@@ -19,7 +19,15 @@ const app = express();
 app.set('trust proxy', Number(process.env.TRUST_PROXY || 1));
 
 app.use(helmet({ contentSecurityPolicy: false })); // CSP left off for the bundled demo frontend; tighten if you serve it elsewhere
-app.use(cors({ origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : '*' }));
+// Browsers send an Origin header with no path and no trailing slash
+// ("https://example.com"), so a configured value written as
+// "https://example.com/" would never match. Normalise rather than make the
+// deployer notice, since the failure is a silent cross-origin block.
+const corsOrigins = (process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map((o) => o.trim().replace(/\/+$/, ''))
+  .filter(Boolean);
+app.use(cors({ origin: corsOrigins.length ? corsOrigins : '*' }));
 app.use(express.json());
 
 // Slow down brute-force login attempts. The limit is per client address and
