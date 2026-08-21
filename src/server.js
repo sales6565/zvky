@@ -114,11 +114,14 @@ process.on('uncaughtException', (err) => {
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`Zvky backend listening on http://localhost:${PORT}`);
-  // If nobody can sign in yet, say so here rather than leaving every attempt
-  // to fail as "Invalid email or password".
-  require('./bootstrap-token')
-    .announce(require('./db'))
-    .catch((err) => console.error('Startup account check failed', err));
+  const db = require('./db');
+  // Repair a schema left over from an earlier version before anything uses it,
+  // then say so if nobody can sign in yet — otherwise every attempt just fails
+  // as "Invalid email or password" with no explanation.
+  require('./migrate')
+    .run(db)
+    .then(() => require('./bootstrap-token').announce(db))
+    .catch((err) => console.error('Startup checks failed', err));
 });
 
 module.exports = app;

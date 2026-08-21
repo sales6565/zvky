@@ -54,8 +54,14 @@ mysql -u root -p -e "CREATE DATABASE zvky CHARACTER SET utf8mb4"
 mysql -u root -p zvky < sql/schema.sql
 ```
 
-Already running the earlier six-role version with live data? Apply the role
-migration instead — it maps the old roles onto the designations:
+Already running the earlier six-role version with live data? The app repairs
+the schema itself on startup (`src/migrate.js`): it drops the old
+`CHECK (role IN (...))` constraint, which lists only the six roles that existed
+then and rejects every current designation with
+`ER_CHECK_CONSTRAINT_VIOLATED`. The check is idempotent and does nothing on a
+current schema.
+
+It does not rename existing rows. To map old roles onto designations, run:
 ```bash
 mysql -u root -p zvky < sql/migration_role_designations.sql
 ```

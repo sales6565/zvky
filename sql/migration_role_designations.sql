@@ -3,6 +3,18 @@
 -- creative_director) and want to keep its data. A fresh install should just
 -- import sql/schema.sql, which already has the current shape.
 
+-- The app applies all of this automatically at startup (src/migrate.js), so you
+-- only need this file if you would rather run it yourself.
+
+-- The old schema constrained users.role to the six roles that existed then, so
+-- inserting any of the current designations fails with
+-- ER_CHECK_CONSTRAINT_VIOLATED. Drop it — roles are validated by src/roles.js.
+-- The constraint is usually auto-named users_chk_1; confirm yours with
+--   SHOW CREATE TABLE users;
+-- MySQL 8 uses DROP CHECK, MariaDB uses DROP CONSTRAINT.
+ALTER TABLE users DROP CHECK users_chk_1;
+-- ALTER TABLE users DROP CONSTRAINT users_chk_1;   -- MariaDB
+
 START TRANSACTION;
 
 -- The role column used to be narrower; the designation keys are longer.
