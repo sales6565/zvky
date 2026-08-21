@@ -5,6 +5,7 @@ const { v4: uuid } = require('uuid');
 const db = require('../db');
 const { authenticate } = require('../middleware/auth');
 const { capabilitiesFor, catalogue } = require('../roles');
+const bootstrapToken = require('../bootstrap-token');
 
 router.post('/login', async (req, res) => {
   const { email, password } = req.body || {};
@@ -50,18 +51,17 @@ router.get('/roles', authenticate, (req, res) => {
 // target the wrong database, and hashes the password server-side.
 //
 // Two conditions, both required, so this cannot become a back door:
-//   - BOOTSTRAP_TOKEN must be set in the environment and match the request.
-//     Unset means the route does not exist at all.
+//   - The request must carry the bootstrap token — either BOOTSTRAP_TOKEN from
+//     the environment, or the one-time token printed to the startup log when
+//     the database is empty (see src/bootstrap-token.js). With neither, the
+//     route does not exist at all.
 //   - The users table must be empty. Once any account exists it always 409s,
 //     so it can never be used to add a second administrator.
-//
-// Unset BOOTSTRAP_TOKEN once you are signed in.
 router.post('/bootstrap', async (req, res) => {
-  const expected = process.env.BOOTSTRAP_TOKEN;
-  if (!expected) return res.status(404).json({ error: 'Not found' });
+  if (!bootstrapToken.isEnabled()) return res.status(404).json({ error: 'Not found' });
 
   const { token, email, name, password } = req.body || {};
-  if (typeof token !== 'string' || token !== expected) {
+  if (!bootstrapToken.matches(token)) {
     return res.status(403).json({ error: 'Invalid bootstrap token' });
   }
   if (!email || !name || !password) {
@@ -85,11 +85,17 @@ router.post('/bootstrap', async (req, res) => {
       'INSERT INTO users (id, `name`, email, password_hash, `role`) VALUES ($1,$2,$3,$4,\'super_admin\')',
       [id, String(name).trim(), String(email).trim(), hash]
     );
-    console.log(`Bootstrapped super admin ${email}. Unset BOOTSTRAP_TOKEN now.`);
+    // The route is now closed either way, since an account exists. Only the
+    // environment variable needs clearing by hand; a runtime token dies with
+    // the process.
+    const usedEnvToken = Boolean(process.env.BOOTSTRAP_TOKEN);
+    console.log(`Bootstrapped super admin ${email}.${usedEnvToken ? ' Unset BOOTSTRAP_TOKEN now.' : ''}`);
     res.status(201).json({
       ok: true,
       user: { id, name: String(name).trim(), email: String(email).trim(), role: 'super_admin' },
-      next: 'Sign in with these details, then remove BOOTSTRAP_TOKEN from the environment.',
+      next: usedEnvToken
+        ? 'Sign in with these details, then remove BOOTSTRAP_TOKEN from the environment.'
+        : 'Sign in with these details. This route is now closed for good.',
     });
   } catch (err) {
     console.error('Bootstrap failed', err);

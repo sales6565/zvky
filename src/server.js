@@ -93,6 +93,11 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`Zvky backend listening on http://localhost:${PORT}`);
+  // If nobody can sign in yet, say so here rather than leaving every attempt
+  // to fail as "Invalid email or password".
+  require('./bootstrap-token')
+    .announce(require('./db'))
+    .catch((err) => console.error('Startup account check failed', err));
 });
 
 module.exports = app;

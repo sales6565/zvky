@@ -107,13 +107,32 @@ demo accounts once you've added your real staff.
 ### No shell on this host?
 
 Some managed platforms give you a database console but no terminal, so
-`npm run seed` isn't available. In that case set an environment variable
+`npm run seed` isn't available.
+
+**Check the startup log first.** When the database has no accounts, the app
+prints a ready-made command with a one-time token:
+
+```
+========================================================================
+This database has no accounts yet, so nobody can sign in.
+
+Create the first super admin by sending this request ...
+  curl -X POST <your-site-url>/api/auth/bootstrap ...
+========================================================================
+```
+
+Copy that command, fill in your name, email and password, and run it. Nothing
+needs configuring. The token is regenerated on every restart and stops working
+the moment an account exists.
+
+If you'd rather set a fixed token — because you can set environment variables
+and would prefer not to read logs — set
 
 ```
 BOOTSTRAP_TOKEN=<any long random string>
 ```
 
-restart the app, and create the first account over HTTP:
+restart, and create the account the same way:
 
 ```bash
 curl -X POST https://your-domain.com/api/auth/bootstrap \
@@ -123,8 +142,15 @@ curl -X POST https://your-domain.com/api/auth/bootstrap \
 
 The app hashes the password itself, using its own database connection — so
 there is no hash to paste and no way to write to the wrong database. The route
-returns 404 while `BOOTSTRAP_TOKEN` is unset and refuses once any account
-exists, so it can't become a back door. **Unset it once you're signed in.**
+returns 404 once any account exists, so it can't become a back door. If you set
+`BOOTSTRAP_TOKEN`, unset it once you're signed in.
+
+> **Which database is the app actually using?** On a managed platform, injected
+> environment variables override anything in `.env` — `dotenv` never replaces a
+> variable that is already set. If the host provisions its own database, that is
+> the one the app talks to, no matter what `.env` says. This is worth checking
+> before hand-writing SQL: `/api/health` reports whether the database the app is
+> connected to has any accounts.
 
 ### Or by hand, via SQL
 
