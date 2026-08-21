@@ -85,9 +85,30 @@ app.get('*', (req, res) => {
 
 // Fallback error handler — surfaces the actual message (e.g. multer's file-type
 // or size-limit errors) rather than a generic 500, since those are meant for the user.
+// Database errors are the exception: their messages name tables and columns, so
+// log those in full and hand the caller the error code alone.
 app.use((err, req, res, next) => {
-  console.error(err);
+  console.error(`${req.method} ${req.originalUrl} failed:`, err);
+  const isDatabaseError = typeof err.code === 'string' && /^(ER_|PROTOCOL_|ECONN)/.test(err.code);
+  if (isDatabaseError) {
+    return res.status(500).json({
+      error: 'The server could not complete that request because of a database error.',
+      code: err.code,
+    });
+  }
   res.status(err.status || 500).json({ error: err.message || 'Unexpected server error' });
+});
+
+// Last line of defence. Routes are wrapped (src/async-router.js) so their
+// failures reach the handler above, but anything that escapes — a rejection
+// from a timer or an event emitter — would otherwise terminate the process and
+// turn every subsequent request into a 502. Log it and keep serving; a stack
+// trace in the log is far easier to act on than a dead container.
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection (server kept running):', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception (server kept running):', err);
 });
 
 const PORT = process.env.PORT || 4000;

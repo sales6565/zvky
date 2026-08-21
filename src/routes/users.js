@@ -1,4 +1,7 @@
-const router = require('express').Router();
+const { asyncRouter } = require('../async-router');
+
+// See src/async-router.js: keeps a failed query from killing the process.
+const router = asyncRouter();
 const bcrypt = require('bcryptjs');
 const { v4: uuid } = require('uuid');
 const db = require('../db');
