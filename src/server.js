@@ -39,7 +39,32 @@ app.use('/api/assets', assetRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/team', teamRoutes);
 
-app.get('/api/health', (req, res) => res.json({ ok: true }));
+// Health check. Deliberately reports the database too: a deployment whose
+// process is up but whose credentials are wrong looks identical from outside
+// otherwise, and the symptom that reaches the user is a failed sign-in.
+// Reports whether any account exists, never how many or whose.
+app.get('/api/health', async (req, res) => {
+  const db = require('./db');
+  try {
+    const { rows } = await db.query('SELECT COUNT(*) AS n FROM users');
+    const seeded = Number(rows[0].n) > 0;
+    res.json({
+      ok: true,
+      database: 'connected',
+      accounts: seeded ? 'present' : 'none',
+      ...(seeded ? {} : { hint: 'No accounts exist yet. Run "npm run seed", or insert a super_admin by hand.' }),
+    });
+  } catch (err) {
+    // err.code distinguishes bad credentials from a missing schema; the message
+    // is the driver's own and says which, without exposing the credentials.
+    res.status(503).json({
+      ok: false,
+      database: 'unreachable',
+      code: err.code || null,
+      error: err.sqlMessage || err.message,
+    });
+  }
+});
 
 // Serve the bundled frontend
 app.use(express.static(path.join(__dirname, '..', 'public')));

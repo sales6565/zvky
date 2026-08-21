@@ -242,9 +242,15 @@ async function api(path, options={}){
     headers: { 'Content-Type':'application/json', ...(state.token?{Authorization:'Bearer '+state.token}:{}), ...(options.headers||{}) },
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
-  if(res.status===401){ logout(); throw new Error('Session expired'); }
   const data = await res.json().catch(()=>({}));
-  if(!res.ok) throw new Error(data.error || 'Request failed');
+  // A 401 from signing in means the credentials were wrong, not that a session
+  // ran out — report what the server actually said. Treating the two the same
+  // showed "Session expired" to someone who had simply mistyped their password.
+  if(res.status===401 && path!=='/auth/login'){
+    logout();
+    throw new Error('Your session has expired — please sign in again.');
+  }
+  if(!res.ok) throw new Error(data.error || `Request failed (HTTP ${res.status})`);
   return data;
 }
 function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
