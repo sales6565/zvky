@@ -60,7 +60,10 @@ app.get('/api/health', async (req, res) => {
       ok: true,
       database: 'connected',
       accounts: seeded ? 'present' : 'none',
-      ...(seeded ? {} : { hint: 'No accounts exist yet. Run "npm run seed", or insert a super_admin by hand.' }),
+      ...(seeded ? {} : {
+        hint: 'No accounts exist yet. Run "npm run seed", or — if you have no shell on this host — '
+          + 'set BOOTSTRAP_TOKEN in the environment and POST it to /api/auth/bootstrap.',
+      }),
     });
   } catch (err) {
     // err.code distinguishes bad credentials from a missing schema; the message

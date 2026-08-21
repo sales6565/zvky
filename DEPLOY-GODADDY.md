@@ -102,22 +102,43 @@ each stage of the review pipeline. It refuses to run if the `users` table
 already has rows.
 
 **Change that password immediately after your first sign-in**, and delete the
-demo accounts once you've added your real staff. If you want an empty studio
-instead, skip the seed and insert one super admin by hand:
+demo accounts once you've added your real staff.
+
+### No shell on this host?
+
+Some managed platforms give you a database console but no terminal, so
+`npm run seed` isn't available. In that case set an environment variable
+
+```
+BOOTSTRAP_TOKEN=<any long random string>
+```
+
+restart the app, and create the first account over HTTP:
 
 ```bash
-node -e "
-const bcrypt=require('bcryptjs');
-console.log(bcrypt.hashSync('your-password-here',10));
-"
+curl -X POST https://your-domain.com/api/auth/bootstrap \
+  -H 'Content-Type: application/json' \
+  -d '{"token":"<the same string>","name":"Your Name","email":"you@zvky.com","password":"a-strong-password"}'
 ```
 
-then in phpMyAdmin:
+The app hashes the password itself, using its own database connection — so
+there is no hash to paste and no way to write to the wrong database. The route
+returns 404 while `BOOTSTRAP_TOKEN` is unset and refuses once any account
+exists, so it can't become a back door. **Unset it once you're signed in.**
 
-```sql
-INSERT INTO users (id, name, email, password_hash, role)
-VALUES (UUID(), 'Your Name', 'you@zvky.com', '<the hash printed above>', 'super_admin');
+### Or by hand, via SQL
+
+If you'd rather insert the row yourself:
+
+```bash
+node scripts/make-admin-sql.js "Your Name" you@zvky.com
 ```
+
+It prints an `INSERT` to paste into phpMyAdmin, and the generated password to
+your terminal. Two things to watch: paste the SQL into a **database console**,
+not a shell — a bcrypt hash contains `$` characters that a shell will expand
+and corrupt — and make sure the console is connected to the same database the
+app's `DB_NAME` points at, or the row will land somewhere the app never reads.
 
 ## 8. Start it
 

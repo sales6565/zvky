@@ -201,6 +201,7 @@ The API is served at `http://localhost:4000/api/*`, and the bundled frontend
 | POST | `/api/auth/login` | anyone |
 | GET | `/api/auth/me` | any logged-in user |
 | GET | `/api/auth/roles` | any logged-in user — the role catalogue |
+| POST | `/api/auth/bootstrap` | first run only — creates the first super admin when the database is empty and `BOOTSTRAP_TOKEN` is set |
 | GET | `/api/projects` | scoped per role automatically |
 | POST | `/api/projects` | any role that can create projects |
 | DELETE | `/api/projects/:id` | a studio-wide role, or the owner |
