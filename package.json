@@ -5,6 +5,7 @@
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
+    "build": "echo 'No build step required — public/index.html is served as-is.'",
     "dev": "nodemon app.js",
     "seed": "node src/seed/seed.js",
     "package": "bash scripts/build-godaddy-zip.sh"
