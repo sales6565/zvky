@@ -13,12 +13,24 @@ const teamRoutes = require('./routes/team');
 
 const app = express();
 
+// On cPanel/Passenger (and behind any reverse proxy) the client address arrives
+// in X-Forwarded-For. Without this the rate limiter keys every request to the
+// proxy's own address and throttles the whole studio as if it were one user.
+app.set('trust proxy', Number(process.env.TRUST_PROXY || 1));
+
 app.use(helmet({ contentSecurityPolicy: false })); // CSP left off for the bundled demo frontend; tighten if you serve it elsewhere
 app.use(cors({ origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : '*' }));
 app.use(express.json());
 
-// Slow down brute-force login attempts.
-const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, standardHeaders: true });
+// Slow down brute-force login attempts. The limit is per client address and
+// counts the whole studio when everyone shares one office IP, so it is set high
+// enough for a full team's morning sign-in and tunable per deployment.
+const loginLimiter = rateLimit({
+  windowMs: Number(process.env.LOGIN_RATE_WINDOW_MINUTES || 15) * 60 * 1000,
+  max: Number(process.env.LOGIN_RATE_MAX || 100),
+  standardHeaders: true,
+  message: { error: 'Too many sign-in attempts from this network. Try again in a few minutes.' },
+});
 app.use('/api/auth/login', loginLimiter);
 
 app.use('/api/auth', authRoutes);
@@ -46,3 +58,5 @@ const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`Zvky backend listening on http://localhost:${PORT}`);
 });
+
+module.exports = app;

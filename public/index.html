@@ -205,11 +205,28 @@ const STATUSES = [
   {id:'approved_for_client', label:'Approved for Client', color:'var(--approved)'},
   {id:'delivered', label:'Delivered', color:'var(--final)'},
 ];
-const ROLES = {
-  super_admin:{label:'Super Admin', color:'var(--brand)'}, admin:{label:'Admin', color:'var(--prog)'},
-  team_lead:{label:'Team Lead', color:'var(--review)'}, coordinator:{label:'Coordinator', color:'var(--approved)'},
-  artist:{label:'Artist', color:'var(--artist-blue)'}, creative_director:{label:'Creative Director', color:'#d4ff3d'},
-};
+/* The studio's designations are defined once on the server (src/roles.js) and
+   fetched here, so adding a role never means editing this file. */
+let ROLE_LIST = [];
+const ROLE_MAP = {};
+function roleInfo(key){ return ROLE_MAP[key] || { key, label: key || 'Unknown', color:'var(--ink-faint)', group:'' }; }
+/* What the signed-in user is allowed to do, as decided by the API. */
+function caps(){ return (state.currentUser && state.currentUser.capabilities) || {}; }
+/* Comma-separated role keys matching a predicate, for /users?role= lookups. */
+function roleKeys(pred){ return ROLE_LIST.filter(pred).map(r=>r.key).join(','); }
+/* Designations the signed-in user may hand out — mirrors the server's rule. */
+function assignableRoleList(){
+  const c = caps();
+  if(!c.manageUsers) return [];
+  if(c.projectScope==='all') return ROLE_LIST;
+  return ROLE_LIST.filter(r=>!r.manageUsers && r.projectScope!=='all');
+}
+async function loadRoles(){
+  const { roles } = await api('/auth/roles');
+  ROLE_LIST = roles;
+  Object.keys(ROLE_MAP).forEach(k=>delete ROLE_MAP[k]);
+  roles.forEach(r=>{ ROLE_MAP[r.key] = r; });
+}
 function typeOf(id){ return TYPES.find(t=>t.id===id) || TYPES[0]; }
 function statusOf(id){ return STATUSES.find(s=>s.id===id) || STATUSES[0]; }
 function initials(name){ return (name||'?').trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase(); }
@@ -240,7 +257,7 @@ async function boot(){
     try{
       const { user } = await api('/auth/me');
       state.currentUser = user;
-      showApp();
+      await showApp();
       return;
     }catch(e){ localStorage.removeItem('zvky_token'); }
   }
@@ -256,7 +273,7 @@ async function attemptLogin(){
     const { token, user } = await api('/auth/login', { method:'POST', body:{ email, password } });
     state.token = token; state.currentUser = user;
     localStorage.setItem('zvky_token', token);
-    showApp();
+    await showApp();
   }catch(e){ err.textContent = e.message; }
 }
 function logout(){
@@ -268,9 +285,10 @@ function logout(){
 }
 document.getElementById('logoutBtn').addEventListener('click', logout);
 
-function showApp(){
+async function showApp(){
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('appRoot').style.display='block';
+  await loadRoles();
   bootApp();
 }
 
@@ -280,12 +298,14 @@ async function bootApp(){
   document.getElementById('userAvatar').textContent = initials(u.name);
   document.getElementById('userName').textContent = u.name;
   const rb = document.getElementById('userRoleBadge');
-  rb.textContent = ROLES[u.role].label; rb.style.background = ROLES[u.role].color+'22'; rb.style.color = ROLES[u.role].color;
+  const ri = roleInfo(u.role);
+  rb.textContent = ri.label; rb.style.background = ri.color+'22'; rb.style.color = ri.color;
+  rb.title = ri.group || '';
 
-  document.getElementById('teamTabBtn').style.display = u.role==='team_lead' ? '' : 'none';
-  document.getElementById('usersTabBtn').style.display = ['super_admin','admin'].includes(u.role) ? '' : 'none';
-  document.getElementById('newProjectBtn').style.display = ['super_admin','admin'].includes(u.role) ? '' : 'none';
-  document.getElementById('bulkImportBtn').style.display = ['super_admin','admin','team_lead','coordinator'].includes(u.role) ? '' : 'none';
+  document.getElementById('teamTabBtn').style.display = caps().leadsTeam ? '' : 'none';
+  document.getElementById('usersTabBtn').style.display = caps().manageUsers ? '' : 'none';
+  document.getElementById('newProjectBtn').style.display = caps().createProject ? '' : 'none';
+  document.getElementById('bulkImportBtn').style.display = caps().createAsset ? '' : 'none';
 
   const { projects } = await api('/projects');
   state.projects = projects;
@@ -416,18 +436,20 @@ function renderList(){
 }
 async function renderTeam(){
   const el = document.getElementById('teamView');
-  if(state.currentUser.role!=='team_lead'){ el.innerHTML=''; return; }
+  if(!caps().leadsTeam){ el.innerHTML=''; return; }
   const { members } = await api('/team');
-  if(!members.length){ el.innerHTML = `<div class="empty">No artists assigned to you yet.</div>`; return; }
-  el.innerHTML = `<table><thead><tr><th>Artist</th><th>Assets Assigned</th><th>Tasks Done</th><th>Progress</th></tr></thead><tbody>
-    ${members.map(m=>`<tr><td style="font-weight:600;">${escapeHTML(m.name)}</td><td>${m.assetCount}</td><td class="mono">${m.doneTasks}/${m.totalTasks}</td>
+  if(!members.length){ el.innerHTML = `<div class="empty">Nobody reports to you yet.</div>`; return; }
+  el.innerHTML = `<table><thead><tr><th>Team Member</th><th>Role</th><th>Assets Assigned</th><th>Tasks Done</th><th>Progress</th></tr></thead><tbody>
+    ${members.map(m=>`<tr><td style="font-weight:600;">${escapeHTML(m.name)}</td>
+      <td><span class="role-badge" style="background:${roleInfo(m.role).color}22;color:${roleInfo(m.role).color}">${escapeHTML(roleInfo(m.role).label)}</span></td>
+      <td>${m.assetCount}</td><td class="mono">${m.doneTasks}/${m.totalTasks}</td>
       <td><div style="background:var(--surface-3);border-radius:20px;height:8px;width:120px;overflow:hidden;"><div style="background:var(--approved);height:100%;width:${m.progressPct}%;"></div></div></td></tr>`).join('')}
   </tbody></table>`;
 }
 async function renderUsers(){
   const el = document.getElementById('usersView');
   const u = state.currentUser;
-  if(!['super_admin','admin'].includes(u.role)){ el.innerHTML=''; return; }
+  if(!caps().manageUsers){ el.innerHTML=''; return; }
   const { users, total } = await api(`/users?search=${encodeURIComponent(state.search)}&limit=${state.usersRenderLimit}&offset=0`);
   el.innerHTML = `
     <div style="display:flex;gap:10px;margin-bottom:12px;align-items:center;">
@@ -436,10 +458,11 @@ async function renderUsers(){
     </div>
     <table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr></thead><tbody>
       ${users.map(x=>{
-        const r=ROLES[x.role];
-        const canDelete = u.role==='super_admin' ? x.role!=='super_admin' : x.manager_id===u.id;
+        const r=roleInfo(x.role);
+        const targetRunsStudio = r.manageUsers && r.projectScope==='all';
+        const canDelete = x.id!==u.id && (caps().projectScope==='all' ? !targetRunsStudio : x.manager_id===u.id);
         return `<tr><td style="font-weight:600;">${escapeHTML(x.name)}</td><td class="mono" style="font-size:11.5px;">${escapeHTML(x.email)}</td>
-          <td><span class="role-badge" style="background:${r.color}22;color:${r.color}">${r.label}</span></td>
+          <td><span class="role-badge" title="${escapeHTML(r.group||'')}" style="background:${r.color}22;color:${r.color}">${escapeHTML(r.label)}</span></td>
           <td>${canDelete ? `<button class="btn btn-ghost btn-sm delUserBtn" data-id="${x.id}" data-name="${escapeHTML(x.name)}">Remove</button>` : ''}</td></tr>`;
       }).join('')}
     </tbody></table>
@@ -462,7 +485,7 @@ async function renderUsers(){
 async function render(){
   if(state.view==='board' || state.view==='list'){ await loadAssets(); }
   renderStats();
-  const showCreateControls = (state.view==='board'||state.view==='list') && ['super_admin','admin','team_lead','coordinator'].includes(state.currentUser.role) && state.currentProjectId;
+  const showCreateControls = (state.view==='board'||state.view==='list') && caps().createAsset && state.currentProjectId;
   document.getElementById('newAssetBtn').style.display = showCreateControls ? '' : 'none';
   document.getElementById('bulkImportBtn').style.display = showCreateControls ? '' : 'none';
   if(state.view==='board') renderBoard();
@@ -479,15 +502,15 @@ async function openDrawer(id){
   const a = state.assets.find(x=>x.id===id);
   if(!a) return;
   const u = state.currentUser;
-  const editable = ['super_admin','admin','coordinator'].includes(u.role) || (u.role==='artist' && a.assignee_id===u.id) || u.role==='team_lead';
+  const editable = caps().editAsset && (!caps().assignable || a.assignee_id===u.id);
   const t = typeOf(a.type);
   const drawer = document.getElementById('drawer');
 
-  const isMyAssetAsArtist = u.role==='artist' && a.assignee_id===u.id;
+  const isMyAssetAsArtist = caps().assignable && a.assignee_id===u.id;
   const canSubmit = isMyAssetAsArtist && ['not_started','in_progress','tl_changes_requested','cd_changes_requested'].includes(a.status);
-  const canTlReview = u.role==='team_lead' && a.status==='pending_tl_review';
-  const canCdReview = (u.role==='creative_director'||u.role==='super_admin') && a.status==='pending_cd_review';
-  const canDeliver = ['super_admin','admin','coordinator','creative_director'].includes(u.role) && a.status==='approved_for_client';
+  const canTlReview = caps().leadsTeam && a.status==='pending_tl_review';
+  const canCdReview = caps().reviewStage==='cd' && a.status==='pending_cd_review';
+  const canDeliver = caps().deliver && a.status==='approved_for_client';
   const latestFeedback = a.feedback && a.feedback[0];
 
   drawer.innerHTML = `
@@ -554,14 +577,14 @@ async function openDrawer(id){
     <div class="field-lbl">Review feedback</div>
     <div id="d_feedback">${(a.feedback&&a.feedback.length) ? a.feedback.map(f=>`
       <div class="note" style="border-left-color:${f.decision==='approved'?'var(--approved)':'#e8402c'};">
-        <span class="who">${escapeHTML(f.given_by_name||'Reviewer')} · ${f.stage==='tl'?'Team Lead':'Creative Director'} · ${f.decision==='approved'?'Approved':'Changes requested'}</span> <span class="when">${fmtDate(f.created_at)}</span>
+        <span class="who">${escapeHTML(f.given_by_name||'Reviewer')} · ${f.stage==='tl'?'Team Lead':'Art Director'} · ${f.decision==='approved'?'Approved':'Changes requested'}</span> <span class="when">${fmtDate(f.created_at)}</span>
         ${f.text?`<p>${escapeHTML(f.text)}</p>`:''}
       </div>`).join('') : '<div style="font-size:12px;color:var(--ink-faint);">No review feedback yet.</div>'}</div>
 
     <div class="field-lbl">Notes</div>
     <div id="d_notes">${a.notes.map(n=>`<div class="note"><span class="who">${escapeHTML(n.author_name||'Someone')}</span> <span class="when">${new Date(n.created_at).toLocaleDateString()}</span><p>${escapeHTML(n.text)}</p></div>`).join('') || '<div style="font-size:12px;color:var(--ink-faint);">No notes yet.</div>'}</div>
     <div style="display:flex;gap:6px;margin-top:8px;"><input type="text" id="newNoteInput" placeholder="Leave a note…" style="flex:1;"><button class="btn btn-ghost" id="addNoteBtn" style="padding:8px 12px;">Post</button></div>
-    ${(u.role==='super_admin'||u.role==='admin') ? `<div class="modal-actions"><button class="btn btn-ghost" id="deleteAssetBtn" style="color:var(--brand);">Delete asset</button></div>` : ''}
+    ${caps().deleteAsset ? `<div class="modal-actions"><button class="btn btn-ghost" id="deleteAssetBtn" style="color:var(--brand);">Delete asset</button></div>` : ''}
   `;
   document.getElementById('overlay').classList.add('show'); drawer.classList.add('show');
   document.getElementById('closeDrawer').onclick = closeDrawer;
@@ -706,9 +729,10 @@ document.getElementById('newProjectBtn').addEventListener('click', async ()=>{
   document.getElementById('p_name').value='';
   try{
     const [{ users: leads }, { users: coords }] = await Promise.all([
-      api('/users?role=team_lead&limit=500'), api('/users?role=coordinator&limit=500'),
+      api('/users?role='+encodeURIComponent(roleKeys(r=>r.leadsTeam))+'&limit=500'),
+      api('/users?role='+encodeURIComponent(roleKeys(r=>r.projectScope==='assigned'))+'&limit=500'),
     ]);
-    document.getElementById('p_leads').innerHTML = leads.map(u=>`<label><input type="checkbox" value="${u.id}">${escapeHTML(u.name)}</label>`).join('') || '<div style="font-size:12px;color:var(--ink-faint);">No team leads visible to you.</div>';
+    document.getElementById('p_leads').innerHTML = leads.map(u=>`<label><input type="checkbox" value="${u.id}">${escapeHTML(u.name)}</label>`).join('') || '<div style="font-size:12px;color:var(--ink-faint);">No leads or supervisors visible to you.</div>';
     document.getElementById('p_coords').innerHTML = coords.map(u=>`<label><input type="checkbox" value="${u.id}">${escapeHTML(u.name)}</label>`).join('') || '<div style="font-size:12px;color:var(--ink-faint);">No coordinators visible to you.</div>';
   }catch(err){ showToast(err.message); }
   projectModalWrap.classList.add('show');
@@ -732,20 +756,31 @@ function openUserModal(){
   document.getElementById('u_name').value=''; document.getElementById('u_email').value='';
   const u = state.currentUser;
   const roleSel = document.getElementById('u_role');
-  const allowedRoles = u.role==='super_admin' ? Object.keys(ROLES) : ['team_lead','coordinator','artist'];
-  roleSel.innerHTML = allowedRoles.map(r=>`<option value="${r}">${ROLES[r].label}</option>`).join('');
+  const allowed = assignableRoleList();
+  const groups = [];
+  allowed.forEach(r=>{ const g = groups.find(x=>x.name===r.group); if(g) g.items.push(r); else groups.push({name:r.group, items:[r]}); });
+  roleSel.innerHTML = groups.map(g=>
+    `<optgroup label="${escapeHTML(g.name)}">${g.items.map(r=>`<option value="${r.key}">${escapeHTML(r.label)}</option>`).join('')}</optgroup>`
+  ).join('');
   roleSel.onchange = renderUserExtraFields;
   renderUserExtraFields();
   userModalWrap.classList.add('show');
 }
 async function renderUserExtraFields(){
   const role = document.getElementById('u_role').value;
+  const info = roleInfo(role);
   const box = document.getElementById('u_extraFields');
-  if(role==='artist'){
-    const { users: leads } = await api('/users?role=team_lead&limit=500');
-    box.innerHTML = `<label>Team lead</label><select id="u_teamLead">${leads.map(l=>`<option value="${l.id}">${escapeHTML(l.name)}</option>`).join('')}</select>`;
-  } else if(role==='coordinator'){
-    box.innerHTML = `<label>Project</label><select id="u_project">${state.projects.map(p=>`<option value="${p.id}">${escapeHTML(p.name)}</option>`).join('')}</select>`;
+  if(info.assignable){
+    // Contributors report to a lead or supervisor.
+    const { users: leads } = await api('/users?role='+encodeURIComponent(roleKeys(r=>r.leadsTeam))+'&limit=500');
+    box.innerHTML = leads.length
+      ? `<label>Reports to</label><select id="u_teamLead">${leads.map(l=>`<option value="${l.id}">${escapeHTML(l.name)} — ${escapeHTML(roleInfo(l.role).label)}</option>`).join('')}</select>`
+      : `<div style="font-size:12px;color:var(--ink-faint);">No leads or supervisors yet — add one first, then set who this person reports to.</div>`;
+  } else if(info.projectScope==='assigned' || info.leadsTeam){
+    // Coordinators and leads get attached to a project.
+    box.innerHTML = state.projects.length
+      ? `<label>Project</label><select id="u_project">${state.projects.map(p=>`<option value="${p.id}">${escapeHTML(p.name)}</option>`).join('')}</select>`
+      : `<div style="font-size:12px;color:var(--ink-faint);">No projects yet — you can attach them to one later.</div>`;
   } else { box.innerHTML=''; }
 }
 document.getElementById('cancelUserModal').addEventListener('click', ()=>userModalWrap.classList.remove('show'));
@@ -756,12 +791,14 @@ document.getElementById('saveUserModal').addEventListener('click', async ()=>{
   const role = document.getElementById('u_role').value;
   if(!name || !email){ showToast('Name and email are required.'); return; }
   const body = { name, email, role };
-  if(role==='artist'){ body.teamLeadId = document.getElementById('u_teamLead').value; }
-  if(role==='coordinator'){ body.projectId = document.getElementById('u_project').value; }
+  const leadSel = document.getElementById('u_teamLead');
+  const projSel = document.getElementById('u_project');
+  if(leadSel && leadSel.value) body.teamLeadId = leadSel.value;
+  if(projSel && projSel.value) body.projectId = projSel.value;
   try{
     await api('/users', { method:'POST', body });
     userModalWrap.classList.remove('show'); renderUsers();
-    showToast(`${name} added as ${ROLES[role].label}. Default password: zvky2026`);
+    showToast(`${name} added as ${roleInfo(role).label}. Default password: zvky2026`);
   }catch(err){ showToast(err.message); }
 });
 

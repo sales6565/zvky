@@ -1,7 +1,8 @@
 require('dotenv').config();
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 const { v4: uuid } = require('uuid');
-const pool = require('../db');
+const db = require('../db');
+const { ASSIGNABLE_ROLES, LEAD_ROLES, roleDef } = require('../roles');
 
 const FIRST = ['Aiko','Ravi','Mika','Theo','Priya','Sam','Noor','Kai','Lena','Omar','Yuki','Diego','Alia','Finn','Sana','Wren','Dev','Zara','Milo','Ines','Kobe','Nell','Arjun','Talia','Bo'];
 const LAST = ['Nakamura','Singh','Voss','Marchetti','Okafor','Reyes','Bergström','Haddad','Costa','Lindqvist','Park','Ferreira','Nazari','Holt','Achebe','Sorensen','Rao','Delgado','Kimura','Adeyemi','Novak','Petrov','Lund','Osei','Calder'];
@@ -28,12 +29,21 @@ const ASSET_SEED = [
 ];
 const CODE_MAP = { character: 'CHR', prop: 'PRP', environment: 'ENV', fx: 'FX', animation: 'ANI', background: 'BG' };
 
+// Spread the seeded staff across the studio's real designations rather than
+// giving everyone the same one, so the Users tab shows the full catalogue in use.
+function rotate(list, i) {
+  return list[i % list.length];
+}
+
 async function main() {
-  const client = await pool.connect();
+  const client = await db.connect();
   try {
-    const { rows: existing } = await client.query('SELECT COUNT(*)::int AS n FROM users');
-    if (existing[0].n > 0) {
-      console.log(`Database already has ${existing[0].n} users. Refusing to reseed. Drop the tables first if you want a clean slate.`);
+    const { rows: existing } = await client.query('SELECT COUNT(*) AS n FROM users');
+    const userCount = Number(existing[0].n);
+    if (userCount > 0) {
+      console.log(`Database already has ${userCount} users. Refusing to reseed. Drop the tables first if you want a clean slate.`);
+      client.release();
+      await db.end();
       process.exit(0);
     }
 
@@ -46,7 +56,7 @@ async function main() {
 
     const superId = uuid();
     await client.query(
-      `INSERT INTO users (id, name, email, password_hash, role) VALUES ($1,$2,$3,$4,'super_admin')`,
+      'INSERT INTO users (id, `name`, email, password_hash, `role`) VALUES ($1,$2,$3,$4,\'super_admin\')',
       [superId, 'Ava Sterling', 'ava@zvky.studio', superHash]
     );
 
@@ -58,7 +68,7 @@ async function main() {
       const id = uuid();
       cdIds.push(id);
       await client.query(
-        `INSERT INTO users (id, name, email, password_hash, role, manager_id) VALUES ($1,$2,$3,$4,'creative_director',$5)`,
+        'INSERT INTO users (id, `name`, email, password_hash, `role`, manager_id) VALUES ($1,$2,$3,$4,\'art_director\',$5)',
         [id, n.name, n.email, demoHash, superId]
       );
     }
@@ -69,7 +79,7 @@ async function main() {
       const id = uuid();
       adminIds.push(id);
       await client.query(
-        `INSERT INTO users (id, name, email, password_hash, role, manager_id) VALUES ($1,$2,$3,$4,'admin',$5)`,
+        'INSERT INTO users (id, `name`, email, password_hash, `role`, manager_id) VALUES ($1,$2,$3,$4,\'admin\',$5)',
         [id, n.name, n.email, demoHash, superId]
       );
     }
@@ -80,7 +90,7 @@ async function main() {
       const name = PROJECT_NAMES[i];
       const code = name.split(' ').map((w) => w[0]).join('').toUpperCase();
       const ownerId = adminIds[i % adminIds.length];
-      await client.query('INSERT INTO projects (id, name, code, owner_id) VALUES ($1,$2,$3,$4)', [id, name, code, ownerId]);
+      await client.query('INSERT INTO projects (id, `name`, `code`, owner_id) VALUES ($1,$2,$3,$4)', [id, name, code, ownerId]);
       projects.push({ id, name, ownerId, teamLeadIds: [], artistIds: [] });
     }
 
@@ -89,8 +99,8 @@ async function main() {
       const id = uuid();
       const proj = projects[i % projects.length];
       await client.query(
-        `INSERT INTO users (id, name, email, password_hash, role, manager_id) VALUES ($1,$2,$3,$4,'team_lead',$5)`,
-        [id, n.name, n.email, demoHash, proj.ownerId]
+        'INSERT INTO users (id, `name`, email, password_hash, `role`, manager_id) VALUES ($1,$2,$3,$4,$5,$6)',
+        [id, n.name, n.email, demoHash, rotate(LEAD_ROLES, i), proj.ownerId]
       );
       await client.query('INSERT INTO project_team_leads (project_id, user_id) VALUES ($1,$2)', [proj.id, id]);
       proj.teamLeadIds.push(id);
@@ -101,7 +111,7 @@ async function main() {
       const id = uuid();
       const proj = projects[i % projects.length];
       await client.query(
-        `INSERT INTO users (id, name, email, password_hash, role, manager_id) VALUES ($1,$2,$3,$4,'coordinator',$5)`,
+        'INSERT INTO users (id, `name`, email, password_hash, `role`, manager_id) VALUES ($1,$2,$3,$4,\'coordinator\',$5)',
         [id, n.name, n.email, demoHash, proj.ownerId]
       );
       await client.query('INSERT INTO project_coordinators (project_id, user_id) VALUES ($1,$2)', [proj.id, id]);
@@ -114,8 +124,8 @@ async function main() {
       const proj = projects[i % projects.length];
       const teamLeadId = proj.teamLeadIds[i % proj.teamLeadIds.length];
       await client.query(
-        `INSERT INTO users (id, name, email, password_hash, role, manager_id, team_lead_id) VALUES ($1,$2,$3,$4,'artist',$5,$6)`,
-        [id, n.name, n.email, demoHash, proj.ownerId, teamLeadId]
+        'INSERT INTO users (id, `name`, email, password_hash, `role`, manager_id, team_lead_id) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+        [id, n.name, n.email, demoHash, rotate(ASSIGNABLE_ROLES, i), proj.ownerId, teamLeadId]
       );
       proj.artistIds.push(id);
     }
@@ -130,8 +140,8 @@ async function main() {
         const code = `${CODE_MAP[type]}-${String(i + 1).padStart(3, '0')}`;
         const dueDate = new Date(Date.now() + dueInDays * 86400000).toISOString().slice(0, 10);
         await client.query(
-          `INSERT INTO assets (id, code, name, type, status, priority, project_id, assignee_id, description, man_hours, due_date)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          'INSERT INTO assets (id, `code`, `name`, `type`, `status`, priority, project_id, assignee_id, description, man_hours, due_date) ' +
+          'VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
           [assetId, code, `${proj.name.split(' ')[0]} — ${name}`, type, status, priority, proj.id, assigneeId, description, manHours, dueDate]
         );
         const pastTl = ['pending_cd_review', 'cd_changes_requested', 'approved_for_client', 'delivered'].includes(status);
@@ -143,8 +153,8 @@ async function main() {
         ];
         for (let t = 0; t < defaultTasks.length; t++) {
           await client.query(
-            'INSERT INTO tasks (id, asset_id, name, done, position) VALUES ($1,$2,$3,$4,$5)',
-            [uuid(), assetId, defaultTasks[t][0], defaultTasks[t][1], t]
+            'INSERT INTO tasks (id, asset_id, `name`, done, `position`) VALUES ($1,$2,$3,$4,$5)',
+            [uuid(), assetId, defaultTasks[t][0], defaultTasks[t][1] ? 1 : 0, t]
           );
         }
 
@@ -159,9 +169,9 @@ async function main() {
           );
           if (status !== 'pending_tl_review') {
             const decision = status === 'tl_changes_requested' ? 'changes_requested' : 'approved';
-            const note = decision === 'changes_requested' ? 'Silhouette reads a little flat from this angle — push the rim light and resubmit.' : 'Reads clean, nice work — approved to go up to creative review.';
+            const note = decision === 'changes_requested' ? 'Silhouette reads a little flat from this angle — push the rim light and resubmit.' : 'Reads clean, nice work — approved to go up to the art director.';
             await client.query(
-              'INSERT INTO feedback (id, asset_id, version_id, stage, decision, given_by, text) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+              'INSERT INTO feedback (id, asset_id, version_id, stage, decision, given_by, `text`) VALUES ($1,$2,$3,$4,$5,$6,$7)',
               [uuid(), assetId, v1, 'tl', decision, teamLeadId, note]
             );
           }
@@ -178,7 +188,7 @@ async function main() {
             const decision = status === 'cd_changes_requested' ? 'changes_requested' : 'approved';
             const note = decision === 'changes_requested' ? 'Color story is close, but the palette drifts warm against the rest of the sequence — cool it down half a stop and resubmit.' : 'Approved — ready to go to the client.';
             await client.query(
-              'INSERT INTO feedback (id, asset_id, version_id, stage, decision, given_by, text) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+              'INSERT INTO feedback (id, asset_id, version_id, stage, decision, given_by, `text`) VALUES ($1,$2,$3,$4,$5,$6,$7)',
               [uuid(), assetId, v2, 'cd', decision, cdId, note]
             );
           }
@@ -190,7 +200,9 @@ async function main() {
     console.log('Seed complete:');
     console.log('  Super admin: ava@zvky.studio / superadmin');
     console.log('  Everyone else: <their email> / zvky2026');
-    console.log(`  ${adminIds.length} admins, 40 team leads, 44 coordinators, ${ARTIST_COUNT} artists, ${cdIds.length} creative directors, ${projects.length} projects.`);
+    console.log(`  ${adminIds.length} admins, 40 leads across ${LEAD_ROLES.length} supervisory designations,`);
+    console.log(`  44 coordinators, ${ARTIST_COUNT} contributors across ${ASSIGNABLE_ROLES.length} designations,`);
+    console.log(`  ${cdIds.length} art directors, ${projects.length} projects.`);
     console.log('  (Seeded review files are placeholders and are not downloadable — only real uploads are.)');
   } catch (err) {
     await client.query('ROLLBACK');
@@ -198,7 +210,7 @@ async function main() {
     process.exit(1);
   } finally {
     client.release();
-    await pool.end();
+    await db.end();
   }
 }
 
