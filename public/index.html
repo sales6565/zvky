@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Zvky — Pipeline</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap');
+:root{
+  --bg:#14161b; --surface:#1d2027; --surface-2:#262a33; --surface-3:#30343e; --border:#363b46;
+  --ink:#edeff2; --ink-muted:#8b909c; --ink-faint:#5b606c; --brand:#ff5a36; --brand-ink:#2a1108;
+  --not:#6b7280; --prog:#f2b33d; --review:#9b7ef0; --approved:#3ddc97; --final:#d4ff3d; --artist-blue:#4fb3ff;
+}
+*{box-sizing:border-box;} html,body{margin:0;padding:0;}
+body{background:var(--bg);color:var(--ink);font-family:'Inter',sans-serif;min-height:100vh;}
+.mono{font-family:'IBM Plex Mono',monospace;} .display{font-family:'Space Grotesk',sans-serif;}
+.sprockets{height:14px;background-image:repeating-linear-gradient(90deg, var(--border) 0 6px, transparent 6px 20px);background-position:6px 50%;background-repeat:repeat-x;background-size:20px 6px;opacity:.55;margin:0 0 2px 0;}
+#app{max-width:1400px;margin:0 auto;padding:20px 24px 60px;}
+header.top{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:6px;}
+.wordmark{display:flex;align-items:center;gap:10px;}
+.wordmark .mark{width:34px;height:34px;border-radius:8px;background:var(--brand);display:flex;align-items:center;justify-content:center;color:var(--brand-ink);font-family:'Space Grotesk';font-weight:700;font-size:16px;transform:rotate(-4deg);}
+.wordmark h1{font-family:'Space Grotesk';font-weight:700;font-size:20px;margin:0;letter-spacing:.2px;}
+.wordmark .sub{color:var(--ink-muted);font-size:12px;font-family:'IBM Plex Mono';margin-top:1px;}
+.proj-select{background:var(--surface-2);border:1px solid var(--border);color:var(--ink);padding:8px 12px;border-radius:8px;font-family:'IBM Plex Mono';font-size:12px;}
+.user-badge{display:flex;align-items:center;gap:8px;background:var(--surface-2);border:1px solid var(--border);border-radius:20px;padding:5px 6px 5px 5px;}
+.user-badge .avatar{width:26px;height:26px;border-radius:50%;background:var(--surface-3);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;font-family:'Space Grotesk';}
+.user-badge .who{font-size:12px;} .user-badge .who .name{font-weight:600;}
+.role-badge{font-size:9px;text-transform:uppercase;letter-spacing:.5px;padding:2px 7px;border-radius:20px;font-family:'IBM Plex Mono';font-weight:600;}
+.btn{border:none;border-radius:8px;padding:9px 16px;font-family:'Inter';font-weight:600;font-size:13px;cursor:pointer;transition:transform .1s ease, background .15s ease;}
+.btn:active{transform:scale(.97);} .btn-brand{background:var(--brand);color:#1a0d08;} .btn-brand:hover{background:#ff6f4d;}
+.btn-ghost{background:var(--surface-2);color:var(--ink);border:1px solid var(--border);} .btn-ghost:hover{background:var(--surface-3);}
+.btn-sm{padding:6px 10px;font-size:12px;}
+.stats{display:flex;gap:0;margin:18px 0 16px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface);flex-wrap:wrap;}
+.stat{flex:1;min-width:90px;padding:12px 16px;border-right:1px solid var(--border);} .stat:last-child{border-right:none;}
+.stat .num{font-family:'Space Grotesk';font-weight:700;font-size:22px;} .stat .lbl{font-size:11px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.6px;margin-top:2px;}
+.toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;}
+.toolbar input[type=text]{background:var(--surface-2);border:1px solid var(--border);color:var(--ink);padding:8px 12px;border-radius:8px;font-size:13px;min-width:180px;font-family:'Inter';}
+.toolbar select{background:var(--surface-2);border:1px solid var(--border);color:var(--ink);padding:8px 10px;border-radius:8px;font-size:13px;font-family:'Inter';}
+.tabs{display:flex;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+.tabs button{background:transparent;border:none;color:var(--ink-muted);padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Inter';}
+.tabs button.active{background:var(--surface-3);color:var(--ink);} .spacer{margin-left:auto;}
+.board{display:flex;gap:14px;align-items:flex-start;overflow-x:auto;padding-bottom:20px;}
+.column{background:var(--surface);border:1px solid var(--border);border-radius:12px;min-width:250px;flex:1;padding:10px;min-height:200px;}
+.column.dragover{border-color:var(--brand);background:#231a15;}
+.col-head{display:flex;align-items:center;gap:8px;padding:6px 6px 12px;}
+.col-head .chip{width:9px;height:9px;border-radius:2px;} .col-head .title{font-family:'Space Grotesk';font-weight:700;font-size:13px;text-transform:uppercase;letter-spacing:.5px;}
+.col-head .count{margin-left:auto;font-family:'IBM Plex Mono';font-size:11px;color:var(--ink-muted);background:var(--surface-2);padding:1px 7px;border-radius:20px;}
+.card{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:10px;cursor:grab;position:relative;transition:border-color .15s;}
+.card:hover{border-color:var(--ink-faint);}
+.card .reg{position:absolute;top:6px;right:6px;width:8px;height:8px;border:1px solid var(--ink-faint);border-radius:50%;opacity:.5;}
+.card .thumb{height:64px;border-radius:6px;margin-bottom:8px;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;}
+.card .code{font-family:'IBM Plex Mono';font-size:10px;color:var(--ink-muted);letter-spacing:.5px;}
+.card .name{font-family:'Space Grotesk';font-weight:700;font-size:13.5px;margin:2px 0 6px;line-height:1.25;}
+.card .meta{display:flex;align-items:center;justify-content:space-between;margin-top:6px;}
+.type-tag{font-size:10px;padding:2px 7px;border-radius:20px;background:var(--surface-3);color:var(--ink-muted);font-family:'IBM Plex Mono';}
+.avatar{width:22px;height:22px;border-radius:50%;background:var(--surface-3);color:var(--ink);display:flex;align-items:center;justify-content:center;font-size:9.5px;font-weight:700;font-family:'Space Grotesk';border:1px solid var(--border);}
+.priority-flag{width:0;height:0;border-style:solid;position:absolute;top:0;left:10px;}
+.priority-high .priority-flag{border-width:0 8px 12px 8px;border-color:transparent transparent var(--brand) transparent;}
+.priority-med .priority-flag{border-width:0 8px 12px 8px;border-color:transparent transparent var(--prog) transparent;}
+table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;}
+th,td{padding:10px 12px;text-align:left;font-size:13px;border-bottom:1px solid var(--border);}
+th{font-family:'IBM Plex Mono';font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink-muted);background:var(--surface-2);}
+tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-bottom:none;}
+.status-pill{font-size:11px;padding:3px 9px;border-radius:20px;font-weight:600;display:inline-flex;align-items:center;gap:5px;} .status-pill .d{width:6px;height:6px;border-radius:50%;}
+.overlay{position:fixed;inset:0;background:rgba(10,11,14,.6);opacity:0;pointer-events:none;transition:opacity .18s;z-index:40;} .overlay.show{opacity:1;pointer-events:auto;}
+.drawer{position:fixed;top:0;right:0;height:100%;width:420px;max-width:92vw;background:var(--surface);border-left:1px solid var(--border);transform:translateX(100%);transition:transform .22s ease;z-index:41;overflow-y:auto;padding:20px;}
+.drawer.show{transform:translateX(0);}
+.drawer .close{background:none;border:none;color:var(--ink-muted);font-size:20px;cursor:pointer;position:absolute;top:16px;right:16px;}
+.drawer .thumb-big{height:140px;border-radius:10px;margin-bottom:14px;}
+.field-lbl{font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink-muted);font-family:'IBM Plex Mono';margin:14px 0 6px;}
+.drawer select,.drawer textarea,.drawer input[type=text],.drawer input[type=date]{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--ink);padding:8px 10px;border-radius:8px;font-family:'Inter';font-size:13px;resize:vertical;}
+.drawer select:disabled,.drawer input:disabled,.drawer textarea:disabled{opacity:.55;cursor:not-allowed;}
+.task-row{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;border-bottom:1px dashed var(--border);}
+.task-row input{accent-color:var(--brand);} .task-row.done span{text-decoration:line-through;color:var(--ink-faint);}
+.note{background:var(--surface-2);border-left:3px solid var(--brand);border-radius:0 8px 8px 0;padding:8px 10px;margin-bottom:8px;}
+.note .who{font-family:'Space Grotesk';font-weight:700;font-size:12px;} .note .when{font-size:10px;color:var(--ink-muted);font-family:'IBM Plex Mono';}
+.note p{margin:4px 0 0;font-size:12.5px;line-height:1.4;}
+.modal-wrap{position:fixed;inset:0;background:rgba(10,11,14,.65);display:none;align-items:center;justify-content:center;z-index:50;padding:20px;} .modal-wrap.show{display:flex;}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:22px;width:440px;max-width:100%;max-height:90vh;overflow-y:auto;}
+.modal h2{font-family:'Space Grotesk';margin:0 0 14px;font-size:18px;}
+.modal label{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--ink-muted);font-family:'IBM Plex Mono';margin:12px 0 6px;}
+.modal input,.modal select,.modal textarea{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--ink);padding:9px 10px;border-radius:8px;font-family:'Inter';font-size:13px;}
+.modal .row2{display:flex;gap:10px;} .modal .row2>div{flex:1;} .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:18px;}
+.checklist{max-height:130px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px 10px;background:var(--surface-2);}
+.checklist label{display:flex;align-items:center;gap:6px;font-family:'Inter';font-size:12.5px;text-transform:none;letter-spacing:0;color:var(--ink);margin:4px 0;}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--surface-3);border:1px solid var(--border);color:var(--ink);padding:10px 18px;border-radius:10px;font-size:13px;opacity:0;transition:all .25s;z-index:60;pointer-events:none;} .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+.empty{text-align:center;padding:40px 20px;color:var(--ink-muted);font-size:13px;}
+::-webkit-scrollbar{width:8px;height:8px;} ::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:4px;}
+#loginScreen{position:fixed;inset:0;background:var(--bg);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px;}
+.login-box{width:380px;max-width:100%;} .login-box .wordmark{justify-content:center;margin-bottom:22px;}
+.login-panel{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;}
+.login-panel label{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--ink-muted);font-family:'IBM Plex Mono';margin:12px 0 6px;}
+.login-panel input{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--ink);padding:10px 12px;border-radius:8px;font-family:'Inter';font-size:13px;}
+.login-err{color:var(--brand);font-size:12px;margin-top:10px;min-height:16px;}
+.demo-note{font-size:11px;color:var(--ink-faint);margin-top:14px;line-height:1.5;}
+#appRoot{display:none;}
+@media (max-width:720px){ .drawer{width:100%;} .stats{flex-wrap:wrap;} }
+</style>
+</head>
+<body>
+
+<div id="loginScreen">
+  <div class="login-box">
+    <div class="wordmark"><div class="mark">Z</div><div><h1>ZVKY</h1><div class="sub">art asset &amp; animation pipeline</div></div></div>
+    <div class="login-panel">
+      <label>Email</label>
+      <input type="text" id="loginEmail" placeholder="you@zvky.studio">
+      <label>Password</label>
+      <input type="password" id="loginPassword" placeholder="••••••••">
+      <div class="login-err" id="loginErr"></div>
+      <button class="btn btn-brand" id="loginBtn" style="width:100%;margin-top:8px;">Sign in</button>
+      <div class="demo-note">Connected to the live API at <span class="mono" id="apiBaseLabel"></span>.</div>
+    </div>
+  </div>
+</div>
+
+<div id="appRoot">
+<div id="app">
+  <header class="top">
+    <div class="wordmark"><div class="mark">Z</div><div><h1>ZVKY</h1><div class="sub">art asset &amp; animation pipeline</div></div></div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <select class="proj-select" id="projectSelect"></select>
+      <div class="user-badge"><div class="avatar" id="userAvatar"></div><div class="who"><div class="name" id="userName"></div><span class="role-badge" id="userRoleBadge"></span></div></div>
+      <button class="btn btn-ghost btn-sm" id="logoutBtn">Log out</button>
+    </div>
+  </header>
+  <div class="sprockets"></div>
+  <div class="stats" id="stats"></div>
+  <div class="toolbar">
+    <div class="tabs" id="mainTabs">
+      <button data-tab="board" class="active">Board</button>
+      <button data-tab="list">List</button>
+      <button data-tab="team" id="teamTabBtn" style="display:none;">My Team</button>
+      <button data-tab="users" id="usersTabBtn" style="display:none;">Users</button>
+    </div>
+    <input type="text" id="search" placeholder="Search assets or codes…" style="display:none;">
+    <select id="filterType" style="display:none;"><option value="">All types</option></select>
+    <div class="spacer"></div>
+    <button class="btn btn-ghost" id="newProjectBtn" style="display:none;">+ Project</button>
+    <button class="btn btn-ghost" id="bulkImportBtn" style="display:none;">Import CSV/XLS</button>
+    <input type="file" id="bulkImportInput" accept=".csv,.xls,.xlsx" style="display:none;">
+    <button class="btn btn-brand" id="newAssetBtn" style="display:none;">+ New Asset</button>
+  </div>
+  <div id="boardView"></div>
+  <div id="listView" style="display:none;"></div>
+  <div id="teamView" style="display:none;"></div>
+  <div id="usersView" style="display:none;"></div>
+</div>
+</div>
+
+<div class="overlay" id="overlay"></div>
+<div class="drawer" id="drawer"></div>
+
+<div class="modal-wrap" id="modalWrap">
+  <div class="modal">
+    <h2>New Asset</h2>
+    <label>Name</label><input type="text" id="f_name" placeholder="e.g. River Spirit — Hero">
+    <div class="row2"><div><label>Type</label><select id="f_type"></select></div><div><label>Priority</label><select id="f_priority"><option value="low">Low</option><option value="med" selected>Medium</option><option value="high">High</option></select></div></div>
+    <div class="row2"><div><label>Assignee</label><select id="f_assignee"></select></div><div><label>Deadline</label><input type="date" id="f_due"></div></div>
+    <label>Estimated man-hours</label><input type="text" id="f_hours" placeholder="e.g. 16">
+    <label>Description</label><textarea id="f_desc" rows="3" placeholder="Brief notes for the artist…"></textarea>
+    <div class="modal-actions"><button class="btn btn-ghost" id="cancelModal">Cancel</button><button class="btn btn-brand" id="saveModal">Create Asset</button></div>
+  </div>
+</div>
+
+<div class="modal-wrap" id="projectModalWrap">
+  <div class="modal">
+    <h2>New Project</h2>
+    <label>Project name</label><input type="text" id="p_name" placeholder="e.g. Nightgarden">
+    <label>Team leads on this project</label><div class="checklist" id="p_leads"></div>
+    <label>Production coordinators on this project</label><div class="checklist" id="p_coords"></div>
+    <div class="modal-actions"><button class="btn btn-ghost" id="cancelProjectModal">Cancel</button><button class="btn btn-brand" id="saveProjectModal">Create Project</button></div>
+  </div>
+</div>
+
+<div class="modal-wrap" id="userModalWrap">
+  <div class="modal">
+    <h2>Add User</h2>
+    <label>Name</label><input type="text" id="u_name" placeholder="Full name">
+    <label>Email</label><input type="text" id="u_email" placeholder="name@zvky.studio">
+    <label>Role</label><select id="u_role"></select>
+    <div id="u_extraFields"></div>
+    <div class="modal-actions"><button class="btn btn-ghost" id="cancelUserModal">Cancel</button><button class="btn btn-brand" id="saveUserModal">Add User</button></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API_BASE = window.location.origin + '/api';
+document.getElementById('apiBaseLabel').textContent = API_BASE;
+
+const TYPES = [
+  {id:'character', label:'Character', color:'#ff5a36'},{id:'prop', label:'Prop', color:'#f2b33d'},
+  {id:'environment', label:'Environment', color:'#3ddc97'},{id:'fx', label:'FX', color:'#9b7ef0'},
+  {id:'animation', label:'Animation', color:'#4fb3ff'},{id:'background', label:'Background', color:'#d4ff3d'},
+];
+const STATUSES = [
+  {id:'not_started', label:'Not Started', color:'var(--not)'},
+  {id:'in_progress', label:'In Progress', color:'var(--prog)'},
+  {id:'pending_tl_review', label:'TL Review', color:'var(--review)'},
+  {id:'tl_changes_requested', label:'TL Changes', color:'#e8402c'},
+  {id:'pending_cd_review', label:'CD Review', color:'#9b7ef0'},
+  {id:'cd_changes_requested', label:'CD Changes', color:'#e8402c'},
+  {id:'approved_for_client', label:'Approved for Client', color:'var(--approved)'},
+  {id:'delivered', label:'Delivered', color:'var(--final)'},
+];
+const ROLES = {
+  super_admin:{label:'Super Admin', color:'var(--brand)'}, admin:{label:'Admin', color:'var(--prog)'},
+  team_lead:{label:'Team Lead', color:'var(--review)'}, coordinator:{label:'Coordinator', color:'var(--approved)'},
+  artist:{label:'Artist', color:'var(--artist-blue)'}, creative_director:{label:'Creative Director', color:'#d4ff3d'},
+};
+function typeOf(id){ return TYPES.find(t=>t.id===id) || TYPES[0]; }
+function statusOf(id){ return STATUSES.find(s=>s.id===id) || STATUSES[0]; }
+function initials(name){ return (name||'?').trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase(); }
+function escapeHTML(s){ const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
+
+let state = { view:'board', search:'', filterType:'', currentProjectId:null, currentUser:null, token:null,
+  projects:[], assets:[], usersRenderLimit:60 };
+
+/* ---------- API helper ---------- */
+async function api(path, options={}){
+  const res = await fetch(API_BASE + path, {
+    ...options,
+    headers: { 'Content-Type':'application/json', ...(state.token?{Authorization:'Bearer '+state.token}:{}), ...(options.headers||{}) },
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+  if(res.status===401){ logout(); throw new Error('Session expired'); }
+  const data = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(data.error || 'Request failed');
+  return data;
+}
+function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
+
+/* ---------- login/session ---------- */
+async function boot(){
+  const saved = localStorage.getItem('zvky_token');
+  if(saved){
+    state.token = saved;
+    try{
+      const { user } = await api('/auth/me');
+      state.currentUser = user;
+      showApp();
+      return;
+    }catch(e){ localStorage.removeItem('zvky_token'); }
+  }
+  document.getElementById('loginBtn').addEventListener('click', attemptLogin);
+  document.getElementById('loginPassword').addEventListener('keydown', e=>{ if(e.key==='Enter') attemptLogin(); });
+}
+async function attemptLogin(){
+  const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  const err = document.getElementById('loginErr');
+  err.textContent='';
+  try{
+    const { token, user } = await api('/auth/login', { method:'POST', body:{ email, password } });
+    state.token = token; state.currentUser = user;
+    localStorage.setItem('zvky_token', token);
+    showApp();
+  }catch(e){ err.textContent = e.message; }
+}
+function logout(){
+  state.token=null; state.currentUser=null;
+  localStorage.removeItem('zvky_token');
+  document.getElementById('appRoot').style.display='none';
+  document.getElementById('loginScreen').style.display='flex';
+  document.getElementById('loginEmail').value=''; document.getElementById('loginPassword').value='';
+}
+document.getElementById('logoutBtn').addEventListener('click', logout);
+
+function showApp(){
+  document.getElementById('loginScreen').style.display='none';
+  document.getElementById('appRoot').style.display='block';
+  bootApp();
+}
+
+/* ---------- app boot ---------- */
+async function bootApp(){
+  const u = state.currentUser;
+  document.getElementById('userAvatar').textContent = initials(u.name);
+  document.getElementById('userName').textContent = u.name;
+  const rb = document.getElementById('userRoleBadge');
+  rb.textContent = ROLES[u.role].label; rb.style.background = ROLES[u.role].color+'22'; rb.style.color = ROLES[u.role].color;
+
+  document.getElementById('teamTabBtn').style.display = u.role==='team_lead' ? '' : 'none';
+  document.getElementById('usersTabBtn').style.display = ['super_admin','admin'].includes(u.role) ? '' : 'none';
+  document.getElementById('newProjectBtn').style.display = ['super_admin','admin'].includes(u.role) ? '' : 'none';
+  document.getElementById('bulkImportBtn').style.display = ['super_admin','admin','team_lead','coordinator'].includes(u.role) ? '' : 'none';
+
+  const { projects } = await api('/projects');
+  state.projects = projects;
+  const projSel = document.getElementById('projectSelect');
+  projSel.innerHTML = projects.map(p=>`<option value="${p.id}">${escapeHTML(p.name)}</option>`).join('') || '<option value="">No projects</option>';
+  state.currentProjectId = projects[0] ? projects[0].id : null;
+  projSel.onchange = ()=>{ state.currentProjectId = projSel.value; render(); };
+
+  document.getElementById('filterType').innerHTML = '<option value="">All types</option>' + TYPES.map(t=>`<option value="${t.id}">${t.label}</option>`).join('');
+  setTab('board');
+}
+
+/* ---------- tabs ---------- */
+function setTab(tab){
+  state.view = tab;
+  document.querySelectorAll('#mainTabs button').forEach(b=>b.classList.toggle('active', b.dataset.tab===tab));
+  const showBoardControls = tab==='board'||tab==='list';
+  document.getElementById('search').style.display = showBoardControls ? '' : 'none';
+  document.getElementById('filterType').style.display = showBoardControls ? '' : 'none';
+  document.getElementById('boardView').style.display = tab==='board' ? '' : 'none';
+  document.getElementById('listView').style.display = tab==='list' ? '' : 'none';
+  document.getElementById('teamView').style.display = tab==='team' ? '' : 'none';
+  document.getElementById('usersView').style.display = tab==='users' ? '' : 'none';
+  render();
+}
+document.querySelectorAll('#mainTabs button').forEach(b=>b.addEventListener('click', ()=>setTab(b.dataset.tab)));
+document.getElementById('search').addEventListener('input', e=>{ state.search=e.target.value; render(); });
+document.getElementById('filterType').addEventListener('change', e=>{ state.filterType=e.target.value; render(); });
+
+/* ---------- data + render ---------- */
+async function loadAssets(){
+  if(!state.currentProjectId){ state.assets=[]; return; }
+  const { assets } = await api('/assets/project/'+state.currentProjectId);
+  state.assets = assets;
+}
+function filteredAssets(){
+  let pool = state.assets;
+  if(state.filterType) pool = pool.filter(a=>a.type===state.filterType);
+  if(state.search){ const q=state.search.toLowerCase(); pool = pool.filter(a=>a.name.toLowerCase().includes(q)||a.code.toLowerCase().includes(q)); }
+  return pool;
+}
+function renderStats(){
+  const el = document.getElementById('stats');
+  if(state.view==='users'){ el.innerHTML=''; return; }
+  const pool = state.assets;
+  const total = pool.length;
+  const finalCount = pool.filter(a=>a.status==='final').length;
+  const pct = total ? Math.round(finalCount/total*100) : 0;
+  el.innerHTML = `<div class="stat"><div class="num">${total}</div><div class="lbl">Assets</div></div>` +
+    STATUSES.map(s=>{ const c=pool.filter(a=>a.status===s.id).length; return `<div class="stat"><div class="num" style="color:${s.color}">${c}</div><div class="lbl">${s.label}</div></div>`; }).join('') +
+    `<div class="stat"><div class="num">${pct}%</div><div class="lbl">Final</div></div>`;
+}
+function typeIconSVG(type, color){
+  const icons={
+    character:`<circle cx="18" cy="14" r="7" fill="none" stroke="${color}" stroke-width="2"/><path d="M6 34c2-8 8-12 12-12s10 4 12 12" fill="none" stroke="${color}" stroke-width="2"/>`,
+    prop:`<rect x="9" y="10" width="18" height="18" rx="2" fill="none" stroke="${color}" stroke-width="2" transform="rotate(-8 18 18)"/>`,
+    environment:`<path d="M4 26l8-12 6 8 5-6 9 10z" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>`,
+    fx:`<path d="M18 4l3 10 10 3-10 3-3 10-3-10-10-3 10-3z" fill="${color}" opacity="0.85"/>`,
+    animation:`<circle cx="18" cy="18" r="11" fill="none" stroke="${color}" stroke-width="2"/><path d="M15 13l8 5-8 5z" fill="${color}"/>`,
+    background:`<rect x="4" y="8" width="28" height="6" fill="${color}" opacity="0.9"/><rect x="4" y="16" width="28" height="6" fill="${color}" opacity="0.6"/><rect x="4" y="24" width="28" height="4" fill="${color}" opacity="0.35"/>`,
+  };
+  return `<svg width="36" height="36" viewBox="0 0 36 36">${icons[type]||icons.prop}</svg>`;
+}
+function cardHTML(a){
+  const t=typeOf(a.type); const pClass = a.priority==='high'?'priority-high':a.priority==='med'?'priority-med':'';
+  const doneTasks = a.tasks.filter(t=>t.done).length;
+  const metaBits = [];
+  if(a.man_hours) metaBits.push(a.man_hours+'h');
+  if(a.due_date) metaBits.push(new Date(a.due_date).toLocaleDateString(undefined,{month:'short',day:'numeric'}));
+  return `<div class="card ${pClass}" draggable="true" data-id="${a.id}">
+    ${a.priority!=='low' ? '<div class="priority-flag"></div>' : ''}<div class="reg"></div>
+    <div class="thumb" style="background:linear-gradient(135deg, ${t.color}33, ${t.color}0d);">${typeIconSVG(a.type,t.color)}</div>
+    <div class="code">${a.code}${metaBits.length? ' · '+metaBits.join(' · ') : ''}</div><div class="name">${escapeHTML(a.name)}</div>
+    <div class="meta"><span class="type-tag">${t.label}</span>
+      <div style="display:flex;align-items:center;gap:6px;"><span class="mono" style="font-size:10px;color:var(--ink-faint);">${doneTasks}/${a.tasks.length}</span>
+        <div class="avatar" title="${escapeHTML(a.assignee_name||'')}">${a.assignee_name ? initials(a.assignee_name) : '—'}</div></div>
+    </div></div>`;
+}
+function renderBoard(){
+  const el = document.getElementById('boardView');
+  if(!state.currentProjectId){ el.innerHTML = `<div class="empty">No projects assigned to you yet.</div>`; return; }
+  const assets = filteredAssets();
+  if(state.assets.length && !assets.length){ el.innerHTML = `<div class="empty">No assets match your filters.</div>`; return; }
+  if(!state.assets.length){ el.innerHTML = `<div class="empty">No assets here yet.</div>`; return; }
+  el.innerHTML = `<div class="board">${STATUSES.map(s=>{
+    const inCol = assets.filter(a=>a.status===s.id);
+    return `<div class="column" data-status="${s.id}"><div class="col-head"><span class="chip" style="background:${s.color}"></span><span class="title">${s.label}</span><span class="count">${inCol.length}</span></div>${inCol.map(cardHTML).join('')}</div>`;
+  }).join('')}</div>`;
+  document.querySelectorAll('.card').forEach(c=>c.addEventListener('click', ()=>openDrawer(c.dataset.id)));
+  document.querySelectorAll('.card').forEach(c=>{
+    c.addEventListener('dragstart', e=>{ c.classList.add('dragging'); e.dataTransfer.setData('text/plain', c.dataset.id); });
+    c.addEventListener('dragend', ()=>c.classList.remove('dragging'));
+  });
+  document.querySelectorAll('.column').forEach(col=>{
+    col.addEventListener('dragover', e=>{ e.preventDefault(); col.classList.add('dragover'); });
+    col.addEventListener('dragleave', ()=>col.classList.remove('dragover'));
+    col.addEventListener('drop', async e=>{
+      e.preventDefault(); col.classList.remove('dragover');
+      const id = e.dataTransfer.getData('text/plain');
+      const asset = state.assets.find(a=>a.id===id);
+      if(!asset) return;
+      const FREE = ['not_started','in_progress'];
+      if(!FREE.includes(asset.status) || !FREE.includes(col.dataset.status)){
+        showToast('Use the review actions in the asset panel to move this forward.');
+        return;
+      }
+      try{
+        await api('/assets/'+id, { method:'PATCH', body:{ status: col.dataset.status } });
+        asset.status = col.dataset.status; render();
+        showToast(`${asset.name} → ${statusOf(asset.status).label}`);
+      }catch(err){ showToast(err.message); }
+    });
+  });
+}
+function renderList(){
+  const el = document.getElementById('listView');
+  if(!state.currentProjectId){ el.innerHTML = `<div class="empty">No projects assigned to you yet.</div>`; return; }
+  const assets = filteredAssets();
+  if(!assets.length){ el.innerHTML = `<div class="empty">No assets match.</div>`; return; }
+  el.innerHTML = `<table><thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Status</th><th>Assignee</th><th>Priority</th><th>Tasks</th></tr></thead><tbody>
+    ${assets.map(a=>{
+      const s=statusOf(a.status), t=typeOf(a.type), doneTasks=a.tasks.filter(t=>t.done).length;
+      return `<tr data-id="${a.id}"><td class="mono">${a.code}</td><td style="font-weight:600;">${escapeHTML(a.name)}</td><td>${t.label}</td>
+      <td><span class="status-pill" style="background:${s.color}22;color:${s.color}"><span class="d" style="background:${s.color}"></span>${s.label}</span></td>
+      <td>${escapeHTML(a.assignee_name)||'—'}</td><td style="text-transform:capitalize;">${a.priority}</td><td class="mono">${doneTasks}/${a.tasks.length}</td></tr>`;
+    }).join('')}</tbody></table>`;
+  el.querySelectorAll('tr[data-id]').forEach(row=>row.addEventListener('click', ()=>openDrawer(row.dataset.id)));
+}
+async function renderTeam(){
+  const el = document.getElementById('teamView');
+  if(state.currentUser.role!=='team_lead'){ el.innerHTML=''; return; }
+  const { members } = await api('/team');
+  if(!members.length){ el.innerHTML = `<div class="empty">No artists assigned to you yet.</div>`; return; }
+  el.innerHTML = `<table><thead><tr><th>Artist</th><th>Assets Assigned</th><th>Tasks Done</th><th>Progress</th></tr></thead><tbody>
+    ${members.map(m=>`<tr><td style="font-weight:600;">${escapeHTML(m.name)}</td><td>${m.assetCount}</td><td class="mono">${m.doneTasks}/${m.totalTasks}</td>
+      <td><div style="background:var(--surface-3);border-radius:20px;height:8px;width:120px;overflow:hidden;"><div style="background:var(--approved);height:100%;width:${m.progressPct}%;"></div></div></td></tr>`).join('')}
+  </tbody></table>`;
+}
+async function renderUsers(){
+  const el = document.getElementById('usersView');
+  const u = state.currentUser;
+  if(!['super_admin','admin'].includes(u.role)){ el.innerHTML=''; return; }
+  const { users, total } = await api(`/users?search=${encodeURIComponent(state.search)}&limit=${state.usersRenderLimit}&offset=0`);
+  el.innerHTML = `
+    <div style="display:flex;gap:10px;margin-bottom:12px;align-items:center;">
+      <input type="text" id="userSearch" placeholder="Search users…" style="background:var(--surface-2);border:1px solid var(--border);color:var(--ink);padding:8px 12px;border-radius:8px;font-size:13px;min-width:220px;">
+      <button class="btn btn-brand" id="addUserBtn">+ Add User</button>
+    </div>
+    <table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr></thead><tbody>
+      ${users.map(x=>{
+        const r=ROLES[x.role];
+        const canDelete = u.role==='super_admin' ? x.role!=='super_admin' : x.manager_id===u.id;
+        return `<tr><td style="font-weight:600;">${escapeHTML(x.name)}</td><td class="mono" style="font-size:11.5px;">${escapeHTML(x.email)}</td>
+          <td><span class="role-badge" style="background:${r.color}22;color:${r.color}">${r.label}</span></td>
+          <td>${canDelete ? `<button class="btn btn-ghost btn-sm delUserBtn" data-id="${x.id}" data-name="${escapeHTML(x.name)}">Remove</button>` : ''}</td></tr>`;
+      }).join('')}
+    </tbody></table>
+    ${total>users.length ? `<div style="text-align:center;margin-top:12px;"><button class="btn btn-ghost" id="loadMoreUsers">Show more (${total-users.length} remaining)</button></div>` : ''}
+    <div style="margin-top:10px;font-size:12px;color:var(--ink-faint);">${users.length} of ${total} users visible to you</div>
+  `;
+  document.getElementById('userSearch').value = state.search;
+  document.getElementById('userSearch').addEventListener('input', e=>{ state.search=e.target.value; renderUsers(); });
+  document.getElementById('addUserBtn').addEventListener('click', openUserModal);
+  const lm = document.getElementById('loadMoreUsers');
+  if(lm) lm.addEventListener('click', ()=>{ state.usersRenderLimit+=60; renderUsers(); });
+  el.querySelectorAll('.delUserBtn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!confirm(`Remove ${btn.dataset.name} from the studio?`)) return;
+      try{ await api('/users/'+btn.dataset.id, { method:'DELETE' }); renderUsers(); showToast(`${btn.dataset.name} removed.`); }
+      catch(err){ showToast(err.message); }
+    });
+  });
+}
+async function render(){
+  if(state.view==='board' || state.view==='list'){ await loadAssets(); }
+  renderStats();
+  const showCreateControls = (state.view==='board'||state.view==='list') && ['super_admin','admin','team_lead','coordinator'].includes(state.currentUser.role) && state.currentProjectId;
+  document.getElementById('newAssetBtn').style.display = showCreateControls ? '' : 'none';
+  document.getElementById('bulkImportBtn').style.display = showCreateControls ? '' : 'none';
+  if(state.view==='board') renderBoard();
+  else if(state.view==='list') renderList();
+  else if(state.view==='team') await renderTeam();
+  else if(state.view==='users') await renderUsers();
+}
+
+/* ---------- drawer ---------- */
+function fmtBytes(n){ if(!n) return ''; const kb=n/1024; return kb<1024 ? kb.toFixed(0)+' KB' : (kb/1024).toFixed(1)+' MB'; }
+function fmtDate(s){ return s ? new Date(s).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : ''; }
+
+async function openDrawer(id){
+  const a = state.assets.find(x=>x.id===id);
+  if(!a) return;
+  const u = state.currentUser;
+  const editable = ['super_admin','admin','coordinator'].includes(u.role) || (u.role==='artist' && a.assignee_id===u.id) || u.role==='team_lead';
+  const t = typeOf(a.type);
+  const drawer = document.getElementById('drawer');
+
+  const isMyAssetAsArtist = u.role==='artist' && a.assignee_id===u.id;
+  const canSubmit = isMyAssetAsArtist && ['not_started','in_progress','tl_changes_requested','cd_changes_requested'].includes(a.status);
+  const canTlReview = u.role==='team_lead' && a.status==='pending_tl_review';
+  const canCdReview = (u.role==='creative_director'||u.role==='super_admin') && a.status==='pending_cd_review';
+  const canDeliver = ['super_admin','admin','coordinator','creative_director'].includes(u.role) && a.status==='approved_for_client';
+  const latestFeedback = a.feedback && a.feedback[0];
+
+  drawer.innerHTML = `
+    <button class="close" id="closeDrawer">×</button>
+    <div class="thumb-big" style="background:linear-gradient(135deg, ${t.color}44, ${t.color}0d); display:flex;align-items:center;justify-content:center;">${typeIconSVG(a.type,t.color).replace('width="36" height="36"','width="64" height="64"')}</div>
+    <div class="code">${a.code}</div><h2 class="display" style="margin:4px 0 2px;font-size:19px;">${escapeHTML(a.name)}</h2>
+    <div class="type-tag" style="display:inline-block;">${t.label}</div>
+    <div class="field-lbl">Status</div>
+    <div class="status-pill" style="background:${statusOf(a.status).color}22;color:${statusOf(a.status).color};font-size:12px;padding:5px 11px;"><span class="d" style="background:${statusOf(a.status).color}"></span>${statusOf(a.status).label}</div>
+
+    ${(canSubmit && latestFeedback && a.status.endsWith('_changes_requested')) ? `
+      <div class="note" style="margin-top:14px;border-left-color:#e8402c;">
+        <span class="who">Feedback to address (${latestFeedback.stage==='tl'?'Team Lead':'Creative Director'})</span>
+        <p>${escapeHTML(latestFeedback.text||'(no written note)')}</p>
+      </div>` : ''}
+
+    ${canSubmit ? `
+      <div class="field-lbl">${a.status.endsWith('_changes_requested') ? 'Resubmit for review' : 'Submit for review'}</div>
+      <input type="file" id="submitFileInput" accept=".psd,.jpg,.jpeg,.png,.gif,.tiff,.tif,.json,.atlas,.skel,.aep,.aet" style="width:100%;font-size:12px;color:var(--ink-muted);">
+      <div style="font-size:10.5px;color:var(--ink-faint);margin-top:4px;">PSD, JPEG, PNG, GIF, TIFF, Spine (.json/.atlas/.skel), After Effects (.aep/.aet)</div>
+      <button class="btn btn-brand" id="submitAssetBtn" style="width:100%;margin-top:8px;">Upload &amp; submit</button>
+    ` : ''}
+
+    ${canTlReview ? `
+      <div class="field-lbl">Team lead review</div>
+      <textarea id="reviewNote" rows="2" placeholder="Feedback for the artist (required if requesting changes)…"></textarea>
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <button class="btn btn-ghost" id="reqChangesBtn" style="flex:1;color:#e8402c;">Request changes</button>
+        <button class="btn btn-brand" id="approveBtn" style="flex:1;">Approve → send to CD</button>
+      </div>
+    ` : ''}
+
+    ${canCdReview ? `
+      <div class="field-lbl">Creative director review</div>
+      <textarea id="reviewNote" rows="2" placeholder="Feedback for the artist (required if requesting changes)…"></textarea>
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <button class="btn btn-ghost" id="reqChangesBtn" style="flex:1;color:#e8402c;">Request changes</button>
+        <button class="btn btn-brand" id="approveBtn" style="flex:1;">Approve for client</button>
+      </div>
+    ` : ''}
+
+    ${canDeliver ? `<button class="btn btn-brand" id="deliverBtn" style="width:100%;margin-top:14px;">Mark delivered to client</button>` : ''}
+
+    <div class="field-lbl" style="margin-top:16px;">Assignee</div><div style="font-size:13px;padding:8px 0;">${escapeHTML(a.assignee_name)||'Unassigned'}</div>
+
+    <div class="row2">
+      <div><div class="field-lbl">Man-hours</div><input type="text" id="d_hours" value="${a.man_hours||''}" ${editable?'':'disabled'} placeholder="e.g. 16"></div>
+      <div><div class="field-lbl">Deadline</div><input type="date" id="d_due" value="${a.due_date?a.due_date.slice(0,10):''}" ${editable?'':'disabled'}></div>
+    </div>
+
+    <div class="field-lbl">Priority</div>
+    <select id="d_priority" ${editable?'':'disabled'}><option value="low" ${a.priority==='low'?'selected':''}>Low</option><option value="med" ${a.priority==='med'?'selected':''}>Medium</option><option value="high" ${a.priority==='high'?'selected':''}>High</option></select>
+    <div class="field-lbl">Description</div><textarea id="d_desc" rows="3" ${editable?'':'disabled'}>${escapeHTML(a.description||'')}</textarea>
+    <div class="field-lbl">Tasks</div>
+    <div id="d_tasks">${a.tasks.map(t=>`<div class="task-row ${t.done?'done':''}" data-tid="${t.id}"><input type="checkbox" ${t.done?'checked':''} ${editable?'':'disabled'}><span>${escapeHTML(t.name)}</span></div>`).join('')}</div>
+
+    <div class="field-lbl">File versions</div>
+    <div id="d_versions">${(a.versions&&a.versions.length) ? a.versions.map(v=>`
+      <div class="note" style="border-left-color:${v.stage==='tl'?'var(--review)':'#9b7ef0'};">
+        <span class="who">v${v.version_number} · ${v.stage==='tl'?'Team Lead review':'Creative Director review'}</span> <span class="when">${fmtDate(v.created_at)}</span>
+        <p>${escapeHTML(v.file_name)} ${v.file_size?'· '+fmtBytes(v.file_size):''} — <a href="#" class="downloadVersionLink" data-vid="${v.id}" style="color:var(--brand);">download</a></p>
+      </div>`).join('') : '<div style="font-size:12px;color:var(--ink-faint);">No files submitted yet.</div>'}</div>
+
+    <div class="field-lbl">Review feedback</div>
+    <div id="d_feedback">${(a.feedback&&a.feedback.length) ? a.feedback.map(f=>`
+      <div class="note" style="border-left-color:${f.decision==='approved'?'var(--approved)':'#e8402c'};">
+        <span class="who">${escapeHTML(f.given_by_name||'Reviewer')} · ${f.stage==='tl'?'Team Lead':'Creative Director'} · ${f.decision==='approved'?'Approved':'Changes requested'}</span> <span class="when">${fmtDate(f.created_at)}</span>
+        ${f.text?`<p>${escapeHTML(f.text)}</p>`:''}
+      </div>`).join('') : '<div style="font-size:12px;color:var(--ink-faint);">No review feedback yet.</div>'}</div>
+
+    <div class="field-lbl">Notes</div>
+    <div id="d_notes">${a.notes.map(n=>`<div class="note"><span class="who">${escapeHTML(n.author_name||'Someone')}</span> <span class="when">${new Date(n.created_at).toLocaleDateString()}</span><p>${escapeHTML(n.text)}</p></div>`).join('') || '<div style="font-size:12px;color:var(--ink-faint);">No notes yet.</div>'}</div>
+    <div style="display:flex;gap:6px;margin-top:8px;"><input type="text" id="newNoteInput" placeholder="Leave a note…" style="flex:1;"><button class="btn btn-ghost" id="addNoteBtn" style="padding:8px 12px;">Post</button></div>
+    ${(u.role==='super_admin'||u.role==='admin') ? `<div class="modal-actions"><button class="btn btn-ghost" id="deleteAssetBtn" style="color:var(--brand);">Delete asset</button></div>` : ''}
+  `;
+  document.getElementById('overlay').classList.add('show'); drawer.classList.add('show');
+  document.getElementById('closeDrawer').onclick = closeDrawer;
+  document.getElementById('overlay').onclick = closeDrawer;
+
+  drawer.querySelectorAll('.downloadVersionLink').forEach(link=>{
+    link.addEventListener('click', async (e)=>{
+      e.preventDefault();
+      try{
+        const res = await fetch(API_BASE+'/assets/versions/'+link.dataset.vid+'/download', { headers:{ Authorization:'Bearer '+state.token } });
+        if(!res.ok){ const d = await res.json().catch(()=>({})); throw new Error(d.error||'Download failed'); }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const tempLink = document.createElement('a'); tempLink.href = url; tempLink.download = ''; tempLink.click();
+        URL.revokeObjectURL(url);
+      }catch(err){ showToast(err.message); }
+    });
+  });
+
+  if(editable){
+    document.getElementById('d_priority').onchange = async e=>{ try{ await api('/assets/'+id,{method:'PATCH',body:{priority:e.target.value}}); a.priority=e.target.value; render(); }catch(err){ showToast(err.message); } };
+    document.getElementById('d_desc').onchange = async e=>{ try{ await api('/assets/'+id,{method:'PATCH',body:{description:e.target.value}}); a.description=e.target.value; }catch(err){ showToast(err.message); } };
+    document.getElementById('d_hours').onchange = async e=>{ try{ await api('/assets/'+id,{method:'PATCH',body:{manHours:e.target.value?Number(e.target.value):null}}); a.man_hours=e.target.value; render(); }catch(err){ showToast(err.message); } };
+    document.getElementById('d_due').onchange = async e=>{ try{ await api('/assets/'+id,{method:'PATCH',body:{due:e.target.value||null}}); a.due_date=e.target.value; render(); }catch(err){ showToast(err.message); } };
+    drawer.querySelectorAll('.task-row').forEach(row=>{
+      row.querySelector('input').onchange = async e=>{
+        try{
+          await api('/assets/tasks/'+row.dataset.tid, { method:'PATCH', body:{ done:e.target.checked } });
+          const task = a.tasks.find(t=>t.id===row.dataset.tid); task.done=e.target.checked;
+          row.classList.toggle('done', task.done); render();
+        }catch(err){ showToast(err.message); }
+      };
+    });
+  }
+
+  if(canSubmit){
+    document.getElementById('submitAssetBtn').onclick = async ()=>{
+      const fileInput = document.getElementById('submitFileInput');
+      if(!fileInput.files[0]){ showToast('Choose a file first.'); return; }
+      const fd = new FormData(); fd.append('file', fileInput.files[0]);
+      try{
+        const res = await fetch(API_BASE+'/assets/'+id+'/submit', { method:'POST', headers:{ Authorization:'Bearer '+state.token }, body: fd });
+        const data = await res.json();
+        if(!res.ok) throw new Error(data.error||'Submit failed');
+        showToast('Submitted for review.'); closeDrawer(); render();
+      }catch(err){ showToast(err.message); }
+    };
+  }
+  if(canTlReview || canCdReview){
+    const doReview = async (decision)=>{
+      const text = document.getElementById('reviewNote').value.trim();
+      if(decision==='changes_requested' && !text){ showToast('Add a note explaining what needs to change.'); return; }
+      try{
+        await api('/assets/'+id+'/review', { method:'POST', body:{ decision, text } });
+        showToast(decision==='approved' ? 'Approved.' : 'Changes requested — artist notified.');
+        closeDrawer(); render();
+      }catch(err){ showToast(err.message); }
+    };
+    document.getElementById('approveBtn').onclick = ()=>doReview('approved');
+    document.getElementById('reqChangesBtn').onclick = ()=>doReview('changes_requested');
+  }
+  if(canDeliver){
+    document.getElementById('deliverBtn').onclick = async ()=>{
+      try{ await api('/assets/'+id+'/deliver', { method:'POST' }); showToast('Marked delivered to client.'); closeDrawer(); render(); }
+      catch(err){ showToast(err.message); }
+    };
+  }
+
+  document.getElementById('addNoteBtn').onclick = async ()=>{
+    const input = document.getElementById('newNoteInput');
+    if(!input.value.trim()) return;
+    try{
+      const { note } = await api('/assets/'+id+'/notes', { method:'POST', body:{ text: input.value.trim() } });
+      note.created_at = new Date().toISOString();
+      a.notes.unshift(note); openDrawer(id);
+    }catch(err){ showToast(err.message); }
+  };
+  const delBtn = document.getElementById('deleteAssetBtn');
+  if(delBtn) delBtn.onclick = async ()=>{
+    if(!confirm(`Delete "${a.name}"? This can't be undone.`)) return;
+    try{ await api('/assets/'+id, { method:'DELETE' }); state.assets = state.assets.filter(x=>x.id!==id); closeDrawer(); render(); showToast('Asset deleted.'); }
+    catch(err){ showToast(err.message); }
+  };
+}
+function closeDrawer(){ document.getElementById('overlay').classList.remove('show'); document.getElementById('drawer').classList.remove('show'); }
+
+/* ---------- new asset modal ---------- */
+const modalWrap = document.getElementById('modalWrap');
+document.getElementById('newAssetBtn').addEventListener('click', async ()=>{
+  document.getElementById('f_name').value=''; document.getElementById('f_due').value=''; document.getElementById('f_desc').value=''; document.getElementById('f_priority').value='med'; document.getElementById('f_hours').value='';
+  document.getElementById('f_type').innerHTML = TYPES.map(t=>`<option value="${t.id}">${t.label}</option>`).join('');
+  try{
+    const { artists } = await api('/projects/'+state.currentProjectId+'/artists');
+    document.getElementById('f_assignee').innerHTML = '<option value="">Unassigned</option>' + artists.map(u=>`<option value="${u.id}">${escapeHTML(u.name)}</option>`).join('');
+  }catch(err){ document.getElementById('f_assignee').innerHTML = '<option value="">Unassigned</option>'; }
+  modalWrap.classList.add('show');
+});
+document.getElementById('cancelModal').addEventListener('click', ()=>modalWrap.classList.remove('show'));
+modalWrap.addEventListener('click', e=>{ if(e.target===modalWrap) modalWrap.classList.remove('show'); });
+document.getElementById('saveModal').addEventListener('click', async ()=>{
+  const name = document.getElementById('f_name').value.trim();
+  if(!name){ showToast('Give the asset a name first.'); return; }
+  try{
+    await api('/assets/project/'+state.currentProjectId, { method:'POST', body:{
+      name, type: document.getElementById('f_type').value, priority: document.getElementById('f_priority').value,
+      assigneeId: document.getElementById('f_assignee').value || null, due: document.getElementById('f_due').value || null,
+      description: document.getElementById('f_desc').value.trim(),
+      manHours: document.getElementById('f_hours').value ? Number(document.getElementById('f_hours').value) : null,
+    }});
+    modalWrap.classList.remove('show'); render(); showToast('Asset created.');
+  }catch(err){ showToast(err.message); }
+});
+
+/* ---------- bulk CSV import ---------- */
+document.getElementById('bulkImportBtn').addEventListener('click', ()=>{
+  if(!state.currentProjectId){ showToast('Select a project first.'); return; }
+  document.getElementById('bulkImportInput').click();
+});
+document.getElementById('bulkImportInput').addEventListener('change', async (e)=>{
+  const file = e.target.files[0];
+  e.target.value = '';
+  if(!file) return;
+  const formData = new FormData();
+  formData.append('file', file);
+  try{
+    const res = await fetch(API_BASE + '/assets/project/' + state.currentProjectId + '/bulk', {
+      method:'POST', headers:{ Authorization:'Bearer '+state.token }, body: formData,
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error || 'Import failed');
+    let msg = `Imported ${data.created} asset${data.created===1?'':'s'}.`;
+    if(data.errors && data.errors.length) msg += ` ${data.errors.length} row(s) skipped — see console.`;
+    showToast(msg);
+    if(data.errors && data.errors.length) console.warn('CSV import issues:', data.errors);
+    render();
+  }catch(err){ showToast(err.message); }
+});
+
+/* ---------- new project modal ---------- */
+const projectModalWrap = document.getElementById('projectModalWrap');
+document.getElementById('newProjectBtn').addEventListener('click', async ()=>{
+  document.getElementById('p_name').value='';
+  try{
+    const [{ users: leads }, { users: coords }] = await Promise.all([
+      api('/users?role=team_lead&limit=500'), api('/users?role=coordinator&limit=500'),
+    ]);
+    document.getElementById('p_leads').innerHTML = leads.map(u=>`<label><input type="checkbox" value="${u.id}">${escapeHTML(u.name)}</label>`).join('') || '<div style="font-size:12px;color:var(--ink-faint);">No team leads visible to you.</div>';
+    document.getElementById('p_coords').innerHTML = coords.map(u=>`<label><input type="checkbox" value="${u.id}">${escapeHTML(u.name)}</label>`).join('') || '<div style="font-size:12px;color:var(--ink-faint);">No coordinators visible to you.</div>';
+  }catch(err){ showToast(err.message); }
+  projectModalWrap.classList.add('show');
+});
+document.getElementById('cancelProjectModal').addEventListener('click', ()=>projectModalWrap.classList.remove('show'));
+projectModalWrap.addEventListener('click', e=>{ if(e.target===projectModalWrap) projectModalWrap.classList.remove('show'); });
+document.getElementById('saveProjectModal').addEventListener('click', async ()=>{
+  const name = document.getElementById('p_name').value.trim();
+  if(!name){ showToast('Name the project first.'); return; }
+  const leadIds = [...document.querySelectorAll('#p_leads input:checked')].map(i=>i.value);
+  const coordIds = [...document.querySelectorAll('#p_coords input:checked')].map(i=>i.value);
+  try{
+    await api('/projects', { method:'POST', body:{ name, teamLeadIds:leadIds, coordinatorIds:coordIds } });
+    projectModalWrap.classList.remove('show'); await bootApp(); showToast(`${name} created.`);
+  }catch(err){ showToast(err.message); }
+});
+
+/* ---------- new user modal ---------- */
+const userModalWrap = document.getElementById('userModalWrap');
+function openUserModal(){
+  document.getElementById('u_name').value=''; document.getElementById('u_email').value='';
+  const u = state.currentUser;
+  const roleSel = document.getElementById('u_role');
+  const allowedRoles = u.role==='super_admin' ? Object.keys(ROLES) : ['team_lead','coordinator','artist'];
+  roleSel.innerHTML = allowedRoles.map(r=>`<option value="${r}">${ROLES[r].label}</option>`).join('');
+  roleSel.onchange = renderUserExtraFields;
+  renderUserExtraFields();
+  userModalWrap.classList.add('show');
+}
+async function renderUserExtraFields(){
+  const role = document.getElementById('u_role').value;
+  const box = document.getElementById('u_extraFields');
+  if(role==='artist'){
+    const { users: leads } = await api('/users?role=team_lead&limit=500');
+    box.innerHTML = `<label>Team lead</label><select id="u_teamLead">${leads.map(l=>`<option value="${l.id}">${escapeHTML(l.name)}</option>`).join('')}</select>`;
+  } else if(role==='coordinator'){
+    box.innerHTML = `<label>Project</label><select id="u_project">${state.projects.map(p=>`<option value="${p.id}">${escapeHTML(p.name)}</option>`).join('')}</select>`;
+  } else { box.innerHTML=''; }
+}
+document.getElementById('cancelUserModal').addEventListener('click', ()=>userModalWrap.classList.remove('show'));
+userModalWrap.addEventListener('click', e=>{ if(e.target===userModalWrap) userModalWrap.classList.remove('show'); });
+document.getElementById('saveUserModal').addEventListener('click', async ()=>{
+  const name = document.getElementById('u_name').value.trim();
+  const email = document.getElementById('u_email').value.trim();
+  const role = document.getElementById('u_role').value;
+  if(!name || !email){ showToast('Name and email are required.'); return; }
+  const body = { name, email, role };
+  if(role==='artist'){ body.teamLeadId = document.getElementById('u_teamLead').value; }
+  if(role==='coordinator'){ body.projectId = document.getElementById('u_project').value; }
+  try{
+    await api('/users', { method:'POST', body });
+    userModalWrap.classList.remove('show'); renderUsers();
+    showToast(`${name} added as ${ROLES[role].label}. Default password: zvky2026`);
+  }catch(err){ showToast(err.message); }
+});
+
+boot();
+</script>
+</body>
+</html>
