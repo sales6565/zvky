@@ -8,6 +8,7 @@
     "build": "echo 'No build step required — public/index.html is served as-is.'",
     "dev": "nodemon app.js",
     "test": "node --test \"tests/*.test.js\"",
+    "roles:check": "node scripts/check-roles.js",
     "seed": "node src/seed/seed.js",
     "package": "bash scripts/build-godaddy-zip.sh"
   },

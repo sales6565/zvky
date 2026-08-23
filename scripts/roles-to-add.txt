@@ -1,0 +1,62 @@
+# Candidate designations, one per line. Blank lines and # comments are ignored.
+# Re-run `npm run roles:check` after editing; it never writes anything.
+Senior Technical Artist
+Team Lead
+Art Supervisor
+Associate Team Lead
+Senior Game Artist
+Senior Game Animator
+Producer
+Vice President – Global Operations & Business Development
+Project Manager
+Associate Team Lead - MIS
+Game Artist
+Senior Team Lead
+Managing Director & CEO
+Technical Artist
+Senior Operations Financial Analyst
+Associate Project Manager
+Associate Animation Supervisor
+Senior UI/UX Designer
+Associate Unity Developer
+Assistant Manager - HR Generalist
+Game Designer
+People & Culture Partner
+MIS Analyst
+Associate Art Director
+Associate Game Artist
+Talent Acquisition Specialist
+Art Director
+Account Manager - Marketing
+Game Animator
+Creative Producer
+Unity Developer
+Senior Unity Developer
+Technical Manager
+Associate Game Developer
+Associate Game Animator
+Associate Technical Artist
+Senior Motion Graphics Artist
+Senior Production Coordinator
+Associator Game Animator
+Test Engineer
+Associate Test Engineer
+Associate Game Mathematician
+Trainee Game Artist
+Associate Math Analyst
+Senior Project Manager
+Production Coordinator
+Trainee Game Animator
+Game Developer
+Associate - UI/UX Designer
+Junior Accountant
+Senior Producer
+Game Mathematician
+Senior Business Development Executive
+Trainee - Game Artist
+Trainee - Test Engineer
+Trainee - Unity Developer
+Associate Game Designer
+Trainee Unity Developer
+Consultant - Lead Game Designer
+Creative Art Director

@@ -22,24 +22,54 @@ change with nothing else to update.
 | Supervision | Art Supervisor, Associate Animation Supervisor, Senior Team Lead, Team Lead, Associate Team Lead | Run a team, hold the first review gate, create and edit assets |
 | Art | Senior Game Artist, Senior Motion Graphics Artist, Game Artist, Associate Game Artist, Trainee Game Artist | Assigned work, submit it for review |
 | Animation | Senior Game Animator, Game Animator, Associate Game Animator, Trainee Game Animator | Assigned work, submit it for review |
-| Design | Senior UI/UX Designer, Game Designer, Associate - UI/UX Designer | Assigned work, submit it for review |
+| Design | Senior UI/UX Designer, Game Designer, Associate Game Designer, Consultant - Lead Game Designer, Associate - UI/UX Designer | Assigned work, submit it for review |
+| Leadership | Managing Director & CEO, Vice President - Global Operations & Business Development | See every project; no pipeline actions. Widen an entry if one of them needs to review, deliver or administer |
+| Production | Senior Producer, Producer, Creative Producer, Senior Project Manager, Project Manager, Associate Project Manager, Senior Production Coordinator | Work across the projects they're attached to; create and edit assets; sign off delivery |
+| Engineering | Senior/Technical Artist, Associate Technical Artist, Senior/Unity Developer, Associate Unity Developer, Game Developer, Associate Game Developer, Test Engineer, Associate Test Engineer, Trainee - Test Engineer | Assigned work, submit it for review |
+| Game Math | Game Mathematician, Associate Game Mathematician, Associate Math Analyst | Assigned work, submit it for review |
+| Business & Operations | Senior Business Development Executive, Senior Operations Financial Analyst, Account Manager - Marketing, MIS Analyst, Junior Accountant | Directory only — no access to the asset pipeline |
+| People & Culture | People & Culture Partner, Assistant Manager - HR Generalist, Talent Acquisition Specialist | Directory only — no access to the asset pipeline |
 
 Seniority (Trainee → Associate → Senior) is recorded and displayed but does not
 by itself change access: a Trainee Game Artist and a Senior Game Artist have the
 same permissions and differ in title and reporting line. Change that by editing
 the entry in `src/roles.js`.
 
+Roles are defined in code, not in a table: there is no `roles` table to seed,
+and `users.role` holds a catalogue key as a `VARCHAR`. The catalogue containing
+each key exactly once is what makes adding one idempotent.
+
 ### Adding a designation
 
-Add one entry to `DEFINITIONS` in `src/roles.js`:
+Add one entry to `DEFINITIONS` in `src/roles.js`, using whichever shape matches
+what the role does:
 
 ```js
-lead_technical_artist: contributor('Lead Technical Artist', ART, 55, '#4db8ff'),
+lead_technical_artist: contributor('Lead Technical Artist', ENGINEERING, 55, '#4dd8d8'),
+senior_producer:       productionRole('Senior Producer', PRODUCTION, 72, '#39d98a'),
+technical_manager:     lead('Technical Manager', SUPERVISION, 74, '#ffa63d'),
+junior_accountant:     staffRole('Junior Accountant', BUSINESS, 25, '#8fa3c7'),
+head_of_studio:        observer('Head of Studio', LEADERSHIP, 97, '#ffd23d'),
 ```
 
 The API validates against it, the role dropdown and badges pick it up from
 `GET /api/auth/roles`, and the permission checks apply immediately. No database
-migration is needed — `users.role` is a `VARCHAR`, not an `ENUM`.
+migration is needed.
+
+### Checking a batch before adding it
+
+Job titles arriving from a spreadsheet tend to carry near-duplicates — a stray
+en dash, `Associator` for `Associate`, a trailing `- MIS`. Put the list in
+`scripts/roles-to-add.txt` and run:
+
+```bash
+npm run roles:check
+```
+
+It reports which are new, which already exist (compared case-insensitively and
+trimmed), and which look like near-duplicates of an existing designation or of
+each other. It only reads — nothing is written — so it is safe to re-run, and
+running it after editing `src/roles.js` confirms the batch landed.
 
 ## 1. Prerequisites
 
