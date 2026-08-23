@@ -15,13 +15,25 @@ async function authenticate(req, res, next) {
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
     const { rows } = await db.query(
-      'SELECT id, name, email, role, manager_id, team_lead_id FROM users WHERE id = $1',
+      'SELECT id, name, email, role, manager_id, team_lead_id, password_changed_at FROM users WHERE id = $1',
       [payload.sub]
     );
     if (!rows.length) {
       return res.status(401).json({ error: 'This account no longer exists' });
     }
     const user = rows[0];
+
+    // The token records which password it was issued under (see signToken).
+    // Anything carrying a stale value is a session started with the old
+    // password — the account's other devices — so refuse it. Tokens predating
+    // this claim read as 0, which matches an account that has never changed its
+    // password, so deploying this does not sign anyone out.
+    const tokenPwd = Number(payload.pwd) || 0;
+    const currentPwd = Number(user.password_changed_at) || 0;
+    if (tokenPwd !== currentPwd) {
+      return res.status(401).json({ error: 'Your password was changed. Please sign in again.' });
+    }
+    delete user.password_changed_at;
     if (!roleDef(user.role)) {
       // The designation was removed from the catalogue while this account
       // still holds it. Fail closed rather than granting an undefined role

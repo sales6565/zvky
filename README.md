@@ -207,6 +207,8 @@ The API is served at `http://localhost:4000/api/*`, and the bundled frontend
 | POST | `/api/auth/login` | anyone |
 | GET | `/api/auth/me` | any logged-in user |
 | GET | `/api/auth/roles` | any logged-in user — the role catalogue |
+| GET | `/api/auth/password-policy` | anyone — the password rules the API enforces |
+| POST | `/api/auth/password` | any logged-in user — change your own password |
 | POST | `/api/auth/bootstrap` | first run only — creates the first super admin while the database is empty, using the token printed to the startup log (or `BOOTSTRAP_TOKEN`) |
 | GET | `/api/projects` | scoped per role automatically |
 | POST | `/api/projects` | any role that can create projects |
@@ -233,6 +235,55 @@ The API is served at `http://localhost:4000/api/*`, and the bundled frontend
 Every route re-checks permissions against the database on each request — a
 role change or removal takes effect on the user's very next request, not just
 after their token expires.
+
+## Passwords
+
+Rules live in [`src/password-policy.js`](src/password-policy.js) and are served
+at `GET /api/auth/password-policy`, so the browser ticks off the same checklist
+the API enforces and the two cannot drift. Currently: at least 10 characters,
+with an uppercase letter, a lowercase letter, a number and a symbol. Change them
+in that one file.
+
+Anyone signed in can change their own password from **Profile** in the header.
+The endpoint requires the current password, so a borrowed unlocked laptop is not
+enough to lock the real owner out.
+
+### Signing out other devices
+
+`users.password_changed_at` records when the password last changed, and every
+token carries the value it was issued under (the `pwd` claim). `authenticate()`
+requires the two to match, so changing a password refuses every token issued
+before it — the account's other sessions — while the browser that made the
+change is handed a replacement and stays signed in.
+
+This deliberately does not compare against the token's own `iat` claim, which
+counts whole seconds: a token minted in the same second as the change cannot be
+told apart from one minted just before it. Matching the stored value exactly has
+no such boundary.
+
+There is no email on password change, because the app has no mail transport. If
+you add one, `POST /api/auth/password` is the place to send from.
+
+## Tests
+
+```bash
+npm test
+```
+
+Runs on Node's built-in test runner — no test framework dependency.
+
+The policy tests are pure and always run. The endpoint tests need a database and
+are skipped unless you name one, which is **dropped and recreated** on every
+run, so never point it at real data:
+
+```bash
+TEST_DB_NAME=zvky_test TEST_DB_USER=root TEST_DB_PASSWORD=secret npm test
+```
+
+They start the real server as a child process and drive it over HTTP, covering a
+valid change, a wrong current password, a mismatched confirmation, a password
+failing each policy rule, reuse of the current password, an unauthenticated
+request, other-device sign-out, and that no password reaches the logs.
 
 ## Packaging for deployment
 

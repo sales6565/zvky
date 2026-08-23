@@ -22,6 +22,11 @@ CREATE TABLE IF NOT EXISTS users (
   `role`        VARCHAR(64)  NOT NULL,
   manager_id    CHAR(36)     NULL,
   team_lead_id  CHAR(36)     NULL,
+  -- Unix epoch seconds, not DATETIME: this is compared against a JWT's `iat`
+  -- claim, and epoch seconds carry no timezone for the two to disagree about.
+  -- Any token issued before this moment is refused, which signs out every
+  -- other device when someone changes their password.
+  password_changed_at BIGINT UNSIGNED NULL,
   created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_users_email (email),
   KEY idx_users_manager (manager_id),

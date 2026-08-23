@@ -7,6 +7,7 @@ const { v4: uuid } = require('uuid');
 const db = require('../db');
 const { authenticate, requireCapability } = require('../middleware/auth');
 const { ROLES, isRole, roleDef, capabilitiesFor } = require('../roles');
+const passwordPolicy = require('../password-policy');
 
 router.use(authenticate);
 
@@ -67,6 +68,13 @@ router.post('/', requireCapability('manageUsers'), async (req, res) => {
   if (!isRole(role)) return res.status(400).json({ error: 'Invalid role' });
   if (!assignableRolesFor(req.user).includes(role)) {
     return res.status(403).json({ error: `You cannot create accounts with the ${roleDef(role).label} role` });
+  }
+
+  // Only when an administrator types one. The generated default below is a
+  // temporary credential the new user is expected to replace on first sign-in.
+  if (password !== undefined && password !== '') {
+    const verdict = passwordPolicy.check(password);
+    if (!verdict.valid) return res.status(400).json({ error: verdict.message, failed: verdict.failed });
   }
 
   const { rows: existing } = await db.query('SELECT 1 AS ok FROM users WHERE lower(email) = lower($1)', [email]);

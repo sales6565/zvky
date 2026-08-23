@@ -9,6 +9,29 @@ const db = require('../db');
 const { authenticate } = require('../middleware/auth');
 const { capabilitiesFor, catalogue } = require('../roles');
 const bootstrapToken = require('../bootstrap-token');
+const passwordPolicy = require('../password-policy');
+
+// bcrypt cost used everywhere passwords are hashed in this codebase.
+const BCRYPT_ROUNDS = 10;
+
+// One place that mints tokens, so the login and change-password paths cannot
+// drift apart on lifetime or payload shape.
+//
+// The `pwd` claim carries the value of users.password_changed_at that was
+// current when the token was issued. authenticate() requires it to still match,
+// which is what signs out other devices after a password change.
+//
+// This deliberately does not compare against the token's own `iat`: that claim
+// counts whole seconds, so a token minted in the same second as the change
+// cannot be told apart from one minted just before it. Matching the stored
+// value exactly has no such boundary.
+function signToken(userId, passwordChangedAt) {
+  return jwt.sign(
+    { sub: userId, pwd: Number(passwordChangedAt) || 0 },
+    process.env.JWT_SECRET,
+    { expiresIn: '12h' }
+  );
+}
 
 router.post('/login', async (req, res) => {
   const { email, password } = req.body || {};
@@ -24,7 +47,7 @@ router.post('/login', async (req, res) => {
     const match = await bcrypt.compare(password, user.password_hash);
     if (!match) return res.status(401).json({ error: 'Invalid email or password' });
 
-    const token = jwt.sign({ sub: user.id }, process.env.JWT_SECRET, { expiresIn: '12h' });
+    const token = signToken(user.id, user.password_changed_at);
     delete user.password_hash;
     user.capabilities = capabilitiesFor(user.role);
     res.json({ token, user });
@@ -36,6 +59,73 @@ router.post('/login', async (req, res) => {
 
 router.get('/me', authenticate, (req, res) => {
   res.json({ user: req.user });
+});
+
+// The password rules, so the browser shows the same checklist the API enforces.
+router.get('/password-policy', (req, res) => {
+  res.json(passwordPolicy.describe());
+});
+
+// POST /api/auth/password — change your own password.
+//
+// Lives under /api/auth rather than /api/users/:id/password because everything
+// in /api/users requires the manageUsers capability and acts on other people's
+// accounts. This acts only on the caller's own account: there is no id to
+// authorise, which removes the question of who may change whose password.
+router.post('/password', authenticate, async (req, res) => {
+  const { currentPassword, newPassword, confirmPassword } = req.body || {};
+
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({
+      error: 'Enter your current password and a new one.',
+      field: !currentPassword ? 'currentPassword' : 'newPassword',
+    });
+  }
+  if (confirmPassword !== undefined && confirmPassword !== newPassword) {
+    return res.status(400).json({
+      error: 'The new passwords do not match.',
+      field: 'confirmPassword',
+    });
+  }
+  if (newPassword === currentPassword) {
+    return res.status(400).json({
+      error: 'Your new password must be different from your current one.',
+      field: 'newPassword',
+    });
+  }
+
+  const verdict = passwordPolicy.check(newPassword);
+  if (!verdict.valid) {
+    return res.status(400).json({ error: verdict.message, field: 'newPassword', failed: verdict.failed });
+  }
+
+  const { rows } = await db.query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
+  if (!rows.length) return res.status(401).json({ error: 'This account no longer exists' });
+
+  const matches = await bcrypt.compare(currentPassword, rows[0].password_hash);
+  if (!matches) {
+    // Logged without the value, so a failed attempt is visible to an
+    // administrator reviewing logs but the password never reaches them.
+    console.warn(`Rejected password change for ${req.user.email}: current password did not match.`);
+    return res.status(403).json({ error: 'Your current password is not correct.', field: 'currentPassword' });
+  }
+
+  const hash = await bcrypt.hash(String(newPassword), BCRYPT_ROUNDS);
+  const changedAt = Date.now(); // milliseconds; only ever compared for equality
+  await db.query(
+    'UPDATE users SET password_hash = $1, password_changed_at = $2 WHERE id = $3',
+    [hash, changedAt, req.user.id]
+  );
+  console.log(`Password changed for ${req.user.email}.`);
+
+  // Every token still carrying the previous value is now refused, which signs
+  // out the account's other devices. Hand this one a replacement so the person
+  // who made the change is not signed out by their own action.
+  res.json({
+    ok: true,
+    token: signToken(req.user.id, changedAt),
+    message: 'Password changed. Any other devices signed in to this account have been signed out.',
+  });
 });
 
 // The role catalogue, so the frontend builds its dropdowns and badges from the
@@ -70,8 +160,9 @@ router.post('/bootstrap', async (req, res) => {
   if (!email || !name || !password) {
     return res.status(400).json({ error: 'name, email and password are required' });
   }
-  if (String(password).length < 10) {
-    return res.status(400).json({ error: 'Choose a password of at least 10 characters' });
+  const verdict = passwordPolicy.check(password);
+  if (!verdict.valid) {
+    return res.status(400).json({ error: verdict.message, failed: verdict.failed });
   }
 
   try {
@@ -83,7 +174,7 @@ router.post('/bootstrap', async (req, res) => {
     }
 
     const id = uuid();
-    const hash = await bcrypt.hash(String(password), 10);
+    const hash = await bcrypt.hash(String(password), BCRYPT_ROUNDS);
     await db.query(
       'INSERT INTO users (id, `name`, email, password_hash, `role`) VALUES ($1,$2,$3,$4,\'super_admin\')',
       [id, String(name).trim(), String(email).trim(), hash]

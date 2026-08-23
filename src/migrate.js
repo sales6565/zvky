@@ -59,6 +59,19 @@ async function widenRoleColumn(db, log) {
   log(`Schema: widened users.role to VARCHAR(64) (was ${type}${len ? `(${len})` : ''}).`);
 }
 
+// Databases created before password changes were possible have no column to
+// record them in. Without it every token stays valid after a password change.
+async function ensurePasswordChangedAt(db, log) {
+  const { rows } = await db.query(
+    `SELECT 1 AS present FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users'
+        AND COLUMN_NAME = 'password_changed_at'`
+  );
+  if (rows.length) return;
+  await db.query('ALTER TABLE users ADD COLUMN password_changed_at BIGINT UNSIGNED NULL');
+  log('Schema: added users.password_changed_at, so a password change can sign out other devices.');
+}
+
 async function run(db, log = console.log) {
   try {
     const stale = (await roleCheckConstraints(db)).filter((c) => isStale(c.clause));
@@ -70,6 +83,7 @@ async function run(db, log = console.log) {
       );
     }
     await widenRoleColumn(db, log);
+    await ensurePasswordChangedAt(db, log);
   } catch (err) {
     // Never block startup on this: an unmigrated schema still serves everyone
     // whose role the old constraint allows, and the error handler now reports

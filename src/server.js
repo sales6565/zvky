@@ -41,6 +41,17 @@ const loginLimiter = rateLimit({
 });
 app.use('/api/auth/login', loginLimiter);
 
+// Changing a password requires the current one, so the endpoint is a place to
+// guess passwords. Limit it harder than sign-in: it is used once in a while by
+// one person, never in bursts by a whole office.
+const passwordChangeLimiter = rateLimit({
+  windowMs: Number(process.env.PASSWORD_CHANGE_RATE_WINDOW_MINUTES || 15) * 60 * 1000,
+  max: Number(process.env.PASSWORD_CHANGE_RATE_MAX || 10),
+  standardHeaders: true,
+  message: { error: 'Too many password change attempts. Try again in a few minutes.' },
+});
+app.use('/api/auth/password', passwordChangeLimiter);
+
 app.use('/api/auth', authRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/assets', assetRoutes);

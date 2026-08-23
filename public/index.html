@@ -80,6 +80,15 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .modal h2{font-family:'Space Grotesk';margin:0 0 14px;font-size:18px;}
 .modal label{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--ink-muted);font-family:'IBM Plex Mono';margin:12px 0 6px;}
 .modal input,.modal select,.modal textarea{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--ink);padding:9px 10px;border-radius:8px;font-family:'Inter';font-size:13px;}
+.pw-field{position:relative;}
+.pw-field input{padding-right:64px;width:100%;}
+.pw-toggle{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:0;color:var(--ink-faint);font-size:10.5px;font-family:'IBM Plex Mono';text-transform:uppercase;letter-spacing:.6px;cursor:pointer;padding:4px 6px;border-radius:6px;}
+.pw-toggle:hover{color:var(--ink);background:var(--surface-3);}
+.field-err{color:var(--brand);font-size:11.5px;margin-top:5px;min-height:14px;}
+.pw-rules{list-style:none;padding:0;margin:8px 0 0;font-size:11.5px;}
+.pw-rules li{color:var(--ink-faint);padding:2px 0;display:flex;gap:7px;align-items:center;}
+.pw-rules li .tick{font-family:'IBM Plex Mono';width:11px;display:inline-block;}
+.pw-rules li.met{color:var(--approved);}
 .modal .row2{display:flex;gap:10px;} .modal .row2>div{flex:1;} .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:18px;}
 .checklist{max-height:130px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px 10px;background:var(--surface-2);}
 .checklist label{display:flex;align-items:center;gap:6px;font-family:'Inter';font-size:12.5px;text-transform:none;letter-spacing:0;color:var(--ink);margin:4px 0;}
@@ -121,6 +130,7 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
       <select class="proj-select" id="projectSelect"></select>
       <div class="user-badge"><div class="avatar" id="userAvatar"></div><div class="who"><div class="name" id="userName"></div><span class="role-badge" id="userRoleBadge"></span></div></div>
+      <button class="btn btn-ghost btn-sm" id="profileBtn">Profile</button>
       <button class="btn btn-ghost btn-sm" id="logoutBtn">Log out</button>
     </div>
   </header>
@@ -170,6 +180,46 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
     <label>Team leads on this project</label><div class="checklist" id="p_leads"></div>
     <label>Production coordinators on this project</label><div class="checklist" id="p_coords"></div>
     <div class="modal-actions"><button class="btn btn-ghost" id="cancelProjectModal">Cancel</button><button class="btn btn-brand" id="saveProjectModal">Create Project</button></div>
+  </div>
+</div>
+
+<div class="modal-wrap" id="profileModalWrap">
+  <div class="modal">
+    <h2>Your Profile</h2>
+    <div class="field-lbl">Signed in as</div>
+    <div id="pf_identity" style="font-size:13px;"></div>
+
+    <div class="field-lbl" style="margin-top:20px;">Change password</div>
+
+    <label>Current password</label>
+    <div class="pw-field">
+      <input type="password" id="pf_current" autocomplete="current-password">
+      <button type="button" class="pw-toggle" data-target="pf_current">Show</button>
+    </div>
+    <div class="field-err" id="pf_current_err"></div>
+
+    <label>New password</label>
+    <div class="pw-field">
+      <input type="password" id="pf_new" autocomplete="new-password">
+      <button type="button" class="pw-toggle" data-target="pf_new">Show</button>
+    </div>
+    <div class="field-err" id="pf_new_err"></div>
+    <ul class="pw-rules" id="pf_rules"></ul>
+
+    <label style="margin-top:12px;display:block;">Confirm new password</label>
+    <div class="pw-field">
+      <input type="password" id="pf_confirm" autocomplete="new-password">
+      <button type="button" class="pw-toggle" data-target="pf_confirm">Show</button>
+    </div>
+    <div class="field-err" id="pf_confirm_err"></div>
+
+    <div style="font-size:11.5px;color:var(--ink-faint);margin-top:12px;">
+      Changing your password signs out any other device signed in to this account.
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="cancelProfileModal">Close</button>
+      <button class="btn btn-brand" id="savePasswordBtn">Change password</button>
+    </div>
   </div>
 </div>
 
@@ -250,7 +300,14 @@ async function api(path, options={}){
     logout();
     throw new Error('Your session has expired — please sign in again.');
   }
-  if(!res.ok) throw new Error(data.error || `Request failed (HTTP ${res.status})`);
+  if(!res.ok){
+    const err = new Error(data.error || `Request failed (HTTP ${res.status})`);
+    err.status = res.status;
+    // Some endpoints name the form field at fault so the message can be shown
+    // beside it rather than as a toast detached from the input.
+    if(data.field) err.field = data.field;
+    throw err;
+  }
   return data;
 }
 function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
@@ -807,6 +864,120 @@ document.getElementById('saveUserModal').addEventListener('click', async ()=>{
     showToast(`${name} added as ${roleInfo(role).label}. Default password: zvky2026`);
   }catch(err){ showToast(err.message); }
 });
+
+/* ---------- profile / change password ---------- */
+const profileModalWrap = document.getElementById('profileModalWrap');
+let passwordPolicy = null;   // fetched once, from the same rules the API enforces
+
+const PF_FIELDS = ['pf_current', 'pf_new', 'pf_confirm'];
+function pfError(id, message){ document.getElementById(id + '_err').textContent = message || ''; }
+function clearPfErrors(){ PF_FIELDS.forEach(f => pfError(f, '')); }
+
+/* Render the rule checklist, ticking off whatever the typed password satisfies.
+   The rules come from the server so this can never disagree with it. */
+function renderPasswordRules(value){
+  const list = document.getElementById('pf_rules');
+  if(!passwordPolicy){ list.innerHTML = ''; return; }
+  list.innerHTML = passwordPolicy.rules.map(r => {
+    const met = checkRule(r.id, value || '');
+    return `<li class="${met?'met':''}"><span class="tick">${met?'✓':'○'}</span>${escapeHTML(r.label)}</li>`;
+  }).join('');
+}
+/* Mirrors src/password-policy.js. The server is still the authority — this only
+   decides which line in the checklist is ticked while someone is typing. */
+function checkRule(id, pw){
+  switch(id){
+    case 'length':    return pw.length >= passwordPolicy.minLength;
+    case 'uppercase': return /[A-Z]/.test(pw);
+    case 'lowercase': return /[a-z]/.test(pw);
+    case 'number':    return /[0-9]/.test(pw);
+    case 'symbol':    return /[^A-Za-z0-9]/.test(pw);
+    default:          return false;
+  }
+}
+function passwordMeetsPolicy(pw){
+  return Boolean(passwordPolicy) && passwordPolicy.rules.every(r => checkRule(r.id, pw));
+}
+
+async function openProfileModal(){
+  const u = state.currentUser;
+  document.getElementById('pf_identity').innerHTML =
+    `<strong>${escapeHTML(u.name)}</strong><br><span class="mono" style="font-size:11.5px;color:var(--ink-muted);">${escapeHTML(u.email)}</span>`;
+  PF_FIELDS.forEach(f => { document.getElementById(f).value = ''; });
+  clearPfErrors();
+  document.querySelectorAll('.pw-toggle').forEach(b => {
+    b.textContent = 'Show';
+    document.getElementById(b.dataset.target).type = 'password';
+  });
+  if(!passwordPolicy){
+    try{ passwordPolicy = await api('/auth/password-policy'); }
+    catch(err){ /* the checklist is a convenience; the server still validates */ }
+  }
+  renderPasswordRules('');
+  profileModalWrap.classList.add('show');
+}
+
+document.getElementById('profileBtn').addEventListener('click', openProfileModal);
+document.getElementById('cancelProfileModal').addEventListener('click', ()=>profileModalWrap.classList.remove('show'));
+profileModalWrap.addEventListener('click', e=>{ if(e.target===profileModalWrap) profileModalWrap.classList.remove('show'); });
+
+document.querySelectorAll('.pw-toggle').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    const input = document.getElementById(btn.dataset.target);
+    const hidden = input.type === 'password';
+    input.type = hidden ? 'text' : 'password';
+    btn.textContent = hidden ? 'Hide' : 'Show';
+    input.focus();
+  });
+});
+
+document.getElementById('pf_new').addEventListener('input', e=>{
+  renderPasswordRules(e.target.value);
+  pfError('pf_new', '');
+  const confirmVal = document.getElementById('pf_confirm').value;
+  if(confirmVal) pfError('pf_confirm', confirmVal === e.target.value ? '' : 'The new passwords do not match.');
+});
+document.getElementById('pf_confirm').addEventListener('input', e=>{
+  const newVal = document.getElementById('pf_new').value;
+  pfError('pf_confirm', !e.target.value || e.target.value === newVal ? '' : 'The new passwords do not match.');
+});
+document.getElementById('pf_current').addEventListener('input', ()=>pfError('pf_current', ''));
+
+async function submitPasswordChange(){
+  const currentPassword = document.getElementById('pf_current').value;
+  const newPassword     = document.getElementById('pf_new').value;
+  const confirmPassword = document.getElementById('pf_confirm').value;
+  clearPfErrors();
+
+  /* Catch what we can before spending a round trip; the server re-checks all of it. */
+  let bad = false;
+  if(!currentPassword){ pfError('pf_current', 'Enter your current password.'); bad = true; }
+  if(!newPassword){ pfError('pf_new', 'Enter a new password.'); bad = true; }
+  else if(!passwordMeetsPolicy(newPassword)){ pfError('pf_new', 'This password does not meet the requirements below.'); bad = true; }
+  else if(newPassword === currentPassword){ pfError('pf_new', 'Your new password must be different from your current one.'); bad = true; }
+  if(newPassword && confirmPassword !== newPassword){ pfError('pf_confirm', 'The new passwords do not match.'); bad = true; }
+  if(bad) return;
+
+  const btn = document.getElementById('savePasswordBtn');
+  btn.disabled = true; btn.textContent = 'Changing…';
+  try{
+    const res = await api('/auth/password', { method:'POST', body:{ currentPassword, newPassword, confirmPassword } });
+    /* The old token was invalidated by the change; keep this session on the new one. */
+    if(res.token){ state.token = res.token; localStorage.setItem('zvky_token', res.token); }
+    profileModalWrap.classList.remove('show');
+    PF_FIELDS.forEach(f => { document.getElementById(f).value = ''; });
+    showToast(res.message || 'Password changed.');
+  }catch(err){
+    /* The API names the field at fault, so the message lands next to it. */
+    const field = err.field ? 'pf_' + ({ currentPassword:'current', newPassword:'new', confirmPassword:'confirm' })[err.field] : null;
+    if(field) pfError(field, err.message);
+    else showToast(err.message);
+  }finally{
+    btn.disabled = false; btn.textContent = 'Change password';
+  }
+}
+document.getElementById('savePasswordBtn').addEventListener('click', submitPasswordChange);
+document.getElementById('pf_confirm').addEventListener('keydown', e=>{ if(e.key==='Enter') submitPasswordChange(); });
 
 boot();
 </script>
