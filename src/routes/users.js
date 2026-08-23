@@ -6,7 +6,7 @@ const bcrypt = require('bcryptjs');
 const { v4: uuid } = require('uuid');
 const db = require('../db');
 const { authenticate, requireCapability } = require('../middleware/auth');
-const { ROLES, isRole, roleDef, capabilitiesFor } = require('../roles');
+const { roleKeys, activeRoles, isRole, roleDef, capabilitiesFor } = require('../roles');
 const passwordPolicy = require('../password-policy');
 
 router.use(authenticate);
@@ -19,8 +19,11 @@ const DEFAULT_PASSWORD = 'zvky2026'; // demo default; real deployments should fo
 function assignableRolesFor(user) {
   const def = roleDef(user.role);
   if (!def || !def.manageUsers) return [];
-  if (def.projectScope === 'all') return Object.keys(ROLES);
-  return Object.keys(ROLES).filter((key) => {
+  // Only roles that are still active can be handed out; a deactivated one
+  // stays valid for whoever already holds it.
+  const available = activeRoles().map((r) => r.key);
+  if (def.projectScope === 'all') return available;
+  return available.filter((key) => {
     const r = roleDef(key);
     return !r.manageUsers && r.projectScope !== 'all';
   });

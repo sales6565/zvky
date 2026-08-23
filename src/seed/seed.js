@@ -2,7 +2,8 @@ require('dotenv').config();
 const bcrypt = require('bcryptjs');
 const { v4: uuid } = require('uuid');
 const db = require('../db');
-const { ASSIGNABLE_ROLES, LEAD_ROLES, roleDef } = require('../roles');
+const { assignableRoles, leadRoles, roleDef } = require('../roles');
+const referenceData = require('../reference-data');
 
 const FIRST = ['Aiko','Ravi','Mika','Theo','Priya','Sam','Noor','Kai','Lena','Omar','Yuki','Diego','Alia','Finn','Sana','Wren','Dev','Zara','Milo','Ines','Kobe','Nell','Arjun','Talia','Bo'];
 const LAST = ['Nakamura','Singh','Voss','Marchetti','Okafor','Reyes','Bergström','Haddad','Costa','Lindqvist','Park','Ferreira','Nazari','Holt','Achebe','Sorensen','Rao','Delgado','Kimura','Adeyemi','Novak','Petrov','Lund','Osei','Calder'];
@@ -27,7 +28,8 @@ const ASSET_SEED = [
   ['Storm Cloud FX', 'fx', 'tl_changes_requested', 'med', 'Rolling storm buildup for act 2 climax.', 16, 9],
   ['Cavern Interior', 'environment', 'cd_changes_requested', 'low', 'Bioluminescent cave interior, mood lighting TBD.', 22, 16],
 ];
-const CODE_MAP = { character: 'CHR', prop: 'PRP', environment: 'ENV', fx: 'FX', animation: 'ANI', background: 'BG' };
+// Filled from the asset_types table once the reference data is in place.
+let CODE_MAP = {};
 
 // Spread the seeded staff across the studio's real designations rather than
 // giving everyone the same one, so the Users tab shows the full catalogue in use.
@@ -36,6 +38,15 @@ function rotate(list, i) {
 }
 
 async function main() {
+  // Resolve the role lists once the reference tables are populated: the seed
+  // spreads its staff across whatever designations the studio actually has.
+  await require('../migrate').run(db, () => {});
+  const LEADS = leadRoles();
+  const CONTRIBUTORS = assignableRoles();
+  CODE_MAP = Object.fromEntries(
+    referenceData.list('asset_types', { includeInactive: true }).map((t) => [t.key, t.codePrefix])
+  );
+
   const client = await db.connect();
   try {
     const { rows: existing } = await client.query('SELECT COUNT(*) AS n FROM users');
@@ -100,7 +111,7 @@ async function main() {
       const proj = projects[i % projects.length];
       await client.query(
         'INSERT INTO users (id, `name`, email, password_hash, `role`, manager_id) VALUES ($1,$2,$3,$4,$5,$6)',
-        [id, n.name, n.email, demoHash, rotate(LEAD_ROLES, i), proj.ownerId]
+        [id, n.name, n.email, demoHash, rotate(LEADS, i), proj.ownerId]
       );
       await client.query('INSERT INTO project_team_leads (project_id, user_id) VALUES ($1,$2)', [proj.id, id]);
       proj.teamLeadIds.push(id);
@@ -125,7 +136,7 @@ async function main() {
       const teamLeadId = proj.teamLeadIds[i % proj.teamLeadIds.length];
       await client.query(
         'INSERT INTO users (id, `name`, email, password_hash, `role`, manager_id, team_lead_id) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-        [id, n.name, n.email, demoHash, rotate(ASSIGNABLE_ROLES, i), proj.ownerId, teamLeadId]
+        [id, n.name, n.email, demoHash, rotate(CONTRIBUTORS, i), proj.ownerId, teamLeadId]
       );
       proj.artistIds.push(id);
     }
@@ -200,8 +211,8 @@ async function main() {
     console.log('Seed complete:');
     console.log('  Super admin: ava@zvky.studio / superadmin');
     console.log('  Everyone else: <their email> / zvky2026');
-    console.log(`  ${adminIds.length} admins, 40 leads across ${LEAD_ROLES.length} supervisory designations,`);
-    console.log(`  44 coordinators, ${ARTIST_COUNT} contributors across ${ASSIGNABLE_ROLES.length} designations,`);
+    console.log(`  ${adminIds.length} admins, 40 leads across ${LEADS.length} supervisory designations,`);
+    console.log(`  44 coordinators, ${ARTIST_COUNT} contributors across ${CONTRIBUTORS.length} designations,`);
     console.log(`  ${cdIds.length} art directors, ${projects.length} projects.`);
     console.log('  (Seeded review files are placeholders and are not downloadable — only real uploads are.)');
   } catch (err) {

@@ -10,6 +10,7 @@ const projectRoutes = require('./routes/projects');
 const assetRoutes = require('./routes/assets');
 const userRoutes = require('./routes/users');
 const teamRoutes = require('./routes/team');
+const referenceRoutes = require('./routes/reference');
 
 const app = express();
 
@@ -57,6 +58,7 @@ app.use('/api/projects', projectRoutes);
 app.use('/api/assets', assetRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/team', teamRoutes);
+app.use('/api/reference', referenceRoutes);
 
 // Health check. Deliberately reports the database too: a deployment whose
 // process is up but whose credentials are wrong looks identical from outside
@@ -135,16 +137,34 @@ process.on('uncaughtException', (err) => {
 });
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-  console.log(`Zvky backend listening on http://localhost:${PORT}`);
+
+// Migrate and load the reference data BEFORE accepting requests.
+//
+// These used to run from inside the listen callback, which meant the server
+// answered requests — health checks included — while the asset types, priorities
+// and roles were still being seeded. A request landing in that window saw empty
+// dropdowns, and the permission checks read the built-in defaults rather than
+// what the database actually held.
+async function start() {
   const db = require('./db');
-  // Repair a schema left over from an earlier version before anything uses it,
-  // then say so if nobody can sign in yet — otherwise every attempt just fails
-  // as "Invalid email or password" with no explanation.
-  require('./migrate')
-    .run(db)
-    .then(() => require('./bootstrap-token').announce(db))
-    .catch((err) => console.error('Startup checks failed', err));
-});
+  try {
+    // Repairs a schema left over from an earlier version, seeds the reference
+    // tables, and loads the mirror the permission checks read from.
+    await require('./migrate').run(db);
+    // Then say so if nobody can sign in yet — otherwise every attempt just
+    // fails as "Invalid email or password" with no explanation.
+    await require('./bootstrap-token').announce(db);
+  } catch (err) {
+    // Start anyway: a server that is up can report through /api/health why the
+    // database is unreachable, where one that exited says nothing at all.
+    console.error('Startup checks failed; starting anyway so /api/health can report why.', err);
+  }
+
+  app.listen(PORT, () => {
+    console.log(`Zvky backend listening on http://localhost:${PORT}`);
+  });
+}
+
+start();
 
 module.exports = app;

@@ -11,6 +11,64 @@
 
 SET NAMES utf8mb4;
 
+-- --------------------------------------------------------------------------
+-- Reference data: the value lists behind the dropdowns. These used to be
+-- arrays in the source and CHECK constraints here, which meant a code change
+-- and a deploy every time the studio wanted a new asset type or designation.
+-- A Super Admin manages them in Settings; src/migrate.js fills them in from
+-- the previous hardcoded values on first start.
+--
+-- `key` is what assets.type, assets.priority and users.role actually hold. It
+-- is generated once and never changes, so renaming a value in Settings leaves
+-- every record that uses it untouched. is_system marks the values the app
+-- depends on by name and refuses to delete.
+-- --------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS asset_types (
+  id          CHAR(36)     NOT NULL PRIMARY KEY,
+  `key`       VARCHAR(64)  NOT NULL,
+  label       VARCHAR(100) NOT NULL,
+  -- Asset codes are built from this: CHR-001, ENV-014.
+  code_prefix VARCHAR(8)   NOT NULL,
+  color       VARCHAR(16)  NULL,
+  position    INT          NOT NULL DEFAULT 0,
+  is_active   TINYINT(1)   NOT NULL DEFAULT 1,
+  is_system   TINYINT(1)   NOT NULL DEFAULT 0,
+  created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_asset_types_key (`key`),
+  UNIQUE KEY uq_asset_types_prefix (code_prefix)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS priorities (
+  id         CHAR(36)     NOT NULL PRIMARY KEY,
+  `key`      VARCHAR(64)  NOT NULL,
+  label      VARCHAR(100) NOT NULL,
+  color      VARCHAR(16)  NULL,
+  position   INT          NOT NULL DEFAULT 0,
+  is_active  TINYINT(1)   NOT NULL DEFAULT 1,
+  is_system  TINYINT(1)   NOT NULL DEFAULT 0,
+  created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_priorities_key (`key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS roles (
+  id         CHAR(36)     NOT NULL PRIMARY KEY,
+  `key`      VARCHAR(64)  NOT NULL,
+  label      VARCHAR(150) NOT NULL,
+  -- The heading a role sits under in the picker: Art, Animation, Engineering.
+  group_name VARCHAR(100) NOT NULL,
+  -- Which capability set applies. See src/role-tiers.js.
+  tier       VARCHAR(32)  NOT NULL,
+  color      VARCHAR(16)  NULL,
+  -- Doubles as seniority: higher sorts first within a group.
+  position   INT          NOT NULL DEFAULT 0,
+  is_active  TINYINT(1)   NOT NULL DEFAULT 1,
+  is_system  TINYINT(1)   NOT NULL DEFAULT 0,
+  created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_roles_key (`key`),
+  KEY idx_roles_tier (tier)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS users (
   id            CHAR(36)     NOT NULL PRIMARY KEY,
   `name`        VARCHAR(255) NOT NULL,
@@ -86,12 +144,13 @@ CREATE TABLE IF NOT EXISTS assets (
   KEY idx_assets_status (`status`),
   CONSTRAINT fk_assets_project  FOREIGN KEY (project_id)  REFERENCES projects(id) ON DELETE CASCADE,
   CONSTRAINT fk_assets_assignee FOREIGN KEY (assignee_id) REFERENCES users(id)    ON DELETE SET NULL,
-  CONSTRAINT chk_assets_type   CHECK (`type` IN ('character','prop','environment','fx','animation','background')),
+  -- No CHECK on `type` or priority: both are managed in Settings and validated
+  -- against the asset_types / priorities tables. `status` keeps its constraint
+  -- because it is a fixed pipeline, not a list anyone edits.
   CONSTRAINT chk_assets_status CHECK (`status` IN (
     'not_started','in_progress','pending_tl_review','tl_changes_requested',
     'pending_cd_review','cd_changes_requested','approved_for_client','delivered'
-  )),
-  CONSTRAINT chk_assets_priority CHECK (priority IN ('low','med','high'))
+  ))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS tasks (

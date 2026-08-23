@@ -22,8 +22,9 @@ const {
   canOverrideReview,
   canMarkDelivered,
 } = require('../permissions');
-const { ASSIGNABLE_ROLES, roleDef } = require('../roles');
+const { assignableRoles, roleDef } = require('../roles');
 const assetImport = require('../asset-import');
+const referenceData = require('../reference-data');
 
 router.use(authenticate);
 
@@ -97,17 +98,23 @@ router.post('/project/:projectId', async (req, res) => {
   const allowed = await canAccessProject(req.user, projectId);
   if (!allowed) return res.status(403).json({ error: 'No access to this project' });
 
-  const { name, type, priority = 'med', assigneeId = null, due = null, description = '', manHours = null } = req.body || {};
+  const { name, type, priority = assetImport.defaultPriority(), assigneeId = null, due = null, description = '', manHours = null } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: 'Asset name is required' });
-  const validTypes = ['character', 'prop', 'environment', 'fx', 'animation', 'background'];
-  if (!validTypes.includes(type)) return res.status(400).json({ error: 'Invalid asset type' });
+  // Asset types are managed in Settings, so validate against the live list
+  // rather than one fixed here.
+  const assetType = referenceData.get('asset_types', type);
+  if (!assetType || !assetType.isActive) {
+    return res.status(400).json({
+      error: 'Invalid asset type',
+      allowed: referenceData.keys('asset_types'),
+    });
+  }
 
   const { rows: countRows } = await db.query(
     'SELECT COUNT(*) AS n FROM assets WHERE project_id = $1 AND `type` = $2',
     [projectId, type]
   );
-  const codeMap = { character: 'CHR', prop: 'PRP', environment: 'ENV', fx: 'FX', animation: 'ANI', background: 'BG' };
-  const code = `${codeMap[type]}-${String(Number(countRows[0].n) + 1).padStart(3, '0')}`;
+  const code = `${assetType.codePrefix}-${String(Number(countRows[0].n) + 1).padStart(3, '0')}`;
 
   const id = uuid();
   await db.query(
@@ -502,7 +509,7 @@ router.post('/project/:projectId/bulk', uploadImport.single('file'), async (req,
   if (emails.length) {
     const { rows } = await db.query(
       'SELECT id, email FROM users WHERE lower(email) IN ($1) AND role IN ($2)',
-      [emails.map((e) => e.toLowerCase()), ASSIGNABLE_ROLES]
+      [emails.map((e) => e.toLowerCase()), assignableRoles()]
     );
     rows.forEach((r) => assigneeByEmail.set(String(r.email).toLowerCase(), r.id));
   }
@@ -522,9 +529,11 @@ router.post('/project/:projectId/bulk', uploadImport.single('file'), async (req,
   }
 
   // --- asset codes ---------------------------------------------------------
-  const codeMap = { character: 'CHR', prop: 'PRP', environment: 'ENV', fx: 'FX', animation: 'ANI', background: 'BG' };
+  const codeMap = Object.fromEntries(
+    referenceData.list('asset_types', { includeInactive: true }).map((t) => [t.key, t.codePrefix])
+  );
   const typeCounters = {};
-  for (const t of assetImport.ASSET_TYPES) {
+  for (const t of assetImport.assetTypes()) {
     const { rows } = await db.query(
       'SELECT COUNT(*) AS n FROM assets WHERE project_id = $1 AND `type` = $2',
       [projectId, t]

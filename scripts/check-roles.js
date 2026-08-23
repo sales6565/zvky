@@ -13,7 +13,13 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { ROLES, ROLE_KEYS } = require('../src/roles');
+const { roleDef, roleKeys } = require('../src/roles');
+
+// Compares against the values a new studio is seeded with. A running studio's
+// catalogue lives in its database and is managed in Settings; this script is
+// for vetting a batch of titles before they are added to the seed.
+const ROLE_KEYS = roleKeys();
+const ROLES = Object.fromEntries(ROLE_KEYS.map((k) => [k, roleDef(k)]));
 
 // --- normalising ------------------------------------------------------------
 // Titles arrive from spreadsheets and HR systems, so they carry en dashes,

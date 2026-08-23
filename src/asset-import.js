@@ -3,8 +3,29 @@
 // like. The endpoint, the downloadable sample and the tests all read it from
 // here, so the sample can never describe a format the endpoint would reject.
 
-const ASSET_TYPES = ['character', 'prop', 'environment', 'fx', 'animation', 'background'];
-const PRIORITIES = ['low', 'med', 'high'];
+const referenceData = require('./reference-data');
+const defaults = require('./reference-defaults');
+
+// Types and priorities are managed in Settings, so read them at validation
+// time rather than capturing a list at import time — a type added this morning
+// has to be importable this afternoon. Before the mirror is loaded (a unit test
+// with no database) fall back to what a new studio starts with.
+function assetTypes() {
+  return referenceData.isLoaded()
+    ? referenceData.keys('asset_types')
+    : defaults.ASSET_TYPES.map((t) => t.key);
+}
+function priorities() {
+  return referenceData.isLoaded()
+    ? referenceData.keys('priorities')
+    : defaults.PRIORITIES.map((p) => p.key);
+}
+// The priority a row gets when the column is blank: whichever sits in the
+// middle of the list, or the first one if there is no middle.
+function defaultPriority() {
+  const all = priorities();
+  return all.includes('med') ? 'med' : all[Math.floor(all.length / 2)] || all[0];
+}
 
 // A row that fails validation is skipped and reported; it never reaches the
 // database. Each check returns either { value } or { error }.
@@ -26,24 +47,26 @@ const COLUMNS = [
   {
     name: 'type',
     required: true,
-    describe: `One of ${ASSET_TYPES.join(', ')}`,
+    get describe() { return `One of ${assetTypes().join(', ')}`; },
     example: ['fx', 'prop', 'environment'],
     parse(raw) {
       const value = String(raw ?? '').trim().toLowerCase();
       if (!value) return { error: 'is required' };
-      if (!ASSET_TYPES.includes(value)) return { error: `must be one of ${ASSET_TYPES.join(', ')}` };
+      const allowed = assetTypes();
+      if (!allowed.includes(value)) return { error: `must be one of ${allowed.join(', ')}` };
       return { value };
     },
   },
   {
     name: 'priority',
     required: false,
-    describe: `${PRIORITIES.join(', ')} — defaults to med`,
+    get describe() { return `${priorities().join(', ')} — defaults to ${defaultPriority()}`; },
     example: ['high', 'med', 'low'],
     parse(raw) {
       const value = String(raw ?? '').trim().toLowerCase();
-      if (!value) return { value: 'med' };
-      if (!PRIORITIES.includes(value)) return { error: `must be one of ${PRIORITIES.join(', ')}` };
+      if (!value) return { value: defaultPriority() };
+      const allowed = priorities();
+      if (!allowed.includes(value)) return { error: `must be one of ${allowed.join(', ')}` };
       return { value };
     },
   },
@@ -181,6 +204,8 @@ function buildTemplateCsv() {
 function describeFormat() {
   return {
     columns: COLUMNS.map((c) => ({ name: c.name, required: c.required, describe: c.describe })),
+    assetTypes: assetTypes(),
+    priorities: priorities(),
     required: REQUIRED_COLUMNS,
     maxRows: MAX_ROWS,
     maxBytes: MAX_BYTES,
@@ -189,8 +214,9 @@ function describeFormat() {
 }
 
 module.exports = {
-  ASSET_TYPES,
-  PRIORITIES,
+  assetTypes,
+  priorities,
+  defaultPriority,
   COLUMNS,
   COLUMN_NAMES,
   REQUIRED_COLUMNS,

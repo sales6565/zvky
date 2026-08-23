@@ -1,5 +1,5 @@
 const db = require('./db');
-const { roleDef, ASSIGNABLE_ROLES, LEAD_ROLES } = require('./roles');
+const { roleDef, assignableRoles, leadRoles } = require('./roles');
 
 // Access rules, expressed against the capabilities in src/roles.js rather than
 // against particular job titles. A new designation gets the right access purely
@@ -175,6 +175,9 @@ module.exports = {
   canOverrideReview,
   canMarkDelivered,
   isReport,
-  ASSIGNABLE_ROLES,
-  LEAD_ROLES,
+  // Re-exported as functions rather than arrays: roles are managed in Settings
+  // now, so a value captured at import time would go stale the moment one
+  // is added.
+  assignableRoles,
+  leadRoles,
 };

@@ -80,6 +80,25 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .modal h2{font-family:'Space Grotesk';margin:0 0 14px;font-size:18px;}
 .modal label{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--ink-muted);font-family:'IBM Plex Mono';margin:12px 0 6px;}
 .modal input,.modal select,.modal textarea{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--ink);padding:9px 10px;border-radius:8px;font-family:'Inter';font-size:13px;}
+.ref-section{margin-bottom:26px;}
+.ref-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:4px;}
+.ref-head h3{font-family:'Space Grotesk';font-size:15px;margin:0;}
+.ref-note{font-size:11.5px;color:var(--ink-faint);margin-bottom:10px;}
+.ref-table{width:100%;border-collapse:collapse;font-size:12.5px;}
+.ref-table th{text-align:left;padding:7px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink-muted);font-family:'IBM Plex Mono';border-bottom:1px solid var(--border);}
+.ref-table td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:middle;}
+.ref-table tr.inactive td{opacity:.45;}
+.ref-swatch{width:13px;height:13px;border-radius:4px;display:inline-block;vertical-align:-2px;margin-right:8px;border:1px solid rgba(255,255,255,.14);}
+.ref-key{font-family:'IBM Plex Mono';font-size:11px;color:var(--ink-faint);}
+.ref-pill{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;padding:2px 7px;border-radius:20px;font-family:'IBM Plex Mono';background:var(--surface-3);color:var(--ink-muted);}
+.ref-actions{text-align:right;white-space:nowrap;}
+.ref-actions button{margin-left:5px;}
+.ref-add{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:12px;padding:12px;background:var(--surface-2);border-radius:10px;}
+.ref-add label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink-muted);font-family:'IBM Plex Mono';margin-bottom:4px;}
+.ref-add input,.ref-add select{margin:0;}
+.ref-add input[type=text]{width:170px;}
+.ref-add input.narrow{width:74px;}
+.ref-err{color:var(--brand);font-size:11.5px;margin-top:8px;min-height:14px;}
 .import-summary{display:flex;gap:18px;margin-bottom:14px;flex-wrap:wrap;}
 .import-summary div{font-size:12px;color:var(--ink-muted);}
 .import-summary strong{display:block;font-size:20px;font-family:'IBM Plex Mono';color:var(--ink);}
@@ -153,6 +172,7 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
       <button data-tab="list">List</button>
       <button data-tab="team" id="teamTabBtn" style="display:none;">My Team</button>
       <button data-tab="users" id="usersTabBtn" style="display:none;">Users</button>
+      <button data-tab="settings" id="settingsTabBtn" style="display:none;">Settings</button>
     </div>
     <input type="text" id="search" placeholder="Search assets or codes…" style="display:none;">
     <select id="filterType" style="display:none;"><option value="">All types</option></select>
@@ -167,6 +187,7 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
   <div id="listView" style="display:none;"></div>
   <div id="teamView" style="display:none;"></div>
   <div id="usersView" style="display:none;"></div>
+  <div id="settingsView" style="display:none;"></div>
 </div>
 </div>
 
@@ -177,7 +198,7 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
   <div class="modal">
     <h2>New Asset</h2>
     <label>Name</label><input type="text" id="f_name" placeholder="e.g. River Spirit — Hero">
-    <div class="row2"><div><label>Type</label><select id="f_type"></select></div><div><label>Priority</label><select id="f_priority"><option value="low">Low</option><option value="med" selected>Medium</option><option value="high">High</option></select></div></div>
+    <div class="row2"><div><label>Type</label><select id="f_type"></select></div><div><label>Priority</label><select id="f_priority"></select></div></div>
     <div class="row2"><div><label>Assignee</label><select id="f_assignee"></select></div><div><label>Deadline</label><input type="date" id="f_due"></div></div>
     <label>Estimated man-hours</label><input type="text" id="f_hours" placeholder="e.g. 16">
     <label>Description</label><textarea id="f_desc" rows="3" placeholder="Brief notes for the artist…"></textarea>
@@ -263,11 +284,24 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 const API_BASE = window.location.origin + '/api';
 document.getElementById('apiBaseLabel').textContent = API_BASE;
 
-const TYPES = [
-  {id:'character', label:'Character', color:'#ff5a36'},{id:'prop', label:'Prop', color:'#f2b33d'},
-  {id:'environment', label:'Environment', color:'#3ddc97'},{id:'fx', label:'FX', color:'#9b7ef0'},
-  {id:'animation', label:'Animation', color:'#4fb3ff'},{id:'background', label:'Background', color:'#d4ff3d'},
-];
+/* Asset types and priorities are managed in Settings and fetched with the role
+   catalogue, so a value added there is usable without a deploy. Held as arrays
+   of {id,label,color} to match what the rest of this file already expects. */
+let TYPES = [];
+let PRIORITIES = [];
+async function loadReferenceData(){
+  const data = await api('/reference');
+  TYPES = data.assetTypes.map(t=>({ id:t.key, label:t.label, color:t.color||'var(--ink-muted)', codePrefix:t.codePrefix }));
+  PRIORITIES = data.priorities.map(p=>({ id:p.key, label:p.label, color:p.color||'var(--ink-muted)' }));
+  ROLE_GROUPS = data.groups || [];
+  ROLE_TIERS = data.tiers || [];
+}
+let ROLE_GROUPS = [];
+let ROLE_TIERS = [];
+function priorityOf(id){ return PRIORITIES.find(p=>p.id===id) || {id, label:id||'—', color:'var(--ink-muted)'}; }
+function priorityOptions(selected){
+  return PRIORITIES.map(p=>`<option value="${p.id}" ${p.id===selected?'selected':''}>${escapeHTML(p.label)}</option>`).join('');
+}
 const STATUSES = [
   {id:'not_started', label:'Not Started', color:'var(--not)'},
   {id:'in_progress', label:'In Progress', color:'var(--prog)'},
@@ -300,7 +334,10 @@ async function loadRoles(){
   Object.keys(ROLE_MAP).forEach(k=>delete ROLE_MAP[k]);
   roles.forEach(r=>{ ROLE_MAP[r.key] = r; });
 }
-function typeOf(id){ return TYPES.find(t=>t.id===id) || TYPES[0]; }
+function typeOf(id){
+  return TYPES.find(t=>t.id===id)
+    || { id, label:(id||'Unknown').replace(/_/g,' ').replace(/\b\w/g, c=>c.toUpperCase()), color:'var(--ink-muted)' };
+}
 function statusOf(id){ return STATUSES.find(s=>s.id===id) || STATUSES[0]; }
 function initials(name){ return (name||'?').trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase(); }
 function escapeHTML(s){ const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
@@ -374,7 +411,7 @@ document.getElementById('logoutBtn').addEventListener('click', logout);
 async function showApp(){
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('appRoot').style.display='block';
-  await loadRoles();
+  await Promise.all([loadRoles(), loadReferenceData()]);
   bootApp();
 }
 
@@ -390,6 +427,7 @@ async function bootApp(){
 
   document.getElementById('teamTabBtn').style.display = caps().leadsTeam ? '' : 'none';
   document.getElementById('usersTabBtn').style.display = caps().manageUsers ? '' : 'none';
+  document.getElementById('settingsTabBtn').style.display = caps().manageSettings ? '' : 'none';
   document.getElementById('newProjectBtn').style.display = caps().createProject ? '' : 'none';
   document.getElementById('bulkImportBtn').style.display = caps().createAsset ? '' : 'none';
   document.getElementById('downloadSampleBtn').style.display = caps().createAsset ? '' : 'none';
@@ -401,7 +439,8 @@ async function bootApp(){
   state.currentProjectId = projects[0] ? projects[0].id : null;
   projSel.onchange = ()=>{ state.currentProjectId = projSel.value; render(); };
 
-  document.getElementById('filterType').innerHTML = '<option value="">All types</option>' + TYPES.map(t=>`<option value="${t.id}">${t.label}</option>`).join('');
+  document.getElementById('filterType').innerHTML = '<option value="">All types</option>' + TYPES.map(t=>`<option value="${t.id}">${escapeHTML(t.label)}</option>`).join('');
+  document.getElementById('f_priority').innerHTML = priorityOptions(PRIORITIES.some(p=>p.id==='med') ? 'med' : (PRIORITIES[Math.floor(PRIORITIES.length/2)]||{}).id);
   setTab('board');
 }
 
@@ -416,6 +455,7 @@ function setTab(tab){
   document.getElementById('listView').style.display = tab==='list' ? '' : 'none';
   document.getElementById('teamView').style.display = tab==='team' ? '' : 'none';
   document.getElementById('usersView').style.display = tab==='users' ? '' : 'none';
+  document.getElementById('settingsView').style.display = tab==='settings' ? '' : 'none';
   render();
 }
 document.querySelectorAll('#mainTabs button').forEach(b=>b.addEventListener('click', ()=>setTab(b.dataset.tab)));
@@ -454,10 +494,12 @@ function typeIconSVG(type, color){
     animation:`<circle cx="18" cy="18" r="11" fill="none" stroke="${color}" stroke-width="2"/><path d="M15 13l8 5-8 5z" fill="${color}"/>`,
     background:`<rect x="4" y="8" width="28" height="6" fill="${color}" opacity="0.9"/><rect x="4" y="16" width="28" height="6" fill="${color}" opacity="0.6"/><rect x="4" y="24" width="28" height="4" fill="${color}" opacity="0.35"/>`,
   };
-  return `<svg width="36" height="36" viewBox="0 0 36 36">${icons[type]||icons.prop}</svg>`;
+  const custom = `<rect x="7" y="7" width="22" height="22" rx="5" fill="none" stroke="${color}" stroke-width="2" stroke-dasharray="4 3"/><circle cx="18" cy="18" r="3.5" fill="${color}"/>`;
+  return `<svg width="36" height="36" viewBox="0 0 36 36">${icons[type]||custom}</svg>`;
 }
 function cardHTML(a){
-  const t=typeOf(a.type); const pClass = a.priority==='high'?'priority-high':a.priority==='med'?'priority-med':'';
+  const t=typeOf(a.type); const p=priorityOf(a.priority);
+  const pClass = a.priority==='high'?'priority-high':a.priority==='med'?'priority-med':'';
   const doneTasks = a.tasks.filter(t=>t.done).length;
   const metaBits = [];
   if(a.man_hours) metaBits.push(a.man_hours+'h');
@@ -580,6 +622,7 @@ async function render(){
   else if(state.view==='list') renderList();
   else if(state.view==='team') await renderTeam();
   else if(state.view==='users') await renderUsers();
+  else if(state.view==='settings') await renderSettings();
 }
 
 /* ---------- drawer ---------- */
@@ -650,7 +693,7 @@ async function openDrawer(id){
     </div>
 
     <div class="field-lbl">Priority</div>
-    <select id="d_priority" ${editable?'':'disabled'}><option value="low" ${a.priority==='low'?'selected':''}>Low</option><option value="med" ${a.priority==='med'?'selected':''}>Medium</option><option value="high" ${a.priority==='high'?'selected':''}>High</option></select>
+    <select id="d_priority" ${editable?'':'disabled'}>${priorityOptions(a.priority)}</select>
     <div class="field-lbl">Description</div><textarea id="d_desc" rows="3" ${editable?'':'disabled'}>${escapeHTML(a.description||'')}</textarea>
     <div class="field-lbl">Tasks</div>
     <div id="d_tasks">${a.tasks.map(t=>`<div class="task-row ${t.done?'done':''}" data-tid="${t.id}"><input type="checkbox" ${t.done?'checked':''} ${editable?'':'disabled'}><span>${escapeHTML(t.name)}</span></div>`).join('')}</div>
@@ -970,6 +1013,208 @@ document.getElementById('saveUserModal').addEventListener('click', async ()=>{
     showToast(`${name} added as ${roleInfo(role).label}. Default password: zvky2026`);
   }catch(err){ showToast(err.message); }
 });
+
+/* ---------- settings: the value lists behind the dropdowns ---------- */
+/* Super Admin only. The tab is hidden without the capability and the API
+   refuses the writes regardless, so hiding it is a convenience, not the check. */
+
+const REF_SECTIONS = [
+  {
+    collection: 'asset-types',
+    title: 'Asset Types',
+    note: 'The Type dropdown on Add Asset, and the prefix each asset code is built from (CHR-001).',
+    columns: [
+      { key:'label',      label:'Name',   input:'text',  placeholder:'e.g. Vehicle', required:true },
+      { key:'codePrefix', label:'Prefix', input:'text',  placeholder:'VEH', narrow:true },
+      { key:'color',      label:'Colour', input:'color' },
+    ],
+  },
+  {
+    collection: 'priorities',
+    title: 'Priorities',
+    note: 'The Priority dropdown on Add Asset and in the asset drawer.',
+    columns: [
+      { key:'label', label:'Name',   input:'text', placeholder:'e.g. Critical', required:true },
+      { key:'color', label:'Colour', input:'color' },
+    ],
+  },
+  {
+    collection: 'roles',
+    title: 'Roles',
+    note: 'The Role dropdown on Add User. What a role can do comes from its tier — pick the closest match.',
+    columns: [
+      { key:'label', label:'Name',  input:'text',   placeholder:'e.g. Senior Rigger', required:true },
+      { key:'group', label:'Group', input:'group' },
+      { key:'tier',  label:'Can do', input:'tier' },
+      { key:'color', label:'Colour', input:'color' },
+    ],
+  },
+];
+
+let refCache = {};
+
+async function renderSettings(){
+  const el = document.getElementById('settingsView');
+  if(!caps().manageSettings){ el.innerHTML = ''; return; }
+
+  /* Deactivated values are included so they can be seen and reactivated. */
+  const loaded = await Promise.all(REF_SECTIONS.map(sec =>
+    api('/reference/' + sec.collection + '?includeInactive=1').then(r => r.entries).catch(() => [])
+  ));
+  REF_SECTIONS.forEach((sec,i)=>{ refCache[sec.collection] = loaded[i]; });
+
+  el.innerHTML = `
+    <div style="font-size:12px;color:var(--ink-muted);margin-bottom:20px;max-width:640px;">
+      These are the value lists the forms use. Renaming one is safe — records that already use it keep working.
+      A value in use can't be deleted; deactivate it instead and it disappears from the dropdowns.
+    </div>
+    ${REF_SECTIONS.map(sec=>renderRefSection(sec)).join('')}
+  `;
+  wireSettings();
+}
+
+function renderRefSection(sec){
+  const entries = refCache[sec.collection] || [];
+  const rows = entries.map(e=>{
+    const cells = [];
+    cells.push(`<td>
+      ${e.color?`<span class="ref-swatch" style="background:${escapeHTML(e.color)}"></span>`:''}
+      <strong>${escapeHTML(e.label)}</strong>
+      ${e.isSystem?'<span class="ref-pill" style="margin-left:8px;">built in</span>':''}
+      ${e.isActive?'':'<span class="ref-pill" style="margin-left:8px;">inactive</span>'}
+      <div class="ref-key">${escapeHTML(e.key)}</div>
+    </td>`);
+    if(sec.collection==='asset-types') cells.push(`<td class="ref-key">${escapeHTML(e.codePrefix||'')}</td>`);
+    if(sec.collection==='roles') cells.push(
+      `<td>${escapeHTML(e.group||'')}</td>`,
+      `<td><span class="ref-pill">${escapeHTML(e.tierLabel||e.tier||'')}</span></td>`
+    );
+    cells.push(`<td class="ref-actions">
+      <button class="btn btn-ghost btn-sm ref-rename" data-c="${sec.collection}" data-k="${escapeHTML(e.key)}">Rename</button>
+      ${e.isSystem?'':`<button class="btn btn-ghost btn-sm ref-toggle" data-c="${sec.collection}" data-k="${escapeHTML(e.key)}" data-active="${e.isActive?1:0}">${e.isActive?'Deactivate':'Reactivate'}</button>`}
+      ${e.isSystem?'':`<button class="btn btn-ghost btn-sm ref-delete" data-c="${sec.collection}" data-k="${escapeHTML(e.key)}" style="color:var(--brand);">Delete</button>`}
+    </td>`);
+    return `<tr class="${e.isActive?'':'inactive'}">${cells.join('')}</tr>`;
+  }).join('');
+
+  const heads = ['Name'];
+  if(sec.collection==='asset-types') heads.push('Prefix');
+  if(sec.collection==='roles') heads.push('Group','Can do');
+  heads.push('');
+
+  return `
+    <div class="ref-section" data-section="${sec.collection}">
+      <div class="ref-head"><h3>${escapeHTML(sec.title)}</h3>
+        <span class="ref-key">${entries.filter(e=>e.isActive).length} active${entries.length!==entries.filter(e=>e.isActive).length?` · ${entries.length-entries.filter(e=>e.isActive).length} inactive`:''}</span>
+      </div>
+      <div class="ref-note">${escapeHTML(sec.note)}</div>
+      <table class="ref-table"><thead><tr>${heads.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>
+      <div class="ref-add">
+        ${sec.columns.map(col=>`<div><label>${escapeHTML(col.label)}</label>${refInput(sec, col)}</div>`).join('')}
+        <button class="btn btn-brand ref-create" data-c="${sec.collection}">Add</button>
+      </div>
+      <div class="ref-err" id="err-${sec.collection}"></div>
+    </div>`;
+}
+
+function refInput(sec, col){
+  const id = `new-${sec.collection}-${col.key}`;
+  if(col.input==='color') return `<input type="color" id="${id}" value="#4db8ff" style="width:48px;padding:2px;height:34px;">`;
+  if(col.input==='tier') return `<select id="${id}">${ROLE_TIERS.map(t=>`<option value="${t.key}" title="${escapeHTML(t.describe)}">${escapeHTML(t.label)}</option>`).join('')}</select>`;
+  if(col.input==='group') return `<input type="text" id="${id}" list="ref-groups" placeholder="e.g. Engineering">
+    <datalist id="ref-groups">${ROLE_GROUPS.map(g=>`<option value="${escapeHTML(g)}"></option>`).join('')}</datalist>`;
+  return `<input type="text" id="${id}" class="${col.narrow?'narrow':''}" placeholder="${escapeHTML(col.placeholder||'')}">`;
+}
+
+function refError(collection, message){
+  const el = document.getElementById('err-'+collection);
+  if(el) el.textContent = message || '';
+}
+
+/* Anything that changes a list re-fetches it, so the dropdowns elsewhere in
+   the app pick the change up without a reload. */
+async function afterRefChange(message){
+  await loadReferenceData();
+  await loadRoles();
+  await renderSettings();
+  document.getElementById('filterType').innerHTML = '<option value="">All types</option>' + TYPES.map(t=>`<option value="${t.id}">${escapeHTML(t.label)}</option>`).join('');
+  document.getElementById('f_priority').innerHTML = priorityOptions(PRIORITIES.some(p=>p.id==='med')?'med':(PRIORITIES[0]||{}).id);
+  if(message) showToast(message);
+}
+
+function wireSettings(){
+  document.querySelectorAll('.ref-create').forEach(btn=>btn.addEventListener('click', async ()=>{
+    const collection = btn.dataset.c;
+    const sec = REF_SECTIONS.find(x=>x.collection===collection);
+    refError(collection, '');
+    const body = {};
+    for(const col of sec.columns){
+      const input = document.getElementById(`new-${collection}-${col.key}`);
+      if(input && input.value !== '') body[col.key] = input.value;
+    }
+    if(!body.label){ refError(collection, 'Give it a name first.'); return; }
+    btn.disabled = true;
+    try{
+      await api('/reference/'+collection, { method:'POST', body });
+      sec.columns.forEach(col=>{
+        const input = document.getElementById(`new-${collection}-${col.key}`);
+        if(input && col.input==='text') input.value='';
+      });
+      await afterRefChange(`"${body.label}" added.`);
+    }catch(err){ refError(collection, err.message); }
+    finally{ btn.disabled = false; }
+  }));
+
+  document.querySelectorAll('.ref-rename').forEach(btn=>btn.addEventListener('click', async ()=>{
+    const { c: collection, k: key } = btn.dataset;
+    const current = (refCache[collection]||[]).find(e=>e.key===key);
+    const label = prompt(`Rename "${current.label}" to:`, current.label);
+    if(label===null || label.trim()===current.label) return;
+    try{
+      await api(`/reference/${collection}/${encodeURIComponent(key)}`, { method:'PATCH', body:{ label } });
+      await afterRefChange('Renamed. Records already using it are unaffected.');
+    }catch(err){ refError(collection, err.message); }
+  }));
+
+  document.querySelectorAll('.ref-toggle').forEach(btn=>btn.addEventListener('click', async ()=>{
+    const { c: collection, k: key } = btn.dataset;
+    const makeActive = btn.dataset.active !== '1';
+    try{
+      await api(`/reference/${collection}/${encodeURIComponent(key)}`, { method:'PATCH', body:{ isActive: makeActive } });
+      await afterRefChange(makeActive ? 'Reactivated.' : 'Deactivated — it is no longer offered in the dropdowns.');
+    }catch(err){ refError(collection, err.message); }
+  }));
+
+  document.querySelectorAll('.ref-delete').forEach(btn=>btn.addEventListener('click', async ()=>{
+    const { c: collection, k: key } = btn.dataset;
+    const current = (refCache[collection]||[]).find(e=>e.key===key);
+    refError(collection, '');
+    /* Ask how many records use it before offering to delete, so the choice is
+       informed rather than a refusal after the fact. */
+    let usage;
+    try{ usage = await api(`/reference/${collection}/${encodeURIComponent(key)}/usage`); }
+    catch(err){ refError(collection, err.message); return; }
+
+    if(usage.inUse > 0){
+      const deactivate = confirm(
+        `"${current.label}" is used by ${usage.inUse} record${usage.inUse===1?'':'s'}, so it can't be deleted.\n\n` +
+        `Deactivate it instead? It will disappear from the dropdowns and those ${usage.inUse} record${usage.inUse===1?'':'s'} will keep working.`
+      );
+      if(!deactivate) return;
+      try{
+        await api(`/reference/${collection}/${encodeURIComponent(key)}`, { method:'PATCH', body:{ isActive:false } });
+        await afterRefChange('Deactivated.');
+      }catch(err){ refError(collection, err.message); }
+      return;
+    }
+
+    if(!confirm(`Delete "${current.label}"? Nothing uses it, so this is safe.`)) return;
+    try{
+      await api(`/reference/${collection}/${encodeURIComponent(key)}`, { method:'DELETE' });
+      await afterRefChange(`"${current.label}" deleted.`);
+    }catch(err){ refError(collection, err.message); }
+  }));
+}
 
 /* ---------- profile / change password ---------- */
 const profileModalWrap = document.getElementById('profileModalWrap');

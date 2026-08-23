@@ -2,7 +2,17 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { ROLES, ROLE_KEYS, GROUP_ORDER, ASSIGNABLE_ROLES, LEAD_ROLES, catalogue } = require('../src/roles');
+const { roleDef, roleKeys, groupOrder, assignableRoles, leadRoles, catalogue } = require('../src/roles');
+
+// The catalogue lives in the roles table now. With no database connected these
+// read the values a new studio is seeded with, which is exactly what these
+// invariants are about: the list the app ships with must be sound before
+// anyone edits it.
+const ROLE_KEYS = roleKeys();
+const ROLES = Object.fromEntries(ROLE_KEYS.map((k) => [k, roleDef(k)]));
+const GROUP_ORDER = groupOrder();
+const ASSIGNABLE_ROLES = assignableRoles();
+const LEAD_ROLES = leadRoles();
 
 // The catalogue is the only definition of what a designation is, so these
 // guard the invariants the rest of the app relies on.
@@ -94,6 +104,13 @@ test('the derived role lists agree with the catalogue', () => {
   assert.deepStrictEqual(ASSIGNABLE_ROLES, ROLE_KEYS.filter((k) => ROLES[k].assignable));
   assert.deepStrictEqual(LEAD_ROLES, ROLE_KEYS.filter((k) => ROLES[k].leadsTeam));
   assert.ok(ASSIGNABLE_ROLES.length > 0 && LEAD_ROLES.length > 0);
+});
+
+test('every seeded role carries a tier, since that is where its permissions come from', () => {
+  const { isTier } = require('../src/role-tiers');
+  for (const key of ROLE_KEYS) {
+    assert.ok(isTier(ROLES[key].tier), `${key} has no usable tier ("${ROLES[key].tier}")`);
+  }
 });
 
 test('the candidate list in scripts/ contains nothing unreviewed and unadded', () => {

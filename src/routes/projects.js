@@ -6,7 +6,7 @@ const { v4: uuid } = require('uuid');
 const db = require('../db');
 const { authenticate, requireCapability } = require('../middleware/auth');
 const { visibleProjects, canAccessProject } = require('../permissions');
-const { ASSIGNABLE_ROLES, roleDef } = require('../roles');
+const { assignableRoles, roleDef } = require('../roles');
 
 router.use(authenticate);
 
@@ -87,8 +87,8 @@ router.get('/:id/artists', async (req, res) => {
     : `SELECT u.id, u.name, u.role FROM users u
        WHERE u.role IN ($1) ORDER BY u.name`;
   const params = leads.length
-    ? [ASSIGNABLE_ROLES, leads.map((l) => l.user_id)]
-    : [ASSIGNABLE_ROLES];
+    ? [assignableRoles(), leads.map((l) => l.user_id)]
+    : [assignableRoles()];
 
   const { rows } = await db.query(sql, params);
   res.json({ artists: rows });

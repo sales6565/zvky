@@ -35,11 +35,32 @@ by itself change access: a Trainee Game Artist and a Senior Game Artist have the
 same permissions and differ in title and reporting line. Change that by editing
 the entry in `src/roles.js`.
 
-Roles are defined in code, not in a table: there is no `roles` table to seed,
-and `users.role` holds a catalogue key as a `VARCHAR`. The catalogue containing
-each key exactly once is what makes adding one idempotent.
+### Managing roles
 
-### Adding a designation
+Roles live in the `roles` table and a Super Admin manages them under
+**Settings** — add, rename, deactivate, delete. No deploy needed.
+
+A role is not just a label: the permission checks read a capability set off it.
+That set comes from the role's **tier** (`src/role-tiers.js`), so adding a role
+is a matter of naming it and choosing the closest of:
+
+| Tier | Can do |
+|---|---|
+| Leadership | Sees every project, takes no action in the pipeline |
+| Creative Direction | Sees everything, holds the final review gate |
+| Lead / Supervisor | Runs a team, holds the first review gate, creates and edits assets |
+| Production | Works across attached projects, creates and edits assets, delivers |
+| Contributor | Assigned work, submits it for review |
+| Staff | In the directory, pipeline closed |
+
+Super Admin and Admin are their own tiers and are marked built in: they cannot
+be deleted, deactivated, retiered, or handed to a new role from the UI. That
+keeps a settings screen from becoming a way to mint administrators.
+
+Adding a designation to the list a **new** studio starts with is still a code
+change — see below.
+
+### Adding a designation to the seed
 
 Add one entry to `DEFINITIONS` in `src/roles.js`, using whichever shape matches
 what the role does:
@@ -269,6 +290,12 @@ The API is served at `http://localhost:4000/api/*`, and the bundled frontend
 | GET | `/api/auth/roles` | any logged-in user — the role catalogue |
 | GET | `/api/auth/password-policy` | anyone — the password rules the API enforces |
 | POST | `/api/auth/password` | any logged-in user — change your own password |
+| GET | `/api/reference` | any logged-in user — every value list a form needs, in one call |
+| GET | `/api/reference/:collection` | any logged-in user — `asset-types`, `priorities` or `roles` |
+| GET | `/api/reference/:collection/:key/usage` | Super Admin — how many records hold this value |
+| POST | `/api/reference/:collection` | Super Admin |
+| PATCH | `/api/reference/:collection/:key` | Super Admin — rename, recolour, activate or deactivate |
+| DELETE | `/api/reference/:collection/:key` | Super Admin — refused while the value is in use |
 | POST | `/api/auth/bootstrap` | first run only — creates the first super admin while the database is empty, using the token printed to the startup log (or `BOOTSTRAP_TOKEN`) |
 | GET | `/api/projects` | scoped per role automatically |
 | POST | `/api/projects` | any role that can create projects |
@@ -295,6 +322,54 @@ The API is served at `http://localhost:4000/api/*`, and the bundled frontend
 Every route re-checks permissions against the database on each request — a
 role change or removal takes effect on the user's very next request, not just
 after their token expires.
+
+## Settings: the value lists behind the dropdowns
+
+Asset types, priorities and roles used to be arrays in the source and CHECK
+constraints in the schema, so the studio needed a deploy to add a type. They are
+now rows in `asset_types`, `priorities` and `roles`, managed under **Settings**
+by anyone whose tier grants `manageSettings` — Super Admin, and only Super Admin.
+
+Reading is open to everyone signed in, because every Add Asset and Add User form
+needs the lists to render. Writing is gated by the same capability lookup used
+everywhere else, on the API rather than only in the UI: hiding the tab is a
+convenience, and the tests call the endpoints directly as an Admin, a lead and a
+contributor to prove it.
+
+### How values behave
+
+- **Keys never change.** A value is stored by a key generated once from its
+  first name. Renaming *Prop* to *Props & Set Dressing* changes what people see
+  and leaves every asset holding `prop` untouched.
+- **Deleting is only allowed when nothing uses the value.** Otherwise the API
+  answers 409 with the count and points at deactivating; Settings asks first, so
+  the choice is informed rather than a refusal after the fact.
+- **Deactivating** removes a value from the dropdowns while every record already
+  holding it keeps rendering and working. This is the route for retiring
+  something, and the reason nothing is ever deleted out from under a record.
+- **Built-in values** — the Super Admin and Admin roles — are protected from
+  deletion, deactivation and retiering.
+
+### What is deliberately not managed here
+
+Asset **status**, the **review stage** (`tl` / `cd`) and a review **decision**
+are not reference data. They are the states of a fixed pipeline whose
+transitions are wired to actions — submit, review, deliver. A status added
+through a form would be a state nothing could enter or leave, so `status` keeps
+its CHECK constraint while `type` and `priority` lost theirs. Making the pipeline
+configurable means building a workflow engine, which is a separate piece of work.
+
+Upload extensions are also fixed, on purpose: that list is a security control,
+not a preference.
+
+### Migrating an existing database
+
+`src/migrate.js` creates the three tables on startup if they are missing, fills
+them from the values the app previously held in code, and drops the `type` and
+`priority` CHECK constraints that would otherwise reject anything new. Any role
+an account holds that the table does not know about is carried across under an
+*Unsorted* group with no pipeline access, rather than leaving that account unable
+to sign in. All of it is idempotent.
 
 ## Passwords
 
