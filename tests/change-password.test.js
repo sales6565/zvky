@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { config, resetSchema, startServer, stopServer, api, SKIP_REASON } = require('./helpers');
 
-const cfg = config();
+const cfg = config('password');
 
 test('change password', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   const ORIGINAL = 'Original-Pass-1!';

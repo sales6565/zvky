@@ -100,6 +100,18 @@ app.get('*', (req, res) => {
 // log those in full and hand the caller the error code alone.
 app.use((err, req, res, next) => {
   console.error(`${req.method} ${req.originalUrl} failed:`, err);
+
+  // Multer reports an oversized or unexpected upload through its own error
+  // class. These are all the caller's doing, so answer 400 with the reason.
+  if (err.name === 'MulterError') {
+    const explain = {
+      LIMIT_FILE_SIZE: 'That file is larger than this endpoint accepts.',
+      LIMIT_FILE_COUNT: 'Too many files were uploaded at once.',
+      LIMIT_UNEXPECTED_FILE: `Unexpected file field "${err.field}".`,
+    };
+    return res.status(400).json({ error: explain[err.code] || `Upload rejected: ${err.message}`, code: err.code });
+  }
+
   const isDatabaseError = typeof err.code === 'string' && /^(ER_|PROTOCOL_|ECONN)/.test(err.code);
   if (isDatabaseError) {
     return res.status(500).json({

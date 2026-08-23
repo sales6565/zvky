@@ -23,6 +23,7 @@ const {
   canMarkDelivered,
 } = require('../permissions');
 const { ASSIGNABLE_ROLES, roleDef } = require('../roles');
+const assetImport = require('../asset-import');
 
 router.use(authenticate);
 
@@ -331,9 +332,84 @@ router.post('/:id/deliver', async (req, res) => {
   res.json({ asset: withDetails });
 });
 
+// GET /api/assets/import-template.csv — the sample file for the bulk import.
+// Generated from the same column definitions the import validates against, so
+// it cannot describe a format that would then be rejected.
+router.get('/import-template.csv', (req, res) => {
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="zvky-asset-import-template.csv"');
+  res.send(assetImport.buildTemplateCsv());
+});
+
+// GET /api/assets/import-format — what the importer expects, for the UI to show.
+router.get('/import-format', (req, res) => res.json(assetImport.describeFormat()));
+
+// Read the uploaded file into rows plus its header row. Throws a tagged error
+// for anything that makes the file unreadable, so the caller answers 400
+// rather than 500.
+function readImportFile(filePath, originalName) {
+  const ext = path.extname(originalName).toLowerCase();
+  const fail = (message) => {
+    const err = new Error(message);
+    err.status = 400;
+    throw err;
+  };
+
+  let stats;
+  try {
+    stats = fs.statSync(filePath);
+  } catch {
+    fail('The uploaded file could not be read.');
+  }
+  if (stats.size === 0) fail('That file is empty.');
+  if (stats.size > assetImport.MAX_BYTES) {
+    fail(`That file is ${(stats.size / 1048576).toFixed(1)}MB; the limit is ${(assetImport.MAX_BYTES / 1048576).toFixed(0)}MB.`);
+  }
+
+  let headers = [];
+  let records = [];
+  try {
+    if (ext === '.csv') {
+      const content = fs.readFileSync(filePath, 'utf8');
+      records = parse(content, {
+        bom: true,                // Excel writes a byte-order mark; without this the first header reads as junk
+        columns: (found) => { headers = found; return found; },
+        skip_empty_lines: true,
+        trim: true,
+        relax_column_count: true, // a ragged row becomes a row error, not a dead import
+      });
+    } else {
+      const workbook = XLSX.readFile(filePath, { cellDates: true });
+      const sheetName = workbook.SheetNames[0];
+      if (!sheetName) fail('That workbook has no sheets.');
+      const sheet = workbook.Sheets[sheetName];
+      const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: false });
+      if (!grid.length) fail('That sheet is empty.');
+      headers = grid[0];
+      records = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    }
+  } catch (err) {
+    if (err.status) throw err;
+    // csv-parse and xlsx both throw on structurally broken files, and their
+    // messages name the line, which is worth passing on.
+    fail(`That file could not be read: ${err.message}`);
+  }
+
+  if (!headers.length) fail('That file has no header row. The first row must name the columns.');
+  return { headers, records };
+}
+
+// Yield to the event loop. Between batches this keeps the server answering
+// other requests during a long import instead of appearing hung.
+const yieldToLoop = () => new Promise((resolve) => setImmediate(resolve));
+
 // POST /api/assets/project/:projectId/bulk — CSV or Excel (.xls/.xlsx) import.
-// Expected columns: name, type, priority, assignee_email, man_hours, deadline, description
-// Only "name" and "type" are required; everything else is optional.
+//
+// Nothing here can take the server down: the file is checked before it is
+// parsed, every row is validated before it reaches the database, inserts go in
+// batches with a row-by-row fallback so one bad row cannot fail its batch, and
+// the loop yields between batches. A row that fails is reported with its row
+// number, the column at fault and why; the rest of the file still imports.
 router.post('/project/:projectId/bulk', uploadImport.single('file'), async (req, res) => {
   const projectId = req.params.projectId;
   if (!canCreateAsset(req.user)) return res.status(403).json({ error: 'Your role cannot create assets' });
@@ -341,78 +417,176 @@ router.post('/project/:projectId/bulk', uploadImport.single('file'), async (req,
   if (!allowed) return res.status(403).json({ error: 'No access to this project' });
   if (!req.file) return res.status(400).json({ error: 'A CSV or Excel file is required' });
 
-  const ext = path.extname(req.file.originalname).toLowerCase();
+  let headers;
   let records;
   try {
-    if (ext === '.csv') {
-      const content = fs.readFileSync(req.file.path, 'utf8');
-      records = parse(content, { columns: true, skip_empty_lines: true, trim: true });
-    } else {
-      // .xls / .xlsx
-      const workbook = XLSX.readFile(req.file.path, { cellDates: true });
-      const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      records = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-    }
+    ({ headers, records } = readImportFile(req.file.path, req.file.originalname));
   } catch (err) {
-    return res.status(400).json({ error: 'Could not read that file: ' + err.message });
+    return res.status(err.status || 400).json({ error: err.message });
   } finally {
-    fs.unlink(req.file.path, () => {}); // it's just an import staging file, not a review asset — don't keep it
+    fs.unlink(req.file.path, () => {}); // staging file, not a review asset
   }
 
-  const validTypes = ['character', 'prop', 'environment', 'fx', 'animation', 'background'];
-  const codeMap = { character: 'CHR', prop: 'PRP', environment: 'ENV', fx: 'FX', animation: 'ANI', background: 'BG' };
-  const created = [];
-  const errors = [];
-  const typeCounters = {};
-  for (const t of validTypes) {
-    const { rows } = await db.query('SELECT COUNT(*) AS n FROM assets WHERE project_id = $1 AND `type` = $2', [projectId, t]);
-    typeCounters[t] = Number(rows[0].n);
+  // --- file-level checks, before any row is touched -------------------------
+  const headerCheck = assetImport.validateHeaders(headers);
+  if (!headerCheck.ok) {
+    return res.status(400).json({
+      error: `That file is missing required column${headerCheck.missing.length > 1 ? 's' : ''}: ${headerCheck.missing.join(', ')}.`,
+      missingColumns: headerCheck.missing,
+      foundColumns: headerCheck.present,
+      expectedColumns: assetImport.COLUMN_NAMES,
+      hint: 'Download the sample file for the exact format.',
+    });
   }
+  if (!records.length) {
+    return res.status(400).json({
+      error: 'That file has a header row but no data rows.',
+      expectedColumns: assetImport.COLUMN_NAMES,
+    });
+  }
+  if (records.length > assetImport.MAX_ROWS) {
+    return res.status(400).json({
+      error: `That file has ${records.length} rows; the limit is ${assetImport.MAX_ROWS} per import. Split it and upload again.`,
+      rowCount: records.length,
+      maxRows: assetImport.MAX_ROWS,
+    });
+  }
+
+  // --- validate every row up front -----------------------------------------
+  // Nothing is written until the whole file has been checked, so an error on
+  // the last row is reported the same way as one on the first.
+  const errors = [];
+  const valid = [];
+  const seenInFile = new Map(); // name + type, within this file
+
+  // Existing assets, so re-uploading a file does not silently duplicate them.
+  const { rows: existingRows } = await db.query(
+    'SELECT `name`, `type` FROM assets WHERE project_id = $1',
+    [projectId]
+  );
+  const existing = new Set(existingRows.map((r) => `${String(r.name).toLowerCase()} ${r.type}`));
 
   for (let i = 0; i < records.length; i++) {
-    const row = records[i];
-    const rowNum = i + 2; // header is row 1
-    const name = (row.name || '').trim();
-    const type = (row.type || '').trim().toLowerCase();
-    if (!name) { errors.push(`Row ${rowNum}: missing name`); continue; }
-    if (!validTypes.includes(type)) { errors.push(`Row ${rowNum}: invalid type "${row.type}" (must be one of ${validTypes.join(', ')})`); continue; }
-
-    let assigneeId = null;
-    if (row.assignee_email) {
-      const emailStr = String(row.assignee_email).trim();
-      const { rows: u } = await db.query(
-        'SELECT id FROM users WHERE lower(email) = lower($1) AND role IN ($2)',
-        [emailStr, ASSIGNABLE_ROLES]
-      );
-      if (!u.length) { errors.push(`Row ${rowNum}: no assignable team member found with email ${emailStr}`); }
-      else assigneeId = u[0].id;
+    const rowNumber = i + 2; // the header is row 1
+    const result = assetImport.validateRow(records[i], rowNumber);
+    if (!result.ok) {
+      errors.push(...result.errors);
+      continue;
     }
+    const { values } = result;
+    const identity = `${values.name.toLowerCase()} ${values.type}`;
 
-    const priority = ['low', 'med', 'high'].includes(String(row.priority || '').toLowerCase()) ? String(row.priority).toLowerCase() : 'med';
-    const manHours = row.man_hours ? Number(row.man_hours) : null;
-    let deadline = null;
-    if (row.deadline instanceof Date) {
-      deadline = row.deadline.toISOString().slice(0, 10);
-    } else if (row.deadline) {
-      deadline = String(row.deadline).trim() || null;
+    if (seenInFile.has(identity)) {
+      errors.push({
+        row: rowNumber, column: 'name', value: values.name,
+        message: `duplicates row ${seenInFile.get(identity)} in this file (same name and type)`,
+      });
+      continue;
     }
+    if (existing.has(identity)) {
+      errors.push({
+        row: rowNumber, column: 'name', value: values.name,
+        message: 'an asset with this name and type already exists in this project',
+      });
+      continue;
+    }
+    seenInFile.set(identity, rowNumber);
+    valid.push({ rowNumber, values });
 
-    typeCounters[type] += 1;
-    const code = `${codeMap[type]}-${String(typeCounters[type]).padStart(3, '0')}`;
-    const id = uuid();
-    await db.query(
-      `INSERT INTO assets (id, \`code\`, \`name\`, \`type\`, \`status\`, priority, project_id, assignee_id, due_date, description, man_hours)
-       VALUES ($1,$2,$3,$4,'not_started',$5,$6,$7,$8,$9,$10)`,
-      [id, code, name, type, priority, projectId, assigneeId, deadline, (row.description || '').trim(), manHours]
-    );
-    const defaultTasks = ['Rough pass', 'Clean line', 'Color / shade'];
-    for (let t = 0; t < defaultTasks.length; t++) {
-      await db.query('INSERT INTO tasks (id, asset_id, `name`, done, `position`) VALUES ($1,$2,$3,0,$4)', [uuid(), id, defaultTasks[t], t]);
-    }
-    created.push({ id, code, name });
+    if (i % 500 === 499) await yieldToLoop(); // stay responsive on a big file
   }
 
-  res.status(207).json({ created: created.length, createdAssets: created, errors });
+  // Resolve assignee emails in one query rather than one per row.
+  const emails = [...new Set(valid.map((v) => v.values.assignee_email).filter(Boolean))];
+  const assigneeByEmail = new Map();
+  if (emails.length) {
+    const { rows } = await db.query(
+      'SELECT id, email FROM users WHERE lower(email) IN ($1) AND role IN ($2)',
+      [emails.map((e) => e.toLowerCase()), ASSIGNABLE_ROLES]
+    );
+    rows.forEach((r) => assigneeByEmail.set(String(r.email).toLowerCase(), r.id));
+  }
+
+  const ready = [];
+  for (const entry of valid) {
+    const email = entry.values.assignee_email;
+    if (email && !assigneeByEmail.has(email.toLowerCase())) {
+      errors.push({
+        row: entry.rowNumber, column: 'assignee_email', value: email,
+        message: 'no assignable team member has this email address',
+      });
+      continue;
+    }
+    entry.assigneeId = email ? assigneeByEmail.get(email.toLowerCase()) : null;
+    ready.push(entry);
+  }
+
+  // --- asset codes ---------------------------------------------------------
+  const codeMap = { character: 'CHR', prop: 'PRP', environment: 'ENV', fx: 'FX', animation: 'ANI', background: 'BG' };
+  const typeCounters = {};
+  for (const t of assetImport.ASSET_TYPES) {
+    const { rows } = await db.query(
+      'SELECT COUNT(*) AS n FROM assets WHERE project_id = $1 AND `type` = $2',
+      [projectId, t]
+    );
+    typeCounters[t] = Number(rows[0].n);
+  }
+  for (const entry of ready) {
+    typeCounters[entry.values.type] += 1;
+    entry.id = uuid();
+    entry.code = `${codeMap[entry.values.type]}-${String(typeCounters[entry.values.type]).padStart(3, '0')}`;
+  }
+
+  // --- insert in batches ---------------------------------------------------
+  const DEFAULT_TASKS = ['Rough pass', 'Clean line', 'Color / shade'];
+  const ASSET_INSERT =
+    'INSERT INTO assets (id, `code`, `name`, `type`, `status`, priority, project_id, assignee_id, due_date, description, man_hours) VALUES ?';
+  const TASK_INSERT = 'INSERT INTO tasks (id, asset_id, `name`, done, `position`) VALUES ?';
+  const assetRow = (e) => [
+    e.id, e.code, e.values.name, e.values.type, 'not_started', e.values.priority,
+    projectId, e.assigneeId, e.values.deadline, e.values.description, e.values.man_hours,
+  ];
+  const taskRows = (e) => DEFAULT_TASKS.map((name, position) => [uuid(), e.id, name, 0, position]);
+
+  const created = [];
+  for (let i = 0; i < ready.length; i += assetImport.BATCH_SIZE) {
+    const batch = ready.slice(i, i + assetImport.BATCH_SIZE);
+    try {
+      await db.query(ASSET_INSERT, [batch.map(assetRow)]);
+      await db.query(TASK_INSERT, [batch.flatMap(taskRows)]);
+      batch.forEach((e) => created.push({ id: e.id, code: e.code, name: e.values.name }));
+    } catch (batchErr) {
+      // The batch failed as a unit, so retry row by row to find which rows are
+      // actually at fault and let the rest through.
+      console.error(`Bulk import batch failed (${batchErr.code || batchErr.message}); retrying row by row.`);
+      for (const entry of batch) {
+        try {
+          await db.query(ASSET_INSERT, [[assetRow(entry)]]);
+          await db.query(TASK_INSERT, [taskRows(entry)]);
+          created.push({ id: entry.id, code: entry.code, name: entry.values.name });
+        } catch (rowErr) {
+          errors.push({
+            row: entry.rowNumber,
+            column: null,
+            value: entry.values.name,
+            message: `could not be saved (${rowErr.code || 'database error'})`,
+          });
+        }
+      }
+    }
+    await yieldToLoop();
+  }
+
+  errors.sort((a, b) => a.row - b.row || String(a.column).localeCompare(String(b.column)));
+
+  // 207 when some rows were skipped, 201 when the whole file went in.
+  res.status(errors.length ? 207 : 201).json({
+    created: created.length,
+    skipped: errors.length,
+    totalRows: records.length,
+    createdAssets: created,
+    errors,
+  });
 });
 
 module.exports = router;

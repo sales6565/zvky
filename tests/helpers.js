@@ -15,9 +15,13 @@ const fs = require('node:fs');
 
 const ROOT = path.join(__dirname, '..');
 
-function config() {
-  const name = process.env.TEST_DB_NAME;
-  if (!name) return null;
+// Each suite gets its own database, derived from TEST_DB_NAME. The test runner
+// runs files in parallel, and two suites dropping and recreating one database
+// at the same time deadlock against each other.
+function config(suffix) {
+  const base = process.env.TEST_DB_NAME;
+  if (!base) return null;
+  const name = suffix ? `${base}_${suffix}` : base;
   return {
     host: process.env.TEST_DB_HOST || process.env.DB_HOST || '127.0.0.1',
     port: Number(process.env.TEST_DB_PORT || process.env.DB_PORT || 3306),

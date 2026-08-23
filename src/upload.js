@@ -32,7 +32,11 @@ function extensionFilter(allowed) {
   return (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
     if (allowed.includes(ext)) return cb(null, true);
-    cb(new Error(`Unsupported file type "${ext}". Allowed: ${allowed.join(', ')}`));
+    // Tagged as a client error: the caller sent the wrong sort of file, which
+    // is not a fault in the server and should not be reported as one.
+    const err = new Error(`Unsupported file type "${ext || '(none)'}". Allowed: ${allowed.join(', ')}`);
+    err.status = 400;
+    cb(err);
   };
 }
 

@@ -80,6 +80,17 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .modal h2{font-family:'Space Grotesk';margin:0 0 14px;font-size:18px;}
 .modal label{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--ink-muted);font-family:'IBM Plex Mono';margin:12px 0 6px;}
 .modal input,.modal select,.modal textarea{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--ink);padding:9px 10px;border-radius:8px;font-family:'Inter';font-size:13px;}
+.import-summary{display:flex;gap:18px;margin-bottom:14px;flex-wrap:wrap;}
+.import-summary div{font-size:12px;color:var(--ink-muted);}
+.import-summary strong{display:block;font-size:20px;font-family:'IBM Plex Mono';color:var(--ink);}
+.import-summary .bad strong{color:var(--brand);}
+.import-errors{max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;}
+.import-errors table{width:100%;border-collapse:collapse;font-size:12px;}
+.import-errors th{position:sticky;top:0;background:var(--surface-2);text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink-muted);font-family:'IBM Plex Mono';}
+.import-errors td{padding:7px 10px;border-top:1px solid var(--border);vertical-align:top;}
+.import-errors td.rownum{font-family:'IBM Plex Mono';color:var(--ink-faint);width:52px;}
+.import-errors td.col{font-family:'IBM Plex Mono';color:var(--review);width:130px;}
+.import-errors td.val{font-family:'IBM Plex Mono';color:var(--ink-faint);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .pw-field{position:relative;}
 .pw-field input{padding-right:64px;width:100%;}
 .pw-toggle{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:0;color:var(--ink-faint);font-size:10.5px;font-family:'IBM Plex Mono';text-transform:uppercase;letter-spacing:.6px;cursor:pointer;padding:4px 6px;border-radius:6px;}
@@ -148,6 +159,7 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
     <div class="spacer"></div>
     <button class="btn btn-ghost" id="newProjectBtn" style="display:none;">+ Project</button>
     <button class="btn btn-ghost" id="bulkImportBtn" style="display:none;">Import CSV/XLS</button>
+    <button class="btn btn-ghost" id="downloadSampleBtn" style="display:none;" title="Download a CSV with the correct headers and example rows">Sample format</button>
     <input type="file" id="bulkImportInput" accept=".csv,.xls,.xlsx" style="display:none;">
     <button class="btn btn-brand" id="newAssetBtn" style="display:none;">+ New Asset</button>
   </div>
@@ -180,6 +192,17 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
     <label>Team leads on this project</label><div class="checklist" id="p_leads"></div>
     <label>Production coordinators on this project</label><div class="checklist" id="p_coords"></div>
     <div class="modal-actions"><button class="btn btn-ghost" id="cancelProjectModal">Cancel</button><button class="btn btn-brand" id="saveProjectModal">Create Project</button></div>
+  </div>
+</div>
+
+<div class="modal-wrap" id="importModalWrap">
+  <div class="modal" style="width:660px;">
+    <h2 id="im_title">Import results</h2>
+    <div id="im_body"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="im_downloadSample">Download sample format</button>
+      <button class="btn btn-brand" id="im_close">Close</button>
+    </div>
   </div>
 </div>
 
@@ -369,6 +392,7 @@ async function bootApp(){
   document.getElementById('usersTabBtn').style.display = caps().manageUsers ? '' : 'none';
   document.getElementById('newProjectBtn').style.display = caps().createProject ? '' : 'none';
   document.getElementById('bulkImportBtn').style.display = caps().createAsset ? '' : 'none';
+  document.getElementById('downloadSampleBtn').style.display = caps().createAsset ? '' : 'none';
 
   const { projects } = await api('/projects');
   state.projects = projects;
@@ -551,6 +575,7 @@ async function render(){
   const showCreateControls = (state.view==='board'||state.view==='list') && caps().createAsset && state.currentProjectId;
   document.getElementById('newAssetBtn').style.display = showCreateControls ? '' : 'none';
   document.getElementById('bulkImportBtn').style.display = showCreateControls ? '' : 'none';
+  document.getElementById('downloadSampleBtn').style.display = showCreateControls ? '' : 'none';
   if(state.view==='board') renderBoard();
   else if(state.view==='list') renderList();
   else if(state.view==='team') await renderTeam();
@@ -766,24 +791,105 @@ document.getElementById('bulkImportBtn').addEventListener('click', ()=>{
   if(!state.currentProjectId){ showToast('Select a project first.'); return; }
   document.getElementById('bulkImportInput').click();
 });
+const importModalWrap = document.getElementById('importModalWrap');
+document.getElementById('im_close').addEventListener('click', ()=>importModalWrap.classList.remove('show'));
+importModalWrap.addEventListener('click', e=>{ if(e.target===importModalWrap) importModalWrap.classList.remove('show'); });
+
+/* The template is behind the same auth as everything else, so it cannot be a
+   plain link — fetch it with the token and hand the browser a blob. */
+async function downloadSampleFormat(){
+  try{
+    const res = await fetch(API_BASE + '/assets/import-template.csv', { headers:{ Authorization:'Bearer '+state.token } });
+    if(!res.ok) throw new Error('Could not fetch the sample file');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'zvky-asset-import-template.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    showToast('Sample format downloaded.');
+  }catch(err){ showToast(err.message); }
+}
+document.getElementById('downloadSampleBtn').addEventListener('click', downloadSampleFormat);
+document.getElementById('im_downloadSample').addEventListener('click', downloadSampleFormat);
+
+/* Show what happened, row by row, rather than leaving it in the console. */
+function showImportResult(data, ok){
+  const title = document.getElementById('im_title');
+  const body  = document.getElementById('im_body');
+  const errors = Array.isArray(data.errors) ? data.errors : [];
+
+  if(!ok){
+    /* The file was rejected outright — nothing was imported. */
+    title.textContent = 'Import failed';
+    let extra = '';
+    if(data.missingColumns && data.missingColumns.length){
+      extra += `<div style="margin-top:12px;font-size:12px;">
+        <div style="color:var(--ink-muted);">Missing column${data.missingColumns.length>1?'s':''}:</div>
+        <div class="mono" style="color:var(--brand);margin-top:4px;">${data.missingColumns.map(escapeHTML).join(', ')}</div>
+        <div style="color:var(--ink-muted);margin-top:10px;">Found in your file:</div>
+        <div class="mono" style="color:var(--ink-faint);margin-top:4px;">${(data.foundColumns||[]).map(escapeHTML).join(', ') || '(none)'}</div>
+        <div style="color:var(--ink-muted);margin-top:10px;">Expected:</div>
+        <div class="mono" style="color:var(--ink-faint);margin-top:4px;">${(data.expectedColumns||[]).map(escapeHTML).join(', ')}</div>
+      </div>`;
+    }
+    body.innerHTML = `<div style="color:var(--brand);font-size:13px;">${escapeHTML(data.error||'Import failed')}</div>${extra}`;
+    importModalWrap.classList.add('show');
+    return;
+  }
+
+  title.textContent = errors.length ? 'Imported with some rows skipped' : 'Import complete';
+  const rows = errors.map(e=>`<tr>
+      <td class="rownum">${e.row ?? ''}</td>
+      <td class="col">${escapeHTML(e.column || '—')}</td>
+      <td class="val" title="${escapeHTML(String(e.value ?? ''))}">${escapeHTML(String(e.value ?? '')) || '<span style="color:var(--ink-faint);">(empty)</span>'}</td>
+      <td>${escapeHTML(e.message || '')}</td>
+    </tr>`).join('');
+
+  body.innerHTML = `
+    <div class="import-summary">
+      <div><strong>${data.totalRows ?? (data.created + errors.length)}</strong>rows in file</div>
+      <div><strong style="color:var(--approved);">${data.created}</strong>imported</div>
+      <div class="bad"><strong>${errors.length}</strong>skipped</div>
+    </div>
+    ${errors.length ? `
+      <div style="font-size:12px;color:var(--ink-muted);margin-bottom:8px;">
+        These rows were not imported. Everything else was. Fix them and upload just those rows again.
+      </div>
+      <div class="import-errors">
+        <table><thead><tr><th>Row</th><th>Column</th><th>Value</th><th>Problem</th></tr></thead>
+        <tbody>${rows}</tbody></table>
+      </div>` :
+      `<div style="font-size:13px;color:var(--approved);">Every row imported successfully.</div>`}
+  `;
+  importModalWrap.classList.add('show');
+}
+
 document.getElementById('bulkImportInput').addEventListener('change', async (e)=>{
   const file = e.target.files[0];
   e.target.value = '';
   if(!file) return;
+  const btn = document.getElementById('bulkImportBtn');
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Importing…';
   const formData = new FormData();
   formData.append('file', file);
   try{
     const res = await fetch(API_BASE + '/assets/project/' + state.currentProjectId + '/bulk', {
       method:'POST', headers:{ Authorization:'Bearer '+state.token }, body: formData,
+      /* A stuck request should surface as a message, not a spinner that never ends. */
+      signal: AbortSignal.timeout(120000),
     });
-    const data = await res.json();
-    if(!res.ok) throw new Error(data.error || 'Import failed');
-    let msg = `Imported ${data.created} asset${data.created===1?'':'s'}.`;
-    if(data.errors && data.errors.length) msg += ` ${data.errors.length} row(s) skipped — see console.`;
-    showToast(msg);
-    if(data.errors && data.errors.length) console.warn('CSV import issues:', data.errors);
-    render();
-  }catch(err){ showToast(err.message); }
+    const data = await res.json().catch(()=>({ error:`Import failed (HTTP ${res.status})` }));
+    showImportResult(data, res.ok);
+    if(res.ok && data.created) { showToast(`Imported ${data.created} asset${data.created===1?'':'s'}.`); render(); }
+  }catch(err){
+    showImportResult({ error: err.name==='TimeoutError'
+      ? 'The import took too long and was stopped. Try a smaller file.'
+      : err.message }, false);
+  }finally{
+    btn.disabled = false; btn.textContent = label;
+  }
 });
 
 /* ---------- new project modal ---------- */
