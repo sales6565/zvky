@@ -87,6 +87,18 @@ function shape(name, row) {
 }
 
 // --- loading -----------------------------------------------------------------
+//
+// The mirror is per-process, so anything that changes these tables by another
+// route is invisible here until it is reloaded: a SQL script, `npm run seed`, a
+// migration — and, on any host that runs more than one Node worker, a write
+// made through a sibling worker. That last one is the common case in
+// production, and it does not resolve itself: two workers serve two different
+// lists indefinitely.
+//
+// So loading is no longer only a startup step. refresh() below is called
+// whenever an answer has to be authoritative, and on a timer as a backstop.
+let lastLoadedAt = 0;
+
 async function load(db) {
   for (const name of COLLECTION_NAMES) {
     const { rows } = await db.query(
@@ -95,11 +107,39 @@ async function load(db) {
     cache[name] = rows.map((row) => shape(name, row));
   }
   loaded = true;
+  lastLoadedAt = Date.now();
   return cache;
+}
+
+// Reload, collapsing concurrent callers onto one query.
+//
+// The Settings page asks for all three lists at once and every one of them
+// wants fresh data; without this that is three identical round trips. Sharing
+// the in-flight promise makes it one, and keeps a burst of role-lookup misses
+// from turning into a burst of queries.
+let inFlight = null;
+
+function refresh(db) {
+  if (inFlight) return inFlight;
+  inFlight = load(db).finally(() => { inFlight = null; });
+  return inFlight;
+}
+
+// Reload, and say whether anything actually changed. Used by the background
+// refresh so a quiet studio logs nothing.
+async function refreshIfChanged(db) {
+  const before = COLLECTION_NAMES.map((name) => `${name}:${(cache[name] || []).length}`).join('|');
+  await refresh(db);
+  const after = COLLECTION_NAMES.map((name) => `${name}:${(cache[name] || []).length}`).join('|');
+  return before !== after;
 }
 
 function isLoaded() {
   return loaded;
+}
+
+function loadedAt() {
+  return lastLoadedAt;
 }
 
 // Used by the tests and by anything that needs to run without a database.
@@ -304,6 +344,9 @@ async function remove(db, name, key) {
 }
 
 module.exports = {
+  refresh,
+  refreshIfChanged,
+  loadedAt,
   COLLECTIONS,
   COLLECTION_NAMES,
   load,

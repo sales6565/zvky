@@ -36,8 +36,19 @@ function resolveCollection(req, res) {
   return name;
 }
 
+// Reads are authoritative.
+//
+// These used to answer straight from the in-memory mirror, which is only
+// refreshed at startup and after a write made through this same process. Rows
+// added any other way — a SQL script, a migration, or a write handled by a
+// sibling worker — were invisible until a restart, so Settings showed a list
+// that did not match the table. Reloading first costs one small query for
+// tables of a few dozen rows, and concurrent callers share it.
+const db = require('../db');
+
 // GET /api/reference — everything a form needs in one round trip.
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
+  await referenceData.refresh(db);
   res.json({
     assetTypes: referenceData.list('asset_types'),
     priorities: referenceData.list('priorities'),
@@ -51,9 +62,10 @@ router.get('/', (req, res) => {
 // GET /api/reference/:collection?includeInactive=1
 // Deactivated values are only listed when asked for, so the ordinary dropdown
 // never offers one, while Settings can still show and reactivate them.
-router.get('/:collection', (req, res) => {
+router.get('/:collection', async (req, res) => {
   const name = resolveCollection(req, res);
   if (!name) return undefined;
+  await referenceData.refresh(db);
   const includeInactive = req.query.includeInactive === '1' || req.query.includeInactive === 'true';
   // Listing what has been retired is a management view, not a dropdown.
   if (includeInactive && !req.user.capabilities.manageSettings) {
@@ -70,14 +82,14 @@ router.get('/:collection/:key/usage', requireCapability('manageSettings'), async
   if (!name) return undefined;
   const entry = referenceData.get(name, req.params.key);
   if (!entry) return res.status(404).json({ error: 'That value does not exist.' });
-  const count = await referenceData.usageCount(require('../db'), name, req.params.key);
+  const count = await referenceData.usageCount(db, name, req.params.key);
   return res.json({ key: entry.key, label: entry.label, inUse: count, canDelete: count === 0 && !entry.isSystem });
 });
 
 router.post('/:collection', requireCapability('manageSettings'), async (req, res) => {
   const name = resolveCollection(req, res);
   if (!name) return undefined;
-  const result = await referenceData.create(require('../db'), name, req.body || {});
+  const result = await referenceData.create(db, name, req.body || {});
   if (!result.ok) return res.status(result.status).json({ error: result.errors[0].message, errors: result.errors });
   console.log(`${req.user.email} added ${referenceData.COLLECTIONS[name].singular} "${result.entry.label}".`);
   return res.status(201).json({ entry: result.entry });
@@ -87,7 +99,7 @@ router.post('/:collection', requireCapability('manageSettings'), async (req, res
 router.patch('/:collection/:key', requireCapability('manageSettings'), async (req, res) => {
   const name = resolveCollection(req, res);
   if (!name) return undefined;
-  const result = await referenceData.update(require('../db'), name, req.params.key, req.body || {});
+  const result = await referenceData.update(db, name, req.params.key, req.body || {});
   if (!result.ok) return res.status(result.status).json({ error: result.errors[0].message, errors: result.errors });
   console.log(`${req.user.email} updated ${referenceData.COLLECTIONS[name].singular} "${result.entry.label}".`);
   return res.json({ entry: result.entry });
@@ -98,7 +110,7 @@ router.patch('/:collection/:key', requireCapability('manageSettings'), async (re
 router.delete('/:collection/:key', requireCapability('manageSettings'), async (req, res) => {
   const name = resolveCollection(req, res);
   if (!name) return undefined;
-  const result = await referenceData.remove(require('../db'), name, req.params.key);
+  const result = await referenceData.remove(db, name, req.params.key);
   if (!result.ok) {
     return res.status(result.status).json({
       error: result.errors[0].message,

@@ -11,6 +11,7 @@ const assetRoutes = require('./routes/assets');
 const userRoutes = require('./routes/users');
 const teamRoutes = require('./routes/team');
 const referenceRoutes = require('./routes/reference');
+const referenceData = require('./reference-data');
 const ipAllowlistRoutes = require('./routes/ip-allowlist');
 const ipGate = require('./middleware/ip-allowlist');
 
@@ -146,6 +147,31 @@ process.on('uncaughtException', (err) => {
   console.error('Uncaught exception (server kept running):', err);
 });
 
+// Keep this process's copy of the value lists from drifting.
+//
+// Reads refresh it, so a browser looking at Settings always sees the table. But
+// the same mirror answers the synchronous permission checks on every request,
+// and those cannot wait on a query — so a worker that nobody happens to ask for
+// reference data would carry a stale catalogue indefinitely, and refuse anyone
+// holding a role added since it started. This bounds that to one interval.
+//
+// Set REFERENCE_REFRESH_SECONDS=0 to switch it off on a single-process
+// deployment where nothing else writes to the database.
+function startReferenceRefresh(db) {
+  const seconds = Number(process.env.REFERENCE_REFRESH_SECONDS ?? 30);
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  const timer = setInterval(() => {
+    referenceData.refreshIfChanged(db)
+      .then((changed) => {
+        if (changed) console.log('[reference] value lists changed elsewhere; reloaded.');
+      })
+      .catch((err) => console.error(`[reference] refresh failed: ${err.sqlMessage || err.message}`));
+  }, seconds * 1000);
+  // Never hold the process open for this.
+  timer.unref();
+  return timer;
+}
+
 const PORT = process.env.PORT || 4000;
 
 // Migrate and load the reference data BEFORE accepting requests.
@@ -165,6 +191,7 @@ async function start() {
     // fails as "Invalid email or password" with no explanation.
     await require('./bootstrap-token').announce(db);
     ipGate.describeAtStartup();
+    startReferenceRefresh(db);
   } catch (err) {
     // Start anyway: a server that is up can report through /api/health why the
     // database is unreachable, where one that exited says nothing at all.

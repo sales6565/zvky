@@ -385,6 +385,16 @@ everywhere else, on the API rather than only in the UI: hiding the tab is a
 convenience, and the tests call the endpoints directly as an Admin, a lead and a
 contributor to prove it.
 
+### Active and inactive
+
+Settings is a management view and lists **everything in the table**, with
+retired values greyed out and marked `inactive` so they can be reactivated. The
+dropdowns on the forms offer **only active values**. The section heading states
+both counts ("60 active · 1 inactive") so the two never have to be guessed at.
+
+Deleting is refused while a value is in use; deactivating is the way to retire
+one without disturbing the records that already hold it.
+
 ### How values behave
 
 - **Keys never change.** A value is stored by a key generated once from its
@@ -398,6 +408,28 @@ contributor to prove it.
   something, and the reason nothing is ever deleted out from under a record.
 - **Built-in values** — the Super Admin and Admin roles — are protected from
   deletion, deactivation and retiering.
+
+### Where the lists are read from
+
+Settings and every dropdown are served from the database, not from a snapshot
+of it. The API reloads before answering a read, and concurrent callers share one
+load, so the three requests the Settings page makes cost a single round trip.
+
+This matters because the same values are also held in a per-process in-memory
+mirror, which the permission checks read: those run on every request and are not
+async, so they cannot wait on a query. The mirror is refreshed on reads, after
+writes, and on a timer (`REFERENCE_REFRESH_SECONDS`, default 30, `0` disables).
+
+The timer is not decoration. Without it a worker that nobody happens to ask for
+reference data keeps a stale catalogue, and **refuses every request from anyone
+holding a role added since it started** — signed in, then `403` on everything,
+depending on which worker took the request. `authenticate()` now reloads once
+before deciding a role is unknown, so a miss heals itself instead of locking
+somebody out.
+
+If you run more than one Node worker against one database — Passenger and most
+cPanel setups do — each worker has its own mirror. That is what these refreshes
+are for: without them two workers serve two different lists indefinitely.
 
 ### What is deliberately not managed here
 

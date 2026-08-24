@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const db = require('../db');
 const { roleDef, capabilitiesFor } = require('../roles');
+const referenceData = require('../reference-data');
 
 // Verifies the bearer token and attaches the current user (fetched fresh
 // from the database, not just trusted from the token) to req.user.
@@ -35,9 +36,18 @@ async function authenticate(req, res, next) {
     }
     delete user.password_changed_at;
     if (!roleDef(user.role)) {
-      // The designation was removed from the catalogue while this account
-      // still holds it. Fail closed rather than granting an undefined role
-      // whatever the last permission check happens to default to.
+      // Either the designation really was removed, or this process is holding a
+      // catalogue older than the account. The second is ordinary: the role may
+      // have been added a moment ago, by a SQL script or by a sibling worker
+      // whose write this process never saw. Reloading before deciding turns
+      // what was a hard 403 — signed in, then refused on every request, purely
+      // according to which worker answered — into a miss that heals itself.
+      await referenceData.refresh(db).catch(() => {});
+    }
+    if (!roleDef(user.role)) {
+      // Now it is a real absence: the designation is not in the table. Fail
+      // closed rather than granting an undefined role whatever the last
+      // permission check happens to default to.
       return res.status(403).json({
         error: `Your role "${user.role}" is no longer configured. Ask an admin to reassign it.`,
       });

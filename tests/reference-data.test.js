@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { config, resetSchema, startServer, stopServer, api, SKIP_REASON } = require('./helpers');
+const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON } = require('./helpers');
 const { TIERS, capabilitiesForTier, ASSIGNABLE_TIERS } = require('../src/role-tiers');
 const defaults = require('../src/reference-defaults');
 const referenceData = require('../src/reference-data');
@@ -291,5 +291,153 @@ test('reference data', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   await t.test('the import template describes the current types, not the old ones', async () => {
     const format = await call('/assets/import-format', { token: superToken });
     assert.ok(format.body.assetTypes.includes('storyboard'), JSON.stringify(format.body.assetTypes));
+  });
+});
+
+// --- the lists must match the table, not a snapshot of it ---------------------
+//
+// These exist because of a real failure: Settings showed fewer asset types,
+// priorities and roles than the database held. The lists were served from a
+// per-process in-memory mirror refreshed only at startup and after a write made
+// through that same process. Anything else that touched the tables — a SQL
+// script, `npm run seed`, a migration, or a sibling worker on a host that runs
+// more than one — was invisible until a restart.
+
+test('a refresh collapses concurrent callers onto one query', async () => {
+  // The Settings page asks for all three lists at once and each wants fresh
+  // data. Without sharing the in-flight load that is three identical round
+  // trips, and a burst of role-lookup misses would be a burst of queries.
+  let queries = 0;
+  const db = {
+    async query() {
+      queries++;
+      await new Promise((r) => setTimeout(r, 10));
+      return { rows: [] };
+    },
+  };
+  const referenceData2 = require('../src/reference-data');
+  const COLLECTIONS = 3;
+  await Promise.all([
+    referenceData2.refresh(db), referenceData2.refresh(db),
+    referenceData2.refresh(db), referenceData2.refresh(db),
+  ]);
+  assert.strictEqual(queries, COLLECTIONS, 'four concurrent refreshes should be one load of three tables');
+
+  // A later refresh is a fresh load, not a cached one.
+  await referenceData2.refresh(db);
+  assert.strictEqual(queries, COLLECTIONS * 2);
+});
+
+test('the settings lists match the database', { skip: cfg ? false : SKIP_REASON }, async (t) => {
+  const PASSWORD = 'Freshness-Test-1!';
+  let server;
+  let sibling;   // a second worker on the same database, as Passenger runs it
+  let superToken;
+
+  const call = (path, options) => api(server.base, path, options);
+  const count = async (base, path) =>
+    (await api(base, `/reference/${path}?includeInactive=1`, { token: superToken })).body.entries.length;
+  const inTable = async (table) =>
+    Number((await sql(cfg, `SELECT COUNT(*) AS n FROM ${table}`))[0].n);
+
+  t.before(async () => {
+    await resetSchema(cfg);
+    server = await startServer(cfg, { BOOTSTRAP_TOKEN: 'fresh-token' });
+    await call('/auth/bootstrap', {
+      method: 'POST',
+      body: { token: 'fresh-token', name: 'Fresh Admin', email: 'super@zvky.test', password: PASSWORD },
+    });
+    superToken = (await call('/auth/login', {
+      method: 'POST', body: { email: 'super@zvky.test', password: PASSWORD },
+    })).body.token;
+    sibling = await startServer(cfg, {});
+  });
+
+  t.after(() => { stopServer(server); stopServer(sibling); });
+
+  await t.test('a row added outside the app shows up without a restart', async () => {
+    // Exactly what a SQL script or `npm run seed` against a running app does.
+    await sql(cfg, `
+      INSERT INTO roles (id,\`key\`,label,group_name,tier,color,position,is_active,is_system)
+        VALUES (UUID(),'matte_painter','Matte Painter','Art','contributor','#4db8ff',0,1,0);
+      INSERT INTO asset_types (id,\`key\`,label,code_prefix,color,position,is_active,is_system)
+        VALUES (UUID(),'weapon','Weapon','WPN','#ff9f1c',0,1,0);
+      INSERT INTO priorities (id,\`key\`,label,color,position,is_active,is_system)
+        VALUES (UUID(),'blocker','Blocker','#ff3b30',0,1,0);
+    `);
+
+    for (const [table, path] of [['roles', 'roles'], ['asset_types', 'asset-types'], ['priorities', 'priorities']]) {
+      assert.strictEqual(await count(server.base, path), await inTable(table),
+        `${table}: the list must match the table`);
+    }
+    const roles = await call('/reference/roles?includeInactive=1', { token: superToken });
+    assert.ok(roles.body.entries.some((e) => e.key === 'matte_painter'));
+  });
+
+  await t.test('two workers on one database do not disagree', async () => {
+    // A write handled by one worker used to leave the other serving a shorter
+    // list indefinitely, so the page changed depending on who answered.
+    const created = await api(sibling.base, '/reference/roles', {
+      token: superToken, method: 'POST', body: { label: 'Crowd Artist', group: 'Art', tier: 'contributor' },
+    });
+    assert.strictEqual(created.status, 201, JSON.stringify(created.body));
+
+    const here = await count(server.base, 'roles');
+    const there = await count(sibling.base, 'roles');
+    assert.strictEqual(here, there, 'both workers must serve the same list');
+    assert.strictEqual(here, await inTable('roles'), 'and it must be what the table holds');
+  });
+
+  await t.test('a role added elsewhere does not lock its holder out', async () => {
+    // The worst of it was not the missing row. A worker that had not heard of a
+    // role refused every request from anyone holding it — signed in, then 403
+    // on everything, according to which worker took the request.
+    const user = await api(sibling.base, '/users', {
+      token: superToken, method: 'POST',
+      body: { name: 'Crowd Person', email: 'crowd@zvky.test', role: 'crowd_artist', password: PASSWORD },
+    });
+    assert.strictEqual(user.status, 201, JSON.stringify(user.body));
+
+    for (const base of [server.base, sibling.base]) {
+      const login = await api(base, '/auth/login', {
+        method: 'POST', body: { email: 'crowd@zvky.test', password: PASSWORD },
+      });
+      assert.strictEqual(login.status, 200);
+      assert.ok(login.body.user.capabilities, 'capabilities must never come back null');
+      assert.strictEqual(login.body.user.capabilities.label, 'Crowd Artist');
+
+      const request = await api(base, '/projects', { token: login.body.token });
+      assert.strictEqual(request.status, 200, 'every worker must accept a role the table knows about');
+    }
+  });
+
+  await t.test('deactivating hides a value from the forms but not from Settings', async () => {
+    // The intended split, asserted so it cannot drift: Settings is a management
+    // view and shows everything, including what has been retired, so it can be
+    // reactivated. The dropdowns offer only what is live.
+    await call('/reference/asset-types/weapon', {
+      token: superToken, method: 'PATCH', body: { isActive: false },
+    });
+
+    const settings = await call('/reference/asset-types?includeInactive=1', { token: superToken });
+    const dropdown = await call('/reference/asset-types', { token: superToken });
+
+    assert.strictEqual(settings.body.entries.length, await inTable('asset_types'),
+      'Settings shows every row in the table');
+    assert.ok(settings.body.entries.some((e) => e.key === 'weapon' && !e.isActive),
+      'including the deactivated one, flagged as inactive');
+    assert.ok(!dropdown.body.entries.some((e) => e.key === 'weapon'),
+      'the dropdown does not offer it');
+    assert.strictEqual(dropdown.body.entries.length, settings.body.entries.length - 1);
+  });
+
+  await t.test('the full list is served, however long it is', async () => {
+    // Guards against a LIMIT or a page size creeping in: the seeded catalogue
+    // is already larger than any default page size would be.
+    const roles = await call('/reference/roles?includeInactive=1', { token: superToken });
+    assert.strictEqual(roles.body.entries.length, await inTable('roles'));
+    assert.ok(roles.body.entries.length > 50, 'the catalogue should be large enough for this to mean something');
+    assert.strictEqual(new Set(roles.body.entries.map((e) => e.key)).size, roles.body.entries.length,
+      'and every entry distinct');
   });
 });
