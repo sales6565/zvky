@@ -163,7 +163,50 @@ storage for an S3-compatible bucket — it's the only file that needs to
 change, since every route just uses `req.file` / `file_path` without caring
 where it physically lives.
 
-## 3. Bulk-importing assets
+## 3. Bulk uploads
+
+Two separate uploaders, one per entity. Each has its own button, its own
+endpoint, its own validation and its own sample file. They share only the CSV/
+Excel reader in `src/import-file.js` — no single parser inspects a file and
+guesses which entity it holds, so the asset sample uploaded to the user
+uploader is rejected by name rather than half-processed.
+
+| | Bulk Upload Assets | Bulk Upload Users |
+|---|---|---|
+| Where | Board toolbar | Users tab |
+| Endpoint | `POST /api/assets/project/:projectId/bulk` | `POST /api/users/bulk` |
+| Sample | `GET /api/assets/import-template.csv` | `GET /api/users/import-template.csv` |
+| Who | anyone who can create assets | anyone who can manage users |
+| Columns | `src/asset-import.js` | `src/user-import.js` |
+
+Both report failures the same way — `{ row, column, value, message }` per bad
+row, `207` when some rows were skipped and `201` when none were — so the
+browser renders either in the same table.
+
+### Bulk-uploading users
+
+Required: `name`, `email`, `role`. Optional: `reports_to_email`, `project`,
+`password`.
+
+| Column | Notes |
+|---|---|
+| `name` | Full name |
+| `email` | What they sign in with. Must be unique, in the file and against existing accounts |
+| `role` | A role key from Settings (`game_artist`), or its label (`Game Artist`) |
+| `reports_to_email` | For roles that are assigned work: the lead they report to. That account must actually run a team |
+| `project` | For leads and production roles: a project name you can see, which they are attached to |
+| `password` | Blank issues the temporary default, which they replace on first sign-in. A value here must meet the password policy |
+
+The form takes ids for the lead and the project; a spreadsheet cannot know an
+id, so the file takes an email and a project name and the endpoint resolves
+them. An admin cannot create an account more powerful than their own, in bulk
+any more than one at a time.
+
+Rows with no password all receive the same temporary one, so it is hashed once
+rather than once per row — bcrypt is deliberately slow, and the difference on a
+large file is a second against several minutes.
+
+## 3.1 Bulk-importing assets
 
 Once a project exists, anyone whose designation can create assets in it (super
 admin, admin, any lead or supervisor, production coordinator) can import a CSV
@@ -293,6 +336,9 @@ The API is served at `http://localhost:4000/api/*`, and the bundled frontend
 | GET | `/api/reference` | any logged-in user — every value list a form needs, in one call |
 | GET | `/api/reference/:collection` | any logged-in user — `asset-types`, `priorities` or `roles` |
 | GET | `/api/reference/:collection/:key/usage` | Super Admin — how many records hold this value |
+| POST | `/api/users/bulk` | anyone who can manage users — CSV/Excel user import |
+| GET | `/api/users/import-template.csv` | anyone who can manage users — the user sample file |
+| GET | `/api/users/import-format` | anyone who can manage users — the user columns |
 | POST | `/api/reference/:collection` | Super Admin |
 | PATCH | `/api/reference/:collection/:key` | Super Admin — rename, recolour, activate or deactivate |
 | DELETE | `/api/reference/:collection/:key` | Super Admin — refused while the value is in use |

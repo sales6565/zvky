@@ -178,9 +178,10 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
     <select id="filterType" style="display:none;"><option value="">All types</option></select>
     <div class="spacer"></div>
     <button class="btn btn-ghost" id="newProjectBtn" style="display:none;">+ Project</button>
-    <button class="btn btn-ghost" id="bulkImportBtn" style="display:none;">Import CSV/XLS</button>
-    <button class="btn btn-ghost" id="downloadSampleBtn" style="display:none;" title="Download a CSV with the correct headers and example rows">Sample format</button>
+    <button class="btn btn-ghost" id="bulkImportBtn" style="display:none;">Bulk Upload Assets</button>
+    <button class="btn btn-ghost" id="downloadSampleBtn" style="display:none;" title="Download a CSV with the asset columns and example rows">Sample format</button>
     <input type="file" id="bulkImportInput" accept=".csv,.xls,.xlsx" style="display:none;">
+    <input type="file" id="bulkUserInput" accept=".csv,.xls,.xlsx" style="display:none;">
     <button class="btn btn-brand" id="newAssetBtn" style="display:none;">+ New Asset</button>
   </div>
   <div id="boardView"></div>
@@ -584,6 +585,8 @@ async function renderUsers(){
     <div style="display:flex;gap:10px;margin-bottom:12px;align-items:center;">
       <input type="text" id="userSearch" placeholder="Search users…" style="background:var(--surface-2);border:1px solid var(--border);color:var(--ink);padding:8px 12px;border-radius:8px;font-size:13px;min-width:220px;">
       <button class="btn btn-brand" id="addUserBtn">+ Add User</button>
+      <button class="btn btn-ghost" id="bulkUserBtn">Bulk Upload Users</button>
+      <button class="btn btn-ghost" id="downloadUserSampleBtn" title="Download a CSV with the user columns and example rows">Sample format</button>
     </div>
     <table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr></thead><tbody>
       ${users.map(x=>{
@@ -601,6 +604,8 @@ async function renderUsers(){
   document.getElementById('userSearch').value = state.search;
   document.getElementById('userSearch').addEventListener('input', e=>{ state.search=e.target.value; renderUsers(); });
   document.getElementById('addUserBtn').addEventListener('click', openUserModal);
+  document.getElementById('bulkUserBtn').addEventListener('click', ()=>document.getElementById('bulkUserInput').click());
+  document.getElementById('downloadUserSampleBtn').addEventListener('click', downloadUserSample);
   const lm = document.getElementById('loadMoreUsers');
   if(lm) lm.addEventListener('click', ()=>{ state.usersRenderLimit+=60; renderUsers(); });
   el.querySelectorAll('.delUserBtn').forEach(btn=>{
@@ -831,40 +836,48 @@ document.getElementById('saveModal').addEventListener('click', async ()=>{
 
 /* ---------- bulk CSV import ---------- */
 document.getElementById('bulkImportBtn').addEventListener('click', ()=>{
-  if(!state.currentProjectId){ showToast('Select a project first.'); return; }
+  /* Assets belong to a project; users do not, which is why only this one asks. */
+  if(!state.currentProjectId){ showToast('Select a project to import assets into first.'); return; }
   document.getElementById('bulkImportInput').click();
 });
 const importModalWrap = document.getElementById('importModalWrap');
 document.getElementById('im_close').addEventListener('click', ()=>importModalWrap.classList.remove('show'));
 importModalWrap.addEventListener('click', e=>{ if(e.target===importModalWrap) importModalWrap.classList.remove('show'); });
 
-/* The template is behind the same auth as everything else, so it cannot be a
-   plain link — fetch it with the token and hand the browser a blob. */
-async function downloadSampleFormat(){
+/* Both templates sit behind the same auth as everything else, so neither can be
+   a plain link — fetch with the token and hand the browser a blob. */
+async function downloadTemplate(path, filename){
   try{
-    const res = await fetch(API_BASE + '/assets/import-template.csv', { headers:{ Authorization:'Bearer '+state.token } });
+    const res = await fetch(API_BASE + path, { headers:{ Authorization:'Bearer '+state.token } });
     if(!res.ok) throw new Error('Could not fetch the sample file');
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = 'zvky-asset-import-template.csv';
+    a.href = url; a.download = filename;
     document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
     showToast('Sample format downloaded.');
   }catch(err){ showToast(err.message); }
 }
+const downloadSampleFormat = () => downloadTemplate('/assets/import-template.csv', 'zvky-asset-import-template.csv');
+const downloadUserSample   = () => downloadTemplate('/users/import-template.csv', 'zvky-user-import-template.csv');
 document.getElementById('downloadSampleBtn').addEventListener('click', downloadSampleFormat);
-document.getElementById('im_downloadSample').addEventListener('click', downloadSampleFormat);
+/* The results modal offers whichever sample the last upload was for. */
+document.getElementById('im_downloadSample').addEventListener('click', ()=>{
+  (state.lastImport === 'users' ? downloadUserSample : downloadSampleFormat)();
+});
 
 /* Show what happened, row by row, rather than leaving it in the console. */
-function showImportResult(data, ok){
+function showImportResult(data, ok, entity){
+  const noun = entity === 'users' ? 'user' : 'asset';
   const title = document.getElementById('im_title');
   const body  = document.getElementById('im_body');
   const errors = Array.isArray(data.errors) ? data.errors : [];
+  state.lastImport = entity;
 
   if(!ok){
     /* The file was rejected outright — nothing was imported. */
-    title.textContent = 'Import failed';
+    title.textContent = entity === 'users' ? 'User import failed' : 'Asset import failed';
     let extra = '';
     if(data.missingColumns && data.missingColumns.length){
       extra += `<div style="margin-top:12px;font-size:12px;">
@@ -881,7 +894,9 @@ function showImportResult(data, ok){
     return;
   }
 
-  title.textContent = errors.length ? 'Imported with some rows skipped' : 'Import complete';
+  title.textContent = errors.length
+    ? `${noun === 'user' ? 'Users' : 'Assets'} imported, some rows skipped`
+    : `${noun === 'user' ? 'Users' : 'Assets'} imported`;
   const rows = errors.map(e=>`<tr>
       <td class="rownum">${e.row ?? ''}</td>
       <td class="col">${escapeHTML(e.column || '—')}</td>
@@ -899,40 +914,72 @@ function showImportResult(data, ok){
       <div style="font-size:12px;color:var(--ink-muted);margin-bottom:8px;">
         These rows were not imported. Everything else was. Fix them and upload just those rows again.
       </div>
+      ${data.temporaryPassword ? `<div style="font-size:12px;color:var(--ink-muted);margin-bottom:8px;">
+        New accounts without a password in the file were given <span class="mono" style="color:var(--ink);">${escapeHTML(data.temporaryPassword)}</span> — they should change it on first sign-in.
+      </div>` : ''}
       <div class="import-errors">
         <table><thead><tr><th>Row</th><th>Column</th><th>Value</th><th>Problem</th></tr></thead>
         <tbody>${rows}</tbody></table>
       </div>` :
-      `<div style="font-size:13px;color:var(--approved);">Every row imported successfully.</div>`}
+      `<div style="font-size:13px;color:var(--approved);">Every row imported successfully.</div>
+       ${data.temporaryPassword ? `<div style="font-size:12px;color:var(--ink-muted);margin-top:10px;">
+         New accounts were given the temporary password <span class="mono" style="color:var(--ink);">${escapeHTML(data.temporaryPassword)}</span> — they should change it on first sign-in.
+       </div>` : ''}`}
   `;
   importModalWrap.classList.add('show');
+}
+
+async function runBulkUpload({ file, path, entity, buttonId, onDone }){
+  const btn = document.getElementById(buttonId);
+  const label = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = 'Uploading…'; }
+  const formData = new FormData();
+  formData.append('file', file);
+  try{
+    const res = await fetch(API_BASE + path, {
+      method:'POST', headers:{ Authorization:'Bearer '+state.token }, body: formData,
+      /* A stuck request should surface as a message, not a spinner that never ends. */
+      signal: AbortSignal.timeout(120000),
+    });
+    const data = await res.json().catch(()=>({ error:`Upload failed (HTTP ${res.status})` }));
+    showImportResult(data, res.ok, entity);
+    if(res.ok && data.created){
+      showToast(`Imported ${data.created} ${entity==='users'?'user':'asset'}${data.created===1?'':'s'}.`);
+      await onDone();
+    }
+  }catch(err){
+    showImportResult({ error: err.name==='TimeoutError'
+      ? 'The upload took too long and was stopped. Try a smaller file.'
+      : err.message }, false, entity);
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = label; }
+  }
 }
 
 document.getElementById('bulkImportInput').addEventListener('change', async (e)=>{
   const file = e.target.files[0];
   e.target.value = '';
   if(!file) return;
-  const btn = document.getElementById('bulkImportBtn');
-  const label = btn.textContent;
-  btn.disabled = true; btn.textContent = 'Importing…';
-  const formData = new FormData();
-  formData.append('file', file);
-  try{
-    const res = await fetch(API_BASE + '/assets/project/' + state.currentProjectId + '/bulk', {
-      method:'POST', headers:{ Authorization:'Bearer '+state.token }, body: formData,
-      /* A stuck request should surface as a message, not a spinner that never ends. */
-      signal: AbortSignal.timeout(120000),
-    });
-    const data = await res.json().catch(()=>({ error:`Import failed (HTTP ${res.status})` }));
-    showImportResult(data, res.ok);
-    if(res.ok && data.created) { showToast(`Imported ${data.created} asset${data.created===1?'':'s'}.`); render(); }
-  }catch(err){
-    showImportResult({ error: err.name==='TimeoutError'
-      ? 'The import took too long and was stopped. Try a smaller file.'
-      : err.message }, false);
-  }finally{
-    btn.disabled = false; btn.textContent = label;
-  }
+  await runBulkUpload({
+    file,
+    path: '/assets/project/' + state.currentProjectId + '/bulk',
+    entity: 'assets',
+    buttonId: 'bulkImportBtn',
+    onDone: render,
+  });
+});
+
+document.getElementById('bulkUserInput').addEventListener('change', async (e)=>{
+  const file = e.target.files[0];
+  e.target.value = '';
+  if(!file) return;
+  await runBulkUpload({
+    file,
+    path: '/users/bulk',
+    entity: 'users',
+    buttonId: 'bulkUserBtn',
+    onDone: renderUsers,
+  });
 });
 
 /* ---------- new project modal ---------- */

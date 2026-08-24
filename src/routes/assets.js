@@ -437,8 +437,16 @@ router.post('/project/:projectId/bulk', uploadImport.single('file'), async (req,
   // --- file-level checks, before any row is touched -------------------------
   const headerCheck = assetImport.validateHeaders(headers);
   if (!headerCheck.ok) {
+    // A file whose headers are the user importer's template. Saying so by name
+    // is more use than listing missing columns and leaving someone to work out
+    // that they picked the wrong button.
+    const userOnly = ['email', 'role', 'reports_to_email', 'password'];
+    const wrongFile = userOnly.filter((c) => headerCheck.present.includes(c)).length >= 2;
     return res.status(400).json({
-      error: `That file is missing required column${headerCheck.missing.length > 1 ? 's' : ''}: ${headerCheck.missing.join(', ')}.`,
+      error: wrongFile
+        ? 'That looks like the user import file, not the asset one. Upload it under Bulk Upload Users, or download the asset sample format here.'
+        : `That file is missing required column${headerCheck.missing.length > 1 ? 's' : ''}: ${headerCheck.missing.join(', ')}.`,
+      wrongTemplate: wrongFile ? 'users' : undefined,
       missingColumns: headerCheck.missing,
       foundColumns: headerCheck.present,
       expectedColumns: assetImport.COLUMN_NAMES,
