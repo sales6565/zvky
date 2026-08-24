@@ -119,6 +119,77 @@ mysql -u root -p zvky < sql/migration_role_designations.sql
 
 ## Review workflow
 
+The pipeline is a state machine in [`src/asset-workflow.js`](src/asset-workflow.js):
+one table of transitions saying what an asset may move from, to, who may move
+it, and whose desk it lands on. The routes do not decide any of that — they ask
+the module and apply the answer. **Anything not in the table cannot happen**,
+which is what makes the pipeline checkable rather than a pile of status strings.
+
+```
+Not Started --assign--> In Progress --submit--> TL Review --tl_approve--> CD Review
+                             ^                      |                        |
+                             |                      v                        v
+                             +---- TL Changes <-----+              CD Changes (with the lead)
+                             |                                             |
+                             |                                          relay
+                             |                                             v
+                             +---------------- (assignee reworks) ---------+
+                                                                           |
+                            CD Review --cd_approve--> Approved for Client --deliver--> Delivered
+```
+
+### Status is not the same as whose desk it is on
+
+`assets.routed_to_id` exists because status alone could not answer "who is this
+with". An asset in **CD Changes** sits with the *team lead* until they relay the
+notes, and with the *assignee* afterwards — without the status moving. `NULL`
+means a review queue that whoever holds that gate picks up.
+
+That distinction is the whole of the relay. Treating "routed to nobody" as
+"routed to anybody" let the assignee resubmit straight past the lead who was
+supposed to brief them; the states that belong to the assignee by definition are
+listed explicitly (`ASSIGNEE_STATUSES`) and CD Changes is not one of them.
+
+### Submissions
+
+A submission is a **link** (required) and a **description** (optional). Links may
+point inside the building: `http://nas/shots/ep01` and `http://192.168.1.20:8080/v3`
+are as valid as a public URL — refusing a host without a dot in it would reject
+the most common case in a studio. `javascript:` and `data:` are refused, since a
+reviewer clicks these. See [`src/submission-link.js`](src/submission-link.js).
+
+Every round is kept. A resubmission after changes **adds** a version; nothing is
+overwritten, so the third attempt does not erase what the first one linked to.
+
+### Two decisions worth knowing
+
+**Where a CD-changes resubmission lands** is one environment variable:
+`CD_CHANGES_REENTRY=tl` (default — the lead who relayed the request re-checks the
+work) or `cd` (straight back to the Creative Director). Both are ordinary states
+of the same machine, not one bolted onto the other.
+
+**Who marks an asset Delivered** is anyone whose tier grants `deliver` — Super
+Admin, Admin, Production (PM) *and* Creative Direction. It is always a manual
+action, never automatic.
+
+### The audit trail
+
+`asset_events` is append-only and records every move: assignment, each
+submission, each review decision, the relay, delivery — with the actor, the
+from/to statuses, and the feedback or description. `GET /api/assets/:id/history`
+stitches it together, and the asset drawer renders it.
+
+It is ordered by an `AUTO_INCREMENT` sequence, not by `created_at`: a review
+round is quicker than one second, and DATETIME ties then sort by random UUID,
+which scrambled the history into nonsense.
+
+### Final %
+
+The share of assets in **Delivered**. It previously counted `status === 'final'`,
+which is not one of the eight states, so it read **0% however much had shipped**.
+
+
+
 Assets now move through a fixed pipeline instead of a free-form status field:
 
 ```

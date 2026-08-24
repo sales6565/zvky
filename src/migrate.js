@@ -218,6 +218,71 @@ async function ensureReportingAndMembership(db, log) {
   if (top.length) log(`Schema: cleared the reporting line on ${top.length} account(s) at the top of the hierarchy.`);
 }
 
+// The review pipeline's columns, for databases created before it was a state
+// machine: where an asset is routed, what a submission links to, and the event
+// log behind the asset detail view.
+async function ensureReviewWorkflow(db, log) {
+  const column = async (table, name) => {
+    const { rows } = await db.query(
+      `SELECT COLUMN_NAME AS n FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = $1 AND COLUMN_NAME = $2`,
+      [table, name]
+    );
+    return rows.length > 0;
+  };
+
+  if (!(await column('assets', 'routed_to_id'))) {
+    await db.query('ALTER TABLE assets ADD COLUMN routed_to_id CHAR(36) NULL AFTER assignee_id');
+    await db.query('ALTER TABLE assets ADD KEY idx_assets_routed (routed_to_id)');
+    try {
+      await db.query('ALTER TABLE assets ADD CONSTRAINT fk_assets_routed FOREIGN KEY (routed_to_id) REFERENCES users(id) ON DELETE SET NULL');
+    } catch (err) {
+      log(`Schema: assets.routed_to_id added, but its foreign key was refused — ${err.sqlMessage || err.message}`);
+    }
+    // Everything mid-flight sits where the pipeline says it should.
+    await db.query(
+      `UPDATE assets SET routed_to_id = assignee_id
+        WHERE routed_to_id IS NULL
+          AND status IN ('in_progress','tl_changes_requested')`
+    );
+    log('Schema: added assets.routed_to_id so the pipeline can say whose desk an asset is on.');
+  }
+
+  if (!(await column('asset_versions', 'link'))) {
+    await db.query('ALTER TABLE asset_versions ADD COLUMN link VARCHAR(2048) NULL AFTER stage');
+    await db.query('ALTER TABLE asset_versions ADD COLUMN description TEXT NULL AFTER link');
+    log('Schema: submissions now carry a link and a description.');
+  }
+  // A submission is a link now, so the file columns have to allow their absence.
+  // Rows already holding a file keep it.
+  for (const col of [['file_name', 'VARCHAR(255)'], ['file_path', 'VARCHAR(255)']]) {
+    const { rows } = await db.query(
+      `SELECT IS_NULLABLE AS nullable FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'asset_versions' AND COLUMN_NAME = $1`,
+      [col[0]]
+    );
+    if (rows.length && rows[0].nullable === 'NO') {
+      await db.query(`ALTER TABLE asset_versions MODIFY \`${col[0]}\` ${col[1]} NULL`);
+    }
+  }
+
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS asset_events (
+      id           CHAR(36)     NOT NULL PRIMARY KEY,
+      seq          BIGINT       NOT NULL AUTO_INCREMENT UNIQUE,
+      asset_id     CHAR(36)     NOT NULL,
+      action       VARCHAR(32)  NOT NULL,
+      from_status  VARCHAR(32)  NULL,
+      to_status    VARCHAR(32)  NOT NULL,
+      actor_id     CHAR(36)     NULL,
+      actor_email  VARCHAR(191) NULL,
+      note         TEXT         NULL,
+      version_id   CHAR(36)     NULL,
+      routed_to_id CHAR(36)     NULL,
+      created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_events_asset (asset_id, seq)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+}
+
 async function ensureReferenceData(db, log) {
   // Created with the collation the rest of the schema already uses, so a later
   // query can compare these columns against the older tables.
@@ -335,6 +400,7 @@ const STEPS = [
   ['reference data mirror', (db) => referenceData.load(db)],
   // After the mirror: isTopOfHierarchy reads a role's tier from it.
   ['reporting hierarchy', ensureReportingAndMembership],
+  ['review pipeline', ensureReviewWorkflow],
   ['IP allowlist', ensureIpAllowlist],
 ];
 

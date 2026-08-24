@@ -201,6 +201,11 @@ CREATE TABLE IF NOT EXISTS assets (
   priority      VARCHAR(8)   NOT NULL DEFAULT 'med',
   project_id    CHAR(36)     NOT NULL,
   assignee_id   CHAR(36)     NULL,
+  -- Whose desk this is on right now, which is not the same as its status: an
+  -- asset in CD Changes sits with the team lead until they relay the notes, and
+  -- with the assignee afterwards, without the status moving. NULL means a
+  -- review queue that whoever holds that gate picks up.
+  routed_to_id  CHAR(36)     NULL,
   man_hours     DECIMAL(6,1) NULL,
   due_date      DATE         NULL,
   description   TEXT         NULL,
@@ -208,8 +213,10 @@ CREATE TABLE IF NOT EXISTS assets (
   KEY idx_assets_project (project_id),
   KEY idx_assets_assignee (assignee_id),
   KEY idx_assets_status (`status`),
+  KEY idx_assets_routed (routed_to_id),
   CONSTRAINT fk_assets_project  FOREIGN KEY (project_id)  REFERENCES projects(id) ON DELETE CASCADE,
   CONSTRAINT fk_assets_assignee FOREIGN KEY (assignee_id) REFERENCES users(id)    ON DELETE SET NULL,
+  CONSTRAINT fk_assets_routed   FOREIGN KEY (routed_to_id) REFERENCES users(id)   ON DELETE SET NULL,
   -- No CHECK on `type` or priority: both are managed in Settings and validated
   -- against the asset_types / priorities tables. `status` keeps its constraint
   -- because it is a fixed pipeline, not a list anyone edits.
@@ -247,8 +254,16 @@ CREATE TABLE IF NOT EXISTS asset_versions (
   asset_id       CHAR(36)     NOT NULL,
   version_number INT          NOT NULL,
   stage          VARCHAR(8)   NOT NULL,
-  file_name      VARCHAR(255) NOT NULL,
-  file_path      VARCHAR(255) NOT NULL,
+  -- Where the work is. Mandatory for anything submitted through the review
+  -- form; NULL only on rows that predate it and carry a file instead.
+  link           VARCHAR(2048) NULL,
+  -- The submitter's own notes. Optional by design: a link with nothing to say
+  -- about it is a perfectly ordinary submission.
+  description    TEXT         NULL,
+  -- Kept for submissions made before the form took a link, and still allowed
+  -- as an optional attachment alongside one.
+  file_name      VARCHAR(255) NULL,
+  file_path      VARCHAR(255) NULL,
   file_size      INT          NULL,
   uploaded_by    CHAR(36)     NULL,
   created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -259,6 +274,40 @@ CREATE TABLE IF NOT EXISTS asset_versions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- A reviewer's decision on a version: approve, or request changes with notes.
+-- Every move an asset makes, in order: assignment, each submission, each review
+-- decision, the relay, delivery. The submission and review tables hold the
+-- detail; this holds the sequence, so the asset detail view can show the whole
+-- back-and-forth rather than only the current state.
+--
+-- Append-only. Nothing here is ever updated or deleted while the asset lives.
+CREATE TABLE IF NOT EXISTS asset_events (
+  id          CHAR(36)     NOT NULL PRIMARY KEY,
+  -- The order things happened in. created_at is only accurate to the second,
+  -- and a review round is quicker than that — submit, approve and relay land in
+  -- the same second routinely, and sorting by timestamp then scrambles them.
+  -- This is the sequence the history is read in.
+  seq         BIGINT       NOT NULL AUTO_INCREMENT UNIQUE,
+  asset_id    CHAR(36)     NOT NULL,
+  -- The transition that was made: assign, submit, tl_approve, tl_request_changes,
+  -- cd_approve, cd_request_changes, relay, deliver.
+  action      VARCHAR(32)  NOT NULL,
+  from_status VARCHAR(32)  NULL,
+  to_status   VARCHAR(32)  NOT NULL,
+  actor_id    CHAR(36)     NULL,
+  -- Kept alongside the id so the trail survives the account being deleted.
+  actor_email VARCHAR(191) NULL,
+  -- Feedback text, or the submitter's description, or a plain explanation.
+  note        TEXT         NULL,
+  -- The submission this event concerns, when there is one.
+  version_id  CHAR(36)     NULL,
+  routed_to_id CHAR(36)    NULL,
+  created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_events_asset (asset_id, seq),
+  CONSTRAINT fk_events_asset  FOREIGN KEY (asset_id)   REFERENCES assets(id)         ON DELETE CASCADE,
+  CONSTRAINT fk_events_actor  FOREIGN KEY (actor_id)   REFERENCES users(id)          ON DELETE SET NULL,
+  CONSTRAINT fk_events_version FOREIGN KEY (version_id) REFERENCES asset_versions(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS feedback (
   id         CHAR(36)   NOT NULL PRIMARY KEY,
   asset_id   CHAR(36)   NOT NULL,

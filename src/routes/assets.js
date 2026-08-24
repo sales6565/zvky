@@ -24,6 +24,8 @@ const {
 } = require('../permissions');
 const { assignableRoles, roleDef } = require('../roles');
 const assetImport = require('../asset-import');
+const workflow = require('../asset-workflow');
+const submissionLink = require('../submission-link');
 const referenceData = require('../reference-data');
 
 router.use(authenticate);
@@ -122,6 +124,16 @@ router.post('/project/:projectId', async (req, res) => {
      VALUES ($1,$2,$3,$4,'not_started',$5,$6,$7,$8,$9,$10)`,
     [id, code, name.trim(), type, priority, projectId, assigneeId, due, description, manHours]
   );
+  // Created Not Started, as the pipeline says. If it was created with somebody
+  // already on it, the same rule that applies to assigning later applies here:
+  // assignment is what starts the work.
+  if (assigneeId) {
+    const { rows: fresh } = await db.query('SELECT * FROM assets WHERE id = $1', [id]);
+    const ctx = await contextFor(req, fresh[0]);
+    const verdict = workflow.evaluate('assign', ctx);
+    if (verdict.ok) await applyTransition(req, res, fresh[0], verdict, { note: verdict.describe });
+  }
+
   const defaultTasks = ['Rough pass', 'Clean line', 'Color / shade'];
   for (let i = 0; i < defaultTasks.length; i++) {
     await db.query(
@@ -162,6 +174,24 @@ router.patch('/:id', async (req, res) => {
   if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
   values.push(req.params.id);
   await db.query(`UPDATE assets SET ${fields.join(', ')} WHERE id = $${i}`, values);
+
+  // Assigning the asset is what starts the work — there is no separate "start"
+  // action for someone to forget. Only from Not Started: reassigning something
+  // that is already in review must not drag it backwards.
+  const assigneeChanged = req.body.assigneeId !== undefined && req.body.assigneeId !== asset.assignee_id;
+  if (assigneeChanged && req.body.assigneeId && asset.status === 'not_started') {
+    const { rows: fresh } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
+    const ctx = await contextFor(req, fresh[0]);
+    const verdict = workflow.evaluate('assign', ctx);
+    if (verdict.ok) {
+      await applyTransition(req, res, fresh[0], verdict, { note: verdict.describe });
+    }
+  } else if (assigneeChanged) {
+    // Still note who it moved to, so the trail does not lose a reassignment
+    // made mid-review.
+    await db.query('UPDATE assets SET routed_to_id = $1 WHERE id = $2 AND routed_to_id IS NOT NULL',
+      [req.body.assigneeId || null, req.params.id]);
+  }
 
   const { rows: updated } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [req.params.id]);
   const [withDetails] = await attachTasksAndNotes(updated);
@@ -233,34 +263,74 @@ router.post('/:id/notes', async (req, res) => {
 // Where it routes depends on what stage the asset is coming from:
 //  - fresh work or a team-lead rework request goes to the team lead
 //  - a creative-director rework request goes straight back to the CD (already passed TL)
+// Everything the state machine needs to judge a move. Gathered once so the
+// permission questions are asked the same way for every action.
+async function contextFor(req, asset) {
+  return {
+    user: req.user,
+    asset,
+    isTeamLead: await isTeamLeadOfAsset(req.user, asset),
+    canOverride: canOverrideReview(req.user),
+    canEdit: await canEditAsset(req.user, asset),
+    canDeliver: await canMarkDelivered(req.user, asset),
+  };
+}
+
+// Apply a transition the state machine has approved: move the asset, record the
+// event, and hand back the asset as the API describes it everywhere else.
+//
+// The event row is the point. Status alone cannot answer "who sent this back
+// and what did they say", and that is the question the asset detail view exists
+// to answer.
+async function applyTransition(req, res, asset, verdict, { note, versionId } = {}) {
+  await db.query(
+    'UPDATE assets SET `status` = $1, routed_to_id = $2 WHERE id = $3',
+    [verdict.to, verdict.routedTo, asset.id]
+  );
+  await db.query(
+    `INSERT INTO asset_events (id, asset_id, action, from_status, to_status, actor_id, actor_email, note, version_id, routed_to_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+    [uuid(), asset.id, verdict.action, asset.status, verdict.to, req.user.id, req.user.email,
+     String(note || '').trim() || null, versionId || null, verdict.routedTo]
+  );
+  const { rows: updated } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [asset.id]);
+  const [withDetails] = await attachTasksAndNotes(updated);
+  return withDetails;
+}
+
+// POST /api/assets/:id/submit — the assignee sends work for review.
+// body: { link (required), description (optional) }; a file may still be
+// attached alongside, for studios that were uploading them.
 router.post('/:id/submit', upload.single('file'), async (req, res) => {
   const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
   const asset = rows[0];
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
-  if (!isAssignedArtist(req.user, asset)) {
-    return res.status(403).json({ error: 'Only the assigned artist can submit this asset' });
-  }
-  const allowedFrom = ['not_started', 'in_progress', 'tl_changes_requested', 'cd_changes_requested'];
-  if (!allowedFrom.includes(asset.status)) {
-    return res.status(409).json({ error: `Can't submit from status "${asset.status}"` });
-  }
-  if (!req.file) return res.status(400).json({ error: 'A file is required' });
+  const ctx = await contextFor(req, asset);
+  const verdict = workflow.evaluate('submit', ctx);
+  if (!verdict.ok) return res.status(verdict.status).json({ error: verdict.error });
 
-  const stage = asset.status === 'cd_changes_requested' ? 'cd' : 'tl';
-  const nextStatus = stage === 'cd' ? 'pending_cd_review' : 'pending_tl_review';
+  const link = submissionLink.validate(req.body ? req.body.link : '');
+  if (!link.ok) return res.status(400).json({ error: link.error, field: 'link' });
+  const description = String((req.body && req.body.description) || '').trim() || null;
+
+  // Which gate this submission is aimed at, so the reviewer sees the round that
+  // was meant for them.
+  const stage = verdict.to === 'pending_cd_review' ? 'cd' : 'tl';
 
   const { rows: vCount } = await db.query('SELECT COUNT(*) AS n FROM asset_versions WHERE asset_id = $1', [req.params.id]);
   const versionNumber = Number(vCount[0].n) + 1;
   const versionId = uuid();
   await db.query(
-    `INSERT INTO asset_versions (id, asset_id, version_number, stage, file_name, file_path, file_size, uploaded_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-    [versionId, req.params.id, versionNumber, stage, req.file.originalname, req.file.filename, req.file.size, req.user.id]
+    `INSERT INTO asset_versions (id, asset_id, version_number, stage, link, description, file_name, file_path, file_size, uploaded_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+    [versionId, req.params.id, versionNumber, stage, link.link, description,
+     req.file ? req.file.originalname : null, req.file ? req.file.filename : null,
+     req.file ? req.file.size : null, req.user.id]
   );
-  await db.query('UPDATE assets SET status = $1 WHERE id = $2', [nextStatus, req.params.id]);
 
-  const { rows: updated } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [req.params.id]);
-  const [withDetails] = await attachTasksAndNotes(updated);
+  // Every round is kept: the submission table is append-only, so a re-submission
+  // after changes adds a version rather than replacing the one that was rejected.
+  const withDetails = await applyTransition(req, res, asset, verdict, { note: description, versionId });
   res.status(201).json({ asset: withDetails });
 });
 
@@ -279,64 +349,122 @@ router.get('/versions/:versionId/download', async (req, res) => {
   res.download(filePath, version.file_name);
 });
 
-// POST /api/assets/:id/review — a lead/supervisor or the art director records a decision
-// on the pending submission. body: { decision: 'approved' | 'changes_requested', text }
+// POST /api/assets/:id/review — a review decision at whichever gate the asset
+// is sitting at. body: { decision: 'approved' | 'changes_requested', text }
+//
+// Which gate that is, and who may act on it, is the state machine's answer, not
+// this handler's: it maps the decision onto a transition and applies whatever
+// comes back.
 router.post('/:id/review', async (req, res) => {
   const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
   const asset = rows[0];
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
+
   const { decision, text } = req.body || {};
   if (!['approved', 'changes_requested'].includes(decision)) {
     return res.status(400).json({ error: 'decision must be "approved" or "changes_requested"' });
   }
 
-  let stage, nextStatus;
-  if (asset.status === 'pending_tl_review') {
-    if (!(await isTeamLeadOfAsset(req.user, asset)) && !canOverrideReview(req.user)) {
-      return res.status(403).json({ error: 'Only this artist\'s team lead can review it right now' });
-    }
-    stage = 'tl';
-    nextStatus = decision === 'approved' ? 'pending_cd_review' : 'tl_changes_requested';
-  } else if (asset.status === 'pending_cd_review') {
-    if (!canReviewAsCD(req.user)) {
-      return res.status(403).json({ error: 'Only the art director can review it right now' });
-    }
-    stage = 'cd';
-    nextStatus = decision === 'approved' ? 'approved_for_client' : 'cd_changes_requested';
-  } else {
-    return res.status(409).json({ error: `Asset isn't awaiting review (status: ${asset.status})` });
+  const stage = asset.status === 'pending_cd_review' ? 'cd' : 'tl';
+  const action = `${stage}_${decision === 'approved' ? 'approve' : 'request_changes'}`;
+
+  const ctx = await contextFor(req, asset);
+  const verdict = workflow.evaluate(action, ctx, { note: text });
+  if (!verdict.ok) {
+    return res.status(verdict.status).json({ error: verdict.error, field: verdict.field });
   }
 
   const { rows: latestVersion } = await db.query(
-    'SELECT id FROM asset_versions WHERE asset_id = $1 AND stage = $2 ORDER BY version_number DESC LIMIT 1',
-    [req.params.id, stage]
+    'SELECT id FROM asset_versions WHERE asset_id = $1 ORDER BY version_number DESC LIMIT 1',
+    [req.params.id]
   );
+  const versionId = latestVersion.length ? latestVersion[0].id : null;
+
   await db.query(
     'INSERT INTO feedback (id, asset_id, version_id, stage, decision, given_by, `text`) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-    [uuid(), req.params.id, latestVersion[0]?.id || null, stage, decision, req.user.id, (text || '').trim() || null]
+    [uuid(), req.params.id, versionId, stage, decision, req.user.id, String(text || '').trim() || null]
   );
-  await db.query('UPDATE assets SET status = $1 WHERE id = $2', [nextStatus, req.params.id]);
 
-  const { rows: updated } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [req.params.id]);
-  const [withDetails] = await attachTasksAndNotes(updated);
+  const withDetails = await applyTransition(req, res, asset, verdict, { note: text, versionId });
   res.json({ asset: withDetails });
 });
 
-// POST /api/assets/:id/deliver — mark a client-approved asset as delivered
+// POST /api/assets/:id/relay — the team lead passes the Creative Director's
+// notes to the assignee.
+//
+// A separate action because the status does not move: the asset stays in CD
+// Changes and only changes desk. Without it the assignee could pick work up
+// before the lead who relayed the request had said anything about it.
+router.post('/:id/relay', async (req, res) => {
+  const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
+  const asset = rows[0];
+  if (!asset) return res.status(404).json({ error: 'Asset not found' });
+  if (!asset.assignee_id) {
+    return res.status(409).json({ error: 'This asset has nobody assigned to pass it to.' });
+  }
+
+  const ctx = await contextFor(req, asset);
+  const verdict = workflow.evaluate('relay', ctx, { note: req.body && req.body.text });
+  if (!verdict.ok) return res.status(verdict.status).json({ error: verdict.error, field: verdict.field });
+
+  const withDetails = await applyTransition(req, res, asset, verdict, { note: req.body && req.body.text });
+  res.json({ asset: withDetails });
+});
+
+// POST /api/assets/:id/deliver — mark a client-approved asset as delivered.
 router.post('/:id/deliver', async (req, res) => {
   const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
   const asset = rows[0];
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
-  if (asset.status !== 'approved_for_client') {
-    return res.status(409).json({ error: 'Asset must be approved for client before it can be delivered' });
-  }
-  if (!(await canMarkDelivered(req.user, asset))) {
-    return res.status(403).json({ error: 'You cannot deliver this asset' });
-  }
-  await db.query('UPDATE assets SET status = $1 WHERE id = $2', ['delivered', req.params.id]);
-  const { rows: updated } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [req.params.id]);
-  const [withDetails] = await attachTasksAndNotes(updated);
+
+  const ctx = await contextFor(req, asset);
+  const verdict = workflow.evaluate('deliver', ctx, { note: req.body && req.body.text });
+  if (!verdict.ok) return res.status(verdict.status).json({ error: verdict.error });
+
+  const withDetails = await applyTransition(req, res, asset, verdict, { note: req.body && req.body.text });
   res.json({ asset: withDetails });
+});
+
+// GET /api/assets/:id/history — the whole back-and-forth, in order.
+//
+// Submissions, review decisions and status changes are three tables; this
+// stitches them into the one sequence a person actually wants to read.
+router.get('/:id/history', async (req, res) => {
+  const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
+  const asset = rows[0];
+  if (!asset) return res.status(404).json({ error: 'Asset not found' });
+  if (!(await canViewAsset(req.user, asset))) {
+    return res.status(403).json({ error: 'No access to this asset' });
+  }
+
+  const { rows: events } = await db.query(
+    `SELECT e.*, u.\`name\` AS actor_name, v.version_number, v.link, v.description AS version_description
+       FROM asset_events e
+       LEFT JOIN users u ON u.id = e.actor_id
+       LEFT JOIN asset_versions v ON v.id = e.version_id
+      WHERE e.asset_id = $1
+      ORDER BY e.seq`,
+    [req.params.id]
+  );
+
+  res.json({
+    assetId: asset.id,
+    status: asset.status,
+    statusLabel: workflow.label(asset.status),
+    events: events.map((e) => ({
+      id: e.id,
+      action: e.action,
+      fromStatus: e.from_status,
+      fromLabel: e.from_status ? workflow.label(e.from_status) : null,
+      toStatus: e.to_status,
+      toLabel: workflow.label(e.to_status),
+      actor: e.actor_name || e.actor_email || 'system',
+      note: e.note,
+      link: e.link,
+      versionNumber: e.version_number,
+      at: e.created_at,
+    })),
+  });
 });
 
 // GET /api/assets/import-template.csv — the sample file for the bulk import.

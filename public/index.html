@@ -557,8 +557,11 @@ function renderStats(){
   if(state.view==='users'){ el.innerHTML=''; return; }
   const pool = state.assets;
   const total = pool.length;
-  const finalCount = pool.filter(a=>a.status==='final').length;
-  const pct = total ? Math.round(finalCount/total*100) : 0;
+  /* Final % is the share of the project that has reached the end of the
+     pipeline. It used to count status === 'final', which is not one of the
+     eight states, so it read 0% however much had shipped. */
+  const deliveredCount = pool.filter(a=>a.status==='delivered').length;
+  const pct = total ? Math.round(deliveredCount/total*100) : 0;
   el.innerHTML = `<div class="stat"><div class="num">${total}</div><div class="lbl">Assets</div></div>` +
     STATUSES.map(s=>{ const c=pool.filter(a=>a.status===s.id).length; return `<div class="stat"><div class="num" style="color:${s.color}">${c}</div><div class="lbl">${s.label}</div></div>`; }).join('') +
     `<div class="stat"><div class="num">${pct}%</div><div class="lbl">Final</div></div>`;
@@ -732,9 +735,17 @@ async function openDrawer(id){
   const drawer = document.getElementById('drawer');
 
   const isMyAssetAsArtist = caps().assignable && a.assignee_id===u.id;
-  const canSubmit = isMyAssetAsArtist && ['not_started','in_progress','tl_changes_requested','cd_changes_requested'].includes(a.status);
+  /* CD Changes sits with the team lead until they relay it, so being the
+     assignee is not enough on its own — the API refuses it too. */
+  const routedToMe = !a.routed_to_id || a.routed_to_id===u.id;
+  const waitingOnRelay = a.status==='cd_changes_requested' && a.routed_to_id!==u.id;
+  const canSubmit = isMyAssetAsArtist && routedToMe && !waitingOnRelay &&
+    ['not_started','in_progress','tl_changes_requested','cd_changes_requested'].includes(a.status);
   const canTlReview = caps().leadsTeam && a.status==='pending_tl_review';
   const canCdReview = caps().reviewStage==='cd' && a.status==='pending_cd_review';
+  /* The relay: the lead passes the CD's notes on, and only before it has been
+     passed on. */
+  const canRelay = caps().leadsTeam && a.status==='cd_changes_requested' && !a.routed_to_id && a.assignee_id;
   const canDeliver = caps().deliver && a.status==='approved_for_client';
   const latestFeedback = a.feedback && a.feedback[0];
 
@@ -752,11 +763,19 @@ async function openDrawer(id){
         <p>${escapeHTML(latestFeedback.text||'(no written note)')}</p>
       </div>` : ''}
 
+    ${waitingOnRelay ? `
+      <div class="note" style="margin-top:14px;border-left-color:#ffd23d;">
+        <span class="who">Waiting on your team lead</span>
+        <p>The Creative Director asked for changes. Your team lead will pass the notes on before you pick this up.</p>
+      </div>` : ''}
+
     ${canSubmit ? `
       <div class="field-lbl">${a.status.endsWith('_changes_requested') ? 'Resubmit for review' : 'Submit for review'}</div>
-      <input type="file" id="submitFileInput" accept=".psd,.jpg,.jpeg,.png,.gif,.tiff,.tif,.json,.atlas,.skel,.aep,.aet" style="width:100%;font-size:12px;color:var(--ink-muted);">
-      <div style="font-size:10.5px;color:var(--ink-faint);margin-top:4px;">PSD, JPEG, PNG, GIF, TIFF, Spine (.json/.atlas/.skel), After Effects (.aep/.aet)</div>
-      <button class="btn btn-brand" id="submitAssetBtn" style="width:100%;margin-top:8px;">Upload &amp; submit</button>
+      <input type="text" id="submitLink" placeholder="https://drive.example.com/shot-01 or http://nas/shots/ep01">
+      <div style="font-size:10.5px;color:var(--ink-faint);margin-top:4px;">Link to the work. Internal and local server links are fine.</div>
+      <textarea id="submitDescription" rows="2" placeholder="Anything the reviewer should know (optional)…" style="margin-top:8px;"></textarea>
+      <div class="ref-err" id="submitErr"></div>
+      <button class="btn btn-brand" id="submitAssetBtn" style="width:100%;margin-top:8px;">Submit for review</button>
     ` : ''}
 
     ${canTlReview ? `
@@ -777,6 +796,13 @@ async function openDrawer(id){
       </div>
     ` : ''}
 
+    ${canRelay ? `
+      <div class="field-lbl">Pass the Creative Director's notes on</div>
+      <div style="font-size:11px;color:var(--ink-faint);margin-bottom:6px;">This is with you until you hand it to ${escapeHTML(a.assignee_name||'the assignee')}.</div>
+      <textarea id="relayNote" rows="2" placeholder="Anything to add for the artist (optional)…"></textarea>
+      <button class="btn btn-brand" id="relayBtn" style="width:100%;margin-top:8px;">Send to ${escapeHTML(a.assignee_name||'assignee')}</button>
+    ` : ''}
+
     ${canDeliver ? `<button class="btn btn-brand" id="deliverBtn" style="width:100%;margin-top:14px;">Mark delivered to client</button>` : ''}
 
     <div class="field-lbl" style="margin-top:16px;">Assignee</div><div style="font-size:13px;padding:8px 0;">${escapeHTML(a.assignee_name)||'Unassigned'}</div>
@@ -792,12 +818,17 @@ async function openDrawer(id){
     <div class="field-lbl">Tasks</div>
     <div id="d_tasks">${a.tasks.map(t=>`<div class="task-row ${t.done?'done':''}" data-tid="${t.id}"><input type="checkbox" ${t.done?'checked':''} ${editable?'':'disabled'}><span>${escapeHTML(t.name)}</span></div>`).join('')}</div>
 
-    <div class="field-lbl">File versions</div>
+    <div class="field-lbl">Submissions</div>
     <div id="d_versions">${(a.versions&&a.versions.length) ? a.versions.map(v=>`
       <div class="note" style="border-left-color:${v.stage==='tl'?'var(--review)':'#9b7ef0'};">
-        <span class="who">v${v.version_number} · ${v.stage==='tl'?'Team Lead review':'Creative Director review'}</span> <span class="when">${fmtDate(v.created_at)}</span>
-        <p>${escapeHTML(v.file_name)} ${v.file_size?'· '+fmtBytes(v.file_size):''} — <a href="#" class="downloadVersionLink" data-vid="${v.id}" style="color:var(--brand);">download</a></p>
-      </div>`).join('') : '<div style="font-size:12px;color:var(--ink-faint);">No files submitted yet.</div>'}</div>
+        <span class="who">v${v.version_number} · ${escapeHTML(v.uploaded_by_name||'Someone')} · ${v.stage==='tl'?'Team Lead review':'Creative Director review'}</span> <span class="when">${fmtDate(v.created_at)}</span>
+        ${v.link?`<p><a href="${escapeHTML(v.link)}" target="_blank" rel="noopener noreferrer" style="color:var(--brand);word-break:break-all;">${escapeHTML(v.link)}</a></p>`:''}
+        ${v.description?`<p>${escapeHTML(v.description)}</p>`:''}
+        ${v.file_name?`<p>${escapeHTML(v.file_name)} ${v.file_size?'· '+fmtBytes(v.file_size):''} — <a href="#" class="downloadVersionLink" data-vid="${v.id}" style="color:var(--brand);">download</a></p>`:''}
+      </div>`).join('') : '<div style="font-size:12px;color:var(--ink-faint);">Nothing submitted yet.</div>'}</div>
+
+    <div class="field-lbl">History</div>
+    <div id="d_history" style="font-size:12px;color:var(--ink-faint);">Loading…</div>
 
     <div class="field-lbl">Review feedback</div>
     <div id="d_feedback">${(a.feedback&&a.feedback.length) ? a.feedback.map(f=>`
@@ -846,18 +877,35 @@ async function openDrawer(id){
   }
 
   if(canSubmit){
-    document.getElementById('submitAssetBtn').onclick = async ()=>{
-      const fileInput = document.getElementById('submitFileInput');
-      if(!fileInput.files[0]){ showToast('Choose a file first.'); return; }
-      const fd = new FormData(); fd.append('file', fileInput.files[0]);
+    document.getElementById('submitAssetBtn').onclick = async (ev)=>{
+      const err = document.getElementById('submitErr');
+      err.textContent = '';
+      const link = document.getElementById('submitLink').value.trim();
+      const description = document.getElementById('submitDescription').value.trim();
+      /* The server validates the link properly; this only saves a round trip
+         on the most common mistake. */
+      if(!link){ err.textContent = 'A link to the work is required.'; return; }
+      ev.target.disabled = true;
       try{
-        const res = await fetch(API_BASE+'/assets/'+id+'/submit', { method:'POST', headers:{ Authorization:'Bearer '+state.token }, body: fd });
-        const data = await res.json();
-        if(!res.ok) throw new Error(data.error||'Submit failed');
+        await api('/assets/'+id+'/submit', { method:'POST', body:{ link, description } });
         showToast('Submitted for review.'); closeDrawer(); render();
-      }catch(err){ showToast(err.message); }
+      }catch(e){ err.textContent = e.message; ev.target.disabled = false; }
     };
   }
+  if(canRelay){
+    document.getElementById('relayBtn').onclick = async (ev)=>{
+      ev.target.disabled = true;
+      try{
+        await api('/assets/'+id+'/relay', { method:'POST', body:{ text: document.getElementById('relayNote').value.trim() } });
+        showToast('Sent to the assignee.'); closeDrawer(); render();
+      }catch(e){ showToast(e.message); ev.target.disabled = false; }
+    };
+  }
+
+  /* The whole back-and-forth, fetched when the drawer opens. Three tables
+     stitched into one sequence by the API, so nobody has to reconstruct the
+     order from timestamps. */
+  loadAssetHistory(id);
   if(canTlReview || canCdReview){
     const doReview = async (decision)=>{
       const text = document.getElementById('reviewNote').value.trim();
@@ -894,6 +942,40 @@ async function openDrawer(id){
     catch(err){ showToast(err.message); }
   };
 }
+const HISTORY_ACTIONS = {
+  assign:             { label: 'Assigned',          color: 'var(--prog)' },
+  submit:             { label: 'Submitted',         color: 'var(--review)' },
+  tl_approve:         { label: 'TL approved',       color: 'var(--approved)' },
+  tl_request_changes: { label: 'TL asked for changes', color: '#e8402c' },
+  cd_approve:         { label: 'CD approved',       color: 'var(--approved)' },
+  cd_request_changes: { label: 'CD asked for changes', color: '#e8402c' },
+  relay:              { label: 'Passed to assignee', color: '#ffd23d' },
+  deliver:            { label: 'Delivered',         color: 'var(--final)' },
+};
+
+async function loadAssetHistory(id){
+  const el = document.getElementById('d_history');
+  if(!el) return;
+  let data;
+  try{ data = await api('/assets/'+id+'/history'); }
+  catch(err){ el.textContent = err.message; return; }
+
+  if(!data.events.length){ el.innerHTML = '<div style="font-size:12px;color:var(--ink-faint);">Nothing has happened yet.</div>'; return; }
+
+  el.innerHTML = data.events.map(e=>{
+    const meta = HISTORY_ACTIONS[e.action] || { label: e.action, color: 'var(--ink-muted)' };
+    return `<div class="note" style="border-left-color:${meta.color};">
+      <span class="who" style="color:${meta.color};">${escapeHTML(meta.label)}</span>
+      <span class="when">${escapeHTML(e.actor)} · ${fmtDate(e.at)}</span>
+      <p style="font-size:11px;color:var(--ink-faint);margin:2px 0 0;">
+        ${e.fromLabel && e.fromLabel!==e.toLabel ? escapeHTML(e.fromLabel)+' → '+escapeHTML(e.toLabel) : escapeHTML(e.toLabel)}
+        ${e.versionNumber?` · v${e.versionNumber}`:''}
+      </p>
+      ${e.note?`<p>${escapeHTML(e.note)}</p>`:''}
+    </div>`;
+  }).join('');
+}
+
 function closeDrawer(){ document.getElementById('overlay').classList.remove('show'); document.getElementById('drawer').classList.remove('show'); }
 
 /* ---------- new asset modal ---------- */

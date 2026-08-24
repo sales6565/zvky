@@ -1,0 +1,280 @@
+// The review pipeline as a state machine.
+//
+// Every move an asset can make is declared here as a transition: what it moves
+// from, what it moves to, who is allowed to make it, and who the asset then
+// sits with. The routes do not decide any of that — they ask this module and
+// apply the answer. Keeping it in one table is what makes the pipeline
+// checkable: the states below are the whole of it, and anything not listed
+// cannot happen.
+//
+//   Not Started -> In Progress -> TL Review -> Approved for Client -> Delivered
+//                       ^             |  \
+//                       |             |   +-> TL Changes -> (assignee reworks)
+//                       |             +-> CD Review -> CD Changes -> (TL relays)
+//
+// `status` says where in the pipeline the asset is. `routed_to_id` says whose
+// desk it is on, which is not the same thing: CD Changes sits with the team
+// lead until they relay it, and with the assignee afterwards, without the
+// status changing. Deriving that from status alone was not possible, which is
+// why it is stored.
+
+const { roleDef } = require('./roles');
+
+// The eight states, in pipeline order. Labels and colours match the dashboard.
+const STATES = [
+  { id: 'not_started', label: 'Not Started', color: 'var(--not)' },
+  { id: 'in_progress', label: 'In Progress', color: 'var(--prog)' },
+  { id: 'pending_tl_review', label: 'TL Review', color: 'var(--review)' },
+  { id: 'tl_changes_requested', label: 'TL Changes', color: '#e8402c' },
+  { id: 'pending_cd_review', label: 'CD Review', color: '#9b7ef0' },
+  { id: 'cd_changes_requested', label: 'CD Changes', color: '#e8402c' },
+  { id: 'approved_for_client', label: 'Approved for Client', color: 'var(--approved)' },
+  { id: 'delivered', label: 'Delivered', color: 'var(--final)' },
+];
+
+const STATE_IDS = STATES.map((s) => s.id);
+const label = (id) => (STATES.find((s) => s.id === id) || {}).label || id;
+
+// Where a re-submission lands after the Creative Director asked for changes.
+//
+// 'tl' — back to the team lead, who relayed the request and re-checks the work
+//        before it reaches the CD again. The default, and the studio's stated
+//        preference.
+// 'cd' — straight back to the CD, skipping the lead.
+//
+// One environment variable because this is the kind of thing a studio changes
+// its mind about; both values are real states of the same machine rather than
+// one being a special case bolted on.
+function cdChangesReentry() {
+  return String(process.env.CD_CHANGES_REENTRY || 'tl').toLowerCase() === 'cd' ? 'cd' : 'tl';
+}
+
+// --- who may do what ---------------------------------------------------------
+// Predicates take the same context every transition gets. They answer only the
+// role question; whether the move is legal from the current status is the
+// table's job.
+
+// Statuses that belong to the assignee by definition. An unrouted asset in one
+// of these is theirs; an unrouted asset anywhere else is sitting in a review
+// queue and is not.
+//
+// This distinction is the whole of the CD Changes relay. That state is routed
+// to nobody until the lead passes it on, and without the list below "routed to
+// nobody" reads as "routed to anybody" — which let the assignee resubmit
+// straight past the lead who was supposed to brief them.
+const ASSIGNEE_STATUSES = ['not_started', 'in_progress', 'tl_changes_requested'];
+
+const actors = {
+  // The person the asset is assigned to, and only while it is on their desk.
+  assignee: (ctx) => {
+    const def = roleDef(ctx.user.role);
+    if (!def || !def.assignable) return false;
+    if (ctx.asset.assignee_id !== ctx.user.id) return false;
+    if (ctx.asset.routed_to_id === ctx.user.id) return true;
+    // Unrouted: theirs only if the status is one of their own. Rows written
+    // before routing existed have no routing, so this keeps them working.
+    return ctx.asset.routed_to_id == null && ASSIGNEE_STATUSES.includes(ctx.asset.status);
+  },
+  // The lead or supervisor of whoever the asset is assigned to.
+  teamLead: (ctx) => ctx.isTeamLead || ctx.canOverride,
+  // The Creative Director gate.
+  creativeDirector: (ctx) => {
+    const def = roleDef(ctx.user.role);
+    return Boolean((def && def.reviewStage === 'cd') || ctx.canOverride);
+  },
+  // Anyone who may set up work on the asset: assign it, or edit it.
+  planner: (ctx) => ctx.canEdit,
+  // Whoever signs off that the client has it.
+  deliverer: (ctx) => ctx.canDeliver,
+};
+
+// Where the asset sits after a transition. Returning a function rather than an
+// id because most of these are "the assignee", which the asset itself knows.
+const routes = {
+  assignee: (ctx) => ctx.asset.assignee_id || null,
+  // Nobody in particular: a review queue, picked up by whoever holds that gate.
+  reviewQueue: () => null,
+  actor: (ctx) => ctx.user.id,
+};
+
+// --- the transition table ----------------------------------------------------
+// The whole pipeline. Anything absent from this list is not a legal move.
+
+const TRANSITIONS = [
+  {
+    action: 'assign',
+    from: ['not_started'],
+    to: 'in_progress',
+    who: 'planner',
+    routeTo: 'assignee',
+    // Assigning is what starts the work; there is no separate "start" action.
+    describe: 'Assigned, so work has started',
+  },
+  {
+    action: 'submit',
+    from: ['not_started', 'in_progress', 'tl_changes_requested'],
+    to: 'pending_tl_review',
+    who: 'assignee',
+    routeTo: 'reviewQueue',
+    describe: 'Submitted for team lead review',
+  },
+  {
+    // The same submission, after the CD asked for changes. Where it lands is
+    // configurable; both destinations are ordinary states of this machine.
+    action: 'submit',
+    from: ['cd_changes_requested'],
+    to: () => (cdChangesReentry() === 'cd' ? 'pending_cd_review' : 'pending_tl_review'),
+    who: 'assignee',
+    routeTo: 'reviewQueue',
+    describe: () =>
+      cdChangesReentry() === 'cd'
+        ? 'Resubmitted straight to the Creative Director'
+        : 'Resubmitted for team lead review',
+  },
+  {
+    action: 'tl_approve',
+    from: ['pending_tl_review'],
+    to: 'pending_cd_review',
+    who: 'teamLead',
+    routeTo: 'reviewQueue',
+    describe: 'Team lead approved, sent to the Creative Director',
+  },
+  {
+    action: 'tl_request_changes',
+    from: ['pending_tl_review'],
+    to: 'tl_changes_requested',
+    who: 'teamLead',
+    routeTo: 'assignee',
+    requiresNote: true,
+    describe: 'Team lead requested changes',
+  },
+  {
+    action: 'cd_approve',
+    from: ['pending_cd_review'],
+    to: 'approved_for_client',
+    who: 'creativeDirector',
+    routeTo: 'reviewQueue',
+    describe: 'Creative Director approved for client',
+  },
+  {
+    // Goes to the lead, not to the assignee: the lead relays it, so the person
+    // who signed the work off is the one who explains what changed.
+    action: 'cd_request_changes',
+    from: ['pending_cd_review'],
+    to: 'cd_changes_requested',
+    who: 'creativeDirector',
+    routeTo: 'reviewQueue',
+    requiresNote: true,
+    describe: 'Creative Director requested changes, sent to the team lead',
+  },
+  {
+    // The relay. Status does not move — only whose desk it is on.
+    action: 'relay',
+    from: ['cd_changes_requested'],
+    to: 'cd_changes_requested',
+    who: 'teamLead',
+    routeTo: 'assignee',
+    describe: 'Team lead passed the Creative Director\'s notes to the assignee',
+  },
+  {
+    action: 'deliver',
+    from: ['approved_for_client'],
+    to: 'delivered',
+    who: 'deliverer',
+    routeTo: 'reviewQueue',
+    describe: 'Delivered to the client',
+  },
+];
+
+function resolve(value, ctx) {
+  return typeof value === 'function' ? value(ctx) : value;
+}
+
+// Find the transition for this action from this status, if there is one.
+function find(action, status) {
+  return TRANSITIONS.find((t) => t.action === action && t.from.includes(status)) || null;
+}
+
+// Everything this user could do to this asset right now. The UI renders from
+// this rather than keeping its own copy of the rules.
+function availableActions(ctx) {
+  return TRANSITIONS
+    .filter((t) => t.from.includes(ctx.asset.status) && actors[t.who](ctx))
+    .map((t) => ({
+      action: t.action,
+      to: resolve(t.to, ctx),
+      toLabel: label(resolve(t.to, ctx)),
+      requiresNote: Boolean(t.requiresNote),
+    }));
+}
+
+// May this move be made, and what does it produce?
+//
+// Returns { ok, to, routedTo, describe } or { ok: false, status, error }. The
+// status codes distinguish "not allowed" from "not legal from here", because
+// they mean different things to whoever is looking at the screen.
+function evaluate(action, ctx, { note } = {}) {
+  const current = ctx.asset.status;
+
+  const transition = find(action, current);
+  if (!transition) {
+    // Is the action real but the status wrong, or is the action nonsense?
+    const knownAction = TRANSITIONS.some((t) => t.action === action);
+    if (!knownAction) return { ok: false, status: 400, error: `Unknown action "${action}".` };
+    return {
+      ok: false,
+      status: 409,
+      error: `An asset in "${label(current)}" cannot be ${action.replace(/_/g, ' ')}.`,
+    };
+  }
+
+  if (!actors[transition.who](ctx)) {
+    return { ok: false, status: 403, error: refusal(transition, ctx) };
+  }
+
+  if (transition.requiresNote && !String(note || '').trim()) {
+    return { ok: false, status: 400, field: 'note', error: 'Say what needs to change.' };
+  }
+
+  return {
+    ok: true,
+    to: resolve(transition.to, ctx),
+    routedTo: routes[transition.routeTo](ctx),
+    describe: resolve(transition.describe, ctx),
+    action,
+  };
+}
+
+// Why someone was turned away, in terms of the pipeline rather than of code.
+function refusal(transition, ctx) {
+  switch (transition.who) {
+    case 'assignee':
+      if (ctx.asset.assignee_id !== ctx.user.id) return 'Only the person this asset is assigned to can submit it.';
+      if (ctx.asset.status === 'cd_changes_requested') {
+        return 'The team lead has not passed the Creative Director\'s notes on yet.';
+      }
+      if (ctx.asset.routed_to_id && ctx.asset.routed_to_id !== ctx.user.id) {
+        return 'This asset is with somebody else right now.';
+      }
+      return 'Only the assigned artist can submit this asset.';
+    case 'teamLead':
+      return 'Only this artist\'s team lead can act on it at this stage.';
+    case 'creativeDirector':
+      return 'Only the Creative Director can act on it at this stage.';
+    case 'deliverer':
+      return 'You cannot mark this asset as delivered.';
+    default:
+      return 'You cannot do that to this asset.';
+  }
+}
+
+module.exports = {
+  STATES,
+  ASSIGNEE_STATUSES,
+  STATE_IDS,
+  TRANSITIONS,
+  label,
+  evaluate,
+  availableActions,
+  cdChangesReentry,
+};
