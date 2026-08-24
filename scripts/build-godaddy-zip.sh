@@ -58,10 +58,10 @@ LOGIN_RATE_MAX=100
 LOGIN_RATE_WINDOW_MINUTES=15
 
 # --- IP allowlist ---
-# Shipped in monitor mode on purpose: a fresh deployment must not be able to
-# lock its own administrator out before anyone has confirmed which address this
-# server actually sees. Nothing is blocked; what would have been blocked is
-# written to the log.
+# Monitor is also the built-in default; stated here so it is visible. A fresh
+# deployment must not be able to lock its own administrator out before anyone
+# has confirmed which address this server actually sees. Nothing is blocked;
+# what would have been blocked is written to the log.
 #
 # To turn the restriction on:
 #   1. Sign in and open Settings -> Allowed IP Addresses.

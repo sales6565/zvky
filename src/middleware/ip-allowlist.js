@@ -31,22 +31,47 @@ const allowlist = require('../ip-allowlist');
 
 // Paths the gate never blocks.
 //
-// Only the platform health check. If the host cannot reach it the deployment is
+// The platform health check. If the host cannot reach it the deployment is
 // marked unhealthy and restarted, which turns a misconfigured allowlist into an
 // outage loop. It exposes no studio data — whether the database is reachable
 // and whether any account exists — and the alternative is worse.
 const ALWAYS_ALLOWED = ['/api/health'];
 
+// Addresses the gate never blocks either, which matters more than the path list
+// above: this deployment's health probe is a plain `GET /` from inside the
+// container, not a request to a health path. Blocking it failed the deploy and
+// production was rolled back.
+//
+// A request whose client address is loopback came from inside the container —
+// the platform itself. It cannot be a remote visitor: with a proxy in front,
+// the address judged here is the one that proxy wrote, so nobody outside can
+// arrange to look like 127.0.0.1. Turn it off with
+// IP_ALLOWLIST_ALLOW_LOOPBACK=false if this app is reachable directly.
+const LOOPBACK = ['127.0.0.0/8', '::1'];
+
+// Some platforms probe from the container network rather than loopback. Off by
+// default because a private range is a much larger surface than loopback; set
+// IP_ALLOWLIST_ALLOW_PRIVATE=true if health checks arrive from one of these.
+const PRIVATE = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '169.254.0.0/16', 'fc00::/7', 'fe80::/10'];
+
 function config() {
   return {
     enabled: String(process.env.IP_ALLOWLIST_ENABLED ?? 'true').toLowerCase() !== 'false',
     // 'enforce' blocks; 'monitor' logs what it would have blocked and lets it
-    // through. Deploy in monitor first to confirm the address this app actually
-    // sees for you, which is not always the address you think you have.
-    mode: String(process.env.IP_ALLOWLIST_MODE || 'enforce').toLowerCase() === 'monitor' ? 'monitor' : 'enforce',
+    // through.
+    //
+    // Monitor is the default, and enforcing takes the exact word "enforce".
+    // The address this app sees for you is not always the address you think you
+    // have, and a seeded list that turns out to hold the wrong one locks
+    // everybody out of production the moment it is switched on. Confirm the
+    // address on Settings -> Allowed IP Addresses first, then set
+    // IP_ALLOWLIST_MODE=enforce.
+    mode: String(process.env.IP_ALLOWLIST_MODE || 'monitor').toLowerCase() === 'enforce' ? 'enforce' : 'monitor',
     emergency: String(process.env.IP_ALLOWLIST_EMERGENCY || '')
       .split(',').map((s) => s.trim()).filter(Boolean),
     bypassToken: process.env.IP_ALLOWLIST_BYPASS_TOKEN || null,
+    allowLoopback: String(process.env.IP_ALLOWLIST_ALLOW_LOOPBACK ?? 'true').toLowerCase() !== 'false',
+    allowPrivate: String(process.env.IP_ALLOWLIST_ALLOW_PRIVATE || 'false').toLowerCase() === 'true',
     // Refuse traffic if the allowlist storage is unreadable, rather than
     // passing it. Off by default: the default has to be the one that cannot
     // strand a Super Admin behind a gate they cannot open.
@@ -171,6 +196,17 @@ function middleware(req, res, next) {
 
   if (ALWAYS_ALLOWED.includes(req.path)) return next();
 
+  // Before anything else, including fail-closed: the deployment's own health
+  // probe has to succeed or the platform kills the release. See LOOPBACK above.
+  if (settings.allowLoopback && ipMatch.findMatch(ip, LOOPBACK)) {
+    req.ipAllowlist = { decision: 'loopback' };
+    return next();
+  }
+  if (settings.allowPrivate && ipMatch.findMatch(ip, PRIVATE)) {
+    req.ipAllowlist = { decision: 'private-network' };
+    return next();
+  }
+
   if (!settings.enabled) {
     req.ipAllowlist = { decision: 'disabled' };
     return next();
@@ -265,7 +301,12 @@ function describeAtStartup(log = console.log) {
     log(`[ip-allowlist] ${settings.mode} mode, ${allowlist.entries().length} entr${allowlist.entries().length === 1 ? 'y' : 'ies'}.`);
   }
   if (settings.mode === 'monitor') {
-    log('[ip-allowlist] MONITOR mode: nothing is blocked, denials are only logged. Set IP_ALLOWLIST_MODE=enforce once the addresses look right.');
+    log('[ip-allowlist] MONITOR mode: nothing is blocked, denials are only logged.');
+    log('[ip-allowlist] To start restricting access: open Settings -> Allowed IP Addresses, check the');
+    log('[ip-allowlist] "You are connecting from" line matches an entry, then set IP_ALLOWLIST_MODE=enforce.');
+  }
+  if (!settings.allowLoopback) {
+    log('[ip-allowlist] Loopback is NOT exempt (IP_ALLOWLIST_ALLOW_LOOPBACK=false). If this host health-checks the app over localhost, that probe will be refused.');
   }
   if (settings.emergency.length) log(`[ip-allowlist] ${settings.emergency.length} emergency address(es) configured in the environment.`);
   if (settings.bypassToken) log('[ip-allowlist] a bypass token is configured.');
@@ -274,4 +315,7 @@ function describeAtStartup(log = console.log) {
   }
 }
 
-module.exports = { middleware, clientIP, config, failClosedIsSafe, describeAtStartup, ALWAYS_ALLOWED };
+module.exports = {
+  middleware, clientIP, config, failClosedIsSafe, describeAtStartup,
+  ALWAYS_ALLOWED, LOOPBACK, PRIVATE,
+};

@@ -443,6 +443,28 @@ configurable means building a workflow engine, which is a separate piece of work
 Upload extensions are also fixed, on purpose: that list is a security control,
 not a preference.
 
+### Collations, and why there is no cross-table string join
+
+`users.role` and `roles.key` were on different collations in production, because
+the two tables were created by different MySQL versions — `DEFAULT CHARSET=utf8mb4`
+with no `COLLATE` takes the *server's* default, which is `utf8mb4_0900_ai_ci` on
+MySQL 8 and `utf8mb4_general_ci` on MySQL 5.7 and MariaDB. Comparing them in SQL
+fails the whole statement:
+
+```
+Illegal mix of collations (utf8mb4_0900_ai_ci,IMPLICIT)
+and (utf8mb4_unicode_ci,IMPLICIT) for operation '='
+```
+
+That took the migration down mid-way and left later steps unapplied. So the
+orphan-role check is two queries and a set difference in JavaScript rather than
+a `LEFT JOIN`, and [`src/db-collation.js`](src/db-collation.js) creates new
+tables with the collation `users` already carries instead of the server default.
+
+The second part is defence in depth for new installs; it cannot retro-fix a
+database whose columns already disagree. Not comparing string columns across
+tables in SQL is what actually makes this safe.
+
 ### Migrating an existing database
 
 `src/migrate.js` creates the three tables on startup if they are missing, fills
@@ -473,21 +495,37 @@ Entries are single addresses (`106.51.81.61`) or CIDR ranges
 restart. Every change is recorded with who made it and from where, under
 *Change history* on the same screen.
 
-### Deploy it in monitor mode first
+### It does not block anything until you say so
 
-The address the app sees is the one your proxy reports, which is often not the
-one you expect. Getting it wrong locks out everyone, Super Admin included.
+**Monitor is the default**, and enforcing takes the exact word `enforce` —
+nothing else turns it on. The address the app sees is the one your proxy
+reports, which is often not the one you expect, and a list holding the wrong one
+locks out everyone the moment it starts blocking.
 
-1. Deploy with `IP_ALLOWLIST_MODE=monitor`. Nothing is blocked; what *would*
-   have been blocked is written to the log.
+1. Deploy. Nothing is blocked; what *would* have been blocked is logged.
 2. Open **Settings → Allowed IP Addresses** and read the *You are connecting
-   from* line. That is the address the gate will judge.
-3. Add it, confirm the log shows no addresses you care about being flagged, then
-   set `IP_ALLOWLIST_MODE=enforce`.
+   from* line. That is the address the gate will judge — add it if it is not
+   already there.
+3. Confirm the log flags no addresses you care about, then set
+   `IP_ALLOWLIST_MODE=enforce`.
 
 `TRUST_PROXY` decides which address that is: too low and every visitor looks
 like the proxy, too high and a client can name its own address. `1` is right
 behind cPanel/Passenger or a single load balancer.
+
+### The platform's health check is never blocked
+
+Requests arriving over **loopback** are exempt, always — ahead of every other
+decision, fail-closed included. This host health-checks the app with a plain
+`GET /` from inside the container, not a request to a health path, and refusing
+it marks the release unhealthy and rolls it back.
+
+A remote visitor cannot arrange to look like loopback: with a proxy in front,
+the address judged is the one that proxy wrote, so anything a client prepends is
+ignored. Set `IP_ALLOWLIST_ALLOW_LOOPBACK=false` only if the app is reachable
+directly rather than through a proxy — the startup log warns when you have. If
+your host probes from a container-network address instead, set
+`IP_ALLOWLIST_ALLOW_PRIVATE=true`.
 
 ### It cannot lock you out permanently
 

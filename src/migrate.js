@@ -2,6 +2,7 @@ const { v4: uuid } = require('uuid');
 const { roleKeys } = require('./roles');
 const referenceData = require('./reference-data');
 const ipAllowlist = require('./ip-allowlist');
+const { applyTableOptions } = require('./db-collation');
 const defaults = require('./reference-defaults');
 
 // Small, idempotent schema repairs applied at startup.
@@ -173,7 +174,9 @@ async function seedReferenceTable(db, table, rows, toValues, log) {
 }
 
 async function ensureReferenceData(db, log) {
-  for (const sql of Object.values(REFERENCE_TABLES)) await db.query(sql);
+  // Created with the collation the rest of the schema already uses, so a later
+  // query can compare these columns against the older tables.
+  for (const sql of Object.values(REFERENCE_TABLES)) await db.query(await applyTableOptions(db, sql));
 
   await seedReferenceTable(db, 'asset_types', defaults.ASSET_TYPES, (r) => ({
     columns: ['id', '`key`', 'label', 'code_prefix', 'color', 'position', 'is_active', 'is_system'],
@@ -193,9 +196,18 @@ async function ensureReferenceData(db, log) {
   // Any role a person already holds that the table does not know about — from
   // a database that predates this, or a role deleted by hand. Carry it across
   // rather than leaving those accounts unable to sign in.
-  const { rows: orphans } = await db.query(
-    'SELECT DISTINCT u.`role` AS role FROM users u LEFT JOIN roles r ON r.`key` = u.`role` WHERE r.`key` IS NULL'
-  );
+  //
+  // Deliberately two queries and a comparison here rather than a LEFT JOIN.
+  // Joining users.role to roles.key compares two string columns, and if those
+  // tables carry different collations — which happens when one was created by
+  // an older server than the other — MySQL refuses the whole statement with
+  // "Illegal mix of collations" and takes this migration down with it. That is
+  // how a production deploy lost its reference tables. A set difference in
+  // JavaScript cannot have that problem, and both lists are small.
+  const { rows: held } = await db.query('SELECT DISTINCT `role` AS role FROM users');
+  const { rows: known } = await db.query('SELECT `key` AS `key` FROM roles');
+  const knownKeys = new Set(known.map((r) => r.key));
+  const orphans = held.filter((r) => r.role && !knownKeys.has(r.role));
   for (const orphan of orphans) {
     if (!orphan.role) continue;
     const label = String(orphan.role).replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());

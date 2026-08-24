@@ -13,6 +13,7 @@
 
 const { v4: uuid } = require('uuid');
 const ipMatch = require('./ip-match');
+const { applyTableOptions } = require('./db-collation');
 
 // The tables, owned here rather than in the migration, so that whoever needs
 // them can create them: startup, and the management screen when it finds them
@@ -73,7 +74,9 @@ function isLoaded() {
 // EXISTS. Throws on a permission problem, which the caller reports rather than
 // hides — a Super Admin who cannot restrict access needs to know why.
 async function ensureTables(db) {
-  for (const sql of TABLES) await db.query(sql);
+  // Matched to the collation the rest of the schema uses — see
+  // src/db-collation.js for why that is not left to the server default.
+  for (const sql of TABLES) await db.query(await applyTableOptions(db, sql));
 }
 
 // Read the table into the mirror. A failure is recorded rather than thrown:

@@ -102,6 +102,8 @@ test('the IP allowlist', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       BOOTSTRAP_TOKEN: 'test-bootstrap-token',
       IP_ALLOWLIST_SEED: OFFICE,
       TRUST_PROXY: '1',
+      // Enforcing is opt-in now; these tests are about what happens when it is on.
+      IP_ALLOWLIST_MODE: 'enforce',
     });
     // Signing in has to happen from an allowed address — which is the point.
     await call('/auth/bootstrap', {
@@ -391,6 +393,7 @@ test('the emergency ways back in', { skip: cfg ? false : SKIP_REASON }, async (t
       IP_ALLOWLIST_SEED: UNREACHABLE,
       IP_ALLOWLIST_EMERGENCY: `${RESCUE}, 192.0.2.0/24`,
       TRUST_PROXY: '1',
+      IP_ALLOWLIST_MODE: 'enforce',
     });
     try {
       // The list is wrong: it allows an address nobody has.
@@ -413,6 +416,7 @@ test('the emergency ways back in', { skip: cfg ? false : SKIP_REASON }, async (t
       IP_ALLOWLIST_SEED: UNREACHABLE,
       IP_ALLOWLIST_BYPASS_TOKEN: TOKEN,
       TRUST_PROXY: '1',
+      IP_ALLOWLIST_MODE: 'enforce',
     });
     try {
       assert.strictEqual(await reach(server, OUTSIDE), 403);
@@ -431,7 +435,7 @@ test('the emergency ways back in', { skip: cfg ? false : SKIP_REASON }, async (t
 
   await t.test('an empty allowlist is treated as not set up, not as a locked door', async () => {
     await resetSchema(cfg);
-    const server = await startServer(cfg, { IP_ALLOWLIST_SEED: '', TRUST_PROXY: '1' });
+    const server = await startServer(cfg, { IP_ALLOWLIST_SEED: '', TRUST_PROXY: '1', IP_ALLOWLIST_MODE: 'enforce' });
     try {
       for (const ip of [OUTSIDE, OFFICE, '8.8.8.8']) {
         assert.strictEqual(await reach(server, ip), 200, `${ip} should reach an app with nothing configured`);
@@ -446,6 +450,7 @@ test('the emergency ways back in', { skip: cfg ? false : SKIP_REASON }, async (t
     await resetSchema(cfg);
     const server = await startServer(cfg, {
       IP_ALLOWLIST_SEED: UNREACHABLE, IP_ALLOWLIST_ENABLED: 'false', TRUST_PROXY: '1',
+      IP_ALLOWLIST_MODE: 'enforce',
     });
     try {
       assert.strictEqual(await reach(server, OUTSIDE), 200);
@@ -475,7 +480,12 @@ test('the emergency ways back in', { skip: cfg ? false : SKIP_REASON }, async (t
     // TRUST_PROXY=0 says nothing in front of us is trusted, so X-Forwarded-For
     // is somebody's claim rather than a proxy's record — and is not believed.
     await resetSchema(cfg);
-    const server = await startServer(cfg, { IP_ALLOWLIST_SEED: OFFICE, TRUST_PROXY: '0' });
+    const server = await startServer(cfg, {
+      IP_ALLOWLIST_SEED: OFFICE, TRUST_PROXY: '0', IP_ALLOWLIST_MODE: 'enforce',
+      // The peer here is loopback, which is exempt by default; switch that off
+      // or this would prove nothing about the forwarded header.
+      IP_ALLOWLIST_ALLOW_LOOPBACK: 'false',
+    });
     try {
       const claimed = await api(server.base, '/projects', { headers: from(OFFICE) });
       assert.strictEqual(claimed.status, 403, 'claiming to be the allowed address must not work');
@@ -573,6 +583,7 @@ test('a broken allowlist explains itself and can be repaired', { skip: cfg ? fal
     await resetSchema(cfg);
     server = await startServer(cfg, {
       BOOTSTRAP_TOKEN: 'broken-token', IP_ALLOWLIST_SEED: OFFICE, TRUST_PROXY: '1',
+      IP_ALLOWLIST_MODE: 'enforce',
     });
     await call('/auth/bootstrap', {
       headers: from(OFFICE), method: 'POST',
@@ -694,6 +705,7 @@ test('fail-closed refuses traffic but keeps the emergency door open', { skip: cf
       IP_ALLOWLIST_FAIL_CLOSED: 'true',
       IP_ALLOWLIST_EMERGENCY: RESCUE,
       TRUST_PROXY: '1',
+      IP_ALLOWLIST_MODE: 'enforce',
     });
     try {
       assert.match(server.output(), /NOT ENFORCING/, 'the fault must be announced at startup');
@@ -717,6 +729,7 @@ test('fail-closed refuses traffic but keeps the emergency door open', { skip: cf
     await breakStorage(cfg);
     const server = await startServer(cfg, {
       IP_ALLOWLIST_SEED: OFFICE, IP_ALLOWLIST_FAIL_CLOSED: 'true', TRUST_PROXY: '1',
+      IP_ALLOWLIST_MODE: 'enforce',
     });
     try {
       assert.strictEqual(await reach(server, OFFICE), 200, 'nobody could have fixed a lockout here');
@@ -725,4 +738,116 @@ test('fail-closed refuses traffic but keeps the emergency door open', { skip: cf
       stopServer(server);
     }
   });
+});
+
+// --- the two things that failed a production deploy --------------------------
+
+test('enforcing takes the exact word, and everything else is monitor', () => {
+  const gate = require('../src/middleware/ip-allowlist');
+  const saved = process.env.IP_ALLOWLIST_MODE;
+  try {
+    // Unset must not block. A seeded list holding an address that turns out not
+    // to be yours locks everybody out of production the moment it is switched
+    // on, so switching it on is a decision somebody makes on purpose.
+    delete process.env.IP_ALLOWLIST_MODE;
+    assert.strictEqual(gate.config().mode, 'monitor');
+    for (const value of ['', 'monitor', 'Monitor', 'on', 'true', 'yes', 'enforced', 'enfore']) {
+      process.env.IP_ALLOWLIST_MODE = value;
+      assert.strictEqual(gate.config().mode, 'monitor', `"${value}" must not start blocking traffic`);
+    }
+    for (const value of ['enforce', 'ENFORCE', 'Enforce']) {
+      process.env.IP_ALLOWLIST_MODE = value;
+      assert.strictEqual(gate.config().mode, 'enforce');
+    }
+  } finally {
+    if (saved === undefined) delete process.env.IP_ALLOWLIST_MODE;
+    else process.env.IP_ALLOWLIST_MODE = saved;
+  }
+});
+
+test('the health probe this platform actually makes is never blocked', { skip: cfg ? false : SKIP_REASON }, async (t) => {
+  // The deployment's health check is a plain `GET /` over loopback, not a
+  // request to a health path. Refusing it made the release unhealthy and
+  // production was rolled back, so this is the regression test for that.
+  await resetSchema(cfg);
+  const server = await startServer(cfg, {
+    IP_ALLOWLIST_SEED: OFFICE,
+    IP_ALLOWLIST_MODE: 'enforce',
+    TRUST_PROXY: '1',
+  });
+  try {
+    // No X-Forwarded-For: the request came from inside the container, which is
+    // exactly what the platform's probe looks like.
+    const probe = await raw(server.base.replace(/\/api$/, '') + '/', '');
+    assert.strictEqual(probe.status, 200, 'the platform probe must succeed or the release is killed');
+
+    const health = await api(server.base, '/health');
+    assert.strictEqual(health.status, 200);
+
+    // And it is genuinely enforcing for everyone else.
+    assert.strictEqual(await reach(server, OUTSIDE), 403);
+    assert.strictEqual(await reach(server, OFFICE), 200);
+
+    // A remote client cannot claim to be loopback: with a proxy in front, the
+    // address judged is the one the proxy wrote, on the right.
+    const pretending = await raw(server.base.replace(/\/api$/, '') + '/', '', {
+      headers: { 'X-Forwarded-For': `127.0.0.1, ${OUTSIDE}` },
+    });
+    assert.strictEqual(pretending.status, 403, 'a forged loopback address must not get in');
+  } finally {
+    stopServer(server);
+  }
+});
+
+test('the loopback exemption can be switched off', { skip: cfg ? false : SKIP_REASON }, async (t) => {
+  await resetSchema(cfg);
+  const server = await startServer(cfg, {
+    IP_ALLOWLIST_SEED: OFFICE,
+    IP_ALLOWLIST_MODE: 'enforce',
+    IP_ALLOWLIST_ALLOW_LOOPBACK: 'false',
+    TRUST_PROXY: '1',
+  });
+  try {
+    const probe = await raw(server.base.replace(/\/api$/, '') + '/', '');
+    assert.strictEqual(probe.status, 403);
+    // Said out loud, because it is how a deploy dies.
+    assert.match(server.output(), /Loopback is NOT exempt/);
+    // The health path stays reachable regardless, so a host that probes it
+    // still works.
+    assert.strictEqual((await api(server.base, '/health')).status, 200);
+  } finally {
+    stopServer(server);
+  }
+});
+
+test('the migration survives tables whose collations disagree', { skip: cfg ? false : SKIP_REASON }, async (t) => {
+  // Production had users.role and roles.key on different collations, because
+  // the two tables were created by different MySQL versions. Comparing them in
+  // SQL fails the whole statement, which took the migration down and left the
+  // IP allowlist tables uncreated.
+  await resetSchema(cfg);
+  await sql(cfg, `
+    DROP TABLE IF EXISTS ip_allowlist_audit, ip_allowlist, roles, asset_types, priorities;
+    ALTER TABLE users MODIFY \`role\` VARCHAR(64)
+      CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'game_artist';
+  `);
+
+  const server = await startServer(cfg, { IP_ALLOWLIST_SEED: OFFICE, IP_ALLOWLIST_MODE: 'enforce' });
+  try {
+    assert.ok(!/Illegal mix of collations/.test(server.output()),
+      `the migration must not compare string columns across tables:\n${server.output()}`);
+    assert.ok(!/could not be applied/.test(server.output()),
+      `every repair should apply:\n${server.output()}`);
+
+    // The step that used to be skipped ran: its tables exist and are seeded.
+    const entries = await sql(cfg, 'SELECT address FROM ip_allowlist');
+    assert.strictEqual(entries.length, 1);
+    assert.strictEqual(entries[0].address, OFFICE);
+
+    // And the reference tables were filled rather than left half-built.
+    const roles = await sql(cfg, 'SELECT COUNT(*) AS n FROM roles');
+    assert.ok(Number(roles[0].n) > 50, 'the role catalogue should have been seeded');
+  } finally {
+    stopServer(server);
+  }
 });
