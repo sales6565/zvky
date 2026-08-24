@@ -415,7 +415,15 @@ not a preference.
 
 `src/migrate.js` creates the three tables on startup if they are missing, fills
 them from the values the app previously held in code, and drops the `type` and
-`priority` CHECK constraints that would otherwise reject anything new. Any role
+`priority` CHECK constraints that would otherwise reject anything new.
+
+Each repair is applied **independently**. They used to share one `try`/`catch`,
+which meant the first failure skipped every step after it and said so in a
+single line that was easy to miss. That is how a deployment ended up without the
+IP allowlist tables: an unrelated step above them failed, they were never
+created, and the only symptom was a generic database error on one screen. A step
+that cannot be applied is now named on its own, the rest still run, and startup
+ends with a count of what did not apply. Any role
 an account holds that the table does not know about is carried across under an
 *Unsorted* group with no pipeline access, rather than leaving that account unable
 to sign in. All of it is idempotent.
@@ -463,6 +471,7 @@ is logged.
 | `IP_ALLOWLIST_EMERGENCY=1.2.3.4,10.0.0.0/8` | Addresses allowed whatever the database says. |
 | `IP_ALLOWLIST_BYPASS_TOKEN=…` | A request carrying this in `X-Allowlist-Bypass` passes from any address. |
 | *(an empty list)* | Treated as "not configured", so the app stays open. |
+| *(unreadable storage)* | Also stays open, loudly — see [When its storage breaks](#when-its-storage-breaks). |
 
 Set at least one of `IP_ALLOWLIST_EMERGENCY` or `IP_ALLOWLIST_BYPASS_TOKEN`
 before enforcing. Without one, a wrong entry means editing the database by hand.
@@ -484,6 +493,42 @@ you confirm it. The browser asks first; the API refuses a `DELETE` without
 `?confirm=yes` regardless, so a script or a stale tab gets the same protection.
 The message distinguishes the two cases — whether another entry still covers
 you, or whether this is the one thing keeping you in.
+
+### When its storage breaks
+
+The allowlist lives in two tables. If they cannot be read — they were never
+created, or the database user cannot see them — the gate **opens rather than
+closes**, because closing would strand the one person who could fix it behind
+the gate that broke.
+
+That is the safe failure, but it is not a quiet one:
+
+- Startup prints `*** IP ALLOWLIST STORAGE IS UNAVAILABLE ***` with the database
+  error and the remedy.
+- The moment the fault is discovered, the log says `NOT ENFORCING`, and repeats
+  it every ten minutes for as long as it lasts.
+- **Settings → Allowed IP Addresses** replaces the list with a red panel naming
+  the error, the likely cause, and the fix — with a **Repair now** button that
+  creates the missing tables and reloads, no redeploy needed.
+
+`IP_ALLOWLIST_FAIL_CLOSED=true` reverses the choice for a deployment that would
+rather be unreachable than unrestricted. It is *ignored* unless
+`IP_ALLOWLIST_EMERGENCY` or `IP_ALLOWLIST_BYPASS_TOKEN` is also set, since
+without one of those it would turn a storage fault into an outage with no way
+back in. Blocked visitors then see "Access temporarily unavailable" rather than
+"Access denied", because the two mean different things.
+
+An empty list and an unreadable one look identical from the cache and mean
+opposite things — a gate nobody configured versus a gate that lost its
+configuration. Only the first is treated as "open by choice"; the second is a
+fault and is reported as one.
+
+### Cost per request
+
+The gate reads an in-memory mirror of the table, refreshed at startup and after
+every write. It issues **no database query per request** — measured at zero
+across 200 requests, allowed and blocked alike — so it cannot exhaust the
+connection pool however much traffic arrives.
 
 ### Spoofing
 
@@ -555,7 +600,12 @@ every other one meets the Access Denied page, a spoofed `X-Forwarded-For` does
 not, sign-in itself is refused before any password is read, an address added
 works on the next request, removing the entry covering the caller needs
 confirmation, and each way back in — emergency address, bypass token, empty
-list, kill switch, monitor mode — does what it claims.
+list, kill switch, monitor mode — does what it claims. It also covers the
+storage failing: that one failing schema repair no longer skips the ones after
+it, that an unreadable list is never mistaken for an empty one, that the screen
+explains the fault instead of returning a database error, that Repair recreates
+the tables and enforcement resumes, and that fail-closed keeps the emergency
+door open and is ignored when there is none.
 
 ## Packaging for deployment
 

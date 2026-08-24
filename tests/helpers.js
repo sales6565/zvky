@@ -131,4 +131,21 @@ async function raw(base, path, { token, method = 'GET', body, headers = {} } = {
   return { status: res.status, text: await res.text(), contentType: res.headers.get('content-type') || '' };
 }
 
-module.exports = { config, resetSchema, startServer, stopServer, api, raw, SKIP_REASON };
+// Run raw SQL against the test database. Tests that need to break something on
+// purpose — dropping a table out from under a running server — need a way in
+// that does not go through the app.
+async function sql(cfg, statement) {
+  const mysql = require('mysql2/promise');
+  const conn = await mysql.createConnection({
+    host: cfg.host, port: cfg.port, user: cfg.user, password: cfg.password,
+    database: cfg.database, multipleStatements: true,
+  });
+  try {
+    const [rows] = await conn.query(statement);
+    return rows;
+  } finally {
+    await conn.end();
+  }
+}
+
+module.exports = { config, resetSchema, startServer, stopServer, api, raw, sql, SKIP_REASON };

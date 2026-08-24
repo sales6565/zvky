@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { config, resetSchema, startServer, stopServer, api, raw, SKIP_REASON } = require('./helpers');
+const { config, resetSchema, startServer, stopServer, api, raw, sql, SKIP_REASON } = require('./helpers');
 const ipMatch = require('../src/ip-match');
 
 const cfg = config('ipallowlist');
@@ -480,6 +480,247 @@ test('the emergency ways back in', { skip: cfg ? false : SKIP_REASON }, async (t
       const claimed = await api(server.base, '/projects', { headers: from(OFFICE) });
       assert.strictEqual(claimed.status, 403, 'claiming to be the allowed address must not work');
       assert.strictEqual(claimed.body.yourAddress, '127.0.0.1', 'the real peer address is what counts');
+    } finally {
+      stopServer(server);
+    }
+  });
+});
+
+// --- when the storage itself is broken ----------------------------------------
+//
+// These exist because of a real failure. The allowlist tables went missing on a
+// running deployment and the app answered "a database error" on one screen while
+// quietly passing every request — it looked restricted and was not. The cause
+// was not in this feature at all: every startup schema repair shared one
+// try/catch, so an unrelated step failing above the allowlist meant its tables
+// were never created, and the only trace was a single log line.
+
+const migrate = require('../src/migrate');
+const allowlistStore = require('../src/ip-allowlist');
+
+test('one failing schema repair does not skip the ones after it', async () => {
+  // A database that refuses the very first thing the migration asks for. Every
+  // later step must still be attempted — that is the whole point.
+  const asked = [];
+  const db = {
+    async query(text) {
+      asked.push(text);
+      if (/CHECK_CONSTRAINTS/.test(text)) {
+        const err = new Error('SELECT command denied');
+        err.code = 'ER_TABLEACCESS_DENIED_ERROR';
+        throw err;
+      }
+      return { rows: [] };
+    },
+  };
+
+  const messages = [];
+  const result = await migrate.run(db, (m) => messages.push(m));
+
+  assert.ok(result.failed.includes('stale role constraints'), 'the failing step should be named');
+  assert.ok(
+    asked.some((q) => /CREATE TABLE IF NOT EXISTS ip_allowlist\b/.test(q)),
+    'the IP allowlist tables must still be created after an earlier step fails'
+  );
+  assert.ok(
+    messages.some((m) => /could not be applied/.test(m)),
+    'the failure should be reported on its own line'
+  );
+  // And the summary has to say how much did not apply, rather than one vague
+  // line that reads like a warning.
+  assert.ok(messages.some((m) => /startup repairs did not apply/.test(m)));
+});
+
+test('an unreadable list is never mistaken for an empty one', async () => {
+  // The two are indistinguishable from the cache and mean opposite things: an
+  // empty list is a gate nobody configured, an unreadable one is a gate that
+  // lost its configuration. Only the first may be treated as "open by choice".
+  const broken = {
+    async query() {
+      const err = new Error("Table 'x.ip_allowlist' doesn't exist");
+      err.code = 'ER_NO_SUCH_TABLE';
+      throw err;
+    },
+  };
+  const ok = await allowlistStore.load(broken);
+  assert.strictEqual(ok, false, 'load should report failure rather than throw');
+  assert.strictEqual(allowlistStore.isLoaded(), false);
+  assert.strictEqual(allowlistStore.storageStatus().state, 'missing-tables');
+  assert.strictEqual(allowlistStore.storageStatus().ok, false);
+  assert.strictEqual(allowlistStore.isConfiguredEmpty(), false, 'this is a fault, not a configuration');
+  assert.deepStrictEqual(allowlistStore.entries(), [], 'never hand out a mirror it cannot vouch for');
+  assert.strictEqual(allowlistStore.findMatch('106.51.81.61'), null, 'and never match against one');
+});
+
+test('fail-closed is refused unless there is a way back in', () => {
+  const gate = require('../src/middleware/ip-allowlist');
+  // Setting it with no emergency address turns a storage fault into an outage
+  // with no remedy, which is the thing the escape hatches exist to prevent.
+  assert.strictEqual(gate.failClosedIsSafe({ failClosed: true, emergency: [], bypassToken: null }), false);
+  assert.strictEqual(gate.failClosedIsSafe({ failClosed: true, emergency: ['1.2.3.4'], bypassToken: null }), true);
+  assert.strictEqual(gate.failClosedIsSafe({ failClosed: true, emergency: [], bypassToken: 'x' }), true);
+  assert.strictEqual(gate.failClosedIsSafe({ failClosed: false, emergency: ['1.2.3.4'], bypassToken: 'x' }), false);
+});
+
+test('a broken allowlist explains itself and can be repaired', { skip: cfg ? false : SKIP_REASON }, async (t) => {
+  const PASSWORD = 'Broken-Storage-1!';
+  let server;
+  let superToken;
+  const call = (path, options) => api(server.base, path, options);
+  const DROP = 'DROP TABLE IF EXISTS ip_allowlist_audit; DROP TABLE IF EXISTS ip_allowlist;';
+
+  t.before(async () => {
+    await resetSchema(cfg);
+    server = await startServer(cfg, {
+      BOOTSTRAP_TOKEN: 'broken-token', IP_ALLOWLIST_SEED: OFFICE, TRUST_PROXY: '1',
+    });
+    await call('/auth/bootstrap', {
+      headers: from(OFFICE), method: 'POST',
+      body: { token: 'broken-token', name: 'Broken Admin', email: 'super@zvky.test', password: PASSWORD },
+    });
+    superToken = (await call('/auth/login', {
+      headers: from(OFFICE), method: 'POST', body: { email: 'super@zvky.test', password: PASSWORD },
+    })).body.token;
+    // Take the tables away from underneath the running server.
+    await sql(cfg, DROP);
+  });
+
+  t.after(() => stopServer(server));
+
+  await t.test('the screen says what is wrong instead of "a database error"', async () => {
+    const res = await call('/ip-allowlist', { headers: from(OFFICE), token: superToken });
+    assert.strictEqual(res.status, 200, 'this must not be a 500');
+    assert.notStrictEqual(res.body.error, 'The server could not complete that request because of a database error.');
+    assert.strictEqual(res.body.storage.ok, false);
+    assert.strictEqual(res.body.storage.state, 'missing-tables');
+    assert.strictEqual(res.body.storage.code, 'ER_NO_SUCH_TABLE');
+    // Enough to act on: what is wrong, why, and what to do.
+    assert.match(res.body.storage.summary, /NOT being restricted/i);
+    assert.ok(res.body.storage.cause);
+    assert.ok(res.body.storage.fix);
+    assert.strictEqual(res.body.storage.repairable, true);
+    // And it must not claim to be enforcing.
+    assert.strictEqual(res.body.enforcement.effective, false);
+  });
+
+  await t.test('the fault is visible in the log, not silent', async () => {
+    // Announced the moment it is discovered — by the read in the subtest above —
+    // rather than waiting for whatever happens to look next.
+    assert.match(server.output(), /NOT ENFORCING/);
+    assert.match(server.output(), /Every address can currently reach this app/);
+  });
+
+  await t.test('the audit trail and a removal degrade instead of erroring', async () => {
+    const audit = await call('/ip-allowlist/audit', { headers: from(OFFICE), token: superToken });
+    assert.strictEqual(audit.status, 200);
+    assert.strictEqual(audit.body.unavailable, true);
+
+    const removal = await call('/ip-allowlist/whatever', {
+      headers: from(OFFICE), token: superToken, method: 'DELETE',
+    });
+    assert.strictEqual(removal.status, 503, 'honest refusal, not a generic 500');
+    assert.ok(removal.body.storage);
+  });
+
+  await t.test('the app stays reachable rather than locking everyone out', async () => {
+    // Failing open is the deliberate choice: closing would strand the one
+    // person who can fix it behind the gate that broke.
+    assert.strictEqual(await reach(server, OUTSIDE), 200);
+    assert.strictEqual(await reach(server, OFFICE), 200);
+  });
+
+  await t.test('repair recreates the tables and enforcement resumes', async () => {
+    const repaired = await call('/ip-allowlist/repair', {
+      headers: from(OFFICE), token: superToken, method: 'POST',
+    });
+    assert.strictEqual(repaired.status, 200, JSON.stringify(repaired.body));
+    assert.strictEqual(repaired.body.storage.ok, true);
+
+    // The list comes back empty, so the gate is open until an address is added.
+    assert.strictEqual(await reach(server, OUTSIDE), 200);
+
+    const added = await call('/ip-allowlist', {
+      headers: from(OFFICE), token: superToken, method: 'POST', body: { address: OFFICE, label: 'Studio' },
+    });
+    assert.strictEqual(added.status, 201, JSON.stringify(added.body));
+
+    assert.strictEqual(await reach(server, OFFICE), 200);
+    assert.strictEqual(await reach(server, OUTSIDE), 403, 'enforcing again, with no restart');
+
+    // The repair is on the record.
+    const audit = await call('/ip-allowlist/audit', { headers: from(OFFICE), token: superToken });
+    assert.ok(audit.body.entries.some((e) => e.action === 'repaired'), 'the repair should be audited');
+  });
+
+  await t.test('a table restored by hand is noticed without a repair call', async () => {
+    await sql(cfg, DROP);
+    const broken = await call('/ip-allowlist', { headers: from(OFFICE), token: superToken });
+    assert.strictEqual(broken.body.storage.ok, false);
+
+    // Somebody runs the CREATE TABLE statements themselves.
+    for (const statement of allowlistStore.TABLES) await sql(cfg, statement);
+
+    const recovered = await call('/ip-allowlist', { headers: from(OFFICE), token: superToken });
+    assert.strictEqual(recovered.status, 200);
+    assert.strictEqual(recovered.body.storage.ok, true, 'a successful read should clear the recorded fault');
+  });
+});
+
+// Breaking the storage in a way that survives a restart, using only the DDL an
+// ordinary database user has. Dropping the tables is not enough: the app would
+// simply recreate them at startup. A view over a table that no longer exists
+// keeps CREATE TABLE IF NOT EXISTS happy — the name is taken — while every read
+// of it fails, which is what a deployment with a half-applied schema looks like.
+async function breakStorage(cfg2) {
+  await sql(cfg2, `
+    DROP TABLE IF EXISTS ip_allowlist_audit;
+    DROP TABLE IF EXISTS ip_allowlist;
+    DROP VIEW IF EXISTS ip_allowlist;
+    CREATE TABLE _allowlist_gone (id CHAR(36), address VARCHAR(64), label VARCHAR(120),
+      is_active TINYINT(1), created_by_id CHAR(36), created_by_email VARCHAR(191), created_at DATETIME);
+    CREATE VIEW ip_allowlist AS SELECT * FROM _allowlist_gone;
+    DROP TABLE _allowlist_gone;
+  `);
+}
+
+test('fail-closed refuses traffic but keeps the emergency door open', { skip: cfg ? false : SKIP_REASON }, async (t) => {
+  const RESCUE = '198.51.100.20';
+
+  await t.test('with an emergency address it holds the line', async () => {
+    await resetSchema(cfg);
+    await breakStorage(cfg);
+    const server = await startServer(cfg, {
+      IP_ALLOWLIST_SEED: OFFICE,
+      IP_ALLOWLIST_FAIL_CLOSED: 'true',
+      IP_ALLOWLIST_EMERGENCY: RESCUE,
+      TRUST_PROXY: '1',
+    });
+    try {
+      assert.match(server.output(), /NOT ENFORCING/, 'the fault must be announced at startup');
+
+      assert.strictEqual(await reach(server, OFFICE), 403, 'refusing while it cannot check');
+      assert.strictEqual(await reach(server, OUTSIDE), 403);
+      // The way back in does not go through the database, so it still works.
+      assert.strictEqual(await reach(server, RESCUE), 200, 'the emergency address must still get in');
+
+      const page = await raw(server.base.replace(/\/api$/, '') + '/', '', {
+        headers: { ...from(OUTSIDE), Accept: 'text/html' },
+      });
+      assert.match(page.text, /Access temporarily unavailable/i, 'and say it is a fault, not a refusal');
+    } finally {
+      stopServer(server);
+    }
+  });
+
+  await t.test('without one it is ignored rather than stranding everybody', async () => {
+    await resetSchema(cfg);
+    await breakStorage(cfg);
+    const server = await startServer(cfg, {
+      IP_ALLOWLIST_SEED: OFFICE, IP_ALLOWLIST_FAIL_CLOSED: 'true', TRUST_PROXY: '1',
+    });
+    try {
+      assert.strictEqual(await reach(server, OFFICE), 200, 'nobody could have fixed a lockout here');
+      assert.match(server.output(), /IP_ALLOWLIST_FAIL_CLOSED was ignored/);
     } finally {
       stopServer(server);
     }

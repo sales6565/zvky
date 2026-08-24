@@ -211,33 +211,6 @@ async function ensureReferenceData(db, log) {
 }
 
 
-// The IP allowlist tables, for databases created before they existed.
-const ALLOWLIST_TABLES = [
-  `CREATE TABLE IF NOT EXISTS ip_allowlist (
-      id CHAR(36) NOT NULL PRIMARY KEY,
-      address VARCHAR(64) NOT NULL,
-      label VARCHAR(120) NULL,
-      is_active TINYINT(1) NOT NULL DEFAULT 1,
-      created_by_id CHAR(36) NULL,
-      created_by_email VARCHAR(191) NULL,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE KEY uq_ip_allowlist_address (address),
-      KEY idx_ip_allowlist_active (is_active)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
-  `CREATE TABLE IF NOT EXISTS ip_allowlist_audit (
-      id CHAR(36) NOT NULL PRIMARY KEY,
-      action VARCHAR(24) NOT NULL,
-      address VARCHAR(64) NULL,
-      label VARCHAR(120) NULL,
-      actor_id CHAR(36) NULL,
-      actor_email VARCHAR(191) NULL,
-      actor_ip VARCHAR(64) NULL,
-      detail VARCHAR(255) NULL,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      KEY idx_ip_audit_created (created_at)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
-];
-
 // The address the studio starts with. Seeded only into an empty table, so a
 // Super Admin who removes it does not find it back after the next restart.
 // Override for a different first address with IP_ALLOWLIST_SEED.
@@ -250,37 +223,82 @@ const SEED_ADDRESSES = String(
   .split(',').map((s) => s.trim()).filter(Boolean)
   .map((address) => ({ address, label: 'Seeded on first run' }));
 
+// Create the allowlist tables, seed a first address into an empty list, and
+// load the mirror the gate reads. Reports loudly on failure: this is
+// access-control storage, and a studio that believes it is restricted when it
+// is not is worse off than one that knows it is open.
 async function ensureIpAllowlist(db, log) {
-  for (const sql of ALLOWLIST_TABLES) await db.query(sql);
-  const seeded = await ipAllowlist.seed(db, SEED_ADDRESSES);
-  if (seeded) log(`Schema: seeded ${seeded} address(es) into the IP allowlist.`);
-  await ipAllowlist.load(db);
+  const result = await ipAllowlist.install(db, SEED_ADDRESSES);
+  if (result.seeded) log(`Schema: seeded ${result.seeded} address(es) into the IP allowlist.`);
+  if (!result.ok) {
+    log('');
+    log('*** IP ALLOWLIST STORAGE IS UNAVAILABLE ***');
+    log(`    ${result.state === 'missing-tables'
+      ? 'The ip_allowlist tables do not exist and could not be created.'
+      : 'The ip_allowlist tables could not be read.'}`);
+    log(`    ${result.code || 'error'}: ${result.detail}`);
+    log('    Access is NOT being restricted by IP address. Every address can reach this app.');
+    log('    Fix: give the database user CREATE privileges and restart, or apply the two');
+    log('    CREATE TABLE statements in sql/schema.sql by hand, then use the Repair button');
+    log('    on Settings -> Allowed IP Addresses.');
+    log('');
+  }
+  return result;
 }
 
-async function run(db, log = console.log) {
-  try {
-    const stale = (await roleCheckConstraints(db)).filter((c) => isStale(c.clause));
-    for (const c of stale) {
-      await dropConstraint(db, c.name);
-      log(
-        `Schema: dropped CHECK constraint "${c.name}" on users.role — it predates the ` +
-        'current designations and was rejecting them. Roles are validated by src/roles.js.'
-      );
-    }
-    await widenRoleColumn(db, log);
-    await ensurePasswordChangedAt(db, log);
-    await dropValueConstraints(db, log);
-    await ensureReferenceData(db, log);
-    // Load the mirror the permission checks read from. Everything above must
-    // have run first: it is reading the tables this just created and filled.
-    await referenceData.load(db);
-    await ensureIpAllowlist(db, log);
-  } catch (err) {
-    // Never block startup on this: an unmigrated schema still serves everyone
-    // whose role the old constraint allows, and the error handler now reports
-    // the failure properly rather than taking the process down.
-    log(`Schema check could not complete: ${err.sqlMessage || err.message}`);
+async function dropStaleRoleConstraints(db, log) {
+  const stale = (await roleCheckConstraints(db)).filter((c) => isStale(c.clause));
+  for (const c of stale) {
+    await dropConstraint(db, c.name);
+    log(
+      `Schema: dropped CHECK constraint "${c.name}" on users.role — it predates the ` +
+      'current designations and was rejecting them. Roles are validated by src/roles.js.'
+    );
   }
+}
+
+// Each repair is independent, and is applied independently.
+//
+// These used to share one try/catch, which meant the first failure skipped
+// every step after it and said so in a single line nobody reads. That is how
+// the IP allowlist tables came to be missing on a running deployment: an
+// unrelated step above them failed, they were never created, and the only
+// symptom was a generic database error on one screen. A step that cannot be
+// applied is now reported on its own and the rest still run.
+//
+// Order still matters where one step feeds another, which is why this is a list
+// rather than a set of parallel calls.
+const STEPS = [
+  ['stale role constraints', dropStaleRoleConstraints],
+  ['users.role column width', widenRoleColumn],
+  ['users.password_changed_at', ensurePasswordChangedAt],
+  ['type and priority constraints', dropValueConstraints],
+  ['reference tables', ensureReferenceData],
+  // Reads the tables the step above creates and fills.
+  ['reference data mirror', (db) => referenceData.load(db)],
+  ['IP allowlist', ensureIpAllowlist],
+];
+
+async function run(db, log = console.log) {
+  const failed = [];
+  for (const [name, step] of STEPS) {
+    try {
+      await step(db, log);
+    } catch (err) {
+      // Never block startup on a schema repair: an unmigrated schema still
+      // serves most of the app, and the request-level error handler reports
+      // what breaks rather than taking the process down.
+      failed.push(name);
+      log(`Schema: "${name}" could not be applied — ${err.sqlMessage || err.message}`);
+    }
+  }
+  if (failed.length) {
+    log(
+      `Schema: ${failed.length} of ${STEPS.length} startup repairs did not apply ` +
+      `(${failed.join(', ')}). The app is running; parts of it may not work until these are fixed.`
+    );
+  }
+  return { failed };
 }
 
 module.exports = { run };

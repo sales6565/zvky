@@ -14,20 +14,130 @@
 const { v4: uuid } = require('uuid');
 const ipMatch = require('./ip-match');
 
-let cache = [];
-let loaded = false;
+// The tables, owned here rather than in the migration, so that whoever needs
+// them can create them: startup, and the management screen when it finds them
+// missing. Both statements are idempotent.
+const TABLES = [
+  `CREATE TABLE IF NOT EXISTS ip_allowlist (
+      id CHAR(36) NOT NULL PRIMARY KEY,
+      address VARCHAR(64) NOT NULL,
+      label VARCHAR(120) NULL,
+      is_active TINYINT(1) NOT NULL DEFAULT 1,
+      created_by_id CHAR(36) NULL,
+      created_by_email VARCHAR(191) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_ip_allowlist_address (address),
+      KEY idx_ip_allowlist_active (is_active)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS ip_allowlist_audit (
+      id CHAR(36) NOT NULL PRIMARY KEY,
+      action VARCHAR(24) NOT NULL,
+      address VARCHAR(64) NULL,
+      label VARCHAR(120) NULL,
+      actor_id CHAR(36) NULL,
+      actor_email VARCHAR(191) NULL,
+      actor_ip VARCHAR(64) NULL,
+      detail VARCHAR(255) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_ip_audit_created (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+];
 
-function isLoaded() {
-  return loaded;
+let cache = [];
+
+// Whether the tables behind this feature can actually be read.
+//
+// This is tracked rather than assumed because the alternative was worse: the
+// first version let a failed load throw out of whatever called it, so a missing
+// table meant the management screen answered "a database error" while the gate
+// quietly passed every request. The feature has to know when its own storage is
+// gone, or it cannot say so.
+//
+//   ready          the tables are there and the mirror below reflects them
+//   missing-tables they do not exist — the migration did not run, or could not
+//   unavailable    they exist but could not be read (permissions, connection)
+//   not-loaded     nothing has tried yet
+let storage = { state: 'not-loaded', detail: null, code: null };
+
+function storageStatus() {
+  return { ...storage, ok: storage.state === 'ready' };
 }
 
+// True only when the list below is a faithful copy of the table. The gate reads
+// this: it must never treat "we could not look" as "there is nothing there".
+function isLoaded() {
+  return storage.state === 'ready';
+}
+
+// Create the tables. Safe to call at any time; both statements are IF NOT
+// EXISTS. Throws on a permission problem, which the caller reports rather than
+// hides — a Super Admin who cannot restrict access needs to know why.
+async function ensureTables(db) {
+  for (const sql of TABLES) await db.query(sql);
+}
+
+// Read the table into the mirror. A failure is recorded rather than thrown:
+// every caller of this is either startup or a write, and neither should die
+// because the feature is not installed. Returns true when the mirror is good.
 async function load(db) {
-  const { rows } = await db.query(
-    'SELECT * FROM ip_allowlist WHERE is_active = 1 ORDER BY created_at'
-  );
-  cache = rows.map(shape);
-  loaded = true;
-  return cache;
+  try {
+    const { rows } = await db.query(
+      'SELECT * FROM ip_allowlist WHERE is_active = 1 ORDER BY created_at'
+    );
+    cache = rows.map(shape);
+    storage = { state: 'ready', detail: null, code: null };
+    return true;
+  } catch (err) {
+    // Deliberately empty rather than stale: whatever is in here would be acted
+    // on by the gate, and acting on a copy we can no longer verify is worse
+    // than admitting we cannot see the list.
+    cache = [];
+    fault(err);
+    return false;
+  }
+}
+
+// Record a storage failure, and say so the moment it is discovered rather than
+// waiting for the next request to notice. Every path that finds the storage
+// broken comes through here, so this is the one place that has to announce it.
+function fault(err) {
+  const was = storage.state;
+  storage = {
+    state: err.code === 'ER_NO_SUCH_TABLE' ? 'missing-tables' : 'unavailable',
+    detail: err.sqlMessage || err.message,
+    code: err.code || null,
+  };
+  if (was !== storage.state) {
+    console.error(
+      `[ip-allowlist] NOT ENFORCING: ${storage.state === 'missing-tables'
+        ? 'the ip_allowlist tables do not exist'
+        : 'the ip_allowlist tables could not be read'} ` +
+      `(${storage.code || 'error'}: ${storage.detail}). ` +
+      'Every address can currently reach this app unless IP_ALLOWLIST_FAIL_CLOSED is set. ' +
+      'Repair it on Settings -> Allowed IP Addresses.'
+    );
+  }
+}
+
+// Create the tables if needed, seed a first address into an empty list, and
+// load the mirror. Returns what happened so the caller can report it.
+async function install(db, seedAddresses = []) {
+  try {
+    await ensureTables(db);
+  } catch (err) {
+    cache = [];
+    fault(err);
+    return { ok: false, seeded: 0, ...storageStatus() };
+  }
+  let seeded = 0;
+  try {
+    seeded = await seed(db, seedAddresses);
+  } catch (err) {
+    // Seeding is a convenience; failing it must not leave the tables unread.
+    console.warn(`[ip-allowlist] could not seed the initial address: ${err.sqlMessage || err.message}`);
+  }
+  const ok = await load(db);
+  return { ok, seeded, ...storageStatus() };
 }
 
 function shape(row) {
@@ -41,9 +151,11 @@ function shape(row) {
   };
 }
 
-// Active entries only: the middleware asks this on every request.
+// Active entries only: the middleware asks this on every request. Empty unless
+// the mirror is known good, so an unreadable table cannot be mistaken for a
+// short one.
 function entries() {
-  return cache.slice();
+  return isLoaded() ? cache.slice() : [];
 }
 
 // Everything, for the management screen, which needs to show what has been
@@ -53,9 +165,10 @@ async function listAll(db) {
   return rows.map(shape);
 }
 
-// Which entry, if any, lets this address in.
+// Which entry, if any, lets this address in. Never answers from a mirror the
+// module cannot vouch for.
 function findMatch(clientIP) {
-  return ipMatch.findMatch(clientIP, cache);
+  return isLoaded() ? ipMatch.findMatch(clientIP, cache) : null;
 }
 
 // An empty allowlist means the gate is off. This is the difference between a
@@ -64,6 +177,13 @@ function findMatch(clientIP) {
 // leaves the app reachable rather than reachable by nobody.
 function isEmpty() {
   return cache.length === 0;
+}
+
+// "Nothing is listed", as distinct from "we could not read the list". The two
+// look identical from the cache and mean opposite things: the first is a gate
+// nobody has configured, the second is a gate that has lost its configuration.
+function isConfiguredEmpty() {
+  return isLoaded() && cache.length === 0;
 }
 
 // --- the audit trail ---------------------------------------------------------
@@ -210,8 +330,13 @@ async function seed(db, addresses) {
 }
 
 module.exports = {
+  TABLES,
+  ensureTables,
+  install,
   load,
   isLoaded,
+  storageStatus,
+  isConfiguredEmpty,
   entries,
   listAll,
   findMatch,

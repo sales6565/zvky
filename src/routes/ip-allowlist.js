@@ -21,15 +21,91 @@ function actorContext(req) {
   return { actor: req.user, actorIp: req.clientIp || gate.clientIP(req) };
 }
 
+// What is wrong with the storage, and what to do about it. Returned instead of
+// a bare 500 because "a database error" tells a Super Admin nothing they can
+// act on, and this is the screen where they would act.
+function storageProblem(status) {
+  if (status.state === 'missing-tables') {
+    return {
+      ...status,
+      summary: 'The tables this feature stores its addresses in do not exist, so access is NOT being restricted by IP address.',
+      cause: 'The startup migration that creates them did not run, or could not — most often because the database user is not allowed to create tables.',
+      fix: 'Use Repair below. If that fails, ask your host to grant the database user CREATE privileges and restart the app, or run the two CREATE TABLE statements from sql/schema.sql by hand.',
+      repairable: true,
+    };
+  }
+  return {
+    ...status,
+    summary: 'The addresses this feature stores could not be read, so access is NOT being restricted by IP address.',
+    cause: 'The database refused or could not answer the query. The exact reason is below and in the server log.',
+    fix: 'Check the database connection and the permissions of the database user, then use Repair below.',
+    repairable: true,
+  };
+}
+
+// Try to put the storage right, then report what happened. Called on demand by
+// the Super Admin rather than automatically on every request: a repair that
+// retries itself endlessly against a database that is refusing it is how a
+// small fault becomes a large one.
+async function repair() {
+  const before = allowlist.storageStatus();
+  const result = await allowlist.install(db, []);
+  return { attempted: true, wasState: before.state, ...result };
+}
+
+// Read the table, correcting what the module believes about its own storage.
+//
+// The recorded status can be wrong in both directions and neither can be
+// trusted on its own: it says "ready" from a mirror loaded before the tables
+// were dropped, and it says "missing" after somebody created them by hand. So
+// the read is attempted and the outcome is what settles it.
+async function readEntries() {
+  try {
+    const entries = await allowlist.listAll(db);
+    // A successful read from a module that thought it was broken means the
+    // fault has been fixed elsewhere; refresh the mirror the gate reads from.
+    if (!allowlist.storageStatus().ok) await allowlist.load(db);
+    return { entries, status: allowlist.storageStatus() };
+  } catch (err) {
+    // load() records why, and empties the mirror rather than leaving the gate
+    // acting on a copy nobody can verify.
+    await allowlist.load(db);
+    return { entries: null, status: allowlist.storageStatus() };
+  }
+}
+
 // GET /api/ip-allowlist — the entries, the caller's own address, and how the
 // gate is configured. The last part matters: someone editing this list needs to
 // know whether it is being enforced at all.
 router.get('/', async (req, res) => {
   const settings = gate.config();
   const myIp = req.clientIp || gate.clientIP(req);
-  const entries = await allowlist.listAll(db);
+
+  // If the storage is not readable, say exactly that and why, rather than
+  // letting the query throw into a generic database error. The screen stays
+  // usable and the problem stays visible.
+  const { entries: allEntries, status } = await readEntries();
+  if (!status.ok || !allEntries) {
+    return res.json({
+      entries: [],
+      yourAddress: myIp,
+      yourAccess: (req.ipAllowlist && req.ipAllowlist.decision) || 'unknown',
+      enforcement: {
+        enabled: settings.enabled,
+        mode: settings.mode,
+        emergencyConfigured: settings.emergency.length > 0,
+        bypassTokenConfigured: Boolean(settings.bypassToken),
+        failClosed: gate.failClosedIsSafe(settings),
+        effective: false,
+      },
+      storage: storageProblem(status),
+    });
+  }
+
+  const entries = allEntries;
 
   res.json({
+    storage: { ...status, ok: true },
     entries: entries.map((entry) => ({
       ...entry,
       // Flagged so the screen can warn before someone removes the entry that is
@@ -46,6 +122,7 @@ router.get('/', async (req, res) => {
       mode: settings.mode,
       emergencyConfigured: settings.emergency.length > 0,
       bypassTokenConfigured: Boolean(settings.bypassToken),
+      failClosed: gate.failClosedIsSafe(settings),
       // An empty list is treated as "not configured", so say so plainly rather
       // than letting someone believe the app is restricted when it is not.
       effective: settings.enabled && settings.mode === 'enforce' && !allowlist.isEmpty(),
@@ -53,9 +130,41 @@ router.get('/', async (req, res) => {
   });
 });
 
+// POST /api/ip-allowlist/repair — create the missing tables and reload.
+//
+// The same work startup does, on demand. It exists because startup is the one
+// moment a Super Admin cannot retry: if the tables were not created then, the
+// only remedies were a redeploy or database access, neither of which the person
+// looking at this screen necessarily has.
+router.post('/repair', async (req, res) => {
+  const result = await repair();
+  if (!result.ok) {
+    return res.status(503).json({
+      error: result.state === 'missing-tables'
+        ? 'The tables still could not be created. The database user is most likely not allowed to create tables.'
+        : 'The allowlist storage still could not be read.',
+      storage: storageProblem(allowlist.storageStatus()),
+    });
+  }
+  await allowlist.record(db, {
+    action: 'repaired',
+    actor: req.user,
+    actorIp: req.clientIp || gate.clientIP(req),
+    detail: `storage was ${result.wasState}`,
+  }).catch(() => {}); // the repair is what matters; a missing audit row is not worth failing it
+  res.json({ ok: true, storage: allowlist.storageStatus(), entries: await allowlist.listAll(db) });
+});
+
 // GET /api/ip-allowlist/audit — who changed what, and when.
 router.get('/audit', async (req, res) => {
-  res.json({ entries: await allowlist.auditTrail(db, req.query.limit) });
+  // An unreadable trail is not worth a 500 on a screen whose job is to explain
+  // that the storage is unreadable.
+  try {
+    res.json({ entries: await allowlist.auditTrail(db, req.query.limit) });
+  } catch (err) {
+    await allowlist.load(db);
+    res.json({ entries: [], unavailable: true, detail: err.sqlMessage || err.message });
+  }
 });
 
 router.post('/', async (req, res) => {
@@ -78,7 +187,13 @@ router.patch('/:id', async (req, res) => {
 // browser asks first; this is the backstop for anything that does not.
 router.delete('/:id', async (req, res) => {
   const myIp = req.clientIp || gate.clientIP(req);
-  const entries = await allowlist.listAll(db);
+  const { entries, status } = await readEntries();
+  if (!entries) {
+    return res.status(503).json({
+      error: 'The allowlist storage cannot be read, so nothing can be removed from it.',
+      storage: storageProblem(status),
+    });
+  }
   const target = entries.find((e) => e.id === req.params.id);
   if (!target) return res.status(404).json({ error: 'That entry does not exist.' });
 

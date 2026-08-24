@@ -107,6 +107,13 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .ip-banner.open{background:rgba(255,176,32,.10);border-color:rgba(255,176,32,.32);color:#ffcc70;}
 .ip-banner.live{background:rgba(64,200,140,.10);border-color:rgba(64,200,140,.30);color:#7fdcb0;}
 .ip-banner.monitor{background:rgba(77,184,255,.10);border-color:rgba(77,184,255,.30);color:#8ecdff;}
+/* The storage-fault banner. Louder than the rest on purpose: it means the app
+   is not restricting access while looking as though it is. */
+.ip-banner.fault{background:rgba(255,90,54,.12);border-color:rgba(255,90,54,.45);color:#ff9b80;}
+.ip-banner.fault h4{margin:0 0 7px;font-size:13px;color:#ff7a55;font-family:'Space Grotesk';letter-spacing:.2px;}
+.ip-banner.fault p{margin:0 0 8px;color:#ffb9a5;}
+.ip-banner.fault code{font-family:'IBM Plex Mono';font-size:11px;background:rgba(0,0,0,.32);
+  padding:3px 6px;border-radius:5px;display:inline-block;word-break:break-word;color:#ffd3c6;}
 .ip-you{font-family:'IBM Plex Mono';font-size:12px;color:var(--ink);background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 11px;display:inline-block;margin-bottom:14px;}
 .ip-you b{color:var(--brand-2,#4db8ff);}
 .ip-mine{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;padding:2px 7px;border-radius:20px;font-family:'IBM Plex Mono';background:rgba(64,200,140,.16);color:#7fdcb0;margin-left:8px;}
@@ -1303,6 +1310,41 @@ async function renderIpAllowlist(){
   const { entries, enforcement, yourAddress, yourAccess } = data;
   const active = entries.filter(e=>e.isActive);
 
+  /* The storage behind this feature is unreadable. Say so at full volume and
+     offer the repair, rather than showing an empty list that reads like "no
+     restrictions configured" — the two look identical and mean opposite
+     things. */
+  if(data.storage && data.storage.ok === false){
+    el.innerHTML = `
+      <div class="ref-section" data-section="ip-allowlist">
+        <div class="ref-head"><h3>Allowed IP Addresses</h3></div>
+        <div class="ip-banner fault">
+          <h4>This feature is not working, and access is not being restricted</h4>
+          <p>${escapeHTML(data.storage.summary||'')}</p>
+          <p>${escapeHTML(data.storage.cause||'')}</p>
+          <p><code>${escapeHTML((data.storage.code?data.storage.code+': ':'')+(data.storage.detail||''))}</code></p>
+          <p>${escapeHTML(data.storage.fix||'')}</p>
+        </div>
+        <div class="ip-you">You are connecting from <b>${escapeHTML(yourAddress||'an address the server could not read')}</b></div>
+        ${data.storage.repairable?'<button class="btn btn-brand" id="ipRepairBtn">Repair now</button>':''}
+        <div class="ref-err" id="err-ip-allowlist"></div>
+      </div>`;
+    const repair = document.getElementById('ipRepairBtn');
+    if(repair) repair.addEventListener('click', async ()=>{
+      repair.disabled = true; repair.textContent = 'Repairing…';
+      ipError('');
+      try{
+        await api('/ip-allowlist/repair', { method:'POST' });
+        showToast('Repaired — the allowlist is working again.');
+        await renderIpAllowlist();
+      }catch(err){
+        ipError(err.message);
+        repair.disabled = false; repair.textContent = 'Repair now';
+      }
+    });
+    return;
+  }
+
   /* Say plainly whether the gate is actually shut. Someone who has added
      addresses and believes the app is locked down, when it is not, is worse off
      than someone who knows it is open. */
@@ -1458,7 +1500,8 @@ function wireIpAllowlist(){
     audit.dataset.loaded = '1';
     const body = document.getElementById('ipAuditBody');
     try{
-      const { entries } = await api('/ip-allowlist/audit');
+      const { entries, unavailable } = await api('/ip-allowlist/audit');
+      if(unavailable){ body.textContent = 'The change history cannot be read while the storage is unavailable.'; return; }
       body.innerHTML = entries.length ? `<table class="ref-table">
         <thead><tr><th>When</th><th>Change</th><th>Address</th><th>By</th><th>From</th></tr></thead>
         <tbody>${entries.map(e=>`<tr>

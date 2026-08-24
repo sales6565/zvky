@@ -16,6 +16,15 @@
 //
 // Each of those is a server-level change by whoever can reach the environment,
 // which is the person who would be fixing a lockout. Every use is logged.
+//
+// If the allowlist tables cannot be read at all, the gate opens rather than
+// closes — closing would lock out the one person who could fix it. That is the
+// safe failure, but it is not a quiet one: it is announced at startup, repeated
+// in the log while it lasts, and stated on the management screen. A studio that
+// believes it is restricted when it is not is worse off than one that knows it
+// is open. IP_ALLOWLIST_FAIL_CLOSED=true reverses the choice for a deployment
+// that would rather be unreachable than unrestricted, and is refused unless an
+// emergency address or bypass token exists to get back in with.
 
 const ipMatch = require('../ip-match');
 const allowlist = require('../ip-allowlist');
@@ -38,7 +47,19 @@ function config() {
     emergency: String(process.env.IP_ALLOWLIST_EMERGENCY || '')
       .split(',').map((s) => s.trim()).filter(Boolean),
     bypassToken: process.env.IP_ALLOWLIST_BYPASS_TOKEN || null,
+    // Refuse traffic if the allowlist storage is unreadable, rather than
+    // passing it. Off by default: the default has to be the one that cannot
+    // strand a Super Admin behind a gate they cannot open.
+    failClosed: String(process.env.IP_ALLOWLIST_FAIL_CLOSED || 'false').toLowerCase() === 'true',
   };
+}
+
+// Fail-closed is only honoured when there is a way back in that does not go
+// through the database — otherwise it turns a storage fault into a total
+// outage with no remedy, which is the exact thing the escape hatches exist to
+// prevent.
+function failClosedIsSafe(settings) {
+  return settings.failClosed && (settings.emergency.length > 0 || Boolean(settings.bypassToken));
 }
 
 // The address to judge. Express resolves this from X-Forwarded-For according to
@@ -54,19 +75,27 @@ function clientIP(req) {
 // Deny politely: a page for a browser, JSON for anything else. It names the
 // address, because the person reading it needs to know what to allowlist, and
 // nothing else about the system.
-function deny(req, res, ip) {
+function deny(req, res, ip, reason = 'not-allowed') {
   const wantsHtml = String(req.headers.accept || '').includes('text/html');
+  const unavailable = reason === 'unavailable';
+  const headline = unavailable ? 'Access temporarily unavailable' : 'Access denied';
+  const explain = unavailable
+    ? 'This application cannot currently check whether your address is permitted, and is configured to refuse rather than allow while that is true. An administrator has been shown the reason in the server log.'
+    : 'This application only accepts connections from approved networks, and this one is not on the list.';
   res.status(403);
   if (!wantsHtml) {
     return res.json({
-      error: 'Access denied: this address is not permitted to reach this application.',
+      error: unavailable
+        ? 'Access denied: the address allowlist cannot be read, and this server is configured to refuse traffic while that is true.'
+        : 'Access denied: this address is not permitted to reach this application.',
       yourAddress: ip,
+      reason,
     });
   }
   return res.send(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Access Denied</title>
+<title>${headline}</title>
 <style>
   :root{color-scheme:dark;}
   body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
@@ -81,8 +110,8 @@ function deny(req, res, ip) {
 </style></head>
 <body><div class="card">
   <div class="mark">Z</div>
-  <h1>Access denied</h1>
-  <p>This application only accepts connections from approved networks, and this one is not on the list.</p>
+  <h1>${headline}</h1>
+  <p>${explain}</p>
   <p>Your address:</p>
   <p><span class="ip">${String(ip || 'unknown').replace(/[<>&"]/g, '')}</span></p>
   <p>If you should have access, pass that address to an administrator to add it.</p>
@@ -112,6 +141,27 @@ function noteDenial(ip, path) {
   }
   // Keep the map from growing without bound under a scan.
   if (seen.size > 5000) seen.clear();
+}
+
+// A storage fault is a standing condition, not an event: it will be true for
+// every request until someone fixes it. Say so on the first request and then
+// every ten minutes, which is often enough to be noticed in a log and rare
+// enough not to bury it.
+let lastStorageWarning = 0;
+const STORAGE_WARNING_INTERVAL_MS = 10 * 60 * 1000;
+
+function noteStorageFault(status) {
+  const now = Date.now();
+  if (now - lastStorageWarning < STORAGE_WARNING_INTERVAL_MS) return;
+  lastStorageWarning = now;
+  const what = status.state === 'missing-tables'
+    ? 'the ip_allowlist tables do not exist'
+    : 'the ip_allowlist tables could not be read';
+  console.error(
+    `[ip-allowlist] NOT ENFORCING: ${what} (${status.code || 'error'}: ${status.detail}). ` +
+    'Every address can currently reach this app. Open Settings -> Allowed IP Addresses to repair, ' +
+    'or see the startup log for the fix.'
+  );
 }
 
 function middleware(req, res, next) {
@@ -150,9 +200,24 @@ function middleware(req, res, next) {
     return next();
   }
 
-  // Not loaded yet, or nothing in it. Either way the gate is not configured,
-  // and an unconfigured gate stands open rather than shut.
-  if (!allowlist.isLoaded() || allowlist.isEmpty()) {
+  // The list cannot be read: the tables are missing, or the database is not
+  // answering. This is not the same as an empty list, and must not be treated
+  // as one — an empty list is a decision, this is a fault.
+  if (!allowlist.isLoaded()) {
+    const status = allowlist.storageStatus();
+    noteStorageFault(status);
+    if (failClosedIsSafe(settings)) {
+      req.ipAllowlist = { decision: 'storage-unavailable-closed', storage: status };
+      if (ALWAYS_ALLOWED.includes(req.path)) return next();
+      return deny(req, res, ip, 'unavailable');
+    }
+    req.ipAllowlist = { decision: 'storage-unavailable', storage: status };
+    return next();
+  }
+
+  // Nothing in it. The gate is not configured, and an unconfigured gate stands
+  // open rather than shut.
+  if (allowlist.isEmpty()) {
     req.ipAllowlist = { decision: 'unconfigured' };
     return next();
   }
@@ -182,9 +247,21 @@ function describeAtStartup(log = console.log) {
     log('[ip-allowlist] disabled (IP_ALLOWLIST_ENABLED=false). Every address may reach this app.');
     return;
   }
-  if (allowlist.isLoaded() && allowlist.isEmpty()) {
+  if (!allowlist.isLoaded()) {
+    const status = allowlist.storageStatus();
+    log('[ip-allowlist] NOT ENFORCING — its storage is unavailable ' +
+        `(${status.code || 'error'}: ${status.detail}).`);
+    log(failClosedIsSafe(settings)
+      ? '[ip-allowlist] IP_ALLOWLIST_FAIL_CLOSED is set, so traffic is being refused until this is fixed. Use the emergency address or bypass token to get in.'
+      : '[ip-allowlist] Every address can currently reach this app. Repair it on Settings -> Allowed IP Addresses.');
+    if (settings.failClosed && !failClosedIsSafe(settings)) {
+      log('[ip-allowlist] IP_ALLOWLIST_FAIL_CLOSED was ignored: with no emergency address or bypass token it would leave nobody able to fix this.');
+    }
+    return;
+  }
+  if (allowlist.isEmpty()) {
     log('[ip-allowlist] no entries, so the gate is open. Add one in Settings to restrict access.');
-  } else if (allowlist.isLoaded()) {
+  } else {
     log(`[ip-allowlist] ${settings.mode} mode, ${allowlist.entries().length} entr${allowlist.entries().length === 1 ? 'y' : 'ies'}.`);
   }
   if (settings.mode === 'monitor') {
@@ -197,4 +274,4 @@ function describeAtStartup(log = console.log) {
   }
 }
 
-module.exports = { middleware, clientIP, config, describeAtStartup, ALWAYS_ALLOWED };
+module.exports = { middleware, clientIP, config, failClosedIsSafe, describeAtStartup, ALWAYS_ALLOWED };
