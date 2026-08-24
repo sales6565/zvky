@@ -482,6 +482,71 @@ an account holds that the table does not know about is carried across under an
 *Unsorted* group with no pipeline access, rather than leaving that account unable
 to sign in. All of it is idempotent.
 
+## The reporting hierarchy, and a user's project
+
+**Edit** on any row of the Users screen opens Role, Project and Reporting To.
+Clicking a name opens the read-only detail view, which shows the same three.
+
+### Three columns that all look like "manager"
+
+`users` carries three self-references and only one of them is the org chart:
+
+| Column | Means | Set by |
+| --- | --- | --- |
+| `manager_id` | Who *created* the account. Gates who may edit or remove them ("you can only change users you added"). | Account creation |
+| `team_lead_id` | Who reviews a contributor's assets. Drives team-scoped permissions. | Add/Edit User |
+| `reports_to_id` | **The org chart.** | Edit User |
+
+Reporting is its own column precisely because the other two carry permission
+meaning. Moving somebody in the hierarchy must not change what anyone can see or
+do, and repurposing `manager_id` would have meant that editing a reporting line
+silently transferred — or destroyed — an administrator's right to manage that
+person.
+
+### Top of the hierarchy
+
+Roles in the **Leadership** tier report to nobody. The field is *absent* for
+them, not disabled or blank: a greyed-out control still says "there is a value
+here you have not chosen". The detail view shows *Top of hierarchy*, and the API
+refuses a reporting line for them whatever the form sends.
+
+That tier currently holds exactly the two designations this was written for —
+Managing Director & CEO, and Vice President, Global Operations & Business
+Development. Reading it from the tier rather than from two hardcoded keys means
+renaming one in Settings cannot quietly hand the person running the studio a
+Reporting To field.
+
+Changing someone's role to a Leadership one **clears** their existing reporting
+line, in the database, without the form having to send anything.
+
+### Loops
+
+One walk answers all three rules — you cannot report to yourself, to someone who
+reports to you, or around a longer circle: walking up from the proposed manager
+must not reach the person being edited. Depth-bounded, so data that is already
+circular stops the walk instead of hanging it. Refusals name the path
+("`Sam Iyer already reports to Rohit Nair through Priya Menon`") rather than just
+saying no. `GET /api/users/:id/manager-options` pre-filters the dropdown to the
+same rule, so the form cannot offer a choice the API would refuse — the server
+checks again regardless.
+
+**Reporting To is optional.** An edit is never blocked because the right manager
+does not exist yet, and nobody has to invent a reporting line to save an
+unrelated change. Unset shows as *Not set*, which is distinct from *Top of
+hierarchy*.
+
+### A user's project
+
+Membership is stored per role, matching how the permission checks already read
+it: `project_coordinators` for `projectScope: 'assigned'`, `project_team_leads`
+for `leadsTeam`, and `project_members` for everyone else. That third table is
+new — contributors, most of the studio, previously had no link to a project at
+all, so an artist could not be assigned to one.
+
+Setting a project clears the other two tables, so a designation change *moves*
+the membership rather than leaving a stale row that the permission checks would
+still honour. Changing only the role moves it automatically.
+
 ## Restricting access by IP address
 
 The whole application can be limited to a set of addresses. The check runs on

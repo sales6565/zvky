@@ -119,6 +119,19 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .ip-obs .verdict.wait{background:rgba(255,176,32,.10);border:1px solid rgba(255,176,32,.32);color:#ffcc70;}
 .ip-obs-scope{font-size:10.5px;color:var(--ink-faint);margin-top:10px;line-height:1.5;}
 .ip-add-seen{white-space:nowrap;}
+.eu-hint{font-size:11px;color:var(--ink-faint);margin-top:5px;line-height:1.45;}
+.eu-top{font-size:12px;line-height:1.5;padding:10px 12px;border-radius:9px;margin-top:12px;
+  background:rgba(255,210,61,.10);border:1px solid rgba(255,210,61,.30);color:#ffd98a;}
+.ud-row{display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--border);font-size:13px;}
+.ud-row:last-child{border-bottom:0;}
+.ud-key{min-width:130px;font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink-muted);
+  font-family:'IBM Plex Mono';padding-top:3px;}
+.ud-val{flex:1;}
+.ud-none{color:var(--ink-faint);font-style:italic;}
+.ud-top{color:#ffd23d;font-weight:600;}
+.u-link{background:none;border:0;padding:0;color:var(--ink);font-weight:600;cursor:pointer;font-size:inherit;
+  font-family:inherit;text-align:left;}
+.u-link:hover{color:var(--brand);text-decoration:underline;}
 .ip-banner.fault h4{margin:0 0 7px;font-size:13px;color:#ff7a55;font-family:'Space Grotesk';letter-spacing:.2px;}
 .ip-banner.fault p{margin:0 0 8px;color:#ffb9a5;}
 .ip-banner.fault code{font-family:'IBM Plex Mono';font-size:11px;background:rgba(0,0,0,.32);
@@ -311,6 +324,30 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
   </div>
 </div>
 
+<div class="modal-wrap" id="editUserModalWrap">
+  <div class="modal">
+    <h2>Edit User</h2>
+    <div id="eu_who" style="font-size:12px;color:var(--ink-muted);margin-bottom:14px;"></div>
+    <label>Role</label><select id="eu_role"></select>
+    <label>Project</label><select id="eu_project"></select>
+    <div id="eu_reportingWrap">
+      <label>Reporting To</label><select id="eu_reportsTo"></select>
+      <div class="eu-hint" id="eu_reportsHint"></div>
+    </div>
+    <div id="eu_topNotice" class="eu-top" style="display:none;"></div>
+    <div class="ref-err" id="eu_err"></div>
+    <div class="modal-actions"><button class="btn btn-ghost" id="cancelEditUser">Cancel</button><button class="btn btn-brand" id="saveEditUser">Save changes</button></div>
+  </div>
+</div>
+
+<div class="modal-wrap" id="userDetailWrap">
+  <div class="modal">
+    <h2>User</h2>
+    <div id="ud_body"></div>
+    <div class="modal-actions"><button class="btn btn-ghost" id="closeUserDetail">Close</button><button class="btn btn-brand" id="editFromDetail">Edit</button></div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -350,6 +387,11 @@ const STATUSES = [
 let ROLE_LIST = [];
 const ROLE_MAP = {};
 function roleInfo(key){ return ROLE_MAP[key] || { key, label: key || 'Unknown', color:'var(--ink-faint)', group:'' }; }
+/* Designations at the top of the hierarchy, taken from the tier rather than a
+   hardcoded pair of keys, so renaming one in Settings does not quietly give the
+   person running the studio a Reporting To field. Rebuilt whenever the role
+   catalogue is loaded. */
+let TOP_TIER_ROLES = new Set();
 /* What the signed-in user is allowed to do, as decided by the API. */
 function caps(){ return (state.currentUser && state.currentUser.capabilities) || {}; }
 /* Comma-separated role keys matching a predicate, for /users?role= lookups. */
@@ -366,6 +408,9 @@ async function loadRoles(){
   ROLE_LIST = roles;
   Object.keys(ROLE_MAP).forEach(k=>delete ROLE_MAP[k]);
   roles.forEach(r=>{ ROLE_MAP[r.key] = r; });
+  /* Kept in step with the catalogue: the server decides which tier sits at the
+     top of the hierarchy, and this follows it. */
+  TOP_TIER_ROLES = new Set(roles.filter(r=>r.tier==='leadership').map(r=>r.key));
 }
 function typeOf(id){
   return TYPES.find(t=>t.id===id)
@@ -620,14 +665,24 @@ async function renderUsers(){
       <button class="btn btn-ghost" id="bulkUserBtn">Bulk Upload Users</button>
       <button class="btn btn-ghost" id="downloadUserSampleBtn" title="Download a CSV with the user columns and example rows">Sample format</button>
     </div>
-    <table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr></thead><tbody>
+    <table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Project</th><th>Reporting To</th><th></th></tr></thead><tbody>
       ${users.map(x=>{
         const r=roleInfo(x.role);
         const targetRunsStudio = r.manageUsers && r.projectScope==='all';
         const canDelete = x.id!==u.id && (caps().projectScope==='all' ? !targetRunsStudio : x.manager_id===u.id);
-        return `<tr><td style="font-weight:600;">${escapeHTML(x.name)}</td><td class="mono" style="font-size:11.5px;">${escapeHTML(x.email)}</td>
+        /* Top of the hierarchy is stated, not left blank: an empty cell reads as
+           "nobody has filled this in yet", which invites someone to fill it in. */
+        const reporting = x.topOfHierarchy
+          ? '<span class="ud-top">Top of hierarchy</span>'
+          : (x.reportsToName ? escapeHTML(x.reportsToName) : '<span class="ud-none">Not set</span>');
+        return `<tr><td><button class="u-link userDetailBtn" data-id="${x.id}">${escapeHTML(x.name)}</button></td>
+          <td class="mono" style="font-size:11.5px;">${escapeHTML(x.email)}</td>
           <td><span class="role-badge" title="${escapeHTML(r.group||'')}" style="background:${r.color}22;color:${r.color}">${escapeHTML(r.label)}</span></td>
-          <td>${canDelete ? `<button class="btn btn-ghost btn-sm delUserBtn" data-id="${x.id}" data-name="${escapeHTML(x.name)}">Remove</button>` : ''}</td></tr>`;
+          <td>${x.projectName ? escapeHTML(x.projectName) : '<span class="ud-none">None</span>'}</td>
+          <td>${reporting}</td>
+          <td style="text-align:right;white-space:nowrap;">
+            <button class="btn btn-ghost btn-sm editUserBtn" data-id="${x.id}">Edit</button>
+            ${canDelete ? `<button class="btn btn-ghost btn-sm delUserBtn" data-id="${x.id}" data-name="${escapeHTML(x.name)}">Remove</button>` : ''}</td></tr>`;
       }).join('')}
     </tbody></table>
     ${total>users.length ? `<div style="text-align:center;margin-top:12px;"><button class="btn btn-ghost" id="loadMoreUsers">Show more (${total-users.length} remaining)</button></div>` : ''}
@@ -640,6 +695,8 @@ async function renderUsers(){
   document.getElementById('downloadUserSampleBtn').addEventListener('click', downloadUserSample);
   const lm = document.getElementById('loadMoreUsers');
   if(lm) lm.addEventListener('click', ()=>{ state.usersRenderLimit+=60; renderUsers(); });
+  el.querySelectorAll('.editUserBtn').forEach(btn=>btn.addEventListener('click', ()=>openEditUser(btn.dataset.id)));
+  el.querySelectorAll('.userDetailBtn').forEach(btn=>btn.addEventListener('click', ()=>openUserDetail(btn.dataset.id)));
   el.querySelectorAll('.delUserBtn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       if(!confirm(`Remove ${btn.dataset.name} from the studio?`)) return;
@@ -1092,6 +1149,146 @@ document.getElementById('saveUserModal').addEventListener('click', async ()=>{
     showToast(`${name} added as ${roleInfo(role).label}. Default password: zvky2026`);
   }catch(err){ showToast(err.message); }
 });
+
+/* ---------- edit a user: their project and who they report to ---------- */
+/* The Reporting To field is absent for the Leadership tier rather than
+   disabled or optional: those designations sit at the top and report to nobody,
+   and a greyed-out control still says "there is a value here you have not
+   chosen". The API refuses it too, so hiding it is a courtesy, not the rule. */
+
+const editUserModalWrap = document.getElementById('editUserModalWrap');
+const userDetailWrap = document.getElementById('userDetailWrap');
+let editingUser = null;
+
+function euError(message){ document.getElementById('eu_err').textContent = message || ''; }
+
+async function openEditUser(id){
+  euError('');
+  let user, managerOptions;
+  try{
+    [user, managerOptions] = await Promise.all([
+      api('/users/' + id).then(r => r.user),
+      api('/users/' + id + '/manager-options'),
+    ]);
+  }catch(err){ showToast(err.message); return; }
+
+  editingUser = user;
+  userDetailWrap.classList.remove('show');
+  document.getElementById('eu_who').innerHTML =
+    `<strong>${escapeHTML(user.name)}</strong> · <span class="mono">${escapeHTML(user.email)}</span>`;
+
+  /* Role: only what this administrator is allowed to assign, matching Add User. */
+  const roleSel = document.getElementById('eu_role');
+  const choices = assignableRoleList().slice();
+  /* Their current designation may not be one this administrator can hand out.
+     Keep it in the list anyway, or opening the form would silently propose
+     changing it. */
+  if(!choices.some(r=>r.key===user.role)) choices.unshift(roleInfo(user.role));
+  roleSel.innerHTML = choices
+    .map(r=>`<option value="${r.key}"${r.key===user.role?' selected':''}>${escapeHTML(r.label)}</option>`).join('');
+
+  const projSel = document.getElementById('eu_project');
+  projSel.innerHTML = '<option value="">— No project —</option>' +
+    state.projects.map(p=>`<option value="${p.id}"${p.id===user.projectId?' selected':''}>${escapeHTML(p.name)}</option>`).join('');
+
+  renderReportingField(user, managerOptions);
+  editUserModalWrap.classList.add('show');
+}
+
+/* Shown, hidden, and repopulated from whichever role is selected right now —
+   not the one the account started with. Choosing a Leadership designation makes
+   the field disappear before saving, so the rule is visible rather than a
+   surprise afterwards. */
+function renderReportingField(user, managerOptions){
+  const wrap = document.getElementById('eu_reportingWrap');
+  const notice = document.getElementById('eu_topNotice');
+  const selectedRole = document.getElementById('eu_role').value;
+  const info = roleInfo(selectedRole);
+  const isTop = TOP_TIER_ROLES.has(selectedRole);
+
+  if(isTop){
+    wrap.style.display = 'none';
+    notice.style.display = '';
+    notice.textContent = `${info.label} sits at the top of the hierarchy, so there is no Reporting To.` +
+      (user.reportsTo ? ` Saving will clear the current line to ${user.reportsTo.name}.` : '');
+    return;
+  }
+
+  wrap.style.display = '';
+  notice.style.display = 'none';
+
+  const sel = document.getElementById('eu_reportsTo');
+  const options = (managerOptions && managerOptions.options) || [];
+  sel.innerHTML = '<option value="">— Not set —</option>' + options
+    .map(o=>`<option value="${o.id}"${o.id===user.reportsToId?' selected':''}>${escapeHTML(o.name)} — ${escapeHTML(o.roleLabel)}</option>`)
+    .join('');
+
+  /* Optional by decision, so say so rather than letting an empty dropdown read
+     as an unfinished form. Anyone already beneath this person is missing from
+     the list on purpose. */
+  document.getElementById('eu_reportsHint').textContent = options.length
+    ? 'Optional. Anyone who reports to this person, directly or further down, is not listed — that would be a loop.'
+    : 'Nobody can be their manager yet: every other account already reports to them.';
+}
+
+document.getElementById('eu_role').addEventListener('change', async ()=>{
+  if(!editingUser) return;
+  const selectedRole = document.getElementById('eu_role').value;
+  /* The candidate list depends on the person, not the role, so it is only
+     re-fetched when moving back off a Leadership designation. */
+  let managerOptions = { options: [] };
+  if(!TOP_TIER_ROLES.has(selectedRole)){
+    try{ managerOptions = await api('/users/' + editingUser.id + '/manager-options'); }catch(e){}
+  }
+  renderReportingField(editingUser, managerOptions);
+});
+
+document.getElementById('cancelEditUser').addEventListener('click', ()=>editUserModalWrap.classList.remove('show'));
+editUserModalWrap.addEventListener('click', e=>{ if(e.target===editUserModalWrap) editUserModalWrap.classList.remove('show'); });
+
+document.getElementById('saveEditUser').addEventListener('click', async (ev)=>{
+  if(!editingUser) return;
+  euError('');
+  const role = document.getElementById('eu_role').value;
+  const body = { role, projectId: document.getElementById('eu_project').value || null };
+  /* Never send a reporting line for a top-of-hierarchy designation: the API
+     refuses it, and the clearing is its job rather than the form's. */
+  if(!TOP_TIER_ROLES.has(role)) body.reportsToId = document.getElementById('eu_reportsTo').value || null;
+
+  ev.target.disabled = true;
+  try{
+    await api('/users/' + editingUser.id, { method:'PATCH', body });
+    editUserModalWrap.classList.remove('show');
+    showToast(`${editingUser.name} updated.`);
+    await renderUsers();
+  }catch(err){ euError(err.message); }
+  finally{ ev.target.disabled = false; }
+});
+
+/* ---------- the read-only view ---------- */
+async function openUserDetail(id){
+  let user;
+  try{ user = await api('/users/' + id).then(r=>r.user); }
+  catch(err){ showToast(err.message); return; }
+
+  const r = roleInfo(user.role);
+  const row = (key, value) => `<div class="ud-row"><div class="ud-key">${key}</div><div class="ud-val">${value}</div></div>`;
+  document.getElementById('ud_body').innerHTML =
+    row('Name', `<strong>${escapeHTML(user.name)}</strong>`) +
+    row('Email', `<span class="mono" style="font-size:12px;">${escapeHTML(user.email)}</span>`) +
+    row('Role', `<span class="role-badge" style="background:${r.color}22;color:${r.color}">${escapeHTML(r.label)}</span>`) +
+    row('Project', user.project ? escapeHTML(user.project.name) : '<span class="ud-none">None</span>') +
+    row('Reporting To', user.topOfHierarchy
+      ? '<span class="ud-top">Top of hierarchy</span>'
+      : (user.reportsTo
+          ? `${escapeHTML(user.reportsTo.name)} <span class="ref-key">— ${escapeHTML(roleInfo(user.reportsTo.role).label)}</span>`
+          : '<span class="ud-none">Not set</span>'));
+
+  document.getElementById('editFromDetail').onclick = ()=>openEditUser(user.id);
+  userDetailWrap.classList.add('show');
+}
+document.getElementById('closeUserDetail').addEventListener('click', ()=>userDetailWrap.classList.remove('show'));
+userDetailWrap.addEventListener('click', e=>{ if(e.target===userDetailWrap) userDetailWrap.classList.remove('show'); });
 
 /* ---------- settings: the value lists behind the dropdowns ---------- */
 /* Super Admin only. The tab is hidden without the capability and the API

@@ -3,6 +3,7 @@ const { roleKeys } = require('./roles');
 const referenceData = require('./reference-data');
 const ipAllowlist = require('./ip-allowlist');
 const { applyTableOptions } = require('./db-collation');
+const reporting = require('./reporting');
 const defaults = require('./reference-defaults');
 
 // Small, idempotent schema repairs applied at startup.
@@ -173,6 +174,50 @@ async function seedReferenceTable(db, table, rows, toValues, log) {
   log(`Schema: seeded ${missing.length} ${table.replace('_', ' ')} into the new reference table.`);
 }
 
+// The org-chart column and the contributor project link, for databases created
+// before they existed.
+async function ensureReportingAndMembership(db, log) {
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'reports_to_id'`
+  );
+  if (!rows.length) {
+    await db.query('ALTER TABLE users ADD COLUMN reports_to_id CHAR(36) NULL AFTER team_lead_id');
+    await db.query('ALTER TABLE users ADD KEY idx_users_reports_to (reports_to_id)');
+    try {
+      await db.query(
+        'ALTER TABLE users ADD CONSTRAINT fk_users_reports_to FOREIGN KEY (reports_to_id) REFERENCES users(id) ON DELETE SET NULL'
+      );
+    } catch (err) {
+      // The column is what matters; a database that refuses the constraint
+      // still works, and saying so beats failing the whole migration.
+      log(`Schema: reports_to_id added, but its foreign key was refused — ${err.sqlMessage || err.message}`);
+    }
+    log('Schema: added users.reports_to_id for the reporting hierarchy.');
+  }
+
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS project_members (
+      project_id CHAR(36) NOT NULL,
+      user_id    CHAR(36) NOT NULL,
+      PRIMARY KEY (project_id, user_id),
+      KEY idx_pm_user (user_id),
+      CONSTRAINT fk_pm_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      CONSTRAINT fk_pm_user    FOREIGN KEY (user_id)    REFERENCES users(id)    ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+
+  // Nobody at the top of the hierarchy reports to anyone. Clear anything a
+  // database already holds for them, so the rule is true of the data and not
+  // only of the form.
+  const { rows: cleared } = await db.query(
+    'SELECT id, `role` FROM users WHERE reports_to_id IS NOT NULL'
+  );
+  const top = cleared.filter((u) => reporting.isTopOfHierarchy(u.role));
+  for (const user of top) {
+    await db.query('UPDATE users SET reports_to_id = NULL WHERE id = $1', [user.id]);
+  }
+  if (top.length) log(`Schema: cleared the reporting line on ${top.length} account(s) at the top of the hierarchy.`);
+}
+
 async function ensureReferenceData(db, log) {
   // Created with the collation the rest of the schema already uses, so a later
   // query can compare these columns against the older tables.
@@ -288,6 +333,8 @@ const STEPS = [
   ['reference tables', ensureReferenceData],
   // Reads the tables the step above creates and fills.
   ['reference data mirror', (db) => referenceData.load(db)],
+  // After the mirror: isTopOfHierarchy reads a role's tier from it.
+  ['reporting hierarchy', ensureReportingAndMembership],
   ['IP allowlist', ensureIpAllowlist],
 ];
 

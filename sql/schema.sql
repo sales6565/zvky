@@ -118,8 +118,18 @@ CREATE TABLE IF NOT EXISTS users (
   -- the studio can add a designation without an schema migration; the API
   -- validates it against the role catalogue on every write.
   `role`        VARCHAR(64)  NOT NULL,
+  -- Who created this account. Despite the name this is not a reporting line:
+  -- it gates who may edit or remove the user ("you can only change users you
+  -- added"). Left alone deliberately — see reports_to_id below.
   manager_id    CHAR(36)     NULL,
+  -- The work hierarchy for contributors: who reviews their assets. Drives
+  -- team-scoped permissions, so it is not the org chart either.
   team_lead_id  CHAR(36)     NULL,
+  -- The org chart: who this person reports to. Separate from both of the above
+  -- because changing an org chart must not change anybody's permissions, and
+  -- it applies to every designation rather than only to contributors.
+  -- NULL for the Leadership tier, who sit at the top and report to no one.
+  reports_to_id CHAR(36)     NULL,
   -- Unix epoch seconds, not DATETIME: this is compared against a JWT's `iat`
   -- claim, and epoch seconds carry no timezone for the two to disagree about.
   -- Any token issued before this moment is refused, which signs out every
@@ -128,10 +138,14 @@ CREATE TABLE IF NOT EXISTS users (
   created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_users_email (email),
   KEY idx_users_manager (manager_id),
+  KEY idx_users_reports_to (reports_to_id),
   KEY idx_users_teamlead (team_lead_id),
   KEY idx_users_role (`role`),
   CONSTRAINT fk_users_manager   FOREIGN KEY (manager_id)   REFERENCES users(id) ON DELETE SET NULL,
-  CONSTRAINT fk_users_team_lead FOREIGN KEY (team_lead_id) REFERENCES users(id) ON DELETE SET NULL
+  CONSTRAINT fk_users_team_lead FOREIGN KEY (team_lead_id) REFERENCES users(id) ON DELETE SET NULL,
+  -- SET NULL rather than CASCADE: removing a manager must orphan their reports,
+  -- never delete them.
+  CONSTRAINT fk_users_reports_to FOREIGN KEY (reports_to_id) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS projects (
@@ -166,6 +180,18 @@ CREATE TABLE IF NOT EXISTS project_coordinators (
 --  not_started -> in_progress -> pending_tl_review -> (tl_changes_requested <-> pending_tl_review)
 --    -> pending_cd_review -> (cd_changes_requested <-> pending_cd_review)
 --    -> approved_for_client -> delivered
+-- Everyone else's project. Coordinators sit in project_coordinators and leads in
+-- project_team_leads; contributors had no link to a project at all, so the
+-- studio's artists could not be assigned to one. This is that link.
+CREATE TABLE IF NOT EXISTS project_members (
+  project_id CHAR(36) NOT NULL,
+  user_id    CHAR(36) NOT NULL,
+  PRIMARY KEY (project_id, user_id),
+  KEY idx_pm_user (user_id),
+  CONSTRAINT fk_pm_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  CONSTRAINT fk_pm_user    FOREIGN KEY (user_id)    REFERENCES users(id)    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS assets (
   id            CHAR(36)     NOT NULL PRIMARY KEY,
   `code`        VARCHAR(64)  NOT NULL,

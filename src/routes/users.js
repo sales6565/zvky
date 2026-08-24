@@ -1,4 +1,6 @@
 const { asyncRouter } = require('../async-router');
+const reporting = require('../reporting');
+const userProject = require('../user-project');
 
 // See src/async-router.js: keeps a failed query from killing the process.
 const router = asyncRouter();
@@ -42,7 +44,7 @@ function assignableRolesFor(user) {
 router.get('/', requireCapability('manageUsers'), async (req, res) => {
   const { search = '', limit = 60, offset = 0, role } = req.query;
   const params = [];
-  let sql = 'SELECT id, name, email, role, manager_id, team_lead_id, created_at FROM users WHERE 1=1';
+  let sql = 'SELECT id, name, email, role, manager_id, team_lead_id, reports_to_id, created_at FROM users WHERE 1=1';
 
   if (roleDef(req.user.role).projectScope !== 'all') {
     params.push(req.user.id);
@@ -69,7 +71,34 @@ router.get('/', requireCapability('manageUsers'), async (req, res) => {
   sql += ` OFFSET $${params.length}`;
 
   const { rows } = await db.query(sql, params);
-  res.json({ users: rows, total: Number(countRows[0].n) });
+
+  // Resolve each row's manager name and project for the list, in two queries
+  // rather than per row.
+  const ids = rows.map((r) => r.id);
+  const managerIds = [...new Set(rows.map((r) => r.reports_to_id).filter(Boolean))];
+  const projects = await userProject.projectsForUsers(db, ids);
+  const managers = new Map();
+  if (managerIds.length) {
+    const { rows: found } = await db.query('SELECT id, `name` FROM users WHERE id IN (?)', [managerIds]);
+    for (const m of found) managers.set(m.id, m.name);
+  }
+
+  res.json({
+    users: rows.map((row) => {
+      const top = reporting.isTopOfHierarchy(row.role);
+      const project = projects.get(row.id) || null;
+      return {
+        ...row,
+        topOfHierarchy: top,
+        // Leadership has no reporting line at all, rather than an empty one.
+        reportsToId: top ? null : row.reports_to_id || null,
+        reportsToName: top ? null : (row.reports_to_id ? managers.get(row.reports_to_id) || null : null),
+        projectId: project ? project.id : null,
+        projectName: project ? project.name : null,
+      };
+    }),
+    total: Number(countRows[0].n),
+  });
 });
 
 // POST /api/users — create an account with one of the studio's designations.
@@ -130,6 +159,34 @@ router.post('/', requireCapability('manageUsers'), async (req, res) => {
   });
 });
 
+// One shape for a user everywhere: the row plus the two things this screen
+// edits, resolved to names rather than ids so the caller does not have to look
+// them up again.
+const USER_COLUMNS =
+  'u.id, u.`name`, u.email, u.`role`, u.manager_id, u.team_lead_id, u.reports_to_id, u.created_at';
+
+async function describeUser(row) {
+  const project = await userProject.currentProject(db, row.id);
+  const top = reporting.isTopOfHierarchy(row.role);
+  let manager = null;
+  if (!top && row.reports_to_id) {
+    const { rows } = await db.query('SELECT id, `name`, email, `role` FROM users WHERE id = $1', [row.reports_to_id]);
+    if (rows.length) manager = { id: rows[0].id, name: rows[0].name, email: rows[0].email, role: rows[0].role };
+  }
+  return {
+    ...row,
+    capabilities: capabilitiesFor(row.role),
+    // Leadership reports to no one, so the field is absent rather than empty —
+    // an empty dropdown reads as "not filled in yet", which is a different
+    // thing and the one that invites somebody to fill it in.
+    topOfHierarchy: top,
+    reportsTo: manager,
+    reportsToId: top ? null : row.reports_to_id || null,
+    project: project ? { id: project.id, name: project.name, code: project.code } : null,
+    projectId: project ? project.id : null,
+  };
+}
+
 // PATCH /api/users/:id — change someone's designation (or their reporting line).
 router.patch('/:id', requireCapability('manageUsers'), async (req, res) => {
   const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [req.params.id]);
@@ -139,9 +196,13 @@ router.patch('/:id', requireCapability('manageUsers'), async (req, res) => {
     return res.status(403).json({ error: 'You can only change users you added' });
   }
 
-  const { role, teamLeadId } = req.body || {};
+  const { role, teamLeadId, reportsToId, projectId } = req.body || {};
   const fields = [];
   const values = [];
+
+  // The role after this edit, which is what every rule below is judged against
+  // — not the one the account holds now.
+  const nextRole = role === undefined ? target.role : role;
 
   if (role !== undefined) {
     if (!isRole(role)) return res.status(400).json({ error: 'Invalid role' });
@@ -159,16 +220,58 @@ router.patch('/:id', requireCapability('manageUsers'), async (req, res) => {
     fields.push(`team_lead_id = $${fields.length + 1}`);
     values.push(teamLeadId || null);
   }
-  if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
 
-  values.push(req.params.id);
-  await db.query(`UPDATE users SET ${fields.join(', ')} WHERE id = $${values.length}`, values);
+  // --- the reporting line ---------------------------------------------------
+  const movingToTop = reporting.isTopOfHierarchy(nextRole);
 
-  const { rows: updated } = await db.query(
-    'SELECT id, name, email, role, manager_id, team_lead_id FROM users WHERE id = $1',
-    [req.params.id]
-  );
-  res.json({ user: { ...updated[0], capabilities: capabilitiesFor(updated[0].role) } });
+  if (movingToTop) {
+    // Promoted to the top of the hierarchy: whatever reporting line they had is
+    // cleared here rather than left for the form to remember to send. Sending
+    // one anyway is refused below, so the two cannot disagree.
+    if (reportsToId) {
+      return res.status(400).json({
+        error: `${roleDef(nextRole).label} sits at the top of the hierarchy and does not report to anyone.`,
+        field: 'reportsToId',
+      });
+    }
+    if (target.reports_to_id) fields.push('reports_to_id = NULL');
+  } else if (reportsToId !== undefined) {
+    const verdict = await reporting.validateManager(db, { ...target, role: nextRole }, reportsToId || null);
+    if (!verdict.ok) {
+      return res.status(verdict.status).json({ error: verdict.error, field: verdict.field, chain: verdict.chain });
+    }
+    fields.push(`reports_to_id = $${fields.length + 1}`);
+    values.push(verdict.managerId);
+  }
+
+  // --- the project ----------------------------------------------------------
+  if (projectId !== undefined && projectId !== null && projectId !== '') {
+    if (!(await userProject.exists(db, projectId))) {
+      return res.status(400).json({ error: 'That project does not exist.', field: 'projectId' });
+    }
+  }
+
+  if (!fields.length && projectId === undefined) {
+    return res.status(400).json({ error: 'Nothing to update' });
+  }
+
+  if (fields.length) {
+    values.push(req.params.id);
+    await db.query(`UPDATE users SET ${fields.join(', ')} WHERE id = $${values.length}`, values);
+  }
+
+  if (projectId !== undefined) {
+    await userProject.setProject(db, req.params.id, projectId || null, nextRole);
+  } else if (role !== undefined) {
+    // The designation changed but the project did not. Move the membership to
+    // the side of the project the new designation belongs on, so a coordinator
+    // promoted to lead does not keep a coordinator row the permission checks
+    // would still honour.
+    await userProject.moveForRole(db, req.params.id, nextRole);
+  }
+
+  const { rows: updated } = await db.query(`SELECT ${USER_COLUMNS} FROM users u WHERE u.id = $1`, [req.params.id]);
+  res.json({ user: await describeUser(updated[0]) });
 });
 
 // DELETE /api/users/:id
@@ -453,6 +556,48 @@ router.post('/bulk', requireCapability('manageUsers'), uploadImport.single('file
     createdUsers: created.map((e) => ({ id: e.id, name: e.values.name, email: e.values.email, role: e.values.role })),
     errors,
     ...(usedDefault ? { temporaryPassword: DEFAULT_PASSWORD } : {}),
+  });
+});
+
+// The routes below take a user id in the path, so they are registered last:
+// Express matches in registration order, and a '/:id' declared above would read
+// '/import-format' as somebody's id and answer "User not found".
+// GET /api/users/:id — one user, with their manager and project resolved.
+// The detail view reads this; the edit form reads it to fill its fields.
+router.get('/:id', requireCapability('manageUsers'), async (req, res) => {
+  const { rows } = await db.query(`SELECT ${USER_COLUMNS} FROM users u WHERE u.id = $1`, [req.params.id]);
+  if (!rows.length) return res.status(404).json({ error: 'User not found' });
+  res.json({ user: await describeUser(rows[0]) });
+});
+
+// GET /api/users/:id/manager-options — who this person could report to.
+//
+// Excludes themselves and everyone already beneath them, so the dropdown cannot
+// offer a choice the API would refuse. The API checks it again regardless: this
+// is a convenience, not the rule.
+router.get('/:id/manager-options', requireCapability('manageUsers'), async (req, res) => {
+  const { rows } = await db.query('SELECT id, `name`, `role` FROM users WHERE id = $1', [req.params.id]);
+  if (!rows.length) return res.status(404).json({ error: 'User not found' });
+  const user = rows[0];
+
+  if (reporting.isTopOfHierarchy(user.role)) {
+    return res.json({
+      topOfHierarchy: true,
+      reason: `${roleDef(user.role).label} sits at the top of the hierarchy and does not report to anyone.`,
+      options: [],
+    });
+  }
+
+  const options = await reporting.eligibleManagers(db, user);
+  res.json({
+    topOfHierarchy: false,
+    options: options.map((o) => ({
+      id: o.id,
+      name: o.name,
+      email: o.email,
+      role: o.role,
+      roleLabel: (roleDef(o.role) || {}).label || o.role,
+    })),
   });
 });
 
