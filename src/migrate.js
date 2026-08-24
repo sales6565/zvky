@@ -1,6 +1,7 @@
 const { v4: uuid } = require('uuid');
 const { roleKeys } = require('./roles');
 const referenceData = require('./reference-data');
+const ipAllowlist = require('./ip-allowlist');
 const defaults = require('./reference-defaults');
 
 // Small, idempotent schema repairs applied at startup.
@@ -209,6 +210,53 @@ async function ensureReferenceData(db, log) {
   }
 }
 
+
+// The IP allowlist tables, for databases created before they existed.
+const ALLOWLIST_TABLES = [
+  `CREATE TABLE IF NOT EXISTS ip_allowlist (
+      id CHAR(36) NOT NULL PRIMARY KEY,
+      address VARCHAR(64) NOT NULL,
+      label VARCHAR(120) NULL,
+      is_active TINYINT(1) NOT NULL DEFAULT 1,
+      created_by_id CHAR(36) NULL,
+      created_by_email VARCHAR(191) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_ip_allowlist_address (address),
+      KEY idx_ip_allowlist_active (is_active)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS ip_allowlist_audit (
+      id CHAR(36) NOT NULL PRIMARY KEY,
+      action VARCHAR(24) NOT NULL,
+      address VARCHAR(64) NULL,
+      label VARCHAR(120) NULL,
+      actor_id CHAR(36) NULL,
+      actor_email VARCHAR(191) NULL,
+      actor_ip VARCHAR(64) NULL,
+      detail VARCHAR(255) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_ip_audit_created (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+];
+
+// The address the studio starts with. Seeded only into an empty table, so a
+// Super Admin who removes it does not find it back after the next restart.
+// Override for a different first address with IP_ALLOWLIST_SEED.
+// Set IP_ALLOWLIST_SEED to an empty string to seed nothing at all — checked
+// against undefined rather than truthiness so that "" means "none" instead of
+// quietly falling back to the default.
+const SEED_ADDRESSES = String(
+  process.env.IP_ALLOWLIST_SEED === undefined ? '106.51.81.61' : process.env.IP_ALLOWLIST_SEED
+)
+  .split(',').map((s) => s.trim()).filter(Boolean)
+  .map((address) => ({ address, label: 'Seeded on first run' }));
+
+async function ensureIpAllowlist(db, log) {
+  for (const sql of ALLOWLIST_TABLES) await db.query(sql);
+  const seeded = await ipAllowlist.seed(db, SEED_ADDRESSES);
+  if (seeded) log(`Schema: seeded ${seeded} address(es) into the IP allowlist.`);
+  await ipAllowlist.load(db);
+}
+
 async function run(db, log = console.log) {
   try {
     const stale = (await roleCheckConstraints(db)).filter((c) => isStale(c.clause));
@@ -226,6 +274,7 @@ async function run(db, log = console.log) {
     // Load the mirror the permission checks read from. Everything above must
     // have run first: it is reading the tables this just created and filled.
     await referenceData.load(db);
+    await ensureIpAllowlist(db, log);
   } catch (err) {
     // Never block startup on this: an unmigrated schema still serves everyone
     // whose role the old constraint allows, and the error handler now reports

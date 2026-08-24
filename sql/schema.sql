@@ -69,6 +69,46 @@ CREATE TABLE IF NOT EXISTS roles (
   KEY idx_roles_tier (tier)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- --------------------------------------------------------------------------
+-- Which addresses may reach this application at all. Managed by a Super Admin
+-- under Settings; enforced by src/middleware/ip-allowlist.js ahead of
+-- authentication.
+--
+-- The ways back in after a bad entry live in the environment, not here — see
+-- IP_ALLOWLIST_* in .env.example. A safeguard stored in the thing it safeguards
+-- is not a safeguard.
+-- --------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS ip_allowlist (
+  id               CHAR(36)     NOT NULL PRIMARY KEY,
+  -- A single address or a CIDR range, stored canonically: 106.51.81.61,
+  -- 106.51.81.0/24, 2001:db8::/32.
+  address          VARCHAR(64)  NOT NULL,
+  label            VARCHAR(120) NULL,
+  is_active        TINYINT(1)   NOT NULL DEFAULT 1,
+  created_by_id    CHAR(36)     NULL,
+  -- Kept alongside the id so the trail survives the account being deleted.
+  created_by_email VARCHAR(191) NULL,
+  created_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_ip_allowlist_address (address),
+  KEY idx_ip_allowlist_active (is_active)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Every change, including removals. After a lockout the useful question is who
+-- removed what, so this is deliberately append-only and outlives the entries.
+CREATE TABLE IF NOT EXISTS ip_allowlist_audit (
+  id          CHAR(36)     NOT NULL PRIMARY KEY,
+  action      VARCHAR(24)  NOT NULL,
+  address     VARCHAR(64)  NULL,
+  label       VARCHAR(120) NULL,
+  actor_id    CHAR(36)     NULL,
+  actor_email VARCHAR(191) NULL,
+  actor_ip    VARCHAR(64)  NULL,
+  detail      VARCHAR(255) NULL,
+  created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_ip_audit_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS users (
   id            CHAR(36)     NOT NULL PRIMARY KEY,
   `name`        VARCHAR(255) NOT NULL,

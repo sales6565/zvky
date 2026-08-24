@@ -99,6 +99,22 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .ref-add input[type=text]{width:170px;}
 .ref-add input.narrow{width:74px;}
 .ref-err{color:var(--brand);font-size:11.5px;margin-top:8px;min-height:14px;}
+/* The IP allowlist section. Mostly borrows the reference-list styling; the
+   extra pieces are the banners, which have to be hard to miss — this is the
+   screen where a careless change locks someone out. */
+.ip-banner{font-size:12px;line-height:1.5;padding:11px 14px;border-radius:10px;margin-bottom:14px;border:1px solid transparent;}
+.ip-banner strong{font-family:'IBM Plex Mono';}
+.ip-banner.open{background:rgba(255,176,32,.10);border-color:rgba(255,176,32,.32);color:#ffcc70;}
+.ip-banner.live{background:rgba(64,200,140,.10);border-color:rgba(64,200,140,.30);color:#7fdcb0;}
+.ip-banner.monitor{background:rgba(77,184,255,.10);border-color:rgba(77,184,255,.30);color:#8ecdff;}
+.ip-you{font-family:'IBM Plex Mono';font-size:12px;color:var(--ink);background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 11px;display:inline-block;margin-bottom:14px;}
+.ip-you b{color:var(--brand-2,#4db8ff);}
+.ip-mine{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;padding:2px 7px;border-radius:20px;font-family:'IBM Plex Mono';background:rgba(64,200,140,.16);color:#7fdcb0;margin-left:8px;}
+.ip-audit{margin-top:14px;}
+.ip-audit summary{cursor:pointer;font-size:11.5px;color:var(--ink-muted);font-family:'IBM Plex Mono';}
+.ip-audit table{margin-top:10px;}
+.ip-act{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;font-family:'IBM Plex Mono';color:var(--ink-muted);}
+.ip-act.removed{color:var(--brand);}
 .import-summary{display:flex;gap:18px;margin-bottom:14px;flex-wrap:wrap;}
 .import-summary div{font-size:12px;color:var(--ink-muted);}
 .import-summary strong{display:block;font-size:20px;font-family:'IBM Plex Mono';color:var(--ink);}
@@ -1116,8 +1132,10 @@ async function renderSettings(){
       A value in use can't be deleted; deactivate it instead and it disappears from the dropdowns.
     </div>
     ${REF_SECTIONS.map(sec=>renderRefSection(sec)).join('')}
+    <div id="ipAllowlistSection"></div>
   `;
   wireSettings();
+  await renderIpAllowlist();
 }
 
 function renderRefSection(sec){
@@ -1261,6 +1279,197 @@ function wireSettings(){
       await afterRefChange(`"${current.label}" deleted.`);
     }catch(err){ refError(collection, err.message); }
   }));
+}
+
+/* ---------- settings: who may reach this application at all ---------- */
+/* The allowlist is checked before anything else on every request, so this is
+   the one screen where a wrong entry costs someone their access. Everything
+   here leans on that: it shows the address the server actually sees for you,
+   marks the entry that is letting you in, and refuses to remove it quietly. */
+
+let ipCache = { entries: [], enforcement: {}, yourAddress: null };
+
+async function renderIpAllowlist(){
+  const el = document.getElementById('ipAllowlistSection');
+  if(!el) return;
+  let data;
+  try{ data = await api('/ip-allowlist'); }
+  catch(err){
+    el.innerHTML = `<div class="ref-section"><div class="ref-head"><h3>Allowed IP Addresses</h3></div>
+      <div class="ref-err">${escapeHTML(err.message)}</div></div>`;
+    return;
+  }
+  ipCache = data;
+  const { entries, enforcement, yourAddress, yourAccess } = data;
+  const active = entries.filter(e=>e.isActive);
+
+  /* Say plainly whether the gate is actually shut. Someone who has added
+     addresses and believes the app is locked down, when it is not, is worse off
+     than someone who knows it is open. */
+  let banner;
+  if(!enforcement.enabled){
+    banner = `<div class="ip-banner open">The IP restriction is switched off for this server
+      (<strong>IP_ALLOWLIST_ENABLED=false</strong>). Any address can reach the app, whatever is listed below.</div>`;
+  }else if(enforcement.mode==='monitor'){
+    banner = `<div class="ip-banner monitor">Monitor mode: nothing is being blocked. Addresses that
+      <em>would</em> have been refused are written to the server log instead. Use this to confirm the
+      addresses below are right, then set <strong>IP_ALLOWLIST_MODE=enforce</strong>.</div>`;
+  }else if(!active.length){
+    banner = `<div class="ip-banner open">The list is empty, so every address can reach this app.
+      An empty list is treated as "not set up" on purpose — it means a mistake here can never lock
+      everyone out. Add an address below to start restricting access.</div>`;
+  }else{
+    banner = `<div class="ip-banner live">Access is restricted to the
+      ${active.length} address${active.length===1?'':'es'} below. Everyone else gets an Access Denied page.</div>`;
+  }
+
+  const rows = entries.map(e=>`
+    <tr class="${e.isActive?'':'inactive'}">
+      <td>
+        <strong class="ref-key" style="font-size:12.5px;color:var(--ink);">${escapeHTML(e.address)}</strong>
+        ${e.coversYou?'<span class="ip-mine">your address</span>':''}
+        ${e.isActive?'':'<span class="ref-pill" style="margin-left:8px;">inactive</span>'}
+      </td>
+      <td>${escapeHTML(e.label||'')}</td>
+      <td class="ref-key">${escapeHTML(e.createdBy||'system')}</td>
+      <td class="ref-actions">
+        <button class="btn btn-ghost btn-sm ip-edit" data-id="${escapeHTML(e.id)}">Edit</button>
+        <button class="btn btn-ghost btn-sm ip-toggle" data-id="${escapeHTML(e.id)}" data-active="${e.isActive?1:0}">${e.isActive?'Deactivate':'Reactivate'}</button>
+        <button class="btn btn-ghost btn-sm ip-delete" data-id="${escapeHTML(e.id)}" style="color:var(--brand);">Remove</button>
+      </td>
+    </tr>`).join('');
+
+  /* How you got in matters when you are about to edit the list. If an emergency
+     address or the bypass token is what let you through, removing your entry
+     will not lock you out — and if nothing but the list did, it will. */
+  const accessNote = {
+    'emergency': 'You are here via an emergency address set in the server environment, not via this list.',
+    'bypass-token': 'You are here via the bypass token, not via this list.',
+    'disabled': 'The gate is switched off, so nothing here is being checked right now.',
+    'unconfigured': 'Nothing is being enforced yet.',
+  }[yourAccess] || '';
+
+  el.innerHTML = `
+    <div class="ref-section" data-section="ip-allowlist">
+      <div class="ref-head"><h3>Allowed IP Addresses</h3>
+        <span class="ref-key">${active.length} active${entries.length!==active.length?` · ${entries.length-active.length} inactive`:''}</span>
+      </div>
+      <div class="ref-note">Which addresses may reach this application at all. Checked before sign-in, on every request.</div>
+      ${banner}
+      <div class="ip-you">You are connecting from <b>${escapeHTML(yourAddress||'an address the server could not read')}</b>${accessNote?` — ${escapeHTML(accessNote)}`:''}</div>
+      <table class="ref-table">
+        <thead><tr><th>Address or range</th><th>Note</th><th>Added by</th><th></th></tr></thead>
+        <tbody>${rows||'<tr><td colspan="4" class="ref-key">Nothing listed — the app is open to every address.</td></tr>'}</tbody>
+      </table>
+      <div class="ref-add">
+        <div><label>Address or range</label><input type="text" id="new-ip-address" placeholder="106.51.81.61 or 106.51.81.0/24" style="width:230px;"></div>
+        <div><label>Note</label><input type="text" id="new-ip-label" placeholder="e.g. Bangalore studio" style="width:200px;"></div>
+        <button class="btn btn-brand" id="ipCreateBtn">Add</button>
+      </div>
+      <div class="ref-err" id="err-ip-allowlist"></div>
+      <details class="ip-audit"><summary>Change history</summary><div id="ipAuditBody" class="ref-key">Loading…</div></details>
+    </div>`;
+  wireIpAllowlist();
+}
+
+function ipError(message){
+  const el = document.getElementById('err-ip-allowlist');
+  if(el) el.textContent = message || '';
+}
+
+function wireIpAllowlist(){
+  document.getElementById('ipCreateBtn').addEventListener('click', async (ev)=>{
+    const address = document.getElementById('new-ip-address').value.trim();
+    const label = document.getElementById('new-ip-label').value.trim();
+    ipError('');
+    if(!address){ ipError('Enter an IP address or CIDR range.'); return; }
+    ev.target.disabled = true;
+    try{
+      await api('/ip-allowlist', { method:'POST', body:{ address, label } });
+      document.getElementById('new-ip-address').value = '';
+      document.getElementById('new-ip-label').value = '';
+      await renderIpAllowlist();
+      /* Worth stating outright: this is live immediately, no restart involved. */
+      showToast(`${address} added — it can reach the app straight away.`);
+    }catch(err){ ipError(err.message); }
+    finally{ ev.target.disabled = false; }
+  });
+
+  document.querySelectorAll('.ip-edit').forEach(btn=>btn.addEventListener('click', async ()=>{
+    const entry = (ipCache.entries||[]).find(e=>e.id===btn.dataset.id);
+    if(!entry) return;
+    const address = prompt('Address or CIDR range:', entry.address);
+    if(address===null) return;
+    const label = prompt('Note (optional):', entry.label||'');
+    if(label===null) return;
+    ipError('');
+    try{
+      await api('/ip-allowlist/'+encodeURIComponent(entry.id), { method:'PATCH', body:{ address, label } });
+      await renderIpAllowlist();
+      showToast('Updated.');
+    }catch(err){ ipError(err.message); }
+  }));
+
+  document.querySelectorAll('.ip-toggle').forEach(btn=>btn.addEventListener('click', async ()=>{
+    const entry = (ipCache.entries||[]).find(e=>e.id===btn.dataset.id);
+    if(!entry) return;
+    const makeActive = btn.dataset.active !== '1';
+    /* Deactivating is a removal in everything but name, so it gets the same
+       warning when it is the entry letting you in. */
+    if(!makeActive && entry.coversYou && ipCache.enforcement.effective){
+      if(!confirm(`${entry.address} is the entry letting you in from ${ipCache.yourAddress}.\n\nDeactivating it will lock you out of this application. Continue?`)) return;
+    }
+    ipError('');
+    try{
+      await api('/ip-allowlist/'+encodeURIComponent(entry.id), { method:'PATCH', body:{ isActive: makeActive } });
+      await renderIpAllowlist();
+      showToast(makeActive ? 'Reactivated.' : 'Deactivated — that address can no longer reach the app.');
+    }catch(err){ ipError(err.message); }
+  }));
+
+  document.querySelectorAll('.ip-delete').forEach(btn=>btn.addEventListener('click', async ()=>{
+    const entry = (ipCache.entries||[]).find(e=>e.id===btn.dataset.id);
+    if(!entry) return;
+    ipError('');
+    /* Ask first, then let the server ask again: it refuses a removal that would
+       cut off the caller unless the request says so explicitly, so a script or
+       a stale page gets the same protection this dialog gives. */
+    if(entry.coversYou && ipCache.enforcement.effective){
+      const others = (ipCache.entries||[]).filter(e=>e.id!==entry.id && e.isActive && e.coversYou);
+      const message = others.length
+        ? `${entry.address} covers your own address (${ipCache.yourAddress}), but another entry still does too, so you will keep your access.\n\nRemove it?`
+        : `${entry.address} is what is letting you in from ${ipCache.yourAddress}.\n\nRemoving it will lock you out of this application immediately. You would need someone with access to the server's environment settings to get back in.\n\nRemove it anyway?`;
+      if(!confirm(message)) return;
+    }else if(!confirm(`Remove ${entry.address} from the allowlist?`)){
+      return;
+    }
+    try{
+      const result = await api('/ip-allowlist/'+encodeURIComponent(entry.id)+'?confirm=yes', { method:'DELETE' });
+      await renderIpAllowlist();
+      showToast(result.warning || `${entry.address} removed.`);
+    }catch(err){ ipError(err.message); }
+  }));
+
+  const audit = document.querySelector('.ip-audit');
+  /* Fetched when opened rather than with the page — it is the part nobody reads
+     until something has gone wrong. */
+  audit.addEventListener('toggle', async ()=>{
+    if(!audit.open || audit.dataset.loaded) return;
+    audit.dataset.loaded = '1';
+    const body = document.getElementById('ipAuditBody');
+    try{
+      const { entries } = await api('/ip-allowlist/audit');
+      body.innerHTML = entries.length ? `<table class="ref-table">
+        <thead><tr><th>When</th><th>Change</th><th>Address</th><th>By</th><th>From</th></tr></thead>
+        <tbody>${entries.map(e=>`<tr>
+          <td class="ref-key">${escapeHTML(new Date(e.at).toLocaleString())}</td>
+          <td><span class="ip-act ${e.action==='removed'?'removed':''}">${escapeHTML(e.action)}</span></td>
+          <td class="ref-key">${escapeHTML(e.address||'')}${e.detail?`<div class="ref-key" style="opacity:.7;">${escapeHTML(e.detail)}</div>`:''}</td>
+          <td>${escapeHTML(e.actor||'system')}</td>
+          <td class="ref-key">${escapeHTML(e.actorIp||'')}</td>
+        </tr>`).join('')}</tbody></table>` : 'No changes recorded yet.';
+    }catch(err){ body.textContent = err.message; }
+  });
 }
 
 /* ---------- profile / change password ---------- */

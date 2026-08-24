@@ -11,6 +11,8 @@ const assetRoutes = require('./routes/assets');
 const userRoutes = require('./routes/users');
 const teamRoutes = require('./routes/team');
 const referenceRoutes = require('./routes/reference');
+const ipAllowlistRoutes = require('./routes/ip-allowlist');
+const ipGate = require('./middleware/ip-allowlist');
 
 const app = express();
 
@@ -29,6 +31,13 @@ const corsOrigins = (process.env.CORS_ORIGIN || '')
   .map((o) => o.trim().replace(/\/+$/, ''))
   .filter(Boolean);
 app.use(cors({ origin: corsOrigins.length ? corsOrigins : '*' }));
+
+// Everything below this line is only reachable from an allowed address. It sits
+// ahead of authentication deliberately: checking afterwards would leave the
+// login endpoint open to addresses that should not reach the app at all. The
+// ways back in when the list is wrong live in the environment — see
+// src/middleware/ip-allowlist.js.
+app.use(ipGate.middleware);
 app.use(express.json());
 
 // Slow down brute-force login attempts. The limit is per client address and
@@ -59,6 +68,7 @@ app.use('/api/assets', assetRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/team', teamRoutes);
 app.use('/api/reference', referenceRoutes);
+app.use('/api/ip-allowlist', ipAllowlistRoutes);
 
 // Health check. Deliberately reports the database too: a deployment whose
 // process is up but whose credentials are wrong looks identical from outside
@@ -154,6 +164,7 @@ async function start() {
     // Then say so if nobody can sign in yet — otherwise every attempt just
     // fails as "Invalid email or password" with no explanation.
     await require('./bootstrap-token').announce(db);
+    ipGate.describeAtStartup();
   } catch (err) {
     // Start anyway: a server that is up can report through /api/health why the
     // database is unreachable, where one that exited says nothing at all.

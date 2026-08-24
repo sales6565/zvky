@@ -292,6 +292,9 @@ Edit `.env` and set:
   cPanel/Passenger, so the login rate limit sees real client addresses)
 - `LOGIN_RATE_MAX` — sign-in attempts allowed per address per window. A whole
   office shares one public IP, so this counts the studio together
+- `IP_ALLOWLIST_*` — optional; restricts the app to specific addresses. Read
+  [Restricting access by IP address](#restricting-access-by-ip-address) before
+  enabling it, and deploy in monitor mode first
 
 ## 5. Install and seed
 
@@ -417,6 +420,86 @@ an account holds that the table does not know about is carried across under an
 *Unsorted* group with no pipeline access, rather than leaving that account unable
 to sign in. All of it is idempotent.
 
+## Restricting access by IP address
+
+The whole application can be limited to a set of addresses. The check runs on
+**every request, before authentication** — a blocked address does not reach the
+sign-in form, so it cannot try passwords. That ordering is the point of the
+feature; checking after sign-in would leave the interesting endpoint exposed.
+
+A Super Admin manages the list under **Settings → Allowed IP Addresses**.
+Entries are single addresses (`106.51.81.61`) or CIDR ranges
+(`106.51.81.0/24`, `2001:db8::/32`), and take effect on the next request — no
+restart. Every change is recorded with who made it and from where, under
+*Change history* on the same screen.
+
+### Deploy it in monitor mode first
+
+The address the app sees is the one your proxy reports, which is often not the
+one you expect. Getting it wrong locks out everyone, Super Admin included.
+
+1. Deploy with `IP_ALLOWLIST_MODE=monitor`. Nothing is blocked; what *would*
+   have been blocked is written to the log.
+2. Open **Settings → Allowed IP Addresses** and read the *You are connecting
+   from* line. That is the address the gate will judge.
+3. Add it, confirm the log shows no addresses you care about being flagged, then
+   set `IP_ALLOWLIST_MODE=enforce`.
+
+`TRUST_PROXY` decides which address that is: too low and every visitor looks
+like the proxy, too high and a client can name its own address. `1` is right
+behind cPanel/Passenger or a single load balancer.
+
+### It cannot lock you out permanently
+
+The ways back in live in the environment rather than in the table they protect —
+a safeguard editable through the thing it safeguards is not a safeguard. All of
+them are set on the server by whoever would be fixing the lockout, and every use
+is logged.
+
+| Setting | Effect |
+| --- | --- |
+| `IP_ALLOWLIST_ENABLED=false` | Turns the restriction off entirely. |
+| `IP_ALLOWLIST_MODE=monitor` | Blocks nothing; logs what it would have blocked. |
+| `IP_ALLOWLIST_EMERGENCY=1.2.3.4,10.0.0.0/8` | Addresses allowed whatever the database says. |
+| `IP_ALLOWLIST_BYPASS_TOKEN=…` | A request carrying this in `X-Allowlist-Bypass` passes from any address. |
+| *(an empty list)* | Treated as "not configured", so the app stays open. |
+
+Set at least one of `IP_ALLOWLIST_EMERGENCY` or `IP_ALLOWLIST_BYPASS_TOKEN`
+before enforcing. Without one, a wrong entry means editing the database by hand.
+The startup log says so if neither is set.
+
+An **empty list means open, not closed**. Deleting the last entry, or deploying
+against a fresh database, leaves the app reachable rather than reachable by
+nobody. The Settings screen states which of the two you are looking at rather
+than letting you believe the app is locked down when it is not.
+
+`/api/health` is never blocked. If the host cannot reach it the deployment is
+marked unhealthy and restarted, which would turn a bad allowlist into a restart
+loop. It exposes nothing but whether the database answers.
+
+### Removing the entry that lets you in
+
+Removing or deactivating the entry covering your own address is refused unless
+you confirm it. The browser asks first; the API refuses a `DELETE` without
+`?confirm=yes` regardless, so a script or a stale tab gets the same protection.
+The message distinguishes the two cases — whether another entry still covers
+you, or whether this is the one thing keeping you in.
+
+### Spoofing
+
+`X-Forwarded-For` is a header anyone can send. Express resolves the client
+address from it according to `TRUST_PROXY`: with one proxy in front, it takes
+the entry that proxy wrote, and anything a client prepended sits to the left of
+it and is ignored. No other header (`X-Real-IP`, `CF-Connecting-IP`, `Forwarded`)
+is consulted at all. `tests/ip-allowlist.test.js` asserts each of those.
+
+Matching lives in [`src/ip-match.js`](src/ip-match.js), written out rather than
+pulled in. It is deliberately strict: leading-zero octets (`010.1.1.1`, octal to
+some parsers and decimal to others), hex forms, `/33`, and anything it cannot
+parse with certainty are refused rather than guessed at. An IPv4-mapped IPv6
+address (`::ffff:106.51.81.61`) is treated as the same host as its IPv4 form, so
+one entry covers both spellings.
+
 ## Passwords
 
 Rules live in [`src/password-policy.js`](src/password-policy.js) and are served
@@ -465,6 +548,14 @@ They start the real server as a child process and drive it over HTTP, covering a
 valid change, a wrong current password, a mismatched confirmation, a password
 failing each policy rule, reuse of the current password, an unauthenticated
 request, other-device sign-out, and that no password reaches the logs.
+
+`tests/ip-allowlist.test.js` covers the address restriction: matching and its
+refusals as pure checks, then a live server where an allowed address gets in and
+every other one meets the Access Denied page, a spoofed `X-Forwarded-For` does
+not, sign-in itself is refused before any password is read, an address added
+works on the next request, removing the entry covering the caller needs
+confirmation, and each way back in — emergency address, bypass token, empty
+list, kill switch, monitor mode — does what it claims.
 
 ## Packaging for deployment
 

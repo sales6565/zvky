@@ -68,6 +68,12 @@ async function startServer(cfg, extraEnv = {}) {
       CORS_ORIGIN: `http://localhost:${port}`,
       LOGIN_RATE_MAX: '100000',
       PASSWORD_CHANGE_RATE_MAX: '100000',
+      // Start with no allowed addresses, which leaves the IP gate open — every
+      // other suite connects from 127.0.0.1 and is not testing the gate. The
+      // allowlist suite overrides this with the addresses it wants. Note this
+      // is the real code path, not the feature switched off: an empty list is
+      // meant to mean "not configured".
+      IP_ALLOWLIST_SEED: '',
       ...extraEnv,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -96,12 +102,13 @@ function stopServer(server) {
   if (server && server.child && !server.child.killed) server.child.kill();
 }
 
-async function api(base, path, { token, method = 'GET', body } = {}) {
+async function api(base, path, { token, method = 'GET', body, headers = {} } = {}) {
   const res = await fetch(base + path, {
     method,
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...headers,
     },
     body: body ? JSON.stringify(body) : undefined,
   });
@@ -109,4 +116,19 @@ async function api(base, path, { token, method = 'GET', body } = {}) {
   return { status: res.status, body: data };
 }
 
-module.exports = { config, resetSchema, startServer, stopServer, api, SKIP_REASON };
+// Some tests need the response as it came — the Access Denied page is HTML, and
+// asserting on JSON that failed to parse would pass for the wrong reason.
+async function raw(base, path, { token, method = 'GET', body, headers = {} } = {}) {
+  const res = await fetch(base + path, {
+    method,
+    headers: {
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...headers,
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return { status: res.status, text: await res.text(), contentType: res.headers.get('content-type') || '' };
+}
+
+module.exports = { config, resetSchema, startServer, stopServer, api, raw, SKIP_REASON };

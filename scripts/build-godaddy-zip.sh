@@ -56,6 +56,22 @@ TRUST_PROXY=1
 
 LOGIN_RATE_MAX=100
 LOGIN_RATE_WINDOW_MINUTES=15
+
+# --- IP allowlist ---
+# Shipped in monitor mode on purpose: a fresh deployment must not be able to
+# lock its own administrator out before anyone has confirmed which address this
+# server actually sees. Nothing is blocked; what would have been blocked is
+# written to the log.
+#
+# To turn the restriction on:
+#   1. Sign in and open Settings -> Allowed IP Addresses.
+#   2. Read the "You are connecting from" line and add that address.
+#   3. Set IP_ALLOWLIST_EMERGENCY below to an address you can reach from
+#      somewhere else, so a mistake is recoverable without database surgery.
+#   4. Change the line below to enforce and restart.
+IP_ALLOWLIST_MODE=monitor
+# IP_ALLOWLIST_EMERGENCY=
+# IP_ALLOWLIST_BYPASS_TOKEN=
 EOF
 
 cd "$OUT_DIR"
