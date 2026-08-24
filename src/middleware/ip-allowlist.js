@@ -28,6 +28,7 @@
 
 const ipMatch = require('../ip-match');
 const allowlist = require('../ip-allowlist');
+const observations = require('../ip-observations');
 
 // Paths the gate never blocks.
 //
@@ -150,22 +151,29 @@ const seen = new Map();
 const LOG_WINDOW_MS = 10 * 60 * 1000;
 const LOG_LIMIT = 3;
 
-function noteDenial(ip, path) {
+function noteDenial(ip, path, { verb = 'denied' } = {}) {
   const now = Date.now();
   const record = seen.get(ip);
   if (!record || now - record.since > LOG_WINDOW_MS) {
     seen.set(ip, { since: now, count: 1 });
-    console.warn(`[ip-allowlist] denied ${ip} -> ${path}`);
+    console.warn(`[ip-allowlist] ${verb} ${ip} -> ${path}`);
     return;
   }
   record.count++;
   if (record.count <= LOG_LIMIT) {
-    console.warn(`[ip-allowlist] denied ${ip} -> ${path}`);
+    console.warn(`[ip-allowlist] ${verb} ${ip} -> ${path}`);
   } else if (record.count === LOG_LIMIT + 1) {
-    console.warn(`[ip-allowlist] denied ${ip} repeatedly; further denials from it will be counted, not logged`);
+    console.warn(`[ip-allowlist] ${verb} ${ip} repeatedly; further from it will be counted, not logged`);
   }
   // Keep the map from growing without bound under a scan.
   if (seen.size > 5000) seen.clear();
+}
+
+// Every verdict is recorded for the Settings screen, which is what a rollout is
+// actually read from — the log is a stream, and the address that matters is
+// often the one that appeared once, an hour ago. See src/ip-observations.js.
+function note(req, ip, decision, rule) {
+  observations.record(ip, { decision, method: req.method, path: req.path, rule });
 }
 
 // A storage fault is a standing condition, not an event: it will be true for
@@ -243,6 +251,7 @@ function middleware(req, res, next) {
     const status = allowlist.storageStatus();
     noteStorageFault(status);
     if (failClosedIsSafe(settings)) {
+      note(req, ip, 'storage-unavailable-closed');
       req.ipAllowlist = { decision: 'storage-unavailable-closed', storage: status };
       if (ALWAYS_ALLOWED.includes(req.path)) return next();
       return deny(req, res, ip, 'unavailable');
@@ -260,17 +269,25 @@ function middleware(req, res, next) {
 
   const match = allowlist.findMatch(ip);
   if (match) {
+    // Recorded too: knowing which addresses currently reach the app is half of
+    // knowing what switching to enforce would break.
+    note(req, ip, 'allowed', match.address);
     req.ipAllowlist = { decision: 'allowed', rule: match.address };
     return next();
   }
 
   if (settings.mode === 'monitor') {
-    console.warn(`[ip-allowlist] MONITOR: would have denied ${ip} -> ${req.method} ${req.path}`);
+    // Rate-limited like a real denial. Monitor mode used to log every single
+    // request from every unrecognised address, which buries the one line that
+    // matters under whatever is scanning the internet that afternoon.
+    noteDenial(ip, `${req.method} ${req.path}`, { verb: 'MONITOR: would have denied' });
+    note(req, ip, 'would-deny');
     req.ipAllowlist = { decision: 'would-deny' };
     return next();
   }
 
   noteDenial(ip, `${req.method} ${req.path}`);
+  note(req, ip, 'denied');
   req.ipAllowlist = { decision: 'denied' };
   return deny(req, res, ip);
 }

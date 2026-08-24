@@ -851,3 +851,143 @@ test('the migration survives tables whose collations disagree', { skip: cfg ? fa
     stopServer(server);
   }
 });
+
+// --- finishing a monitor-mode rollout ----------------------------------------
+
+test('observations answer the question a rollout turns on', () => {
+  const obs = require('../src/ip-observations');
+  obs.reset();
+
+  obs.record('1.2.3.4', { decision: 'would-deny', method: 'GET', path: '/' });
+  obs.record('1.2.3.4', { decision: 'would-deny', method: 'GET', path: '/api/projects' });
+  obs.record('5.6.7.8', { decision: 'allowed', method: 'GET', path: '/', rule: '5.6.7.0/24' });
+
+  const s = obs.summary();
+  assert.strictEqual(s.refused.length, 1);
+  assert.strictEqual(s.refused[0].address, '1.2.3.4');
+  assert.strictEqual(s.refused[0].count, 2, 'repeat requests are counted, not duplicated');
+  assert.deepStrictEqual(s.refused[0].paths, ['GET /', 'GET /api/projects']);
+  assert.strictEqual(s.allowed.length, 1);
+  assert.strictEqual(s.allowed[0].rule, '5.6.7.0/24');
+
+  // Adding the address removes it from the review list.
+  assert.strictEqual(obs.forget('1.2.3.4'), true);
+  assert.strictEqual(obs.summary().refused.length, 0);
+});
+
+test('a scanner cannot exhaust memory through the observation ledger', () => {
+  const obs = require('../src/ip-observations');
+  obs.reset();
+  for (let i = 0; i < obs.MAX_ADDRESSES + 250; i++) {
+    obs.record(`10.0.${Math.floor(i / 256)}.${i % 256}`, { decision: 'would-deny', path: '/' });
+  }
+  const s = obs.summary();
+  assert.strictEqual(s.total, obs.MAX_ADDRESSES, 'the ledger is bounded');
+  assert.strictEqual(s.truncated, true, 'and says so rather than pretending to be complete');
+  obs.reset();
+});
+
+test('a monitor-mode rollout can be read, then enforced', { skip: cfg ? false : SKIP_REASON }, async (t) => {
+  const PASSWORD = 'Rollout-Test-1!';
+  const STUDIO = '106.202.105.46';   // the address actually in use
+  const SCANNER = '45.9.148.7';
+  const RESCUE = '198.51.100.20';
+  let monitor;
+  let token;
+
+  t.before(async () => {
+    await resetSchema(cfg);
+    monitor = await startServer(cfg, {
+      BOOTSTRAP_TOKEN: 'rollout-token',
+      IP_ALLOWLIST_SEED: OFFICE,
+      IP_ALLOWLIST_EMERGENCY: RESCUE,
+      TRUST_PROXY: '1',
+      // Monitor is the default; named here because it is what this is about.
+      IP_ALLOWLIST_MODE: 'monitor',
+    });
+    await api(monitor.base, '/auth/bootstrap', {
+      headers: from(OFFICE), method: 'POST',
+      body: { token: 'rollout-token', name: 'Roll Admin', email: 'super@zvky.test', password: PASSWORD },
+    });
+    token = (await api(monitor.base, '/auth/login', {
+      headers: from(OFFICE), method: 'POST', body: { email: 'super@zvky.test', password: PASSWORD },
+    })).body.token;
+  });
+
+  t.after(() => stopServer(monitor));
+
+  await t.test('monitor blocks nothing but records everyone', async () => {
+    for (const ip of [STUDIO, STUDIO, SCANNER, OFFICE]) {
+      assert.strictEqual(await reach(monitor, ip), 200, `${ip} must not be blocked in monitor mode`);
+    }
+
+    const res = await api(monitor.base, '/ip-allowlist/observed', { headers: from(OFFICE), token });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.mode, 'monitor');
+    assert.strictEqual(res.body.enforcing, false);
+
+    const refused = res.body.wouldBeRefused.map((e) => e.address);
+    assert.ok(refused.includes(STUDIO), 'the address actually in use would have been refused');
+    assert.ok(refused.includes(SCANNER));
+    assert.ok(!refused.includes(OFFICE), 'an allowlisted address must never appear as refused');
+
+    const reaching = res.body.reaching.map((e) => e.address);
+    assert.ok(reaching.includes(OFFICE), 'and must appear as getting through');
+
+    assert.strictEqual(res.body.unresolved, 2, 'two addresses stand between here and enforcing');
+  });
+
+  await t.test('the monitor log does not drown in one noisy address', async () => {
+    for (let i = 0; i < 25; i++) await reach(monitor, SCANNER);
+    const lines = (monitor.output().match(/MONITOR: would have denied 45\.9\.148\.7 ->/g) || []).length;
+    assert.ok(lines <= 5, `one address should not produce a line per request, got ${lines}`);
+    assert.match(monitor.output(), /repeatedly; further from it will be counted/);
+  });
+
+  await t.test('allowing an observed address clears it from the review list', async () => {
+    const added = await api(monitor.base, '/ip-allowlist', {
+      headers: from(OFFICE), token, method: 'POST',
+      body: { address: STUDIO, label: 'Studio (observed during rollout)' },
+    });
+    assert.strictEqual(added.status, 201, JSON.stringify(added.body));
+
+    const res = await api(monitor.base, '/ip-allowlist/observed', { headers: from(OFFICE), token });
+    assert.ok(!res.body.wouldBeRefused.some((e) => e.address === STUDIO && !e.coveredNow),
+      'once allowed it should no longer read as a problem');
+    assert.strictEqual(res.body.unresolved, 1, 'only the scanner is left, correctly');
+  });
+
+  await t.test('switching to enforce blocks for real, and the override still works', async () => {
+    // The same database, the same list — only IP_ALLOWLIST_MODE differs. That is
+    // the whole of the change being made in production.
+    const enforcing = await startServer(cfg, {
+      IP_ALLOWLIST_EMERGENCY: RESCUE, TRUST_PROXY: '1', IP_ALLOWLIST_MODE: 'enforce',
+    });
+    try {
+      assert.match(enforcing.output(), /enforce mode/);
+
+      assert.strictEqual(await reach(enforcing, OFFICE), 200, 'an allowed address still gets in');
+      assert.strictEqual(await reach(enforcing, STUDIO), 200, 'including the one added during the rollout');
+      assert.strictEqual(await reach(enforcing, SCANNER), 403, 'and a stranger is actually blocked now');
+      assert.strictEqual(await reach(enforcing, RESCUE), 200, 'the emergency address still works');
+      assert.match(enforcing.output(), /EMERGENCY ADDRESS USED/);
+
+      // The platform's own probe is unaffected by any of this.
+      const probe = await raw(enforcing.base.replace(/\/api$/, '') + '/', '');
+      assert.strictEqual(probe.status, 200);
+    } finally {
+      stopServer(enforcing);
+    }
+  });
+
+  await t.test('going back to monitor unblocks everyone again', async () => {
+    // The way out if enforcing turns out to be wrong: one variable, one restart.
+    const reverted = await startServer(cfg, { TRUST_PROXY: '1', IP_ALLOWLIST_MODE: 'monitor' });
+    try {
+      assert.strictEqual(await reach(reverted, SCANNER), 200, 'nothing is blocked once back in monitor');
+      assert.match(reverted.output(), /MONITOR mode: nothing is blocked/);
+    } finally {
+      stopServer(reverted);
+    }
+  });
+});

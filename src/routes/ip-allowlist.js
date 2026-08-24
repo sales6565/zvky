@@ -3,6 +3,7 @@ const { authenticate, requireCapability } = require('../middleware/auth');
 const allowlist = require('../ip-allowlist');
 const ipMatch = require('../ip-match');
 const gate = require('../middleware/ip-allowlist');
+const observations = require('../ip-observations');
 const db = require('../db');
 
 // See src/async-router.js: keeps a failed query from killing the process.
@@ -155,6 +156,41 @@ router.post('/repair', async (req, res) => {
   res.json({ ok: true, storage: allowlist.storageStatus(), entries: await allowlist.listAll(db) });
 });
 
+// GET /api/ip-allowlist/observed — the addresses this server has judged.
+//
+// The question a monitor-mode rollout has to answer before enforcement goes on:
+// who would this have refused? Reading that out of the server log means
+// scrolling a stream and hoping nothing important scrolled past. This is the
+// same information, aggregated, with the caller's own address marked.
+router.get('/observed', async (req, res) => {
+  const myIp = req.clientIp || gate.clientIP(req);
+  const settings = gate.config();
+  const summary = observations.summary();
+
+  const mark = (entry) => ({
+    ...entry,
+    isYou: entry.address === myIp,
+    // Whether an entry on the list already covers it — so an address that was
+    // refused earlier but has since been allowed does not read as a problem.
+    coveredNow: Boolean(allowlist.findMatch(entry.address)),
+  });
+
+  res.json({
+    mode: settings.mode,
+    enforcing: settings.enabled && settings.mode === 'enforce',
+    yourAddress: myIp,
+    since: summary.since,
+    scope: summary.scope,
+    truncated: summary.truncated,
+    limit: summary.limit,
+    // The two lists a rollout is read from.
+    wouldBeRefused: summary.refused.map(mark),
+    reaching: summary.allowed.map(mark),
+    // Safe to enforce only when nothing still-uncovered would be turned away.
+    unresolved: summary.refused.filter((e) => !allowlist.findMatch(e.address)).length,
+  });
+});
+
 // GET /api/ip-allowlist/audit — who changed what, and when.
 router.get('/audit', async (req, res) => {
   // An unreadable trail is not worth a 500 on a screen whose job is to explain
@@ -171,6 +207,9 @@ router.post('/', async (req, res) => {
   const { address, label } = req.body || {};
   const result = await allowlist.create(db, { address, label }, actorContext(req));
   if (!result.ok) return res.status(result.status).json({ error: result.errors[0].message, errors: result.errors });
+  // It has been dealt with, so drop it from the observed list rather than
+  // leaving a warning about an address that is now allowed.
+  if (result.entry) observations.forget(result.entry.address);
   return res.status(201).json({ entry: result.entry });
 });
 

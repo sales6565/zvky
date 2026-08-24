@@ -110,6 +110,15 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 /* The storage-fault banner. Louder than the rest on purpose: it means the app
    is not restricting access while looking as though it is. */
 .ip-banner.fault{background:rgba(255,90,54,.12);border-color:rgba(255,90,54,.45);color:#ff9b80;}
+/* The rollout panel: who the gate has seen, and who enforcing would turn away. */
+.ip-obs{margin-top:16px;padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);}
+.ip-obs h4{margin:0 0 3px;font-family:'Space Grotesk';font-size:13px;}
+.ip-obs .ref-note{margin-bottom:10px;}
+.ip-obs .verdict{font-size:12px;line-height:1.5;padding:9px 12px;border-radius:8px;margin-bottom:12px;}
+.ip-obs .verdict.ready{background:rgba(64,200,140,.10);border:1px solid rgba(64,200,140,.30);color:#7fdcb0;}
+.ip-obs .verdict.wait{background:rgba(255,176,32,.10);border:1px solid rgba(255,176,32,.32);color:#ffcc70;}
+.ip-obs-scope{font-size:10.5px;color:var(--ink-faint);margin-top:10px;line-height:1.5;}
+.ip-add-seen{white-space:nowrap;}
 .ip-banner.fault h4{margin:0 0 7px;font-size:13px;color:#ff7a55;font-family:'Space Grotesk';letter-spacing:.2px;}
 .ip-banner.fault p{margin:0 0 8px;color:#ffb9a5;}
 .ip-banner.fault code{font-family:'IBM Plex Mono';font-size:11px;background:rgba(0,0,0,.32);
@@ -1409,9 +1418,11 @@ async function renderIpAllowlist(){
         <button class="btn btn-brand" id="ipCreateBtn">Add</button>
       </div>
       <div class="ref-err" id="err-ip-allowlist"></div>
+      <div id="ipObserved"></div>
       <details class="ip-audit"><summary>Change history</summary><div id="ipAuditBody" class="ref-key">Loading…</div></details>
     </div>`;
   wireIpAllowlist();
+  renderIpObserved();
 }
 
 function ipError(message){
@@ -1513,6 +1524,69 @@ function wireIpAllowlist(){
         </tr>`).join('')}</tbody></table>` : 'No changes recorded yet.';
     }catch(err){ body.textContent = err.message; }
   });
+}
+
+/* ---------- the rollout panel: what enforcing would actually do ---------- */
+/* Monitor mode's whole purpose is to answer one question before the gate starts
+   blocking: who would this have turned away? That used to live only in the
+   server log, which is a stream — the address that matters is often the one
+   that appeared once, an hour ago, under whatever was scanning that afternoon.
+   This is the same information, aggregated, with your own address marked. */
+
+async function renderIpObserved(){
+  const el = document.getElementById('ipObserved');
+  if(!el) return;
+  let d;
+  try{ d = await api('/ip-allowlist/observed'); }
+  catch(err){ el.innerHTML = `<div class="ip-obs ref-key">Could not read observed addresses: ${escapeHTML(err.message)}</div>`; return; }
+
+  const rows = (list, kind) => list.length ? `
+    <table class="ref-table">
+      <thead><tr><th>Address</th><th>Requests</th><th>Last seen</th><th>Seen at</th><th></th></tr></thead>
+      <tbody>${list.map(e=>`
+        <tr>
+          <td><strong class="ref-key" style="font-size:12.5px;color:var(--ink);">${escapeHTML(e.address)}</strong>
+            ${e.isYou?'<span class="ip-mine">you</span>':''}
+            ${e.coveredNow?'<span class="ref-pill" style="margin-left:8px;">now allowed</span>':''}</td>
+          <td class="ref-key">${e.count}</td>
+          <td class="ref-key">${escapeHTML(new Date(e.lastSeen).toLocaleString())}</td>
+          <td class="ref-key" style="opacity:.75;">${escapeHTML((e.paths||[]).join(', '))}</td>
+          <td class="ref-actions">${(kind==='refused' && !e.coveredNow)
+            ? `<button class="btn btn-ghost btn-sm ip-add-seen" data-ip="${escapeHTML(e.address)}">Allow this</button>` : ''}</td>
+        </tr>`).join('')}</tbody>
+    </table>` : `<div class="ref-key">None recorded.</div>`;
+
+  /* The one sentence the decision turns on. An address that has never appeared
+     here has not been proven safe — it has just never connected, which is a
+     different thing and the more dangerous one to confuse. */
+  const verdict = d.enforcing
+    ? `<div class="verdict ready">Enforcing. ${d.wouldBeRefused.length} address${d.wouldBeRefused.length===1?' has':'es have'} been turned away since this server started.</div>`
+    : d.unresolved === 0
+      ? `<div class="verdict ready">Nothing seen so far would be refused. Note this only covers addresses that have actually connected — an address that has never appeared here has not been checked, it has simply not been used.</div>`
+      : `<div class="verdict wait"><strong>${d.unresolved}</strong> address${d.unresolved===1?'':'es'} would be refused if you switched to enforce now. Review them below and allow the ones that should have access before turning enforcement on.</div>`;
+
+  el.innerHTML = `
+    <div class="ip-obs">
+      <h4>What enforcing would do</h4>
+      <div class="ref-note">Addresses this server has judged, newest first.</div>
+      ${verdict}
+      <div class="ref-note" style="margin-top:4px;">Would be refused</div>
+      ${rows(d.wouldBeRefused, 'refused')}
+      <div class="ref-note" style="margin-top:14px;">Currently getting through</div>
+      ${rows(d.reaching, 'allowed')}
+      <div class="ip-obs-scope">${escapeHTML(d.scope)} Recording since ${escapeHTML(new Date(d.since).toLocaleString())}.${d.truncated?` Only the ${d.limit} most recent addresses are kept.`:''}</div>
+    </div>`;
+
+  el.querySelectorAll('.ip-add-seen').forEach(btn=>btn.addEventListener('click', async ()=>{
+    const address = btn.dataset.ip;
+    if(!confirm(`Add ${address} to the allowlist?`)) return;
+    btn.disabled = true;
+    try{
+      await api('/ip-allowlist', { method:'POST', body:{ address, label:'Added during rollout' } });
+      showToast(`${address} added.`);
+      await renderIpAllowlist();
+    }catch(err){ ipError(err.message); btn.disabled = false; }
+  }));
 }
 
 /* ---------- profile / change password ---------- */

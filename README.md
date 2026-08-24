@@ -513,6 +513,39 @@ locks out everyone the moment it starts blocking.
 like the proxy, too high and a client can name its own address. `1` is right
 behind cPanel/Passenger or a single load balancer.
 
+### Reading a monitor-mode rollout
+
+Monitor mode exists to answer one question before enforcement goes on: *if this
+were enforcing, who would it have turned away?*
+
+The gate writes each verdict to the process log — `console.warn`, so **stderr**,
+which on this host is the platform's application log; there is no log file on
+disk. Repeats from one address are rate-limited to a few lines per ten minutes,
+so a scanner cannot bury the line that matters.
+
+But a log is a stream, and the address you most need to see is often the one
+that appeared once, an hour ago. So the gate also keeps a running tally, shown
+under **Settings → Allowed IP Addresses → What enforcing would do**:
+
+- **Would be refused** — every address enforcement would turn away, with a
+  request count, when it was last seen, and an **Allow this** button.
+- **Currently getting through** — which addresses the list is letting in.
+- A verdict line naming how many addresses stand between you and enforcing.
+
+`GET /api/ip-allowlist/observed` returns the same thing as JSON.
+
+**An address that never appears has not been checked — it has just never
+connected.** That distinction is the whole risk in this rollout: "my address is
+not in the refusal log" is not evidence it is allowlisted, and reasoning from it
+is how a studio locks itself out. Confirm from *Currently getting through*, or
+from the *You are connecting from* line, that the address you rely on is
+actually matching an entry.
+
+The tally is in memory and per-process: it covers one worker since it last
+restarted, and a host running several workers gives each its own view. Writing a
+row per blocked request would let anyone scanning the internet drive database
+load, which is a poor trade for data that only matters during a rollout.
+
 ### The platform's health check is never blocked
 
 Requests arriving over **loopback** are exempt, always — ahead of every other
