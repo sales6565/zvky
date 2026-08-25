@@ -14,7 +14,7 @@ const fs = require('node:fs');
 const importFile = require('../import-file');
 const userImport = require('../user-import');
 const { uploadImport } = require('../upload');
-const { visibleProjects, hasFullAccess, holds } = require('../permissions');
+const { visibleProjects, hasFullAccess, mayAdministerUser, holds } = require('../permissions');
 
 // The cost used everywhere passwords are hashed in this codebase.
 const BCRYPT_ROUNDS = 10;
@@ -51,10 +51,12 @@ router.get('/', requirePermission('user.view'), async (req, res) => {
   const params = [];
   let sql = 'SELECT id, name, email, role, manager_id, team_lead_id, reports_to_id, created_at FROM users WHERE 1=1';
 
-  if (roleDef(req.user.role).projectScope !== 'all') {
-    params.push(req.user.id);
-    sql += ` AND manager_id = $${params.length}`;
-  }
+  // No row filter. "User View" means the studio's people, for whoever a Super
+  // Admin has trusted with it — this used to narrow to `manager_id = you`,
+  // which meant accounts you personally clicked Add User for, so a role granted
+  // the permission got an empty list. Full-access accounts stay in the roster
+  // (leaving them out would make it wrong); what they are protected from is
+  // being edited, in mayAdministerUser.
   if (search) {
     params.push(`%${String(search).toLowerCase()}%`);
     sql += ` AND (lower(name) LIKE $${params.length} OR lower(email) LIKE $${params.length})`;
@@ -192,11 +194,11 @@ router.patch('/:id', requirePermission('user.edit'), async (req, res) => {
   const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [req.params.id]);
   const target = rows[0];
   if (!target) return res.status(404).json({ error: 'User not found' });
-  if (roleDef(req.user.role).projectScope !== 'all' && target.manager_id !== req.user.id) {
-    return res.status(403).json({ error: 'You can only change users you added' });
+  if (!mayAdministerUser(req.user, target)) {
+    return res.status(403).json({ error: 'Accounts with full studio access cannot be changed here' });
   }
 
-  const { role, teamLeadId, reportsToId, projectId } = req.body || {};
+  const { name, email, role, teamLeadId, reportsToId, projectId } = req.body || {};
 
   // Editing a user and changing their role, project or reporting line are
   // separate permissions: somebody may be trusted to correct a name without
@@ -212,6 +214,37 @@ router.patch('/:id', requirePermission('user.edit'), async (req, res) => {
   }
   const fields = [];
   const values = [];
+
+  // --- name and email -------------------------------------------------------
+  //
+  // What user.edit means on its own. Without these it meant nothing: the three
+  // fields this endpoint could write were each behind their own permission, so
+  // a role granted only user.edit could reach the handler and then change
+  // nothing about the account.
+  //
+  // Validated the same way POST does, because it is the same record.
+  if (name !== undefined) {
+    if (typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'Name cannot be blank', field: 'name' });
+    }
+    if (name.trim().length > 255) {
+      return res.status(400).json({ error: 'Name is too long (255 characters at most)', field: 'name' });
+    }
+    fields.push(`name = $${fields.length + 1}`);
+    values.push(name.trim());
+  }
+  if (email !== undefined) {
+    if (typeof email !== 'string' || !email.trim()) {
+      return res.status(400).json({ error: 'Email cannot be blank', field: 'email' });
+    }
+    const { rows: clash } = await db.query(
+      'SELECT 1 AS ok FROM users WHERE lower(email) = lower($1) AND id <> $2',
+      [email.trim(), req.params.id]
+    );
+    if (clash.length) return res.status(409).json({ error: 'That email is already in use', field: 'email' });
+    fields.push(`email = $${fields.length + 1}`);
+    values.push(email.trim());
+  }
 
   // The role after this edit, which is what every rule below is judged against
   // — not the one the account holds now.
@@ -295,12 +328,14 @@ router.delete('/:id', requirePermission('user.delete'), async (req, res) => {
   if (target.id === req.user.id) return res.status(403).json({ error: 'You cannot remove your own account' });
   // Anyone at the full-access tier, not only the Super Admin role: these
   // accounts can undo any change made here, so removing one is a deliberate
-  // act rather than a row in a list.
+  // act rather than a row in a list. This holds for EVERY caller, including
+  // another full-access account — demote first, then remove. Editing is the
+  // looser rule below it, which is what makes the demotion possible.
   if (hasFullAccess(target)) {
     return res.status(403).json({ error: 'Accounts with full studio access cannot be removed here' });
   }
-  if (roleDef(req.user.role).projectScope !== 'all' && target.manager_id !== req.user.id) {
-    return res.status(403).json({ error: 'You can only remove users you added' });
+  if (!mayAdministerUser(req.user, target)) {
+    return res.status(403).json({ error: 'You do not have permission to do that' });
   }
   await db.query('DELETE FROM users WHERE id = $1', [req.params.id]);
   res.json({ ok: true });

@@ -166,6 +166,31 @@ function hasFullAccess(user) {
   return Boolean(def && def.manageUsers && def.projectScope === 'all');
 }
 
+// May `actor` administer `target`'s account — view it in the roster, edit it,
+// remove it?
+//
+// This replaces `projectScope !== 'all' && target.manager_id !== actor.id`,
+// which was three copies of the same mistake in src/routes/users.js. Two things
+// were wrong with it. It answered a question about PEOPLE with projectScope, a
+// value about PROJECTS — a role trusted to run the studio's staff list has no
+// particular relationship to how many projects it sees. And its fallback,
+// "only accounts you personally created", is not a scope at all: it is an
+// accident of who happened to click Add User. Between them they made the whole
+// User Management group inert — a role granted every permission in it could add
+// people and then administer nobody but the people it had just added, and its
+// user list came back empty.
+//
+// What replaces it is the permission plus one guard: an account with full
+// studio access can only be administered by another one. Otherwise a role
+// granted user.edit could rename, reassign or demote a Super Admin, and the way
+// back would be through the account it had just changed. Handing out roles is
+// separately limited by assignableRolesFor(), so this cannot be used to climb.
+function mayAdministerUser(actor, target) {
+  if (!actor || !target) return false;
+  if (hasFullAccess(actor)) return true;
+  return !hasFullAccess(target);
+}
+
 // Holds the final review gate (art director, with super admin as an override).
 function canReviewAsCD(user) {
   return holds(user, 'review.cd');
@@ -219,6 +244,7 @@ module.exports = {
   holds,
   canOverrideStage,
   hasFullAccess,
+  mayAdministerUser,
   visibleProjects,
   canAccessProject,
   canViewAsset,

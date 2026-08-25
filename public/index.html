@@ -374,8 +374,12 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
   <div class="modal">
     <h2>Edit User</h2>
     <div id="eu_who" style="font-size:12px;color:var(--ink-muted);margin-bottom:14px;"></div>
-    <label>Role</label><select id="eu_role"></select>
-    <label>Project</label><select id="eu_project"></select>
+    <div id="eu_detailsWrap">
+      <label>Name</label><input type="text" id="eu_name" placeholder="Full name">
+      <label>Email</label><input type="text" id="eu_email" placeholder="name@zvky.studio">
+    </div>
+    <div id="eu_roleWrap"><label>Role</label><select id="eu_role"></select></div>
+    <div id="eu_projectWrap"><label>Project</label><select id="eu_project"></select></div>
     <div id="eu_reportingWrap">
       <label>Reporting To</label><select id="eu_reportsTo"></select>
       <div class="eu-hint" id="eu_reportsHint"></div>
@@ -542,11 +546,20 @@ const SETTINGS_SECTIONS = [
 function canOpenSettings(){ return SETTINGS_SECTIONS.some(s=>can(s.permission)); }
 /* Comma-separated role keys matching a predicate, for /users?role= lookups. */
 function roleKeys(pred){ return ROLE_LIST.filter(pred).map(r=>r.key).join(','); }
-/* Designations the signed-in user may hand out — mirrors the server's rule. */
+/* Designations the signed-in user may hand out — mirrors assignableRolesFor()
+   in src/routes/users.js, key for key.
+
+   The first line used to read caps().manageUsers, which is why the Add User
+   form's Role dropdown came back empty for a role granted User Add: the tier
+   does not move when a permission is switched on, so the list was thrown away
+   before it was built. The roles themselves were never the problem — the API
+   hands the catalogue to anyone signed in, because every form with a role
+   dropdown needs it. */
 function assignableRoleList(){
-  const c = caps();
-  if(!c.manageUsers) return [];
-  if(c.projectScope==='all') return ROLE_LIST;
+  if(!can('user.add','user.change_role')) return [];
+  /* Reach, not permission: a role that does not see the whole studio cannot
+     mint an account that does. Same filter the server applies. */
+  if(caps().projectScope==='all') return ROLE_LIST;
   return ROLE_LIST.filter(r=>!r.manageUsers && r.projectScope!=='all');
 }
 async function loadRoles(){
@@ -818,12 +831,14 @@ async function renderUsers(){
     <table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Project</th><th>Reporting To</th><th></th></tr></thead><tbody>
       ${users.map(x=>{
         const r=roleInfo(x.role);
+        /* The same guard the API applies (mayAdministerUser in
+           src/permissions.js): an account with full studio access can only be
+           administered by another one, so nobody below that tier is offered a
+           button that would 403. Everything else is the permission alone. */
         const targetRunsStudio = r.manageUsers && r.projectScope==='all';
-        /* Two different questions, and both have to be yes: the permission says
-           whether this role may remove anybody at all, and projectScope — a
-           tier value, not a switch — says how far that reaches. */
-        const canDelete = can('user.delete') && x.id!==u.id &&
-          (caps().projectScope==='all' ? !targetRunsStudio : x.manager_id===u.id);
+        const mayAdminister = caps().projectScope==='all' ? true : !targetRunsStudio;
+        const canDelete = can('user.delete') && mayAdminister && x.id!==u.id && !targetRunsStudio;
+        const canEditRow = can('user.edit') && mayAdminister;
         /* Top of the hierarchy is stated, not left blank: an empty cell reads as
            "nobody has filled this in yet", which invites someone to fill it in. */
         const reporting = x.topOfHierarchy
@@ -835,7 +850,7 @@ async function renderUsers(){
           <td>${x.projectName ? escapeHTML(x.projectName) : '<span class="ud-none">None</span>'}</td>
           <td>${reporting}</td>
           <td style="text-align:right;white-space:nowrap;">
-            ${can('user.edit') ? `<button class="btn btn-ghost btn-sm editUserBtn" data-id="${x.id}">Edit</button>` : ''}
+            ${canEditRow ? `<button class="btn btn-ghost btn-sm editUserBtn" data-id="${x.id}">Edit</button>` : ''}
             ${canDelete ? `<button class="btn btn-ghost btn-sm delUserBtn" data-id="${x.id}" data-name="${escapeHTML(x.name)}">Remove</button>` : ''}</td></tr>`;
       }).join('')}
     </tbody></table>
@@ -1494,6 +1509,16 @@ async function openEditUser(id){
   document.getElementById('eu_who').innerHTML =
     `<strong>${escapeHTML(user.name)}</strong> · <span class="mono">${escapeHTML(user.email)}</span>`;
 
+  /* Each field is its own permission, and the API refuses one that was sent
+     without it — so the form shows exactly what this role may change rather
+     than offering everything and failing on save. */
+  document.getElementById('eu_name').value = user.name || '';
+  document.getElementById('eu_email').value = user.email || '';
+  const show = (id, yes)=>{ document.getElementById(id).style.display = yes ? '' : 'none'; };
+  show('eu_detailsWrap', can('user.edit'));
+  show('eu_roleWrap',    can('user.change_role'));
+  show('eu_projectWrap', can('user.change_project'));
+
   /* Role: only what this administrator is allowed to assign, matching Add User. */
   const roleSel = document.getElementById('eu_role');
   const choices = assignableRoleList().slice();
@@ -1522,6 +1547,13 @@ function renderReportingField(user, managerOptions){
   const selectedRole = document.getElementById('eu_role').value;
   const info = roleInfo(selectedRole);
   const isTop = TOP_TIER_ROLES.has(selectedRole);
+
+  /* Not offered at all without the permission to change it. */
+  if(!can('user.change_reporting')){
+    wrap.style.display = 'none';
+    notice.style.display = 'none';
+    return;
+  }
 
   if(isTop){
     wrap.style.display = 'none';
@@ -1566,11 +1598,24 @@ editUserModalWrap.addEventListener('click', e=>{ if(e.target===editUserModalWrap
 document.getElementById('saveEditUser').addEventListener('click', async (ev)=>{
   if(!editingUser) return;
   euError('');
+  /* Send only the fields this role may change. Sending one it may not is a 403
+     from the API, so a form that always sent all four made "may edit a name"
+     unusable on its own. */
   const role = document.getElementById('eu_role').value;
-  const body = { role, projectId: document.getElementById('eu_project').value || null };
+  const body = {};
+  if(can('user.edit')){
+    body.name = document.getElementById('eu_name').value.trim();
+    body.email = document.getElementById('eu_email').value.trim();
+    if(!body.name){ euError('A name is required.'); return; }
+    if(!body.email){ euError('An email address is required.'); return; }
+  }
+  if(can('user.change_role')) body.role = role;
+  if(can('user.change_project')) body.projectId = document.getElementById('eu_project').value || null;
   /* Never send a reporting line for a top-of-hierarchy designation: the API
      refuses it, and the clearing is its job rather than the form's. */
-  if(!TOP_TIER_ROLES.has(role)) body.reportsToId = document.getElementById('eu_reportsTo').value || null;
+  if(can('user.change_reporting') && !TOP_TIER_ROLES.has(role)){
+    body.reportsToId = document.getElementById('eu_reportsTo').value || null;
+  }
 
   ev.target.disabled = true;
   try{

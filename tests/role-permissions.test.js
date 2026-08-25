@@ -64,6 +64,9 @@ test('the Settings screen asks permissions, not capabilities', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  // Comments explain why these reads were wrong, and naming one is not making
+  // it. Scan the code, not the prose.
+  const code = html.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
   // Every capability that has a permission key. Reading one of these to decide
   // what to show is the bug: the tier does not move when a Super Admin switches
@@ -71,7 +74,7 @@ test('the Settings screen asks permissions, not capabilities', () => {
   for (const cap of ['manageSettings', 'manageAccess', 'managePermissions', 'manageUsers',
     'createProject', 'createAsset', 'editAsset', 'deleteAsset', 'deliver',
     'leadsTeam', 'reviewStage']) {
-    assert.ok(!html.includes(`caps().${cap}`),
+    assert.ok(!code.includes(`caps().${cap}`),
       `The UI still reads the tier capability "${cap}" to decide what to show. ` +
       'Ask can("…") with the permission the API checks instead.');
   }
@@ -86,7 +89,7 @@ test('the Settings screen asks permissions, not capabilities', () => {
   // projectScope is how much of the studio somebody sees, and assignable is
   // whether the designation is one that does the work.
   for (const cap of ['projectScope', 'assignable']) {
-    assert.ok(html.includes(`caps().${cap}`), `${cap} should still come from the tier`);
+    assert.ok(code.includes(`caps().${cap}`), `${cap} should still come from the tier`);
   }
 
   // And each gated thing names the key the API checks, so one does not reveal
@@ -469,6 +472,161 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       'the reversible half still works');
 
     await as('root', '/permissions/roles/art_director/reset', { method: 'POST', body: {} });
+  });
+
+  // --- the whole User Management group, end to end ---------------------------
+  //
+  // Granting the group used to leave every one of these inert. Not because a
+  // permission check was missing — all nine were present and keyed correctly —
+  // but because a tier-derived reach rule ran after them: unless the role's
+  // projectScope was 'all', the list filtered to `manager_id = you` and every
+  // edit was refused with "You can only change users you added". A role could
+  // add people and then administer nobody but the people it had just added.
+
+  await t.test('granting User Management makes all of it work', async () => {
+    const group = catalog.GROUPS.find((g) => g.key === 'users').permissions.map((p) => p.key);
+    await setRole('producer', [...new Set([...(await enabledFor('producer')), ...group])]);
+
+    // 1. User View — the studio's people, not an empty list.
+    const list = await as('pat', '/users?limit=50');
+    assert.strictEqual(list.status, 200);
+    assert.ok(list.body.total >= 4, `the roster came back with ${list.body.total} people`);
+    assert.ok(list.body.users.some((x) => x.id === people.ana), 'including people they did not add');
+
+    // 2. User Add.
+    const made = await as('pat', '/users', {
+      method: 'POST',
+      body: { name: 'Newby', email: 'newby@zvky.test', role: 'game_artist', password: PASSWORD, projectId },
+    });
+    assert.strictEqual(made.status, 201, JSON.stringify(made.body));
+    const newby = made.body.user.id;
+
+    // 3. User Edit — a name and an email, which is all user.edit means on its
+    // own now that the other three fields each have their own key.
+    const renamed = await as('pat', `/users/${newby}`, { method: 'PATCH', body: { name: 'Newby Renamed' } });
+    assert.strictEqual(renamed.status, 200, JSON.stringify(renamed.body));
+    assert.strictEqual(renamed.body.user.name, 'Newby Renamed');
+    assert.strictEqual((await as('pat', `/users/${newby}`, {
+      method: 'PATCH', body: { email: 'ana@zvky.test' },
+    })).status, 409, 'and a duplicate email is refused, as on create');
+
+    // 5. Change Role, validated against the roles that exist.
+    assert.strictEqual((await as('pat', `/users/${newby}`, {
+      method: 'PATCH', body: { role: 'team_lead' },
+    })).status, 200);
+    assert.strictEqual((await as('pat', `/users/${newby}`, {
+      method: 'PATCH', body: { role: 'not_a_role' },
+    })).status, 400, 'a role that does not exist is refused');
+    assert.strictEqual((await as('pat', `/users/${newby}`, {
+      method: 'PATCH', body: { role: 'super_admin' },
+    })).status, 403, 'and one above their own reach is refused');
+
+    // 6. Change Project.
+    const other = (await as('root', '/projects', { method: 'POST', body: { name: 'Second' } })).body.project.id;
+    assert.strictEqual((await as('pat', `/users/${newby}`, {
+      method: 'PATCH', body: { projectId: other },
+    })).status, 200);
+
+    // 7. Change Reporting To — and the validation still runs for this role.
+    assert.strictEqual((await as('pat', `/users/${newby}`, { method: 'GET' })).status, 200);
+    assert.strictEqual((await as('pat', `/users/${people.ana}/manager-options`)).status, 200);
+    assert.strictEqual((await as('pat', `/users/${people.ana}`, {
+      method: 'PATCH', body: { reportsToId: people.lee },
+    })).status, 200);
+
+    const self = await as('pat', `/users/${people.ana}`, { method: 'PATCH', body: { reportsToId: people.ana } });
+    assert.strictEqual(self.status, 400, 'self-reporting is still refused');
+    assert.match(self.body.error, /cannot report to themselves/i);
+
+    const loop = await as('pat', `/users/${people.lee}`, { method: 'PATCH', body: { reportsToId: people.ana } });
+    assert.strictEqual(loop.status, 400, 'and so is a loop');
+    assert.match(loop.body.error, /reporting loop/i);
+
+    // 4. User Delete.
+    assert.strictEqual((await as('pat', `/users/${newby}`, { method: 'DELETE' })).status, 200);
+
+    await as('root', `/projects/${other}`, { method: 'DELETE' });
+    await as('root', '/permissions/roles/producer/reset', { method: 'POST', body: {} });
+  });
+
+  await t.test('a full-access account is protected from a role below it', async () => {
+    // The one guard that replaces the old reach rule: user.edit is not a way to
+    // rename, demote or remove the account that could undo the change.
+    await setRole('producer', [...new Set([...(await enabledFor('producer')),
+      'user.view', 'user.edit', 'user.change_role', 'user.delete'])]);
+    const rootId = (await as('root', '/users?search=root@zvky.test')).body.users[0].id;
+
+    for (const [method, body] of [['PATCH', { name: 'Hijacked' }], ['PATCH', { role: 'game_artist' }], ['DELETE', undefined]]) {
+      const res = await as('pat', `/users/${rootId}`, { method, body });
+      assert.strictEqual(res.status, 403, `${method} ${JSON.stringify(body)}`);
+      assert.match(res.body.error, /full studio access|permission/i);
+    }
+    // Ordinary accounts are still theirs to administer.
+    assert.strictEqual((await as('pat', `/users/${people.ana}`, {
+      method: 'PATCH', body: { name: 'Ana' },
+    })).status, 200);
+
+    await as('root', '/permissions/roles/producer/reset', { method: 'POST', body: {} });
+  });
+
+  await t.test('a role without User Management is refused at the API, not just in the UI', async () => {
+    // Hiding a button is not a control. Every one of the seven, called directly.
+    for (const [method, path, body] of [
+      ['GET', '/users?limit=50'],
+      ['GET', `/users/${people.lee}`],
+      ['GET', `/users/${people.lee}/manager-options`],
+      ['POST', '/users', { name: 'X', email: 'x@zvky.test', role: 'game_artist' }],
+      ['PATCH', `/users/${people.lee}`, { name: 'X' }],
+      ['PATCH', `/users/${people.lee}`, { role: 'game_artist' }],
+      ['PATCH', `/users/${people.lee}`, { projectId: null }],
+      ['PATCH', `/users/${people.lee}`, { reportsToId: null }],
+      ['DELETE', `/users/${people.lee}`],
+      ['GET', '/users/import-format'],
+      ['POST', '/users/bulk'],
+    ]) {
+      const res = await as('ana', path, { method, body });
+      assert.strictEqual(res.status, 403, `${method} ${path} ${JSON.stringify(body || {})}`);
+    }
+  });
+
+  await t.test('each field of an edit needs its own permission', async () => {
+    // user.edit alone changes a name, and nothing else — the form sends only
+    // what the caller holds, and the API refuses the rest either way.
+    await setRole('producer', [...new Set([...(await enabledFor('producer')), 'user.view', 'user.edit'])]);
+    assert.strictEqual((await as('pat', `/users/${people.ana}`, {
+      method: 'PATCH', body: { name: 'Ana Two' },
+    })).status, 200);
+    for (const body of [{ role: 'team_lead' }, { projectId: null }, { reportsToId: null }]) {
+      const res = await as('pat', `/users/${people.ana}`, { method: 'PATCH', body });
+      assert.strictEqual(res.status, 403, JSON.stringify(body));
+      assert.match(res.body.error, /permission to change/i);
+    }
+    await as('root', '/permissions/roles/producer/reset', { method: 'POST', body: {} });
+  });
+
+  // --- reading an admin-managed list, versus managing it ---------------------
+
+  await t.test('the lists behind dropdowns are readable by anyone signed in', async () => {
+    // The Add User form's Role dropdown, the Add Asset form's Type and Priority
+    // dropdowns, and the project picker. Needing Manage Roles to populate a
+    // dropdown would mean nobody could fill in a form without also being
+    // trusted to edit the studio's role catalogue.
+    for (const who of ['pat', 'lee', 'ana', 'dana', 'root']) {
+      for (const path of ['/auth/roles', '/reference', '/reference/roles', '/reference/asset-types',
+        '/reference/priorities', '/projects']) {
+        assert.strictEqual((await as(who, path)).status, 200, `${who} could not read ${path}`);
+      }
+    }
+    const ref = (await as('ana', '/reference')).body;
+    assert.ok(ref.roles.length > 0 && ref.assetTypes.length > 0 && ref.priorities.length > 0,
+      'and the lists actually have something in them');
+
+    // Managing one is still separate, and still per collection.
+    assert.strictEqual((await as('ana', '/reference/roles', {
+      method: 'POST', body: { label: 'Nope' },
+    })).status, 403);
+    assert.strictEqual((await as('ana', '/reference/roles?includeInactive=1')).status, 403,
+      'listing what has been retired is a management view, not a dropdown');
   });
 
   // --- editing a project -----------------------------------------------------
