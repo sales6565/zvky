@@ -22,25 +22,36 @@ const CAPABILITY_DEFAULTS = {
   editAsset: false,
   deliver: false,
   deleteAsset: null,
+  // Managing who may reach the application at all — the IP allowlist, and the
+  // switch between monitor and enforce. Split out from manageSettings so that
+  // "full access to the studio" does not automatically mean "can lock the
+  // studio out of its own app". Held by the Super Admin tier alone.
+  manageAccess: false,
+};
+
+// The capabilities that make up full access. Named once and shared, so the
+// tiers below cannot drift apart from each other by a line nobody noticed.
+const FULL_ACCESS = {
+  projectScope: 'all',
+  reviewStage: 'cd',
+  manageUsers: true,
+  manageSettings: true,
+  createProject: true,
+  createAsset: true,
+  editAsset: true,
+  deliver: true,
+  deleteAsset: 'any',
 };
 
 const TIERS = {
   // --- system tiers: one role each, not creatable or deletable -------------
   super_admin: {
     label: 'Super Admin',
-    describe: 'Runs the studio. Every permission, including these settings.',
+    describe: 'Runs the studio. Every permission, including who may reach the app at all.',
     system: true,
-    capabilities: {
-      projectScope: 'all',
-      reviewStage: 'cd',
-      manageUsers: true,
-      manageSettings: true,
-      createProject: true,
-      createAsset: true,
-      editAsset: true,
-      deliver: true,
-      deleteAsset: 'any',
-    },
+    // The only tier holding manageAccess: the IP allowlist stays here even
+    // though other tiers below have everything else.
+    capabilities: { ...FULL_ACCESS, manageAccess: true },
   },
   admin: {
     label: 'Admin',
@@ -59,9 +70,19 @@ const TIERS = {
 
   // --- tiers a new role may be created in -----------------------------------
   leadership: {
-    label: 'Leadership',
-    describe: 'Sees every project. Takes no action in the pipeline.',
-    capabilities: { projectScope: 'all' },
+    label: 'Leadership (full access, top of hierarchy)',
+    describe: 'Every permission except managing the IP allowlist. Reports to nobody, so no Reporting To field.',
+    // Deliberately still its own tier rather than folded into full_access
+    // below: src/reporting.js reads this tier to mean "top of the org chart",
+    // which is a fact about the position rather than about its access level.
+    // Merging the two would hand a Reporting To field to the person running
+    // the studio, or take it away from everyone with full access.
+    capabilities: { ...FULL_ACCESS },
+  },
+  full_access: {
+    label: 'Full Access',
+    describe: 'Every permission except managing the IP allowlist. Reports to someone, unlike Leadership.',
+    capabilities: { ...FULL_ACCESS },
   },
   direction: {
     label: 'Creative Direction',
@@ -132,6 +153,7 @@ function describeTiers({ includeSystem = false } = {}) {
 }
 
 module.exports = {
+  FULL_ACCESS,
   TIERS,
   TIER_KEYS,
   ASSIGNABLE_TIERS,

@@ -35,6 +35,54 @@ by itself change access: a Trainee Game Artist and a Senior Game Artist have the
 same permissions and differ in title and reporting line. Change that by editing
 the entry in `src/roles.js`.
 
+### Full access
+
+Six designations run the studio and hold every permission the Super Admin does,
+bar one:
+
+| Designation | Tier |
+| --- | --- |
+| Managing Director & CEO | `leadership` |
+| Vice President – Global Operations & Business Development | `leadership` |
+| Head of Production | `full_access` |
+| CTO | `full_access` |
+| General Manager | `full_access` |
+| Account Manager - Marketing | `full_access` |
+
+This is the tier system doing its job rather than a new mechanism: the
+capabilities are defined once as `FULL_ACCESS` in
+[`src/role-tiers.js`](src/role-tiers.js) and shared by all three top tiers, so
+they cannot drift apart. `hasFullAccess()` in
+[`src/permissions.js`](src/permissions.js) names the check that the code used to
+spell out as `manageUsers && projectScope === 'all'` — which meant "Super Admin"
+by coincidence, and would have quietly changed meaning the moment roles were
+added at that level. **Super Admin remains a distinct role** for identity and
+display; only the access tier is shared.
+
+`leadership` and `full_access` grant identical permissions and are still
+separate tiers, because [`src/reporting.js`](src/reporting.js) reads
+`leadership` to mean *top of the org chart*. Merging them would give the CEO a
+Reporting To field, or take it away from everyone with full access.
+
+### The one thing they do not get
+
+Managing the **IP allowlist** — adding or removing addresses, and switching
+between monitor and enforce — is held by the Super Admin tier alone, through its
+own `manageAccess` capability.
+
+It was split out of `manageSettings` for this change. A wrong value elsewhere in
+Settings misconfigures a dropdown; a wrong value here locks the whole studio out
+of the application, and the way back is an environment variable on the server.
+Six more people holding every other permission is a different risk from six more
+people able to close the front door.
+
+The six **can** create and promote other Super Admins, by decision. Full access
+includes handing out full access.
+
+An account at any full-access tier cannot be deleted directly — demote it first,
+then remove it. That guard already existed for Super Admin and now covers the
+tier rather than the one role.
+
 ### Managing roles
 
 Roles live in the `roles` table and a Super Admin manages them under

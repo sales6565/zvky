@@ -263,6 +263,33 @@ const ROLES = [
     isSystem: false
   },
   {
+    key: "head_of_production",
+    label: "Head of Production",
+    group: "Production",
+    tier: "full_access",
+    color: "#ffd23d",
+    position: 92,
+    isSystem: false
+  },
+  {
+    key: "cto",
+    label: "CTO",
+    group: "Leadership",
+    tier: "full_access",
+    color: "#ffd23d",
+    position: 94,
+    isSystem: false
+  },
+  {
+    key: "general_manager",
+    label: "General Manager",
+    group: "Leadership",
+    tier: "full_access",
+    color: "#ffd23d",
+    position: 93,
+    isSystem: false
+  },
+  {
     key: "managing_director_ceo",
     label: "Managing Director & CEO",
     group: "Leadership",
@@ -491,7 +518,7 @@ const ROLES = [
     key: "account_manager_marketing",
     label: "Account Manager - Marketing",
     group: "Business & Operations",
-    tier: "staff",
+    tier: "full_access",
     color: "#8fa3c7",
     position: 50,
     isSystem: false

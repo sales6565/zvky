@@ -1427,10 +1427,13 @@ async function renderSettings(){
       A value in use can't be deleted; deactivate it instead and it disappears from the dropdowns.
     </div>
     ${REF_SECTIONS.map(sec=>renderRefSection(sec)).join('')}
-    <div id="ipAllowlistSection"></div>
+    ${caps().manageAccess ? '<div id="ipAllowlistSection"></div>' : ''}
   `;
   wireSettings();
-  await renderIpAllowlist();
+  /* Managing who may reach the app is Super Admin's alone, even though every
+     other section here is open to the full-access roles. The API refuses it
+     regardless; hiding it keeps the screen honest about what is on offer. */
+  if(caps().manageAccess) await renderIpAllowlist();
 }
 
 function renderRefSection(sec){

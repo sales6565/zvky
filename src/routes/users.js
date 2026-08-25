@@ -14,7 +14,7 @@ const fs = require('node:fs');
 const importFile = require('../import-file');
 const userImport = require('../user-import');
 const { uploadImport } = require('../upload');
-const { visibleProjects } = require('../permissions');
+const { visibleProjects, hasFullAccess } = require('../permissions');
 
 // The cost used everywhere passwords are hashed in this codebase.
 const BCRYPT_ROUNDS = 10;
@@ -280,8 +280,11 @@ router.delete('/:id', requireCapability('manageUsers'), async (req, res) => {
   const target = rows[0];
   if (!target) return res.status(404).json({ error: 'User not found' });
   if (target.id === req.user.id) return res.status(403).json({ error: 'You cannot remove your own account' });
-  if (roleDef(target.role) && roleDef(target.role).projectScope === 'all' && roleDef(target.role).manageUsers) {
-    return res.status(403).json({ error: 'Super admins cannot be removed here' });
+  // Anyone at the full-access tier, not only the Super Admin role: these
+  // accounts can undo any change made here, so removing one is a deliberate
+  // act rather than a row in a list.
+  if (hasFullAccess(target)) {
+    return res.status(403).json({ error: 'Accounts with full studio access cannot be removed here' });
   }
   if (roleDef(req.user.role).projectScope !== 'all' && target.manager_id !== req.user.id) {
     return res.status(403).json({ error: 'You can only remove users you added' });

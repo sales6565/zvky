@@ -15,7 +15,7 @@ test('every seeded role sits in a tier that exists', () => {
   }
 });
 
-test('moving roles into tiers changed nobody\'s permissions', () => {
+test('every seeded role holds exactly the permissions its tier grants', () => {
   // The catalogue that preceded these tables defined capabilities per role.
   // Each role now takes them from its tier, and this asserts the two agree —
   // if a tier is edited so that a seeded role would gain or lose a permission,
@@ -28,7 +28,11 @@ test('moving roles into tiers changed nobody\'s permissions', () => {
     team_lead: { projectScope: 'team', reviewStage: 'tl', leadsTeam: true, assignable: false },
     game_artist: { projectScope: 'own_work', assignable: true, editAsset: true, manageUsers: false },
     junior_accountant: { projectScope: 'own_work', assignable: false, editAsset: false, manageUsers: false },
-    managing_director_ceo: { projectScope: 'all', assignable: false, editAsset: false, manageSettings: false },
+    // Leadership was widened to full access; it is pinned here at its new
+    // shape so a later edit cannot move it again unnoticed.
+    managing_director_ceo: { projectScope: 'all', assignable: false, editAsset: true, manageSettings: true, manageAccess: false },
+    cto: { projectScope: 'all', manageUsers: true, manageSettings: true, manageAccess: false },
+    head_of_production: { projectScope: 'all', manageUsers: true, deleteAsset: 'any', manageAccess: false },
   };
   for (const [key, expected] of Object.entries(EXPECTED)) {
     const role = defaults.ROLES.find((r) => r.key === key);
@@ -41,8 +45,19 @@ test('moving roles into tiers changed nobody\'s permissions', () => {
   }
 });
 
-test('manageSettings belongs to the Super Admin tier and nothing else', () => {
+test('managing Settings belongs to the full-access tiers, and nothing below them', () => {
+  // Widened deliberately: the studio's leadership and the full-access
+  // designations administer Settings alongside the Super Admin. Everything
+  // below them still cannot.
   const holders = Object.keys(TIERS).filter((t) => capabilitiesForTier(t).manageSettings);
+  assert.deepStrictEqual(holders.sort(), ['full_access', 'leadership', 'super_admin']);
+});
+
+test('managing who may reach the app belongs to the Super Admin tier alone', () => {
+  // The capability that was split out of manageSettings when those tiers were
+  // widened. A wrong entry in the allowlist locks everyone out, so it did not
+  // travel with the rest of Settings.
+  const holders = Object.keys(TIERS).filter((t) => capabilitiesForTier(t).manageAccess);
   assert.deepStrictEqual(holders, ['super_admin']);
 });
 
@@ -229,10 +244,10 @@ test('reference data', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(sneak.status, 400, 'no new role may be minted in a system tier');
   });
 
-  await t.test('only a Super Admin may write', async () => {
+  await t.test('only the full-access tiers may write', async () => {
     // One account per non-super tier, each created by the Super Admin.
     const subjects = [];
-    for (const tier of ['admin', 'lead', 'production', 'contributor', 'staff', 'direction', 'leadership']) {
+    for (const tier of ['admin', 'lead', 'production', 'contributor', 'staff', 'direction']) {
       const roleKey = tier === 'admin' ? 'admin' : `probe_${tier}`;
       if (tier !== 'admin') {
         await call('/reference/roles', {

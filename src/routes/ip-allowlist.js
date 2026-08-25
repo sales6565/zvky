@@ -9,12 +9,15 @@ const db = require('../db');
 // See src/async-router.js: keeps a failed query from killing the process.
 const router = asyncRouter();
 
-// Managing which addresses may reach this application. Super Admin only, via
-// the same manageSettings capability the rest of Settings uses — the check is a
-// capability lookup rather than a role name compared by hand, so it keeps
-// working as roles are added.
+// Managing which addresses may reach this application.
+//
+// Gated on manageAccess rather than the manageSettings the rest of Settings
+// uses, and that is the whole point of the capability existing: several roles
+// now hold every other permission in the studio, and a wrong entry here does
+// not misconfigure a dropdown — it locks everyone out of the application.
+// Deliberately narrower than "full access".
 router.use(authenticate);
-router.use(requireCapability('manageSettings'));
+router.use(requireCapability('manageAccess'));
 
 // Reading a request's address the same way the gate does, so what this screen
 // reports is what the gate would judge.

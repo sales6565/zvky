@@ -117,6 +117,20 @@ async function isTeamLeadOfAsset(user, asset) {
   return isReport(user, asset.assignee_id);
 }
 
+// Full access: the studio-wide tier.
+//
+// The codebase spelled this out as `manageUsers && projectScope === 'all'` in
+// three places, which meant "Super Admin" by coincidence rather than by
+// statement — and adding roles at that level would have quietly changed what
+// each of those lines meant. Named once here instead.
+//
+// It deliberately does not include manageAccess: the IP allowlist is Super
+// Admin's alone, and a role can have every other permission without it.
+function hasFullAccess(user) {
+  const def = roleDef(user && user.role);
+  return Boolean(def && def.manageUsers && def.projectScope === 'all');
+}
+
 // Holds the final review gate (art director, with super admin as an override).
 function canReviewAsCD(user) {
   const def = roleDef(user.role);
@@ -127,8 +141,7 @@ function canReviewAsCD(user) {
 // assigned lead is unavailable. Deliberately narrow: a studio-wide role that
 // also administers accounts, i.e. the super admin.
 function canOverrideReview(user) {
-  const def = roleDef(user.role);
-  return Boolean(def && def.manageUsers && def.projectScope === 'all');
+  return hasFullAccess(user);
 }
 
 async function canMarkDelivered(user, asset) {
@@ -161,6 +174,7 @@ function canManageUsers(user) {
 }
 
 module.exports = {
+  hasFullAccess,
   visibleProjects,
   canAccessProject,
   canViewAsset,

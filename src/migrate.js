@@ -283,6 +283,26 @@ async function ensureReviewWorkflow(db, log) {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
 }
 
+// Roles whose access level changed after they were already seeded.
+//
+// seedReferenceTable only inserts what is missing, so a role that already
+// exists keeps whatever tier it was created with — which is right for anything
+// a Super Admin has edited, and wrong for a deliberate change like this one.
+// Applied only where the tier is still the value it was seeded with, so a
+// studio that has since moved a role somewhere else is left alone.
+const RETIERED_ROLES = [
+  { key: 'account_manager_marketing', from: 'staff', to: 'full_access' },
+];
+
+async function ensureRoleTiers(db, log) {
+  for (const { key, from, to } of RETIERED_ROLES) {
+    const { rows } = await db.query('SELECT tier FROM roles WHERE `key` = $1', [key]);
+    if (!rows.length || rows[0].tier !== from) continue;
+    await db.query('UPDATE roles SET tier = $1 WHERE `key` = $2 AND tier = $3', [to, key, from]);
+    log(`Schema: "${key}" moved from the ${from} tier to ${to}.`);
+  }
+}
+
 async function ensureReferenceData(db, log) {
   // Created with the collation the rest of the schema already uses, so a later
   // query can compare these columns against the older tables.
@@ -397,6 +417,8 @@ const STEPS = [
   ['type and priority constraints', dropValueConstraints],
   ['reference tables', ensureReferenceData],
   // Reads the tables the step above creates and fills.
+  // Before the mirror loads, so the change is in what everything else reads.
+  ['role access tiers', ensureRoleTiers],
   ['reference data mirror', (db) => referenceData.load(db)],
   // After the mirror: isTopOfHierarchy reads a role's tier from it.
   ['reporting hierarchy', ensureReportingAndMembership],
