@@ -236,6 +236,14 @@ CREATE TABLE IF NOT EXISTS assets (
   -- with the assignee afterwards, without the status moving. NULL means a
   -- review queue that whoever holds that gate picks up.
   routed_to_id  CHAR(36)     NULL,
+  -- Who added this asset. "Asset Edit" granted to a role means "edit the assets
+  -- you added", not "edit the studio's assets", so ownership has to be a fact
+  -- about the row rather than something inferred from the history.
+  --
+  -- Nullable, and NULL means unowned: rows that predate this column and could
+  -- not be attributed. An unowned asset is editable only by a full-access role
+  -- or by whoever it is assigned to.
+  created_by    CHAR(36)     NULL,
   man_hours     DECIMAL(6,1) NULL,
   due_date      DATE         NULL,
   description   TEXT         NULL,
@@ -244,9 +252,13 @@ CREATE TABLE IF NOT EXISTS assets (
   KEY idx_assets_assignee (assignee_id),
   KEY idx_assets_status (`status`),
   KEY idx_assets_routed (routed_to_id),
+  KEY idx_assets_creator (created_by),
   CONSTRAINT fk_assets_project  FOREIGN KEY (project_id)  REFERENCES projects(id) ON DELETE CASCADE,
   CONSTRAINT fk_assets_assignee FOREIGN KEY (assignee_id) REFERENCES users(id)    ON DELETE SET NULL,
   CONSTRAINT fk_assets_routed   FOREIGN KEY (routed_to_id) REFERENCES users(id)   ON DELETE SET NULL,
+  -- SET NULL rather than CASCADE: deleting the person who added an asset must
+  -- not delete the asset. It becomes unowned, which is the safe end of the rule.
+  CONSTRAINT fk_assets_creator  FOREIGN KEY (created_by)  REFERENCES users(id)   ON DELETE SET NULL,
   -- No CHECK on `type` or priority: both are managed in Settings and validated
   -- against the asset_types / priorities tables. `status` keeps its constraint
   -- because it is a fixed pipeline, not a list anyone edits.
@@ -318,8 +330,8 @@ CREATE TABLE IF NOT EXISTS asset_events (
   -- This is the sequence the history is read in.
   seq         BIGINT       NOT NULL AUTO_INCREMENT UNIQUE,
   asset_id    CHAR(36)     NOT NULL,
-  -- The transition that was made: assign, submit, tl_approve, tl_request_changes,
-  -- cd_approve, cd_request_changes, relay, deliver.
+  -- The transition that was made: assign, reassign, submit, tl_approve,
+  -- tl_request_changes, cd_approve, cd_request_changes, relay, deliver.
   action      VARCHAR(32)  NOT NULL,
   from_status VARCHAR(32)  NULL,
   to_status   VARCHAR(32)  NOT NULL,

@@ -22,6 +22,9 @@ const {
   canOverrideReview,
   canMarkDelivered,
   canOverrideStage,
+  canAssignAsset,
+  isAwaitingRework,
+  REWORK_STATUSES,
   holds,
 } = require('../permissions');
 const { assignableRoles, roleDef } = require('../roles');
@@ -122,9 +125,9 @@ router.post('/project/:projectId', async (req, res) => {
 
   const id = uuid();
   await db.query(
-    `INSERT INTO assets (id, \`code\`, \`name\`, \`type\`, \`status\`, priority, project_id, assignee_id, due_date, description, man_hours)
-     VALUES ($1,$2,$3,$4,'not_started',$5,$6,$7,$8,$9,$10)`,
-    [id, code, name.trim(), type, priority, projectId, assigneeId, due, description, manHours]
+    `INSERT INTO assets (id, \`code\`, \`name\`, \`type\`, \`status\`, priority, project_id, assignee_id, created_by, due_date, description, man_hours)
+     VALUES ($1,$2,$3,$4,'not_started',$5,$6,$7,$8,$9,$10,$11)`,
+    [id, code, name.trim(), type, priority, projectId, assigneeId, req.user.id, due, description, manHours]
   );
   // Created Not Started, as the pipeline says. If it was created with somebody
   // already on it, the same rule that applies to assigning later applies here:
@@ -182,9 +185,12 @@ router.patch('/:id', async (req, res) => {
     }
   }
 
-  // Reassignment is its own permission, separate from editing the asset.
+  // Reassignment is its own permission, separate from editing the asset, and
+  // scoped the same way: your own assets, or anyone's if you have full access.
+  // Being the assignee is not enough — handing your work to somebody else is
+  // the creator's call, not yours.
   if (req.body.assigneeId !== undefined && req.body.assigneeId !== asset.assignee_id
-      && !req.permissions.has('asset.assign')) {
+      && !canAssignAsset(req.user, asset)) {
     return res.status(403).json({ error: 'You do not have permission to assign this asset.', field: 'assigneeId' });
   }
   for (const key of ['status', 'priority', 'description', 'assignee_id', 'due_date', 'man_hours']) {
@@ -452,6 +458,109 @@ router.post('/:id/deliver', async (req, res) => {
   res.json({ asset: withDetails });
 });
 
+// POST /api/assets/:id/reassign — hand rework to somebody else.
+//
+// The pipeline sends changes-requested work back to whoever submitted it. This
+// is the way out of that: when an asset is sitting in TL Changes or CD Changes,
+// the person who added it can put a different artist on the rework instead.
+//
+// Deliberately not part of PATCH. Reassigning mid-review is a different act
+// from correcting a due date — it moves whose desk the asset is on, it belongs
+// in the history where the next reviewer will read it, and it is legal in
+// exactly two states rather than at every stage.
+//
+// Nothing is copied to the new assignee, because nothing needs to be: the
+// feedback, the submission history and the last link and description all hang
+// off the asset, not off the person. Once the asset is theirs they can view it,
+// and viewing it brings the whole thread with it.
+router.post('/:id/reassign', async (req, res) => {
+  const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
+  const asset = rows[0];
+  if (!asset) return res.status(404).json({ error: 'Asset not found' });
+
+  if (!canAssignAsset(req.user, asset)) {
+    return res.status(403).json({ error: 'Only the person who added this asset can hand its rework to somebody else.' });
+  }
+  if (!isAwaitingRework(asset)) {
+    return res.status(409).json({
+      error: 'Reassigning rework is only possible while an asset is waiting on changes.',
+      status: asset.status,
+      allowedStatuses: REWORK_STATUSES,
+    });
+  }
+
+  const { assigneeId, note } = req.body || {};
+  if (!assigneeId) return res.status(400).json({ error: 'Choose who should pick this up.', field: 'assigneeId' });
+  if (assigneeId === asset.assignee_id) {
+    return res.status(400).json({ error: 'That is already who it is assigned to.', field: 'assigneeId' });
+  }
+
+  const { rows: candidate } = await db.query('SELECT id, `name`, `role` FROM users WHERE id = $1', [assigneeId]);
+  if (!candidate.length) return res.status(400).json({ error: 'That person no longer exists.', field: 'assigneeId' });
+  const next = candidate[0];
+  const def = roleDef(next.role);
+  if (!def || !def.assignable) {
+    return res.status(400).json({
+      error: `${next.name} holds a designation that is not assigned work.`,
+      field: 'assigneeId',
+    });
+  }
+  if (!(await canAccessProject(next, asset.project_id))) {
+    return res.status(400).json({ error: `${next.name} is not on this project.`, field: 'assigneeId' });
+  }
+
+  // Where the asset is sitting matters. In CD Changes it is with the team lead
+  // until they relay the notes; reassigning must not steal it off their desk
+  // and skip the relay. So the routing only follows the assignee when it was
+  // already pointing at them.
+  const wasWithAssignee = asset.routed_to_id && asset.routed_to_id === asset.assignee_id;
+  const routedTo = wasWithAssignee ? next.id : asset.routed_to_id;
+
+  await db.query('UPDATE assets SET assignee_id = $1, routed_to_id = $2 WHERE id = $3',
+    [next.id, routedTo, asset.id]);
+
+  const { rows: previous } = await db.query('SELECT `name` FROM users WHERE id = $1', [asset.assignee_id]);
+  const from = previous.length ? previous[0].name : 'nobody';
+  await db.query(
+    `INSERT INTO asset_events (id, asset_id, action, from_status, to_status, actor_id, actor_email, note, routed_to_id)
+     VALUES ($1,$2,'reassign',$3,$4,$5,$6,$7,$8)`,
+    [uuid(), asset.id, asset.status, asset.status, req.user.id, req.user.email,
+     `Rework moved from ${from} to ${next.name}${note && note.trim() ? ` — ${note.trim()}` : ''}`, routedTo]
+  );
+  console.log(`${req.user.email} reassigned ${asset.code} from ${from} to ${next.name}.`);
+
+  const { rows: updated } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [asset.id]);
+  const [withDetails] = await attachTasksAndNotes(updated);
+  res.json({ asset: withDetails });
+});
+
+// GET /api/assets/:id/reassign-options — who could pick this rework up.
+//
+// The assignable contributors on the project, minus whoever holds it now, so
+// the picker cannot offer a choice the endpoint above would refuse.
+router.get('/:id/reassign-options', async (req, res) => {
+  const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
+  const asset = rows[0];
+  if (!asset) return res.status(404).json({ error: 'Asset not found' });
+  if (!canAssignAsset(req.user, asset)) {
+    return res.status(403).json({ error: 'You do not have permission to do that' });
+  }
+
+  const { rows: people } = await db.query(
+    'SELECT id, `name`, `role` FROM users WHERE role IN ($1) ORDER BY `name`',
+    [assignableRoles()]
+  );
+  const options = [];
+  for (const person of people) {
+    if (person.id === asset.assignee_id) continue;
+    if (await canAccessProject(person, asset.project_id)) {
+      options.push({ id: person.id, name: person.name, role: person.role,
+        roleLabel: (roleDef(person.role) || {}).label || person.role });
+    }
+  }
+  res.json({ options, awaitingRework: isAwaitingRework(asset), status: asset.status });
+});
+
 // GET /api/assets/:id/history — the whole back-and-forth, in order.
 //
 // Submissions, review decisions and status changes are three tables; this
@@ -712,11 +821,14 @@ router.post('/project/:projectId/bulk', requirePermission('asset.bulk_upload'), 
   // --- insert in batches ---------------------------------------------------
   const DEFAULT_TASKS = ['Rough pass', 'Clean line', 'Color / shade'];
   const ASSET_INSERT =
-    'INSERT INTO assets (id, `code`, `name`, `type`, `status`, priority, project_id, assignee_id, due_date, description, man_hours) VALUES ?';
+    'INSERT INTO assets (id, `code`, `name`, `type`, `status`, priority, project_id, assignee_id, created_by, due_date, description, man_hours) VALUES ?';
   const TASK_INSERT = 'INSERT INTO tasks (id, asset_id, `name`, done, `position`) VALUES ?';
+  // Imported assets belong to whoever uploaded the file, same as one added by
+  // hand — otherwise a bulk upload would produce a projectful of assets its
+  // uploader could not then edit.
   const assetRow = (e) => [
     e.id, e.code, e.values.name, e.values.type, 'not_started', e.values.priority,
-    projectId, e.assigneeId, e.values.deadline, e.values.description, e.values.man_hours,
+    projectId, e.assigneeId, req.user.id, e.values.deadline, e.values.description, e.values.man_hours,
   ];
   const taskRows = (e) => DEFAULT_TASKS.map((name, position) => [uuid(), e.id, name, 0, position]);
 

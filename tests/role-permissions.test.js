@@ -91,6 +91,11 @@ test('the Settings screen asks permissions, not capabilities', () => {
   for (const cap of ['projectScope', 'assignable']) {
     assert.ok(code.includes(`caps().${cap}`), `${cap} should still come from the tier`);
   }
+  // And the studio-wide tier itself, which is the one exception to asset
+  // ownership. Read through one helper so the exception has a single name
+  // rather than being spelled out wherever it is needed.
+  assert.match(code, /function fullAccess\(\)\{[^}]*caps\(\)/,
+    'fullAccess() should be the one place the studio-wide tier is read');
 
   // And each gated thing names the key the API checks, so one does not reveal
   // another.

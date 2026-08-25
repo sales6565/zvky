@@ -455,6 +455,11 @@ let TOP_TIER_ROLES = new Set();
    the tier did not move, so the capability is still false. */
 function caps(){ return (state.currentUser && state.currentUser.capabilities) || {}; }
 
+/* The studio-wide tier. Genuinely a tier question and not a switch — nothing in
+   Settings turns it on — so it reads caps(), matching hasFullAccess() in
+   src/permissions.js. It is the one exception to asset ownership below. */
+function fullAccess(){ const c = caps(); return Boolean(c.manageUsers && c.projectScope==='all'); }
+
 /* The permission list this account holds, as decided by its role. */
 function perms(){ return (state.currentUser && state.currentUser.permissions) || []; }
 /* can('asset.add') — and can('a','b') for "either of these". */
@@ -497,6 +502,28 @@ const UI_GATES = {
   bulkImportBtn:         () => can('asset.bulk_upload'),
   downloadSampleBtn:     () => can('asset.bulk_upload'),
 };
+
+/* Whose asset is this? Mirrors ownsAsset() in src/permissions.js, clause for
+   clause: a full-access role, the person who added it, or — for an artist doing
+   the work — the person it is assigned to. "Asset Edit" is not a licence to
+   edit the studio's assets, so holding the permission is necessary and not
+   enough. created_by is null on assets that predate the column and could not be
+   attributed; those fall to the first and third clauses only. */
+function ownsAsset(a){
+  const me = (state.currentUser || {}).id;
+  if(fullAccess()) return true;
+  if(a.created_by && a.created_by === me) return true;
+  return Boolean(a.assignee_id) && a.assignee_id === me;
+}
+/* Changing who an asset is assigned to. The same question minus the assignee
+   clause: handing your own work to somebody else is the creator's call. */
+function mayAssignAsset(a){
+  if(!can('asset.assign')) return false;
+  if(fullAccess()) return true;
+  return Boolean(a.created_by) && a.created_by === (state.currentUser || {}).id;
+}
+/* The two states the pipeline parks rework in. */
+const REWORK_STATUSES = ['tl_changes_requested','cd_changes_requested'];
 
 /* The project the header is pointing at, from the list the API already sent. */
 function currentProject(){
@@ -899,10 +926,12 @@ async function openDrawer(id){
   const a = state.assets.find(x=>x.id===id);
   if(!a) return;
   const u = state.currentUser;
-  /* The permission to edit, and — for a designation that does the work rather
-     than plans it — only their own asset. `assignable` is a tier value: it says
-     what kind of designation this is, not what it may do, so it stays on caps(). */
-  const editable = can('asset.edit') && (!caps().assignable || a.assignee_id===u.id);
+  /* The permission, and then whose asset it is. Both have to be yes. */
+  const editable = can('asset.edit') && ownsAsset(a);
+  /* Reassigning while the asset waits on changes: the creator can put somebody
+     else on the rework instead of it going back to whoever submitted it. Only
+     in those two states, and only for the creator or a full-access role. */
+  const canReassignRework = mayAssignAsset(a) && REWORK_STATUSES.includes(a.status);
   const t = typeOf(a.type);
   const drawer = document.getElementById('drawer');
 
@@ -981,6 +1010,18 @@ async function openDrawer(id){
     ` : ''}
 
     ${canDeliver ? `<button class="btn btn-brand" id="deliverBtn" style="width:100%;margin-top:14px;">Mark delivered to client</button>` : ''}
+
+    ${canReassignRework ? `
+      <div class="field-lbl" style="margin-top:16px;">Hand the rework to someone else</div>
+      <div style="font-size:11px;color:var(--ink-faint);margin-bottom:6px;">
+        The changes go back to ${escapeHTML(a.assignee_name||'the assignee')} by default. Pick somebody else and they pick it up
+        with the feedback and the submission history attached.
+      </div>
+      <select id="reassignTo"><option value="">Loading…</option></select>
+      <input type="text" id="reassignNote" placeholder="Why the handover (optional)…" style="margin-top:6px;">
+      <button class="btn btn-ghost" id="reassignBtn" style="width:100%;margin-top:8px;">Reassign rework</button>
+      <div class="ref-err" id="reassignErr"></div>
+    ` : ''}
 
     <div class="field-lbl" style="margin-top:16px;">Assignee</div><div style="font-size:13px;padding:8px 0;">${escapeHTML(a.assignee_name)||'Unassigned'}</div>
 
@@ -1097,6 +1138,33 @@ async function openDrawer(id){
     const approveBtn = document.getElementById('approveBtn');
     if(approveBtn) approveBtn.onclick = ()=>doReview('approved');
     document.getElementById('reqChangesBtn').onclick = ()=>doReview('changes_requested');
+  }
+  if(canReassignRework){
+    /* The candidates come from the API rather than being filtered here, so the
+       picker cannot offer somebody the endpoint would refuse. */
+    const sel = document.getElementById('reassignTo');
+    const err = document.getElementById('reassignErr');
+    api(`/assets/${id}/reassign-options`).then(({ options })=>{
+      sel.innerHTML = options.length
+        ? '<option value="">Choose who picks this up…</option>' +
+          options.map(o=>`<option value="${o.id}">${escapeHTML(o.name)} · ${escapeHTML(o.roleLabel)}</option>`).join('')
+        : '<option value="">Nobody else on this project can take it</option>';
+    }).catch(e=>{ sel.innerHTML = '<option value="">Could not load</option>'; err.textContent = e.message; });
+
+    document.getElementById('reassignBtn').onclick = async (ev)=>{
+      err.textContent = '';
+      if(!sel.value){ err.textContent = 'Choose who should pick this up.'; return; }
+      ev.target.disabled = true;
+      try{
+        const { asset } = await api(`/assets/${id}/reassign`, { method:'POST', body:{
+          assigneeId: sel.value,
+          note: document.getElementById('reassignNote').value.trim() || undefined,
+        }});
+        showToast(`Rework moved to ${asset.assignee_name}.`);
+        closeDrawer(); render();
+      }catch(e){ err.textContent = e.message; }
+      finally{ ev.target.disabled = false; }
+    };
   }
   if(canDeliver){
     document.getElementById('deliverBtn').onclick = async ()=>{

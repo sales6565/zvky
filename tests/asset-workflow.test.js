@@ -353,12 +353,21 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
   await t.test('the pipeline cannot be bypassed without the override permission', async () => {
     const id = await newAsset('Shortcut Attempt');
-    // The team lead can edit this asset but holds no override.
+    // The artist may edit this asset — it is assigned to them — and holds no
+    // override, so they get the pipeline's refusal rather than a permission one.
     const res = await call(`/assets/${id}`, {
-      token: token.lead, method: 'PATCH', body: { status: 'delivered' },
+      token: token.artist, method: 'PATCH', body: { status: 'delivered' },
     });
     assert.strictEqual(res.status, 409);
     assert.match(res.body.error, /submit\/review\/deliver/);
+    assert.strictEqual(await statusOf(id), 'in_progress');
+
+    // The team lead is refused one step earlier now: they did not add this
+    // asset and it is not assigned to them, so asset.edit does not reach it.
+    const lead = await call(`/assets/${id}`, {
+      token: token.lead, method: 'PATCH', body: { status: 'delivered' },
+    });
+    assert.strictEqual(lead.status, 403);
     assert.strictEqual(await statusOf(id), 'in_progress');
   });
 

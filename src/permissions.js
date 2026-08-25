@@ -128,12 +128,60 @@ function holds(user, key) {
   return Boolean(user && Array.isArray(user.permissions) && user.permissions.includes(key));
 }
 
+// Whose asset is this?
+//
+// "Asset Edit" granted to a role means "edit the assets you added", not "edit
+// every asset in the studio" — so holding the permission is necessary and not
+// sufficient. Three ways to be the right person, and only three:
+//
+//   1. A full-access role. Studio-wide reach is what that tier is, and somebody
+//      has to be able to fix an asset whose creator has left. This is the one
+//      exception to the ownership rule.
+//   2. You added it. The rule proper.
+//   3. It is assigned to you. Not an ownership claim — it is the artist's own
+//      work sitting on their own desk, and it is how a contributor ticks a task
+//      or updates a description on the thing they are being asked to make.
+//      Contributors never add assets, so without this clause the ownership rule
+//      would take the checklist away from every artist in the studio. It grants
+//      nothing wider: an assignee reaches exactly the one asset they hold.
+//
+// created_by is NULL for assets that predate the column and could not be
+// attributed (see ensureAssetOwnership in src/migrate.js). Those are unowned:
+// clause 2 can never match, so they fall to a full-access role or the assignee.
+function ownsAsset(user, asset) {
+  if (!user || !asset) return false;
+  if (hasFullAccess(user)) return true;
+  if (asset.created_by && asset.created_by === user.id) return true;
+  return Boolean(asset.assignee_id) && asset.assignee_id === user.id;
+}
+
 // Can this user edit status/priority/description/tasks on this asset?
 // The art director is deliberately excluded: direction is given through the
 // review action so that every decision is recorded as feedback on the asset.
 async function canEditAsset(user, asset) {
   if (!holds(user, 'asset.edit')) return false;
+  if (!ownsAsset(user, asset)) return false;
   return canViewAsset(user, asset);
+}
+
+// Can this user change who an asset is assigned to?
+//
+// Its own permission, and the same ownership question — with one clause of
+// ownsAsset removed. Being the assignee is not a licence to hand your work to
+// somebody else; that is the creator's call, or a full-access role's.
+function canAssignAsset(user, asset) {
+  if (!holds(user, 'asset.assign')) return false;
+  if (hasFullAccess(user)) return true;
+  return Boolean(asset && asset.created_by) && asset.created_by === user.id;
+}
+
+// The two states where an asset is waiting for rework. The creator may hand
+// that rework to somebody else rather than let it go back to whoever submitted
+// it — which is the whole point of the Reassign action.
+const REWORK_STATUSES = ['tl_changes_requested', 'cd_changes_requested'];
+
+function isAwaitingRework(asset) {
+  return Boolean(asset) && REWORK_STATUSES.includes(asset.status);
 }
 
 // Is this user a contributor the asset is actually assigned to?
@@ -245,6 +293,10 @@ module.exports = {
   canOverrideStage,
   hasFullAccess,
   mayAdministerUser,
+  ownsAsset,
+  canAssignAsset,
+  isAwaitingRework,
+  REWORK_STATUSES,
   visibleProjects,
   canAccessProject,
   canViewAsset,

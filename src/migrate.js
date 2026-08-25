@@ -471,6 +471,60 @@ async function dropStaleRoleConstraints(db, log) {
 //
 // Order still matters where one step feeds another, which is why this is a list
 // rather than a set of parallel calls.
+// assets.created_by — who added an asset, which is what "Asset Edit" is scoped
+// to for a role that holds the permission without full access.
+//
+// The backfill is deliberately conservative. Nothing recorded a creation event,
+// so the only signal in the data is the FIRST row in asset_events: when that is
+// an `assign`, it was written at creation (or at the first assignment) by the
+// person doing the assigning, which is the closest thing to a creator this
+// database has. Any other first event — or none at all — leaves created_by
+// NULL rather than guessing, because guessing wrong here hands editing rights
+// to the wrong person. An asset created with no assignee and never assigned has
+// no trace of its creator at all.
+//
+// NULL is a real answer, not a gap: an unowned asset can be edited by a
+// full-access role, or by whoever it is assigned to, and by nobody else.
+async function ensureAssetOwnership(db, log) {
+  const { rows: present } = await db.query(
+    `SELECT COLUMN_NAME AS n FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'assets' AND COLUMN_NAME = 'created_by'`
+  );
+  if (present.length) return;
+
+  await db.query('ALTER TABLE assets ADD COLUMN created_by CHAR(36) NULL AFTER routed_to_id');
+  await db.query('ALTER TABLE assets ADD KEY idx_assets_creator (created_by)');
+  try {
+    await db.query(
+      'ALTER TABLE assets ADD CONSTRAINT fk_assets_creator FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL'
+    );
+  } catch (err) {
+    log(`Schema: assets.created_by added, but its foreign key was refused — ${err.sqlMessage || err.message}`);
+  }
+
+  await db.query(
+    `UPDATE assets a
+        SET a.created_by = (
+          SELECT e.actor_id FROM asset_events e
+           WHERE e.asset_id = a.id AND e.action = 'assign'
+           ORDER BY e.seq ASC LIMIT 1
+        )
+      WHERE a.created_by IS NULL`
+  );
+
+  const { rows: counted } = await db.query(
+    `SELECT COUNT(*) AS total, SUM(created_by IS NULL) AS unowned FROM assets`
+  );
+  const total = Number(counted[0].total);
+  const unowned = Number(counted[0].unowned);
+  log(`Schema: added assets.created_by — ${total - unowned} of ${total} asset(s) attributed from the history.`);
+  if (unowned) {
+    log(`         ${unowned} asset(s) could not be attributed and are unowned: editable by a`);
+    log('         full-access role, or by whoever they are assigned to, and by nobody else.');
+    log('         Reassign or re-add them if somebody below that tier needs to edit them.');
+  }
+}
+
 const STEPS = [
   ['stale role constraints', dropStaleRoleConstraints],
   ['users.role column width', widenRoleColumn],
@@ -485,6 +539,7 @@ const STEPS = [
   ['reporting hierarchy', ensureReportingAndMembership],
   ['review pipeline', ensureReviewWorkflow],
   ['role permissions', ensurePermissionTables],
+  ['asset ownership', ensureAssetOwnership],
   ['IP allowlist', ensureIpAllowlist],
 ];
 
