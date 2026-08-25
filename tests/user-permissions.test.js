@@ -282,6 +282,110 @@ test('granting permissions to individuals', { skip: cfg ? false : SKIP_REASON },
     }
   });
 
+  await t.test('a grant to one person leaves every other account alone', async () => {
+    // The regression test for a reported leak. Nothing leaked — but "nothing
+    // leaked" is exactly the kind of claim that needs pinning down, so this
+    // measures every account before and after rather than only the two
+    // involved.
+    const everyone = (await as('root', '/permissions/users')).body.users;
+    assert.ok(everyone.length >= 4, 'needs a few accounts to be worth measuring');
+
+    const snapshot = async () => {
+      const out = new Map();
+      for (const u of everyone) {
+        const res = await as('root', `/permissions/users/${u.id}`);
+        out.set(u.email, {
+          granted: res.body.user.permissions.filter((p) => p.granted).map((p) => p.key).sort(),
+          effective: res.body.user.permissions.filter((p) => p.effective).map((p) => p.key).sort(),
+        });
+      }
+      return out;
+    };
+
+    const before = await snapshot();
+    const target = everyone.find((u) => u.email === 'artist@zvky.test');
+
+    const saved = await setGrants('artist', ['asset.add', 'project.add']);
+    assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
+
+    const after = await snapshot();
+    for (const u of everyone) {
+      const was = before.get(u.email);
+      const now = after.get(u.email);
+      if (u.id === target.id) {
+        assert.deepStrictEqual(now.granted, ['asset.add', 'project.add'], 'the target gets exactly what was granted');
+        continue;
+      }
+      assert.deepStrictEqual(now.granted, was.granted, `${u.email}'s grants changed`);
+      assert.deepStrictEqual(now.effective, was.effective, `${u.email}'s effective permissions changed`);
+    }
+
+    // And in the table itself: one row per granted key, for one user id.
+    const rows = await sql(cfg, 'SELECT user_id, permission_key FROM user_permissions ORDER BY permission_key');
+    assert.deepStrictEqual(
+      rows.map((r) => r.permission_key).sort(), ['asset.add', 'project.add'],
+      'no rows were written for anybody else'
+    );
+    for (const row of rows) assert.strictEqual(row.user_id, target.id);
+
+    // The Super Admin doing the granting is untouched.
+    const rootRows = await sql(cfg, `SELECT COUNT(*) AS n FROM user_permissions WHERE user_id = '${people.root}'`);
+    assert.strictEqual(Number(rootRows[0].n), 0, 'granting must not write anything against the grantor');
+
+    // Revoking is just as contained.
+    await setGrants('artist', []);
+    const restored = await snapshot();
+    for (const u of everyone) {
+      assert.deepStrictEqual(restored.get(u.email), before.get(u.email), `${u.email} did not return to its starting state`);
+    }
+  });
+
+  await t.test('two people can be granted at the same time without crossing over', async () => {
+    // Concurrent saves for different accounts: the rows are keyed by user, so
+    // these cannot contend, and this is what proves it rather than assuming.
+    const [a, b] = await Promise.all([
+      setGrants('artist', ['asset.add']),
+      setGrants('other', ['project.add']),
+    ]);
+    assert.strictEqual(a.status, 200);
+    assert.strictEqual(b.status, 200);
+
+    const artist = await as('root', `/permissions/users/${people.artist}`);
+    const other = await as('root', `/permissions/users/${people.other}`);
+    assert.deepStrictEqual(artist.body.user.permissions.filter((p) => p.granted).map((p) => p.key), ['asset.add']);
+    assert.deepStrictEqual(other.body.user.permissions.filter((p) => p.granted).map((p) => p.key), ['project.add']);
+
+    await setGrants('artist', []);
+    await setGrants('other', []);
+  });
+
+  await t.test('two accounts on the same role are not each other', async () => {
+    // The likeliest way to *think* a grant leaked: two people share a role, so
+    // they share a baseline, and both screens show the same ticks. Only one of
+    // them has anything granted individually.
+    await setGrants('artist', ['asset.add']);
+    const artist = (await as('root', `/permissions/users/${people.artist}`)).body.user;
+    const other = (await as('root', `/permissions/users/${people.other}`)).body.user;
+
+    assert.strictEqual(artist.role, other.role, 'same role');
+    assert.deepStrictEqual(
+      artist.permissions.filter((p) => p.fromRole).map((p) => p.key),
+      other.permissions.filter((p) => p.fromRole).map((p) => p.key),
+      'so the same baseline — this is not a leak'
+    );
+    assert.deepStrictEqual(artist.permissions.filter((p) => p.granted).map((p) => p.key), ['asset.add']);
+    assert.deepStrictEqual(other.permissions.filter((p) => p.granted).map((p) => p.key), []);
+
+    // And it shows in what they can actually do.
+    assert.strictEqual((await as('artist', `/assets/project/${projectId}`, {
+      method: 'POST', body: { name: 'Mine', type: 'prop' },
+    })).status, 201);
+    assert.strictEqual((await as('other', `/assets/project/${projectId}`, {
+      method: 'POST', body: { name: 'Not mine', type: 'prop' },
+    })).status, 403);
+    await setGrants('artist', []);
+  });
+
   await t.test('the screen is told what comes from where', async () => {
     await setGrants('artist', ['asset.add']);
     const res = await as('root', `/permissions/users/${people.artist}`);

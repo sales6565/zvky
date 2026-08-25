@@ -130,9 +130,21 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .pm-row{display:flex;gap:9px;align-items:flex-start;padding:5px 0;font-size:12.5px;line-height:1.35;}
 .pm-row input{margin:2px 0 0;flex:none;}
 .pm-row.inherited{opacity:.62;}
+.pm-row.inherited label{text-decoration:underline dotted var(--ink-faint);text-underline-offset:3px;}
+/* Granted to this person alone: marked on the row itself, so a screen full of
+   ticks reads as "role" against "individual" without inspecting each one. */
+.pm-row.own{background:rgba(64,200,140,.07);border-left:2px solid rgba(64,200,140,.45);
+  margin-left:-8px;padding-left:8px;border-radius:0 4px 4px 0;}
+.pm-legend{display:flex;flex-wrap:wrap;gap:16px;font-size:11.5px;color:var(--ink-muted);
+  margin-bottom:12px;line-height:1.5;}
+.pm-legend b{color:var(--ink);}
+.pm-swatch{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;}
+.pm-swatch.role{background:rgba(77,184,255,.5);}
+.pm-swatch.own{background:rgba(64,200,140,.7);}
 .pm-tag{font-size:9px;text-transform:uppercase;letter-spacing:.5px;font-family:'IBM Plex Mono';
   padding:1px 5px;border-radius:20px;background:var(--surface-3);color:var(--ink-muted);margin-left:5px;}
 .pm-tag.role{background:rgba(77,184,255,.14);color:#8ecdff;}
+.pm-tag.own{background:rgba(64,200,140,.16);color:#7fdcb0;}
 .pm-tag.pending{background:rgba(255,176,32,.13);color:#ffcc70;}
 .pm-tag.danger{background:rgba(255,90,54,.15);color:#ff9b80;}
 .pm-note{font-size:10.5px;color:var(--ink-faint);margin-top:2px;line-height:1.4;}
@@ -1901,6 +1913,13 @@ async function renderIpObserved(){
 
 let pmCatalog = null;
 let pmSubject = null;
+/* Which load is the current one. Two picks in quick succession put two fetches
+   in flight, and whichever answered last used to win — so the screen could show
+   one person while the picker named another, and a save would then be written
+   against whoever the screen was showing. That is a quiet way to grant a
+   permission to the wrong account, so a stale response is discarded rather
+   than rendered. */
+let pmLoadToken = 0;
 
 function pmMessage(text, kind){
   const el = document.getElementById('pm_msg');
@@ -1944,15 +1963,28 @@ async function renderUserPermissions(){
 
 async function showPermissionsFor(userId){
   const body = document.getElementById('pm_body');
+  const token = ++pmLoadToken;
   let data;
   try{ data = await api('/permissions/users/' + userId); }
-  catch(err){ body.innerHTML = `<div class="ref-err">${escapeHTML(err.message)}</div>`; return; }
+  catch(err){
+    if(token !== pmLoadToken) return;
+    body.innerHTML = `<div class="ref-err">${escapeHTML(err.message)}</div>`; return;
+  }
+  /* Somebody else was picked while this was in flight; theirs is the load that
+     belongs on screen. */
+  if(token !== pmLoadToken) return;
 
   pmSubject = data.user;
   const held = new Map(data.user.permissions.map(p=>[p.key, p]));
 
   body.innerHTML = `
     <div class="pm-who">Editing <b>${escapeHTML(data.user.name)}</b> · ${escapeHTML(data.user.email)} · role <b>${escapeHTML(data.user.roleLabel)}</b></div>
+    <div class="pm-legend">
+      <span><span class="pm-swatch role"></span>${data.user.permissions.filter(p=>p.fromRole).length} come from the
+        <b>${escapeHTML(data.user.roleLabel)}</b> role — everyone with that role has them, here and elsewhere</span>
+      <span><span class="pm-swatch own"></span>${data.user.permissions.filter(p=>p.granted).length} granted to
+        <b>${escapeHTML(data.user.name)}</b> alone</span>
+    </div>
     ${data.isYou ? `<div class="ip-banner fault" style="margin-bottom:12px;">
       <h4>These are your own permissions</h4>
       <p>You cannot change them here. Removing your own access to this screen is not something the app can undo — ask another Super Admin to make the change.</p>
@@ -1964,13 +1996,14 @@ async function showPermissionsFor(userId){
           ${group.permissions.map(p=>{
             const state = held.get(p.key) || {};
             const locked = state.fromRole || !p.grantable || data.isYou;
-            return `<div class="pm-row ${state.fromRole?'inherited':''}">
+            return `<div class="pm-row ${state.fromRole?'inherited':''} ${state.granted?'own':''}">
               <input type="checkbox" data-key="${escapeHTML(p.key)}"
                 ${state.effective?'checked':''} ${locked?'disabled':''}
                 ${p.danger?`data-danger="${escapeHTML(p.danger)}"`:''}>
               <div>
                 <label>${escapeHTML(p.label)}</label>
-                ${state.fromRole?'<span class="pm-tag role">from role</span>':''}
+                ${state.fromRole?`<span class="pm-tag role">from ${escapeHTML(data.user.roleLabel)}</span>`:''}
+                ${state.granted?'<span class="pm-tag own">granted here</span>':''}
                 ${!p.grantable?'<span class="pm-tag">super admin only</span>':''}
                 ${p.pending?'<span class="pm-tag pending">no action yet</span>':''}
                 ${p.danger&&!state.fromRole?'<span class="pm-tag danger">high risk</span>':''}
@@ -1990,12 +2023,15 @@ async function showPermissionsFor(userId){
      not have to remember which ones are dangerous. */
   body.querySelectorAll('input[data-danger]').forEach(box=>box.addEventListener('change', ()=>{
     if(!box.checked) return;
-    if(!confirm(`Grant "${box.closest('.pm-row').querySelector('label').textContent}" to ${pmSubject.name}?\n\n${box.dataset.danger}`)){
+    if(!confirm(`Grant "${box.closest('.pm-row').querySelector('label').textContent}" to ${data.user.name} (${data.user.email})?\n\n${box.dataset.danger}`)){
       box.checked = false;
     }
   }));
 
   const save = document.getElementById('pm_save');
+  // This render's subject, captured here rather than read from a module-level
+  // variable that a later pick could have moved.
+  const subjectId = data.user.id;
   if(save) save.addEventListener('click', async ()=>{
     /* Only what is actually granted here — a ticked-and-disabled box comes from
        the role and is not ours to send. */
@@ -2005,14 +2041,15 @@ async function showPermissionsFor(userId){
     const added = wanted.filter(k=>!previously.includes(k));
     const removed = previously.filter(k=>!wanted.includes(k));
     if(!added.length && !removed.length){ pmMessage('Nothing changed.', ''); return; }
-    if(!confirm(`Apply to ${pmSubject.name}?\n\n${added.length} to grant, ${removed.length} to revoke.`)) return;
+    // Names the account, so a confirmation cannot be agreed to for the wrong person.
+    if(!confirm(`Apply to ${data.user.name} (${data.user.email})?\n\n${added.length} to grant, ${removed.length} to revoke.`)) return;
 
     save.disabled = true;
     pmMessage('Saving…', '');
     try{
-      const res = await api('/permissions/users/' + pmSubject.id, { method:'PUT', body:{ permissions: wanted } });
+      const res = await api('/permissions/users/' + subjectId, { method:'PUT', body:{ permissions: wanted } });
       pmMessage(res.summary, 'ok');
-      await showPermissionsFor(pmSubject.id);
+      await showPermissionsFor(subjectId);
       pmMessage(res.summary, 'ok');
     }catch(err){ pmMessage(err.message, 'err'); }
     finally{ save.disabled = false; }
