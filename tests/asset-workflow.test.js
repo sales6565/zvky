@@ -351,13 +351,40 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     }
   });
 
-  await t.test('the pipeline cannot be bypassed by editing the status directly', async () => {
+  await t.test('the pipeline cannot be bypassed without the override permission', async () => {
     const id = await newAsset('Shortcut Attempt');
+    // The team lead can edit this asset but holds no override.
     const res = await call(`/assets/${id}`, {
-      token: token.admin, method: 'PATCH', body: { status: 'delivered' },
+      token: token.lead, method: 'PATCH', body: { status: 'delivered' },
     });
     assert.strictEqual(res.status, 409);
     assert.match(res.body.error, /submit\/review\/deliver/);
     assert.strictEqual(await statusOf(id), 'in_progress');
+  });
+
+  await t.test('an override is allowed for whoever holds it, and is recorded', async () => {
+    // asset.override_stage exists so a studio-wide administrator can unstick a
+    // pipeline. The move is deliberately logged, so a status that skipped the
+    // review flow is not a mystery afterwards.
+    const id = await newAsset('Forced Through');
+    const res = await call(`/assets/${id}`, {
+      token: token.admin, method: 'PATCH', body: { status: 'delivered' },
+    });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(await statusOf(id), 'delivered');
+
+    const events = await historyOf(id);
+    const forced = events.find((e) => e.action === 'override');
+    assert.ok(forced, 'the override should appear in the history');
+    assert.strictEqual(forced.fromStatus, 'in_progress');
+    assert.strictEqual(forced.toStatus, 'delivered');
+    assert.match(forced.note, /outside the review flow/i);
+
+    // A status that is not a status is still refused.
+    const nonsense = await call(`/assets/${await newAsset('Nonsense')}`, {
+      token: token.admin, method: 'PATCH', body: { status: 'teleported' },
+    });
+    assert.strictEqual(nonsense.status, 400);
+    assert.strictEqual(nonsense.body.field, 'status');
   });
 });

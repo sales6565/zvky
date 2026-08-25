@@ -8,7 +8,7 @@ const fs = require('fs');
 const { parse } = require('csv-parse/sync');
 const XLSX = require('xlsx');
 const db = require('../db');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requirePermission } = require('../middleware/auth');
 const { upload, uploadImport } = require('../upload');
 const {
   canAccessProject,
@@ -21,6 +21,7 @@ const {
   canReviewAsCD,
   canOverrideReview,
   canMarkDelivered,
+  canOverrideStage,
 } = require('../permissions');
 const { assignableRoles, roleDef } = require('../roles');
 const assetImport = require('../asset-import');
@@ -160,9 +161,30 @@ router.patch('/:id', async (req, res) => {
   let i = 1;
   const FREE_STATUSES = ['not_started', 'in_progress'];
   if (req.body.status !== undefined) {
-    if (!FREE_STATUSES.includes(req.body.status) || !FREE_STATUSES.includes(asset.status)) {
+    const freeMove = FREE_STATUSES.includes(req.body.status) && FREE_STATUSES.includes(asset.status);
+    // Anything else is a move the pipeline would not make. Allowed only for
+    // somebody holding the override permission, and recorded as an event so a
+    // status that skipped the review flow is not a mystery later.
+    if (!freeMove && !canOverrideStage(req.user)) {
       return res.status(409).json({ error: 'Status moves through review are handled by the submit/review/deliver actions, not a direct edit' });
     }
+    if (!freeMove && !workflow.STATE_IDS.includes(req.body.status)) {
+      return res.status(400).json({ error: `"${req.body.status}" is not a status.`, field: 'status' });
+    }
+    if (!freeMove) {
+      await db.query(
+        `INSERT INTO asset_events (id, asset_id, action, from_status, to_status, actor_id, actor_email, note, routed_to_id)
+         VALUES ($1,$2,'override',$3,$4,$5,$6,$7,$8)`,
+        [uuid(), asset.id, asset.status, req.body.status, req.user.id, req.user.email,
+         'Status forced outside the review flow', asset.routed_to_id]
+      );
+    }
+  }
+
+  // Reassignment is its own permission, separate from editing the asset.
+  if (req.body.assigneeId !== undefined && req.body.assigneeId !== asset.assignee_id
+      && !req.permissions.has('asset.assign')) {
+    return res.status(403).json({ error: 'You do not have permission to assign this asset.', field: 'assigneeId' });
   }
   for (const key of ['status', 'priority', 'description', 'assignee_id', 'due_date', 'man_hours']) {
     const bodyKey = key === 'assignee_id' ? 'assigneeId' : key === 'due_date' ? 'due' : key === 'man_hours' ? 'manHours' : key;
@@ -545,7 +567,7 @@ const yieldToLoop = () => new Promise((resolve) => setImmediate(resolve));
 // batches with a row-by-row fallback so one bad row cannot fail its batch, and
 // the loop yields between batches. A row that fails is reported with its row
 // number, the column at fault and why; the rest of the file still imports.
-router.post('/project/:projectId/bulk', uploadImport.single('file'), async (req, res) => {
+router.post('/project/:projectId/bulk', requirePermission('asset.bulk_upload'), uploadImport.single('file'), async (req, res) => {
   const projectId = req.params.projectId;
   if (!canCreateAsset(req.user)) return res.status(403).json({ error: 'Your role cannot create assets' });
   const allowed = await canAccessProject(req.user, projectId);

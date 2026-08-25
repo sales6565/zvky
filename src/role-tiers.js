@@ -27,6 +27,10 @@ const CAPABILITY_DEFAULTS = {
   // "full access to the studio" does not automatically mean "can lock the
   // studio out of its own app". Held by the Super Admin tier alone.
   manageAccess: false,
+  // Granting permissions to individuals. Held with manageAccess by the Super
+  // Admin tier alone: whoever can hand out permissions can hand out every
+  // other one, including to themselves.
+  managePermissions: false,
 };
 
 // The capabilities that make up full access. Named once and shared, so the
@@ -51,7 +55,7 @@ const TIERS = {
     system: true,
     // The only tier holding manageAccess: the IP allowlist stays here even
     // though other tiers below have everything else.
-    capabilities: { ...FULL_ACCESS, manageAccess: true },
+    capabilities: { ...FULL_ACCESS, manageAccess: true, managePermissions: true },
   },
   admin: {
     label: 'Admin',

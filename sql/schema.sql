@@ -148,6 +148,37 @@ CREATE TABLE IF NOT EXISTS users (
   CONSTRAINT fk_users_reports_to FOREIGN KEY (reports_to_id) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Permissions granted to one person, on top of whatever their role already
+-- allows. Additive only: a row here adds a permission, and there is no row
+-- shape that takes one away — removing something a role grants means changing
+-- the role. See src/permission-catalog.js.
+CREATE TABLE IF NOT EXISTS user_permissions (
+  user_id         CHAR(36)     NOT NULL,
+  permission_key  VARCHAR(64)  NOT NULL,
+  granted_by_id   CHAR(36)     NULL,
+  granted_by_email VARCHAR(191) NULL,
+  created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, permission_key),
+  KEY idx_user_permissions_user (user_id),
+  CONSTRAINT fk_uperm_user  FOREIGN KEY (user_id)       REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_uperm_actor FOREIGN KEY (granted_by_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Who changed whose permissions, and when. Append-only, and outlives both the
+-- grant and the accounts involved.
+CREATE TABLE IF NOT EXISTS permission_audit (
+  id             CHAR(36)     NOT NULL PRIMARY KEY,
+  seq            BIGINT       NOT NULL AUTO_INCREMENT UNIQUE,
+  subject_id     CHAR(36)     NULL,
+  subject_email  VARCHAR(191) NULL,
+  permission_key VARCHAR(64)  NOT NULL,
+  action         VARCHAR(16)  NOT NULL,
+  actor_id       CHAR(36)     NULL,
+  actor_email    VARCHAR(191) NULL,
+  created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_perm_audit_subject (subject_id, seq)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS projects (
   id         CHAR(36)     NOT NULL PRIMARY KEY,
   `name`     VARCHAR(255) NOT NULL,

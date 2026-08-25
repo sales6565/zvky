@@ -56,11 +56,21 @@ async function visibleProjects(user) {
     return rows;
   }
 
-  // 'own_work'
+  // 'own_work': the projects they have work in, and the one they are attached
+  // to.
+  //
+  // The second half was missing. Contributor membership (project_members)
+  // arrived with the Edit User screen's Project field, and this query still
+  // only looked at assets — so assigning somebody to a project did nothing for
+  // them until work landed in it. That made a granted permission behave
+  // unpredictably: `asset.add` worked or did not depending on whether they
+  // happened to hold an asset there already.
   const { rows } = await db.query(
     `SELECT DISTINCT p.* FROM projects p
-     JOIN assets a ON a.project_id = p.id
-     WHERE a.assignee_id = $1 ORDER BY p.created_at`,
+     LEFT JOIN assets a ON a.project_id = p.id AND a.assignee_id = $1
+     LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $1
+     WHERE a.id IS NOT NULL OR pm.user_id IS NOT NULL
+     ORDER BY p.created_at`,
     [user.id]
   );
   return rows;
@@ -95,12 +105,26 @@ async function canViewAsset(user, asset) {
   return canAccessProject(user, asset.project_id);
 }
 
+// Does this person hold a catalogue permission — from their role's tier, or
+// granted to them individually?
+//
+// The set is computed once per request in authenticate() and hung off the user,
+// so these predicates stay synchronous where they already were.
+//
+// The division of labour matters and is easy to get wrong: a permission says
+// what somebody may DO. It never says how much of the studio they may do it to.
+// Reach stays with the role's projectScope, which is why every check below is
+// "holds the permission AND the role's scope reaches this row" rather than one
+// or the other.
+function holds(user, key) {
+  return Boolean(user && Array.isArray(user.permissions) && user.permissions.includes(key));
+}
+
 // Can this user edit status/priority/description/tasks on this asset?
 // The art director is deliberately excluded: direction is given through the
 // review action so that every decision is recorded as feedback on the asset.
 async function canEditAsset(user, asset) {
-  const def = roleDef(user.role);
-  if (!def || !def.editAsset) return false;
+  if (!holds(user, 'asset.edit')) return false;
   return canViewAsset(user, asset);
 }
 
@@ -112,8 +136,11 @@ function isAssignedArtist(user, asset) {
 
 // Is this user the lead or supervisor of the contributor this asset is assigned to?
 async function isTeamLeadOfAsset(user, asset) {
+  if (!holds(user, 'review.tl') || !asset.assignee_id) return false;
   const def = roleDef(user.role);
-  if (!def || !def.leadsTeam || !asset.assignee_id) return false;
+  // Someone granted TL review actions without leading a team reviews the work
+  // they can already see, rather than nobody's.
+  if (!def || !def.leadsTeam) return canViewAsset(user, asset);
   return isReport(user, asset.assignee_id);
 }
 
@@ -133,8 +160,7 @@ function hasFullAccess(user) {
 
 // Holds the final review gate (art director, with super admin as an override).
 function canReviewAsCD(user) {
-  const def = roleDef(user.role);
-  return Boolean(def && def.reviewStage === 'cd');
+  return holds(user, 'review.cd');
 }
 
 // May step into a review gate that isn't theirs, to unblock work when the
@@ -145,24 +171,32 @@ function canOverrideReview(user) {
 }
 
 async function canMarkDelivered(user, asset) {
+  if (!holds(user, 'review.deliver')) return false;
   const def = roleDef(user.role);
-  if (!def || !def.deliver) return false;
-  if (def.projectScope === 'all') return true;
+  if (def && def.projectScope === 'all') return true;
   return canAccessProject(user, asset.project_id);
 }
 
 // Can this user delete the asset outright?
 async function canDeleteAsset(user, asset) {
+  if (!holds(user, 'asset.delete')) return false;
   const def = roleDef(user.role);
-  if (!def || !def.deleteAsset) return false;
+  // Reach is still the role's: 'any' deletes studio-wide, 'owned' only in
+  // projects they own. A grant unlocks the action, not the range.
+  if (!def) return false;
   if (def.deleteAsset === 'any') return true;
+  if (!def.deleteAsset) return canAccessProject(user, asset.project_id);
   const { rows } = await db.query('SELECT owner_id FROM projects WHERE id = $1', [asset.project_id]);
   return rows.length > 0 && rows[0].owner_id === user.id;
 }
 
 function canCreateAsset(user) {
-  const def = roleDef(user.role);
-  return Boolean(def && def.createAsset);
+  return holds(user, 'asset.add');
+}
+
+// May this person move an asset outside the normal review flow?
+function canOverrideStage(user) {
+  return holds(user, 'asset.override_stage');
 }
 function canCreateProject(user) {
   const def = roleDef(user.role);
@@ -174,6 +208,8 @@ function canManageUsers(user) {
 }
 
 module.exports = {
+  holds,
+  canOverrideStage,
   hasFullAccess,
   visibleProjects,
   canAccessProject,

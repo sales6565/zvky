@@ -4,7 +4,7 @@ const { asyncRouter } = require('../async-router');
 const router = asyncRouter();
 const { v4: uuid } = require('uuid');
 const db = require('../db');
-const { authenticate, requireCapability } = require('../middleware/auth');
+const { authenticate, requirePermission } = require('../middleware/auth');
 const { visibleProjects, canAccessProject } = require('../permissions');
 const { assignableRoles, roleDef } = require('../roles');
 
@@ -17,7 +17,7 @@ router.get('/', async (req, res) => {
 });
 
 // POST /api/projects — anyone whose role can create projects. The creator becomes the owner.
-router.post('/', requireCapability('createProject'), async (req, res) => {
+router.post('/', requirePermission('project.add'), async (req, res) => {
   const { name, teamLeadIds = [], coordinatorIds = [] } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: 'Project name is required' });
 
@@ -56,7 +56,7 @@ router.post('/', requireCapability('createProject'), async (req, res) => {
 
 // DELETE /api/projects/:id — a studio-wide role may delete any project,
 // everyone else only the ones they own.
-router.delete('/:id', requireCapability('createProject'), async (req, res) => {
+router.delete('/:id', requirePermission('project.delete'), async (req, res) => {
   const { rows } = await db.query('SELECT * FROM projects WHERE id = $1', [req.params.id]);
   const project = rows[0];
   if (!project) return res.status(404).json({ error: 'Project not found' });

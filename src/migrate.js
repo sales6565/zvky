@@ -4,6 +4,7 @@ const referenceData = require('./reference-data');
 const ipAllowlist = require('./ip-allowlist');
 const { applyTableOptions } = require('./db-collation');
 const reporting = require('./reporting');
+const catalog = require('./permission-catalog');
 const defaults = require('./reference-defaults');
 
 // Small, idempotent schema repairs applied at startup.
@@ -303,6 +304,41 @@ async function ensureRoleTiers(db, log) {
   }
 }
 
+// Per-user permission grants and their audit trail.
+async function ensurePermissionTables(db, log) {
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS user_permissions (
+      user_id          CHAR(36)     NOT NULL,
+      permission_key   VARCHAR(64)  NOT NULL,
+      granted_by_id    CHAR(36)     NULL,
+      granted_by_email VARCHAR(191) NULL,
+      created_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, permission_key),
+      KEY idx_user_permissions_user (user_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS permission_audit (
+      id             CHAR(36)     NOT NULL PRIMARY KEY,
+      seq            BIGINT       NOT NULL AUTO_INCREMENT UNIQUE,
+      subject_id     CHAR(36)     NULL,
+      subject_email  VARCHAR(191) NULL,
+      permission_key VARCHAR(64)  NOT NULL,
+      action         VARCHAR(16)  NOT NULL,
+      actor_id       CHAR(36)     NULL,
+      actor_email    VARCHAR(191) NULL,
+      created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_perm_audit_subject (subject_id, seq)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+
+  // A grant naming a permission the catalogue no longer has is dead weight and
+  // would show as an unexplained row on the screen.
+  const { rows } = await db.query('SELECT DISTINCT permission_key FROM user_permissions');
+  const stale = rows.map((r) => r.permission_key).filter((k) => !catalog.isPermission(k));
+  for (const key of stale) {
+    await db.query('DELETE FROM user_permissions WHERE permission_key = $1', [key]);
+    log(`Schema: dropped grants for "${key}", which is not a permission any more.`);
+  }
+}
+
 async function ensureReferenceData(db, log) {
   // Created with the collation the rest of the schema already uses, so a later
   // query can compare these columns against the older tables.
@@ -423,6 +459,7 @@ const STEPS = [
   // After the mirror: isTopOfHierarchy reads a role's tier from it.
   ['reporting hierarchy', ensureReportingAndMembership],
   ['review pipeline', ensureReviewWorkflow],
+  ['user permissions', ensurePermissionTables],
   ['IP allowlist', ensureIpAllowlist],
 ];
 

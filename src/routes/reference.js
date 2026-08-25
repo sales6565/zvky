@@ -1,5 +1,5 @@
 const { asyncRouter } = require('../async-router');
-const { authenticate, requireCapability } = require('../middleware/auth');
+const { authenticate, requireCapability, can } = require('../middleware/auth');
 const referenceData = require('../reference-data');
 const { describeTiers } = require('../role-tiers');
 const { groupOrder, catalogue } = require('../roles');
@@ -23,6 +23,30 @@ const COLLECTION_BY_PATH = {
   priorities: 'priorities',
   roles: 'roles',
 };
+
+// Each list is its own permission, so somebody can be trusted with priorities
+// without being trusted with the role catalogue.
+const PERMISSION_BY_PATH = {
+  'asset-types': 'settings.asset_types',
+  priorities: 'settings.priorities',
+  roles: 'settings.roles',
+};
+
+// Writing to one collection. Replaces the single manageSettings gate that used
+// to cover all three.
+function requireCollectionPermission(req, res, next) {
+  const key = PERMISSION_BY_PATH[req.params.collection];
+  if (!key || !can(req, key)) {
+    return res.status(403).json({ error: 'You do not have permission to do that' });
+  }
+  return next();
+}
+
+// Whether this caller may manage any of the lists — for the read that includes
+// deactivated values, which is a management view rather than a dropdown.
+function managesAnyList(req) {
+  return Object.values(PERMISSION_BY_PATH).some((key) => can(req, key));
+}
 
 function resolveCollection(req, res) {
   const name = COLLECTION_BY_PATH[req.params.collection];
@@ -68,7 +92,7 @@ router.get('/:collection', async (req, res) => {
   await referenceData.refresh(db);
   const includeInactive = req.query.includeInactive === '1' || req.query.includeInactive === 'true';
   // Listing what has been retired is a management view, not a dropdown.
-  if (includeInactive && !req.user.capabilities.manageSettings) {
+  if (includeInactive && !managesAnyList(req)) {
     return res.status(403).json({ error: 'You do not have permission to do that' });
   }
   return res.json({ entries: referenceData.list(name, { includeInactive }) });
@@ -77,7 +101,7 @@ router.get('/:collection', async (req, res) => {
 // GET /api/reference/:collection/:key/usage — how many records hold this value.
 // The Settings screen asks before offering to delete, so it can say "12 assets
 // use this" rather than only finding out when the delete is refused.
-router.get('/:collection/:key/usage', requireCapability('manageSettings'), async (req, res) => {
+router.get('/:collection/:key/usage', requireCollectionPermission, async (req, res) => {
   const name = resolveCollection(req, res);
   if (!name) return undefined;
   const entry = referenceData.get(name, req.params.key);
@@ -86,7 +110,7 @@ router.get('/:collection/:key/usage', requireCapability('manageSettings'), async
   return res.json({ key: entry.key, label: entry.label, inUse: count, canDelete: count === 0 && !entry.isSystem });
 });
 
-router.post('/:collection', requireCapability('manageSettings'), async (req, res) => {
+router.post('/:collection', requireCollectionPermission, async (req, res) => {
   const name = resolveCollection(req, res);
   if (!name) return undefined;
   const result = await referenceData.create(db, name, req.body || {});
@@ -96,7 +120,7 @@ router.post('/:collection', requireCapability('manageSettings'), async (req, res
 });
 
 // Renaming keeps the stored key, so records already holding it are untouched.
-router.patch('/:collection/:key', requireCapability('manageSettings'), async (req, res) => {
+router.patch('/:collection/:key', requireCollectionPermission, async (req, res) => {
   const name = resolveCollection(req, res);
   if (!name) return undefined;
   const result = await referenceData.update(db, name, req.params.key, req.body || {});
@@ -107,7 +131,7 @@ router.patch('/:collection/:key', requireCapability('manageSettings'), async (re
 
 // Deleting only succeeds when nothing uses the value; otherwise the response
 // says how many records do and points at deactivating instead.
-router.delete('/:collection/:key', requireCapability('manageSettings'), async (req, res) => {
+router.delete('/:collection/:key', requireCollectionPermission, async (req, res) => {
   const name = resolveCollection(req, res);
   if (!name) return undefined;
   const result = await referenceData.remove(db, name, req.params.key);

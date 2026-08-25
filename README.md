@@ -35,6 +35,62 @@ by itself change access: a Trainee Game Artist and a Senior Game Artist have the
 same permissions and differ in title and reporting line. Change that by editing
 the entry in `src/roles.js`.
 
+### Per-user permissions
+
+A role gives somebody a baseline. **Settings → User Permissions** grants extras
+on top of it, one person at a time, without moving them to another role.
+
+The catalogue lives in
+[`src/permission-catalog.js`](src/permission-catalog.js) — 28 permissions in
+five groups. Two rules hold it together with the role system:
+
+**Additive.** Effective = role baseline ∪ individual grants. A grant can add
+something a role does not give; it cannot take away something the role does.
+On screen a role-granted permission is ticked and locked — to remove one of
+those, change the role. There is no per-user deny.
+
+**A permission unlocks the action, not the reach.** Granting `asset.edit` to a
+Game Artist lets them edit assets *their role's `projectScope` already covers* —
+not every asset in the studio. Scope stays with the role. Anything else would
+turn one checkbox into studio-wide access.
+
+That second rule surprises people, so it is worth stating twice: granting
+`user.edit` to a contributor does **not** let them edit anybody — a contributor's
+reach over users is "the ones they added". Grants compose with scope; they do
+not override it.
+
+The effective set is computed per request in `authenticate()` from the freshly
+read role plus the stored grants, so a change takes effect on the **next
+request** — no re-login, no waiting for a token to expire.
+
+### Permissions with no action behind them
+
+Three catalogue entries are listed and grantable but gate nothing yet, because
+the feature does not exist: **Reset User Password**, **Project Edit**, **View
+Audit Logs**. They show on screen tagged *no action yet* rather than pretending
+to work. Grant them now and they take effect when the feature lands.
+
+**Override Review Stage** is the opposite — a new permission with a new action
+behind it. It unlocks the direct status edit the pipeline otherwise refuses, and
+every use is written to the asset history as an `override` event.
+
+### Who can grant
+
+`settings.permissions` is held by the Super Admin tier alone and **cannot be
+granted**, or one grant would be enough to grant everything else. The six
+full-access roles hold every other permission and still cannot reach this
+screen — the same reasoning that keeps the IP allowlist separate.
+
+Nobody edits their own permissions, including a Super Admin. That is a block
+rather than a confirmation: an administrator removing their own access to the
+screen that would put it back is not something the app can undo.
+
+Granting **Manage IP Allowlist** asks for confirmation with the lockout warning,
+which is carried on the permission itself rather than remembered by the screen.
+
+Every grant and revoke is written to `permission_audit` — who, for whom, which
+permission, when — readable at `GET /api/permissions/audit`.
+
 ### Full access
 
 Six designations run the studio and hold every permission the Super Admin does,

@@ -83,6 +83,7 @@ function capabilitiesFor(role) {
     manageUsers: def.manageUsers,
     manageSettings: def.manageSettings,
     manageAccess: def.manageAccess,
+    managePermissions: def.managePermissions,
     createProject: def.createProject,
     createAsset: def.createAsset,
     editAsset: def.editAsset,

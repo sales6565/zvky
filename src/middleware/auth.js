@@ -2,6 +2,8 @@ const jwt = require('jsonwebtoken');
 const db = require('../db');
 const { roleDef, capabilitiesFor } = require('../roles');
 const referenceData = require('../reference-data');
+const catalog = require('../permission-catalog');
+const userPermissions = require('../user-permissions');
 
 // Verifies the bearer token and attaches the current user (fetched fresh
 // from the database, not just trusted from the token) to req.user.
@@ -53,6 +55,16 @@ async function authenticate(req, res, next) {
       });
     }
     user.capabilities = capabilitiesFor(user.role);
+
+    // The effective permission set: what the role's tier implies, plus whatever
+    // has been granted to this person individually. Computed per request off
+    // the freshly-read role, so a role change or a revoked grant takes effect
+    // on the next request rather than when a token expires.
+    const granted = await userPermissions.grantedFor(db, user.id).catch(() => []);
+    user.grantedPermissions = granted;
+    user.permissions = [...catalog.effectiveFor(user.capabilities, granted)];
+    req.permissions = new Set(user.permissions);
+
     req.user = user;
     next();
   } catch (err) {
@@ -83,4 +95,21 @@ function requireCapability(capability) {
   };
 }
 
-module.exports = { authenticate, requireRole, requireCapability };
+// The finer-grained gate: one catalogue permission, from the role's baseline or
+// from an individual grant. Prefer this over requireCapability for anything a
+// Super Admin might want to hand to one person.
+function requirePermission(key) {
+  return (req, res, next) => {
+    if (!req.permissions || !req.permissions.has(key)) {
+      return res.status(403).json({ error: 'You do not have permission to do that' });
+    }
+    next();
+  };
+}
+
+// The same question, asked inside a handler that has more to weigh than one key.
+function can(req, key) {
+  return Boolean(req.permissions && req.permissions.has(key));
+}
+
+module.exports = { authenticate, requireRole, requireCapability, requirePermission, can };

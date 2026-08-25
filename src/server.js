@@ -13,6 +13,7 @@ const teamRoutes = require('./routes/team');
 const referenceRoutes = require('./routes/reference');
 const referenceData = require('./reference-data');
 const ipAllowlistRoutes = require('./routes/ip-allowlist');
+const permissionRoutes = require('./routes/permissions');
 const ipGate = require('./middleware/ip-allowlist');
 
 const app = express();
@@ -70,6 +71,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/team', teamRoutes);
 app.use('/api/reference', referenceRoutes);
 app.use('/api/ip-allowlist', ipAllowlistRoutes);
+app.use('/api/permissions', permissionRoutes);
 
 // Health check. Deliberately reports the database too: a deployment whose
 // process is up but whose credentials are wrong looks identical from outside

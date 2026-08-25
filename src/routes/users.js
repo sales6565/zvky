@@ -7,14 +7,14 @@ const router = asyncRouter();
 const bcrypt = require('bcryptjs');
 const { v4: uuid } = require('uuid');
 const db = require('../db');
-const { authenticate, requireCapability } = require('../middleware/auth');
+const { authenticate, requireCapability, requirePermission, can } = require('../middleware/auth');
 const { roleKeys, activeRoles, isRole, roleDef, capabilitiesFor } = require('../roles');
 const passwordPolicy = require('../password-policy');
 const fs = require('node:fs');
 const importFile = require('../import-file');
 const userImport = require('../user-import');
 const { uploadImport } = require('../upload');
-const { visibleProjects, hasFullAccess } = require('../permissions');
+const { visibleProjects, hasFullAccess, holds } = require('../permissions');
 
 // The cost used everywhere passwords are hashed in this codebase.
 const BCRYPT_ROUNDS = 10;
@@ -28,7 +28,12 @@ const DEFAULT_PASSWORD = 'zvky2026'; // demo default; real deployments should fo
 // another account that manages users or sees the whole studio.
 function assignableRolesFor(user) {
   const def = roleDef(user.role);
-  if (!def || !def.manageUsers) return [];
+  // Keyed off the permission rather than the raw capability, so a grant of
+  // user.add or user.change_role actually produces a list of roles to pick
+  // from. Reading the capability here meant the route let somebody through and
+  // then handed them an empty catalogue.
+  if (!holds(user, 'user.add') && !holds(user, 'user.change_role')) return [];
+  if (!def) return [];
   // Only roles that are still active can be handed out; a deactivated one
   // stays valid for whoever already holds it.
   const available = activeRoles().map((r) => r.key);
@@ -41,7 +46,7 @@ function assignableRolesFor(user) {
 
 // GET /api/users?search=&limit=&offset=&role=
 // A studio-wide manager sees everyone; an admin sees only users they added.
-router.get('/', requireCapability('manageUsers'), async (req, res) => {
+router.get('/', requirePermission('user.view'), async (req, res) => {
   const { search = '', limit = 60, offset = 0, role } = req.query;
   const params = [];
   let sql = 'SELECT id, name, email, role, manager_id, team_lead_id, reports_to_id, created_at FROM users WHERE 1=1';
@@ -102,7 +107,7 @@ router.get('/', requireCapability('manageUsers'), async (req, res) => {
 });
 
 // POST /api/users — create an account with one of the studio's designations.
-router.post('/', requireCapability('manageUsers'), async (req, res) => {
+router.post('/', requirePermission('user.add'), async (req, res) => {
   const { name, email, role, teamLeadId, projectId, password } = req.body || {};
   if (!name || !email || !role) return res.status(400).json({ error: 'Name, email, and role are required' });
   if (!isRole(role)) return res.status(400).json({ error: 'Invalid role' });
@@ -135,18 +140,13 @@ router.post('/', requireCapability('manageUsers'), async (req, res) => {
 
   // Attach them to the project they were created for, on whichever side of the
   // project their role sits.
+  //
+  // Through the same helper Edit User uses, so all three tables are covered.
+  // This branch used to name only the coordinator and lead tables, so creating
+  // a contributor "on" a project attached them to nothing — the account looked
+  // staffed and the permission checks disagreed.
   if (projectId) {
-    if (def.projectScope === 'assigned') {
-      await db.query(
-        'INSERT IGNORE INTO project_coordinators (project_id, user_id) VALUES ($1,$2)',
-        [projectId, id]
-      );
-    } else if (def.leadsTeam) {
-      await db.query(
-        'INSERT IGNORE INTO project_team_leads (project_id, user_id) VALUES ($1,$2)',
-        [projectId, id]
-      );
-    }
+    await userProject.setProject(db, id, projectId, role);
   }
 
   const { rows } = await db.query(
@@ -188,7 +188,7 @@ async function describeUser(row) {
 }
 
 // PATCH /api/users/:id — change someone's designation (or their reporting line).
-router.patch('/:id', requireCapability('manageUsers'), async (req, res) => {
+router.patch('/:id', requirePermission('user.edit'), async (req, res) => {
   const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [req.params.id]);
   const target = rows[0];
   if (!target) return res.status(404).json({ error: 'User not found' });
@@ -197,6 +197,19 @@ router.patch('/:id', requireCapability('manageUsers'), async (req, res) => {
   }
 
   const { role, teamLeadId, reportsToId, projectId } = req.body || {};
+
+  // Editing a user and changing their role, project or reporting line are
+  // separate permissions: somebody may be trusted to correct a name without
+  // being trusted to promote people.
+  for (const [field, key, present] of [
+    ['role', 'user.change_role', role !== undefined],
+    ['projectId', 'user.change_project', projectId !== undefined],
+    ['reportsToId', 'user.change_reporting', reportsToId !== undefined],
+  ]) {
+    if (present && !can(req, key)) {
+      return res.status(403).json({ error: `You do not have permission to change ${field}.`, field });
+    }
+  }
   const fields = [];
   const values = [];
 
@@ -275,7 +288,7 @@ router.patch('/:id', requireCapability('manageUsers'), async (req, res) => {
 });
 
 // DELETE /api/users/:id
-router.delete('/:id', requireCapability('manageUsers'), async (req, res) => {
+router.delete('/:id', requirePermission('user.delete'), async (req, res) => {
   const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [req.params.id]);
   const target = rows[0];
   if (!target) return res.status(404).json({ error: 'User not found' });
@@ -296,14 +309,14 @@ router.delete('/:id', requireCapability('manageUsers'), async (req, res) => {
 // GET /api/users/import-template.csv — the sample file for the user import.
 // Generated from the same column definitions the import validates against, so
 // it cannot describe a format that would then be rejected.
-router.get('/import-template.csv', requireCapability('manageUsers'), (req, res) => {
+router.get('/import-template.csv', requirePermission('user.bulk_upload'), (req, res) => {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="zvky-user-import-template.csv"');
   res.send(userImport.buildTemplateCsv());
 });
 
 // GET /api/users/import-format — what the user importer expects, for the UI.
-router.get('/import-format', requireCapability('manageUsers'), (req, res) => {
+router.get('/import-format', requirePermission('user.bulk_upload'), (req, res) => {
   res.json(userImport.describeFormat());
 });
 
@@ -320,7 +333,7 @@ function looksLikeAssetFile(present) {
 // Its own endpoint with its own validation, sharing only the CSV reader with
 // the asset importer. Errors follow the same shape the asset import returns —
 // {row, column, value, message} — so the browser renders both in one table.
-router.post('/bulk', requireCapability('manageUsers'), uploadImport.single('file'), async (req, res) => {
+router.post('/bulk', requirePermission('user.bulk_upload'), uploadImport.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'A CSV or Excel file is required' });
 
   let headers;
@@ -567,7 +580,7 @@ router.post('/bulk', requireCapability('manageUsers'), uploadImport.single('file
 // '/import-format' as somebody's id and answer "User not found".
 // GET /api/users/:id — one user, with their manager and project resolved.
 // The detail view reads this; the edit form reads it to fill its fields.
-router.get('/:id', requireCapability('manageUsers'), async (req, res) => {
+router.get('/:id', requirePermission('user.view'), async (req, res) => {
   const { rows } = await db.query(`SELECT ${USER_COLUMNS} FROM users u WHERE u.id = $1`, [req.params.id]);
   if (!rows.length) return res.status(404).json({ error: 'User not found' });
   res.json({ user: await describeUser(rows[0]) });
@@ -578,7 +591,7 @@ router.get('/:id', requireCapability('manageUsers'), async (req, res) => {
 // Excludes themselves and everyone already beneath them, so the dropdown cannot
 // offer a choice the API would refuse. The API checks it again regardless: this
 // is a convenience, not the rule.
-router.get('/:id/manager-options', requireCapability('manageUsers'), async (req, res) => {
+router.get('/:id/manager-options', requirePermission('user.view'), async (req, res) => {
   const { rows } = await db.query('SELECT id, `name`, `role` FROM users WHERE id = $1', [req.params.id]);
   if (!rows.length) return res.status(404).json({ error: 'User not found' });
   const user = rows[0];

@@ -119,6 +119,26 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .ip-obs .verdict.wait{background:rgba(255,176,32,.10);border:1px solid rgba(255,176,32,.32);color:#ffcc70;}
 .ip-obs-scope{font-size:10.5px;color:var(--ink-faint);margin-top:10px;line-height:1.5;}
 .ip-add-seen{white-space:nowrap;}
+/* User Permissions: a checklist per person, grouped by area. */
+.pm-pick{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap;}
+.pm-pick input[type=text]{width:240px;}
+.pm-who{font-size:12px;color:var(--ink-muted);margin-bottom:12px;}
+.pm-who b{color:var(--ink);}
+.pm-groups{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:14px;}
+.pm-group{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;}
+.pm-group h4{margin:0 0 9px;font-family:'Space Grotesk';font-size:12.5px;}
+.pm-row{display:flex;gap:9px;align-items:flex-start;padding:5px 0;font-size:12.5px;line-height:1.35;}
+.pm-row input{margin:2px 0 0;flex:none;}
+.pm-row.inherited{opacity:.62;}
+.pm-tag{font-size:9px;text-transform:uppercase;letter-spacing:.5px;font-family:'IBM Plex Mono';
+  padding:1px 5px;border-radius:20px;background:var(--surface-3);color:var(--ink-muted);margin-left:5px;}
+.pm-tag.role{background:rgba(77,184,255,.14);color:#8ecdff;}
+.pm-tag.pending{background:rgba(255,176,32,.13);color:#ffcc70;}
+.pm-tag.danger{background:rgba(255,90,54,.15);color:#ff9b80;}
+.pm-note{font-size:10.5px;color:var(--ink-faint);margin-top:2px;line-height:1.4;}
+.pm-bar{display:flex;gap:10px;align-items:center;margin-top:14px;}
+.pm-msg{font-size:12px;}
+.pm-msg.ok{color:#7fdcb0;} .pm-msg.err{color:var(--brand);}
 .eu-hint{font-size:11px;color:var(--ink-faint);margin-top:5px;line-height:1.45;}
 .eu-top{font-size:12px;line-height:1.5;padding:10px 12px;border-radius:9px;margin-top:12px;
   background:rgba(255,210,61,.10);border:1px solid rgba(255,210,61,.30);color:#ffd98a;}
@@ -1428,8 +1448,10 @@ async function renderSettings(){
     </div>
     ${REF_SECTIONS.map(sec=>renderRefSection(sec)).join('')}
     ${caps().manageAccess ? '<div id="ipAllowlistSection"></div>' : ''}
+    ${caps().managePermissions ? '<div id="userPermissionsSection"></div>' : ''}
   `;
   wireSettings();
+  if(caps().managePermissions) await renderUserPermissions();
   /* Managing who may reach the app is Super Admin's alone, even though every
      other section here is open to the full-access roles. The API refuses it
      regardless; hiding it keeps the screen honest about what is on offer. */
@@ -1869,6 +1891,132 @@ async function renderIpObserved(){
       await renderIpAllowlist();
     }catch(err){ ipError(err.message); btn.disabled = false; }
   }));
+}
+
+/* ---------- settings: per-user permissions ---------- */
+/* A role gives somebody a baseline; this grants extras on top of it, one person
+   at a time. Additive only, which is why a role-granted box is shown ticked and
+   disabled: it can be seen but not taken away here. To remove it you change the
+   role. */
+
+let pmCatalog = null;
+let pmSubject = null;
+
+function pmMessage(text, kind){
+  const el = document.getElementById('pm_msg');
+  if(el){ el.textContent = text || ''; el.className = 'pm-msg ' + (kind||''); }
+}
+
+async function renderUserPermissions(){
+  const el = document.getElementById('userPermissionsSection');
+  if(!el) return;
+  try{
+    if(!pmCatalog) pmCatalog = (await api('/permissions/catalog')).groups;
+  }catch(err){
+    el.innerHTML = `<div class="ref-section"><div class="ref-head"><h3>User Permissions</h3></div>
+      <div class="ref-err">${escapeHTML(err.message)}</div></div>`;
+    return;
+  }
+
+  el.innerHTML = `
+    <div class="ref-section" data-section="user-permissions">
+      <div class="ref-head"><h3>User Permissions</h3></div>
+      <div class="ref-note">Give one person permissions their role does not include. A role's own permissions are shown ticked and locked — to remove one of those, change the role.</div>
+      <div class="pm-pick">
+        <input type="text" id="pm_search" placeholder="Search people…">
+        <select id="pm_user"><option value="">— Choose someone —</option></select>
+      </div>
+      <div id="pm_body"></div>
+    </div>`;
+
+  const search = document.getElementById('pm_search');
+  const picker = document.getElementById('pm_user');
+  const load = async ()=>{
+    const { users } = await api('/permissions/users?search=' + encodeURIComponent(search.value.trim()));
+    picker.innerHTML = '<option value="">— Choose someone —</option>' + users.map(u=>
+      `<option value="${u.id}"${pmSubject&&pmSubject.id===u.id?' selected':''}>${escapeHTML(u.name)} — ${escapeHTML(u.roleLabel)}${u.grantCount?` (+${u.grantCount})`:''}</option>`).join('');
+  };
+  await load();
+  search.addEventListener('input', ()=>{ clearTimeout(search._t); search._t = setTimeout(load, 200); });
+  picker.addEventListener('change', ()=>picker.value ? showPermissionsFor(picker.value) : (document.getElementById('pm_body').innerHTML=''));
+  if(pmSubject) await showPermissionsFor(pmSubject.id);
+}
+
+async function showPermissionsFor(userId){
+  const body = document.getElementById('pm_body');
+  let data;
+  try{ data = await api('/permissions/users/' + userId); }
+  catch(err){ body.innerHTML = `<div class="ref-err">${escapeHTML(err.message)}</div>`; return; }
+
+  pmSubject = data.user;
+  const held = new Map(data.user.permissions.map(p=>[p.key, p]));
+
+  body.innerHTML = `
+    <div class="pm-who">Editing <b>${escapeHTML(data.user.name)}</b> · ${escapeHTML(data.user.email)} · role <b>${escapeHTML(data.user.roleLabel)}</b></div>
+    ${data.isYou ? `<div class="ip-banner fault" style="margin-bottom:12px;">
+      <h4>These are your own permissions</h4>
+      <p>You cannot change them here. Removing your own access to this screen is not something the app can undo — ask another Super Admin to make the change.</p>
+    </div>` : ''}
+    <div class="pm-groups">
+      ${pmCatalog.map(group=>`
+        <div class="pm-group">
+          <h4>${escapeHTML(group.label)}</h4>
+          ${group.permissions.map(p=>{
+            const state = held.get(p.key) || {};
+            const locked = state.fromRole || !p.grantable || data.isYou;
+            return `<div class="pm-row ${state.fromRole?'inherited':''}">
+              <input type="checkbox" data-key="${escapeHTML(p.key)}"
+                ${state.effective?'checked':''} ${locked?'disabled':''}
+                ${p.danger?`data-danger="${escapeHTML(p.danger)}"`:''}>
+              <div>
+                <label>${escapeHTML(p.label)}</label>
+                ${state.fromRole?'<span class="pm-tag role">from role</span>':''}
+                ${!p.grantable?'<span class="pm-tag">super admin only</span>':''}
+                ${p.pending?'<span class="pm-tag pending">no action yet</span>':''}
+                ${p.danger&&!state.fromRole?'<span class="pm-tag danger">high risk</span>':''}
+                ${p.describe?`<div class="pm-note">${escapeHTML(p.describe)}</div>`:''}
+                ${p.pending?`<div class="pm-note">${escapeHTML(p.pending)}</div>`:''}
+              </div>
+            </div>`;
+          }).join('')}
+        </div>`).join('')}
+    </div>
+    <div class="pm-bar">
+      ${data.isYou?'':'<button class="btn btn-brand" id="pm_save">Save permissions</button>'}
+      <span class="pm-msg" id="pm_msg"></span>
+    </div>`;
+
+  /* The warning lives with the permission in the catalogue, so the screen does
+     not have to remember which ones are dangerous. */
+  body.querySelectorAll('input[data-danger]').forEach(box=>box.addEventListener('change', ()=>{
+    if(!box.checked) return;
+    if(!confirm(`Grant "${box.closest('.pm-row').querySelector('label').textContent}" to ${pmSubject.name}?\n\n${box.dataset.danger}`)){
+      box.checked = false;
+    }
+  }));
+
+  const save = document.getElementById('pm_save');
+  if(save) save.addEventListener('click', async ()=>{
+    /* Only what is actually granted here — a ticked-and-disabled box comes from
+       the role and is not ours to send. */
+    const wanted = [...body.querySelectorAll('input[type=checkbox]:not(:disabled)')]
+      .filter(b=>b.checked).map(b=>b.dataset.key);
+    const previously = data.user.permissions.filter(p=>p.granted).map(p=>p.key);
+    const added = wanted.filter(k=>!previously.includes(k));
+    const removed = previously.filter(k=>!wanted.includes(k));
+    if(!added.length && !removed.length){ pmMessage('Nothing changed.', ''); return; }
+    if(!confirm(`Apply to ${pmSubject.name}?\n\n${added.length} to grant, ${removed.length} to revoke.`)) return;
+
+    save.disabled = true;
+    pmMessage('Saving…', '');
+    try{
+      const res = await api('/permissions/users/' + pmSubject.id, { method:'PUT', body:{ permissions: wanted } });
+      pmMessage(res.summary, 'ok');
+      await showPermissionsFor(pmSubject.id);
+      pmMessage(res.summary, 'ok');
+    }catch(err){ pmMessage(err.message, 'err'); }
+    finally{ save.disabled = false; }
+  });
 }
 
 /* ---------- profile / change password ---------- */

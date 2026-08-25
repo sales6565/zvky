@@ -1,5 +1,5 @@
 const { asyncRouter } = require('../async-router');
-const { authenticate, requireCapability } = require('../middleware/auth');
+const { authenticate, requirePermission } = require('../middleware/auth');
 const allowlist = require('../ip-allowlist');
 const ipMatch = require('../ip-match');
 const gate = require('../middleware/ip-allowlist');
@@ -17,7 +17,7 @@ const router = asyncRouter();
 // not misconfigure a dropdown — it locks everyone out of the application.
 // Deliberately narrower than "full access".
 router.use(authenticate);
-router.use(requireCapability('manageAccess'));
+router.use(requirePermission('settings.ip_allowlist'));
 
 // Reading a request's address the same way the gate does, so what this screen
 // reports is what the gate would judge.
