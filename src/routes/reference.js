@@ -12,10 +12,9 @@ router.use(authenticate);
 // The value lists behind the dropdowns — asset types, priorities and roles.
 //
 // Reading is open to anyone signed in, because every Add Asset and Add User
-// form needs these to render. Writing is Super Admin only: the manageSettings
-// capability belongs to exactly that tier (src/role-tiers.js), so the check is
-// the same capability lookup used everywhere else rather than a role name
-// compared by hand.
+// form needs these to render. Managing one — writing to it, or listing what has
+// been retired — needs that list's own permission from the role, so a role can
+// be trusted with priorities without being trusted with the role catalogue.
 
 // URLs use hyphens; the collections are named with underscores.
 const COLLECTION_BY_PATH = {
@@ -42,10 +41,15 @@ function requireCollectionPermission(req, res, next) {
   return next();
 }
 
-// Whether this caller may manage any of the lists — for the read that includes
-// deactivated values, which is a management view rather than a dropdown.
-function managesAnyList(req) {
-  return Object.values(PERMISSION_BY_PATH).some((key) => can(req, key));
+// Whether this caller manages this particular list. Used for the read that
+// includes deactivated values, which is a management view rather than a
+// dropdown — and so belongs to whoever manages *that* list. Asking whether they
+// manage any of the three would let somebody trusted with asset types read the
+// retired half of the role catalogue, which is exactly the leak the
+// per-collection permissions exist to close.
+function managesCollection(req) {
+  const key = PERMISSION_BY_PATH[req.params.collection];
+  return Boolean(key) && can(req, key);
 }
 
 function resolveCollection(req, res) {
@@ -92,7 +96,7 @@ router.get('/:collection', async (req, res) => {
   await referenceData.refresh(db);
   const includeInactive = req.query.includeInactive === '1' || req.query.includeInactive === 'true';
   // Listing what has been retired is a management view, not a dropdown.
-  if (includeInactive && !managesAnyList(req)) {
+  if (includeInactive && !managesCollection(req)) {
     return res.status(403).json({ error: 'You do not have permission to do that' });
   }
   return res.json({ entries: referenceData.list(name, { includeInactive }) });

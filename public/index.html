@@ -424,8 +424,39 @@ function roleInfo(key){ return ROLE_MAP[key] || { key, label: key || 'Unknown', 
    person running the studio a Reporting To field. Rebuilt whenever the role
    catalogue is loaded. */
 let TOP_TIER_ROLES = new Set();
-/* What the signed-in user is allowed to do, as decided by the API. */
+/* What the signed-in user is allowed to do, as decided by the API.
+
+   Two answers, and the difference matters. caps() is the tier: how much of the
+   studio this person sees (projectScope), which review gate they hold, how far
+   a deletion reaches — values a checkbox cannot express, so they stay with the
+   role's tier. holds() is the role's permission list from Settings > Role
+   Permissions: what may be done, one key at a time, switchable per role.
+
+   Anything a Super Admin can switch on for a role must be asked with holds().
+   Asking caps() instead is how a permission gets enabled and changes nothing:
+   the tier did not move, so the capability is still false. */
 function caps(){ return (state.currentUser && state.currentUser.capabilities) || {}; }
+function holds(key){
+  const list = (state.currentUser && state.currentUser.permissions) || [];
+  return list.indexOf(key) !== -1;
+}
+/* The Settings sections that exist on this screen, each with the permission
+   that reveals it. Kept together so adding a section cannot leave its gate
+   behind, and so the tab itself can be decided from the same list.
+
+   settings.audit_logs is deliberately absent: the catalogue lists it, but no
+   section has been built for it yet, and granting it alone should not open an
+   empty page. */
+const SETTINGS_SECTIONS = [
+  { permission:'settings.asset_types' },
+  { permission:'settings.priorities' },
+  { permission:'settings.roles' },
+  { permission:'settings.ip_allowlist' },
+  { permission:'settings.permissions' },
+];
+/* Settings opens for anyone holding at least one of them, and shows only the
+   sections they hold. */
+function canOpenSettings(){ return SETTINGS_SECTIONS.some(s=>holds(s.permission)); }
 /* Comma-separated role keys matching a predicate, for /users?role= lookups. */
 function roleKeys(pred){ return ROLE_LIST.filter(pred).map(r=>r.key).join(','); }
 /* Designations the signed-in user may hand out — mirrors the server's rule. */
@@ -537,7 +568,7 @@ async function bootApp(){
 
   document.getElementById('teamTabBtn').style.display = caps().leadsTeam ? '' : 'none';
   document.getElementById('usersTabBtn').style.display = caps().manageUsers ? '' : 'none';
-  document.getElementById('settingsTabBtn').style.display = caps().manageSettings ? '' : 'none';
+  document.getElementById('settingsTabBtn').style.display = canOpenSettings() ? '' : 'none';
   document.getElementById('newProjectBtn').style.display = caps().createProject ? '' : 'none';
   document.getElementById('bulkImportBtn').style.display = caps().createAsset ? '' : 'none';
   document.getElementById('downloadSampleBtn').style.display = caps().createAsset ? '' : 'none';
@@ -1408,9 +1439,13 @@ userDetailWrap.addEventListener('click', e=>{ if(e.target===userDetailWrap) user
 /* Super Admin only. The tab is hidden without the capability and the API
    refuses the writes regardless, so hiding it is a convenience, not the check. */
 
+/* The three value lists, each behind its own permission: a role trusted with
+   asset types is not thereby trusted with the role catalogue. The API enforces
+   the same split per collection; this decides what is offered. */
 const REF_SECTIONS = [
   {
     collection: 'asset-types',
+    permission: 'settings.asset_types',
     title: 'Asset Types',
     note: 'The Type dropdown on Add Asset, and the prefix each asset code is built from (CHR-001).',
     columns: [
@@ -1421,6 +1456,7 @@ const REF_SECTIONS = [
   },
   {
     collection: 'priorities',
+    permission: 'settings.priorities',
     title: 'Priorities',
     note: 'The Priority dropdown on Add Asset and in the asset drawer.',
     columns: [
@@ -1430,6 +1466,7 @@ const REF_SECTIONS = [
   },
   {
     collection: 'roles',
+    permission: 'settings.roles',
     title: 'Roles',
     note: 'The Role dropdown on Add User. What a role can do comes from its tier — pick the closest match.',
     columns: [
@@ -1445,29 +1482,35 @@ let refCache = {};
 
 async function renderSettings(){
   const el = document.getElementById('settingsView');
-  if(!caps().manageSettings){ el.innerHTML = ''; return; }
+  /* Every gate on this screen reads the role's permissions, never its tier.
+     Someone whose role has been given one Settings permission gets this page
+     with that one section on it, and nothing else. */
+  if(!canOpenSettings()){ el.innerHTML = ''; return; }
 
-  /* Deactivated values are included so they can be seen and reactivated. */
-  const loaded = await Promise.all(REF_SECTIONS.map(sec =>
+  const lists = REF_SECTIONS.filter(sec=>holds(sec.permission));
+  /* Deactivated values are included so they can be seen and reactivated. The
+     API treats that as a management read and refuses it for a list this role
+     does not manage, so only the ones being shown are asked for. */
+  const loaded = await Promise.all(lists.map(sec =>
     api('/reference/' + sec.collection + '?includeInactive=1').then(r => r.entries).catch(() => [])
   ));
-  REF_SECTIONS.forEach((sec,i)=>{ refCache[sec.collection] = loaded[i]; });
+  lists.forEach((sec,i)=>{ refCache[sec.collection] = loaded[i]; });
 
   el.innerHTML = `
-    <div style="font-size:12px;color:var(--ink-muted);margin-bottom:20px;max-width:640px;">
+    ${lists.length ? `<div style="font-size:12px;color:var(--ink-muted);margin-bottom:20px;max-width:640px;">
       These are the value lists the forms use. Renaming one is safe — records that already use it keep working.
       A value in use can't be deleted; deactivate it instead and it disappears from the dropdowns.
-    </div>
-    ${REF_SECTIONS.map(sec=>renderRefSection(sec)).join('')}
-    ${caps().manageAccess ? '<div id="ipAllowlistSection"></div>' : ''}
-    ${caps().managePermissions ? '<div id="rolePermissionsSection"></div>' : ''}
+    </div>` : ''}
+    ${lists.map(sec=>renderRefSection(sec)).join('')}
+    ${holds('settings.ip_allowlist') ? '<div id="ipAllowlistSection"></div>' : ''}
+    ${holds('settings.permissions') ? '<div id="rolePermissionsSection"></div>' : ''}
   `;
   wireSettings();
-  if(caps().managePermissions) await renderRolePermissions();
-  /* Managing who may reach the app is Super Admin's alone, even though every
-     other section here is open to the full-access roles. The API refuses it
-     regardless; hiding it keeps the screen honest about what is on offer. */
-  if(caps().manageAccess) await renderIpAllowlist();
+  if(holds('settings.permissions')) await renderRolePermissions();
+  /* Managing who may reach the app stays with whoever has been given that one
+     permission — it is not implied by holding the rest of this screen. The API
+     refuses it regardless; hiding it keeps the screen honest about the offer. */
+  if(holds('settings.ip_allowlist')) await renderIpAllowlist();
 }
 
 function renderRefSection(sec){

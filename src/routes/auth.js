@@ -8,6 +8,7 @@ const { v4: uuid } = require('uuid');
 const db = require('../db');
 const { authenticate } = require('../middleware/auth');
 const { capabilitiesFor, catalogue } = require('../roles');
+const rolePermissions = require('../role-permissions');
 const bootstrapToken = require('../bootstrap-token');
 const passwordPolicy = require('../password-policy');
 
@@ -50,6 +51,14 @@ router.post('/login', async (req, res) => {
     const token = signToken(user.id, user.password_changed_at);
     delete user.password_hash;
     user.capabilities = capabilitiesFor(user.role);
+    // The same permission set authenticate() attaches to every later request.
+    //
+    // Sending it here matters because the browser keeps whatever this response
+    // carries as the signed-in user until the page is reloaded. Leaving it out
+    // meant a screen asking "may I show this?" got `undefined` for the whole
+    // session, so a permission switched on for the role was invisible until the
+    // person happened to refresh and pick it up from /auth/me.
+    user.permissions = [...await rolePermissions.effectiveFor(db, user.role).catch(() => new Set())];
     res.json({ token, user });
   } catch (err) {
     console.error(err);

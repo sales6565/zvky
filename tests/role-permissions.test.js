@@ -56,6 +56,28 @@ test('nothing per-user is left in the tree', () => {
   assert.throws(() => require('../src/user-permissions'), /Cannot find module/);
 });
 
+test('the Settings screen asks permissions, not capabilities', () => {
+  // The bug this guards against does not fail a request — it makes the app
+  // quietly refuse to offer something the API would have allowed. So it is
+  // caught by reading the screen rather than by calling anything.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+
+  for (const cap of ['manageSettings', 'manageAccess', 'managePermissions']) {
+    assert.ok(!html.includes(`caps().${cap}`),
+      `Settings visibility still reads the tier capability "${cap}". ` +
+      'A permission switched on for a role does not move the tier, so the ' +
+      'section stays hidden. Ask holds("settings.…") instead.');
+  }
+
+  // And each section is gated on its own key, so one does not reveal another.
+  for (const key of ['settings.asset_types', 'settings.priorities', 'settings.roles',
+    'settings.ip_allowlist', 'settings.permissions']) {
+    assert.ok(html.includes(`'${key}'`), `no gate mentions ${key}`);
+  }
+});
+
 // --- against a live server -----------------------------------------------------
 
 test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
@@ -259,6 +281,81 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(latest.actor, 'root@zvky.test');
     assert.ok(latest.at);
     await as('root', '/permissions/roles/producer/reset', { method: 'POST', body: {} });
+  });
+
+  // --- what the browser is told --------------------------------------------
+  //
+  // The screens ask "may I show this?" against the permission list on the
+  // signed-in user. Signing in used to answer with the role's capabilities and
+  // nothing else, so a permission switched on for a role changed what the API
+  // allowed and not one thing about what the app offered — Settings stayed
+  // hidden until the person reloaded and picked the list up from /auth/me.
+
+  await t.test('signing in returns the role\'s permissions, not only its tier', async () => {
+    const res = await call('/auth/login', { method: 'POST', body: { email: 'pat@zvky.test', password: PASSWORD } });
+    assert.strictEqual(res.status, 200);
+    const user = res.body.user;
+    assert.ok(Array.isArray(user.permissions), 'the login response carries a permission list');
+    assert.deepStrictEqual(
+      [...user.permissions].sort(),
+      [...catalog.baselineFor(capabilitiesForTier('production'))].sort(),
+      'and it is the same set every later request is judged by'
+    );
+    // The tier is still sent alongside it: projectScope and the review stage
+    // are values no checkbox can carry, and the screens still need them.
+    assert.ok(user.capabilities, 'the capabilities are still there');
+  });
+
+  await t.test('a settings permission reaches the next sign-in without a deploy', async () => {
+    const before = await call('/auth/login', { method: 'POST', body: { email: 'pat@zvky.test', password: PASSWORD } });
+    assert.ok(!before.body.user.permissions.includes('settings.asset_types'));
+    assert.strictEqual(before.body.user.capabilities.manageSettings, false,
+      'the tier says no, which is exactly why the tier cannot be what the screen asks');
+
+    await setRole('producer', [...(await enabledFor('producer')), 'settings.asset_types']);
+
+    const after = await call('/auth/login', { method: 'POST', body: { email: 'pat@zvky.test', password: PASSWORD } });
+    assert.ok(after.body.user.permissions.includes('settings.asset_types'),
+      'signing in now shows the permission the role was given');
+    assert.strictEqual(after.body.user.capabilities.manageSettings, false,
+      'and the tier has not moved — nothing else came with it');
+  });
+
+  await t.test('one list\'s permission does not open the others', async () => {
+    // Producer holds settings.asset_types from the test above and nothing else
+    // in Settings. Listing what has been retired is a management view, so it
+    // belongs to whoever manages that list — not to whoever manages any list.
+    assert.strictEqual((await as('pat', '/reference/asset-types?includeInactive=1')).status, 200);
+    assert.strictEqual((await as('pat', '/reference/priorities?includeInactive=1')).status, 403);
+    assert.strictEqual((await as('pat', '/reference/roles?includeInactive=1')).status, 403);
+    // Writing, likewise.
+    assert.strictEqual((await as('pat', '/reference/priorities', {
+      method: 'POST', body: { label: 'Whenever' },
+    })).status, 403);
+    // And the two sections that are not value lists stay shut.
+    assert.strictEqual((await as('pat', '/ip-allowlist')).status, 403);
+    assert.strictEqual((await as('pat', '/permissions/roles')).status, 403);
+
+    // The dropdown read is untouched: every Add Asset form needs it.
+    assert.strictEqual((await as('pat', '/reference/priorities')).status, 200);
+    assert.strictEqual((await as('ana', '/reference/asset-types')).status, 200);
+
+    await as('root', '/permissions/roles/producer/reset', { method: 'POST', body: {} });
+  });
+
+  await t.test('a role with no settings permission is offered no part of the screen', async () => {
+    const res = await call('/auth/login', { method: 'POST', body: { email: 'ana@zvky.test', password: PASSWORD } });
+    const held = res.body.user.permissions.filter((k) => k.startsWith('settings.'));
+    assert.deepStrictEqual(held, [], 'a Game Artist holds none of them');
+    for (const path of [
+      '/reference/asset-types?includeInactive=1',
+      '/reference/priorities?includeInactive=1',
+      '/reference/roles?includeInactive=1',
+      '/ip-allowlist',
+      '/permissions/roles',
+    ]) {
+      assert.strictEqual((await as('ana', path)).status, 403, path);
+    }
   });
 
   await t.test('a role added in Settings arrives with its tier\'s permissions', async () => {
