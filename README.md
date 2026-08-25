@@ -35,63 +35,63 @@ by itself change access: a Trainee Game Artist and a Senior Game Artist have the
 same permissions and differ in title and reporting line. Change that by editing
 the entry in `src/roles.js`.
 
-### Per-user permissions
+### Role permissions
 
-A role gives somebody a baseline. **Settings → User Permissions** grants extras
-on top of it, one person at a time, without moving them to another role.
+**Settings → Role Permissions** configures what a role may do. Every user's
+permissions come from their role — there are no per-user grants. Change a role,
+and everyone holding it changes together.
 
 The catalogue lives in
 [`src/permission-catalog.js`](src/permission-catalog.js) — 28 permissions in
-five groups. Two rules hold it together with the role system:
+five groups — and the settings live in `role_permissions` as
+`(role_key, permission_key, enabled)`.
 
-**Additive.** Effective = role baseline ∪ individual grants. A grant can add
-something a role does not give; it cannot take away something the role does.
-On screen a role-granted permission is ticked and locked — to remove one of
-those, change the role. There is no per-user deny.
+**When a change takes effect: the next request.** The permission set is read per
+request in `authenticate()` from the user's freshly-read role, so nobody signs
+out and in again, and no session has to be refreshed. Moving somebody to another
+role takes effect the same way.
 
-**A permission unlocks the action, not the reach.** Granting `asset.edit` to a
-Game Artist lets them edit assets *their role's `projectScope` already covers* —
-not every asset in the studio. Scope stays with the role. Anything else would
-turn one checkbox into studio-wide access.
+### What the tier system still does
 
-That second rule surprises people, so it is worth stating twice: granting
-`user.edit` to a contributor does **not** let them edit anybody — a contributor's
-reach over users is "the ones they added". Grants compose with scope; they do
-not override it.
+Permissions are booleans; some things are not. `projectScope` (`all` / `owned` /
+`team` / `assigned` / `own_work`), `reviewStage` (`tl` / `cd`) and `deleteAsset`
+(`any` / `owned`) are **values**, and they stay on the role's tier in
+[`src/role-tiers.js`](src/role-tiers.js).
 
-The effective set is computed per request in `authenticate()` from the freshly
-read role plus the stored grants, so a change takes effect on the **next
-request** — no re-login, no waiting for a token to expire.
+So a permission says *what* may be done and the tier still decides *how much of
+the studio it may be done to*. Enabling `asset.edit` for a role lets it edit the
+assets its `projectScope` already reaches — not every asset in the studio.
 
-### Permissions with no action behind them
+### Migrating without changing anything
 
-Three catalogue entries are listed and grantable but gate nothing yet, because
-the feature does not exist: **Reset User Password**, **Project Edit**, **View
-Audit Logs**. They show on screen tagged *no action yet* rather than pretending
-to work. Grant them now and they take effect when the feature lands.
+On first run each role's permissions are seeded from what its tier already
+implied, so the day this went live nobody gained or lost access. A role added in
+Settings later is seeded the same way on first use, rather than arriving with
+nothing. **Reset to defaults** puts a role back to its tier's set.
 
-**Override Review Stage** is the opposite — a new permission with a new action
-behind it. It unlocks the direct status edit the pipeline otherwise refuses, and
-every use is written to the asset history as an `override` event.
+That is also how the six full-access designations get everything: their tiers
+already implied every permission, so the seed enabled every permission for them.
+There is no separate hardcoded rule — they are ordinary rows now, and can be
+changed on this screen like any other role.
 
-### Who can grant
+### Safety
 
-`settings.permissions` is held by the Super Admin tier alone and **cannot be
-granted**, or one grant would be enough to grant everything else. The six
-full-access roles hold every other permission and still cannot reach this
-screen — the same reasoning that keeps the IP allowlist separate.
+Two permissions **cannot be switched off** for the Super Admin role: *Manage
+Role Permissions* and *Manage Roles*. They are the only way back if this screen
+is misconfigured, so the API keeps them on whatever is sent. Any other change to
+the Super Admin role needs `confirm: true` — the screen asks twice.
 
-Nobody edits their own permissions, including a Super Admin. That is a block
-rather than a confirmation: an administrator removing their own access to the
-screen that would put it back is not something the app can undo.
+*Manage Role Permissions* cannot be switched **on** for any other role: a role
+holding it could give itself every other permission, which is a door that only
+opens outwards.
 
-Granting **Manage IP Allowlist** asks for confirmation with the lockout warning,
-which is carried on the permission itself rather than remembered by the screen.
+Enabling *Manage IP Allowlist* for any role asks for confirmation with the
+lockout warning, carried on the permission itself.
 
-Every grant and revoke is written to `permission_audit` — who, for whom, which
-permission, when — readable at `GET /api/permissions/audit`.
+Every change is written to `role_permission_audit` — who, which role, which
+permission, enabled or disabled, when — readable at `GET /api/permissions/audit`.
 
-### Full access
+### Full access### Full access
 
 Six designations run the studio and hold every permission the Super Admin does,
 bar one:

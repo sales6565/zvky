@@ -5,6 +5,7 @@ const ipAllowlist = require('./ip-allowlist');
 const { applyTableOptions } = require('./db-collation');
 const reporting = require('./reporting');
 const catalog = require('./permission-catalog');
+const rolePermissions = require('./role-permissions');
 const defaults = require('./reference-defaults');
 
 // Small, idempotent schema repairs applied at startup.
@@ -304,38 +305,62 @@ async function ensureRoleTiers(db, log) {
   }
 }
 
-// Per-user permission grants and their audit trail.
+// Role permissions, and the removal of the per-user grants they replace.
 async function ensurePermissionTables(db, log) {
-  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS user_permissions (
-      user_id          CHAR(36)     NOT NULL,
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS role_permissions (
+      role_key         VARCHAR(64)  NOT NULL,
       permission_key   VARCHAR(64)  NOT NULL,
-      granted_by_id    CHAR(36)     NULL,
-      granted_by_email VARCHAR(191) NULL,
-      created_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (user_id, permission_key),
-      KEY idx_user_permissions_user (user_id)
+      enabled          TINYINT(1)   NOT NULL DEFAULT 0,
+      updated_by_id    CHAR(36)     NULL,
+      updated_by_email VARCHAR(191) NULL,
+      updated_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (role_key, permission_key),
+      KEY idx_role_permissions_role (role_key, enabled)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
 
-  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS permission_audit (
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS role_permission_audit (
       id             CHAR(36)     NOT NULL PRIMARY KEY,
       seq            BIGINT       NOT NULL AUTO_INCREMENT UNIQUE,
-      subject_id     CHAR(36)     NULL,
-      subject_email  VARCHAR(191) NULL,
+      role_key       VARCHAR(64)  NOT NULL,
       permission_key VARCHAR(64)  NOT NULL,
       action         VARCHAR(16)  NOT NULL,
       actor_id       CHAR(36)     NULL,
       actor_email    VARCHAR(191) NULL,
       created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      KEY idx_perm_audit_subject (subject_id, seq)
+      KEY idx_role_perm_audit (role_key, seq)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
 
-  // A grant naming a permission the catalogue no longer has is dead weight and
-  // would show as an unexplained row on the screen.
-  const { rows } = await db.query('SELECT DISTINCT permission_key FROM user_permissions');
-  const stale = rows.map((r) => r.permission_key).filter((k) => !catalog.isPermission(k));
-  for (const key of stale) {
-    await db.query('DELETE FROM user_permissions WHERE permission_key = $1', [key]);
-    log(`Schema: dropped grants for "${key}", which is not a permission any more.`);
+  // Seed from what each role's tier already implies, so switching to this table
+  // changes nobody's access on the day it goes live. Only roles with no rows
+  // are touched: a studio that has since configured a role keeps its settings.
+  const { rows: configured } = await db.query('SELECT DISTINCT role_key FROM role_permissions');
+  const known = new Set(configured.map((r) => r.role_key));
+  let seeded = 0;
+  for (const role of referenceData.list('roles', { includeInactive: true })) {
+    if (known.has(role.key)) continue;
+    await rolePermissions.seedRole(db, role.key);
+    seeded++;
+  }
+  if (seeded) log(`Schema: seeded permissions for ${seeded} role(s) from their tiers.`);
+
+  // A permission the catalogue no longer has is dead weight on the screen.
+  const { rows } = await db.query('SELECT DISTINCT permission_key FROM role_permissions');
+  for (const key of rows.map((r) => r.permission_key).filter((k) => !catalog.isPermission(k))) {
+    await db.query('DELETE FROM role_permissions WHERE permission_key = $1', [key]);
+    log(`Schema: dropped role permissions for "${key}", which is not a permission any more.`);
+  }
+
+  // The per-user grants this replaces. Dropped rather than left behind, so
+  // nothing reads a table the app no longer honours.
+  for (const table of ['user_permissions', 'permission_audit']) {
+    const { rows: present } = await db.query(
+      `SELECT COUNT(*) AS n FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = $1`, [table]
+    );
+    if (Number(present[0].n) > 0) {
+      await db.query(`DROP TABLE ${table}`);
+      log(`Schema: dropped ${table} — per-user permission grants were replaced by role permissions.`);
+    }
   }
 }
 
@@ -459,7 +484,7 @@ const STEPS = [
   // After the mirror: isTopOfHierarchy reads a role's tier from it.
   ['reporting hierarchy', ensureReportingAndMembership],
   ['review pipeline', ensureReviewWorkflow],
-  ['user permissions', ensurePermissionTables],
+  ['role permissions', ensurePermissionTables],
   ['IP allowlist', ensureIpAllowlist],
 ];
 

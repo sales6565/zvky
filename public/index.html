@@ -1460,10 +1460,10 @@ async function renderSettings(){
     </div>
     ${REF_SECTIONS.map(sec=>renderRefSection(sec)).join('')}
     ${caps().manageAccess ? '<div id="ipAllowlistSection"></div>' : ''}
-    ${caps().managePermissions ? '<div id="userPermissionsSection"></div>' : ''}
+    ${caps().managePermissions ? '<div id="rolePermissionsSection"></div>' : ''}
   `;
   wireSettings();
-  if(caps().managePermissions) await renderUserPermissions();
+  if(caps().managePermissions) await renderRolePermissions();
   /* Managing who may reach the app is Super Admin's alone, even though every
      other section here is open to the full-access roles. The API refuses it
      regardless; hiding it keeps the screen honest about what is on offer. */
@@ -1905,108 +1905,102 @@ async function renderIpObserved(){
   }));
 }
 
-/* ---------- settings: per-user permissions ---------- */
-/* A role gives somebody a baseline; this grants extras on top of it, one person
-   at a time. Additive only, which is why a role-granted box is shown ticked and
-   disabled: it can be seen but not taken away here. To remove it you change the
-   role. */
+/* ---------- settings: role permissions ---------- */
+/* A role's permissions apply to everyone holding it. There are no per-user
+   grants: change the role, and every user with that role changes on their next
+   request — the set is read per request, so nobody signs out and in again. */
 
-let pmCatalog = null;
-let pmSubject = null;
-/* Which load is the current one. Two picks in quick succession put two fetches
-   in flight, and whichever answered last used to win — so the screen could show
-   one person while the picker named another, and a save would then be written
-   against whoever the screen was showing. That is a quiet way to grant a
-   permission to the wrong account, so a stale response is discarded rather
-   than rendered. */
-let pmLoadToken = 0;
+let rpCatalog = null;
+let rpRole = null;
+/* Two picks in quick succession put two fetches in flight; whichever answers
+   last must not win, or the screen shows one role while the picker names
+   another and a save lands on the wrong one. */
+let rpLoadToken = 0;
 
-function pmMessage(text, kind){
-  const el = document.getElementById('pm_msg');
+function rpMessage(text, kind){
+  const el = document.getElementById('rp_msg');
   if(el){ el.textContent = text || ''; el.className = 'pm-msg ' + (kind||''); }
 }
 
-async function renderUserPermissions(){
-  const el = document.getElementById('userPermissionsSection');
+async function renderRolePermissions(){
+  const el = document.getElementById('rolePermissionsSection');
   if(!el) return;
+  let roles;
   try{
-    if(!pmCatalog) pmCatalog = (await api('/permissions/catalog')).groups;
+    if(!rpCatalog) rpCatalog = (await api('/permissions/catalog')).groups;
+    roles = (await api('/permissions/roles')).roles;
   }catch(err){
-    el.innerHTML = `<div class="ref-section"><div class="ref-head"><h3>User Permissions</h3></div>
+    el.innerHTML = `<div class="ref-section"><div class="ref-head"><h3>Role Permissions</h3></div>
       <div class="ref-err">${escapeHTML(err.message)}</div></div>`;
     return;
   }
 
   el.innerHTML = `
-    <div class="ref-section" data-section="user-permissions">
-      <div class="ref-head"><h3>User Permissions</h3></div>
-      <div class="ref-note">Give one person permissions their role does not include. A role's own permissions are shown ticked and locked — to remove one of those, change the role.</div>
-      <div class="pm-pick">
-        <input type="text" id="pm_search" placeholder="Search people…">
-        <select id="pm_user"><option value="">— Choose someone —</option></select>
+    <div class="ref-section" data-section="role-permissions">
+      <div class="ref-head"><h3>Role Permissions</h3>
+        <span class="ref-key">${roles.length} roles</span>
       </div>
-      <div id="pm_body"></div>
+      <div class="ref-note">What each role may do. A change here applies to everyone holding that role, on their next request.</div>
+      <div class="pm-pick">
+        <select id="rp_role"><option value="">— Choose a role —</option>${
+          roles.map(r=>`<option value="${escapeHTML(r.key)}"${rpRole&&rpRole.key===r.key?' selected':''}>${escapeHTML(r.label)} — ${r.enabledCount}/${r.total}${r.isActive?'':' (inactive)'}</option>`).join('')
+        }</select>
+      </div>
+      <div id="rp_body"></div>
     </div>`;
 
-  const search = document.getElementById('pm_search');
-  const picker = document.getElementById('pm_user');
-  const load = async ()=>{
-    const { users } = await api('/permissions/users?search=' + encodeURIComponent(search.value.trim()));
-    picker.innerHTML = '<option value="">— Choose someone —</option>' + users.map(u=>
-      `<option value="${u.id}"${pmSubject&&pmSubject.id===u.id?' selected':''}>${escapeHTML(u.name)} — ${escapeHTML(u.roleLabel)}${u.grantCount?` (+${u.grantCount})`:''}</option>`).join('');
-  };
-  await load();
-  search.addEventListener('input', ()=>{ clearTimeout(search._t); search._t = setTimeout(load, 200); });
-  picker.addEventListener('change', ()=>picker.value ? showPermissionsFor(picker.value) : (document.getElementById('pm_body').innerHTML=''));
-  if(pmSubject) await showPermissionsFor(pmSubject.id);
+  document.getElementById('rp_role').addEventListener('change', (e)=>{
+    if(e.target.value) showRolePermissions(e.target.value);
+    else document.getElementById('rp_body').innerHTML = '';
+  });
+  if(rpRole) await showRolePermissions(rpRole.key);
 }
 
-async function showPermissionsFor(userId){
-  const body = document.getElementById('pm_body');
-  const token = ++pmLoadToken;
+async function showRolePermissions(roleKey){
+  const body = document.getElementById('rp_body');
+  const token = ++rpLoadToken;
   let data;
-  try{ data = await api('/permissions/users/' + userId); }
+  try{ data = await api('/permissions/roles/' + encodeURIComponent(roleKey)); }
   catch(err){
-    if(token !== pmLoadToken) return;
+    if(token !== rpLoadToken) return;
     body.innerHTML = `<div class="ref-err">${escapeHTML(err.message)}</div>`; return;
   }
-  /* Somebody else was picked while this was in flight; theirs is the load that
-     belongs on screen. */
-  if(token !== pmLoadToken) return;
+  if(token !== rpLoadToken) return;   // a later pick owns the screen
 
-  pmSubject = data.user;
-  const held = new Map(data.user.permissions.map(p=>[p.key, p]));
+  rpRole = data.role;
+  const held = new Map(data.role.permissions.map(p=>[p.key, p]));
+  const roleLabel = data.role.label;
 
   body.innerHTML = `
-    <div class="pm-who">Editing <b>${escapeHTML(data.user.name)}</b> · ${escapeHTML(data.user.email)} · role <b>${escapeHTML(data.user.roleLabel)}</b></div>
-    <div class="pm-legend">
-      <span><span class="pm-swatch role"></span>${data.user.permissions.filter(p=>p.fromRole).length} come from the
-        <b>${escapeHTML(data.user.roleLabel)}</b> role — everyone with that role has them, here and elsewhere</span>
-      <span><span class="pm-swatch own"></span>${data.user.permissions.filter(p=>p.granted).length} granted to
-        <b>${escapeHTML(data.user.name)}</b> alone</span>
-    </div>
-    ${data.isYou ? `<div class="ip-banner fault" style="margin-bottom:12px;">
-      <h4>These are your own permissions</h4>
-      <p>You cannot change them here. Removing your own access to this screen is not something the app can undo — ask another Super Admin to make the change.</p>
+    <div class="pm-who">Editing the <b>${escapeHTML(roleLabel)}</b> role · everyone holding it is affected</div>
+    ${data.role.isSuperAdmin ? `<div class="ip-banner fault" style="margin-bottom:12px;">
+      <h4>This is the role that fixes mistakes made here</h4>
+      <p>Changing ${escapeHTML(roleLabel)} asks for a second confirmation. Manage Role Permissions and Manage Roles cannot be switched off for it at all — they are the only way back if this screen is misconfigured.</p>
     </div>` : ''}
+    <div class="pm-legend">
+      <span><span class="pm-swatch own"></span>${data.role.permissions.filter(p=>p.enabled).length} of ${data.role.permissions.length} enabled</span>
+      <span><span class="pm-swatch role"></span>${data.role.permissions.filter(p=>!p.isDefault).length} changed from this role's defaults</span>
+    </div>
     <div class="pm-groups">
-      ${pmCatalog.map(group=>`
+      ${rpCatalog.map(group=>`
         <div class="pm-group">
           <h4>${escapeHTML(group.label)}</h4>
           ${group.permissions.map(p=>{
             const state = held.get(p.key) || {};
-            const locked = state.fromRole || !p.grantable || data.isYou;
-            return `<div class="pm-row ${state.fromRole?'inherited':''} ${state.granted?'own':''}">
+            /* settings.permissions is only ever on for the Super Admin role —
+               a role holding it could give itself everything else. */
+            const locked = state.locked || (!p.grantable && !data.role.isSuperAdmin);
+            return `<div class="pm-row ${state.enabled?'own':''}">
               <input type="checkbox" data-key="${escapeHTML(p.key)}"
-                ${state.effective?'checked':''} ${locked?'disabled':''}
+                ${state.enabled?'checked':''} ${locked?'disabled':''}
                 ${p.danger?`data-danger="${escapeHTML(p.danger)}"`:''}>
               <div>
                 <label>${escapeHTML(p.label)}</label>
-                ${state.fromRole?`<span class="pm-tag role">from ${escapeHTML(data.user.roleLabel)}</span>`:''}
-                ${state.granted?'<span class="pm-tag own">granted here</span>':''}
-                ${!p.grantable?'<span class="pm-tag">super admin only</span>':''}
+                ${state.locked?'<span class="pm-tag role">cannot be switched off</span>':''}
+                ${(!p.grantable && !data.role.isSuperAdmin)?'<span class="pm-tag">super admin role only</span>':''}
                 ${p.pending?'<span class="pm-tag pending">no action yet</span>':''}
-                ${p.danger&&!state.fromRole?'<span class="pm-tag danger">high risk</span>':''}
+                ${p.danger?'<span class="pm-tag danger">high risk</span>':''}
+                ${!state.isDefault?'<span class="pm-tag own">changed</span>':''}
                 ${p.describe?`<div class="pm-note">${escapeHTML(p.describe)}</div>`:''}
                 ${p.pending?`<div class="pm-note">${escapeHTML(p.pending)}</div>`:''}
               </div>
@@ -2015,44 +2009,53 @@ async function showPermissionsFor(userId){
         </div>`).join('')}
     </div>
     <div class="pm-bar">
-      ${data.isYou?'':'<button class="btn btn-brand" id="pm_save">Save permissions</button>'}
-      <span class="pm-msg" id="pm_msg"></span>
+      <button class="btn btn-brand" id="rp_save">Save role permissions</button>
+      <button class="btn btn-ghost" id="rp_reset">Reset to defaults</button>
+      <span class="pm-msg" id="rp_msg"></span>
     </div>`;
 
-  /* The warning lives with the permission in the catalogue, so the screen does
-     not have to remember which ones are dangerous. */
+  /* The warning travels with the permission, so the screen does not have to
+     remember which ones are dangerous. */
   body.querySelectorAll('input[data-danger]').forEach(box=>box.addEventListener('change', ()=>{
     if(!box.checked) return;
-    if(!confirm(`Grant "${box.closest('.pm-row').querySelector('label').textContent}" to ${data.user.name} (${data.user.email})?\n\n${box.dataset.danger}`)){
+    const label = box.closest('.pm-row').querySelector('label').textContent;
+    if(!confirm(`Enable "${label}" for every user with the ${roleLabel} role?\n\n${box.dataset.danger}`)){
       box.checked = false;
     }
   }));
 
-  const save = document.getElementById('pm_save');
-  // This render's subject, captured here rather than read from a module-level
-  // variable that a later pick could have moved.
-  const subjectId = data.user.id;
-  if(save) save.addEventListener('click', async ()=>{
-    /* Only what is actually granted here — a ticked-and-disabled box comes from
-       the role and is not ours to send. */
-    const wanted = [...body.querySelectorAll('input[type=checkbox]:not(:disabled)')]
-      .filter(b=>b.checked).map(b=>b.dataset.key);
-    const previously = data.user.permissions.filter(p=>p.granted).map(p=>p.key);
-    const added = wanted.filter(k=>!previously.includes(k));
-    const removed = previously.filter(k=>!wanted.includes(k));
-    if(!added.length && !removed.length){ pmMessage('Nothing changed.', ''); return; }
-    // Names the account, so a confirmation cannot be agreed to for the wrong person.
-    if(!confirm(`Apply to ${data.user.name} (${data.user.email})?\n\n${added.length} to grant, ${removed.length} to revoke.`)) return;
+  const save = document.getElementById('rp_save');
+  save.addEventListener('click', async ()=>{
+    const wanted = [...body.querySelectorAll('input[type=checkbox]')]
+      .filter(b=>b.checked || b.disabled && b.checked).filter(b=>b.checked).map(b=>b.dataset.key);
+    const before = data.role.permissions.filter(p=>p.enabled).map(p=>p.key);
+    const on = wanted.filter(k=>!before.includes(k));
+    const off = before.filter(k=>!wanted.includes(k));
+    if(!on.length && !off.length){ rpMessage('Nothing changed.', ''); return; }
+    if(!confirm(`Apply to the ${roleLabel} role?\n\n${on.length} to enable, ${off.length} to disable.\nEveryone with this role is affected.`)) return;
+    /* The Super Admin role asks twice — the API demands it too, so a script
+       cannot skip the step the screen enforces. */
+    if(data.role.isSuperAdmin && !confirm(`This is the ${roleLabel} role.\n\nIf you disable something it needs, the screen that would put it back may stop working. Continue?`)) return;
 
     save.disabled = true;
-    pmMessage('Saving…', '');
+    rpMessage('Saving…', '');
     try{
-      const res = await api('/permissions/users/' + subjectId, { method:'PUT', body:{ permissions: wanted } });
-      pmMessage(res.summary, 'ok');
-      await showPermissionsFor(subjectId);
-      pmMessage(res.summary, 'ok');
-    }catch(err){ pmMessage(err.message, 'err'); }
-    finally{ save.disabled = false; }
+      const res = await api('/permissions/roles/' + encodeURIComponent(rpRole.key),
+        { method:'PUT', body:{ permissions: wanted, confirm: true } });
+      await showRolePermissions(rpRole.key);
+      rpMessage(res.warning ? `${res.summary} ${res.warning}` : res.summary, 'ok');
+      await renderRolePermissions();
+    }catch(err){ rpMessage(err.message, 'err'); save.disabled = false; }
+  });
+
+  document.getElementById('rp_reset').addEventListener('click', async ()=>{
+    if(!confirm(`Reset ${roleLabel} to the permissions its tier implies?`)) return;
+    try{
+      const res = await api('/permissions/roles/' + encodeURIComponent(rpRole.key) + '/reset',
+        { method:'POST', body:{ confirm: true } });
+      await showRolePermissions(rpRole.key);
+      rpMessage(res.summary, 'ok');
+    }catch(err){ rpMessage(err.message, 'err'); }
   });
 }
 

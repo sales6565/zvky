@@ -148,35 +148,34 @@ CREATE TABLE IF NOT EXISTS users (
   CONSTRAINT fk_users_reports_to FOREIGN KEY (reports_to_id) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Permissions granted to one person, on top of whatever their role already
--- allows. Additive only: a row here adds a permission, and there is no row
--- shape that takes one away — removing something a role grants means changing
--- the role. See src/permission-catalog.js.
-CREATE TABLE IF NOT EXISTS user_permissions (
-  user_id         CHAR(36)     NOT NULL,
-  permission_key  VARCHAR(64)  NOT NULL,
-  granted_by_id   CHAR(36)     NULL,
-  granted_by_email VARCHAR(191) NULL,
-  created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (user_id, permission_key),
-  KEY idx_user_permissions_user (user_id),
-  CONSTRAINT fk_uperm_user  FOREIGN KEY (user_id)       REFERENCES users(id) ON DELETE CASCADE,
-  CONSTRAINT fk_uperm_actor FOREIGN KEY (granted_by_id) REFERENCES users(id) ON DELETE SET NULL
+-- What each role may do. Every user's permissions come from their role, so a
+-- change here moves everyone holding it together. See src/role-permissions.js.
+--
+-- The tier system underneath still carries what a checkbox cannot express:
+-- projectScope, reviewStage and deleteAsset are values rather than booleans and
+-- stay with the tier. This table is the booleans.
+CREATE TABLE IF NOT EXISTS role_permissions (
+  role_key         VARCHAR(64)  NOT NULL,
+  permission_key   VARCHAR(64)  NOT NULL,
+  enabled          TINYINT(1)   NOT NULL DEFAULT 0,
+  updated_by_id    CHAR(36)     NULL,
+  updated_by_email VARCHAR(191) NULL,
+  updated_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (role_key, permission_key),
+  KEY idx_role_permissions_role (role_key, enabled)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Who changed whose permissions, and when. Append-only, and outlives both the
--- grant and the accounts involved.
-CREATE TABLE IF NOT EXISTS permission_audit (
+-- Who changed which permission for which role, and when. Append-only.
+CREATE TABLE IF NOT EXISTS role_permission_audit (
   id             CHAR(36)     NOT NULL PRIMARY KEY,
   seq            BIGINT       NOT NULL AUTO_INCREMENT UNIQUE,
-  subject_id     CHAR(36)     NULL,
-  subject_email  VARCHAR(191) NULL,
+  role_key       VARCHAR(64)  NOT NULL,
   permission_key VARCHAR(64)  NOT NULL,
   action         VARCHAR(16)  NOT NULL,
   actor_id       CHAR(36)     NULL,
   actor_email    VARCHAR(191) NULL,
   created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  KEY idx_perm_audit_subject (subject_id, seq)
+  KEY idx_role_perm_audit (role_key, seq)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS projects (

@@ -2,8 +2,7 @@ const jwt = require('jsonwebtoken');
 const db = require('../db');
 const { roleDef, capabilitiesFor } = require('../roles');
 const referenceData = require('../reference-data');
-const catalog = require('../permission-catalog');
-const userPermissions = require('../user-permissions');
+const rolePermissions = require('../role-permissions');
 
 // Verifies the bearer token and attaches the current user (fetched fresh
 // from the database, not just trusted from the token) to req.user.
@@ -56,14 +55,13 @@ async function authenticate(req, res, next) {
     }
     user.capabilities = capabilitiesFor(user.role);
 
-    // The effective permission set: what the role's tier implies, plus whatever
-    // has been granted to this person individually. Computed per request off
-    // the freshly-read role, so a role change or a revoked grant takes effect
-    // on the next request rather than when a token expires.
-    const granted = await userPermissions.grantedFor(db, user.id).catch(() => []);
-    user.grantedPermissions = granted;
-    user.permissions = [...catalog.effectiveFor(user.capabilities, granted)];
-    req.permissions = new Set(user.permissions);
+    // What this person may do, read from their role. Per request off the
+    // freshly-read role, so changing a role's permissions — or moving somebody
+    // to another role — takes effect on their very next request. No re-login,
+    // no waiting for a token to expire.
+    const held = await rolePermissions.effectiveFor(db, user.role).catch(() => new Set());
+    user.permissions = [...held];
+    req.permissions = held;
 
     req.user = user;
     next();

@@ -111,12 +111,13 @@ const GROUPS = [
       { key: 'settings.audit_logs',   label: 'View Audit Logs',      impliedBy: has('manageSettings'), pending: PENDING },
       {
         key: 'settings.permissions',
-        label: 'Manage User Permissions',
-        // This screen itself. Held by the Super Admin tier alone and not
-        // grantable, or a grant could be used to grant more.
+        label: 'Manage Role Permissions',
+        // This screen itself. Held by the Super Admin role and not switchable
+        // on for any other role: whoever holds it can give their own role every
+        // other permission, so enabling it anywhere else is a one-way door.
         impliedBy: has('managePermissions'),
         grantable: false,
-        danger: 'Whoever holds this can grant every other permission, including to themselves.',
+        danger: 'Whoever holds this can give any role every other permission, including their own.',
       },
     ],
   },
@@ -130,8 +131,8 @@ function isPermission(key) {
   return BY_KEY.has(key);
 }
 
-// Permissions a Super Admin may hand out individually. Excludes the one that
-// hands out permissions.
+// Permissions that may be switched on for a role through the screen. Excludes
+// the one that controls the screen itself.
 function grantableKeys() {
   return ALL.filter((p) => p.grantable !== false).map((p) => p.key);
 }
