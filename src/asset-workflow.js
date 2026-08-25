@@ -78,10 +78,14 @@ const actors = {
   // The lead or supervisor of whoever the asset is assigned to.
   teamLead: (ctx) => ctx.isTeamLead || ctx.canOverride,
   // The Creative Director gate.
-  creativeDirector: (ctx) => {
-    const def = roleDef(ctx.user.role);
-    return Boolean((def && def.reviewStage === 'cd') || ctx.canOverride);
-  },
+  //
+  // Reads the role's permission, not its tier. Reading the tier was the same
+  // mistake the screens were making: switching review.cd off for a role left
+  // the tier's reviewStage untouched, so the permission did nothing.
+  creativeDirector: (ctx) => Boolean(ctx.canReviewCd || ctx.canOverride),
+  // Signing work off for the client — the half of that gate that cannot be
+  // taken back. Held separately, so a role can review without signing off.
+  clientApprover: (ctx) => Boolean((ctx.canReviewCd && ctx.canApproveForClient) || ctx.canOverride),
   // Anyone who may set up work on the asset: assign it, or edit it.
   planner: (ctx) => ctx.canEdit,
   // Whoever signs off that the client has it.
@@ -152,7 +156,7 @@ const TRANSITIONS = [
     action: 'cd_approve',
     from: ['pending_cd_review'],
     to: 'approved_for_client',
-    who: 'creativeDirector',
+    who: 'clientApprover',
     routeTo: 'reviewQueue',
     describe: 'Creative Director approved for client',
   },
@@ -259,6 +263,7 @@ function refusal(transition, ctx) {
       return 'Only the assigned artist can submit this asset.';
     case 'teamLead':
       return 'Only this artist\'s team lead can act on it at this stage.';
+    case 'clientApprover':
     case 'creativeDirector':
       return 'Only the Creative Director can act on it at this stage.';
     case 'deliverer':

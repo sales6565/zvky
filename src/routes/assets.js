@@ -22,6 +22,7 @@ const {
   canOverrideReview,
   canMarkDelivered,
   canOverrideStage,
+  holds,
 } = require('../permissions');
 const { assignableRoles, roleDef } = require('../roles');
 const assetImport = require('../asset-import');
@@ -295,6 +296,10 @@ async function contextFor(req, asset) {
     canOverride: canOverrideReview(req.user),
     canEdit: await canEditAsset(req.user, asset),
     canDeliver: await canMarkDelivered(req.user, asset),
+    // The two halves of the Creative Director's gate, from the role's
+    // permissions rather than from its tier.
+    canReviewCd: canReviewAsCD(req.user),
+    canApproveForClient: holds(req.user, 'review.approve_client'),
   };
 }
 

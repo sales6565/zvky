@@ -51,6 +51,17 @@ const GROUPS = [
       { key: 'user.change_reporting', label: 'Change Reporting To',  impliedBy: has('manageUsers') },
       { key: 'user.reset_password',   label: 'Reset User Password',  impliedBy: has('manageUsers'), pending: PENDING },
       { key: 'user.bulk_upload',      label: 'Bulk Upload Users',    impliedBy: has('manageUsers') },
+      {
+        key: 'user.view_team',
+        label: 'View Team Roster',
+        // The My Team tab. Seeded from the capability that used to decide it,
+        // plus the studio-wide tier — which already holds review.tl on the same
+        // reasoning, and which "everything a Super Admin has" would otherwise
+        // not include. From now on it is a switch like everything else, rather
+        // than something only a change of tier can move.
+        impliedBy: anyOf(has('leadsTeam'), fullAccess),
+        describe: 'See the people reporting to you and how their work is going.',
+      },
     ],
   },
   {
@@ -80,7 +91,15 @@ const GROUPS = [
     permissions: [
       { key: 'review.tl',             label: 'TL Review Actions',    impliedBy: anyOf(reviewsAt('tl'), has('leadsTeam'), fullAccess) },
       { key: 'review.cd',             label: 'CD Review Actions',    impliedBy: reviewsAt('cd') },
-      { key: 'review.approve_client', label: 'Approve for Client',   impliedBy: reviewsAt('cd') },
+      {
+        key: 'review.approve_client',
+        label: 'Approve for Client',
+        // Narrower than review.cd on purpose: sending work back is the
+        // reversible half of the gate, signing it off for the client is not.
+        // A role can hold the review and not the sign-off.
+        impliedBy: reviewsAt('cd'),
+        describe: 'Sign work off as ready for the client. Requires CD Review Actions as well.',
+      },
       { key: 'review.deliver',        label: 'Mark as Delivered',    impliedBy: has('deliver') },
     ],
   },
@@ -89,7 +108,7 @@ const GROUPS = [
     label: 'Project Management',
     permissions: [
       { key: 'project.add',           label: 'Project Add',          impliedBy: has('createProject') },
-      { key: 'project.edit',          label: 'Project Edit',         impliedBy: has('createProject'), pending: PENDING },
+      { key: 'project.edit',          label: 'Project Edit',         impliedBy: has('createProject') },
       { key: 'project.delete',        label: 'Project Delete',       impliedBy: has('createProject') },
     ],
   },

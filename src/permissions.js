@@ -28,12 +28,20 @@ async function visibleProjects(user) {
     return rows;
   }
 
+  // The three narrower scopes below each add "…or you created it".
+  //
+  // Without that, granting project.add to a role whose scope is narrower than
+  // the whole studio produced a project its creator could not see: these
+  // queries match on being a coordinator, a lead, or having work in it, and
+  // creating a project makes you none of those — it makes you its owner. The
+  // reach rule for editing and deleting one is already "yours, or anyone's if
+  // your scope is studio-wide", so this makes seeing agree with doing.
   if (def.projectScope === 'assigned') {
     const { rows } = await db.query(
       `SELECT DISTINCT p.* FROM projects p
        LEFT JOIN project_coordinators pc ON pc.project_id = p.id AND pc.user_id = $1
        LEFT JOIN project_team_leads  ptl ON ptl.project_id = p.id AND ptl.user_id = $1
-       WHERE pc.user_id IS NOT NULL OR ptl.user_id IS NOT NULL
+       WHERE pc.user_id IS NOT NULL OR ptl.user_id IS NOT NULL OR p.owner_id = $1
        ORDER BY p.created_at`,
       [user.id]
     );
@@ -49,7 +57,7 @@ async function visibleProjects(user) {
        LEFT JOIN project_team_leads ptl ON ptl.project_id = p.id AND ptl.user_id = $1
        LEFT JOIN assets a ON a.project_id = p.id
        LEFT JOIN users  r ON r.id = a.assignee_id AND r.team_lead_id = $1
-       WHERE ptl.user_id IS NOT NULL OR r.id IS NOT NULL
+       WHERE ptl.user_id IS NOT NULL OR r.id IS NOT NULL OR p.owner_id = $1
        ORDER BY p.created_at`,
       [user.id]
     );
@@ -69,7 +77,7 @@ async function visibleProjects(user) {
     `SELECT DISTINCT p.* FROM projects p
      LEFT JOIN assets a ON a.project_id = p.id AND a.assignee_id = $1
      LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $1
-     WHERE a.id IS NOT NULL OR pm.user_id IS NOT NULL
+     WHERE a.id IS NOT NULL OR pm.user_id IS NOT NULL OR p.owner_id = $1
      ORDER BY p.created_at`,
     [user.id]
   );

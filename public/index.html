@@ -236,6 +236,7 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
     <div class="wordmark"><div class="mark">Z</div><div><h1>ZVKY</h1><div class="sub">art asset &amp; animation pipeline</div></div></div>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
       <select class="proj-select" id="projectSelect"></select>
+      <button class="btn btn-ghost btn-sm" id="editProjectBtn" style="display:none;" title="Edit this project">&#9998;</button>
       <div class="user-badge"><div class="avatar" id="userAvatar"></div><div class="who"><div class="name" id="userName"></div><span class="role-badge" id="userRoleBadge"></span></div></div>
       <button class="btn btn-ghost btn-sm" id="profileBtn">Profile</button>
       <button class="btn btn-ghost btn-sm" id="logoutBtn">Log out</button>
@@ -291,6 +292,19 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
     <label>Team leads on this project</label><div class="checklist" id="p_leads"></div>
     <label>Production coordinators on this project</label><div class="checklist" id="p_coords"></div>
     <div class="modal-actions"><button class="btn btn-ghost" id="cancelProjectModal">Cancel</button><button class="btn btn-brand" id="saveProjectModal">Create Project</button></div>
+  </div>
+</div>
+
+<div class="modal-wrap" id="editProjectModalWrap">
+  <div class="modal">
+    <h2>Edit Project</h2>
+    <div id="ep_who" style="font-size:12px;color:var(--ink-muted);margin-bottom:10px;"></div>
+    <label>Project name</label><input type="text" id="ep_name" placeholder="e.g. Nightgarden">
+    <label>Team leads on this project</label><div class="checklist" id="ep_leads"></div>
+    <label>Production coordinators on this project</label><div class="checklist" id="ep_coords"></div>
+    <div style="font-size:11px;color:var(--ink-faint);margin-top:8px;">Assets already in this project keep their assignees and their place in the pipeline.</div>
+    <div class="err" id="ep_err" style="color:#e8402c;font-size:12px;margin-top:8px;"></div>
+    <div class="modal-actions"><button class="btn btn-ghost" id="cancelEditProject">Cancel</button><button class="btn btn-brand" id="saveEditProject">Save changes</button></div>
   </div>
 </div>
 
@@ -429,17 +443,86 @@ let TOP_TIER_ROLES = new Set();
    Two answers, and the difference matters. caps() is the tier: how much of the
    studio this person sees (projectScope), which review gate they hold, how far
    a deletion reaches — values a checkbox cannot express, so they stay with the
-   role's tier. holds() is the role's permission list from Settings > Role
+   role's tier. can() is the role's permission list from Settings > Role
    Permissions: what may be done, one key at a time, switchable per role.
 
-   Anything a Super Admin can switch on for a role must be asked with holds().
+   Anything a Super Admin can switch on for a role must be asked with can().
    Asking caps() instead is how a permission gets enabled and changes nothing:
    the tier did not move, so the capability is still false. */
 function caps(){ return (state.currentUser && state.currentUser.capabilities) || {}; }
-function holds(key){
-  const list = (state.currentUser && state.currentUser.permissions) || [];
-  return list.indexOf(key) !== -1;
+
+/* The permission list this account holds, as decided by its role. */
+function perms(){ return (state.currentUser && state.currentUser.permissions) || []; }
+/* can('asset.add') — and can('a','b') for "either of these". */
+function can(){
+  const held = perms();
+  for(let i=0;i<arguments.length;i++){ if(held.indexOf(arguments[i]) !== -1) return true; }
+  return false;
 }
+/* canAnyIn('user') — any permission in a catalogue group. The key prefixes are
+   the group names, so this needs no second copy of the catalogue to stay in
+   step with it. Used for the things a whole area of the app hangs off: the
+   Users tab opens for anyone trusted with any part of user management, and the
+   individual buttons inside it are then gated one by one. */
+function canAnyIn(group){
+  const prefix = group + '.';
+  return perms().some(k => k.indexOf(prefix) === 0);
+}
+
+/* Every element whose visibility is a permission question, in one table.
+
+   This is the fix for a bug that has now appeared three times — Settings, then
+   the Users tab, then the Add Project button — always the same way: a screen
+   asked caps() (the role's TIER) about something the API decides from the
+   role's PERMISSIONS. Switching a permission on does not move the tier, so the
+   API allowed the action and the app never offered it.
+
+   The rule for anything added here later: if a Super Admin can switch it on in
+   Settings > Role Permissions, it belongs in this table, keyed by the same
+   permission the API checks. caps() is only for what a checkbox cannot carry —
+   projectScope (how much of the studio somebody sees) and assignable (whether
+   this designation is one that does the work). Those are values, not switches,
+   and nothing in Settings changes them. */
+const UI_GATES = {
+  teamTabBtn:            () => can('user.view_team'),
+  usersTabBtn:           () => canAnyIn('user'),
+  settingsTabBtn:        () => canOpenSettings(),
+  newProjectBtn:         () => can('project.add'),
+  editProjectBtn:        () => mayEditCurrentProject(),
+  newAssetBtn:           () => can('asset.add'),
+  bulkImportBtn:         () => can('asset.bulk_upload'),
+  downloadSampleBtn:     () => can('asset.bulk_upload'),
+};
+
+/* The project the header is pointing at, from the list the API already sent. */
+function currentProject(){
+  return (state.projects||[]).find(p=>p.id===state.currentProjectId) || null;
+}
+/* Whether this account may change that project — the exact rule the API
+   applies, asked here so the button is not offered where it would 403.
+
+   Two questions, not one: the permission says whether this role may edit a
+   project at all, and projectScope — a tier value, not a switch — says which
+   ones it reaches. A Producer given Project Edit may change the projects they
+   own; the studio-wide roles reach all of them. */
+function mayEditCurrentProject(){
+  const p = currentProject();
+  if(!p || !can('project.edit')) return false;
+  return caps().projectScope==='all' || p.owner_id===(state.currentUser||{}).id;
+}
+
+/* Show or hide one gated element. `also` carries the non-permission half of the
+   question — the New Asset button needs a board view and a project as well as
+   the permission — and defaults to yes. */
+function applyGate(id, also){
+  const el = document.getElementById(id);
+  if(!el) return false;
+  const rule = UI_GATES[id];
+  const visible = (rule ? rule() : true) && also !== false;
+  el.style.display = visible ? '' : 'none';
+  return visible;
+}
+
 /* The Settings sections that exist on this screen, each with the permission
    that reveals it. Kept together so adding a section cannot leave its gate
    behind, and so the tab itself can be decided from the same list.
@@ -456,7 +539,7 @@ const SETTINGS_SECTIONS = [
 ];
 /* Settings opens for anyone holding at least one of them, and shows only the
    sections they hold. */
-function canOpenSettings(){ return SETTINGS_SECTIONS.some(s=>holds(s.permission)); }
+function canOpenSettings(){ return SETTINGS_SECTIONS.some(s=>can(s.permission)); }
 /* Comma-separated role keys matching a predicate, for /users?role= lookups. */
 function roleKeys(pred){ return ROLE_LIST.filter(pred).map(r=>r.key).join(','); }
 /* Designations the signed-in user may hand out — mirrors the server's rule. */
@@ -566,19 +649,20 @@ async function bootApp(){
   rb.textContent = ri.label; rb.style.background = ri.color+'22'; rb.style.color = ri.color;
   rb.title = ri.group || '';
 
-  document.getElementById('teamTabBtn').style.display = caps().leadsTeam ? '' : 'none';
-  document.getElementById('usersTabBtn').style.display = caps().manageUsers ? '' : 'none';
-  document.getElementById('settingsTabBtn').style.display = canOpenSettings() ? '' : 'none';
-  document.getElementById('newProjectBtn').style.display = caps().createProject ? '' : 'none';
-  document.getElementById('bulkImportBtn').style.display = caps().createAsset ? '' : 'none';
-  document.getElementById('downloadSampleBtn').style.display = caps().createAsset ? '' : 'none';
+  /* Every tab and toolbar button, from the one table. The asset buttons are
+     turned on again by render(), which knows whether there is a board and a
+     project to add to. */
+  ['teamTabBtn','usersTabBtn','settingsTabBtn','newProjectBtn'].forEach(id=>applyGate(id));
+  ['newAssetBtn','bulkImportBtn','downloadSampleBtn'].forEach(id=>applyGate(id, false));
 
   const { projects } = await api('/projects');
   state.projects = projects;
   const projSel = document.getElementById('projectSelect');
   projSel.innerHTML = projects.map(p=>`<option value="${p.id}">${escapeHTML(p.name)}</option>`).join('') || '<option value="">No projects</option>';
   state.currentProjectId = projects[0] ? projects[0].id : null;
-  projSel.onchange = ()=>{ state.currentProjectId = projSel.value; render(); };
+  /* Re-asked on every switch: reach depends on which project is selected. */
+  projSel.onchange = ()=>{ state.currentProjectId = projSel.value; applyGate('editProjectBtn'); render(); };
+  applyGate('editProjectBtn');
 
   document.getElementById('filterType').innerHTML = '<option value="">All types</option>' + TYPES.map(t=>`<option value="${t.id}">${escapeHTML(t.label)}</option>`).join('');
   document.getElementById('f_priority').innerHTML = priorityOptions(PRIORITIES.some(p=>p.id==='med') ? 'med' : (PRIORITIES[Math.floor(PRIORITIES.length/2)]||{}).id);
@@ -709,7 +793,7 @@ function renderList(){
 }
 async function renderTeam(){
   const el = document.getElementById('teamView');
-  if(!caps().leadsTeam){ el.innerHTML=''; return; }
+  if(!can('user.view_team')){ el.innerHTML=''; return; }
   const { members } = await api('/team');
   if(!members.length){ el.innerHTML = `<div class="empty">Nobody reports to you yet.</div>`; return; }
   el.innerHTML = `<table><thead><tr><th>Team Member</th><th>Role</th><th>Assets Assigned</th><th>Tasks Done</th><th>Progress</th></tr></thead><tbody>
@@ -722,20 +806,24 @@ async function renderTeam(){
 async function renderUsers(){
   const el = document.getElementById('usersView');
   const u = state.currentUser;
-  if(!caps().manageUsers){ el.innerHTML=''; return; }
+  if(!canAnyIn('user')){ el.innerHTML=''; return; }
   const { users, total } = await api(`/users?search=${encodeURIComponent(state.search)}&limit=${state.usersRenderLimit}&offset=0`);
   el.innerHTML = `
     <div style="display:flex;gap:10px;margin-bottom:12px;align-items:center;">
       <input type="text" id="userSearch" placeholder="Search users…" style="background:var(--surface-2);border:1px solid var(--border);color:var(--ink);padding:8px 12px;border-radius:8px;font-size:13px;min-width:220px;">
-      <button class="btn btn-brand" id="addUserBtn">+ Add User</button>
-      <button class="btn btn-ghost" id="bulkUserBtn">Bulk Upload Users</button>
-      <button class="btn btn-ghost" id="downloadUserSampleBtn" title="Download a CSV with the user columns and example rows">Sample format</button>
+      ${can('user.add') ? `<button class="btn btn-brand" id="addUserBtn">+ Add User</button>` : ''}
+      ${can('user.bulk_upload') ? `<button class="btn btn-ghost" id="bulkUserBtn">Bulk Upload Users</button>
+      <button class="btn btn-ghost" id="downloadUserSampleBtn" title="Download a CSV with the user columns and example rows">Sample format</button>` : ''}
     </div>
     <table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Project</th><th>Reporting To</th><th></th></tr></thead><tbody>
       ${users.map(x=>{
         const r=roleInfo(x.role);
         const targetRunsStudio = r.manageUsers && r.projectScope==='all';
-        const canDelete = x.id!==u.id && (caps().projectScope==='all' ? !targetRunsStudio : x.manager_id===u.id);
+        /* Two different questions, and both have to be yes: the permission says
+           whether this role may remove anybody at all, and projectScope — a
+           tier value, not a switch — says how far that reaches. */
+        const canDelete = can('user.delete') && x.id!==u.id &&
+          (caps().projectScope==='all' ? !targetRunsStudio : x.manager_id===u.id);
         /* Top of the hierarchy is stated, not left blank: an empty cell reads as
            "nobody has filled this in yet", which invites someone to fill it in. */
         const reporting = x.topOfHierarchy
@@ -747,7 +835,7 @@ async function renderUsers(){
           <td>${x.projectName ? escapeHTML(x.projectName) : '<span class="ud-none">None</span>'}</td>
           <td>${reporting}</td>
           <td style="text-align:right;white-space:nowrap;">
-            <button class="btn btn-ghost btn-sm editUserBtn" data-id="${x.id}">Edit</button>
+            ${can('user.edit') ? `<button class="btn btn-ghost btn-sm editUserBtn" data-id="${x.id}">Edit</button>` : ''}
             ${canDelete ? `<button class="btn btn-ghost btn-sm delUserBtn" data-id="${x.id}" data-name="${escapeHTML(x.name)}">Remove</button>` : ''}</td></tr>`;
       }).join('')}
     </tbody></table>
@@ -756,9 +844,11 @@ async function renderUsers(){
   `;
   document.getElementById('userSearch').value = state.search;
   document.getElementById('userSearch').addEventListener('input', e=>{ state.search=e.target.value; renderUsers(); });
-  document.getElementById('addUserBtn').addEventListener('click', openUserModal);
-  document.getElementById('bulkUserBtn').addEventListener('click', ()=>document.getElementById('bulkUserInput').click());
-  document.getElementById('downloadUserSampleBtn').addEventListener('click', downloadUserSample);
+  /* Wired only where rendered — the buttons above are gated one by one. */
+  const wire = (id, fn)=>{ const b = document.getElementById(id); if(b) b.addEventListener('click', fn); };
+  wire('addUserBtn', openUserModal);
+  wire('bulkUserBtn', ()=>document.getElementById('bulkUserInput').click());
+  wire('downloadUserSampleBtn', downloadUserSample);
   const lm = document.getElementById('loadMoreUsers');
   if(lm) lm.addEventListener('click', ()=>{ state.usersRenderLimit+=60; renderUsers(); });
   el.querySelectorAll('.editUserBtn').forEach(btn=>btn.addEventListener('click', ()=>openEditUser(btn.dataset.id)));
@@ -774,10 +864,11 @@ async function renderUsers(){
 async function render(){
   if(state.view==='board' || state.view==='list'){ await loadAssets(); }
   renderStats();
-  const showCreateControls = (state.view==='board'||state.view==='list') && caps().createAsset && state.currentProjectId;
-  document.getElementById('newAssetBtn').style.display = showCreateControls ? '' : 'none';
-  document.getElementById('bulkImportBtn').style.display = showCreateControls ? '' : 'none';
-  document.getElementById('downloadSampleBtn').style.display = showCreateControls ? '' : 'none';
+  /* The permission half comes from UI_GATES; this is the other half — these
+     only make sense on a board, with a project to add to. Adding an asset and
+     importing a file are separate permissions, so they are separate gates. */
+  const onABoard = (state.view==='board'||state.view==='list') && Boolean(state.currentProjectId);
+  ['newAssetBtn','bulkImportBtn','downloadSampleBtn'].forEach(id=>applyGate(id, onABoard));
   if(state.view==='board') renderBoard();
   else if(state.view==='list') renderList();
   else if(state.view==='team') await renderTeam();
@@ -793,7 +884,10 @@ async function openDrawer(id){
   const a = state.assets.find(x=>x.id===id);
   if(!a) return;
   const u = state.currentUser;
-  const editable = caps().editAsset && (!caps().assignable || a.assignee_id===u.id);
+  /* The permission to edit, and — for a designation that does the work rather
+     than plans it — only their own asset. `assignable` is a tier value: it says
+     what kind of designation this is, not what it may do, so it stays on caps(). */
+  const editable = can('asset.edit') && (!caps().assignable || a.assignee_id===u.id);
   const t = typeOf(a.type);
   const drawer = document.getElementById('drawer');
 
@@ -804,12 +898,16 @@ async function openDrawer(id){
   const waitingOnRelay = a.status==='cd_changes_requested' && a.routed_to_id!==u.id;
   const canSubmit = isMyAssetAsArtist && routedToMe && !waitingOnRelay &&
     ['not_started','in_progress','tl_changes_requested','cd_changes_requested'].includes(a.status);
-  const canTlReview = caps().leadsTeam && a.status==='pending_tl_review';
-  const canCdReview = caps().reviewStage==='cd' && a.status==='pending_cd_review';
+  const canTlReview = can('review.tl') && a.status==='pending_tl_review';
+  const canCdReview = can('review.cd') && a.status==='pending_cd_review';
+  /* Signing off for the client is the half of the CD gate that cannot be taken
+     back, and is its own permission. A role can review without holding it — it
+     then gets Request Changes and no Approve. */
+  const canApproveForClient = canCdReview && can('review.approve_client');
   /* The relay: the lead passes the CD's notes on, and only before it has been
      passed on. */
-  const canRelay = caps().leadsTeam && a.status==='cd_changes_requested' && !a.routed_to_id && a.assignee_id;
-  const canDeliver = caps().deliver && a.status==='approved_for_client';
+  const canRelay = can('review.tl') && a.status==='cd_changes_requested' && !a.routed_to_id && a.assignee_id;
+  const canDeliver = can('review.deliver') && a.status==='approved_for_client';
   const latestFeedback = a.feedback && a.feedback[0];
 
   drawer.innerHTML = `
@@ -855,8 +953,9 @@ async function openDrawer(id){
       <textarea id="reviewNote" rows="2" placeholder="Feedback for the artist (required if requesting changes)…"></textarea>
       <div style="display:flex;gap:8px;margin-top:8px;">
         <button class="btn btn-ghost" id="reqChangesBtn" style="flex:1;color:#e8402c;">Request changes</button>
-        <button class="btn btn-brand" id="approveBtn" style="flex:1;">Approve for client</button>
+        ${canApproveForClient ? `<button class="btn btn-brand" id="approveBtn" style="flex:1;">Approve for client</button>` : ''}
       </div>
+      ${canApproveForClient ? '' : `<div style="font-size:11px;color:var(--ink-faint);margin-top:6px;">Your role reviews at this stage but does not sign work off for the client.</div>`}
     ` : ''}
 
     ${canRelay ? `
@@ -903,7 +1002,7 @@ async function openDrawer(id){
     <div class="field-lbl">Notes</div>
     <div id="d_notes">${a.notes.map(n=>`<div class="note"><span class="who">${escapeHTML(n.author_name||'Someone')}</span> <span class="when">${new Date(n.created_at).toLocaleDateString()}</span><p>${escapeHTML(n.text)}</p></div>`).join('') || '<div style="font-size:12px;color:var(--ink-faint);">No notes yet.</div>'}</div>
     <div style="display:flex;gap:6px;margin-top:8px;"><input type="text" id="newNoteInput" placeholder="Leave a note…" style="flex:1;"><button class="btn btn-ghost" id="addNoteBtn" style="padding:8px 12px;">Post</button></div>
-    ${caps().deleteAsset ? `<div class="modal-actions"><button class="btn btn-ghost" id="deleteAssetBtn" style="color:var(--brand);">Delete asset</button></div>` : ''}
+    ${can('asset.delete') ? `<div class="modal-actions"><button class="btn btn-ghost" id="deleteAssetBtn" style="color:var(--brand);">Delete asset</button></div>` : ''}
   `;
   document.getElementById('overlay').classList.add('show'); drawer.classList.add('show');
   document.getElementById('closeDrawer').onclick = closeDrawer;
@@ -979,7 +1078,9 @@ async function openDrawer(id){
         closeDrawer(); render();
       }catch(err){ showToast(err.message); }
     };
-    document.getElementById('approveBtn').onclick = ()=>doReview('approved');
+    /* Approve is absent at the CD stage for a role without the sign-off. */
+    const approveBtn = document.getElementById('approveBtn');
+    if(approveBtn) approveBtn.onclick = ()=>doReview('approved');
     document.getElementById('reqChangesBtn').onclick = ()=>doReview('changes_requested');
   }
   if(canDeliver){
@@ -1243,6 +1344,77 @@ document.getElementById('saveProjectModal').addEventListener('click', async ()=>
   }catch(err){ showToast(err.message); }
 });
 
+/* ---------- edit project modal ----------
+
+   The same three fields New Project has, because it is the same record. It
+   writes the project row and who is attached to it, and nothing else: assets
+   keep their project, their assignees and their status, and the artists in
+   project_members are left alone — taking a lead off a project is not a
+   statement about the people working on it. */
+const editProjectModalWrap = document.getElementById('editProjectModalWrap');
+let editingProject = null;
+
+function epError(message){ document.getElementById('ep_err').textContent = message || ''; }
+
+/* One checklist, ticked from what the project already has. */
+function epChecklist(elId, people, chosen){
+  const el = document.getElementById(elId);
+  el.innerHTML = people.length
+    ? people.map(u=>`<label><input type="checkbox" value="${u.id}"${chosen.includes(u.id)?' checked':''}>${escapeHTML(u.name)}</label>`).join('')
+    : '<div style="font-size:12px;color:var(--ink-faint);">Nobody eligible is visible to you.</div>';
+}
+
+async function openEditProject(){
+  if(!state.currentProjectId) return;
+  epError('');
+  let project, leads, coords;
+  try{
+    [project, { users: leads }, { users: coords }] = await Promise.all([
+      api('/projects/' + state.currentProjectId).then(r=>r.project),
+      api('/users?role='+encodeURIComponent(roleKeys(r=>r.leadsTeam))+'&limit=500'),
+      api('/users?role='+encodeURIComponent(roleKeys(r=>r.projectScope==='assigned'))+'&limit=500'),
+    ]);
+  }catch(err){ showToast(err.message); return; }
+
+  editingProject = project;
+  document.getElementById('ep_who').innerHTML =
+    `<span class="mono">${escapeHTML(project.code||'')}</span> · created ${new Date(project.created_at).toLocaleDateString()}`;
+  document.getElementById('ep_name').value = project.name;
+  epChecklist('ep_leads', leads, project.teamLeadIds || []);
+  epChecklist('ep_coords', coords, project.coordinatorIds || []);
+  editProjectModalWrap.classList.add('show');
+}
+
+document.getElementById('editProjectBtn').addEventListener('click', openEditProject);
+document.getElementById('cancelEditProject').addEventListener('click', ()=>editProjectModalWrap.classList.remove('show'));
+editProjectModalWrap.addEventListener('click', e=>{ if(e.target===editProjectModalWrap) editProjectModalWrap.classList.remove('show'); });
+
+document.getElementById('saveEditProject').addEventListener('click', async ()=>{
+  if(!editingProject) return;
+  /* The same rule Add Project applies, checked here so the message lands on the
+     form rather than as a toast over a closed modal. The API checks it too. */
+  const name = document.getElementById('ep_name').value.trim();
+  if(!name){ epError('Name the project first.'); return; }
+
+  const btn = document.getElementById('saveEditProject');
+  btn.disabled = true;
+  try{
+    await api('/projects/' + editingProject.id, { method:'PATCH', body:{
+      name,
+      teamLeadIds: [...document.querySelectorAll('#ep_leads input:checked')].map(i=>i.value),
+      coordinatorIds: [...document.querySelectorAll('#ep_coords input:checked')].map(i=>i.value),
+    }});
+    editProjectModalWrap.classList.remove('show');
+    const keep = editingProject.id;
+    await bootApp();
+    /* Stay on the project that was just edited rather than jumping to the first. */
+    const sel = document.getElementById('projectSelect');
+    if([...sel.options].some(o=>o.value===keep)){ sel.value = keep; state.currentProjectId = keep; await render(); }
+    showToast(`${name} updated.`);
+  }catch(err){ epError(err.message); }
+  finally{ btn.disabled = false; }
+});
+
 /* ---------- new user modal ---------- */
 const userModalWrap = document.getElementById('userModalWrap');
 function openUserModal(){
@@ -1487,7 +1659,7 @@ async function renderSettings(){
      with that one section on it, and nothing else. */
   if(!canOpenSettings()){ el.innerHTML = ''; return; }
 
-  const lists = REF_SECTIONS.filter(sec=>holds(sec.permission));
+  const lists = REF_SECTIONS.filter(sec=>can(sec.permission));
   /* Deactivated values are included so they can be seen and reactivated. The
      API treats that as a management read and refuses it for a list this role
      does not manage, so only the ones being shown are asked for. */
@@ -1502,15 +1674,15 @@ async function renderSettings(){
       A value in use can't be deleted; deactivate it instead and it disappears from the dropdowns.
     </div>` : ''}
     ${lists.map(sec=>renderRefSection(sec)).join('')}
-    ${holds('settings.ip_allowlist') ? '<div id="ipAllowlistSection"></div>' : ''}
-    ${holds('settings.permissions') ? '<div id="rolePermissionsSection"></div>' : ''}
+    ${can('settings.ip_allowlist') ? '<div id="ipAllowlistSection"></div>' : ''}
+    ${can('settings.permissions') ? '<div id="rolePermissionsSection"></div>' : ''}
   `;
   wireSettings();
-  if(holds('settings.permissions')) await renderRolePermissions();
+  if(can('settings.permissions')) await renderRolePermissions();
   /* Managing who may reach the app stays with whoever has been given that one
      permission — it is not implied by holding the rest of this screen. The API
      refuses it regardless; hiding it keeps the screen honest about the offer. */
-  if(holds('settings.ip_allowlist')) await renderIpAllowlist();
+  if(can('settings.ip_allowlist')) await renderIpAllowlist();
 }
 
 function renderRefSection(sec){

@@ -1,5 +1,5 @@
 const { asyncRouter } = require('../async-router');
-const { authenticate, requireCapability, can } = require('../middleware/auth');
+const { authenticate, can } = require('../middleware/auth');
 const referenceData = require('../reference-data');
 const { describeTiers } = require('../role-tiers');
 const { groupOrder, catalogue } = require('../roles');

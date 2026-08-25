@@ -3,14 +3,14 @@ const { asyncRouter } = require('../async-router');
 // See src/async-router.js: keeps a failed query from killing the process.
 const router = asyncRouter();
 const db = require('../db');
-const { authenticate, requireCapability } = require('../middleware/auth');
+const { authenticate, requirePermission } = require('../middleware/auth');
 
 router.use(authenticate);
 
 // GET /api/team — the reports of whoever is asking, with progress stats.
 // Available to any designation that runs a team: Team Lead, Senior Team Lead,
 // Associate Team Lead, Art Supervisor, Associate Animation Supervisor.
-router.get('/', requireCapability('leadsTeam'), async (req, res) => {
+router.get('/', requirePermission('user.view_team'), async (req, res) => {
   const { rows: members } = await db.query(
     'SELECT id, name, email, role FROM users WHERE team_lead_id = $1 ORDER BY name',
     [req.user.id]

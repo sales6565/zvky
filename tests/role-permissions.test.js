@@ -4,6 +4,7 @@ const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON } = 
 const catalog = require('../src/permission-catalog');
 const rolePermissions = require('../src/role-permissions');
 const { capabilitiesForTier } = require('../src/role-tiers');
+const { roleDef } = require('../src/roles');
 const defaults = require('../src/reference-defaults');
 
 const cfg = config('roleperms');
@@ -64,18 +65,61 @@ test('the Settings screen asks permissions, not capabilities', () => {
   const path = require('node:path');
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
 
-  for (const cap of ['manageSettings', 'manageAccess', 'managePermissions']) {
+  // Every capability that has a permission key. Reading one of these to decide
+  // what to show is the bug: the tier does not move when a Super Admin switches
+  // the permission on, so the API allows the action and the app never offers it.
+  for (const cap of ['manageSettings', 'manageAccess', 'managePermissions', 'manageUsers',
+    'createProject', 'createAsset', 'editAsset', 'deleteAsset', 'deliver',
+    'leadsTeam', 'reviewStage']) {
     assert.ok(!html.includes(`caps().${cap}`),
-      `Settings visibility still reads the tier capability "${cap}". ` +
-      'A permission switched on for a role does not move the tier, so the ' +
-      'section stays hidden. Ask holds("settings.…") instead.');
+      `The UI still reads the tier capability "${cap}" to decide what to show. ` +
+      'Ask can("…") with the permission the API checks instead.');
   }
 
-  // And each section is gated on its own key, so one does not reveal another.
+  // A gated button must not appear where the API would refuse it: the reach
+  // rule belongs in the gate alongside the permission.
+  assert.ok(html.includes('mayEditCurrentProject'),
+    'the Edit Project button must weigh reach as well as the permission');
+
+  // The two that legitimately stay on the tier, asserted so that staying there
+  // is a decision rather than an oversight. Neither is a switch in Settings:
+  // projectScope is how much of the studio somebody sees, and assignable is
+  // whether the designation is one that does the work.
+  for (const cap of ['projectScope', 'assignable']) {
+    assert.ok(html.includes(`caps().${cap}`), `${cap} should still come from the tier`);
+  }
+
+  // And each gated thing names the key the API checks, so one does not reveal
+  // another.
   for (const key of ['settings.asset_types', 'settings.priorities', 'settings.roles',
-    'settings.ip_allowlist', 'settings.permissions']) {
+    'settings.ip_allowlist', 'settings.permissions', 'user.view_team', 'user.add',
+    'user.edit', 'user.delete', 'user.bulk_upload', 'project.add', 'project.edit',
+    'asset.add', 'asset.edit', 'asset.delete', 'asset.bulk_upload',
+    'review.tl', 'review.cd', 'review.approve_client', 'review.deliver']) {
     assert.ok(html.includes(`'${key}'`), `no gate mentions ${key}`);
   }
+});
+
+test('every permission the catalogue lists is either checked or declared pending', () => {
+  // The gap this closes: review.cd and review.approve_client were in the
+  // catalogue, switchable in Settings, and read by nothing — the workflow asked
+  // the tier instead. A key nobody checks is a switch that lies.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const root = path.join(__dirname, '..');
+  const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8');
+  const sources = ['src', 'public'].flatMap(function walk(dir) {
+    const full = path.join(root, dir);
+    return fs.readdirSync(full, { withFileTypes: true }).flatMap((e) =>
+      e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)]);
+  }).filter((f) => /\.(js|html)$/.test(f) && !f.includes('permission-catalog'));
+  const haystack = sources.map(read).join('\n');
+
+  const unchecked = catalog.ALL
+    .filter((p) => !p.pending)
+    .filter((p) => !haystack.includes(`'${p.key}'`) && !haystack.includes(`"${p.key}"`));
+  assert.deepStrictEqual(unchecked.map((p) => p.key), [],
+    'these permissions can be switched on and off and nothing reads them');
 });
 
 // --- against a live server -----------------------------------------------------
@@ -115,7 +159,8 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     token.root = await login('root@zvky.test');
     projectId = (await call('/projects', { token: token.root, method: 'POST', body: { name: 'Skyfall' } })).body.project.id;
 
-    for (const [who, role] of [['pat', 'producer'], ['quinn', 'producer'], ['lee', 'team_lead'], ['ana', 'game_artist']]) {
+    for (const [who, role] of [['pat', 'producer'], ['quinn', 'producer'], ['lee', 'team_lead'],
+      ['dana', 'art_director'], ['ana', 'game_artist']]) {
       const res = await call('/users', {
         token: token.root, method: 'POST',
         body: { name: who, email: `${who}@zvky.test`, role, password: PASSWORD, projectId },
@@ -356,6 +401,177 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     ]) {
       assert.strictEqual((await as('ana', path)).status, 403, path);
     }
+  });
+
+  // --- the gates that were reading the tier ---------------------------------
+  //
+  // Three times now the same shape of bug: a screen asked the role's TIER about
+  // something the API decides from the role's PERMISSIONS. The tier does not
+  // move when a permission is switched on, so the API allowed the action and
+  // the app never offered it. These pin the API half; the static check above
+  // pins the screen half.
+
+  await t.test('the team roster follows its permission, not the tier', async () => {
+    // It used to be requireCapability('leadsTeam'), which no Super Admin could
+    // switch on or off for anybody.
+    assert.strictEqual((await as('lee', '/team')).status, 200, 'a lead sees their roster');
+    assert.strictEqual((await as('ana', '/team')).status, 403);
+    assert.strictEqual((await as('root', '/team')).status, 200, 'and so does the studio-wide role');
+
+    await setRole('team_lead', (await enabledFor('team_lead')).filter((k) => k !== 'user.view_team'));
+    assert.strictEqual((await as('lee', '/team')).status, 403, 'switched off, the roster closes');
+    assert.strictEqual(roleDef('team_lead').leadsTeam, true,
+      'and the tier is untouched — which is exactly why reading it was wrong');
+
+    await setRole('producer', [...(await enabledFor('producer')), 'user.view_team']);
+    assert.strictEqual((await as('pat', '/team')).status, 200, 'switched on, it opens');
+
+    await as('root', '/permissions/roles/team_lead/reset', { method: 'POST', body: {} });
+    await as('root', '/permissions/roles/producer/reset', { method: 'POST', body: {} });
+  });
+
+  await t.test('the Creative Director gate follows review.cd, not reviewStage', async () => {
+    // The workflow read roleDef(user).reviewStage, so review.cd was a switch
+    // that did nothing at all.
+    const asset = (await as('root', `/assets/project/${projectId}`, {
+      method: 'POST', body: { name: 'Gate check', type: 'prop', assigneeId: people.ana },
+    })).body.asset;
+    const push = async (who, path, body) => (await as(who, `/assets/${asset.id}${path}`, { method: 'POST', body })).status;
+
+    assert.strictEqual(await push('ana', '/submit', { link: 'https://example.test/v1' }), 201);
+    assert.strictEqual(await push('lee', '/review', { decision: 'approved' }), 200, 'through the TL gate');
+
+    // The Art Director holds review.cd from their tier and can act.
+    await setRole('art_director', (await enabledFor('art_director')).filter((k) => k !== 'review.cd'));
+    const refused = await as('dana', `/assets/${asset.id}/review`, {
+      method: 'POST', body: { decision: 'changes_requested', text: 'no' },
+    });
+    assert.strictEqual(refused.status, 403, 'switching review.cd off closes the gate');
+    assert.strictEqual(roleDef('art_director').reviewStage, 'cd', 'while the tier still says cd');
+
+    await as('root', '/permissions/roles/art_director/reset', { method: 'POST', body: {} });
+    assert.strictEqual(await push('dana', '/review', { decision: 'approved' }), 200, 'and back on, it opens');
+  });
+
+  await t.test('approving for the client is separable from reviewing', async () => {
+    const asset = (await as('root', `/assets/project/${projectId}`, {
+      method: 'POST', body: { name: 'Sign-off check', type: 'prop', assigneeId: people.ana },
+    })).body.asset;
+    const push = async (who, path, body) => (await as(who, `/assets/${asset.id}${path}`, { method: 'POST', body })).status;
+    assert.strictEqual(await push('ana', '/submit', { link: 'https://example.test/v1' }), 201);
+    assert.strictEqual(await push('lee', '/review', { decision: 'approved' }), 200);
+
+    // review.cd on, review.approve_client off: they may send it back, not sign it off.
+    await setRole('art_director', (await enabledFor('art_director')).filter((k) => k !== 'review.approve_client'));
+    assert.strictEqual(await push('dana', '/review', { decision: 'approved' }), 403,
+      'the half that cannot be taken back needs its own permission');
+    assert.strictEqual(await push('dana', '/review', { decision: 'changes_requested', text: 'Softer light' }), 200,
+      'the reversible half still works');
+
+    await as('root', '/permissions/roles/art_director/reset', { method: 'POST', body: {} });
+  });
+
+  // --- editing a project -----------------------------------------------------
+
+  await t.test('editing a project needs project.edit', async () => {
+    const made = await as('root', '/projects', { method: 'POST', body: { name: 'Tin Rain' } });
+    const id = made.body.project.id;
+
+    assert.strictEqual((await as('ana', `/projects/${id}`, {
+      method: 'PATCH', body: { name: 'Nope' },
+    })).status, 403, 'a Game Artist cannot');
+
+    await setRole('producer', [...(await enabledFor('producer')), 'project.edit']);
+    // A Producer holds the permission now, but the project is not theirs and
+    // their scope does not reach the whole studio.
+    assert.strictEqual((await as('pat', `/projects/${id}`, {
+      method: 'PATCH', body: { name: 'Nope' },
+    })).status, 403, 'the permission says whether, the scope says which');
+    await as('root', '/permissions/roles/producer/reset', { method: 'POST', body: {} });
+
+    await as('root', `/projects/${id}`, { method: 'DELETE' });
+  });
+
+  await t.test('a project you created is one you can see', async () => {
+    // Granting project.add to a scoped role used to produce a project its
+    // creator could not see: the scoped queries match coordinators, leads and
+    // people with work in it, and creating one makes you none of those.
+    await setRole('producer', [...(await enabledFor('producer')), 'project.add', 'project.edit']);
+    const made = await as('pat', '/projects', { method: 'POST', body: { name: 'Pat\'s Own' } });
+    assert.strictEqual(made.status, 201, JSON.stringify(made.body));
+    const id = made.body.project.id;
+
+    const mine = (await as('pat', '/projects')).body.projects;
+    assert.ok(mine.some((p) => p.id === id), 'the creator can see what they created');
+
+    // And can therefore act on it, which is the point.
+    const renamed = await as('pat', `/projects/${id}`, { method: 'PATCH', body: { name: 'Pat\'s Own II' } });
+    assert.strictEqual(renamed.status, 200, JSON.stringify(renamed.body));
+
+    // Without widening anything else: a project of Root's that pat is not
+    // attached to stays invisible.
+    const notMine = (await as('root', '/projects', {
+      method: 'POST', body: { name: 'Root Only' },
+    })).body.project.id;
+    const seen = (await as('pat', '/projects')).body.projects;
+    assert.ok(!seen.some((p) => p.id === notMine), 'and still cannot see a project they are not on');
+
+    await as('root', `/projects/${notMine}`, { method: 'DELETE' });
+    await as('root', `/projects/${id}`, { method: 'DELETE' });
+    await as('root', '/permissions/roles/producer/reset', { method: 'POST', body: {} });
+  });
+
+  await t.test('editing a project rewrites only the project', async () => {
+    const id = (await as('root', '/projects', {
+      method: 'POST', body: { name: 'Tin Rain', teamLeadIds: [people.lee] },
+    })).body.project.id;
+    const asset = (await as('root', `/assets/project/${id}`, {
+      method: 'POST', body: { name: 'Keeper', type: 'prop', assigneeId: people.ana },
+    })).body.asset;
+
+    const saved = await as('root', `/projects/${id}`, {
+      method: 'PATCH', body: { name: 'Tin Rain Redux', teamLeadIds: [], coordinatorIds: [people.pat] },
+    });
+    assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
+    assert.strictEqual(saved.body.project.name, 'Tin Rain Redux');
+    assert.strictEqual(saved.body.project.code, 'TRR', 'the derived code follows the name');
+    assert.deepStrictEqual(saved.body.project.teamLeadIds, [], 'the lead was unticked');
+    assert.deepStrictEqual(saved.body.project.coordinatorIds, [people.pat]);
+
+    // The asset is exactly where it was.
+    const after = (await as('root', `/assets/project/${id}`)).body.assets.find((a) => a.id === asset.id);
+    assert.ok(after, 'the asset is still in the project');
+    assert.strictEqual(after.assignee_id, people.ana, 'and still assigned to the same person');
+    assert.strictEqual(after.status, asset.status, 'and still at the same stage');
+
+    // And the account itself is untouched by being unticked as a lead.
+    assert.strictEqual((await as('root', `/users/${people.lee}`)).body.user.role, 'team_lead');
+
+    await as('root', `/projects/${id}`, { method: 'DELETE' });
+  });
+
+  await t.test('an edit is validated the way a create is', async () => {
+    const id = (await as('root', '/projects', { method: 'POST', body: { name: 'Tin Rain' } })).body.project.id;
+    for (const body of [{ name: '' }, { name: '   ' }, { name: 'x'.repeat(256) }]) {
+      const res = await as('root', `/projects/${id}`, { method: 'PATCH', body });
+      assert.strictEqual(res.status, 400, JSON.stringify(body));
+      assert.strictEqual(res.body.field, 'name');
+    }
+    // Create refuses the same things, with the same message.
+    const created = await as('root', '/projects', { method: 'POST', body: { name: '  ' } });
+    assert.strictEqual(created.status, 400);
+    assert.strictEqual(created.body.error, 'Project name is required');
+
+    assert.strictEqual((await as('root', `/projects/${id}`, {
+      method: 'PATCH', body: { teamLeadIds: 'nope' },
+    })).status, 400, 'a membership list has to be a list');
+
+    // Sending nothing changes nothing rather than blanking the record.
+    const untouched = await as('root', `/projects/${id}`, { method: 'PATCH', body: {} });
+    assert.strictEqual(untouched.status, 200);
+    assert.strictEqual(untouched.body.project.name, 'Tin Rain');
+
+    await as('root', `/projects/${id}`, { method: 'DELETE' });
   });
 
   await t.test('a role added in Settings arrives with its tier\'s permissions', async () => {
