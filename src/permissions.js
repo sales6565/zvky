@@ -132,27 +132,28 @@ function holds(user, key) {
 //
 // "Asset Edit" granted to a role means "edit the assets you added", not "edit
 // every asset in the studio" — so holding the permission is necessary and not
-// sufficient. Three ways to be the right person, and only three:
+// sufficient. Two ways to be the right person, and only two:
 //
 //   1. A full-access role. Studio-wide reach is what that tier is, and somebody
 //      has to be able to fix an asset whose creator has left. This is the one
 //      exception to the ownership rule.
 //   2. You added it. The rule proper.
-//   3. It is assigned to you. Not an ownership claim — it is the artist's own
-//      work sitting on their own desk, and it is how a contributor ticks a task
-//      or updates a description on the thing they are being asked to make.
-//      Contributors never add assets, so without this clause the ownership rule
-//      would take the checklist away from every artist in the studio. It grants
-//      nothing wider: an assignee reaches exactly the one asset they hold.
+//
+// Being the assignee is deliberately NOT a third way. It was, briefly, on the
+// reasoning that a contributor needs to tick a checklist item on their own
+// work — and that consequence is real: contributors never add assets, so under
+// this rule the checklist and the description are read-only to the artist
+// carrying the asset. That was raised and decided the other way. Submitting for
+// review is a separate permission and is unaffected, so the pipeline still
+// runs; what an artist can no longer do is change the record of the work.
 //
 // created_by is NULL for assets that predate the column and could not be
 // attributed (see ensureAssetOwnership in src/migrate.js). Those are unowned:
-// clause 2 can never match, so they fall to a full-access role or the assignee.
+// clause 2 can never match, so only a full-access role can edit them.
 function ownsAsset(user, asset) {
   if (!user || !asset) return false;
   if (hasFullAccess(user)) return true;
-  if (asset.created_by && asset.created_by === user.id) return true;
-  return Boolean(asset.assignee_id) && asset.assignee_id === user.id;
+  return Boolean(asset.created_by) && asset.created_by === user.id;
 }
 
 // Can this user edit status/priority/description/tasks on this asset?
@@ -166,13 +167,9 @@ async function canEditAsset(user, asset) {
 
 // Can this user change who an asset is assigned to?
 //
-// Its own permission, and the same ownership question — with one clause of
-// ownsAsset removed. Being the assignee is not a licence to hand your work to
-// somebody else; that is the creator's call, or a full-access role's.
+// Its own permission, over the same ownership question.
 function canAssignAsset(user, asset) {
-  if (!holds(user, 'asset.assign')) return false;
-  if (hasFullAccess(user)) return true;
-  return Boolean(asset && asset.created_by) && asset.created_by === user.id;
+  return holds(user, 'asset.assign') && ownsAsset(user, asset);
 }
 
 // The two states where an asset is waiting for rework. The creator may hand

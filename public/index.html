@@ -504,24 +504,17 @@ const UI_GATES = {
 };
 
 /* Whose asset is this? Mirrors ownsAsset() in src/permissions.js, clause for
-   clause: a full-access role, the person who added it, or — for an artist doing
-   the work — the person it is assigned to. "Asset Edit" is not a licence to
-   edit the studio's assets, so holding the permission is necessary and not
-   enough. created_by is null on assets that predate the column and could not be
-   attributed; those fall to the first and third clauses only. */
+   clause: a full-access role, or the person who added it. "Asset Edit" is not a
+   licence to edit the studio's assets, so holding the permission is necessary
+   and not enough — and being the person it is assigned to is not ownership.
+   created_by is null on assets that predate the column and could not be
+   attributed; only a full-access role can edit those. */
 function ownsAsset(a){
-  const me = (state.currentUser || {}).id;
-  if(fullAccess()) return true;
-  if(a.created_by && a.created_by === me) return true;
-  return Boolean(a.assignee_id) && a.assignee_id === me;
-}
-/* Changing who an asset is assigned to. The same question minus the assignee
-   clause: handing your own work to somebody else is the creator's call. */
-function mayAssignAsset(a){
-  if(!can('asset.assign')) return false;
   if(fullAccess()) return true;
   return Boolean(a.created_by) && a.created_by === (state.currentUser || {}).id;
 }
+/* Changing who an asset is assigned to — its own permission, same question. */
+function mayAssignAsset(a){ return can('asset.assign') && ownsAsset(a); }
 /* The two states the pipeline parks rework in. */
 const REWORK_STATUSES = ['tl_changes_requested','cd_changes_requested'];
 

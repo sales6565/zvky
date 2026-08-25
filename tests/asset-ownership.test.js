@@ -17,7 +17,7 @@ test('the two rework states are the ones the pipeline parks changes in', () => {
   }
 });
 
-test('ownership has exactly three ways to be yes', () => {
+test('ownership has exactly two ways to be yes', () => {
   const holder = (perms, role) => ({ id: 'u1', role, permissions: perms });
   const editor = holder(['asset.edit'], 'producer');
   const boss = holder(['asset.edit'], 'super_admin');
@@ -25,15 +25,18 @@ test('ownership has exactly three ways to be yes', () => {
   assert.ok(!ownsAsset(editor, { created_by: 'someone', assignee_id: 'other' }),
     'holding the permission is not enough on its own');
   assert.ok(ownsAsset(editor, { created_by: 'u1', assignee_id: 'other' }), 'you added it');
-  assert.ok(ownsAsset(editor, { created_by: 'someone', assignee_id: 'u1' }), 'it is on your desk');
   assert.ok(ownsAsset(boss, { created_by: 'someone', assignee_id: 'other' }), 'full access reaches anything');
 
-  // An unowned asset — created before the column existed and not attributable.
-  assert.ok(!ownsAsset(editor, { created_by: null, assignee_id: 'other' }));
-  assert.ok(ownsAsset(editor, { created_by: null, assignee_id: 'u1' }), 'unless it is assigned to you');
-  assert.ok(ownsAsset(boss, { created_by: null, assignee_id: null }), 'or you have full access');
+  // Being the one carrying the work is not ownership.
+  assert.ok(!ownsAsset(editor, { created_by: 'someone', assignee_id: 'u1' }),
+    'the asset on your desk is not thereby yours to edit');
 
-  // Assigning drops the assignee clause: your own work is not yours to hand on.
+  // An unowned asset — created before the column existed and not attributable.
+  assert.ok(!ownsAsset(editor, { created_by: null, assignee_id: 'u1' }),
+    'and an unowned one reaches nobody below full access');
+  assert.ok(ownsAsset(boss, { created_by: null, assignee_id: null }), 'except full access');
+
+  // Assigning asks the same question behind its own permission.
   const assigner = holder(['asset.assign'], 'producer');
   assert.ok(canAssignAsset(assigner, { created_by: 'u1' }));
   assert.ok(!canAssignAsset(assigner, { created_by: 'other', assignee_id: 'u1' }),
@@ -159,25 +162,34 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     })).status, 200);
   });
 
-  await t.test('the artist doing the work keeps their own asset', async () => {
-    // Contributors never add assets. Without the assignee clause the ownership
-    // rule would take the checklist away from every artist in the studio.
+  await t.test('the artist carrying the work cannot edit its record', async () => {
+    // The consequence of creator-only, stated rather than discovered.
+    // Contributors never add assets, so the description and the checklist are
+    // read-only to the person actually making the thing.
     const asset = await newAsset('pat', 'Ana\'s Work', people.ana);
     assert.strictEqual((await as('ana', `/assets/${asset.id}`, {
       method: 'PATCH', body: { description: 'work in progress' },
-    })).status, 200);
+    })).status, 403, 'the asset on your desk is not yours to edit');
     const seen = await seenBy('ana', asset.id);
+    assert.ok(seen, 'they can still see it');
     assert.strictEqual((await as('ana', `/assets/tasks/${seen.tasks[0].id}`, {
       method: 'PATCH', body: { done: true },
-    })).status, 200, 'and can still tick a task on it');
+    })).status, 403, 'nor is the checklist');
 
-    // But only the one on their desk.
-    assert.strictEqual((await as('bo', `/assets/${asset.id}`, {
-      method: 'PATCH', body: { description: 'not mine' },
-    })).status, 403);
+    // The pipeline is untouched: submitting is a separate permission, so the
+    // work still moves even though the record is not theirs to change.
+    assert.strictEqual((await as('ana', `/assets/${asset.id}/submit`, {
+      method: 'POST', body: { link: 'https://example.test/v1', description: 'First pass' },
+    })).status, 201, 'and they can still submit it for review');
+    assert.strictEqual(await statusOf(asset.id), 'pending_tl_review');
+
+    // The creator retains both.
+    assert.strictEqual((await as('pat', `/assets/${asset.id}`, {
+      method: 'PATCH', body: { description: 'the brief' },
+    })).status, 200);
   });
 
-  await t.test('an unowned asset falls to full access or the assignee', async () => {
+  await t.test('an unowned asset falls to full access alone', async () => {
     // What the backfill leaves behind for assets it could not attribute.
     const asset = await newAsset('pat', 'Legacy', people.ana);
     await sql(cfg, `UPDATE assets SET created_by = NULL WHERE id = '${asset.id}'`);
@@ -187,10 +199,10 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     })).status, 403, 'not even the person who really added it, once the record is gone');
     assert.strictEqual((await as('ana', `/assets/${asset.id}`, {
       method: 'PATCH', body: { description: 'x' },
-    })).status, 200, 'the assignee still works on it');
+    })).status, 403, 'nor the person holding it');
     assert.strictEqual((await as('root', `/assets/${asset.id}`, {
       method: 'PATCH', body: { description: 'x' },
-    })).status, 200, 'and full access can fix it');
+    })).status, 200, 'full access is the only way back');
     assert.strictEqual((await as('pat', `/assets/${asset.id}/reassign`, {
       method: 'POST', body: { assigneeId: people.bo },
     })).status, 403, 'and it cannot be reassigned by a non-owner');
@@ -204,7 +216,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     assert.strictEqual((await as('quinn', `/assets/${mine.id}`, {
       method: 'PATCH', body: { assigneeId: people.ana },
     })).status, 403);
-    // The assignee may edit the asset but may not hand it on.
+    // Nor may the person holding it hand it on.
     assert.strictEqual((await as('bo', `/assets/${mine.id}`, {
       method: 'PATCH', body: { assigneeId: people.ana },
     })).status, 403, 'your own work is not yours to hand to somebody else');

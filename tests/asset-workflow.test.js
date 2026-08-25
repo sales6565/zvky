@@ -352,23 +352,32 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   });
 
   await t.test('the pipeline cannot be bypassed without the override permission', async () => {
-    const id = await newAsset('Shortcut Attempt');
-    // The artist may edit this asset — it is assigned to them — and holds no
-    // override, so they get the pipeline's refusal rather than a permission one.
+    // The caller has to be somebody who may edit this asset, or the refusal
+    // would be about ownership rather than about the pipeline. The lead adds
+    // their own asset: they own it, they hold asset.edit, and they hold no
+    // override.
+    const own = await call(`/assets/project/${projectId}`, {
+      token: token.lead, method: 'POST',
+      body: { name: 'Shortcut Attempt', type: 'character', assigneeId: people.artist },
+    });
+    assert.strictEqual(own.status, 201, JSON.stringify(own.body));
+    const id = own.body.asset.id;
+
     const res = await call(`/assets/${id}`, {
-      token: token.artist, method: 'PATCH', body: { status: 'delivered' },
+      token: token.lead, method: 'PATCH', body: { status: 'delivered' },
     });
     assert.strictEqual(res.status, 409);
     assert.match(res.body.error, /submit\/review\/deliver/);
     assert.strictEqual(await statusOf(id), 'in_progress');
 
-    // The team lead is refused one step earlier now: they did not add this
-    // asset and it is not assigned to them, so asset.edit does not reach it.
-    const lead = await call(`/assets/${id}`, {
+    // And somebody who did not add it is refused one step earlier, on
+    // ownership, whatever the status they asked for.
+    const notTheirs = await newAsset('Someone Else\'s');
+    const outsider = await call(`/assets/${notTheirs}`, {
       token: token.lead, method: 'PATCH', body: { status: 'delivered' },
     });
-    assert.strictEqual(lead.status, 403);
-    assert.strictEqual(await statusOf(id), 'in_progress');
+    assert.strictEqual(outsider.status, 403);
+    assert.strictEqual(await statusOf(notTheirs), 'in_progress');
   });
 
   await t.test('an override is allowed for whoever holds it, and is recorded', async () => {
