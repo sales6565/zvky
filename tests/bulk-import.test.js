@@ -262,6 +262,36 @@ test('bulk import', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.ok(elapsed < 30000, `2000 rows took ${elapsed}ms`);
   });
 
+  await t.test('an imported row that names an assignee lands in Assigned, not Not Assigned', async () => {
+    // The bug this covers: the importer wrote 'not_started' for every row, so a
+    // row that named an assignee produced an asset with that person's avatar on
+    // it sitting in the Not Assigned column, and no history of the assignment.
+    const artist = await api(server.base, '/users', {
+      method: 'POST', token,
+      body: { name: 'Import Artist', email: 'importartist@zvky.test', role: 'game_artist',
+              password: PASSWORD, projectId },
+    });
+    assert.strictEqual(artist.status, 201, JSON.stringify(artist.body));
+
+    const result = await upload('assigned.csv',
+      'name,type,assignee_email\nWith An Owner,prop,importartist@zvky.test\nWith No Owner,prop,\n');
+    assert.strictEqual(result.status, 201, JSON.stringify(result.body).slice(0, 300));
+
+    const { body } = await api(server.base, `/assets/project/${projectId}`, { token });
+    const owned = body.assets.find((a) => a.name === 'With An Owner');
+    const bare = body.assets.find((a) => a.name === 'With No Owner');
+    assert.strictEqual(owned.assignee_id, artist.body.user.id);
+    assert.strictEqual(owned.status, 'assigned', 'an imported assignment is an assignment');
+    assert.strictEqual(bare.status, 'not_started', 'a row with no assignee is untouched');
+
+    // And it is in the history, so the assignment is not anonymous.
+    const history = await api(server.base, `/assets/${owned.id}/history`, { token });
+    assert.strictEqual(history.status, 200, JSON.stringify(history.body));
+    const assign = history.body.events.find((e) => e.action === 'assign');
+    assert.ok(assign, 'the import wrote an assign event');
+    assert.strictEqual(assign.toStatus, 'assigned');
+  });
+
   await t.test('the server is still healthy after every one of those', async () => {
     const health = await api(server.base, '/health');
     assert.strictEqual(health.status, 200);

@@ -852,6 +852,31 @@ async function statusConstraintText(db) {
   return String(rows[0].c);
 }
 
+// Assets that already had somebody on them when the 'assigned' state arrived.
+//
+// Under the old rule, assigning an asset moved it straight to in_progress, so
+// "has an assignee" and "is Not Assigned" could not both be true. Under the new
+// rule they can, and on any database that predates it they were: a projectful
+// of assets showing an assignee's avatar in the Not Assigned column, because
+// nothing re-ran the assign transition over rows that were already there.
+//
+// Rows that are further down the pipeline are left exactly as they are — only
+// the contradiction is repaired, and only in the one direction that is not a
+// judgement call. No asset_events row is written, because no one performed this
+// assignment now; the original event, where there was one, is still the record.
+async function backfillAssignedStatus(db, log) {
+  const { rows: stuck } = await db.query(
+    "SELECT COUNT(*) AS n FROM assets WHERE assignee_id IS NOT NULL AND `status` = 'not_started'"
+  );
+  const count = Number(stuck[0].n);
+  if (!count) return;
+  await db.query(
+    "UPDATE assets SET `status` = 'assigned', routed_to_id = COALESCE(routed_to_id, assignee_id) "
+    + "WHERE assignee_id IS NOT NULL AND `status` = 'not_started'"
+  );
+  log(`Schema: ${count} asset(s) had an assignee but still read as Not Assigned. Moved to Assigned.`);
+}
+
 const STEPS = [
   ['stale role constraints', dropStaleRoleConstraints],
   ['users.role column width', widenRoleColumn],
@@ -873,6 +898,10 @@ const STEPS = [
   ['client and project lifecycle', ensureLifecycleColumns],
   ['asset brief and checklist', ensureAssetPanelColumns],
   ['assigned state and time tracking', ensureTimeTracking],
+  // After the constraint above admits 'assigned', or the update below cannot
+  // land. Separate from that step so a rerun repairs the data even when the
+  // constraint was already current and the step above did nothing.
+  ['assigned backfill', backfillAssignedStatus],
   ['permission catalogue top-up', ensurePermissionCatalogueComplete],
   ['IP allowlist', ensureIpAllowlist],
 ];

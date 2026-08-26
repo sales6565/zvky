@@ -241,7 +241,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     const asset = await newAsset('pat', 'Stage Check', people.ana);
     const reassign = (body) => as('pat', `/assets/${asset.id}/reassign`, { method: 'POST', body });
 
-    // Not Started / In Progress.
+    // Not Assigned / Assigned / In Progress.
     let res = await reassign({ assigneeId: people.bo });
     assert.strictEqual(res.status, 409, 'not before any work has been submitted');
     assert.deepStrictEqual(res.body.allowedStatuses, REWORK_STATUSES);

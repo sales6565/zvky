@@ -319,7 +319,10 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
   <div class="stats" id="stats"></div>
   <div class="toolbar">
     <div class="tabs" id="mainTabs">
-      <button data-tab="board" class="active">Board</button>
+      <!-- The label is "Dashboard"; the internal key stays "board", which is app
+           state rather than a URL. There is no router on this page, so no link,
+           bookmark or redirect says "board" to a user anywhere. -->
+      <button data-tab="board" class="active">Dashboard</button>
       <button data-tab="projects" id="projectsTabBtn" style="display:none;">Projects</button>
       <!-- The label is "Assets List"; the internal key stays "list", which is
            app state rather than a URL — there is no router here, so nothing is
@@ -539,7 +542,10 @@ function priorityOptions(selected){
   return PRIORITIES.map(p=>`<option value="${p.id}" ${p.id===selected?'selected':''}>${escapeHTML(p.label)}</option>`).join('');
 }
 const STATUSES = [
-  {id:'not_started', label:'Not Started', color:'var(--not)'},
+  /* Label only. The key stays 'not_started': it is in the assets CHECK
+       constraint, in every asset_events row ever written, and in saved filters.
+       Renaming it would be a data migration, not a rename. */
+    {id:'not_started', label:'Not Assigned', color:'var(--not)'},
   {id:'assigned', label:'Assigned', color:'#5b8def'},
   {id:'in_progress', label:'In Progress', color:'var(--prog)'},
   {id:'pending_tl_review', label:'TL Review', color:'var(--review)'},
@@ -1097,7 +1103,12 @@ function renderBoard(){
       const id = e.dataTransfer.getData('text/plain');
       const asset = state.assets.find(a=>a.id===id);
       if(!asset) return;
-      const FREE = ['not_started','in_progress'];
+      /* The statuses a drag may move between. Must match FREE_STATUSES in
+         src/routes/assets.js: this list was left behind when 'assigned' was
+         added, so dragging a card into the Assigned column was refused here
+         with "use the review actions" — and the review actions have no such
+         move. The card simply could not be put in the column. */
+      const FREE = ['not_started','assigned','in_progress'];
       if(!FREE.includes(asset.status) || !FREE.includes(col.dataset.status)){
         showToast('Use the review actions in the asset panel to move this forward.');
         return;
@@ -1351,7 +1362,7 @@ function clientDetailHTML(c){
         <td class="mono" style="font-size:11.5px;">${escapeHTML(p.code||'')}</td>
         <td>${projectBadge(p) || '<span style="font-size:11.5px;color:var(--ink-faint);">active</span>'}</td>
         <td style="text-align:right;white-space:nowrap;">
-          ${p.status==='active' ? `<button class="btn btn-ghost btn-sm openProjectBtn" data-id="${p.id}">Open board</button>` : ''}
+          ${p.status==='active' ? `<button class="btn btn-ghost btn-sm openProjectBtn" data-id="${p.id}">Open dashboard</button>` : ''}
           ${can('project.close') && p.isActive ? (p.status==='closed'
             ? `<button class="btn btn-ghost btn-sm projReopenBtn" data-id="${p.id}" data-name="${escapeHTML(p.name)}">Reopen</button>`
             : `<button class="btn btn-ghost btn-sm projCloseBtn" data-id="${p.id}" data-name="${escapeHTML(p.name)}">Close</button>`) : ''}
@@ -1829,8 +1840,11 @@ async function openDrawer(id){
         a.assignee_id = asset.assignee_id;
         a.assignee_name = asset.assignee_name;
         showToast(asset.assignee_name ? `Reassigned to ${asset.assignee_name}.` : 'Unassigned.');
-        loadAssetHistory(id);
-        render();
+        /* Assigning moves the asset to Assigned, so the panel's status chip and
+           its actions are now stale. Await the reload and redraw the panel from
+           it — the same reason the timer button does. */
+        await render();
+        openDrawer(id);
       }catch(e2){ err.textContent = e2.message; e.target.value = previous || ''; }
     };
   }

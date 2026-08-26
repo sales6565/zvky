@@ -167,7 +167,7 @@ router.post('/project/:projectId', async (req, res) => {
      VALUES ($1,$2,$3,$4,'not_started',$5,$6,$7,$8,$9,$10,$11)`,
     [id, code, name.trim(), type, priority, projectId, assigneeId, req.user.id, due, description, manHours]
   );
-  // Created Not Started, as the pipeline says. If it was created with somebody
+  // Created Not Assigned, as the pipeline says. If it was created with somebody
   // already on it, the same rule that applies to assigning later applies here:
   // assignment is what starts the work.
   if (assigneeId) {
@@ -202,7 +202,7 @@ router.patch('/:id', async (req, res) => {
   const fields = [];
   const values = [];
   let i = 1;
-  const FREE_STATUSES = ['not_started', 'assigned', 'in_progress'];
+  const FREE_STATUSES = workflow.FREE_STATUSES;
   if (req.body.status !== undefined) {
     const freeMove = FREE_STATUSES.includes(req.body.status) && FREE_STATUSES.includes(asset.status);
     // Anything else is a move the pipeline would not make. Allowed only for
@@ -254,7 +254,7 @@ router.patch('/:id', async (req, res) => {
   await db.query(`UPDATE assets SET ${fields.join(', ')} WHERE id = $${i}`, values);
 
   // Assigning the asset is what starts the work — there is no separate "start"
-  // action for someone to forget. Only from Not Started: reassigning something
+  // action for someone to forget. Only from Not Assigned: reassigning something
   // that is already in review must not drag it backwards.
   const assigneeChanged = req.body.assigneeId !== undefined && req.body.assigneeId !== asset.assignee_id;
   if (assigneeChanged && req.body.assigneeId && asset.status === 'not_started') {
@@ -1103,6 +1103,33 @@ router.post('/project/:projectId/bulk', requirePermission('asset.bulk_upload'), 
       }
     }
     await yieldToLoop();
+  }
+
+  // An imported row that names an assignee is an assignment, and assignment is
+  // what moves an asset out of Not Assigned. Adding one by hand goes through
+  // the workflow's 'assign' transition; this path used to write 'not_started'
+  // and stop there, so a bulk-imported asset showed its assignee's avatar while
+  // sitting in the Not Assigned column, and nothing in its history said who put
+  // them on it. Same destination, same event, one statement per batch.
+  const assignedByImport = ready.filter(
+    (e) => e.assigneeId && created.some((c) => c.id === e.id)
+  );
+  if (assignedByImport.length) {
+    const ids = assignedByImport.map((e) => e.id);
+    const holes = ids.map((_, n) => `$${n + 1}`).join(',');
+    await db.query(
+      `UPDATE assets SET \`status\` = 'assigned', routed_to_id = assignee_id WHERE id IN (${holes})`,
+      ids
+    );
+    const eventRows = assignedByImport.map((e) => [
+      uuid(), e.id, 'assign', 'not_started', 'assigned', req.user.id, req.user.email,
+      'Assigned on import', e.assigneeId,
+    ]);
+    await db.query(
+      `INSERT INTO asset_events (id, asset_id, action, from_status, to_status, actor_id, actor_email, note, routed_to_id)
+       VALUES ?`,
+      [eventRows]
+    );
   }
 
   errors.sort((a, b) => a.row - b.row || String(a.column).localeCompare(String(b.column)));

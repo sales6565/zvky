@@ -238,6 +238,71 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
     assert.strictEqual((await start('ana', asset.id)).status, 409, 'nor after delivery');
   });
 
+  await t.test('assets assigned before the Assigned state existed are moved into it', async () => {
+    // What a database that predates the Assigned state looks like: under the
+    // old rule, assigning moved an asset straight to in_progress, so nothing
+    // ever wrote a row that had an assignee and still read not_started. After
+    // the upgrade, every such row that did exist sat in the Not Assigned column
+    // wearing its assignee's avatar, because nothing re-ran the transition over
+    // rows that were already there.
+    const stuck = await newAsset('Assigned Long Ago');
+    const midPipeline = await newAsset('Already Working');
+    await as('ana', `/assets/${midPipeline.id}/accept`, { method: 'POST' });
+    const untouched = (await as('pat', `/assets/project/${projectId}`, {
+      method: 'POST', body: { name: 'Genuinely Unassigned', type: 'character' },
+    })).body.asset;
+    assert.strictEqual(untouched.status, 'not_started');
+
+    // Wind the two assigned ones back to what the old schema would have held.
+    await sql(cfg, `UPDATE assets SET \`status\` = 'not_started', routed_to_id = NULL
+                      WHERE id IN ('${stuck.id}', '${midPipeline.id}')`);
+
+    const migrate = require('../src/migrate');
+    const mysql = require('mysql2/promise');
+    const conn = await mysql.createConnection({
+      host: cfg.host, port: cfg.port, user: cfg.user, password: cfg.password, database: cfg.database,
+    });
+    const db = { query: async (text, params = []) => {
+      const ordered = [];
+      const sqlText = text.replace(/\$(\d+)/g, (_, n) => { ordered.push(params[Number(n) - 1]); return '?'; });
+      const [rows] = await conn.query(sqlText, ordered.length ? ordered : params);
+      return { rows: Array.isArray(rows) ? rows : [], result: rows };
+    } };
+    const messages = [];
+    try {
+      await migrate.run(db, (m) => messages.push(m));
+    } finally {
+      await conn.end();
+    }
+
+    assert.strictEqual((await assetRow(stuck.id)).status, 'assigned', 'the stuck one was moved');
+    assert.strictEqual((await assetRow(midPipeline.id)).status, 'assigned', 'so was the other');
+    assert.strictEqual((await assetRow(untouched.id)).status, 'not_started',
+      'an asset with nobody on it is genuinely Not Assigned and stays there');
+    assert.ok(
+      messages.some((m) => /Not Assigned. Moved to Assigned/.test(m)),
+      `the repair should say what it did — got: ${messages.join(' | ')}`
+    );
+
+    // Running it again finds nothing left to do and says nothing.
+    const second = [];
+    const conn2 = await mysql.createConnection({
+      host: cfg.host, port: cfg.port, user: cfg.user, password: cfg.password, database: cfg.database,
+    });
+    const db2 = { query: async (text, params = []) => {
+      const ordered = [];
+      const sqlText = text.replace(/\$(\d+)/g, (_, n) => { ordered.push(params[Number(n) - 1]); return '?'; });
+      const [rows] = await conn2.query(sqlText, ordered.length ? ordered : params);
+      return { rows: Array.isArray(rows) ? rows : [], result: rows };
+    } };
+    try {
+      await migrate.run(db2, (m) => second.push(m));
+    } finally {
+      await conn2.end();
+    }
+    assert.ok(!second.some((m) => /Moved to Assigned/.test(m)), 'the repair is idempotent');
+  });
+
   await t.test('reassigning mid-round keeps the time already spent', async () => {
     // Total is lifetime effort on the asset, whoever spent it.
     const asset = await newAsset('Handed Over');

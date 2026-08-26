@@ -241,12 +241,12 @@ router.delete('/:id', requirePermission('project.delete'), async (req, res) => {
   if (!project.is_active) return res.json({ ok: true, archived: true, alreadyArchived: true });
 
   // Work still in flight is worth a second look before it disappears from
-  // everybody's board.
+  // everybody's dashboard.
   const unfinished = await lifecycle.unfinishedAssets(db, req.params.id);
   if (unfinished && req.query.confirm !== '1' && req.query.confirm !== 'true') {
     return res.status(409).json({
       requiresConfirmation: true,
-      error: `${project.name} has ${unfinished} asset${unfinished === 1 ? '' : 's'} that ${unfinished === 1 ? 'has' : 'have'} not been delivered. Archiving hides the project and its work from every board until it is restored.`,
+      error: `${project.name} has ${unfinished} asset${unfinished === 1 ? '' : 's'} that ${unfinished === 1 ? 'has' : 'have'} not been delivered. Archiving hides the project and its work from every dashboard until it is restored.`,
       unfinished,
     });
   }

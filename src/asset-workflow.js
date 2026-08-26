@@ -7,7 +7,7 @@
 // checkable: the states below are the whole of it, and anything not listed
 // cannot happen.
 //
-//   Not Started -> Assigned -> In Progress -> TL Review -> Approved for Client -> Delivered
+//   Not Assigned -> Assigned -> In Progress -> TL Review -> Approved for Client -> Delivered
 //                       |            ^             |  \
 //                  (accept starts    |             |   +-> TL Changes -> (assignee reworks)
 //                   the clock)       |             +-> CD Review -> CD Changes -> (TL relays)
@@ -27,7 +27,7 @@ const { roleDef } = require('./roles');
 
 // The nine states, in pipeline order. Labels and colours match the dashboard.
 const STATES = [
-  { id: 'not_started', label: 'Not Started', color: 'var(--not)' },
+  { id: 'not_started', label: 'Not Assigned', color: 'var(--not)' },
   { id: 'assigned', label: 'Assigned', color: '#5b8def' },
   { id: 'in_progress', label: 'In Progress', color: 'var(--prog)' },
   { id: 'pending_tl_review', label: 'TL Review', color: 'var(--review)' },
@@ -69,6 +69,17 @@ function cdChangesReentry() {
 // nobody" reads as "routed to anybody" — which let the assignee resubmit
 // straight past the lead who was supposed to brief them.
 const ASSIGNEE_STATUSES = ['not_started', 'assigned', 'in_progress', 'tl_changes_requested'];
+
+// The statuses a status may be dragged between on the dashboard, in either
+// direction, without going through a review action. Everything past In Progress
+// is a review decision and has its own action.
+//
+// It lives here because two places have to agree on it — the PATCH route and
+// the dashboard's drag handler — and when they drifted apart (the frontend list
+// was not updated when 'assigned' was added) the Assigned column became a place
+// no card could be dragged into. The frontend copy is checked against this one
+// by a test.
+const FREE_STATUSES = ['not_started', 'assigned', 'in_progress'];
 
 const actors = {
   // The person the asset is assigned to, and only while it is on their desk.
@@ -297,6 +308,7 @@ function refusal(transition, ctx) {
 module.exports = {
   STATES,
   ASSIGNEE_STATUSES,
+  FREE_STATUSES,
   STATE_IDS,
   TRANSITIONS,
   label,

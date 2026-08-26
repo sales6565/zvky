@@ -14,9 +14,38 @@ test('the nine states match the dashboard, in pipeline order', () => {
     'pending_cd_review', 'cd_changes_requested', 'approved_for_client', 'delivered',
   ]);
   assert.deepStrictEqual(workflow.STATES.map((s) => s.label), [
-    'Not Started', 'Assigned', 'In Progress', 'TL Review', 'TL Changes',
+    'Not Assigned', 'Assigned', 'In Progress', 'TL Review', 'TL Changes',
     'CD Review', 'CD Changes', 'Approved for Client', 'Delivered',
   ]);
+});
+
+// The dashboard draws its columns and its stats bar from its own copy of the
+// state list, and its drag handler from its own copy of the free range. Both
+// copies have silently drifted from this module before — once when 'assigned'
+// was added, which left the Assigned column unable to accept a dragged card and
+// gave it a heading the backend never used the same words for. Check them.
+test('the dashboard is drawn from the same states and the same free range', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+
+  const block = page.match(/const STATUSES = \[([\s\S]*?)\];/);
+  assert.ok(block, 'public/index.html has no STATUSES array');
+  const drawn = [...block[1].matchAll(/\{id:'([a-z_]+)', label:'([^']+)'/g)]
+    .map((m) => ({ id: m[1], label: m[2] }));
+  assert.deepStrictEqual(
+    drawn,
+    workflow.STATES.map((s) => ({ id: s.id, label: s.label })),
+    'the dashboard columns and the workflow states have drifted apart'
+  );
+
+  const free = page.match(/const FREE = \[([^\]]*)\]/);
+  assert.ok(free, 'the dashboard drag handler has no FREE list');
+  assert.deepStrictEqual(
+    free[1].split(',').map((v) => v.trim().replace(/'/g, '')),
+    workflow.FREE_STATUSES,
+    'the dashboard drag range and FREE_STATUSES have drifted apart'
+  );
 });
 
 test('a move not in the table cannot happen', () => {
@@ -201,7 +230,7 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       token: token.admin, method: 'PATCH', body: { assigneeId: people.artist },
     });
     assert.strictEqual(assigned.status, 200);
-    assert.strictEqual(assigned.body.asset.status, 'assigned', 'not Not Started, not In Progress');
+    assert.strictEqual(assigned.body.asset.status, 'assigned', 'not Not Assigned, not In Progress');
 
     const accepted = await call(`/assets/${id}/timer/start`, { token: token.artist, method: 'POST' });
     assert.strictEqual(accepted.status, 200, JSON.stringify(accepted.body));

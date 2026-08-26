@@ -230,16 +230,17 @@ the module and apply the answer. **Anything not in the table cannot happen**,
 which is what makes the pipeline checkable rather than a pile of status strings.
 
 ```
-Not Started --assign--> In Progress --submit--> TL Review --tl_approve--> CD Review
-                             ^                      |                        |
-                             |                      v                        v
-                             +---- TL Changes <-----+              CD Changes (with the lead)
-                             |                                             |
-                             |                                          relay
-                             |                                             v
-                             +---------------- (assignee reworks) ---------+
-                                                                           |
-                            CD Review --cd_approve--> Approved for Client --deliver--> Delivered
+Not Assigned --assign--> Assigned --accept--> In Progress --submit--> TL Review
+                                                      ^                   |
+                                                      |         tl_approve|  tl_request_changes
+                                                      |                   |         |
+                                                      +---- TL Changes <--|---------+
+                                                      |                   v
+                                                      |               CD Review --cd_approve--> Approved for Client --deliver--> Delivered
+                                                      |                   |
+                                                      |    cd_request_changes (lands with the lead)
+                                                      |                   v
+                                                      +-- (assignee reworks) <-- relay -- CD Changes
 ```
 
 ### Status is not the same as whose desk it is on
@@ -297,7 +298,7 @@ which is not one of the eight states, so it read **0% however much had shipped**
 Assets now move through a fixed pipeline instead of a free-form status field:
 
 ```
-not_started → in_progress → pending_tl_review ⇄ tl_changes_requested
+not_started → assigned → in_progress → pending_tl_review ⇄ tl_changes_requested
                                     ↓ (TL approves)
                              pending_cd_review ⇄ cd_changes_requested
                                     ↓ (CD approves)
@@ -319,9 +320,9 @@ not_started → in_progress → pending_tl_review ⇄ tl_changes_requested
   coordinator, or the art director) calls `POST /api/assets/:id/deliver` once
   it's `approved_for_client` to mark it `delivered`.
 
-Board/list drag-and-drop in the frontend only works between `not_started`
-and `in_progress` — everything past that point has to go through the actions
-above, and the API enforces this even if someone calls `PATCH` directly.
+Dashboard/list drag-and-drop in the frontend only works between `not_started`,
+`assigned` and `in_progress` — everything past that point has to go through the
+actions above, and the API enforces this even if someone calls `PATCH` directly.
 
 Every submission is stored as a version (`asset_versions`) and every
 decision as feedback (`feedback`), so the full review history — files and
@@ -348,7 +349,7 @@ uploader is rejected by name rather than half-processed.
 
 | | Bulk Upload Assets | Bulk Upload Users |
 |---|---|---|
-| Where | Board toolbar | Users tab |
+| Where | Dashboard toolbar | Users tab |
 | Endpoint | `POST /api/assets/project/:projectId/bulk` | `POST /api/users/bulk` |
 | Sample | `GET /api/assets/import-template.csv` | `GET /api/users/import-template.csv` |
 | Who | anyone who can create assets | anyone who can manage users |
@@ -528,7 +529,7 @@ The API is served at `http://localhost:4000/api/*`, and the bundled frontend
 | GET | `/api/assets/project/:projectId` | scoped per role |
 | POST | `/api/assets/project/:projectId` | any role that can create assets |
 | POST | `/api/assets/project/:projectId/bulk` | any role that can create assets — CSV import |
-| PATCH | `/api/assets/:id` | whoever can edit that asset (status limited to not_started ⇄ in_progress) |
+| PATCH | `/api/assets/:id` | whoever can edit that asset (status limited to not_started ⇄ assigned ⇄ in_progress) |
 | DELETE | `/api/assets/:id` | super_admin, or admin who owns the project |
 | POST | `/api/assets/:id/submit` | the assigned contributor — uploads a file, advances to the right review stage |
 | POST | `/api/assets/:id/review` | their lead/supervisor (TL stage) or art_director/super_admin (CD stage) |
