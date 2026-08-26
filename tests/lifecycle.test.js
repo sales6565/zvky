@@ -37,6 +37,43 @@ test('the new permission keys are in the right groups', () => {
   assert.ok(group('clients').includes('client.delete'));
 });
 
+test('the schema check names every piece this build needs, and the step that adds it', async () => {
+  // A unit test rather than a live one: dropping a table out from under a
+  // running server blocks on a metadata lock, and the point here is the
+  // mapping from "what is missing" to "which step to re-run", not the DDL.
+  const check = require('../src/schema-check');
+  const stub = (tables, columns) => ({
+    query: async (sql) => (/FROM information_schema.TABLES/.test(sql)
+      ? { rows: tables.map((t) => ({ t })) }
+      : { rows: columns.map(([t, c]) => ({ t, c })) }),
+  });
+
+  const everything = [...new Set(check.REQUIRED.map((r) => r.table))];
+  const allColumns = check.REQUIRED.filter((r) => r.column).map((r) => [r.table, r.column]);
+  assert.deepStrictEqual(await check.missing(stub(everything, allColumns)), [],
+    'a complete schema reports nothing missing');
+
+  // One column gone — the shape of the outage.
+  const withoutOne = allColumns.filter(([t, c]) => !(t === 'tasks' && c === 'created_by'));
+  assert.deepStrictEqual(await check.missing(stub(everything, withoutOne)), [{
+    name: 'tasks.created_by', kind: 'column', step: 'asset brief and checklist',
+  }]);
+
+  // A whole table gone is reported once, not once per column it holds.
+  const withoutTable = everything.filter((t) => t !== 'work_sessions');
+  const gaps = await check.missing(stub(withoutTable, allColumns));
+  assert.deepStrictEqual(gaps, [{ name: 'work_sessions', kind: 'table', step: 'assigned state and time tracking' }]);
+
+  // And every entry names a real migration step, so the hint is actionable.
+  const steps = new Set(require('node:fs')
+    .readFileSync(require('node:path').join(__dirname, '..', 'src', 'migrate.js'), 'utf8')
+    .match(/\['[^']+', ensure[A-Za-z]+\]/g)
+    .map((m) => m.slice(2, m.indexOf("',"))));
+  for (const need of check.REQUIRED) {
+    assert.ok(steps.has(need.step), `"${need.step}" is not a step in migrate.js`);
+  }
+});
+
 // --- against a live server -----------------------------------------------------
 
 test('client and project lifecycle', { skip: cfg ? false : SKIP_REASON }, async (t) => {
@@ -364,6 +401,39 @@ test('client and project lifecycle', { skip: cfg ? false : SKIP_REASON }, async 
     assert.strictEqual(res.status, 200);
     assert.strictEqual(res.body.ok, true);
     assert.deepStrictEqual(res.body.schemaRepairs, { applied: true });
+    assert.deepStrictEqual(res.body.schema, { complete: true });
+  });
+
+  await t.test('health names the missing piece, and the asset list still draws', async () => {
+    // The outage in one line: the app runs against a schema it does not have,
+    // and every endpoint touching the gap answers "a database error" with no
+    // clue which gap. Two things had to change — the gap gets named, and a
+    // missing enrichment stops taking the studio's main screen down with it.
+    await sql(cfg, 'ALTER TABLE tasks DROP FOREIGN KEY fk_tasks_author');
+    await sql(cfg, 'ALTER TABLE tasks DROP COLUMN created_by');
+
+    const health = await call('/health', {});
+    assert.strictEqual(health.body.ok, false);
+    assert.deepStrictEqual(health.body.schema.missing, ['tasks.created_by (column)']);
+    assert.deepStrictEqual(health.body.schema.steps, ['asset brief and checklist']);
+
+    // The board used to answer 500 here. Who added a checklist item is a
+    // label; the asset list is the app.
+    const { id: clientId, projects } = await newClientWith('Schema Gap Co', [{ name: 'Still Draws' }]);
+    const project = projects[0].id;
+    await as('root', `/assets/project/${project}`, {
+      method: 'POST', body: { name: 'Survives', type: 'prop', assigneeId: people.ana },
+    });
+    const assets = await as('root', `/assets/project/${project}`);
+    assert.strictEqual(assets.status, 200, JSON.stringify(assets.body));
+    assert.ok(Array.isArray(assets.body.assets));
+    for (const asset of assets.body.assets) {
+      assert.ok(Array.isArray(asset.tasks), 'and the checklist still comes back');
+    }
+
+    await sql(cfg, 'ALTER TABLE tasks ADD COLUMN created_by CHAR(36) NULL');
+    assert.deepStrictEqual((await call('/health', {})).body.schema, { complete: true });
+    await as('root', `/clients/${clientId}?confirm=1`, { method: 'DELETE' });
   });
 
   await t.test('Super Admin holds the new keys without being given them', async () => {

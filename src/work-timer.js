@@ -34,6 +34,19 @@ async function openSession(db, assetId) {
   return rows[0] || null;
 }
 
+// Whether the clock can run at all. Asked before start/pause, so a missing
+// table produces "time tracking is not available on this deployment yet"
+// rather than a database error the person cannot act on.
+async function available(db) {
+  try {
+    await db.query('SELECT 1 FROM work_sessions LIMIT 1');
+    return true;
+  } catch (err) {
+    if (unavailable(err)) return false;
+    throw err;
+  }
+}
+
 // Start the clock. Refuses if it is already running — the caller turns that
 // into a 409, and the button that was clicked twice does nothing twice.
 async function start(db, assetId, userId) {
@@ -62,6 +75,18 @@ async function pause(db, assetId) {
   return { ok: true, wasRunning: true, round: running.round };
 }
 
+// Everything below tolerates work_sessions not existing yet.
+//
+// The table arrives with a migration step, and a step can fail — on shared
+// hosting, usually because the database user has no CREATE. When that happens
+// the timer cannot work, but the board, the asset list and the whole review
+// pipeline have nothing to do with the timer and must still draw. Reporting no
+// time is right; taking the studio's main screen down for it is not.
+function unavailable(err) {
+  const code = err && err.code;
+  return code === 'ER_NO_SUCH_TABLE' || code === 'ER_BAD_FIELD_ERROR';
+}
+
 // The summary a screen needs: total seconds (a running session counted up to
 // now), the per-round breakdown, and whether the clock is running right now.
 async function summary(db, assetId) {
@@ -71,7 +96,10 @@ async function summary(db, assetId) {
             SUM(ended_at IS NULL) AS running
        FROM work_sessions WHERE asset_id = $1 GROUP BY round ORDER BY round`,
     [assetId]
-  );
+  ).catch((err) => {
+    if (!unavailable(err)) throw err;
+    return { rows: [] };
+  });
   const rounds = rows.map((r) => ({ round: Number(r.round), seconds: Number(r.seconds) || 0 }));
   return {
     totalSeconds: rounds.reduce((sum, r) => sum + r.seconds, 0),
@@ -89,11 +117,15 @@ async function totalsFor(db, assetIds) {
             SUM(ended_at IS NULL) AS running
        FROM work_sessions WHERE asset_id IN ($1) GROUP BY asset_id`,
     [assetIds]
-  );
+  ).catch((err) => {
+    if (!unavailable(err)) throw err;
+    console.warn(`[schema] work_sessions unavailable (${err.code}) — time tracking is off until it exists. See /api/health.`);
+    return { rows: [] };
+  });
   return new Map(rows.map((r) => [r.asset_id, {
     seconds: Number(r.seconds) || 0,
     running: Number(r.running) > 0,
   }]));
 }
 
-module.exports = { start, pause, summary, totalsFor, openSession, currentRound };
+module.exports = { start, pause, summary, totalsFor, openSession, currentRound, available };

@@ -91,14 +91,29 @@ app.get('/api/health', async (req, res) => {
     const { rows } = await db.query('SELECT COUNT(*) AS n FROM users');
     const seeded = Number(rows[0].n) > 0;
     const repairsFailed = (lastMigration && lastMigration.failed) || [];
+    // What the schema is actually missing, whatever the migration reported. A
+    // step can report success on one boot and the column still be absent —
+    // asking the database directly is the answer that cannot be stale.
+    const gaps = await require('./schema-check').missing(db).catch(() => null);
     res.json({
-      ok: repairsFailed.length === 0,
+      ok: repairsFailed.length === 0 && (gaps ? gaps.length === 0 : true),
       database: 'connected',
       accounts: seeded ? 'present' : 'none',
       schemaRepairs: repairsFailed.length
         ? { applied: false, failed: repairsFailed,
             hint: 'These startup schema repairs did not apply. The server log from startup has each one\'s database error; parts of the app will fail until they are fixed.' }
         : { applied: true },
+      schema: gaps === null
+        ? { checked: false, hint: 'information_schema could not be read on this database user.' }
+        : (gaps.length
+            ? {
+              complete: false,
+              missing: gaps.map((g) => `${g.name} (${g.kind})`),
+              steps: [...new Set(gaps.map((g) => g.step))],
+              hint: 'The app is running against a schema it does not have, which is why some requests fail with a database error. '
+                + 'Most often the database user lacks ALTER or CREATE — grant those and restart, or apply the matching statements from sql/schema.sql by hand.',
+            }
+            : { complete: true }),
       ...(seeded ? {} : {
         hint: 'No accounts exist yet. Run "npm run seed", or — if you have no shell on this host — '
           + 'set BOOTSTRAP_TOKEN in the environment and POST it to /api/auth/bootstrap.',

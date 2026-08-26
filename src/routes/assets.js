@@ -42,12 +42,23 @@ router.use(authenticate);
 async function attachTasksAndNotes(assets) {
   if (!assets.length) return assets;
   const ids = assets.map((a) => a.id);
-  const { rows: tasks } = await db.query(
+  // Who added each checklist item is an enrichment, not the point of this
+  // screen. If tasks.created_by has not arrived — a migration step that could
+  // not run, usually for want of ALTER — the board must still draw. It used to
+  // take the whole asset list down with it, which is how a missing column
+  // became "every tab is blank".
+  const tasks = await db.query(
     `SELECT t.*, u.\`name\` AS created_by_name FROM tasks t
      LEFT JOIN users u ON u.id = t.created_by
      WHERE t.asset_id IN ($1) ORDER BY t.\`position\``,
     [ids]
-  );
+  ).then((r) => r.rows).catch(async (err) => {
+    console.warn(`[schema] task authorship unavailable (${err.code || err.message}) — see /api/health. Falling back.`);
+    const { rows } = await db.query(
+      'SELECT * FROM tasks WHERE asset_id IN ($1) ORDER BY `position`', [ids]
+    );
+    return rows.map((t) => ({ ...t, created_by_name: null }));
+  });
   const { rows: notes } = await db.query(
     `SELECT n.*, u.name AS author_name FROM notes n
      LEFT JOIN users u ON u.id = n.author_id
@@ -541,6 +552,13 @@ router.post('/:id/timer/start', async (req, res) => {
   // reworking what they have not been handed.
   if (asset.status === 'cd_changes_requested' && asset.routed_to_id !== req.user.id && !hasFullAccess(req.user)) {
     return res.status(409).json({ error: 'The team lead has not passed the Creative Director\'s notes on yet.' });
+  }
+
+  // A clock with nowhere to write is a clear refusal, not a database error.
+  if (!(await workTimer.available(db))) {
+    return res.status(503).json({
+      error: 'Time tracking is not available on this deployment yet — its table has not been created. See /api/health.',
+    });
   }
 
   let moved = null;

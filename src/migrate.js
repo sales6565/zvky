@@ -250,9 +250,13 @@ async function ensureReviewWorkflow(db, log) {
     log('Schema: added assets.routed_to_id so the pipeline can say whose desk an asset is on.');
   }
 
+  // Checked separately for the same reason as tasks.created_by above: two
+  // columns behind one probe cannot recover from a half-applied run.
+  if (!(await column('asset_versions', 'description'))) {
+    await db.query('ALTER TABLE asset_versions ADD COLUMN description TEXT NULL');
+  }
   if (!(await column('asset_versions', 'link'))) {
     await db.query('ALTER TABLE asset_versions ADD COLUMN link VARCHAR(2048) NULL AFTER stage');
-    await db.query('ALTER TABLE asset_versions ADD COLUMN description TEXT NULL AFTER link');
     log('Schema: submissions now carry a link and a description.');
   }
   // A submission is a link now, so the file columns have to allow their absence.
@@ -729,15 +733,29 @@ async function ensureAssetPanelColumns(db, log) {
     await db.query('ALTER TABLE assets ADD COLUMN reference_link VARCHAR(2048) NULL AFTER description');
     added.push('assets.reference_link');
   }
-  if (!(await has('tasks', 'created_by'))) {
+  // Each column checked on its own.
+  //
+  // These two were gated on one probe: if created_by was absent but created_at
+  // present — a half-applied run, or one column dropped by hand — the second
+  // ALTER threw "duplicate column", the whole step failed, and it failed the
+  // same way on every subsequent boot. A step that can never complete is how a
+  // deployment ends up permanently serving code against a schema it lacks,
+  // which is the outage this whole change exists to prevent.
+  const hadCreatedBy = await has('tasks', 'created_by');
+  if (!hadCreatedBy) {
     await db.query('ALTER TABLE tasks ADD COLUMN created_by CHAR(36) NULL');
+    added.push('tasks.created_by');
+  }
+  if (!(await has('tasks', 'created_at'))) {
     await db.query('ALTER TABLE tasks ADD COLUMN created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP');
+    added.push('tasks.created_at');
+  }
+  if (!hadCreatedBy) {
     try {
       await db.query('ALTER TABLE tasks ADD CONSTRAINT fk_tasks_author FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL');
     } catch (err) {
       log(`Schema: tasks.created_by added, but its foreign key was refused — ${err.sqlMessage || err.message}`);
     }
-    added.push('tasks.created_by', 'tasks.created_at');
   }
   if (added.length) log(`Schema: added ${added.join(', ')}.`);
 }
