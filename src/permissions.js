@@ -15,14 +15,21 @@ async function visibleProjects(user) {
   const def = roleDef(user.role);
   if (!def) return [];
 
+  // Archived projects are out of every scope, for everybody. Nothing about
+  // them is destroyed — an archived project's assets, submissions and review
+  // history are all still there, and restoring it brings the lot back. It is
+  // simply not somewhere work happens any more, so it does not clutter a
+  // picker or a board. The Projects tab is where archived ones are listed and
+  // restored, which is the one place that asks for them on purpose.
+
   if (def.projectScope === 'all') {
-    const { rows } = await db.query('SELECT * FROM projects ORDER BY created_at');
+    const { rows } = await db.query('SELECT * FROM projects WHERE is_active = 1 ORDER BY created_at');
     return rows;
   }
 
   if (def.projectScope === 'owned') {
     const { rows } = await db.query(
-      'SELECT * FROM projects WHERE owner_id = $1 ORDER BY created_at',
+      'SELECT * FROM projects WHERE owner_id = $1 AND is_active = 1 ORDER BY created_at',
       [user.id]
     );
     return rows;
@@ -41,7 +48,7 @@ async function visibleProjects(user) {
       `SELECT DISTINCT p.* FROM projects p
        LEFT JOIN project_coordinators pc ON pc.project_id = p.id AND pc.user_id = $1
        LEFT JOIN project_team_leads  ptl ON ptl.project_id = p.id AND ptl.user_id = $1
-       WHERE pc.user_id IS NOT NULL OR ptl.user_id IS NOT NULL OR p.owner_id = $1
+       WHERE p.is_active = 1 AND (pc.user_id IS NOT NULL OR ptl.user_id IS NOT NULL OR p.owner_id = $1)
        ORDER BY p.created_at`,
       [user.id]
     );
@@ -57,7 +64,7 @@ async function visibleProjects(user) {
        LEFT JOIN project_team_leads ptl ON ptl.project_id = p.id AND ptl.user_id = $1
        LEFT JOIN assets a ON a.project_id = p.id
        LEFT JOIN users  r ON r.id = a.assignee_id AND r.team_lead_id = $1
-       WHERE ptl.user_id IS NOT NULL OR r.id IS NOT NULL OR p.owner_id = $1
+       WHERE p.is_active = 1 AND (ptl.user_id IS NOT NULL OR r.id IS NOT NULL OR p.owner_id = $1)
        ORDER BY p.created_at`,
       [user.id]
     );
@@ -77,7 +84,7 @@ async function visibleProjects(user) {
     `SELECT DISTINCT p.* FROM projects p
      LEFT JOIN assets a ON a.project_id = p.id AND a.assignee_id = $1
      LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $1
-     WHERE a.id IS NOT NULL OR pm.user_id IS NOT NULL OR p.owner_id = $1
+     WHERE p.is_active = 1 AND (a.id IS NOT NULL OR pm.user_id IS NOT NULL OR p.owner_id = $1)
      ORDER BY p.created_at`,
     [user.id]
   );

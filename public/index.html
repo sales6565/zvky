@@ -202,6 +202,17 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--surface-3);border:1px solid var(--border);color:var(--ink);padding:10px 18px;border-radius:10px;font-size:13px;opacity:0;transition:all .25s;z-index:60;pointer-events:none;} .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 .empty{text-align:center;padding:40px 20px;color:var(--ink-muted);font-size:13px;}
 
+/* Status badges. One place decides what a state looks like and what it is
+   called, so the header dropdown, the client grid and the project table cannot
+   describe the same client three different ways. */
+.badge{font-size:9px;text-transform:uppercase;letter-spacing:.06em;padding:2px 6px;border-radius:4px;white-space:nowrap;}
+.badge-archived{background:#6b6b6b33;color:#a8a8a8;}
+.badge-deal{background:#e8402c22;color:#e8402c;}
+.badge-closed{background:#c9a22722;color:#d8b53f;}
+.badge-system{background:var(--surface-3);color:var(--ink-faint);}
+.row-muted{opacity:.55;}
+.lifecycle-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;}
+
 /* Clients > Acme Corp > Projects */
 .crumbs{display:flex;align-items:center;gap:8px;font-size:12px;padding:4px 0;}
 .crumb-link{background:none;border:none;color:var(--brand);cursor:pointer;font:inherit;padding:0;}
@@ -289,7 +300,10 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
     <div class="tabs" id="mainTabs">
       <button data-tab="board" class="active">Board</button>
       <button data-tab="projects" id="projectsTabBtn" style="display:none;">Projects</button>
-      <button data-tab="list">List</button>
+      <!-- The label is "Assets List"; the internal key stays "list", which is
+           app state rather than a URL — there is no router here, so nothing is
+           bookmarkable and nothing needs migrating. -->
+      <button data-tab="list">Assets List</button>
       <button data-tab="team" id="teamTabBtn" style="display:none;">My Team</button>
       <button data-tab="users" id="usersTabBtn" style="display:none;">Users</button>
       <button data-tab="settings" id="settingsTabBtn" style="display:none;">Settings</button>
@@ -685,7 +699,7 @@ function escapeHTML(s){ const d=document.createElement('div'); d.textContent=s||
 let state = { view:'board', search:'', filterType:'', currentProjectId:null, currentUser:null, token:null,
   projects:[], assets:[], usersRenderLimit:60,
   /* The Projects tab: the client list, and which one is open (null = the list). */
-  clients:[], clientId:null,
+  clients:[], clientId:null, showArchived:false,
   /* The header's Client picker, which narrows the Project picker beside it. */
   clientContextId:null };
 
@@ -713,6 +727,10 @@ async function api(path, options={}){
     // And some report a whole list at once — every bad row of a repeatable
     // form — so a form can mark each row rather than showing only the first.
     if(data.errors) err.details = { errors: data.errors };
+    // The whole body, for refusals that carry more than a message: how many
+    // projects are still open, how many assets are undelivered, whether the
+    // caller is being asked to confirm rather than simply told no.
+    err.body = data;
     throw err;
   }
   return data;
@@ -848,6 +866,19 @@ function restoreContext(){
 function projectsUnder(clientId){
   return state.projects.filter(p=>p.client_id===clientId);
 }
+
+/* What a client's state is called, wherever it is shown. */
+function clientBadge(c){
+  if(c.isSystem) return '<span class="badge badge-system">system</span>';
+  if(c.status==='archived') return '<span class="badge badge-archived">archived</span>';
+  if(c.status==='deal_closed') return '<span class="badge badge-deal">deal closed</span>';
+  return '';
+}
+function projectBadge(p){
+  if(p.status==='archived') return '<span class="badge badge-archived">archived</span>';
+  if(p.status==='closed') return '<span class="badge badge-closed">closed</span>';
+  return '';
+}
 /* The projects the Project picker should offer right now. With no clients to
    group by — a role without client.view — that is simply all of them. */
 function projectsForContext(){
@@ -865,10 +896,14 @@ function renderContextPickers(){
     clientSel.style.display = 'none';
   }else{
     clientSel.style.display = '';
+    /* A <option> cannot carry markup, so the badge is spelled out in the text.
+       Somebody picking a client from the header should see that its deal is
+       closed without opening the Projects tab to find out. */
     clientSel.innerHTML = '<option value="">Select a client…</option>' +
       state.clients.map(c=>{
         const n = projectsUnder(c.id).length;
-        return `<option value="${c.id}"${c.id===state.clientContextId?' selected':''}>${escapeHTML(c.name)}${n?` (${n})`:''}</option>`;
+        const tag = c.status==='deal_closed' ? ' · deal closed' : '';
+        return `<option value="${c.id}"${c.id===state.clientContextId?' selected':''}>${escapeHTML(c.name)}${n?` (${n})`:''}${tag}</option>`;
       }).join('');
   }
 
@@ -877,7 +912,7 @@ function renderContextPickers(){
      there empty and unexplained. */
   projSel.disabled = state.clients.length ? (!state.clientContextId || !available.length) : !available.length;
   projSel.innerHTML = !state.clients.length || state.clientContextId
-    ? (available.map(p=>`<option value="${p.id}"${p.id===state.currentProjectId?' selected':''}>${escapeHTML(p.name)}</option>`).join('')
+    ? (available.map(p=>`<option value="${p.id}"${p.id===state.currentProjectId?' selected':''}>${escapeHTML(p.name)}${p.closed_at?' · closed':''}</option>`).join('')
        || '<option value="">No projects under this client</option>')
     : '<option value="">Choose a client first</option>';
 
@@ -1155,7 +1190,13 @@ async function renderProjects(){
   if(!can('client.view')){ el.innerHTML=''; return; }
 
   let clients;
-  try{ clients = (await api('/clients')).clients; }
+  /* Archived things are asked for on purpose, not shown by default — this tab
+     is the one place they can be found and restored. Inside one client they are
+     always listed, greyed and with a Restore button: having drilled into a
+     client, "what happened to that project" is exactly the question being
+     asked, and hiding the answer behind a second toggle would be unhelpful. */
+  const wantArchived = state.showArchived || Boolean(state.clientId);
+  try{ clients = (await api('/clients' + (wantArchived ? '?includeArchived=1' : ''))).clients; }
   catch(err){ el.innerHTML = `<div class="empty">${escapeHTML(err.message)}</div>`; return; }
   state.clients = clients;
 
@@ -1181,13 +1222,17 @@ function clientListHTML(clients){
       <div style="font-size:12px;color:var(--ink-muted);flex:1;">
         Every project belongs to a client. Choose one to see its projects.
       </div>
+      ${(can('client.delete') || can('project.delete')) ? `<label style="font-size:12px;color:var(--ink-muted);display:flex;align-items:center;gap:5px;">
+        <input type="checkbox" id="showArchived"${state.showArchived?' checked':''}> Show archived
+      </label>` : ''}
       ${can('client.add') ? '<button class="btn btn-brand" id="newClientBtn">+ Add Client</button>' : ''}
     </div>
     ${clients.length ? `<div class="client-grid">${clients.map(c=>`
-      <div class="client-card" data-client="${c.id}">
-        <div class="client-name">${escapeHTML(c.name)}${c.isSystem?'<span class="client-tag">system</span>':''}</div>
+      <div class="client-card ${c.status==='archived'?'row-muted':''}" data-client="${c.id}">
+        <div class="client-name">${escapeHTML(c.name)}${clientBadge(c)}</div>
         ${c.contactName ? `<div class="client-meta">${escapeHTML(c.contactName)}${c.contactEmail?` · <span class="mono">${escapeHTML(c.contactEmail)}</span>`:''}</div>` : ''}
-        <div class="client-count">${c.projectCount} project${c.projectCount===1?'':'s'}</div>
+        <div class="client-count">${c.projectCount} project${c.projectCount===1?'':'s'}${
+          (c.archivedProjects||[]).length ? ` · ${c.archivedProjects.length} archived` : ''}</div>
         ${c.notes ? `<div class="client-notes">${escapeHTML(c.notes)}</div>` : ''}
       </div>`).join('')}</div>`
       : '<div class="empty">No clients yet.</div>'}
@@ -1195,21 +1240,43 @@ function clientListHTML(clients){
 }
 
 function clientDetailHTML(c){
+  const all = [...c.projects, ...(c.archivedProjects || [])];
   return `
     ${crumbs([{ label:'Clients', go:'clients' }, { label:c.name }, { label:'Projects' }])}
     <div style="display:flex;align-items:flex-start;gap:10px;margin:10px 0 16px;">
       <div style="flex:1;">
-        <div style="font-size:18px;font-weight:600;">${escapeHTML(c.name)}${c.isSystem?'<span class="client-tag">system</span>':''}</div>
+        <div style="font-size:18px;font-weight:600;display:flex;align-items:center;gap:8px;">${escapeHTML(c.name)}${clientBadge(c)}</div>
         ${c.contactName||c.contactEmail ? `<div class="client-meta">${escapeHTML(c.contactName||'')}${c.contactEmail?` · <span class="mono">${escapeHTML(c.contactEmail)}</span>`:''}</div>`:''}
         ${c.notes ? `<div class="client-notes" style="margin-top:6px;">${escapeHTML(c.notes)}</div>`:''}
+        ${c.status==='deal_closed' ? `<div class="client-notes" style="margin-top:6px;">The deal is closed, so no new projects go under this client. Projects already here keep running.</div>`:''}
+        ${c.status==='archived' ? `<div class="client-notes" style="margin-top:6px;">Archived — nothing is deleted. Restore to bring this client and its projects back.</div>`:''}
       </div>
-      ${can('client.edit') ? `<button class="btn btn-ghost" id="editClientBtn" data-client="${c.id}">Edit client</button>` : ''}
-      ${can('client.delete') && !c.isSystem ? `<button class="btn btn-ghost" id="delClientBtn" data-client="${c.id}" style="color:var(--brand);">Delete</button>` : ''}
+      ${can('client.edit') && c.status==='active' ? `<button class="btn btn-ghost" id="editClientBtn" data-client="${c.id}">Edit client</button>` : ''}
     </div>
-    ${c.projects.length ? `<table><thead><tr><th>Project</th><th>Code</th><th></th></tr></thead><tbody>
-      ${c.projects.map(p=>`<tr><td style="font-weight:600;">${escapeHTML(p.name)}</td>
+    <div class="lifecycle-actions">
+      ${can('client.close') && !c.isSystem && c.isActive ? (c.status==='deal_closed'
+        ? `<button class="btn btn-ghost btn-sm" id="reopenDealBtn" data-client="${c.id}">Reopen deal</button>`
+        : `<button class="btn btn-ghost btn-sm" id="closeDealBtn" data-client="${c.id}">Mark deal closed</button>`) : ''}
+      ${can('client.delete') && !c.isSystem ? (c.isActive
+        ? `<button class="btn btn-ghost btn-sm" id="archiveClientBtn" data-client="${c.id}">Archive client</button>`
+        : `<button class="btn btn-ghost btn-sm" id="restoreClientBtn" data-client="${c.id}">Restore client</button>`) : ''}
+      ${can('client.delete') && !c.isSystem && !c.isActive && !all.length
+        ? `<button class="btn btn-ghost btn-sm" id="purgeClientBtn" data-client="${c.id}" style="color:var(--brand);">Delete permanently</button>` : ''}
+    </div>
+    ${all.length ? `<table style="margin-top:14px;"><thead><tr><th>Project</th><th>Code</th><th>Status</th><th></th></tr></thead><tbody>
+      ${all.map(p=>`<tr class="${p.status!=='active'?'row-muted':''}">
+        <td style="font-weight:600;">${escapeHTML(p.name)}</td>
         <td class="mono" style="font-size:11.5px;">${escapeHTML(p.code||'')}</td>
-        <td style="text-align:right;"><button class="btn btn-ghost btn-sm openProjectBtn" data-id="${p.id}">Open board</button></td></tr>`).join('')}
+        <td>${projectBadge(p) || '<span style="font-size:11.5px;color:var(--ink-faint);">active</span>'}</td>
+        <td style="text-align:right;white-space:nowrap;">
+          ${p.status==='active' ? `<button class="btn btn-ghost btn-sm openProjectBtn" data-id="${p.id}">Open board</button>` : ''}
+          ${can('project.close') && p.isActive ? (p.status==='closed'
+            ? `<button class="btn btn-ghost btn-sm projReopenBtn" data-id="${p.id}" data-name="${escapeHTML(p.name)}">Reopen</button>`
+            : `<button class="btn btn-ghost btn-sm projCloseBtn" data-id="${p.id}" data-name="${escapeHTML(p.name)}">Close</button>`) : ''}
+          ${can('project.delete') ? (p.isActive
+            ? `<button class="btn btn-ghost btn-sm projArchiveBtn" data-id="${p.id}" data-name="${escapeHTML(p.name)}">Archive</button>`
+            : `<button class="btn btn-ghost btn-sm projRestoreBtn" data-id="${p.id}" data-name="${escapeHTML(p.name)}">Restore</button>`) : ''}
+        </td></tr>`).join('')}
     </tbody></table>` : '<div class="empty">No projects under this client yet.</div>'}
   `;
 }
@@ -1225,13 +1292,71 @@ function wireProjects(){
   if(add) add.addEventListener('click', ()=>openClientModal(null));
   const edit = document.getElementById('editClientBtn');
   if(edit) edit.addEventListener('click', ()=>openClientModal(edit.dataset.client));
-  const del = document.getElementById('delClientBtn');
-  if(del) del.addEventListener('click', async ()=>{
-    const c = state.clients.find(x=>x.id===del.dataset.client);
-    if(!confirm(`Delete ${c.name}?`)) return;
-    try{ await api('/clients/'+c.id, { method:'DELETE' }); state.clientId=null; await renderProjects(); showToast(`${c.name} deleted.`); }
+  const archived = document.getElementById('showArchived');
+  if(archived) archived.addEventListener('change', ()=>{ state.showArchived = archived.checked; renderProjects(); });
+
+  /* Every lifecycle action, wired the same way.
+
+     An endpoint that wants a second look answers 409 with requiresConfirmation
+     and a message saying exactly what is at stake — how many projects are
+     still open, how many assets are undelivered. So rather than guess at the
+     wording here, the confirm() shows what the server said and retries with the
+     confirmation attached. The person is asked once, about the real situation. */
+  async function lifecycle(path, { method='POST', body, confirmParam='confirm' }={}){
+    try{
+      await api(path, { method, body });
+      return true;
+    }catch(err){
+      const detail = err.body || {};
+      if(err.status === 409 && detail.requiresConfirmation){
+        if(!confirm(err.message + '\n\nGo ahead?')) return false;
+        const again = method === 'DELETE'
+          ? `${path}${path.includes('?')?'&':'?'}${confirmParam}=1`
+          : path;
+        await api(again, { method, body: method==='POST' ? { ...(body||{}), confirm:true } : body });
+        return true;
+      }
+      throw err;
+    }
+  }
+  async function act(path, opts, done){
+    try{ if(await lifecycle(path, opts)) { await bootApp(); await renderProjects(); showToast(done); } }
+    catch(err){ showToast(err.message); }
+  }
+
+  const on = (id, fn)=>{ const b = document.getElementById(id); if(b) b.addEventListener('click', fn); };
+  const clientOf = (b)=> (state.clients.find(x=>x.id===b.dataset.client) || {});
+
+  on('closeDealBtn', async ()=>{
+    const c = clientOf(document.getElementById('closeDealBtn'));
+    if(!confirm(`Mark the deal with ${c.name} as closed?\n\nNo new projects can be added under it. Projects already running are left alone — close those separately if the work is finished too.`)) return;
+    try{
+      const res = await api(`/clients/${c.id}/close-deal`, { method:'POST' });
+      await bootApp(); await renderProjects();
+      showToast(res.stillRunning.length
+        ? `Deal closed. ${res.stillRunning.length} project${res.stillRunning.length===1?'':'s'} still running.`
+        : 'Deal closed.');
+    }catch(err){ showToast(err.message); }
+  });
+  on('reopenDealBtn', ()=>act(`/clients/${clientOf(document.getElementById('reopenDealBtn')).id}/reopen-deal`, {}, 'Deal reopened.'));
+  on('archiveClientBtn', ()=>act(`/clients/${clientOf(document.getElementById('archiveClientBtn')).id}`, { method:'DELETE' }, 'Archived — nothing was deleted.'));
+  on('restoreClientBtn', ()=>act(`/clients/${clientOf(document.getElementById('restoreClientBtn')).id}/restore`, {}, 'Restored.'));
+  on('purgeClientBtn', async ()=>{
+    const c = clientOf(document.getElementById('purgeClientBtn'));
+    if(!confirm(`Delete ${c.name} permanently?\n\nIt holds nothing, so nothing is lost — but this cannot be undone.`)) return;
+    try{ await api(`/clients/${c.id}?purge=1`, { method:'DELETE' }); state.clientId=null; await bootApp(); await renderProjects(); showToast(`${c.name} deleted.`); }
     catch(err){ showToast(err.message); }
   });
+
+  const perProject = [
+    ['.projCloseBtn',   id=>`/projects/${id}/close`,   {},                  'Closed — its assets are read-only until it is reopened.'],
+    ['.projReopenBtn',  id=>`/projects/${id}/reopen`,  {},                  'Reopened.'],
+    ['.projArchiveBtn', id=>`/projects/${id}`,         { method:'DELETE' }, 'Archived — the assets and their history are kept.'],
+    ['.projRestoreBtn', id=>`/projects/${id}/restore`, {},                  'Restored.'],
+  ];
+  for(const [sel, path, opts, done] of perProject){
+    document.querySelectorAll(sel).forEach(b=>b.addEventListener('click', ()=>act(path(b.dataset.id), opts, `${b.dataset.name}: ${done}`)));
+  }
   /* Opening a project's board is what the header dropdown does, so it does the
      same thing rather than a second mechanism. */
   document.querySelectorAll('.openProjectBtn').forEach(b=>b.addEventListener('click', ()=>{

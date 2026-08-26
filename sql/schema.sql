@@ -192,6 +192,15 @@ CREATE TABLE IF NOT EXISTS clients (
   notes         TEXT         NULL,
   -- Set on the "Unassigned" client only. A system client cannot be deleted.
   is_system     TINYINT(1)   NOT NULL DEFAULT 0,
+  -- Archived, following the same convention the value lists use: something with
+  -- records attached is deactivated rather than deleted, and everything under
+  -- it keeps working. Hard delete stays available for a client holding nothing.
+  is_active     TINYINT(1)   NOT NULL DEFAULT 1,
+  archived_at   DATETIME     NULL,
+  -- The engagement. NULL means the deal is live; a timestamp means it is closed
+  -- and no new projects go under this client. Deliberately not a flag: "when"
+  -- is the question anybody asks about a closed deal.
+  deal_closed_at DATETIME    NULL,
   created_by    CHAR(36)     NULL,
   created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_clients_name (`name`),
@@ -206,9 +215,17 @@ CREATE TABLE IF NOT EXISTS projects (
   -- system "Unassigned" one.
   client_id  CHAR(36)     NOT NULL,
   owner_id   CHAR(36)     NOT NULL,
+  -- Archived, as above: the assets, their submissions and their review history
+  -- are all still there, the project is simply out of the way.
+  is_active  TINYINT(1)   NOT NULL DEFAULT 1,
+  archived_at DATETIME    NULL,
+  -- Closed. NULL means open. A closed project takes no new assets and its
+  -- existing ones are read-only until it is reopened.
+  closed_at  DATETIME     NULL,
   created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_projects_owner (owner_id),
   KEY idx_projects_client (client_id),
+  KEY idx_projects_active (is_active),
   CONSTRAINT fk_projects_owner  FOREIGN KEY (owner_id)  REFERENCES users(id) ON DELETE CASCADE,
   -- RESTRICT, not CASCADE: deleting a client must never silently delete the
   -- projects under it, and with them every asset in those projects. The API

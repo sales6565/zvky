@@ -668,6 +668,46 @@ async function ensurePermissionCatalogueComplete(db, log) {
   }
 }
 
+// Archive and status columns on clients and projects.
+//
+// Named is_active/archived_at rather than is_deleted, because that is what this
+// codebase already calls the idea: asset types, priorities, roles and allowlist
+// entries all deactivate rather than delete when something depends on them.
+// A second vocabulary for the same concept would be the harder thing to read.
+async function ensureLifecycleColumns(db, log) {
+  const has = async (table, column) => {
+    const { rows } = await db.query(
+      `SELECT COLUMN_NAME AS n FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = $1 AND COLUMN_NAME = $2`,
+      [table, column]
+    );
+    return rows.length > 0;
+  };
+
+  const added = [];
+  const columns = [
+    ['clients', 'is_active', 'TINYINT(1) NOT NULL DEFAULT 1'],
+    ['clients', 'archived_at', 'DATETIME NULL'],
+    ['clients', 'deal_closed_at', 'DATETIME NULL'],
+    ['projects', 'is_active', 'TINYINT(1) NOT NULL DEFAULT 1'],
+    ['projects', 'archived_at', 'DATETIME NULL'],
+    ['projects', 'closed_at', 'DATETIME NULL'],
+  ];
+  for (const [table, column, type] of columns) {
+    if (await has(table, column)) continue;
+    await db.query(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+    added.push(`${table}.${column}`);
+  }
+  if (added.includes('projects.is_active')) {
+    await db.query('ALTER TABLE projects ADD KEY idx_projects_active (is_active)');
+  }
+  if (added.length) {
+    // Everything that exists today is live and open — the defaults say so, and
+    // this is stated rather than assumed.
+    log(`Schema: added ${added.join(', ')}. Every existing client and project is active and open.`);
+  }
+}
+
 const STEPS = [
   ['stale role constraints', dropStaleRoleConstraints],
   ['users.role column width', widenRoleColumn],
@@ -686,6 +726,7 @@ const STEPS = [
   ['client hierarchy', ensureClients],
   // After the client step, so client.* exists in the catalogue by the time
   // roles are topped up against it.
+  ['client and project lifecycle', ensureLifecycleColumns],
   ['permission catalogue top-up', ensurePermissionCatalogueComplete],
   ['IP allowlist', ensureIpAllowlist],
 ];

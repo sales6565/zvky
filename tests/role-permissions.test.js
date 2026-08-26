@@ -328,7 +328,8 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
     // And the rows are written back, not merely computed each time.
     const rows = await sql(cfg, "SELECT COUNT(*) AS n FROM role_permissions WHERE role_key = 'producer' AND permission_key LIKE 'client.%'");
-    assert.strictEqual(Number(rows[0].n), 4);
+    assert.strictEqual(Number(rows[0].n),
+      catalog.KEYS.filter((k) => k.startsWith('client.')).length);
   });
 
   await t.test('managing permissions cannot be switched on for another role', async () => {

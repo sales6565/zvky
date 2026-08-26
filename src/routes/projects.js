@@ -5,6 +5,7 @@ const router = asyncRouter();
 const { v4: uuid } = require('uuid');
 const db = require('../db');
 const { authenticate, requirePermission } = require('../middleware/auth');
+const lifecycle = require('../lifecycle');
 const { visibleProjects, canAccessProject } = require('../permissions');
 const { assignableRoles, roleDef } = require('../roles');
 
@@ -33,6 +34,8 @@ router.post('/', requirePermission('project.add'), async (req, res) => {
   }
   const clientRow = await resolveClient(clientId);
   if (!clientRow) return res.status(400).json({ error: 'That client does not exist.', field: 'clientId' });
+  const refusal = lifecycle.clientRefusal(clientRow);
+  if (refusal) return res.status(409).json({ error: refusal, field: 'clientId' });
 
   const client = await db.connect();
   try {
@@ -40,7 +43,7 @@ router.post('/', requirePermission('project.add'), async (req, res) => {
     const id = uuid();
     await client.query(
       'INSERT INTO projects (id, name, code, client_id, owner_id) VALUES ($1,$2,$3,$4,$5)',
-      [id, verdict.value, codeFor(verdict.value), clientRow, req.user.id]
+      [id, verdict.value, codeFor(verdict.value), clientRow.id, req.user.id]
     );
     for (const leadId of teamLeadIds) {
       await client.query(
@@ -66,10 +69,12 @@ router.post('/', requirePermission('project.add'), async (req, res) => {
   }
 });
 
-// The named client, or null when it does not exist.
+// The named client, or null when it does not exist. The row, not just the id,
+// because whether it is archived or its deal is closed decides whether a new
+// project may go under it.
 async function resolveClient(clientId) {
-  const { rows } = await db.query('SELECT id FROM clients WHERE id = $1', [clientId]);
-  return rows.length ? rows[0].id : null;
+  const { rows } = await db.query('SELECT * FROM clients WHERE id = $1', [clientId]);
+  return rows.length ? rows[0] : null;
 }
 
 // The name rule, in one place, so creating and editing cannot disagree about
@@ -113,6 +118,8 @@ router.patch('/:id', requirePermission('project.edit'), async (req, res) => {
   if (!mayChange(req.user, project)) {
     return res.status(403).json({ error: 'You can only edit projects you created' });
   }
+  const shut = lifecycle.projectRefusal(project);
+  if (shut) return res.status(409).json({ error: shut, projectClosed: true });
 
   const { name, clientId, teamLeadIds, coordinatorIds } = req.body || {};
 
@@ -134,8 +141,12 @@ router.patch('/:id', requirePermission('project.edit'), async (req, res) => {
   // out, so it has to be possible from the edit form.
   let newClient = null;
   if (clientId !== undefined) {
-    newClient = await resolveClient(clientId);
-    if (!newClient) return res.status(400).json({ error: 'That client does not exist.', field: 'clientId' });
+    const target = await resolveClient(clientId);
+    if (!target) return res.status(400).json({ error: 'That client does not exist.', field: 'clientId' });
+    // Moving a project onto a client is the same act as creating one there.
+    const blocked = lifecycle.clientRefusal(target);
+    if (blocked) return res.status(409).json({ error: blocked, field: 'clientId' });
+    newClient = target.id;
   }
 
   const client = await db.connect();
@@ -205,8 +216,102 @@ router.delete('/:id', requirePermission('project.delete'), async (req, res) => {
   if (!mayChange(req.user, project)) {
     return res.status(403).json({ error: 'You can only delete projects you created' });
   }
-  await db.query('DELETE FROM projects WHERE id = $1', [req.params.id]);
-  res.json({ ok: true });
+  // Soft by default, following the convention the value lists set: something
+  // with records under it is deactivated, never deleted, and everything that
+  // depends on it keeps working. A project holds assets, their submissions and
+  // their whole review history — none of that is worth destroying to tidy a
+  // list. Hard delete survives for the one case where it costs nothing: a
+  // project with no assets at all, and only when asked for explicitly.
+  const { rows: held } = await db.query('SELECT COUNT(*) AS n FROM assets WHERE project_id = $1', [req.params.id]);
+  const assetCount = Number(held[0].n);
+  const wantsHardDelete = req.query.purge === '1' || req.query.purge === 'true';
+
+  if (wantsHardDelete) {
+    if (assetCount) {
+      return res.status(409).json({
+        error: `${project.name} holds ${assetCount} asset${assetCount === 1 ? '' : 's'}. Archive it instead — nothing is lost and it can be restored.`,
+        assetCount,
+      });
+    }
+    await db.query('DELETE FROM projects WHERE id = $1', [req.params.id]);
+    console.log(`${req.user.email} deleted the empty project "${project.name}".`);
+    return res.json({ ok: true, deleted: true });
+  }
+
+  if (!project.is_active) return res.json({ ok: true, archived: true, alreadyArchived: true });
+
+  // Work still in flight is worth a second look before it disappears from
+  // everybody's board.
+  const unfinished = await lifecycle.unfinishedAssets(db, req.params.id);
+  if (unfinished && req.query.confirm !== '1' && req.query.confirm !== 'true') {
+    return res.status(409).json({
+      requiresConfirmation: true,
+      error: `${project.name} has ${unfinished} asset${unfinished === 1 ? '' : 's'} that ${unfinished === 1 ? 'has' : 'have'} not been delivered. Archiving hides the project and its work from every board until it is restored.`,
+      unfinished,
+    });
+  }
+
+  await db.query('UPDATE projects SET is_active = 0, archived_at = NOW() WHERE id = $1', [req.params.id]);
+  console.log(`${req.user.email} archived project "${project.name}" (${assetCount} asset(s) kept).`);
+  return res.json({ ok: true, archived: true, assetCount });
+});
+
+// POST /api/projects/:id/restore — bring an archived project back.
+router.post('/:id/restore', requirePermission('project.delete'), async (req, res) => {
+  const { rows } = await db.query('SELECT * FROM projects WHERE id = $1', [req.params.id]);
+  const project = rows[0];
+  if (!project) return res.status(404).json({ error: 'Project not found' });
+  if (!mayChange(req.user, project)) {
+    return res.status(403).json({ error: 'You can only restore projects you created' });
+  }
+  // Restoring into an archived client would put it somewhere still hidden.
+  const { rows: owner } = await db.query('SELECT * FROM clients WHERE id = $1', [project.client_id]);
+  if (owner.length && !owner[0].is_active) {
+    return res.status(409).json({ error: `${owner[0].name} is archived. Restore the client first.` });
+  }
+  await db.query('UPDATE projects SET is_active = 1, archived_at = NULL WHERE id = $1', [req.params.id]);
+  console.log(`${req.user.email} restored project "${project.name}".`);
+  res.json({ ok: true, restored: true });
+});
+
+// POST /api/projects/:id/close  and  /reopen
+//
+// Separate from archiving, and from the client's deal status. A closed project
+// is finished work that stays visible: it takes no new assets, and its existing
+// ones are read-only until somebody reopens it.
+router.post('/:id/close', requirePermission('project.close'), async (req, res) => {
+  const { rows } = await db.query('SELECT * FROM projects WHERE id = $1', [req.params.id]);
+  const project = rows[0];
+  if (!project) return res.status(404).json({ error: 'Project not found' });
+  if (!mayChange(req.user, project)) {
+    return res.status(403).json({ error: 'You can only close projects you created' });
+  }
+  if (project.closed_at) return res.json({ ok: true, closed: true, alreadyClosed: true });
+
+  const unfinished = await lifecycle.unfinishedAssets(db, req.params.id);
+  if (unfinished && req.body && req.body.confirm !== true) {
+    return res.status(409).json({
+      requiresConfirmation: true,
+      error: `${project.name} has ${unfinished} asset${unfinished === 1 ? '' : 's'} that ${unfinished === 1 ? 'has' : 'have'} not been delivered. Closing makes ${unfinished === 1 ? 'it' : 'them'} read-only — no submissions, reviews or edits — until the project is reopened.`,
+      unfinished,
+    });
+  }
+
+  await db.query('UPDATE projects SET closed_at = NOW() WHERE id = $1', [req.params.id]);
+  console.log(`${req.user.email} closed project "${project.name}".`);
+  return res.json({ ok: true, closed: true, unfinished });
+});
+
+router.post('/:id/reopen', requirePermission('project.close'), async (req, res) => {
+  const { rows } = await db.query('SELECT * FROM projects WHERE id = $1', [req.params.id]);
+  const project = rows[0];
+  if (!project) return res.status(404).json({ error: 'Project not found' });
+  if (!mayChange(req.user, project)) {
+    return res.status(403).json({ error: 'You can only reopen projects you created' });
+  }
+  await db.query('UPDATE projects SET closed_at = NULL WHERE id = $1', [req.params.id]);
+  console.log(`${req.user.email} reopened project "${project.name}".`);
+  res.json({ ok: true, closed: false });
 });
 
 // GET /api/projects/:id/artists — everyone eligible for assignment on this

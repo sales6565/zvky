@@ -200,20 +200,40 @@ test('clients and their projects', { skip: cfg ? false : SKIP_REASON }, async (t
     assert.strictEqual((await one(acme.id)).projectCount, 4);
   });
 
-  await t.test('a client can only be deleted once it is empty, and never the system one', async () => {
+  await t.test('deleting archives by default, and destroys only what is empty', async () => {
+    // The convention the value lists set: something with records under it is
+    // deactivated, never deleted. ?purge=1 is the deliberate hard delete, and
+    // it only works on something holding nothing.
     const acme = await named('Acme Corp');
-    const busy = await as('root', `/clients/${acme.id}`, { method: 'DELETE' });
-    assert.strictEqual(busy.status, 409);
-    assert.strictEqual(busy.body.projectCount, 4);
+    const purge = await as('root', `/clients/${acme.id}?purge=1`, { method: 'DELETE' });
+    assert.strictEqual(purge.status, 409);
+    assert.strictEqual(purge.body.projectCount, 4);
+    assert.match(purge.body.error, /archive it instead/i);
 
     const system = (await listed()).find((c) => c.isSystem);
     const refused = await as('root', `/clients/${system.id}`, { method: 'DELETE' });
     assert.strictEqual(refused.status, 409);
     assert.match(refused.body.error, /cannot be deleted/i);
 
+    // An empty one archives by default, and is really gone with ?purge=1.
     const quiet = await named('Quiet Co');
-    assert.strictEqual((await as('root', `/clients/${quiet.id}`, { method: 'DELETE' })).status, 200);
-    assert.strictEqual(await named('Quiet Co'), undefined);
+    const archived = await as('root', `/clients/${quiet.id}`, { method: 'DELETE' });
+    assert.strictEqual(archived.status, 200);
+    assert.strictEqual(archived.body.archived, true);
+    assert.strictEqual(await named('Quiet Co'), undefined, 'out of the live list');
+
+    const withArchived = (await as('root', '/clients?includeArchived=1')).body.clients;
+    const stillThere = withArchived.find((c) => c.name === 'Quiet Co');
+    assert.ok(stillThere, 'but still there when asked for');
+    assert.strictEqual(stillThere.status, 'archived');
+
+    assert.strictEqual((await as('root', `/clients/${quiet.id}/restore`, { method: 'POST' })).status, 200);
+    assert.ok(await named('Quiet Co'), 'and restoring brings it back');
+
+    await as('root', `/clients/${quiet.id}`, { method: 'DELETE' });
+    assert.strictEqual((await as('root', `/clients/${quiet.id}?purge=1`, { method: 'DELETE' })).status, 200);
+    const gone = (await as('root', '/clients?includeArchived=1')).body.clients;
+    assert.ok(!gone.some((c) => c.name === 'Quiet Co'), 'purge really removes it');
   });
 
   await t.test('a project can be moved to another client', async () => {

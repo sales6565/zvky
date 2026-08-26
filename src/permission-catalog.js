@@ -109,7 +109,18 @@ const GROUPS = [
     permissions: [
       { key: 'project.add',           label: 'Project Add',          impliedBy: has('createProject') },
       { key: 'project.edit',          label: 'Project Edit',         impliedBy: has('createProject') },
-      { key: 'project.delete',        label: 'Project Delete',       impliedBy: has('createProject') },
+      {
+        key: 'project.delete',
+        label: 'Project Delete',
+        impliedBy: has('createProject'),
+        describe: 'Archive a project, or delete one outright once it holds nothing.',
+      },
+      {
+        key: 'project.close',
+        label: 'Close / Reopen Project',
+        impliedBy: has('createProject'),
+        describe: 'Close a project so it takes no new assets and its existing ones are read-only, and reopen it.',
+      },
     ],
   },
   {
@@ -132,7 +143,14 @@ const GROUPS = [
         key: 'client.delete',
         label: 'Client Delete',
         impliedBy: has('createProject'),
-        danger: 'Only a client with no projects can be deleted, so this can never take work with it.',
+        describe: 'Archive a client, or delete one outright once it holds no projects.',
+        danger: 'Archiving hides a client and its projects; nothing is destroyed. Only an empty client can be deleted outright.',
+      },
+      {
+        key: 'client.close',
+        label: 'Close / Reopen Deal',
+        impliedBy: has('createProject'),
+        describe: 'Mark a client\'s deal closed so no new projects go under it, and reopen it.',
       },
     ],
   },

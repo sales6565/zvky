@@ -28,6 +28,7 @@ const {
   holds,
 } = require('../permissions');
 const { assignableRoles, roleDef } = require('../roles');
+const lifecycle = require('../lifecycle');
 const assetImport = require('../asset-import');
 const workflow = require('../asset-workflow');
 const submissionLink = require('../submission-link');
@@ -72,6 +73,23 @@ async function attachTasksAndNotes(assets) {
 
 const ASSET_SELECT = `SELECT a.*, u.name AS assignee_name FROM assets a LEFT JOIN users u ON u.id = a.assignee_id`;
 
+// Nothing is written to an asset in a closed or archived project.
+//
+// Reading stays open — the whole point of closing rather than deleting is that
+// the work remains there to look at. This guards the writes, and every one of
+// them goes through it rather than each remembering for itself.
+//
+// The default is deliberately strict: a closed project finishes nothing, not
+// even a review already in flight. Reopening is one click for whoever holds
+// project.close, so the way to finish that review is to say so out loud.
+async function projectClosedResponse(res, projectId) {
+  const { rows } = await db.query('SELECT id, `name`, is_active, closed_at FROM projects WHERE id = $1', [projectId]);
+  const refusal = lifecycle.projectRefusal(rows[0]);
+  if (!refusal) return false;
+  res.status(409).json({ error: refusal, projectClosed: true });
+  return true;
+}
+
 // GET /api/assets/project/:projectId — role-scoped list for that project
 router.get('/project/:projectId', async (req, res) => {
   const projectId = req.params.projectId;
@@ -104,6 +122,7 @@ router.post('/project/:projectId', async (req, res) => {
   if (!canCreateAsset(req.user)) return res.status(403).json({ error: 'Your role cannot create assets' });
   const allowed = await canAccessProject(req.user, projectId);
   if (!allowed) return res.status(403).json({ error: 'No access to this project' });
+  if (await projectClosedResponse(res, projectId)) return undefined;
 
   const { name, type, priority = assetImport.defaultPriority(), assigneeId = null, due = null, description = '', manHours = null } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: 'Asset name is required' });
@@ -156,6 +175,7 @@ router.patch('/:id', async (req, res) => {
   const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
   const asset = rows[0];
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
+  if (await projectClosedResponse(res, asset.project_id)) return undefined;
   if (!(await canEditAsset(req.user, asset))) {
     return res.status(403).json({ error: 'You cannot edit this asset' });
   }
@@ -232,6 +252,7 @@ router.delete('/:id', async (req, res) => {
   const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
   const asset = rows[0];
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
+  if (await projectClosedResponse(res, asset.project_id)) return undefined;
   if (!(await canDeleteAsset(req.user, asset))) {
     return res.status(403).json({ error: 'You cannot delete this asset' });
   }
@@ -244,6 +265,7 @@ router.post('/:id/tasks', async (req, res) => {
   const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
   const asset = rows[0];
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
+  if (await projectClosedResponse(res, asset.project_id)) return undefined;
   if (!(await canEditAsset(req.user, asset))) return res.status(403).json({ error: 'You cannot edit this asset' });
   const { name } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: 'Task name is required' });
@@ -259,13 +281,14 @@ router.post('/:id/tasks', async (req, res) => {
 // PATCH /api/tasks/:id — toggle done
 router.patch('/tasks/:id', async (req, res) => {
   const { rows } = await db.query(
-    `SELECT t.*, a.project_id, a.assignee_id AS asset_assignee_id, a.id AS parent_asset_id
+    `SELECT t.*, a.project_id, a.assignee_id AS asset_assignee_id, a.created_by AS asset_created_by, a.id AS parent_asset_id
      FROM tasks t JOIN assets a ON a.id = t.asset_id WHERE t.id = $1`,
     [req.params.id]
   );
   const row = rows[0];
   if (!row) return res.status(404).json({ error: 'Task not found' });
-  const pseudoAsset = { id: row.parent_asset_id, project_id: row.project_id, assignee_id: row.asset_assignee_id };
+  const pseudoAsset = { id: row.parent_asset_id, project_id: row.project_id, assignee_id: row.asset_assignee_id, created_by: row.asset_created_by };
+  if (await projectClosedResponse(res, row.project_id)) return undefined;
   if (!(await canEditAsset(req.user, pseudoAsset))) return res.status(403).json({ error: 'You cannot edit this task' });
   const { done } = req.body || {};
   await db.query('UPDATE tasks SET done = $1 WHERE id = $2', [done ? 1 : 0, req.params.id]);
@@ -277,6 +300,7 @@ router.post('/:id/notes', async (req, res) => {
   const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
   const asset = rows[0];
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
+  if (await projectClosedResponse(res, asset.project_id)) return undefined;
   if (!(await canViewAsset(req.user, asset))) return res.status(403).json({ error: 'No access to this asset' });
   const { text } = req.body || {};
   if (!text || !text.trim()) return res.status(400).json({ error: 'Note text is required' });
@@ -338,6 +362,7 @@ router.post('/:id/submit', upload.single('file'), async (req, res) => {
   const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
   const asset = rows[0];
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
+  if (await projectClosedResponse(res, asset.project_id)) return undefined;
   const ctx = await contextFor(req, asset);
   const verdict = workflow.evaluate('submit', ctx);
   if (!verdict.ok) return res.status(verdict.status).json({ error: verdict.error });
@@ -392,6 +417,7 @@ router.post('/:id/review', async (req, res) => {
   const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
   const asset = rows[0];
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
+  if (await projectClosedResponse(res, asset.project_id)) return undefined;
 
   const { decision, text } = req.body || {};
   if (!['approved', 'changes_requested'].includes(decision)) {
@@ -432,6 +458,7 @@ router.post('/:id/relay', async (req, res) => {
   const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
   const asset = rows[0];
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
+  if (await projectClosedResponse(res, asset.project_id)) return undefined;
   if (!asset.assignee_id) {
     return res.status(409).json({ error: 'This asset has nobody assigned to pass it to.' });
   }
@@ -449,6 +476,7 @@ router.post('/:id/deliver', async (req, res) => {
   const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
   const asset = rows[0];
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
+  if (await projectClosedResponse(res, asset.project_id)) return undefined;
 
   const ctx = await contextFor(req, asset);
   const verdict = workflow.evaluate('deliver', ctx, { note: req.body && req.body.text });
@@ -477,6 +505,7 @@ router.post('/:id/reassign', async (req, res) => {
   const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
   const asset = rows[0];
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
+  if (await projectClosedResponse(res, asset.project_id)) return undefined;
 
   if (!canAssignAsset(req.user, asset)) {
     return res.status(403).json({ error: 'Only the person who added this asset can hand its rework to somebody else.' });
@@ -686,6 +715,7 @@ router.post('/project/:projectId/bulk', requirePermission('asset.bulk_upload'), 
   if (!canCreateAsset(req.user)) return res.status(403).json({ error: 'Your role cannot create assets' });
   const allowed = await canAccessProject(req.user, projectId);
   if (!allowed) return res.status(403).json({ error: 'No access to this project' });
+  if (await projectClosedResponse(res, projectId)) return undefined;
   if (!req.file) return res.status(400).json({ error: 'A CSV or Excel file is required' });
 
   let headers;
