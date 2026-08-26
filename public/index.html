@@ -80,6 +80,12 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .task-add{display:grid;grid-template-columns:1fr auto;gap:6px;margin-top:8px;}
 .task-add input{margin:0;}
 
+/* The boot-failure banner: the one thing on screen when the app cannot load. */
+.boot-error{background:#e8402c14;border:1px solid #e8402c66;border-radius:10px;padding:16px 18px;margin:14px 0;}
+.be-title{font-family:'Space Grotesk';font-weight:600;font-size:15px;margin-bottom:4px;}
+.be-detail{font-size:12.5px;color:var(--ink-muted);word-break:break-word;}
+.be-hint{font-size:11.5px;color:var(--ink-faint);margin:8px 0 12px;}
+
 /* The clock on an asset. */
 .timer-box{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-top:12px;}
 .timer-total{font-family:'Space Grotesk';font-size:18px;font-weight:600;}
@@ -309,6 +315,7 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
     </div>
   </header>
   <div class="sprockets"></div>
+  <div id="bootError" style="display:none;"></div>
   <div class="stats" id="stats"></div>
   <div class="toolbar">
     <div class="tabs" id="mainTabs">
@@ -754,6 +761,7 @@ async function api(path, options={}){
     // Some endpoints name the form field at fault so the message can be shown
     // beside it rather than as a toast detached from the input.
     if(data.field) err.field = data.field;
+    err.request = `${(options.method||'GET').toUpperCase()} /api${path}`;
     // And some report a whole list at once — every bad row of a repeatable
     // form — so a form can mark each row rather than showing only the first.
     if(data.errors) err.details = { errors: data.errors };
@@ -803,11 +811,41 @@ function logout(){
 }
 document.getElementById('logoutBtn').addEventListener('click', logout);
 
+/* A failure here used to be invisible: bootApp was fired without await or
+   catch, so one failed request at boot — a 500 from a half-applied migration,
+   a database hiccup, a timeout — killed the boot silently and left the shell
+   up with every tab permanently blank. Nothing reached the screen; the only
+   trace was an unhandled rejection in the console. That is precisely the
+   "everything is blank and nothing says why" outage, so the rule now is that
+   the boot either completes or says on screen exactly what failed. */
+function bootError(err){
+  const el = document.getElementById('bootError');
+  if(!err){ el.style.display='none'; el.innerHTML=''; return; }
+  el.style.display='';
+  el.innerHTML = `
+    <div class="boot-error">
+      <div class="be-title">The app could not load its data</div>
+      <div class="be-detail">${escapeHTML(err.request || 'A request')} failed: ${escapeHTML(err.message)}</div>
+      <div class="be-hint">If this keeps happening after a deployment, open <span class="mono">/api/health</span> —
+        it reports the database state and any schema repair that did not apply.</div>
+      <button class="btn btn-brand" id="bootRetry">Retry</button>
+    </div>`;
+  document.getElementById('bootRetry').onclick = ()=>showApp();
+}
+
 async function showApp(){
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('appRoot').style.display='block';
-  await Promise.all([loadRoles(), loadReferenceData()]);
-  bootApp();
+  bootError(null);
+  try{
+    await Promise.all([loadRoles(), loadReferenceData()]);
+    await bootApp();
+  }catch(err){
+    /* The login path used to surface this on the login form — which this
+       function had already hidden, so the message went nowhere. It lands in
+       the shell now, with a retry. */
+    bootError(err);
+  }
 }
 
 /* ---------- app boot ---------- */
@@ -1160,6 +1198,9 @@ async function renderUsers(){
   });
 }
 async function render(){
+  const viewIds = { board:'boardView', list:'listView', team:'teamView',
+    users:'usersView', projects:'projectsView', settings:'settingsView' };
+  try{
   if(state.view==='board' || state.view==='list'){ await loadAssets(); }
   renderStats();
   /* The permission half comes from UI_GATES; this is the other half — these
@@ -1173,6 +1214,16 @@ async function render(){
   else if(state.view==='users') await renderUsers();
   else if(state.view==='projects') await renderProjects();
   else if(state.view==='settings') await renderSettings();
+  }catch(err){
+    /* setTab fires render() without awaiting it, so a throw in here used to be
+       an unhandled rejection and a tab that simply stayed empty. The tab now
+       says what broke, which is the difference between a bug report that reads
+       "everything is blank" and one that names the failing request. */
+    const el = document.getElementById(viewIds[state.view]);
+    if(el) el.innerHTML = `<div class="empty">This tab could not load.<br>
+      <span style="font-size:12px;color:var(--ink-faint);">${escapeHTML(err.request ? err.request + ' — ' : '')}${escapeHTML(err.message)}</span><br>
+      <button class="btn btn-ghost btn-sm" style="margin-top:10px;" onclick="render()">Retry</button></div>`;
+  }
 }
 
 /* What this page holds, and what deliberately lives elsewhere.

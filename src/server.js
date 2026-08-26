@@ -79,15 +79,26 @@ app.use('/api/permissions', permissionRoutes);
 // process is up but whose credentials are wrong looks identical from outside
 // otherwise, and the symptom that reaches the user is a failed sign-in.
 // Reports whether any account exists, never how many or whose.
+// What the startup schema repair reported, held so /api/health can answer
+// "did every migration actually apply?" from a URL. Reading server logs was
+// the only way to know before, and a step that fails silently is exactly how
+// a deployment ends up serving code against a schema it does not have.
+let lastMigration = null;
+
 app.get('/api/health', async (req, res) => {
   const db = require('./db');
   try {
     const { rows } = await db.query('SELECT COUNT(*) AS n FROM users');
     const seeded = Number(rows[0].n) > 0;
+    const repairsFailed = (lastMigration && lastMigration.failed) || [];
     res.json({
-      ok: true,
+      ok: repairsFailed.length === 0,
       database: 'connected',
       accounts: seeded ? 'present' : 'none',
+      schemaRepairs: repairsFailed.length
+        ? { applied: false, failed: repairsFailed,
+            hint: 'These startup schema repairs did not apply. The server log from startup has each one\'s database error; parts of the app will fail until they are fixed.' }
+        : { applied: true },
       ...(seeded ? {} : {
         hint: 'No accounts exist yet. Run "npm run seed", or — if you have no shell on this host — '
           + 'set BOOTSTRAP_TOKEN in the environment and POST it to /api/auth/bootstrap.',
@@ -190,7 +201,7 @@ async function start() {
   try {
     // Repairs a schema left over from an earlier version, seeds the reference
     // tables, and loads the mirror the permission checks read from.
-    await require('./migrate').run(db);
+    lastMigration = await require('./migrate').run(db);
     // Then say so if nobody can sign in yet — otherwise every attempt just
     // fails as "Invalid email or password" with no explanation.
     await require('./bootstrap-token').announce(db);

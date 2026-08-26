@@ -356,6 +356,16 @@ test('client and project lifecycle', { skip: cfg ? false : SKIP_REASON }, async 
     await as('root', `/clients/${clientId}?confirm=1`, { method: 'DELETE' });
   });
 
+  await t.test('health says whether every schema repair applied', async () => {
+    // A partially-applied migration used to be visible only in the server log,
+    // and code assuming a column that never arrived blanked the whole app.
+    // /api/health now answers the question from a URL.
+    const res = await call('/health', {});
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.ok, true);
+    assert.deepStrictEqual(res.body.schemaRepairs, { applied: true });
+  });
+
   await t.test('Super Admin holds the new keys without being given them', async () => {
     const mine = (await as('root', '/auth/me')).body.user.permissions;
     for (const key of ['project.close', 'project.delete', 'client.close', 'client.delete']) {
