@@ -16,10 +16,15 @@ const SCHEMES = new Set(['http:', 'https:', 'ftp:', 'ftps:', 'sftp:', 'smb:', 'f
 
 const MAX_LENGTH = 2048; // the column width, checked here so the error is readable
 
-function validate(raw) {
+// `optional` is for the reference link on an asset — the brief rather than the
+// submission. Everything about what counts as a valid link is identical; the
+// only difference is that leaving it out is allowed, and clearing it is how you
+// remove it. Two validators would have drifted the moment one gained a scheme.
+function validate(raw, { optional = false } = {}) {
   const text = String(raw ?? '').trim();
 
   if (!text) {
+    if (optional) return { ok: true, link: null };
     return { ok: false, error: 'A link to the work is required.' };
   }
   if (text.length > MAX_LENGTH) {

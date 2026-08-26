@@ -71,7 +71,14 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .drawer select,.drawer textarea,.drawer input[type=text],.drawer input[type=date]{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--ink);padding:8px 10px;border-radius:8px;font-family:'Inter';font-size:13px;resize:vertical;}
 .drawer select:disabled,.drawer input:disabled,.drawer textarea:disabled{opacity:.55;cursor:not-allowed;}
 .task-row{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;border-bottom:1px dashed var(--border);}
-.task-row input{accent-color:var(--brand);} .task-row.done span{text-decoration:line-through;color:var(--ink-faint);}
+.task-row input[type=checkbox]{accent-color:var(--brand);}
+.task-row.done .task-text{text-decoration:line-through;color:var(--ink-faint);}
+.task-text{flex:1;}
+.task-who{font-size:9px;color:var(--ink-faint);background:var(--surface-3);padding:1px 5px;border-radius:8px;}
+.task-btn{background:none;border:none;color:var(--ink-faint);cursor:pointer;font-size:13px;padding:0 3px;line-height:1;}
+.task-btn:hover{color:var(--brand);}
+.task-add{display:grid;grid-template-columns:1fr auto;gap:6px;margin-top:8px;}
+.task-add input{margin:0;}
 .note{background:var(--surface-2);border-left:3px solid var(--brand);border-radius:0 8px 8px 0;padding:8px 10px;margin-bottom:8px;}
 .note .who{font-family:'Space Grotesk';font-weight:700;font-size:12px;} .note .when{font-size:10px;color:var(--ink-muted);font-family:'IBM Plex Mono';}
 .note p{margin:4px 0 0;font-size:12.5px;line-height:1.4;}
@@ -612,6 +619,21 @@ function ownsAsset(a){
 }
 /* Changing who an asset is assigned to — its own permission, same question. */
 function mayAssignAsset(a){ return can('asset.assign') && ownsAsset(a); }
+/* One checklist row. Rendered from a function rather than inline, because the
+   same row is redrawn after every add, rename and delete. */
+function taskRowHTML(t, manage){
+  return `<div class="task-row ${t.done?'done':''}" data-tid="${t.id}">
+    <input type="checkbox" ${t.done?'checked':''} ${manage?'':'disabled'}>
+    <span class="task-text">${escapeHTML(t.name)}</span>
+    ${t.created_by_name?`<span class="task-who" title="Added by ${escapeHTML(t.created_by_name)}">${escapeHTML(initials(t.created_by_name))}</span>`:''}
+    ${manage?`<button class="task-btn task-edit" title="Rename">✎</button><button class="task-btn task-del" title="Delete">×</button>`:''}
+  </div>`;
+}
+function taskProgress(tasks){
+  if(!tasks || !tasks.length) return 'none yet';
+  return `${tasks.filter(t=>t.done).length}/${tasks.length} done`;
+}
+
 /* The two states the pipeline parks rework in. */
 const REWORK_STATUSES = ['tl_changes_requested','cd_changes_requested'];
 
@@ -1498,6 +1520,14 @@ async function openDrawer(id){
      else on the rework instead of it going back to whoever submitted it. Only
      in those two states, and only for the creator or a full-access role. */
   const canReassignRework = mayAssignAsset(a) && REWORK_STATUSES.includes(a.status);
+  /* The checklist is wider than editing the record: the creator, whoever it is
+     assigned to, and the reviewer holding it. Mirrors canManageTasks in
+     src/permissions.js — the API decides, this only stops offering a control
+     that would be refused. */
+  const manageTasks = ownsAsset(a)
+    || a.assignee_id === u.id
+    || (can('review.tl') && a.assignee_id)
+    || can('review.cd');
   const t = typeOf(a.type);
   const drawer = document.getElementById('drawer');
 
@@ -1589,7 +1619,21 @@ async function openDrawer(id){
       <div class="ref-err" id="reassignErr"></div>
     ` : ''}
 
-    <div class="field-lbl" style="margin-top:16px;">Assignee</div><div style="font-size:13px;padding:8px 0;">${escapeHTML(a.assignee_name)||'Unassigned'}</div>
+    <div class="field-lbl" style="margin-top:16px;">Assignee</div>
+    ${mayAssignAsset(a)
+      ? `<select id="d_assignee"><option value="">Loading…</option></select><div class="ref-err" id="d_assigneeErr"></div>`
+      : `<div style="font-size:13px;padding:8px 0;">${escapeHTML(a.assignee_name)||'Unassigned'}</div>`}
+
+    <div class="field-lbl">Requirement / Reference Link</div>
+    <div style="font-size:11px;color:var(--ink-faint);margin-bottom:5px;">
+      The brief, spec or reference this is made from — not the finished work. Submissions go in the Submissions section below.
+    </div>
+    ${editable
+      ? `<input type="text" id="d_refLink" value="${escapeHTML(a.reference_link||'')}" placeholder="https://drive.example.com/brief (optional)">
+         <div class="ref-err" id="d_refErr"></div>`
+      : (a.reference_link
+          ? `<div style="font-size:13px;padding:6px 0;"><a href="${escapeHTML(a.reference_link)}" target="_blank" rel="noopener noreferrer" style="color:var(--brand);word-break:break-all;">${escapeHTML(a.reference_link)}</a></div>`
+          : `<div style="font-size:12px;color:var(--ink-faint);padding:6px 0;">None given.</div>`)}
 
     <div class="row2">
       <div><div class="field-lbl">Man-hours</div><input type="text" id="d_hours" value="${a.man_hours||''}" ${editable?'':'disabled'} placeholder="e.g. 16"></div>
@@ -1599,8 +1643,15 @@ async function openDrawer(id){
     <div class="field-lbl">Priority</div>
     <select id="d_priority" ${editable?'':'disabled'}>${priorityOptions(a.priority)}</select>
     <div class="field-lbl">Description</div><textarea id="d_desc" rows="3" ${editable?'':'disabled'}>${escapeHTML(a.description||'')}</textarea>
-    <div class="field-lbl">Tasks</div>
-    <div id="d_tasks">${a.tasks.map(t=>`<div class="task-row ${t.done?'done':''}" data-tid="${t.id}"><input type="checkbox" ${t.done?'checked':''} ${editable?'':'disabled'}><span>${escapeHTML(t.name)}</span></div>`).join('')}</div>
+    <div class="field-lbl" style="display:flex;align-items:center;gap:8px;">
+      <span>Tasks</span>
+      <span id="d_taskCount" style="font-size:11px;color:var(--ink-faint);text-transform:none;letter-spacing:0;">${taskProgress(a.tasks)}</span>
+    </div>
+    <div id="d_tasks">${a.tasks.map(t=>taskRowHTML(t, manageTasks)).join('')}</div>
+    ${manageTasks ? `<div class="task-add">
+      <input type="text" id="d_newTask" placeholder="Add a task…">
+      <button class="btn btn-ghost btn-sm" id="d_addTask">Add</button>
+    </div><div class="ref-err" id="d_taskErr"></div>` : ''}
 
     <div class="field-lbl">Submissions</div>
     <div id="d_versions">${(a.versions&&a.versions.length) ? a.versions.map(v=>`
@@ -1649,15 +1700,110 @@ async function openDrawer(id){
     document.getElementById('d_desc').onchange = async e=>{ try{ await api('/assets/'+id,{method:'PATCH',body:{description:e.target.value}}); a.description=e.target.value; }catch(err){ showToast(err.message); } };
     document.getElementById('d_hours').onchange = async e=>{ try{ await api('/assets/'+id,{method:'PATCH',body:{manHours:e.target.value?Number(e.target.value):null}}); a.man_hours=e.target.value; render(); }catch(err){ showToast(err.message); } };
     document.getElementById('d_due').onchange = async e=>{ try{ await api('/assets/'+id,{method:'PATCH',body:{due:e.target.value||null}}); a.due_date=e.target.value; render(); }catch(err){ showToast(err.message); } };
+    /* The brief's link. Saved on blur like every other field here, and the
+       server's message lands under the input rather than as a toast that has
+       drifted away from the thing it is about. */
+    const ref = document.getElementById('d_refLink');
+    if(ref) ref.onchange = async e=>{
+      const err = document.getElementById('d_refErr');
+      err.textContent = '';
+      try{
+        const { asset } = await api('/assets/'+id, { method:'PATCH', body:{ referenceLink: e.target.value.trim() } });
+        a.reference_link = asset.reference_link;
+        e.target.value = asset.reference_link || '';
+      }catch(e2){ err.textContent = e2.message; }
+    };
+  }
+
+  /* Changing the assignee from the panel.
+
+     The same permission the reassign flow uses, and the same endpoint the Edit
+     form uses — PATCH with assigneeId — rather than a third path with its own
+     rules. Every change it makes is written to the asset's history, so the
+     panel and the Reassign block below both leave the same trail. */
+  if(mayAssignAsset(a)){
+    const sel = document.getElementById('d_assignee');
+    const err = document.getElementById('d_assigneeErr');
+    api(`/projects/${a.project_id}/artists`).then(({ artists })=>{
+      sel.innerHTML = '<option value="">Unassigned</option>' +
+        artists.map(x=>`<option value="${x.id}"${x.id===a.assignee_id?' selected':''}>${escapeHTML(x.name)}</option>`).join('');
+      /* Somebody already on it who is no longer an eligible pick still has to
+         show, or the dropdown would silently propose unassigning them. */
+      if(a.assignee_id && !artists.some(x=>x.id===a.assignee_id)){
+        sel.insertAdjacentHTML('beforeend', `<option value="${a.assignee_id}" selected>${escapeHTML(a.assignee_name||'Current assignee')}</option>`);
+      }
+    }).catch(e2=>{ sel.innerHTML = '<option value="">Could not load</option>'; err.textContent = e2.message; });
+
+    sel.onchange = async e=>{
+      err.textContent = '';
+      const previous = a.assignee_id;
+      try{
+        const { asset } = await api('/assets/'+id, { method:'PATCH', body:{ assigneeId: e.target.value || null } });
+        a.assignee_id = asset.assignee_id;
+        a.assignee_name = asset.assignee_name;
+        showToast(asset.assignee_name ? `Reassigned to ${asset.assignee_name}.` : 'Unassigned.');
+        loadAssetHistory(id);
+        render();
+      }catch(e2){ err.textContent = e2.message; e.target.value = previous || ''; }
+    };
+  }
+
+  /* The checklist. Redrawn from the server's answer after every change, so the
+     progress count and the rows cannot drift from what was actually saved. */
+  async function refreshTasks(){
+    try{
+      const { tasks } = await api(`/assets/${id}/tasks`);
+      a.tasks = tasks;
+      document.getElementById('d_tasks').innerHTML = tasks.map(t=>taskRowHTML(t, manageTasks)).join('');
+      document.getElementById('d_taskCount').textContent = taskProgress(tasks);
+      wireTasks();
+      render();
+    }catch(err){ showToast(err.message); }
+  }
+  function wireTasks(){
+    const err = document.getElementById('d_taskErr');
     drawer.querySelectorAll('.task-row').forEach(row=>{
+      const tid = row.dataset.tid;
       row.querySelector('input').onchange = async e=>{
+        if(err) err.textContent = '';
         try{
-          await api('/assets/tasks/'+row.dataset.tid, { method:'PATCH', body:{ done:e.target.checked } });
-          const task = a.tasks.find(t=>t.id===row.dataset.tid); task.done=e.target.checked;
-          row.classList.toggle('done', task.done); render();
-        }catch(err){ showToast(err.message); }
+          await api('/assets/tasks/'+tid, { method:'PATCH', body:{ done:e.target.checked } });
+          await refreshTasks();
+        }catch(e2){ if(err) err.textContent = e2.message; e.target.checked = !e.target.checked; }
+      };
+      const edit = row.querySelector('.task-edit');
+      if(edit) edit.onclick = async ()=>{
+        const current = a.tasks.find(t=>t.id===tid);
+        const next = prompt('Rename this task:', current ? current.name : '');
+        if(next===null || !next.trim() || (current && next.trim()===current.name)) return;
+        if(err) err.textContent = '';
+        try{ await api(`/assets/tasks/${tid}/text`, { method:'PATCH', body:{ name: next.trim() } }); await refreshTasks(); }
+        catch(e2){ if(err) err.textContent = e2.message; }
+      };
+      const del = row.querySelector('.task-del');
+      if(del) del.onclick = async ()=>{
+        const current = a.tasks.find(t=>t.id===tid);
+        if(!confirm(`Delete "${current ? current.name : 'this task'}"?`)) return;
+        if(err) err.textContent = '';
+        try{ await api('/assets/tasks/'+tid, { method:'DELETE' }); await refreshTasks(); }
+        catch(e2){ if(err) err.textContent = e2.message; }
       };
     });
+  }
+  wireTasks();
+
+  if(manageTasks){
+    const input = document.getElementById('d_newTask');
+    const addTask = async ()=>{
+      const err = document.getElementById('d_taskErr');
+      err.textContent = '';
+      const name = input.value.trim();
+      if(!name){ err.textContent = 'Type the task first.'; return; }
+      try{ await api(`/assets/${id}/tasks`, { method:'POST', body:{ name } }); input.value=''; await refreshTasks(); }
+      catch(e2){ err.textContent = e2.message; }
+    };
+    document.getElementById('d_addTask').onclick = addTask;
+    input.onkeydown = e=>{ if(e.key==='Enter'){ e.preventDefault(); addTask(); } };
   }
 
   if(canSubmit){

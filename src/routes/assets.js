@@ -23,6 +23,7 @@ const {
   canMarkDelivered,
   canOverrideStage,
   canAssignAsset,
+  canManageTasks,
   isAwaitingRework,
   REWORK_STATUSES,
   holds,
@@ -40,7 +41,9 @@ async function attachTasksAndNotes(assets) {
   if (!assets.length) return assets;
   const ids = assets.map((a) => a.id);
   const { rows: tasks } = await db.query(
-    'SELECT * FROM tasks WHERE asset_id IN ($1) ORDER BY `position`',
+    `SELECT t.*, u.\`name\` AS created_by_name FROM tasks t
+     LEFT JOIN users u ON u.id = t.created_by
+     WHERE t.asset_id IN ($1) ORDER BY t.\`position\``,
     [ids]
   );
   const { rows: notes } = await db.query(
@@ -213,6 +216,16 @@ router.patch('/:id', async (req, res) => {
       && !canAssignAsset(req.user, asset)) {
     return res.status(403).json({ error: 'You do not have permission to assign this asset.', field: 'assigneeId' });
   }
+  // The brief's link. Optional, and validated by the same rules a submission
+  // link is — so "that is not a valid link" means the same thing in both
+  // places. Clearing it is sending an empty string.
+  if (req.body.referenceLink !== undefined) {
+    const verdict = submissionLink.validate(req.body.referenceLink, { optional: true });
+    if (!verdict.ok) return res.status(400).json({ error: verdict.error, field: 'referenceLink' });
+    fields.push(`reference_link = $${i++}`);
+    values.push(verdict.link);
+  }
+
   for (const key of ['status', 'priority', 'description', 'assignee_id', 'due_date', 'man_hours']) {
     const bodyKey = key === 'assignee_id' ? 'assigneeId' : key === 'due_date' ? 'due' : key === 'man_hours' ? 'manHours' : key;
     if (req.body[bodyKey] !== undefined) {
@@ -240,6 +253,23 @@ router.patch('/:id', async (req, res) => {
     // made mid-review.
     await db.query('UPDATE assets SET routed_to_id = $1 WHERE id = $2 AND routed_to_id IS NOT NULL',
       [req.body.assigneeId || null, req.params.id]);
+
+    // And record it. This used to update the routing and say nothing, so an
+    // asset could change hands mid-pipeline with no trace of who moved it or
+    // when — the one question the history exists to answer.
+    const nameOf = async (userId) => {
+      if (!userId) return 'nobody';
+      const { rows: who } = await db.query('SELECT `name` FROM users WHERE id = $1', [userId]);
+      return who.length ? who[0].name : 'somebody who no longer has an account';
+    };
+    const from = await nameOf(asset.assignee_id);
+    const to = await nameOf(req.body.assigneeId);
+    await db.query(
+      `INSERT INTO asset_events (id, asset_id, action, from_status, to_status, actor_id, actor_email, note, routed_to_id)
+       VALUES ($1,$2,'reassign',$3,$4,$5,$6,$7,$8)`,
+      [uuid(), asset.id, asset.status, asset.status, req.user.id, req.user.email,
+       `Reassigned from ${from} to ${to}`, req.body.assigneeId || null]
+    );
   }
 
   const { rows: updated } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [req.params.id]);
@@ -260,22 +290,95 @@ router.delete('/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
+// The checklist.
+//
+// Its own permission question — see canManageTasks in src/permissions.js. The
+// asset's record belongs to whoever wrote the brief; the checklist belongs to
+// the people doing and checking the work.
+async function taskGuard(req, res, assetId) {
+  const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [assetId]);
+  const asset = rows[0];
+  if (!asset) { res.status(404).json({ error: 'Asset not found' }); return null; }
+  if (await projectClosedResponse(res, asset.project_id)) return null;
+  if (!(await canManageTasks(req.user, asset))) {
+    res.status(403).json({
+      error: 'Only the person who added this asset, whoever it is assigned to, or its reviewer can change its checklist.',
+    });
+    return null;
+  }
+  return asset;
+}
+
+function checkTaskName(name) {
+  if (typeof name !== 'string' || !name.trim()) return { error: 'Task name is required', field: 'name' };
+  if (name.trim().length > 255) return { error: 'That task is too long (255 characters at most)', field: 'name' };
+  return null;
+}
+
+// GET /api/assets/:id/tasks — the checklist, with who added each item.
+router.get('/:id/tasks', async (req, res) => {
+  const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
+  const asset = rows[0];
+  if (!asset) return res.status(404).json({ error: 'Asset not found' });
+  if (!(await canViewAsset(req.user, asset))) return res.status(403).json({ error: 'No access to this asset' });
+  const { rows: tasks } = await db.query(
+    `SELECT t.*, u.\`name\` AS created_by_name FROM tasks t
+     LEFT JOIN users u ON u.id = t.created_by
+     WHERE t.asset_id = $1 ORDER BY t.\`position\``,
+    [req.params.id]
+  );
+  res.json({
+    tasks: tasks.map((t) => ({ ...t, done: Boolean(t.done) })),
+    done: tasks.filter((t) => t.done).length,
+    total: tasks.length,
+    canManage: await canManageTasks(req.user, asset),
+  });
+});
+
+// PATCH /api/assets/tasks/:id — rename a checklist item.
+router.patch('/tasks/:id/text', async (req, res) => {
+  const { rows } = await db.query('SELECT asset_id FROM tasks WHERE id = $1', [req.params.id]);
+  if (!rows.length) return res.status(404).json({ error: 'Task not found' });
+  if (!(await taskGuard(req, res, rows[0].asset_id))) return undefined;
+
+  const bad = checkTaskName(req.body && req.body.name);
+  if (bad) return res.status(400).json({ error: bad.error, field: bad.field });
+
+  await db.query('UPDATE tasks SET `name` = $1 WHERE id = $2', [req.body.name.trim(), req.params.id]);
+  return res.json({ ok: true, name: req.body.name.trim() });
+});
+
+// DELETE /api/assets/tasks/:id — remove a checklist item.
+router.delete('/tasks/:id', async (req, res) => {
+  const { rows } = await db.query('SELECT asset_id, `name` FROM tasks WHERE id = $1', [req.params.id]);
+  if (!rows.length) return res.status(404).json({ error: 'Task not found' });
+  if (!(await taskGuard(req, res, rows[0].asset_id))) return undefined;
+  await db.query('DELETE FROM tasks WHERE id = $1', [req.params.id]);
+  return res.json({ ok: true });
+});
+
 // POST /api/assets/:id/tasks — add a checklist item
 router.post('/:id/tasks', async (req, res) => {
   const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
   const asset = rows[0];
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
-  if (await projectClosedResponse(res, asset.project_id)) return undefined;
-  if (!(await canEditAsset(req.user, asset))) return res.status(403).json({ error: 'You cannot edit this asset' });
+  if (!(await taskGuard(req, res, req.params.id))) return undefined;
   const { name } = req.body || {};
-  if (!name || !name.trim()) return res.status(400).json({ error: 'Task name is required' });
+  const bad = checkTaskName(name);
+  if (bad) return res.status(400).json({ error: bad.error, field: bad.field });
+
   const { rows: posRows } = await db.query('SELECT COUNT(*) AS n FROM tasks WHERE asset_id = $1', [req.params.id]);
   const id = uuid();
   await db.query(
-    'INSERT INTO tasks (id, asset_id, `name`, done, `position`) VALUES ($1,$2,$3,0,$4)',
-    [id, req.params.id, name.trim(), Number(posRows[0].n)]
+    'INSERT INTO tasks (id, asset_id, `name`, done, `position`, created_by) VALUES ($1,$2,$3,0,$4,$5)',
+    [id, req.params.id, name.trim(), Number(posRows[0].n), req.user.id]
   );
-  res.status(201).json({ task: { id, asset_id: req.params.id, name: name.trim(), done: false } });
+  return res.status(201).json({
+    task: {
+      id, asset_id: req.params.id, name: name.trim(), done: false,
+      created_by: req.user.id, created_by_name: req.user.name,
+    },
+  });
 });
 
 // PATCH /api/tasks/:id — toggle done
@@ -287,9 +390,7 @@ router.patch('/tasks/:id', async (req, res) => {
   );
   const row = rows[0];
   if (!row) return res.status(404).json({ error: 'Task not found' });
-  const pseudoAsset = { id: row.parent_asset_id, project_id: row.project_id, assignee_id: row.asset_assignee_id, created_by: row.asset_created_by };
-  if (await projectClosedResponse(res, row.project_id)) return undefined;
-  if (!(await canEditAsset(req.user, pseudoAsset))) return res.status(403).json({ error: 'You cannot edit this task' });
+  if (!(await taskGuard(req, res, row.parent_asset_id))) return undefined;
   const { done } = req.body || {};
   await db.query('UPDATE tasks SET done = $1 WHERE id = $2', [done ? 1 : 0, req.params.id]);
   res.json({ ok: true });

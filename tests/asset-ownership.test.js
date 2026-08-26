@@ -173,9 +173,23 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     })).status, 403, 'the asset on your desk is not yours to edit');
     const seen = await seenBy('ana', asset.id);
     assert.ok(seen, 'they can still see it');
+
+    // The checklist is the exception, and the line is drawn deliberately: the
+    // asset's RECORD is the creator's — description, priority, deadline — and
+    // the CHECKLIST is the working notes of whoever is doing and checking the
+    // job. Ticking a box on your own work is not editing somebody's brief.
     assert.strictEqual((await as('ana', `/assets/tasks/${seen.tasks[0].id}`, {
       method: 'PATCH', body: { done: true },
-    })).status, 403, 'nor is the checklist');
+    })).status, 200, 'but the checklist on their own work is theirs to work');
+    assert.strictEqual((await as('ana', `/assets/${asset.id}/tasks`, {
+      method: 'POST', body: { name: 'Something I noticed' },
+    })).status, 201);
+
+    // And it really is scoped to their own: bo holds neither the asset nor the
+    // assignment, so the checklist is closed to them too.
+    assert.strictEqual((await as('bo', `/assets/tasks/${seen.tasks[0].id}`, {
+      method: 'PATCH', body: { done: true },
+    })).status, 403);
 
     // The pipeline is untouched: submitting is a separate permission, so the
     // work still moves even though the record is not theirs to change.

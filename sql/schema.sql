@@ -292,6 +292,12 @@ CREATE TABLE IF NOT EXISTS assets (
   man_hours     DECIMAL(6,1) NULL,
   due_date      DATE         NULL,
   description   TEXT         NULL,
+  -- The brief: a link to the requirement, reference art, or spec that the work
+  -- is made FROM. Deliberately not the same thing as asset_versions.link, which
+  -- is where a finished submission was put — one is the input, the other the
+  -- output, and conflating them would make "the link" ambiguous on a screen
+  -- that shows both. Optional, unlike a submission's link.
+  reference_link VARCHAR(2048) NULL,
   created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_assets_project (project_id),
   KEY idx_assets_assignee (assignee_id),
@@ -313,14 +319,21 @@ CREATE TABLE IF NOT EXISTS assets (
   ))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- The per-asset checklist. One table, not two: an "AssetTask" alongside this
+-- would be a second name for the thing already here, and every screen would
+-- then have to ask which kind it was looking at.
 CREATE TABLE IF NOT EXISTS tasks (
   id         CHAR(36)     NOT NULL PRIMARY KEY,
   asset_id   CHAR(36)     NOT NULL,
   `name`     VARCHAR(255) NOT NULL,
   done       TINYINT(1)   NOT NULL DEFAULT 0,
   `position` INT          NOT NULL DEFAULT 0,
+  -- NULL on the three tasks every asset is seeded with, which nobody typed.
+  created_by CHAR(36)     NULL,
+  created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_tasks_asset (asset_id),
-  CONSTRAINT fk_tasks_asset FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE
+  CONSTRAINT fk_tasks_asset  FOREIGN KEY (asset_id)   REFERENCES assets(id) ON DELETE CASCADE,
+  CONSTRAINT fk_tasks_author FOREIGN KEY (created_by) REFERENCES users(id)  ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS notes (

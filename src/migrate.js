@@ -708,6 +708,40 @@ async function ensureLifecycleColumns(db, log) {
   }
 }
 
+// assets.reference_link, and authorship on the checklist.
+//
+// The checklist extends the tasks table that is already there rather than
+// arriving as a second one. Existing rows keep working: created_by is NULL on
+// the three tasks every asset has been seeded with since the beginning, which
+// is exactly right — nobody typed those.
+async function ensureAssetPanelColumns(db, log) {
+  const has = async (table, column) => {
+    const { rows } = await db.query(
+      `SELECT COLUMN_NAME AS n FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = $1 AND COLUMN_NAME = $2`,
+      [table, column]
+    );
+    return rows.length > 0;
+  };
+
+  const added = [];
+  if (!(await has('assets', 'reference_link'))) {
+    await db.query('ALTER TABLE assets ADD COLUMN reference_link VARCHAR(2048) NULL AFTER description');
+    added.push('assets.reference_link');
+  }
+  if (!(await has('tasks', 'created_by'))) {
+    await db.query('ALTER TABLE tasks ADD COLUMN created_by CHAR(36) NULL');
+    await db.query('ALTER TABLE tasks ADD COLUMN created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP');
+    try {
+      await db.query('ALTER TABLE tasks ADD CONSTRAINT fk_tasks_author FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL');
+    } catch (err) {
+      log(`Schema: tasks.created_by added, but its foreign key was refused — ${err.sqlMessage || err.message}`);
+    }
+    added.push('tasks.created_by', 'tasks.created_at');
+  }
+  if (added.length) log(`Schema: added ${added.join(', ')}.`);
+}
+
 const STEPS = [
   ['stale role constraints', dropStaleRoleConstraints],
   ['users.role column width', widenRoleColumn],
@@ -727,6 +761,7 @@ const STEPS = [
   // After the client step, so client.* exists in the catalogue by the time
   // roles are topped up against it.
   ['client and project lifecycle', ensureLifecycleColumns],
+  ['asset brief and checklist', ensureAssetPanelColumns],
   ['permission catalogue top-up', ensurePermissionCatalogueComplete],
   ['IP allowlist', ensureIpAllowlist],
 ];

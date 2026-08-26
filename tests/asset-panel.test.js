@@ -1,0 +1,285 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { config, resetSchema, startServer, stopServer, api, sql, systemClientId, SKIP_REASON } = require('./helpers');
+const submissionLink = require('../src/submission-link');
+
+const cfg = config('assetpanel');
+
+// --- the link rules, shared between the brief and the submission ---------------
+
+test('the reference link is the submission link, made optional', () => {
+  // One validator, so "that is not a valid link" cannot come to mean two
+  // different things on one screen.
+  assert.ok(!submissionLink.validate('').ok, 'a submission needs one');
+  const blank = submissionLink.validate('', { optional: true });
+  assert.ok(blank.ok);
+  assert.strictEqual(blank.link, null, 'and clearing the brief is allowed');
+  assert.strictEqual(submissionLink.validate('   ', { optional: true }).link, null);
+
+  for (const bad of ['not a link', 'javascript:alert(1)', 'mailto:someone@example.test']) {
+    assert.ok(!submissionLink.validate(bad, { optional: true }).ok, `${bad} should be refused`);
+  }
+  for (const good of ['https://drive.example.com/brief', 'http://nas/refs/ep01', 'smb://server/share']) {
+    assert.ok(submissionLink.validate(good, { optional: true }).ok, `${good} should be accepted`);
+  }
+});
+
+// --- against a live server -----------------------------------------------------
+
+test('the asset side panel', { skip: cfg ? false : SKIP_REASON }, async (t) => {
+  const PASSWORD = 'Panel-Test-1!';
+  let server;
+  let projectId;
+  const token = {};
+  const people = {};
+
+  const call = (path, options) => api(server.base, path, options);
+  const as = (who, path, options = {}) => call(path, { ...options, token: token[who] });
+  const seenBy = async (who, id) =>
+    (await as(who, `/assets/project/${projectId}`)).body.assets.find((x) => x.id === id);
+  const historyOf = async (id, who = 'root') => (await as(who, `/assets/${id}/history`)).body.events;
+
+  async function newAsset(who, name, assigneeId) {
+    const res = await as(who, `/assets/project/${projectId}`, {
+      method: 'POST', body: { name, type: 'character', ...(assigneeId ? { assigneeId } : {}) },
+    });
+    assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+    return res.body.asset;
+  }
+
+  t.before(async () => {
+    await resetSchema(cfg);
+    server = await startServer(cfg, { BOOTSTRAP_TOKEN: 'panel-token' });
+    await call('/auth/bootstrap', {
+      method: 'POST',
+      body: { token: 'panel-token', name: 'Root', email: 'root@zvky.test', password: PASSWORD },
+    });
+    const login = async (email) => (await call('/auth/login', {
+      method: 'POST', body: { email, password: PASSWORD },
+    })).body.token;
+    token.root = await login('root@zvky.test');
+    const clientId = await systemClientId(server.base, token.root);
+    projectId = (await as('root', '/projects', {
+      method: 'POST', body: { clientId, name: 'Nightgarden' },
+    })).body.project.id;
+
+    for (const [who, role] of [['pat', 'producer'], ['quinn', 'producer'], ['lee', 'team_lead'],
+      ['dana', 'art_director'], ['ana', 'game_artist'], ['bo', 'game_artist']]) {
+      const res = await call('/users', {
+        token: token.root, method: 'POST',
+        body: { name: who, email: `${who}@zvky.test`, role, password: PASSWORD, projectId },
+      });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      people[who] = res.body.user.id;
+      token[who] = await login(`${who}@zvky.test`);
+    }
+    for (const artist of ['ana', 'bo']) {
+      await as('root', `/users/${people[artist]}`, {
+        method: 'PATCH', body: { reportsToId: people.lee, teamLeadId: people.lee },
+      });
+    }
+  });
+
+  t.after(() => stopServer(server));
+
+  // --- 1. changing the assignee from the panel -----------------------------------
+
+  await t.test('the creator can change the assignee, and it lands in the history', async () => {
+    const asset = await newAsset('pat', 'Hero Prop', people.ana);
+
+    const res = await as('pat', `/assets/${asset.id}`, { method: 'PATCH', body: { assigneeId: people.bo } });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(res.body.asset.assignee_id, people.bo);
+    assert.strictEqual(res.body.asset.assignee_name, 'bo');
+
+    // The new assignee has it; the old one does not.
+    assert.ok(await seenBy('bo', asset.id), 'it is in their queue');
+    assert.strictEqual(await seenBy('ana', asset.id), undefined);
+
+    const events = await historyOf(asset.id);
+    const move = events[events.length - 1];
+    assert.strictEqual(move.action, 'reassign');
+    assert.match(move.note, /from ana to bo/);
+    assert.strictEqual(move.actor, 'pat', 'attributed to whoever made the change');
+    assert.ok(move.at);
+  });
+
+  await t.test('a mid-review reassignment is recorded too', async () => {
+    // This is the gap: the old code updated the routing and wrote nothing, so
+    // an asset could change hands mid-pipeline with no trace of who moved it.
+    const asset = await newAsset('pat', 'Mid Flight', people.ana);
+    assert.strictEqual((await as('ana', `/assets/${asset.id}/submit`, {
+      method: 'POST', body: { link: 'https://example.test/v1', description: 'First pass' },
+    })).status, 201);
+
+    assert.strictEqual((await as('pat', `/assets/${asset.id}`, {
+      method: 'PATCH', body: { assigneeId: people.bo },
+    })).status, 200);
+
+    const events = await historyOf(asset.id);
+    assert.deepStrictEqual(events.map((e) => e.action), ['assign', 'submit', 'reassign']);
+    assert.strictEqual(await seenBy('bo', asset.id).then((x) => Boolean(x)), true);
+  });
+
+  await t.test('changing the assignee uses the reassign permission, not a new one', async () => {
+    const mine = await newAsset('pat', 'Whose Call', people.ana);
+
+    // Another Producer holds asset.assign and did not add this asset.
+    assert.strictEqual((await as('quinn', `/assets/${mine.id}`, {
+      method: 'PATCH', body: { assigneeId: people.bo },
+    })).status, 403);
+    // Nor the person carrying it.
+    assert.strictEqual((await as('ana', `/assets/${mine.id}`, {
+      method: 'PATCH', body: { assigneeId: people.bo },
+    })).status, 403);
+    // Full access reaches anything, as everywhere else.
+    assert.strictEqual((await as('root', `/assets/${mine.id}`, {
+      method: 'PATCH', body: { assigneeId: people.bo },
+    })).status, 200);
+  });
+
+  // --- 2. the reference link -----------------------------------------------------
+
+  await t.test('the brief link is separate from a submission link', async () => {
+    const asset = await newAsset('pat', 'Briefed', people.ana);
+
+    const saved = await as('pat', `/assets/${asset.id}`, {
+      method: 'PATCH', body: { referenceLink: '  https://drive.example.com/brief  ' },
+    });
+    assert.strictEqual(saved.status, 200);
+    assert.strictEqual(saved.body.asset.reference_link, 'https://drive.example.com/brief', 'trimmed and stored');
+
+    // The assignee submits work. Two links now exist, and they are not the same
+    // field — which is the whole point of adding a second one.
+    await as('ana', `/assets/${asset.id}/submit`, {
+      method: 'POST', body: { link: 'https://drive.example.com/render-v1', description: 'First pass' },
+    });
+    const seen = await seenBy('ana', asset.id);
+    assert.strictEqual(seen.reference_link, 'https://drive.example.com/brief');
+    assert.strictEqual(seen.versions[0].link, 'https://drive.example.com/render-v1');
+    assert.notStrictEqual(seen.reference_link, seen.versions[0].link);
+
+    // Optional, and clearable.
+    assert.strictEqual((await as('pat', `/assets/${asset.id}`, {
+      method: 'PATCH', body: { referenceLink: '' },
+    })).body.asset.reference_link, null);
+
+    // Validated the same way a submission link is.
+    const bad = await as('pat', `/assets/${asset.id}`, { method: 'PATCH', body: { referenceLink: 'not a link' } });
+    assert.strictEqual(bad.status, 400);
+    assert.strictEqual(bad.body.field, 'referenceLink');
+  });
+
+  await t.test('everyone who can see the asset can read the brief; only the creator writes it', async () => {
+    const asset = await newAsset('pat', 'Read Only Brief', people.ana);
+    await as('pat', `/assets/${asset.id}`, {
+      method: 'PATCH', body: { referenceLink: 'https://drive.example.com/spec' },
+    });
+
+    // The assignee needs to read it to do the job.
+    assert.strictEqual((await seenBy('ana', asset.id)).reference_link, 'https://drive.example.com/spec');
+    // And cannot change it — that is the brief, and editing it is asset.edit.
+    assert.strictEqual((await as('ana', `/assets/${asset.id}`, {
+      method: 'PATCH', body: { referenceLink: 'https://drive.example.com/mine' },
+    })).status, 403);
+    assert.strictEqual((await as('quinn', `/assets/${asset.id}`, {
+      method: 'PATCH', body: { referenceLink: 'https://drive.example.com/theirs' },
+    })).status, 403);
+  });
+
+  // --- 3. the checklist ----------------------------------------------------------
+
+  await t.test('tasks can be added, ticked, renamed and deleted', async () => {
+    const asset = await newAsset('pat', 'Checklist', people.ana);
+    const before = (await as('pat', `/assets/${asset.id}/tasks`)).body;
+    assert.strictEqual(before.total, 3, 'every asset starts with the three seeded steps');
+    assert.strictEqual(before.done, 0);
+
+    const made = await as('pat', `/assets/${asset.id}/tasks`, { method: 'POST', body: { name: '  Paint pass  ' } });
+    assert.strictEqual(made.status, 201);
+    assert.strictEqual(made.body.task.name, 'Paint pass', 'trimmed');
+    assert.strictEqual(made.body.task.created_by, people.pat, 'and attributed');
+    const taskId = made.body.task.id;
+
+    assert.strictEqual((await as('pat', `/assets/tasks/${taskId}`, { method: 'PATCH', body: { done: true } })).status, 200);
+    const ticked = (await as('pat', `/assets/${asset.id}/tasks`)).body;
+    assert.strictEqual(ticked.total, 4);
+    assert.strictEqual(ticked.done, 1, 'the progress count is the server\'s answer, not the browser\'s');
+
+    const renamed = await as('pat', `/assets/tasks/${taskId}/text`, { method: 'PATCH', body: { name: 'Paint and polish' } });
+    assert.strictEqual(renamed.status, 200);
+    assert.strictEqual((await as('pat', `/assets/${asset.id}/tasks`)).body.tasks.find((x) => x.id === taskId).name,
+      'Paint and polish');
+    assert.ok((await as('pat', `/assets/tasks/${taskId}/text`, { method: 'PATCH', body: { name: '  ' } })).status === 400);
+
+    assert.strictEqual((await as('pat', `/assets/tasks/${taskId}`, { method: 'DELETE' })).status, 200);
+    assert.strictEqual((await as('pat', `/assets/${asset.id}/tasks`)).body.total, 3);
+  });
+
+  await t.test('a checklist belongs to its own asset', async () => {
+    const one = await newAsset('pat', 'Asset One', people.ana);
+    const two = await newAsset('pat', 'Asset Two', people.ana);
+
+    await as('pat', `/assets/${one.id}/tasks`, { method: 'POST', body: { name: 'Only on one' } });
+    const onTwo = (await as('pat', `/assets/${two.id}/tasks`)).body.tasks.map((x) => x.name);
+    assert.ok(!onTwo.includes('Only on one'), 'and does not leak to another');
+    assert.ok((await as('pat', `/assets/${one.id}/tasks`)).body.tasks.map((x) => x.name).includes('Only on one'));
+
+    // Deleting the asset takes its checklist with it, and nothing else's.
+    // Through root: a Producer creates assets but does not hold asset.delete.
+    assert.strictEqual((await as('root', `/assets/${one.id}`, { method: 'DELETE' })).status, 200);
+    const orphans = await sql(cfg, `SELECT COUNT(*) AS n FROM tasks WHERE asset_id = '${one.id}'`);
+    assert.strictEqual(Number(orphans[0].n), 0);
+    assert.strictEqual((await as('pat', `/assets/${two.id}/tasks`)).body.total, 3);
+  });
+
+  await t.test('the checklist is the working group, wider than the record', async () => {
+    // The decision worth naming: the asset's record is the creator's, the
+    // checklist belongs to whoever is doing and checking the work.
+    const asset = await newAsset('pat', 'Working Group', people.ana);
+    const tick = (who) => as(who, `/assets/${asset.id}/tasks`, { method: 'POST', body: { name: `note from ${who}` } });
+
+    assert.strictEqual((await tick('pat')).status, 201, 'the creator');
+    assert.strictEqual((await tick('ana')).status, 201, 'the assignee');
+    assert.strictEqual((await tick('lee')).status, 201, 'their team lead');
+    assert.strictEqual((await tick('dana')).status, 201, 'the creative director');
+    assert.strictEqual((await tick('root')).status, 201, 'full access');
+
+    // And nobody else: another Producer holds asset.edit and asset.assign and
+    // still has no business in this checklist.
+    const refused = await tick('quinn');
+    assert.strictEqual(refused.status, 403);
+    assert.match(refused.body.error, /added this asset, whoever it is assigned to, or its reviewer/);
+    assert.strictEqual((await tick('bo')).status, 403, 'nor an unrelated artist');
+
+    // Reading it is open to anyone who can see the asset.
+    assert.strictEqual((await as('quinn', `/assets/${asset.id}/tasks`)).status, 200);
+    assert.strictEqual((await as('quinn', `/assets/${asset.id}/tasks`)).body.canManage, false,
+      'and it says so, so the screen does not offer a control that would be refused');
+  });
+
+  await t.test('a closed project freezes the checklist and the brief', async () => {
+    const asset = await newAsset('pat', 'Frozen', people.ana);
+    const seen = await seenBy('pat', asset.id);
+    await as('root', `/projects/${projectId}/close`, { method: 'POST', body: { confirm: true } });
+
+    for (const [method, path, body] of [
+      ['POST', `/assets/${asset.id}/tasks`, { name: 'Late' }],
+      ['PATCH', `/assets/tasks/${seen.tasks[0].id}`, { done: true }],
+      ['PATCH', `/assets/tasks/${seen.tasks[0].id}/text`, { name: 'Renamed' }],
+      ['DELETE', `/assets/tasks/${seen.tasks[0].id}`, undefined],
+      ['PATCH', `/assets/${asset.id}`, { referenceLink: 'https://example.test/x' }],
+    ]) {
+      const res = await as('pat', path, { method, body });
+      assert.strictEqual(res.status, 409, `${method} ${path}`);
+      assert.strictEqual(res.body.projectClosed, true);
+    }
+    // Still readable, as everywhere else.
+    assert.strictEqual((await as('pat', `/assets/${asset.id}/tasks`)).status, 200);
+
+    await as('root', `/projects/${projectId}/reopen`, { method: 'POST' });
+    assert.strictEqual((await as('pat', `/assets/${asset.id}/tasks`, {
+      method: 'POST', body: { name: 'Fine now' },
+    })).status, 201);
+  });
+});
