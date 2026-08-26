@@ -8,13 +8,13 @@ const cfg = config('workflow');
 
 // --- the machine, on its own --------------------------------------------------
 
-test('the eight states match the dashboard, in pipeline order', () => {
+test('the nine states match the dashboard, in pipeline order', () => {
   assert.deepStrictEqual(workflow.STATES.map((s) => s.id), [
-    'not_started', 'in_progress', 'pending_tl_review', 'tl_changes_requested',
+    'not_started', 'assigned', 'in_progress', 'pending_tl_review', 'tl_changes_requested',
     'pending_cd_review', 'cd_changes_requested', 'approved_for_client', 'delivered',
   ]);
   assert.deepStrictEqual(workflow.STATES.map((s) => s.label), [
-    'Not Started', 'In Progress', 'TL Review', 'TL Changes',
+    'Not Started', 'Assigned', 'In Progress', 'TL Review', 'TL Changes',
     'CD Review', 'CD Changes', 'Approved for Client', 'Delivered',
   ]);
 });
@@ -190,7 +190,10 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
   t.after(() => stopServer(server));
 
-  await t.test('an asset starts Not Started, and assigning it starts the work', async () => {
+  await t.test('assigning parks the asset in Assigned; accepting starts it', async () => {
+    // The old rule — assignment moves work straight to In Progress — is
+    // superseded: the assignee picking it up is its own act, and it is the
+    // moment the clock starts.
     const id = await newAsset('Unassigned Prop', { assign: false });
     assert.strictEqual(await statusOf(id), 'not_started');
 
@@ -198,19 +201,26 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       token: token.admin, method: 'PATCH', body: { assigneeId: people.artist },
     });
     assert.strictEqual(assigned.status, 200);
-    assert.strictEqual(assigned.body.asset.status, 'in_progress', 'no separate "start" action');
+    assert.strictEqual(assigned.body.asset.status, 'assigned', 'not Not Started, not In Progress');
+
+    const accepted = await call(`/assets/${id}/timer/start`, { token: token.artist, method: 'POST' });
+    assert.strictEqual(accepted.status, 200, JSON.stringify(accepted.body));
+    assert.strictEqual(accepted.body.accepted, true);
+    assert.strictEqual(accepted.body.asset.status, 'in_progress');
+    assert.strictEqual(accepted.body.timer.running, true, 'and the clock is running');
+    await call(`/assets/${id}/timer/pause`, { token: token.artist, method: 'POST' });
 
     const events = await historyOf(id);
-    assert.strictEqual(events.length, 1);
-    assert.strictEqual(events[0].action, 'assign');
-    assert.strictEqual(events[0].fromStatus, 'not_started');
-    assert.strictEqual(events[0].toStatus, 'in_progress');
+    assert.deepStrictEqual(events.map((e) => e.action), ['assign', 'accept']);
+    assert.deepStrictEqual(events.map((e) => e.toStatus), ['assigned', 'in_progress']);
   });
 
   await t.test('the happy path runs end to end', async () => {
     const id = await newAsset('Hero Character');
-    assert.strictEqual(await statusOf(id), 'in_progress', 'created with an assignee starts in progress');
+    assert.strictEqual(await statusOf(id), 'assigned', 'created with an assignee waits to be accepted');
 
+    assert.strictEqual((await call(`/assets/${id}/timer/start`, { token: token.artist, method: 'POST' })).status, 200);
+    assert.strictEqual(await statusOf(id), 'in_progress');
     assert.strictEqual((await act(id, 'submit', 'artist',
       { link: 'http://nas/shots/hero-v1', description: 'First pass.' })).status, 201);
     assert.strictEqual(await statusOf(id), 'pending_tl_review');
@@ -225,7 +235,7 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(await statusOf(id), 'delivered');
 
     assert.deepStrictEqual((await historyOf(id)).map((e) => e.action),
-      ['assign', 'submit', 'tl_approve', 'cd_approve', 'deliver']);
+      ['assign', 'accept', 'submit', 'tl_approve', 'cd_approve', 'deliver']);
   });
 
   await t.test('a TL-changes round goes back to the assignee and keeps both submissions', async () => {
@@ -322,7 +332,7 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       assert.strictEqual(res.status, 400, `${JSON.stringify(body)} should be refused`);
       assert.strictEqual(res.body.field, 'link');
     }
-    assert.strictEqual(await statusOf(id), 'in_progress', 'and nothing moved');
+    assert.strictEqual(await statusOf(id), 'assigned', 'and nothing moved');
 
     // A local link is fine, and the description really is optional.
     const ok = await act(id, 'submit', 'artist', { link: 'http://nas/shots/x' });
@@ -342,9 +352,10 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     const events = await historyOf(id);
     assert.deepStrictEqual(events.map((e) => e.action),
       ['assign', 'submit', 'tl_request_changes', 'submit', 'tl_approve', 'cd_approve']);
-    // Each event says where it came from and where it went.
+    // Each event says where it came from and where it went. Submitting straight
+    // from Assigned is the legal shortcut — it just records no time.
     assert.deepStrictEqual(events.map((e) => e.toStatus), [
-      'in_progress', 'pending_tl_review', 'tl_changes_requested',
+      'assigned', 'pending_tl_review', 'tl_changes_requested',
       'pending_tl_review', 'pending_cd_review', 'approved_for_client',
     ]);
     for (let i = 1; i < events.length; i++) {
@@ -369,7 +380,7 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     });
     assert.strictEqual(res.status, 409);
     assert.match(res.body.error, /submit\/review\/deliver/);
-    assert.strictEqual(await statusOf(id), 'in_progress');
+    assert.strictEqual(await statusOf(id), 'assigned');
 
     // And somebody who did not add it is refused one step earlier, on
     // ownership, whatever the status they asked for.
@@ -378,7 +389,7 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       token: token.lead, method: 'PATCH', body: { status: 'delivered' },
     });
     assert.strictEqual(outsider.status, 403);
-    assert.strictEqual(await statusOf(notTheirs), 'in_progress');
+    assert.strictEqual(await statusOf(notTheirs), 'assigned');
   });
 
   await t.test('an override is allowed for whoever holds it, and is recorded', async () => {
@@ -395,7 +406,7 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     const events = await historyOf(id);
     const forced = events.find((e) => e.action === 'override');
     assert.ok(forced, 'the override should appear in the history');
-    assert.strictEqual(forced.fromStatus, 'in_progress');
+    assert.strictEqual(forced.fromStatus, 'assigned');
     assert.strictEqual(forced.toStatus, 'delivered');
     assert.match(forced.note, /outside the review flow/i);
 

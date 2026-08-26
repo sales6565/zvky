@@ -742,6 +742,56 @@ async function ensureAssetPanelColumns(db, log) {
   if (added.length) log(`Schema: added ${added.join(', ')}.`);
 }
 
+// The 'assigned' state, and the work_sessions table behind the timer.
+//
+// The status CHECK constraint has to be rebuilt to admit the new value —
+// MySQL/MariaDB cannot widen one in place. Existing rows are untouched: an
+// asset that was in_progress under the old rule stays in_progress, because its
+// work genuinely had started; only assignments made from now on land in
+// 'assigned' and wait for the assignee to accept.
+async function ensureTimeTracking(db, log) {
+  const { rows: table } = await db.query(
+    `SELECT TABLE_NAME AS t FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'work_sessions'`
+  );
+  if (!table.length) {
+    await db.query(`CREATE TABLE work_sessions (
+      id         CHAR(36)  NOT NULL PRIMARY KEY,
+      asset_id   CHAR(36)  NOT NULL,
+      user_id    CHAR(36)  NULL,
+      round      INT       NOT NULL DEFAULT 1,
+      started_at DATETIME  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      ended_at   DATETIME  NULL,
+      seconds    INT       NULL,
+      KEY idx_ws_asset (asset_id),
+      KEY idx_ws_open (asset_id, ended_at),
+      CONSTRAINT fk_ws_asset FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE,
+      CONSTRAINT fk_ws_user  FOREIGN KEY (user_id)  REFERENCES users(id)  ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+    log('Schema: added work_sessions — the auditable log behind the asset timer.');
+  }
+
+  // Rebuild the status constraint if 'assigned' is not yet a legal value,
+  // read from the constraint's own text.
+  const { rows: chk } = await db.query(
+    `SELECT CHECK_CLAUSE AS c FROM information_schema.CHECK_CONSTRAINTS
+      WHERE CONSTRAINT_SCHEMA = DATABASE() AND CONSTRAINT_NAME = 'chk_assets_status'`
+  ).catch(() => ({ rows: [] }));
+  const needsRebuild = chk.length && !String(chk[0].c).includes('assigned');
+  if (needsRebuild) {
+    try {
+      await db.query('ALTER TABLE assets DROP CONSTRAINT chk_assets_status');
+    } catch {
+      await db.query('ALTER TABLE assets DROP CHECK chk_assets_status');
+    }
+    await db.query(`ALTER TABLE assets ADD CONSTRAINT chk_assets_status CHECK (\`status\` IN (
+      'not_started','assigned','in_progress','pending_tl_review','tl_changes_requested',
+      'pending_cd_review','cd_changes_requested','approved_for_client','delivered'
+    ))`);
+    log("Schema: the status constraint now admits 'assigned'. Existing assets are untouched.");
+  }
+}
+
 const STEPS = [
   ['stale role constraints', dropStaleRoleConstraints],
   ['users.role column width', widenRoleColumn],
@@ -762,6 +812,7 @@ const STEPS = [
   // roles are topped up against it.
   ['client and project lifecycle', ensureLifecycleColumns],
   ['asset brief and checklist', ensureAssetPanelColumns],
+  ['assigned state and time tracking', ensureTimeTracking],
   ['permission catalogue top-up', ensurePermissionCatalogueComplete],
   ['IP allowlist', ensureIpAllowlist],
 ];

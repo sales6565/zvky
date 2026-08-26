@@ -252,7 +252,7 @@ CREATE TABLE IF NOT EXISTS project_coordinators (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Status pipeline:
---  not_started -> in_progress -> pending_tl_review -> (tl_changes_requested <-> pending_tl_review)
+--  not_started -> assigned -> in_progress -> pending_tl_review -> (tl_changes_requested <-> pending_tl_review)
 --    -> pending_cd_review -> (cd_changes_requested <-> pending_cd_review)
 --    -> approved_for_client -> delivered
 -- Everyone else's project. Coordinators sit in project_coordinators and leads in
@@ -314,7 +314,7 @@ CREATE TABLE IF NOT EXISTS assets (
   -- against the asset_types / priorities tables. `status` keeps its constraint
   -- because it is a fixed pipeline, not a list anyone edits.
   CONSTRAINT chk_assets_status CHECK (`status` IN (
-    'not_started','in_progress','pending_tl_review','tl_changes_requested',
+    'not_started','assigned','in_progress','pending_tl_review','tl_changes_requested',
     'pending_cd_review','cd_changes_requested','approved_for_client','delivered'
   ))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -322,6 +322,33 @@ CREATE TABLE IF NOT EXISTS assets (
 -- The per-asset checklist. One table, not two: an "AssetTask" alongside this
 -- would be a second name for the thing already here, and every screen would
 -- then have to ask which kind it was looking at.
+-- When somebody actually worked on an asset, one row per stretch of the clock.
+--
+-- A running stretch has ended_at NULL; pausing (or submitting, which pauses)
+-- closes it and stamps seconds. The rule that keeps this honest: at most one
+-- open row per asset, enforced by the API before it opens one — which is also
+-- what makes a double-click or a second browser tab harmless.
+--
+-- `round` is which spell of work this was: 1 up to the first submission, 2 for
+-- the rework after the first set of change requests, and so on. Stored rather
+-- than derived so the per-round breakdown survives resubmissions and
+-- reassignment mid-round.
+CREATE TABLE IF NOT EXISTS work_sessions (
+  id         CHAR(36)  NOT NULL PRIMARY KEY,
+  asset_id   CHAR(36)  NOT NULL,
+  user_id    CHAR(36)  NULL,
+  round      INT       NOT NULL DEFAULT 1,
+  started_at DATETIME  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  ended_at   DATETIME  NULL,
+  -- Stamped when the row closes, so totals are a SUM rather than N date
+  -- subtractions. NULL means the clock is still running.
+  seconds    INT       NULL,
+  KEY idx_ws_asset (asset_id),
+  KEY idx_ws_open (asset_id, ended_at),
+  CONSTRAINT fk_ws_asset FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE,
+  CONSTRAINT fk_ws_user  FOREIGN KEY (user_id)  REFERENCES users(id)  ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS tasks (
   id         CHAR(36)     NOT NULL PRIMARY KEY,
   asset_id   CHAR(36)     NOT NULL,

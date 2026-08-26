@@ -24,12 +24,14 @@ const {
   canOverrideStage,
   canAssignAsset,
   canManageTasks,
+  hasFullAccess,
   isAwaitingRework,
   REWORK_STATUSES,
   holds,
 } = require('../permissions');
 const { assignableRoles, roleDef } = require('../roles');
 const lifecycle = require('../lifecycle');
+const workTimer = require('../work-timer');
 const assetImport = require('../asset-import');
 const workflow = require('../asset-workflow');
 const submissionLink = require('../submission-link');
@@ -64,8 +66,11 @@ async function attachTasksAndNotes(assets) {
      WHERE f.asset_id IN ($1) ORDER BY f.created_at DESC`,
     [ids]
   );
+  const timeSpent = await workTimer.totalsFor(db, ids);
   return assets.map((a) => ({
     ...a,
+    time_spent_seconds: (timeSpent.get(a.id) || {}).seconds || 0,
+    timer_running: Boolean((timeSpent.get(a.id) || {}).running),
     // MySQL stores the flag as TINYINT(1); hand the browser a real boolean.
     tasks: tasks.filter((t) => t.asset_id === a.id).map((t) => ({ ...t, done: Boolean(t.done) })),
     notes: notes.filter((n) => n.asset_id === a.id),
@@ -186,7 +191,7 @@ router.patch('/:id', async (req, res) => {
   const fields = [];
   const values = [];
   let i = 1;
-  const FREE_STATUSES = ['not_started', 'in_progress'];
+  const FREE_STATUSES = ['not_started', 'assigned', 'in_progress'];
   if (req.body.status !== undefined) {
     const freeMove = FREE_STATUSES.includes(req.body.status) && FREE_STATUSES.includes(asset.status);
     // Anything else is a move the pipeline would not make. Allowed only for
@@ -476,6 +481,10 @@ router.post('/:id/submit', upload.single('file'), async (req, res) => {
   // was meant for them.
   const stage = verdict.to === 'pending_cd_review' ? 'cd' : 'tl';
 
+  // Submitting stops the clock. Before the version row is written, so the
+  // closing stretch still counts against the round it belongs to.
+  await workTimer.pause(db, req.params.id);
+
   const { rows: vCount } = await db.query('SELECT COUNT(*) AS n FROM asset_versions WHERE asset_id = $1', [req.params.id]);
   const versionNumber = Number(vCount[0].n) + 1;
   const versionId = uuid();
@@ -491,6 +500,92 @@ router.post('/:id/submit', upload.single('file'), async (req, res) => {
   // after changes adds a version rather than replacing the one that was rejected.
   const withDetails = await applyTransition(req, res, asset, verdict, { note: description, versionId });
   res.status(201).json({ asset: withDetails });
+});
+
+// --- the clock ----------------------------------------------------------------
+//
+// Who may run an asset's timer: the person the asset is assigned to, or a
+// full-access role for oversight. Not the creator — the clock measures the
+// assignee's own hands-on time, and nobody else should be able to start it
+// under their name.
+function mayRunTimer(req, asset) {
+  if (hasFullAccess(req.user)) return true;
+  return Boolean(asset.assignee_id) && asset.assignee_id === req.user.id;
+}
+
+// The statuses in which working (and therefore timing) makes sense. The two
+// changes-requested states are here because a rework round is the same cycle
+// again — accept the rework, pause, resume, submit — with the next round
+// number, exactly as the first round was.
+const TIMEABLE = ['assigned', 'in_progress', 'tl_changes_requested', 'cd_changes_requested'];
+
+// POST /api/assets/:id/timer/start — Accept and Start, and every Resume.
+//
+// One endpoint for both, because they are one act: open a session. The only
+// difference is that from 'assigned' it also moves the asset to In Progress,
+// through the state machine's own accept transition rather than a side door.
+router.post('/:id/timer/start', async (req, res) => {
+  const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
+  const asset = rows[0];
+  if (!asset) return res.status(404).json({ error: 'Asset not found' });
+  if (await projectClosedResponse(res, asset.project_id)) return undefined;
+  if (!mayRunTimer(req, asset)) {
+    return res.status(403).json({ error: 'Only the person this asset is assigned to can run its timer.' });
+  }
+  if (!TIMEABLE.includes(asset.status)) {
+    return res.status(409).json({
+      error: `The timer only runs while the work is on somebody's desk — this asset is in ${workflow.label(asset.status)}.`,
+    });
+  }
+  // CD Changes sits with the lead until relayed; the assignee cannot start
+  // reworking what they have not been handed.
+  if (asset.status === 'cd_changes_requested' && asset.routed_to_id !== req.user.id && !hasFullAccess(req.user)) {
+    return res.status(409).json({ error: 'The team lead has not passed the Creative Director\'s notes on yet.' });
+  }
+
+  let moved = null;
+  if (asset.status === 'assigned') {
+    const ctx = await contextFor(req, asset);
+    const verdict = workflow.evaluate('accept', ctx);
+    if (!verdict.ok) return res.status(verdict.status).json({ error: verdict.error });
+    moved = await applyTransition(req, res, asset, verdict, { note: verdict.describe });
+  }
+
+  const started = await workTimer.start(db, req.params.id, req.user.id);
+  if (!started.ok) {
+    // The double-click, the second tab, or a colleague a moment faster. The
+    // clock is already doing what the click wanted, so say so.
+    return res.status(409).json({ error: 'The timer is already running.', running: true, since: started.since });
+  }
+
+  const timer = await workTimer.summary(db, req.params.id);
+  if (moved) return res.status(200).json({ asset: moved, timer, accepted: true });
+  const { rows: fresh } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [req.params.id]);
+  const [withDetails] = await attachTasksAndNotes(fresh);
+  return res.json({ asset: withDetails, timer });
+});
+
+// POST /api/assets/:id/timer/pause — stop the clock. Idempotent on purpose:
+// two people pausing, or one person twice, ends at the same place.
+router.post('/:id/timer/pause', async (req, res) => {
+  const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
+  const asset = rows[0];
+  if (!asset) return res.status(404).json({ error: 'Asset not found' });
+  if (!mayRunTimer(req, asset)) {
+    return res.status(403).json({ error: 'Only the person this asset is assigned to can run its timer.' });
+  }
+  await workTimer.pause(db, req.params.id);
+  res.json({ timer: await workTimer.summary(db, req.params.id) });
+});
+
+// GET /api/assets/:id/timer — the total, the per-round breakdown, and whether
+// it is running. Readable by anyone who can see the asset.
+router.get('/:id/timer', async (req, res) => {
+  const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
+  const asset = rows[0];
+  if (!asset) return res.status(404).json({ error: 'Asset not found' });
+  if (!(await canViewAsset(req.user, asset))) return res.status(403).json({ error: 'No access to this asset' });
+  res.json({ timer: await workTimer.summary(db, req.params.id), canRun: mayRunTimer(req, asset) });
 });
 
 // GET /api/assets/versions/:versionId/download — stream the uploaded file

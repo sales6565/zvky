@@ -7,10 +7,15 @@
 // checkable: the states below are the whole of it, and anything not listed
 // cannot happen.
 //
-//   Not Started -> In Progress -> TL Review -> Approved for Client -> Delivered
-//                       ^             |  \
-//                       |             |   +-> TL Changes -> (assignee reworks)
-//                       |             +-> CD Review -> CD Changes -> (TL relays)
+//   Not Started -> Assigned -> In Progress -> TL Review -> Approved for Client -> Delivered
+//                       |            ^             |  \
+//                  (accept starts    |             |   +-> TL Changes -> (assignee reworks)
+//                   the clock)       |             +-> CD Review -> CD Changes -> (TL relays)
+//
+// Assigned and In Progress are separated by the assignee's own act: assignment
+// puts work on their desk, Accept and Start is them picking it up — and it is
+// the moment the time tracking begins. Assignment used to move an asset
+// straight to In Progress; that rule is gone.
 //
 // `status` says where in the pipeline the asset is. `routed_to_id` says whose
 // desk it is on, which is not the same thing: CD Changes sits with the team
@@ -20,9 +25,10 @@
 
 const { roleDef } = require('./roles');
 
-// The eight states, in pipeline order. Labels and colours match the dashboard.
+// The nine states, in pipeline order. Labels and colours match the dashboard.
 const STATES = [
   { id: 'not_started', label: 'Not Started', color: 'var(--not)' },
+  { id: 'assigned', label: 'Assigned', color: '#5b8def' },
   { id: 'in_progress', label: 'In Progress', color: 'var(--prog)' },
   { id: 'pending_tl_review', label: 'TL Review', color: 'var(--review)' },
   { id: 'tl_changes_requested', label: 'TL Changes', color: '#e8402c' },
@@ -62,7 +68,7 @@ function cdChangesReentry() {
 // to nobody until the lead passes it on, and without the list below "routed to
 // nobody" reads as "routed to anybody" — which let the assignee resubmit
 // straight past the lead who was supposed to brief them.
-const ASSIGNEE_STATUSES = ['not_started', 'in_progress', 'tl_changes_requested'];
+const ASSIGNEE_STATUSES = ['not_started', 'assigned', 'in_progress', 'tl_changes_requested'];
 
 const actors = {
   // The person the asset is assigned to, and only while it is on their desk.
@@ -108,15 +114,30 @@ const TRANSITIONS = [
   {
     action: 'assign',
     from: ['not_started'],
-    to: 'in_progress',
+    to: 'assigned',
     who: 'planner',
     routeTo: 'assignee',
-    // Assigning is what starts the work; there is no separate "start" action.
-    describe: 'Assigned, so work has started',
+    // Assignment puts the work on somebody's desk. It no longer starts it —
+    // that is the assignee's own act (accept, below), because the clock starts
+    // with it and a clock should not be started by somebody else's click.
+    describe: 'Assigned',
+  },
+  {
+    // The assignee picks the work up. This is what moves it to In Progress,
+    // and it is the moment the time tracking starts a session.
+    action: 'accept',
+    from: ['assigned'],
+    to: 'in_progress',
+    who: 'assignee',
+    routeTo: 'assignee',
+    describe: 'Accepted — work started',
   },
   {
     action: 'submit',
-    from: ['not_started', 'in_progress', 'tl_changes_requested'],
+    // 'assigned' is deliberately in this list: submitting without ever
+    // clicking Accept is a legal shortcut (it simply records no time), because
+    // refusing it would block work that was done before this feature existed.
+    from: ['not_started', 'assigned', 'in_progress', 'tl_changes_requested'],
     to: 'pending_tl_review',
     who: 'assignee',
     routeTo: 'reviewQueue',

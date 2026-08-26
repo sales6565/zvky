@@ -79,6 +79,13 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .task-btn:hover{color:var(--brand);}
 .task-add{display:grid;grid-template-columns:1fr auto;gap:6px;margin-top:8px;}
 .task-add input{margin:0;}
+
+/* The clock on an asset. */
+.timer-box{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-top:12px;}
+.timer-total{font-family:'Space Grotesk';font-size:18px;font-weight:600;}
+.timer-rounds{font-size:11px;color:var(--ink-faint);margin-top:2px;}
+.timer-live{color:var(--approved);animation:timerblink 1.2s infinite;}
+@keyframes timerblink{0%,100%{opacity:1}50%{opacity:.25}}
 .note{background:var(--surface-2);border-left:3px solid var(--brand);border-radius:0 8px 8px 0;padding:8px 10px;margin-bottom:8px;}
 .note .who{font-family:'Space Grotesk';font-weight:700;font-size:12px;} .note .when{font-size:10px;color:var(--ink-muted);font-family:'IBM Plex Mono';}
 .note p{margin:4px 0 0;font-size:12.5px;line-height:1.4;}
@@ -526,6 +533,7 @@ function priorityOptions(selected){
 }
 const STATUSES = [
   {id:'not_started', label:'Not Started', color:'var(--not)'},
+  {id:'assigned', label:'Assigned', color:'#5b8def'},
   {id:'in_progress', label:'In Progress', color:'var(--prog)'},
   {id:'pending_tl_review', label:'TL Review', color:'var(--review)'},
   {id:'tl_changes_requested', label:'TL Changes', color:'#e8402c'},
@@ -1069,12 +1077,13 @@ function renderList(){
   if(!state.currentProjectId){ el.innerHTML = `<div class="empty">No projects assigned to you yet.</div>`; return; }
   const assets = filteredAssets();
   if(!assets.length){ el.innerHTML = `<div class="empty">No assets match.</div>`; return; }
-  el.innerHTML = `<table><thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Status</th><th>Assignee</th><th>Priority</th><th>Tasks</th></tr></thead><tbody>
+  el.innerHTML = `<table><thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Status</th><th>Assignee</th><th>Priority</th><th>Tasks</th><th>Time Spent</th></tr></thead><tbody>
     ${assets.map(a=>{
       const s=statusOf(a.status), t=typeOf(a.type), doneTasks=a.tasks.filter(t=>t.done).length;
       return `<tr data-id="${a.id}"><td class="mono">${a.code}</td><td style="font-weight:600;">${escapeHTML(a.name)}</td><td>${t.label}</td>
       <td><span class="status-pill" style="background:${s.color}22;color:${s.color}"><span class="d" style="background:${s.color}"></span>${s.label}</span></td>
-      <td>${escapeHTML(a.assignee_name)||'—'}</td><td style="text-transform:capitalize;">${a.priority}</td><td class="mono">${doneTasks}/${a.tasks.length}</td></tr>`;
+      <td>${escapeHTML(a.assignee_name)||'—'}</td><td style="text-transform:capitalize;">${a.priority}</td><td class="mono">${doneTasks}/${a.tasks.length}</td>
+      <td class="mono">${a.time_spent_seconds?fmtDuration(a.time_spent_seconds):'—'}${a.timer_running?' <span class="timer-live" title="The clock is running">●</span>':''}</td></tr>`;
     }).join('')}</tbody></table>`;
   el.querySelectorAll('tr[data-id]').forEach(row=>row.addEventListener('click', ()=>openDrawer(row.dataset.id)));
 }
@@ -1507,6 +1516,13 @@ document.getElementById('cm_save').addEventListener('click', async (ev)=>{
 });
 
 /* ---------- drawer ---------- */
+/* "4h 32m" — how every screen writes a stretch of tracked time. */
+function fmtDuration(seconds){
+  const n = Number(seconds)||0;
+  if(n < 60) return n + 's';
+  const h = Math.floor(n/3600), m = Math.floor((n%3600)/60);
+  return h ? `${h}h ${String(m).padStart(2,'0')}m` : `${m}m`;
+}
 function fmtBytes(n){ if(!n) return ''; const kb=n/1024; return kb<1024 ? kb.toFixed(0)+' KB' : (kb/1024).toFixed(1)+' MB'; }
 function fmtDate(s){ return s ? new Date(s).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : ''; }
 
@@ -1520,6 +1536,12 @@ async function openDrawer(id){
      else on the rework instead of it going back to whoever submitted it. Only
      in those two states, and only for the creator or a full-access role. */
   const canReassignRework = mayAssignAsset(a) && REWORK_STATUSES.includes(a.status);
+  /* The clock. The assignee's own, with full access for oversight — mirrors
+     mayRunTimer on the server. Only in the states where working makes sense,
+     and in CD Changes only once the lead has relayed the notes. */
+  const canRunTimer = (a.assignee_id===u.id || fullAccess()) &&
+    ['assigned','in_progress','tl_changes_requested','cd_changes_requested'].includes(a.status) &&
+    !(a.status==='cd_changes_requested' && a.routed_to_id!==u.id && !fullAccess());
   /* The checklist is wider than editing the record: the creator, whoever it is
      assigned to, and the reviewer holding it. Mirrors canManageTasks in
      src/permissions.js — the API decides, this only stops offering a control
@@ -1537,7 +1559,7 @@ async function openDrawer(id){
   const routedToMe = !a.routed_to_id || a.routed_to_id===u.id;
   const waitingOnRelay = a.status==='cd_changes_requested' && a.routed_to_id!==u.id;
   const canSubmit = isMyAssetAsArtist && routedToMe && !waitingOnRelay &&
-    ['not_started','in_progress','tl_changes_requested','cd_changes_requested'].includes(a.status);
+    ['not_started','assigned','in_progress','tl_changes_requested','cd_changes_requested'].includes(a.status);
   const canTlReview = can('review.tl') && a.status==='pending_tl_review';
   const canCdReview = can('review.cd') && a.status==='pending_cd_review';
   /* Signing off for the client is the half of the CD gate that cannot be taken
@@ -1557,6 +1579,20 @@ async function openDrawer(id){
     <div class="type-tag" style="display:inline-block;">${t.label}</div>
     <div class="field-lbl">Status</div>
     <div class="status-pill" style="background:${statusOf(a.status).color}22;color:${statusOf(a.status).color};font-size:12px;padding:5px 11px;"><span class="d" style="background:${statusOf(a.status).color}"></span>${statusOf(a.status).label}</div>
+
+    ${(a.time_spent_seconds || canRunTimer) ? `
+      <div class="timer-box">
+        <div>
+          <div class="field-lbl" style="margin-top:0;">Time Spent</div>
+          <div class="timer-total"><span id="d_timeSpent">${fmtDuration(a.time_spent_seconds||0)}</span>${a.timer_running?' <span class="timer-live">●</span>':''}</div>
+          <div id="d_rounds" class="timer-rounds"></div>
+        </div>
+        ${canRunTimer ? `<button class="btn ${a.timer_running?'btn-ghost':'btn-brand'}" id="d_timerBtn">${
+          a.timer_running ? 'Pause' : (a.status==='assigned' && !a.time_spent_seconds ? 'Accept and Start' : 'Resume')
+        }</button>` : ''}
+      </div>
+      <div class="ref-err" id="d_timerErr"></div>
+    ` : ''}
 
     ${(canSubmit && latestFeedback && a.status.endsWith('_changes_requested')) ? `
       <div class="note" style="margin-top:14px;border-left-color:#e8402c;">
@@ -1792,6 +1828,60 @@ async function openDrawer(id){
   }
   wireTasks();
 
+  /* The clock's wiring.
+
+     One button that is whatever the clock needs next — Accept and Start only
+     ever appears once, before any time exists; after that the pair is
+     Pause/Resume, exactly as asked. The button disables itself for the length
+     of the call, and the server refuses a second open session anyway, so a
+     double-click or a second tab cannot start two clocks.
+
+     The seconds tick locally while the drawer is open and the clock runs; the
+     stored truth is always the server's, re-read after every action. */
+  if(window.__timerTick){ clearInterval(window.__timerTick); window.__timerTick = null; }
+  function startTick(){
+    if(window.__timerTick) clearInterval(window.__timerTick);
+    window.__timerTick = setInterval(()=>{
+      a.time_spent_seconds = (a.time_spent_seconds||0) + 1;
+      const el = document.getElementById('d_timeSpent');
+      if(el) el.textContent = fmtDuration(a.time_spent_seconds);
+      else { clearInterval(window.__timerTick); window.__timerTick = null; }
+    }, 1000);
+  }
+  if(a.timer_running) startTick();
+
+  /* The per-round breakdown, when there has been more than one round. */
+  if(document.getElementById('d_rounds') && a.time_spent_seconds){
+    api(`/assets/${id}/timer`).then(({ timer })=>{
+      const el = document.getElementById('d_rounds');
+      if(el && timer.rounds.length > 1){
+        el.textContent = timer.rounds.map(r=>`Round ${r.round}: ${fmtDuration(r.seconds)}`).join(' · ');
+      }
+    }).catch(()=>{});
+  }
+
+  const timerBtn = document.getElementById('d_timerBtn');
+  if(timerBtn) timerBtn.onclick = async (ev)=>{
+    const err = document.getElementById('d_timerErr');
+    err.textContent = '';
+    ev.target.disabled = true;
+    const pausing = a.timer_running;
+    try{
+      await api(`/assets/${id}/timer/${pausing?'pause':'start'}`, { method:'POST' });
+      /* Await the reload before re-rendering the drawer. Kicking it off and
+         re-opening immediately re-read state.assets from BEFORE the change, so
+         the button label and the tick ran one step behind the server — a
+         paused clock that still ticked, a Pause button on a paused timer. */
+      await render();
+      openDrawer(id);
+    }catch(e2){
+      err.textContent = e2.message;
+      ev.target.disabled = false;
+      /* "Already running" means another tab won the race — show the truth. */
+      if(e2.status===409 && e2.body && e2.body.running){ await render(); openDrawer(id); }
+    }
+  };
+
   if(manageTasks){
     const input = document.getElementById('d_newTask');
     const addTask = async ()=>{
@@ -1935,7 +2025,10 @@ async function loadAssetHistory(id){
   }).join('');
 }
 
-function closeDrawer(){ document.getElementById('overlay').classList.remove('show'); document.getElementById('drawer').classList.remove('show'); }
+function closeDrawer(){
+  if(window.__timerTick){ clearInterval(window.__timerTick); window.__timerTick = null; }
+  document.getElementById('overlay').classList.remove('show'); document.getElementById('drawer').classList.remove('show');
+}
 
 /* ---------- new asset modal ---------- */
 const modalWrap = document.getElementById('modalWrap');
