@@ -14,7 +14,7 @@ const cfg = config('roleperms');
 test('the catalogue covers the groups that were asked for', () => {
   assert.deepStrictEqual(catalog.GROUPS.map((g) => g.label), [
     'User Management', 'Asset Management', 'Review Workflow',
-    'Project Management', 'Settings / Admin',
+    'Project Management', 'Client Management', 'Settings / Admin',
   ]);
   assert.strictEqual(new Set(catalog.KEYS).size, catalog.KEYS.length);
 });

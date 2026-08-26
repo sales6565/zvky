@@ -113,6 +113,30 @@ const GROUPS = [
     ],
   },
   {
+    key: 'clients',
+    label: 'Client Management',
+    permissions: [
+      {
+        key: 'client.view',
+        label: 'Client View',
+        // Open by default. The Projects tab is how everybody navigates to their
+        // work, and it lists clients — a role that could not see clients could
+        // not reach its own projects. The list is still scoped: you see the
+        // clients whose projects your role's projectScope reaches.
+        impliedBy: () => true,
+        describe: 'See the client list and the projects under each one.',
+      },
+      { key: 'client.add',    label: 'Client Add',    impliedBy: has('createProject') },
+      { key: 'client.edit',   label: 'Client Edit',   impliedBy: has('createProject') },
+      {
+        key: 'client.delete',
+        label: 'Client Delete',
+        impliedBy: has('createProject'),
+        danger: 'Only a client with no projects can be deleted, so this can never take work with it.',
+      },
+    ],
+  },
+  {
     key: 'settings',
     label: 'Settings / Admin',
     permissions: [

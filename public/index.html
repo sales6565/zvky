@@ -201,6 +201,41 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .checklist label{display:flex;align-items:center;gap:6px;font-family:'Inter';font-size:12.5px;text-transform:none;letter-spacing:0;color:var(--ink);margin:4px 0;}
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--surface-3);border:1px solid var(--border);color:var(--ink);padding:10px 18px;border-radius:10px;font-size:13px;opacity:0;transition:all .25s;z-index:60;pointer-events:none;} .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 .empty{text-align:center;padding:40px 20px;color:var(--ink-muted);font-size:13px;}
+
+/* Clients > Acme Corp > Projects */
+.crumbs{display:flex;align-items:center;gap:8px;font-size:12px;padding:4px 0;}
+.crumb-link{background:none;border:none;color:var(--brand);cursor:pointer;font:inherit;padding:0;}
+.crumb-link:hover{text-decoration:underline;}
+.crumb-sep{color:var(--ink-faint);}
+.crumb-now{color:var(--ink-muted);font-weight:600;}
+
+.client-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;}
+.client-card{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:14px;cursor:pointer;transition:border-color .12s;}
+.client-card:hover{border-color:var(--brand);}
+.client-name{font-weight:600;font-size:14px;display:flex;align-items:center;gap:6px;}
+.client-tag{font-size:9px;text-transform:uppercase;letter-spacing:.06em;background:var(--surface-3);color:var(--ink-faint);padding:2px 6px;border-radius:4px;}
+.client-meta{font-size:11.5px;color:var(--ink-muted);margin-top:4px;}
+.client-count{font-size:12px;color:var(--ink-faint);margin-top:8px;}
+.client-notes{font-size:11.5px;color:var(--ink-faint);margin-top:6px;line-height:1.4;}
+
+/* One repeatable project row on the Add / Edit Client form. */
+.proj-row{display:grid;grid-template-columns:1fr auto;gap:6px;margin-bottom:6px;align-items:center;}
+.proj-row .pr-name{margin:0;}
+.proj-row .pr-remove{padding:6px 10px;line-height:1;}
+.proj-row .pr-err{grid-column:1 / -1;color:#e8402c;font-size:11px;}
+.cm-existing-lbl{font-size:11px;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.06em;margin-top:12px;}
+.cm-existing{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px;}
+.pill{font-size:11.5px;background:var(--surface-3);color:var(--ink-muted);padding:3px 8px;border-radius:10px;}
+
+/* The Settings index: what is on this page, and what is on its own tab. */
+.set-index{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:22px;}
+.set-index-lbl{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--ink-faint);margin-bottom:8px;}
+.set-index-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;}
+.set-index-item{display:flex;flex-direction:column;gap:2px;text-align:left;background:none;border:none;padding:0;font:inherit;}
+.sii-link{cursor:pointer;}
+.sii-link:hover .sii-name{text-decoration:underline;}
+.sii-name{font-size:12.5px;font-weight:600;color:var(--ink);}
+.sii-note{font-size:11px;color:var(--ink-faint);line-height:1.35;}
 ::-webkit-scrollbar{width:8px;height:8px;} ::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:4px;}
 #loginScreen{position:fixed;inset:0;background:var(--bg);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px;}
 .login-box{width:380px;max-width:100%;} .login-box .wordmark{justify-content:center;margin-bottom:22px;}
@@ -247,6 +282,7 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
   <div class="toolbar">
     <div class="tabs" id="mainTabs">
       <button data-tab="board" class="active">Board</button>
+      <button data-tab="projects" id="projectsTabBtn" style="display:none;">Projects</button>
       <button data-tab="list">List</button>
       <button data-tab="team" id="teamTabBtn" style="display:none;">My Team</button>
       <button data-tab="users" id="usersTabBtn" style="display:none;">Users</button>
@@ -263,6 +299,7 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
     <button class="btn btn-brand" id="newAssetBtn" style="display:none;">+ New Asset</button>
   </div>
   <div id="boardView"></div>
+  <div id="projectsView" style="display:none;"></div>
   <div id="listView" style="display:none;"></div>
   <div id="teamView" style="display:none;"></div>
   <div id="usersView" style="display:none;"></div>
@@ -292,6 +329,30 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
     <label>Team leads on this project</label><div class="checklist" id="p_leads"></div>
     <label>Production coordinators on this project</label><div class="checklist" id="p_coords"></div>
     <div class="modal-actions"><button class="btn btn-ghost" id="cancelProjectModal">Cancel</button><button class="btn btn-brand" id="saveProjectModal">Create Project</button></div>
+  </div>
+</div>
+
+<div class="modal-wrap" id="clientModalWrap">
+  <div class="modal" style="width:560px;">
+    <h2 id="cm_title">Add Client</h2>
+    <label>Client name</label><input type="text" id="cm_name" placeholder="e.g. Acme Corp">
+    <label>Contact</label><input type="text" id="cm_contactName" placeholder="Who to talk to (optional)">
+    <label>Contact email</label><input type="text" id="cm_contactEmail" placeholder="name@acme.com (optional)">
+    <label>Notes</label><textarea id="cm_notes" rows="2" placeholder="Anything worth remembering (optional)"></textarea>
+    <div id="cm_existing"></div>
+    <div id="cm_projectsWrap">
+      <label style="margin-top:14px;">Projects to create under this client</label>
+      <div style="font-size:11px;color:var(--ink-faint);margin-bottom:6px;">
+        Optional — leave blank to create the client on its own. Every row is checked before anything is saved.
+      </div>
+      <div id="cm_projects"></div>
+      <button type="button" class="btn btn-ghost btn-sm" id="cm_addRow" style="margin-top:6px;">+ Add Another Project</button>
+    </div>
+    <div class="ref-err" id="cm_err"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="cm_cancel">Cancel</button>
+      <button class="btn btn-brand" id="cm_save">Create Client</button>
+    </div>
   </div>
 </div>
 
@@ -496,6 +557,8 @@ const UI_GATES = {
   teamTabBtn:            () => can('user.view_team'),
   usersTabBtn:           () => canAnyIn('user'),
   settingsTabBtn:        () => canOpenSettings(),
+  projectsTabBtn:        () => can('client.view'),
+  newClientBtn:          () => can('client.add'),
   newProjectBtn:         () => can('project.add'),
   editProjectBtn:        () => mayEditCurrentProject(),
   newAssetBtn:           () => can('asset.add'),
@@ -555,11 +618,11 @@ function applyGate(id, also){
    section has been built for it yet, and granting it alone should not open an
    empty page. */
 const SETTINGS_SECTIONS = [
-  { permission:'settings.asset_types' },
-  { permission:'settings.priorities' },
-  { permission:'settings.roles' },
-  { permission:'settings.ip_allowlist' },
-  { permission:'settings.permissions' },
+  { permission:'settings.permissions',  label:'Role Permissions', note:'What each role may do, across all six permission groups.' },
+  { permission:'settings.asset_types',  label:'Asset Types',      note:'The Type dropdown and the code prefix each asset gets.' },
+  { permission:'settings.priorities',   label:'Priorities',       note:'The Priority dropdown.' },
+  { permission:'settings.roles',        label:'Roles',            note:'The studio\'s designations and what each one can do.' },
+  { permission:'settings.ip_allowlist', label:'IP Allowlist',     note:'Which addresses may reach this application at all.' },
 ];
 /* Settings opens for anyone holding at least one of them, and shows only the
    sections they hold. */
@@ -600,7 +663,9 @@ function initials(name){ return (name||'?').trim().split(/\s+/).map(w=>w[0]).sli
 function escapeHTML(s){ const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
 
 let state = { view:'board', search:'', filterType:'', currentProjectId:null, currentUser:null, token:null,
-  projects:[], assets:[], usersRenderLimit:60 };
+  projects:[], assets:[], usersRenderLimit:60,
+  /* The Projects tab: the client list, and which one is open (null = the list). */
+  clients:[], clientId:null };
 
 /* ---------- API helper ---------- */
 async function api(path, options={}){
@@ -623,6 +688,9 @@ async function api(path, options={}){
     // Some endpoints name the form field at fault so the message can be shown
     // beside it rather than as a toast detached from the input.
     if(data.field) err.field = data.field;
+    // And some report a whole list at once — every bad row of a repeatable
+    // form — so a form can mark each row rather than showing only the first.
+    if(data.errors) err.details = { errors: data.errors };
     throw err;
   }
   return data;
@@ -685,7 +753,7 @@ async function bootApp(){
   /* Every tab and toolbar button, from the one table. The asset buttons are
      turned on again by render(), which knows whether there is a board and a
      project to add to. */
-  ['teamTabBtn','usersTabBtn','settingsTabBtn','newProjectBtn'].forEach(id=>applyGate(id));
+  ['teamTabBtn','projectsTabBtn','usersTabBtn','settingsTabBtn','newProjectBtn'].forEach(id=>applyGate(id));
   ['newAssetBtn','bulkImportBtn','downloadSampleBtn'].forEach(id=>applyGate(id, false));
 
   const { projects } = await api('/projects');
@@ -710,6 +778,7 @@ function setTab(tab){
   document.getElementById('search').style.display = showBoardControls ? '' : 'none';
   document.getElementById('filterType').style.display = showBoardControls ? '' : 'none';
   document.getElementById('boardView').style.display = tab==='board' ? '' : 'none';
+  document.getElementById('projectsView').style.display = tab==='projects' ? '' : 'none';
   document.getElementById('listView').style.display = tab==='list' ? '' : 'none';
   document.getElementById('teamView').style.display = tab==='team' ? '' : 'none';
   document.getElementById('usersView').style.display = tab==='users' ? '' : 'none';
@@ -908,8 +977,259 @@ async function render(){
   else if(state.view==='list') renderList();
   else if(state.view==='team') await renderTeam();
   else if(state.view==='users') await renderUsers();
+  else if(state.view==='projects') await renderProjects();
   else if(state.view==='settings') await renderSettings();
 }
+
+/* What this page holds, and what deliberately lives elsewhere.
+
+   Every admin-configurable area of the app is on this page — the audit turned
+   up nothing scattered outside it. What is elsewhere is operational rather than
+   configuration: the Users tab administers people, the Projects tab administers
+   clients and their projects, and both are day-to-day work rather than settings
+   somebody configures once. They are named here so it is clear they were not
+   overlooked, and each is only reachable with its own permission anyway.
+
+   The list shows only the sections this role holds, so it never advertises a
+   section the page will not then render. */
+function settingsIndexHTML(){
+  const held = SETTINGS_SECTIONS.filter(s=>can(s.permission));
+  if(!held.length) return '';
+  const elsewhere = [
+    can('user.view') || canAnyIn('user') ? { label:'Users', note:'Accounts, roles, reporting lines.', tab:'users' } : null,
+    can('client.view') ? { label:'Projects', note:'Clients and the projects under them.', tab:'projects' } : null,
+  ].filter(Boolean);
+
+  return `
+    <div class="set-index">
+      <div class="set-index-lbl">On this page</div>
+      <div class="set-index-grid">
+        ${held.map(s=>`<div class="set-index-item"><span class="sii-name">${escapeHTML(s.label)}</span><span class="sii-note">${escapeHTML(s.note)}</span></div>`).join('')}
+      </div>
+      ${elsewhere.length ? `
+        <div class="set-index-lbl" style="margin-top:14px;">Managed on their own tabs</div>
+        <div class="set-index-grid">
+          ${elsewhere.map(e=>`<button class="set-index-item sii-link" data-tab="${e.tab}"><span class="sii-name">${escapeHTML(e.label)} →</span><span class="sii-note">${escapeHTML(e.note)}</span></button>`).join('')}
+        </div>` : ''}
+    </div>`;
+}
+
+/* ---------- clients and their projects ----------
+
+   One screen with two levels. The list of clients, and — once one is chosen —
+   the projects under it, reached through a breadcrumb rather than a separate
+   page, because "Clients > Acme Corp > Projects" is the whole navigation model
+   and a back button would hide it.
+
+   state.clientId is which client is open; null means the list. */
+async function renderProjects(){
+  const el = document.getElementById('projectsView');
+  if(!can('client.view')){ el.innerHTML=''; return; }
+
+  let clients;
+  try{ clients = (await api('/clients')).clients; }
+  catch(err){ el.innerHTML = `<div class="empty">${escapeHTML(err.message)}</div>`; return; }
+  state.clients = clients;
+
+  const open = state.clientId ? clients.find(c=>c.id===state.clientId) : null;
+  if(state.clientId && !open) state.clientId = null;
+
+  el.innerHTML = open ? clientDetailHTML(open) : clientListHTML(clients);
+  wireProjects();
+}
+
+function crumbs(parts){
+  return `<div class="crumbs">${parts.map((p,i)=>
+    (i<parts.length-1 && p.go)
+      ? `<button class="crumb-link" data-go="${p.go}">${escapeHTML(p.label)}</button><span class="crumb-sep">›</span>`
+      : `<span class="crumb-now">${escapeHTML(p.label)}</span>${i<parts.length-1?'<span class="crumb-sep">›</span>':''}`
+  ).join('')}</div>`;
+}
+
+function clientListHTML(clients){
+  return `
+    ${crumbs([{ label:'Clients' }])}
+    <div style="display:flex;align-items:center;gap:10px;margin:10px 0 16px;">
+      <div style="font-size:12px;color:var(--ink-muted);flex:1;">
+        Every project belongs to a client. Choose one to see its projects.
+      </div>
+      ${can('client.add') ? '<button class="btn btn-brand" id="newClientBtn">+ Add Client</button>' : ''}
+    </div>
+    ${clients.length ? `<div class="client-grid">${clients.map(c=>`
+      <div class="client-card" data-client="${c.id}">
+        <div class="client-name">${escapeHTML(c.name)}${c.isSystem?'<span class="client-tag">system</span>':''}</div>
+        ${c.contactName ? `<div class="client-meta">${escapeHTML(c.contactName)}${c.contactEmail?` · <span class="mono">${escapeHTML(c.contactEmail)}</span>`:''}</div>` : ''}
+        <div class="client-count">${c.projectCount} project${c.projectCount===1?'':'s'}</div>
+        ${c.notes ? `<div class="client-notes">${escapeHTML(c.notes)}</div>` : ''}
+      </div>`).join('')}</div>`
+      : '<div class="empty">No clients yet.</div>'}
+  `;
+}
+
+function clientDetailHTML(c){
+  return `
+    ${crumbs([{ label:'Clients', go:'clients' }, { label:c.name }, { label:'Projects' }])}
+    <div style="display:flex;align-items:flex-start;gap:10px;margin:10px 0 16px;">
+      <div style="flex:1;">
+        <div style="font-size:18px;font-weight:600;">${escapeHTML(c.name)}${c.isSystem?'<span class="client-tag">system</span>':''}</div>
+        ${c.contactName||c.contactEmail ? `<div class="client-meta">${escapeHTML(c.contactName||'')}${c.contactEmail?` · <span class="mono">${escapeHTML(c.contactEmail)}</span>`:''}</div>`:''}
+        ${c.notes ? `<div class="client-notes" style="margin-top:6px;">${escapeHTML(c.notes)}</div>`:''}
+      </div>
+      ${can('client.edit') ? `<button class="btn btn-ghost" id="editClientBtn" data-client="${c.id}">Edit client</button>` : ''}
+      ${can('client.delete') && !c.isSystem ? `<button class="btn btn-ghost" id="delClientBtn" data-client="${c.id}" style="color:var(--brand);">Delete</button>` : ''}
+    </div>
+    ${c.projects.length ? `<table><thead><tr><th>Project</th><th>Code</th><th></th></tr></thead><tbody>
+      ${c.projects.map(p=>`<tr><td style="font-weight:600;">${escapeHTML(p.name)}</td>
+        <td class="mono" style="font-size:11.5px;">${escapeHTML(p.code||'')}</td>
+        <td style="text-align:right;"><button class="btn btn-ghost btn-sm openProjectBtn" data-id="${p.id}">Open board</button></td></tr>`).join('')}
+    </tbody></table>` : '<div class="empty">No projects under this client yet.</div>'}
+  `;
+}
+
+function wireProjects(){
+  document.querySelectorAll('.crumb-link').forEach(b=>b.addEventListener('click', ()=>{
+    state.clientId = null; renderProjects();
+  }));
+  document.querySelectorAll('.client-card').forEach(card=>card.addEventListener('click', ()=>{
+    state.clientId = card.dataset.client; renderProjects();
+  }));
+  const add = document.getElementById('newClientBtn');
+  if(add) add.addEventListener('click', ()=>openClientModal(null));
+  const edit = document.getElementById('editClientBtn');
+  if(edit) edit.addEventListener('click', ()=>openClientModal(edit.dataset.client));
+  const del = document.getElementById('delClientBtn');
+  if(del) del.addEventListener('click', async ()=>{
+    const c = state.clients.find(x=>x.id===del.dataset.client);
+    if(!confirm(`Delete ${c.name}?`)) return;
+    try{ await api('/clients/'+c.id, { method:'DELETE' }); state.clientId=null; await renderProjects(); showToast(`${c.name} deleted.`); }
+    catch(err){ showToast(err.message); }
+  });
+  /* Opening a project's board is what the header dropdown does, so it does the
+     same thing rather than a second mechanism. */
+  document.querySelectorAll('.openProjectBtn').forEach(b=>b.addEventListener('click', ()=>{
+    const sel = document.getElementById('projectSelect');
+    if([...sel.options].some(o=>o.value===b.dataset.id)){
+      sel.value = b.dataset.id; state.currentProjectId = b.dataset.id;
+      applyGate('editProjectBtn');
+    }
+    setTab('board');
+  }));
+}
+
+/* ---------- the Add / Edit Client modal ----------
+
+   One modal for both, because they are one form: a client's details, and a
+   repeatable list of projects to create under it. Adding projects to a client
+   that already exists is the same rows against the same endpoint rules — the
+   API shares its validation and its transaction between the two, and so does
+   this. */
+const clientModalWrap = document.getElementById('clientModalWrap');
+let editingClient = null;
+let projectRowSeq = 0;
+
+function cmError(message){ document.getElementById('cm_err').textContent = message || ''; }
+
+/* One repeatable row. Removable down to none — zero projects is allowed. */
+function addProjectRow(name){
+  const id = ++projectRowSeq;
+  const row = document.createElement('div');
+  row.className = 'proj-row';
+  row.dataset.row = id;
+  row.innerHTML = `
+    <input type="text" class="pr-name" placeholder="Project name" value="${escapeHTML(name||'')}">
+    <button type="button" class="btn btn-ghost btn-sm pr-remove" title="Remove this row">×</button>
+    <div class="pr-err"></div>`;
+  row.querySelector('.pr-remove').addEventListener('click', ()=>row.remove());
+  document.getElementById('cm_projects').appendChild(row);
+  return row;
+}
+
+async function openClientModal(clientId){
+  cmError('');
+  document.getElementById('cm_projects').innerHTML = '';
+  editingClient = clientId ? (state.clients || []).find(c=>c.id===clientId) : null;
+
+  document.getElementById('cm_title').textContent = editingClient ? 'Edit Client' : 'Add Client';
+  document.getElementById('cm_save').textContent = editingClient ? 'Save changes' : 'Create Client';
+  document.getElementById('cm_name').value = editingClient ? editingClient.name : '';
+  document.getElementById('cm_contactName').value = (editingClient && editingClient.contactName) || '';
+  document.getElementById('cm_contactEmail').value = (editingClient && editingClient.contactEmail) || '';
+  document.getElementById('cm_notes').value = (editingClient && editingClient.notes) || '';
+
+  /* On an edit the existing projects are shown but not editable here — this
+     section adds new ones. Renaming one is the project's own edit form. */
+  const existing = document.getElementById('cm_existing');
+  existing.innerHTML = editingClient && editingClient.projects.length
+    ? `<div class="cm-existing-lbl">Already under this client</div>
+       <div class="cm-existing">${editingClient.projects.map(p=>`<span class="pill">${escapeHTML(p.name)}</span>`).join('')}</div>`
+    : '';
+
+  /* A new client opens with one blank row to fill in; an edit opens with none,
+     since adding a project is a choice rather than the point of the form. */
+  document.getElementById('cm_projectsWrap').style.display = can('project.add') ? '' : 'none';
+  if(can('project.add') && !editingClient) addProjectRow();
+
+  clientModalWrap.classList.add('show');
+}
+
+document.getElementById('cm_addRow').addEventListener('click', ()=>addProjectRow());
+document.getElementById('cm_cancel').addEventListener('click', ()=>clientModalWrap.classList.remove('show'));
+clientModalWrap.addEventListener('click', e=>{ if(e.target===clientModalWrap) clientModalWrap.classList.remove('show'); });
+
+document.getElementById('cm_save').addEventListener('click', async (ev)=>{
+  cmError('');
+  document.querySelectorAll('#cm_projects .pr-err').forEach(e=>e.textContent='');
+
+  const rows = [...document.querySelectorAll('#cm_projects .proj-row')];
+  /* Blank rows are dropped rather than refused: leaving the last one empty is
+     how somebody says "no more projects", not a mistake to correct. */
+  const projects = rows
+    .map(r=>({ row:r, name:r.querySelector('.pr-name').value.trim() }))
+    .filter(r=>r.name);
+
+  const body = {
+    name: document.getElementById('cm_name').value.trim(),
+    contactName: document.getElementById('cm_contactName').value.trim() || null,
+    contactEmail: document.getElementById('cm_contactEmail').value.trim() || null,
+    notes: document.getElementById('cm_notes').value.trim() || null,
+    projects: projects.map(p=>({ name:p.name })),
+  };
+  if(!body.name){ cmError('Name the client first.'); return; }
+
+  ev.target.disabled = true;
+  try{
+    if(editingClient){
+      await api('/clients/'+editingClient.id, { method:'PATCH', body });
+      showToast(`${body.name} updated${projects.length?` — ${projects.length} project${projects.length===1?'':'s'} added`:''}.`);
+    }else{
+      const res = await api('/clients', { method:'POST', body });
+      state.clientId = res.client.id;
+      showToast(`${body.name} created with ${res.projects.length} project${res.projects.length===1?'':'s'}.`);
+    }
+    clientModalWrap.classList.remove('show');
+    /* The header dropdown lists projects, so it has to pick up new ones. */
+    await bootApp();
+    setTab('projects');
+    await renderProjects();
+  }catch(err){
+    /* The API reports every bad row at once, each with the row it came from —
+       put each message on its own row rather than one at the top. */
+    const detail = err.details && err.details.errors;
+    if(Array.isArray(detail)){
+      let placed = 0;
+      for(const e of detail){
+        if(e.index !== undefined && projects[e.index]){
+          projects[e.index].row.querySelector('.pr-err').textContent = e.error;
+          placed++;
+        }
+      }
+      cmError(placed === detail.length ? 'Fix the rows marked below.' : err.message);
+    }else{
+      cmError(err.message);
+    }
+  }
+  finally{ ev.target.disabled = false; }
+});
 
 /* ---------- drawer ---------- */
 function fmtBytes(n){ if(!n) return ''; const kb=n/1024; return kb<1024 ? kb.toFixed(0)+' KB' : (kb/1024).toFixed(1)+' MB'; }
@@ -1775,6 +2095,7 @@ async function renderSettings(){
   lists.forEach((sec,i)=>{ refCache[sec.collection] = loaded[i]; });
 
   el.innerHTML = `
+    ${settingsIndexHTML()}
     ${lists.length ? `<div style="font-size:12px;color:var(--ink-muted);margin-bottom:20px;max-width:640px;">
       These are the value lists the forms use. Renaming one is safe — records that already use it keep working.
       A value in use can't be deleted; deactivate it instead and it disappears from the dropdowns.
@@ -1783,6 +2104,7 @@ async function renderSettings(){
     ${can('settings.ip_allowlist') ? '<div id="ipAllowlistSection"></div>' : ''}
     ${can('settings.permissions') ? '<div id="rolePermissionsSection"></div>' : ''}
   `;
+  el.querySelectorAll('.sii-link').forEach(b=>b.addEventListener('click', ()=>setTab(b.dataset.tab)));
   wireSettings();
   if(can('settings.permissions')) await renderRolePermissions();
   /* Managing who may reach the app stays with whoever has been given that one

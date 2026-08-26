@@ -178,14 +178,42 @@ CREATE TABLE IF NOT EXISTS role_permission_audit (
   KEY idx_role_perm_audit (role_key, seq)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Who the work is for. A project belongs to exactly one client.
+--
+-- One row is a system client, "Unassigned": it exists so that projects created
+-- before clients did have somewhere to belong, and so that projects.client_id
+-- can be NOT NULL rather than nullable-and-usually-null. It can be renamed but
+-- not deleted, because deleting it would orphan whatever is still in it.
+CREATE TABLE IF NOT EXISTS clients (
+  id            CHAR(36)     NOT NULL PRIMARY KEY,
+  `name`        VARCHAR(255) NOT NULL,
+  contact_name  VARCHAR(255) NULL,
+  contact_email VARCHAR(191) NULL,
+  notes         TEXT         NULL,
+  -- Set on the "Unassigned" client only. A system client cannot be deleted.
+  is_system     TINYINT(1)   NOT NULL DEFAULT 0,
+  created_by    CHAR(36)     NULL,
+  created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_clients_name (`name`),
+  CONSTRAINT fk_clients_creator FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS projects (
   id         CHAR(36)     NOT NULL PRIMARY KEY,
   `name`     VARCHAR(255) NOT NULL,
   `code`     VARCHAR(64)  NULL,
+  -- Required. Everything belongs to a client, even if that client is the
+  -- system "Unassigned" one.
+  client_id  CHAR(36)     NOT NULL,
   owner_id   CHAR(36)     NOT NULL,
   created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_projects_owner (owner_id),
-  CONSTRAINT fk_projects_owner FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
+  KEY idx_projects_client (client_id),
+  CONSTRAINT fk_projects_owner  FOREIGN KEY (owner_id)  REFERENCES users(id) ON DELETE CASCADE,
+  -- RESTRICT, not CASCADE: deleting a client must never silently delete the
+  -- projects under it, and with them every asset in those projects. The API
+  -- refuses to delete a client that still holds work.
+  CONSTRAINT fk_projects_client FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS project_team_leads (

@@ -18,17 +18,24 @@ router.get('/', async (req, res) => {
 
 // POST /api/projects — anyone whose role can create projects. The creator becomes the owner.
 router.post('/', requirePermission('project.add'), async (req, res) => {
-  const { name, teamLeadIds = [], coordinatorIds = [] } = req.body || {};
+  const { name, clientId, teamLeadIds = [], coordinatorIds = [] } = req.body || {};
   const verdict = checkName(name);
   if (!verdict.ok) return res.status(400).json({ error: verdict.error, field: verdict.field });
+
+  // Every project belongs to a client. Where the caller does not name one — an
+  // older client of this API, or the quick "+ Project" button — it goes to the
+  // system placeholder rather than being refused, which keeps the requirement
+  // true without making it a new obstacle.
+  const clientRow = await resolveClient(clientId);
+  if (!clientRow) return res.status(400).json({ error: 'That client does not exist.', field: 'clientId' });
 
   const client = await db.connect();
   try {
     await client.query('BEGIN');
     const id = uuid();
     await client.query(
-      'INSERT INTO projects (id, name, code, owner_id) VALUES ($1,$2,$3,$4)',
-      [id, verdict.value, codeFor(verdict.value), req.user.id]
+      'INSERT INTO projects (id, name, code, client_id, owner_id) VALUES ($1,$2,$3,$4,$5)',
+      [id, verdict.value, codeFor(verdict.value), clientRow, req.user.id]
     );
     for (const leadId of teamLeadIds) {
       await client.query(
@@ -53,6 +60,19 @@ router.post('/', requirePermission('project.add'), async (req, res) => {
     client.release();
   }
 });
+
+// The client a new project belongs to: the one named, or the placeholder.
+//
+// Returning null only when a client id was given and does not exist — an
+// absent id is not an error, it is "no particular client yet".
+async function resolveClient(clientId) {
+  if (clientId) {
+    const { rows } = await db.query('SELECT id FROM clients WHERE id = $1', [clientId]);
+    return rows.length ? rows[0].id : null;
+  }
+  const { rows } = await db.query('SELECT id FROM clients WHERE is_system = 1 LIMIT 1');
+  return rows.length ? rows[0].id : null;
+}
 
 // The name rule, in one place, so creating and editing cannot disagree about
 // what a valid project name is.
@@ -96,7 +116,7 @@ router.patch('/:id', requirePermission('project.edit'), async (req, res) => {
     return res.status(403).json({ error: 'You can only edit projects you created' });
   }
 
-  const { name, teamLeadIds, coordinatorIds } = req.body || {};
+  const { name, clientId, teamLeadIds, coordinatorIds } = req.body || {};
 
   // Every field is optional; only what was sent is written. Sending nothing is
   // not an error, it just changes nothing.
@@ -112,12 +132,23 @@ router.patch('/:id', requirePermission('project.edit'), async (req, res) => {
     }
   }
 
+  // Moving a project to another client. How the "Unassigned" pile gets sorted
+  // out, so it has to be possible from the edit form.
+  let newClient = null;
+  if (clientId !== undefined) {
+    newClient = await resolveClient(clientId);
+    if (!newClient) return res.status(400).json({ error: 'That client does not exist.', field: 'clientId' });
+  }
+
   const client = await db.connect();
   try {
     await client.query('BEGIN');
     if (newName !== null) {
       await client.query('UPDATE projects SET `name` = $1, `code` = $2 WHERE id = $3',
         [newName, codeFor(newName), project.id]);
+    }
+    if (newClient) {
+      await client.query('UPDATE projects SET client_id = $1 WHERE id = $2', [newClient, project.id]);
     }
     // Replaced wholesale rather than diffed: the form sends the complete list
     // it is showing, so anything missing from it was unticked.

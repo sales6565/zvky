@@ -525,6 +525,88 @@ async function ensureAssetOwnership(db, log) {
   }
 }
 
+// clients, and projects.client_id.
+//
+// Projects predate clients, so every existing one needs somewhere to belong
+// before the column can be NOT NULL. They go to a seeded system client called
+// "Unassigned" — flagged for review because it is a real editorial decision
+// rather than a technical one: the alternative was a nullable client_id, which
+// would have meant every screen and query carrying an "or no client" branch
+// forever. A placeholder keeps the model honest — everything has a client — and
+// leaves one obvious list of projects for somebody to sort into real clients.
+// The row can be renamed but not deleted.
+async function ensureClients(db, log) {
+  const { rows: table } = await db.query(
+    `SELECT TABLE_NAME AS t FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'clients'`
+  );
+  if (!table.length) {
+    await db.query(`CREATE TABLE clients (
+      id            CHAR(36)     NOT NULL PRIMARY KEY,
+      \`name\`        VARCHAR(255) NOT NULL,
+      contact_name  VARCHAR(255) NULL,
+      contact_email VARCHAR(191) NULL,
+      notes         TEXT         NULL,
+      is_system     TINYINT(1)   NOT NULL DEFAULT 0,
+      created_by    CHAR(36)     NULL,
+      created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_clients_name (\`name\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+    log('Schema: added the clients table.');
+  }
+
+  // The placeholder, created before the column that needs it.
+  const placeholder = await ensurePlaceholderClient(db);
+
+  const { rows: column } = await db.query(
+    `SELECT COLUMN_NAME AS n, IS_NULLABLE AS nullable FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'projects' AND COLUMN_NAME = 'client_id'`
+  );
+  if (!column.length) {
+    // Added nullable, filled, then tightened — a NOT NULL column cannot be
+    // added to a table that already has rows.
+    await db.query('ALTER TABLE projects ADD COLUMN client_id CHAR(36) NULL AFTER `code`');
+    await db.query('ALTER TABLE projects ADD KEY idx_projects_client (client_id)');
+  }
+  const { rows: moved } = await db.query(
+    'UPDATE projects SET client_id = $1 WHERE client_id IS NULL', [placeholder]
+  );
+  const orphans = moved && moved.affectedRows !== undefined ? moved.affectedRows : 0;
+
+  if (!column.length || column[0].nullable === 'YES') {
+    await db.query('ALTER TABLE projects MODIFY client_id CHAR(36) NOT NULL');
+    try {
+      await db.query('ALTER TABLE projects ADD CONSTRAINT fk_projects_client FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE RESTRICT');
+    } catch (err) {
+      log(`Schema: projects.client_id added, but its foreign key was refused — ${err.sqlMessage || err.message}`);
+    }
+    const { rows: counted } = await db.query('SELECT COUNT(*) AS n FROM projects');
+    log(`Schema: every project now belongs to a client. ${Number(counted[0].n)} project(s) moved to "Unassigned".`);
+    log('         Rename it or move those projects to real clients from the Projects tab.');
+  } else if (orphans) {
+    log(`Schema: ${orphans} project(s) had no client and were moved to "Unassigned".`);
+  }
+}
+
+// The one client that always exists. Created by id lookup on name so running
+// the migration twice cannot make a second one.
+async function ensurePlaceholderClient(db) {
+  const { v4: uuid } = require('uuid');
+  const { rows } = await db.query('SELECT id FROM clients WHERE is_system = 1 LIMIT 1');
+  if (rows.length) return rows[0].id;
+  const { rows: named } = await db.query('SELECT id FROM clients WHERE `name` = $1', ['Unassigned']);
+  if (named.length) {
+    await db.query('UPDATE clients SET is_system = 1 WHERE id = $1', [named[0].id]);
+    return named[0].id;
+  }
+  const id = uuid();
+  await db.query(
+    'INSERT INTO clients (id, `name`, notes, is_system) VALUES ($1,$2,$3,1)',
+    [id, 'Unassigned', 'Projects that existed before clients did. Move them to a real client and this can be left empty.']
+  );
+  return id;
+}
+
 const STEPS = [
   ['stale role constraints', dropStaleRoleConstraints],
   ['users.role column width', widenRoleColumn],
@@ -540,6 +622,7 @@ const STEPS = [
   ['review pipeline', ensureReviewWorkflow],
   ['role permissions', ensurePermissionTables],
   ['asset ownership', ensureAssetOwnership],
+  ['client hierarchy', ensureClients],
   ['IP allowlist', ensureIpAllowlist],
 ];
 
