@@ -303,6 +303,108 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
     assert.ok(!second.some((m) => /Moved to Assigned/.test(m)), 'the repair is idempotent');
   });
 
+  await t.test('a stale status constraint under any name is repaired, not reported fixed', async () => {
+    // What a real deployment looked like: the narrow status constraint was
+    // under a different name — an older schema, or a table recreated by a
+    // hosting panel — so the migration dropped nothing, added a second, wider
+    // constraint called chk_assets_status, read that one back and logged
+    // success. Both are enforced, so every write landing an asset in 'assigned'
+    // still failed, and /api/health said ok.
+    const mysql = require('mysql2/promise');
+    const open = async () => {
+      const conn = await mysql.createConnection({
+        host: cfg.host, port: cfg.port, user: cfg.user, password: cfg.password, database: cfg.database,
+      });
+      return { conn, db: { query: async (text, params = []) => {
+        const ordered = [];
+        const sqlText = text.replace(/\$(\d+)/g, (_, n) => { ordered.push(params[Number(n) - 1]); return '?'; });
+        const [rows] = await conn.query(sqlText, ordered.length ? ordered : params);
+        return { rows: Array.isArray(rows) ? rows : [], result: rows };
+      } } };
+    };
+
+    const statusChecks = async () => sql(cfg,
+      `SELECT cc.CONSTRAINT_NAME n, cc.CHECK_CLAUSE c
+         FROM information_schema.CHECK_CONSTRAINTS cc
+         JOIN information_schema.TABLE_CONSTRAINTS tc
+           ON tc.CONSTRAINT_NAME = cc.CONSTRAINT_NAME AND tc.CONSTRAINT_SCHEMA = cc.CONSTRAINT_SCHEMA
+        WHERE tc.TABLE_NAME = 'assets' AND tc.CONSTRAINT_TYPE = 'CHECK'
+          AND tc.CONSTRAINT_SCHEMA = DATABASE() AND cc.CHECK_CLAUSE LIKE '%not_started%'`);
+
+    // Park the assigned rows so a narrow constraint can be applied at all,
+    // then install one under a name nothing looks for.
+    const parked = await sql(cfg, "SELECT id FROM assets WHERE `status` = 'assigned'");
+    await sql(cfg, "UPDATE assets SET `status` = 'not_started' WHERE `status` = 'assigned'");
+    try { await sql(cfg, 'ALTER TABLE assets DROP CONSTRAINT chk_assets_status'); } catch { /* absent */ }
+    await sql(cfg, `ALTER TABLE assets ADD CONSTRAINT legacy_assets_status CHECK (\`status\` IN (
+      'not_started','in_progress','pending_tl_review','tl_changes_requested',
+      'pending_cd_review','cd_changes_requested','approved_for_client','delivered'))`);
+    assert.ok((await statusChecks()).some((c) => c.n === 'legacy_assets_status'), 'the stale one is installed');
+
+    // Health must see it even though it is not called chk_assets_status.
+    const schemaCheck = require('../src/schema-check');
+    const probe = await open();
+    try {
+      const gaps = await schemaCheck.gaps(probe.db);
+      assert.ok(
+        gaps.some((g) => g.kind === 'constraint' && g.name === 'legacy_assets_status'),
+        `health should name the stale constraint whatever it is called — got ${JSON.stringify(gaps)}`
+      );
+    } finally { await probe.conn.end(); }
+
+    // And the migration must drop it, not sit a good one beside it.
+    const migrate = require('../src/migrate');
+    const runner = await open();
+    const messages = [];
+    try { await migrate.run(runner.db, (m) => messages.push(m)); } finally { await runner.conn.end(); }
+
+    const after = await statusChecks();
+    assert.ok(!after.some((c) => c.n === 'legacy_assets_status'), 'the stale constraint was dropped');
+    for (const c of after) {
+      assert.ok(String(c.c).includes("'assigned'"),
+        `${c.n} still rejects 'assigned': ${c.c}`);
+    }
+    assert.ok(!messages.some((m) => /\*\*\*/.test(m)), `no loud failure expected — got ${messages.join(' | ')}`);
+
+    // The proof that matters: the write that used to fail now works.
+    const asset = await newAsset('After The Repair');
+    assert.strictEqual((await assetRow(asset.id)).status, 'assigned');
+    for (const p of parked) {
+      await sql(cfg, `UPDATE assets SET \`status\` = 'assigned' WHERE id = '${p.id}'`);
+    }
+  });
+
+  await t.test('a create that fails part-way leaves nothing behind', async () => {
+    // FX-001's real shape: the asset row was written, the assign transition
+    // then failed on a stale constraint, and the default checklist never ran.
+    // The request 500'd and left a real asset behind — assigned to somebody,
+    // status not_started, no tasks, sitting in the Not Assigned column. The
+    // three writes are one transaction now, so a failure leaves no row at all.
+    const before = await sql(cfg, 'SELECT COUNT(*) AS n FROM assets');
+
+    // Make the transition fail, the same way a stale constraint does, without
+    // touching the constraint every other subtest depends on.
+    await sql(cfg, `CREATE TRIGGER refuse_assigned BEFORE UPDATE ON assets FOR EACH ROW
+      BEGIN IF NEW.\`status\` = 'assigned' THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'simulated stale constraint';
+      END IF; END`);
+    let res;
+    try {
+      res = await as('pat', `/assets/project/${projectId}`, {
+        method: 'POST', body: { name: 'Doomed Create', type: 'character', assigneeId: people.ana },
+      });
+    } finally {
+      await sql(cfg, 'DROP TRIGGER refuse_assigned');
+    }
+
+    assert.strictEqual(res.status, 500, 'the create fails, as it should');
+    const after = await sql(cfg, 'SELECT COUNT(*) AS n FROM assets');
+    assert.strictEqual(Number(after[0].n), Number(before[0].n),
+      'and leaves no half-created asset behind');
+    const orphan = await sql(cfg, "SELECT id FROM assets WHERE `name` = 'Doomed Create'");
+    assert.strictEqual(orphan.length, 0, 'specifically, not this one');
+  });
+
   await t.test('reassigning mid-round keeps the time already spent', async () => {
     // Total is lifetime effort on the asset, whoever spent it.
     const asset = await newAsset('Handed Over');

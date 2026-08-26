@@ -789,67 +789,111 @@ async function ensureTimeTracking(db, log) {
     log('Schema: added work_sessions — the auditable log behind the asset timer.');
   }
 
-  // Widen the status constraint so it admits 'assigned'.
+  // Widen the status constraint so it admits every state the app can write.
   //
-  // This is the step whose failure is worst, and it used to be the easiest to
-  // miss. The old version decided whether to act by reading the constraint's
-  // text from information_schema.CHECK_CONSTRAINTS — and when that read
-  // returned nothing (the view does not exist on MySQL 5.7, and is not always
-  // readable) it concluded there was nothing to do. So on a database where the
-  // constraint was real but unreadable, the rebuild never ran, and every write
-  // that lands an asset in 'assigned' — creating one with an assignee, or
-  // assigning an existing one — failed with a CHECK violation. Nothing else
-  // reported a problem, because the tables and columns were all present.
+  // Two separate mistakes have lived in this one step.
   //
-  // So: act unless the constraint is positively confirmed to be current.
-  // Attempting a rebuild that was not needed costs one ALTER; skipping one that
-  // was needed costs the studio its two most common actions.
-  const current = await statusConstraintText(db);
-  const confirmedCurrent = current !== null && current.includes('assigned');
-  if (!confirmedCurrent) {
-    try {
+  // The first: it decided whether to act by reading the constraint's text from
+  // information_schema.CHECK_CONSTRAINTS, and when that read returned nothing
+  // (the view does not exist on MySQL 5.7, and is not always readable) it
+  // concluded there was nothing to do. So on a database where the constraint
+  // was real but unreadable, the rebuild never ran, and every write that lands
+  // an asset in 'assigned' failed with a CHECK violation.
+  //
+  // The second, and worse because it reported success: it dropped and read
+  // back BY NAME. A database whose status constraint is under a different name
+  // — an older schema, or a table recreated by a hosting panel's import — kept
+  // that constraint untouched, gained a second, wider one called
+  // chk_assets_status, and then read the new one back and logged "the status
+  // constraint now admits 'assigned'". MySQL and MariaDB enforce every CHECK on
+  // a table, so the old narrow one still rejected the write. Creating an asset
+  // with an assignee then failed *after* the asset row was already inserted,
+  // leaving exactly the thing this was supposed to prevent: an asset with an
+  // assignee, a status of not_started, and no checklist.
+  //
+  // So: find them by what they constrain, not by what they are called — the
+  // same way the type and priority constraints are already handled — and act
+  // unless every one of them is positively confirmed current.
+  const stale = await staleStatusConstraints(db);
+  if (stale === null || stale.length) {
+    for (const name of (stale || []).map((c) => c.name)) {
+      try {
+        await db.query(`ALTER TABLE assets DROP CONSTRAINT \`${name}\``);
+      } catch {
+        try {
+          await db.query(`ALTER TABLE assets DROP CHECK \`${name}\``);
+        } catch {
+          log(`Schema: could not drop the stale status constraint "${name}". Assigning an asset will`);
+          log('         keep failing until it is dropped by hand or this user is granted ALTER.');
+        }
+      }
+    }
+    // When the constraints could not be read at all, the named one is still the
+    // best guess at what is there — drop it blind before adding it back.
+    if (stale === null) {
       try {
         await db.query('ALTER TABLE assets DROP CONSTRAINT chk_assets_status');
       } catch {
-        await db.query('ALTER TABLE assets DROP CHECK chk_assets_status');
+        try { await db.query('ALTER TABLE assets DROP CHECK chk_assets_status'); } catch { /* absent */ }
       }
-    } catch {
-      // No such constraint. Fine — the ADD below is then the whole job.
     }
-    await db.query(`ALTER TABLE assets ADD CONSTRAINT chk_assets_status CHECK (\`status\` IN (
-      'not_started','assigned','in_progress','pending_tl_review','tl_changes_requested',
-      'pending_cd_review','cd_changes_requested','approved_for_client','delivered'
-    ))`);
+    try {
+      await db.query(`ALTER TABLE assets ADD CONSTRAINT chk_assets_status CHECK (\`status\` IN (
+        ${STATUS_VALUES.map((v) => `'${v}'`).join(',')}
+      ))`);
+    } catch (err) {
+      // Adding it back is not the important half — nothing rejects a valid
+      // status without it. Dropping the stale one was.
+      if (!/duplicate|exists/i.test(err.sqlMessage || err.message || '')) throw err;
+    }
 
-    // Verify rather than assume. If the constraint still cannot be confirmed,
-    // say so loudly: this is the difference between a working studio and one
-    // that cannot assign anything.
-    const after = await statusConstraintText(db);
+    // Verify rather than assume, and verify ALL of them.
+    const after = await staleStatusConstraints(db);
     if (after === null) {
       log("Schema: the status constraint was rebuilt to admit 'assigned', but this database will not");
       log('         report its constraints, so that cannot be confirmed from here. If assigning an');
       log('         asset fails with a constraint error, apply the CHECK from sql/schema.sql by hand.');
-    } else if (!after.includes('assigned')) {
-      log("Schema: *** the status constraint still does not admit 'assigned'. Assigning an asset and");
-      log('         creating one with an assignee will both fail until it does. Apply the CHECK from');
+    } else if (after.length) {
+      log(`Schema: *** ${after.length} status constraint(s) still reject a valid status: `
+        + `${after.map((c) => c.name).join(', ')}. Assigning an asset and creating one with an`);
+      log('         assignee will both fail until they are dropped. Apply the CHECK from');
       log('         sql/schema.sql by hand, or grant this database user ALTER on assets.');
     } else {
-      log("Schema: the status constraint now admits 'assigned'. Existing assets are untouched.");
+      log("Schema: the status constraint now admits every current status. Existing assets are untouched.");
     }
   }
 }
 
-// The status CHECK constraint's text, or null when this database will not say.
-// Null means "unknown", never "absent" — the two are different, and treating
-// unknown as absent is what let a stale constraint survive a deployment.
-async function statusConstraintText(db) {
+// Every status the app can write. One list, used to build the constraint and to
+// judge whether an existing one is current.
+const STATUS_VALUES = [
+  'not_started', 'assigned', 'in_progress', 'pending_tl_review', 'tl_changes_requested',
+  'pending_cd_review', 'cd_changes_requested', 'approved_for_client', 'delivered',
+];
+
+// Every CHECK constraint on `assets` that constrains `status` and does not admit
+// all of STATUS_VALUES — whatever it is called. Null means this database will
+// not report its constraints, which is "unknown", never "none".
+async function staleStatusConstraints(db) {
   const { rows } = await db.query(
-    `SELECT CHECK_CLAUSE AS c FROM information_schema.CHECK_CONSTRAINTS
-      WHERE CONSTRAINT_SCHEMA = DATABASE() AND CONSTRAINT_NAME = 'chk_assets_status'`
+    `SELECT cc.CONSTRAINT_NAME AS name, cc.CHECK_CLAUSE AS clause
+       FROM information_schema.CHECK_CONSTRAINTS cc
+       JOIN information_schema.TABLE_CONSTRAINTS tc
+         ON tc.CONSTRAINT_NAME   = cc.CONSTRAINT_NAME
+        AND tc.CONSTRAINT_SCHEMA = cc.CONSTRAINT_SCHEMA
+      WHERE tc.TABLE_NAME = 'assets'
+        AND tc.CONSTRAINT_TYPE = 'CHECK'
+        AND tc.CONSTRAINT_SCHEMA = DATABASE()`
   ).catch(() => ({ rows: null }));
-  if (rows === null) return null;          // the view is unreadable or absent
-  if (!rows.length) return '';             // readable, and the constraint is gone
-  return String(rows[0].c);
+  if (rows === null) return null;
+  return rows.filter((r) => {
+    const clause = String(r.clause || '');
+    // Only the ones enumerating statuses. `not_started` appears in every
+    // version of this constraint there has ever been, which is what identifies
+    // it without relying on its name.
+    if (!/\bstatus\b/i.test(clause) || !clause.includes("'not_started'")) return false;
+    return STATUS_VALUES.some((v) => !clause.includes(`'${v}'`));
+  });
 }
 
 // Assets that already had somebody on them when the 'assigned' state arrived.

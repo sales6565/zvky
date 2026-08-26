@@ -114,11 +114,16 @@ test('the constraint rebuild acts when it cannot confirm the constraint is curre
   const path = require('node:path');
   const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'migrate.js'), 'utf8');
 
-  assert.match(source, /const confirmedCurrent = current !== null && current\.includes\('assigned'\)/,
-    'the rebuild should be skipped only on a positive confirmation');
-  assert.match(source, /if \(!confirmedCurrent\) \{/, 'and act in every other case');
+  assert.match(source, /const stale = await staleStatusConstraints\(db\);/,
+    'the constraints are looked up before deciding');
+  assert.match(source, /if \(stale === null \|\| stale\.length\) \{/,
+    'unknown must act, not be treated as already fine');
   // And it verifies afterwards rather than assuming the ALTER worked.
-  assert.match(source, /const after = await statusConstraintText\(db\)/);
+  assert.match(source, /const after = await staleStatusConstraints\(db\)/);
+  // And it finds them by what they constrain, never by their name — a stale
+  // constraint under another name is still enforced.
+  assert.doesNotMatch(source, /CONSTRAINT_NAME = 'chk_assets_status'/,
+    'looking the constraint up by name is what let a stale one survive');
 });
 
 // --- against a live server -----------------------------------------------------

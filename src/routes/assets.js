@@ -161,21 +161,35 @@ router.post('/project/:projectId', async (req, res) => {
   );
   const code = `${assetType.codePrefix}-${String(Number(countRows[0].n) + 1).padStart(3, '0')}`;
 
+  // One transaction for the whole creation.
+  //
+  // These three writes — the asset, the assignment that follows it, and the
+  // default checklist — used to run as three unrelated statements. When the
+  // middle one failed, the asset row had already been committed and the
+  // checklist never ran, so a failed create left a real asset behind: assigned
+  // to somebody, status not_started, no tasks, sitting in the Not Assigned
+  // column. That is not a hypothetical; it is what a stale status CHECK
+  // constraint produced, and it is why "the assigned asset is in the wrong
+  // column" survived two fixes to the assignment logic. A create either
+  // happens or it does not.
   const id = uuid();
-  await db.query(
-    `INSERT INTO assets (id, \`code\`, \`name\`, \`type\`, \`status\`, priority, project_id, assignee_id, created_by, due_date, description, man_hours)
-     VALUES ($1,$2,$3,$4,'not_started',$5,$6,$7,$8,$9,$10,$11)`,
-    [id, code, name.trim(), type, priority, projectId, assigneeId, req.user.id, due, description, manHours]
-  );
+  const conn = await db.connect();
+  try {
+    await conn.query('BEGIN');
+    await conn.query(
+      `INSERT INTO assets (id, \`code\`, \`name\`, \`type\`, \`status\`, priority, project_id, assignee_id, created_by, due_date, description, man_hours)
+       VALUES ($1,$2,$3,$4,'not_started',$5,$6,$7,$8,$9,$10,$11)`,
+      [id, code, name.trim(), type, priority, projectId, assigneeId, req.user.id, due, description, manHours]
+    );
   // Created Not Assigned, as the pipeline says. If it was created with somebody
   // already on it, the same rule that applies to assigning later applies here:
   // assignment is what starts the work.
   if (assigneeId) {
-    const { rows: fresh } = await db.query('SELECT * FROM assets WHERE id = $1', [id]);
+    const { rows: fresh } = await conn.query('SELECT * FROM assets WHERE id = $1', [id]);
     const ctx = await contextFor(req, fresh[0]);
     const verdict = workflow.evaluate('assign', ctx);
     if (verdict.ok) {
-      await applyTransition(req, res, fresh[0], verdict, { note: verdict.describe });
+      await applyTransition(req, res, fresh[0], verdict, { note: verdict.describe, conn });
     } else {
       // This must not happen: the INSERT above has already written the
       // assignee, so skipping the transition leaves an asset that is assigned
@@ -191,12 +205,20 @@ router.post('/project/:projectId', async (req, res) => {
   }
 
   const defaultTasks = ['Rough pass', 'Clean line', 'Color / shade'];
-  for (let i = 0; i < defaultTasks.length; i++) {
-    await db.query(
-      'INSERT INTO tasks (id, asset_id, `name`, done, `position`) VALUES ($1,$2,$3,0,$4)',
-      [uuid(), id, defaultTasks[i], i]
-    );
+    for (let i = 0; i < defaultTasks.length; i++) {
+      await conn.query(
+        'INSERT INTO tasks (id, asset_id, `name`, done, `position`) VALUES ($1,$2,$3,0,$4)',
+        [uuid(), id, defaultTasks[i], i]
+      );
+    }
+    await conn.query('COMMIT');
+  } catch (err) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    conn.release();
   }
+
   const { rows } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [id]);
   const [withDetails] = await attachTasksAndNotes(rows);
   res.status(201).json({ asset: withDetails });
@@ -491,18 +513,21 @@ async function contextFor(req, asset) {
 // The event row is the point. Status alone cannot answer "who sent this back
 // and what did they say", and that is the question the asset detail view exists
 // to answer.
-async function applyTransition(req, res, asset, verdict, { note, versionId } = {}) {
-  await db.query(
+// `conn` runs the writes on a caller's open transaction rather than the pool,
+// so a transition that fails takes the rest of that transaction down with it.
+async function applyTransition(req, res, asset, verdict, { note, versionId, conn } = {}) {
+  const run = conn || db;
+  await run.query(
     'UPDATE assets SET `status` = $1, routed_to_id = $2 WHERE id = $3',
     [verdict.to, verdict.routedTo, asset.id]
   );
-  await db.query(
+  await run.query(
     `INSERT INTO asset_events (id, asset_id, action, from_status, to_status, actor_id, actor_email, note, version_id, routed_to_id)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
     [uuid(), asset.id, verdict.action, asset.status, verdict.to, req.user.id, req.user.email,
      String(note || '').trim() || null, versionId || null, verdict.routedTo]
   );
-  const { rows: updated } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [asset.id]);
+  const { rows: updated } = await run.query(`${ASSET_SELECT} WHERE a.id = $1`, [asset.id]);
   const [withDetails] = await attachTasksAndNotes(updated);
   return withDetails;
 }

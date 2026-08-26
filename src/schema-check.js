@@ -68,7 +68,15 @@ async function missing(db) {
 // A constraint is part of the schema this build needs, so it is checked here.
 const CONSTRAINTS = [
   {
-    name: 'chk_assets_status',
+    // Matched by what it constrains, not by what it is called. A database whose
+    // status CHECK lives under a different name — an older schema, a table
+    // recreated by a hosting panel's import — kept a narrow constraint that
+    // still rejected 'assigned' while a second, correct chk_assets_status sat
+    // beside it. Both are enforced. Keying this check on the name meant health
+    // read the good one and reported ok, on a deployment where creating an
+    // asset with an assignee failed every time.
+    identifies: (clause) => /\bstatus\b/i.test(clause) && clause.includes("'not_started'"),
+    describe: 'the assets status constraint',
     mustAllow: 'assigned',
     step: 'assigned state and time tracking',
     breaks: 'assigning an asset, and creating one with an assignee',
@@ -87,15 +95,21 @@ async function staleConstraints(db) {
   if (!result || !result.rows) return [];
   const { rows } = result;
 
-  const byName = new Map(rows.map((r) => [String(r.n), String(r.c)]));
-  return CONSTRAINTS
-    .filter((need) => byName.has(need.name) && !byName.get(need.name).includes(need.mustAllow))
-    .map((need) => ({
-      name: need.name,
-      kind: 'constraint',
-      step: need.step,
-      detail: `does not allow "${need.mustAllow}" — breaks ${need.breaks}`,
-    }));
+  const found = [];
+  for (const need of CONSTRAINTS) {
+    for (const row of rows) {
+      const clause = String(row.c || '');
+      if (!need.identifies(clause)) continue;
+      if (clause.includes(`'${need.mustAllow}'`)) continue;
+      found.push({
+        name: String(row.n),
+        kind: 'constraint',
+        step: need.step,
+        detail: `${need.describe} does not allow "${need.mustAllow}" — breaks ${need.breaks}`,
+      });
+    }
+  }
+  return found;
 }
 
 // Everything this build needs and does not have: tables, columns, constraints.

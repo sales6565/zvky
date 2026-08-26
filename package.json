@@ -9,6 +9,7 @@
     "dev": "nodemon app.js",
     "test": "node --test \"tests/*.test.js\"",
     "roles:check": "node scripts/check-roles.js",
+    "asset:check": "node scripts/check-asset.js",
     "seed": "node src/seed/seed.js",
     "package": "bash scripts/build-godaddy-zip.sh"
   },
