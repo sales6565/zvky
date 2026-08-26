@@ -789,25 +789,67 @@ async function ensureTimeTracking(db, log) {
     log('Schema: added work_sessions — the auditable log behind the asset timer.');
   }
 
-  // Rebuild the status constraint if 'assigned' is not yet a legal value,
-  // read from the constraint's own text.
-  const { rows: chk } = await db.query(
-    `SELECT CHECK_CLAUSE AS c FROM information_schema.CHECK_CONSTRAINTS
-      WHERE CONSTRAINT_SCHEMA = DATABASE() AND CONSTRAINT_NAME = 'chk_assets_status'`
-  ).catch(() => ({ rows: [] }));
-  const needsRebuild = chk.length && !String(chk[0].c).includes('assigned');
-  if (needsRebuild) {
+  // Widen the status constraint so it admits 'assigned'.
+  //
+  // This is the step whose failure is worst, and it used to be the easiest to
+  // miss. The old version decided whether to act by reading the constraint's
+  // text from information_schema.CHECK_CONSTRAINTS — and when that read
+  // returned nothing (the view does not exist on MySQL 5.7, and is not always
+  // readable) it concluded there was nothing to do. So on a database where the
+  // constraint was real but unreadable, the rebuild never ran, and every write
+  // that lands an asset in 'assigned' — creating one with an assignee, or
+  // assigning an existing one — failed with a CHECK violation. Nothing else
+  // reported a problem, because the tables and columns were all present.
+  //
+  // So: act unless the constraint is positively confirmed to be current.
+  // Attempting a rebuild that was not needed costs one ALTER; skipping one that
+  // was needed costs the studio its two most common actions.
+  const current = await statusConstraintText(db);
+  const confirmedCurrent = current !== null && current.includes('assigned');
+  if (!confirmedCurrent) {
     try {
-      await db.query('ALTER TABLE assets DROP CONSTRAINT chk_assets_status');
+      try {
+        await db.query('ALTER TABLE assets DROP CONSTRAINT chk_assets_status');
+      } catch {
+        await db.query('ALTER TABLE assets DROP CHECK chk_assets_status');
+      }
     } catch {
-      await db.query('ALTER TABLE assets DROP CHECK chk_assets_status');
+      // No such constraint. Fine — the ADD below is then the whole job.
     }
     await db.query(`ALTER TABLE assets ADD CONSTRAINT chk_assets_status CHECK (\`status\` IN (
       'not_started','assigned','in_progress','pending_tl_review','tl_changes_requested',
       'pending_cd_review','cd_changes_requested','approved_for_client','delivered'
     ))`);
-    log("Schema: the status constraint now admits 'assigned'. Existing assets are untouched.");
+
+    // Verify rather than assume. If the constraint still cannot be confirmed,
+    // say so loudly: this is the difference between a working studio and one
+    // that cannot assign anything.
+    const after = await statusConstraintText(db);
+    if (after === null) {
+      log("Schema: the status constraint was rebuilt to admit 'assigned', but this database will not");
+      log('         report its constraints, so that cannot be confirmed from here. If assigning an');
+      log('         asset fails with a constraint error, apply the CHECK from sql/schema.sql by hand.');
+    } else if (!after.includes('assigned')) {
+      log("Schema: *** the status constraint still does not admit 'assigned'. Assigning an asset and");
+      log('         creating one with an assignee will both fail until it does. Apply the CHECK from');
+      log('         sql/schema.sql by hand, or grant this database user ALTER on assets.');
+    } else {
+      log("Schema: the status constraint now admits 'assigned'. Existing assets are untouched.");
+    }
   }
+}
+
+// The status CHECK constraint's text, or null when this database will not say.
+// Null means "unknown", never "absent" — the two are different, and treating
+// unknown as absent is what let a stale constraint survive a deployment.
+async function statusConstraintText(db) {
+  const { rows } = await db.query(
+    `SELECT CHECK_CLAUSE AS c FROM information_schema.CHECK_CONSTRAINTS
+      WHERE CONSTRAINT_SCHEMA = DATABASE() AND CONSTRAINT_NAME = 'chk_assets_status'`
+  ).catch(() => ({ rows: null }));
+  if (rows === null) return null;          // the view is unreadable or absent
+  if (!rows.length) return '';             // readable, and the constraint is gone
+  return String(rows[0].c);
 }
 
 const STEPS = [

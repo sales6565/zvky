@@ -94,7 +94,7 @@ app.get('/api/health', async (req, res) => {
     // What the schema is actually missing, whatever the migration reported. A
     // step can report success on one boot and the column still be absent —
     // asking the database directly is the answer that cannot be stale.
-    const gaps = await require('./schema-check').missing(db).catch(() => null);
+    const gaps = await require('./schema-check').gaps(db).catch(() => null);
     res.json({
       ok: repairsFailed.length === 0 && (gaps ? gaps.length === 0 : true),
       database: 'connected',
@@ -108,7 +108,7 @@ app.get('/api/health', async (req, res) => {
         : (gaps.length
             ? {
               complete: false,
-              missing: gaps.map((g) => `${g.name} (${g.kind})`),
+              missing: gaps.map((g) => `${g.name} (${g.kind})${g.detail ? ` — ${g.detail}` : ''}`),
               steps: [...new Set(gaps.map((g) => g.step))],
               hint: 'The app is running against a schema it does not have, which is why some requests fail with a database error. '
                 + 'Most often the database user lacks ALTER or CREATE — grant those and restart, or apply the matching statements from sql/schema.sql by hand.',
@@ -157,6 +157,25 @@ app.use((err, req, res, next) => {
 
   const isDatabaseError = typeof err.code === 'string' && /^(ER_|PROTOCOL_|ECONN)/.test(err.code);
   if (isDatabaseError) {
+    // A CHECK constraint refusing a value is not an opaque database fault: it
+    // means this build is writing something the schema was never widened to
+    // accept, which is a deployment problem with a known remedy. Say so, and
+    // name the constraint.
+    //
+    // The driver's own `code` is worse than useless here — MariaDB reuses error
+    // number 4025 for a CHECK failure, and mysql2's table maps it to the
+    // unrelated ER_INNODB_AUTOEXTEND_SIZE_OUT_OF_RANGE. The message is the
+    // truth, so it is the message that gets read.
+    const message = err.sqlMessage || err.message || '';
+    const constraint = /CONSTRAINT `?([A-Za-z0-9_]+)`? failed/i.exec(message);
+    if (constraint) {
+      return res.status(500).json({
+        error: `This deployment's database rejected the value: the "${constraint[1]}" constraint has not been updated for this version. `
+          + 'Open /api/health — it names the schema changes that have not been applied.',
+        constraint: constraint[1],
+        detail: message,
+      });
+    }
     return res.status(500).json({
       error: 'The server could not complete that request because of a database error.',
       code: err.code,

@@ -59,4 +59,49 @@ async function missing(db) {
   return gaps;
 }
 
-module.exports = { REQUIRED, missing };
+// Constraints, which columns and tables do not cover.
+//
+// The gap that let a broken deployment report itself healthy: every table and
+// column was present, so this said "complete", while the status CHECK
+// constraint still refused 'assigned' and both of the studio's commonest
+// writes — create an asset with an assignee, assign an existing one — failed.
+// A constraint is part of the schema this build needs, so it is checked here.
+const CONSTRAINTS = [
+  {
+    name: 'chk_assets_status',
+    mustAllow: 'assigned',
+    step: 'assigned state and time tracking',
+    breaks: 'assigning an asset, and creating one with an assignee',
+  },
+];
+
+async function staleConstraints(db) {
+  // Destructured after the catch, not in it: `const { rows } = null` throws
+  // before any guard can run.
+  const result = await db.query(
+    `SELECT CONSTRAINT_NAME AS n, CHECK_CLAUSE AS c FROM information_schema.CHECK_CONSTRAINTS
+      WHERE CONSTRAINT_SCHEMA = DATABASE()`
+  ).catch(() => null);
+  // Unreadable is not the same as wrong: report nothing rather than a false
+  // alarm on a database that does not expose its constraints.
+  if (!result || !result.rows) return [];
+  const { rows } = result;
+
+  const byName = new Map(rows.map((r) => [String(r.n), String(r.c)]));
+  return CONSTRAINTS
+    .filter((need) => byName.has(need.name) && !byName.get(need.name).includes(need.mustAllow))
+    .map((need) => ({
+      name: need.name,
+      kind: 'constraint',
+      step: need.step,
+      detail: `does not allow "${need.mustAllow}" — breaks ${need.breaks}`,
+    }));
+}
+
+// Everything this build needs and does not have: tables, columns, constraints.
+async function gaps(db) {
+  const [columns, constraints] = await Promise.all([missing(db), staleConstraints(db)]);
+  return [...columns, ...constraints];
+}
+
+module.exports = { REQUIRED, CONSTRAINTS, missing, staleConstraints, gaps };

@@ -74,6 +74,53 @@ test('the schema check names every piece this build needs, and the step that add
   }
 });
 
+test('the schema check covers constraints, not just tables and columns', async () => {
+  // The gap that let a broken deployment report itself healthy: every table
+  // and column was present, so the check said "complete", while the status
+  // CHECK constraint still refused 'assigned' — and both of the studio's
+  // commonest writes failed with a database error.
+  const check = require('../src/schema-check');
+  const stub = (clause) => ({
+    query: async (sql) => (/CHECK_CONSTRAINTS/.test(sql)
+      ? { rows: [{ n: 'chk_assets_status', c: clause }] }
+      : { rows: [] }),
+  });
+
+  const current = "`status` in ('not_started','assigned','in_progress','delivered')";
+  assert.deepStrictEqual(await check.staleConstraints(stub(current)), [],
+    'a widened constraint is not reported');
+
+  const stale = "`status` in ('not_started','in_progress','delivered')";
+  const gaps = await check.staleConstraints(stub(stale));
+  assert.strictEqual(gaps.length, 1);
+  assert.strictEqual(gaps[0].name, 'chk_assets_status');
+  assert.strictEqual(gaps[0].kind, 'constraint');
+  assert.strictEqual(gaps[0].step, 'assigned state and time tracking');
+  assert.match(gaps[0].detail, /does not allow "assigned"/);
+
+  // A database that will not report its constraints raises no false alarm.
+  const silent = { query: async () => { throw new Error('no such view'); } };
+  assert.deepStrictEqual(await check.staleConstraints(silent), []);
+});
+
+test('the constraint rebuild acts when it cannot confirm the constraint is current', () => {
+  // The bug: the old code read the constraint's text and, when the read
+  // returned nothing, concluded there was nothing to do. On a database where
+  // the constraint was real but unreadable, the rebuild never ran and every
+  // write landing an asset in 'assigned' failed. Unknown must not read as
+  // "already fine" — asserted from the source, because the failure only
+  // appears on a database that hides its constraints.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'migrate.js'), 'utf8');
+
+  assert.match(source, /const confirmedCurrent = current !== null && current\.includes\('assigned'\)/,
+    'the rebuild should be skipped only on a positive confirmation');
+  assert.match(source, /if \(!confirmedCurrent\) \{/, 'and act in every other case');
+  // And it verifies afterwards rather than assuming the ALTER worked.
+  assert.match(source, /const after = await statusConstraintText\(db\)/);
+});
+
 // --- against a live server -----------------------------------------------------
 
 test('client and project lifecycle', { skip: cfg ? false : SKIP_REASON }, async (t) => {
@@ -402,6 +449,58 @@ test('client and project lifecycle', { skip: cfg ? false : SKIP_REASON }, async 
     assert.strictEqual(res.body.ok, true);
     assert.deepStrictEqual(res.body.schemaRepairs, { applied: true });
     assert.deepStrictEqual(res.body.schema, { complete: true });
+  });
+
+  await t.test('a stale status constraint is named, not reported as a mystery', async () => {
+    // Both of the studio's commonest writes — creating an asset with an
+    // assignee, and assigning an existing one — land it in 'assigned'. When
+    // the constraint has not been widened, both fail; the message now says
+    // which constraint and where to look.
+    // MariaDB validates existing rows when a CHECK is added, and this suite has
+    // assets sitting in 'assigned'. Park them while the narrow constraint is in
+    // place, exactly as a real database would have had none of them yet.
+    await sql(cfg, "UPDATE assets SET `status` = 'not_started' WHERE `status` = 'assigned'");
+    await sql(cfg, 'ALTER TABLE assets DROP CONSTRAINT chk_assets_status');
+    await sql(cfg, `ALTER TABLE assets ADD CONSTRAINT chk_assets_status CHECK (\`status\` IN (
+      'not_started','in_progress','pending_tl_review','tl_changes_requested',
+      'pending_cd_review','cd_changes_requested','approved_for_client','delivered'))`);
+
+    const health = await call('/health', {});
+    assert.strictEqual(health.body.ok, false);
+    assert.strictEqual(health.body.schema.missing.length, 1);
+    assert.match(health.body.schema.missing[0], /chk_assets_status \(constraint\)/);
+    assert.match(health.body.schema.missing[0], /does not allow "assigned"/);
+
+    const { id: clientId, projects } = await newClientWith('Constraint Co', [{ name: 'Blocked' }]);
+    const project = projects[0].id;
+    const refused = await as('root', `/assets/project/${project}`, {
+      method: 'POST', body: { name: 'Cannot Assign', type: 'prop', assigneeId: people.ana },
+    });
+    assert.strictEqual(refused.status, 500);
+    assert.strictEqual(refused.body.constraint, 'chk_assets_status',
+      'the response names the constraint rather than saying "a database error"');
+    assert.match(refused.body.error, /has not been updated for this version/);
+    assert.match(refused.body.error, /api\/health/);
+
+    // Unassigned creation is unaffected, which is why only some actions broke.
+    assert.strictEqual((await as('root', `/assets/project/${project}`, {
+      method: 'POST', body: { name: 'Fine', type: 'prop' },
+    })).status, 201);
+
+    await sql(cfg, 'ALTER TABLE assets DROP CONSTRAINT chk_assets_status');
+    await sql(cfg, `ALTER TABLE assets ADD CONSTRAINT chk_assets_status CHECK (\`status\` IN (
+      'not_started','assigned','in_progress','pending_tl_review','tl_changes_requested',
+      'pending_cd_review','cd_changes_requested','approved_for_client','delivered'))`);
+    assert.deepStrictEqual((await call('/health', {})).body.schema, { complete: true });
+
+    // And with it widened, both actions work.
+    const made = await as('root', `/assets/project/${project}`, {
+      method: 'POST', body: { name: 'Now Fine', type: 'prop', assigneeId: people.ana },
+    });
+    assert.strictEqual(made.status, 201);
+    assert.strictEqual(made.body.asset.status, 'assigned');
+
+    await as('root', `/clients/${clientId}?confirm=1`, { method: 'DELETE' });
   });
 
   await t.test('health names the missing piece, and the asset list still draws', async () => {
