@@ -22,10 +22,15 @@ router.post('/', requirePermission('project.add'), async (req, res) => {
   const verdict = checkName(name);
   if (!verdict.ok) return res.status(400).json({ error: verdict.error, field: verdict.field });
 
-  // Every project belongs to a client. Where the caller does not name one — an
-  // older client of this API, or the quick "+ Project" button — it goes to the
-  // system placeholder rather than being refused, which keeps the requirement
-  // true without making it a new obstacle.
+  // Every project belongs to a client, and the caller has to say which.
+  //
+  // This used to fall back to the "Unassigned" placeholder when no client was
+  // named, which made the requirement true on paper while letting new work pile
+  // up in a bucket nobody chose. The placeholder now holds only what predates
+  // clients; nothing new lands there by accident.
+  if (!clientId) {
+    return res.status(400).json({ error: 'Choose a client for this project.', field: 'clientId' });
+  }
   const clientRow = await resolveClient(clientId);
   if (!clientRow) return res.status(400).json({ error: 'That client does not exist.', field: 'clientId' });
 
@@ -61,16 +66,9 @@ router.post('/', requirePermission('project.add'), async (req, res) => {
   }
 });
 
-// The client a new project belongs to: the one named, or the placeholder.
-//
-// Returning null only when a client id was given and does not exist — an
-// absent id is not an error, it is "no particular client yet".
+// The named client, or null when it does not exist.
 async function resolveClient(clientId) {
-  if (clientId) {
-    const { rows } = await db.query('SELECT id FROM clients WHERE id = $1', [clientId]);
-    return rows.length ? rows[0].id : null;
-  }
-  const { rows } = await db.query('SELECT id FROM clients WHERE is_system = 1 LIMIT 1');
+  const { rows } = await db.query('SELECT id FROM clients WHERE id = $1', [clientId]);
   return rows.length ? rows[0].id : null;
 }
 

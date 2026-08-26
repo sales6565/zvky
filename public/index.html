@@ -226,6 +226,11 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .cm-existing-lbl{font-size:11px;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.06em;margin-top:12px;}
 .cm-existing{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px;}
 .pill{font-size:11.5px;background:var(--surface-3);color:var(--ink-muted);padding:3px 8px;border-radius:10px;}
+.new-client-row{display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center;}
+.new-client-row input{margin:0;}
+#p_fields{border:none;padding:0;margin:0;}
+#p_fields:disabled{opacity:.45;}
+.p-locked{font-size:11.5px;color:var(--ink-faint);margin-top:10px;}
 
 /* The Settings index: what is on this page, and what is on its own tab. */
 .set-index{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:22px;}
@@ -270,7 +275,8 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
   <header class="top">
     <div class="wordmark"><div class="mark">Z</div><div><h1>ZVKY</h1><div class="sub">art asset &amp; animation pipeline</div></div></div>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-      <select class="proj-select" id="projectSelect"></select>
+      <select class="proj-select" id="clientSelect" title="Client"></select>
+      <select class="proj-select" id="projectSelect" disabled></select>
       <button class="btn btn-ghost btn-sm" id="editProjectBtn" style="display:none;" title="Edit this project">&#9998;</button>
       <div class="user-badge"><div class="avatar" id="userAvatar"></div><div class="who"><div class="name" id="userName"></div><span class="role-badge" id="userRoleBadge"></span></div></div>
       <button class="btn btn-ghost btn-sm" id="profileBtn">Profile</button>
@@ -325,10 +331,24 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 <div class="modal-wrap" id="projectModalWrap">
   <div class="modal">
     <h2>New Project</h2>
-    <label>Project name</label><input type="text" id="p_name" placeholder="e.g. Nightgarden">
-    <label>Team leads on this project</label><div class="checklist" id="p_leads"></div>
-    <label>Production coordinators on this project</label><div class="checklist" id="p_coords"></div>
-    <div class="modal-actions"><button class="btn btn-ghost" id="cancelProjectModal">Cancel</button><button class="btn btn-brand" id="saveProjectModal">Create Project</button></div>
+    <label>Client</label>
+    <select id="p_client"></select>
+    <div id="p_newClientWrap" style="display:none;">
+      <label>New client name</label>
+      <div class="new-client-row">
+        <input type="text" id="p_newClientName" placeholder="e.g. Acme Corp">
+        <button type="button" class="btn btn-brand btn-sm" id="p_createClient">Create</button>
+      </div>
+      <div class="ref-err" id="p_clientErr"></div>
+    </div>
+    <fieldset id="p_fields" disabled>
+      <label>Project name</label><input type="text" id="p_name" placeholder="e.g. Nightgarden">
+      <label>Team leads on this project</label><div class="checklist" id="p_leads"></div>
+      <label>Production coordinators on this project</label><div class="checklist" id="p_coords"></div>
+    </fieldset>
+    <div class="p-locked" id="p_lockedNote">Choose a client first — everything else unlocks once you have.</div>
+    <div class="ref-err" id="p_err"></div>
+    <div class="modal-actions"><button class="btn btn-ghost" id="cancelProjectModal">Cancel</button><button class="btn btn-brand" id="saveProjectModal" disabled>Create Project</button></div>
   </div>
 </div>
 
@@ -665,7 +685,9 @@ function escapeHTML(s){ const d=document.createElement('div'); d.textContent=s||
 let state = { view:'board', search:'', filterType:'', currentProjectId:null, currentUser:null, token:null,
   projects:[], assets:[], usersRenderLimit:60,
   /* The Projects tab: the client list, and which one is open (null = the list). */
-  clients:[], clientId:null };
+  clients:[], clientId:null,
+  /* The header's Client picker, which narrows the Project picker beside it. */
+  clientContextId:null };
 
 /* ---------- API helper ---------- */
 async function api(path, options={}){
@@ -758,16 +780,122 @@ async function bootApp(){
 
   const { projects } = await api('/projects');
   state.projects = projects;
-  const projSel = document.getElementById('projectSelect');
-  projSel.innerHTML = projects.map(p=>`<option value="${p.id}">${escapeHTML(p.name)}</option>`).join('') || '<option value="">No projects</option>';
-  state.currentProjectId = projects[0] ? projects[0].id : null;
-  /* Re-asked on every switch: reach depends on which project is selected. */
-  projSel.onchange = ()=>{ state.currentProjectId = projSel.value; applyGate('editProjectBtn'); render(); };
+  /* The client list drives the project list, so it has to be loaded first. A
+     role without client.view still gets its projects — the picker just shows
+     one flat list, since there are no clients to group them under. */
+  try{ state.clients = can('client.view') ? (await api('/clients')).clients : []; }
+  catch{ state.clients = []; }
+  restoreContext();
+  renderContextPickers();
   applyGate('editProjectBtn');
 
   document.getElementById('filterType').innerHTML = '<option value="">All types</option>' + TYPES.map(t=>`<option value="${t.id}">${escapeHTML(t.label)}</option>`).join('');
   document.getElementById('f_priority').innerHTML = priorityOptions(PRIORITIES.some(p=>p.id==='med') ? 'med' : (PRIORITIES[Math.floor(PRIORITIES.length/2)]||{}).id);
   setTab('board');
+}
+
+/* ---------- the header's Client → Project cascade ----------
+
+   Two pickers, the second filled from the first. Nothing else in the app knows
+   about the client half: everything still filters on state.currentProjectId,
+   which is what the boards, the asset list and the stats already read. The
+   client is a way of narrowing the project list, not a second filter.
+
+   Both are remembered across reloads, because losing your place on every
+   refresh is the kind of small tax that makes a tool tiring. Remembered per
+   account, so two people on one machine do not inherit each other's context,
+   and validated against what the API actually returned — a project that has
+   been deleted, or that this account can no longer see, falls back rather than
+   leaving the app pointed at nothing. */
+function contextKey(){
+  const me = (state.currentUser || {}).id || 'anon';
+  return `zvky_ctx_${me}`;
+}
+function saveContext(){
+  try{
+    localStorage.setItem(contextKey(), JSON.stringify({
+      clientId: state.clientContextId || null,
+      projectId: state.currentProjectId || null,
+    }));
+  }catch{ /* private browsing, a full quota — not worth failing a click over */ }
+}
+function restoreContext(){
+  let saved = {};
+  try{ saved = JSON.parse(localStorage.getItem(contextKey()) || '{}') || {}; }catch{ saved = {}; }
+
+  /* Only honour a remembered project this account can still see. */
+  const project = state.projects.find(p=>p.id===saved.projectId) || null;
+  const clientStillThere = state.clients.some(c=>c.id===saved.clientId);
+
+  if(project){
+    state.currentProjectId = project.id;
+    state.clientContextId = project.client_id || saved.clientId || null;
+  }else if(clientStillThere){
+    state.clientContextId = saved.clientId;
+    const first = projectsForContext()[0];
+    state.currentProjectId = first ? first.id : null;
+  }else{
+    /* Nothing remembered, or none of it survives. Start on the first client
+       that has work in it, so the app opens on something rather than nothing. */
+    const firstWithWork = state.clients.find(c=>projectsUnder(c.id).length);
+    state.clientContextId = firstWithWork ? firstWithWork.id : null;
+    const first = projectsForContext()[0];
+    state.currentProjectId = first ? first.id : null;
+  }
+  saveContext();
+}
+
+function projectsUnder(clientId){
+  return state.projects.filter(p=>p.client_id===clientId);
+}
+/* The projects the Project picker should offer right now. With no clients to
+   group by — a role without client.view — that is simply all of them. */
+function projectsForContext(){
+  if(!state.clients.length) return state.projects;
+  return state.clientContextId ? projectsUnder(state.clientContextId) : [];
+}
+
+function renderContextPickers(){
+  const clientSel = document.getElementById('clientSelect');
+  const projSel = document.getElementById('projectSelect');
+
+  /* No clients to choose between: hide the picker rather than show an empty
+     control, and let the project list stand on its own. */
+  if(!state.clients.length){
+    clientSel.style.display = 'none';
+  }else{
+    clientSel.style.display = '';
+    clientSel.innerHTML = '<option value="">Select a client…</option>' +
+      state.clients.map(c=>{
+        const n = projectsUnder(c.id).length;
+        return `<option value="${c.id}"${c.id===state.clientContextId?' selected':''}>${escapeHTML(c.name)}${n?` (${n})`:''}</option>`;
+      }).join('');
+  }
+
+  const available = projectsForContext();
+  /* Disabled until a client is chosen, and it says why rather than sitting
+     there empty and unexplained. */
+  projSel.disabled = state.clients.length ? (!state.clientContextId || !available.length) : !available.length;
+  projSel.innerHTML = !state.clients.length || state.clientContextId
+    ? (available.map(p=>`<option value="${p.id}"${p.id===state.currentProjectId?' selected':''}>${escapeHTML(p.name)}</option>`).join('')
+       || '<option value="">No projects under this client</option>')
+    : '<option value="">Choose a client first</option>';
+
+  clientSel.onchange = ()=>{
+    state.clientContextId = clientSel.value || null;
+    const first = projectsForContext()[0];
+    state.currentProjectId = first ? first.id : null;
+    saveContext();
+    renderContextPickers();
+    applyGate('editProjectBtn');
+    render();
+  };
+  projSel.onchange = ()=>{
+    state.currentProjectId = projSel.value || null;
+    saveContext();
+    applyGate('editProjectBtn');
+    render();
+  };
 }
 
 /* ---------- tabs ---------- */
@@ -1715,8 +1843,48 @@ document.getElementById('bulkUserInput').addEventListener('change', async (e)=>{
 
 /* ---------- new project modal ---------- */
 const projectModalWrap = document.getElementById('projectModalWrap');
+/* Client first, and nothing else until one is chosen.
+
+   The API refuses a project with no client, so the form does the same rather
+   than letting somebody fill in five fields and then be told. The lock is a
+   real `disabled` on the fieldset, not a colour: a disabled fieldset cannot be
+   focused, typed into or submitted, so the rule holds even for somebody
+   tabbing through. */
+const NEW_CLIENT = '__new__';
+
+function projectFormClientId(){
+  const v = document.getElementById('p_client').value;
+  return v && v !== NEW_CLIENT ? v : null;
+}
+
+function syncProjectForm(){
+  const chosen = projectFormClientId();
+  const creating = document.getElementById('p_client').value === NEW_CLIENT;
+  document.getElementById('p_fields').disabled = !chosen;
+  document.getElementById('saveProjectModal').disabled = !chosen;
+  document.getElementById('p_newClientWrap').style.display = creating ? '' : 'none';
+  document.getElementById('p_lockedNote').style.display = chosen ? 'none' : '';
+  if(creating) document.getElementById('p_newClientName').focus();
+}
+
+function fillProjectClientOptions(selected){
+  /* "+ Add New Client" is only offered to somebody who may create one — it
+     would otherwise be a route to a 403. */
+  document.getElementById('p_client').innerHTML =
+    '<option value="">Select a client…</option>' +
+    state.clients.map(c=>`<option value="${c.id}"${c.id===selected?' selected':''}>${escapeHTML(c.name)}</option>`).join('') +
+    (can('client.add') ? `<option value="${NEW_CLIENT}">+ Add New Client</option>` : '');
+}
+
 document.getElementById('newProjectBtn').addEventListener('click', async ()=>{
   document.getElementById('p_name').value='';
+  document.getElementById('p_newClientName').value='';
+  document.getElementById('p_err').textContent='';
+  document.getElementById('p_clientErr').textContent='';
+  /* Opens on whichever client the header is pointing at, since that is almost
+     always the one meant. */
+  fillProjectClientOptions(state.clientContextId);
+  syncProjectForm();
   try{
     const [{ users: leads }, { users: coords }] = await Promise.all([
       api('/users?role='+encodeURIComponent(roleKeys(r=>r.leadsTeam))+'&limit=500'),
@@ -1727,17 +1895,54 @@ document.getElementById('newProjectBtn').addEventListener('click', async ()=>{
   }catch(err){ showToast(err.message); }
   projectModalWrap.classList.add('show');
 });
+
+document.getElementById('p_client').addEventListener('change', syncProjectForm);
+
+/* Creating a client without leaving the form. One POST to the same endpoint the
+   Add Client screen uses — no projects on it, since the one being filled in
+   below is about to be created against it. */
+document.getElementById('p_createClient').addEventListener('click', async (ev)=>{
+  const err = document.getElementById('p_clientErr');
+  err.textContent = '';
+  const name = document.getElementById('p_newClientName').value.trim();
+  if(!name){ err.textContent = 'Name the client first.'; return; }
+
+  ev.target.disabled = true;
+  try{
+    const res = await api('/clients', { method:'POST', body:{ name } });
+    /* Reload rather than push the new one onto the list: the header pickers and
+       the Projects tab read the same state, and all three should agree. */
+    state.clients = (await api('/clients')).clients;
+    fillProjectClientOptions(res.client.id);
+    document.getElementById('p_newClientName').value = '';
+    syncProjectForm();
+    document.getElementById('p_name').focus();
+    showToast(`${name} created.`);
+  }catch(e){ err.textContent = e.message; }
+  finally{ ev.target.disabled = false; }
+});
 document.getElementById('cancelProjectModal').addEventListener('click', ()=>projectModalWrap.classList.remove('show'));
 projectModalWrap.addEventListener('click', e=>{ if(e.target===projectModalWrap) projectModalWrap.classList.remove('show'); });
 document.getElementById('saveProjectModal').addEventListener('click', async ()=>{
+  const err = document.getElementById('p_err');
+  err.textContent = '';
+  const clientId = projectFormClientId();
+  if(!clientId){ err.textContent = 'Choose a client first.'; return; }
   const name = document.getElementById('p_name').value.trim();
-  if(!name){ showToast('Name the project first.'); return; }
+  if(!name){ err.textContent = 'Name the project first.'; return; }
   const leadIds = [...document.querySelectorAll('#p_leads input:checked')].map(i=>i.value);
   const coordIds = [...document.querySelectorAll('#p_coords input:checked')].map(i=>i.value);
   try{
-    await api('/projects', { method:'POST', body:{ name, teamLeadIds:leadIds, coordinatorIds:coordIds } });
-    projectModalWrap.classList.remove('show'); await bootApp(); showToast(`${name} created.`);
-  }catch(err){ showToast(err.message); }
+    const { project } = await api('/projects', { method:'POST', body:{ clientId, name, teamLeadIds:leadIds, coordinatorIds:coordIds } });
+    projectModalWrap.classList.remove('show');
+    /* Land on what was just made, rather than wherever the pickers happened to
+       be pointing before. */
+    state.clientContextId = clientId;
+    state.currentProjectId = project.id;
+    saveContext();
+    await bootApp();
+    showToast(`${name} created.`);
+  }catch(e){ err.textContent = e.message; }
 });
 
 /* ---------- edit project modal ----------

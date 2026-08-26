@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON } = require('./helpers');
+const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON, systemClientId } = require('./helpers');
 const { TIERS, capabilitiesForTier, ASSIGNABLE_TIERS, FULL_ACCESS } = require('../src/role-tiers');
 const defaults = require('../src/reference-defaults');
 
@@ -89,6 +89,7 @@ test('what the six can and cannot reach', { skip: cfg ? false : SKIP_REASON }, a
   let server;
   let root;          // the Super Admin
   let projectId;
+  let clientId;
   const token = {};
 
   const call = (path, options) => api(server.base, path, options);
@@ -105,7 +106,8 @@ test('what the six can and cannot reach', { skip: cfg ? false : SKIP_REASON }, a
       method: 'POST', body: { email, password: PASSWORD },
     })).body.token;
     root = token.root = await login('root@zvky.test');
-    projectId = (await call('/projects', { token: root, method: 'POST', body: { name: 'Skyfall' } })).body.project.id;
+    clientId = await systemClientId(server.base, root);
+    projectId = (await call('/projects', { token: root, method: 'POST', body: { clientId, name: 'Skyfall' } })).body.project.id;
 
     // One account per role under test, plus an ordinary contributor.
     for (const role of [...FULL, 'game_artist']) {
@@ -156,7 +158,7 @@ test('what the six can and cannot reach', { skip: cfg ? false : SKIP_REASON }, a
         method: 'POST', body: { label: `Priority ${n}` },
       })).status, 201, `${role} should be able to add a priority`);
       assert.strictEqual((await as(role, '/projects', {
-        method: 'POST', body: { name: `Project ${n}` },
+        method: 'POST', body: { clientId, name: `Project ${n}` },
       })).status, 201, `${role} should be able to create a project`);
       assert.strictEqual((await as(role, `/assets/project/${projectId}`, {
         method: 'POST', body: { name: `Asset ${n}`, type: 'prop' },

@@ -134,6 +134,16 @@ async function raw(base, path, { token, method = 'GET', body, headers = {} } = {
 // Run raw SQL against the test database. Tests that need to break something on
 // purpose — dropping a table out from under a running server — need a way in
 // that does not go through the app.
+// Every project needs a client, so tests that only care about projects need
+// somewhere to put them. The migration seeds exactly one system client; this is
+// it, so a test can say "a project, anywhere" without inventing a client first.
+async function systemClientId(base, token) {
+  const res = await api(base, '/clients', { token });
+  const found = (res.body.clients || []).find((c) => c.isSystem);
+  if (!found) throw new Error('No system client — did the migration run?');
+  return found.id;
+}
+
 async function sql(cfg, statement) {
   const mysql = require('mysql2/promise');
   const conn = await mysql.createConnection({
@@ -148,4 +158,4 @@ async function sql(cfg, statement) {
   }
 }
 
-module.exports = { config, resetSchema, startServer, stopServer, api, raw, sql, SKIP_REASON };
+module.exports = { config, resetSchema, startServer, stopServer, api, raw, sql, systemClientId, SKIP_REASON };

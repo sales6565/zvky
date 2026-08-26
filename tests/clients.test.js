@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON } = require('./helpers');
+const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON, systemClientId } = require('./helpers');
 const clients = require('../src/clients');
 
 const cfg = config('clients');
@@ -83,7 +83,8 @@ test('clients and their projects', { skip: cfg ? false : SKIP_REASON }, async (t
 
     // Somebody needs a project to be attached to before they can be created on
     // one, so the placeholder client's first project does that job.
-    const seed = (await as('root', '/projects', { method: 'POST', body: { name: 'Seed' } })).body.project.id;
+    const systemClient = await systemClientId(server.base, token.root);
+    const seed = (await as('root', '/projects', { method: 'POST', body: { clientId: systemClient, name: 'Seed' } })).body.project.id;
     for (const [who, role] of [['pat', 'producer'], ['ana', 'game_artist']]) {
       const res = await call('/users', {
         token: token.root, method: 'POST',
@@ -232,6 +233,41 @@ test('clients and their projects', { skip: cfg ? false : SKIP_REASON }, async (t
     })).status, 400);
     // Put it back, so the fixture's users keep a project.
     await as('root', `/projects/${seed.id}`, { method: 'PATCH', body: { clientId: system.id } });
+  });
+
+  await t.test('a project cannot be created without naming a client', async () => {
+    // The header pickers and the + Project form both make this true in the UI;
+    // this is the half that holds when somebody calls the API directly.
+    const res = await as('root', '/projects', { method: 'POST', body: { name: 'Homeless' } });
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(res.body.field, 'clientId');
+
+    assert.strictEqual((await as('root', '/projects', {
+      method: 'POST', body: { clientId: 'no-such-client', name: 'Homeless' },
+    })).status, 400, 'and not by naming one that does not exist');
+
+    assert.ok(!(await as('root', '/projects')).body.projects.some((p) => p.name === 'Homeless'));
+
+    // "Unassigned" now holds only what predates clients — nothing new lands
+    // there by accident, which was the point of removing the fallback.
+    const system = (await listed()).find((c) => c.isSystem);
+    assert.strictEqual((await as('root', '/projects', {
+      method: 'POST', body: { clientId: system.id, name: 'Deliberately Unassigned' },
+    })).status, 201, 'though it can still be chosen on purpose');
+  });
+
+  await t.test('every project reports the client it belongs to', async () => {
+    // What the header's Project picker filters on. Without client_id on the
+    // row the cascade would need a request per client.
+    const projects = (await as('root', '/projects')).body.projects;
+    assert.ok(projects.length);
+    for (const project of projects) {
+      assert.ok(project.client_id, `${project.name} has no client`);
+    }
+    const acme = await named('Acme Corp');
+    const under = projects.filter((p) => p.client_id === acme.id).map((p) => p.name).sort();
+    assert.deepStrictEqual(under, acme.projects.map((p) => p.name).sort(),
+      'and grouping by it gives the same answer the client endpoint does');
   });
 
   await t.test('the client list is scoped the way projects are', async () => {

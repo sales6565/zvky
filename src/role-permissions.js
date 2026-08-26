@@ -66,10 +66,59 @@ async function seedRole(db, roleKey, { actor } = {}) {
 // The permission set to judge a request by. Seeds on first use so a role added
 // in Settings works immediately.
 async function effectiveFor(db, roleKey) {
+  // The Super Admin role holds the whole catalogue, always, without consulting
+  // the table. Anything else is how the role that fixes everyone's access ends
+  // up unable to reach a feature — see topUpRole below for how that happened.
+  if (isSuperAdmin(roleKey)) return new Set(catalog.KEYS);
+
   const held = await forRole(db, roleKey);
-  if (held) return held;
+  if (held) {
+    // The role has rows, but the catalogue may have grown since they were
+    // written. Fill in the gaps at their defaults rather than reading a missing
+    // row as "not allowed".
+    const topped = await topUpRole(db, roleKey, held);
+    return topped;
+  }
   await seedRole(db, roleKey);
   return defaultsFor(roleKey);
+}
+
+function isSuperAdmin(roleKey) {
+  const def = roleDef(roleKey);
+  return Boolean(def && def.tier === 'super_admin');
+}
+
+// Give a role its defaults for any permission that did not exist when it was
+// last written.
+//
+// This is the bug that took the Projects tab away from Super Admin, and the
+// Settings page before it. seedRole only ever ran for a role with NO rows, so
+// a role seeded when the catalogue had 29 keys never saw the 30th. A missing
+// row reads as "not held", so every role silently failed to hold every
+// permission added after it was seeded — including the role whose whole job is
+// to hand those permissions out.
+//
+// Cheap: the INSERT IGNOREs only run when a key is genuinely absent, which is
+// once per role per catalogue change and never again.
+async function topUpRole(db, roleKey, held) {
+  const { rows } = await db.query(
+    'SELECT permission_key FROM role_permissions WHERE role_key = $1', [roleKey]
+  );
+  const written = new Set(rows.map((r) => r.permission_key));
+  const missing = catalog.KEYS.filter((k) => !written.has(k));
+  if (!missing.length) return held;
+
+  const defaults = defaultsFor(roleKey);
+  for (const key of missing) {
+    await db.query(
+      `INSERT IGNORE INTO role_permissions (role_key, permission_key, enabled, updated_by_email)
+       VALUES ($1,$2,$3,'system')`,
+      [roleKey, key, defaults.has(key) ? 1 : 0]
+    );
+    if (defaults.has(key)) held.add(key);
+  }
+  console.log(`[role-permissions] "${roleKey}" gained ${missing.length} new permission(s) from the catalogue: ${missing.join(', ')}`);
+  return held;
 }
 
 // Every role's settings at once, for the screen.
@@ -80,22 +129,30 @@ async function all(db) {
     if (!byRole.has(row.role_key)) byRole.set(row.role_key, new Set());
     if (row.enabled) byRole.get(row.role_key).add(row.permission_key);
   }
+  // The screen reads this, so it has to agree with what the checks enforce.
+  for (const key of byRole.keys()) {
+    if (isSuperAdmin(key)) byRole.set(key, new Set(catalog.KEYS));
+  }
   return byRole;
 }
 
 // --- writing -----------------------------------------------------------------
 
-// Permissions the Super Admin role may never lose.
+// Permissions the Super Admin role may never lose: all of them.
 //
-// Not a matter of taste: switching either of these off removes the only way to
-// switch them back on. Everything else about the Super Admin role is
-// changeable, with confirmation.
-const SUPER_ADMIN_LOCKED = ['settings.permissions', 'settings.roles'];
+// This used to be two keys — the pair that, switched off, removed the only way
+// to switch them back on — with the rest changeable behind a confirmation. That
+// left the role that grants everyone else's access able to lose its own, and
+// the catalogue-growth bug above meant it could lose access it never knowingly
+// gave up. Super Admin now means "every permission in the catalogue", as a
+// definition rather than as a row somebody has to maintain.
+//
+// Kept as a named export because tests and the screen both ask what cannot be
+// switched off, and "everything" is a perfectly good answer to that.
+const SUPER_ADMIN_LOCKED = catalog.KEYS;
 
 function lockedFor(roleKey) {
-  const def = roleDef(roleKey);
-  if (def && def.tier === 'super_admin') return SUPER_ADMIN_LOCKED;
-  return [];
+  return isSuperAdmin(roleKey) ? [...catalog.KEYS] : [];
 }
 
 // Set a role's permissions to exactly this set, recording each change.
@@ -105,7 +162,8 @@ function lockedFor(roleKey) {
 async function setForRole(db, roleKey, wantedKeys, actor) {
   const wanted = new Set((wantedKeys || []).filter((k) => catalog.isPermission(k)));
 
-  // The locked ones stay on whatever anybody sends.
+  // The locked ones stay on whatever anybody sends. For Super Admin that is the
+  // whole catalogue, so this call cannot take anything away from it.
   for (const key of lockedFor(roleKey)) wanted.add(key);
 
   // And settings.permissions is never switched on for anything but the Super
@@ -160,4 +218,7 @@ async function audit(db, roleKey, limit = 100) {
   }));
 }
 
-module.exports = { forRole, defaultsFor, seedRole, effectiveFor, all, setForRole, audit, lockedFor, SUPER_ADMIN_LOCKED };
+module.exports = {
+  forRole, defaultsFor, seedRole, topUpRole, effectiveFor, all, setForRole, audit,
+  lockedFor, isSuperAdmin, SUPER_ADMIN_LOCKED,
+};

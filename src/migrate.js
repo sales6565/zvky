@@ -607,6 +607,67 @@ async function ensurePlaceholderClient(db) {
   return id;
 }
 
+// Every role holds a row for every permission in the catalogue.
+//
+// Roles were seeded once, when they were first read, and never revisited. A
+// permission added to the catalogue afterwards got no row for any existing
+// role, and a missing row reads as "not allowed" — so every role quietly failed
+// to hold every permission introduced after it was seeded. That is what took
+// the Projects tab away from Super Admin: `client.view` arrived after
+// super_admin had been seeded, so the row simply was not there.
+//
+// The checks now top a role up on read as well, so this is belt and braces —
+// but doing it at startup means the table matches what the app enforces, and
+// the Role Permissions screen shows the truth rather than a gap.
+async function ensurePermissionCatalogueComplete(db, log) {
+  const catalog = require('./permission-catalog');
+  const rolePermissions = require('./role-permissions');
+  const { catalogue } = require('./roles');
+
+  const { rows: written } = await db.query('SELECT role_key, permission_key FROM role_permissions');
+  if (!written.length) return; // nothing seeded yet; first read will do it properly
+
+  const byRole = new Map();
+  for (const row of written) {
+    if (!byRole.has(row.role_key)) byRole.set(row.role_key, new Set());
+    byRole.get(row.role_key).add(row.permission_key);
+  }
+
+  let added = 0;
+  const touched = [];
+  for (const [roleKey, keys] of byRole) {
+    const missing = catalog.KEYS.filter((k) => !keys.has(k));
+    if (!missing.length) continue;
+    const defaults = rolePermissions.defaultsFor(roleKey);
+    for (const key of missing) {
+      await db.query(
+        `INSERT IGNORE INTO role_permissions (role_key, permission_key, enabled, updated_by_email)
+         VALUES ($1,$2,$3,'system')`,
+        [roleKey, key, defaults.has(key) ? 1 : 0]
+      );
+      added += 1;
+    }
+    touched.push(`${roleKey} (+${missing.length})`);
+  }
+
+  // And the Super Admin role holds everything, whatever the table says.
+  const superAdmin = catalogue().find((r) => r.tier === 'super_admin');
+  if (superAdmin) {
+    const { rows: off } = await db.query(
+      'SELECT permission_key FROM role_permissions WHERE role_key = $1 AND enabled = 0',
+      [superAdmin.key]
+    );
+    if (off.length) {
+      await db.query('UPDATE role_permissions SET enabled = 1 WHERE role_key = $1', [superAdmin.key]);
+      log(`Schema: switched ${off.length} permission(s) back on for the ${superAdmin.label} role — it holds the whole catalogue by definition.`);
+    }
+  }
+
+  if (added) {
+    log(`Schema: ${added} permission row(s) added for roles that predate them — ${touched.join(', ')}.`);
+  }
+}
+
 const STEPS = [
   ['stale role constraints', dropStaleRoleConstraints],
   ['users.role column width', widenRoleColumn],
@@ -623,6 +684,9 @@ const STEPS = [
   ['role permissions', ensurePermissionTables],
   ['asset ownership', ensureAssetOwnership],
   ['client hierarchy', ensureClients],
+  // After the client step, so client.* exists in the catalogue by the time
+  // roles are topped up against it.
+  ['permission catalogue top-up', ensurePermissionCatalogueComplete],
   ['IP allowlist', ensureIpAllowlist],
 ];
 

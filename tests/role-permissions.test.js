@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON } = require('./helpers');
+const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON, systemClientId } = require('./helpers');
 const catalog = require('../src/permission-catalog');
 const rolePermissions = require('../src/role-permissions');
 const { capabilitiesForTier } = require('../src/role-tiers');
@@ -46,10 +46,16 @@ test('the review gates map onto the roles that already held them', () => {
   assert.ok(production.has('review.deliver'));
 });
 
-test('two permissions cannot be switched off for the Super Admin role', () => {
-  // They are the only way back if this screen is misconfigured.
-  assert.deepStrictEqual(rolePermissions.SUPER_ADMIN_LOCKED.sort(),
-    ['settings.permissions', 'settings.roles']);
+test('nothing can be switched off for the Super Admin role', () => {
+  // It used to be two keys — the pair that, switched off, removed the only way
+  // to switch them back on. That left the role that grants everyone else's
+  // access able to lose its own, and worse: a permission added to the catalogue
+  // after super_admin was seeded got no row at all, so Super Admin silently
+  // stopped holding it. Super Admin now means the whole catalogue, by
+  // definition rather than by a row somebody has to maintain.
+  assert.deepStrictEqual([...rolePermissions.SUPER_ADMIN_LOCKED].sort(), [...catalog.KEYS].sort());
+  assert.deepStrictEqual(rolePermissions.lockedFor('super_admin').sort(), [...catalog.KEYS].sort());
+  assert.deepStrictEqual(rolePermissions.lockedFor('producer'), [], 'and only for that role');
 });
 
 test('nothing per-user is left in the tree', () => {
@@ -136,6 +142,7 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   const PASSWORD = 'RolePerms-Test-1!';
   let server;
   let projectId;
+  let clientId;
   const token = {};
   const people = {};
 
@@ -165,7 +172,8 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       method: 'POST', body: { email, password: PASSWORD },
     })).body.token;
     token.root = await login('root@zvky.test');
-    projectId = (await call('/projects', { token: token.root, method: 'POST', body: { name: 'Skyfall' } })).body.project.id;
+    clientId = await systemClientId(server.base, token.root);
+    projectId = (await call('/projects', { token: token.root, method: 'POST', body: { clientId, name: 'Skyfall' } })).body.project.id;
 
     for (const [who, role] of [['pat', 'producer'], ['quinn', 'producer'], ['lee', 'team_lead'],
       ['dana', 'art_director'], ['ana', 'game_artist']]) {
@@ -285,20 +293,42 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     });
     assert.strictEqual(res.status, 409);
     assert.strictEqual(res.body.requiresConfirmation, true);
-    assert.deepStrictEqual(res.body.lockedKeys.sort(), ['settings.permissions', 'settings.roles']);
+    assert.deepStrictEqual(res.body.lockedKeys.sort(), [...catalog.KEYS].sort(),
+      'and everything is locked, so the confirmation is really only a warning');
   });
 
-  await t.test('the Super Admin role cannot lose its way back', async () => {
-    // Even asking for nothing at all leaves the two that fix a mistake here.
+  await t.test('the Super Admin role keeps everything, whatever is sent', async () => {
+    // Asking for nothing at all changes nothing at all.
     const res = await setRole('super_admin', []);
     assert.strictEqual(res.status, 200);
-    assert.deepStrictEqual(res.body.refused.sort(), ['settings.permissions', 'settings.roles']);
-    assert.deepStrictEqual(await enabledFor('super_admin'), ['settings.permissions', 'settings.roles']);
+    assert.deepStrictEqual(res.body.refused.sort(), [...catalog.KEYS].sort());
+    assert.deepStrictEqual(await enabledFor('super_admin'), [...catalog.KEYS].sort());
 
-    // And the screen still answers, which is the whole point of the lock.
+    // And the screen still answers, which is the whole point.
     assert.strictEqual((await as('root', '/permissions/roles')).status, 200);
-    await as('root', '/permissions/roles/super_admin/reset', { method: 'POST', body: { confirm: true } });
     assert.strictEqual((await enabledFor('super_admin')).length, catalog.KEYS.length);
+  });
+
+  await t.test('a permission added after a role was seeded still reaches it', async () => {
+    // The bug that took the Projects tab away from Super Admin, reproduced.
+    // Roles were seeded once and never revisited, and a missing row reads as
+    // "not allowed" — so every role quietly failed to hold every permission
+    // introduced after it was seeded, the granting role included.
+    const held = await enabledFor('producer');
+    assert.ok(held.includes('client.view'), 'a Producer holds it to begin with');
+
+    await sql(cfg, "DELETE FROM role_permissions WHERE permission_key LIKE 'client.%'");
+
+    // Read through the API, which is what every request does.
+    assert.deepStrictEqual(await enabledFor('producer'), held,
+      'the gap is filled at its default rather than read as a refusal');
+    const sa = (await as('root', '/auth/me')).body.user.permissions;
+    assert.deepStrictEqual([...sa].sort(), [...catalog.KEYS].sort(),
+      'and Super Admin holds the whole catalogue again');
+
+    // And the rows are written back, not merely computed each time.
+    const rows = await sql(cfg, "SELECT COUNT(*) AS n FROM role_permissions WHERE role_key = 'producer' AND permission_key LIKE 'client.%'");
+    assert.strictEqual(Number(rows[0].n), 4);
   });
 
   await t.test('managing permissions cannot be switched on for another role', async () => {
@@ -527,7 +557,7 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     })).status, 403, 'and one above their own reach is refused');
 
     // 6. Change Project.
-    const other = (await as('root', '/projects', { method: 'POST', body: { name: 'Second' } })).body.project.id;
+    const other = (await as('root', '/projects', { method: 'POST', body: { clientId, name: 'Second' } })).body.project.id;
     assert.strictEqual((await as('pat', `/users/${newby}`, {
       method: 'PATCH', body: { projectId: other },
     })).status, 200);
@@ -637,7 +667,7 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   // --- editing a project -----------------------------------------------------
 
   await t.test('editing a project needs project.edit', async () => {
-    const made = await as('root', '/projects', { method: 'POST', body: { name: 'Tin Rain' } });
+    const made = await as('root', '/projects', { method: 'POST', body: { clientId, name: 'Tin Rain' } });
     const id = made.body.project.id;
 
     assert.strictEqual((await as('ana', `/projects/${id}`, {
@@ -660,7 +690,7 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     // creator could not see: the scoped queries match coordinators, leads and
     // people with work in it, and creating one makes you none of those.
     await setRole('producer', [...(await enabledFor('producer')), 'project.add', 'project.edit']);
-    const made = await as('pat', '/projects', { method: 'POST', body: { name: 'Pat\'s Own' } });
+    const made = await as('pat', '/projects', { method: 'POST', body: { clientId, name: 'Pat\'s Own' } });
     assert.strictEqual(made.status, 201, JSON.stringify(made.body));
     const id = made.body.project.id;
 
@@ -674,7 +704,7 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     // Without widening anything else: a project of Root's that pat is not
     // attached to stays invisible.
     const notMine = (await as('root', '/projects', {
-      method: 'POST', body: { name: 'Root Only' },
+      method: 'POST', body: { clientId, name: 'Root Only' },
     })).body.project.id;
     const seen = (await as('pat', '/projects')).body.projects;
     assert.ok(!seen.some((p) => p.id === notMine), 'and still cannot see a project they are not on');
@@ -686,7 +716,7 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
   await t.test('editing a project rewrites only the project', async () => {
     const id = (await as('root', '/projects', {
-      method: 'POST', body: { name: 'Tin Rain', teamLeadIds: [people.lee] },
+      method: 'POST', body: { clientId, name: 'Tin Rain', teamLeadIds: [people.lee] },
     })).body.project.id;
     const asset = (await as('root', `/assets/project/${id}`, {
       method: 'POST', body: { name: 'Keeper', type: 'prop', assigneeId: people.ana },
@@ -714,14 +744,14 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   });
 
   await t.test('an edit is validated the way a create is', async () => {
-    const id = (await as('root', '/projects', { method: 'POST', body: { name: 'Tin Rain' } })).body.project.id;
+    const id = (await as('root', '/projects', { method: 'POST', body: { clientId, name: 'Tin Rain' } })).body.project.id;
     for (const body of [{ name: '' }, { name: '   ' }, { name: 'x'.repeat(256) }]) {
       const res = await as('root', `/projects/${id}`, { method: 'PATCH', body });
       assert.strictEqual(res.status, 400, JSON.stringify(body));
       assert.strictEqual(res.body.field, 'name');
     }
     // Create refuses the same things, with the same message.
-    const created = await as('root', '/projects', { method: 'POST', body: { name: '  ' } });
+    const created = await as('root', '/projects', { method: 'POST', body: { clientId, name: '  ' } });
     assert.strictEqual(created.status, 400);
     assert.strictEqual(created.body.error, 'Project name is required');
 

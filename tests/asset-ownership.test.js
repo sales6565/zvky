@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON } = require('./helpers');
+const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON, systemClientId } = require('./helpers');
 const { ownsAsset, canAssignAsset, isAwaitingRework, REWORK_STATUSES } = require('../src/permissions');
 
 const cfg = config('assetown');
@@ -90,7 +90,8 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
       method: 'POST', body: { email, password: PASSWORD },
     })).body.token;
     token.root = await login('root@zvky.test');
-    projectId = (await call('/projects', { token: token.root, method: 'POST', body: { name: 'Nightgarden' } })).body.project.id;
+    const clientId = await systemClientId(server.base, token.root);
+    projectId = (await call('/projects', { token: token.root, method: 'POST', body: { clientId, name: 'Nightgarden' } })).body.project.id;
 
     for (const [who, role] of [['pat', 'producer'], ['quinn', 'producer'], ['lee', 'team_lead'],
       ['ana', 'game_artist'], ['bo', 'game_artist']]) {

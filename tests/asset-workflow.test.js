@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON } = require('./helpers');
+const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON, systemClientId } = require('./helpers');
 const workflow = require('../src/asset-workflow');
 const submissionLink = require('../src/submission-link');
 
@@ -166,7 +166,8 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     })).body.token;
     token.admin = await login('admin@zvky.test');
 
-    projectId = (await call('/projects', { token: token.admin, method: 'POST', body: { name: 'Skyfall' } })).body.project.id;
+    const clientId = await systemClientId(server.base, token.admin);
+    projectId = (await call('/projects', { token: token.admin, method: 'POST', body: { clientId, name: 'Skyfall' } })).body.project.id;
 
     const make = async (name, email, role, teamLeadId) => {
       const res = await call('/users', {

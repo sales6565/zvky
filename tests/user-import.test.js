@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { config, resetSchema, startServer, stopServer, api, SKIP_REASON } = require('./helpers');
+const { config, resetSchema, startServer, stopServer, api, SKIP_REASON, systemClientId } = require('./helpers');
 const userImport = require('../src/user-import');
 const assetImport = require('../src/asset-import');
 
@@ -115,7 +115,8 @@ test('bulk user upload', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       body: { token: 'test-bootstrap-token', name: 'Import Admin', email: 'super@zvky.test', password: PASSWORD },
     });
     token = (await call('/auth/login', { method: 'POST', body: { email: 'super@zvky.test', password: PASSWORD } })).body.token;
-    const project = await call('/projects', { method: 'POST', token, body: { name: 'Staffing Target' } });
+    const clientId = await systemClientId(server.base, token);
+    const project = await call('/projects', { method: 'POST', token, body: { clientId, name: 'Staffing Target' } });
     projectName = project.body.project.name;
   });
 

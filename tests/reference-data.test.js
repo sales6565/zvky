@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON } = require('./helpers');
+const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON, systemClientId } = require('./helpers');
 const { TIERS, capabilitiesForTier, ASSIGNABLE_TIERS } = require('../src/role-tiers');
 const defaults = require('../src/reference-defaults');
 const referenceData = require('../src/reference-data');
@@ -113,7 +113,8 @@ test('reference data', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     superToken = (await call('/auth/login', {
       method: 'POST', body: { email: 'super@zvky.test', password: PASSWORD },
     })).body.token;
-    const project = await call('/projects', { method: 'POST', token: superToken, body: { name: 'Reference Target' } });
+    const clientId = await systemClientId(server.base, superToken);
+    const project = await call('/projects', { method: 'POST', token: superToken, body: { clientId, name: 'Reference Target' } });
     projectId = project.body.project.id;
   });
 

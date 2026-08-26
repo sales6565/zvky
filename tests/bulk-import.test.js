@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { config, resetSchema, startServer, stopServer, api, SKIP_REASON } = require('./helpers');
+const { config, resetSchema, startServer, stopServer, api, SKIP_REASON, systemClientId } = require('./helpers');
 const assetImport = require('../src/asset-import');
 
 const cfg = config('bulk');
@@ -89,8 +89,9 @@ test('bulk import', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       method: 'POST', body: { email: 'admin@zvky.test', password: PASSWORD },
     });
     token = login.body.token;
+    const clientId = await systemClientId(server.base, token);
     const project = await api(server.base, '/projects', {
-      method: 'POST', token, body: { name: 'Import Target' },
+      method: 'POST', token, body: { clientId, name: 'Import Target' },
     });
     assert.strictEqual(project.status, 201, JSON.stringify(project.body));
     projectId = project.body.project.id;

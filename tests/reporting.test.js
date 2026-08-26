@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON } = require('./helpers');
+const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON, systemClientId } = require('./helpers');
 const reporting = require('../src/reporting');
 const userProject = require('../src/user-project');
 
@@ -58,8 +58,9 @@ test('editing a user\'s project and reporting line', { skip: cfg ? false : SKIP_
       method: 'POST', body: { email: 'super@zvky.test', password: PASSWORD },
     })).body.token;
 
-    project = (await call('/projects', { token, method: 'POST', body: { name: 'Skyfall' } })).body.project;
-    other = (await call('/projects', { token, method: 'POST', body: { name: 'Nightfall' } })).body.project;
+    const clientId = await systemClientId(server.base, token);
+    project = (await call('/projects', { token, method: 'POST', body: { clientId, name: 'Skyfall' } })).body.project;
+    other = (await call('/projects', { token, method: 'POST', body: { clientId, name: 'Nightfall' } })).body.project;
 
     for (const [key, name, email, role] of [
       ['ceo', 'Asha Rao', 'ceo@zvky.test', CEO],
