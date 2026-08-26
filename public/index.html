@@ -1834,18 +1834,23 @@ async function openDrawer(id){
 
     sel.onchange = async e=>{
       err.textContent = '';
-      const previous = a.assignee_id;
+      sel.disabled = true;
       try{
         const { asset } = await api('/assets/'+id, { method:'PATCH', body:{ assigneeId: e.target.value || null } });
-        a.assignee_id = asset.assignee_id;
-        a.assignee_name = asset.assignee_name;
         showToast(asset.assignee_name ? `Reassigned to ${asset.assignee_name}.` : 'Unassigned.');
-        /* Assigning moves the asset to Assigned, so the panel's status chip and
-           its actions are now stale. Await the reload and redraw the panel from
-           it — the same reason the timer button does. */
+      }catch(e2){
+        err.textContent = e2.message;
+      }finally{
+        /* Redraw from the server either way, and never from what this page
+           assumed. Reverting the dropdown to its previous value on failure was
+           a guess, and for a while it was the wrong one: the request could
+           update the asset and still answer with an error, so the page put back
+           a value the database no longer held and the card stayed in the old
+           column. Asking the server costs one request and cannot be wrong. */
+        sel.disabled = false;
         await render();
         openDrawer(id);
-      }catch(e2){ err.textContent = e2.message; e.target.value = previous || ''; }
+      }
     };
   }
 

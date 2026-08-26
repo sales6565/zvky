@@ -287,6 +287,29 @@ async function ensureReviewWorkflow(db, log) {
       created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
       KEY idx_events_asset (asset_id, seq)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+
+  // CREATE TABLE IF NOT EXISTS does nothing to a table that is already there —
+  // including one from a version of this app that had fewer columns. So a
+  // database carrying an older asset_events kept it, and every write to the
+  // history failed on the missing column. That failure landed *after* the asset
+  // itself had been updated, so reassigning an asset changed the row and then
+  // answered 500: the studio was told the change had failed, over a change that
+  // had happened. Patch the columns individually, each behind its own probe.
+  for (const [name, definition] of [
+    ['from_status',  'VARCHAR(32) NULL'],
+    ['to_status',    "VARCHAR(32) NOT NULL DEFAULT ''"],
+    ['actor_id',     'CHAR(36) NULL'],
+    ['actor_email',  'VARCHAR(191) NULL'],
+    ['note',         'TEXT NULL'],
+    ['version_id',   'CHAR(36) NULL'],
+    ['routed_to_id', 'CHAR(36) NULL'],
+    ['created_at',   'DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP'],
+  ]) {
+    if (await column('asset_events', name)) continue;
+    await db.query(`ALTER TABLE asset_events ADD COLUMN \`${name}\` ${definition}`);
+    log(`Schema: added asset_events.${name} — without it, recording a reassignment failed`);
+    log('         after the asset had already been updated.');
+  }
 }
 
 // Roles whose access level changed after they were already seeded.

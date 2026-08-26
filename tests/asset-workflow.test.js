@@ -440,6 +440,104 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     }
   });
 
+  await t.test('a failure after the write does not report failure over a change that happened', async () => {
+    // The symptom: reassigning succeeded in the database and the page still
+    // said "the server could not complete that request because of a database
+    // error". Two separate faults produced it.
+    //
+    // (a) The history INSERT ran unrelated to the asset UPDATE, so an
+    //     asset_events table from an older version — missing routed_to_id or
+    //     note — failed after the assignment had already committed.
+    // (b) Building the response re-read the asset, and the notes, submissions
+    //     and feedback joins threw rather than degrading, so a missing
+    //     enrichment table turned a good write into a 500.
+    const asset = await newAsset('Post-Write Failure');
+    const before = await sql(cfg, `SELECT assignee_id FROM assets WHERE id = '${asset}'`);
+
+    // (a) A history write that cannot land must take the whole change with it.
+    await sql(cfg, 'ALTER TABLE asset_events DROP COLUMN routed_to_id');
+    let res;
+    try {
+      res = await call(`/assets/${asset}`, {
+        token: token.admin, method: 'PATCH', body: { assigneeId: people.other },
+      });
+    } finally {
+      await sql(cfg, 'ALTER TABLE asset_events ADD COLUMN routed_to_id CHAR(36) NULL');
+    }
+    assert.strictEqual(res.status, 500, 'a history that cannot be written is a real failure');
+    const after = await sql(cfg, `SELECT assignee_id FROM assets WHERE id = '${asset}'`);
+    assert.strictEqual(after[0].assignee_id, before[0].assignee_id,
+      'and it rolls the assignment back rather than reporting failure over a change that happened');
+
+    // (b) Enrichment the response does not need must never fail the request.
+    for (const [what, drop, restore] of [
+      ['notes.author_id', 'ALTER TABLE notes DROP FOREIGN KEY fk_notes_author, DROP COLUMN author_id',
+                          'ALTER TABLE notes ADD COLUMN author_id CHAR(36) NULL'],
+      ['asset_versions',  'RENAME TABLE asset_versions TO asset_versions_bak',
+                          'RENAME TABLE asset_versions_bak TO asset_versions'],
+      ['feedback',        'RENAME TABLE feedback TO feedback_bak',
+                          'RENAME TABLE feedback_bak TO feedback'],
+    ]) {
+      const target = (await sql(cfg, `SELECT assignee_id FROM assets WHERE id = '${asset}'`))[0].assignee_id
+        === people.other ? people.artist : people.other;
+      await sql(cfg, drop);
+      let out;
+      try {
+        out = await call(`/assets/${asset}`, {
+          token: token.admin, method: 'PATCH', body: { assigneeId: target },
+        });
+      } finally {
+        await sql(cfg, restore);
+      }
+      assert.strictEqual(out.status, 200, `${what} is enrichment — losing it must not fail the write`);
+      const row = await sql(cfg, `SELECT assignee_id FROM assets WHERE id = '${asset}'`);
+      assert.strictEqual(row[0].assignee_id, target, `${what}: and the change still landed`);
+    }
+  });
+
+  await t.test('an older asset_events table gains the columns it is missing', async () => {
+    // CREATE TABLE IF NOT EXISTS does nothing to a table that already exists,
+    // so an asset_events from an earlier version kept its old columns forever
+    // and every reassignment failed on the history write.
+    await sql(cfg, 'ALTER TABLE asset_events DROP COLUMN note');
+    await sql(cfg, 'ALTER TABLE asset_events DROP COLUMN routed_to_id');
+
+    const schemaCheck = require('../src/schema-check');
+    const mysql = require('mysql2/promise');
+    const conn = await mysql.createConnection({
+      host: cfg.host, port: cfg.port, user: cfg.user, password: cfg.password, database: cfg.database,
+    });
+    const db = { query: async (text, params = []) => {
+      const ordered = [];
+      const sqlText = text.replace(/\$(\d+)/g, (_, n) => { ordered.push(params[Number(n) - 1]); return '?'; });
+      const [out] = await conn.query(sqlText, ordered.length ? ordered : params);
+      return { rows: Array.isArray(out) ? out : [], result: out };
+    } };
+    try {
+      const gaps = await schemaCheck.gaps(db);
+      for (const col of ['asset_events.note', 'asset_events.routed_to_id']) {
+        assert.ok(gaps.some((g) => g.name === col), `health should name ${col}`);
+      }
+      await require('../src/migrate').run(db, () => {});
+    } finally {
+      await conn.end();
+    }
+
+    const columns = (await sql(cfg, 'SHOW COLUMNS FROM asset_events')).map((r) => r.Field);
+    assert.ok(columns.includes('note'), 'note was added back');
+    assert.ok(columns.includes('routed_to_id'), 'routed_to_id was added back');
+
+    // And the write that was failing now works.
+    const asset = await newAsset('After The Column Repair');
+    const res = await call(`/assets/${asset}`, {
+      token: token.admin, method: 'PATCH', body: { assigneeId: people.other },
+    });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    const events = await sql(cfg, `SELECT action, note FROM asset_events WHERE asset_id = '${asset}' ORDER BY seq DESC LIMIT 1`);
+    assert.strictEqual(events[0].action, 'reassign');
+    assert.match(String(events[0].note), /Reassigned from/);
+  });
+
   await t.test('a submission without a valid link is refused', async () => {
     const id = await newAsset('Linkless');
     for (const body of [{}, { link: '' }, { link: 'not a url' }, { description: 'notes only' }]) {

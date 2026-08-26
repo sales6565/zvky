@@ -27,6 +27,18 @@ const REQUIRED = [
   { table: 'tasks',          column: 'created_by',     step: 'asset brief and checklist' },
   { table: 'tasks',          column: 'created_at',     step: 'asset brief and checklist' },
   { table: 'work_sessions',  column: null,             step: 'assigned state and time tracking' },
+  // The history. Absent from this list until a reassignment failed on it — and
+  // failed *after* updating the asset, so the change happened and the request
+  // still reported a database error. asset_events is created with CREATE TABLE
+  // IF NOT EXISTS, so an older copy of it keeps whatever columns it had.
+  { table: 'asset_events',   column: null,             step: 'review pipeline' },
+  { table: 'asset_events',   column: 'routed_to_id',   step: 'review pipeline' },
+  { table: 'asset_events',   column: 'version_id',     step: 'review pipeline' },
+  { table: 'asset_events',   column: 'note',           step: 'review pipeline' },
+  { table: 'asset_versions', column: null,             step: 'review pipeline' },
+  { table: 'asset_versions', column: 'link',           step: 'review pipeline' },
+  { table: 'feedback',       column: null,             step: 'review pipeline' },
+  { table: 'notes',          column: 'author_id',      step: 'review pipeline' },
   { table: 'role_permissions',      column: null,      step: 'role permissions' },
   { table: 'role_permission_audit', column: null,      step: 'role permissions' },
 ];

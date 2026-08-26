@@ -42,41 +42,66 @@ router.use(authenticate);
 async function attachTasksAndNotes(assets) {
   if (!assets.length) return assets;
   const ids = assets.map((a) => a.id);
-  // Who added each checklist item is an enrichment, not the point of this
-  // screen. If tasks.created_by has not arrived — a migration step that could
-  // not run, usually for want of ALTER — the board must still draw. It used to
-  // take the whole asset list down with it, which is how a missing column
-  // became "every tab is blank".
-  const tasks = await db.query(
-    `SELECT t.*, u.\`name\` AS created_by_name FROM tasks t
-     LEFT JOIN users u ON u.id = t.created_by
-     WHERE t.asset_id IN ($1) ORDER BY t.\`position\``,
-    [ids]
-  ).then((r) => r.rows).catch(async (err) => {
-    console.warn(`[schema] task authorship unavailable (${err.code || err.message}) — see /api/health. Falling back.`);
-    const { rows } = await db.query(
-      'SELECT * FROM tasks WHERE asset_id IN ($1) ORDER BY `position`', [ids]
-    );
-    return rows.map((t) => ({ ...t, created_by_name: null }));
+
+  // Everything below decorates an asset for the response. None of it is the
+  // point of any request — the work is already done and committed by the time
+  // this runs. So a missing enrichment table must never turn a successful write
+  // into "the server could not complete that request because of a database
+  // error", which is exactly what it did: reassigning an asset updated the row,
+  // then threw here while re-reading it, and the page reported a failure over a
+  // change that had already happened — and put the old value back on screen.
+  //
+  // tasks already degraded this way. notes, submissions and feedback did not,
+  // and any one of them could turn a good write into a bad answer.
+  const enrich = async (what, run) => {
+    try {
+      return await run();
+    } catch (err) {
+      console.warn(`[schema] ${what} unavailable (${err.code || err.message}) — see /api/health. Falling back.`);
+      return [];
+    }
+  };
+
+  // Who added each checklist item is an enrichment on top of an enrichment: if
+  // only the authorship join fails, the items themselves are still readable.
+  const tasks = await enrich('the checklist', async () => {
+    try {
+      const { rows } = await db.query(
+        `SELECT t.*, u.\`name\` AS created_by_name FROM tasks t
+         LEFT JOIN users u ON u.id = t.created_by
+         WHERE t.asset_id IN ($1) ORDER BY t.\`position\``,
+        [ids]
+      );
+      return rows;
+    } catch {
+      const { rows } = await db.query(
+        'SELECT * FROM tasks WHERE asset_id IN ($1) ORDER BY `position`', [ids]
+      );
+      return rows.map((t) => ({ ...t, created_by_name: null }));
+    }
   });
-  const { rows: notes } = await db.query(
+
+  const notes = await enrich('asset notes', async () => (await db.query(
     `SELECT n.*, u.name AS author_name FROM notes n
      LEFT JOIN users u ON u.id = n.author_id
      WHERE n.asset_id IN ($1) ORDER BY n.created_at DESC`,
     [ids]
-  );
-  const { rows: versions } = await db.query(
+  )).rows);
+
+  const versions = await enrich('submission history', async () => (await db.query(
     `SELECT v.*, u.name AS uploaded_by_name FROM asset_versions v
      LEFT JOIN users u ON u.id = v.uploaded_by
      WHERE v.asset_id IN ($1) ORDER BY v.version_number DESC`,
     [ids]
-  );
-  const { rows: feedback } = await db.query(
+  )).rows);
+
+  const feedback = await enrich('review feedback', async () => (await db.query(
     `SELECT f.*, u.name AS given_by_name FROM feedback f
      LEFT JOIN users u ON u.id = f.given_by
      WHERE f.asset_id IN ($1) ORDER BY f.created_at DESC`,
     [ids]
-  );
+  )).rows);
+
   const timeSpent = await workTimer.totalsFor(db, ids);
   return assets.map((a) => ({
     ...a,
@@ -253,12 +278,19 @@ router.patch('/:id', async (req, res) => {
     return res.status(403).json({ error: 'You cannot edit this asset' });
   }
 
+  // --- work out what to write, and refuse before opening a transaction -------
+  //
+  // Every refusal has to happen up here. An early return from inside an open
+  // transaction hands the pool back a connection with uncommitted work on it,
+  // and the next request to borrow that connection inherits it.
   const fields = [];
   const values = [];
   let i = 1;
-  const FREE_STATUSES = workflow.FREE_STATUSES;
+  let overrideEvent = null;
+
   if (req.body.status !== undefined) {
-    const freeMove = FREE_STATUSES.includes(req.body.status) && FREE_STATUSES.includes(asset.status);
+    const freeMove = workflow.FREE_STATUSES.includes(req.body.status)
+      && workflow.FREE_STATUSES.includes(asset.status);
     // Anything else is a move the pipeline would not make. Allowed only for
     // somebody holding the override permission, and recorded as an event so a
     // status that skipped the review flow is not a mystery later.
@@ -269,12 +301,8 @@ router.patch('/:id', async (req, res) => {
       return res.status(400).json({ error: `"${req.body.status}" is not a status.`, field: 'status' });
     }
     if (!freeMove) {
-      await db.query(
-        `INSERT INTO asset_events (id, asset_id, action, from_status, to_status, actor_id, actor_email, note, routed_to_id)
-         VALUES ($1,$2,'override',$3,$4,$5,$6,$7,$8)`,
-        [uuid(), asset.id, asset.status, req.body.status, req.user.id, req.user.email,
-         'Status forced outside the review flow', asset.routed_to_id]
-      );
+      overrideEvent = [uuid(), asset.id, asset.status, req.body.status, req.user.id, req.user.email,
+        'Status forced outside the review flow', asset.routed_to_id];
     }
   }
 
@@ -297,51 +325,87 @@ router.patch('/:id', async (req, res) => {
   }
   if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
   values.push(req.params.id);
-  await db.query(`UPDATE assets SET ${fields.join(', ')} WHERE id = $${i}`, values);
 
-  // Assigning the asset is what starts the work — there is no separate "start"
-  // action for someone to forget. Only from Not Assigned: reassigning something
-  // that is already in review must not drag it backwards.
-  const assigneeChanged = req.body.assigneeId !== undefined && req.body.assigneeId !== asset.assignee_id;
-  if (assigneeChanged && req.body.assigneeId && asset.status === 'not_started') {
-    const { rows: fresh } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
-    const ctx = await contextFor(req, fresh[0]);
-    const verdict = workflow.evaluate('assign', ctx);
-    if (verdict.ok) {
-      await applyTransition(req, res, fresh[0], verdict, { note: verdict.describe });
-    } else {
-      // Same trap as the create path: the UPDATE above has already written the
-      // assignee. Never let a refused transition pass unrecorded here.
-      console.error(
-        `Asset ${asset.code} was assigned but the assign transition was refused: `
-        + `${verdict.error} (actor ${req.user.email}, role ${req.user.role}). `
-        + 'The asset is assigned and still reads Not Assigned.'
+  // --- one transaction for every write this request makes --------------------
+  //
+  // Reassigning an asset is two writes: the row, and the history row saying who
+  // moved it. They ran unrelated, so when the history INSERT failed — an
+  // asset_events table from an older version, missing routed_to_id or note —
+  // the assignment had already committed and the request still answered 500.
+  // The user was told the change had failed, over a change that had happened,
+  // and the page then put back the value it thought was still current. Wrong in
+  // both directions from one unrelated failure. Both halves land, or neither.
+  const conn = await db.connect();
+  try {
+    await conn.query('BEGIN');
+
+    if (overrideEvent) {
+      await conn.query(
+        `INSERT INTO asset_events (id, asset_id, action, from_status, to_status, actor_id, actor_email, note, routed_to_id)
+         VALUES ($1,$2,'override',$3,$4,$5,$6,$7,$8)`,
+        overrideEvent
       );
     }
-  } else if (assigneeChanged) {
-    // Still note who it moved to, so the trail does not lose a reassignment
-    // made mid-review.
-    await db.query('UPDATE assets SET routed_to_id = $1 WHERE id = $2 AND routed_to_id IS NOT NULL',
-      [req.body.assigneeId || null, req.params.id]);
 
-    // And record it. This used to update the routing and say nothing, so an
-    // asset could change hands mid-pipeline with no trace of who moved it or
-    // when — the one question the history exists to answer.
-    const nameOf = async (userId) => {
-      if (!userId) return 'nobody';
-      const { rows: who } = await db.query('SELECT `name` FROM users WHERE id = $1', [userId]);
-      return who.length ? who[0].name : 'somebody who no longer has an account';
-    };
-    const from = await nameOf(asset.assignee_id);
-    const to = await nameOf(req.body.assigneeId);
-    await db.query(
-      `INSERT INTO asset_events (id, asset_id, action, from_status, to_status, actor_id, actor_email, note, routed_to_id)
-       VALUES ($1,$2,'reassign',$3,$4,$5,$6,$7,$8)`,
-      [uuid(), asset.id, asset.status, asset.status, req.user.id, req.user.email,
-       `Reassigned from ${from} to ${to}`, req.body.assigneeId || null]
-    );
+    await conn.query(`UPDATE assets SET ${fields.join(', ')} WHERE id = $${i}`, values);
+
+    // Assigning the asset is what starts the work — there is no separate
+    // "start" action for someone to forget. Only from Not Assigned:
+    // reassigning something already in review must not drag it backwards.
+    const assigneeChanged = req.body.assigneeId !== undefined && req.body.assigneeId !== asset.assignee_id;
+    if (assigneeChanged && req.body.assigneeId && asset.status === 'not_started') {
+      const { rows: fresh } = await conn.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
+      const ctx = await contextFor(req, fresh[0]);
+      const verdict = workflow.evaluate('assign', ctx);
+      if (verdict.ok) {
+        await applyTransition(req, res, fresh[0], verdict, { note: verdict.describe, conn });
+      } else {
+        // The UPDATE above has already written the assignee, so skipping the
+        // transition would leave an asset assigned to somebody and still
+        // reading Not Assigned. It did happen once — the transition asked for
+        // asset.edit while assigning asked for asset.assign — and the silence
+        // is why it took three passes to find. Never pass it unrecorded.
+        console.error(
+          `Asset ${asset.code} was assigned but the assign transition was refused: `
+          + `${verdict.error} (actor ${req.user.email}, role ${req.user.role}). `
+          + 'The asset is assigned and still reads Not Assigned.'
+        );
+      }
+    } else if (assigneeChanged) {
+      // Still note who it moved to, so the trail does not lose a reassignment
+      // made mid-review.
+      await conn.query('UPDATE assets SET routed_to_id = $1 WHERE id = $2 AND routed_to_id IS NOT NULL',
+        [req.body.assigneeId || null, req.params.id]);
+
+      // And record it. This used to update the routing and say nothing, so an
+      // asset could change hands mid-pipeline with no trace of who moved it or
+      // when — the one question the history exists to answer.
+      const nameOf = async (userId) => {
+        if (!userId) return 'nobody';
+        const { rows: who } = await conn.query('SELECT `name` FROM users WHERE id = $1', [userId]);
+        return who.length ? who[0].name : 'somebody who no longer has an account';
+      };
+      const from = await nameOf(asset.assignee_id);
+      const to = await nameOf(req.body.assigneeId);
+      await conn.query(
+        `INSERT INTO asset_events (id, asset_id, action, from_status, to_status, actor_id, actor_email, note, routed_to_id)
+         VALUES ($1,$2,'reassign',$3,$4,$5,$6,$7,$8)`,
+        [uuid(), asset.id, asset.status, asset.status, req.user.id, req.user.email,
+         `Reassigned from ${from} to ${to}`, req.body.assigneeId || null]
+      );
+    }
+
+    await conn.query('COMMIT');
+  } catch (err) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    conn.release();
   }
 
+  // Committed. Nothing past this point may fail the request:
+  // attachTasksAndNotes degrades rather than throwing, so building the response
+  // cannot report a failure over a change that has already happened.
   const { rows: updated } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [req.params.id]);
   const [withDetails] = await attachTasksAndNotes(updated);
   res.json({ asset: withDetails });
