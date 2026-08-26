@@ -48,6 +48,24 @@ test('the dashboard is drawn from the same states and the same free range', () =
   );
 });
 
+test('assigning is allowed by asset.assign OR asset.edit, not by asset.edit alone', () => {
+  // The actor behind the assign transition is "anyone who may set up work on
+  // this asset". It read canEdit alone, so a role holding asset.assign without
+  // asset.edit could not perform the one transition its permission names.
+  const base = {
+    user: { id: 'u1', role: 'producer' },
+    asset: { assignee_id: 'u2', routed_to_id: null, status: 'not_started' },
+    isTeamLead: false, canOverride: false, canDeliver: false,
+    canReviewCd: false, canApproveForClient: false,
+  };
+  assert.ok(workflow.evaluate('assign', { ...base, canAssign: true, canEdit: false }).ok,
+    'asset.assign alone is enough to assign');
+  assert.ok(workflow.evaluate('assign', { ...base, canAssign: false, canEdit: true }).ok,
+    'asset.edit alone still is too');
+  assert.ok(!workflow.evaluate('assign', { ...base, canAssign: false, canEdit: false }).ok,
+    'neither is not');
+});
+
 test('a move not in the table cannot happen', () => {
   // The point of a table rather than a pile of if-statements: anything absent
   // is refused, rather than falling through to whatever the last branch did.
@@ -352,6 +370,74 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     const artistDelivers = await act(id, 'deliver', 'artist');
     assert.strictEqual(artistDelivers.status, 403);
     assert.strictEqual((await act(id, 'deliver', 'admin')).status, 200);
+  });
+
+  await t.test('assigning needs asset.assign, not asset.edit', async () => {
+    // The bug this covers, in the shape it actually took: a role that can add
+    // and assign assets but not edit them. Creating an asset with an assignee
+    // wrote the assignee in the INSERT and then silently skipped the assign
+    // transition, because the transition asked whether the actor could *edit*.
+    // The asset came back assigned to somebody and still reading not_started —
+    // an avatar sitting in the Not Assigned column.
+    const enabled = async (role) =>
+      (await call(`/permissions/roles/${role}`, { token: token.admin }))
+        .body.role.permissions.filter((p) => p.enabled).map((p) => p.key);
+
+    const before = await enabled('producer');
+    assert.ok(before.includes('asset.add') && before.includes('asset.assign'),
+      'the fixture role should start with both');
+    const put = await call('/permissions/roles/producer', {
+      token: token.admin, method: 'PUT',
+      body: { confirm: true, permissions: before.filter((k) => k !== 'asset.edit') },
+    });
+    assert.strictEqual(put.status, 200, JSON.stringify(put.body));
+
+    try {
+      const res = await call('/users', {
+        token: token.admin, method: 'POST',
+        body: { name: 'Noel Edit', email: 'noedit@zvky.test', role: 'producer',
+                password: PASSWORD, projectId },
+      });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      const noEdit = (await call('/auth/login', {
+        method: 'POST', body: { email: 'noedit@zvky.test', password: PASSWORD },
+      })).body.token;
+
+      // Created with an assignee.
+      const created = await call(`/assets/project/${projectId}`, {
+        token: noEdit, method: 'POST',
+        body: { name: 'Assigned On Creation', type: 'character', assigneeId: people.artist },
+      });
+      assert.strictEqual(created.status, 201, JSON.stringify(created.body));
+      const [rowA] = await sql(cfg,
+        `SELECT \`status\`, assignee_id FROM assets WHERE id = '${created.body.asset.id}'`);
+      assert.ok(rowA.assignee_id, 'the assignee was written');
+      assert.strictEqual(rowA.status, 'assigned',
+        'assigned in the database, not just in the response');
+
+      // And assigned afterwards, which used to be refused outright.
+      const bare = await call(`/assets/project/${projectId}`, {
+        token: noEdit, method: 'POST', body: { name: 'Assigned Later', type: 'character' },
+      });
+      const patched = await call(`/assets/${bare.body.asset.id}`, {
+        token: noEdit, method: 'PATCH', body: { assigneeId: people.artist },
+      });
+      assert.strictEqual(patched.status, 200,
+        `asset.assign should be enough to assign — got ${JSON.stringify(patched.body)}`);
+      const [rowB] = await sql(cfg,
+        `SELECT \`status\`, assignee_id FROM assets WHERE id = '${bare.body.asset.id}'`);
+      assert.strictEqual(rowB.status, 'assigned');
+
+      // But it is still not permission to edit the record.
+      const edited = await call(`/assets/${bare.body.asset.id}`, {
+        token: noEdit, method: 'PATCH', body: { priority: 'high' },
+      });
+      assert.strictEqual(edited.status, 403, 'asset.assign is not asset.edit');
+    } finally {
+      await call('/permissions/roles/producer', {
+        token: token.admin, method: 'PUT', body: { confirm: true, permissions: before },
+      });
+    }
   });
 
   await t.test('a submission without a valid link is refused', async () => {

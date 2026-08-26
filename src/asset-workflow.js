@@ -104,7 +104,14 @@ const actors = {
   // taken back. Held separately, so a role can review without signing off.
   clientApprover: (ctx) => Boolean((ctx.canReviewCd && ctx.canApproveForClient) || ctx.canOverride),
   // Anyone who may set up work on the asset: assign it, or edit it.
-  planner: (ctx) => ctx.canEdit,
+  //
+  // Both halves, and the second one used to be missing. Assigning is its own
+  // permission — a role can hold asset.assign without asset.edit, which is a
+  // perfectly ordinary split — but this read canEdit alone. So for such a role
+  // the assign transition was refused while the assignee was written anyway,
+  // and the asset sat in Not Assigned wearing the avatar of the person it had
+  // just been given to. The comment above was already right; the code was not.
+  planner: (ctx) => Boolean(ctx.canAssign || ctx.canEdit),
   // Whoever signs off that the client has it.
   deliverer: (ctx) => ctx.canDeliver,
 };

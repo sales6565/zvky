@@ -174,7 +174,20 @@ router.post('/project/:projectId', async (req, res) => {
     const { rows: fresh } = await db.query('SELECT * FROM assets WHERE id = $1', [id]);
     const ctx = await contextFor(req, fresh[0]);
     const verdict = workflow.evaluate('assign', ctx);
-    if (verdict.ok) await applyTransition(req, res, fresh[0], verdict, { note: verdict.describe });
+    if (verdict.ok) {
+      await applyTransition(req, res, fresh[0], verdict, { note: verdict.describe });
+    } else {
+      // This must not happen: the INSERT above has already written the
+      // assignee, so skipping the transition leaves an asset that is assigned
+      // to somebody and still reads Not Assigned. It did happen — the
+      // transition asked for asset.edit while creating asked for asset.add —
+      // and the silence is why it took three passes to find. Say so.
+      console.error(
+        `Asset ${code} was created with an assignee but the assign transition was refused: `
+        + `${verdict.error} (actor ${req.user.email}, role ${req.user.role}). `
+        + 'The asset is assigned and still reads Not Assigned.'
+      );
+    }
   }
 
   const defaultTasks = ['Rough pass', 'Clean line', 'Color / shade'];
@@ -195,7 +208,26 @@ router.patch('/:id', async (req, res) => {
   const asset = rows[0];
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
   if (await projectClosedResponse(res, asset.project_id)) return undefined;
-  if (!(await canEditAsset(req.user, asset))) {
+
+  // Two permissions, two questions. Changing who an asset is assigned to is
+  // asset.assign; changing the record itself — its priority, its brief, its
+  // deadline — is asset.edit. This gate used to demand asset.edit for both, so
+  // a role holding asset.assign and not asset.edit was refused the one thing
+  // its permission was for, and the panel offered it a dropdown the API then
+  // rejected. Ask for what the request actually changes.
+  const EDIT_FIELDS = ['status', 'priority', 'description', 'due', 'manHours', 'referenceLink'];
+  const wantsEdit = EDIT_FIELDS.some((k) => req.body && req.body[k] !== undefined);
+  const wantsAssign = Boolean(req.body) && req.body.assigneeId !== undefined
+    && req.body.assigneeId !== asset.assignee_id;
+  const mayEdit = await canEditAsset(req.user, asset);
+  if (wantsEdit && !mayEdit) {
+    return res.status(403).json({ error: 'You cannot edit this asset' });
+  }
+  if (wantsAssign && !canAssignAsset(req.user, asset)) {
+    return res.status(403).json({ error: 'You do not have permission to assign this asset.', field: 'assigneeId' });
+  }
+  // A request that changes nothing either way still has to be somebody's to make.
+  if (!wantsEdit && !wantsAssign && !mayEdit) {
     return res.status(403).json({ error: 'You cannot edit this asset' });
   }
 
@@ -224,14 +256,6 @@ router.patch('/:id', async (req, res) => {
     }
   }
 
-  // Reassignment is its own permission, separate from editing the asset, and
-  // scoped the same way: your own assets, or anyone's if you have full access.
-  // Being the assignee is not enough — handing your work to somebody else is
-  // the creator's call, not yours.
-  if (req.body.assigneeId !== undefined && req.body.assigneeId !== asset.assignee_id
-      && !canAssignAsset(req.user, asset)) {
-    return res.status(403).json({ error: 'You do not have permission to assign this asset.', field: 'assigneeId' });
-  }
   // The brief's link. Optional, and validated by the same rules a submission
   // link is — so "that is not a valid link" means the same thing in both
   // places. Clearing it is sending an empty string.
@@ -263,6 +287,14 @@ router.patch('/:id', async (req, res) => {
     const verdict = workflow.evaluate('assign', ctx);
     if (verdict.ok) {
       await applyTransition(req, res, fresh[0], verdict, { note: verdict.describe });
+    } else {
+      // Same trap as the create path: the UPDATE above has already written the
+      // assignee. Never let a refused transition pass unrecorded here.
+      console.error(
+        `Asset ${asset.code} was assigned but the assign transition was refused: `
+        + `${verdict.error} (actor ${req.user.email}, role ${req.user.role}). `
+        + 'The asset is assigned and still reads Not Assigned.'
+      );
     }
   } else if (assigneeChanged) {
     // Still note who it moved to, so the trail does not lose a reassignment
@@ -442,6 +474,9 @@ async function contextFor(req, asset) {
     isTeamLead: await isTeamLeadOfAsset(req.user, asset),
     canOverride: canOverrideReview(req.user),
     canEdit: await canEditAsset(req.user, asset),
+    // Separate from canEdit on purpose: assigning is its own permission, and
+    // the assign transition asks for this one.
+    canAssign: canAssignAsset(req.user, asset),
     canDeliver: await canMarkDelivered(req.user, asset),
     // The two halves of the Creative Director's gate, from the role's
     // permissions rather than from its tier.
