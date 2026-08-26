@@ -114,6 +114,11 @@ test('the constraint rebuild acts when it cannot confirm the constraint is curre
   const path = require('node:path');
   const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'migrate.js'), 'utf8');
 
+  // And the clause is normalized before it is read: MySQL 8 escapes the quotes
+  // in CHECK_CLAUSE, which is how a clause-based search still missed one.
+  assert.match(source, /normalizeCheckClause\(r\.clause\)/,
+    'the status clause must be normalized before it is matched');
+
   assert.match(source, /const stale = await staleStatusConstraints\(db\);/,
     'the constraints are looked up before deciding');
   assert.match(source, /if \(stale === null \|\| stale\.length\) \{/,
@@ -124,6 +129,31 @@ test('the constraint rebuild acts when it cannot confirm the constraint is curre
   // constraint under another name is still enforced.
   assert.doesNotMatch(source, /CONSTRAINT_NAME = 'chk_assets_status'/,
     'looking the constraint up by name is what let a stale one survive');
+});
+
+test('a CHECK clause reads the same whichever engine wrote it', () => {
+  const { normalizeCheckClause } = require('../src/schema-check');
+
+  // How MySQL 8 renders it: a charset introducer, and escaped quotes. This is
+  // the rendering that defeated a clause-based search and let an auto-named
+  // constraint (assets_chk_2) go on rejecting 'assigned'.
+  const mysql8 = "(`status` in (_utf8mb4\\'not_started\\',_utf8mb4\\'in_progress\\'))";
+  // How MariaDB renders the identical constraint.
+  const mariadb = "`status` in ('not_started','in_progress')";
+
+  for (const [engine, clause] of [['MySQL 8', mysql8], ['MariaDB', mariadb]]) {
+    const normalized = normalizeCheckClause(clause);
+    assert.ok(normalized.includes("'not_started'"), `${engine}: a listed value is found`);
+    assert.ok(normalized.includes("'in_progress'"), `${engine}: and so is the next one`);
+    assert.ok(!normalized.includes("'assigned'"), `${engine}: an absent value is still absent`);
+    assert.ok(!normalized.includes('_utf8mb4'), `${engine}: the introducer is gone`);
+    assert.ok(!normalized.includes("\\'"), `${engine}: the quotes are unescaped`);
+  }
+
+  // The wide constraint this build writes must read as current under both.
+  const wide = "(`status` in (_utf8mb4\\'not_started\\',_utf8mb4\\'assigned\\'))";
+  assert.ok(normalizeCheckClause(wide).includes("'assigned'"),
+    'a constraint that does admit assigned must not be rebuilt every boot');
 });
 
 // --- against a live server -----------------------------------------------------

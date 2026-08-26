@@ -7,6 +7,7 @@ const reporting = require('./reporting');
 const catalog = require('./permission-catalog');
 const rolePermissions = require('./role-permissions');
 const defaults = require('./reference-defaults');
+const { normalizeCheckClause } = require('./schema-check');
 
 // Small, idempotent schema repairs applied at startup.
 //
@@ -34,7 +35,8 @@ async function roleCheckConstraints(db) {
         AND tc.CONSTRAINT_TYPE = 'CHECK'
         AND tc.CONSTRAINT_SCHEMA = DATABASE()`
   );
-  return rows.filter((r) => /\brole\b/i.test(r.clause || ''));
+  return rows.filter((r) => /\brole\b/i.test(r.clause || ''))
+    .map((r) => ({ ...r, clause: normalizeCheckClause(r.clause) }));
 }
 
 // A constraint is stale when it does not name every designation the app can
@@ -98,7 +100,7 @@ async function dropValueConstraints(db, log) {
     );
     for (const constraint of rows) {
       // Only the one enumerating this column's values; `status` keeps its own.
-      const clause = String(constraint.clause || '');
+      const clause = normalizeCheckClause(constraint.clause);
       if (!new RegExp(`\\b${column}\\b`, 'i').test(clause)) continue;
       if (/status/i.test(clause)) continue;
       try {
@@ -790,31 +792,58 @@ async function ensureAssetPanelColumns(db, log) {
 // asset that was in_progress under the old rule stays in_progress, because its
 // work genuinely had started; only assignments made from now on land in
 // 'assigned' and wait for the assignee to accept.
-async function ensureTimeTracking(db, log) {
+// The work_sessions table behind the timer.
+//
+// Its own step, separate from the status constraint below it. They used to be
+// one, with the table first — so on a database where creating the table failed,
+// the step threw and the constraint repair underneath it never ran at all. That
+// is not a hypothetical: a deployment reported both
+// "work_sessions unavailable (ER_NO_SUCH_TABLE)" and a status constraint still
+// rejecting 'assigned', from this single cause. Two jobs, two steps, each
+// isolated by the runner.
+async function ensureWorkSessions(db, log) {
   const { rows: table } = await db.query(
     `SELECT TABLE_NAME AS t FROM information_schema.TABLES
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'work_sessions'`
   );
-  if (!table.length) {
-    await db.query(`CREATE TABLE work_sessions (
-      id         CHAR(36)  NOT NULL PRIMARY KEY,
-      asset_id   CHAR(36)  NOT NULL,
-      user_id    CHAR(36)  NULL,
-      round      INT       NOT NULL DEFAULT 1,
-      started_at DATETIME  NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      ended_at   DATETIME  NULL,
-      seconds    INT       NULL,
-      KEY idx_ws_asset (asset_id),
-      KEY idx_ws_open (asset_id, ended_at),
-      CONSTRAINT fk_ws_asset FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE,
-      CONSTRAINT fk_ws_user  FOREIGN KEY (user_id)  REFERENCES users(id)  ON DELETE SET NULL
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
-    log('Schema: added work_sessions — the auditable log behind the asset timer.');
-  }
+  if (table.length) return;
 
+  // Without the foreign keys, then with them. A referential constraint can be
+  // refused for reasons that have nothing to do with this table — a collation
+  // that does not match assets.id, an engine mismatch, a user without
+  // REFERENCES — and losing the whole table to that would turn the timer off
+  // for a reason nobody could see. The cascade is a nicety; the table is not.
+  await db.query(await applyTableOptions(db, `CREATE TABLE work_sessions (
+    id         CHAR(36)  NOT NULL PRIMARY KEY,
+    asset_id   CHAR(36)  NOT NULL,
+    user_id    CHAR(36)  NULL,
+    round      INT       NOT NULL DEFAULT 1,
+    started_at DATETIME  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ended_at   DATETIME  NULL,
+    seconds    INT       NULL,
+    KEY idx_ws_asset (asset_id),
+    KEY idx_ws_open (asset_id, ended_at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+  log('Schema: added work_sessions — the auditable log behind the asset timer.');
+
+  for (const [name, sql] of [
+    ['fk_ws_asset', 'ALTER TABLE work_sessions ADD CONSTRAINT fk_ws_asset FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE'],
+    ['fk_ws_user', 'ALTER TABLE work_sessions ADD CONSTRAINT fk_ws_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL'],
+  ]) {
+    try {
+      await db.query(sql);
+    } catch (err) {
+      log(`Schema: work_sessions was created, but ${name} was refused — ${err.sqlMessage || err.message}`);
+      log('         The timer works; deleting an asset will not clear its sessions automatically.');
+    }
+  }
+}
+
+// Widen the assets status constraint so it admits every state the app writes.
+async function ensureStatusConstraint(db, log) {
   // Widen the status constraint so it admits every state the app can write.
   //
-  // Two separate mistakes have lived in this one step.
+  // Three mistakes have lived in this one step.
   //
   // The first: it decided whether to act by reading the constraint's text from
   // information_schema.CHECK_CONSTRAINTS, and when that read returned nothing
@@ -833,6 +862,13 @@ async function ensureTimeTracking(db, log) {
   // with an assignee then failed *after* the asset row was already inserted,
   // leaving exactly the thing this was supposed to prevent: an asset with an
   // assignee, a status of not_started, and no checklist.
+  //
+  // The third, which is why the second fix did not take on MySQL 8: it searched
+  // the clause for "'not_started'", and MySQL 8 renders string literals in
+  // CHECK_CLAUSE with a charset introducer and escaped quotes —
+  // _utf8mb4\'not_started\' — so the search matched nothing and an auto-named
+  // constraint, assets_chk_2, kept rejecting every write of 'assigned'. Clauses
+  // are normalized before they are read now; see normalizeCheckClause.
   //
   // So: find them by what they constrain, not by what they are called — the
   // same way the type and priority constraints are already handled — and act
@@ -910,7 +946,7 @@ async function staleStatusConstraints(db) {
   ).catch(() => ({ rows: null }));
   if (rows === null) return null;
   return rows.filter((r) => {
-    const clause = String(r.clause || '');
+    const clause = normalizeCheckClause(r.clause);
     // Only the ones enumerating statuses. `not_started` appears in every
     // version of this constraint there has ever been, which is what identifies
     // it without relying on its name.
@@ -964,7 +1000,11 @@ const STEPS = [
   // roles are topped up against it.
   ['client and project lifecycle', ensureLifecycleColumns],
   ['asset brief and checklist', ensureAssetPanelColumns],
-  ['assigned state and time tracking', ensureTimeTracking],
+  ['work sessions table', ensureWorkSessions],
+  // Deliberately after, and deliberately separate: this is the repair that
+  // decides whether an asset can be assigned at all, and it must not be
+  // skipped because the step above it could not create a table.
+  ['assigned state and time tracking', ensureStatusConstraint],
   // After the constraint above admits 'assigned', or the update below cannot
   // land. Separate from that step so a rerun repairs the data even when the
   // constraint was already current and the step above did nothing.

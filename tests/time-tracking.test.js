@@ -374,6 +374,89 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
     }
   });
 
+  await t.test('an anonymous status constraint is dropped, and a lost table does not block it', async () => {
+    // The deployment that produced this: two log lines from one cause.
+    //
+    //   PATCH /api/assets/... failed: Check constraint 'assets_chk_2' is violated
+    //   [schema] work_sessions unavailable (ER_NO_SUCH_TABLE)
+    //
+    // assets_chk_2 is a name MySQL generates for a CHECK declared without one,
+    // so nothing that looked the constraint up by name could find it. And
+    // creating work_sessions used to run first inside the same migration step
+    // as the constraint repair — so when the table could not be created, the
+    // step threw and the repair below it never ran at all.
+    const mysql = require('mysql2/promise');
+    const open = async () => {
+      const conn = await mysql.createConnection({
+        host: cfg.host, port: cfg.port, user: cfg.user, password: cfg.password, database: cfg.database,
+      });
+      return { conn, db: { query: async (text, params = []) => {
+        const ordered = [];
+        const sqlText = text.replace(/\$(\d+)/g, (_, n) => { ordered.push(params[Number(n) - 1]); return '?'; });
+        const [out] = await conn.query(sqlText, ordered.length ? ordered : params);
+        return { rows: Array.isArray(out) ? out : [], result: out };
+      } } };
+    };
+
+    const parked = await sql(cfg, "SELECT id FROM assets WHERE `status` = 'assigned'");
+    await sql(cfg, "UPDATE assets SET `status` = 'not_started' WHERE `status` = 'assigned'");
+    for (const name of ['chk_assets_status', 'legacy_assets_status']) {
+      try { await sql(cfg, `ALTER TABLE assets DROP CONSTRAINT \`${name}\``); } catch { /* absent */ }
+    }
+    // Declared with no name, so the engine picks one — assets_chk_N.
+    await sql(cfg, `ALTER TABLE assets ADD CHECK (\`status\` IN (
+      'not_started','in_progress','pending_tl_review','tl_changes_requested',
+      'pending_cd_review','cd_changes_requested','approved_for_client','delivered'))`);
+    // And the table the step above the repair creates, gone.
+    await sql(cfg, 'DROP TABLE IF EXISTS work_sessions');
+
+    const anonymous = (await sql(cfg,
+      `SELECT cc.CONSTRAINT_NAME n FROM information_schema.CHECK_CONSTRAINTS cc
+         JOIN information_schema.TABLE_CONSTRAINTS tc
+           ON tc.CONSTRAINT_NAME = cc.CONSTRAINT_NAME AND tc.CONSTRAINT_SCHEMA = cc.CONSTRAINT_SCHEMA
+        WHERE tc.TABLE_NAME = 'assets' AND tc.CONSTRAINT_TYPE = 'CHECK'
+          AND tc.CONSTRAINT_SCHEMA = DATABASE() AND cc.CHECK_CLAUSE LIKE '%not_started%'`))
+      .map((r) => r.n);
+    assert.ok(anonymous.length, 'the engine named it for us');
+    assert.ok(!anonymous.includes('chk_assets_status'), `and not with our name — got ${anonymous}`);
+
+    // Health must name it even though nothing knows what it is called.
+    const schemaCheck = require('../src/schema-check');
+    const probe = await open();
+    try {
+      const gaps = await schemaCheck.gaps(probe.db);
+      assert.ok(gaps.some((g) => g.kind === 'constraint' && anonymous.includes(g.name)),
+        `health should name the anonymous constraint — got ${JSON.stringify(gaps)}`);
+      assert.ok(gaps.some((g) => g.name === 'work_sessions'), 'and the missing table');
+    } finally { await probe.conn.end(); }
+
+    const runner = await open();
+    const messages = [];
+    try { await require('../src/migrate').run(runner.db, (m) => messages.push(m)); }
+    finally { await runner.conn.end(); }
+
+    // Both jobs done, neither blocked by the other.
+    const after = await sql(cfg,
+      `SELECT cc.CONSTRAINT_NAME n, cc.CHECK_CLAUSE c FROM information_schema.CHECK_CONSTRAINTS cc
+         JOIN information_schema.TABLE_CONSTRAINTS tc
+           ON tc.CONSTRAINT_NAME = cc.CONSTRAINT_NAME AND tc.CONSTRAINT_SCHEMA = cc.CONSTRAINT_SCHEMA
+        WHERE tc.TABLE_NAME = 'assets' AND tc.CONSTRAINT_TYPE = 'CHECK'
+          AND tc.CONSTRAINT_SCHEMA = DATABASE() AND cc.CHECK_CLAUSE LIKE '%not_started%'`);
+    for (const c of after) {
+      assert.ok(schemaCheck.normalizeCheckClause(c.c).includes("'assigned'"),
+        `${c.n} still rejects 'assigned': ${c.c}`);
+    }
+    const tables = await sql(cfg, "SHOW TABLES LIKE 'work_sessions'");
+    assert.strictEqual(tables.length, 1, 'work_sessions was recreated');
+
+    // The write that was failing now works, end to end.
+    const asset = await newAsset('After Both Repairs');
+    assert.strictEqual((await assetRow(asset.id)).status, 'assigned');
+    for (const p of parked) {
+      await sql(cfg, `UPDATE assets SET \`status\` = 'assigned' WHERE id = '${p.id}'`);
+    }
+  });
+
   await t.test('a create that fails part-way leaves nothing behind', async () => {
     // FX-001's real shape: the asset row was written, the assign transition
     // then failed on a stale constraint, and the default checklist never ran.

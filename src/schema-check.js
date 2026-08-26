@@ -71,6 +71,30 @@ async function missing(db) {
   return gaps;
 }
 
+// A CHECK constraint's text, in a form the same string test works on
+// everywhere.
+//
+// MySQL 8 renders string literals in CHECK_CLAUSE with a charset introducer and
+// backslash-escaped quotes:
+//
+//   (`status` in (_utf8mb4\'not_started\',_utf8mb4\'assigned\'))
+//
+// MariaDB renders the identical constraint as:
+//
+//   `status` in ('not_started','assigned')
+//
+// So a test for "'not_started'" matches on MariaDB and finds nothing on
+// MySQL 8 — the closing quote is preceded by a backslash. That is how an
+// auto-named constraint, assets_chk_2, survived a repair that searched by
+// clause precisely so that its name would not matter, and went on rejecting
+// every write that set a status of 'assigned'. Verified against MariaDB here
+// and against the MySQL 8 rendering in the tests.
+function normalizeCheckClause(clause) {
+  return String(clause || '')
+    .replace(/\\(['"])/g, '$1')
+    .replace(/_(?:utf8mb4|utf8mb3|utf8|latin1|binary|ascii)(?=')/gi, '');
+}
+
 // Constraints, which columns and tables do not cover.
 //
 // The gap that let a broken deployment report itself healthy: every table and
@@ -110,7 +134,7 @@ async function staleConstraints(db) {
   const found = [];
   for (const need of CONSTRAINTS) {
     for (const row of rows) {
-      const clause = String(row.c || '');
+      const clause = normalizeCheckClause(row.c);
       if (!need.identifies(clause)) continue;
       if (clause.includes(`'${need.mustAllow}'`)) continue;
       found.push({
@@ -130,4 +154,4 @@ async function gaps(db) {
   return [...columns, ...constraints];
 }
 
-module.exports = { REQUIRED, CONSTRAINTS, missing, staleConstraints, gaps };
+module.exports = { REQUIRED, CONSTRAINTS, missing, staleConstraints, gaps, normalizeCheckClause };

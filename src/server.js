@@ -166,8 +166,14 @@ app.use((err, req, res, next) => {
     // number 4025 for a CHECK failure, and mysql2's table maps it to the
     // unrelated ER_INNODB_AUTOEXTEND_SIZE_OUT_OF_RANGE. The message is the
     // truth, so it is the message that gets read.
+    // Both engines' wordings, because they do not agree:
+    //   MariaDB   CONSTRAINT `chk_assets_status` failed: db.assets
+    //   MySQL 8   Check constraint 'assets_chk_2' is violated.
+    // Only the first was matched, so on MySQL 8 the studio got the generic
+    // "database error" for the one fault this message exists to name.
     const message = err.sqlMessage || err.message || '';
-    const constraint = /CONSTRAINT `?([A-Za-z0-9_]+)`? failed/i.exec(message);
+    const constraint = /CONSTRAINT [`'\"]?([A-Za-z0-9_]+)[`'\"]? failed/i.exec(message)
+      || /check constraint [`'\"]?([A-Za-z0-9_]+)[`'\"]? is violated/i.exec(message);
     if (constraint) {
       return res.status(500).json({
         error: `This deployment's database rejected the value: the "${constraint[1]}" constraint has not been updated for this version. `
