@@ -1011,8 +1011,22 @@ function restoreContext(){
   const clientStillThere = state.clients.some(c=>c.id===saved.clientId);
 
   if(project){
-    state.currentProjectId = project.id;
-    state.clientContextId = project.client_id || saved.clientId || null;
+    /* A remembered project is only worth returning to if there is still
+       something of theirs in it.
+       
+       This is the branch a returning user always takes, and it is where the
+       handover kept getting lost: somebody given work in a project they have
+       never opened would land wherever they were last time, see an empty
+       board, and have no reason to think of looking elsewhere. Preferring a
+       project with their work only in the "nothing remembered" branch fixed it
+       for a browser with no history and for nobody else.
+       
+       Somebody whose remembered project still holds their work stays put. */
+    const stillMine = (project.my_open_assets || 0) > 0;
+    const withWork = stillMine ? null : state.projects.find(p=>(p.my_open_assets||0) > 0);
+    const landing = withWork || project;
+    state.currentProjectId = landing.id;
+    state.clientContextId = landing.client_id || (landing === project ? saved.clientId : null) || null;
   }else if(clientStillThere){
     state.clientContextId = saved.clientId;
     const first = projectsForContext()[0];
