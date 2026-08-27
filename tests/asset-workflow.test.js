@@ -39,6 +39,18 @@ test('the dashboard is drawn from the same states and the same free range', () =
     'the dashboard columns and the workflow states have drifted apart'
   );
 
+  // The tile and the column must come from one list. They are rendered in two
+  // places, and the last time those two places each kept their own copy of a
+  // status list they drifted — which is how the Assigned column became one no
+  // card could be dragged into.
+  const gated = 'visibleStatuses()';
+  for (const site of ['`<div class="board">${' + gated, '    ' + gated + '.map(s=>{ const c=pool.filter']) {
+    assert.ok(page.includes(site),
+      `the dashboard should draw its columns and its stat tiles from ${gated} — missing: ${site}`);
+  }
+  assert.match(page, /function visibleStatuses\(\)\{\s*\n\s*if\(can\('asset\.add'\)\) return STATUSES;/,
+    "visibleStatuses should gate on can('asset.add'), the same way every other gate on the page does");
+
   const free = page.match(/const FREE = \[([^\]]*)\]/);
   assert.ok(free, 'the dashboard drag handler has no FREE list');
   assert.deepStrictEqual(
