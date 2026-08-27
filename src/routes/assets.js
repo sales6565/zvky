@@ -123,6 +123,13 @@ async function attachTasksAndNotes(assets) {
   }));
 }
 
+// A user's name for an audit line, from whichever connection the caller is on.
+async function nameOfUser(run, userId) {
+  if (!userId) return 'nobody';
+  const { rows } = await run.query('SELECT `name` FROM users WHERE id = $1', [userId]);
+  return rows.length ? rows[0].name : 'somebody who no longer has an account';
+}
+
 // Seconds, for a human reading an audit line. "2h 15m", not "8100".
 function fmtSeconds(total) {
   const n = Math.max(0, Math.round(Number(total) || 0));
@@ -373,10 +380,24 @@ router.patch('/:id', async (req, res) => {
 
     await conn.query(`UPDATE assets SET ${fields.join(', ')} WHERE id = $${i}`, values);
 
-    // Assigning the asset is what starts the work — there is no separate
-    // "start" action for someone to forget. Only from Not Assigned:
-    // reassigning something already in review must not drag it backwards.
+    // Changing who an asset is assigned to means the same thing however it was
+    // asked for. The Hand over button and this panel dropdown are two controls
+    // for one operation, and they used to disagree: the button ran the proper
+    // transition, while this path only swapped the name when the asset was Not
+    // Assigned and otherwise left the status alone. So changing the assignee of
+    // SUBMITTED work through the dropdown left it in TL Review with the new
+    // person's name on it — assigned to them, and nowhere near the Assigned
+    // column they were looking in. One operation, one rule.
+    //
+    //   from Not Assigned   'assign'          -> Assigned
+    //   from a review queue 'reassign_review' -> Assigned, a fresh round
+    //   anything else       the status stays; only the routing and the trail move
     const assigneeChanged = req.body.assigneeId !== undefined && req.body.assigneeId !== asset.assignee_id;
+    const transitionFor = (status) => {
+      if (status === 'not_started') return 'assign';
+      if (['pending_tl_review', 'pending_cd_review'].includes(status)) return 'reassign_review';
+      return null;
+    };
 
     // A different person means a different stretch of work. Their clock reads
     // nothing because their episode is new, and the last person's hours stay on
@@ -390,12 +411,32 @@ router.patch('/:id', async (req, res) => {
         assignedById: req.user.id, status: asset.status,
       });
     }
-    if (assigneeChanged && req.body.assigneeId && asset.status === 'not_started') {
+    const moveFor = assigneeChanged && req.body.assigneeId ? transitionFor(asset.status) : null;
+    if (moveFor) {
       const { rows: fresh } = await conn.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
       const ctx = await contextFor(req, fresh[0]);
-      const verdict = workflow.evaluate('assign', ctx);
+      const verdict = workflow.evaluate(moveFor, ctx);
       if (verdict.ok) {
-        await applyTransition(req, res, fresh[0], verdict, { note: verdict.describe, conn });
+        // Handing submitted work on says so in the trail, and says what the
+        // outgoing round finished on — the same record the Hand over button
+        // leaves, because it is the same event.
+        let note = verdict.describe;
+        if (moveFor === 'reassign_review') {
+          const outgoing = await assignments.current(conn, req.params.id);
+          let spent = 0;
+          if (outgoing) {
+            const { rows: sec } = await conn.query(
+              'SELECT COALESCE(SUM(COALESCE(seconds, 0)), 0) AS s FROM work_sessions WHERE assignment_id = $1',
+              [outgoing.id]
+            ).catch(() => ({ rows: [{ s: 0 }] }));
+            spent = Number(sec[0].s) || 0;
+          }
+          const outgoingName = await nameOfUser(conn, asset.assignee_id);
+          const incomingName = await nameOfUser(conn, req.body.assigneeId);
+          note = `Reassigned from ${outgoingName} to ${incomingName} while in ${workflow.label(asset.status)}. `
+            + `${outgoingName} recorded ${fmtSeconds(spent)} on their round; ${incomingName} starts a new one.`;
+        }
+        await applyTransition(req, res, fresh[0], verdict, { note, conn });
       } else {
         // The UPDATE above has already written the assignee, so skipping the
         // transition would leave an asset assigned to somebody and still
@@ -417,13 +458,8 @@ router.patch('/:id', async (req, res) => {
       // And record it. This used to update the routing and say nothing, so an
       // asset could change hands mid-pipeline with no trace of who moved it or
       // when — the one question the history exists to answer.
-      const nameOf = async (userId) => {
-        if (!userId) return 'nobody';
-        const { rows: who } = await conn.query('SELECT `name` FROM users WHERE id = $1', [userId]);
-        return who.length ? who[0].name : 'somebody who no longer has an account';
-      };
-      const from = await nameOf(asset.assignee_id);
-      const to = await nameOf(req.body.assigneeId);
+      const from = await nameOfUser(conn, asset.assignee_id);
+      const to = await nameOfUser(conn, req.body.assigneeId);
       await conn.query(
         `INSERT INTO asset_events (id, asset_id, action, from_status, to_status, actor_id, actor_email, note, routed_to_id)
          VALUES ($1,$2,'reassign',$3,$4,$5,$6,$7,$8)`,

@@ -104,21 +104,37 @@ test('the asset side panel', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.ok(move.at);
   });
 
-  await t.test('a mid-review reassignment is recorded too', async () => {
-    // This is the gap: the old code updated the routing and wrote nothing, so
+  await t.test('a mid-review reassignment is recorded, and moves the asset', async () => {
+    // Two things this covers, both of which were once wrong.
+    //
+    // First the trail: the old code updated the routing and wrote nothing, so
     // an asset could change hands mid-pipeline with no trace of who moved it.
+    //
+    // Then the destination. This dropdown and the Hand over button are two
+    // controls for one operation, and only the button ran the transition — so
+    // handing submitted work on from here left it in TL Review with the new
+    // person's name on it. Assigned to them, and nowhere near the Assigned
+    // column they were looking in. Both routes land in the same place now.
     const asset = await newAsset('pat', 'Mid Flight', people.ana);
     assert.strictEqual((await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v1', description: 'First pass' },
     })).status, 201);
 
-    assert.strictEqual((await as('pat', `/assets/${asset.id}`, {
+    const done = await as('pat', `/assets/${asset.id}`, {
       method: 'PATCH', body: { assigneeId: people.bo },
-    })).status, 200);
+    });
+    assert.strictEqual(done.status, 200);
+    assert.strictEqual(done.body.asset.status, 'assigned',
+      'submitted work handed on goes back to Assigned for whoever takes it');
 
     const events = await historyOf(asset.id);
-    assert.deepStrictEqual(events.map((e) => e.action), ['assign', 'submit', 'reassign']);
-    assert.strictEqual(await seenBy('bo', asset.id).then((x) => Boolean(x)), true);
+    assert.deepStrictEqual(events.map((e) => e.action), ['assign', 'submit', 'reassign_review']);
+    assert.match(events[2].note, /from ana to bo/);
+
+    // And the new assignee finds it where they would look for it.
+    const theirs = await seenBy('bo', asset.id);
+    assert.ok(theirs, 'it is in their queue');
+    assert.strictEqual(theirs.status, 'assigned');
   });
 
   await t.test('changing the assignee uses the reassign permission, not a new one', async () => {

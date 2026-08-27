@@ -557,6 +557,55 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
       "bo's round is a part of the asset's lifetime, not the whole of it");
   });
 
+  await t.test('the panel dropdown hands work on the same way the button does', async () => {
+    // Two controls, one operation. The Hand over button ran the transition and
+    // the panel's assignee dropdown did not, so changing the assignee of
+    // submitted work through the dropdown left it in TL Review with the new
+    // person's name on it — assigned to them, and absent from the Assigned
+    // column they were looking in. Both routes must land in the same place.
+    const asset = await newAsset('Dropdown Handover');
+    await start('ana', asset.id);
+    await sleep(1100);
+    await as('ana', `/assets/${asset.id}/submit`, {
+      method: 'POST', body: { link: 'https://example.test/dd-v1' },
+    });
+    assert.strictEqual((await assetRow(asset.id)).status, 'pending_tl_review');
+    const anaSpent = (await timerOf(asset.id)).currentSeconds;
+
+    // pat created it, so pat is who the dropdown is offered to.
+    const res = await as('pat', `/assets/${asset.id}`, {
+      method: 'PATCH', body: { assigneeId: people.bo },
+    });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+
+    const row = await assetRow(asset.id);
+    assert.strictEqual(row.status, 'assigned',
+      'the dropdown moves it to Assigned, exactly as the Hand over button does');
+    assert.strictEqual(row.assignee_id, people.bo);
+
+    // And it is a genuinely new round, not a rename of the old one.
+    const after = await timerOf(asset.id);
+    assert.strictEqual(after.currentSeconds, 0, "bo's clock starts at nothing here too");
+    assert.strictEqual(after.totalSeconds, anaSpent, "and ana's hours survive");
+
+    const episodes = await sql(cfg,
+      `SELECT COUNT(*) AS n FROM asset_assignments WHERE asset_id = '${asset.id}'`);
+    assert.strictEqual(Number(episodes[0].n), 2, 'two stretches, one each');
+
+    // The trail says the same thing either route was taken.
+    const history = (await as('root', `/assets/${asset.id}/history`)).body.events;
+    const event = history[history.length - 1];
+    assert.strictEqual(event.action, 'reassign_review');
+    assert.strictEqual(event.toStatus, 'assigned');
+    assert.match(event.note, /from ana to bo/);
+    assert.match(event.note, /ana recorded/);
+
+    // The whole point: bo can now find it where they would look.
+    const bosBoard = (await as('bo', `/assets/project/${projectId}`)).body.assets
+      .filter((a) => a.status === 'assigned' && a.id === asset.id);
+    assert.strictEqual(bosBoard.length, 1, 'it is in the new assignee\'s Assigned column');
+  });
+
   await t.test('the same person getting work back is NOT a new round of assignment', async () => {
     // The older rule, which this must not have broken: changes sent back to
     // whoever submitted them do not change the assignee, so no new stretch
