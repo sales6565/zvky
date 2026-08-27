@@ -102,7 +102,7 @@ function unavailable(err) {
 
 // The summary a screen needs: total seconds (a running session counted up to
 // now), the per-round breakdown, and whether the clock is running right now.
-async function summary(db, assetId, assignmentId) {
+async function summary(db, assetId, assignmentId, assigneeId) {
   const { rows } = await db.query(
     `SELECT round,
             SUM(COALESCE(seconds, TIMESTAMPDIFF(SECOND, started_at, NOW()))) AS seconds,
@@ -128,12 +128,24 @@ async function summary(db, assetId, assignmentId) {
   //
   // Send work back to the SAME person and no new stretch begins, so their
   // number keeps climbing across the round. That is the older rule, unchanged.
+  // Scoped to the assignment episode when there is one. When there is not —
+  // a deployment where asset_assignments could not be created — fall back to
+  // the sessions belonging to whoever holds the asset now, which answers the
+  // same question from a table that is definitely there.
+  //
+  // Falling back to the lifetime total, which is what this did, was the bug
+  // behind "the new assignee has no Accept and Start button": their counter
+  // showed the previous person's hours, so the panel decided work was already
+  // under way and offered Resume. Never fall back to somebody else's time.
   let currentSeconds = null;
-  if (assignmentId) {
+  const scope = assignmentId
+    ? { sql: 'assignment_id = $1', value: assignmentId }
+    : (assigneeId ? { sql: 'user_id = $1', value: assigneeId } : null);
+  if (scope) {
     const { rows: mine } = await db.query(
       `SELECT SUM(COALESCE(seconds, TIMESTAMPDIFF(SECOND, started_at, NOW()))) AS seconds
-         FROM work_sessions WHERE assignment_id = $1`,
-      [assignmentId]
+         FROM work_sessions WHERE asset_id = $2 AND ${scope.sql}`,
+      [scope.value, assetId]
     ).catch((err) => {
       if (!unavailable(err)) throw err;
       return { rows: [{ seconds: null }] };
@@ -151,13 +163,24 @@ async function summary(db, assetId, assignmentId) {
 }
 
 // Totals for a set of assets in one query — what the Assets List shows.
+// Totals for a set of assets in one query — what the Assets List shows.
+//
+// Two figures per asset, for the same reason summary reports two: `seconds` is
+// the lifetime, and `currentSeconds` is what the person holding it now has put
+// in. A screen that shows the lifetime to a new assignee is telling them
+// somebody else's hours are theirs.
 async function totalsFor(db, assetIds) {
   if (!assetIds.length) return new Map();
   const { rows } = await db.query(
-    `SELECT asset_id,
-            SUM(COALESCE(seconds, TIMESTAMPDIFF(SECOND, started_at, NOW()))) AS seconds,
-            SUM(ended_at IS NULL) AS running
-       FROM work_sessions WHERE asset_id IN ($1) GROUP BY asset_id`,
+    `SELECT w.asset_id,
+            SUM(COALESCE(w.seconds, TIMESTAMPDIFF(SECOND, w.started_at, NOW()))) AS seconds,
+            SUM(w.ended_at IS NULL) AS running,
+            SUM(CASE WHEN w.user_id = a.assignee_id
+                     THEN COALESCE(w.seconds, TIMESTAMPDIFF(SECOND, w.started_at, NOW()))
+                     ELSE 0 END) AS current_seconds
+       FROM work_sessions w
+       JOIN assets a ON a.id = w.asset_id
+      WHERE w.asset_id IN ($1) GROUP BY w.asset_id`,
     [assetIds]
   ).catch((err) => {
     if (!unavailable(err)) throw err;
@@ -166,6 +189,7 @@ async function totalsFor(db, assetIds) {
   });
   return new Map(rows.map((r) => [r.asset_id, {
     seconds: Number(r.seconds) || 0,
+    currentSeconds: Number(r.current_seconds) || 0,
     running: Number(r.running) > 0,
   }]));
 }

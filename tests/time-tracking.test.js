@@ -606,6 +606,116 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
     assert.strictEqual(bosBoard.length, 1, 'it is in the new assignee\'s Assigned column');
   });
 
+  await t.test("a new assignee's counter never shows the last person's hours", async () => {
+    // What made the Accept and Start button disappear. The panel decides
+    // between "Accept and Start" and "Resume" on whether the CURRENT round has
+    // any time in it, and that figure fell back to the asset's LIFETIME total
+    // whenever there was no assignment episode to read — on a deployment where
+    // asset_assignments could not be created, every reassigned asset therefore
+    // told its new owner they were mid-session on somebody else's hours.
+    const asset = await newAsset('Counter Scope');
+    await start('ana', asset.id);
+    await sleep(1100);
+    await as('ana', `/assets/${asset.id}/submit`, {
+      method: 'POST', body: { link: 'https://example.test/cs-v1' },
+    });
+    const anaSpent = (await timerOf(asset.id)).currentSeconds;
+    assert.ok(anaSpent >= 1);
+
+    await as('lee', `/assets/${asset.id}/reassign`, {
+      method: 'POST', body: { assigneeId: people.bo },
+    });
+
+    // With episodes, and — the case that broke — without them.
+    const withEpisodes = await timerOf(asset.id);
+    assert.strictEqual(withEpisodes.currentSeconds, 0);
+
+    await sql(cfg, `UPDATE work_sessions SET assignment_id = NULL WHERE asset_id = '${asset.id}'`);
+    const withoutEpisodes = await timerOf(asset.id);
+    assert.strictEqual(withoutEpisodes.currentSeconds, 0,
+      "with nothing to scope by, it falls back to the current assignee's own sessions — never to the lifetime");
+    assert.strictEqual(withoutEpisodes.totalSeconds, anaSpent, 'the lifetime is still reported, separately');
+
+    // And the list carries the same distinction, which is what the panel reads.
+    const listed = (await as('root', `/assets/project/${projectId}`)).body.assets
+      .find((a) => a.id === asset.id);
+    assert.strictEqual(listed.round_seconds, 0, 'the new owner is at nothing');
+    assert.strictEqual(listed.time_spent_seconds, anaSpent, 'the asset is not');
+  });
+
+  await t.test('handing work across teams does not refuse the person handing it', async () => {
+    // The actor check was re-derived from the asset row AFTER the assignee had
+    // been written, so it asked "is this lead in charge of the person receiving
+    // it" rather than "of the person handing it over". Within one team both
+    // answers agree, which is why it went unnoticed; across teams the handover
+    // was refused after the write, rolled back, and reported with a message
+    // that made no sense to the lead reading it.
+    const otherLead = await call('/users', {
+      token: token.root, method: 'POST',
+      body: { name: 'mira', email: 'mira@zvky.test', role: 'team_lead', password: PASSWORD, projectId },
+    });
+    assert.strictEqual(otherLead.status, 201, JSON.stringify(otherLead.body));
+    const theirArtist = await call('/users', {
+      token: token.root, method: 'POST',
+      body: { name: 'nell', email: 'nell@zvky.test', role: 'game_artist', password: PASSWORD,
+              projectId, teamLeadId: otherLead.body.user.id },
+    });
+    assert.strictEqual(theirArtist.status, 201, JSON.stringify(theirArtist.body));
+
+    const asset = await newAsset('Across Teams');
+    await as('ana', `/assets/${asset.id}/submit`, {
+      method: 'POST', body: { link: 'https://example.test/at-v1' },
+    });
+    // lee leads ana, not nell. lee is the reviewer holding it, so lee may hand
+    // it on — to anybody assignable on the project.
+    const handed = await as('lee', `/assets/${asset.id}/reassign`, {
+      method: 'POST', body: { assigneeId: theirArtist.body.user.id },
+    });
+    assert.strictEqual(handed.status, 200, JSON.stringify(handed.body));
+    const row = await assetRow(asset.id);
+    assert.strictEqual(row.status, 'assigned');
+    assert.strictEqual(row.assignee_id, theirArtist.body.user.id);
+  });
+
+  await t.test('an assignee with no team lead does not strand the review gate', async () => {
+    // The picker offers everybody assignable on the project, and some of them
+    // report to nobody. Work submitted by such a person sat in TL Review with
+    // no lead able to approve it and nothing saying why — the review flow just
+    // stopped. Where there is no lead to be the gate, any lead who can see the
+    // work is.
+    const loner = await call('/users', {
+      token: token.root, method: 'POST',
+      body: { name: 'oona', email: 'oona@zvky.test', role: 'game_artist', password: PASSWORD, projectId },
+    });
+    assert.strictEqual(loner.status, 201, JSON.stringify(loner.body));
+    const loose = await sql(cfg, "SELECT reports_to_id r, team_lead_id t FROM users WHERE email = 'oona@zvky.test'");
+    assert.ok(!loose[0].r && !loose[0].t, 'nobody leads them');
+
+    const asset = await newAsset('No Lead');
+    await as('ana', `/assets/${asset.id}/submit`, {
+      method: 'POST', body: { link: 'https://example.test/nl-v1' },
+    });
+    assert.strictEqual((await as('lee', `/assets/${asset.id}/reassign`, {
+      method: 'POST', body: { assigneeId: loner.body.user.id },
+    })).status, 200);
+
+    const theirToken = (await call('/auth/login', {
+      method: 'POST', body: { email: 'oona@zvky.test', password: PASSWORD },
+    })).body.token;
+    const resubmitted = await call(`/assets/${asset.id}/submit`, {
+      token: theirToken, method: 'POST', body: { link: 'https://example.test/nl-v2' },
+    });
+    assert.strictEqual(resubmitted.status, 201, JSON.stringify(resubmitted.body));
+    assert.strictEqual((await assetRow(asset.id)).status, 'pending_tl_review');
+
+    const approved = await as('lee', `/assets/${asset.id}/review`, {
+      method: 'POST', body: { decision: 'approved' },
+    });
+    assert.strictEqual(approved.status, 200,
+      `a lead who can see it must be able to approve it — got ${JSON.stringify(approved.body)}`);
+    assert.strictEqual((await assetRow(asset.id)).status, 'pending_cd_review');
+  });
+
   await t.test('the same person getting work back is NOT a new round of assignment', async () => {
     // The older rule, which this must not have broken: changes sent back to
     // whoever submitted them do not change the assignee, so no new stretch

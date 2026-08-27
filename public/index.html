@@ -784,8 +784,13 @@ function currentEpisode(a){
   return (Array.isArray(a.assignments) ? a.assignments : []).find(ep=>ep.active) || null;
 }
 function roundSeconds(a){
+  /* The server works this out — from the assignment episode where there is one,
+     and otherwise from the current assignee's own sessions. Never from the
+     asset's lifetime: that is somebody else's time, and reading it here is what
+     made a freshly reassigned asset offer Resume instead of Accept and Start. */
+  if(typeof a.round_seconds === 'number') return a.round_seconds;
   const ep = currentEpisode(a);
-  return ep ? ep.seconds : (a.time_spent_seconds || 0);
+  return ep ? ep.seconds : 0;
 }
 
 function visibleStatuses(){
@@ -2014,6 +2019,7 @@ async function openDrawer(id){
       a.time_spent_seconds = (a.time_spent_seconds||0) + 1;
       const ep = currentEpisode(a);
       if(ep) ep.seconds += 1;
+      if(typeof a.round_seconds === 'number') a.round_seconds += 1;
       const el = document.getElementById('d_timeSpent');
       if(el) el.textContent = fmtDuration(roundSeconds(a));
       else { clearInterval(window.__timerTick); window.__timerTick = null; }

@@ -253,7 +253,24 @@ async function isTeamLeadOfAsset(user, asset) {
   // Someone granted TL review actions without leading a team reviews the work
   // they can already see, rather than nobody's.
   if (!def || !def.leadsTeam) return canViewAsset(user, asset);
-  return isReport(user, asset.assignee_id);
+  if (await isReport(user, asset.assignee_id)) return true;
+
+  // The assignee reports to nobody, so nobody is "their lead" and the first
+  // review gate has no one behind it. That used to be unreachable in practice;
+  // handing work on made it reachable, because the picker offers everybody
+  // assignable on the project and some of them have no lead recorded. An asset
+  // submitted by such a person sat in TL Review with no team lead able to
+  // approve it and no message saying why — the review flow simply stopped.
+  //
+  // So: when there is no lead to be the gate, any lead who can see the work is.
+  // This does not loosen the normal case, where the assignee's own lead is
+  // found above and this line is never reached.
+  const { rows } = await db.query(
+    'SELECT reports_to_id, team_lead_id FROM users WHERE id = $1', [asset.assignee_id]
+  );
+  const lead = rows[0] && (rows[0].reports_to_id || rows[0].team_lead_id);
+  if (lead) return false;
+  return canViewAsset(user, asset);
 }
 
 // Full access: the studio-wide tier.

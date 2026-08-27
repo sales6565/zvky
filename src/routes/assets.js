@@ -113,6 +113,14 @@ async function attachTasksAndNotes(assets) {
   return assets.map((a) => ({
     ...a,
     time_spent_seconds: (timeSpent.get(a.id) || {}).seconds || 0,
+    // What the person holding it now has put in, as distinct from the asset's
+    // lifetime above. The panel shows this one; showing the lifetime to a new
+    // assignee told them somebody else's hours were theirs, and made the panel
+    // offer Resume where it should have offered Accept and Start.
+    round_seconds: (episodes.get(a.id) || []).reduce(
+      (n, ep) => (ep.active ? ep.seconds : n),
+      (timeSpent.get(a.id) || {}).currentSeconds || 0
+    ),
     timer_running: Boolean((timeSpent.get(a.id) || {}).running),
     assignments: episodes.get(a.id) || [],
     // MySQL stores the flag as TINYINT(1); hand the browser a real boolean.
@@ -777,7 +785,7 @@ router.post('/:id/timer/start', async (req, res) => {
     return res.status(409).json({ error: 'The timer is already running.', running: true, since: started.since });
   }
 
-  const timer = await workTimer.summary(db, req.params.id, episode && episode.id);
+  const timer = await workTimer.summary(db, req.params.id, episode && episode.id, asset.assignee_id);
   if (moved) return res.status(200).json({ asset: moved, timer, accepted: true });
   const { rows: fresh } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [req.params.id]);
   const [withDetails] = await attachTasksAndNotes(fresh);
@@ -795,7 +803,7 @@ router.post('/:id/timer/pause', async (req, res) => {
   }
   await workTimer.pause(db, req.params.id);
   const paused = await assignments.current(db, req.params.id);
-  res.json({ timer: await workTimer.summary(db, req.params.id, paused && paused.id) });
+  res.json({ timer: await workTimer.summary(db, req.params.id, paused && paused.id, asset.assignee_id) });
 });
 
 // GET /api/assets/:id/timer — the total, the per-round breakdown, and whether
@@ -806,7 +814,7 @@ router.get('/:id/timer', async (req, res) => {
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
   if (!(await canViewAsset(req.user, asset))) return res.status(403).json({ error: 'No access to this asset' });
   const held = await assignments.current(db, req.params.id);
-  res.json({ timer: await workTimer.summary(db, req.params.id, held && held.id), canRun: mayRunTimer(req, asset) });
+  res.json({ timer: await workTimer.summary(db, req.params.id, held && held.id, asset.assignee_id), canRun: mayRunTimer(req, asset) });
 });
 
 // GET /api/assets/versions/:versionId/download — stream the uploaded file
@@ -1031,8 +1039,18 @@ router.post('/:id/reassign', async (req, res) => {
         status: asset.status, reason: 'reassigned_in_review',
       });
 
+      // The transition needs the fresh row so the routing lands on the new
+      // assignee — but the actor check must be judged against the asset as it
+      // WAS. contextFor recomputes canHandOver from whatever row it is given,
+      // and the row now names the incoming person, so re-deriving it here asked
+      // "is this lead in charge of the person receiving it" instead of "of the
+      // person handing it over". Hand work to somebody on another team and the
+      // handover was refused after the assignee had already been written — a
+      // rollback, and a refusal message that made no sense to the lead reading
+      // it. `allowed` is that same question, answered above against the row
+      // before it changed, so carry it rather than asking again.
       const { rows: fresh } = await conn.query('SELECT * FROM assets WHERE id = $1', [asset.id]);
-      const ctx = await contextFor(req, fresh[0]);
+      const ctx = { ...(await contextFor(req, fresh[0])), canHandOver: allowed };
       const verdict = workflow.evaluate('reassign_review', ctx);
       if (!verdict.ok) {
         await conn.query('ROLLBACK');
