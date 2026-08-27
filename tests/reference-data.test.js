@@ -477,3 +477,24 @@ test('categories are a managed list like the others, starting empty', async () =
   const keys = catalog.GROUPS.flatMap((g) => g.permissions).map((p) => p.key);
   assert.ok(keys.includes('settings.categories'), 'managing the list needs its own permission');
 });
+
+test('a derived code prefix never collides with one already taken', () => {
+  /* code_prefix is UNIQUE and the first three letters of two labels collide
+     often. Deriving the prefix and inserting it hopefully is what made adding
+     "Stone Wall" after "Storyboard" a 500 — from the Settings screen as well
+     as from an import. */
+  const referenceData2 = require('../src/reference-data');
+  const cache = referenceData2.list('asset_types', { includeInactive: true });
+  const taken = new Set(cache.map((e) => e.codePrefix));
+
+  // Whatever the seeded list holds, a fresh derivation must not duplicate it.
+  for (const entry of cache) {
+    const derived = referenceData2.uniqueCodePrefix(entry.label);
+    assert.ok(!taken.has(derived) || derived === undefined,
+      `${entry.label} derived ${derived}, which is already in use`);
+  }
+
+  // And it stays letters, so it still matches what the screen accepts by hand.
+  const derived = referenceData2.uniqueCodePrefix('Storyboard');
+  assert.match(String(derived), /^[A-Z]{1,6}$/);
+});

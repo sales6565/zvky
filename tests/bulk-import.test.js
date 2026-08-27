@@ -101,7 +101,7 @@ test('Man Hours is required, and must be a positive number', () => {
 });
 
 test('every row error names the row, the column and the reason', () => {
-  const result = assetImport.validateRow({ name: '', type: 'nope', category: '', man_hours: '' }, 7);
+  const result = assetImport.validateRow({ name: '', type: '', category: '', man_hours: '' }, 7);
   assert.strictEqual(result.ok, false);
   for (const error of result.errors) {
     assert.strictEqual(error.row, 7);
@@ -225,10 +225,10 @@ test('bulk import', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       'No.,Assets Name,Category,Scope of Work,Man Hours',
       '1,Keeper One,Slot Game,prop,5',
       '2,,Slot Game,prop,5',
-      '3,Bad Scope,Slot Game,notatype,5',
-      '4,Bad Hours,Slot Game,prop,notanumber',
-      '5,No Hours,Slot Game,prop,',
-      '6,No Category,,prop,5',
+      '3,Bad Hours,Slot Game,prop,notanumber',
+      '4,No Hours,Slot Game,prop,',
+      '5,No Category,,prop,5',
+      '6,No Scope,Slot Game,,5',
       '7,Keeper Two,Table Game,fx,3',
       '',
     ].join('\n');
@@ -242,10 +242,11 @@ test('bulk import', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       assert.ok(error.message);
     }
     assert.deepStrictEqual(result.body.errors.map((e) => e.row), [3, 4, 5, 6, 7]);
-    // Each failure named by the header the sheet uses.
+    // Each failure named by the header the sheet uses. A blank cell is still an
+    // error in both open lists — only an unheard-of NAME is added.
     assert.deepStrictEqual(
       result.body.errors.map((e) => e.column),
-      ['Assets Name', 'Scope of Work', 'Man Hours', 'Man Hours', 'Category'],
+      ['Assets Name', 'Man Hours', 'Man Hours', 'Category', 'Scope of Work'],
     );
     stillResponsive(result);
   });
@@ -363,12 +364,58 @@ test('bulk import', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     }
   });
 
-  await t.test('an unknown Scope of Work is still refused, not created', async () => {
+  await t.test('a Scope of Work the sheet names but Settings does not hold is created', async () => {
+    const before = (await api(server.base, '/reference/asset-types', { token })).body.entries;
+    assert.ok(!before.some((t2) => /Storyboard/i.test(t2.label)));
+
     const result = await upload('newscope.csv',
-      'Assets Name,Category,Scope of Work,Man Hours\nOdd One,Slot Game,invented,4\n');
+      'Assets Name,Category,Scope of Work,Man Hours\n'
+      + 'Opening Titles,Slot Game,Storyboard,4\n'
+      + 'Closing Titles,Slot Game,storyboard,4\n'   // same scope, typed differently
+      + 'Stone Arch,Slot Game,Stone Wall,4\n');     // first three letters collide with STO
+    assert.strictEqual(result.status, 201, JSON.stringify(result.body));
+
+    assert.deepStrictEqual(result.body.createdScopes.map((t2) => t2.label).sort(),
+      ['Stone Wall', 'Storyboard']);
+
+    const after = (await api(server.base, '/reference/asset-types', { token })).body.entries;
+    assert.strictEqual(after.filter((t2) => /^storyboard$/i.test(t2.label)).length, 1,
+      'case differences must not produce two scopes');
+
+    /* code_prefix is UNIQUE and both of these start STO. Deriving the prefix
+       blindly is what used to make the second one a 500. */
+    const prefixes = after.map((t2) => t2.codePrefix);
+    assert.strictEqual(new Set(prefixes).size, prefixes.length, `prefixes collided: ${prefixes}`);
+
+    const key = after.find((t2) => /^storyboard$/i.test(t2.label)).key;
+    const assets = (await api(server.base, `/assets/project/${projectId}`, { token })).body.assets;
+    for (const name of ['Opening Titles', 'Closing Titles']) {
+      assert.strictEqual(assets.find((a) => a.name === name).type, key);
+    }
+    // And the asset code is built from the newly derived prefix.
+    const arch = assets.find((a) => a.name === 'Stone Arch');
+    const archPrefix = after.find((t2) => t2.key === arch.type).codePrefix;
+    assert.ok(arch.code.startsWith(`${archPrefix}-`), `${arch.code} should start with ${archPrefix}`);
+  });
+
+  await t.test('a blank Scope of Work is still an error, not a new scope', async () => {
+    const result = await upload('blankscope.csv',
+      'Assets Name,Category,Scope of Work,Man Hours\nNo Scope At All,Slot Game,,4\n');
     assert.strictEqual(result.status, 207, JSON.stringify(result.body));
     assert.strictEqual(result.body.created, 0);
     assert.strictEqual(result.body.errors[0].column, 'Scope of Work');
+  });
+
+  await t.test('re-uploading matches on the resolved scope, not the raw text', async () => {
+    /* The sheet says "FX"; the database holds "fx". Compared as raw strings,
+       the second upload would find no match and duplicate every asset. */
+    const csv = 'Assets Name,Category,Scope of Work,Man Hours\nCase Test,Slot Game,FX,4\n';
+    const first = await upload('case1.csv', csv);
+    assert.strictEqual(first.body.created, 1, JSON.stringify(first.body));
+    const second = await upload('case2.csv',
+      'Assets Name,Category,Scope of Work,Man Hours\nCase Test,Slot Game,fx,4\n');
+    assert.strictEqual(second.body.created, 0, 'the same asset must not import twice');
+    assert.ok(/already exists/.test(second.body.errors[0].message), second.body.errors[0].message);
   });
 
   await t.test('imported assets carry Category, Scope of Work and Man Hours', async () => {
@@ -454,5 +501,53 @@ test('every distinct new category in a sheet is added, not just the first', {
     const byName = Object.fromEntries(assets.map((a) => [a.name, a.category]));
     assert.strictEqual(byName['Repeat A'], byName['Asset 0']);
     assert.strictEqual(byName['Repeat B'], byName['Asset 1']);
+  });
+});
+
+test('an import appends to the value lists rather than reordering them', {
+  skip: config('appendpos') ? false : SKIP_REASON,
+}, async (t) => {
+  /* The seeded scopes of work carry deliberate positions, and that is the
+     order the dropdowns show. A value created by an import takes position 0 so
+     it lands after them — otherwise importing eleven new scopes scattered them
+     through the curated list. */
+  const cfg2 = config('appendpos');
+  const PASSWORD = 'Append-Pos-1!';
+  let server; let token; let projectId;
+
+  t.before(async () => {
+    await resetSchema(cfg2);
+    server = await startServer(cfg2, { BOOTSTRAP_TOKEN: 'tok' });
+    await api(server.base, '/auth/bootstrap', { method: 'POST',
+      body: { token: 'tok', name: 'Root', email: 'root@zvky.test', password: PASSWORD } });
+    token = (await api(server.base, '/auth/login', { method: 'POST',
+      body: { email: 'root@zvky.test', password: PASSWORD } })).body.token;
+    const clientId = await systemClientId(server.base, token);
+    projectId = (await api(server.base, '/projects', { method: 'POST', token,
+      body: { clientId, name: 'Append Target' } })).body.project.id;
+  });
+  t.after(() => stopServer(server));
+
+  await t.test('seeded scopes keep their order; imported ones follow', async () => {
+    const before = (await api(server.base, '/reference/asset-types', { token }))
+      .body.entries.map((e) => e.key);
+
+    const form = new FormData();
+    form.append('file', new Blob([
+      'Assets Name,Category,Scope of Work,Man Hours\n'
+      + 'A,Slot Game,Aardvark Pass,4\n'   // sorts first alphabetically
+      + 'B,Slot Game,Rigging,4\n',
+    ], { type: 'text/csv' }), 'append.csv');
+    const res = await fetch(`${server.base}/assets/project/${projectId}/bulk`, {
+      method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form,
+    });
+    assert.strictEqual(res.status, 201, JSON.stringify(await res.json()).slice(0, 200));
+
+    const after = (await api(server.base, '/reference/asset-types', { token }))
+      .body.entries.map((e) => e.key);
+    // The originals, in their original order, then the new ones.
+    assert.deepStrictEqual(after.slice(0, before.length), before,
+      'an import must not reorder the list somebody curated');
+    assert.strictEqual(after.length, before.length + 2);
   });
 });

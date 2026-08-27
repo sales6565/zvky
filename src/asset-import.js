@@ -111,13 +111,15 @@ const COLUMNS = [
     header: 'Scope of Work',
     accepts: ['scope_of_work', 'scope_of_the_work', 'type'],
     required: true,
-    get describe() { return `One of ${assetTypes().join(', ')}`; },
+    /* Like Category, a value Settings does not hold yet is CREATED rather than
+       refused, so this checks only that something sane is there. Matching it,
+       or adding it, happens in the endpoint where there is a database. */
+    get describe() { return `One of ${assetTypes().join(', ')} — a new one is added to the list`; },
     example: ['fx', 'prop', 'environment'],
     parse(raw) {
-      const value = String(raw ?? '').trim().toLowerCase();
+      const value = String(raw ?? '').trim();
       if (!value) return { error: 'is required' };
-      const allowed = assetTypes();
-      if (!allowed.includes(value)) return { error: `must be one of ${allowed.join(', ')}` };
+      if (value.length > 100) return { error: `is ${value.length} characters; the limit is 100` };
       return { value };
     },
   },

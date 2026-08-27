@@ -68,6 +68,39 @@ function toCodePrefix(label) {
   return (letters.slice(0, 3) || 'AST');
 }
 
+/* The same three letters, but guaranteed not to be taken.
+
+   code_prefix is UNIQUE, and the first three letters of two labels collide
+   often — "Storyboard" and "Stone Wall" are both STO. Deriving the prefix and
+   inserting it hopefully meant the second one died on the unique key and came
+   back as a 500, which is what somebody adding a value in Settings actually
+   saw. Widening to four, five, six letters covers most of it; past that, a
+   third letter is substituted. Returns null when nothing is free, so the
+   caller can say so rather than letting the database refuse it. */
+function uniqueCodePrefix(label, { excludeKey } = {}) {
+  const taken = new Set(
+    (cache.asset_types || [])
+      .filter((e) => e.key !== excludeKey && e.codePrefix)
+      .map((e) => String(e.codePrefix).toUpperCase())
+  );
+  const letters = String(label).toUpperCase().replace(/[^A-Z]/g, '') || 'AST';
+
+  const candidates = [];
+  for (let n = 3; n <= 6; n++) if (letters.length >= n) candidates.push(letters.slice(0, n));
+  candidates.push(letters.slice(0, 3).padEnd(3, 'X'));
+  // Keep the first two letters, walk the third: STA, STB, STC …
+  const stem = letters.slice(0, 2).padEnd(2, 'X');
+  for (let c = 0; c < 26; c++) candidates.push(stem + String.fromCharCode(65 + c));
+  // Then a fourth: STAA, STAB …
+  for (let c = 0; c < 26; c++) {
+    for (let d = 0; d < 26; d++) {
+      candidates.push(stem + String.fromCharCode(65 + c) + String.fromCharCode(65 + d));
+    }
+  }
+
+  return candidates.find((p) => !taken.has(p)) || null;
+}
+
 // --- shaping rows for consumers ---------------------------------------------
 function shape(name, row) {
   const base = {
@@ -255,7 +288,15 @@ async function create(db, name, payload) {
   const id = uuid();
 
   if (name === 'asset_types') {
-    const prefix = (String(payload.codePrefix ?? '').trim().toUpperCase()) || toCodePrefix(label);
+    // A prefix somebody typed is used as given — validate() has already
+    // refused it if it clashes. One we derive has to avoid the collision
+    // ourselves, or the UNIQUE key refuses the insert as a 500.
+    const given = String(payload.codePrefix ?? '').trim().toUpperCase();
+    const prefix = given || uniqueCodePrefix(label);
+    if (!prefix) {
+      return { ok: false, status: 400, errors: [{ field: 'codePrefix',
+        message: 'Could not find a free code prefix for that name. Give one explicitly.' }] };
+    }
     await db.query(
       'INSERT INTO asset_types (id, `key`, label, code_prefix, color, position, is_active, is_system) VALUES ($1,$2,$3,$4,$5,$6,1,0)',
       [id, key, label, prefix, color, position]
@@ -304,7 +345,9 @@ async function update(db, name, key, payload) {
   const values = [String(merged.label).trim(), merged.color || null, Number(merged.position) || 0];
   if (name === 'asset_types') {
     sets.push('code_prefix = $4');
-    values.push(String(merged.codePrefix || toCodePrefix(merged.label)).toUpperCase());
+    values.push(String(
+      merged.codePrefix || uniqueCodePrefix(merged.label, { excludeKey: key }) || current.codePrefix
+    ).toUpperCase());
   } else if (name === 'roles') {
     sets.push('group_name = $4', 'tier = $5');
     values.push(String(merged.group).trim(), String(merged.tier).trim());
@@ -359,6 +402,7 @@ module.exports = {
   loadedAt,
   COLLECTIONS,
   COLLECTION_NAMES,
+  uniqueCodePrefix,
   load,
   isLoaded,
   seedCache,

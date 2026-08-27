@@ -2519,6 +2519,15 @@ function showImportResult(data, ok, entity){
      import. Saying so here is the difference between a feature and a silent
      edit to a list somebody else maintains. */
   const newCats = Array.isArray(data.createdCategories) ? data.createdCategories : [];
+  const newScopes = Array.isArray(data.createdScopes) ? data.createdScopes : [];
+  const addedNote = (label, list, where) => list.length
+    ? `<div style="font-size:12px;color:var(--ink-muted);margin-bottom:10px;">
+        Added ${list.length} ${list.length===1?label.one:label.many} to your list:
+        <span class="mono" style="color:var(--ink);">${list.slice(0,12).map(c=>escapeHTML(c.label)).join(', ')}</span>${
+          list.length > 12 ? ` <span style="color:var(--ink-faint);">and ${list.length-12} more</span>` : ''}.
+        Rename or deactivate them under Settings → ${where}.
+      </div>`
+    : '';
 
   body.innerHTML = `
     <div class="import-summary">
@@ -2526,12 +2535,8 @@ function showImportResult(data, ok, entity){
       <div><strong style="color:var(--approved);">${data.created}</strong>imported</div>
       <div class="bad"><strong>${errors.length}</strong>skipped</div>
     </div>
-    ${newCats.length ? `<div style="font-size:12px;color:var(--ink-muted);margin-bottom:10px;">
-      Added ${newCats.length} ${newCats.length===1?'category':'categories'} to your list:
-      <span class="mono" style="color:var(--ink);">${newCats.slice(0,12).map(c=>escapeHTML(c.label)).join(', ')}</span>${
-        newCats.length > 12 ? ` <span style="color:var(--ink-faint);">and ${newCats.length-12} more</span>` : ''}.
-      Rename or deactivate them under Settings → Categories.
-    </div>` : ''}
+    ${addedNote({one:'category', many:'categories'}, newCats, 'Categories')}
+    ${addedNote({one:'scope of work', many:'scopes of work'}, newScopes, 'Scope of Work')}
     ${errors.length ? `
       <div style="font-size:12px;color:var(--ink-muted);margin-bottom:8px;">
         These rows were not imported. Everything else was. Fix them and upload just those rows again.
@@ -2569,7 +2574,9 @@ async function runBulkUpload({ file, path, entity, buttonId, onDone }){
        otherwise the Assets List prints the raw key (slot_game) where the label
        belongs, and the panel's Category dropdown, not finding the value it was
        given, falls back to showing "None" for an asset that has one. */
-    if(res.ok && Array.isArray(data.createdCategories) && data.createdCategories.length){
+    const addedLists = (Array.isArray(data.createdCategories) ? data.createdCategories.length : 0)
+      + (Array.isArray(data.createdScopes) ? data.createdScopes.length : 0);
+    if(res.ok && addedLists){
       try{ await loadReferenceData(); }catch(err){ /* the redraw below still runs */ }
     }
     showImportResult(data, res.ok, entity);

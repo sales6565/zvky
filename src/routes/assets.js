@@ -1366,7 +1366,13 @@ router.post('/project/:projectId/bulk', requirePermission('asset.bulk_upload'), 
     'SELECT `name`, `type` FROM assets WHERE project_id = $1',
     [projectId]
   );
-  const existing = new Set(existingRows.map((r) => `${String(r.name).toLowerCase()} ${r.type}`));
+  /* Compare loosely on both halves. The sheet carries whatever somebody typed
+     into Scope of Work ("FX", "fx", "F X"); the database holds the key. Left
+     as a raw string comparison, re-uploading the same file would have found no
+     match and created every asset a second time. */
+  const flatten = (v) => String(v ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const identityOf = (name, type) => `${String(name).trim().toLowerCase()}|${flatten(type)}`;
+  const existing = new Set(existingRows.map((r) => identityOf(r.name, r.type)));
 
   for (let i = 0; i < records.length; i++) {
     const rowNumber = i + 2; // the header is row 1
@@ -1376,7 +1382,7 @@ router.post('/project/:projectId/bulk', requirePermission('asset.bulk_upload'), 
       continue;
     }
     const { values } = result;
-    const identity = `${values.name.toLowerCase()} ${values.type}`;
+    const identity = identityOf(values.name, values.type);
 
     if (seenInFile.has(identity)) {
       errors.push({
@@ -1398,56 +1404,81 @@ router.post('/project/:projectId/bulk', requirePermission('asset.bulk_upload'), 
     if (i % 500 === 499) await yieldToLoop(); // stay responsive on a big file
   }
 
-  /* --- categories ---------------------------------------------------------
-     
-     Unlike Scope of Work, a category the sheet names but Settings does not yet
+  /* --- the two open value lists ------------------------------------------
+
+     A Category or a Scope of Work the sheet names but Settings does not yet
      hold is CREATED rather than refused, so a studio can bring its taxonomy in
      with its first import instead of typing it twice.
-     
-     Matching is case- and spacing-insensitive against both the label people
-     read and the key the database stores, so "Slot Game", "slot game" and
-     "slot_game" are one category and not three. A name genuinely not seen
-     before is added once, however many rows use it, and the response says
-     which ones were added — creating them quietly would make a typo in a
-     spreadsheet an invisible change to a Settings list. */
-  const normaliseCategory = (v) => String(v ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
-  const categoryByName = new Map();
-  const indexCategory = (entry) => {
-    categoryByName.set(normaliseCategory(entry.label), entry.key);
-    categoryByName.set(normaliseCategory(entry.key), entry.key);
-  };
-  referenceData.list('categories', { includeInactive: true }).forEach(indexCategory);
 
-  const createdCategories = [];
-  // First spelling in the file wins: rows 2 and 9 saying "Bonus Round" and
-  // "bonus round" are one category, labelled the way it was first written.
-  const wanted = new Map();
-  for (const v of valid) {
-    const normalised = normaliseCategory(v.values.category);
-    if (!wanted.has(normalised)) wanted.set(normalised, v.values.category);
-  }
-  for (const [normalised, label] of wanted) {
-    if (categoryByName.has(normalised)) continue;
-    const made = await referenceData.create(db, 'categories', { label });
-    if (made.ok) {
-      indexCategory(made.entry);
-      createdCategories.push({ key: made.entry.key, label: made.entry.label });
+     Matching is case- and punctuation-insensitive against both the label
+     people read and the key the database stores, so "Slot Game", "slot game"
+     and "slot_game" are one value and not three. A name genuinely not seen
+     before is added once, however many rows use it, under the first spelling
+     in the file — and the response says what was added, because adding to a
+     list somebody else maintains should never be silent. */
+  async function resolveList(collection, field) {
+    const byName = new Map();
+    const index = (entry) => {
+      byName.set(flatten(entry.label), entry.key);
+      byName.set(flatten(entry.key), entry.key);
+    };
+    referenceData.list(collection, { includeInactive: true }).forEach(index);
+
+    // First spelling in the file wins, so the label reads the way it was
+    // first written rather than the way the last row happened to type it.
+    const wanted = new Map();
+    for (const v of valid) {
+      const flat = flatten(v.values[field]);
+      if (!wanted.has(flat)) wanted.set(flat, v.values[field]);
     }
-    // A category that could not be created leaves its rows to fail below with
-    // a per-row message, rather than failing the whole file here.
+
+    const created = [];
+    for (const [flat, label] of wanted) {
+      if (byName.has(flat)) continue;
+      /* Position 0 so an import appends to the list rather than landing in the
+         middle of it. The seeded scopes of work carry deliberate positions
+         (Character 60 … Background 10) and that is the order the dropdown
+         shows; without this, eleven imported values sorted in among them and
+         the curated order was gone. */
+      const made = await referenceData.create(db, collection, { label, position: 0 });
+      if (made.ok) {
+        index(made.entry);
+        created.push({ key: made.entry.key, label: made.entry.label });
+      }
+      /* One that could not be created — a name that reduces to nothing, or an
+         asset type with no free code prefix left — leaves its rows to fail
+         below with a per-row message, rather than failing the whole file. */
+    }
+    return { byName, created };
   }
+
+  const categories = await resolveList('categories', 'category');
+  // Asset types carry a UNIQUE code prefix, which is derived here; the asset
+  // codes built further down read the list again, so a type added just now is
+  // already in it.
+  const scopes = await resolveList('asset_types', 'type');
 
   const ready = [];
   for (const entry of valid) {
-    const key = categoryByName.get(normaliseCategory(entry.values.category));
-    if (!key) {
+    const categoryKey = categories.byName.get(flatten(entry.values.category));
+    if (!categoryKey) {
       errors.push({
         row: entry.rowNumber, column: 'Category', value: entry.values.category,
         message: 'could not be matched to a category, and could not be added as a new one',
       });
       continue;
     }
-    entry.category = key;
+    const scopeKey = scopes.byName.get(flatten(entry.values.type));
+    if (!scopeKey) {
+      errors.push({
+        row: entry.rowNumber, column: 'Scope of Work', value: entry.values.type,
+        message: 'could not be matched to a scope of work, and could not be added as a new one',
+      });
+      continue;
+    }
+    // The row carried whatever the sheet said; from here on it is the key.
+    entry.values.type = scopeKey;
+    entry.category = categoryKey;
     // Priority, assignee, deadline and description are not imported columns.
     // Every imported asset starts unassigned with the default priority, and
     // gets the rest in the asset panel.
@@ -1552,9 +1583,10 @@ router.post('/project/:projectId/bulk', requirePermission('asset.bulk_upload'), 
     skipped: errors.length,
     totalRows: records.length,
     createdAssets: created,
-    // Named so a category the sheet invented is visible, not a silent edit to
-    // a Settings list.
-    createdCategories,
+    // Named so a value the sheet invented is visible, not a silent edit to a
+    // Settings list.
+    createdCategories: categories.created,
+    createdScopes: scopes.created,
     errors,
   });
 });
