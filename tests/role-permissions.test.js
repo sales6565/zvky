@@ -11,6 +11,39 @@ const cfg = config('roleperms');
 
 // --- the catalogue and the seed ------------------------------------------------
 
+test('no feature is gated on a role NAME anywhere', () => {
+  // The report that keeps coming back: "this section is hidden for my role, it
+  // must be checking for 'Team Lead' by name". It is not, and this fails if it
+  // ever becomes true. Every gate asks the role's PERMISSIONS, so granting one
+  // in Settings is the whole of what it takes to open a section.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const root = path.join(__dirname, '..');
+  const files = ['public/index.html', 'src/permissions.js', 'src/asset-workflow.js']
+    .concat(fs.readdirSync(path.join(root, 'src', 'routes')).map((f) => `src/routes/${f}`));
+
+  const offenders = [];
+  for (const rel of files) {
+    const text = fs.readFileSync(path.join(root, rel), 'utf8');
+    text.split('\n').forEach((line, i) => {
+      // A role compared against a string literal. `tier === 'super_admin'` is a
+      // tier, not a role name, and is allowed — it guards confirmation prompts,
+      // never a feature.
+      if (/\.role\s*(===?|!==?)\s*['"]/.test(line)) offenders.push(`${rel}:${i + 1} ${line.trim()}`);
+    });
+  }
+  assert.deepStrictEqual(offenders, [],
+    `these gate on a role name instead of a permission:\n${offenders.join('\n')}`);
+
+  // And the section this was reported about, specifically.
+  const page = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
+  assert.match(page, /const canTlReview = can\('review\.tl'\)/,
+    'the TL review controls must be gated on the review.tl permission');
+  assert.match(page, /const canCdReview = can\('review\.cd'\)/);
+  assert.match(page, /function mayHandOverInReview\(a\)\{\s*\n\s*if\(!can\('asset\.assign'\)\) return false;/,
+    'and so must the handover, so it cannot grow the same bug later');
+});
+
 test('the catalogue covers the groups that were asked for', () => {
   assert.deepStrictEqual(catalog.GROUPS.map((g) => g.label), [
     'User Management', 'Asset Management', 'Review Workflow',
@@ -176,7 +209,7 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     projectId = (await call('/projects', { token: token.root, method: 'POST', body: { clientId, name: 'Skyfall' } })).body.project.id;
 
     for (const [who, role] of [['pat', 'producer'], ['quinn', 'producer'], ['lee', 'team_lead'],
-      ['dana', 'art_director'], ['ana', 'game_artist']]) {
+      ['dana', 'art_director'], ['ana', 'game_artist'], ['pm', 'project_manager']]) {
       const res = await call('/users', {
         token: token.root, method: 'POST',
         body: { name: who, email: `${who}@zvky.test`, role, password: PASSWORD, projectId },
@@ -469,6 +502,36 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
     await as('root', '/permissions/roles/team_lead/reset', { method: 'POST', body: {} });
     await as('root', '/permissions/roles/producer/reset', { method: 'POST', body: {} });
+  });
+
+  await t.test('a grant reaches a session that is already signed in', async () => {
+    // Why "I granted it and nothing happened" kept being reported. The page
+    // read its permission list once, at sign-in, and never asked again — so an
+    // open tab kept answering from before the grant, and the only cure nobody
+    // knew about was signing out. The token is not the problem and never was:
+    // it names the person, and the permissions are looked up per request.
+    const before = await enabledFor('project_manager');
+    assert.ok(!before.includes('review.tl'), 'not held to begin with');
+
+    // Somebody signs in now, before the grant.
+    const session = (await call('/auth/login', {
+      method: 'POST', body: { email: 'pm@zvky.test', password: PASSWORD },
+    })).body;
+    assert.ok(!(session.user.permissions || []).includes('review.tl'),
+      'and their sign-in says so');
+
+    await setRole('project_manager', [...before, 'review.tl']);
+    try {
+      assert.ok((await enabledFor('project_manager')).includes('review.tl'), 'the role has it now');
+
+      // Same token, no second sign-in. This is what the page re-reads.
+      const me = await call('/auth/me', { token: session.token });
+      assert.strictEqual(me.status, 200);
+      assert.ok((me.body.user.permissions || []).includes('review.tl'),
+        'and the session it belongs to can see it without signing out again');
+    } finally {
+      await setRole('project_manager', before);
+    }
   });
 
   await t.test('the Creative Director gate follows review.cd, not reviewStage', async () => {

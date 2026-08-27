@@ -597,6 +597,30 @@ function fullAccess(){ const c = caps(); return Boolean(c.manageUsers && c.proje
 
 /* The permission list this account holds, as decided by its role. */
 function perms(){ return (state.currentUser && state.currentUser.permissions) || []; }
+
+/* Permissions belong to the role, and a role can be edited while somebody is
+   using the app. This list was read once at sign-in and never asked about
+   again, so granting a permission changed nothing the person could see until
+   they signed out and back in — an open tab kept the answers it cached before
+   the grant. That is a slow, confusing failure: the setting says the role has
+   it, the screen behaves as though it does not, and nothing explains the gap.
+   
+   So re-read it, no more often than this, and redraw when it has actually
+   changed. One request every twenty seconds is a small price for a Settings
+   change that takes effect where somebody can see it. */
+const PERMISSION_REFRESH_MS = 20000;
+let permissionsCheckedAt = 0;
+async function refreshPermissions(){
+  if(!state.token || !state.currentUser) return false;
+  if(Date.now() - permissionsCheckedAt < PERMISSION_REFRESH_MS) return false;
+  permissionsCheckedAt = Date.now();
+  const before = perms().join(',');
+  try{
+    const { user } = await api('/auth/me');
+    state.currentUser = user;
+  }catch(e){ return false; }          /* a blip must not blank the screen */
+  return perms().join(',') !== before;
+}
 /* can('asset.add') — and can('a','b') for "either of these". */
 function can(){
   const held = perms();
@@ -1309,6 +1333,15 @@ async function render(){
   const viewIds = { board:'boardView', list:'listView', team:'teamView',
     users:'usersView', projects:'projectsView', settings:'settingsView' };
   try{
+  /* If the role gained or lost something since this page loaded, the tabs and
+     toolbar buttons have to be re-decided too — they are applied once at boot
+     and would otherwise keep the shape they had at sign-in. */
+  if(await refreshPermissions()){
+    ['teamTabBtn','projectsTabBtn','usersTabBtn','settingsTabBtn','newProjectBtn'].forEach(id=>applyGate(id));
+    if(state.openAssetId && document.getElementById('drawer').classList.contains('show')){
+      openDrawer(state.openAssetId);
+    }
+  }
   if(state.view==='board' || state.view==='list'){ await loadAssets(); }
   renderStats();
   /* The permission half comes from UI_GATES; this is the other half — these
@@ -1688,6 +1721,9 @@ function fmtDate(s){ return s ? new Date(s).toLocaleString(undefined,{month:'sho
 async function openDrawer(id){
   const a = state.assets.find(x=>x.id===id);
   if(!a) return;
+  /* Which asset is on screen, so a permission change can redraw this panel
+     rather than leaving it showing the shape it had a moment ago. */
+  state.openAssetId = id;
   const u = state.currentUser;
   /* The permission, and then whose asset it is. Both have to be yes. */
   const editable = can('asset.edit') && ownsAsset(a);
@@ -2244,6 +2280,7 @@ async function loadAssetHistory(id){
 }
 
 function closeDrawer(){
+  state.openAssetId = null;
   if(window.__timerTick){ clearInterval(window.__timerTick); window.__timerTick = null; }
   document.getElementById('overlay').classList.remove('show'); document.getElementById('drawer').classList.remove('show');
 }
