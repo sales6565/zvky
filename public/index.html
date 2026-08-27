@@ -2527,7 +2527,9 @@ function showImportResult(data, ok, entity){
       <div class="bad"><strong>${errors.length}</strong>skipped</div>
     </div>
     ${newCats.length ? `<div style="font-size:12px;color:var(--ink-muted);margin-bottom:10px;">
-      Added to your Category list: <span class="mono" style="color:var(--ink);">${newCats.map(c=>escapeHTML(c.label)).join(', ')}</span>.
+      Added ${newCats.length} ${newCats.length===1?'category':'categories'} to your list:
+      <span class="mono" style="color:var(--ink);">${newCats.slice(0,12).map(c=>escapeHTML(c.label)).join(', ')}</span>${
+        newCats.length > 12 ? ` <span style="color:var(--ink-faint);">and ${newCats.length-12} more</span>` : ''}.
       Rename or deactivate them under Settings → Categories.
     </div>` : ''}
     ${errors.length ? `

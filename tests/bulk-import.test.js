@@ -394,3 +394,65 @@ test('bulk import', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(health.body.ok, true);
   });
 });
+
+test('every distinct new category in a sheet is added, not just the first', {
+  skip: config('manycat') ? false : SKIP_REASON,
+}, async (t) => {
+  /* "Add all of them" is the point: a sheet bringing in a studio's whole
+     taxonomy at once has to end with the whole taxonomy in Settings, with each
+     asset pointing at its own category — not with one category created and the
+     rest of the rows sharing it or failing. */
+  const cfg2 = config('manycat');
+  const PASSWORD = 'Many-Cat-1!';
+  let server; let token; let projectId;
+
+  t.before(async () => {
+    await resetSchema(cfg2);
+    server = await startServer(cfg2, { BOOTSTRAP_TOKEN: 'tok' });
+    await api(server.base, '/auth/bootstrap', { method: 'POST',
+      body: { token: 'tok', name: 'Root', email: 'root@zvky.test', password: PASSWORD } });
+    token = (await api(server.base, '/auth/login', { method: 'POST',
+      body: { email: 'root@zvky.test', password: PASSWORD } })).body.token;
+    const clientId = await systemClientId(server.base, token);
+    projectId = (await api(server.base, '/projects', { method: 'POST', token,
+      body: { clientId, name: 'Many Categories' } })).body.project.id;
+  });
+  t.after(() => stopServer(server));
+
+  await t.test('a sheet of many different categories brings all of them in', async () => {
+    const N = 40;
+    const rows = ['No.,Assets Name,Category,Scope of Work,Man Hours'];
+    for (let i = 0; i < N; i++) {
+      rows.push(`${i + 1},Asset ${i},Category ${String(i).padStart(2, '0')},prop,4`);
+    }
+    // Two more rows repeating categories already named above, differently cased,
+    // so "all of them" cannot be read as "one per row".
+    rows.push(`${N + 1},Repeat A,category 00,prop,4`);
+    rows.push(`${N + 2},Repeat B,CATEGORY 01,prop,4`);
+
+    const form = new FormData();
+    form.append('file', new Blob([rows.join('\n')], { type: 'text/csv' }), 'many.csv');
+    const res = await fetch(`${server.base}/assets/project/${projectId}/bulk`, {
+      method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form,
+      signal: AbortSignal.timeout(120000),
+    });
+    const body = await res.json();
+    assert.strictEqual(res.status, 201, JSON.stringify(body).slice(0, 300));
+    assert.strictEqual(body.created, N + 2);
+
+    // N created — the two repeats matched existing ones rather than adding more.
+    assert.strictEqual(body.createdCategories.length, N,
+      'each distinct category added once, repeats matched to what was already there');
+
+    const entries = (await api(server.base, '/reference/categories', { token })).body.entries;
+    assert.strictEqual(entries.length, N);
+
+    // Every asset points at its own category, and the repeats share theirs.
+    const assets = (await api(server.base, `/assets/project/${projectId}`, { token })).body.assets;
+    assert.strictEqual(assets.filter((a) => a.category).length, N + 2);
+    assert.strictEqual(new Set(assets.map((a) => a.category)).size, N);
+    const byName = Object.fromEntries(assets.map((a) => [a.name, a.category]));
+    assert.strictEqual(byName['Repeat A'], byName['Asset 0']);
+    assert.strictEqual(byName['Repeat B'], byName['Asset 1']);
+  });
+});
