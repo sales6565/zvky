@@ -208,24 +208,24 @@ async function canHandOverInReview(user, asset) {
 
 // Who may work the checklist on an asset.
 //
-// Deliberately wider than canEditAsset, and the difference is the point. The
-// asset's record — its description, its priority, its deadline — is the
-// creator's to change, because that is the brief. The checklist is not the
-// brief: it is the working notes of whoever is doing the job and whoever is
-// checking it, so it belongs to the people around the work rather than to the
-// person who wrote the request.
+// The checklist is what the asset is measured against, so it is set by the
+// people who define and check the work rather than by the person doing it:
 //
 //   the creator (or a full-access role) — it is their asset
-//   the assignee                        — it is their work
 //   the reviewer holding it             — TL or CD, who tick things off as they check
 //
-// Note what this restores: the assignee can tick their own boxes again. The
-// creator-only rule on asset editing had taken that away, which is the right
-// answer for the record and the wrong one for a checklist.
+// The assignee is deliberately NOT on that list. They read the checklist and
+// work to it; they do not decide what is on it, and they do not declare an item
+// finished — that is the reviewer's call. This reverses an earlier default
+// where the assignee could manage the list on the reasoning that it was their
+// working notes. The studio's answer is that it is not: it is the specification
+// they are working to.
+//
+// Reading is unaffected — canViewAsset governs that — and so is everything the
+// assignee does to carry the work: accepting it, the clock, and submitting.
 async function canManageTasks(user, asset) {
   if (!user || !asset) return false;
   if (ownsAsset(user, asset)) return true;                       // creator or full access
-  if (asset.assignee_id && asset.assignee_id === user.id) return true;
   if (await isTeamLeadOfAsset(user, asset)) return true;         // the first review gate
   if (holds(user, 'review.cd') && await canViewAsset(user, asset)) return true;
   return false;

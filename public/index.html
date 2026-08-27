@@ -1703,14 +1703,16 @@ async function openDrawer(id){
   const canRunTimer = (a.assignee_id===u.id || fullAccess()) &&
     ['assigned','in_progress','tl_changes_requested','cd_changes_requested'].includes(a.status) &&
     !(a.status==='cd_changes_requested' && a.routed_to_id!==u.id && !fullAccess());
-  /* The checklist is wider than editing the record: the creator, whoever it is
-     assigned to, and the reviewer holding it. Mirrors canManageTasks in
-     src/permissions.js — the API decides, this only stops offering a control
+  /* The checklist is set by the creator and the reviewers, not by whoever is
+     carrying the work — they read it and work to it. Mirrors canManageTasks in
+     src/permissions.js; the API decides, this only stops offering a control
      that would be refused. */
   const manageTasks = ownsAsset(a)
-    || a.assignee_id === u.id
     || (can('review.tl') && a.assignee_id)
     || can('review.cd');
+  /* Say so, rather than leaving an artist to discover their checkboxes have
+     stopped responding and assume the page is broken. */
+  const tasksReadOnly = !manageTasks && a.assignee_id === u.id;
   const t = typeOf(a.type);
   const drawer = document.getElementById('drawer');
 
@@ -1779,6 +1781,9 @@ async function openDrawer(id){
       <span>Tasks</span>
       <span id="d_taskCount" style="font-size:11px;color:var(--ink-faint);text-transform:none;letter-spacing:0;">${taskProgress(a.tasks)}</span>
     </div>
+    ${tasksReadOnly ? `<div style="font-size:11px;color:var(--ink-faint);margin-bottom:6px;">
+      What this asset has to cover, set by whoever added it and by its reviewers. Yours to work to, not to change.
+    </div>` : ''}
     <div id="d_tasks">${a.tasks.map(t=>taskRowHTML(t, manageTasks)).join('')}</div>
     ${manageTasks ? `<div class="task-add">
       <input type="text" id="d_newTask" placeholder="Add a task…">

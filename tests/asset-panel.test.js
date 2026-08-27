@@ -249,14 +249,13 @@ test('the asset side panel', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual((await as('pat', `/assets/${two.id}/tasks`)).body.total, 3);
   });
 
-  await t.test('the checklist is the working group, wider than the record', async () => {
-    // The decision worth naming: the asset's record is the creator's, the
-    // checklist belongs to whoever is doing and checking the work.
+  await t.test('the checklist is set by the creator and the reviewers', async () => {
+    // The decision worth naming: the checklist is what the asset is measured
+    // against, so it is written by the people who define and check the work.
     const asset = await newAsset('pat', 'Working Group', people.ana);
     const tick = (who) => as(who, `/assets/${asset.id}/tasks`, { method: 'POST', body: { name: `note from ${who}` } });
 
     assert.strictEqual((await tick('pat')).status, 201, 'the creator');
-    assert.strictEqual((await tick('ana')).status, 201, 'the assignee');
     assert.strictEqual((await tick('lee')).status, 201, 'their team lead');
     assert.strictEqual((await tick('dana')).status, 201, 'the creative director');
     assert.strictEqual((await tick('root')).status, 201, 'full access');
@@ -265,13 +264,66 @@ test('the asset side panel', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     // still has no business in this checklist.
     const refused = await tick('quinn');
     assert.strictEqual(refused.status, 403);
-    assert.match(refused.body.error, /added this asset, whoever it is assigned to, or its reviewer/);
+    assert.match(refused.body.error, /set by whoever added this asset and by its reviewers/);
     assert.strictEqual((await tick('bo')).status, 403, 'nor an unrelated artist');
 
     // Reading it is open to anyone who can see the asset.
     assert.strictEqual((await as('quinn', `/assets/${asset.id}/tasks`)).status, 200);
     assert.strictEqual((await as('quinn', `/assets/${asset.id}/tasks`)).body.canManage, false,
       'and it says so, so the screen does not offer a control that would be refused');
+  });
+
+  await t.test('the assignee reads the checklist and cannot change any of it', async () => {
+    // Reversing an earlier default. Carrying the work does not carry the right
+    // to decide what the work is — including ticking an item off, which is a
+    // claim that something is finished and belongs to whoever checks it.
+    const asset = await newAsset('pat', 'Not Yours To Set', people.ana);
+    const seed = await as('pat', `/assets/${asset.id}/tasks`, { method: 'POST', body: { name: 'Rough pass' } });
+    assert.strictEqual(seed.status, 201);
+    const task = seed.body.task;
+
+    // Reading: yes, in full.
+    const read = await as('ana', `/assets/${asset.id}/tasks`);
+    assert.strictEqual(read.status, 200, 'the list is theirs to read');
+    assert.ok(read.body.tasks.length >= 1);
+    assert.strictEqual(read.body.canManage, false,
+      'and the answer the screen uses to decide whether to offer any control');
+
+    // Writing: none of it. All four routes, including the checkbox.
+    const add = await as('ana', `/assets/${asset.id}/tasks`, { method: 'POST', body: { name: 'mine' } });
+    assert.strictEqual(add.status, 403, 'cannot add');
+    assert.match(add.body.error, /Being assigned the work does not carry the right/);
+    assert.strictEqual((await as('ana', `/assets/tasks/${task.id}/text`, {
+      method: 'PATCH', body: { name: 'renamed' },
+    })).status, 403, 'cannot rename');
+    assert.strictEqual((await as('ana', `/assets/tasks/${task.id}`, {
+      method: 'PATCH', body: { done: true },
+    })).status, 403, 'cannot tick it off');
+    assert.strictEqual((await as('ana', `/assets/tasks/${task.id}`, {
+      method: 'DELETE',
+    })).status, 403, 'cannot delete');
+
+    // Nothing moved. (An asset is seeded with a default checklist, so this
+    // counts the change rather than the total.)
+    const after = await as('pat', `/assets/${asset.id}/tasks`);
+    assert.strictEqual(after.body.tasks.length, read.body.tasks.length,
+      'no item was added');
+    const mine = after.body.tasks.find((x) => x.id === task.id);
+    assert.strictEqual(mine.name, 'Rough pass', 'nor renamed');
+    assert.strictEqual(mine.done, false, 'nor ticked off');
+    assert.ok(!after.body.tasks.some((x) => x.name === 'mine'), 'and nothing of theirs got in');
+
+    // And carrying the work is untouched: the clock and the submission are
+    // still the assignee's, which is the half of this that must not change.
+    assert.strictEqual((await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' })).status, 200,
+      'Accept and Start still theirs');
+    assert.strictEqual((await as('ana', `/assets/${asset.id}/timer/pause`, { method: 'POST' })).status, 200,
+      'Pause still theirs');
+    assert.strictEqual((await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' })).status, 200,
+      'Resume still theirs');
+    assert.strictEqual((await as('ana', `/assets/${asset.id}/submit`, {
+      method: 'POST', body: { link: 'https://example.test/still-mine' },
+    })).status, 201, 'Submit for review still theirs');
   });
 
   await t.test('a closed project freezes the checklist and the brief', async () => {

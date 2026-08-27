@@ -517,7 +517,8 @@ async function taskGuard(req, res, assetId) {
   if (await projectClosedResponse(res, asset.project_id)) return null;
   if (!(await canManageTasks(req.user, asset))) {
     res.status(403).json({
-      error: 'Only the person who added this asset, whoever it is assigned to, or its reviewer can change its checklist.',
+      error: 'The checklist is set by whoever added this asset and by its reviewers. '
+        + 'Being assigned the work does not carry the right to change what the work is.',
     });
     return null;
   }

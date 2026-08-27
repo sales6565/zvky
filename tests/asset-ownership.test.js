@@ -174,19 +174,20 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     const seen = await seenBy('ana', asset.id);
     assert.ok(seen, 'they can still see it');
 
-    // The checklist is the exception, and the line is drawn deliberately: the
-    // asset's RECORD is the creator's — description, priority, deadline — and
-    // the CHECKLIST is the working notes of whoever is doing and checking the
-    // job. Ticking a box on your own work is not editing somebody's brief.
+    // The checklist is no exception. It is what the asset is measured against,
+    // so it is set by whoever defined the work and by whoever checks it —
+    // including ticking an item off, which is a claim that something is
+    // finished. Carrying the work does not carry that.
     assert.strictEqual((await as('ana', `/assets/tasks/${seen.tasks[0].id}`, {
       method: 'PATCH', body: { done: true },
-    })).status, 200, 'but the checklist on their own work is theirs to work');
+    })).status, 403, 'not even the checkbox on their own work');
     assert.strictEqual((await as('ana', `/assets/${asset.id}/tasks`, {
       method: 'POST', body: { name: 'Something I noticed' },
-    })).status, 201);
+    })).status, 403);
+    // Reading it is untouched — they work to it.
+    assert.ok(seen.tasks.length, 'the list is still theirs to read');
 
-    // And it really is scoped to their own: bo holds neither the asset nor the
-    // assignment, so the checklist is closed to them too.
+    // And an unrelated artist is no closer.
     assert.strictEqual((await as('bo', `/assets/tasks/${seen.tasks[0].id}`, {
       method: 'PATCH', body: { done: true },
     })).status, 403);
