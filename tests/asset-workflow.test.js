@@ -428,13 +428,19 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
     await act(id, 'submit', 'artist', { link: 'https://review.example.com/g1' });
 
-    // Not the artist, and not the CD, at the TL gate.
-    for (const who of ['artist', 'cd']) {
-      const res = await act(id, 'review', who, { decision: 'approved' });
-      assert.strictEqual(res.status, 403, `${who} must not approve at TL Review`);
-      assert.match(res.body.error, /team lead/i);
-    }
-    assert.strictEqual((await act(id, 'review', 'lead', { decision: 'approved' })).status, 200);
+    // Not the artist, at the TL gate.
+    const own = await act(id, 'review', 'artist', { decision: 'approved' });
+    assert.strictEqual(own.status, 403, 'nobody reviews their own submission');
+    assert.match(own.body.error, /team lead/i);
+
+    // The Creative Director CAN act here now, and that is a consequence of the
+    // studio's own decision rather than an accident: review.tl belongs to every
+    // role in Supervision, Creative Direction and Production, and Creative
+    // Direction is where the CD sits. It widens who may clear the first gate —
+    // it does not let anyone skip it.
+    const director = await act(id, 'review', 'cd', { decision: 'approved' });
+    assert.strictEqual(director.status, 200, 'the CD holds review.tl through their department');
+    assert.strictEqual(await statusOf(id), 'pending_cd_review', 'and it still lands at the CD gate');
 
     // Not the lead, and not the artist, at the CD gate.
     for (const who of ['lead', 'artist']) {

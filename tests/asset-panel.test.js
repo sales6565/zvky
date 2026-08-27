@@ -262,17 +262,23 @@ test('the asset side panel', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual((await tick('dana')).status, 201, 'the creative director');
     assert.strictEqual((await tick('root')).status, 201, 'full access');
 
-    // And nobody else: another Producer holds asset.edit and asset.assign and
-    // still has no business in this checklist.
-    const refused = await tick('quinn');
+    // Another Producer can, and this is a consequence of review.tl belonging to
+    // every Production role rather than only to team leads: the checklist is
+    // open to the asset's reviewers, and they are now among them. Widening the
+    // review gate widens this with it — one permission, several doors.
+    assert.strictEqual((await tick('quinn')).status, 201, 'a second Producer reviews here too');
+
+    // An artist with no part in it still cannot.
+    const refused = await tick('bo');
     assert.strictEqual(refused.status, 403);
     assert.match(refused.body.error, /set by whoever added this asset and by its reviewers/);
-    assert.strictEqual((await tick('bo')).status, 403, 'nor an unrelated artist');
 
-    // Reading it is open to anyone who can see the asset.
-    assert.strictEqual((await as('quinn', `/assets/${asset.id}/tasks`)).status, 200);
-    assert.strictEqual((await as('quinn', `/assets/${asset.id}/tasks`)).body.canManage, false,
-      'and it says so, so the screen does not offer a control that would be refused');
+    // Reading it is open to anyone who can see the asset, and the answer the
+    // screen uses says whether to offer a control at all.
+    const read = await as('ana', `/assets/${asset.id}/tasks`);
+    assert.strictEqual(read.status, 200, 'the assignee reads the list they work to');
+    assert.strictEqual(read.body.canManage, false,
+      'so the screen does not offer a control that would be refused');
   });
 
   await t.test('the assignee reads the checklist and cannot change any of it', async () => {

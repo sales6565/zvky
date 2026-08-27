@@ -221,9 +221,12 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     assert.strictEqual((await as('root', `/assets/${asset.id}`, {
       method: 'PATCH', body: { description: 'x' },
     })).status, 200, 'full access is the only way back');
+    // A Producer holds review.tl through their department now, so they have a
+    // route to reassigning in principle — and are refused on the state instead,
+    // because this asset is not in one of the two stages a handover is for.
     assert.strictEqual((await as('pat', `/assets/${asset.id}/reassign`, {
       method: 'POST', body: { assigneeId: people.bo },
-    })).status, 403, 'and it cannot be reassigned by a non-owner');
+    })).status, 409, 'refused on the stage rather than the person');
   });
 
   await t.test('reassigning through the edit is scoped to your own assets too', async () => {

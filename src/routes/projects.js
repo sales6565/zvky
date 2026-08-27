@@ -12,9 +12,29 @@ const { assignableRoles, roleDef } = require('../roles');
 router.use(authenticate);
 
 // GET /api/projects — only the projects this user is allowed to see
+//
+// Each one also says how much unfinished work in it is this person's, which is
+// what lets the app open on a project where they actually have something to do.
+// Without it the page opened on the first client that had any work at all, by
+// list order — so somebody handed an asset in a project they had not worked in
+// before signed in, landed on a different client entirely, and saw an empty
+// board. The asset was theirs, the API returned it, and the page was looking
+// somewhere else.
 router.get('/', async (req, res) => {
   const projects = await visibleProjects(req.user);
-  res.json({ projects });
+  const ids = projects.map((p) => p.id);
+  let mine = new Map();
+  if (ids.length) {
+    const { rows } = await db.query(
+      `SELECT project_id, COUNT(*) AS n FROM assets
+        WHERE assignee_id = $1 AND project_id IN ($2)
+          AND \`status\` NOT IN ('delivered', 'approved_for_client')
+        GROUP BY project_id`,
+      [req.user.id, ids]
+    ).catch(() => ({ rows: [] }));
+    mine = new Map(rows.map((r) => [r.project_id, Number(r.n) || 0]));
+  }
+  res.json({ projects: projects.map((p) => ({ ...p, my_open_assets: mine.get(p.id) || 0 })) });
 });
 
 // POST /api/projects — anyone whose role can create projects. The creator becomes the owner.

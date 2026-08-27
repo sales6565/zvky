@@ -1,5 +1,5 @@
 const { v4: uuid } = require('uuid');
-const { roleKeys } = require('./roles');
+const { roleKeys, roleDef } = require('./roles');
 const referenceData = require('./reference-data');
 const ipAllowlist = require('./ip-allowlist');
 const { applyTableOptions } = require('./db-collation');
@@ -1079,6 +1079,46 @@ async function backfillAssignedStatus(db, log) {
   log(`Schema: ${count} asset(s) had an assignee but still read as Not Assigned. Moved to Assigned.`);
 }
 
+// Roles that should run the first review gate but were never given it.
+//
+// review.tl used to come only from a role's TIER, so nine roles across
+// Supervision, Creative Direction and Production never had it — Project Manager
+// and Producer among them — and the review controls were missing for everyone
+// holding them. The default is fixed in role-permissions.js; this brings
+// databases that were seeded under the old one into line.
+//
+// Only rows still marked as seeded by the system are touched. If an
+// administrator has turned this permission off for a role, that is a decision,
+// and a migration must not quietly reverse it — updated_by_email is what tells
+// the two apart.
+async function ensureReviewGateDefaults(db, log) {
+  const keys = roleKeys().filter((k) => {
+    const def = roleDef(k);
+    return def && rolePermissions.TL_REVIEW_GROUPS.includes(def.group);
+  });
+  if (!keys.length) return;
+
+  const holes = keys.map((_, i) => `$${i + 1}`).join(',');
+  const { rows } = await db.query(
+    `SELECT role_key FROM role_permissions
+      WHERE permission_key = 'review.tl' AND enabled = 0
+        AND (updated_by_email IS NULL OR updated_by_email = 'system')
+        AND role_key IN (${holes})`,
+    keys
+  );
+  if (!rows.length) return;
+
+  await db.query(
+    `UPDATE role_permissions SET enabled = 1, updated_by_email = 'system'
+      WHERE permission_key = 'review.tl' AND enabled = 0
+        AND (updated_by_email IS NULL OR updated_by_email = 'system')
+        AND role_key IN (${holes})`,
+    keys
+  );
+  log(`Schema: TL Review Actions granted to ${rows.length} role(s) that run the first review gate:`);
+  log(`         ${rows.map((r) => r.role_key).join(', ')}.`);
+}
+
 const STEPS = [
   ['stale role constraints', dropStaleRoleConstraints],
   ['users.role column width', widenRoleColumn],
@@ -1112,6 +1152,8 @@ const STEPS = [
   // constraint was already current and the step above did nothing.
   ['assigned backfill', backfillAssignedStatus],
   ['permission catalogue top-up', ensurePermissionCatalogueComplete],
+  // After the catalogue top-up, so every role has a row to correct.
+  ['review gate departments', ensureReviewGateDefaults],
   ['IP allowlist', ensureIpAllowlist],
 ];
 

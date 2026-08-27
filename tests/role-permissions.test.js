@@ -225,9 +225,11 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   await t.test('the seed reproduces what the tiers already allowed', async () => {
     // Nothing changes on the day this goes live.
     for (const role of ['producer', 'team_lead', 'art_director', 'game_artist', 'super_admin']) {
-      const expected = [...catalog.baselineFor(capabilitiesForTier(
-        require('../src/roles').roleDef(role).tier
-      ))].sort();
+      // defaultsFor, not baselineFor: the baseline is what a role's TIER gives
+      // it, and the defaults add what its DEPARTMENT gives it on top — which is
+      // how every role that runs the first review gate comes to hold review.tl
+      // whether or not its tier happened to carry it.
+      const expected = [...require('../src/role-permissions').defaultsFor(role)].sort();
       assert.deepStrictEqual(await enabledFor(role), expected, `${role} was seeded from its tier`);
     }
   });
@@ -417,7 +419,7 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.ok(Array.isArray(user.permissions), 'the login response carries a permission list');
     assert.deepStrictEqual(
       [...user.permissions].sort(),
-      [...catalog.baselineFor(capabilitiesForTier('production'))].sort(),
+      [...require('../src/role-permissions').defaultsFor('producer')].sort(),
       'and it is the same set every later request is judged by'
     );
     // The tier is still sent alongside it: projectScope and the review stage
@@ -510,24 +512,26 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     // open tab kept answering from before the grant, and the only cure nobody
     // knew about was signing out. The token is not the problem and never was:
     // it names the person, and the permissions are looked up per request.
+    // review.cd, not review.tl: every Production role holds review.tl by
+    // default now, so it is no longer a permission this role can be missing.
     const before = await enabledFor('project_manager');
-    assert.ok(!before.includes('review.tl'), 'not held to begin with');
+    assert.ok(!before.includes('review.cd'), 'not held to begin with');
 
     // Somebody signs in now, before the grant.
     const session = (await call('/auth/login', {
       method: 'POST', body: { email: 'pm@zvky.test', password: PASSWORD },
     })).body;
-    assert.ok(!(session.user.permissions || []).includes('review.tl'),
+    assert.ok(!(session.user.permissions || []).includes('review.cd'),
       'and their sign-in says so');
 
-    await setRole('project_manager', [...before, 'review.tl']);
+    await setRole('project_manager', [...before, 'review.cd']);
     try {
-      assert.ok((await enabledFor('project_manager')).includes('review.tl'), 'the role has it now');
+      assert.ok((await enabledFor('project_manager')).includes('review.cd'), 'the role has it now');
 
       // Same token, no second sign-in. This is what the page re-reads.
       const me = await call('/auth/me', { token: session.token });
       assert.strictEqual(me.status, 200);
-      assert.ok((me.body.user.permissions || []).includes('review.tl'),
+      assert.ok((me.body.user.permissions || []).includes('review.cd'),
         'and the session it belongs to can see it without signing out again');
     } finally {
       await setRole('project_manager', before);

@@ -1018,12 +1018,24 @@ function restoreContext(){
     const first = projectsForContext()[0];
     state.currentProjectId = first ? first.id : null;
   }else{
-    /* Nothing remembered, or none of it survives. Start on the first client
-       that has work in it, so the app opens on something rather than nothing. */
-    const firstWithWork = state.clients.find(c=>projectsUnder(c.id).length);
-    state.clientContextId = firstWithWork ? firstWithWork.id : null;
-    const first = projectsForContext()[0];
-    state.currentProjectId = first ? first.id : null;
+    /* Nothing remembered, or none of it survives. Open where THIS account has
+       work, not on the first client that has any work at all.
+       
+       That distinction is the whole bug: somebody handed an asset in a project
+       they had not worked in before would sign in, land on a different client
+       by list order, and see an empty board — while the asset was theirs, in
+       the database, and returned by the API. Nothing was broken except where
+       the page was looking. */
+    const withMine = state.projects.find(p=>(p.my_open_assets||0) > 0);
+    if(withMine){
+      state.clientContextId = withMine.client_id || null;
+      state.currentProjectId = withMine.id;
+    }else{
+      const firstWithWork = state.clients.find(c=>projectsUnder(c.id).length);
+      state.clientContextId = firstWithWork ? firstWithWork.id : null;
+      const first = projectsForContext()[0];
+      state.currentProjectId = first ? first.id : null;
+    }
   }
   saveContext();
 }

@@ -43,11 +43,27 @@ async function forRole(db, roleKey) {
 
 // The permissions a role's tier implies. The starting state for a role that
 // has never been configured, and what "reset to the role's defaults" means.
+// The departments whose roles run the first review gate.
+//
+// The studio's answer to "who reviews at TL": everyone in Supervision, Creative
+// Direction and Production — not just the roles whose TIER happens to carry
+// leadsTeam or reviewStage 'tl'. Nine roles in those departments did not get
+// review.tl from their tier, Project Manager and Producer among them, which is
+// why the review controls were missing for them however many times the gate was
+// checked. The gate was never the problem; the default was.
+//
+// Kept as the app's own group names rather than a new "department" concept.
+// There already is one — roles carry a group — and inventing a second grouping
+// beside it is how two lists drift apart.
+const TL_REVIEW_GROUPS = ['Supervision', 'Creative Direction', 'Production'];
+
 function defaultsFor(roleKey) {
   const def = roleDef(roleKey);
   if (!def) return new Set();
   const caps = capabilitiesForTier(def.tier) || {};
-  return catalog.baselineFor(caps);
+  const baseline = catalog.baselineFor(caps);
+  if (TL_REVIEW_GROUPS.includes(def.group)) baseline.add('review.tl');
+  return baseline;
 }
 
 // Write a role's defaults, for a role that has none. Returns what was written.
@@ -219,6 +235,7 @@ async function audit(db, roleKey, limit = 100) {
 }
 
 module.exports = {
+  TL_REVIEW_GROUPS,
   forRole, defaultsFor, seedRole, topUpRole, effectiveFor, all, setForRole, audit,
   lockedFor, isSuperAdmin, SUPER_ADMIN_LOCKED,
 };
