@@ -839,6 +839,105 @@ async function ensureWorkSessions(db, log) {
   }
 }
 
+// Assignment episodes: who has held an asset, in order.
+//
+// Its own step for the same reason work_sessions is: a table that cannot be
+// created must not take the repair below it down with it.
+async function ensureAssignmentEpisodes(db, log) {
+  const { rows: table } = await db.query(
+    `SELECT TABLE_NAME AS t FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'asset_assignments'`
+  );
+  if (!table.length) {
+    await db.query(await applyTableOptions(db, `CREATE TABLE asset_assignments (
+      id            CHAR(36)     NOT NULL PRIMARY KEY,
+      seq           BIGINT       NOT NULL AUTO_INCREMENT UNIQUE,
+      asset_id      CHAR(36)     NOT NULL,
+      user_id       CHAR(36)     NULL,
+      assigned_by_id CHAR(36)    NULL,
+      assigned_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      status_at_assignment VARCHAR(32) NOT NULL,
+      ended_at      DATETIME     NULL,
+      ended_status  VARCHAR(32)  NULL,
+      ended_reason  VARCHAR(32)  NULL,
+      KEY idx_aa_asset (asset_id, seq),
+      KEY idx_aa_open (asset_id, ended_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+    log('Schema: added asset_assignments — who has held each asset, in order.');
+
+    for (const [name, statement] of [
+      ['fk_aa_asset', 'ALTER TABLE asset_assignments ADD CONSTRAINT fk_aa_asset FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE'],
+      ['fk_aa_user', 'ALTER TABLE asset_assignments ADD CONSTRAINT fk_aa_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL'],
+    ]) {
+      try {
+        await db.query(statement);
+      } catch (err) {
+        log(`Schema: asset_assignments was created, but ${name} was refused — ${err.sqlMessage || err.message}`);
+      }
+    }
+  }
+
+  // Added after the table shipped, so an existing one needs it patched in.
+  const { rows: endedStatus } = await db.query(
+    `SELECT COLUMN_NAME AS n FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'asset_assignments' AND COLUMN_NAME = 'ended_status'`
+  );
+  if (!endedStatus.length) {
+    await db.query('ALTER TABLE asset_assignments ADD COLUMN ended_status VARCHAR(32) NULL AFTER ended_at');
+  }
+
+  // Which episode a stretch of work belongs to. Behind its own probe, so a
+  // half-applied run repairs itself rather than failing here forever.
+  const { rows: column } = await db.query(
+    `SELECT COLUMN_NAME AS n FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'work_sessions' AND COLUMN_NAME = 'assignment_id'`
+  );
+  if (!column.length) {
+    const { rows: ws } = await db.query(
+      `SELECT TABLE_NAME AS t FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'work_sessions'`
+    );
+    if (ws.length) {
+      await db.query('ALTER TABLE work_sessions ADD COLUMN assignment_id CHAR(36) NULL');
+      await db.query('ALTER TABLE work_sessions ADD KEY idx_ws_assignment (assignment_id)');
+      log('Schema: work_sessions rows now say which assignment they belong to.');
+    }
+  }
+
+  // Every asset that already has somebody on it gets an open episode, so the
+  // Assets List and the timer have something to attribute to from the first
+  // page load rather than only for work assigned after this deployment.
+  const { rows: gap } = await db.query(
+    `SELECT COUNT(*) AS n FROM assets a
+      WHERE a.assignee_id IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM asset_assignments x WHERE x.asset_id = a.id AND x.ended_at IS NULL)`
+  );
+  if (Number(gap[0].n)) {
+    await db.query(
+      `INSERT INTO asset_assignments (id, asset_id, user_id, assigned_by_id, assigned_at, status_at_assignment)
+       SELECT UUID(), a.id, a.assignee_id, a.created_by, a.created_at, a.\`status\`
+         FROM assets a
+        WHERE a.assignee_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM asset_assignments x WHERE x.asset_id = a.id AND x.ended_at IS NULL)`
+    );
+    log(`Schema: opened an assignment record for ${Number(gap[0].n)} asset(s) that already had somebody on them.`);
+
+    // Their existing sessions belong to that episode. Without this the first
+    // page load would show every historical hour as unattributed and the
+    // current assignee's counter as nothing, which is the opposite of true.
+    try {
+      await db.query(
+        `UPDATE work_sessions w
+           JOIN asset_assignments ass ON ass.asset_id = w.asset_id AND ass.ended_at IS NULL
+            SET w.assignment_id = ass.id
+          WHERE w.assignment_id IS NULL`
+      );
+    } catch (err) {
+      log(`Schema: existing work sessions could not be attributed to an assignment — ${err.sqlMessage || err.message}`);
+    }
+  }
+}
+
 // Widen the assets status constraint so it admits every state the app writes.
 async function ensureStatusConstraint(db, log) {
   // Widen the status constraint so it admits every state the app can write.
@@ -1005,6 +1104,9 @@ const STEPS = [
   // decides whether an asset can be assigned at all, and it must not be
   // skipped because the step above it could not create a table.
   ['assigned state and time tracking', ensureStatusConstraint],
+  // After work_sessions, whose column it adds, and after the constraint, so a
+  // backfill that writes statuses cannot be refused by a stale one.
+  ['assignment history', ensureAssignmentEpisodes],
   // After the constraint above admits 'assigned', or the update below cannot
   // land. Separate from that step so a rerun repairs the data even when the
   // constraint was already current and the step above did nothing.

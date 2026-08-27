@@ -179,6 +179,33 @@ function canAssignAsset(user, asset) {
   return holds(user, 'asset.assign') && ownsAsset(user, asset);
 }
 
+// Who may hand a SUBMITTED asset to somebody else.
+//
+// Deliberately a wider reach than the rework handover below it, and the axis is
+// whose desk the asset is sitting on.
+//
+//   rework      the asset is back with the artist. Whether somebody else picks
+//               it up is the creator's call, and only theirs. Unchanged.
+//
+//   in review   the asset is in a reviewer's queue. It is on THEIR desk, and
+//               they are the person who can see it is not going to be finished
+//               by whoever submitted it — so the reviewer holding it may hand
+//               it on, as well as the creator.
+//
+// The permission is still asset.assign: this widens who it reaches, not what
+// key is asked for. A reviewer whose role does not hold asset.assign — an Art
+// Director, by default — still cannot, and granting it in Settings is the way
+// to change that.
+async function canHandOverInReview(user, asset) {
+  if (!holds(user, 'asset.assign')) return false;
+  if (ownsAsset(user, asset)) return true;                       // creator, or full access
+  if (asset.status === 'pending_tl_review') return isTeamLeadOfAsset(user, asset);
+  if (asset.status === 'pending_cd_review') {
+    return canReviewAsCD(user) && canViewAsset(user, asset);
+  }
+  return false;
+}
+
 // Who may work the checklist on an asset.
 //
 // Deliberately wider than canEditAsset, and the difference is the point. The
@@ -324,6 +351,7 @@ module.exports = {
   mayAdministerUser,
   ownsAsset,
   canAssignAsset,
+  canHandOverInReview,
   canManageTasks,
   isAwaitingRework,
   REWORK_STATUSES,

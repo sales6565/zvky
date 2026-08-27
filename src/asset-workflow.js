@@ -112,6 +112,12 @@ const actors = {
   // and the asset sat in Not Assigned wearing the avatar of the person it had
   // just been given to. The comment above was already right; the code was not.
   planner: (ctx) => Boolean(ctx.canAssign || ctx.canEdit),
+  // Handing SUBMITTED work to somebody else. A wider reach than planner, on
+  // purpose: the asset is in a reviewer's queue, so the reviewer holding it may
+  // hand it on as well as the person who added it. The route works this out
+  // (canHandOverInReview) and hands the answer in, the same way canAssign and
+  // canEdit arrive.
+  handOver: (ctx) => Boolean(ctx.canHandOver),
   // Whoever signs off that the client has it.
   deliverer: (ctx) => ctx.canDeliver,
 };
@@ -139,6 +145,27 @@ const TRANSITIONS = [
     // that is the assignee's own act (accept, below), because the clock starts
     // with it and a clock should not be started by somebody else's click.
     describe: 'Assigned',
+  },
+  {
+    // Handing submitted work to somebody else.
+    //
+    // Distinct from the rework reassignment below it, and deliberately so. That
+    // one moves an asset that is already back with the artist and leaves its
+    // status alone. This one takes work that has been SUBMITTED and is sitting
+    // in a reviewer's queue, and gives it to a different person — who has not
+    // done any of it. So it goes back to Assigned rather than staying in
+    // review: the new person has to pick it up and do the work before anybody
+    // reviews anything.
+    //
+    // What the outgoing person did is not touched. Their submission stays in
+    // asset_versions, their hours stay on their assignment record, and both
+    // stay in the asset's history.
+    action: 'reassign_review',
+    from: ['pending_tl_review', 'pending_cd_review'],
+    to: 'assigned',
+    who: 'handOver',
+    routeTo: 'assignee',
+    describe: 'Reassigned while in review',
   },
   {
     // The assignee picks the work up. This is what moves it to In Progress,
@@ -264,10 +291,19 @@ function evaluate(action, ctx, { note } = {}) {
     // Is the action real but the status wrong, or is the action nonsense?
     const knownAction = TRANSITIONS.some((t) => t.action === action);
     if (!knownAction) return { ok: false, status: 400, error: `Unknown action "${action}".` };
+    // Read as a sentence. Most action names work verbatim; the ones that do not
+    // say so here rather than producing "cannot be reassign review".
+    const PHRASE = {
+      reassign_review: 'handed to somebody else — that is only possible while it is waiting on a reviewer',
+      tl_approve: 'approved by a team lead',
+      cd_approve: 'approved by the director',
+      tl_request_changes: 'sent back by a team lead',
+      cd_request_changes: 'sent back by the director',
+    };
     return {
       ok: false,
       status: 409,
-      error: `An asset in "${label(current)}" cannot be ${action.replace(/_/g, ' ')}.`,
+      error: `An asset in "${label(current)}" cannot be ${PHRASE[action] || action.replace(/_/g, ' ')}.`,
     };
   }
 
@@ -307,6 +343,8 @@ function refusal(transition, ctx) {
       return 'Only the Creative Director can act on it at this stage.';
     case 'deliverer':
       return 'You cannot mark this asset as delivered.';
+    case 'handOver':
+      return 'Handing submitted work on is for the person who added the asset or the reviewer holding it.';
     default:
       return 'You cannot do that to this asset.';
   }

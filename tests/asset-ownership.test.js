@@ -244,15 +244,32 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     // Not Assigned / Assigned / In Progress.
     let res = await reassign({ assigneeId: people.bo });
     assert.strictEqual(res.status, 409, 'not before any work has been submitted');
-    assert.deepStrictEqual(res.body.allowedStatuses, REWORK_STATUSES);
+    assert.deepStrictEqual(res.body.allowedStatuses,
+      [...REWORK_STATUSES, 'pending_tl_review', 'pending_cd_review'],
+      'rework, and work sitting with a reviewer');
 
-    // Waiting on a reviewer is not the same as waiting on changes.
+    // Waiting on a reviewer IS reassignable now — and it means something
+    // different from reassigning rework: the work has been submitted, so
+    // handing it on returns it to Assigned for somebody who has not done it.
     await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v1', description: 'First pass' },
     });
     assert.strictEqual(await statusOf(asset.id), 'pending_tl_review');
-    assert.strictEqual((await reassign({ assigneeId: people.bo })).status, 409,
-      'not while a reviewer is holding it');
+    const handed = await reassign({ assigneeId: people.bo });
+    assert.strictEqual(handed.status, 200, 'submitted work can be handed on');
+    assert.strictEqual(handed.body.asset.status, 'assigned',
+      'and it goes back to Assigned, because the new person has not done it');
+    assert.strictEqual(handed.body.reassigned.inReview, true, 'reported as the in-review case');
+
+    // Put it back the way the rest of this test expects.
+    await as('bo', `/assets/${asset.id}/submit`, {
+      method: 'POST', body: { link: 'https://example.test/v1b', description: 'Bo picks it up' },
+    });
+    await as('lee', `/assets/${asset.id}/review`, {
+      method: 'POST', body: { decision: 'changes_requested', text: 'Not yet' },
+    });
+    await reassign({ assigneeId: people.ana });
+    assert.strictEqual(await statusOf(asset.id), 'tl_changes_requested');
 
     // TL Changes: now it is available.
     await as('lee', `/assets/${asset.id}/review`, {
@@ -260,13 +277,25 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     });
     assert.strictEqual((await reassign({ assigneeId: people.bo })).status, 200);
 
-    // And once it is through and delivered, gone again.
+    // CD Review is the other reviewer's queue, and behaves the same way.
     await as('bo', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v2', description: 'Reworked' },
     });
     await as('lee', `/assets/${asset.id}/review`, { method: 'POST', body: { decision: 'approved' } });
     assert.strictEqual(await statusOf(asset.id), 'pending_cd_review');
-    assert.strictEqual((await reassign({ assigneeId: people.ana })).status, 409);
+    const fromCd = await reassign({ assigneeId: people.ana });
+    assert.strictEqual(fromCd.status, 200, 'the director\'s queue too');
+    assert.strictEqual(fromCd.body.asset.status, 'assigned');
+
+    // Delivered is where it stops.
+    await as('ana', `/assets/${asset.id}/submit`, {
+      method: 'POST', body: { link: 'https://example.test/v3', description: 'Again' },
+    });
+    await as('lee', `/assets/${asset.id}/review`, { method: 'POST', body: { decision: 'approved' } });
+    await as('root', `/assets/${asset.id}/review`, { method: 'POST', body: { decision: 'approved' } });
+    await as('root', `/assets/${asset.id}/deliver`, { method: 'POST' });
+    assert.strictEqual((await reassign({ assigneeId: people.bo })).status, 409,
+      'nothing to hand on once it has shipped');
   });
 
   await t.test('only the creator may hand the rework on', async () => {
@@ -321,6 +350,9 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
       ['assign', 'submit', 'tl_request_changes', 'reassign'],
       'and the whole sequence, with the handover recorded in it');
     assert.match(history[3].note, /from ana to bo — ana is out this week/);
+    // And what the outgoing round finally recorded, which is what makes the
+    // handover answerable rather than just noted.
+    assert.match(history[3].note, /ana recorded/);
     assert.strictEqual(history[3].actor, 'pat', 'attributed to whoever made the call');
 
     // The person it left no longer holds it.

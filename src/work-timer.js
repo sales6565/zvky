@@ -49,15 +49,28 @@ async function available(db) {
 
 // Start the clock. Refuses if it is already running — the caller turns that
 // into a 409, and the button that was clicked twice does nothing twice.
-async function start(db, assetId, userId) {
+async function start(db, assetId, userId, assignmentId) {
   const running = await openSession(db, assetId);
   if (running) return { ok: false, alreadyRunning: true, since: running.started_at };
   const id = uuid();
   const round = await currentRound(db, assetId);
-  await db.query(
-    'INSERT INTO work_sessions (id, asset_id, user_id, round) VALUES ($1,$2,$3,$4)',
-    [id, assetId, userId, round]
-  );
+  // Which stretch-with-one-person this belongs to. It is what makes a new
+  // assignee's counter start at nothing without anything having to "reset" it:
+  // their episode simply has no sessions in it yet.
+  try {
+    await db.query(
+      'INSERT INTO work_sessions (id, asset_id, user_id, round, assignment_id) VALUES ($1,$2,$3,$4,$5)',
+      [id, assetId, userId, round, assignmentId || null]
+    );
+  } catch (err) {
+    // A deployment whose work_sessions predates episodes still keeps time; it
+    // just cannot attribute it to one.
+    if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
+    await db.query(
+      'INSERT INTO work_sessions (id, asset_id, user_id, round) VALUES ($1,$2,$3,$4)',
+      [id, assetId, userId, round]
+    );
+  }
   return { ok: true, sessionId: id, round };
 }
 
@@ -89,7 +102,7 @@ function unavailable(err) {
 
 // The summary a screen needs: total seconds (a running session counted up to
 // now), the per-round breakdown, and whether the clock is running right now.
-async function summary(db, assetId) {
+async function summary(db, assetId, assignmentId) {
   const { rows } = await db.query(
     `SELECT round,
             SUM(COALESCE(seconds, TIMESTAMPDIFF(SECOND, started_at, NOW()))) AS seconds,
@@ -101,8 +114,37 @@ async function summary(db, assetId) {
     return { rows: [] };
   });
   const rounds = rows.map((r) => ({ round: Number(r.round), seconds: Number(r.seconds) || 0 }));
+
+  // Two numbers, and the difference between them matters.
+  //
+  //   totalSeconds    every hour ever spent on this asset, by anyone. The
+  //                   historical record, which a reassignment must never
+  //                   shorten.
+  //   currentSeconds  the hours spent by whoever holds it now, in the stretch
+  //                   they have held it. This is the clock they see. Hand work
+  //                   to somebody new and theirs reads nothing, because it is
+  //                   a different stretch — nothing was reset, and the last
+  //                   person's hours are still in the total above.
+  //
+  // Send work back to the SAME person and no new stretch begins, so their
+  // number keeps climbing across the round. That is the older rule, unchanged.
+  let currentSeconds = null;
+  if (assignmentId) {
+    const { rows: mine } = await db.query(
+      `SELECT SUM(COALESCE(seconds, TIMESTAMPDIFF(SECOND, started_at, NOW()))) AS seconds
+         FROM work_sessions WHERE assignment_id = $1`,
+      [assignmentId]
+    ).catch((err) => {
+      if (!unavailable(err)) throw err;
+      return { rows: [{ seconds: null }] };
+    });
+    currentSeconds = Number(mine[0].seconds) || 0;
+  }
+
+  const totalSeconds = rounds.reduce((sum, r) => sum + r.seconds, 0);
   return {
-    totalSeconds: rounds.reduce((sum, r) => sum + r.seconds, 0),
+    totalSeconds,
+    currentSeconds: currentSeconds === null ? totalSeconds : currentSeconds,
     rounds,
     running: rows.some((r) => Number(r.running) > 0),
   };

@@ -488,6 +488,107 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
     assert.strictEqual(orphan.length, 0, 'specifically, not this one');
   });
 
+  await t.test('handing submitted work on: new person, Assigned, a clock at nothing', async () => {
+    // The case this exists for. Ana works, submits, and while a reviewer is
+    // holding it the lead gives it to Bo — who has done none of it. Bo starts
+    // from the beginning, with a clock of their own. Ana's hours and Ana's
+    // submission are not discarded; they stay on Ana's now-closed round.
+    const asset = await newAsset('Handed In Review');
+    await start('ana', asset.id);
+    await sleep(1100);
+    await as('ana', `/assets/${asset.id}/submit`, {
+      method: 'POST', body: { link: 'https://example.test/ana-v1', description: 'Ana first pass' },
+    });
+    assert.strictEqual((await assetRow(asset.id)).status, 'pending_tl_review');
+    const anaSpent = (await timerOf(asset.id)).currentSeconds;
+    assert.ok(anaSpent >= 1, `ana recorded something — got ${anaSpent}`);
+
+    const handed = await as('lee', `/assets/${asset.id}/reassign`, {
+      method: 'POST', body: { assigneeId: people.bo, note: 'ana is on the trailer' },
+    });
+    assert.strictEqual(handed.status, 200, JSON.stringify(handed.body));
+    assert.strictEqual(handed.body.reassigned.inReview, true);
+    assert.strictEqual(handed.body.reassigned.handedOverSeconds, anaSpent,
+      'the audit carries the number ana finished on');
+
+    const row = await assetRow(asset.id);
+    assert.strictEqual(row.status, 'assigned', 'back to Assigned for the person who has not done it');
+    assert.strictEqual(row.assignee_id, people.bo);
+
+    const after = await timerOf(asset.id);
+    assert.strictEqual(after.currentSeconds, 0, "bo's clock starts at nothing");
+    assert.strictEqual(after.totalSeconds, anaSpent,
+      "and ana's hours are still on the asset — not carried into bo's counter, not thrown away");
+
+    // Two rounds on the list, not one overwritten.
+    const listed = (await as('root', `/assets/project/${projectId}`)).body.assets
+      .find((a) => a.id === asset.id);
+    assert.strictEqual(listed.assignments.length, 2, 'one row each');
+    const [first, second] = listed.assignments;
+    assert.strictEqual(first.userName, 'ana');
+    assert.strictEqual(first.active, false);
+    assert.strictEqual(first.seconds, anaSpent);
+    assert.strictEqual(first.endedStatus, 'pending_tl_review', 'where ana left it');
+    assert.deepStrictEqual(first.submissions.map((v) => v.link), ['https://example.test/ana-v1'],
+      "ana's submission stays on ana's round");
+    assert.strictEqual(second.userName, 'bo');
+    assert.strictEqual(second.active, true);
+    assert.strictEqual(second.seconds, 0);
+    assert.deepStrictEqual(second.submissions, [], 'bo has submitted nothing yet');
+
+    // And the audit says who, from whom, to whom, and on what number.
+    const history = (await as('root', `/assets/${asset.id}/history`)).body.events;
+    const event = history[history.length - 1];
+    assert.strictEqual(event.action, 'reassign_review');
+    assert.strictEqual(event.fromStatus, 'pending_tl_review');
+    assert.strictEqual(event.toStatus, 'assigned');
+    assert.strictEqual(event.actor, 'lee');
+    assert.match(event.note, /from ana to bo/);
+    assert.match(event.note, /ana is on the trailer/);
+    assert.match(event.note, /ana recorded/);
+
+    // Bo can now work it, and their clock is theirs alone.
+    assert.strictEqual((await start('bo', asset.id)).status, 200);
+    await sleep(1100);
+    await pauseIt('bo', asset.id);
+    const bosOwn = await timerOf(asset.id);
+    assert.ok(bosOwn.currentSeconds >= 1, 'bo accrues');
+    assert.ok(bosOwn.currentSeconds < bosOwn.totalSeconds,
+      "bo's round is a part of the asset's lifetime, not the whole of it");
+  });
+
+  await t.test('the same person getting work back is NOT a new round of assignment', async () => {
+    // The older rule, which this must not have broken: changes sent back to
+    // whoever submitted them do not change the assignee, so no new stretch
+    // begins and their clock keeps climbing.
+    const asset = await newAsset('Back To Ana');
+    await start('ana', asset.id);
+    await sleep(1100);
+    await as('ana', `/assets/${asset.id}/submit`, {
+      method: 'POST', body: { link: 'https://example.test/loop-v1' },
+    });
+    const before = (await timerOf(asset.id)).currentSeconds;
+
+    await as('lee', `/assets/${asset.id}/review`, {
+      method: 'POST', body: { decision: 'changes_requested', text: 'Softer light' },
+    });
+    assert.strictEqual((await assetRow(asset.id)).assignee_id, people.ana, 'still ana');
+
+    const episodes = await sql(cfg,
+      `SELECT COUNT(*) AS n FROM asset_assignments WHERE asset_id = '${asset.id}'`);
+    assert.strictEqual(Number(episodes[0].n), 1, 'one stretch, not two');
+
+    await start('ana', asset.id);
+    await sleep(1100);
+    await pauseIt('ana', asset.id);
+    const after = await timerOf(asset.id);
+    assert.ok(after.currentSeconds > before,
+      `the same person's clock keeps climbing across the round — ${before} then ${after.currentSeconds}`);
+    assert.strictEqual(after.currentSeconds, after.totalSeconds,
+      'and with one person on it, the round and the asset are the same hours');
+    assert.ok(after.rounds.length > 1, 'the per-round breakdown still separates them');
+  });
+
   await t.test('reassigning mid-round keeps the time already spent', async () => {
     // Total is lifetime effort on the asset, whoever spent it.
     const asset = await newAsset('Handed Over');

@@ -23,6 +23,7 @@ const {
   canMarkDelivered,
   canOverrideStage,
   canAssignAsset,
+  canHandOverInReview,
   canManageTasks,
   hasFullAccess,
   isAwaitingRework,
@@ -32,6 +33,7 @@ const {
 const { assignableRoles, roleDef } = require('../roles');
 const lifecycle = require('../lifecycle');
 const workTimer = require('../work-timer');
+const assignments = require('../assignments');
 const assetImport = require('../asset-import');
 const workflow = require('../asset-workflow');
 const submissionLink = require('../submission-link');
@@ -103,16 +105,34 @@ async function attachTasksAndNotes(assets) {
   )).rows);
 
   const timeSpent = await workTimer.totalsFor(db, ids);
+  // Who has held each asset, in order, with the time and submissions from each
+  // stretch. The Assets List draws one row per entry here; the dashboard
+  // ignores it and keeps drawing one card per asset.
+  const episodes = await enrich('assignment history', () => assignments.listFor(db, ids))
+    .then((m) => (m instanceof Map ? m : new Map()));
   return assets.map((a) => ({
     ...a,
     time_spent_seconds: (timeSpent.get(a.id) || {}).seconds || 0,
     timer_running: Boolean((timeSpent.get(a.id) || {}).running),
+    assignments: episodes.get(a.id) || [],
     // MySQL stores the flag as TINYINT(1); hand the browser a real boolean.
     tasks: tasks.filter((t) => t.asset_id === a.id).map((t) => ({ ...t, done: Boolean(t.done) })),
     notes: notes.filter((n) => n.asset_id === a.id),
     versions: versions.filter((v) => v.asset_id === a.id),
     feedback: feedback.filter((f) => f.asset_id === a.id),
   }));
+}
+
+// Seconds, for a human reading an audit line. "2h 15m", not "8100".
+function fmtSeconds(total) {
+  const n = Math.max(0, Math.round(Number(total) || 0));
+  if (!n) return 'no time';
+  const h = Math.floor(n / 3600);
+  const m = Math.round((n % 3600) / 60);
+  if (h && m) return `${h}h ${m}m`;
+  if (h) return `${h}h`;
+  if (m) return `${m}m`;
+  return `${n}s`;
 }
 
 const ASSET_SELECT = `SELECT a.*, u.name AS assignee_name FROM assets a LEFT JOIN users u ON u.id = a.assignee_id`;
@@ -210,6 +230,10 @@ router.post('/project/:projectId', async (req, res) => {
   // already on it, the same rule that applies to assigning later applies here:
   // assignment is what starts the work.
   if (assigneeId) {
+    // The first stretch-with-one-person on this asset.
+    await assignments.open(conn, {
+      assetId: id, userId: assigneeId, assignedById: req.user.id, status: 'not_started',
+    });
     const { rows: fresh } = await conn.query('SELECT * FROM assets WHERE id = $1', [id]);
     const ctx = await contextFor(req, fresh[0]);
     const verdict = workflow.evaluate('assign', ctx);
@@ -353,6 +377,19 @@ router.patch('/:id', async (req, res) => {
     // "start" action for someone to forget. Only from Not Assigned:
     // reassigning something already in review must not drag it backwards.
     const assigneeChanged = req.body.assigneeId !== undefined && req.body.assigneeId !== asset.assignee_id;
+
+    // A different person means a different stretch of work. Their clock reads
+    // nothing because their episode is new, and the last person's hours stay on
+    // theirs. Work coming back to the SAME person changes no assignee, so no
+    // episode ends and their number keeps climbing — the two cases separate
+    // themselves here, on the one question that actually distinguishes them.
+    if (assigneeChanged) {
+      await workTimer.pause(conn, req.params.id);
+      await assignments.open(conn, {
+        assetId: req.params.id, userId: req.body.assigneeId || null,
+        assignedById: req.user.id, status: asset.status,
+      });
+    }
     if (assigneeChanged && req.body.assigneeId && asset.status === 'not_started') {
       const { rows: fresh } = await conn.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
       const ctx = await contextFor(req, fresh[0]);
@@ -563,6 +600,9 @@ async function contextFor(req, asset) {
     // Separate from canEdit on purpose: assigning is its own permission, and
     // the assign transition asks for this one.
     canAssign: canAssignAsset(req.user, asset),
+    // Wider still, and only for handing submitted work on — see
+    // canHandOverInReview. The reviewer holding it counts, not just the creator.
+    canHandOver: await canHandOverInReview(req.user, asset),
     canDeliver: await canMarkDelivered(req.user, asset),
     // The two halves of the Creative Director's gate, from the role's
     // permissions rather than from its tier.
@@ -693,14 +733,15 @@ router.post('/:id/timer/start', async (req, res) => {
     moved = await applyTransition(req, res, asset, verdict, { note: verdict.describe });
   }
 
-  const started = await workTimer.start(db, req.params.id, req.user.id);
+  const episode = await assignments.current(db, req.params.id);
+  const started = await workTimer.start(db, req.params.id, req.user.id, episode && episode.id);
   if (!started.ok) {
     // The double-click, the second tab, or a colleague a moment faster. The
     // clock is already doing what the click wanted, so say so.
     return res.status(409).json({ error: 'The timer is already running.', running: true, since: started.since });
   }
 
-  const timer = await workTimer.summary(db, req.params.id);
+  const timer = await workTimer.summary(db, req.params.id, episode && episode.id);
   if (moved) return res.status(200).json({ asset: moved, timer, accepted: true });
   const { rows: fresh } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [req.params.id]);
   const [withDetails] = await attachTasksAndNotes(fresh);
@@ -717,7 +758,8 @@ router.post('/:id/timer/pause', async (req, res) => {
     return res.status(403).json({ error: 'Only the person this asset is assigned to can run its timer.' });
   }
   await workTimer.pause(db, req.params.id);
-  res.json({ timer: await workTimer.summary(db, req.params.id) });
+  const paused = await assignments.current(db, req.params.id);
+  res.json({ timer: await workTimer.summary(db, req.params.id, paused && paused.id) });
 });
 
 // GET /api/assets/:id/timer — the total, the per-round breakdown, and whether
@@ -727,7 +769,8 @@ router.get('/:id/timer', async (req, res) => {
   const asset = rows[0];
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
   if (!(await canViewAsset(req.user, asset))) return res.status(403).json({ error: 'No access to this asset' });
-  res.json({ timer: await workTimer.summary(db, req.params.id), canRun: mayRunTimer(req, asset) });
+  const held = await assignments.current(db, req.params.id);
+  res.json({ timer: await workTimer.summary(db, req.params.id, held && held.id), canRun: mayRunTimer(req, asset) });
 });
 
 // GET /api/assets/versions/:versionId/download — stream the uploaded file
@@ -845,14 +888,53 @@ router.post('/:id/reassign', async (req, res) => {
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
   if (await projectClosedResponse(res, asset.project_id)) return undefined;
 
-  if (!canAssignAsset(req.user, asset)) {
-    return res.status(403).json({ error: 'Only the person who added this asset can hand its rework to somebody else.' });
+  // Two different things share this endpoint, and they must not share a branch.
+  //
+  //   REWORK        the asset is back with the artist after a change request.
+  //                 Somebody else picks the rework up. The status does not
+  //                 move — it is still rework, just somebody else's.
+  //
+  //   IN REVIEW     the asset has been SUBMITTED and is sitting in a reviewer's
+  //                 queue. Handing it to somebody else means handing them work
+  //                 they have not done, so it goes back to Assigned and they
+  //                 start from the beginning: their own clock, from nothing.
+  //
+  // Which one this is decided once, here, and carried through the rest of the
+  // handler. Folding them together is what would quietly make a reassignment
+  // mid-review look like a continuation of somebody else's round.
+  // Whether this person has ANY route to reassigning this asset, asked before
+  // the status is looked at. Somebody with no business here is told so, rather
+  // than being told which statuses are reassignable — which is not their
+  // concern, and which the narrower checks below would otherwise leak.
+  const couldEver = canAssignAsset(req.user, asset)
+    || await isTeamLeadOfAsset(req.user, asset)
+    || (canReviewAsCD(req.user) && await canViewAsset(req.user, asset));
+  if (!couldEver) {
+    return res.status(403).json({ error: 'You do not have permission to hand this asset to somebody else.' });
   }
-  if (!isAwaitingRework(asset)) {
+
+  const inReview = ['pending_tl_review', 'pending_cd_review'].includes(asset.status);
+  const rework = isAwaitingRework(asset);
+  if (!inReview && !rework) {
     return res.status(409).json({
-      error: 'Reassigning rework is only possible while an asset is waiting on changes.',
+      error: 'Handing an asset to somebody else is only possible while it is waiting on changes or waiting on a reviewer.',
       status: asset.status,
-      allowedStatuses: REWORK_STATUSES,
+      allowedStatuses: [...REWORK_STATUSES, 'pending_tl_review', 'pending_cd_review'],
+    });
+  }
+
+  // Each case asks its own question, because the answers differ: rework is the
+  // creator's call alone, while submitted work sitting in a reviewer's queue
+  // may also be handed on by the reviewer holding it. Both ask for
+  // asset.assign — this is about reach, not about a new permission.
+  const allowed = inReview
+    ? await canHandOverInReview(req.user, asset)
+    : canAssignAsset(req.user, asset);
+  if (!allowed) {
+    return res.status(403).json({
+      error: inReview
+        ? 'Handing submitted work on is for the person who added the asset or the reviewer holding it.'
+        : 'Only the person who added this asset can hand its rework to somebody else.',
     });
   }
 
@@ -876,29 +958,102 @@ router.post('/:id/reassign', async (req, res) => {
     return res.status(400).json({ error: `${next.name} is not on this project.`, field: 'assigneeId' });
   }
 
-  // Where the asset is sitting matters. In CD Changes it is with the team lead
-  // until they relay the notes; reassigning must not steal it off their desk
-  // and skip the relay. So the routing only follows the assignee when it was
-  // already pointing at them.
-  const wasWithAssignee = asset.routed_to_id && asset.routed_to_id === asset.assignee_id;
-  const routedTo = wasWithAssignee ? next.id : asset.routed_to_id;
-
-  await db.query('UPDATE assets SET assignee_id = $1, routed_to_id = $2 WHERE id = $3',
-    [next.id, routedTo, asset.id]);
-
   const { rows: previous } = await db.query('SELECT `name` FROM users WHERE id = $1', [asset.assignee_id]);
   const from = previous.length ? previous[0].name : 'nobody';
-  await db.query(
-    `INSERT INTO asset_events (id, asset_id, action, from_status, to_status, actor_id, actor_email, note, routed_to_id)
-     VALUES ($1,$2,'reassign',$3,$4,$5,$6,$7,$8)`,
-    [uuid(), asset.id, asset.status, asset.status, req.user.id, req.user.email,
-     `Rework moved from ${from} to ${next.name}${note && note.trim() ? ` — ${note.trim()}` : ''}`, routedTo]
+  const trailer = note && note.trim() ? ` — ${note.trim()}` : '';
+
+  const conn = await db.connect();
+  let handedOverSeconds = 0;
+  try {
+    await conn.query('BEGIN');
+
+    // Stop the outgoing person's clock and read what it finished on, before
+    // anything else moves. That number goes in the audit line: "who reassigned,
+    // from whom to whom, when, and what the outgoing session finally recorded".
+    await workTimer.pause(conn, asset.id);
+    const outgoing = await assignments.current(conn, asset.id);
+    if (outgoing) {
+      const { rows: spent } = await conn.query(
+        `SELECT COALESCE(SUM(COALESCE(seconds, 0)), 0) AS s
+           FROM work_sessions WHERE assignment_id = $1`,
+        [outgoing.id]
+      ).catch(() => ({ rows: [{ s: 0 }] }));
+      handedOverSeconds = Number(spent[0].s) || 0;
+    }
+
+    if (inReview) {
+      // --- submitted work, handed to somebody who has not done it -----------
+      //
+      // The asset goes back to Assigned under the new person. Their clock is a
+      // new episode, so it reads nothing — not because anything reset it, but
+      // because it is a different stretch of work. The outgoing person's hours
+      // stay on their now-closed episode and in the asset's lifetime total, and
+      // their submission stays in asset_versions untouched.
+      await conn.query('UPDATE assets SET assignee_id = $1 WHERE id = $2', [next.id, asset.id]);
+      await assignments.open(conn, {
+        assetId: asset.id, userId: next.id, assignedById: req.user.id,
+        status: asset.status, reason: 'reassigned_in_review',
+      });
+
+      const { rows: fresh } = await conn.query('SELECT * FROM assets WHERE id = $1', [asset.id]);
+      const ctx = await contextFor(req, fresh[0]);
+      const verdict = workflow.evaluate('reassign_review', ctx);
+      if (!verdict.ok) {
+        await conn.query('ROLLBACK');
+        conn.release();
+        return res.status(verdict.status).json({ error: verdict.error });
+      }
+      await applyTransition(req, res, fresh[0], verdict, {
+        conn,
+        // The reason, where a person reading the trail would look for it, and
+        // then what the outgoing round finally recorded — which is the number
+        // the handover is answerable for.
+        note: `Reassigned from ${from} to ${next.name} while in ${workflow.label(asset.status)}${trailer}. `
+          + `${from} recorded ${fmtSeconds(handedOverSeconds)} on their round; ${next.name} starts a new one.`,
+      });
+      await conn.query('COMMIT');
+    } else {
+      // --- rework, picked up by somebody else --------------------------------
+      //
+      // Unchanged behaviour. The status stays where it is: the asset is already
+      // back with the artist, and this only says which artist. In CD Changes it
+      // sits with the team lead until they relay the notes, so the routing only
+      // follows the assignee when it was already pointing at them — reassigning
+      // must not steal it off the lead's desk and skip the relay.
+      const wasWithAssignee = asset.routed_to_id && asset.routed_to_id === asset.assignee_id;
+      const routedTo = wasWithAssignee ? next.id : asset.routed_to_id;
+
+      await conn.query('UPDATE assets SET assignee_id = $1, routed_to_id = $2 WHERE id = $3',
+        [next.id, routedTo, asset.id]);
+      await assignments.open(conn, {
+        assetId: asset.id, userId: next.id, assignedById: req.user.id,
+        status: asset.status, reason: 'reassigned_rework',
+      });
+      await conn.query(
+        `INSERT INTO asset_events (id, asset_id, action, from_status, to_status, actor_id, actor_email, note, routed_to_id)
+         VALUES ($1,$2,'reassign',$3,$4,$5,$6,$7,$8)`,
+        [uuid(), asset.id, asset.status, asset.status, req.user.id, req.user.email,
+         `Rework moved from ${from} to ${next.name}${trailer}. ${from} recorded ${fmtSeconds(handedOverSeconds)}.`,
+         routedTo]
+      );
+      await conn.query('COMMIT');
+    }
+  } catch (err) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    conn.release();
+  }
+
+  console.log(
+    `${req.user.email} reassigned ${asset.code} from ${from} to ${next.name}`
+    + ` (${inReview ? `in ${asset.status}, back to assigned` : 'rework'};`
+    + ` ${from} recorded ${fmtSeconds(handedOverSeconds)}).`
   );
-  console.log(`${req.user.email} reassigned ${asset.code} from ${from} to ${next.name}.`);
 
   const { rows: updated } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [asset.id]);
   const [withDetails] = await attachTasksAndNotes(updated);
-  res.json({ asset: withDetails });
+  res.json({ asset: withDetails, reassigned: { inReview, from, to: next.name, handedOverSeconds } });
 });
 
 // GET /api/assets/:id/reassign-options — who could pick this rework up.
@@ -909,7 +1064,13 @@ router.get('/:id/reassign-options', async (req, res) => {
   const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
   const asset = rows[0];
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
-  if (!canAssignAsset(req.user, asset)) {
+  // The same reach the handover itself uses, asked the same way — a picker that
+  // opens for somebody the endpoint would refuse is a promise the app breaks.
+  const reviewing = ['pending_tl_review', 'pending_cd_review'].includes(asset.status);
+  const mayPick = reviewing
+    ? await canHandOverInReview(req.user, asset)
+    : canAssignAsset(req.user, asset);
+  if (!mayPick) {
     return res.status(403).json({ error: 'You do not have permission to do that' });
   }
 
@@ -925,7 +1086,7 @@ router.get('/:id/reassign-options', async (req, res) => {
         roleLabel: (roleDef(person.role) || {}).label || person.role });
     }
   }
-  res.json({ options, awaitingRework: isAwaitingRework(asset), status: asset.status });
+  res.json({ options, awaitingRework: isAwaitingRework(asset), inReview: reviewing, status: asset.status });
 });
 
 // GET /api/assets/:id/history — the whole back-and-forth, in order.

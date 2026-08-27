@@ -338,6 +338,11 @@ CREATE TABLE IF NOT EXISTS work_sessions (
   asset_id   CHAR(36)  NOT NULL,
   user_id    CHAR(36)  NULL,
   round      INT       NOT NULL DEFAULT 1,
+  -- Which stretch-with-one-person this session belongs to (asset_assignments).
+  -- No foreign key: that table is declared after this one, and the link is a
+  -- lookup rather than a rule worth failing a CREATE over. NULL on sessions
+  -- written before assignment episodes existed.
+  assignment_id CHAR(36) NULL,
   started_at DATETIME  NOT NULL DEFAULT CURRENT_TIMESTAMP,
   ended_at   DATETIME  NULL,
   -- Stamped when the row closes, so totals are a SUM rather than N date
@@ -345,6 +350,7 @@ CREATE TABLE IF NOT EXISTS work_sessions (
   seconds    INT       NULL,
   KEY idx_ws_asset (asset_id),
   KEY idx_ws_open (asset_id, ended_at),
+  KEY idx_ws_assignment (assignment_id),
   CONSTRAINT fk_ws_asset FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE,
   CONSTRAINT fk_ws_user  FOREIGN KEY (user_id)  REFERENCES users(id)  ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -407,6 +413,42 @@ CREATE TABLE IF NOT EXISTS asset_versions (
 -- back-and-forth rather than only the current state.
 --
 -- Append-only. Nothing here is ever updated or deleted while the asset lives.
+-- One row per stretch of time an asset sat with one person.
+--
+-- The asset's own row says who has it NOW. This says who has had it, in order,
+-- and it is what the Assets List is built from: a reassignment adds a row here
+-- rather than overwriting the last one, so the person who did the first round
+-- keeps their line, their time and their submission.
+--
+-- An episode opens whenever the assignee changes and closes when it changes
+-- again. At most one is open per asset at a time — the same invariant
+-- work_sessions keeps for the clock, and for the same reason.
+CREATE TABLE IF NOT EXISTS asset_assignments (
+  id            CHAR(36)     NOT NULL PRIMARY KEY,
+  seq           BIGINT       NOT NULL AUTO_INCREMENT UNIQUE,
+  asset_id      CHAR(36)     NOT NULL,
+  -- Null only if the asset was unassigned; an episode with nobody in it is not
+  -- written, so in practice this is always somebody.
+  user_id       CHAR(36)     NULL,
+  assigned_by_id CHAR(36)    NULL,
+  assigned_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  -- Where the asset was when this person got it. A reassignment out of TL
+  -- Review reads 'pending_tl_review' here even though the asset moves to
+  -- 'assigned' for the new person, which is what makes the trail legible.
+  status_at_assignment VARCHAR(32) NOT NULL,
+  ended_at      DATETIME     NULL,
+  -- Where the asset had got to when this person let go of it. The Assets List
+  -- shows this on a finished row: somebody who took work all the way to TL
+  -- Review should not have their round labelled with the status it started in.
+  ended_status  VARCHAR(32)  NULL,
+  -- Why it ended: 'reassigned', 'unassigned', 'delivered'.
+  ended_reason  VARCHAR(32)  NULL,
+  KEY idx_aa_asset (asset_id, seq),
+  KEY idx_aa_open (asset_id, ended_at),
+  CONSTRAINT fk_aa_asset FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE,
+  CONSTRAINT fk_aa_user  FOREIGN KEY (user_id)  REFERENCES users(id)  ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS asset_events (
   id          CHAR(36)     NOT NULL PRIMARY KEY,
   -- The order things happened in. created_at is only accurate to the second,
