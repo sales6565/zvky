@@ -1756,6 +1756,35 @@ async function openDrawer(id){
       <div class="ref-err" id="d_timerErr"></div>
     ` : ''}
 
+    <div class="field-lbl">Requirement / Reference Link</div>
+    <div style="font-size:11px;color:var(--ink-faint);margin-bottom:5px;">
+      The brief, spec or reference this is made from — not the finished work. Submissions go in the Submissions section below.
+    </div>
+    ${editable
+      ? `<input type="text" id="d_refLink" value="${escapeHTML(a.reference_link||'')}" placeholder="https://drive.example.com/brief (optional)">
+         <div class="ref-err" id="d_refErr"></div>`
+      : (a.reference_link
+          ? `<div style="font-size:13px;padding:6px 0;"><a href="${escapeHTML(a.reference_link)}" target="_blank" rel="noopener noreferrer" style="color:var(--brand);word-break:break-all;">${escapeHTML(a.reference_link)}</a></div>`
+          : `<div style="font-size:12px;color:var(--ink-faint);padding:6px 0;">None given.</div>`)}
+
+    <div class="row2">
+      <div><div class="field-lbl">Man-hours</div><input type="text" id="d_hours" value="${a.man_hours||''}" ${editable?'':'disabled'} placeholder="e.g. 16"></div>
+      <div><div class="field-lbl">Deadline</div><input type="date" id="d_due" value="${a.due_date?a.due_date.slice(0,10):''}" ${editable?'':'disabled'}></div>
+    </div>
+
+    <div class="field-lbl">Priority</div>
+    <select id="d_priority" ${editable?'':'disabled'}>${priorityOptions(a.priority)}</select>
+    <div class="field-lbl">Description</div><textarea id="d_desc" rows="3" ${editable?'':'disabled'}>${escapeHTML(a.description||'')}</textarea>
+    <div class="field-lbl" style="display:flex;align-items:center;gap:8px;">
+      <span>Tasks</span>
+      <span id="d_taskCount" style="font-size:11px;color:var(--ink-faint);text-transform:none;letter-spacing:0;">${taskProgress(a.tasks)}</span>
+    </div>
+    <div id="d_tasks">${a.tasks.map(t=>taskRowHTML(t, manageTasks)).join('')}</div>
+    ${manageTasks ? `<div class="task-add">
+      <input type="text" id="d_newTask" placeholder="Add a task…">
+      <button class="btn btn-ghost btn-sm" id="d_addTask">Add</button>
+    </div><div class="ref-err" id="d_taskErr"></div>` : ''}
+
     ${(canSubmit && latestFeedback && a.status.endsWith('_changes_requested')) ? `
       <div class="note" style="margin-top:14px;border-left-color:#e8402c;">
         <span class="who">Feedback to address (${latestFeedback.stage==='tl'?'Team Lead':'Creative Director'})</span>
@@ -1836,34 +1865,6 @@ async function openDrawer(id){
       ? `<select id="d_assignee"><option value="">Loading…</option></select><div class="ref-err" id="d_assigneeErr"></div>`
       : `<div style="font-size:13px;padding:8px 0;">${escapeHTML(a.assignee_name)||'Unassigned'}</div>`}
 
-    <div class="field-lbl">Requirement / Reference Link</div>
-    <div style="font-size:11px;color:var(--ink-faint);margin-bottom:5px;">
-      The brief, spec or reference this is made from — not the finished work. Submissions go in the Submissions section below.
-    </div>
-    ${editable
-      ? `<input type="text" id="d_refLink" value="${escapeHTML(a.reference_link||'')}" placeholder="https://drive.example.com/brief (optional)">
-         <div class="ref-err" id="d_refErr"></div>`
-      : (a.reference_link
-          ? `<div style="font-size:13px;padding:6px 0;"><a href="${escapeHTML(a.reference_link)}" target="_blank" rel="noopener noreferrer" style="color:var(--brand);word-break:break-all;">${escapeHTML(a.reference_link)}</a></div>`
-          : `<div style="font-size:12px;color:var(--ink-faint);padding:6px 0;">None given.</div>`)}
-
-    <div class="row2">
-      <div><div class="field-lbl">Man-hours</div><input type="text" id="d_hours" value="${a.man_hours||''}" ${editable?'':'disabled'} placeholder="e.g. 16"></div>
-      <div><div class="field-lbl">Deadline</div><input type="date" id="d_due" value="${a.due_date?a.due_date.slice(0,10):''}" ${editable?'':'disabled'}></div>
-    </div>
-
-    <div class="field-lbl">Priority</div>
-    <select id="d_priority" ${editable?'':'disabled'}>${priorityOptions(a.priority)}</select>
-    <div class="field-lbl">Description</div><textarea id="d_desc" rows="3" ${editable?'':'disabled'}>${escapeHTML(a.description||'')}</textarea>
-    <div class="field-lbl" style="display:flex;align-items:center;gap:8px;">
-      <span>Tasks</span>
-      <span id="d_taskCount" style="font-size:11px;color:var(--ink-faint);text-transform:none;letter-spacing:0;">${taskProgress(a.tasks)}</span>
-    </div>
-    <div id="d_tasks">${a.tasks.map(t=>taskRowHTML(t, manageTasks)).join('')}</div>
-    ${manageTasks ? `<div class="task-add">
-      <input type="text" id="d_newTask" placeholder="Add a task…">
-      <button class="btn btn-ghost btn-sm" id="d_addTask">Add</button>
-    </div><div class="ref-err" id="d_taskErr"></div>` : ''}
 
     <div class="field-lbl">Submissions</div>
     <div id="d_versions">${(a.versions&&a.versions.length) ? a.versions.map(v=>`
