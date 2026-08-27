@@ -195,6 +195,21 @@ router.get('/project/:projectId', async (req, res) => {
   res.json({ assets: withDetails });
 });
 
+/* Category is managed in Settings like Scope of Work and Priority, so an
+   incoming value is checked against the live list rather than a fixed one.
+   Returns an error body, or null when the value is acceptable.
+
+   Empty means "no category" and is always allowed: the list starts empty, and
+   an asset without one is a normal asset, not an incomplete one. */
+function validateCategory(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const entry = referenceData.get('categories', value);
+  if (!entry || !entry.isActive) {
+    return { error: 'Invalid category', field: 'category', allowed: referenceData.keys('categories') };
+  }
+  return null;
+}
+
 // POST /api/assets/project/:projectId — create a new asset
 router.post('/project/:projectId', async (req, res) => {
   const projectId = req.params.projectId;
@@ -203,8 +218,13 @@ router.post('/project/:projectId', async (req, res) => {
   if (!allowed) return res.status(403).json({ error: 'No access to this project' });
   if (await projectClosedResponse(res, projectId)) return undefined;
 
-  const { name, type, priority = assetImport.defaultPriority(), assigneeId = null, due = null, description = '', manHours = null } = req.body || {};
+  const { name, type, category = null, priority = assetImport.defaultPriority(), assigneeId = null, due = null, description = '', manHours = null } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: 'Asset name is required' });
+  /* Category is optional — the list ships empty and a studio that has not set
+     one up yet must still be able to add assets. A value that IS given has to
+     be one of the managed ones, so the column cannot fill with typos. */
+  const categoryError = validateCategory(category);
+  if (categoryError) return res.status(400).json(categoryError);
   // Asset types are managed in Settings, so validate against the live list
   // rather than one fixed here.
   const assetType = referenceData.get('asset_types', type);
@@ -237,9 +257,9 @@ router.post('/project/:projectId', async (req, res) => {
   try {
     await conn.query('BEGIN');
     await conn.query(
-      `INSERT INTO assets (id, \`code\`, \`name\`, \`type\`, \`status\`, priority, project_id, assignee_id, created_by, due_date, description, man_hours)
-       VALUES ($1,$2,$3,$4,'not_started',$5,$6,$7,$8,$9,$10,$11)`,
-      [id, code, name.trim(), type, priority, projectId, assigneeId, req.user.id, due, description, manHours]
+      `INSERT INTO assets (id, \`code\`, \`name\`, \`type\`, category, \`status\`, priority, project_id, assignee_id, created_by, due_date, description, man_hours)
+       VALUES ($1,$2,$3,$4,$5,'not_started',$6,$7,$8,$9,$10,$11,$12)`,
+      [id, code, name.trim(), type, category || null, priority, projectId, assigneeId, req.user.id, due, description, manHours]
     );
   // Created Not Assigned, as the pipeline says. If it was created with somebody
   // already on it, the same rule that applies to assigning later applies here:
@@ -301,7 +321,7 @@ router.patch('/:id', async (req, res) => {
   // a role holding asset.assign and not asset.edit was refused the one thing
   // its permission was for, and the panel offered it a dropdown the API then
   // rejected. Ask for what the request actually changes.
-  const EDIT_FIELDS = ['status', 'priority', 'description', 'due', 'manHours', 'referenceLink'];
+  const EDIT_FIELDS = ['status', 'priority', 'description', 'due', 'manHours', 'referenceLink', 'category'];
   const wantsEdit = EDIT_FIELDS.some((k) => req.body && req.body[k] !== undefined);
   const wantsAssign = Boolean(req.body) && req.body.assigneeId !== undefined
     && req.body.assigneeId !== asset.assignee_id;
@@ -355,11 +375,18 @@ router.patch('/:id', async (req, res) => {
     values.push(verdict.link);
   }
 
-  for (const key of ['status', 'priority', 'description', 'assignee_id', 'due_date', 'man_hours']) {
+  if (req.body.category !== undefined) {
+    const categoryError = validateCategory(req.body.category);
+    if (categoryError) return res.status(400).json(categoryError);
+  }
+
+  for (const key of ['status', 'priority', 'description', 'assignee_id', 'due_date', 'man_hours', 'category']) {
     const bodyKey = key === 'assignee_id' ? 'assigneeId' : key === 'due_date' ? 'due' : key === 'man_hours' ? 'manHours' : key;
     if (req.body[bodyKey] !== undefined) {
       fields.push(`\`${key}\` = $${i++}`);
-      values.push(req.body[bodyKey]);
+      // Clearing a category comes through as '' from a <select>; store the
+      // absence as NULL so "no category" is one value, not two.
+      values.push(key === 'category' && req.body[bodyKey] === '' ? null : req.body[bodyKey]);
     }
   }
   if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });

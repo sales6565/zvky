@@ -28,6 +28,14 @@ const COLLECTIONS = {
     extra: ['color'],
     usedBy: { table: 'assets', column: 'priority' },
   },
+  // Starts empty and is filled in Settings; an asset with no category is
+  // normal, so nothing here treats an empty list as a broken one.
+  categories: {
+    table: 'categories',
+    singular: 'category',
+    extra: ['color'],
+    usedBy: { table: 'assets', column: 'category' },
+  },
   roles: {
     table: 'roles',
     singular: 'role',
@@ -252,9 +260,11 @@ async function create(db, name, payload) {
       'INSERT INTO asset_types (id, `key`, label, code_prefix, color, position, is_active, is_system) VALUES ($1,$2,$3,$4,$5,$6,1,0)',
       [id, key, label, prefix, color, position]
     );
-  } else if (name === 'priorities') {
+  } else if (name === 'priorities' || name === 'categories') {
+    // Both are label, colour and position and nothing else, so they share the
+    // insert rather than each having a near-identical branch.
     await db.query(
-      'INSERT INTO priorities (id, `key`, label, color, position, is_active, is_system) VALUES ($1,$2,$3,$4,$5,1,0)',
+      `INSERT INTO ${COLLECTIONS[name].table} (id, \`key\`, label, color, position, is_active, is_system) VALUES ($1,$2,$3,$4,$5,1,0)`,
       [id, key, label, color, position]
     );
   } else {

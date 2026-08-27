@@ -320,9 +320,9 @@ test('reference data', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 // more than one — was invisible until a restart.
 
 test('a refresh collapses concurrent callers onto one query', async () => {
-  // The Settings page asks for all three lists at once and each wants fresh
-  // data. Without sharing the in-flight load that is three identical round
-  // trips, and a burst of role-lookup misses would be a burst of queries.
+  // The Settings page asks for every list at once and each wants fresh data.
+  // Without sharing the in-flight load that is one identical round trip per
+  // list, and a burst of role-lookup misses would be a burst of queries.
   let queries = 0;
   const db = {
     async query() {
@@ -332,12 +332,14 @@ test('a refresh collapses concurrent callers onto one query', async () => {
     },
   };
   const referenceData2 = require('../src/reference-data');
-  const COLLECTIONS = 3;
+  // Read from the module rather than hardcoded, so adding a collection does
+  // not fail a test that is about collapsing concurrent loads.
+  const COLLECTIONS = referenceData2.COLLECTION_NAMES.length;
   await Promise.all([
     referenceData2.refresh(db), referenceData2.refresh(db),
     referenceData2.refresh(db), referenceData2.refresh(db),
   ]);
-  assert.strictEqual(queries, COLLECTIONS, 'four concurrent refreshes should be one load of three tables');
+  assert.strictEqual(queries, COLLECTIONS, `four concurrent refreshes should be one load of ${COLLECTIONS} tables`);
 
   // A later refresh is a fresh load, not a cached one.
   await referenceData2.refresh(db);
@@ -456,4 +458,20 @@ test('the settings lists match the database', { skip: cfg ? false : SKIP_REASON 
     assert.strictEqual(new Set(roles.body.entries.map((e) => e.key)).size, roles.body.entries.length,
       'and every entry distinct');
   });
+});
+
+test('categories are a managed list like the others, starting empty', async () => {
+  /* Category was added as a reference collection rather than a free-text
+     column so the values stay consistent and renaming one does not orphan the
+     assets holding it. It ships with no values on purpose: the studio's own
+     taxonomy is not something to guess at, and an asset with no category is a
+     normal asset. */
+  const referenceData2 = require('../src/reference-data');
+  assert.ok(referenceData2.COLLECTION_NAMES.includes('categories'));
+  assert.ok(!Object.keys(defaults).some((k) => /categor/i.test(k)),
+    'reference-defaults should not seed a category list');
+
+  const catalog = require('../src/permission-catalog');
+  const keys = catalog.GROUPS.flatMap((g) => g.permissions).map((p) => p.key);
+  assert.ok(keys.includes('settings.categories'), 'managing the list needs its own permission');
 });

@@ -142,6 +142,17 @@ const REFERENCE_TABLES = {
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE KEY uq_priorities_key (\`key\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  categories: `CREATE TABLE IF NOT EXISTS categories (
+      id CHAR(36) NOT NULL PRIMARY KEY,
+      \`key\` VARCHAR(64) NOT NULL,
+      label VARCHAR(100) NOT NULL,
+      color VARCHAR(16) NULL,
+      position INT NOT NULL DEFAULT 0,
+      is_active TINYINT(1) NOT NULL DEFAULT 1,
+      is_system TINYINT(1) NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_categories_key (\`key\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   roles: `CREATE TABLE IF NOT EXISTS roles (
       id CHAR(36) NOT NULL PRIMARY KEY,
       \`key\` VARCHAR(64) NOT NULL,
@@ -1119,6 +1130,21 @@ async function ensureReviewGateDefaults(db, log) {
   log(`         ${rows.map((r) => r.role_key).join(', ')}.`);
 }
 
+
+// The category each asset belongs to. Deliberately no seed: the list starts
+// empty and a Super Admin fills it in Settings, so nobody inherits a taxonomy
+// guessed for them. Nullable, so every asset that already exists stays valid.
+async function ensureAssetCategory(db, log) {
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'assets' AND COLUMN_NAME = 'category'`
+  );
+  if (rows.length) return;
+  await db.query('ALTER TABLE assets ADD COLUMN category VARCHAR(64) NULL AFTER `type`');
+  await db.query('ALTER TABLE assets ADD KEY idx_assets_category (category)');
+  log('Schema: added assets.category.');
+}
+
 const STEPS = [
   ['stale role constraints', dropStaleRoleConstraints],
   ['users.role column width', widenRoleColumn],
@@ -1155,6 +1181,7 @@ const STEPS = [
   // After the catalogue top-up, so every role has a row to correct.
   ['review gate departments', ensureReviewGateDefaults],
   ['IP allowlist', ensureIpAllowlist],
+  ['asset category', ensureAssetCategory],
 ];
 
 async function run(db, log = console.log) {

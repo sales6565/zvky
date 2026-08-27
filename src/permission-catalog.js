@@ -161,6 +161,7 @@ const GROUPS = [
       { key: 'settings.roles',        label: 'Manage Roles',         impliedBy: has('manageSettings') },
       { key: 'settings.asset_types',  label: 'Manage Scope of Work', impliedBy: has('manageSettings') },
       { key: 'settings.priorities',   label: 'Manage Priorities',    impliedBy: has('manageSettings') },
+      { key: 'settings.categories',   label: 'Manage Categories',    impliedBy: has('manageSettings') },
       {
         key: 'settings.ip_allowlist',
         label: 'Manage IP Allowlist',

@@ -360,3 +360,70 @@ test('the asset side panel', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     })).status, 201);
   });
 });
+
+test('category and man-hours survive the round trip', { skip: cfg ? false : SKIP_REASON }, async (t) => {
+  const PASSWORD = 'Panel-Cat-1!';
+  let server; let token; let projectId;
+
+  t.before(async () => {
+    await resetSchema(cfg);
+    server = await startServer(cfg, { BOOTSTRAP_TOKEN: 'tok' });
+    await api(server.base, '/auth/bootstrap', { method: 'POST',
+      body: { token: 'tok', name: 'Root', email: 'root@zvky.test', password: PASSWORD } });
+    token = (await api(server.base, '/auth/login', { method: 'POST',
+      body: { email: 'root@zvky.test', password: PASSWORD } })).body.token;
+    const clientId = await systemClientId(server.base, token);
+    projectId = (await api(server.base, '/projects', { method: 'POST', token,
+      body: { clientId, name: 'Cat Target' } })).body.project.id;
+  });
+  t.after(() => stopServer(server));
+
+  await t.test('the list ships empty and an asset may be created without one', async () => {
+    const before = await api(server.base, '/reference/categories', { token });
+    assert.deepStrictEqual(before.body.entries, [], 'no category should be invented for the studio');
+
+    const made = await api(server.base, `/assets/project/${projectId}`, { method: 'POST', token,
+      body: { name: 'No Category', type: 'prop' } });
+    assert.strictEqual(made.status, 201, JSON.stringify(made.body));
+    assert.strictEqual(made.body.asset.category, null);
+  });
+
+  await t.test('a category that is not in the managed list is refused', async () => {
+    const bad = await api(server.base, `/assets/project/${projectId}`, { method: 'POST', token,
+      body: { name: 'Typo Category', type: 'prop', category: 'slot_gaem' } });
+    assert.strictEqual(bad.status, 400, JSON.stringify(bad.body));
+    assert.strictEqual(bad.body.field, 'category');
+  });
+
+  await t.test('man-hours given at creation is the same field the panel edits', async () => {
+    const added = await api(server.base, '/reference/categories', { method: 'POST', token,
+      body: { label: 'Slot Game' } });
+    assert.strictEqual(added.status, 201, JSON.stringify(added.body));
+    const key = added.body.entry.key;
+
+    const made = await api(server.base, `/assets/project/${projectId}`, { method: 'POST', token,
+      body: { name: 'Full House', type: 'prop', category: key, manHours: 16 } });
+    assert.strictEqual(made.status, 201, JSON.stringify(made.body));
+    const id = made.body.asset.id;
+    assert.strictEqual(made.body.asset.category, key);
+    assert.strictEqual(Number(made.body.asset.man_hours), 16);
+
+    /* The estimate and the tracked time are different columns and must stay
+       that way: nothing typed into Man Hours may show up as Time Spent. */
+    assert.strictEqual(Number(made.body.asset.time_spent_seconds || 0), 0);
+
+    // The panel PATCHes the same fields it was created with.
+    await api(server.base, `/assets/${id}`, { method: 'PATCH', token, body: { manHours: 24 } });
+    const listed = (await api(server.base, `/assets/project/${projectId}`, { token }))
+      .body.assets.find((a) => a.id === id);
+    assert.strictEqual(Number(listed.man_hours), 24, 'the panel edits the creation field, not a second one');
+    assert.strictEqual(listed.category, key);
+    assert.strictEqual(Number(listed.time_spent_seconds || 0), 0);
+
+    // And clearing it is sending an empty value, stored as absence.
+    await api(server.base, `/assets/${id}`, { method: 'PATCH', token, body: { category: '' } });
+    const cleared = (await api(server.base, `/assets/project/${projectId}`, { token }))
+      .body.assets.find((a) => a.id === id);
+    assert.strictEqual(cleared.category, null);
+  });
+});

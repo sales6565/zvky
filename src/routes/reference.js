@@ -19,6 +19,7 @@ router.use(authenticate);
 // URLs use hyphens; the collections are named with underscores.
 const COLLECTION_BY_PATH = {
   'asset-types': 'asset_types',
+  'categories': 'categories',
   priorities: 'priorities',
   roles: 'roles',
 };
@@ -27,6 +28,7 @@ const COLLECTION_BY_PATH = {
 // without being trusted with the role catalogue.
 const PERMISSION_BY_PATH = {
   'asset-types': 'settings.asset_types',
+  'categories': 'settings.categories',
   priorities: 'settings.priorities',
   roles: 'settings.roles',
 };
@@ -79,6 +81,7 @@ router.get('/', async (req, res) => {
   await referenceData.refresh(db);
   res.json({
     assetTypes: referenceData.list('asset_types'),
+    categories: referenceData.list('categories'),
     priorities: referenceData.list('priorities'),
     roles: catalogue(),
     // Only meaningful to whoever can manage these; harmless to everyone else.

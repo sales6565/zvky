@@ -380,10 +380,13 @@ tr.past-round{opacity:0.62;}
 <div class="modal-wrap" id="modalWrap">
   <div class="modal">
     <h2>New Asset</h2>
-    <label>Name</label><input type="text" id="f_name" placeholder="e.g. River Spirit — Hero">
-    <div class="row2"><div><label>Scope of Work</label><select id="f_type"></select></div><div><label>Priority</label><select id="f_priority"></select></div></div>
-    <div class="row2"><div><label>Assignee</label><select id="f_assignee"></select></div><div><label>Deadline</label><input type="date" id="f_due"></div></div>
-    <label>Estimated man-hours</label><input type="text" id="f_hours" placeholder="e.g. 16">
+    <label>Assets Name</label><input type="text" id="f_name" placeholder="e.g. River Spirit — Hero">
+    <div class="row2"><div><label>Category</label><select id="f_category"></select></div><div><label>Scope of Work</label><select id="f_type"></select></div></div>
+    <!-- The estimate, not the clock. Time Spent is recorded by the timer on the
+         asset panel and is never typed in here. -->
+    <label>Man Hours</label><input type="text" id="f_hours" placeholder="e.g. 16 — the estimate, not time tracked">
+    <div class="row2"><div><label>Priority</label><select id="f_priority"></select></div><div><label>Assignee</label><select id="f_assignee"></select></div></div>
+    <label>Deadline</label><input type="date" id="f_due">
     <label>Description</label><textarea id="f_desc" rows="3" placeholder="Brief notes for the artist…"></textarea>
     <div class="modal-actions"><button class="btn btn-ghost" id="cancelModal">Cancel</button><button class="btn btn-brand" id="saveModal">Create Asset</button></div>
   </div>
@@ -546,21 +549,38 @@ tr.past-round{opacity:0.62;}
 const API_BASE = window.location.origin + '/api';
 document.getElementById('apiBaseLabel').textContent = API_BASE;
 
-/* Asset types and priorities are managed in Settings and fetched with the role
-   catalogue, so a value added there is usable without a deploy. Held as arrays
-   of {id,label,color} to match what the rest of this file already expects. */
+/* Scope of Work, categories and priorities are managed in Settings and fetched
+   with the role catalogue, so a value added there is usable without a deploy.
+   Held as arrays of {id,label,color} to match what the rest of this file
+   already expects. */
 let TYPES = [];
 let PRIORITIES = [];
+let CATEGORIES = [];
 async function loadReferenceData(){
   const data = await api('/reference');
   TYPES = data.assetTypes.map(t=>({ id:t.key, label:t.label, color:t.color||'var(--ink-muted)', codePrefix:t.codePrefix }));
   PRIORITIES = data.priorities.map(p=>({ id:p.key, label:p.label, color:p.color||'var(--ink-muted)' }));
+  /* Ships empty. Every consumer treats "no categories yet" as a normal state,
+     so the field is simply optional until a Super Admin fills the list in. */
+  CATEGORIES = (data.categories || []).map(c=>({ id:c.key, label:c.label, color:c.color||'var(--ink-muted)' }));
   ROLE_GROUPS = data.groups || [];
   ROLE_TIERS = data.tiers || [];
 }
 let ROLE_GROUPS = [];
 let ROLE_TIERS = [];
 function priorityOf(id){ return PRIORITIES.find(p=>p.id===id) || {id, label:id||'—', color:'var(--ink-muted)'}; }
+/* An asset may legitimately have no category, and may also hold one that has
+   since been deactivated — so this never invents a label, it falls back to
+   whatever the row stores. */
+function categoryLabel(id){
+  if(!id) return '';
+  const c = CATEGORIES.find(x=>x.id===id);
+  return c ? c.label : id;
+}
+function categoryOptions(selected){
+  return '<option value="">— None —</option>' +
+    CATEGORIES.map(c=>`<option value="${c.id}"${c.id===selected?' selected':''}>${escapeHTML(c.label)}</option>`).join('');
+}
 function priorityOptions(selected){
   return PRIORITIES.map(p=>`<option value="${p.id}" ${p.id===selected?'selected':''}>${escapeHTML(p.label)}</option>`).join('');
 }
@@ -757,6 +777,7 @@ const SETTINGS_SECTIONS = [
   { permission:'settings.permissions',  label:'Role Permissions', note:'What each role may do, across all six permission groups.' },
   { permission:'settings.asset_types',  label:'Scope of Work',    note:'The Scope of Work dropdown and the code prefix each asset gets.' },
   { permission:'settings.priorities',   label:'Priorities',       note:'The Priority dropdown.' },
+  { permission:'settings.categories',   label:'Categories',       note:'The Category dropdown. Starts empty — add the studio\'s own list.' },
   { permission:'settings.roles',        label:'Roles',            note:'The studio\'s designations and what each one can do.' },
   { permission:'settings.ip_allowlist', label:'IP Allowlist',     note:'Which addresses may reach this application at all.' },
 ];
@@ -1320,7 +1341,7 @@ function renderList(){
     for(const ep of episodes) rows.push({ a, ep });
   }
 
-  el.innerHTML = tabs + `<table><thead><tr><th>Code</th><th>Name</th><th>Scope of Work</th><th>Status</th><th>Assignee</th><th>Round</th><th>Priority</th><th>Tasks</th><th>Time Spent</th></tr></thead><tbody>
+  el.innerHTML = tabs + `<table><thead><tr><th>Code</th><th>Assets Name</th><th>Category</th><th>Scope of Work</th><th>Man Hours</th><th>Status</th><th>Assignee</th><th>Round</th><th>Priority</th><th>Tasks</th><th>Time Spent</th></tr></thead><tbody>
     ${rows.map(({a, ep})=>{
       const t=typeOf(a.type), doneTasks=a.tasks.filter(x=>x.done).length;
       /* A finished stretch shows where that person LEFT it — somebody who took
@@ -1333,7 +1354,11 @@ function renderList(){
       const who = ep ? ep.userName : (a.assignee_name || '');
       const past = ep && !ep.active;
       return `<tr data-id="${a.id}"${past?' class="past-round"':''}>
-      <td class="mono">${a.code}</td><td style="font-weight:600;">${escapeHTML(a.name)}</td><td>${t.label}</td>
+      <td class="mono">${a.code}</td><td style="font-weight:600;">${escapeHTML(a.name)}</td>
+      <td>${escapeHTML(categoryLabel(a.category))||'—'}</td>
+      <td>${t.label}</td>
+      <!-- The estimate. Time Spent, the last column, is what the timer recorded. -->
+      <td class="mono">${a.man_hours ? a.man_hours+'h' : '—'}</td>
       <td><span class="status-pill" style="background:${s.color}22;color:${s.color}"><span class="d" style="background:${s.color}"></span>${s.label}</span></td>
       <td>${escapeHTML(who)||'—'}</td>
       <td>${ep ? (past ? `<span class="round-tag">handed on</span>` : `<span class="round-tag round-tag-live">current</span>`) : ''}</td>
@@ -1905,9 +1930,17 @@ async function openDrawer(id){
           : `<div style="font-size:12px;color:var(--ink-faint);padding:6px 0;">None given.</div>`)}
 
     <div class="row2">
-      <div><div class="field-lbl">Man-hours</div><input type="text" id="d_hours" value="${a.man_hours||''}" ${editable?'':'disabled'} placeholder="e.g. 16"></div>
+      <div><div class="field-lbl">Man Hours</div><input type="text" id="d_hours" value="${a.man_hours||''}" ${editable?'':'disabled'} placeholder="e.g. 16">
+        <div style="font-size:11px;color:var(--ink-faint);margin-top:4px;">The estimate. Time Spent above is what the timer recorded.</div></div>
       <div><div class="field-lbl">Deadline</div><input type="date" id="d_due" value="${a.due_date?a.due_date.slice(0,10):''}" ${editable?'':'disabled'}></div>
     </div>
+
+    <!-- Added here rather than in the row above so the section order this panel
+         was given — link, man-hours, deadline, priority, description, tasks —
+         keeps its existing sequence, with one field inserted into it. Without
+         this, a category chosen at creation could never be corrected. -->
+    <div class="field-lbl">Category</div>
+    <select id="d_category" ${editable?'':'disabled'}>${categoryOptions(a.category||'')}</select>
 
     <div class="field-lbl">Priority</div>
     <select id="d_priority" ${editable?'':'disabled'}>${priorityOptions(a.priority)}</select>
@@ -2055,6 +2088,7 @@ async function openDrawer(id){
   if(editable){
     document.getElementById('d_priority').onchange = async e=>{ try{ await api('/assets/'+id,{method:'PATCH',body:{priority:e.target.value}}); a.priority=e.target.value; render(); }catch(err){ showToast(err.message); } };
     document.getElementById('d_desc').onchange = async e=>{ try{ await api('/assets/'+id,{method:'PATCH',body:{description:e.target.value}}); a.description=e.target.value; }catch(err){ showToast(err.message); } };
+    document.getElementById('d_category').onchange = async e=>{ try{ await api('/assets/'+id,{method:'PATCH',body:{category:e.target.value||null}}); a.category=e.target.value||null; render(); }catch(err){ showToast(err.message); } };
     document.getElementById('d_hours').onchange = async e=>{ try{ await api('/assets/'+id,{method:'PATCH',body:{manHours:e.target.value?Number(e.target.value):null}}); a.man_hours=e.target.value; render(); }catch(err){ showToast(err.message); } };
     document.getElementById('d_due').onchange = async e=>{ try{ await api('/assets/'+id,{method:'PATCH',body:{due:e.target.value||null}}); a.due_date=e.target.value; render(); }catch(err){ showToast(err.message); } };
     /* The brief's link. Saved on blur like every other field here, and the
@@ -2376,6 +2410,7 @@ const modalWrap = document.getElementById('modalWrap');
 document.getElementById('newAssetBtn').addEventListener('click', async ()=>{
   document.getElementById('f_name').value=''; document.getElementById('f_due').value=''; document.getElementById('f_desc').value=''; document.getElementById('f_priority').value='med'; document.getElementById('f_hours').value='';
   document.getElementById('f_type').innerHTML = TYPES.map(t=>`<option value="${t.id}">${t.label}</option>`).join('');
+  document.getElementById('f_category').innerHTML = categoryOptions('');
   try{
     const { artists } = await api('/projects/'+state.currentProjectId+'/artists');
     document.getElementById('f_assignee').innerHTML = '<option value="">Unassigned</option>' + artists.map(u=>`<option value="${u.id}">${escapeHTML(u.name)}</option>`).join('');
@@ -2389,7 +2424,9 @@ document.getElementById('saveModal').addEventListener('click', async ()=>{
   if(!name){ showToast('Give the asset a name first.'); return; }
   try{
     await api('/assets/project/'+state.currentProjectId, { method:'POST', body:{
-      name, type: document.getElementById('f_type').value, priority: document.getElementById('f_priority').value,
+      name, type: document.getElementById('f_type').value,
+      category: document.getElementById('f_category').value || null,
+      priority: document.getElementById('f_priority').value,
       assigneeId: document.getElementById('f_assignee').value || null, due: document.getElementById('f_due').value || null,
       description: document.getElementById('f_desc').value.trim(),
       manHours: document.getElementById('f_hours').value ? Number(document.getElementById('f_hours').value) : null,
@@ -2947,7 +2984,7 @@ userDetailWrap.addEventListener('click', e=>{ if(e.target===userDetailWrap) user
 /* Super Admin only. The tab is hidden without the capability and the API
    refuses the writes regardless, so hiding it is a convenience, not the check. */
 
-/* The three value lists, each behind its own permission: a role trusted with
+/* The value lists, each behind its own permission: a role trusted with
    the scope-of-work list is not thereby trusted with the role catalogue. The
    API enforces the same split per collection; this decides what is offered.
 
@@ -2973,6 +3010,16 @@ const REF_SECTIONS = [
     note: 'The Priority dropdown on Add Asset and in the asset drawer.',
     columns: [
       { key:'label', label:'Name',   input:'text', placeholder:'e.g. Critical', required:true },
+      { key:'color', label:'Colour', input:'color' },
+    ],
+  },
+  {
+    collection: 'categories',
+    permission: 'settings.categories',
+    title: 'Categories',
+    note: 'The Category dropdown on Add Asset and in the asset drawer. This list starts empty — nothing is assumed about how the studio groups its work.',
+    columns: [
+      { key:'label', label:'Name',   input:'text', placeholder:'e.g. Slot Game', required:true },
       { key:'color', label:'Colour', input:'color' },
     ],
   },
