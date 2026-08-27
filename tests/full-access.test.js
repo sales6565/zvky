@@ -184,6 +184,7 @@ test('what the six can and cannot reach', { skip: cfg ? false : SKIP_REASON }, a
         token: root, method: 'POST',
         body: { name: `Gate ${role}`, type: 'prop', assigneeId: artist.body.user.id },
       })).body.asset;
+      await as('artist', `/assets/${asset.id}/timer/start`, { method: 'POST' });
       await as('artist', `/assets/${asset.id}/submit`, { method: 'POST', body: { link: 'http://nas/x' } });
 
       assert.strictEqual((await as(role, `/assets/${asset.id}/review`, {

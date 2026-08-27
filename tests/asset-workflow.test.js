@@ -335,6 +335,7 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
     assert.strictEqual((await call(`/assets/${id}/timer/start`, { token: token.artist, method: 'POST' })).status, 200);
     assert.strictEqual(await statusOf(id), 'in_progress');
+    await act(id, 'timer/start', 'artist');
     assert.strictEqual((await act(id, 'submit', 'artist',
       { link: 'http://nas/shots/hero-v1', description: 'First pass.' })).status, 201);
     assert.strictEqual(await statusOf(id), 'pending_tl_review');
@@ -354,6 +355,7 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
   await t.test('a TL-changes round goes back to the assignee and keeps both submissions', async () => {
     const id = await newAsset('Villain Character');
+    await act(id, 'timer/start', 'artist');
     await act(id, 'submit', 'artist', { link: 'https://review.example.com/v1' });
 
     const rejected = await act(id, 'review', 'lead',
@@ -362,6 +364,7 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(rejected.body.asset.status, 'tl_changes_requested');
     assert.strictEqual(rejected.body.asset.routed_to_id, people.artist, 'routed back to the assignee');
 
+    await act(id, 'timer/start', 'artist');
     await act(id, 'submit', 'artist', { link: 'https://review.example.com/v2', description: 'Reworked.' });
     assert.strictEqual(await statusOf(id), 'pending_tl_review');
 
@@ -374,12 +377,13 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
     const events = await historyOf(id);
     assert.deepStrictEqual(events.map((e) => e.action),
-      ['assign', 'submit', 'tl_request_changes', 'submit']);
-    assert.strictEqual(events[2].note, 'Silhouette reads flat.', 'the feedback is in the trail');
+      ['assign', 'accept', 'submit', 'tl_request_changes', 'submit']);
+    assert.strictEqual(events[3].note, 'Silhouette reads flat.', 'the feedback is in the trail');
   });
 
   await t.test('a CD-changes round goes to the lead, who relays it', async () => {
     const id = await newAsset('Sidekick');
+    await act(id, 'timer/start', 'artist');
     await act(id, 'submit', 'artist', { link: 'https://review.example.com/s1' });
     await act(id, 'review', 'lead', { decision: 'approved' });
 
@@ -389,6 +393,7 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(rejected.body.asset.routed_to_id, null, 'with the lead, not the artist');
 
     // The artist cannot pick it up before the lead has briefed them.
+    await act(id, 'timer/start', 'artist');
     const early = await act(id, 'submit', 'artist', { link: 'https://review.example.com/s2' });
     assert.strictEqual(early.status, 403);
     assert.match(early.body.error, /team lead has not passed/i);
@@ -399,18 +404,24 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(relayed.body.asset.routed_to_id, people.artist, 'only whose desk it is on');
 
     // Default re-entry is the lead, who relayed it.
+    await act(id, 'timer/start', 'artist');
     const resubmitted = await act(id, 'submit', 'artist',
       { link: 'https://review.example.com/s2', description: 'Cooled it.' });
     assert.strictEqual(resubmitted.status, 201);
     assert.strictEqual(await statusOf(id), 'pending_tl_review');
 
     assert.deepStrictEqual((await historyOf(id)).map((e) => e.action),
-      ['assign', 'submit', 'tl_approve', 'cd_request_changes', 'relay', 'submit']);
+      ['assign', 'accept', 'submit', 'tl_approve', 'cd_request_changes', 'relay', 'submit']);
   });
 
   await t.test('permission is enforced at every gate, by the API', async () => {
     const id = await newAsset('Guarded Prop');
-    // Only the assignee submits.
+
+    // Only the assignee submits — asked from In Progress, where submitting is
+    // otherwise legal, so the answer is about who is asking rather than about
+    // the state. From Assigned every submission is refused for being too early,
+    // whoever sends it, and that would say nothing about permission.
+    await act(id, 'timer/start', 'artist');
     const wrongArtist = await act(id, 'submit', 'other', { link: 'https://review.example.com/x' });
     assert.strictEqual(wrongArtist.status, 403);
     assert.match(wrongArtist.body.error, /assigned/i);
@@ -607,12 +618,13 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
   await t.test('a submission without a valid link is refused', async () => {
     const id = await newAsset('Linkless');
+    await act(id, 'timer/start', 'artist');
     for (const body of [{}, { link: '' }, { link: 'not a url' }, { description: 'notes only' }]) {
       const res = await act(id, 'submit', 'artist', body);
       assert.strictEqual(res.status, 400, `${JSON.stringify(body)} should be refused`);
       assert.strictEqual(res.body.field, 'link');
     }
-    assert.strictEqual(await statusOf(id), 'assigned', 'and nothing moved');
+    assert.strictEqual(await statusOf(id), 'in_progress', 'and nothing moved');
 
     // A local link is fine, and the description really is optional.
     const ok = await act(id, 'submit', 'artist', { link: 'http://nas/shots/x' });
@@ -623,19 +635,22 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     // A review round is quicker than one second, so ordering cannot come from
     // the timestamp — it comes from an append-only sequence.
     const id = await newAsset('Fast Round');
+    await act(id, 'timer/start', 'artist');
     await act(id, 'submit', 'artist', { link: 'http://nas/a' });
     await act(id, 'review', 'lead', { decision: 'changes_requested', text: 'again' });
+    await act(id, 'timer/start', 'artist');
     await act(id, 'submit', 'artist', { link: 'http://nas/b' });
     await act(id, 'review', 'lead', { decision: 'approved' });
     await act(id, 'review', 'cd', { decision: 'approved' });
 
     const events = await historyOf(id);
     assert.deepStrictEqual(events.map((e) => e.action),
-      ['assign', 'submit', 'tl_request_changes', 'submit', 'tl_approve', 'cd_approve']);
-    // Each event says where it came from and where it went. Submitting straight
-    // from Assigned is the legal shortcut — it just records no time.
+      ['assign', 'accept', 'submit', 'tl_request_changes', 'submit', 'tl_approve', 'cd_approve']);
+    // Each event says where it came from and where it went. Accepting is in the
+    // chain now: work has to be started before it can be handed in, so the step
+    // out of Assigned is always recorded.
     assert.deepStrictEqual(events.map((e) => e.toStatus), [
-      'assigned', 'pending_tl_review', 'tl_changes_requested',
+      'assigned', 'in_progress', 'pending_tl_review', 'tl_changes_requested',
       'pending_tl_review', 'pending_cd_review', 'approved_for_client',
     ]);
     for (let i = 1; i < events.length; i++) {

@@ -70,6 +70,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
   }
   // Drive an asset to TL Changes, which is where Reassign becomes available.
   async function intoRework(assetId, artist) {
+    await as(artist, `/assets/${assetId}/timer/start`, { method: 'POST' });
     assert.strictEqual((await as(artist, `/assets/${assetId}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v1', description: 'First pass' },
     })).status, 201);
@@ -194,6 +195,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
 
     // The pipeline is untouched: submitting is a separate permission, so the
     // work still moves even though the record is not theirs to change.
+    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
     assert.strictEqual((await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v1', description: 'First pass' },
     })).status, 201, 'and they can still submit it for review');
@@ -252,6 +254,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     // Waiting on a reviewer IS reassignable now — and it means something
     // different from reassigning rework: the work has been submitted, so
     // handing it on returns it to Assigned for somebody who has not done it.
+    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
     await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v1', description: 'First pass' },
     });
@@ -263,6 +266,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     assert.strictEqual(handed.body.reassigned.inReview, true, 'reported as the in-review case');
 
     // Put it back the way the rest of this test expects.
+    await as('bo', `/assets/${asset.id}/timer/start`, { method: 'POST' });
     await as('bo', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v1b', description: 'Bo picks it up' },
     });
@@ -279,6 +283,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     assert.strictEqual((await reassign({ assigneeId: people.bo })).status, 200);
 
     // CD Review is the other reviewer's queue, and behaves the same way.
+    await as('bo', `/assets/${asset.id}/timer/start`, { method: 'POST' });
     await as('bo', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v2', description: 'Reworked' },
     });
@@ -289,6 +294,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     assert.strictEqual(fromCd.body.asset.status, 'assigned');
 
     // Delivered is where it stops.
+    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
     await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v3', description: 'Again' },
     });
@@ -348,21 +354,23 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
 
     const history = (await as('bo', `/assets/${asset.id}/history`)).body.events;
     assert.deepStrictEqual(history.map((e) => e.action),
-      ['assign', 'submit', 'tl_request_changes', 'reassign'],
+      ['assign', 'accept', 'submit', 'tl_request_changes', 'reassign'],
       'and the whole sequence, with the handover recorded in it');
-    assert.match(history[3].note, /from ana to bo — ana is out this week/);
+    assert.match(history[4].note, /from ana to bo — ana is out this week/);
     // And what the outgoing round finally recorded, which is what makes the
     // handover answerable rather than just noted.
-    assert.match(history[3].note, /ana recorded/);
-    assert.strictEqual(history[3].actor, 'pat', 'attributed to whoever made the call');
+    assert.match(history[4].note, /ana recorded/);
+    assert.strictEqual(history[4].actor, 'pat', 'attributed to whoever made the call');
 
     // The person it left no longer holds it.
     assert.strictEqual(await seenBy('ana', asset.id), undefined);
+    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
     assert.strictEqual((await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/x', description: 'still mine?' },
     })).status, 403);
 
     // And the new one can carry on from where it was left.
+    await as('bo', `/assets/${asset.id}/timer/start`, { method: 'POST' });
     assert.strictEqual((await as('bo', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v2', description: 'Reworked' },
     })).status, 201);
@@ -389,6 +397,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     // notes. Reassigning at that point changes who will receive them, not who
     // is holding them right now.
     const asset = await newAsset('pat', 'Relay Check', people.ana);
+    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
     await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v1', description: 'First' },
     });
@@ -403,10 +412,12 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     })).status, 200);
 
     // Still the lead's to relay, and now it goes to bo.
+    await as('bo', `/assets/${asset.id}/timer/start`, { method: 'POST' });
     assert.strictEqual((await as('bo', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v2', description: 'Too soon' },
     })).status, 403, 'the notes have not been passed on yet');
     assert.strictEqual((await as('lee', `/assets/${asset.id}/relay`, { method: 'POST', body: {} })).status, 200);
+    await as('bo', `/assets/${asset.id}/timer/start`, { method: 'POST' });
     assert.strictEqual((await as('bo', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v2', description: 'Reworked' },
     })).status, 201, 'and then it is theirs');

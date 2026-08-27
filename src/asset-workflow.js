@@ -179,10 +179,21 @@ const TRANSITIONS = [
   },
   {
     action: 'submit',
-    // 'assigned' is deliberately in this list: submitting without ever
-    // clicking Accept is a legal shortcut (it simply records no time), because
-    // refusing it would block work that was done before this feature existed.
-    from: ['not_started', 'assigned', 'in_progress', 'tl_changes_requested'],
+    // 'assigned' is deliberately NOT in this list. Work has to be started
+    // before it can be handed in: an asset sitting in Assigned is one nobody
+    // has picked up, and a submission from there records a round that nobody
+    // ever worked. Accept and Start is the act that moves it to In Progress,
+    // and it is one click.
+    //
+    // This reverses the earlier shortcut, which allowed it on the reasoning
+    // that refusing would block work done before the timer existed. Those
+    // assets are long since through the pipeline; the shortcut was only being
+    // used to skip the clock.
+    //
+    // The rework states stay: after a change request the work is already
+    // underway, there is no accept step to take, and requiring one would strand
+    // every round after the first.
+    from: ['not_started', 'in_progress', 'tl_changes_requested'],
     to: 'pending_tl_review',
     who: 'assignee',
     routeTo: 'reviewQueue',
@@ -293,7 +304,19 @@ function evaluate(action, ctx, { note } = {}) {
     if (!knownAction) return { ok: false, status: 400, error: `Unknown action "${action}".` };
     // Read as a sentence. Most action names work verbatim; the ones that do not
     // say so here rather than producing "cannot be reassign review".
+    // The one refusal a person meets in normal use, so it says what to do
+    // rather than what went wrong. Only from Assigned: from anywhere else,
+    // "cannot be submitted" is already the whole story.
+    if (action === 'submit' && current === 'assigned') {
+      return {
+        ok: false,
+        status: 409,
+        field: 'status',
+        error: 'Start the work before submitting it — click Accept and Start.',
+      };
+    }
     const PHRASE = {
+      submit: 'submitted',
       reassign_review: 'handed to somebody else — that is only possible while it is waiting on a reviewer',
       tl_approve: 'approved by a team lead',
       cd_approve: 'approved by the director',

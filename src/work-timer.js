@@ -30,7 +30,10 @@ async function openSession(db, assetId) {
   const { rows } = await db.query(
     'SELECT * FROM work_sessions WHERE asset_id = $1 AND ended_at IS NULL LIMIT 1',
     [assetId]
-  );
+  ).catch((err) => {
+    if (!unavailable(err)) throw err;
+    return { rows: [] };
+  });
   return rows[0] || null;
 }
 
@@ -76,6 +79,10 @@ async function start(db, assetId, userId, assignmentId) {
 
 // Stop the clock, stamping the row with how long it ran. Idempotent: pausing a
 // paused timer is not an error, it is nothing.
+// Stopping a clock that cannot exist is not a failure, it is nothing. Submitting
+// pauses the timer first, and on a deployment whose work_sessions table could
+// not be created that raw query used to throw — so the artist could not submit
+// at all, with "a database error" as the only explanation.
 async function pause(db, assetId) {
   const running = await openSession(db, assetId);
   if (!running) return { ok: true, wasRunning: false };

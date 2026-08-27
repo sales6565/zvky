@@ -116,6 +116,7 @@ test('the asset side panel', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     // person's name on it. Assigned to them, and nowhere near the Assigned
     // column they were looking in. Both routes land in the same place now.
     const asset = await newAsset('pat', 'Mid Flight', people.ana);
+    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
     assert.strictEqual((await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v1', description: 'First pass' },
     })).status, 201);
@@ -128,8 +129,8 @@ test('the asset side panel', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       'submitted work handed on goes back to Assigned for whoever takes it');
 
     const events = await historyOf(asset.id);
-    assert.deepStrictEqual(events.map((e) => e.action), ['assign', 'submit', 'reassign_review']);
-    assert.match(events[2].note, /from ana to bo/);
+    assert.deepStrictEqual(events.map((e) => e.action), ['assign', 'accept', 'submit', 'reassign_review']);
+    assert.match(events[3].note, /from ana to bo/);
 
     // And the new assignee finds it where they would look for it.
     const theirs = await seenBy('bo', asset.id);
@@ -167,6 +168,7 @@ test('the asset side panel', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
     // The assignee submits work. Two links now exist, and they are not the same
     // field — which is the whole point of adding a second one.
+    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
     await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://drive.example.com/render-v1', description: 'First pass' },
     });
@@ -321,6 +323,7 @@ test('the asset side panel', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       'Pause still theirs');
     assert.strictEqual((await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' })).status, 200,
       'Resume still theirs');
+    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
     assert.strictEqual((await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/still-mine' },
     })).status, 201, 'Submit for review still theirs');

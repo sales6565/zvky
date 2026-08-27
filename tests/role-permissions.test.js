@@ -249,6 +249,7 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     // Ana reports to Lee so the TL gate is his.
     await as('root', `/users/${people.ana}`, { method: 'PATCH', body: { teamLeadId: people.lee } });
 
+    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
     assert.strictEqual((await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'http://nas/x' },
     })).status, 201);
@@ -276,6 +277,7 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       token: token.root, method: 'POST',
       body: { name: 'Gateless', type: 'prop', assigneeId: people.ana },
     })).body.asset;
+    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
     await as('ana', `/assets/${asset.id}/submit`, { method: 'POST', body: { link: 'http://nas/y' } });
     assert.strictEqual((await as('lee', `/assets/${asset.id}/review`, {
       method: 'POST', body: { decision: 'approved' },
@@ -477,6 +479,7 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     })).body.asset;
     const push = async (who, path, body) => (await as(who, `/assets/${asset.id}${path}`, { method: 'POST', body })).status;
 
+    await push('ana', '/timer/start', {});
     assert.strictEqual(await push('ana', '/submit', { link: 'https://example.test/v1' }), 201);
     assert.strictEqual(await push('lee', '/review', { decision: 'approved' }), 200, 'through the TL gate');
 
@@ -497,6 +500,7 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       method: 'POST', body: { name: 'Sign-off check', type: 'prop', assigneeId: people.ana },
     })).body.asset;
     const push = async (who, path, body) => (await as(who, `/assets/${asset.id}${path}`, { method: 'POST', body })).status;
+    await push('ana', '/timer/start', {});
     assert.strictEqual(await push('ana', '/submit', { link: 'https://example.test/v1' }), 201);
     assert.strictEqual(await push('lee', '/review', { decision: 'approved' }), 200);
 

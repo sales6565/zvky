@@ -27,6 +27,12 @@ header.top{display:flex;align-items:center;justify-content:space-between;gap:16p
 .user-badge .who{font-size:12px;} .user-badge .who .name{font-weight:600;}
 .role-badge{font-size:9px;text-transform:uppercase;letter-spacing:.5px;padding:2px 7px;border-radius:20px;font-family:'IBM Plex Mono';font-weight:600;}
 .btn{border:none;border-radius:8px;padding:9px 16px;font-family:'Inter';font-weight:600;font-size:13px;cursor:pointer;transition:transform .1s ease, background .15s ease;}
+/* A refused button has to look refused. Without this a disabled .btn-brand kept
+   its full colour and its pointer, so it read as clickable and simply did
+   nothing — worse than no button at all. The title attribute carries the
+   reason on hover; a line under the button carries it for anyone not hovering. */
+.btn:disabled{opacity:.45;cursor:not-allowed;filter:grayscale(1);}
+.btn:disabled:hover{transform:none;}
 .btn:active{transform:scale(.97);} .btn-brand{background:var(--brand);color:#1a0d08;} .btn-brand:hover{background:#ff6f4d;}
 .btn-ghost{background:var(--surface-2);color:var(--ink);border:1px solid var(--border);} .btn-ghost:hover{background:var(--surface-3);}
 .btn-sm{padding:6px 10px;font-size:12px;}
@@ -1723,6 +1729,13 @@ async function openDrawer(id){
   const waitingOnRelay = a.status==='cd_changes_requested' && a.routed_to_id!==u.id;
   const canSubmit = isMyAssetAsArtist && routedToMe && !waitingOnRelay &&
     ['not_started','assigned','in_progress','tl_changes_requested','cd_changes_requested'].includes(a.status);
+  /* The section still shows while the asset is only Assigned — the artist needs
+     to see what submitting will ask for — but the button is refused until the
+     work has been started, which is one click away in the box above. Mirrors the
+     submit transition in src/asset-workflow.js, which no longer accepts
+     'assigned'; the API is still the authority. Pause and Resume do not come
+     back into it: once accepted the asset is In Progress and stays there. */
+  const mustStartFirst = canSubmit && a.status === 'assigned';
   const canTlReview = can('review.tl') && a.status==='pending_tl_review';
   const canCdReview = can('review.cd') && a.status==='pending_cd_review';
   /* Signing off for the client is the half of the CD gate that cannot be taken
@@ -1808,7 +1821,11 @@ async function openDrawer(id){
       <div style="font-size:10.5px;color:var(--ink-faint);margin-top:4px;">Link to the work. Internal and local server links are fine.</div>
       <textarea id="submitDescription" rows="2" placeholder="Anything the reviewer should know (optional)…" style="margin-top:8px;"></textarea>
       <div class="ref-err" id="submitErr"></div>
-      <button class="btn btn-brand" id="submitAssetBtn" style="width:100%;margin-top:8px;">Submit for review</button>
+      <button class="btn btn-brand" id="submitAssetBtn" style="width:100%;margin-top:8px;"
+        ${mustStartFirst ? 'disabled title="Start the work before submitting it — click Accept and Start."' : ''}>Submit for review</button>
+      ${mustStartFirst ? `<div style="font-size:11px;color:var(--ink-faint);margin-top:6px;">
+        Start the work before submitting it — Accept and Start is at the top of this panel.
+      </div>` : ''}
     ` : ''}
 
     <!-- Reviewing and handing on are two independent choices, and this panel

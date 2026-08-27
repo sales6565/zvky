@@ -763,19 +763,31 @@ router.post('/:id/timer/start', async (req, res) => {
     return res.status(409).json({ error: 'The team lead has not passed the Creative Director\'s notes on yet.' });
   }
 
-  // A clock with nowhere to write is a clear refusal, not a database error.
-  if (!(await workTimer.available(db))) {
-    return res.status(503).json({
-      error: 'Time tracking is not available on this deployment yet — its table has not been created. See /api/health.',
-    });
-  }
-
+  // Accepting the work comes first, and happens whether or not the clock can
+  // record it.
+  //
+  // These were the other way round, with a 503 above the transition — so on a
+  // deployment whose work_sessions table could not be created, an artist could
+  // not accept an asset, and it could never leave Assigned. Recording the time
+  // is the part that degrades; taking the work is not optional. This matters
+  // more now that submitting requires the work to have been started.
   let moved = null;
   if (asset.status === 'assigned') {
     const ctx = await contextFor(req, asset);
     const verdict = workflow.evaluate('accept', ctx);
     if (!verdict.ok) return res.status(verdict.status).json({ error: verdict.error });
     moved = await applyTransition(req, res, asset, verdict, { note: verdict.describe });
+  }
+
+  // A clock with nowhere to write says so plainly, rather than answering with a
+  // database error — but only after the work has been accepted.
+  if (!(await workTimer.available(db))) {
+    return res.status(moved ? 200 : 503).json({
+      asset: moved || undefined,
+      accepted: Boolean(moved),
+      timerUnavailable: true,
+      error: 'Time tracking is not available on this deployment yet — its table has not been created. See /api/health.',
+    });
   }
 
   const episode = await assignments.current(db, req.params.id);
