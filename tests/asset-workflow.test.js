@@ -133,6 +133,39 @@ test('reviewing and handing on are independent sections of the asset panel', () 
   }
 });
 
+test('every status belongs to exactly one Assets List tab', () => {
+  // The tabs divide the whole enum. A status placed in none of them would stop
+  // appearing in the list altogether — work that exists and cannot be found is
+  // the worst failure this screen has — and one placed in two would be counted
+  // twice. Neither is visible by looking at the page, so it is asserted here.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+
+  const block = page.match(/const ASSET_LIST_GROUPS = \[([\s\S]*?)\n\];/);
+  assert.ok(block, 'the groups should be one named list');
+
+  const groups = [...block[1].matchAll(/\{ id:'([a-z]+)',\s*label:'([^']+)',\s*statuses:\[([^\]]*)\]/g)]
+    .map((m) => ({
+      id: m[1],
+      label: m[2],
+      statuses: [...m[3].matchAll(/'([a-z_]+)'/g)].map((x) => x[1]),
+    }));
+  assert.deepStrictEqual(groups.map((g) => g.id), ['active', 'inactive', 'archived']);
+
+  const placed = groups.flatMap((g) => g.statuses);
+  assert.deepStrictEqual([...placed].sort(), [...workflow.STATE_IDS].sort(),
+    'every status is placed, and nothing is placed that is not a status');
+  assert.strictEqual(new Set(placed).size, placed.length, 'and none is placed twice');
+
+  // The grouping the studio asked for, stated so a change to it is deliberate.
+  const byId = Object.fromEntries(groups.map((g) => [g.id, g.statuses]));
+  assert.deepStrictEqual(byId.inactive, ['not_started'], 'Inactive is Not Assigned');
+  assert.deepStrictEqual(byId.archived, ['delivered'],
+    'Archived is Delivered — there is no separate "Final" status, and never was');
+  assert.ok(!workflow.STATE_IDS.includes('final'), 'nothing in the enum is called final');
+});
+
 test('a move not in the table cannot happen', () => {
   // The point of a table rather than a pile of if-statements: anything absent
   // is refused, rather than falling through to whatever the last branch did.

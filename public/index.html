@@ -97,6 +97,17 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .timer-total{font-family:'Space Grotesk';font-size:18px;font-weight:600;}
 .timer-rounds{font-size:11px;color:var(--ink-faint);margin-top:2px;}
 .timer-live{color:var(--approved);animation:timerblink 1.2s infinite;}
+/* Sub-tabs inside a view. Deliberately lighter than the main nav: these filter
+   what a screen shows, they do not change which screen you are on. */
+.sub-tabs{display:flex;gap:4px;margin-bottom:12px;flex-wrap:wrap;}
+.sub-tab{background:none;border:1px solid transparent;border-radius:8px;padding:6px 12px;
+  font-family:'Inter';font-size:12.5px;font-weight:600;color:var(--ink-muted);cursor:pointer;
+  display:inline-flex;align-items:center;gap:7px;transition:background .15s ease,color .15s ease;}
+.sub-tab:hover{background:var(--surface-2);color:var(--ink);}
+.sub-tab.active{background:var(--surface-2);border-color:var(--border);color:var(--ink);}
+.sub-tab-count{font-family:'IBM Plex Mono';font-size:11px;color:var(--ink-faint);
+  background:var(--surface-3);border-radius:20px;padding:1px 7px;min-width:20px;text-align:center;}
+.sub-tab.active .sub-tab-count{color:var(--brand);}
 /* A round somebody has already handed on. Still readable, visibly finished —
    the current row is the one the eye should land on first. */
 tr.past-round{opacity:0.62;}
@@ -793,6 +804,28 @@ function statusOf(id){ return STATUSES.find(s=>s.id===id) || STATUSES[0]; }
    so they are hidden — tile and column together, from this one list. */
 const PLANNER_STATUSES = ['not_started', 'pending_cd_review', 'cd_changes_requested'];
 
+/* The three groups the Assets List is divided into.
+   
+   Every status belongs to exactly one of them, and a test fails if a new
+   status is added without being placed — otherwise it would simply stop
+   appearing anywhere, which is the quietest way to lose work.
+   
+   Note there is no "Final" status and never has been: the nine ids below are
+   the whole enum. "Final %" on the dashboard is a computed figure — the share
+   of a project that has reached Delivered — not a state an asset can be in.
+   Archived is Delivered, and only Delivered. */
+const ASSET_LIST_GROUPS = [
+  { id:'active',   label:'Active',   statuses:['assigned','in_progress','pending_tl_review',
+                                               'tl_changes_requested','pending_cd_review',
+                                               'cd_changes_requested','approved_for_client'] },
+  { id:'inactive', label:'Inactive', statuses:['not_started'] },
+  { id:'archived', label:'Archived', statuses:['delivered'] },
+];
+function listGroupOf(statusId){
+  const g = ASSET_LIST_GROUPS.find(x=>x.statuses.includes(statusId));
+  return g ? g.id : 'active';
+}
+
 /* Which pipeline stages this account sees on the dashboard.
    
    Reads can('asset.add') like every other gate on this page, so switching the
@@ -830,7 +863,8 @@ function visibleStatuses(){
 function initials(name){ return (name||'?').trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase(); }
 function escapeHTML(s){ const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
 
-let state = { view:'board', search:'', filterType:'', currentProjectId:null, currentUser:null, token:null,
+let state = { view:'board', search:'', filterType:'', listGroup:'active',
+  currentProjectId:null, currentUser:null, token:null,
   projects:[], assets:[], usersRenderLimit:60,
   /* The Projects tab: the client list, and which one is open (null = the list). */
   clients:[], clientId:null, showArchived:false,
@@ -1241,8 +1275,33 @@ function renderBoard(){
 function renderList(){
   const el = document.getElementById('listView');
   if(!state.currentProjectId){ el.innerHTML = `<div class="empty">No projects assigned to you yet.</div>`; return; }
-  const assets = filteredAssets();
-  if(!assets.length){ el.innerHTML = `<div class="empty">No assets match.</div>`; return; }
+
+  /* Search and the type filter apply first, so the counts beside each tab
+     always say how many rows clicking it would actually show. Counting the
+     whole project instead would put "Active (12)" above a list of two. */
+  const matching = filteredAssets()
+    .filter(a=>visibleStatuses().some(s=>s.id===a.status));
+  const inGroup = (id)=>matching.filter(a=>listGroupOf(a.status)===id);
+  const shown = inGroup(state.listGroup);
+
+  const tabs = `<div class="sub-tabs">${ASSET_LIST_GROUPS.map(g=>{
+    const n = inGroup(g.id).length;
+    return `<button class="sub-tab${g.id===state.listGroup?' active':''}" data-group="${g.id}">${g.label} <span class="sub-tab-count">${n}</span></button>`;
+  }).join('')}</div>`;
+
+  const wire = ()=>document.querySelectorAll('#listView .sub-tab').forEach(b=>{
+    b.addEventListener('click', ()=>{ state.listGroup = b.dataset.group; renderList(); });
+  });
+
+  if(!shown.length){
+    const why = matching.length
+      ? `No ${ASSET_LIST_GROUPS.find(g=>g.id===state.listGroup).label.toLowerCase()} assets match.`
+      : 'No assets match.';
+    el.innerHTML = tabs + `<div class="empty">${why}</div>`;
+    wire();
+    return;
+  }
+  const assets = shown;
   /* One row per ASSIGNMENT, not per asset.
      
      The dashboard answers "where is this asset now" and draws one card. This
@@ -1261,7 +1320,7 @@ function renderList(){
     for(const ep of episodes) rows.push({ a, ep });
   }
 
-  el.innerHTML = `<table><thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Status</th><th>Assignee</th><th>Round</th><th>Priority</th><th>Tasks</th><th>Time Spent</th></tr></thead><tbody>
+  el.innerHTML = tabs + `<table><thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Status</th><th>Assignee</th><th>Round</th><th>Priority</th><th>Tasks</th><th>Time Spent</th></tr></thead><tbody>
     ${rows.map(({a, ep})=>{
       const t=typeOf(a.type), doneTasks=a.tasks.filter(x=>x.done).length;
       /* A finished stretch shows where that person LEFT it — somebody who took
@@ -1282,6 +1341,7 @@ function renderList(){
       <td class="mono">${seconds?fmtDuration(seconds):'—'}${running?' <span class="timer-live" title="The clock is running">●</span>':''}</td></tr>`;
     }).join('')}</tbody></table>`;
   el.querySelectorAll('tr[data-id]').forEach(row=>row.addEventListener('click', ()=>openDrawer(row.dataset.id)));
+  wire();
 }
 async function renderTeam(){
   const el = document.getElementById('teamView');
