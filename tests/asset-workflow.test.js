@@ -88,6 +88,51 @@ test('assigning is allowed by asset.assign OR asset.edit, not by asset.edit alon
     'neither is not');
 });
 
+test('reviewing and handing on are independent sections of the asset panel', () => {
+  // Reviewing a submission and handing it to somebody else are two separate
+  // choices at the same stage, gated by two separate permissions. Adding the
+  // handover must never nest inside, or push out, the review controls — and to
+  // whoever holds only one of the two it looks exactly as if it had. This pins
+  // the shape so the same thing cannot be done to the CD block later.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+
+  const at = (needle) => {
+    const i = page.indexOf(needle);
+    assert.notStrictEqual(i, -1, `the panel should contain ${needle}`);
+    return i;
+  };
+
+  // Each section opens its own conditional, at the top level of the template.
+  for (const gate of ['${canTlReview ? `', '${canCdReview ? `', '${canHandOver ? `']) {
+    assert.ok(page.includes(gate), `${gate} should be its own top-level branch`);
+  }
+
+  // Review comes first: it is the decision the asset is waiting for.
+  assert.ok(at('${canTlReview ? `') < at('${canHandOver ? `'),
+    'the team lead review block must render before the handover block');
+  assert.ok(at('${canCdReview ? `') < at('${canHandOver ? `'),
+    'and so must the creative director block');
+
+  // Neither review block may live inside the handover branch, which is the
+  // shape that would make one replace the other.
+  const handover = page.slice(at('${canHandOver ? `'));
+  const handoverBlock = handover.slice(0, handover.indexOf('` : \'\'}'));
+  for (const control of ['tlApproveBtn', 'tlReqChangesBtn', 'cdApproveBtn', 'cdReqChangesBtn']) {
+    assert.ok(!handoverBlock.includes(control),
+      `${control} must not be nested inside the handover section`);
+  }
+
+  // The two review stages own their own ids. One shared pair across two blocks
+  // is a collision waiting for the day they can both render.
+  for (const id of ['tlReviewNote', 'tlReqChangesBtn', 'tlApproveBtn',
+    'cdReviewNote', 'cdReqChangesBtn', 'cdApproveBtn']) {
+    const uses = page.split(`id="${id}"`).length - 1;
+    assert.strictEqual(uses, 1, `${id} should be declared exactly once — found ${uses}`);
+  }
+});
+
 test('a move not in the table cannot happen', () => {
   // The point of a table rather than a pile of if-statements: anything absent
   // is refused, rather than falling through to whatever the last branch did.

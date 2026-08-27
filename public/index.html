@@ -1777,21 +1777,26 @@ async function openDrawer(id){
       <button class="btn btn-brand" id="submitAssetBtn" style="width:100%;margin-top:8px;">Submit for review</button>
     ` : ''}
 
+    <!-- Reviewing and handing on are two independent choices, and this panel
+         offers whichever of them the viewer holds. Review comes first because
+         it is the decision the asset is waiting for; handing on is the way out
+         of making it. Neither is inside the other's conditional, and the test
+         in tests/asset-workflow.test.js fails if that ever changes. -->
     ${canTlReview ? `
       <div class="field-lbl">Team lead review</div>
-      <textarea id="reviewNote" rows="2" placeholder="Feedback for the artist (required if requesting changes)…"></textarea>
+      <textarea id="tlReviewNote" rows="2" placeholder="Feedback for the artist (required if requesting changes)…"></textarea>
       <div style="display:flex;gap:8px;margin-top:8px;">
-        <button class="btn btn-ghost" id="reqChangesBtn" style="flex:1;color:#e8402c;">Request changes</button>
-        <button class="btn btn-brand" id="approveBtn" style="flex:1;">Approve → send to CD</button>
+        <button class="btn btn-ghost" id="tlReqChangesBtn" style="flex:1;color:#e8402c;">Request changes</button>
+        <button class="btn btn-brand" id="tlApproveBtn" style="flex:1;">Approve → send to CD</button>
       </div>
     ` : ''}
 
     ${canCdReview ? `
       <div class="field-lbl">Creative director review</div>
-      <textarea id="reviewNote" rows="2" placeholder="Feedback for the artist (required if requesting changes)…"></textarea>
+      <textarea id="cdReviewNote" rows="2" placeholder="Feedback for the artist (required if requesting changes)…"></textarea>
       <div style="display:flex;gap:8px;margin-top:8px;">
-        <button class="btn btn-ghost" id="reqChangesBtn" style="flex:1;color:#e8402c;">Request changes</button>
-        ${canApproveForClient ? `<button class="btn btn-brand" id="approveBtn" style="flex:1;">Approve for client</button>` : ''}
+        <button class="btn btn-ghost" id="cdReqChangesBtn" style="flex:1;color:#e8402c;">Request changes</button>
+        ${canApproveForClient ? `<button class="btn btn-brand" id="cdApproveBtn" style="flex:1;">Approve for client</button>` : ''}
       </div>
       ${canApproveForClient ? '' : `<div style="font-size:11px;color:var(--ink-faint);margin-top:6px;">Your role reviews at this stage but does not sign work off for the client.</div>`}
     ` : ''}
@@ -1815,6 +1820,11 @@ async function openDrawer(id){
           : `The changes go back to ${escapeHTML(a.assignee_name||'the assignee')} by default. Pick somebody else and they pick it up
              with the feedback and the submission history attached.`}
       </div>
+      ${(canReassignInReview && !canTlReview && !canCdReview) ? `
+        <div style="font-size:11px;color:var(--ink-faint);margin-bottom:6px;">
+          Approving it or sending it back is the reviewer's call at this stage, not yours — this is the
+          one action on it that is.
+        </div>` : ''}
       <select id="reassignTo"><option value="">Loading…</option></select>
       <input type="text" id="reassignNote" placeholder="Why the handover (optional)…" style="margin-top:6px;">
       <button class="btn btn-ghost" id="reassignBtn" style="width:100%;margin-top:8px;">${canReassignInReview ? 'Hand over' : 'Reassign rework'}</button>
@@ -2104,8 +2114,14 @@ async function openDrawer(id){
      order from timestamps. */
   loadAssetHistory(id);
   if(canTlReview || canCdReview){
+    /* Stage-specific ids rather than one pair shared between the two blocks.
+       They cannot both render today — the statuses are mutually exclusive — but
+       one pair of ids across two sections is a collision waiting for the day
+       that stops being true, and getElementById would silently wire only the
+       first of them. */
+    const stage = canTlReview ? 'tl' : 'cd';
     const doReview = async (decision)=>{
-      const text = document.getElementById('reviewNote').value.trim();
+      const text = document.getElementById(stage+'ReviewNote').value.trim();
       if(decision==='changes_requested' && !text){ showToast('Add a note explaining what needs to change.'); return; }
       try{
         await api('/assets/'+id+'/review', { method:'POST', body:{ decision, text } });
@@ -2114,9 +2130,9 @@ async function openDrawer(id){
       }catch(err){ showToast(err.message); }
     };
     /* Approve is absent at the CD stage for a role without the sign-off. */
-    const approveBtn = document.getElementById('approveBtn');
+    const approveBtn = document.getElementById(stage+'ApproveBtn');
     if(approveBtn) approveBtn.onclick = ()=>doReview('approved');
-    document.getElementById('reqChangesBtn').onclick = ()=>doReview('changes_requested');
+    document.getElementById(stage+'ReqChangesBtn').onclick = ()=>doReview('changes_requested');
   }
   if(canHandOver){
     /* The candidates come from the API rather than being filtered here, so the
