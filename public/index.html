@@ -737,22 +737,28 @@ function typeOf(id){
 }
 function statusOf(id){ return STATUSES.find(s=>s.id===id) || STATUSES[0]; }
 
+/* The stages of the pipeline that only interest whoever sets work up.
+   
+   Not Assigned is the queue nobody has picked up: acting on it means putting
+   somebody on it. The two CD stages are the director's gate. For an account
+   that cannot add assets, all three are columns of other people's paperwork,
+   so they are hidden — tile and column together, from this one list. */
+const PLANNER_STATUSES = ['not_started', 'pending_cd_review', 'cd_changes_requested'];
+
 /* Which pipeline stages this account sees on the dashboard.
    
-   Not Assigned is the queue of work nobody has picked up. Acting on it means
-   putting somebody on it, and for anyone who cannot add assets it is a column
-   of other people's paperwork — so it is hidden from them, tile and column
-   together, and the same list drives both. Reads can('asset.add') like every
-   other gate on this page, so switching the permission on for a role in
-   Settings brings the column back for it with no further code.
+   Reads can('asset.add') like every other gate on this page, so switching the
+   permission on for a role in Settings brings the columns back for it with no
+   further code, and adding a stage to the list above is the whole change.
    
    Visibility only. The assets are still in the API's answer, still counted in
    the Assets total, and still created and moved by exactly the same rules —
-   this decides what is drawn, and nothing else. It is not a security boundary
-   and must not be relied on as one. */
+   who may act at the CD gate is review.cd and is untouched by this. It decides
+   what is drawn and nothing else, so it is not a security boundary and must
+   not be relied on as one. */
 function visibleStatuses(){
   if(can('asset.add')) return STATUSES;
-  return STATUSES.filter(s=>s.id !== 'not_started');
+  return STATUSES.filter(s=>PLANNER_STATUSES.indexOf(s.id) === -1);
 }
 function initials(name){ return (name||'?').trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase(); }
 function escapeHTML(s){ const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }

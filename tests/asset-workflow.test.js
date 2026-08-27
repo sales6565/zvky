@@ -51,6 +51,16 @@ test('the dashboard is drawn from the same states and the same free range', () =
   assert.match(page, /function visibleStatuses\(\)\{\s*\n\s*if\(can\('asset\.add'\)\) return STATUSES;/,
     "visibleStatuses should gate on can('asset.add'), the same way every other gate on the page does");
 
+  // The stages hidden from an account that cannot add assets. Every one of them
+  // must be a real state id — a typo here would hide nothing and say nothing.
+  const planner = page.match(/const PLANNER_STATUSES = \[([^\]]*)\]/);
+  assert.ok(planner, 'the hidden stages should be one named list');
+  const hidden = planner[1].split(',').map((v) => v.trim().replace(/'/g, '')).filter(Boolean);
+  assert.deepStrictEqual(hidden, ['not_started', 'pending_cd_review', 'cd_changes_requested']);
+  for (const id of hidden) {
+    assert.ok(workflow.STATE_IDS.includes(id), `"${id}" is not a status the pipeline has`);
+  }
+
   const free = page.match(/const FREE = \[([^\]]*)\]/);
   assert.ok(free, 'the dashboard drag handler has no FREE list');
   assert.deepStrictEqual(
