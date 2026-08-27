@@ -755,7 +755,7 @@ function applyGate(id, also){
    empty page. */
 const SETTINGS_SECTIONS = [
   { permission:'settings.permissions',  label:'Role Permissions', note:'What each role may do, across all six permission groups.' },
-  { permission:'settings.asset_types',  label:'Asset Types',      note:'The Type dropdown and the code prefix each asset gets.' },
+  { permission:'settings.asset_types',  label:'Scope of Work',    note:'The Scope of Work dropdown and the code prefix each asset gets.' },
   { permission:'settings.priorities',   label:'Priorities',       note:'The Priority dropdown.' },
   { permission:'settings.roles',        label:'Roles',            note:'The studio\'s designations and what each one can do.' },
   { permission:'settings.ip_allowlist', label:'IP Allowlist',     note:'Which addresses may reach this application at all.' },
@@ -2948,14 +2948,18 @@ userDetailWrap.addEventListener('click', e=>{ if(e.target===userDetailWrap) user
    refuses the writes regardless, so hiding it is a convenience, not the check. */
 
 /* The three value lists, each behind its own permission: a role trusted with
-   asset types is not thereby trusted with the role catalogue. The API enforces
-   the same split per collection; this decides what is offered. */
+   the scope-of-work list is not thereby trusted with the role catalogue. The
+   API enforces the same split per collection; this decides what is offered.
+
+   The collection slug, the permission key and the table behind them are all
+   still `asset_types` — this screen was renamed, not rebuilt, so no stored
+   permission grant had to move. */
 const REF_SECTIONS = [
   {
     collection: 'asset-types',
     permission: 'settings.asset_types',
-    title: 'Asset Types',
-    note: 'The Type dropdown on Add Asset, and the prefix each asset code is built from (CHR-001).',
+    title: 'Scope of Work',
+    note: 'The Scope of Work dropdown on Add Asset, and the prefix each asset code is built from (CHR-001).',
     columns: [
       { key:'label',      label:'Name',   input:'text',  placeholder:'e.g. Vehicle', required:true },
       { key:'codePrefix', label:'Prefix', input:'text',  placeholder:'VEH', narrow:true },
