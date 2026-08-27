@@ -123,9 +123,11 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     const assetImport = require('../src/asset-import');
     const header = assetImport.buildTemplateCsv().trim().split('\n')[0];
     const columns = header.split(',');
-    const row = columns.map((c) => (/^name$/i.test(c) ? 'Imported One'
-      : /^(scope_of_work|type)$/i.test(c) ? 'character'
-      : /priority/i.test(c) ? 'med' : '')).join(',');
+    const row = columns.map((c) => (/^(assets name|assets|name)$/i.test(c) ? 'Imported One'
+      : /^(scope of work|scope_of_work|type)$/i.test(c) ? 'character'
+      : /^category$/i.test(c) ? 'Slot Game'
+      : /^man hours$/i.test(c) ? '5'
+      : /^no\.?$/i.test(c) ? '1' : '')).join(',');
     const form = new FormData();
     form.append('file', new Blob([`${header}\n${row}\n`], { type: 'text/csv' }), 'assets.csv');
     const res = await fetch(`${server.base}/assets/project/${projectId}/bulk`, {

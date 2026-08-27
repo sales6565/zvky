@@ -578,7 +578,17 @@ function categoryLabel(id){
   return c ? c.label : id;
 }
 function categoryOptions(selected){
-  return '<option value="">— None —</option>' +
+  /* A value the list does not hold still gets an option of its own. Without
+     one the browser silently selects the first entry, so a <select> would show
+     "None" for an asset that has a category — and the next change to any other
+     field would look like the user had cleared it. Happens for a category that
+     has since been deactivated, and for one added by an import this tab has
+     not reloaded yet. */
+  const known = CATEGORIES.some(c=>c.id===selected);
+  const orphan = selected && !known
+    ? `<option value="${escapeHTML(selected)}" selected>${escapeHTML(categoryLabel(selected))}</option>`
+    : '';
+  return `<option value=""${selected?'':' selected'}>— None —</option>` + orphan +
     CATEGORIES.map(c=>`<option value="${c.id}"${c.id===selected?' selected':''}>${escapeHTML(c.label)}</option>`).join('');
 }
 function priorityOptions(selected){
@@ -2505,12 +2515,21 @@ function showImportResult(data, ok, entity){
       <td>${escapeHTML(e.message || '')}</td>
     </tr>`).join('');
 
+  /* A category named in the sheet but not yet in Settings is added by the
+     import. Saying so here is the difference between a feature and a silent
+     edit to a list somebody else maintains. */
+  const newCats = Array.isArray(data.createdCategories) ? data.createdCategories : [];
+
   body.innerHTML = `
     <div class="import-summary">
       <div><strong>${data.totalRows ?? (data.created + errors.length)}</strong>rows in file</div>
       <div><strong style="color:var(--approved);">${data.created}</strong>imported</div>
       <div class="bad"><strong>${errors.length}</strong>skipped</div>
     </div>
+    ${newCats.length ? `<div style="font-size:12px;color:var(--ink-muted);margin-bottom:10px;">
+      Added to your Category list: <span class="mono" style="color:var(--ink);">${newCats.map(c=>escapeHTML(c.label)).join(', ')}</span>.
+      Rename or deactivate them under Settings → Categories.
+    </div>` : ''}
     ${errors.length ? `
       <div style="font-size:12px;color:var(--ink-muted);margin-bottom:8px;">
         These rows were not imported. Everything else was. Fix them and upload just those rows again.
@@ -2543,6 +2562,14 @@ async function runBulkUpload({ file, path, entity, buttonId, onDone }){
       signal: AbortSignal.timeout(120000),
     });
     const data = await res.json().catch(()=>({ error:`Upload failed (HTTP ${res.status})` }));
+    /* An asset import can ADD categories, so the browser's copy of the list is
+       out of date the moment it succeeds. Reload it before anything redraws —
+       otherwise the Assets List prints the raw key (slot_game) where the label
+       belongs, and the panel's Category dropdown, not finding the value it was
+       given, falls back to showing "None" for an asset that has one. */
+    if(res.ok && Array.isArray(data.createdCategories) && data.createdCategories.length){
+      try{ await loadReferenceData(); }catch(err){ /* the redraw below still runs */ }
+    }
     showImportResult(data, res.ok, entity);
     if(res.ok && data.created){
       showToast(`Imported ${data.created} ${entity==='users'?'user':'asset'}${data.created===1?'':'s'}.`);

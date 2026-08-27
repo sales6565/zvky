@@ -26,9 +26,12 @@ test('the two importers describe genuinely different files', () => {
   const userColumns = userImport.COLUMN_NAMES;
   const assetColumns = assetImport.COLUMN_NAMES;
   assert.notDeepStrictEqual(userColumns, assetColumns);
-  // `name` is the only column both use; everything else is entity-specific.
+  /* No header is shared any more: the asset sheet asks for "Assets Name", the
+     way the screen writes it, while the user sheet still asks for `name`. The
+     asset importer does still ACCEPT `name` as an older spelling, which is why
+     the check below is on the headers each sample hands out. */
   const shared = userColumns.filter((c) => assetColumns.includes(c));
-  assert.deepStrictEqual(shared, ['name']);
+  assert.deepStrictEqual(shared, []);
   assert.notStrictEqual(userImport.buildTemplateCsv(), assetImport.buildTemplateCsv());
 });
 
@@ -38,11 +41,13 @@ test('each importer refuses the other one\'s template', () => {
 
   const assetIntoUsers = userImport.validateHeaders(assetHeaders);
   assert.strictEqual(assetIntoUsers.ok, false);
-  assert.deepStrictEqual(assetIntoUsers.missing, ['email', 'role']);
+  // `name` too now: the asset sheet's column is "Assets Name", which the user
+  // importer does not recognise as its own `name`.
+  assert.deepStrictEqual(assetIntoUsers.missing, ['name', 'email', 'role']);
 
   const userIntoAssets = assetImport.validateHeaders(userHeaders);
   assert.strictEqual(userIntoAssets.ok, false);
-  assert.deepStrictEqual(userIntoAssets.missing, ['scope_of_work']);
+  assert.deepStrictEqual(userIntoAssets.missing, ['Category', 'Scope of Work', 'Man Hours']);
 });
 
 test('a user row is validated on its own terms', () => {

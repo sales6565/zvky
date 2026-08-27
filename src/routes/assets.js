@@ -1398,28 +1398,60 @@ router.post('/project/:projectId/bulk', requirePermission('asset.bulk_upload'), 
     if (i % 500 === 499) await yieldToLoop(); // stay responsive on a big file
   }
 
-  // Resolve assignee emails in one query rather than one per row.
-  const emails = [...new Set(valid.map((v) => v.values.assignee_email).filter(Boolean))];
-  const assigneeByEmail = new Map();
-  if (emails.length) {
-    const { rows } = await db.query(
-      'SELECT id, email FROM users WHERE lower(email) IN ($1) AND role IN ($2)',
-      [emails.map((e) => e.toLowerCase()), assignableRoles()]
-    );
-    rows.forEach((r) => assigneeByEmail.set(String(r.email).toLowerCase(), r.id));
+  /* --- categories ---------------------------------------------------------
+     
+     Unlike Scope of Work, a category the sheet names but Settings does not yet
+     hold is CREATED rather than refused, so a studio can bring its taxonomy in
+     with its first import instead of typing it twice.
+     
+     Matching is case- and spacing-insensitive against both the label people
+     read and the key the database stores, so "Slot Game", "slot game" and
+     "slot_game" are one category and not three. A name genuinely not seen
+     before is added once, however many rows use it, and the response says
+     which ones were added — creating them quietly would make a typo in a
+     spreadsheet an invisible change to a Settings list. */
+  const normaliseCategory = (v) => String(v ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const categoryByName = new Map();
+  const indexCategory = (entry) => {
+    categoryByName.set(normaliseCategory(entry.label), entry.key);
+    categoryByName.set(normaliseCategory(entry.key), entry.key);
+  };
+  referenceData.list('categories', { includeInactive: true }).forEach(indexCategory);
+
+  const createdCategories = [];
+  // First spelling in the file wins: rows 2 and 9 saying "Bonus Round" and
+  // "bonus round" are one category, labelled the way it was first written.
+  const wanted = new Map();
+  for (const v of valid) {
+    const normalised = normaliseCategory(v.values.category);
+    if (!wanted.has(normalised)) wanted.set(normalised, v.values.category);
+  }
+  for (const [normalised, label] of wanted) {
+    if (categoryByName.has(normalised)) continue;
+    const made = await referenceData.create(db, 'categories', { label });
+    if (made.ok) {
+      indexCategory(made.entry);
+      createdCategories.push({ key: made.entry.key, label: made.entry.label });
+    }
+    // A category that could not be created leaves its rows to fail below with
+    // a per-row message, rather than failing the whole file here.
   }
 
   const ready = [];
   for (const entry of valid) {
-    const email = entry.values.assignee_email;
-    if (email && !assigneeByEmail.has(email.toLowerCase())) {
+    const key = categoryByName.get(normaliseCategory(entry.values.category));
+    if (!key) {
       errors.push({
-        row: entry.rowNumber, column: 'assignee_email', value: email,
-        message: 'no assignable team member has this email address',
+        row: entry.rowNumber, column: 'Category', value: entry.values.category,
+        message: 'could not be matched to a category, and could not be added as a new one',
       });
       continue;
     }
-    entry.assigneeId = email ? assigneeByEmail.get(email.toLowerCase()) : null;
+    entry.category = key;
+    // Priority, assignee, deadline and description are not imported columns.
+    // Every imported asset starts unassigned with the default priority, and
+    // gets the rest in the asset panel.
+    entry.assigneeId = null;
     ready.push(entry);
   }
 
@@ -1444,14 +1476,15 @@ router.post('/project/:projectId/bulk', requirePermission('asset.bulk_upload'), 
   // --- insert in batches ---------------------------------------------------
   const DEFAULT_TASKS = ['Rough pass', 'Clean line', 'Color / shade'];
   const ASSET_INSERT =
-    'INSERT INTO assets (id, `code`, `name`, `type`, `status`, priority, project_id, assignee_id, created_by, due_date, description, man_hours) VALUES ?';
+    'INSERT INTO assets (id, `code`, `name`, `type`, category, `status`, priority, project_id, assignee_id, created_by, due_date, description, man_hours) VALUES ?';
   const TASK_INSERT = 'INSERT INTO tasks (id, asset_id, `name`, done, `position`) VALUES ?';
   // Imported assets belong to whoever uploaded the file, same as one added by
   // hand — otherwise a bulk upload would produce a projectful of assets its
   // uploader could not then edit.
   const assetRow = (e) => [
-    e.id, e.code, e.values.name, e.values.type, 'not_started', e.values.priority,
-    projectId, e.assigneeId, req.user.id, e.values.deadline, e.values.description, e.values.man_hours,
+    e.id, e.code, e.values.name, e.values.type, e.category, 'not_started',
+    assetImport.defaultPriority(), projectId, e.assigneeId, req.user.id,
+    null, '', e.values.man_hours,
   ];
   const taskRows = (e) => DEFAULT_TASKS.map((name, position) => [uuid(), e.id, name, 0, position]);
 
@@ -1519,6 +1552,9 @@ router.post('/project/:projectId/bulk', requirePermission('asset.bulk_upload'), 
     skipped: errors.length,
     totalRows: records.length,
     createdAssets: created,
+    // Named so a category the sheet invented is visible, not a silent edit to
+    // a Settings list.
+    createdCategories,
     errors,
   });
 });

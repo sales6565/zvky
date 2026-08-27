@@ -427,3 +427,38 @@ test('category and man-hours survive the round trip', { skip: cfg ? false : SKIP
     assert.strictEqual(cleared.category, null);
   });
 });
+
+test('a Category select never misrepresents the value it was given', () => {
+  /* The bug this covers: a <select> whose options do not include the current
+     value silently selects the first one. With "— None —" first, an asset
+     holding a category the browser had not loaded yet — one an import had just
+     created, or one since deactivated — displayed as having none, and the next
+     edit to any other field would have looked like the user cleared it. */
+  const fs = require('fs');
+  const page = fs.readFileSync(require('path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const body = page.slice(page.indexOf('function categoryOptions'));
+  const source = body.slice(0, body.indexOf('\n}') + 2);
+
+  const escapeHTML = (t) => String(t).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const CATEGORIES = [{ id: 'slot_game', label: 'Slot Game' }];
+  const categoryLabel = (id) => {
+    const c = CATEGORIES.find((x) => x.id === id);
+    return c ? c.label : id;
+  };
+  // eslint-disable-next-line no-new-func
+  const categoryOptions = new Function('CATEGORIES', 'categoryLabel', 'escapeHTML',
+    `${source}; return categoryOptions;`)(CATEGORIES, categoryLabel, escapeHTML);
+
+  const known = categoryOptions('slot_game');
+  assert.match(known, /<option value="slot_game" selected>Slot Game<\/option>/);
+
+  // The one that matters: a value the list does not hold gets its own option.
+  const orphan = categoryOptions('bonus_round');
+  assert.match(orphan, /<option value="bonus_round" selected>/,
+    'an unknown category must still be the selected option');
+  assert.ok(!/— None —<\/option>\s*<option value="slot_game" selected/.test(orphan));
+
+  // And no value at all still selects None.
+  assert.match(categoryOptions(''), /<option value="" selected>— None —/);
+});

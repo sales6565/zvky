@@ -20,18 +20,55 @@ function priorities() {
     ? referenceData.keys('priorities')
     : defaults.PRIORITIES.map((p) => p.key);
 }
-// The priority a row gets when the column is blank: whichever sits in the
-// middle of the list, or the first one if there is no middle.
+// Priority is not an imported column. Every imported asset gets this one and
+// it is changed afterwards in the asset panel like any other field: whichever
+// priority sits in the middle of the list, or the first if there is no middle.
 function defaultPriority() {
   const all = priorities();
   return all.includes('med') ? 'med' : all[Math.floor(all.length / 2)] || all[0];
+}
+
+/* The Category cells the sample file shows.
+
+   Categories are managed in Settings and the list ships empty, so there is
+   often nothing real to demonstrate with. When the studio HAS configured some,
+   the sample uses its own — the file it hands out then imports against its own
+   list. When it has not, the sample shows plausible names, which the import
+   creates on the way in; that is the behaviour, so the sample may as well
+   demonstrate it. */
+function exampleCategories() {
+  const configured = referenceData.isLoaded()
+    ? referenceData.list('categories').map((c) => c.label)
+    : [];
+  if (!configured.length) return ['Slot Game', 'Table Game', 'Slot Game'];
+  return [0, 1, 2].map((n) => configured[n % configured.length]);
 }
 
 // A row that fails validation is skipped and reported; it never reaches the
 // database. Each check returns either { value } or { error }.
 const COLUMNS = [
   {
+    /* A line number for whoever is filling the sheet in, so they can talk about
+       "row 4" with a colleague. Nothing reads it and nothing stores it: an
+       asset's own reference is its code (FX-001), which this application
+       generates at creation from the scope-of-work prefix and a per-project
+       count, so there is no identifier a person could know in advance to put
+       here. Accepted and ignored — a sheet that carries it is not "wrong". */
+    name: 'no',
+    header: 'No.',
+    accepts: ['no.', 'no', 'number', 's_no', 'sl_no', 'sr_no', 'serial', '#'],
+    required: false,
+    ignored: true,
+    describe: 'Your own row number. Not stored.',
+    example: ['1', '2', '3'],
+    parse() { return { value: null }; },
+  },
+  {
     name: 'name',
+    header: 'Assets Name',
+    // The screen calls this Assets Name; `name` is what it has always been in
+    // the database and in files saved before the rename.
+    accepts: ['assets_name', 'assets', 'name'],
     required: true,
     describe: 'Asset name',
     example: ['Waterfall Spray FX', 'Trader Cart', 'Northern Ridge'],
@@ -45,15 +82,34 @@ const COLUMNS = [
     },
   },
   {
+    /* Unlike Scope of Work, a category the studio has not configured yet is
+       CREATED from the sheet rather than refused. So this only checks that a
+       value is present and sane; matching it to an existing category, or
+       adding it to the list, happens in the endpoint where there is a database
+       to write to. */
+    name: 'category',
+    header: 'Category',
+    accepts: ['category', 'categories'],
+    required: true,
+    describe: 'Category — added to the Settings list if it is a new one',
+    get example() { return exampleCategories(); },
+    parse(raw) {
+      const value = String(raw ?? '').trim();
+      if (!value) return { error: 'is required' };
+      if (value.length > 100) return { error: `is ${value.length} characters; the limit is 100` };
+      return { value };
+    },
+  },
+  {
     name: 'type',
     /* The spelling the sample file carries and error messages name. The UI
        calls this attribute Scope of Work, so the column people are asked to
        fill in says the same thing; `name` stays `type` because that is the
-       database column and the API field, which this rename does not touch.
-       `accepts` keeps the old spelling working, so a file somebody saved
-       before the rename still imports. */
-    header: 'scope_of_work',
-    accepts: ['scope_of_work', 'type'],
+       database column and the API field, which the rename did not touch.
+       `accepts` keeps the old spelling working, so a file saved before the
+       rename still imports. */
+    header: 'Scope of Work',
+    accepts: ['scope_of_work', 'scope_of_the_work', 'type'],
     required: true,
     get describe() { return `One of ${assetTypes().join(', ')}`; },
     example: ['fx', 'prop', 'environment'],
@@ -66,87 +122,31 @@ const COLUMNS = [
     },
   },
   {
-    name: 'priority',
-    required: false,
-    get describe() { return `${priorities().join(', ')} — defaults to ${defaultPriority()}`; },
-    example: ['high', 'med', 'low'],
-    parse(raw) {
-      const value = String(raw ?? '').trim().toLowerCase();
-      if (!value) return { value: defaultPriority() };
-      const allowed = priorities();
-      if (!allowed.includes(value)) return { error: `must be one of ${allowed.join(', ')}` };
-      return { value };
-    },
-  },
-  {
-    name: 'assignee_email',
-    required: false,
-    describe: "Email of the person to assign it to; blank leaves it unassigned",
-    example: ['', '', ''],
-    parse(raw) {
-      const value = String(raw ?? '').trim();
-      if (!value) return { value: null };
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return { error: 'is not a valid email address' };
-      return { value };
-    },
-  },
-  {
+    /* The estimate, not tracked time. Required, so no imported asset arrives
+       without one — Time Spent is recorded by the timer and never imported. */
     name: 'man_hours',
-    required: false,
-    describe: 'Estimated hours, a number',
+    header: 'Man Hours',
+    accepts: ['man_hours', 'manhours', 'man_hrs', 'hours'],
+    required: true,
+    describe: 'Estimated hours — a positive number',
     example: ['20', '8', '26'],
     parse(raw) {
-      if (raw === '' || raw === null || raw === undefined) return { value: null };
-      const value = Number(String(raw).trim());
-      // Number('') is 0 and Number('abc') is NaN; NaN reaching the database
-      // is what used to abort the whole import with a SQL error.
-      if (!Number.isFinite(value)) return { error: `must be a number (got "${raw}")` };
-      if (value < 0) return { error: 'cannot be negative' };
-      if (value > 99999) return { error: 'is larger than the column allows (max 99999)' };
-      return { value: Math.round(value * 10) / 10 }; // DECIMAL(6,1)
-    },
-  },
-  {
-    name: 'deadline',
-    required: false,
-    describe: 'YYYY-MM-DD, or a date cell in Excel',
-    example: ['2026-09-15', '2026-09-10', '2026-09-20'],
-    parse(raw) {
-      if (raw === '' || raw === null || raw === undefined) return { value: null };
-      // Excel hands back a real Date when cellDates is on.
-      if (raw instanceof Date) {
-        if (Number.isNaN(raw.getTime())) return { error: 'is not a valid date' };
-        return { value: raw.toISOString().slice(0, 10) };
-      }
-      const text = String(raw).trim();
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return { error: `must be written as YYYY-MM-DD (got "${text}")` };
-      // Catch 2026-02-31, which matches the pattern but is not a day.
-      const [y, m, d] = text.split('-').map(Number);
-      const date = new Date(Date.UTC(y, m - 1, d));
-      if (date.getUTCFullYear() !== y || date.getUTCMonth() !== m - 1 || date.getUTCDate() !== d) {
-        return { error: `is not a real date (${text})` };
-      }
-      return { value: text };
-    },
-  },
-  {
-    name: 'description',
-    required: false,
-    describe: 'Free text',
-    example: [
-      'Mist and spray pass for the falls establishing shot',
-      'Wooden cart with awning for the market scene',
-      'Snow-capped ridge backdrop for the finale',
-    ],
-    parse(raw) {
-      return { value: String(raw ?? '').trim() };
+      const text = String(raw ?? '').trim();
+      if (!text) return { error: 'is required' };
+      const value = Number(text);
+      if (!Number.isFinite(value)) return { error: `is "${text}", which is not a number` };
+      if (value <= 0) return { error: 'must be greater than zero' };
+      if (value > 100000) return { error: 'is larger than 100000, which is not a real estimate' };
+      return { value };
     },
   },
 ];
 
-// A column is identified to people by its header and matched in a file by any
-// of the spellings it accepts. For every column but one those are the same
-// string as its `name`; see the type column above for why one differs.
+/* A column is identified to people by its header — the spelling the sample
+   file carries and error messages use — and matched in a file by any of the
+   spellings it accepts. The two differ because the headers people read are
+   written the way the screen writes them ("Assets Name"), while `name` stays
+   the database key it has always been. */
 const headerOf = (c) => c.header || c.name;
 const acceptsOf = (c) => c.accepts || [c.name];
 
@@ -186,6 +186,7 @@ function validateRow(row, rowNumber) {
   const values = {};
   const errors = [];
   for (const column of COLUMNS) {
+    if (column.ignored) continue;
     // Tolerate header casing differences by looking the key up loosely.
     const key = Object.keys(row).find((k) => acceptsOf(column).includes(normaliseHeader(k)));
     const raw = key === undefined ? undefined : row[key];

@@ -359,7 +359,7 @@ router.get('/import-format', requirePermission('user.bulk_upload'), (req, res) =
 // is more use than listing missing columns and leaving someone to work out
 // that they picked the wrong button.
 function looksLikeAssetFile(present) {
-  const assetOnly = ['scope_of_work', 'type', 'priority', 'man_hours', 'deadline', 'assignee_email'];
+  const assetOnly = ['assets_name', 'assets', 'scope_of_work', 'type', 'category', 'man_hours', 'no.'];
   return assetOnly.filter((c) => present.includes(c)).length >= 2;
 }
 

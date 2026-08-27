@@ -295,7 +295,9 @@ test('reference data', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       token: superToken, method: 'POST', body: { label: 'Storyboard', codePrefix: 'STB' },
     });
     const form = new FormData();
-    form.append('file', new Blob(['name,type\nOpening Sequence,storyboard\n'], { type: 'text/csv' }), 'sb.csv');
+    form.append('file', new Blob([
+      'Assets Name,Category,Scope of Work,Man Hours\nOpening Sequence,Slot Game,storyboard,6\n',
+    ], { type: 'text/csv' }), 'sb.csv');
     const res = await fetch(`${server.base}/assets/project/${projectId}/bulk`, {
       method: 'POST', headers: { Authorization: `Bearer ${superToken}` }, body: form,
     });
