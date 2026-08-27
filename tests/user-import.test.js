@@ -42,7 +42,7 @@ test('each importer refuses the other one\'s template', () => {
 
   const userIntoAssets = assetImport.validateHeaders(userHeaders);
   assert.strictEqual(userIntoAssets.ok, false);
-  assert.deepStrictEqual(userIntoAssets.missing, ['type']);
+  assert.deepStrictEqual(userIntoAssets.missing, ['scope_of_work']);
 });
 
 test('a user row is validated on its own terms', () => {

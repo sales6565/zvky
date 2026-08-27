@@ -123,7 +123,8 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     const assetImport = require('../src/asset-import');
     const header = assetImport.buildTemplateCsv().trim().split('\n')[0];
     const columns = header.split(',');
-    const row = columns.map((c) => (/name/i.test(c) ? 'Imported One' : /type/i.test(c) ? 'character'
+    const row = columns.map((c) => (/^name$/i.test(c) ? 'Imported One'
+      : /^(scope_of_work|type)$/i.test(c) ? 'character'
       : /priority/i.test(c) ? 'med' : '')).join(',');
     const form = new FormData();
     form.append('file', new Blob([`${header}\n${row}\n`], { type: 'text/csv' }), 'assets.csv');

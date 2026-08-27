@@ -356,7 +356,7 @@ tr.past-round{opacity:0.62;}
       <button data-tab="settings" id="settingsTabBtn" style="display:none;">Settings</button>
     </div>
     <input type="text" id="search" placeholder="Search assets or codes…" style="display:none;">
-    <select id="filterType" style="display:none;"><option value="">All types</option></select>
+    <select id="filterType" style="display:none;"><option value="">All scopes of work</option></select>
     <div class="spacer"></div>
     <button class="btn btn-ghost" id="newProjectBtn" style="display:none;">+ Project</button>
     <button class="btn btn-ghost" id="bulkImportBtn" style="display:none;">Bulk Upload Assets</button>
@@ -381,7 +381,7 @@ tr.past-round{opacity:0.62;}
   <div class="modal">
     <h2>New Asset</h2>
     <label>Name</label><input type="text" id="f_name" placeholder="e.g. River Spirit — Hero">
-    <div class="row2"><div><label>Type</label><select id="f_type"></select></div><div><label>Priority</label><select id="f_priority"></select></div></div>
+    <div class="row2"><div><label>Scope of Work</label><select id="f_type"></select></div><div><label>Priority</label><select id="f_priority"></select></div></div>
     <div class="row2"><div><label>Assignee</label><select id="f_assignee"></select></div><div><label>Deadline</label><input type="date" id="f_due"></div></div>
     <label>Estimated man-hours</label><input type="text" id="f_hours" placeholder="e.g. 16">
     <label>Description</label><textarea id="f_desc" rows="3" placeholder="Brief notes for the artist…"></textarea>
@@ -1006,7 +1006,7 @@ async function bootApp(){
   renderContextPickers();
   applyGate('editProjectBtn');
 
-  document.getElementById('filterType').innerHTML = '<option value="">All types</option>' + TYPES.map(t=>`<option value="${t.id}">${escapeHTML(t.label)}</option>`).join('');
+  document.getElementById('filterType').innerHTML = '<option value="">All scopes of work</option>' + TYPES.map(t=>`<option value="${t.id}">${escapeHTML(t.label)}</option>`).join('');
   document.getElementById('f_priority').innerHTML = priorityOptions(PRIORITIES.some(p=>p.id==='med') ? 'med' : (PRIORITIES[Math.floor(PRIORITIES.length/2)]||{}).id);
   setTab('board');
 }
@@ -1320,7 +1320,7 @@ function renderList(){
     for(const ep of episodes) rows.push({ a, ep });
   }
 
-  el.innerHTML = tabs + `<table><thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Status</th><th>Assignee</th><th>Round</th><th>Priority</th><th>Tasks</th><th>Time Spent</th></tr></thead><tbody>
+  el.innerHTML = tabs + `<table><thead><tr><th>Code</th><th>Name</th><th>Scope of Work</th><th>Status</th><th>Assignee</th><th>Round</th><th>Priority</th><th>Tasks</th><th>Time Spent</th></tr></thead><tbody>
     ${rows.map(({a, ep})=>{
       const t=typeOf(a.type), doneTasks=a.tasks.filter(x=>x.done).length;
       /* A finished stretch shows where that person LEFT it — somebody who took
@@ -3087,7 +3087,7 @@ async function afterRefChange(message){
   await loadReferenceData();
   await loadRoles();
   await renderSettings();
-  document.getElementById('filterType').innerHTML = '<option value="">All types</option>' + TYPES.map(t=>`<option value="${t.id}">${escapeHTML(t.label)}</option>`).join('');
+  document.getElementById('filterType').innerHTML = '<option value="">All scopes of work</option>' + TYPES.map(t=>`<option value="${t.id}">${escapeHTML(t.label)}</option>`).join('');
   document.getElementById('f_priority').innerHTML = priorityOptions(PRIORITIES.some(p=>p.id==='med')?'med':(PRIORITIES[0]||{}).id);
   if(message) showToast(message);
 }

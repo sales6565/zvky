@@ -46,6 +46,14 @@ const COLUMNS = [
   },
   {
     name: 'type',
+    /* The spelling the sample file carries and error messages name. The UI
+       calls this attribute Scope of Work, so the column people are asked to
+       fill in says the same thing; `name` stays `type` because that is the
+       database column and the API field, which this rename does not touch.
+       `accepts` keeps the old spelling working, so a file somebody saved
+       before the rename still imports. */
+    header: 'scope_of_work',
+    accepts: ['scope_of_work', 'type'],
     required: true,
     get describe() { return `One of ${assetTypes().join(', ')}`; },
     example: ['fx', 'prop', 'environment'],
@@ -136,8 +144,15 @@ const COLUMNS = [
   },
 ];
 
-const COLUMN_NAMES = COLUMNS.map((c) => c.name);
-const REQUIRED_COLUMNS = COLUMNS.filter((c) => c.required).map((c) => c.name);
+// A column is identified to people by its header and matched in a file by any
+// of the spellings it accepts. For every column but one those are the same
+// string as its `name`; see the type column above for why one differs.
+const headerOf = (c) => c.header || c.name;
+const acceptsOf = (c) => c.accepts || [c.name];
+
+const COLUMN_NAMES = COLUMNS.map(headerOf);
+const ACCEPTED_HEADERS = COLUMNS.flatMap(acceptsOf);
+const REQUIRED_COLUMNS = COLUMNS.filter((c) => c.required).map(headerOf);
 
 // Bounds. A file past these is rejected before any work is done, rather than
 // being discovered halfway through a long import.
@@ -156,8 +171,12 @@ function normaliseHeader(header) {
 // caller can tell someone exactly which column to add.
 function validateHeaders(headers) {
   const present = (headers || []).map(normaliseHeader).filter(Boolean);
-  const missing = REQUIRED_COLUMNS.filter((c) => !present.includes(c));
-  const unknown = present.filter((h) => !COLUMN_NAMES.includes(h));
+  // A required column is present under any spelling it accepts, but it is
+  // reported missing under the one the sample file uses — naming the old
+  // spelling in the error would send someone to fix the wrong thing.
+  const missing = COLUMNS.filter((c) => c.required && !acceptsOf(c).some((h) => present.includes(h)))
+    .map(headerOf);
+  const unknown = present.filter((h) => !ACCEPTED_HEADERS.includes(h));
   return { ok: missing.length === 0, present, missing, unknown };
 }
 
@@ -168,15 +187,15 @@ function validateRow(row, rowNumber) {
   const errors = [];
   for (const column of COLUMNS) {
     // Tolerate header casing differences by looking the key up loosely.
-    const key = Object.keys(row).find((k) => normaliseHeader(k) === column.name);
+    const key = Object.keys(row).find((k) => acceptsOf(column).includes(normaliseHeader(k)));
     const raw = key === undefined ? undefined : row[key];
     const result = column.parse(raw);
     if (result.error) {
       errors.push({
         row: rowNumber,
-        column: column.name,
+        column: headerOf(column),
         value: raw === undefined || raw === null ? '' : String(raw).slice(0, 80),
-        message: `${column.name} ${result.error}`,
+        message: `${headerOf(column)} ${result.error}`,
       });
     } else {
       values[column.name] = result.value;
@@ -203,7 +222,7 @@ function buildTemplateCsv() {
 // A short description of the format, for the UI to show beside the upload.
 function describeFormat() {
   return {
-    columns: COLUMNS.map((c) => ({ name: c.name, required: c.required, describe: c.describe })),
+    columns: COLUMNS.map((c) => ({ name: headerOf(c), required: c.required, describe: c.describe })),
     assetTypes: assetTypes(),
     priorities: priorities(),
     required: REQUIRED_COLUMNS,
@@ -219,6 +238,7 @@ module.exports = {
   defaultPriority,
   COLUMNS,
   COLUMN_NAMES,
+  ACCEPTED_HEADERS,
   REQUIRED_COLUMNS,
   MAX_ROWS,
   MAX_BYTES,

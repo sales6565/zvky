@@ -27,7 +27,27 @@ test('the generated sample satisfies the importer that validates it', () => {
 test('header validation names what is missing rather than just failing', () => {
   const check = assetImport.validateHeaders(['title', 'category']);
   assert.strictEqual(check.ok, false);
-  assert.deepStrictEqual(check.missing, ['name', 'type']);
+  assert.deepStrictEqual(check.missing, ['name', 'scope_of_work']);
+});
+
+test('the sample file asks for scope_of_work, and files saying type still import', () => {
+  /* The attribute the UI calls Scope of Work is still the `type` column in the
+     database and in the API. Only the spelling people are asked to type into a
+     spreadsheet changed, so a file somebody saved before the rename has to keep
+     working — otherwise a display rename would have quietly broken imports. */
+  const header = assetImport.buildTemplateCsv().split('\n')[0].split(',');
+  assert.ok(header.includes('scope_of_work'), `sample header was ${header.join(',')}`);
+  assert.ok(!header.includes('type'), 'the sample should ask for one spelling, not both');
+
+  for (const spelling of ['scope_of_work', 'type', 'Scope of Work']) {
+    const check = assetImport.validateHeaders(['name', spelling]);
+    assert.strictEqual(check.ok, true, `${spelling} should be accepted`);
+    assert.deepStrictEqual(check.unknown, [], `${spelling} should not read as an unknown column`);
+    const row = assetImport.validateRow({ name: 'X', [spelling]: 'prop' }, 2);
+    assert.strictEqual(row.ok, true, `${spelling} should parse`);
+    // Whichever spelling the file used, the value lands on the API/database key.
+    assert.strictEqual(row.values.type, 'prop');
+  }
 });
 
 test('headers are matched despite case, spacing and a byte-order mark', () => {
@@ -59,7 +79,7 @@ test('every row error names the row, the column and the reason', () => {
     assert.ok(typeof error.column === 'string' && error.column.length > 0);
     assert.ok(typeof error.message === 'string' && error.message.length > 0);
   }
-  assert.deepStrictEqual(result.errors.map((e) => e.column).sort(), ['name', 'priority', 'type']);
+  assert.deepStrictEqual(result.errors.map((e) => e.column).sort(), ['name', 'priority', 'scope_of_work']);
 });
 
 test('optional columns may be absent entirely', () => {
@@ -164,7 +184,7 @@ test('bulk import', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   await t.test('a file missing required columns is refused, naming them', async () => {
     const result = await upload('wrong.csv', 'title,category\nFoo,bar\n');
     assert.strictEqual(result.status, 400);
-    assert.deepStrictEqual(result.body.missingColumns, ['name', 'type']);
+    assert.deepStrictEqual(result.body.missingColumns, ['name', 'scope_of_work']);
     assert.ok(Array.isArray(result.body.expectedColumns));
     stillResponsive(result);
   });
@@ -193,6 +213,20 @@ test('bulk import', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     }
     assert.deepStrictEqual(result.body.errors.map((e) => e.row), [3, 4, 5, 6, 7, 8]);
     stillResponsive(result);
+  });
+
+  await t.test('a file using either spelling of the scope column imports', async () => {
+    const asNew = await upload('new.csv', 'name,scope_of_work\nNew Spelling,prop\n');
+    assert.strictEqual(asNew.status, 201, JSON.stringify(asNew.body));
+    const asOld = await upload('old.csv', 'name,type\nOld Spelling,fx\n');
+    assert.strictEqual(asOld.status, 201, JSON.stringify(asOld.body));
+    // Either way the value lands on the `type` column the API reports.
+    const { body } = await api(server.base, `/assets/project/${projectId}`, { token });
+    const listed = body.assets.filter((a) => /Spelling$/.test(a.name));
+    assert.deepStrictEqual(
+      listed.map((a) => [a.name, a.type]).sort(),
+      [['New Spelling', 'prop'], ['Old Spelling', 'fx']],
+    );
   });
 
   await t.test('a row repeated inside the file is imported once', async () => {
