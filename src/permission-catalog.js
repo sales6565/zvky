@@ -155,6 +155,23 @@ const GROUPS = [
     ],
   },
   {
+    key: 'reports',
+    label: 'Reports',
+    permissions: [
+      {
+        key: 'report.view',
+        label: 'View Reports',
+        /* The studio-wide tier by default, and grantable to anyone else in
+           Settings. Reports read across every project a person can see, and
+           they compare a person's tracked hours against an estimate — which is
+           the kind of thing a role should be given deliberately rather than
+           inherit from being able to edit an asset. */
+        impliedBy: fullAccess,
+        describe: 'Work-efficiency reports: estimated Man Hours against tracked Time Spent.',
+      },
+    ],
+  },
+  {
     key: 'settings',
     label: 'Settings / Admin',
     permissions: [

@@ -47,7 +47,7 @@ test('no feature is gated on a role NAME anywhere', () => {
 test('the catalogue covers the groups that were asked for', () => {
   assert.deepStrictEqual(catalog.GROUPS.map((g) => g.label), [
     'User Management', 'Asset Management', 'Review Workflow',
-    'Project Management', 'Client Management', 'Settings / Admin',
+    'Project Management', 'Client Management', 'Reports', 'Settings / Admin',
   ]);
   assert.strictEqual(new Set(catalog.KEYS).size, catalog.KEYS.length);
 });

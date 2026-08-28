@@ -108,6 +108,24 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .sub-tab-count{font-family:'IBM Plex Mono';font-size:11px;color:var(--ink-faint);
   background:var(--surface-3);border-radius:20px;padding:1px 7px;min-width:20px;text-align:center;}
 .sub-tab.active .sub-tab-count{color:var(--brand);}
+/* --- Reports --- */
+.rep-head{display:flex;align-items:flex-start;gap:16px;margin-bottom:14px;}
+.rep-sub{font-size:12px;color:var(--ink-muted);margin-top:5px;max-width:760px;line-height:1.5;}
+.rep-filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:16px;}
+.rep-filters select,.rep-filters input[type=date]{background:var(--surface-2);border:1px solid var(--border);
+  color:var(--ink);padding:7px 10px;border-radius:8px;font-family:'Inter';font-size:12.5px;}
+.rep-date{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ink-faint);
+  text-transform:uppercase;letter-spacing:.4px;}
+.rep-grain{display:flex;gap:4px;margin-bottom:10px;}
+.eff-track{position:relative;height:8px;background:var(--surface-3);border-radius:20px;overflow:hidden;}
+.eff-fill{height:100%;border-radius:20px;}
+.eff-mark{position:absolute;top:-2px;left:50%;width:1px;height:12px;background:var(--ink-faint);opacity:.55;}
+.rep-outlier{background:rgba(232,64,44,.06);}
+.rep-flag{font-size:10px;padding:2px 7px;border-radius:20px;background:rgba(232,64,44,.16);
+  color:#e8402c;font-family:'IBM Plex Mono';margin-left:6px;text-transform:uppercase;letter-spacing:.4px;}
+.rep-note{font-size:12px;color:var(--ink-muted);margin-top:10px;line-height:1.7;}
+.rep-chip{display:inline-block;font-family:'IBM Plex Mono';font-size:11px;background:var(--surface-2);
+  color:var(--ink-muted);border-radius:20px;padding:2px 9px;margin-left:6px;}
 /* A round somebody has already handed on. Still readable, visibly finished —
    the current row is the one the eye should land on first. */
 tr.past-round{opacity:0.62;}
@@ -352,6 +370,7 @@ tr.past-round{opacity:0.62;}
            bookmarkable and nothing needs migrating. -->
       <button data-tab="list">Assets List</button>
       <button data-tab="team" id="teamTabBtn" style="display:none;">My Team</button>
+      <button data-tab="reports" id="reportsTabBtn" style="display:none;">Reports</button>
       <button data-tab="users" id="usersTabBtn" style="display:none;">Users</button>
       <button data-tab="settings" id="settingsTabBtn" style="display:none;">Settings</button>
     </div>
@@ -370,6 +389,7 @@ tr.past-round{opacity:0.62;}
   <div id="listView" style="display:none;"></div>
   <div id="teamView" style="display:none;"></div>
   <div id="usersView" style="display:none;"></div>
+  <div id="reportsView" style="display:none;"></div>
   <div id="settingsView" style="display:none;"></div>
 </div>
 </div>
@@ -696,6 +716,7 @@ const UI_GATES = {
   teamTabBtn:            () => can('user.view_team'),
   usersTabBtn:           () => canAnyIn('user'),
   settingsTabBtn:        () => canOpenSettings(),
+  reportsTabBtn:         () => can('report.view'),
   projectsTabBtn:        () => can('client.view'),
   newClientBtn:          () => can('client.add'),
   newProjectBtn:         () => can('project.add'),
@@ -770,6 +791,12 @@ function mayEditCurrentProject(){
 /* Show or hide one gated element. `also` carries the non-permission half of the
    question — the New Asset button needs a board view and a project as well as
    the permission — and defaults to yes. */
+/* Every tab button that has a gate. Derived, not written out: this list used
+   to be typed in two places, and a new tab added to UI_GATES but not to both
+   copies stayed hidden from everyone — which is exactly how the Reports tab
+   was invisible to Super Admin on its first run. */
+const TAB_GATE_IDS = Object.keys(UI_GATES).filter(id=>id.endsWith('TabBtn'));
+
 function applyGate(id, also){
   const el = document.getElementById(id);
   if(!el) return false;
@@ -1039,7 +1066,7 @@ async function bootApp(){
   /* Every tab and toolbar button, from the one table. The asset buttons are
      turned on again by render(), which knows whether there is a board and a
      project to add to. */
-  ['teamTabBtn','projectsTabBtn','usersTabBtn','settingsTabBtn','newProjectBtn'].forEach(id=>applyGate(id));
+  [...TAB_GATE_IDS,'newProjectBtn'].forEach(id=>applyGate(id));
   ['newAssetBtn','bulkImportBtn','downloadSampleBtn'].forEach(id=>applyGate(id, false));
 
   const { projects } = await api('/projects');
@@ -1217,6 +1244,7 @@ function setTab(tab){
   document.getElementById('listView').style.display = tab==='list' ? '' : 'none';
   document.getElementById('teamView').style.display = tab==='team' ? '' : 'none';
   document.getElementById('usersView').style.display = tab==='users' ? '' : 'none';
+  document.getElementById('reportsView').style.display = tab==='reports' ? '' : 'none';
   document.getElementById('settingsView').style.display = tab==='settings' ? '' : 'none';
   render();
 }
@@ -1394,6 +1422,165 @@ function renderList(){
   el.querySelectorAll('tr[data-id]').forEach(row=>row.addEventListener('click', ()=>openDrawer(row.dataset.id)));
   wire();
 }
+/* ---------- Reports ---------- */
+/* Estimated Man Hours against tracked Time Spent.
+   
+   Two numbers per row, always: FIRST PASS is the work before the first
+   submission, TOTAL is every round including rework. A wide gap between them
+   says the estimate was fine and the work came back — which one number alone
+   cannot tell you, and which is the reason both are here. */
+const reportState = { data:null, loading:false, view:'byUser', grain:'week',
+  filters:{ projectId:'', clientId:'', assigneeId:'', category:'', scope:'', from:'', to:'' } };
+
+const REPORT_VIEWS = [
+  { id:'byUser',     label:'By User',          head:'Assignee' },
+  { id:'byCategory', label:'By Category',      head:'Category' },
+  { id:'byScope',    label:'By Scope of Work', head:'Scope of Work' },
+  { id:'byProject',  label:'By Project',       head:'Project' },
+  { id:'byClient',   label:'By Client',        head:'Client' },
+  { id:'trend',      label:'Over Time',        head:'Period' },
+  { id:'assets',     label:'Every Asset',      head:'Asset' },
+];
+
+/* Colour by how far off the estimate a number is. The same three bands
+   everywhere, so a reader learns them once. */
+function effColor(v){
+  if(v === null || v === undefined) return 'var(--ink-faint)';
+  if(v < 80)  return '#e8402c';
+  if(v < 100) return '#f2b33d';
+  return 'var(--approved)';
+}
+function effCell(v){
+  if(v === null || v === undefined) return `<td class="mono" style="color:var(--ink-faint);">N/A</td>`;
+  return `<td class="mono" style="color:${effColor(v)};font-weight:600;">${v}%</td>`;
+}
+
+/* A bar, drawn in the row. 100% is the line — anything reaching it came in on
+   or under estimate — and the scale is capped so one 900% outlier does not
+   flatten every other bar to nothing. */
+function effBar(v){
+  if(v === null || v === undefined) return '<td></td>';
+  const width = Math.max(2, Math.min(100, (v / 200) * 100));
+  return `<td style="width:150px;"><div class="eff-track"><div class="eff-fill" style="width:${width}%;background:${effColor(v)}"></div>
+    <div class="eff-mark" title="100% — on estimate"></div></div></td>`;
+}
+
+async function loadReport(){
+  const q = new URLSearchParams();
+  for(const [k,v] of Object.entries(reportState.filters)) if(v) q.set(k, v);
+  q.set('grain', reportState.grain);
+  reportState.data = await api('/reports/efficiency?' + q.toString());
+}
+
+async function renderReports(){
+  const el = document.getElementById('reportsView');
+  if(!can('report.view')){ el.innerHTML = ''; return; }
+  if(!reportState.data && !reportState.loading){
+    reportState.loading = true;
+    el.innerHTML = `<div class="empty">Working out the numbers…</div>`;
+    try{ await loadReport(); }
+    catch(err){ el.innerHTML = `<div class="empty">${escapeHTML(err.message)}</div>`; reportState.loading=false; return; }
+    reportState.loading = false;
+  }
+  const d = reportState.data;
+  if(!d) return;
+
+  const f = reportState.filters;
+  const opts = (list, valueKey, labelKey, selected) =>
+    list.map(x=>`<option value="${escapeHTML(x[valueKey])}"${x[valueKey]===selected?' selected':''}>${escapeHTML(x[labelKey])}</option>`).join('');
+
+  const filterBar = `
+    <div class="rep-filters">
+      <select id="rep_project"><option value="">All projects</option>${opts(d.filters.projects,'id','name',f.projectId)}</select>
+      <select id="rep_client"><option value="">All clients</option>${opts(d.filters.clients,'id','name',f.clientId)}</select>
+      <select id="rep_user"><option value="">All people</option>${opts(d.filters.users,'id','name',f.assigneeId)}</select>
+      <select id="rep_category"><option value="">All categories</option>${opts(d.filters.categories,'key','label',f.category)}</select>
+      <select id="rep_scope"><option value="">All scopes of work</option>${opts(d.filters.scopes,'key','label',f.scope)}</select>
+      <label class="rep-date">From <input type="date" id="rep_from" value="${f.from}"></label>
+      <label class="rep-date">To <input type="date" id="rep_to" value="${f.to}"></label>
+      <button class="btn btn-ghost" id="rep_clear">Clear</button>
+    </div>`;
+
+  const s = d.summary;
+  const summary = `
+    <div class="stats">
+      <div class="stat"><div class="num">${s.assets}</div><div class="lbl">Assets reported</div></div>
+      <div class="stat"><div class="num" style="color:${effColor(s.firstPass)}">${s.firstPass===null?'N/A':s.firstPass+'%'}</div><div class="lbl">First-pass efficiency</div></div>
+      <div class="stat"><div class="num" style="color:${effColor(s.total)}">${s.total===null?'N/A':s.total+'%'}</div><div class="lbl">Total efficiency</div></div>
+      <div class="stat"><div class="num">${s.manHours}</div><div class="lbl">Man Hours estimated</div></div>
+      <div class="stat"><div class="num">${s.trackedHours}</div><div class="lbl">Hours tracked</div></div>
+      <div class="stat"><div class="num" style="color:var(--ink-faint)">${s.excluded}</div><div class="lbl">Excluded</div></div>
+    </div>`;
+
+  const tabs = `<div class="sub-tabs">${REPORT_VIEWS.map(v=>{
+    const n = v.id==='assets' ? d.assets.length : v.id==='trend' ? d.trend.length : d[v.id].groups.length;
+    return `<button class="sub-tab${v.id===reportState.view?' active':''}" data-view="${v.id}">${v.label} <span class="sub-tab-count">${n}</span></button>`;
+  }).join('')}</div>`;
+
+  const view = REPORT_VIEWS.find(v=>v.id===reportState.view);
+  let body;
+
+  if(reportState.view === 'assets'){
+    body = !d.assets.length ? `<div class="empty">No asset has both an estimate and tracked time yet.</div>` : `
+      <table><thead><tr><th>Code</th><th>Assets Name</th><th>Assignee</th><th>Category</th><th>Scope of Work</th>
+        <th>Man Hours</th><th>First pass</th><th>Total</th><th>First pass %</th><th>Total %</th><th>Rounds</th></tr></thead><tbody>
+      ${d.assets.map(a=>`<tr>
+        <td class="mono">${escapeHTML(a.code)}</td><td style="font-weight:600;">${escapeHTML(a.name)}</td>
+        <td>${escapeHTML(a.assignee||'—')}</td><td>${escapeHTML(a.category||'—')}</td><td>${escapeHTML(a.scope||'—')}</td>
+        <td class="mono">${a.manHours}h</td><td class="mono">${a.firstPassHours}h</td><td class="mono">${a.totalHours}h</td>
+        ${effCell(a.firstPass)}${effCell(a.total)}
+        <td class="mono">${a.rounds}${a.contributors>1?` <span class="round-tag">${a.contributors} people</span>`:''}</td>
+      </tr>`).join('')}</tbody></table>`;
+  } else {
+    const rows = reportState.view==='trend' ? d.trend : d[reportState.view].groups;
+    const ungrouped = reportState.view==='trend' ? 0 : d[reportState.view].ungrouped;
+    body = !rows.length ? `<div class="empty">Nothing to report on with these filters.</div>` : `
+      ${reportState.view==='trend' ? `<div class="rep-grain">
+        <button class="sub-tab${reportState.grain==='week'?' active':''}" data-grain="week">Weekly</button>
+        <button class="sub-tab${reportState.grain==='month'?' active':''}" data-grain="month">Monthly</button>
+      </div>` : ''}
+      <table><thead><tr><th>${view.head}</th><th>Assets</th><th>First pass</th><th>Total</th><th></th>
+        <th>Man Hours</th><th>Tracked</th>${reportState.view==='byUser'?'<th>Shared</th>':''}</tr></thead><tbody>
+      ${rows.map(g=>`<tr${g.outlier?' class="rep-outlier"':''}>
+        <td style="font-weight:600;">${escapeHTML(String(g.label))}${g.outlier?` <span class="rep-flag" title="Averaging below ${d.thresholds.outlierBelow}% across ${d.thresholds.outlierMinAssets} or more assets">over budget</span>`:''}</td>
+        <td class="mono">${g.assets}</td>
+        ${effCell(g.firstPass)}${effCell(g.total)}${effBar(g.total)}
+        <td class="mono">${g.manHours}h</td><td class="mono">${g.trackedHours}h</td>
+        ${reportState.view==='byUser'?`<td class="mono">${g.handedOver||''}</td>`:''}
+      </tr>`).join('')}</tbody></table>
+      ${ungrouped ? `<div class="rep-note">${ungrouped} asset${ungrouped===1?'':'s'} had nothing in this column and ${ungrouped===1?'is':'are'} not counted above.</div>` : ''}`;
+  }
+
+  const excluded = d.excluded.length ? `
+    <div class="rep-note" style="margin-top:14px;">
+      <strong>${d.excluded.length}</strong> asset${d.excluded.length===1?'':'s'} left out, because efficiency cannot be worked out for ${d.excluded.length===1?'it':'them'}:
+      ${['never submitted','no Man Hours estimate','no tracked time'].map(r=>{
+        const n = d.excluded.filter(e=>e.reason===r).length;
+        return n ? `<span class="rep-chip">${n} ${escapeHTML(r)}</span>` : '';
+      }).join('')}
+    </div>` : '';
+
+  el.innerHTML = `
+    <div class="rep-head">
+      <div>
+        <h2 class="display" style="margin:0;font-size:17px;">Work efficiency</h2>
+        <div class="rep-sub">Man Hours estimated ÷ Time Spent tracked. Above 100% came in under the estimate.
+          <strong>First pass</strong> is the work before the first submission; <strong>total</strong> includes every round of rework.</div>
+      </div>
+    </div>
+    ${filterBar}${summary}${tabs}${body}${excluded}`;
+
+  // --- wiring -------------------------------------------------------------
+  const reload = async ()=>{ reportState.data=null; await renderReports(); };
+  const bind = (id, key)=>{ const n=document.getElementById(id); if(n) n.onchange = ()=>{ reportState.filters[key]=n.value; reload(); }; };
+  bind('rep_project','projectId'); bind('rep_client','clientId'); bind('rep_user','assigneeId');
+  bind('rep_category','category'); bind('rep_scope','scope'); bind('rep_from','from'); bind('rep_to','to');
+  const clear = document.getElementById('rep_clear');
+  if(clear) clear.onclick = ()=>{ reportState.filters = { projectId:'',clientId:'',assigneeId:'',category:'',scope:'',from:'',to:'' }; reload(); };
+  el.querySelectorAll('.sub-tab[data-view]').forEach(b=>b.onclick = ()=>{ reportState.view=b.dataset.view; renderReports(); });
+  el.querySelectorAll('.sub-tab[data-grain]').forEach(b=>b.onclick = ()=>{ reportState.grain=b.dataset.grain; reload(); });
+}
+
 async function renderTeam(){
   const el = document.getElementById('teamView');
   if(!can('user.view_team')){ el.innerHTML=''; return; }
@@ -1468,13 +1655,13 @@ async function renderUsers(){
 }
 async function render(){
   const viewIds = { board:'boardView', list:'listView', team:'teamView',
-    users:'usersView', projects:'projectsView', settings:'settingsView' };
+    users:'usersView', projects:'projectsView', reports:'reportsView', settings:'settingsView' };
   try{
   /* If the role gained or lost something since this page loaded, the tabs and
      toolbar buttons have to be re-decided too — they are applied once at boot
      and would otherwise keep the shape they had at sign-in. */
   if(await refreshPermissions()){
-    ['teamTabBtn','projectsTabBtn','usersTabBtn','settingsTabBtn','newProjectBtn'].forEach(id=>applyGate(id));
+    [...TAB_GATE_IDS,'newProjectBtn'].forEach(id=>applyGate(id));
     if(state.openAssetId && document.getElementById('drawer').classList.contains('show')){
       openDrawer(state.openAssetId);
     }
@@ -1488,6 +1675,7 @@ async function render(){
   ['newAssetBtn','bulkImportBtn','downloadSampleBtn'].forEach(id=>applyGate(id, onABoard));
   if(state.view==='board') renderBoard();
   else if(state.view==='list') renderList();
+  else if(state.view==='reports') await renderReports();
   else if(state.view==='team') await renderTeam();
   else if(state.view==='users') await renderUsers();
   else if(state.view==='projects') await renderProjects();
