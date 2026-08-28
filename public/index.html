@@ -827,13 +827,24 @@ function typeOf(id){
 }
 function statusOf(id){ return STATUSES.find(s=>s.id===id) || STATUSES[0]; }
 
-/* The stages of the pipeline that only interest whoever sets work up.
+/* Stages that are not everybody's business, and who they ARE the business of.
    
-   Not Assigned is the queue nobody has picked up: acting on it means putting
-   somebody on it. The two CD stages are the director's gate. For an account
-   that cannot add assets, all three are columns of other people's paperwork,
-   so they are hidden — tile and column together, from this one list. */
-const PLANNER_STATUSES = ['not_started', 'pending_cd_review', 'cd_changes_requested'];
+   Each entry names a status and the permissions that make it worth showing;
+   holding any one of them is enough. A status not listed here is shown to
+   everyone. The same list drives the Dashboard column, its stats tile and the
+   Assets List, so a stage can never appear in one and not another.
+   
+   These were all gated on asset.add alone, which read "can you set work up".
+   That is right for Not Assigned — acting on that queue means putting somebody
+   on it — but wrong for the two CD stages: they are the director's gate, and a
+   director reviews without necessarily creating anything. A Creative Art
+   Director holds review.cd and not asset.add, so the one board they exist to
+   work was the one board they could not see. */
+const RESTRICTED_STATUSES = [
+  { id: 'not_started',           needs: ['asset.add'] },
+  { id: 'pending_cd_review',     needs: ['asset.add', 'review.cd'] },
+  { id: 'cd_changes_requested',  needs: ['asset.add', 'review.cd'] },
+];
 
 /* The three groups the Assets List is divided into.
    
@@ -888,8 +899,10 @@ function roundSeconds(a){
 }
 
 function visibleStatuses(){
-  if(can('asset.add')) return STATUSES;
-  return STATUSES.filter(s=>PLANNER_STATUSES.indexOf(s.id) === -1);
+  return STATUSES.filter(s=>{
+    const rule = RESTRICTED_STATUSES.find(r=>r.id === s.id);
+    return !rule || rule.needs.some(p=>can(p));
+  });
 }
 function initials(name){ return (name||'?').trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase(); }
 function escapeHTML(s){ const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }

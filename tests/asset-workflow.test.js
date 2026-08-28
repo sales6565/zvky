@@ -48,18 +48,37 @@ test('the dashboard is drawn from the same states and the same free range', () =
     assert.ok(page.includes(site),
       `the dashboard should draw its columns and its stat tiles from ${gated} — missing: ${site}`);
   }
-  assert.match(page, /function visibleStatuses\(\)\{\s*\n\s*if\(can\('asset\.add'\)\) return STATUSES;/,
-    "visibleStatuses should gate on can('asset.add'), the same way every other gate on the page does");
+  /* The stages not shown to everyone, and what makes each one worth showing.
+     Every id must be a real state — a typo here would hide nothing and say
+     nothing — and every permission must be a real key, or the rule can never
+     be satisfied and the column would be invisible to the whole studio. */
+  const restricted = page.match(/const RESTRICTED_STATUSES = \[([\s\S]*?)\n\];/);
+  assert.ok(restricted, 'the restricted stages should be one named list');
+  const rules = [...restricted[1].matchAll(/id:\s*'([^']+)'[^}]*needs:\s*\[([^\]]*)\]/g)]
+    .map((m) => ({ id: m[1], needs: m[2].split(',').map((v) => v.trim().replace(/'/g, '')).filter(Boolean) }));
 
-  // The stages hidden from an account that cannot add assets. Every one of them
-  // must be a real state id — a typo here would hide nothing and say nothing.
-  const planner = page.match(/const PLANNER_STATUSES = \[([^\]]*)\]/);
-  assert.ok(planner, 'the hidden stages should be one named list');
-  const hidden = planner[1].split(',').map((v) => v.trim().replace(/'/g, '')).filter(Boolean);
-  assert.deepStrictEqual(hidden, ['not_started', 'pending_cd_review', 'cd_changes_requested']);
-  for (const id of hidden) {
-    assert.ok(workflow.STATE_IDS.includes(id), `"${id}" is not a status the pipeline has`);
+  assert.deepStrictEqual(rules.map((r) => r.id),
+    ['not_started', 'pending_cd_review', 'cd_changes_requested']);
+
+  const catalogKeys = new Set(require('../src/permission-catalog').KEYS);
+  for (const rule of rules) {
+    assert.ok(workflow.STATE_IDS.includes(rule.id), `"${rule.id}" is not a status the pipeline has`);
+    assert.ok(rule.needs.length, `"${rule.id}" has no permission that reveals it`);
+    for (const key of rule.needs) {
+      assert.ok(catalogKeys.has(key), `"${rule.id}" is gated on "${key}", which is not a permission`);
+    }
   }
+
+  /* The fix this encodes: a CD reviewer holding review.cd and not asset.add
+     could not see the two stages their permission is entirely about. */
+  for (const id of ['pending_cd_review', 'cd_changes_requested']) {
+    const rule = rules.find((r) => r.id === id);
+    assert.ok(rule.needs.includes('review.cd'), `${id} must be visible to a CD reviewer`);
+    assert.ok(rule.needs.includes('asset.add'), `${id} must stay visible to whoever sets work up`);
+  }
+  // Not Assigned deliberately stays with asset.add alone: acting on that queue
+  // means putting somebody on it, which reviewing does not.
+  assert.deepStrictEqual(rules.find((r) => r.id === 'not_started').needs, ['asset.add']);
 
   const free = page.match(/const FREE = \[([^\]]*)\]/);
   assert.ok(free, 'the dashboard drag handler has no FREE list');
@@ -751,4 +770,57 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(nonsense.status, 400);
     assert.strictEqual(nonsense.body.field, 'status');
   });
+});
+
+test('who sees which dashboard column', () => {
+  /* The bug: the CD stages were gated on asset.add, which asks "can you set
+     work up". A Creative Art Director holds review.cd and NOT asset.add, so
+     the two columns their permission is entirely about were the two they could
+     not see — column and stats tile together.
+
+     This runs the page's own visibleStatuses() against three permission sets,
+     so the rule is checked rather than the list it happens to be written in. */
+  const fs = require('fs');
+  const path = require('path');
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+
+  const grab = (name, opener) => {
+    const at = page.indexOf(opener);
+    assert.ok(at !== -1, `could not find ${name} in the page`);
+    const rest = page.slice(at);
+    return rest.slice(0, rest.indexOf('\n}') + 2);
+  };
+  const source = grab('RESTRICTED_STATUSES', 'const RESTRICTED_STATUSES = [')
+    + '\n' + grab('visibleStatuses', 'function visibleStatuses()');
+
+  const STATUSES = workflow.STATE_IDS.map((id) => ({ id }));
+  const build = (held) => new Function('STATUSES', 'can',
+    `${source}; return visibleStatuses;`)(STATUSES, (p) => held.includes(p));
+
+  const seen = (held) => build(held)().map((s) => s.id);
+
+  const cd = seen(['review.cd']);                 // Creative Art Director
+  const planner = seen(['asset.add']);            // Team Lead, Producer …
+  const neither = seen([]);                       // Game Artist
+  const both = seen(['asset.add', 'review.cd']);
+
+  for (const id of ['pending_cd_review', 'cd_changes_requested']) {
+    assert.ok(cd.includes(id), `a CD reviewer must see ${id}`);
+    assert.ok(planner.includes(id), `${id} must stay visible to whoever sets work up`);
+    assert.ok(!neither.includes(id), `${id} must stay hidden from a role holding neither`);
+  }
+
+  // Not Assigned deliberately did NOT change: acting on that queue means
+  // putting somebody on it, which reviewing does not.
+  assert.ok(planner.includes('not_started'));
+  assert.ok(!cd.includes('not_started'), 'reviewing is not a reason to see the unassigned queue');
+  assert.ok(!neither.includes('not_started'));
+
+  // Nothing regressed for the case that already worked.
+  assert.deepStrictEqual(both, workflow.STATE_IDS, 'holding both should show every stage');
+  // And every stage outside the restricted list is everybody's business.
+  for (const id of workflow.STATE_IDS) {
+    if (['not_started', 'pending_cd_review', 'cd_changes_requested'].includes(id)) continue;
+    assert.ok(neither.includes(id), `${id} should be visible to everyone`);
+  }
 });
