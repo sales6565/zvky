@@ -581,7 +581,7 @@ async function ensureClients(db, log) {
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'clients'`
   );
   if (!table.length) {
-    await db.query(`CREATE TABLE clients (
+    await db.query(await applyTableOptions(db, `CREATE TABLE clients (
       id            CHAR(36)     NOT NULL PRIMARY KEY,
       \`name\`        VARCHAR(255) NOT NULL,
       contact_name  VARCHAR(255) NULL,
@@ -591,8 +591,26 @@ async function ensureClients(db, log) {
       created_by    CHAR(36)     NULL,
       created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE KEY uq_clients_name (\`name\`)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
     log('Schema: added the clients table.');
+  }
+
+  /* The key above is added once, when the column is. A boot that could not
+     create it — most often because clients and projects disagreed on collation,
+     which a key will not span — never tried again, so the constraint stayed
+     missing for the life of the database. Now the collations are aligned first,
+     this puts back what that boot could not. */
+  const { rows: hasFk } = await db.query(
+    `SELECT CONSTRAINT_NAME AS n FROM information_schema.REFERENTIAL_CONSTRAINTS
+      WHERE CONSTRAINT_SCHEMA = DATABASE() AND CONSTRAINT_NAME = 'fk_projects_client'`
+  );
+  if (!hasFk.length) {
+    try {
+      await db.query('ALTER TABLE projects ADD CONSTRAINT fk_projects_client FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE RESTRICT');
+      log('Schema: restored the projects -> clients foreign key, which an earlier boot could not create.');
+    } catch (err) {
+      log(`Schema: the projects -> clients foreign key is still missing — ${err.sqlMessage || err.message}`);
+    }
   }
 
   // The placeholder, created before the column that needs it.
@@ -1145,6 +1163,101 @@ async function ensureAssetCategory(db, log) {
   log('Schema: added assets.category.');
 }
 
+
+/* Make every table's collation agree.
+ *
+ * `DEFAULT CHARSET=utf8mb4` with no COLLATE takes the SERVER's default, which
+ * is utf8mb4_0900_ai_ci on MySQL 8 and utf8mb4_general_ci on MariaDB and MySQL
+ * 5.7. src/db-collation.js exists to stop that, by anchoring new tables to
+ * whatever `users` has — but the clients table was created without it. On a
+ * MySQL 8 host that gave clients one collation and the rest of the schema
+ * another, and any query comparing a string column across the two died:
+ *
+ *   Illegal mix of collations (utf8mb4_0900_ai_ci,IMPLICIT)
+ *   and (utf8mb4_unicode_ci,IMPLICIT) for operation '='
+ *
+ * which is what the Reports tab hit on `clients.id = projects.client_id`.
+ * Creating it correctly fixes new databases; this fixes the ones already out
+ * there, which is the half that matters to a studio running today.
+ *
+ * A table cannot be converted while a foreign key touches its columns — from
+ * either side — so the keys come off, the table is converted, and they go back
+ * exactly as they were.
+ */
+async function ensureCollationConsistency(db, log) {
+  const { rows: target } = await db.query(
+    `SELECT TABLE_COLLATION AS c FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users'`
+  );
+  const want = target.length ? target[0].c : null;
+  // Nothing to anchor to, or an anchor not worth following: leave it alone
+  // rather than convert the schema to a guess.
+  if (!want || !/^utf8mb4_/i.test(want)) return;
+
+  const { rows: wrong } = await db.query(
+    `SELECT TABLE_NAME AS t, TABLE_COLLATION AS c FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'
+        AND TABLE_COLLATION IS NOT NULL AND TABLE_COLLATION <> $1
+      ORDER BY TABLE_NAME`,
+    [want]
+  );
+  if (!wrong.length) return;
+
+  for (const { t, c } of wrong) {
+    // Every foreign key that would block the conversion: the ones this table
+    // owns, and the ones pointing at it.
+    const { rows: keys } = await db.query(
+      `SELECT rc.CONSTRAINT_NAME AS name, k.TABLE_NAME AS child, k.COLUMN_NAME AS col,
+              k.REFERENCED_TABLE_NAME AS parent, k.REFERENCED_COLUMN_NAME AS parentCol,
+              rc.DELETE_RULE AS onDelete, rc.UPDATE_RULE AS onUpdate, k.ORDINAL_POSITION AS pos
+         FROM information_schema.REFERENTIAL_CONSTRAINTS rc
+         JOIN information_schema.KEY_COLUMN_USAGE k
+           ON k.CONSTRAINT_NAME = rc.CONSTRAINT_NAME
+          AND k.CONSTRAINT_SCHEMA = rc.CONSTRAINT_SCHEMA
+        WHERE rc.CONSTRAINT_SCHEMA = DATABASE()
+          AND (k.TABLE_NAME = $1 OR k.REFERENCED_TABLE_NAME = $1)
+        ORDER BY rc.CONSTRAINT_NAME, k.ORDINAL_POSITION`,
+      [t]
+    );
+
+    // Composite keys arrive as one row per column; rebuild them whole.
+    const byName = new Map();
+    for (const k of keys) {
+      if (!byName.has(k.name)) {
+        byName.set(k.name, { name: k.name, child: k.child, parent: k.parent,
+          cols: [], parentCols: [], onDelete: k.onDelete, onUpdate: k.onUpdate });
+      }
+      const entry = byName.get(k.name);
+      entry.cols.push(k.col);
+      entry.parentCols.push(k.parentCol);
+    }
+    const constraints = [...byName.values()];
+
+    try {
+      for (const fk of constraints) {
+        await db.query(`ALTER TABLE \`${fk.child}\` DROP FOREIGN KEY \`${fk.name}\``);
+      }
+      await db.query(`ALTER TABLE \`${t}\` CONVERT TO CHARACTER SET utf8mb4 COLLATE ${want}`);
+      log(`Schema: ${t} was ${c}; converted to ${want} so it can be joined to the rest.`);
+    } catch (err) {
+      log(`Schema: ${t} is ${c} rather than ${want} and could not be converted — ${err.sqlMessage || err.message}. `
+        + 'Queries joining it to another table will fail with "Illegal mix of collations".');
+    } finally {
+      // Back exactly as they were, whether or not the conversion worked.
+      for (const fk of constraints) {
+        const cols = fk.cols.map((x) => `\`${x}\``).join(', ');
+        const parentCols = fk.parentCols.map((x) => `\`${x}\``).join(', ');
+        await db.query(
+          `ALTER TABLE \`${fk.child}\` ADD CONSTRAINT \`${fk.name}\` FOREIGN KEY (${cols}) `
+          + `REFERENCES \`${fk.parent}\` (${parentCols}) ON DELETE ${fk.onDelete} ON UPDATE ${fk.onUpdate}`
+        ).catch((err) => {
+          log(`Schema: could not put ${fk.name} back on ${fk.child} — ${err.sqlMessage || err.message}`);
+        });
+      }
+    }
+  }
+}
+
 const STEPS = [
   ['stale role constraints', dropStaleRoleConstraints],
   ['users.role column width', widenRoleColumn],
@@ -1160,6 +1273,11 @@ const STEPS = [
   ['review pipeline', ensureReviewWorkflow],
   ['role permissions', ensurePermissionTables],
   ['asset ownership', ensureAssetOwnership],
+  /* Before the client hierarchy, and before anything else adds a foreign key.
+     A key cannot be created between two columns whose collations disagree, so
+     a mismatch left here does not only break queries — it silently stops the
+     schema getting the constraints it asks for. */
+  ['collation alignment', ensureCollationConsistency],
   ['client hierarchy', ensureClients],
   // After the client step, so client.* exists in the catalogue by the time
   // roles are topped up against it.

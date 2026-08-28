@@ -162,9 +162,47 @@ async function staleConstraints(db) {
 }
 
 // Everything this build needs and does not have: tables, columns, constraints.
-async function gaps(db) {
-  const [columns, constraints] = await Promise.all([missing(db), staleConstraints(db)]);
-  return [...columns, ...constraints];
+/* Tables whose collation disagrees with the rest of the schema.
+ *
+ * Not a missing piece, but it fails the same way and for the same reason — a
+ * deployment whose schema is not what this build assumes. Any query comparing
+ * a string column across two such tables dies with
+ *
+ *   Illegal mix of collations (utf8mb4_0900_ai_ci,IMPLICIT)
+ *   and (utf8mb4_unicode_ci,IMPLICIT) for operation '='
+ *
+ * and, less visibly, a foreign key cannot be created across the boundary at
+ * all — so the schema quietly does not get constraints it asked for. The
+ * startup migration converts these; this is what says so when it could not.
+ */
+async function mixedCollations(db) {
+  const { rows: anchor } = await db.query(
+    `SELECT TABLE_COLLATION AS c FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users'`
+  );
+  const want = anchor.length ? anchor[0].c : null;
+  if (!want || !/^utf8mb4_/i.test(want)) return [];
+
+  const { rows } = await db.query(
+    `SELECT TABLE_NAME AS t, TABLE_COLLATION AS c FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'
+        AND TABLE_COLLATION IS NOT NULL AND TABLE_COLLATION <> $1
+      ORDER BY TABLE_NAME`,
+    [want]
+  );
+  return rows.map((r) => ({
+    name: r.t,
+    kind: 'collation',
+    step: 'collation alignment',
+    detail: `is ${r.c}, the rest of the schema is ${want}; joins against it fail`,
+  }));
 }
 
-module.exports = { REQUIRED, CONSTRAINTS, missing, staleConstraints, gaps, normalizeCheckClause };
+async function gaps(db) {
+  const [columns, constraints, collations] = await Promise.all([
+    missing(db), staleConstraints(db), mixedCollations(db).catch(() => []),
+  ]);
+  return [...columns, ...constraints, ...collations];
+}
+
+module.exports = { REQUIRED, CONSTRAINTS, missing, staleConstraints, mixedCollations, gaps, normalizeCheckClause };

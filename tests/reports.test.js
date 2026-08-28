@@ -475,3 +475,55 @@ test('the report names a value added by another process', () => {
   assert.match(route, /const unnamed = rows\.some/,
     'and only when there is actually a key it cannot name');
 });
+
+test('every table is created with the schema\'s own collation', () => {
+  /* The failure this prevents: `DEFAULT CHARSET=utf8mb4` with no COLLATE takes
+     the SERVER's default — utf8mb4_0900_ai_ci on MySQL 8, utf8mb4_general_ci
+     on MariaDB — so a table created without src/db-collation.js disagrees with
+     the rest of the schema. Any query comparing a string column across the two
+     dies with "Illegal mix of collations", which is what the Reports tab hit
+     on clients.id = projects.client_id. A foreign key cannot span the boundary
+     either, so the schema also quietly loses constraints it asked for. */
+  const fs = require('fs');
+  const path = require('path');
+  const migrate = fs.readFileSync(path.join(__dirname, '..', 'src', 'migrate.js'), 'utf8');
+
+  const lines = migrate.split('\n');
+  const offenders = [];
+  lines.forEach((line, i) => {
+    if (!/\bCREATE TABLE\b/.test(line)) return;
+    if (/^\s*(\/\/|\*|log\()/.test(line)) return;            // comments and log text
+    // The reference tables are declared as bare strings and wrapped where they
+    // are used, so look at the two lines around the statement.
+    const context = lines.slice(Math.max(0, i - 1), i + 1).join('\n');
+    if (/applyTableOptions/.test(context)) return;
+    if (/^\s*\w+:\s*`CREATE TABLE/.test(line)) return;        // REFERENCE_TABLES entries
+    offenders.push(`line ${i + 1}: ${line.trim().slice(0, 70)}`);
+  });
+  assert.deepStrictEqual(offenders, [],
+    `these CREATE TABLE statements bypass applyTableOptions:\n${offenders.join('\n')}`);
+
+  // And every REFERENCE_TABLES entry must be wrapped where it is executed.
+  assert.match(migrate, /for \(const sql of Object\.values\(REFERENCE_TABLES\)\) await db\.query\(await applyTableOptions/);
+});
+
+test('a collation mismatch is repaired at startup and named until it is', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const migrate = fs.readFileSync(path.join(__dirname, '..', 'src', 'migrate.js'), 'utf8');
+  const check = require('../src/schema-check');
+
+  assert.match(migrate, /ensureCollationConsistency/, 'the repair should exist');
+  assert.ok(typeof check.mixedCollations === 'function',
+    '/api/health should be able to report a mismatch it could not repair');
+
+  /* Order matters: a foreign key cannot be created between two columns whose
+     collations disagree, so the alignment has to happen before any step that
+     adds one — otherwise the schema is repaired but stays short a constraint. */
+  const steps = migrate.slice(migrate.indexOf('const STEPS = ['));
+  const alignment = steps.indexOf("'collation alignment'");
+  const clients = steps.indexOf("'client hierarchy'");
+  assert.ok(alignment !== -1 && clients !== -1, 'both steps should be registered');
+  assert.ok(alignment < clients,
+    'collation alignment must run before the step that adds the clients foreign key');
+});
