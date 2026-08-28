@@ -92,13 +92,28 @@ router.get('/efficiency', requirePermission('report.view'), async (req, res) => 
      confidently, which is worse than the error. A schema fault belongs in the
      error handler, which names the missing piece and points at /api/health. */
 
-  // Labels, so the report reads in the studio's own words rather than in keys.
+  /* Labels, so the report reads in the studio's own words rather than in keys.
+   *
+   * The reference lists are mirrored in memory and reloaded when THIS process
+   * writes to them. A value added by another process — a second Node worker
+   * under Passenger, or a script run on the host — is therefore invisible here
+   * until a restart, and the report printed "table_game" where it should have
+   * said "Table Game". So: if a key turns up that the mirror cannot name, ask
+   * the database once and try again. Once, not per row.
+   */
   const labelFrom = (collection) => {
     const list = referenceData.list(collection, { includeInactive: true });
     return new Map(list.map((e) => [e.key, e.label]));
   };
-  const categories = labelFrom('categories');
-  const scopes = labelFrom('asset_types');
+  let categories = labelFrom('categories');
+  let scopes = labelFrom('asset_types');
+  const unnamed = rows.some((r) => (r.category && !categories.has(r.category))
+    || (r.type && !scopes.has(r.type)));
+  if (unnamed) {
+    await referenceData.refresh(db).catch(() => {});
+    categories = labelFrom('categories');
+    scopes = labelFrom('asset_types');
+  }
 
   const prepared = rows.map((r) => ({
     ...r,

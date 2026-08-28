@@ -133,6 +133,22 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
+/* GET /api/health/errors — the last few database faults this process has seen.
+   
+   Authenticated and behind full studio access: the messages name tables and
+   columns, which is the point, and that is not for everybody. */
+app.get('/api/health/errors', require('./middleware/auth').authenticate, (req, res) => {
+  const { hasFullAccess } = require('./permissions');
+  if (!hasFullAccess(req.user)) return res.status(403).json({ error: 'Not for this role.' });
+  res.json({
+    count: RECENT_DB_ERRORS.length,
+    errors: RECENT_DB_ERRORS,
+    hint: RECENT_DB_ERRORS.length
+      ? 'Each entry names the request and what the database said. A missing column or table means a startup schema change did not apply — /api/health names which.'
+      : 'No database faults since this process started.',
+  });
+});
+
 // Serve the bundled frontend
 app.use(express.static(path.join(__dirname, '..', 'public')));
 app.get('*', (req, res) => {
@@ -143,8 +159,28 @@ app.get('*', (req, res) => {
 // or size-limit errors) rather than a generic 500, since those are meant for the user.
 // Database errors are the exception: their messages name tables and columns, so
 // log those in full and hand the caller the error code alone.
+/* The last few database faults, in memory.
+   
+   Shared hosting frequently gives a studio no way to read the server log, so
+   an error that says "look in the log" is an error that ends the
+   investigation. This keeps enough to diagnose one and no more: when, which
+   request, the driver's code and message. No row values and no credentials,
+   and it is behind full access. */
+const RECENT_DB_ERRORS = [];
+const RECENT_LIMIT = 25;
+
 app.use((err, req, res, next) => {
   console.error(`${req.method} ${req.originalUrl} failed:`, err);
+  if (err && (err.code || '').startsWith('ER_')) {
+    RECENT_DB_ERRORS.unshift({
+      at: new Date().toISOString(),
+      method: req.method,
+      path: req.originalUrl,
+      code: err.code,
+      message: err.sqlMessage || err.message,
+    });
+    RECENT_DB_ERRORS.length = Math.min(RECENT_DB_ERRORS.length, RECENT_LIMIT);
+  }
 
   // Multer reports an oversized or unexpected upload through its own error
   // class. These are all the caller's doing, so answer 400 with the reason.
@@ -207,9 +243,20 @@ app.use((err, req, res, next) => {
         detail: message,
       });
     }
+    /* Every other database fault.
+       
+       This used to hand back the code alone, on the reasoning that driver
+       messages name tables and columns and belong in the log. On shared
+       hosting there is often no log anyone can reach, so "a database error"
+       was the whole of what a studio could find out — twice now. The message
+       names schema, not data: no row values, no credentials. It is worth more
+       in the reply than it is withheld. */
     return res.status(500).json({
-      error: 'The server could not complete that request because of a database error.',
+      error: `The database refused that request: ${message || 'no detail given'}`,
       code: err.code,
+      detail: message,
+      hint: 'Open /api/health — if a schema change has not applied it is named there. '
+        + 'GET /api/health/errors has the last few of these in full, for a host with no reachable log.',
     });
   }
   res.status(err.status || 500).json({ error: err.message || 'Unexpected server error' });

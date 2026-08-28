@@ -439,3 +439,39 @@ test('a report refuses rather than reporting zero when the schema is incomplete'
   assert.ok(!/ER_NO_SUCH_TABLE/.test(route),
     'the reports query must not swallow a missing table into an empty report');
 });
+
+test('a database error names itself rather than saying "a database error"', () => {
+  /* Twice in a row a studio saw "The server could not complete that request
+     because of a database error" and had nothing else to go on — no shell, no
+     log, and a health check that said the schema was complete. The reply now
+     carries the driver's own message, which names the table or column at
+     fault. It describes SCHEMA, not data: no row values, no credentials. */
+  const fs = require('fs');
+  const path = require('path');
+  const server = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
+
+  assert.ok(!/error: 'The server could not complete that request because of a database error\.'/.test(server),
+    'the opaque message should no longer be what a database fault returns');
+  assert.match(server, /The database refused that request: \$\{message/,
+    'the driver message belongs in the reply, not only in a log nobody can reach');
+  assert.match(server, /ER_BAD_FIELD_ERROR/, 'a missing column is named specifically');
+  assert.match(server, /health\/errors/, 'and the reply points at where the recent ones are listed');
+
+  // The recent-faults endpoint is authenticated and behind full access.
+  assert.match(server, /app\.get\('\/api\/health\/errors'[\s\S]{0,200}authenticate/);
+  assert.match(server, /hasFullAccess\(req\.user\)/);
+});
+
+test('the report names a value added by another process', () => {
+  /* The reference lists are mirrored in memory and only reloaded when THIS
+     process writes to them. Under Passenger there can be several Node workers,
+     so a category added by one — or by a script on the host — left the others
+     printing "table_game" where the report should say "Table Game". */
+  const fs = require('fs');
+  const path = require('path');
+  const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'reports.js'), 'utf8');
+  assert.match(route, /referenceData\.refresh\(db\)/,
+    'an unrecognised key should send the mirror back to the database once');
+  assert.match(route, /const unnamed = rows\.some/,
+    'and only when there is actually a key it cannot name');
+});
