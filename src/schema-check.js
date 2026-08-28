@@ -41,6 +41,19 @@ const REQUIRED = [
   { table: 'notes',          column: 'author_id',      step: 'review pipeline' },
   { table: 'role_permissions',      column: null,      step: 'role permissions' },
   { table: 'role_permission_audit', column: null,      step: 'role permissions' },
+
+  /* Everything below was added after this list was last kept up. It went
+     unnoticed because the check reported "complete" the whole time: a schema
+     the app needs but this list does not know about is a gap the one endpoint
+     built to name gaps cannot see. Adding a column to the app now means adding
+     it here, and a test checks the two agree. */
+  { table: 'work_sessions',    column: 'round',         step: 'assigned state and time tracking' },
+  { table: 'work_sessions',    column: 'assignment_id', step: 'assignment history' },
+  { table: 'asset_assignments', column: null,           step: 'assignment history' },
+  { table: 'asset_assignments', column: 'ended_status', step: 'assignment history' },
+  { table: 'ip_allowlist',     column: null,            step: 'IP allowlist' },
+  { table: 'categories',       column: null,            step: 'reference tables' },
+  { table: 'assets',           column: 'category',      step: 'asset category' },
 ];
 
 // Two queries for the whole check, rather than one per column.

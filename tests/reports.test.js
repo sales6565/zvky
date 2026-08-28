@@ -254,6 +254,12 @@ test('efficiency reports', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
     const noTime = await makeAsset('No Time', { manHours: 5 });
     await submit(noTime.id, 'anna', 'https://example.test/no-time');
+    /* Submitting has to start the clock first — an asset cannot be handed in
+       from Assigned — so it records whatever the request took. On a loaded
+       machine that rounds to a second, and this asset stops being the
+       no-tracked-time case it is here to be, which took the next two subtests
+       down with it. Zero it, so the case is the case regardless of timing. */
+    await sql(cfg, `UPDATE work_sessions SET seconds = 0 WHERE asset_id = '${noTime.id}'`);
 
     await makeAsset('Never Submitted', { manHours: 5 });
 
@@ -392,4 +398,44 @@ test('the Reports tab is drawn from the same permission the API checks', () => {
     'the tab gate must ask for the same key the endpoint requires');
   const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'reports.js'), 'utf8');
   assert.match(route, /requirePermission\('report\.view'\)/);
+});
+
+test('the schema check knows about every table the app queries', () => {
+  /* The blind spot this covers: /api/health exists to answer "which schema
+     change has not been applied", and it answered "complete" while four were
+     missing — because its list had not been kept up. A schema fault the one
+     diagnostic built to name it cannot see is worse than no diagnostic.
+     
+     This does not try to parse every query. It checks the tables and columns
+     this build is known to depend on are all declared, which is the part that
+     went stale. */
+  const required = require('../src/schema-check').REQUIRED;
+  assert.ok(Array.isArray(required), 'schema-check should expose what it requires');
+  const declared = new Set(required.map((r) => (r.column ? `${r.table}.${r.column}` : r.table)));
+
+  for (const need of [
+    'work_sessions', 'work_sessions.round', 'work_sessions.assignment_id',
+    'asset_assignments', 'asset_assignments.ended_status',
+    'categories', 'assets.category',
+    'role_permissions', 'asset_versions', 'asset_events',
+  ]) {
+    assert.ok(declared.has(need), `${need} is used by this build but /api/health would not notice it missing`);
+  }
+
+  // Every entry names the migration step that adds it, so the answer says what
+  // to re-run rather than only what is absent.
+  for (const entry of required) {
+    assert.ok(entry.step && typeof entry.step === 'string', `${entry.table} has no step named`);
+  }
+});
+
+test('a report refuses rather than reporting zero when the schema is incomplete', () => {
+  /* This used to catch a missing table and return an empty report: "0 assets,
+     no efficiency" where the truth was "this database cannot answer". A wrong
+     answer given confidently is worse than the error it replaced. */
+  const fs = require('fs');
+  const path = require('path');
+  const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'reports.js'), 'utf8');
+  assert.ok(!/ER_NO_SUCH_TABLE/.test(route),
+    'the reports query must not swallow a missing table into an empty report');
 });

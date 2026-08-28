@@ -82,13 +82,15 @@ router.get('/efficiency', requirePermission('report.view'), async (req, res) => 
        LEFT JOIN users u ON u.id = a.assignee_id
       WHERE ${where.join(' AND ')}`,
     params
-  ).catch((err) => {
-    /* work_sessions or asset_assignments missing means a deployment that has
-       not run the timer migration yet. A report with no time data is empty, not
-       a 500. */
-    if (/ER_NO_SUCH_TABLE|doesn't exist/i.test(err.message || '')) return { rows: [] };
-    throw err;
-  });
+  );
+  /* Deliberately NOT caught.
+     
+     This used to swallow a missing table into an empty report, on the reasoning
+     that a deployment without the timer tables has no time data to show. It
+     does not: a report that says "0 assets, no efficiency" when the truth is
+     "this database is missing asset_assignments" is a wrong answer delivered
+     confidently, which is worse than the error. A schema fault belongs in the
+     error handler, which names the missing piece and points at /api/health. */
 
   // Labels, so the report reads in the studio's own words rather than in keys.
   const labelFrom = (collection) => {

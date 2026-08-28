@@ -184,6 +184,29 @@ app.use((err, req, res, next) => {
         detail: message,
       });
     }
+    /* A column or table this build needs that the database does not have.
+       
+       The generic message below is what somebody saw when creating an asset
+       against a deployment whose newest migration had not applied: true, and
+       useless. These two errors have one cause and one remedy, so they say so
+       and name the piece — the same treatment the CHECK constraint above gets.
+       
+       MySQL and MariaDB word these the same way:
+         Unknown column 'a.category' in 'field list'
+         Table 'db.asset_assignments' doesn't exist  */
+    const schemaFault = err.code === 'ER_BAD_FIELD_ERROR' || err.code === 'ER_NO_SUCH_TABLE';
+    if (schemaFault) {
+      const named = /Unknown column '([^']+)'/i.exec(message)
+        || /Table '(?:[^.']*\.)?([^']+)' doesn't exist/i.exec(message);
+      return res.status(500).json({
+        error: `This deployment's database is missing ${named ? `"${named[1]}"` : 'something this version needs'}, `
+          + 'which a startup schema change should have added. '
+          + 'Open /api/health — it names every schema change that has not been applied, and the step to re-run.',
+        missing: named ? named[1] : undefined,
+        code: err.code,
+        detail: message,
+      });
+    }
     return res.status(500).json({
       error: 'The server could not complete that request because of a database error.',
       code: err.code,
