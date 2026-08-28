@@ -551,3 +551,68 @@ test('an import appends to the value lists rather than reordering them', {
     assert.strictEqual(after.length, before.length + 2);
   });
 });
+
+test('the sample file and the New Asset form cannot drift apart', () => {
+  /* The sample's columns are maintained in src/asset-import.js and the form's
+     fields in public/index.html, and nothing but this test connects them. It
+     failing means somebody changed one — added a field, renamed a label — and
+     the two now describe different things, which is exactly how the sample got
+     out of date before.
+
+     Fixing it is a decision, not a formality: either the importer gains the
+     column, or the field goes in NOT_IMPORTED below with the reason. */
+  const fs = require('fs');
+  const path = require('path');
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+
+  const form = page.slice(page.indexOf('<h2>New Asset</h2>'));
+  const modal = form.slice(0, form.indexOf('modal-actions'));
+  const formFields = [...modal.matchAll(/<label>([^<]+)<\/label>/g)].map((m) => m[1].trim());
+  assert.ok(formFields.length >= 4, `only found ${formFields.length} fields in the New Asset form`);
+
+  /* Fields the form collects that the sheet deliberately does not. Every one
+     needs a reason, so removing a column is a decision somebody made rather
+     than something that quietly happened. */
+  const NOT_IMPORTED = {
+    Priority: 'imported assets take the default priority and are changed in the panel',
+    Assignee: 'assigning is a workflow move, not a spreadsheet cell',
+    Deadline: 'set per asset after import',
+    Description: 'set per asset after import',
+  };
+  // Columns the sheet has that the form has no field for.
+  const NOT_ON_FORM = {
+    'No.': 'a line number for whoever fills the sheet in; never stored',
+  };
+
+  const sampleColumns = assetImport.buildTemplateCsv().split('\n')[0].split(',');
+  assert.deepStrictEqual(sampleColumns, assetImport.COLUMN_NAMES,
+    'the sample header must be the importer’s own column list, not a second copy');
+
+  const expectedColumns = Object.keys(NOT_ON_FORM)
+    .concat(formFields.filter((f) => !(f in NOT_IMPORTED)));
+  assert.deepStrictEqual(sampleColumns, expectedColumns,
+    'the sample columns no longer match the New Asset form — add the column, or list the field in NOT_IMPORTED with a reason');
+
+  // And every excuse still refers to a field that exists, so the list cannot
+  // rot into exemptions for fields nobody has any more.
+  for (const field of Object.keys(NOT_IMPORTED)) {
+    assert.ok(formFields.includes(field), `NOT_IMPORTED names "${field}", which the form no longer has`);
+  }
+});
+
+test('the sample shows values that are really in the configured lists', () => {
+  /* A sample quoting scope-of-work values hardcoded in the importer is a
+     sample that stops matching the dropdown the moment somebody edits the list
+     in Settings. These are read from the live list instead. */
+  const { parse } = require('csv-parse/sync');
+  const rows = parse(assetImport.buildTemplateCsv(),
+    { bom: true, columns: true, skip_empty_lines: true, trim: true });
+  const live = assetImport.assetTypes();
+  for (const row of rows) {
+    assert.ok(live.includes(row['Scope of Work']),
+      `sample offers "${row['Scope of Work']}", which is not in ${live.join(', ')}`);
+    assert.ok(Number(row['Man Hours']) > 0, 'the sample should show a sensible estimate');
+    assert.ok(row['Assets Name'] && row.Category, 'every sample row should be complete');
+  }
+  assert.ok(rows.length >= 2, 'the sample needs example rows, not just a header');
+});

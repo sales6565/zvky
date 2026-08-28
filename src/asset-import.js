@@ -37,10 +37,26 @@ function defaultPriority() {
    creates on the way in; that is the behaviour, so the sample may as well
    demonstrate it. */
 function exampleCategories() {
-  const configured = referenceData.isLoaded()
-    ? referenceData.list('categories').map((c) => c.label)
-    : [];
-  if (!configured.length) return ['Slot Game', 'Table Game', 'Slot Game'];
+  return sampleCells(
+    referenceData.isLoaded() ? referenceData.list('categories').map((c) => c.label) : [],
+    ['Slot Game', 'Table Game', 'Slot Game']
+  );
+}
+
+/* And the Scope of Work cells. Unlike categories this list is never empty —
+   a new studio starts with six — so the sample always shows values that are
+   really in the dropdown rather than three names hardcoded here, which is how
+   a sample drifts away from the app it describes. */
+function exampleScopes() {
+  return sampleCells(
+    referenceData.isLoaded() ? referenceData.list('asset_types').map((t) => t.key) : [],
+    defaults.ASSET_TYPES.slice(0, 3).map((t) => t.key)
+  );
+}
+
+// Three cells drawn from a live list, cycling if it is shorter than three.
+function sampleCells(configured, fallback) {
+  if (!configured.length) return fallback;
   return [0, 1, 2].map((n) => configured[n % configured.length]);
 }
 
@@ -115,7 +131,7 @@ const COLUMNS = [
        refused, so this checks only that something sane is there. Matching it,
        or adding it, happens in the endpoint where there is a database. */
     get describe() { return `One of ${assetTypes().join(', ')} — a new one is added to the list`; },
-    example: ['fx', 'prop', 'environment'],
+    get example() { return exampleScopes(); },
     parse(raw) {
       const value = String(raw ?? '').trim();
       if (!value) return { error: 'is required' };
