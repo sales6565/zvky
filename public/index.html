@@ -725,8 +725,11 @@ function mayAssignAsset(a){ return can('asset.assign') && ownsAsset(a); }
 function mayHandOverInReview(a){
   if(!can('asset.assign')) return false;
   if(ownsAsset(a)) return true;
-  if(a.status === 'pending_tl_review') return can('review.tl');
+  /* Beyond the creator, whoever is holding it at that stage. Mirrors the switch
+     in canHandOverInReview on the server, which stays the authority. */
+  if(a.status === 'pending_tl_review' || a.status === 'tl_changes_requested') return can('review.tl');
   if(a.status === 'pending_cd_review') return can('review.cd');
+  if(a.status === 'cd_changes_requested') return can('review.cd') || can('review.tl');
   return false;
 }
 /* One checklist row. Rendered from a function rather than inline, because the
@@ -1869,10 +1872,14 @@ async function openDrawer(id){
      rework changes hands and stays where it is, while submitted work goes back
      to Assigned for a person who has not done it. Same permission, same
      endpoint — which one it is, the server decides from the status. */
-  const REVIEW_STATUSES = ['pending_tl_review','pending_cd_review'];
-  const canReassignRework = mayAssignAsset(a) && REWORK_STATUSES.includes(a.status);
-  const canReassignInReview = REVIEW_STATUSES.includes(a.status) && mayHandOverInReview(a);
-  const canHandOver = canReassignRework || canReassignInReview;
+  /* The four stages an asset can be handed on from. All four behave the same
+     way now — back to Assigned, with the incoming person's own clock from
+     nothing — so there is one flag rather than two, and the wording below
+     changes with the stage rather than the mechanism. */
+  const HAND_OVER_STATUSES = ['pending_tl_review','pending_cd_review',
+                              'tl_changes_requested','cd_changes_requested'];
+  const canHandOver = HAND_OVER_STATUSES.includes(a.status) && mayHandOverInReview(a);
+  const handingBackRework = REWORK_STATUSES.includes(a.status);
   /* The clock. The assignee's own, with full access for oversight — mirrors
      mayRunTimer on the server. Only in the states where working makes sense,
      and in CD Changes only once the lead has relayed the notes. */
@@ -2040,23 +2047,23 @@ async function openDrawer(id){
     ${canDeliver ? `<button class="btn btn-brand" id="deliverBtn" style="width:100%;margin-top:14px;">Mark delivered to client</button>` : ''}
 
     ${canHandOver ? `
-      <div class="field-lbl" style="margin-top:16px;">${canReassignInReview ? 'Hand this to someone else' : 'Hand the rework to someone else'}</div>
+      <div class="field-lbl" style="margin-top:16px;">Hand this to someone else</div>
       <div style="font-size:11px;color:var(--ink-faint);margin-bottom:6px;">
-        ${canReassignInReview
-          ? `${escapeHTML(a.assignee_name||'The assignee')} has submitted this and it is waiting on a reviewer.
-             Handing it on returns it to <strong>Assigned</strong> for whoever takes it, with a clock of their own
-             starting from nothing — ${escapeHTML(a.assignee_name||'the assignee')}'s submission and hours stay on the record.`
-          : `The changes go back to ${escapeHTML(a.assignee_name||'the assignee')} by default. Pick somebody else and they pick it up
-             with the feedback and the submission history attached.`}
+        ${handingBackRework
+          ? `The changes go back to ${escapeHTML(a.assignee_name||'the assignee')} by default.`
+          : `${escapeHTML(a.assignee_name||'The assignee')} has submitted this and it is waiting on a reviewer.`}
+        Handing it on returns it to <strong>Assigned</strong> for whoever takes it, with a clock of their own
+        starting from nothing — ${escapeHTML(a.assignee_name||'the assignee')}'s${handingBackRework ? ' work, the feedback' : ' submission'}
+        and hours stay on the record.
       </div>
-      ${(canReassignInReview && !canTlReview && !canCdReview) ? `
+      ${(!handingBackRework && !canTlReview && !canCdReview) ? `
         <div style="font-size:11px;color:var(--ink-faint);margin-bottom:6px;">
           Approving it or sending it back is the reviewer's call at this stage, not yours — this is the
           one action on it that is.
         </div>` : ''}
       <select id="reassignTo"><option value="">Loading…</option></select>
       <input type="text" id="reassignNote" placeholder="Why the handover (optional)…" style="margin-top:6px;">
-      <button class="btn btn-ghost" id="reassignBtn" style="width:100%;margin-top:8px;">${canReassignInReview ? 'Hand over' : 'Reassign rework'}</button>
+      <button class="btn btn-ghost" id="reassignBtn" style="width:100%;margin-top:8px;">Hand over</button>
       <div class="ref-err" id="reassignErr"></div>
     ` : ''}
 
@@ -2357,9 +2364,8 @@ async function openDrawer(id){
           assigneeId: sel.value,
           note: document.getElementById('reassignNote').value.trim() || undefined,
         }});
-        showToast(canReassignInReview
-          ? `${asset.assignee_name} picks this up from the start.`
-          : `Rework moved to ${asset.assignee_name}.`);
+        // The same sentence at every stage now, because it is the same move.
+        showToast(`${asset.assignee_name} picks this up from the start.`);
         closeDrawer(); render();
       }catch(e){ err.textContent = e.message; }
       finally{ ev.target.disabled = false; }

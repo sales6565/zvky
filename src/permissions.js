@@ -199,11 +199,31 @@ function canAssignAsset(user, asset) {
 async function canHandOverInReview(user, asset) {
   if (!holds(user, 'asset.assign')) return false;
   if (ownsAsset(user, asset)) return true;                       // creator, or full access
-  if (asset.status === 'pending_tl_review') return isTeamLeadOfAsset(user, asset);
-  if (asset.status === 'pending_cd_review') {
-    return canReviewAsCD(user) && canViewAsset(user, asset);
+
+  /* Beyond the creator, the reach follows the stage — whoever is holding the
+     asset at that moment may pass it on:
+     
+       TL Review     the lead it is waiting on
+       CD Changes    the director who sent it back, and the lead who relays
+                     their notes — either may put somebody else on the rework
+       TL Changes    the lead who sent it back
+       CD Review     the director it is waiting on
+     
+     The rework stages reached only the creator before, so a lead who had just
+     sent work back could not then hand that rework to somebody else — the one
+     person with the clearest reason to. */
+  const asCD = async () => canReviewAsCD(user) && await canViewAsset(user, asset);
+  switch (asset.status) {
+    case 'pending_tl_review':
+    case 'tl_changes_requested':
+      return isTeamLeadOfAsset(user, asset);
+    case 'pending_cd_review':
+      return asCD();
+    case 'cd_changes_requested':
+      return (await asCD()) || await isTeamLeadOfAsset(user, asset);
+    default:
+      return false;
   }
-  return false;
 }
 
 // Who may work the checklist on an asset.

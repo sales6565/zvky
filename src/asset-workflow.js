@@ -161,7 +161,16 @@ const TRANSITIONS = [
     // asset_versions, their hours stay on their assignment record, and both
     // stay in the asset's history.
     action: 'reassign_review',
-    from: ['pending_tl_review', 'pending_cd_review'],
+    /* All four stages where an asset is in somebody's hands and can be put in
+       somebody else's: the two review queues, and the two rework stages.
+
+       The rework stages used to reassign through a branch of their own that
+       left the status where it was, so the incoming person inherited a stage
+       mid-flight with no way to start their own round. They land here now, on
+       the one path that was already built and debugged for review handover:
+       back to Assigned, a new episode, their own clock from nothing. */
+    from: ['pending_tl_review', 'pending_cd_review',
+           'tl_changes_requested', 'cd_changes_requested'],
     to: 'assigned',
     who: 'handOver',
     routeTo: 'assignee',
@@ -317,7 +326,7 @@ function evaluate(action, ctx, { note } = {}) {
     }
     const PHRASE = {
       submit: 'submitted',
-      reassign_review: 'handed to somebody else — that is only possible while it is waiting on a reviewer',
+      reassign_review: 'handed to somebody else — that is only possible while it is waiting on a reviewer or waiting on changes',
       tl_approve: 'approved by a team lead',
       cd_approve: 'approved by the director',
       tl_request_changes: 'sent back by a team lead',
@@ -373,8 +382,18 @@ function refusal(transition, ctx) {
   }
 }
 
+// One transition by name. So a route can ask "which statuses does this move
+// accept" rather than keeping its own copy of the answer, which is how the two
+// drift apart.
+function transitionFor(action) {
+  const found = TRANSITIONS.find((t) => t.action === action);
+  if (!found) throw new Error(`No such transition: ${action}`);
+  return found;
+}
+
 module.exports = {
   STATES,
+  transitionFor,
   ASSIGNEE_STATUSES,
   FREE_STATUSES,
   STATE_IDS,

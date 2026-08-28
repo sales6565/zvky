@@ -972,20 +972,19 @@ router.post('/:id/reassign', async (req, res) => {
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
   if (await projectClosedResponse(res, asset.project_id)) return undefined;
 
-  // Two different things share this endpoint, and they must not share a branch.
+  // All four stages hand over the same way.
   //
-  //   REWORK        the asset is back with the artist after a change request.
-  //                 Somebody else picks the rework up. The status does not
-  //                 move — it is still rework, just somebody else's.
+  // Whether the asset is sitting in a review queue or waiting on changes, the
+  // person receiving it has not done the work in front of them — so it returns
+  // to Assigned and they start from the beginning: their own episode, their own
+  // clock from nothing, with everything the previous person did still on the
+  // record.
   //
-  //   IN REVIEW     the asset has been SUBMITTED and is sitting in a reviewer's
-  //                 queue. Handing it to somebody else means handing them work
-  //                 they have not done, so it goes back to Assigned and they
-  //                 start from the beginning: their own clock, from nothing.
-  //
-  // Which one this is decided once, here, and carried through the rest of the
-  // handler. Folding them together is what would quietly make a reassignment
-  // mid-review look like a continuation of somebody else's round.
+  // The rework stages had a branch of their own that left the status where it
+  // was. That made the incoming person the owner of a stage mid-flight: no
+  // Accept and Start, and a round already carrying somebody else's history.
+  // They take this path now — the one already built and debugged for review
+  // handover — rather than a second implementation of the same idea.
   // Whether this person has ANY route to reassigning this asset, asked before
   // the status is looked at. Somebody with no business here is told so, rather
   // than being told which statuses are reassignable — which is not their
@@ -997,28 +996,27 @@ router.post('/:id/reassign', async (req, res) => {
     return res.status(403).json({ error: 'You do not have permission to hand this asset to somebody else.' });
   }
 
+  // The stages an asset can be handed on from — the workflow's own list, so
+  // this cannot drift from what the transition will actually accept.
+  const HAND_OVER_STATUSES = workflow.transitionFor('reassign_review').from;
+  // Only for wording — the trail and the log read better saying which kind of
+  // handover this was. Both take the same path.
   const inReview = ['pending_tl_review', 'pending_cd_review'].includes(asset.status);
-  const rework = isAwaitingRework(asset);
-  if (!inReview && !rework) {
+  if (!HAND_OVER_STATUSES.includes(asset.status)) {
     return res.status(409).json({
       error: 'Handing an asset to somebody else is only possible while it is waiting on changes or waiting on a reviewer.',
       status: asset.status,
-      allowedStatuses: [...REWORK_STATUSES, 'pending_tl_review', 'pending_cd_review'],
+      allowedStatuses: HAND_OVER_STATUSES,
     });
   }
 
-  // Each case asks its own question, because the answers differ: rework is the
-  // creator's call alone, while submitted work sitting in a reviewer's queue
-  // may also be handed on by the reviewer holding it. Both ask for
-  // asset.assign — this is about reach, not about a new permission.
-  const allowed = inReview
-    ? await canHandOverInReview(req.user, asset)
-    : canAssignAsset(req.user, asset);
+  // One question for all four stages: the person who added the asset, or
+  // whoever is holding it right now. Both ask for asset.assign — this is about
+  // reach, not about a new permission.
+  const allowed = await canHandOverInReview(req.user, asset);
   if (!allowed) {
     return res.status(403).json({
-      error: inReview
-        ? 'Handing submitted work on is for the person who added the asset or the reviewer holding it.'
-        : 'Only the person who added this asset can hand its rework to somebody else.',
+      error: 'Handing this on is for the person who added the asset or whoever is holding it now.',
     });
   }
 
@@ -1065,73 +1063,44 @@ router.post('/:id/reassign', async (req, res) => {
       handedOverSeconds = Number(spent[0].s) || 0;
     }
 
-    if (inReview) {
-      // --- submitted work, handed to somebody who has not done it -----------
-      //
-      // The asset goes back to Assigned under the new person. Their clock is a
-      // new episode, so it reads nothing — not because anything reset it, but
-      // because it is a different stretch of work. The outgoing person's hours
-      // stay on their now-closed episode and in the asset's lifetime total, and
-      // their submission stays in asset_versions untouched.
-      await conn.query('UPDATE assets SET assignee_id = $1 WHERE id = $2', [next.id, asset.id]);
-      await assignments.open(conn, {
-        assetId: asset.id, userId: next.id, assignedById: req.user.id,
-        status: asset.status, reason: 'reassigned_in_review',
-      });
+    /* The asset goes back to Assigned under the new person. Their clock is a
+       new episode, so it reads nothing — not because anything reset it, but
+       because it is a different stretch of work. The outgoing person's hours
+       stay on their now-closed episode and in the asset's lifetime total, and
+       their submission stays in asset_versions untouched. */
+    await conn.query('UPDATE assets SET assignee_id = $1 WHERE id = $2', [next.id, asset.id]);
+    await assignments.open(conn, {
+      assetId: asset.id, userId: next.id, assignedById: req.user.id,
+      status: asset.status, reason: inReview ? 'reassigned_in_review' : 'reassigned_rework',
+    });
 
-      // The transition needs the fresh row so the routing lands on the new
-      // assignee — but the actor check must be judged against the asset as it
-      // WAS. contextFor recomputes canHandOver from whatever row it is given,
-      // and the row now names the incoming person, so re-deriving it here asked
-      // "is this lead in charge of the person receiving it" instead of "of the
-      // person handing it over". Hand work to somebody on another team and the
-      // handover was refused after the assignee had already been written — a
-      // rollback, and a refusal message that made no sense to the lead reading
-      // it. `allowed` is that same question, answered above against the row
-      // before it changed, so carry it rather than asking again.
-      const { rows: fresh } = await conn.query('SELECT * FROM assets WHERE id = $1', [asset.id]);
-      const ctx = { ...(await contextFor(req, fresh[0])), canHandOver: allowed };
-      const verdict = workflow.evaluate('reassign_review', ctx);
-      if (!verdict.ok) {
-        await conn.query('ROLLBACK');
-        conn.release();
-        return res.status(verdict.status).json({ error: verdict.error });
-      }
-      await applyTransition(req, res, fresh[0], verdict, {
-        conn,
-        // The reason, where a person reading the trail would look for it, and
-        // then what the outgoing round finally recorded — which is the number
-        // the handover is answerable for.
-        note: `Reassigned from ${from} to ${next.name} while in ${workflow.label(asset.status)}${trailer}. `
-          + `${from} recorded ${fmtSeconds(handedOverSeconds)} on their round; ${next.name} starts a new one.`,
-      });
-      await conn.query('COMMIT');
-    } else {
-      // --- rework, picked up by somebody else --------------------------------
-      //
-      // Unchanged behaviour. The status stays where it is: the asset is already
-      // back with the artist, and this only says which artist. In CD Changes it
-      // sits with the team lead until they relay the notes, so the routing only
-      // follows the assignee when it was already pointing at them — reassigning
-      // must not steal it off the lead's desk and skip the relay.
-      const wasWithAssignee = asset.routed_to_id && asset.routed_to_id === asset.assignee_id;
-      const routedTo = wasWithAssignee ? next.id : asset.routed_to_id;
-
-      await conn.query('UPDATE assets SET assignee_id = $1, routed_to_id = $2 WHERE id = $3',
-        [next.id, routedTo, asset.id]);
-      await assignments.open(conn, {
-        assetId: asset.id, userId: next.id, assignedById: req.user.id,
-        status: asset.status, reason: 'reassigned_rework',
-      });
-      await conn.query(
-        `INSERT INTO asset_events (id, asset_id, action, from_status, to_status, actor_id, actor_email, note, routed_to_id)
-         VALUES ($1,$2,'reassign',$3,$4,$5,$6,$7,$8)`,
-        [uuid(), asset.id, asset.status, asset.status, req.user.id, req.user.email,
-         `Rework moved from ${from} to ${next.name}${trailer}. ${from} recorded ${fmtSeconds(handedOverSeconds)}.`,
-         routedTo]
-      );
-      await conn.query('COMMIT');
+    /* The transition needs the fresh row so the routing lands on the new
+       assignee — but the actor check must be judged against the asset as it
+       WAS. contextFor recomputes canHandOver from whatever row it is given,
+       and the row now names the incoming person, so re-deriving it here asked
+       "is this lead in charge of the person receiving it" instead of "of the
+       person handing it over". Hand work to somebody on another team and the
+       handover was refused after the assignee had already been written — a
+       rollback, and a refusal message that made no sense to the lead reading
+       it. `allowed` is that same question, answered above against the row
+       before it changed, so carry it rather than asking again. */
+    const { rows: fresh } = await conn.query('SELECT * FROM assets WHERE id = $1', [asset.id]);
+    const ctx = { ...(await contextFor(req, fresh[0])), canHandOver: allowed };
+    const verdict = workflow.evaluate('reassign_review', ctx);
+    if (!verdict.ok) {
+      await conn.query('ROLLBACK');
+      conn.release();
+      return res.status(verdict.status).json({ error: verdict.error });
     }
+    await applyTransition(req, res, fresh[0], verdict, {
+      conn,
+      // The reason, where a person reading the trail would look for it, and
+      // then what the outgoing round finally recorded — which is the number
+      // the handover is answerable for.
+      note: `Reassigned from ${from} to ${next.name} while in ${workflow.label(asset.status)}${trailer}. `
+        + `${from} recorded ${fmtSeconds(handedOverSeconds)} on their round; ${next.name} starts a new one.`,
+    });
+    await conn.query('COMMIT');
   } catch (err) {
     await conn.query('ROLLBACK').catch(() => {});
     throw err;
@@ -1161,9 +1130,8 @@ router.get('/:id/reassign-options', async (req, res) => {
   // The same reach the handover itself uses, asked the same way — a picker that
   // opens for somebody the endpoint would refuse is a promise the app breaks.
   const reviewing = ['pending_tl_review', 'pending_cd_review'].includes(asset.status);
-  const mayPick = reviewing
-    ? await canHandOverInReview(req.user, asset)
-    : canAssignAsset(req.user, asset);
+  // One question, the same one the handover itself asks, for all four stages.
+  const mayPick = await canHandOverInReview(req.user, asset);
   if (!mayPick) {
     return res.status(403).json({ error: 'You do not have permission to do that' });
   }
