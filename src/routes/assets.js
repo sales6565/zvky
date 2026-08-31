@@ -1136,6 +1136,15 @@ router.get('/:id/reassign-options', async (req, res) => {
     return res.status(403).json({ error: 'You do not have permission to do that' });
   }
 
+  /* Who to offer. The narrow permission offers the people on this asset's
+     project; the broad one offers everybody, because that is what it says.
+     
+     The project filter here is a different one from the New Asset form's —
+     that endpoint follows the reporting line to the project's leads, this one
+     asks whether the person can reach the project at all. Two lists that were
+     never the same, in two places, which is why the "partial list" looked
+     different depending on where you opened it. */
+  const anyone = holds(req.user, 'asset.assign_any');
   const { rows: people } = await db.query(
     'SELECT id, `name`, `role` FROM users WHERE role IN ($1) ORDER BY `name`',
     [assignableRoles()]
@@ -1143,12 +1152,13 @@ router.get('/:id/reassign-options', async (req, res) => {
   const options = [];
   for (const person of people) {
     if (person.id === asset.assignee_id) continue;
-    if (await canAccessProject(person, asset.project_id)) {
+    if (anyone || await canAccessProject(person, asset.project_id)) {
       options.push({ id: person.id, name: person.name, role: person.role,
         roleLabel: (roleDef(person.role) || {}).label || person.role });
     }
   }
-  res.json({ options, awaitingRework: isAwaitingRework(asset), inReview: reviewing, status: asset.status });
+  res.json({ options, awaitingRework: isAwaitingRework(asset), inReview: reviewing,
+    status: asset.status, scope: anyone ? 'all' : 'on-this-project' });
 });
 
 // GET /api/assets/:id/history — the whole back-and-forth, in order.

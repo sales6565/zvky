@@ -116,6 +116,74 @@ test('Assign Work to Anyone, end to end', { skip: cfg ? false : SKIP_REASON }, a
     assert.strictEqual(refused.status, 403, JSON.stringify(refused.body));
   });
 
+  await t.test('both assignee pickers widen for the permission, and only for it', async () => {
+    /* Two endpoints, two different filters, neither of which knew about the
+       new permission:
+       
+         New Asset  GET /projects/:id/artists
+                    role IN assignable AND team_lead_id IN (this project's leads)
+                    — a REPORTING LINE, not project membership. Somebody on the
+                    project reporting to another lead was never in the list.
+       
+         Asset Edit GET /assets/:id/reassign-options
+                    role IN assignable, then filtered by whether the person can
+                    reach the asset's project.
+       
+       Hence a "partial list" that differed depending on where you opened it. */
+    const asset = await newAsset('pat', 'Picker Check', people.ana);
+
+    // Somebody assignable who reports to nobody and is on another project:
+    // invisible to both narrow filters.
+    const outsider = await call('/users', { token: token.root, method: 'POST',
+      body: { name: 'outsider', email: 'outsider@zvky.test', role: 'game_artist',
+              password: PASSWORD, projectId: otherProjectId } });
+    assert.strictEqual(outsider.status, 201, JSON.stringify(outsider.body));
+
+    // Attach a lead to the project so the reporting-line filter actually bites,
+    // and put ana under them.
+    await as('root', `/projects/${projectId}`, { method: 'PATCH', body: { teamLeadIds: [people.lee] } });
+    await as('root', `/users/${people.ana}`, { method: 'PATCH',
+      body: { reportsToId: people.lee, teamLeadId: people.lee } });
+
+    // --- without the broad permission: the narrow lists, unchanged ----------
+    await setPerms('coordinator', (await permsOf('coordinator')).filter((k) => k !== 'asset.assign_any'));
+    // pat holds the ownership-based one and created this asset.
+    const narrowNew = (await as('pat', `/projects/${projectId}/artists`)).body;
+    assert.strictEqual(narrowNew.scope, 'reports-to-project-leads');
+    assert.ok(narrowNew.artists.some((a) => a.id === people.ana), 'ana reports to the project lead');
+    assert.ok(!narrowNew.artists.some((a) => a.id === outsider.body.user.id),
+      'and the outsider is not in the narrow list — that is the original scope, kept');
+
+    const narrowEdit = (await as('pat', `/assets/${asset.id}/reassign-options`)).body;
+    assert.strictEqual(narrowEdit.scope, 'on-this-project');
+    assert.ok(!narrowEdit.options.some((o) => o.id === outsider.body.user.id),
+      'nor in the narrow Asset Edit list');
+
+    // --- with it: everybody, from both places ------------------------------
+    await setPerms('coordinator', [...(await permsOf('coordinator')), 'asset.assign_any']);
+    const wideNew = (await as('coord', `/projects/${projectId}/artists`)).body;
+    assert.strictEqual(wideNew.scope, 'all');
+    assert.ok(wideNew.artists.some((a) => a.id === outsider.body.user.id),
+      'the New Asset form offers somebody on no shared project and no shared lead');
+    assert.ok(wideNew.artists.length >= narrowNew.artists.length,
+      'and never fewer than the narrow list');
+
+    const wideEdit = (await as('coord', `/assets/${asset.id}/reassign-options`)).body;
+    assert.strictEqual(wideEdit.scope, 'all');
+    assert.ok(wideEdit.options.some((o) => o.id === outsider.body.user.id),
+      'and so does Asset Edit');
+
+    // Both wide lists are the same people, minus whoever holds the asset.
+    const wideNames = wideNew.artists.map((a) => a.id).filter((id) => id !== people.ana).sort();
+    assert.deepStrictEqual(wideEdit.options.map((o) => o.id).sort(), wideNames,
+      'the two places agree once the permission is held');
+
+    // Revoking it puts the narrow lists back.
+    await setPerms('coordinator', (await permsOf('coordinator')).filter((k) => k !== 'asset.assign_any'));
+    assert.strictEqual((await as('pat', `/projects/${projectId}/artists`)).body.scope,
+      'reports-to-project-leads');
+  });
+
   await t.test('the ownership-based one still works on its own, unaffected', async () => {
     // Take the broad one away again; producer keeps only asset.assign.
     await setPerms('coordinator', (await permsOf('coordinator')).filter((k) => k !== 'asset.assign_any'));

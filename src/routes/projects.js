@@ -6,7 +6,7 @@ const { v4: uuid } = require('uuid');
 const db = require('../db');
 const { authenticate, requirePermission } = require('../middleware/auth');
 const lifecycle = require('../lifecycle');
-const { visibleProjects, canAccessProject } = require('../permissions');
+const { visibleProjects, canAccessProject, holds } = require('../permissions');
 const { assignableRoles, roleDef } = require('../roles');
 
 router.use(authenticate);
@@ -334,13 +334,35 @@ router.post('/:id/reopen', requirePermission('project.close'), async (req, res) 
   res.json({ ok: true, closed: false });
 });
 
-// GET /api/projects/:id/artists — everyone eligible for assignment on this
-// project: any contributor designation reporting to one of its leads. If the
-// project has no leads attached yet, fall back to every contributor so the
-// assignee picker is never empty.
+/* GET /api/projects/:id/artists — who the New Asset form offers as assignee.
+ *
+ * Two answers, because two permissions ask different questions.
+ *
+ * NARROW (the default, unchanged): any contributor designation REPORTING TO one
+ * of this project's leads. Note what that filter actually is — a reporting
+ * line, not project membership. Somebody on the project who reports to a
+ * different lead, or to nobody, was never in this list. That is the whole of
+ * the "partial list" this endpoint was reported for. It is kept because it is
+ * what the narrow permission is for: a lead staffing their own team's work.
+ * When the project has no leads attached there is no line to follow, so it
+ * falls back to every contributor rather than offering nobody.
+ *
+ * WIDE (asset.assign_any): every contributor in the studio. No project, no
+ * reporting line — that is what the permission says. It is a list of PEOPLE and
+ * says nothing about which assets the holder may touch; the assignment itself
+ * is still checked when it is made.
+ */
 router.get('/:id/artists', async (req, res) => {
   const allowed = await canAccessProject(req.user, req.params.id);
   if (!allowed) return res.status(403).json({ error: 'No access to this project' });
+
+  if (holds(req.user, 'asset.assign_any')) {
+    const { rows } = await db.query(
+      'SELECT u.id, u.name, u.role FROM users u WHERE u.role IN ($1) ORDER BY u.name',
+      [assignableRoles()]
+    );
+    return res.json({ artists: rows, scope: 'all' });
+  }
 
   const { rows: leads } = await db.query(
     'SELECT user_id FROM project_team_leads WHERE project_id = $1',
@@ -358,7 +380,7 @@ router.get('/:id/artists', async (req, res) => {
     : [assignableRoles()];
 
   const { rows } = await db.query(sql, params);
-  res.json({ artists: rows });
+  res.json({ artists: rows, scope: leads.length ? 'reports-to-project-leads' : 'all-contributors' });
 });
 
 module.exports = router;
