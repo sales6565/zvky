@@ -390,14 +390,34 @@ test('every gated tab button is actually applied at boot', () => {
     'both the boot-time pass and the permission refresh should apply the derived list');
 });
 
-test('the Reports tab is drawn from the same permission the API checks', () => {
+test('the Reports tab is drawn from the same permissions the API checks', () => {
+  /* The blind spot: a tab that opens on one key while its endpoints require
+     another gives somebody an empty screen, or hides a report they may read.
+     
+     This used to pin the literal `can('report.view')`, which broke the moment
+     the tab legitimately started opening for a second report with its own
+     permission. What it actually cares about is that the two agree, so that is
+     what it now asserts: every key the tab gate opens for is a key some report
+     endpoint requires, and every report endpoint's key opens the tab. */
   const fs = require('fs');
   const path = require('path');
   const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
-  assert.match(page, /reportsTabBtn:\s*\(\)\s*=>\s*can\('report\.view'\)/,
-    'the tab gate must ask for the same key the endpoint requires');
-  const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'reports.js'), 'utf8');
-  assert.match(route, /requirePermission\('report\.view'\)/);
+
+  const gate = page.match(/reportsTabBtn:\s*\(\)\s*=>\s*can\(([^)]*)\)/);
+  assert.ok(gate, 'the Reports tab should still be gated');
+  const opensFor = [...gate[1].matchAll(/'([^']+)'/g)].map((m) => m[1]).sort();
+  assert.ok(opensFor.length, 'on at least one permission');
+
+  const required = new Set();
+  for (const file of ['reports.js', 'idle.js']) {
+    const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', file), 'utf8');
+    for (const m of route.matchAll(/requirePermission\('(report\.[^']+)'\)/g)) required.add(m[1]);
+  }
+
+  assert.deepStrictEqual(opensFor, [...required].sort(),
+    'the tab must open for exactly the report permissions the endpoints require');
+  assert.ok(opensFor.includes('report.view'), 'including the efficiency report');
+  assert.ok(opensFor.includes('report.idle'), 'and the idle report');
 });
 
 test('the schema check knows about every table the app queries', () => {

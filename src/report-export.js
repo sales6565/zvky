@@ -26,6 +26,30 @@ const VIEWS = [
 
 const viewById = (id) => VIEWS.find((v) => v.id === id) || VIEWS[0];
 
+/* The Idle Report is its own thing: a different question, a different
+ * permission and a different period selector, so it is not one of the seven
+ * efficiency views above and does not appear in that workbook. It reuses
+ * everything below it — the same column definitions, the same branded PDF,
+ * the same filename convention — because a studio should not have to learn two
+ * shapes of export. */
+const IDLE_VIEW = { id: 'idle', label: 'Idle Report', head: 'Person', sheet: 'Idle' };
+
+function idleRows(report) {
+  return (report.rows || []).map((r) => ({
+    Person: r.name || '',
+    Role: r.roleLabel || r.role || '',
+    'Expected hours': r.expectedHours,
+    'Tracked hours': r.trackedHours,
+    'Idle hours': r.idleHours,
+    'Idle hours per day': r.idlePerDay === null || r.idlePerDay === undefined ? '' : r.idlePerDay,
+    'Idle %': r.idlePercent === null || r.idlePercent === undefined ? 'N/A' : r.idlePercent,
+    'Overtime hours': r.overtimeHours || 0,
+    'Assets worked on': r.assetsWorked || 0,
+  }));
+}
+
+const idleHeaders = () => Object.keys(idleRows({ rows: [{}] })[0]);
+
 /* A percentage that may legitimately not exist.
  *
  * An asset with no tracked time has no efficiency — not zero. Writing 0 into a
@@ -155,8 +179,21 @@ function fileName(appName, viewId, ext, at = new Date()) {
   return `${parts.join('-')}.${ext}`;
 }
 
+/* The period and the working day, spelled out. An idle figure is meaningless
+   without both, and a file that has been emailed on must carry them. */
+function idleContext(report) {
+  const s = report.schedule || {};
+  return [
+    ['Period', (report.period || {}).label || ''],
+    ['Working days in period', report.workingDays],
+    ['Standard working day', `${s.hoursPerDay} hours, ${(s.workingDayNames || []).join(', ')}`],
+    ['Expected hours per person', report.expectedHours],
+  ];
+}
+
 module.exports = {
   VIEWS, viewById, rowsFor, headersFor,
+  IDLE_VIEW, idleRows, idleHeaders, idleContext,
   groupRows, assetRows, describeFilters, summaryRows, exclusionRows,
   stamp, fileName,
 };

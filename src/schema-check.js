@@ -56,6 +56,7 @@ const REQUIRED = [
   { table: 'assets',           column: 'category',      step: 'asset category' },
   { table: 'users',            column: 'avatar',        step: 'profile photos' },
   { table: 'users',            column: 'avatar_mime',   step: 'profile photos' },
+  { table: 'work_schedule',    column: null,            step: 'working hours' },
   { table: 'branding',         column: null,            step: 'branding' },
   { table: 'branding',         column: 'logo',          step: 'branding' },
 ];

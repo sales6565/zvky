@@ -5,6 +5,7 @@ const multer = require('multer');
 const db = require('../db');
 const { authenticate, requirePermission } = require('../middleware/auth');
 const branding = require('../branding');
+const workSchedule = require('../work-schedule');
 
 /* The logo arrives in memory, not on disk. It is one small image on its way
  * into a table, so writing it to a temp file first would only create something
@@ -61,6 +62,28 @@ router.delete('/logo', requirePermission('settings.branding'), async (req, res) 
   const result = await branding.clearLogo(db);
   console.log(`${req.user.email} removed the logo.`);
   res.json({ branding: result.branding });
+});
+
+/* The standard working day, which the Idle Report measures against.
+ *
+ * It lives on the branding router because both are one-row studio-wide settings
+ * edited on the same Settings screen, and because giving a single field its own
+ * file and mount would be more moving parts than the thing is worth. Read by
+ * anyone signed in — a report that shows the number has to be able to say what
+ * the number was — and written behind settings.branding, the existing
+ * "may change studio-wide settings" permission. */
+router.get('/schedule', async (req, res) => {
+  if (!workSchedule.isLoaded()) await workSchedule.load(db).catch(() => {});
+  res.json({ schedule: workSchedule.current() });
+});
+
+router.put('/schedule', requirePermission('settings.branding'), async (req, res) => {
+  const { hoursPerDay, workingDays } = req.body || {};
+  const result = await workSchedule.save(db, { hoursPerDay, workingDays });
+  if (!result.ok) return res.status(result.status).json({ errors: result.errors, error: result.errors[0].message });
+  console.log(`${req.user.email} set the working day to ${result.schedule.hoursPerDay}h, `
+    + `${result.schedule.workingDayNames.join('/')}.`);
+  res.json({ schedule: result.schedule });
 });
 
 module.exports = router;

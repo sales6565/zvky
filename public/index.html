@@ -175,6 +175,9 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
   text-transform:uppercase;letter-spacing:.4px;}
 .rep-grain{display:flex;gap:4px;margin-bottom:10px;}
 .rep-downloads{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;margin-left:auto;}
+.rep-sections{margin-bottom:12px;}
+.idle-period{align-items:center;}
+.idle-range{font-size:11.5px;color:var(--ink-faint);}
 .eff-track{position:relative;height:8px;background:var(--surface-3);border-radius:20px;overflow:hidden;}
 .eff-fill{height:100%;border-radius:20px;}
 .eff-mark{position:absolute;top:-2px;left:50%;width:1px;height:12px;background:var(--ink-faint);opacity:.55;}
@@ -883,7 +886,7 @@ const UI_GATES = {
   teamTabBtn:            () => can('user.view_team'),
   usersTabBtn:           () => canAnyIn('user'),
   settingsTabBtn:        () => canOpenSettings(),
-  reportsTabBtn:         () => can('report.view'),
+  reportsTabBtn:         () => can('report.view','report.idle'),
   projectsTabBtn:        () => can('client.view'),
   newClientBtn:          () => can('client.add'),
   newProjectBtn:         () => can('project.add'),
@@ -1768,7 +1771,7 @@ function renderList(){
    submission, TOTAL is every round including rework. A wide gap between them
    says the estimate was fine and the work came back — which one number alone
    cannot tell you, and which is the reason both are here. */
-const reportState = { data:null, loading:false, view:'byUser', grain:'week',
+const reportState = { data:null, loading:false, section:'efficiency', view:'byUser', grain:'week',
   filters:{ projectId:'', clientId:'', assigneeId:'', category:'', scope:'', from:'', to:'' } };
 
 const REPORT_VIEWS = [
@@ -1811,7 +1814,231 @@ async function loadReport(){
   reportState.data = await api('/reports/efficiency?' + q.toString());
 }
 
-async function renderReports(){
+/* The Reports tab now holds two reports with two permissions.
+ *
+ * Work efficiency asks whether jobs took as long as estimated; Idle asks how
+ * much of a person's week is unaccounted for. A role can hold either, both or
+ * neither, so the tab shows only the sections its holder may read — and the
+ * section switch itself is hidden when there is only one, because a tab bar
+ * with one tab is furniture. */
+function reportSections(){
+  return [
+    { id:'efficiency', label:'Work Efficiency', allowed:can('report.view') },
+    { id:'idle',       label:'Idle Report',     allowed:can('report.idle') },
+  ].filter(s=>s.allowed);
+}
+
+async function renderReportsTab(){
+  const el = document.getElementById('reportsView');
+  const sections = reportSections();
+  if(!sections.length){ el.innerHTML = ''; return; }
+  if(!sections.some(s=>s.id===reportState.section)) reportState.section = sections[0].id;
+  if(reportState.section === 'idle') return renderIdleReport(sections);
+  return renderReports(sections);
+}
+
+function reportSectionTabs(sections){
+  if(sections.length < 2) return '';
+  return `<div class="sub-tabs rep-sections">${sections.map(s=>
+    `<button class="sub-tab${s.id===reportState.section?' active':''}" data-section="${s.id}">${escapeHTML(s.label)}</button>`
+  ).join('')}</div>`;
+}
+
+function wireReportSections(el){
+  el.querySelectorAll('.sub-tab[data-section]').forEach(b=>b.onclick = ()=>{
+    reportState.section = b.dataset.section;
+    renderReportsTab();
+  });
+}
+
+/* ---------- Idle Report ----------
+ *
+ * Idle = the hours the period expected, minus the hours actually tracked.
+ *
+ * The period selector is the point of this screen: idleness only means
+ * something against a stated stretch of time, so Day/Week/Month/Year is a
+ * first-class control rather than a filter.
+ *
+ * Filters narrow WHO is listed, never anybody's hours. Picking a project
+ * answers "of the people on Nightgarden, who had spare capacity" — if it
+ * shrank their tracked time instead, somebody who worked a full day on another
+ * project would print at 100% idle, which is not idleness at all. The screen
+ * says so out loud when a filter is applied, because a reader cannot be
+ * expected to infer it.
+ */
+const idleState = { data:null, loading:false, period:'week', on:null,
+  filters:{ projectId:'', clientId:'', category:'', scope:'' } };
+
+const IDLE_PERIODS = [
+  { id:'day',   label:'Day' },
+  { id:'week',  label:'Week' },
+  { id:'month', label:'Month' },
+  { id:'year',  label:'Year' },
+];
+
+function idleQuery(){
+  const q = new URLSearchParams();
+  q.set('period', idleState.period);
+  if(idleState.on) q.set('on', idleState.on);
+  for(const [k,v] of Object.entries(idleState.filters)) if(v) q.set(k, v);
+  return q;
+}
+
+async function loadIdle(){
+  idleState.data = await api('/idle/report?' + idleQuery().toString());
+}
+
+/* Colour by how much of the period is unaccounted for. Deliberately the
+   opposite direction to the efficiency bands — there, high is good; here, high
+   is the thing you are looking for. */
+function idleColor(v){
+  if(v === null || v === undefined) return 'var(--ink-faint)';
+  if(v >= 50) return '#e8402c';
+  if(v >= 20) return '#f2b33d';
+  return 'var(--approved)';
+}
+
+async function renderIdleReport(sections = reportSections()){
+  const el = document.getElementById('reportsView');
+  if(!can('report.idle')){ el.innerHTML=''; return; }
+  if(!idleState.data && !idleState.loading){
+    idleState.loading = true;
+    el.innerHTML = `${reportSectionTabs(sections)}<div class="empty">Working out the numbers…</div>`;
+    wireReportSections(el);
+    try{ await loadIdle(); }
+    catch(err){
+      el.innerHTML = `${reportSectionTabs(sections)}<div class="empty">${escapeHTML(err.message)}</div>`;
+      wireReportSections(el); idleState.loading=false; return;
+    }
+    idleState.loading = false;
+  }
+  const d = idleState.data;
+  if(!d) return;
+
+  /* The filter lists come from the efficiency report's payload, which is the
+     only place they are assembled. Somebody holding report.idle but not
+     report.view cannot fetch it, so they simply get no dropdowns rather than
+     an error — the period selector is the control that matters here. */
+  const f = idleState.filters;
+  const src = (reportState.data && reportState.data.filters) || null;
+  const opts = (list, valueKey, labelKey, selected) => (list||[])
+    .map(x=>`<option value="${escapeHTML(x[valueKey])}"${x[valueKey]===selected?' selected':''}>${escapeHTML(x[labelKey])}</option>`).join('');
+
+  const filterBar = src ? `
+    <div class="rep-filters">
+      <select id="idle_project"><option value="">All projects/games</option>${opts(src.projects,'id','name',f.projectId)}</select>
+      <select id="idle_client"><option value="">All clients</option>${opts(src.clients,'id','name',f.clientId)}</select>
+      <select id="idle_category"><option value="">All categories</option>${opts(src.categories,'key','label',f.category)}</select>
+      <select id="idle_scope"><option value="">All scopes of work</option>${opts(src.scopes,'key','label',f.scope)}</select>
+      <button class="btn btn-ghost" id="idle_clear">Clear</button>
+    </div>` : '';
+
+  const anchor = idleState.on || new Date().toISOString().slice(0,10);
+  const periodBar = `
+    <div class="rep-filters idle-period">
+      <div class="sub-tabs">${IDLE_PERIODS.map(p=>
+        `<button class="sub-tab${p.id===idleState.period?' active':''}" data-period="${p.id}">${p.label}</button>`).join('')}</div>
+      <label class="rep-date">Containing <input type="date" id="idle_on" value="${anchor}"></label>
+      <span class="idle-range">${escapeHTML(d.period.label)} · ${d.workingDays} working day${d.workingDays===1?'':'s'} · ${d.expectedHours}h expected each</span>
+    </div>`;
+
+  const t = d.totals;
+  const summary = `
+    <div class="stats">
+      <div class="stat"><div class="num">${t?t.people:0}</div><div class="lbl">People</div></div>
+      <div class="stat"><div class="num">${t?t.expectedHours:0}h</div><div class="lbl">Expected</div></div>
+      <div class="stat"><div class="num">${t?t.trackedHours:0}h</div><div class="lbl">Tracked</div></div>
+      <div class="stat"><div class="num" style="color:${idleColor(t?t.idlePercent:null)}">${t?t.idleHours:0}h</div><div class="lbl">Idle</div></div>
+      <div class="stat"><div class="num" style="color:${idleColor(t?t.idlePercent:null)}">${t&&t.idlePercent!==null?t.idlePercent+'%':'N/A'}</div><div class="lbl">Idle share</div></div>
+      <div class="stat"><div class="num" style="color:var(--ink-faint)">${t?t.overtimeHours:0}h</div><div class="lbl">Overtime</div></div>
+    </div>`;
+
+  const body = !d.rows.length ? `<div class="empty">Nobody in scope for this period.</div>` : `
+    <table><thead><tr><th>Person</th><th>Role</th><th>Expected</th><th>Tracked</th>
+      <th>Idle</th><th>Idle / day</th><th>Idle %</th><th></th><th>Assets</th></tr></thead><tbody>
+    ${d.rows.map(r=>`<tr>
+      <td><span class="who-line">${avatarHTML({ id:r.id, name:r.name, photoAt:r.photoUpdatedAt }, { size:22, title:false })}<span style="font-weight:600;">${escapeHTML(r.name)}</span></span></td>
+      <td style="font-size:11.5px;color:var(--ink-muted);">${escapeHTML(r.roleLabel||r.role||'')}</td>
+      <td class="mono">${r.expectedHours}h</td>
+      <td class="mono">${r.trackedHours}h${r.overtimeHours?` <span class="round-tag">+${r.overtimeHours}h over</span>`:''}</td>
+      <td class="mono" style="color:${idleColor(r.idlePercent)};font-weight:600;">${r.idleHours}h</td>
+      <td class="mono">${r.idlePerDay===null?'—':r.idlePerDay+'h'}</td>
+      <td class="mono" style="color:${idleColor(r.idlePercent)};font-weight:600;">${r.idlePercent===null?'N/A':r.idlePercent+'%'}</td>
+      <td style="width:140px;">${r.idlePercent===null?'':`<div class="eff-track"><div class="eff-fill" style="width:${Math.max(2,Math.min(100,r.idlePercent))}%;background:${idleColor(r.idlePercent)}"></div></div>`}</td>
+      <td class="mono">${r.assetsWorked||''}</td>
+    </tr>`).join('')}</tbody></table>`;
+
+  const narrowNote = d.narrowed ? `
+    <div class="rep-note" style="margin-top:12px;">
+      The filter chooses <strong>who is listed</strong> — everyone here worked on it during this period.
+      Their hours are still their whole day, not just this slice: somebody who spent the week on
+      something else would otherwise read as fully idle here, which they are not.
+    </div>` : '';
+
+  const caveats = `
+    <div class="rep-note" style="margin-top:12px;">
+      ${d.caveats.map(c=>`<div>${escapeHTML(c)}</div>`).join('')}
+      ${can('settings.branding') ? '<div style="margin-top:4px;">The working day is set in Settings.</div>' : ''}
+    </div>`;
+
+  const downloads = `
+    <div class="rep-downloads">
+      <button class="btn btn-ghost btn-sm" id="idle_xlsx">Download Excel</button>
+      <button class="btn btn-ghost btn-sm" id="idle_pdf">Download PDF</button>
+    </div>`;
+
+  el.innerHTML = `
+    <div class="rep-head">
+      <div>
+        <h2 class="display" style="margin:0;font-size:17px;">Idle time</h2>
+        <div class="rep-sub">Standard working hours for the period, minus the hours actually tracked.
+          Only people who can be assigned work appear — nobody else starts a timer, so they would all read as fully idle.</div>
+      </div>
+      ${downloads}
+    </div>
+    ${reportSectionTabs(sections)}
+    ${periodBar}${filterBar}${summary}${body}${narrowNote}${caveats}`;
+
+  // --- wiring ---------------------------------------------------------------
+  wireReportSections(el);
+  const reload = async ()=>{ idleState.data=null; await renderIdleReport(); };
+  el.querySelectorAll('.sub-tab[data-period]').forEach(b=>b.onclick = ()=>{
+    idleState.period = b.dataset.period; reload();
+  });
+  const on = document.getElementById('idle_on');
+  if(on) on.onchange = ()=>{ idleState.on = on.value || null; reload(); };
+  const bind = (id, key)=>{ const e=document.getElementById(id);
+    if(e) e.onchange = ()=>{ idleState.filters[key]=e.value; reload(); }; };
+  bind('idle_project','projectId'); bind('idle_client','clientId');
+  bind('idle_category','category'); bind('idle_scope','scope');
+  const clear = document.getElementById('idle_clear');
+  if(clear) clear.onclick = ()=>{ idleState.filters={projectId:'',clientId:'',category:'',scope:''}; reload(); };
+
+  const grab = async (btn, ext)=>{
+    const original = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Preparing…';
+    try{
+      const res = await fetch(`${API_BASE}/idle/report.${ext}?${idleQuery().toString()}`, {
+        headers: { Authorization: 'Bearer ' + state.token },
+      });
+      if(!res.ok){
+        const problem = await res.json().catch(()=>({}));
+        throw new Error(problem.error || `The download failed (HTTP ${res.status})`);
+      }
+      const named = /filename="([^"]+)"/.exec(res.headers.get('content-disposition')||'');
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement('a');
+      a.href = url; a.download = named ? named[1] : `idle.${ext}`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url), 30000);
+    }catch(err){ showToast(err.message); }
+    finally{ btn.disabled = false; btn.textContent = original; }
+  };
+  const xb = document.getElementById('idle_xlsx'); if(xb) xb.onclick = ()=>grab(xb,'xlsx');
+  const pb = document.getElementById('idle_pdf');  if(pb) pb.onclick = ()=>grab(pb,'pdf');
+}
+
+async function renderReports(sections = reportSections()){
   const el = document.getElementById('reportsView');
   if(!can('report.view')){ el.innerHTML = ''; return; }
   if(!reportState.data && !reportState.loading){
@@ -1919,6 +2146,7 @@ async function renderReports(){
       </div>
       ${downloads}
     </div>
+    ${reportSectionTabs(sections)}
     ${filterBar}${summary}${tabs}${body}${excluded}`;
 
   // --- wiring -------------------------------------------------------------
@@ -1928,6 +2156,7 @@ async function renderReports(){
   bind('rep_category','category'); bind('rep_scope','scope'); bind('rep_from','from'); bind('rep_to','to');
   const clear = document.getElementById('rep_clear');
   if(clear) clear.onclick = ()=>{ reportState.filters = { projectId:'',clientId:'',assigneeId:'',category:'',scope:'',from:'',to:'' }; reload(); };
+  wireReportSections(el);
   el.querySelectorAll('.sub-tab[data-view]').forEach(b=>b.onclick = ()=>{ reportState.view=b.dataset.view; renderReports(); });
 
   /* The downloads carry exactly the filters the screen is showing, so the file
@@ -1990,12 +2219,154 @@ async function renderTeam(){
       <td><div style="background:var(--surface-3);border-radius:20px;height:8px;width:120px;overflow:hidden;"><div style="background:var(--approved);height:100%;width:${m.progressPct}%;"></div></div></td></tr>`).join('')}
   </tbody></table>`;
 }
-async function renderUsers(){
+/* ---------- Users tab: the staff list, and who is idle right now ----------
+ *
+ * Two sub-tabs behind two permissions. A lead who should notice a stalled
+ * queue does not thereby need to read everyone's email address and reporting
+ * line, so "Idle Now" is gated on user.idle_view and the list on user.view. */
+const userSections = () => [
+  { id:'list', label:'All Users',  allowed:can('user.view') },
+  { id:'idle', label:'Idle Now',   allowed:can('user.idle_view') },
+].filter(s=>s.allowed);
+
+const usersState = { section:'list' };
+
+function userSectionTabs(sections){
+  if(sections.length < 2) return '';
+  return `<div class="sub-tabs" style="margin-bottom:12px;">${sections.map(s=>
+    `<button class="sub-tab${s.id===usersState.section?' active':''}" data-usection="${s.id}">${escapeHTML(s.label)}</button>`
+  ).join('')}</div>`;
+}
+
+function wireUserSections(el){
+  el.querySelectorAll('.sub-tab[data-usection]').forEach(b=>b.onclick = ()=>{
+    usersState.section = b.dataset.usection;
+    renderUsersTab();
+  });
+}
+
+async function renderUsersTab(){
+  const el = document.getElementById('usersView');
+  const sections = userSections();
+  if(!sections.length){ el.innerHTML=''; stopIdleNow(); return; }
+  if(!sections.some(s=>s.id===usersState.section)) usersState.section = sections[0].id;
+  if(usersState.section === 'idle') return renderIdleNow(sections);
+  stopIdleNow();
+  return renderUsers(sections);
+}
+
+/* ---------- Idle Now ----------
+ *
+ * "Currently idle" means no open work session. That is the literal reading and
+ * it is not the same as "not working": src/work-timer.js has no inactivity
+ * timeout by design, so a timer left running overnight makes somebody look
+ * busy who went home hours ago. Rather than quietly mis-report them, a timer
+ * running implausibly long is called out at the top of the screen — the same
+ * data problem the list exists to surface, seen from the other side.
+ *
+ * Refreshed on a timer rather than needing a reload, and the interval is torn
+ * down when the sub-tab is left so it does not keep polling in the background
+ * for the rest of the session.
+ */
+const IDLE_NOW_REFRESH_MS = 30000;
+let idleNowTimer = null;
+let idleNowData = null;
+
+function stopIdleNow(){
+  if(idleNowTimer){ clearInterval(idleNowTimer); idleNowTimer = null; }
+}
+
+function humanDuration(seconds){
+  if(seconds === null || seconds === undefined) return null;
+  const m = Math.floor(seconds/60);
+  if(m < 1) return 'moments';
+  if(m < 60) return `${m} min`;
+  const h = Math.floor(m/60);
+  if(h < 24) return `${h}h ${m%60}m`;
+  const d = Math.floor(h/24);
+  return `${d}d ${h%24}h`;
+}
+
+async function renderIdleNow(sections = userSections()){
+  const el = document.getElementById('usersView');
+  if(!can('user.idle_view')){ el.innerHTML=''; stopIdleNow(); return; }
+  try{ idleNowData = await api('/idle/now'); }
+  catch(err){
+    el.innerHTML = `${userSectionTabs(sections)}<div class="empty">${escapeHTML(err.message)}</div>`;
+    wireUserSections(el); return;
+  }
+  const d = idleNowData;
+
+  const person = (r, extra) => `<tr>
+    <td><span class="who-line">${avatarHTML({ id:r.id, name:r.name, photoAt:r.photoUpdatedAt }, { size:24, title:false })}<span style="font-weight:600;">${escapeHTML(r.name)}</span></span></td>
+    ${extra}
+  </tr>`;
+
+  const waitingCell = (r) => {
+    if(!r.waiting.length) return '<td><span class="ud-none">Nothing assigned</span></td>';
+    const shown = r.waiting.slice(0,3).map(w=>`<span class="rep-chip" title="${escapeHTML(w.name)}">${escapeHTML(w.code)}</span>`).join(' ');
+    return `<td>${shown}${r.waiting.length>3?` <span class="ud-none">+${r.waiting.length-3} more</span>`:''}</td>`;
+  };
+
+  const idleTable = !d.idle.length
+    ? '<div class="empty">Everybody in scope has a timer running.</div>'
+    : `<table><thead><tr><th>Person</th><th>Idle for</th><th>Last tracked</th><th>Assigned, not started</th></tr></thead><tbody>
+       ${d.idle.map(r=>person(r, `
+         <td class="mono" style="color:${r.neverTracked?'#e8402c':'var(--ink)'};">${r.neverTracked?'never started a timer':escapeHTML(humanDuration(r.idleForSeconds)||'—')}</td>
+         <td style="font-size:11.5px;color:var(--ink-muted);">${r.lastActiveAt?escapeHTML(fmtDate(r.lastActiveAt)):'—'}</td>
+         ${waitingCell(r)}`)).join('')}
+       </tbody></table>`;
+
+  const workingTable = !d.working.length ? '' : `
+    <details class="ip-audit" style="margin-top:16px;">
+      <summary>${d.working.length} working right now</summary>
+      <table><thead><tr><th>Person</th><th>On</th><th>Running for</th></tr></thead><tbody>
+      ${d.working.map(r=>person(r, `
+        <td class="mono">${escapeHTML(r.asset.code)} <span style="color:var(--ink-muted);">${escapeHTML(r.asset.name)}</span></td>
+        <td class="mono"${r.stale?' style="color:#f2b33d;"':''}>${escapeHTML(humanDuration(r.runningForSeconds)||'—')}${r.stale?' ⚠':''}</td>`)).join('')}
+      </tbody></table>
+    </details>`;
+
+  /* The warning that makes the rest of the screen trustworthy. Without it a
+     forgotten timer silently reads as somebody hard at work. */
+  const stale = d.staleTimers.length ? `
+    <div class="ip-banner open" style="margin-bottom:14px;">
+      <strong>${d.staleTimers.length}</strong> timer${d.staleTimers.length===1?' has':'s have'} been running for more than
+      ${Math.round(d.staleAfterSeconds/3600)} hours: ${d.staleTimers.map(r=>escapeHTML(r.name)).join(', ')}.
+      The clock runs until somebody pauses it, so ${d.staleTimers.length===1?'this person may not be':'these people may not be'}
+      working — ${d.staleTimers.length===1?'they are':'they are'} counted as busy above and not as idle.
+    </div>` : '';
+
+  el.innerHTML = `
+    ${userSectionTabs(sections)}
+    ${stale}
+    <div class="rep-head">
+      <div>
+        <h2 class="display" style="margin:0;font-size:17px;">Idle now</h2>
+        <div class="rep-sub">Nobody with a timer running. Refreshes every ${IDLE_NOW_REFRESH_MS/1000} seconds —
+          <span class="mono" id="idle_now_at">${escapeHTML(new Date(d.at).toLocaleTimeString())}</span></div>
+      </div>
+    </div>
+    ${idleTable}${workingTable}`;
+
+  wireUserSections(el);
+
+  /* One interval, replaced rather than stacked: switching sub-tab and coming
+     back must not leave two polls running. */
+  stopIdleNow();
+  idleNowTimer = setInterval(()=>{
+    if(state.view!=='users' || usersState.section!=='idle'){ stopIdleNow(); return; }
+    renderIdleNow().catch(()=>{});
+  }, IDLE_NOW_REFRESH_MS);
+}
+
+async function renderUsers(sections = userSections()){
   const el = document.getElementById('usersView');
   const u = state.currentUser;
   if(!canAnyIn('user')){ el.innerHTML=''; return; }
   const { users, total } = await api(`/users?search=${encodeURIComponent(state.search)}&limit=${state.usersRenderLimit}&offset=0`);
   el.innerHTML = `
+    ${userSectionTabs(sections)}
     <div style="display:flex;gap:10px;margin-bottom:12px;align-items:center;">
       <input type="text" id="userSearch" placeholder="Search users…" style="background:var(--surface-2);border:1px solid var(--border);color:var(--ink);padding:8px 12px;border-radius:8px;font-size:13px;min-width:220px;">
       ${can('user.add') ? `<button class="btn btn-brand" id="addUserBtn">+ Add User</button>` : ''}
@@ -2031,21 +2402,22 @@ async function renderUsers(){
     ${total>users.length ? `<div style="text-align:center;margin-top:12px;"><button class="btn btn-ghost" id="loadMoreUsers">Show more (${total-users.length} remaining)</button></div>` : ''}
     <div style="margin-top:10px;font-size:12px;color:var(--ink-faint);">${users.length} of ${total} users visible to you</div>
   `;
+  wireUserSections(el);
   document.getElementById('userSearch').value = state.search;
-  document.getElementById('userSearch').addEventListener('input', e=>{ state.search=e.target.value; renderUsers(); });
+  document.getElementById('userSearch').addEventListener('input', e=>{ state.search=e.target.value; renderUsersTab(); });
   /* Wired only where rendered — the buttons above are gated one by one. */
   const wire = (id, fn)=>{ const b = document.getElementById(id); if(b) b.addEventListener('click', fn); };
   wire('addUserBtn', openUserModal);
   wire('bulkUserBtn', ()=>document.getElementById('bulkUserInput').click());
   wire('downloadUserSampleBtn', downloadUserSample);
   const lm = document.getElementById('loadMoreUsers');
-  if(lm) lm.addEventListener('click', ()=>{ state.usersRenderLimit+=60; renderUsers(); });
+  if(lm) lm.addEventListener('click', ()=>{ state.usersRenderLimit+=60; renderUsersTab(); });
   el.querySelectorAll('.editUserBtn').forEach(btn=>btn.addEventListener('click', ()=>openEditUser(btn.dataset.id)));
   el.querySelectorAll('.userDetailBtn').forEach(btn=>btn.addEventListener('click', ()=>openUserDetail(btn.dataset.id)));
   el.querySelectorAll('.delUserBtn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       if(!confirm(`Remove ${btn.dataset.name} from the studio?`)) return;
-      try{ await api('/users/'+btn.dataset.id, { method:'DELETE' }); renderUsers(); showToast(`${btn.dataset.name} removed.`); }
+      try{ await api('/users/'+btn.dataset.id, { method:'DELETE' }); renderUsersTab(); showToast(`${btn.dataset.name} removed.`); }
       catch(err){ showToast(err.message); }
     });
   });
@@ -2072,9 +2444,9 @@ async function render(){
   ['newAssetBtn','bulkImportBtn','downloadSampleBtn'].forEach(id=>applyGate(id, onABoard));
   if(state.view==='board') renderBoard();
   else if(state.view==='list') renderList();
-  else if(state.view==='reports') await renderReports();
+  else if(state.view==='reports') await renderReportsTab();
   else if(state.view==='team') await renderTeam();
-  else if(state.view==='users') await renderUsers();
+  else if(state.view==='users') await renderUsersTab();
   else if(state.view==='projects') await renderProjects();
   else if(state.view==='settings') await renderSettings();
   }catch(err){
@@ -3447,7 +3819,7 @@ document.getElementById('saveUserModal').addEventListener('click', async ()=>{
   if(projSel && projSel.value) body.projectId = projSel.value;
   try{
     await api('/users', { method:'POST', body });
-    userModalWrap.classList.remove('show'); renderUsers();
+    userModalWrap.classList.remove('show'); renderUsersTab();
     showToast(`${name} added as ${roleInfo(role).label}. Default password: zvky2026`);
   }catch(err){ showToast(err.message); }
 });
@@ -3499,7 +3871,7 @@ async function euUploadPhoto(file){
     if(!res.ok) throw new Error(data.error || `Upload failed (HTTP ${res.status})`);
     editingUser.photoUpdatedAt = data.photoUpdatedAt;
     renderEditUserPhoto();
-    renderUsers();
+    renderUsersTab();
     showToast(`Photo updated for ${editingUser.name}.`);
   }catch(err){ euPhotoError(err.message); }
   finally{ document.getElementById('eu_file').value = ''; }
@@ -3516,7 +3888,7 @@ document.getElementById('eu_removePhoto').addEventListener('click', async ()=>{
     const res = await api(`/users/${encodeURIComponent(editingUser.id)}/photo`, { method:'DELETE' });
     editingUser.photoUpdatedAt = res.photoUpdatedAt || null;
     renderEditUserPhoto();
-    renderUsers();
+    renderUsersTab();
     showToast(`Photo removed for ${editingUser.name}.`);
   }catch(err){ euPhotoError(err.message); }
 });
@@ -3654,7 +4026,7 @@ document.getElementById('saveEditUser').addEventListener('click', async (ev)=>{
     await api('/users/' + editingUser.id, { method:'PATCH', body });
     editUserModalWrap.classList.remove('show');
     showToast(`${editingUser.name} updated.`);
-    await renderUsers();
+    await renderUsersTab();
   }catch(err){ euError(err.message); }
   finally{ ev.target.disabled = false; }
 });
@@ -3767,12 +4139,13 @@ async function renderSettings(){
     </div>` : ''}
     ${lists.map(sec=>renderRefSection(sec)).join('')}
     ${can('settings.branding') ? '<div id="brandingSection"></div>' : ''}
+    ${can('settings.branding') ? '<div id="scheduleSection"></div>' : ''}
     ${can('settings.ip_allowlist') ? '<div id="ipAllowlistSection"></div>' : ''}
     ${can('settings.permissions') ? '<div id="rolePermissionsSection"></div>' : ''}
   `;
   el.querySelectorAll('.sii-link').forEach(b=>b.addEventListener('click', ()=>setTab(b.dataset.tab)));
   wireSettings();
-  if(can('settings.branding')) renderBranding();
+  if(can('settings.branding')){ renderBranding(); renderSchedule(); }
   if(can('settings.permissions')) await renderRolePermissions();
   /* Managing who may reach the app stays with whoever has been given that one
      permission — it is not implied by holding the rest of this screen. The API
@@ -4237,6 +4610,65 @@ function rpMessage(text, kind){
    
    Every save repaints the header immediately — the point of making this
    configurable is that somebody can see the result, not read about it. */
+/* The standard working day.
+ *
+ * Nothing in this app recorded this before the Idle Report needed it: there is
+ * no shift model, no roster and no calendar, so "expected minus actual" had no
+ * expected half. One studio-wide number and the days it applies to.
+ *
+ * The days matter as much as the hours. Counting all seven would make a week
+ * expect 56 hours and put everybody above 50% idle on the first morning, which
+ * would discredit the report before anyone read it. */
+let SCHEDULE = null;
+
+async function renderSchedule(){
+  const el = document.getElementById('scheduleSection');
+  if(!el) return;
+  if(!SCHEDULE){
+    try{ SCHEDULE = (await api('/branding/schedule')).schedule; }
+    catch(err){ el.innerHTML = `<div class="ref-section"><div class="ref-err">${escapeHTML(err.message)}</div></div>`; return; }
+  }
+  const days = [[1,'Mon'],[2,'Tue'],[3,'Wed'],[4,'Thu'],[5,'Fri'],[6,'Sat'],[7,'Sun']];
+  el.innerHTML = `
+    <div class="ref-section">
+      <div class="ref-head"><h3>Working Hours</h3></div>
+      <div class="ref-note">What a full working day is. The Idle Report measures tracked time against this;
+        nothing else in the app uses it. Public holidays and leave are not recorded anywhere, so time away
+        still reads as idle time.</div>
+      <div class="ref-add">
+        <div>
+          <label>Hours in a working day</label>
+          <input type="number" id="sch_hours" class="narrow" min="0.25" max="24" step="0.25" value="${SCHEDULE.hoursPerDay}">
+        </div>
+        <div>
+          <label>Working days</label>
+          <div class="checklist" style="max-height:none;">
+            ${days.map(([n,label])=>`<label><input type="checkbox" value="${n}"${SCHEDULE.workingDays.includes(n)?' checked':''}>${label}</label>`).join('')}
+          </div>
+        </div>
+        <button class="btn btn-brand" id="sch_save">Save</button>
+      </div>
+      <div class="ref-err" id="sch_err"></div>
+      <div class="ref-note" id="sch_now">A week currently expects
+        <strong>${(SCHEDULE.hoursPerDay*SCHEDULE.workingDays.length).toFixed(2).replace(/\.00$/,'')} hours</strong>
+        (${SCHEDULE.workingDayNames.join(', ')}).</div>
+    </div>`;
+
+  document.getElementById('sch_save').onclick = async ()=>{
+    const err = document.getElementById('sch_err');
+    err.textContent = '';
+    const workingDays = [...el.querySelectorAll('.checklist input:checked')].map(i=>Number(i.value));
+    try{
+      const res = await api('/branding/schedule', { method:'PUT',
+        body:{ hoursPerDay: Number(document.getElementById('sch_hours').value), workingDays } });
+      SCHEDULE = res.schedule;
+      idleState.data = null;   // the report's expected hours just changed
+      renderSchedule();
+      showToast('Working hours saved.');
+    }catch(e){ err.textContent = e.message; }
+  };
+}
+
 function renderBranding(){
   const el = document.getElementById('brandingSection');
   if(!el) return;

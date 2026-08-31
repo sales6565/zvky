@@ -98,11 +98,16 @@ function write(stream, opts) {
 
   // --- what this is ----------------------------------------------------------
   doc.font('Helvetica-Bold').fontSize(13).fillColor(INK)
-    .text(`Work efficiency — ${view.label}`, MARGIN, top);
+    .text(opts.title || `Work efficiency — ${view.label}`, MARGIN, top);
   top = doc.y + 3;
+  /* The line under the title that says what the numbers mean. The efficiency
+     report's wording is the default because it was the first caller; the idle
+     report passes its own, since "above 100% came in under estimate" would be
+     nonsense over a table of idle hours. */
   doc.font('Helvetica').fontSize(8.5).fillColor(MUTED).text(
-    'Man Hours estimated divided by time tracked. Above 100% came in under the estimate. '
-    + 'First pass is the work before the first submission; total includes every round of rework.',
+    opts.blurb
+      || 'Man Hours estimated divided by time tracked. Above 100% came in under the estimate. '
+         + 'First pass is the work before the first submission; total includes every round of rework.',
     MARGIN, top, { width });
   top = doc.y + 10;
 
@@ -254,9 +259,11 @@ function write(stream, opts) {
   if (excluded && excluded.length) {
     if (y + 40 > bottom) { doc.addPage(); y = MARGIN; }
     doc.font('Helvetica-Bold').fontSize(8).fillColor(INK)
-      .text('Left out of the numbers', MARGIN, y + 12);
+      .text(opts.excludedTitle || 'Left out of the numbers', MARGIN, y + 12);
     doc.font('Helvetica').fontSize(8).fillColor(MUTED).text(
-      excluded.map(([reason, n]) => `${n} ${reason}`).join(' · '),
+      // [reason, count] for efficiency; [sentence, ''] for the idle caveats.
+      excluded.map(([label, n]) => (n === '' || n === undefined ? label : `${n} ${label}`)).join(
+        opts.excludedTitle ? '\n' : ' · '),
       MARGIN, doc.y + 2, { width });
   }
 
@@ -270,7 +277,7 @@ function write(stream, opts) {
     doc.moveTo(MARGIN, footY - 6).lineTo(doc.page.width - MARGIN, footY - 6)
       .strokeColor(RULE).lineWidth(0.5).stroke();
     doc.font('Helvetica').fontSize(7).fillColor(MUTED)
-      .text(`${appName || 'Report'} · work efficiency`, MARGIN, footY,
+      .text(`${appName || 'Report'} · ${opts.footer || 'work efficiency'}`, MARGIN, footY,
         { width: width / 2, lineBreak: false });
     doc.text(`Page ${i + 1} of ${range.count}`, MARGIN + width / 2, footY,
       { width: width / 2, align: 'right', lineBreak: false });

@@ -8,6 +8,7 @@ const catalog = require('./permission-catalog');
 const rolePermissions = require('./role-permissions');
 const defaults = require('./reference-defaults');
 const branding = require('./branding');
+const workSchedule = require('./work-schedule');
 const { normalizeCheckClause } = require('./schema-check');
 
 // Small, idempotent schema repairs applied at startup.
@@ -1164,6 +1165,28 @@ async function ensureReviewGateDefaults(db, log) {
  * Added one at a time and each guarded, so a half-applied migration from an
  * interrupted deploy completes on the next start instead of failing on the
  * column it already added. */
+/* What a standard working day is.
+ *
+ * One row, id 1, like branding — a studio-wide policy, not per anything. The
+ * Idle Report needs it and nothing in this app recorded it before: there is no
+ * shift model, no roster and no calendar, so the expected half of "expected
+ * minus actual" had nowhere to come from.
+ *
+ * Seeded with the studio's answer, eight hours Monday to Friday, so the report
+ * works on a database that has never visited the setting. */
+async function ensureWorkSchedule(db, log) {
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS work_schedule (
+      id            TINYINT      NOT NULL PRIMARY KEY,
+      hours_per_day DECIMAL(4,2) NOT NULL DEFAULT 8.00,
+      working_days  VARCHAR(32)  NOT NULL DEFAULT '1,2,3,4,5',
+      updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )`));
+  const { rows } = await db.query('SELECT id FROM work_schedule WHERE id = 1');
+  if (rows.length) return;
+  await db.query("INSERT INTO work_schedule (id, hours_per_day, working_days) VALUES (1, 8.00, '1,2,3,4,5')");
+  log('Schema: work_schedule created (8 hours a day, Monday to Friday).');
+}
+
 async function ensureProfilePhotos(db, log) {
   const { rows } = await db.query(
     `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
@@ -1362,6 +1385,9 @@ const STEPS = [
   ['IP allowlist', ensureIpAllowlist],
   ['asset category', ensureAssetCategory],
   ['profile photos', ensureProfilePhotos],
+  ['working hours', ensureWorkSchedule],
+  // Its mirror, once the table exists and holds its one row.
+  ['working hours mirror', (db) => workSchedule.load(db)],
 ];
 
 async function run(db, log = console.log) {

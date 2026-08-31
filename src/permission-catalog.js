@@ -46,6 +46,17 @@ const GROUPS = [
       { key: 'user.add',              label: 'User Add',             impliedBy: has('manageUsers') },
       { key: 'user.edit',             label: 'User Edit',            impliedBy: has('manageUsers') },
       { key: 'user.delete',           label: 'User Delete',          impliedBy: has('manageUsers') },
+      {
+        key: 'user.idle_view',
+        label: 'View Idle Users',
+        /* Independent of User View, both ways. Seeing the staff list is an
+           administrative need; seeing who is not working right now is a
+           supervisory one, and a studio may hand out either without the other.
+           A lead who should notice a stalled queue does not thereby need to
+           read everyone's email address and reporting line. */
+        impliedBy: fullAccess,
+        describe: 'The "Idle Now" list: who has no timer running, and what is waiting on them.',
+      },
       { key: 'user.change_role',      label: 'Change Role',          impliedBy: has('manageUsers') },
       { key: 'user.change_project',   label: 'Change Project',       impliedBy: has('manageUsers') },
       { key: 'user.change_reporting', label: 'Change Reporting To',  impliedBy: has('manageUsers') },
@@ -188,6 +199,23 @@ const GROUPS = [
            inherit from being able to edit an asset. */
         impliedBy: fullAccess,
         describe: 'Work-efficiency reports: estimated Man Hours against tracked Time Spent.',
+      },
+      {
+        key: 'report.idle',
+        label: 'View Idle Report',
+        /* Deliberately NOT implied by report.view, and report.view is not
+           implied by this.
+           
+           They answer different questions about different people. Efficiency
+           asks whether the work took as long as it was estimated to; idle asks
+           how much of somebody's week is unaccounted for. The second is a
+           question about a person rather than about a job, so a studio may well
+           want a producer who can read efficiency without being handed a list
+           of who looks underworked — or a department head who should see
+           capacity and has no business reading estimates. Holding both is a
+           choice made in Settings, not a consequence of holding one. */
+        impliedBy: fullAccess,
+        describe: 'Idle Report: standard working hours against hours actually tracked, per person.',
       },
     ],
   },
