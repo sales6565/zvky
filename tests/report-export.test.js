@@ -323,9 +323,18 @@ test('downloading the report', { skip: cfg ? false : SKIP_REASON }, async (t) =>
     assert.match(res.disposition, /attachment; filename=".*\.xlsx"/);
 
     const book = xlsx.read(res.buffer, { type: 'buffer' });
-    assert.deepStrictEqual(book.SheetNames,
+    /* Summary first, then every efficiency view in the order the sub-tabs show
+       them. The Idle Report is appended after those for a reader who holds View
+       Idle Report, so this asserts the efficiency sheets are all there and in
+       order rather than pinning the exact list — which would break again the
+       next time the workbook legitimately gains something. */
+    assert.deepStrictEqual(
+      book.SheetNames.slice(0, exporter.VIEWS.length + 1),
       ['Summary', ...exporter.VIEWS.map((v) => v.sheet)],
-      'one sheet per view, led by the Summary');
+      'one sheet per efficiency view, led by the Summary');
+    const extra = book.SheetNames.slice(exporter.VIEWS.length + 1);
+    assert.ok(extra.every((n) => n === exporter.IDLE_VIEW.sheet),
+      `anything after those should be the Idle sheet, got ${extra.join(', ')}`);
 
     const assets = xlsx.utils.sheet_to_json(book.Sheets['Every Asset']);
     assert.strictEqual(assets.length, 2);

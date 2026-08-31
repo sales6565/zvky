@@ -235,6 +235,11 @@ test('idle, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) => {
         await sql(cfg, `INSERT INTO work_sessions (id, asset_id, user_id, round, started_at, ended_at, seconds)
           VALUES (UUID(), '${asset.id}', '${id[who]}', 1,
                   '${day} 09:00:00', '${day} ${String(9 + hours).padStart(2, '0')}:00:00', ${hours * 3600})`);
+        /* A submission too, so the efficiency report includes these assets —
+           it only counts work that has been sent for review. Without one the
+           two reports have no overlapping population to compare. */
+        await sql(cfg, `INSERT INTO asset_versions (id, asset_id, version_number, stage, link, description, uploaded_by, created_at)
+          VALUES (UUID(), '${asset.id}', 1, 'tl', 'https://example.test/x', 'First pass', '${id[who]}', '${day} 18:00:00')`);
       }
     }
   });
@@ -398,6 +403,121 @@ test('idle, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(pdf.status, 200);
     assert.match(pdf.headers.get('content-type'), /application\/pdf/);
     assert.match(pdf.headers.get('content-disposition') || '', /idle/);
+  });
+
+  await t.test('the Idle Report rides along in the Reports workbook', async () => {
+    const xlsx = require('xlsx');
+    const grab = async (query = '') => {
+      const res = await fetch(`${server.base}/reports/efficiency.xlsx${query}`,
+        { headers: { Authorization: `Bearer ${token.root}` } });
+      assert.strictEqual(res.status, 200);
+      return xlsx.read(Buffer.from(await res.arrayBuffer()), { type: 'buffer' });
+    };
+
+    const book = await grab('?from=2026-03-02&to=2026-03-06');
+    assert.ok(book.SheetNames.includes('Idle'), `the workbook should carry an Idle sheet: ${book.SheetNames}`);
+    assert.strictEqual(book.SheetNames[book.SheetNames.length - 1], 'Idle', 'after the efficiency sheets');
+
+    /* The sheets have to cover the same span, or the workbook is a trap. With a
+       date range they do, because the idle builder reads the same from/to. */
+    const summary = xlsx.utils.sheet_to_json(book.Sheets.Summary, { header: 1 });
+    const covered = summary.find((r) => r[0] === 'Period covered');
+    assert.ok(covered, 'the Summary says which period the Idle sheet covers');
+    assert.strictEqual(covered[1], '2026-03-02 to 2026-03-06', 'exactly the range the rest of the file used');
+    assert.ok(!summary.some((r) => /no date limit/.test(String(r[1] || ''))),
+      'and no warning, because they agree');
+
+    // The numbers are the ones the Idle screen shows for that week.
+    const rows = xlsx.utils.sheet_to_json(book.Sheets.Idle);
+    const screen = (await as('root', '/idle/report?from=2026-03-02&to=2026-03-06')).body;
+    assert.strictEqual(rows.length, screen.rows.length);
+    const bo = rows.find((r) => r.Person === 'Bo Chen');
+    assert.strictEqual(bo['Idle hours'], screen.rows.find((r) => r.name === 'Bo Chen').idleHours);
+
+    /* Without a date range they CANNOT agree — the efficiency sheets cover
+       every asset ever and idle has to be measured against a period. The file
+       must say so rather than let somebody read two spans as one. */
+    const undated = await grab();
+    const note = xlsx.utils.sheet_to_json(undated.Sheets.Summary, { header: 1 })
+      .find((r) => /no date limit/.test(String(r[1] || '')));
+    assert.ok(note, 'an undated workbook warns that the Idle sheet covers a different span');
+    assert.match(String(note[1]), /Set a date range/, 'and says how to make them match');
+  });
+
+  await t.test('the two reports agree about how long somebody worked', async () => {
+    /* They read the same table by different routes, and for a while they read
+       it differently: efficiency summed the stored `seconds`, idle measured the
+       gap between the timestamps. For a session the timer wrote those agree, but
+       any row where they diverge produced one workbook whose sheets contradicted
+       each other about the same person — which discredits both. Idle now uses
+       the stored seconds for any session wholly inside the period, and only
+       measures the timestamps when a session straddles the edge and the stored
+       total would include time from outside. */
+    const xlsx = require('xlsx');
+    const res = await fetch(`${server.base}/reports/efficiency.xlsx?from=2026-03-01&to=2026-03-31`,
+      { headers: { Authorization: `Bearer ${token.root}` } });
+    const book = xlsx.read(Buffer.from(await res.arrayBuffer()), { type: 'buffer' });
+    const efficiency = xlsx.utils.sheet_to_json(book.Sheets['By User']);
+    const idleSheet = xlsx.utils.sheet_to_json(book.Sheets.Idle);
+    assert.ok(efficiency.length, 'the fixtures should give the efficiency sheet something');
+
+    for (const row of efficiency) {
+      const mine = idleSheet.find((r) => r.Person === row.Assignee);
+      assert.ok(mine, `${row.Assignee} should be on the Idle sheet too`);
+      assert.strictEqual(Number(mine['Tracked hours']), Number(row['Tracked hours']),
+        `${row.Assignee}: the two sheets must not disagree about tracked hours`);
+    }
+  });
+
+  await t.test('a straddling session is still split across the two days', async () => {
+    // The stored seconds cover both days, so the boundary case must keep
+    // measuring the timestamps rather than taking the stored total whole.
+    const friday = (await as('root', '/idle/report?period=day&on=2026-03-06')).body;
+    const saturday = (await as('root', '/idle/report?period=day&on=2026-03-07')).body;
+    assert.strictEqual(friday.rows.find((r) => r.name === 'Cy Dean').trackedHours, 3);
+    assert.strictEqual(saturday.rows.find((r) => r.name === 'Cy Dean').trackedHours, 3);
+  });
+
+  await t.test('the workbook holds no idle data for somebody without the permission', async () => {
+    /* The two permissions are independent, so a reader trusted with efficiency
+       and not with idle must not receive idle numbers as a side effect of
+       pressing the same button. */
+    const xlsx = require('xlsx');
+    await as('root', '/permissions/roles/game_artist', { method: 'PUT', body: { permissions: ['report.view'] } });
+    token.ana = (await api(server.base, '/auth/login',
+      { method: 'POST', body: { email: 'ana@idle.test', password: PASSWORD } })).body.token;
+
+    const res = await fetch(`${server.base}/reports/efficiency.xlsx`,
+      { headers: { Authorization: `Bearer ${token.ana}` } });
+    assert.strictEqual(res.status, 200, 'the efficiency workbook still works');
+    const book = xlsx.read(Buffer.from(await res.arrayBuffer()), { type: 'buffer' });
+    assert.ok(!book.SheetNames.includes('Idle'), `no Idle sheet: ${book.SheetNames}`);
+    const summary = xlsx.utils.sheet_to_json(book.Sheets.Summary, { header: 1 })
+      .map((r) => r.join(' ')).join(' ');
+    assert.ok(!/idle/i.test(summary), 'and not a word about idle in the Summary either');
+
+    // The PDF view is gated the same way.
+    const pdf = await fetch(`${server.base}/reports/efficiency.pdf?view=idle`,
+      { headers: { Authorization: `Bearer ${token.ana}` } });
+    assert.strictEqual(pdf.status, 403);
+    const normal = await fetch(`${server.base}/reports/efficiency.pdf?view=byUser`,
+      { headers: { Authorization: `Bearer ${token.ana}` } });
+    assert.strictEqual(normal.status, 200, 'while the efficiency PDF is unaffected');
+
+    await as('root', '/permissions/roles/game_artist/reset', { method: 'POST' });
+  });
+
+  await t.test('the Reports PDF endpoint can render the Idle Report', async () => {
+    const res = await fetch(`${server.base}/reports/efficiency.pdf?view=idle&from=2026-03-02&to=2026-03-06`,
+      { headers: { Authorization: `Bearer ${token.root}` } });
+    assert.strictEqual(res.status, 200);
+    assert.match(res.headers.get('content-type'), /application\/pdf/);
+    // Same document the idle endpoint produces — one writer, two doors.
+    const own = await fetch(`${server.base}/idle/report.pdf?from=2026-03-02&to=2026-03-06`,
+      { headers: { Authorization: `Bearer ${token.root}` } });
+    assert.strictEqual(own.status, 200);
+    assert.strictEqual(res.headers.get('content-disposition'), own.headers.get('content-disposition'),
+      'including the filename, so the two doors are not telling different stories');
   });
 
   await t.test('each permission opens exactly its own feature', async () => {

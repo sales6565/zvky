@@ -102,6 +102,12 @@ async function buildIdleReport(req) {
   if (req.query.category) addNarrow('a.category = ?', req.query.category);
   if (req.query.scope) addNarrow('a.`type` = ?', req.query.scope);
 
+  /* A user filter is different in kind from the others and is applied directly.
+     Narrowing by project asks "who worked on this", which is a question about
+     assets; narrowing by person just picks a row, and needs no trip through
+     work_sessions to answer. */
+  const onlyUserId = /^[0-9a-fA-F-]{36}$/.test(req.query.assigneeId || '') ? req.query.assigneeId : null;
+
   let onlyUsers = null;
   if (narrow.length) {
     const { rows } = await db.query(
@@ -116,6 +122,10 @@ async function buildIdleReport(req) {
       [...narrowParams, projectIds, to, from]
     );
     onlyUsers = rows.map((r) => r.id).filter(Boolean);
+    if (!onlyUsers.length) return { ...empty, narrowed: true };
+  }
+  if (onlyUserId) {
+    onlyUsers = onlyUsers ? onlyUsers.filter((x) => x === onlyUserId) : [onlyUserId];
     if (!onlyUsers.length) return { ...empty, narrowed: true };
   }
 
@@ -134,9 +144,25 @@ async function buildIdleReport(req) {
 
   const { rows: tracked } = await db.query(
     `SELECT w.user_id AS id,
-            SUM(GREATEST(0, TIMESTAMPDIFF(SECOND,
-              GREATEST(w.started_at, $${params.length + 1}),
-              LEAST(COALESCE(w.ended_at, NOW()), $${params.length + 2})))) AS seconds,
+            SUM(CASE
+              /* Wholly inside the window: use the stored seconds, which is what
+                 the efficiency report counts. Two sheets of one workbook
+                 disagreeing about how long somebody worked would discredit
+                 both, and the stored value is the authority — the timer writes
+                 it from the timestamps, so for real sessions they agree, and
+                 where they do not it is the seconds that were meant. */
+              WHEN w.started_at >= $${params.length + 1}
+               AND COALESCE(w.ended_at, NOW()) <= $${params.length + 2}
+                THEN COALESCE(w.seconds,
+                     TIMESTAMPDIFF(SECOND, w.started_at, COALESCE(w.ended_at, NOW())))
+              /* Straddling the boundary: the stored seconds cover time outside
+                 this period, so the part inside has to be measured. Somebody
+                 who worked 21:00 Friday to 03:00 Saturday did not do six hours
+                 of Friday. */
+              ELSE GREATEST(0, TIMESTAMPDIFF(SECOND,
+                GREATEST(w.started_at, $${params.length + 1}),
+                LEAST(COALESCE(w.ended_at, NOW()), $${params.length + 2})))
+            END) AS seconds,
             COUNT(DISTINCT w.asset_id) AS assets
        FROM work_sessions w
        JOIN assets a ON a.id = w.asset_id
@@ -380,7 +406,10 @@ router.get('/report.xlsx', requirePermission('report.idle'), async (req, res) =>
   res.send(buffer);
 });
 
-router.get('/report.pdf', requirePermission('report.idle'), async (req, res) => {
+/* One writer, two doors: /api/idle/report.pdf and the Reports tab's own PDF
+   button at /api/reports/efficiency.pdf?view=idle. Sharing it is the point —
+   two renderers would drift into producing two different documents. */
+async function writeIdlePdf(req, res) {
   const report = await buildIdleReport(req);
   const logo = await branding.readLogo(db).catch(() => null);
   res.setHeader('Content-Type', 'application/pdf');
@@ -410,8 +439,15 @@ router.get('/report.pdf', requirePermission('report.idle'), async (req, res) => 
     blurb: 'Standard working hours for the period, minus the hours actually tracked '
       + 'against assets. Idle never goes negative — work beyond a full day is shown as overtime.',
   });
-});
+}
+
+router.get('/report.pdf', requirePermission('report.idle'), (req, res) => writeIdlePdf(req, res));
 
 const idleFileName = (appName, ext) => exporter.fileName(appName, null, ext).replace('-efficiency-', '-idle-');
 
+/* Exported so the Reports exports can put an Idle sheet in the same workbook.
+   The same builder, so the sheet cannot disagree with the Idle screen. */
 module.exports = router;
+module.exports.buildIdleReport = buildIdleReport;
+module.exports.idleFileContext = idleFileContext;
+module.exports.writeIdlePdf = writeIdlePdf;

@@ -10,6 +10,8 @@ const exporter = require('../report-export');
 const reportPdf = require('../report-pdf');
 const branding = require('../branding');
 const xlsx = require('xlsx');
+const { holds } = require('../permissions');
+const idleRoutes = require('./idle');
 
 router.use(authenticate);
 
@@ -225,11 +227,50 @@ router.get('/efficiency.xlsx', requirePermission('report.view'), async (req, res
     xlsx.utils.book_append_sheet(book, sheet, view.sheet.slice(0, 31));
   }
 
+  /* The Idle Report, in the same workbook — but only for a reader who holds
+   * View Idle Report. The two permissions are independent, so somebody trusted
+   * with efficiency and not with idle must not receive an idle sheet as a side
+   * effect of pressing the same button.
+   *
+   * The period is the honest problem here. The efficiency sheets filter on a
+   * free from/to and default to every asset ever; idle has to measure against
+   * a defined stretch of time or there is nothing to be idle relative to. When
+   * a date range is set they agree exactly, because the idle builder reads the
+   * same from/to. When one is NOT set they cannot agree, so the Summary says
+   * which period the Idle sheet covers and that it differs — a workbook whose
+   * sheets quietly measured different spans would be worse than no sheet. */
+  if (holds(req.user, 'report.idle')) {
+    const idleReport = await idleRoutes.buildIdleReport(req);
+    const dated = Boolean(req.query.from && req.query.to);
+    const notes = [
+      [],
+      ['Idle sheet'],
+      ['Period covered', idleReport.period.label],
+      ['Working days in period', idleReport.workingDays],
+      ['Standard working day',
+        `${idleReport.schedule.hoursPerDay} hours, ${idleReport.schedule.workingDayNames.join(', ')}`],
+    ];
+    if (!dated) {
+      notes.push(['Note', 'The efficiency sheets above cover every asset matching the filters, with no '
+        + `date limit. Idle has to be measured against a period, so that sheet covers ${idleReport.period.label}. `
+        + 'Set a date range to make them cover the same span.']);
+    }
+    notes.push(...idleReport.caveats.map((c) => ['', c]));
+    xlsx.utils.sheet_add_aoa(summarySheet, notes, { origin: -1 });
+
+    const idleSheetRows = exporter.idleRows(idleReport);
+    const idleHeaders = exporter.idleHeaders();
+    const idleSheet = xlsx.utils.json_to_sheet(idleSheetRows, { header: idleHeaders });
+    idleSheet['!cols'] = idleHeaders.map((h, i) => ({ wch: i === 0 ? 26 : Math.max(12, h.length + 2) }));
+    xlsx.utils.book_append_sheet(book, idleSheet, exporter.IDLE_VIEW.sheet);
+  }
+
   const buffer = xlsx.write(book, { type: 'buffer', bookType: 'xlsx' });
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition',
     `attachment; filename="${exporter.fileName(branding.current().appName, null, 'xlsx')}"`);
-  console.log(`${req.user.email} downloaded the efficiency report as a spreadsheet.`);
+  console.log(`${req.user.email} downloaded the efficiency report as a spreadsheet`
+    + `${holds(req.user, 'report.idle') ? ', with the idle sheet' : ''}.`);
   res.send(buffer);
 });
 
@@ -240,6 +281,17 @@ router.get('/efficiency.xlsx', requirePermission('report.view'), async (req, res
  * a worse document than the one table they meant to send. The spreadsheet is
  * where the whole dataset lives. */
 router.get('/efficiency.pdf', requirePermission('report.view'), async (req, res) => {
+  /* The Idle Report is one of the views this endpoint can render, so the
+     Reports tab's PDF button covers it too. Its own permission still applies —
+     holding View Reports does not hand somebody the idle numbers. A reader who
+     has idle and NOT efficiency uses /api/idle/report.pdf, which this route
+     cannot serve them because it is gated on report.view. */
+  if (req.query.view === 'idle') {
+    if (!holds(req.user, 'report.idle')) {
+      return res.status(403).json({ error: 'You do not have permission to view the Idle Report.' });
+    }
+    return idleRoutes.writeIdlePdf(req, res);
+  }
   const report = await buildReport(req);
   const view = exporter.viewById(req.query.view);
   const rows = exporter.rowsFor(report, view.id);

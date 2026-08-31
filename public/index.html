@@ -2133,7 +2133,9 @@ async function renderReports(sections = reportSections()){
      means and which a screenshot defeats anyway. */
   const downloads = `
     <div class="rep-downloads">
-      <button class="btn btn-ghost btn-sm" id="rep_xlsx" title="Every breakdown, one sheet each, with the filters on a Summary sheet">Download Excel</button>
+      <button class="btn btn-ghost btn-sm" id="rep_xlsx" title="${can('report.idle')
+        ? 'Every breakdown plus the Idle Report, one sheet each, with the filters and periods on a Summary sheet'
+        : 'Every breakdown, one sheet each, with the filters on a Summary sheet'}">Download Excel</button>
       <button class="btn btn-ghost btn-sm" id="rep_pdf" title="The view you are looking at, formatted to read and to send on">Download PDF</button>
     </div>`;
 
