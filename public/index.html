@@ -174,6 +174,7 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .rep-date{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ink-faint);
   text-transform:uppercase;letter-spacing:.4px;}
 .rep-grain{display:flex;gap:4px;margin-bottom:10px;}
+.rep-downloads{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;margin-left:auto;}
 .eff-track{position:relative;height:8px;background:var(--surface-3);border-radius:20px;overflow:hidden;}
 .eff-fill{height:100%;border-radius:20px;}
 .eff-mark{position:absolute;top:-2px;left:50%;width:1px;height:12px;background:var(--ink-faint);opacity:.55;}
@@ -1898,6 +1899,17 @@ async function renderReports(){
       }).join('')}
     </div>` : '';
 
+  /* Downloads. Gated on report.view and nothing else: reading a report and
+     taking a copy of the one you are reading are the same act, and the file
+     holds nothing the screen is not already showing. A separate permission
+     would only be able to say "you may look but not save", which no studio
+     means and which a screenshot defeats anyway. */
+  const downloads = `
+    <div class="rep-downloads">
+      <button class="btn btn-ghost btn-sm" id="rep_xlsx" title="Every breakdown, one sheet each, with the filters on a Summary sheet">Download Excel</button>
+      <button class="btn btn-ghost btn-sm" id="rep_pdf" title="The view you are looking at, formatted to read and to send on">Download PDF</button>
+    </div>`;
+
   el.innerHTML = `
     <div class="rep-head">
       <div>
@@ -1905,6 +1917,7 @@ async function renderReports(){
         <div class="rep-sub">Man Hours estimated ÷ Time Spent tracked. Above 100% came in under the estimate.
           <strong>First pass</strong> is the work before the first submission; <strong>total</strong> includes every round of rework.</div>
       </div>
+      ${downloads}
     </div>
     ${filterBar}${summary}${tabs}${body}${excluded}`;
 
@@ -1916,6 +1929,52 @@ async function renderReports(){
   const clear = document.getElementById('rep_clear');
   if(clear) clear.onclick = ()=>{ reportState.filters = { projectId:'',clientId:'',assigneeId:'',category:'',scope:'',from:'',to:'' }; reload(); };
   el.querySelectorAll('.sub-tab[data-view]').forEach(b=>b.onclick = ()=>{ reportState.view=b.dataset.view; renderReports(); });
+
+  /* The downloads carry exactly the filters the screen is showing, so the file
+     is a copy of this report and not of a differently-filtered one. The PDF
+     also carries the open view; the spreadsheet does not need it, because it
+     contains every view. */
+  const downloadQuery = ()=>{
+    const q = new URLSearchParams();
+    for(const [k,v] of Object.entries(reportState.filters)) if(v) q.set(k, v);
+    q.set('grain', reportState.grain);
+    return q;
+  };
+  /* fetch + blob rather than a plain link: the file is behind a bearer token,
+     and an <a href> cannot send one. Same reason the rest of this app uses
+     api() instead of links. */
+  const download = async (btn, ext, extra = {})=>{
+    const original = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Preparing…';
+    try{
+      const q = downloadQuery();
+      for(const [k,v] of Object.entries(extra)) q.set(k, v);
+      const res = await fetch(`${API_BASE}/reports/efficiency.${ext}?${q.toString()}`, {
+        headers: { Authorization: 'Bearer ' + state.token },
+      });
+      if(!res.ok){
+        const problem = await res.json().catch(()=>({}));
+        throw new Error(problem.error || `The download failed (HTTP ${res.status})`);
+      }
+      /* The filename the server chose, so it carries the studio's name and the
+         date rather than being called "efficiency" in everyone's downloads. */
+      const disposition = res.headers.get('content-disposition') || '';
+      const named = /filename="([^"]+)"/.exec(disposition);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = named ? named[1] : `report.${ext}`;
+      document.body.appendChild(a); a.click(); a.remove();
+      /* Revoked on the next tick, not immediately: revoking before the browser
+         has started the download cancels it. */
+      setTimeout(()=>URL.revokeObjectURL(url), 30000);
+    }catch(err){ showToast(err.message); }
+    finally{ btn.disabled = false; btn.textContent = original; }
+  };
+  const xlsxBtn = document.getElementById('rep_xlsx');
+  if(xlsxBtn) xlsxBtn.onclick = ()=>download(xlsxBtn, 'xlsx');
+  const pdfBtn = document.getElementById('rep_pdf');
+  if(pdfBtn) pdfBtn.onclick = ()=>download(pdfBtn, 'pdf', { view: reportState.view });
   el.querySelectorAll('.sub-tab[data-grain]').forEach(b=>b.onclick = ()=>{ reportState.grain=b.dataset.grain; reload(); });
 }
 

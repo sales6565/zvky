@@ -6,6 +6,10 @@ const { authenticate, requirePermission } = require('../middleware/auth');
 const { visibleProjects } = require('../permissions');
 const referenceData = require('../reference-data');
 const reports = require('../reports');
+const exporter = require('../report-export');
+const reportPdf = require('../report-pdf');
+const branding = require('../branding');
+const xlsx = require('xlsx');
 
 router.use(authenticate);
 
@@ -20,14 +24,22 @@ router.use(authenticate);
  * how much of the studio you may look at — same rule the rest of the
  * permissions follow.
  */
-router.get('/efficiency', requirePermission('report.view'), async (req, res) => {
+/* One report, built once.
+ *
+ * The screen, the spreadsheet and the PDF all call this. That is the whole
+ * reason it is a function: a download that says something different from the
+ * screen it was taken from is worse than no download, and the only way to be
+ * sure they agree is for there to be one query and one set of filters rather
+ * than a copy per format.
+ */
+async function buildReport(req) {
   const projects = await visibleProjects(req.user);
   if (!projects.length) {
-    return res.json({
+    return {
       ...reports.build([]),
       filters: { projects: [], clients: [], users: [], categories: [], scopes: [] },
       scope: { projects: 0 },
-    });
+    };
   }
   const projectIds = projects.map((p) => p.id);
 
@@ -147,7 +159,7 @@ router.get('/efficiency', requirePermission('report.view'), async (req, res) => 
     clients.push(...clientRows);
   }
 
-  res.json({
+  return {
     ...report,
     filters: {
       projects: projects.map((p) => ({ id: p.id, name: p.name, clientId: p.client_id })),
@@ -157,6 +169,95 @@ router.get('/efficiency', requirePermission('report.view'), async (req, res) => 
       scopes: referenceData.list('asset_types').map((t) => ({ key: t.key, label: t.label })),
     },
     scope: { projects: projects.length },
+  };
+}
+
+router.get('/efficiency', requirePermission('report.view'), async (req, res) => {
+  res.json(await buildReport(req));
+});
+
+/* The filters as the caller sent them, so the file can print them back. Read
+   from the query string rather than passed around, so a filter added to the
+   report later cannot be silently missing from the export's header. */
+const filtersFrom = (req) => ({
+  from: req.query.from || '', to: req.query.to || '',
+  clientId: req.query.clientId || '', projectId: req.query.projectId || '',
+  assigneeId: req.query.assigneeId || '', category: req.query.category || '',
+  scope: req.query.scope || '',
+});
+
+/* GET /api/reports/efficiency.xlsx — every view, one sheet each.
+ *
+ * All seven breakdowns come out of a single query already, so a workbook
+ * holding all of them costs nothing more than one holding the open tab, and
+ * one download is then the whole filtered report. The Summary sheet leads with
+ * the filters, so a file that has been emailed on still says what it is a
+ * report OF. */
+router.get('/efficiency.xlsx', requirePermission('report.view'), async (req, res) => {
+  const report = await buildReport(req);
+  const book = xlsx.utils.book_new();
+
+  const filters = exporter.describeFilters(filtersFrom(req), report.filters);
+  const summary = [
+    [branding.current().appName],
+    ['Work efficiency report'],
+    [],
+    ...filters,
+    [],
+    ['Generated', exporter.stamp()],
+    [],
+    ...exporter.summaryRows(report),
+  ];
+  const excluded = exporter.exclusionRows(report);
+  if (excluded.length) summary.push([], ['Left out of the numbers'], ...excluded);
+  const summarySheet = xlsx.utils.aoa_to_sheet(summary);
+  summarySheet['!cols'] = [{ wch: 26 }, { wch: 42 }];
+  xlsx.utils.book_append_sheet(book, summarySheet, 'Summary');
+
+  for (const view of exporter.VIEWS) {
+    const rows = exporter.rowsFor(report, view.id);
+    const headers = exporter.headersFor(report, view.id);
+    const sheet = xlsx.utils.json_to_sheet(rows, { header: headers });
+    sheet['!cols'] = headers.map((h, i) => ({ wch: i === 0 ? 30 : Math.max(12, h.length + 2) }));
+    /* Sheet names are capped at 31 characters by the format and cannot contain
+       []:*?/\ — every name here is already safe, but the cap is enforced so a
+       renamed view can never produce a file Excel refuses to open. */
+    xlsx.utils.book_append_sheet(book, sheet, view.sheet.slice(0, 31));
+  }
+
+  const buffer = xlsx.write(book, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition',
+    `attachment; filename="${exporter.fileName(branding.current().appName, null, 'xlsx')}"`);
+  console.log(`${req.user.email} downloaded the efficiency report as a spreadsheet.`);
+  res.send(buffer);
+});
+
+/* GET /api/reports/efficiency.pdf — the view that is open, as a document.
+ *
+ * Deliberately one view, where the spreadsheet is all seven: a PDF is
+ * something a person reads and forwards, and seven tables stapled together is
+ * a worse document than the one table they meant to send. The spreadsheet is
+ * where the whole dataset lives. */
+router.get('/efficiency.pdf', requirePermission('report.view'), async (req, res) => {
+  const report = await buildReport(req);
+  const view = exporter.viewById(req.query.view);
+  const rows = exporter.rowsFor(report, view.id);
+  const headers = exporter.headersFor(report, view.id);
+  const filters = exporter.describeFilters(filtersFrom(req), report.filters);
+  const logo = await branding.readLogo(db).catch(() => null);
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition',
+    `attachment; filename="${exporter.fileName(branding.current().appName, view.id, 'pdf')}"`);
+  console.log(`${req.user.email} downloaded the "${view.label}" efficiency report as a PDF.`);
+  reportPdf.write(res, {
+    appName: branding.current().appName,
+    tagline: branding.current().tagline,
+    logo,
+    view, headers, rows, filters,
+    summary: exporter.summaryRows(report),
+    excluded: exporter.exclusionRows(report),
   });
 });
 
