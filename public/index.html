@@ -1058,7 +1058,16 @@ async function api(path, options={}){
   // ran out — report what the server actually said. Treating the two the same
   // showed "Session expired" to someone who had simply mistyped their password.
   if(res.status===401 && path!=='/auth/login'){
-    logout();
+    /* A session that has run out ends the same way as pressing Log out: the
+       page reloads. The reason has to survive that, so it travels in
+       sessionStorage and is printed on the login screen rather than thrown at
+       whichever call happened to be the one that noticed — that error used to
+       land in a toast, or in a form's error line, or nowhere at all.
+
+       Not during boot: there the token is simply stale, boot already clears it
+       and shows the login screen, and reloading would only be a second trip to
+       the same place. */
+    logout({ reload: !booting, notice: 'Your session has expired — please sign in again.' });
     throw new Error('Your session has expired — please sign in again.');
   }
   if(!res.ok){
@@ -1082,20 +1091,30 @@ async function api(path, options={}){
 function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
 
 /* ---------- login/session ---------- */
+/* True until boot has decided whether there is a session. While it is set, a
+   401 must not reload the page: boot is already on its way to the login screen
+   and a reload would just be a slower route to the same screen — and, if the
+   stored token were ever refused twice, a loop. */
+let booting = true;
 async function boot(){
   // Before the sign-in screen is looked at, so it is never briefly unbranded.
   await loadBranding();
   paintBranding();
+  /* Read once per page load, whichever way boot goes, so a notice cannot sit
+     in storage and reappear on some later visit. */
+  showLogoutNotice();
   const saved = localStorage.getItem('zvky_token');
   if(saved){
     state.token = saved;
     try{
       const { user } = await api('/auth/me');
       state.currentUser = user;
+      booting = false;
       await showApp();
       return;
-    }catch(e){ localStorage.removeItem('zvky_token'); }
+    }catch(e){ localStorage.removeItem('zvky_token'); state.token = null; }
   }
+  booting = false;
   document.getElementById('loginBtn').addEventListener('click', attemptLogin);
   document.getElementById('loginPassword').addEventListener('keydown', e=>{ if(e.key==='Enter') attemptLogin(); });
 }
@@ -1111,14 +1130,80 @@ async function attemptLogin(){
     await showApp();
   }catch(e){ err.textContent = e.message; }
 }
-function logout(){
+/* Logging out reloads the page, and the reason is worth writing down.
+ *
+ * It used to hide #appRoot, show #loginScreen and clear the two fields. That
+ * empties the screen without emptying the app. Everything else stayed exactly
+ * as the previous user left it: state.projects and state.clients, the
+ * remembered Client/Project context, which tab was open, and — because they
+ * live in module-level variables rather than in `state` — TYPES, CATEGORIES,
+ * ROLE_LIST, refCache, ipCache, rpCatalog and the permission-refresh throttle.
+ * The rendered DOM stayed too, sixteen kilobytes of the last user's Settings
+ * screen sitting behind the login form, with their clients still listed in the
+ * header picker.
+ *
+ * None of that is per-user in memory, so the next person to sign in on the same
+ * page load inherited it: a coordinator whose own API responses carried no
+ * clients at all still had the previous admin's clients in their header
+ * dropdown, and refreshPermissions() sat throttled for the first twenty seconds
+ * of their session against a timestamp from somebody else's.
+ *
+ * Clearing all of that by hand would mean listing every cache here and keeping
+ * the list correct forever — the seventeenth would be forgotten, and the bug
+ * would come back quietly. A reload cannot forget one. So: clear the token,
+ * put the login screen up immediately so the reload is not spent looking at the
+ * signed-in page, then reload.
+ *
+ * Reloading in place rather than navigating to /login: this app has no router.
+ * The server answers every path with the same file, so /login would render
+ * correctly and then stay in the address bar through the next session, showing
+ * /login above someone's dashboard. location.replace of the current path gets
+ * the clean document and drops any query or fragment with it.
+ *
+ * What this does NOT do is revoke the token server-side, because there is
+ * nothing to revoke: the JWT is stateless and stays valid until it expires.
+ * Changing a password is what invalidates one early, via its `pwd` claim.
+ */
+const LOGOUT_NOTICE_KEY = 'zvky_logout_notice';
+let loggingOut = false;
+
+/* Printed on the login screen after a reload that had something to say —
+   read once, so a later visit does not repeat it. */
+function showLogoutNotice(){
+  let notice = null;
+  try{
+    notice = sessionStorage.getItem(LOGOUT_NOTICE_KEY);
+    sessionStorage.removeItem(LOGOUT_NOTICE_KEY);
+  }catch{ /* private browsing: no notice, which is only cosmetic */ }
+  if(notice) document.getElementById('loginErr').textContent = notice;
+}
+
+function logout(options = {}){
+  /* Several requests can fail with 401 together. The first one wins; the rest
+     must not queue up more navigations. */
+  if(loggingOut) return;
+
   state.token=null; state.currentUser=null;
-  localStorage.removeItem('zvky_token');
+  try{ localStorage.removeItem('zvky_token'); }catch{ /* nothing else to do */ }
+
+  /* Up front, so that whatever is on screen for the length of the reload is
+     the login form and not the page the user was just looking at. */
   document.getElementById('appRoot').style.display='none';
   document.getElementById('loginScreen').style.display='flex';
   document.getElementById('loginEmail').value=''; document.getElementById('loginPassword').value='';
+  document.getElementById('loginErr').textContent='';
+
+  if(options.reload === false){
+    if(options.notice) document.getElementById('loginErr').textContent = options.notice;
+    return;
+  }
+  if(options.notice){
+    try{ sessionStorage.setItem(LOGOUT_NOTICE_KEY, options.notice); }catch{ /* cosmetic */ }
+  }
+  loggingOut = true;
+  window.location.replace(window.location.pathname);
 }
-document.getElementById('logoutBtn').addEventListener('click', logout);
+document.getElementById('logoutBtn').addEventListener('click', ()=>logout());
 
 /* A failure here used to be invisible: bootApp was fired without await or
    catch, so one failed request at boot — a 500 from a half-applied migration,
