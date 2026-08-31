@@ -72,6 +72,26 @@ const GROUPS = [
       { key: 'asset.edit',            label: 'Asset Edit',           impliedBy: has('editAsset') },
       { key: 'asset.delete',          label: 'Asset Delete',         impliedBy: has('deleteAsset') },
       { key: 'asset.assign',          label: 'Asset Assign/Reassign', impliedBy: has('editAsset') },
+      {
+        key: 'asset.assign_any',
+        label: 'Assign Work to Anyone',
+        /* Independent of the one above, not a stronger version of it.
+           
+           asset.assign is ownership-bound: it lets somebody put a person on an
+           asset THEY added. This one drops that condition — any asset, whoever
+           created it, in any status where assignment makes sense. A role can
+           hold either, both or neither, and the two are checked separately.
+           
+           What it does NOT drop is project scope. A permission says what
+           somebody may do, never how much of the studio they may do it to, so
+           this still reaches only the projects the role already reaches.
+           
+           Only the studio-wide tier by default: deciding who works on anything
+           is a coordinator's job, not something an ordinary job description
+           should imply. Granted in Settings to the roles that do it. */
+        impliedBy: fullAccess,
+        describe: 'Assign or reassign any asset in reach to anyone on its project, without having created it.',
+      },
       { key: 'asset.bulk_upload',     label: 'Bulk Upload Assets',   impliedBy: has('createAsset') },
       {
         key: 'asset.override_stage',

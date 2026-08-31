@@ -40,8 +40,16 @@ test('no feature is gated on a role NAME anywhere', () => {
   assert.match(page, /const canTlReview = can\('review\.tl'\)/,
     'the TL review controls must be gated on the review.tl permission');
   assert.match(page, /const canCdReview = can\('review\.cd'\)/);
-  assert.match(page, /function mayHandOverInReview\(a\)\{\s*\n\s*if\(!can\('asset\.assign'\)\) return false;/,
-    'and so must the handover, so it cannot grow the same bug later');
+  /* And so must the handover, so it cannot grow the same bug later. Checked by
+     what the function ASKS rather than by its first line: it now has two ways
+     in — the broad permission and the ownership-based one — and pinning the
+     opening line made adding the second look like a regression. */
+  const handover = page.slice(page.indexOf('function mayHandOverInReview(a){'));
+  const body = handover.slice(0, handover.indexOf('\n}'));
+  assert.match(body, /can\('asset\.assign'\)/, 'the handover asks for the assign permission');
+  assert.match(body, /can\('asset\.assign_any'\)/, 'and for the broad one');
+  assert.ok(!/\.role\s*(===?|!==?)\s*['"]/.test(body),
+    'and never for a role by name');
 });
 
 test('the catalogue covers the groups that were asked for', () => {

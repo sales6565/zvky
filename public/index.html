@@ -737,13 +737,24 @@ function ownsAsset(a){
   return Boolean(a.created_by) && a.created_by === (state.currentUser || {}).id;
 }
 /* Changing who an asset is assigned to — its own permission, same question. */
-function mayAssignAsset(a){ return can('asset.assign') && ownsAsset(a); }
+/* Two independent routes to assigning, mirroring canAssignAsset and
+   canAssignAnyAsset on the server, which stay the authority:
+   
+     asset.assign      the asset is yours — you added it, or you hold full access
+     asset.assign_any  it does not have to be
+   
+   Either is enough. The project half of the second one is not checked here
+   because this page only ever shows assets from a project the user can already
+   open; the API checks it regardless. */
+function mayAssignAsset(a){ return (can('asset.assign') && ownsAsset(a)) || can('asset.assign_any'); }
 /* Handing SUBMITTED work to somebody else reaches further than that: the asset
    is sitting in a reviewer's queue, so the reviewer holding it may hand it on
    as well as the person who added it. Mirrors canHandOverInReview on the server
    — which stays the authority. This only decides whether to offer the control,
    and offering one the API would refuse is the failure worth avoiding here. */
 function mayHandOverInReview(a){
+  // Handing work on is assigning it, so the broad permission reaches here too.
+  if(can('asset.assign_any')) return true;
   if(!can('asset.assign')) return false;
   if(ownsAsset(a)) return true;
   /* Beyond the creator, whoever is holding it at that stage. Mirrors the switch

@@ -499,3 +499,52 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     })).status, 201, 'and then it is theirs');
   });
 });
+
+test('Assign Work to Anyone is a permission of its own', () => {
+  /* Not a stronger asset.assign — a different question.
+     
+       asset.assign      "is this asset yours?"  (creator, or full access)
+       asset.assign_any  asks nothing about who created it
+     
+     A role may hold either, both or neither, and granting one must neither
+     imply nor disable the other. */
+  const catalog = require('../src/permission-catalog');
+  assert.ok(catalog.isPermission('asset.assign_any'));
+  assert.ok(catalog.grantableKeys().includes('asset.assign_any'),
+    'a Super Admin can grant it to any role from Settings');
+
+  const entry = catalog.ALL.find((p) => p.key === 'asset.assign_any');
+  assert.strictEqual(entry.group, 'assets', 'it belongs under Asset Management');
+
+  const { capabilitiesForTier } = require('../src/role-tiers');
+  assert.ok(catalog.baselineFor(capabilitiesForTier('super_admin')).has('asset.assign_any'));
+  for (const tier of ['lead', 'production', 'staff', 'direction']) {
+    assert.ok(!catalog.baselineFor(capabilitiesForTier(tier)).has('asset.assign_any'),
+      `${tier} should not get studio-wide assignment without being given it`);
+  }
+
+  // Neither is derived from the other: an ordinary asset-editing role still
+  // gets asset.assign as before, and nothing more.
+  const lead = catalog.baselineFor(capabilitiesForTier('lead'));
+  assert.ok(lead.has('asset.assign'), 'the ownership-based one is untouched');
+});
+
+test('the two assignment checks are independent functions', () => {
+  const permissions = require('../src/permissions');
+  assert.strictEqual(typeof permissions.canAssignAsset, 'function');
+  assert.strictEqual(typeof permissions.canAssignAnyAsset, 'function');
+  assert.strictEqual(typeof permissions.mayAssign, 'function');
+
+  const holder = (keys) => ({ id: 'u1', role: 'x', permissions: keys });
+  const asset = { id: 'a1', created_by: 'someone-else', project_id: 'p1' };
+
+  // The ownership one is unchanged: the permission alone is not enough.
+  assert.strictEqual(permissions.canAssignAsset(holder(['asset.assign']), asset), false,
+    'asset.assign still asks whether the asset is yours');
+  assert.strictEqual(
+    permissions.canAssignAsset(holder(['asset.assign']), { ...asset, created_by: 'u1' }), true);
+
+  // And holding only the broad one does not accidentally satisfy the narrow one.
+  assert.strictEqual(permissions.canAssignAsset(holder(['asset.assign_any']), asset), false,
+    'the two are separate checks, not one falling through to the other');
+});

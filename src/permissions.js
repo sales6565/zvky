@@ -179,6 +179,29 @@ function canAssignAsset(user, asset) {
   return holds(user, 'asset.assign') && ownsAsset(user, asset);
 }
 
+/* The other way in: assigning work you did not create.
+ *
+ * Deliberately a separate function and a separate permission, checked
+ * independently of the one above. asset.assign asks "is this yours"; this asks
+ * nothing about who created it. A role may hold either, both or neither, and
+ * granting one neither implies nor disables the other.
+ *
+ * It does keep project scope. Ownership was quietly doing that job for
+ * asset.assign — you can only have created assets on projects you can reach —
+ * so dropping ownership without putting the project check back would have
+ * turned one checkbox into studio-wide reach, which no other permission grants.
+ */
+async function canAssignAnyAsset(user, asset) {
+  if (!holds(user, 'asset.assign_any')) return false;
+  if (!asset || !asset.project_id) return false;
+  return canAccessProject(user, asset.project_id);
+}
+
+// Either route in. What every assignment gate should ask.
+async function mayAssign(user, asset) {
+  return canAssignAsset(user, asset) || await canAssignAnyAsset(user, asset);
+}
+
 // Who may hand a SUBMITTED asset to somebody else.
 //
 // Deliberately a wider reach than the rework handover below it, and the axis is
@@ -197,6 +220,11 @@ function canAssignAsset(user, asset) {
 // Director, by default — still cannot, and granting it in Settings is the way
 // to change that.
 async function canHandOverInReview(user, asset) {
+  /* The broad permission is a route in here too — handing work to somebody
+     else IS assigning it, and a coordinator trusted to assign anything should
+     not be stopped at the one stage where the work has already started. Asked
+     first because it does not depend on the stage at all. */
+  if (await canAssignAnyAsset(user, asset)) return true;
   if (!holds(user, 'asset.assign')) return false;
   if (ownsAsset(user, asset)) return true;                       // creator, or full access
 
@@ -388,6 +416,8 @@ module.exports = {
   mayAdministerUser,
   ownsAsset,
   canAssignAsset,
+  canAssignAnyAsset,
+  mayAssign,
   canHandOverInReview,
   canManageTasks,
   isAwaitingRework,

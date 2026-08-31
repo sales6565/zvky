@@ -22,7 +22,7 @@ const {
   canOverrideReview,
   canMarkDelivered,
   canOverrideStage,
-  canAssignAsset,
+  mayAssign,
   canHandOverInReview,
   canManageTasks,
   hasFullAccess,
@@ -329,7 +329,7 @@ router.patch('/:id', async (req, res) => {
   if (wantsEdit && !mayEdit) {
     return res.status(403).json({ error: 'You cannot edit this asset' });
   }
-  if (wantsAssign && !canAssignAsset(req.user, asset)) {
+  if (wantsAssign && !(await mayAssign(req.user, asset))) {
     return res.status(403).json({ error: 'You do not have permission to assign this asset.', field: 'assigneeId' });
   }
   // A request that changes nothing either way still has to be somebody's to make.
@@ -671,7 +671,7 @@ async function contextFor(req, asset) {
     canEdit: await canEditAsset(req.user, asset),
     // Separate from canEdit on purpose: assigning is its own permission, and
     // the assign transition asks for this one.
-    canAssign: canAssignAsset(req.user, asset),
+    canAssign: await mayAssign(req.user, asset),
     // Wider still, and only for handing submitted work on — see
     // canHandOverInReview. The reviewer holding it counts, not just the creator.
     canHandOver: await canHandOverInReview(req.user, asset),
@@ -989,7 +989,7 @@ router.post('/:id/reassign', async (req, res) => {
   // the status is looked at. Somebody with no business here is told so, rather
   // than being told which statuses are reassignable — which is not their
   // concern, and which the narrower checks below would otherwise leak.
-  const couldEver = canAssignAsset(req.user, asset)
+  const couldEver = await mayAssign(req.user, asset)
     || await isTeamLeadOfAsset(req.user, asset)
     || (canReviewAsCD(req.user) && await canViewAsset(req.user, asset));
   if (!couldEver) {
