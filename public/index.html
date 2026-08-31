@@ -172,6 +172,16 @@ tr.past-round{opacity:0.62;}
 .modal h2{font-family:'Space Grotesk';margin:0 0 14px;font-size:18px;}
 .modal label{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--ink-muted);font-family:'IBM Plex Mono';margin:12px 0 6px;}
 .modal input,.modal select,.modal textarea{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--ink);padding:9px 10px;border-radius:8px;font-family:'Inter';font-size:13px;}
+/* ...except the ones you don't type into. The rule above dresses every input in
+   a modal as a text field: full width, padding, a border, a background. On a
+   checkbox that is wrong twice over — it stops looking like a checkbox, and at
+   width:100% inside the flex row of a .checklist it becomes a flex item that
+   shrinks around whatever name sits beside it. Every row then got a different
+   box width, so every name started at a different x and the team-lead and
+   coordinator lists rendered as a diagonal staircase. Put the tick box back to
+   its own intrinsic size and stop it shrinking. */
+.modal input[type=checkbox],.modal input[type=radio]{width:auto;padding:0;margin:0;
+  background:none;border:0;border-radius:0;flex:none;}
 .ref-section{margin-bottom:26px;}
 .ref-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:4px;}
 .ref-head h3{font-family:'Space Grotesk';font-size:15px;margin:0;}
@@ -290,7 +300,12 @@ tr.past-round{opacity:0.62;}
 .pw-rules li.met{color:var(--approved);}
 .modal .row2{display:flex;gap:10px;} .modal .row2>div{flex:1;} .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:18px;}
 .checklist{max-height:130px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px 10px;background:var(--surface-2);}
-.checklist label{display:flex;align-items:center;gap:6px;font-family:'Inter';font-size:12.5px;text-transform:none;letter-spacing:0;color:var(--ink);margin:4px 0;}
+/* One row per person: tick box on the left, name beside it, every row starting
+   at the same place. Aligned to the TOP rather than the middle so that a name
+   long enough to wrap keeps its box against the first line instead of drifting
+   halfway down the row — and so the row below it is unaffected either way. */
+.checklist label{display:flex;align-items:flex-start;gap:7px;font-family:'Inter';font-size:12.5px;text-transform:none;letter-spacing:0;color:var(--ink);margin:0;padding:4px 0;line-height:1.35;}
+.checklist label input[type=checkbox]{flex:none;width:auto;margin:1px 0 0;accent-color:var(--brand-accent);}
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--surface-3);border:1px solid var(--border);color:var(--ink);padding:10px 18px;border-radius:10px;font-size:13px;opacity:0;transition:all .25s;z-index:60;pointer-events:none;} .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 .empty{text-align:center;padding:40px 20px;color:var(--ink-muted);font-size:13px;}
 
