@@ -54,6 +54,8 @@ const REQUIRED = [
   { table: 'ip_allowlist',     column: null,            step: 'IP allowlist' },
   { table: 'categories',       column: null,            step: 'reference tables' },
   { table: 'assets',           column: 'category',      step: 'asset category' },
+  { table: 'branding',         column: null,            step: 'branding' },
+  { table: 'branding',         column: 'logo',          step: 'branding' },
 ];
 
 // Two queries for the whole check, rather than one per column.

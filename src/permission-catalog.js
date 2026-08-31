@@ -200,6 +200,15 @@ const GROUPS = [
       { key: 'settings.priorities',   label: 'Manage Priorities',    impliedBy: has('manageSettings') },
       { key: 'settings.categories',   label: 'Manage Categories',    impliedBy: has('manageSettings') },
       {
+        key: 'settings.branding',
+        label: 'Manage Branding',
+        // The application's own name, tagline and logo. Everyone sees the
+        // result on every screen, so it is a Settings permission rather than
+        // something any role that can edit an asset picks up.
+        impliedBy: has('manageSettings'),
+        describe: 'The name, tagline and logo shown in the header and on the sign-in screen.',
+      },
+      {
         key: 'settings.ip_allowlist',
         label: 'Manage IP Allowlist',
         impliedBy: has('manageAccess'),

@@ -8,7 +8,19 @@
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap');
 :root{
   --bg:#14161b; --surface:#1d2027; --surface-2:#262a33; --surface-3:#30343e; --border:#363b46;
-  --ink:#edeff2; --ink-muted:#8b909c; --ink-faint:#5b606c; --brand:#ff5a36; --brand-ink:#2a1108;
+  --ink:#edeff2; --ink-muted:#8b909c; --ink-faint:#5b606c;
+  /* The brand, in two tones, because one cannot do both jobs on a dark UI.
+     
+     --brand is the studio red. It is a FILL: white on it measures 10.4:1, well
+     past AA. As TEXT on this app's background it measures 1.74:1 — invisible —
+     so links and accents cannot use it.
+     
+     --brand-accent is the same hue lifted until it can be read: 6.0:1 on the
+     page background. It is also kept clear of the workflow colours, which carry
+     meaning and are not touched by any of this: its nearest neighbour is TL/CD
+     Changes at ΔE 30, where anything under about 25 starts to read as the same
+     colour at a glance. */
+  --brand:#7f1416; --brand-ink:#ffffff; --brand-accent:#ef6b6f; --brand-hover:#96181b;
   --not:#6b7280; --prog:#f2b33d; --review:#9b7ef0; --approved:#3ddc97; --final:#d4ff3d; --artist-blue:#4fb3ff;
 }
 *{box-sizing:border-box;} html,body{margin:0;padding:0;}
@@ -21,6 +33,25 @@ header.top{display:flex;align-items:center;justify-content:space-between;gap:16p
 .wordmark .mark{width:34px;height:34px;border-radius:8px;background:var(--brand);display:flex;align-items:center;justify-content:center;color:var(--brand-ink);font-family:'Space Grotesk';font-weight:700;font-size:16px;transform:rotate(-4deg);}
 .wordmark h1{font-family:'Space Grotesk';font-weight:700;font-size:20px;margin:0;letter-spacing:.2px;}
 .wordmark .sub{color:var(--ink-muted);font-size:12px;font-family:'IBM Plex Mono';margin-top:1px;}
+/* An uploaded logo replaces the lettered square rather than sitting beside it.
+   Contained, not cropped: a studio's mark is not ours to trim. */
+.wordmark .mark.has-logo{background:none;border-radius:0;transform:none;width:auto;height:36px;max-width:180px;}
+.wordmark .mark.has-logo img{height:36px;max-width:180px;object-fit:contain;display:block;}
+.wordmark .sub:empty{display:none;}
+/* The header pickers, each said aloud rather than left to a tooltip. */
+.hdr-pick{display:flex;flex-direction:column;gap:3px;}
+.hdr-pick>span{font-size:9px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink-faint);
+  font-family:'IBM Plex Mono';padding-left:2px;}
+.brand-form{display:flex;flex-direction:column;gap:10px;max-width:520px;}
+.brand-form label{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--ink-faint);
+  font-family:'IBM Plex Mono';}
+.brand-form input[type=text]{background:var(--surface-2);border:1px solid var(--border);color:var(--ink);
+  padding:8px 10px;border-radius:8px;font-family:'Inter';font-size:13px;width:100%;}
+.brand-logo-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+.brand-logo-preview{height:44px;max-width:200px;background:var(--surface-2);border:1px solid var(--border);
+  border-radius:8px;padding:5px 9px;display:flex;align-items:center;justify-content:center;}
+.brand-logo-preview img{max-height:34px;max-width:180px;object-fit:contain;display:block;}
+.brand-logo-preview .none{font-size:11px;color:var(--ink-faint);font-family:'IBM Plex Mono';}
 .proj-select{background:var(--surface-2);border:1px solid var(--border);color:var(--ink);padding:8px 12px;border-radius:8px;font-family:'IBM Plex Mono';font-size:12px;}
 .user-badge{display:flex;align-items:center;gap:8px;background:var(--surface-2);border:1px solid var(--border);border-radius:20px;padding:5px 6px 5px 5px;}
 .user-badge .avatar{width:26px;height:26px;border-radius:50%;background:var(--surface-3);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;font-family:'Space Grotesk';}
@@ -33,7 +64,7 @@ header.top{display:flex;align-items:center;justify-content:space-between;gap:16p
    reason on hover; a line under the button carries it for anyone not hovering. */
 .btn:disabled{opacity:.45;cursor:not-allowed;filter:grayscale(1);}
 .btn:disabled:hover{transform:none;}
-.btn:active{transform:scale(.97);} .btn-brand{background:var(--brand);color:#1a0d08;} .btn-brand:hover{background:#ff6f4d;}
+.btn:active{transform:scale(.97);} .btn-brand{background:var(--brand);color:var(--brand-ink);} .btn-brand:hover{background:var(--brand-hover);}
 .btn-ghost{background:var(--surface-2);color:var(--ink);border:1px solid var(--border);} .btn-ghost:hover{background:var(--surface-3);}
 .btn-sm{padding:6px 10px;font-size:12px;}
 .stats{display:flex;gap:0;margin:18px 0 16px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface);flex-wrap:wrap;}
@@ -47,7 +78,7 @@ header.top{display:flex;align-items:center;justify-content:space-between;gap:16p
 .tabs button.active{background:var(--surface-3);color:var(--ink);} .spacer{margin-left:auto;}
 .board{display:flex;gap:14px;align-items:flex-start;overflow-x:auto;padding-bottom:20px;}
 .column{background:var(--surface);border:1px solid var(--border);border-radius:12px;min-width:250px;flex:1;padding:10px;min-height:200px;}
-.column.dragover{border-color:var(--brand);background:#231a15;}
+.column.dragover{border-color:var(--brand-accent);background:#231a15;}
 .col-head{display:flex;align-items:center;gap:8px;padding:6px 6px 12px;}
 .col-head .chip{width:9px;height:9px;border-radius:2px;} .col-head .title{font-family:'Space Grotesk';font-weight:700;font-size:13px;text-transform:uppercase;letter-spacing:.5px;}
 .col-head .count{margin-left:auto;font-family:'IBM Plex Mono';font-size:11px;color:var(--ink-muted);background:var(--surface-2);padding:1px 7px;border-radius:20px;}
@@ -61,7 +92,7 @@ header.top{display:flex;align-items:center;justify-content:space-between;gap:16p
 .type-tag{font-size:10px;padding:2px 7px;border-radius:20px;background:var(--surface-3);color:var(--ink-muted);font-family:'IBM Plex Mono';}
 .avatar{width:22px;height:22px;border-radius:50%;background:var(--surface-3);color:var(--ink);display:flex;align-items:center;justify-content:center;font-size:9.5px;font-weight:700;font-family:'Space Grotesk';border:1px solid var(--border);}
 .priority-flag{width:0;height:0;border-style:solid;position:absolute;top:0;left:10px;}
-.priority-high .priority-flag{border-width:0 8px 12px 8px;border-color:transparent transparent var(--brand) transparent;}
+.priority-high .priority-flag{border-width:0 8px 12px 8px;border-color:transparent transparent var(--brand-accent) transparent;}
 .priority-med .priority-flag{border-width:0 8px 12px 8px;border-color:transparent transparent var(--prog) transparent;}
 table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;}
 th,td{padding:10px 12px;text-align:left;font-size:13px;border-bottom:1px solid var(--border);}
@@ -77,12 +108,12 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .drawer select,.drawer textarea,.drawer input[type=text],.drawer input[type=date]{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--ink);padding:8px 10px;border-radius:8px;font-family:'Inter';font-size:13px;resize:vertical;}
 .drawer select:disabled,.drawer input:disabled,.drawer textarea:disabled{opacity:.55;cursor:not-allowed;}
 .task-row{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;border-bottom:1px dashed var(--border);}
-.task-row input[type=checkbox]{accent-color:var(--brand);}
+.task-row input[type=checkbox]{accent-color:var(--brand-accent);}
 .task-row.done .task-text{text-decoration:line-through;color:var(--ink-faint);}
 .task-text{flex:1;}
 .task-who{font-size:9px;color:var(--ink-faint);background:var(--surface-3);padding:1px 5px;border-radius:8px;}
 .task-btn{background:none;border:none;color:var(--ink-faint);cursor:pointer;font-size:13px;padding:0 3px;line-height:1;}
-.task-btn:hover{color:var(--brand);}
+.task-btn:hover{color:var(--brand-accent);}
 .task-add{display:grid;grid-template-columns:1fr auto;gap:6px;margin-top:8px;}
 .task-add input{margin:0;}
 
@@ -107,7 +138,7 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .sub-tab.active{background:var(--surface-2);border-color:var(--border);color:var(--ink);}
 .sub-tab-count{font-family:'IBM Plex Mono';font-size:11px;color:var(--ink-faint);
   background:var(--surface-3);border-radius:20px;padding:1px 7px;min-width:20px;text-align:center;}
-.sub-tab.active .sub-tab-count{color:var(--brand);}
+.sub-tab.active .sub-tab-count{color:var(--brand-accent);}
 /* --- Reports --- */
 .rep-head{display:flex;align-items:flex-start;gap:16px;margin-bottom:14px;}
 .rep-sub{font-size:12px;color:var(--ink-muted);margin-top:5px;max-width:760px;line-height:1.5;}
@@ -133,7 +164,7 @@ tr.past-round{opacity:0.62;}
   border:1px solid var(--surface-3);border-radius:20px;padding:2px 8px;white-space:nowrap;}
 .round-tag-live{color:var(--approved);border-color:var(--approved);}
 @keyframes timerblink{0%,100%{opacity:1}50%{opacity:.25}}
-.note{background:var(--surface-2);border-left:3px solid var(--brand);border-radius:0 8px 8px 0;padding:8px 10px;margin-bottom:8px;}
+.note{background:var(--surface-2);border-left:3px solid var(--brand-accent);border-radius:0 8px 8px 0;padding:8px 10px;margin-bottom:8px;}
 .note .who{font-family:'Space Grotesk';font-weight:700;font-size:12px;} .note .when{font-size:10px;color:var(--ink-muted);font-family:'IBM Plex Mono';}
 .note p{margin:4px 0 0;font-size:12.5px;line-height:1.4;}
 .modal-wrap{position:fixed;inset:0;background:rgba(10,11,14,.65);display:none;align-items:center;justify-content:center;z-index:50;padding:20px;} .modal-wrap.show{display:flex;}
@@ -159,7 +190,7 @@ tr.past-round{opacity:0.62;}
 .ref-add input,.ref-add select{margin:0;}
 .ref-add input[type=text]{width:170px;}
 .ref-add input.narrow{width:74px;}
-.ref-err{color:var(--brand);font-size:11.5px;margin-top:8px;min-height:14px;}
+.ref-err{color:var(--brand-accent);font-size:11.5px;margin-top:8px;min-height:14px;}
 /* The IP allowlist section. Mostly borrows the reference-list styling; the
    extra pieces are the banners, which have to be hard to miss — this is the
    screen where a careless change locks someone out. */
@@ -211,7 +242,7 @@ tr.past-round{opacity:0.62;}
 .pm-note{font-size:10.5px;color:var(--ink-faint);margin-top:2px;line-height:1.4;}
 .pm-bar{display:flex;gap:10px;align-items:center;margin-top:14px;}
 .pm-msg{font-size:12px;}
-.pm-msg.ok{color:#7fdcb0;} .pm-msg.err{color:var(--brand);}
+.pm-msg.ok{color:#7fdcb0;} .pm-msg.err{color:var(--brand-accent);}
 .eu-hint{font-size:11px;color:var(--ink-faint);margin-top:5px;line-height:1.45;}
 .eu-top{font-size:12px;line-height:1.5;padding:10px 12px;border-radius:9px;margin-top:12px;
   background:rgba(255,210,61,.10);border:1px solid rgba(255,210,61,.30);color:#ffd98a;}
@@ -224,7 +255,7 @@ tr.past-round{opacity:0.62;}
 .ud-top{color:#ffd23d;font-weight:600;}
 .u-link{background:none;border:0;padding:0;color:var(--ink);font-weight:600;cursor:pointer;font-size:inherit;
   font-family:inherit;text-align:left;}
-.u-link:hover{color:var(--brand);text-decoration:underline;}
+.u-link:hover{color:var(--brand-accent);text-decoration:underline;}
 .ip-banner.fault h4{margin:0 0 7px;font-size:13px;color:#ff7a55;font-family:'Space Grotesk';letter-spacing:.2px;}
 .ip-banner.fault p{margin:0 0 8px;color:#ffb9a5;}
 .ip-banner.fault code{font-family:'IBM Plex Mono';font-size:11px;background:rgba(0,0,0,.32);
@@ -236,11 +267,11 @@ tr.past-round{opacity:0.62;}
 .ip-audit summary{cursor:pointer;font-size:11.5px;color:var(--ink-muted);font-family:'IBM Plex Mono';}
 .ip-audit table{margin-top:10px;}
 .ip-act{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;font-family:'IBM Plex Mono';color:var(--ink-muted);}
-.ip-act.removed{color:var(--brand);}
+.ip-act.removed{color:var(--brand-accent);}
 .import-summary{display:flex;gap:18px;margin-bottom:14px;flex-wrap:wrap;}
 .import-summary div{font-size:12px;color:var(--ink-muted);}
 .import-summary strong{display:block;font-size:20px;font-family:'IBM Plex Mono';color:var(--ink);}
-.import-summary .bad strong{color:var(--brand);}
+.import-summary .bad strong{color:var(--brand-accent);}
 .import-errors{max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;}
 .import-errors table{width:100%;border-collapse:collapse;font-size:12px;}
 .import-errors th{position:sticky;top:0;background:var(--surface-2);text-align:left;padding:8px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink-muted);font-family:'IBM Plex Mono';}
@@ -252,7 +283,7 @@ tr.past-round{opacity:0.62;}
 .pw-field input{padding-right:64px;width:100%;}
 .pw-toggle{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:0;color:var(--ink-faint);font-size:10.5px;font-family:'IBM Plex Mono';text-transform:uppercase;letter-spacing:.6px;cursor:pointer;padding:4px 6px;border-radius:6px;}
 .pw-toggle:hover{color:var(--ink);background:var(--surface-3);}
-.field-err{color:var(--brand);font-size:11.5px;margin-top:5px;min-height:14px;}
+.field-err{color:var(--brand-accent);font-size:11.5px;margin-top:5px;min-height:14px;}
 .pw-rules{list-style:none;padding:0;margin:8px 0 0;font-size:11.5px;}
 .pw-rules li{color:var(--ink-faint);padding:2px 0;display:flex;gap:7px;align-items:center;}
 .pw-rules li .tick{font-family:'IBM Plex Mono';width:11px;display:inline-block;}
@@ -276,14 +307,14 @@ tr.past-round{opacity:0.62;}
 
 /* Clients > Acme Corp > Projects */
 .crumbs{display:flex;align-items:center;gap:8px;font-size:12px;padding:4px 0;}
-.crumb-link{background:none;border:none;color:var(--brand);cursor:pointer;font:inherit;padding:0;}
+.crumb-link{background:none;border:none;color:var(--brand-accent);cursor:pointer;font:inherit;padding:0;}
 .crumb-link:hover{text-decoration:underline;}
 .crumb-sep{color:var(--ink-faint);}
 .crumb-now{color:var(--ink-muted);font-weight:600;}
 
 .client-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;}
 .client-card{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:14px;cursor:pointer;transition:border-color .12s;}
-.client-card:hover{border-color:var(--brand);}
+.client-card:hover{border-color:var(--brand-accent);}
 .client-name{font-weight:600;font-size:14px;display:flex;align-items:center;gap:6px;}
 .client-tag{font-size:9px;text-transform:uppercase;letter-spacing:.06em;background:var(--surface-3);color:var(--ink-faint);padding:2px 6px;border-radius:4px;}
 .client-meta{font-size:11.5px;color:var(--ink-muted);margin-top:4px;}
@@ -319,7 +350,7 @@ tr.past-round{opacity:0.62;}
 .login-panel{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;}
 .login-panel label{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--ink-muted);font-family:'IBM Plex Mono';margin:12px 0 6px;}
 .login-panel input{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--ink);padding:10px 12px;border-radius:8px;font-family:'Inter';font-size:13px;}
-.login-err{color:var(--brand);font-size:12px;margin-top:10px;min-height:16px;}
+.login-err{color:var(--brand-accent);font-size:12px;margin-top:10px;min-height:16px;}
 .demo-note{font-size:11px;color:var(--ink-faint);margin-top:14px;line-height:1.5;}
 #appRoot{display:none;}
 @media (max-width:720px){ .drawer{width:100%;} .stats{flex-wrap:wrap;} }
@@ -329,7 +360,7 @@ tr.past-round{opacity:0.62;}
 
 <div id="loginScreen">
   <div class="login-box">
-    <div class="wordmark"><div class="mark">Z</div><div><h1>ZVKY</h1><div class="sub">art asset &amp; animation pipeline</div></div></div>
+    <div class="wordmark" data-wordmark><div class="mark"></div><div><h1></h1><div class="sub"></div></div></div>
     <div class="login-panel">
       <label>Email</label>
       <input type="text" id="loginEmail" placeholder="you@zvky.studio">
@@ -345,10 +376,12 @@ tr.past-round{opacity:0.62;}
 <div id="appRoot">
 <div id="app">
   <header class="top">
-    <div class="wordmark"><div class="mark">Z</div><div><h1>ZVKY</h1><div class="sub">art asset &amp; animation pipeline</div></div></div>
+    <div class="wordmark" data-wordmark><div class="mark"></div><div><h1></h1><div class="sub"></div></div></div>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-      <select class="proj-select" id="clientSelect" title="Client"></select>
-      <select class="proj-select" id="projectSelect" disabled></select>
+      <label class="hdr-pick"><span>Client</span>
+        <select class="proj-select" id="clientSelect" title="Client"></select></label>
+      <label class="hdr-pick"><span>Project/Game</span>
+        <select class="proj-select" id="projectSelect" title="Project/Game" disabled></select></label>
       <button class="btn btn-ghost btn-sm" id="editProjectBtn" style="display:none;" title="Edit this project">&#9998;</button>
       <div class="user-badge"><div class="avatar" id="userAvatar"></div><div class="who"><div class="name" id="userName"></div><span class="role-badge" id="userRoleBadge"></span></div></div>
       <button class="btn btn-ghost btn-sm" id="profileBtn">Profile</button>
@@ -426,7 +459,7 @@ tr.past-round{opacity:0.62;}
       <div class="ref-err" id="p_clientErr"></div>
     </div>
     <fieldset id="p_fields" disabled>
-      <label>Project name</label><input type="text" id="p_name" placeholder="e.g. Nightgarden">
+      <label>Project/Game name</label><input type="text" id="p_name" placeholder="e.g. Nightgarden">
       <label>Team leads on this project</label><div class="checklist" id="p_leads"></div>
       <label>Production coordinators on this project</label><div class="checklist" id="p_coords"></div>
     </fieldset>
@@ -445,7 +478,7 @@ tr.past-round{opacity:0.62;}
     <label>Notes</label><textarea id="cm_notes" rows="2" placeholder="Anything worth remembering (optional)"></textarea>
     <div id="cm_existing"></div>
     <div id="cm_projectsWrap">
-      <label style="margin-top:14px;">Projects to create under this client</label>
+      <label style="margin-top:14px;">Projects/Games to create under this client</label>
       <div style="font-size:11px;color:var(--ink-faint);margin-bottom:6px;">
         Optional — leave blank to create the client on its own. Every row is checked before anything is saved.
       </div>
@@ -464,7 +497,7 @@ tr.past-round{opacity:0.62;}
   <div class="modal">
     <h2>Edit Project</h2>
     <div id="ep_who" style="font-size:12px;color:var(--ink-muted);margin-bottom:10px;"></div>
-    <label>Project name</label><input type="text" id="ep_name" placeholder="e.g. Nightgarden">
+    <label>Project/Game name</label><input type="text" id="ep_name" placeholder="e.g. Nightgarden">
     <label>Team leads on this project</label><div class="checklist" id="ep_leads"></div>
     <label>Production coordinators on this project</label><div class="checklist" id="ep_coords"></div>
     <div style="font-size:11px;color:var(--ink-faint);margin-top:8px;">Assets already in this project keep their assignees and their place in the pipeline.</div>
@@ -544,7 +577,7 @@ tr.past-round{opacity:0.62;}
       <label>Email</label><input type="text" id="eu_email" placeholder="name@zvky.studio">
     </div>
     <div id="eu_roleWrap"><label>Role</label><select id="eu_role"></select></div>
-    <div id="eu_projectWrap"><label>Project</label><select id="eu_project"></select></div>
+    <div id="eu_projectWrap"><label>Project/Game</label><select id="eu_project"></select></div>
     <div id="eu_reportingWrap">
       <label>Reporting To</label><select id="eu_reportsTo"></select>
       <div class="eu-hint" id="eu_reportsHint"></div>
@@ -576,6 +609,47 @@ document.getElementById('apiBaseLabel').textContent = API_BASE;
 let TYPES = [];
 let PRIORITIES = [];
 let CATEGORIES = [];
+
+/* The studio's own name, tagline and logo. Fetched without a token, because the
+   sign-in screen wears them and that screen has no token yet. Falls back to the
+   built-in defaults so a database that has not been migrated, or an API that is
+   briefly unreachable, still shows a header rather than an empty one. */
+let BRANDING = { appName:'ZVKY FORGE', tagline:'art asset & animation pipeline', hasLogo:false, logoUpdatedAt:null };
+
+async function loadBranding(){
+  try{
+    const res = await fetch(API_BASE + '/branding');
+    if(!res.ok) return;
+    const { branding } = await res.json();
+    if(branding) BRANDING = branding;
+  }catch(err){ /* keep the defaults */ }
+}
+
+/* Paint every wordmark on the page — the sign-in screen has one and the app
+   header has another, and they must not drift apart.
+   
+   The logo URL carries the time it was uploaded, so a new one appears
+   immediately instead of waiting for a cache to expire. */
+function paintBranding(){
+  const name = BRANDING.appName || 'ZVKY FORGE';
+  const tagline = BRANDING.tagline === null || BRANDING.tagline === undefined
+    ? '' : BRANDING.tagline;
+  document.title = `${name} — Pipeline`;
+  document.querySelectorAll('[data-wordmark]').forEach(w=>{
+    const mark = w.querySelector('.mark');
+    if(BRANDING.hasLogo){
+      const stamp = encodeURIComponent(BRANDING.logoUpdatedAt || '');
+      mark.classList.add('has-logo');
+      mark.innerHTML = `<img src="${API_BASE}/branding/logo?v=${stamp}" alt="${escapeHTML(name)}">`;
+    } else {
+      // No logo: the first letter of the name, which is what it always was.
+      mark.classList.remove('has-logo');
+      mark.textContent = (name.trim()[0] || 'Z').toUpperCase();
+    }
+    w.querySelector('h1').textContent = name;
+    w.querySelector('.sub').textContent = tagline;
+  });
+}
 async function loadReferenceData(){
   const data = await api('/reference');
   TYPES = data.assetTypes.map(t=>({ id:t.key, label:t.label, color:t.color||'var(--ink-muted)', codePrefix:t.codePrefix }));
@@ -827,6 +901,7 @@ function applyGate(id, also){
 const SETTINGS_SECTIONS = [
   { permission:'settings.permissions',  label:'Role Permissions', note:'What each role may do, across all six permission groups.' },
   { permission:'settings.asset_types',  label:'Scope of Work',    note:'The Scope of Work dropdown and the code prefix each asset gets.' },
+  { permission:'settings.branding',     label:'Branding',         note:'The name, tagline and logo shown in the header and on the sign-in screen.' },
   { permission:'settings.priorities',   label:'Priorities',       note:'The Priority dropdown.' },
   { permission:'settings.categories',   label:'Categories',       note:'The Category dropdown. Starts empty — add the studio\'s own list.' },
   { permission:'settings.roles',        label:'Roles',            note:'The studio\'s designations and what each one can do.' },
@@ -993,6 +1068,9 @@ function showToast(msg){ const t=document.getElementById('toast'); t.textContent
 
 /* ---------- login/session ---------- */
 async function boot(){
+  // Before the sign-in screen is looked at, so it is never briefly unbranded.
+  await loadBranding();
+  paintBranding();
   const saved = localStorage.getItem('zvky_token');
   if(saved){
     state.token = saved;
@@ -1054,7 +1132,8 @@ async function showApp(){
   document.getElementById('appRoot').style.display='block';
   bootError(null);
   try{
-    await Promise.all([loadRoles(), loadReferenceData()]);
+    await Promise.all([loadRoles(), loadReferenceData(), loadBranding()]);
+    paintBranding();
     await bootApp();
   }catch(err){
     /* The login path used to surface this on the login form — which this
@@ -1502,7 +1581,7 @@ async function renderReports(){
 
   const filterBar = `
     <div class="rep-filters">
-      <select id="rep_project"><option value="">All projects</option>${opts(d.filters.projects,'id','name',f.projectId)}</select>
+      <select id="rep_project"><option value="">All projects/games</option>${opts(d.filters.projects,'id','name',f.projectId)}</select>
       <select id="rep_client"><option value="">All clients</option>${opts(d.filters.clients,'id','name',f.clientId)}</select>
       <select id="rep_user"><option value="">All people</option>${opts(d.filters.users,'id','name',f.assigneeId)}</select>
       <select id="rep_category"><option value="">All categories</option>${opts(d.filters.categories,'key','label',f.category)}</select>
@@ -1820,7 +1899,7 @@ function clientDetailHTML(c){
         ? `<button class="btn btn-ghost btn-sm" id="archiveClientBtn" data-client="${c.id}">Archive client</button>`
         : `<button class="btn btn-ghost btn-sm" id="restoreClientBtn" data-client="${c.id}">Restore client</button>`) : ''}
       ${can('client.delete') && !c.isSystem && !c.isActive && !all.length
-        ? `<button class="btn btn-ghost btn-sm" id="purgeClientBtn" data-client="${c.id}" style="color:var(--brand);">Delete permanently</button>` : ''}
+        ? `<button class="btn btn-ghost btn-sm" id="purgeClientBtn" data-client="${c.id}" style="color:var(--brand-accent);">Delete permanently</button>` : ''}
     </div>
     ${all.length ? `<table style="margin-top:14px;"><thead><tr><th>Project</th><th>Code</th><th>Status</th><th></th></tr></thead><tbody>
       ${all.map(p=>`<tr class="${p.status!=='active'?'row-muted':''}">
@@ -1948,7 +2027,7 @@ function addProjectRow(name){
   row.className = 'proj-row';
   row.dataset.row = id;
   row.innerHTML = `
-    <input type="text" class="pr-name" placeholder="Project name" value="${escapeHTML(name||'')}">
+    <input type="text" class="pr-name" placeholder="Project/Game name" value="${escapeHTML(name||'')}">
     <button type="button" class="btn btn-ghost btn-sm pr-remove" title="Remove this row">×</button>
     <div class="pr-err"></div>`;
   row.querySelector('.pr-remove').addEventListener('click', ()=>row.remove());
@@ -2155,7 +2234,7 @@ async function openDrawer(id){
       ? `<input type="text" id="d_refLink" value="${escapeHTML(a.reference_link||'')}" placeholder="https://drive.example.com/brief (optional)">
          <div class="ref-err" id="d_refErr"></div>`
       : (a.reference_link
-          ? `<div style="font-size:13px;padding:6px 0;"><a href="${escapeHTML(a.reference_link)}" target="_blank" rel="noopener noreferrer" style="color:var(--brand);word-break:break-all;">${escapeHTML(a.reference_link)}</a></div>`
+          ? `<div style="font-size:13px;padding:6px 0;"><a href="${escapeHTML(a.reference_link)}" target="_blank" rel="noopener noreferrer" style="color:var(--brand-accent);word-break:break-all;">${escapeHTML(a.reference_link)}</a></div>`
           : `<div style="font-size:12px;color:var(--ink-faint);padding:6px 0;">None given.</div>`)}
 
     <div class="row2">
@@ -2276,9 +2355,9 @@ async function openDrawer(id){
     <div id="d_versions">${(a.versions&&a.versions.length) ? a.versions.map(v=>`
       <div class="note" style="border-left-color:${v.stage==='tl'?'var(--review)':'#9b7ef0'};">
         <span class="who">v${v.version_number} · ${escapeHTML(v.uploaded_by_name||'Someone')} · ${v.stage==='tl'?'Team Lead review':'Creative Director review'}</span> <span class="when">${fmtDate(v.created_at)}</span>
-        ${v.link?`<p><a href="${escapeHTML(v.link)}" target="_blank" rel="noopener noreferrer" style="color:var(--brand);word-break:break-all;">${escapeHTML(v.link)}</a></p>`:''}
+        ${v.link?`<p><a href="${escapeHTML(v.link)}" target="_blank" rel="noopener noreferrer" style="color:var(--brand-accent);word-break:break-all;">${escapeHTML(v.link)}</a></p>`:''}
         ${v.description?`<p>${escapeHTML(v.description)}</p>`:''}
-        ${v.file_name?`<p>${escapeHTML(v.file_name)} ${v.file_size?'· '+fmtBytes(v.file_size):''} — <a href="#" class="downloadVersionLink" data-vid="${v.id}" style="color:var(--brand);">download</a></p>`:''}
+        ${v.file_name?`<p>${escapeHTML(v.file_name)} ${v.file_size?'· '+fmtBytes(v.file_size):''} — <a href="#" class="downloadVersionLink" data-vid="${v.id}" style="color:var(--brand-accent);">download</a></p>`:''}
       </div>`).join('') : '<div style="font-size:12px;color:var(--ink-faint);">Nothing submitted yet.</div>'}</div>
 
     <div class="field-lbl">History</div>
@@ -2294,7 +2373,7 @@ async function openDrawer(id){
     <div class="field-lbl">Notes</div>
     <div id="d_notes">${a.notes.map(n=>`<div class="note"><span class="who">${escapeHTML(n.author_name||'Someone')}</span> <span class="when">${new Date(n.created_at).toLocaleDateString()}</span><p>${escapeHTML(n.text)}</p></div>`).join('') || '<div style="font-size:12px;color:var(--ink-faint);">No notes yet.</div>'}</div>
     <div style="display:flex;gap:6px;margin-top:8px;"><input type="text" id="newNoteInput" placeholder="Leave a note…" style="flex:1;"><button class="btn btn-ghost" id="addNoteBtn" style="padding:8px 12px;">Post</button></div>
-    ${can('asset.delete') ? `<div class="modal-actions"><button class="btn btn-ghost" id="deleteAssetBtn" style="color:var(--brand);">Delete asset</button></div>` : ''}
+    ${can('asset.delete') ? `<div class="modal-actions"><button class="btn btn-ghost" id="deleteAssetBtn" style="color:var(--brand-accent);">Delete asset</button></div>` : ''}
   `;
   document.getElementById('overlay').classList.add('show'); drawer.classList.add('show');
   document.getElementById('closeDrawer').onclick = closeDrawer;
@@ -2711,14 +2790,14 @@ function showImportResult(data, ok, entity){
     if(data.missingColumns && data.missingColumns.length){
       extra += `<div style="margin-top:12px;font-size:12px;">
         <div style="color:var(--ink-muted);">Missing column${data.missingColumns.length>1?'s':''}:</div>
-        <div class="mono" style="color:var(--brand);margin-top:4px;">${data.missingColumns.map(escapeHTML).join(', ')}</div>
+        <div class="mono" style="color:var(--brand-accent);margin-top:4px;">${data.missingColumns.map(escapeHTML).join(', ')}</div>
         <div style="color:var(--ink-muted);margin-top:10px;">Found in your file:</div>
         <div class="mono" style="color:var(--ink-faint);margin-top:4px;">${(data.foundColumns||[]).map(escapeHTML).join(', ') || '(none)'}</div>
         <div style="color:var(--ink-muted);margin-top:10px;">Expected:</div>
         <div class="mono" style="color:var(--ink-faint);margin-top:4px;">${(data.expectedColumns||[]).map(escapeHTML).join(', ')}</div>
       </div>`;
     }
-    body.innerHTML = `<div style="color:var(--brand);font-size:13px;">${escapeHTML(data.error||'Import failed')}</div>${extra}`;
+    body.innerHTML = `<div style="color:var(--brand-accent);font-size:13px;">${escapeHTML(data.error||'Import failed')}</div>${extra}`;
     importModalWrap.classList.add('show');
     return;
   }
@@ -3041,7 +3120,7 @@ async function renderUserExtraFields(){
   } else if(info.projectScope==='assigned' || info.leadsTeam){
     // Coordinators and leads get attached to a project.
     box.innerHTML = state.projects.length
-      ? `<label>Project</label><select id="u_project">${state.projects.map(p=>`<option value="${p.id}">${escapeHTML(p.name)}</option>`).join('')}</select>`
+      ? `<label>Project/Game</label><select id="u_project">${state.projects.map(p=>`<option value="${p.id}">${escapeHTML(p.name)}</option>`).join('')}</select>`
       : `<div style="font-size:12px;color:var(--ink-faint);">No projects yet — you can attach them to one later.</div>`;
   } else { box.innerHTML=''; }
 }
@@ -3316,11 +3395,13 @@ async function renderSettings(){
       A value in use can't be deleted; deactivate it instead and it disappears from the dropdowns.
     </div>` : ''}
     ${lists.map(sec=>renderRefSection(sec)).join('')}
+    ${can('settings.branding') ? '<div id="brandingSection"></div>' : ''}
     ${can('settings.ip_allowlist') ? '<div id="ipAllowlistSection"></div>' : ''}
     ${can('settings.permissions') ? '<div id="rolePermissionsSection"></div>' : ''}
   `;
   el.querySelectorAll('.sii-link').forEach(b=>b.addEventListener('click', ()=>setTab(b.dataset.tab)));
   wireSettings();
+  if(can('settings.branding')) renderBranding();
   if(can('settings.permissions')) await renderRolePermissions();
   /* Managing who may reach the app stays with whoever has been given that one
      permission — it is not implied by holding the rest of this screen. The API
@@ -3347,7 +3428,7 @@ function renderRefSection(sec){
     cells.push(`<td class="ref-actions">
       <button class="btn btn-ghost btn-sm ref-rename" data-c="${sec.collection}" data-k="${escapeHTML(e.key)}">Rename</button>
       ${e.isSystem?'':`<button class="btn btn-ghost btn-sm ref-toggle" data-c="${sec.collection}" data-k="${escapeHTML(e.key)}" data-active="${e.isActive?1:0}">${e.isActive?'Deactivate':'Reactivate'}</button>`}
-      ${e.isSystem?'':`<button class="btn btn-ghost btn-sm ref-delete" data-c="${sec.collection}" data-k="${escapeHTML(e.key)}" style="color:var(--brand);">Delete</button>`}
+      ${e.isSystem?'':`<button class="btn btn-ghost btn-sm ref-delete" data-c="${sec.collection}" data-k="${escapeHTML(e.key)}" style="color:var(--brand-accent);">Delete</button>`}
     </td>`);
     return `<tr class="${e.isActive?'':'inactive'}">${cells.join('')}</tr>`;
   }).join('');
@@ -3560,7 +3641,7 @@ async function renderIpAllowlist(){
       <td class="ref-actions">
         <button class="btn btn-ghost btn-sm ip-edit" data-id="${escapeHTML(e.id)}">Edit</button>
         <button class="btn btn-ghost btn-sm ip-toggle" data-id="${escapeHTML(e.id)}" data-active="${e.isActive?1:0}">${e.isActive?'Deactivate':'Reactivate'}</button>
-        <button class="btn btn-ghost btn-sm ip-delete" data-id="${escapeHTML(e.id)}" style="color:var(--brand);">Remove</button>
+        <button class="btn btn-ghost btn-sm ip-delete" data-id="${escapeHTML(e.id)}" style="color:var(--brand-accent);">Remove</button>
       </td>
     </tr>`).join('');
 
@@ -3778,6 +3859,99 @@ let rpLoadToken = 0;
 function rpMessage(text, kind){
   const el = document.getElementById('rp_msg');
   if(el){ el.textContent = text || ''; el.className = 'pm-msg ' + (kind||''); }
+}
+
+/* ---------- Settings: Branding ---------- */
+/* The name, tagline and logo, changed here rather than in the source.
+   
+   Every save repaints the header immediately — the point of making this
+   configurable is that somebody can see the result, not read about it. */
+function renderBranding(){
+  const el = document.getElementById('brandingSection');
+  if(!el) return;
+  const b = BRANDING;
+  const logoBox = b.hasLogo
+    ? `<img src="${API_BASE}/branding/logo?v=${encodeURIComponent(b.logoUpdatedAt||'')}" alt="Current logo">`
+    : `<span class="none">No logo — the first letter of the name is used</span>`;
+
+  el.innerHTML = `
+    <div class="ref-section">
+      <div class="ref-head"><h3>Branding</h3></div>
+      <div class="ref-note">What the header and the sign-in screen say. Everyone sees this.</div>
+      <div class="brand-form">
+        <div>
+          <label for="br_name">Application name</label>
+          <input type="text" id="br_name" maxlength="60" value="${escapeHTML(b.appName||'')}"
+                 placeholder="${escapeHTML((b.defaults||{}).appName || 'ZVKY FORGE')}">
+        </div>
+        <div>
+          <label for="br_tagline">Tagline</label>
+          <input type="text" id="br_tagline" maxlength="120" value="${escapeHTML(b.tagline||'')}"
+                 placeholder="Leave empty to hide it">
+        </div>
+        <div>
+          <label>Logo</label>
+          <div class="brand-logo-row">
+            <div class="brand-logo-preview">${logoBox}</div>
+            <input type="file" id="br_logoFile" accept="image/png,image/svg+xml,image/jpeg,image/webp" style="display:none;">
+            <button class="btn btn-ghost btn-sm" id="br_pick">Choose image…</button>
+            ${b.hasLogo ? `<button class="btn btn-ghost btn-sm" id="br_clear">Remove logo</button>` : ''}
+          </div>
+          <div style="font-size:11px;color:var(--ink-faint);margin-top:6px;">
+            PNG, SVG, JPEG or WebP, up to 512KB. Shown at 36px tall and never cropped.
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button class="btn btn-brand" id="br_save">Save branding</button>
+          <span class="ref-err" id="br_err"></span>
+        </div>
+      </div>
+    </div>`;
+
+  const err = document.getElementById('br_err');
+  const say = (msg, ok)=>{ err.textContent = msg; err.style.color = ok ? 'var(--approved)' : ''; };
+
+  document.getElementById('br_save').onclick = async (ev)=>{
+    ev.target.disabled = true; say('');
+    try{
+      const { branding } = await api('/branding', { method:'PUT', body:{
+        appName: document.getElementById('br_name').value,
+        tagline: document.getElementById('br_tagline').value,
+      }});
+      BRANDING = branding; paintBranding(); renderBranding();
+      showToast('Branding saved.');
+    }catch(e){ say(e.message); }
+    finally{ const btn = document.getElementById('br_save'); if(btn) btn.disabled = false; }
+  };
+
+  document.getElementById('br_pick').onclick = ()=>document.getElementById('br_logoFile').click();
+  document.getElementById('br_logoFile').onchange = async (e)=>{
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if(!file) return;
+    say('Uploading…', true);
+    const form = new FormData();
+    form.append('logo', file);
+    try{
+      const res = await fetch(API_BASE + '/branding/logo', {
+        method:'POST', headers:{ Authorization:'Bearer ' + state.token }, body: form,
+      });
+      const data = await res.json().catch(()=>({ error:`Upload failed (HTTP ${res.status})` }));
+      if(!res.ok) throw new Error(data.error || 'Upload failed');
+      BRANDING = data.branding; paintBranding(); renderBranding();
+      showToast('Logo updated.');
+    }catch(e2){ say(e2.message); }
+  };
+
+  const clear = document.getElementById('br_clear');
+  if(clear) clear.onclick = async ()=>{
+    if(!confirm('Remove the logo? The header goes back to the first letter of the name.')) return;
+    try{
+      const { branding } = await api('/branding/logo', { method:'DELETE' });
+      BRANDING = branding; paintBranding(); renderBranding();
+      showToast('Logo removed.');
+    }catch(e){ say(e.message); }
+  };
 }
 
 async function renderRolePermissions(){

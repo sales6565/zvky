@@ -7,6 +7,7 @@ const reporting = require('./reporting');
 const catalog = require('./permission-catalog');
 const rolePermissions = require('./role-permissions');
 const defaults = require('./reference-defaults');
+const branding = require('./branding');
 const { normalizeCheckClause } = require('./schema-check');
 
 // Small, idempotent schema repairs applied at startup.
@@ -1258,6 +1259,33 @@ async function ensureCollationConsistency(db, log) {
   }
 }
 
+
+/* The studio's own name, tagline and logo.
+ *
+ * One row, id 1, so there is nothing to pick between. The logo lives in the
+ * table rather than on disk because an uploads directory does not survive a
+ * redeploy on the kind of shared hosting this runs on, and a logo that
+ * disappears when the app is updated is worse than a MEDIUMBLOB.
+ */
+async function ensureBranding(db, log) {
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS branding (
+      id              TINYINT      NOT NULL PRIMARY KEY,
+      app_name        VARCHAR(60)  NOT NULL,
+      tagline         VARCHAR(120) NULL,
+      logo            MEDIUMBLOB   NULL,
+      logo_mime       VARCHAR(64)  NULL,
+      logo_updated_at DATETIME     NULL,
+      updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+
+  const { rows } = await db.query('SELECT COUNT(*) AS n FROM branding WHERE id = 1');
+  if (Number(rows[0].n) === 0) {
+    await db.query('INSERT INTO branding (id, app_name, tagline) VALUES (1, $1, $2)',
+      [branding.DEFAULTS.appName, branding.DEFAULTS.tagline]);
+    log(`Schema: branding seeded as "${branding.DEFAULTS.appName}".`);
+  }
+}
+
 const STEPS = [
   ['stale role constraints', dropStaleRoleConstraints],
   ['users.role column width', widenRoleColumn],
@@ -1278,6 +1306,9 @@ const STEPS = [
      a mismatch left here does not only break queries — it silently stops the
      schema getting the constraints it asks for. */
   ['collation alignment', ensureCollationConsistency],
+  ['branding', ensureBranding],
+  // Its mirror, after the table exists and is seeded.
+  ['branding mirror', (db) => branding.load(db)],
   ['client hierarchy', ensureClients],
   // After the client step, so client.* exists in the catalogue by the time
   // roles are topped up against it.

@@ -527,3 +527,82 @@ test('a collation mismatch is repaired at startup and named until it is', () => 
   assert.ok(alignment < clients,
     'collation alignment must run before the step that adds the clients foreign key');
 });
+
+test('the brand colour is readable everywhere it is used', () => {
+  /* #7f1416 is a DARK red. It is fine as a fill with white on it, and unusable
+     as text on this app's dark background — 1.7:1, which is no contrast at all.
+     So it is two tokens, and this checks both do the job they are given. */
+  const fs = require('fs');
+  const path = require('path');
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+
+  const tokenOf = (name) => {
+    const m = new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{3,8})`).exec(page);
+    assert.ok(m, `--${name} should be defined`);
+    return m[1];
+  };
+  const hex = (h) => { const v = h.replace('#', ''); return [0, 2, 4].map((i) => parseInt(v.slice(i, i + 2), 16)); };
+  const lin = (c) => { const x = c / 255; return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; };
+  const L = (h) => { const [r, g, b] = hex(h).map(lin); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+  const ratio = (a, b) => (Math.max(L(a), L(b)) + 0.05) / (Math.min(L(a), L(b)) + 0.05);
+
+  const brand = tokenOf('brand');
+  const brandInk = tokenOf('brand-ink');
+  const accent = tokenOf('brand-accent');
+  const bg = tokenOf('bg');
+
+  assert.strictEqual(brand.toLowerCase(), '#7f1416', 'the studio red');
+  assert.ok(ratio(brand, brandInk) >= 4.5,
+    `text on the brand fill is ${ratio(brand, brandInk).toFixed(2)}:1, under AA`);
+  assert.ok(ratio(accent, bg) >= 4.5,
+    `the accent reads ${ratio(accent, bg).toFixed(2)}:1 on the page background, under AA`);
+
+  // The dark red must never be used AS text — that is the mistake this splits.
+  assert.ok(!/color:var\(--brand\)[^-]/.test(page),
+    'the dark fill colour must not be used as a text colour');
+});
+
+test('the workflow colours are untouched and still tell each other apart', () => {
+  /* They carry meaning on the Dashboard, so branding does not get to change
+     them — and the new accent must not be mistakable for one of them either. */
+  const fs = require('fs');
+  const path = require('path');
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+
+  const STATUS = {
+    not_started: 'var(--not)', assigned: '#5b8def', in_progress: 'var(--prog)',
+    pending_tl_review: 'var(--review)', tl_changes_requested: '#e8402c',
+    pending_cd_review: '#9b7ef0', cd_changes_requested: '#e8402c',
+    approved_for_client: 'var(--approved)', delivered: 'var(--final)',
+  };
+  for (const [id, colour] of Object.entries(STATUS)) {
+    const row = new RegExp(`id:\\s*'${id}'[^}]*color:\\s*'${colour.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`);
+    assert.match(page, row, `${id} should still be ${colour}`);
+  }
+
+  // The tokens behind them, unchanged.
+  for (const [name, value] of [['not', '#6b7280'], ['prog', '#f2b33d'], ['review', '#9b7ef0'],
+    ['approved', '#3ddc97'], ['final', '#d4ff3d']]) {
+    assert.match(page, new RegExp(`--${name}:\\s*${value}`), `--${name} should still be ${value}`);
+  }
+
+  // And the accent keeps its distance from the nearest of them.
+  const hex = (h) => { const v = h.replace('#', ''); return [0, 2, 4].map((i) => parseInt(v.slice(i, i + 2), 16)); };
+  const lin = (c) => { const x = c / 255; return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; };
+  const lab = (h) => {
+    const [r, g, b] = hex(h).map(lin);
+    const f = (t) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+    const x = f((0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047);
+    const y = f(0.2126 * r + 0.7152 * g + 0.0722 * b);
+    const z = f((0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883);
+    return [116 * y - 16, 500 * (x - y), 200 * (y - z)];
+  };
+  const dE = (a, b) => { const A = lab(a); const B = lab(b);
+    return Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]); };
+
+  const accent = /--brand-accent:\s*(#[0-9a-fA-F]{6})/.exec(page)[1];
+  for (const colour of ['#6b7280', '#5b8def', '#f2b33d', '#9b7ef0', '#e8402c', '#3ddc97', '#d4ff3d']) {
+    assert.ok(dE(accent, colour) >= 25,
+      `the brand accent is ΔE ${dE(accent, colour).toFixed(0)} from ${colour} — too close to tell apart`);
+  }
+});
