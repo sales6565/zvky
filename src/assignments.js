@@ -115,7 +115,8 @@ async function listFor(db, assetIds) {
   let rows = [];
   try {
     ({ rows } = await db.query(
-      `SELECT ass.*, u.\`name\` AS user_name, b.\`name\` AS assigned_by_name,
+      `SELECT ass.*, u.\`name\` AS user_name, u.avatar_updated_at AS user_photo_at,
+              b.\`name\` AS assigned_by_name,
               COALESCE(t.seconds, 0) AS seconds,
               COALESCE(t.running, 0) AS running
          FROM asset_assignments ass
@@ -171,6 +172,7 @@ async function listFor(db, assetIds) {
       assetId: row.asset_id,
       userId: row.user_id,
       userName: row.user_name || 'somebody who no longer has an account',
+      userPhotoAt: row.user_photo_at || null,
       assignedById: row.assigned_by_id,
       assignedByName: row.assigned_by_name || null,
       assignedAt: row.assigned_at,

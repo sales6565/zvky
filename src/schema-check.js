@@ -54,6 +54,8 @@ const REQUIRED = [
   { table: 'ip_allowlist',     column: null,            step: 'IP allowlist' },
   { table: 'categories',       column: null,            step: 'reference tables' },
   { table: 'assets',           column: 'category',      step: 'asset category' },
+  { table: 'users',            column: 'avatar',        step: 'profile photos' },
+  { table: 'users',            column: 'avatar_mime',   step: 'profile photos' },
   { table: 'branding',         column: null,            step: 'branding' },
   { table: 'branding',         column: 'logo',          step: 'branding' },
 ];

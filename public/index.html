@@ -90,7 +90,33 @@ header.top{display:flex;align-items:center;justify-content:space-between;gap:16p
 .card .name{font-family:'Space Grotesk';font-weight:700;font-size:13.5px;margin:2px 0 6px;line-height:1.25;}
 .card .meta{display:flex;align-items:center;justify-content:space-between;margin-top:6px;}
 .type-tag{font-size:10px;padding:2px 7px;border-radius:20px;background:var(--surface-3);color:var(--ink-muted);font-family:'IBM Plex Mono';}
-.avatar{width:22px;height:22px;border-radius:50%;background:var(--surface-3);color:var(--ink);display:flex;align-items:center;justify-content:center;font-size:9.5px;font-weight:700;font-family:'Space Grotesk';border:1px solid var(--border);}
+.avatar{width:22px;height:22px;border-radius:50%;background:var(--surface-3);color:var(--ink);display:flex;align-items:center;justify-content:center;font-size:9.5px;font-weight:700;font-family:'Space Grotesk';border:1px solid var(--border);flex:none;overflow:hidden;}
+/* The photo form of the same circle. object-fit:cover crops to the square
+   rather than squashing a portrait, and display:block kills the baseline gap
+   an inline <img> would leave inside the circle. */
+img.avatar{display:block;object-fit:cover;padding:0;}
+/* A name with its face beside it — the pattern used by the Users tab, the
+   submission list, the review panels and the history. */
+.who-line{display:flex;align-items:center;gap:7px;min-width:0;}
+/* --- the Profile photo section --- */
+.photo-row{display:flex;align-items:center;gap:14px;margin-top:4px;}
+.photo-row .avatar{width:64px;height:64px;font-size:22px;}
+.photo-actions{display:flex;flex-direction:column;gap:6px;min-width:0;}
+.photo-buttons{display:flex;gap:8px;flex-wrap:wrap;}
+.photo-hint{font-size:11px;color:var(--ink-faint);line-height:1.45;}
+.photo-preview{margin-top:14px;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);}
+.photo-preview-body{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;}
+/* The crop box. Round, because the result is always shown round — cropping
+   inside a square and then discovering the corners are cut is a small
+   unpleasant surprise. */
+#pf_canvas{width:128px;height:128px;border-radius:50%;background:var(--surface-3);
+  border:1px solid var(--border);cursor:grab;touch-action:none;flex:none;}
+#pf_canvas:active{cursor:grabbing;}
+.photo-preview-side{display:flex;flex-direction:column;gap:9px;flex:1;min-width:150px;}
+.photo-zoom{display:flex;align-items:center;gap:8px;font-size:10.5px;text-transform:uppercase;
+  letter-spacing:.5px;color:var(--ink-muted);font-family:'IBM Plex Mono';}
+.photo-zoom input[type=range]{flex:1;accent-color:var(--brand-accent);padding:0;background:none;border:0;}
+.who-line>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .priority-flag{width:0;height:0;border-style:solid;position:absolute;top:0;left:10px;}
 .priority-high .priority-flag{border-width:0 8px 12px 8px;border-color:transparent transparent var(--brand-accent) transparent;}
 .priority-med .priority-flag{border-width:0 8px 12px 8px;border-color:transparent transparent var(--prog) transparent;}
@@ -538,6 +564,40 @@ tr.past-round{opacity:0.62;}
     <div class="field-lbl">Signed in as</div>
     <div id="pf_identity" style="font-size:13px;"></div>
 
+    <!-- Above the password section, as asked. The photo is the lighter of the
+         two things on this screen: it is changed casually and often, where a
+         password is changed rarely and carefully. -->
+    <div class="field-lbl" style="margin-top:20px;">Profile photo</div>
+    <div class="photo-row">
+      <div id="pf_photo"></div>
+      <div class="photo-actions">
+        <div class="photo-buttons">
+          <button type="button" class="btn btn-ghost btn-sm" id="pf_pick">Upload photo</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="pf_remove" style="display:none;">Remove</button>
+        </div>
+        <div class="photo-hint" id="pf_photo_hint"></div>
+      </div>
+      <input type="file" id="pf_file" accept="image/jpeg,image/png,image/webp" style="display:none;">
+    </div>
+    <!-- The preview. Hidden until a file is chosen, so the resting state of
+         this screen is one row, not an empty crop box. -->
+    <div id="pf_preview" class="photo-preview" hidden>
+      <div class="photo-preview-body">
+        <canvas id="pf_canvas" width="256" height="256"></canvas>
+        <div class="photo-preview-side">
+          <div class="photo-hint">This is the square that will be saved. Drag to reframe.</div>
+          <label class="photo-zoom">Zoom
+            <input type="range" id="pf_zoom" min="100" max="300" value="100">
+          </label>
+          <div class="photo-buttons">
+            <button type="button" class="btn btn-brand btn-sm" id="pf_save_photo">Save photo</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="pf_cancel_photo">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="field-err" id="pf_photo_err"></div>
+
     <div class="field-lbl" style="margin-top:20px;">Change password</div>
 
     <label>Current password</label>
@@ -587,6 +647,23 @@ tr.past-round{opacity:0.62;}
   <div class="modal">
     <h2>Edit User</h2>
     <div id="eu_who" style="font-size:12px;color:var(--ink-muted);margin-bottom:14px;"></div>
+    <!-- Shown only to someone who may administer this account; the API applies
+         the same rule, so this is convenience, not the control. -->
+    <div id="eu_photoWrap" style="display:none;">
+      <div class="field-lbl">Profile photo</div>
+      <div class="photo-row">
+        <div id="eu_photo"></div>
+        <div class="photo-actions">
+          <div class="photo-buttons">
+            <button type="button" class="btn btn-ghost btn-sm" id="eu_pick">Upload photo</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="eu_removePhoto" style="display:none;">Remove</button>
+          </div>
+          <div class="photo-hint">JPG, PNG or WebP, up to 3MB. Saved as soon as you choose it.</div>
+        </div>
+        <input type="file" id="eu_file" accept="image/jpeg,image/png,image/webp" style="display:none;">
+      </div>
+      <div class="field-err" id="eu_photo_err"></div>
+    </div>
     <div id="eu_detailsWrap">
       <label>Name</label><input type="text" id="eu_name" placeholder="Full name">
       <label>Email</label><input type="text" id="eu_email" placeholder="name@zvky.studio">
@@ -859,7 +936,7 @@ function taskRowHTML(t, manage){
   return `<div class="task-row ${t.done?'done':''}" data-tid="${t.id}">
     <input type="checkbox" ${t.done?'checked':''} ${manage?'':'disabled'}>
     <span class="task-text">${escapeHTML(t.name)}</span>
-    ${t.created_by_name?`<span class="task-who" title="Added by ${escapeHTML(t.created_by_name)}">${escapeHTML(initials(t.created_by_name))}</span>`:''}
+    ${t.created_by_name?avatarHTML({ id:t.created_by, name:t.created_by_name, photoAt:t.created_by_photo_at }, { size:18, title:`Added by ${t.created_by_name}` }):''}
     ${manage?`<button class="task-btn task-edit" title="Rename">✎</button><button class="task-btn task-del" title="Delete">×</button>`:''}
   </div>`;
 }
@@ -1036,6 +1113,73 @@ function visibleStatuses(){
   });
 }
 function initials(name){ return (name||'?').trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase(); }
+
+/* ---------- who somebody is, on screen ----------
+ *
+ * One function draws every person in this app, because there are now eight
+ * places that do it — the header, the Users tab, the board cards, the Assets
+ * List, the drawer, submissions, review panels and the history — and eight
+ * copies of "photo if there is one, initials if not" would not stay in step.
+ *
+ * The photo URL carries the upload time. That is what makes a changed photo
+ * appear immediately: the URL itself changes, so a cached image cannot be the
+ * one shown. Without it the browser would keep serving the old face for as
+ * long as it felt like.
+ *
+ * `at` is the avatar_updated_at the API sends (photoUpdatedAt, assignee_photo_at,
+ * actor_photo_at...). Null or absent means no photo, and the initials are
+ * drawn instead — which is the normal case for most of a studio, not an error.
+ */
+function photoUrl(id, at){
+  if(!id || !at) return null;
+  return `${API_BASE}/users/${encodeURIComponent(id)}/photo?v=${encodeURIComponent(new Date(at).getTime())}`;
+}
+
+/* opts:
+ *   size   pixel diameter of the circle (default: whatever .avatar says)
+ *   cls    extra classes, for the caller's own layout
+ *   title  a tooltip; pass false for none, a string to override the name
+ *   attrs  raw extra attributes, for the one element that needs an id
+ *   empty  what to show when there is no name at all (default an em dash)
+ *
+ * The <img> and the <div> carry the same class, so one CSS rule sizes both and
+ * a row does not shift when somebody adds a photo.
+ */
+function avatarHTML(person = {}, opts = {}){
+  const { id, name, photoAt } = person;
+  const cls = `avatar${opts.cls ? ' ' + opts.cls : ''}`;
+  const size = opts.size
+    ? `width:${opts.size}px;height:${opts.size}px;font-size:${Math.round(opts.size * 0.4)}px;`
+    : '';
+  const label = opts.title === false ? null : (opts.title || name || '');
+  const title = label ? ` title="${escapeHTML(label)}"` : '';
+  const attrs = opts.attrs ? ' ' + opts.attrs : '';
+  const url = photoUrl(id, photoAt);
+  if(url){
+    /* onerror: a photo removed in another tab, or a 404 from a database that
+       has not had the migration yet, must not leave a broken-image icon in the
+       header. Fall back to the initials the person would have had anyway —
+       data-initials rather than a rebuilt call, so nothing has to survive
+       being escaped into an attribute. */
+    return `<img${attrs} class="${cls}" src="${escapeHTML(url)}" alt="${escapeHTML(name||'')}"${title}`
+      + ` style="${size}" data-initials="${escapeHTML(name ? initials(name) : (opts.empty || '—'))}"`
+      + ` onerror="avatarFellBack(this)">`;
+  }
+  const text = name ? initials(name) : (opts.empty || '—');
+  return `<div${attrs} class="${cls}"${title} style="${size}">${escapeHTML(text)}</div>`;
+}
+
+/* Turn a failed <img> avatar into the initials circle, keeping its id, classes
+   and size so the surrounding layout does not notice. */
+function avatarFellBack(img){
+  const div = document.createElement('div');
+  div.className = img.className;
+  if(img.id) div.id = img.id;
+  div.setAttribute('style', img.getAttribute('style') || '');
+  if(img.title) div.title = img.title;
+  div.textContent = img.dataset.initials || '—';
+  img.replaceWith(div);
+}
 function escapeHTML(s){ const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
 
 let state = { view:'board', search:'', filterType:'', listGroup:'active',
@@ -1246,7 +1390,11 @@ async function showApp(){
 /* ---------- app boot ---------- */
 async function bootApp(){
   const u = state.currentUser;
-  document.getElementById('userAvatar').textContent = initials(u.name);
+  /* outerHTML, not textContent: the badge is now a photo or the initials,
+     and which one it is changes when somebody uploads. */
+  document.getElementById('userAvatar').outerHTML =
+    avatarHTML({ id:u.id, name:u.name, photoAt:u.photoUpdatedAt },
+               { size:26, title:false, attrs:'id="userAvatar"' });
   document.getElementById('userName').textContent = u.name;
   const rb = document.getElementById('userRoleBadge');
   const ri = roleInfo(u.role);
@@ -1493,7 +1641,7 @@ function cardHTML(a){
     <div class="code">${a.code}${metaBits.length? ' · '+metaBits.join(' · ') : ''}</div><div class="name">${escapeHTML(a.name)}</div>
     <div class="meta"><span class="type-tag">${t.label}</span>
       <div style="display:flex;align-items:center;gap:6px;"><span class="mono" style="font-size:10px;color:var(--ink-faint);">${doneTasks}/${a.tasks.length}</span>
-        <div class="avatar" title="${escapeHTML(a.assignee_name||'')}">${a.assignee_name ? initials(a.assignee_name) : '—'}</div></div>
+        ${avatarHTML({ id:a.assignee_id, name:a.assignee_name, photoAt:a.assignee_photo_at })}</div>
     </div></div>`;
 }
 function renderBoard(){
@@ -1604,7 +1752,7 @@ function renderList(){
       <!-- The estimate. Time Spent, the last column, is what the timer recorded. -->
       <td class="mono">${a.man_hours ? a.man_hours+'h' : '—'}</td>
       <td><span class="status-pill" style="background:${s.color}22;color:${s.color}"><span class="d" style="background:${s.color}"></span>${s.label}</span></td>
-      <td>${escapeHTML(who)||'—'}</td>
+      <td>${who ? `<span class="who-line">${avatarHTML({ id: ep ? ep.userId : a.assignee_id, name: who, photoAt: ep ? ep.userPhotoAt : a.assignee_photo_at }, { size:20, title:false })}<span>${escapeHTML(who)}</span></span>` : '—'}</td>
       <td>${ep ? (past ? `<span class="round-tag">handed on</span>` : `<span class="round-tag round-tag-live">current</span>`) : ''}</td>
       <td style="text-transform:capitalize;">${a.priority}</td><td class="mono">${past?'':`${doneTasks}/${a.tasks.length}`}</td>
       <td class="mono">${seconds?fmtDuration(seconds):'—'}${running?' <span class="timer-live" title="The clock is running">●</span>':''}</td></tr>`;
@@ -1811,7 +1959,7 @@ async function renderUsers(){
         const reporting = x.topOfHierarchy
           ? '<span class="ud-top">Top of hierarchy</span>'
           : (x.reportsToName ? escapeHTML(x.reportsToName) : '<span class="ud-none">Not set</span>');
-        return `<tr><td><button class="u-link userDetailBtn" data-id="${x.id}">${escapeHTML(x.name)}</button></td>
+        return `<tr><td><span class="who-line">${avatarHTML({ id:x.id, name:x.name, photoAt:x.photoUpdatedAt }, { size:24, title:false })}<button class="u-link userDetailBtn" data-id="${x.id}">${escapeHTML(x.name)}</button></span></td>
           <td class="mono" style="font-size:11.5px;">${escapeHTML(x.email)}</td>
           <td><span class="role-badge" title="${escapeHTML(r.group||'')}" style="background:${r.color}22;color:${r.color}">${escapeHTML(r.label)}</span></td>
           <td>${x.projectName ? escapeHTML(x.projectName) : '<span class="ud-none">None</span>'}</td>
@@ -2448,13 +2596,15 @@ async function openDrawer(id){
     <div class="field-lbl" style="margin-top:16px;">Assignee</div>
     ${mayAssignAsset(a)
       ? `<select id="d_assignee"><option value="">Loading…</option></select><div class="ref-err" id="d_assigneeErr"></div>`
-      : `<div style="font-size:13px;padding:8px 0;">${escapeHTML(a.assignee_name)||'Unassigned'}</div>`}
+      : `<div style="font-size:13px;padding:8px 0;">${a.assignee_name
+            ? `<span class="who-line">${avatarHTML({ id:a.assignee_id, name:a.assignee_name, photoAt:a.assignee_photo_at }, { size:22, title:false })}<span>${escapeHTML(a.assignee_name)}</span></span>`
+            : 'Unassigned'}</div>`}
 
 
     <div class="field-lbl">Submissions</div>
     <div id="d_versions">${(a.versions&&a.versions.length) ? a.versions.map(v=>`
       <div class="note" style="border-left-color:${v.stage==='tl'?'var(--review)':'#9b7ef0'};">
-        <span class="who">v${v.version_number} · ${escapeHTML(v.uploaded_by_name||'Someone')} · ${v.stage==='tl'?'Team Lead review':'Creative Director review'}</span> <span class="when">${fmtDate(v.created_at)}</span>
+        <span class="who">v${v.version_number} · ${avatarHTML({ id:v.uploaded_by, name:v.uploaded_by_name, photoAt:v.uploaded_by_photo_at }, { size:16, title:false })} ${escapeHTML(v.uploaded_by_name||'Someone')} · ${v.stage==='tl'?'Team Lead review':'Creative Director review'}</span> <span class="when">${fmtDate(v.created_at)}</span>
         ${v.link?`<p><a href="${escapeHTML(v.link)}" target="_blank" rel="noopener noreferrer" style="color:var(--brand-accent);word-break:break-all;">${escapeHTML(v.link)}</a></p>`:''}
         ${v.description?`<p>${escapeHTML(v.description)}</p>`:''}
         ${v.file_name?`<p>${escapeHTML(v.file_name)} ${v.file_size?'· '+fmtBytes(v.file_size):''} — <a href="#" class="downloadVersionLink" data-vid="${v.id}" style="color:var(--brand-accent);">download</a></p>`:''}
@@ -2796,7 +2946,7 @@ async function loadAssetHistory(id){
     const meta = HISTORY_ACTIONS[e.action] || { label: e.action, color: 'var(--ink-muted)' };
     return `<div class="note" style="border-left-color:${meta.color};">
       <span class="who" style="color:${meta.color};">${escapeHTML(meta.label)}</span>
-      <span class="when">${escapeHTML(e.actor)} · ${fmtDate(e.at)}</span>
+      <span class="when who-line">${avatarHTML({ id:e.actorId, name:e.actor, photoAt:e.actorPhotoAt }, { size:16, title:false })}<span>${escapeHTML(e.actor)} · ${fmtDate(e.at)}</span></span>
       <p style="font-size:11px;color:var(--ink-faint);margin:2px 0 0;">
         ${e.fromLabel && e.fromLabel!==e.toLabel ? escapeHTML(e.fromLabel)+' → '+escapeHTML(e.toLabel) : escapeHTML(e.toLabel)}
         ${e.versionNumber?` · v${e.versionNumber}`:''}
@@ -3255,6 +3405,63 @@ let editingUser = null;
 
 function euError(message){ document.getElementById('eu_err').textContent = message || ''; }
 
+/* An administrator setting somebody else's photo.
+ *
+ * The same crop-and-downscale path as the Profile screen — cropSquareToBlob is
+ * shared, so the two cannot drift into producing different sizes — but without
+ * the reframing step. Choosing a face for a colleague is a quick correction
+ * ("this is the wrong person"), not something to sit and compose, so it takes
+ * the centre square and saves. The person themselves can reframe it whenever
+ * they like on their own Profile screen.
+ */
+function euPhotoError(msg){ document.getElementById('eu_photo_err').textContent = msg || ''; }
+
+function renderEditUserPhoto(){
+  const u = editingUser;
+  if(!u) return;
+  document.getElementById('eu_photo').innerHTML =
+    avatarHTML({ id:u.id, name:u.name, photoAt:u.photoUpdatedAt }, { size:64, title:false });
+  const has = Boolean(u.photoUpdatedAt);
+  document.getElementById('eu_removePhoto').style.display = has ? '' : 'none';
+  document.getElementById('eu_pick').textContent = has ? 'Change photo' : 'Upload photo';
+}
+
+async function euUploadPhoto(file){
+  euPhotoError('');
+  const prepared = await cropSquareToBlob(file).catch(err => { euPhotoError(err.message); return null; });
+  if(!prepared) { document.getElementById('eu_file').value=''; return; }
+  try{
+    const body = new FormData();
+    body.append('photo', prepared, 'photo.jpg');
+    const res = await fetch(`${API_BASE}/users/${encodeURIComponent(editingUser.id)}/photo`, {
+      method:'POST', headers:{ Authorization:'Bearer ' + state.token }, body,
+    });
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok) throw new Error(data.error || `Upload failed (HTTP ${res.status})`);
+    editingUser.photoUpdatedAt = data.photoUpdatedAt;
+    renderEditUserPhoto();
+    renderUsers();
+    showToast(`Photo updated for ${editingUser.name}.`);
+  }catch(err){ euPhotoError(err.message); }
+  finally{ document.getElementById('eu_file').value = ''; }
+}
+
+document.getElementById('eu_pick').addEventListener('click', ()=>document.getElementById('eu_file').click());
+document.getElementById('eu_file').addEventListener('change', e=>{
+  const f = e.target.files && e.target.files[0];
+  if(f) euUploadPhoto(f);
+});
+document.getElementById('eu_removePhoto').addEventListener('click', async ()=>{
+  euPhotoError('');
+  try{
+    const res = await api(`/users/${encodeURIComponent(editingUser.id)}/photo`, { method:'DELETE' });
+    editingUser.photoUpdatedAt = res.photoUpdatedAt || null;
+    renderEditUserPhoto();
+    renderUsers();
+    showToast(`Photo removed for ${editingUser.name}.`);
+  }catch(err){ euPhotoError(err.message); }
+});
+
 async function openEditUser(id){
   euError('');
   let user, managerOptions;
@@ -3277,6 +3484,11 @@ async function openEditUser(id){
   document.getElementById('eu_email').value = user.email || '';
   const show = (id, yes)=>{ document.getElementById(id).style.display = yes ? '' : 'none'; };
   show('eu_detailsWrap', can('user.edit'));
+  /* Same gate as the rest of this form and as the API: whoever may change what
+     this account IS may change its picture. */
+  show('eu_photoWrap', can('user.edit'));
+  euPhotoError('');
+  renderEditUserPhoto();
   show('eu_roleWrap',    can('user.change_role'));
   show('eu_projectWrap', can('user.change_project'));
 
@@ -4240,8 +4452,248 @@ async function openProfileModal(){
     catch(err){ /* the checklist is a convenience; the server still validates */ }
   }
   renderPasswordRules('');
+  photoError('');
+  closePhotoPreview();
+  renderProfilePhoto();
   profileModalWrap.classList.add('show');
 }
+
+/* ---------- profile photo ----------
+ *
+ * The browser does the cropping and the downscaling, for three reasons: it is
+ * the only way to show someone the square they are actually going to get
+ * before they commit to it; there is no image library on the server to do it
+ * with; and a 4MB photo off a phone becomes about 30KB before it is ever
+ * uploaded, which is the difference between a column that is fine to read on
+ * every page and one that is not.
+ *
+ * None of that is trusted. The server checks the type and the size again, and
+ * sniffs the magic bytes rather than believing the Content-Type — see
+ * src/avatar.js. This code is a convenience for the person using it, not a
+ * control.
+ */
+const PHOTO_MAX_BYTES = 3 * 1024 * 1024;   // matches the server's cap
+const PHOTO_OUTPUT_PX = 256;               // plenty for a 64px circle on a retina screen
+const PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
+/* What the crop box is currently showing: the loaded image, how far it is
+   zoomed, and where it has been dragged to. */
+let photoEdit = null;
+
+/* The checks, in one place, so the Profile screen and the Users tab refuse the
+   same things with the same words. Throws with a message fit to show. */
+function checkPhotoFile(file){
+  if(!PHOTO_TYPES.includes(file.type)){
+    throw new Error(`${file.type || 'That file'} is not a supported image. Use JPG, PNG or WebP.`);
+  }
+  if(file.size > PHOTO_MAX_BYTES){
+    throw new Error(`That image is ${(file.size/1024/1024).toFixed(1)}MB; the limit is 3MB.`);
+  }
+}
+
+function loadImageFile(file){
+  return new Promise((resolve, reject)=>{
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = ()=>resolve({ img, url });
+    img.onerror = ()=>{ URL.revokeObjectURL(url); reject(new Error('That file could not be read as an image.')); };
+    img.src = url;
+  });
+}
+
+/* Centre square, scaled to PHOTO_OUTPUT_PX, as a JPEG blob. The Profile screen
+   lets someone move that square around first; the Users tab just takes it. Both
+   end at the same size and format, which is the point of sharing this. */
+async function cropSquareToBlob(file){
+  checkPhotoFile(file);
+  const { img, url } = await loadImageFile(file);
+  try{
+    const side = Math.min(img.width, img.height);
+    const c = document.createElement('canvas');
+    c.width = c.height = PHOTO_OUTPUT_PX;
+    c.getContext('2d').drawImage(
+      img, (img.width - side)/2, (img.height - side)/2, side, side,
+      0, 0, PHOTO_OUTPUT_PX, PHOTO_OUTPUT_PX);
+    return await canvasToJpeg(c);
+  } finally { URL.revokeObjectURL(url); }
+}
+
+function canvasToJpeg(canvas){
+  /* JPEG at 0.9: a photograph of a person is much smaller this way than as
+     PNG, and the difference is invisible in a 64px circle. About 20-30KB. */
+  return new Promise((resolve, reject)=>{
+    canvas.toBlob(b => b ? resolve(b) : reject(new Error('The image could not be prepared.')),
+                  'image/jpeg', 0.9);
+  });
+}
+
+function photoError(msg){ document.getElementById('pf_photo_err').textContent = msg || ''; }
+
+/* The circle at the top of the section, plus whether "Remove" applies. */
+function renderProfilePhoto(){
+  const u = state.currentUser;
+  document.getElementById('pf_photo').innerHTML =
+    avatarHTML({ id:u.id, name:u.name, photoAt:u.photoUpdatedAt }, { size:64, title:false });
+  const has = Boolean(u.photoUpdatedAt);
+  document.getElementById('pf_remove').style.display = has ? '' : 'none';
+  document.getElementById('pf_pick').textContent = has ? 'Change photo' : 'Upload photo';
+  document.getElementById('pf_photo_hint').textContent = has
+    ? 'JPG, PNG or WebP, up to 3MB.'
+    : 'No photo yet — your initials are shown instead. JPG, PNG or WebP, up to 3MB.';
+}
+
+function closePhotoPreview(){
+  document.getElementById('pf_preview').hidden = true;
+  document.getElementById('pf_file').value = '';
+  photoEdit = null;
+}
+
+/* Draw the current framing into the canvas. Called on load, on zoom and on
+   every drag, so it has to be cheap: one drawImage, no allocation. */
+function paintPhotoCrop(){
+  if(!photoEdit) return;
+  const c = document.getElementById('pf_canvas');
+  const ctx = c.getContext('2d');
+  const { img, scale, dx, dy } = photoEdit;
+  ctx.clearRect(0, 0, c.width, c.height);
+  const w = img.width * scale, h = img.height * scale;
+  ctx.drawImage(img, dx, dy, w, h);
+}
+
+/* Clamp the framing so the image always covers the whole circle — you cannot
+   drag a corner in and save a photo with a transparent wedge in it. */
+function clampPhotoOffset(){
+  const c = PHOTO_OUTPUT_PX;
+  const w = photoEdit.img.width * photoEdit.scale, h = photoEdit.img.height * photoEdit.scale;
+  photoEdit.dx = Math.min(0, Math.max(c - w, photoEdit.dx));
+  photoEdit.dy = Math.min(0, Math.max(c - h, photoEdit.dy));
+}
+
+function openPhotoPreview(file){
+  photoError('');
+  /* Checked before anything is uploaded, so the message names the real problem
+     and nobody waits for a 3MB upload to fail. The server refuses the same
+     things — this is the courtesy, not the control. */
+  try{ checkPhotoFile(file); }
+  catch(err){ photoError(err.message); document.getElementById('pf_file').value=''; return; }
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = ()=>{
+    /* Start zoomed to cover: the shorter side exactly fills the circle, which
+       is the framing somebody almost always wants, and centred on it. */
+    const base = PHOTO_OUTPUT_PX / Math.min(img.width, img.height);
+    photoEdit = { img, base, scale: base, dx: 0, dy: 0, url };
+    photoEdit.dx = (PHOTO_OUTPUT_PX - img.width * base) / 2;
+    photoEdit.dy = (PHOTO_OUTPUT_PX - img.height * base) / 2;
+    document.getElementById('pf_zoom').value = 100;
+    document.getElementById('pf_preview').hidden = false;
+    paintPhotoCrop();
+  };
+  img.onerror = ()=>{
+    URL.revokeObjectURL(url);
+    photoError('That file could not be read as an image.');
+    document.getElementById('pf_file').value = '';
+  };
+  img.src = url;
+}
+
+async function saveProfilePhoto(){
+  if(!photoEdit) return;
+  const btn = document.getElementById('pf_save_photo');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  photoError('');
+  try{
+    const blob = await canvasToJpeg(document.getElementById('pf_canvas'));
+    const body = new FormData();
+    body.append('photo', blob, 'photo.jpg');
+    const res = await fetch(`${API_BASE}/users/me/photo`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + state.token },
+      body,
+    });
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok) throw new Error(data.error || `Upload failed (HTTP ${res.status})`);
+    state.currentUser.photoUpdatedAt = data.photoUpdatedAt;
+    afterPhotoChange('Profile photo updated.');
+  }catch(err){ photoError(err.message); }
+  finally{ btn.disabled = false; btn.textContent = 'Save photo'; }
+}
+
+async function removeProfilePhoto(){
+  photoError('');
+  try{
+    const res = await api('/users/me/photo', { method:'DELETE' });
+    state.currentUser.photoUpdatedAt = res.photoUpdatedAt || null;
+    afterPhotoChange('Profile photo removed.');
+  }catch(err){ photoError(err.message); }
+}
+
+/* One place to redraw after the photo changes, so the header and whatever tab
+   is open pick it up without a reload — the picture is on screen in several
+   places at once and they must not disagree. */
+function afterPhotoChange(message){
+  if(photoEdit && photoEdit.url) URL.revokeObjectURL(photoEdit.url);
+  closePhotoPreview();
+  renderProfilePhoto();
+  const u = state.currentUser;
+  const badge = document.getElementById('userAvatar');
+  if(badge){
+    badge.outerHTML = avatarHTML({ id:u.id, name:u.name, photoAt:u.photoUpdatedAt },
+                                 { size:26, title:false, attrs:'id="userAvatar"' });
+  }
+  render();
+  showToast(message);
+}
+
+document.getElementById('pf_pick').addEventListener('click', ()=>document.getElementById('pf_file').click());
+document.getElementById('pf_file').addEventListener('change', e=>{
+  const file = e.target.files && e.target.files[0];
+  if(file) openPhotoPreview(file);
+});
+document.getElementById('pf_zoom').addEventListener('input', e=>{
+  if(!photoEdit) return;
+  /* Zoom about the centre of the circle, so the face stays where it was
+     instead of sliding out of frame as the slider moves. */
+  const c = PHOTO_OUTPUT_PX / 2;
+  const next = photoEdit.base * (Number(e.target.value) / 100);
+  const ratio = next / photoEdit.scale;
+  photoEdit.dx = c - (c - photoEdit.dx) * ratio;
+  photoEdit.dy = c - (c - photoEdit.dy) * ratio;
+  photoEdit.scale = next;
+  clampPhotoOffset();
+  paintPhotoCrop();
+});
+/* Dragging to reframe. Pointer events rather than mouse events, so this works
+   with a finger on the phone as well as with a mouse. */
+(function wirePhotoDrag(){
+  const c = document.getElementById('pf_canvas');
+  let from = null;
+  c.addEventListener('pointerdown', e=>{
+    if(!photoEdit) return;
+    from = { x:e.clientX, y:e.clientY, dx:photoEdit.dx, dy:photoEdit.dy };
+    c.setPointerCapture(e.pointerId);
+  });
+  c.addEventListener('pointermove', e=>{
+    if(!from || !photoEdit) return;
+    /* The canvas is drawn at 128 CSS pixels but is 256 across, so a drag of
+       one screen pixel has to move the image by two. */
+    const k = PHOTO_OUTPUT_PX / c.getBoundingClientRect().width;
+    photoEdit.dx = from.dx + (e.clientX - from.x) * k;
+    photoEdit.dy = from.dy + (e.clientY - from.y) * k;
+    clampPhotoOffset();
+    paintPhotoCrop();
+  });
+  const stop = ()=>{ from = null; };
+  c.addEventListener('pointerup', stop);
+  c.addEventListener('pointercancel', stop);
+})();
+document.getElementById('pf_save_photo').addEventListener('click', saveProfilePhoto);
+document.getElementById('pf_cancel_photo').addEventListener('click', ()=>{
+  if(photoEdit && photoEdit.url) URL.revokeObjectURL(photoEdit.url);
+  closePhotoPreview();
+  photoError('');
+});
+document.getElementById('pf_remove').addEventListener('click', removeProfilePhoto);
 
 document.getElementById('profileBtn').addEventListener('click', openProfileModal);
 document.getElementById('cancelProfileModal').addEventListener('click', ()=>profileModalWrap.classList.remove('show'));

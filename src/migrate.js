@@ -1153,6 +1153,36 @@ async function ensureReviewGateDefaults(db, log) {
 // The category each asset belongs to. Deliberately no seed: the list starts
 // empty and a Super Admin fills it in Settings, so nobody inherits a taxonomy
 // guessed for them. Nullable, so every asset that already exists stays valid.
+/* Profile photos, stored on the user's own row.
+ *
+ * MEDIUMBLOB rather than BLOB: BLOB tops out at 64KB, and while the browser
+ * downscales before uploading, the server's cap is 3MB and the column has to
+ * be able to hold what the server is willing to accept. Otherwise the limit
+ * would really be enforced by a truncation error, which is not a limit — it is
+ * a corrupted image and a 500.
+ *
+ * Added one at a time and each guarded, so a half-applied migration from an
+ * interrupted deploy completes on the next start instead of failing on the
+ * column it already added. */
+async function ensureProfilePhotos(db, log) {
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users'
+        AND COLUMN_NAME IN ('avatar', 'avatar_mime', 'avatar_updated_at')`
+  );
+  const have = new Set(rows.map((r) => r.COLUMN_NAME));
+  const add = [
+    ['avatar', 'MEDIUMBLOB NULL'],
+    ['avatar_mime', 'VARCHAR(64) NULL'],
+    ['avatar_updated_at', 'DATETIME NULL'],
+  ].filter(([name]) => !have.has(name));
+  if (!add.length) return;
+  for (const [name, type] of add) {
+    await db.query(`ALTER TABLE users ADD COLUMN \`${name}\` ${type}`);
+  }
+  log(`Schema: added users.${add.map(([n]) => n).join(', users.')}.`);
+}
+
 async function ensureAssetCategory(db, log) {
   const { rows } = await db.query(
     `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
@@ -1331,6 +1361,7 @@ const STEPS = [
   ['review gate departments', ensureReviewGateDefaults],
   ['IP allowlist', ensureIpAllowlist],
   ['asset category', ensureAssetCategory],
+  ['profile photos', ensureProfilePhotos],
 ];
 
 async function run(db, log = console.log) {

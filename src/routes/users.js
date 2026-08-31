@@ -14,12 +14,127 @@ const fs = require('node:fs');
 const importFile = require('../import-file');
 const userImport = require('../user-import');
 const { uploadImport } = require('../upload');
+const { userFields } = require('../user-fields');
+const multer = require('multer');
+const avatar = require('../avatar');
 const { visibleProjects, hasFullAccess, mayAdministerUser, holds } = require('../permissions');
 
 // The cost used everywhere passwords are hashed in this codebase.
 const BCRYPT_ROUNDS = 10;
 
+/* The photo itself.
+ *
+ * Deliberately ABOVE router.use(authenticate), so it is reachable without a
+ * token — and that is a decision worth stating rather than leaving to be
+ * discovered.
+ *
+ * This app authenticates with an Authorization header. An <img src> cannot
+ * send one, and avatars appear on every screen, so the alternatives were to
+ * inline every photo as a data: URI in the JSON (which would put tens of
+ * kilobytes per person into an asset list of sixty people) or to put the token
+ * in the query string (which writes it into every proxy and access log). The
+ * studio logo route already takes this shape, for the same reason.
+ *
+ * What protects a photo is therefore the URL: a version 4 UUID, 122 bits of
+ * randomness, handed out only inside authenticated responses. It is a
+ * capability, not a secret — anyone who is given the link can load the image.
+ * That is the accepted trade for a face in a pipeline tool; it would not be
+ * acceptable for anything else, so nothing else goes through here.
+ *
+ * 404 when there is no photo: the page then draws initials, which is the
+ * documented fallback rather than a broken image icon.
+ */
+router.get('/:id/photo', async (req, res) => {
+  const photo = await avatar.read(db, req.params.id).catch(() => null);
+  if (!photo) return res.status(404).json({ error: 'This account has no profile photo.' });
+  res.setHeader('Content-Type', photo.mime);
+  /* Revalidated rather than trusted for a week: the page appends the upload
+     time to the URL, so a new photo is a new URL and appears at once, but a
+     browser that kept the old URL must not show a deleted photo for days. */
+  res.setHeader('Cache-Control', 'private, max-age=300, must-revalidate');
+  res.send(photo.buffer);
+});
+
 router.use(authenticate);
+
+/* In memory, not on disk: it is one small image on its way into a row, so a
+   temp file would only be something to clean up. The cap is enforced here so
+   multer stops the upload early, and again in src/avatar.js so a request that
+   reaches the module another way is still refused. */
+const uploadPhoto = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: avatar.MAX_PHOTO_BYTES, files: 1 },
+});
+
+/* multer aborts an oversized upload before the route body runs, so the generic
+   handler in server.js would answer "larger than this endpoint accepts" — true,
+   but it does not say what the limit IS, which is the one thing someone
+   choosing another file needs to know. Catch it here and say the number. */
+const acceptPhoto = (req, res, next) => uploadPhoto.single('photo')(req, res, (err) => {
+  if (err && err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(400).json({
+      error: `That image is over the ${Math.round(avatar.MAX_PHOTO_BYTES / 1024 / 1024)}MB limit.`,
+      field: 'photo',
+    });
+  }
+  return next(err);
+});
+
+/* Who may change whose photo.
+ *
+ * Your own, always — that needs no permission, the same way changing your own
+ * password does not.
+ *
+ * Somebody else's needs "User Edit" AND the studio's existing rule about who
+ * may administer whom (mayAdministerUser: an account with full studio access
+ * can only be administered by another one). That is deliberately the same gate
+ * as editing their name, email and role, rather than a new permission: a
+ * person trusted to change what an account IS is trusted to change its
+ * picture, and inventing a second rule for the same record is how two rules
+ * drift apart.
+ */
+async function mayChangePhotoOf(actor, targetId) {
+  if (actor.id === targetId) return { ok: true, self: true };
+  if (!holds(actor, 'user.edit')) {
+    return { ok: false, status: 403, error: 'You can only change your own profile photo.' };
+  }
+  const { rows } = await db.query('SELECT id, `role` FROM users WHERE id = $1', [targetId]);
+  const target = rows[0];
+  if (!target) return { ok: false, status: 404, error: 'User not found' };
+  if (!mayAdministerUser(actor, target)) {
+    return { ok: false, status: 403, error: 'That account can only be administered by another full-access account.' };
+  }
+  return { ok: true, self: false };
+}
+
+// "me" is spelled out so the page never has to interpolate the caller's own id.
+const targetIdFor = (req) => (req.params.id === 'me' ? req.user.id : req.params.id);
+
+// POST /api/users/:id/photo — set a profile photo. :id may be "me".
+router.post('/:id/photo', acceptPhoto, async (req, res) => {
+  const targetId = targetIdFor(req);
+  const allowed = await mayChangePhotoOf(req.user, targetId);
+  if (!allowed.ok) return res.status(allowed.status).json({ error: allowed.error });
+  if (!req.file) return res.status(400).json({ error: 'Choose an image to upload.', field: 'photo' });
+
+  const saved = await avatar.save(db, targetId, { buffer: req.file.buffer, mime: req.file.mimetype });
+  if (!saved.ok) return res.status(saved.status).json({ error: saved.error, field: 'photo' });
+
+  console.log(`${req.user.email} set the profile photo for `
+    + `${allowed.self ? 'their own account' : targetId} (${saved.mime}, ${req.file.size} bytes).`);
+  res.json({ ok: true, hasPhoto: true, photoUpdatedAt: new Date().toISOString() });
+});
+
+// DELETE /api/users/:id/photo — back to the initials avatar.
+router.delete('/:id/photo', async (req, res) => {
+  const targetId = targetIdFor(req);
+  const allowed = await mayChangePhotoOf(req.user, targetId);
+  if (!allowed.ok) return res.status(allowed.status).json({ error: allowed.error });
+  await avatar.clear(db, targetId);
+  console.log(`${req.user.email} removed the profile photo for `
+    + `${allowed.self ? 'their own account' : targetId}.`);
+  res.json({ ok: true, hasPhoto: false, photoUpdatedAt: null });
+});
 
 const DEFAULT_PASSWORD = 'zvky2026'; // demo default; real deployments should force a reset on first login
 
@@ -49,7 +164,8 @@ function assignableRolesFor(user) {
 router.get('/', requirePermission('user.view'), async (req, res) => {
   const { search = '', limit = 60, offset = 0, role } = req.query;
   const params = [];
-  let sql = 'SELECT id, name, email, role, manager_id, team_lead_id, reports_to_id, created_at FROM users WHERE 1=1';
+  let sql = 'SELECT id, name, email, role, manager_id, team_lead_id, reports_to_id, created_at, '
+    + 'avatar_updated_at AS `photoUpdatedAt` FROM users WHERE 1=1';
 
   // No row filter. "User View" means the studio's people, for whoever a Super
   // Admin has trusted with it — this used to narrow to `manager_id = you`,
@@ -164,8 +280,12 @@ router.post('/', requirePermission('user.add'), async (req, res) => {
 // One shape for a user everywhere: the row plus the two things this screen
 // edits, resolved to names rather than ids so the caller does not have to look
 // them up again.
+/* Aliased to u., for the queries that join. Deliberately never u.* — see
+   src/user-fields.js: `users` carries the profile photo as a MEDIUMBLOB now,
+   and this row is sent to the browser. */
 const USER_COLUMNS =
-  'u.id, u.`name`, u.email, u.`role`, u.manager_id, u.team_lead_id, u.reports_to_id, u.created_at';
+  'u.id, u.`name`, u.email, u.`role`, u.manager_id, u.team_lead_id, u.reports_to_id, u.created_at, '
+  + 'u.avatar_updated_at AS `photoUpdatedAt`';
 
 async function describeUser(row) {
   const project = await userProject.currentProject(db, row.id);
@@ -191,7 +311,7 @@ async function describeUser(row) {
 
 // PATCH /api/users/:id — change someone's designation (or their reporting line).
 router.patch('/:id', requirePermission('user.edit'), async (req, res) => {
-  const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [req.params.id]);
+  const { rows } = await db.query(`SELECT ${userFields()} FROM users WHERE id = $1`, [req.params.id]);
   const target = rows[0];
   if (!target) return res.status(404).json({ error: 'User not found' });
   if (!mayAdministerUser(req.user, target)) {
@@ -322,7 +442,7 @@ router.patch('/:id', requirePermission('user.edit'), async (req, res) => {
 
 // DELETE /api/users/:id
 router.delete('/:id', requirePermission('user.delete'), async (req, res) => {
-  const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [req.params.id]);
+  const { rows } = await db.query(`SELECT ${userFields()} FROM users WHERE id = $1`, [req.params.id]);
   const target = rows[0];
   if (!target) return res.status(404).json({ error: 'User not found' });
   if (target.id === req.user.id) return res.status(403).json({ error: 'You cannot remove your own account' });

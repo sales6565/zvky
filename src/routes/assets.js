@@ -69,7 +69,8 @@ async function attachTasksAndNotes(assets) {
   const tasks = await enrich('the checklist', async () => {
     try {
       const { rows } = await db.query(
-        `SELECT t.*, u.\`name\` AS created_by_name FROM tasks t
+        `SELECT t.*, u.\`name\` AS created_by_name, u.avatar_updated_at AS created_by_photo_at
+           FROM tasks t
          LEFT JOIN users u ON u.id = t.created_by
          WHERE t.asset_id IN ($1) ORDER BY t.\`position\``,
         [ids]
@@ -91,7 +92,8 @@ async function attachTasksAndNotes(assets) {
   )).rows);
 
   const versions = await enrich('submission history', async () => (await db.query(
-    `SELECT v.*, u.name AS uploaded_by_name FROM asset_versions v
+    `SELECT v.*, u.name AS uploaded_by_name, u.avatar_updated_at AS uploaded_by_photo_at
+       FROM asset_versions v
      LEFT JOIN users u ON u.id = v.uploaded_by
      WHERE v.asset_id IN ($1) ORDER BY v.version_number DESC`,
     [ids]
@@ -150,7 +152,12 @@ function fmtSeconds(total) {
   return `${n}s`;
 }
 
-const ASSET_SELECT = `SELECT a.*, u.name AS assignee_name FROM assets a LEFT JOIN users u ON u.id = a.assignee_id`;
+/* assignee_photo_at is the assignee's avatar_updated_at: the page turns it
+   into a photo URL, and null means draw their initials instead. The image
+   bytes are never selected here — this join runs for every asset on the
+   board, and a MEDIUMBLOB per row would be paid for on every load. */
+const ASSET_SELECT = `SELECT a.*, u.name AS assignee_name, u.avatar_updated_at AS assignee_photo_at
+  FROM assets a LEFT JOIN users u ON u.id = a.assignee_id`;
 
 // Nothing is written to an asset in a closed or archived project.
 //
@@ -565,7 +572,8 @@ router.get('/:id/tasks', async (req, res) => {
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
   if (!(await canViewAsset(req.user, asset))) return res.status(403).json({ error: 'No access to this asset' });
   const { rows: tasks } = await db.query(
-    `SELECT t.*, u.\`name\` AS created_by_name FROM tasks t
+    `SELECT t.*, u.\`name\` AS created_by_name, u.avatar_updated_at AS created_by_photo_at
+       FROM tasks t
      LEFT JOIN users u ON u.id = t.created_by
      WHERE t.asset_id = $1 ORDER BY t.\`position\``,
     [req.params.id]
@@ -620,6 +628,7 @@ router.post('/:id/tasks', async (req, res) => {
     task: {
       id, asset_id: req.params.id, name: name.trim(), done: false,
       created_by: req.user.id, created_by_name: req.user.name,
+      created_by_photo_at: req.user.photoUpdatedAt || null,
     },
   });
 });
@@ -1174,7 +1183,8 @@ router.get('/:id/history', async (req, res) => {
   }
 
   const { rows: events } = await db.query(
-    `SELECT e.*, u.\`name\` AS actor_name, v.version_number, v.link, v.description AS version_description
+    `SELECT e.*, u.\`name\` AS actor_name, u.avatar_updated_at AS actor_photo_at,
+            v.version_number, v.link, v.description AS version_description
        FROM asset_events e
        LEFT JOIN users u ON u.id = e.actor_id
        LEFT JOIN asset_versions v ON v.id = e.version_id
@@ -1195,6 +1205,8 @@ router.get('/:id/history', async (req, res) => {
       toStatus: e.to_status,
       toLabel: workflow.label(e.to_status),
       actor: e.actor_name || e.actor_email || 'system',
+      actorId: e.actor_id || null,
+      actorPhotoAt: e.actor_photo_at || null,
       note: e.note,
       link: e.link,
       versionNumber: e.version_number,

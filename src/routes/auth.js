@@ -6,6 +6,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { v4: uuid } = require('uuid');
 const db = require('../db');
+const { userFields } = require('../user-fields');
 const { authenticate } = require('../middleware/auth');
 const { capabilitiesFor, catalogue } = require('../roles');
 const rolePermissions = require('../role-permissions');
@@ -40,7 +41,10 @@ router.post('/login', async (req, res) => {
     return res.status(400).json({ error: 'Email and password are required' });
   }
   try {
-    const { rows } = await db.query('SELECT * FROM users WHERE lower(email) = lower($1)', [email]);
+    /* Named columns, not *: the row below is sent to the browser, and `users`
+       now carries the profile photo as a MEDIUMBLOB. See src/user-fields.js. */
+    const { rows } = await db.query(
+      `SELECT ${userFields(true)} FROM users WHERE lower(email) = lower($1)`, [email]);
     const user = rows[0];
     // Deliberately vague error so we don't reveal which part was wrong.
     if (!user) return res.status(401).json({ error: 'Invalid email or password' });

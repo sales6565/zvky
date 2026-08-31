@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const db = require('../db');
+const { userFields } = require('../user-fields');
 const { roleDef, capabilitiesFor } = require('../roles');
 const referenceData = require('../reference-data');
 const rolePermissions = require('../role-permissions');
@@ -17,7 +18,7 @@ async function authenticate(req, res, next) {
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
     const { rows } = await db.query(
-      'SELECT id, name, email, role, manager_id, team_lead_id, password_changed_at FROM users WHERE id = $1',
+      `SELECT ${userFields()} FROM users WHERE id = $1`,
       [payload.sub]
     );
     if (!rows.length) {
