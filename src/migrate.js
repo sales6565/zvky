@@ -1174,6 +1174,53 @@ async function ensureReviewGateDefaults(db, log) {
  *
  * Seeded with the studio's answer, eight hours Monday to Friday, so the report
  * works on a database that has never visited the setting. */
+/* Who has been told what.
+ *
+ * One row per person per event. Stored rather than pushed, because a
+ * notification that only ever existed as a live pop-up is one that anybody away
+ * from their desk never received.
+ *
+ * The message is NOT stored. The row keeps ids — who, what asset, which other
+ * person — and the sentence is built when it is read, so a wording change
+ * applies to the whole history and an asset renamed afterwards still reads
+ * correctly.
+ *
+ * ON DELETE CASCADE on the recipient: a removed account's notifications go with
+ * it. SET NULL on the asset, so deleting an asset leaves the history readable
+ * rather than taking somebody's notification list with it. */
+async function ensureNotifications(db, log) {
+  /* `seq` is monotonic, and that is the point of it. created_at is a DATETIME
+     with second precision and a reassignment raises two rows in the same
+     second, which made "newest first" arbitrary between them and — worse —
+     made a timestamp cursor unsafe: comparing created_at against the last one
+     seen silently drops anything raised in the same second the browser last
+     looked, permanently. A sequence cannot tie and cannot skip. Same column,
+     same reason, as asset_assignments.seq. */
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS notifications (
+      id            CHAR(36)    NOT NULL PRIMARY KEY,
+      seq           BIGINT      NOT NULL AUTO_INCREMENT UNIQUE,
+      recipient_id  CHAR(36)    NOT NULL,
+      actor_id      CHAR(36)    NULL,
+      kind          VARCHAR(32) NOT NULL,
+      asset_id      CHAR(36)    NULL,
+      other_user_id CHAR(36)    NULL,
+      read_at       DATETIME    NULL,
+      created_at    DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_notifications_inbox (recipient_id, created_at),
+      KEY idx_notifications_unread (recipient_id, read_at)
+    )`));
+
+  /* The keys are added separately and tolerantly: on a database where an older
+     copy of the table already exists they may be there, and a deployment whose
+     user cannot create constraints must still get a working table. */
+  const fk = async (sql) => { await db.query(sql).catch(() => {}); };
+  await fk('ALTER TABLE notifications ADD CONSTRAINT fk_notifications_recipient '
+    + 'FOREIGN KEY (recipient_id) REFERENCES users(id) ON DELETE CASCADE');
+  await fk('ALTER TABLE notifications ADD CONSTRAINT fk_notifications_asset '
+    + 'FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE SET NULL');
+  log('Schema: notifications table ready.');
+}
+
 async function ensureWorkSchedule(db, log) {
   await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS work_schedule (
       id            TINYINT      NOT NULL PRIMARY KEY,
@@ -1388,6 +1435,8 @@ const STEPS = [
   ['working hours', ensureWorkSchedule],
   // Its mirror, once the table exists and holds its one row.
   ['working hours mirror', (db) => workSchedule.load(db)],
+  // After users and assets, whose keys it points at.
+  ['notifications', ensureNotifications],
 ];
 
 async function run(db, log = console.log) {

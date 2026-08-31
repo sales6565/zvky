@@ -18,6 +18,7 @@ const permissionRoutes = require('./routes/permissions');
 const reportRoutes = require('./routes/reports');
 const brandingRoutes = require('./routes/branding');
 const idleRoutes = require('./routes/idle');
+const notificationRoutes = require('./routes/notifications');
 const branding = require('./branding');
 const ipGate = require('./middleware/ip-allowlist');
 
@@ -80,6 +81,7 @@ app.use('/api/ip-allowlist', ipAllowlistRoutes);
 app.use('/api/permissions', permissionRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/idle', idleRoutes);
+app.use('/api/notifications', notificationRoutes);
 app.use('/api/branding', brandingRoutes);
 
 // Health check. Deliberately reports the database too: a deployment whose

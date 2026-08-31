@@ -176,6 +176,46 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .rep-grain{display:flex;gap:4px;margin-bottom:10px;}
 .rep-downloads{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;margin-left:auto;}
 .rep-sections{margin-bottom:12px;}
+/* --- the notification bell --- */
+.notif-wrap{position:relative;}
+.notif-bell{position:relative;padding:8px 10px;font-size:14px;line-height:1;}
+/* The count. Sized from its own content so "12" and "1" both sit right, with a
+   floor so a single digit is still a circle rather than a sliver. */
+.notif-badge{position:absolute;top:-4px;right:-4px;min-width:16px;height:16px;padding:0 4px;
+  border-radius:20px;background:var(--brand);color:var(--brand-ink);font-size:9.5px;font-weight:700;
+  font-family:'IBM Plex Mono';display:flex;align-items:center;justify-content:center;
+  border:1px solid var(--bg);}
+.notif-panel{position:absolute;top:calc(100% + 8px);right:0;width:340px;max-width:calc(100vw - 32px);
+  background:var(--surface);border:1px solid var(--border);border-radius:12px;z-index:70;
+  box-shadow:0 12px 32px rgba(0,0,0,.45);overflow:hidden;}
+.notif-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:11px 14px;border-bottom:1px solid var(--border);font-size:13px;}
+.notif-head .u-link{font-size:11.5px;color:var(--ink-muted);font-weight:500;}
+.notif-head .u-link:hover{color:var(--brand-accent);}
+.notif-list{max-height:min(60vh,420px);overflow-y:auto;}
+.notif-item{display:flex;gap:10px;align-items:flex-start;width:100%;text-align:left;
+  padding:11px 14px;border:0;border-bottom:1px solid var(--border);background:none;
+  color:var(--ink);font:inherit;cursor:pointer;}
+.notif-item:last-child{border-bottom:0;}
+.notif-item:hover{background:var(--surface-2);}
+/* Unread is marked on the row, not only by weight: a list where the only
+   difference is boldness is hard to scan at a glance. */
+.notif-item.unread{background:rgba(127,20,22,.10);border-left:2px solid var(--brand);padding-left:12px;}
+.notif-item .body{flex:1;min-width:0;}
+.notif-item .msg{font-size:12.5px;line-height:1.4;}
+.notif-item.unread .msg{font-weight:600;}
+.notif-item .when{font-size:10.5px;color:var(--ink-faint);margin-top:3px;font-family:'IBM Plex Mono';}
+.notif-empty{padding:22px 14px;text-align:center;color:var(--ink-muted);font-size:12.5px;}
+/* The live pop-up. Sits above the toast so the two can coexist. */
+.notif-toast{position:fixed;right:20px;bottom:20px;width:320px;max-width:calc(100vw - 40px);
+  background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--brand);
+  border-radius:10px;padding:12px 14px;box-shadow:0 12px 32px rgba(0,0,0,.45);
+  z-index:80;cursor:pointer;opacity:0;transform:translateY(10px);transition:opacity .2s, transform .2s;}
+.notif-toast.show{opacity:1;transform:translateY(0);}
+.notif-toast .t-title{font-size:10px;text-transform:uppercase;letter-spacing:.6px;
+  color:var(--brand-accent);font-family:'IBM Plex Mono';margin-bottom:4px;}
+.notif-toast .t-msg{font-size:12.5px;line-height:1.4;}
+.notif-toast .t-hint{font-size:10.5px;color:var(--ink-faint);margin-top:5px;}
 .idle-period{align-items:center;}
 .idle-range{font-size:11.5px;color:var(--ink-faint);}
 .eff-track{position:relative;height:8px;background:var(--surface-3);border-radius:20px;overflow:hidden;}
@@ -429,6 +469,22 @@ tr.past-round{opacity:0.62;}
         <select class="proj-select" id="projectSelect" title="Project/Game" disabled></select></label>
       <button class="btn btn-ghost btn-sm" id="editProjectBtn" style="display:none;" title="Edit this project">&#9998;</button>
       <div class="user-badge"><div class="avatar" id="userAvatar"></div><div class="who"><div class="name" id="userName"></div><span class="role-badge" id="userRoleBadge"></span></div></div>
+      <!-- Between the name and Profile, as asked. The panel is a sibling rather
+           than a child so it can hang below the header without the header's
+           overflow clipping it. -->
+      <div class="notif-wrap">
+        <button class="btn btn-ghost btn-sm notif-bell" id="notifBell" title="Notifications" aria-haspopup="true" aria-expanded="false">
+          <span aria-hidden="true">&#128276;</span>
+          <span class="notif-badge" id="notifBadge" hidden></span>
+        </button>
+        <div class="notif-panel" id="notifPanel" hidden>
+          <div class="notif-head">
+            <strong>Notifications</strong>
+            <button class="u-link" id="notifReadAll">Mark all as read</button>
+          </div>
+          <div class="notif-list" id="notifList"></div>
+        </div>
+      </div>
       <button class="btn btn-ghost btn-sm" id="profileBtn">Profile</button>
       <button class="btn btn-ghost btn-sm" id="logoutBtn">Log out</button>
     </div>
@@ -1332,6 +1388,9 @@ function logout(options = {}){
   if(loggingOut) return;
 
   state.token=null; state.currentUser=null;
+  /* Stop polling before the reload: an in-flight request against a cleared
+     token would 401 and, through api(), call straight back into here. */
+  stopNotifications();
   try{ localStorage.removeItem('zvky_token'); }catch{ /* nothing else to do */ }
 
   /* Up front, so that whatever is on screen for the length of the reload is
@@ -1383,6 +1442,8 @@ async function showApp(){
     await Promise.all([loadRoles(), loadReferenceData(), loadBranding()]);
     paintBranding();
     await bootApp();
+    // Once there is a session to poll for.
+    startNotifications();
   }catch(err){
     /* The login path used to surface this on the login form — which this
        function had already hidden, so the message went nowhere. It lands in
@@ -5187,6 +5248,241 @@ document.getElementById('pf_cancel_photo').addEventListener('click', ()=>{
   photoError('');
 });
 document.getElementById('pf_remove').addEventListener('click', removeProfilePhoto);
+
+/* ---------- notifications ----------
+ *
+ * Polled, not pushed, and that is a decision rather than a shortcut. This app
+ * has no WebSocket or SSE — but more to the point, src/reference-data.js
+ * records that running more than one Node worker is the common case in
+ * production here, and an event pushed from one worker cannot reach a browser
+ * held by another without a shared bus. Polling is correct under any number of
+ * workers and adds no dependency; a socket would have been the heavier option
+ * AND the broken one.
+ *
+ * Thirty seconds, and only while the tab is visible. A forgotten tab in a
+ * background window costs nothing, and the catch-up on return is a single
+ * request rather than the hundred that would have queued.
+ */
+const NOTIF_POLL_MS = 30000;
+/* `cursor` is the sequence number of the newest notification this tab has
+   seen, not a timestamp: created_at has second precision and a reassignment
+   raises two rows at once, so a time-based cursor could skip one for good. */
+const notifState = { items:[], unread:0, cursor:null, open:false, timer:null, loading:false };
+
+function stopNotifications(){
+  if(notifState.timer){ clearInterval(notifState.timer); notifState.timer = null; }
+}
+
+function notifWhen(at){
+  const then = new Date(at);
+  const secs = Math.max(0, Math.round((Date.now() - then.getTime())/1000));
+  if(secs < 60) return 'just now';
+  const m = Math.floor(secs/60);
+  if(m < 60) return `${m} min ago`;
+  const h = Math.floor(m/60);
+  if(h < 24) return `${h}h ago`;
+  const d = Math.floor(h/24);
+  if(d < 7) return `${d}d ago`;
+  return then.toLocaleDateString();
+}
+
+function paintNotifBadge(){
+  const badge = document.getElementById('notifBadge');
+  if(!badge) return;
+  badge.hidden = notifState.unread === 0;
+  /* Capped, because a three-digit count in a 16px circle is unreadable and the
+     exact number stops mattering long before then. */
+  badge.textContent = notifState.unread > 99 ? '99+' : String(notifState.unread);
+  const bell = document.getElementById('notifBell');
+  if(bell) bell.title = notifState.unread
+    ? `${notifState.unread} unread notification${notifState.unread===1?'':'s'}`
+    : 'Notifications';
+}
+
+function renderNotifList(){
+  const list = document.getElementById('notifList');
+  if(!list) return;
+  if(!notifState.items.length){
+    list.innerHTML = '<div class="notif-empty">Nothing yet. You will be told here when work is assigned to you.</div>';
+    return;
+  }
+  list.innerHTML = notifState.items.map(n=>`
+    <button class="notif-item${n.read?'':' unread'}" data-id="${escapeHTML(n.id)}"
+            data-asset="${escapeHTML(n.assetId||'')}" data-project="${escapeHTML(n.projectId||'')}">
+      ${avatarHTML({ id:n.otherUserId, name:n.otherName, photoAt:n.otherPhotoUpdatedAt }, { size:26, title:false })}
+      <span class="body">
+        <span class="msg">${escapeHTML(n.message)}</span>
+        <span class="when">${escapeHTML(notifWhen(n.createdAt))}</span>
+      </span>
+    </button>`).join('');
+
+  list.querySelectorAll('.notif-item').forEach(b=>b.onclick = ()=>openNotification(b.dataset));
+}
+
+/* Clicking one marks it read and goes to the asset.
+ *
+ * The asset may live in a project the header is not currently pointing at, so
+ * the context is switched first — otherwise the drawer would open against a
+ * board that does not contain it, or not open at all. */
+async function openNotification({ id, asset, project }){
+  closeNotifPanel();
+  if(id) await markNotificationsRead([id]);
+  if(!asset) return;
+  try{
+    /* The asset may be in a project the header is not pointing at. Move the
+       context first, the same way choosing from the picker does — otherwise the
+       drawer opens against a board that does not contain it. The client has to
+       move too, or the project picker is left showing a project its client
+       filter excludes. */
+    if(project && project !== state.currentProjectId){
+      const target = state.projects.find(p=>p.id === project);
+      state.currentProjectId = project;
+      if(target && target.client_id) state.clientContextId = target.client_id;
+      saveContext();
+      renderContextPickers();
+      applyGate('editProjectBtn');
+      await render();
+    }
+
+    /* openDrawer reads state.assets and returns silently when the asset is not
+       in it — which is right for a click on a card already on screen, and wrong
+       here. The whole point of this notification is that something changed
+       since this page loaded, so the asset being absent is the NORMAL case, not
+       an edge one. Reload the board before opening. */
+    if(!state.assets.some(a=>a.id === asset)){
+      await loadAssets();
+      if(state.view==='board') renderBoard(); else if(state.view==='list') renderList();
+    }
+    if(!state.assets.some(a=>a.id === asset)){
+      /* Still missing: the asset was deleted, or it has moved somewhere this
+         person can no longer see. Say so — a click that does nothing at all
+         reads as a broken link. */
+      showToast('That asset is no longer available to you.');
+      return;
+    }
+    await openDrawer(asset);
+  }catch(err){ showToast(err.message); }
+}
+
+async function markNotificationsRead(ids){
+  const marked = notifState.items.filter(n=>ids.includes(n.id) && !n.read);
+  if(!marked.length) return;
+  // Optimistic: the badge should drop the instant it is clicked, not after a
+  // round trip. The server's count replaces it either way.
+  marked.forEach(n=>{ n.read = true; });
+  notifState.unread = Math.max(0, notifState.unread - marked.length);
+  paintNotifBadge(); renderNotifList();
+  try{
+    const res = await api('/notifications/read', { method:'POST', body:{ ids } });
+    notifState.unread = res.unread;
+    paintNotifBadge();
+  }catch(err){ /* the next poll corrects the count */ }
+}
+
+async function loadNotifications(){
+  if(notifState.loading) return;
+  notifState.loading = true;
+  try{
+    const res = await api('/notifications?limit=30');
+    notifState.items = res.notifications;
+    notifState.unread = res.unread;
+    notifState.cursor = res.cursor;
+    paintNotifBadge();
+    if(notifState.open) renderNotifList();
+  }catch(err){ /* the bell simply stays as it was */ }
+  finally{ notifState.loading = false; }
+}
+
+/* The poll. Cheap by design: a count, plus only what has been raised since the
+   last look. Anything new both updates the list and raises a pop-up. */
+async function pollNotifications(){
+  if(!state.token) { stopNotifications(); return; }
+  if(document.hidden) return;
+  try{
+    const q = notifState.cursor === null ? '' : '?since=' + encodeURIComponent(notifState.cursor);
+    const res = await api('/notifications/poll' + q);
+    notifState.cursor = res.cursor;
+    notifState.unread = res.unread;
+    paintNotifBadge();
+    if(res.fresh && res.fresh.length){
+      notifState.items = [...res.fresh.slice().reverse(), ...notifState.items].slice(0, 30);
+      if(notifState.open) renderNotifList();
+      /* One pop-up, for the most recent. A burst of five reassignments should
+         not stack five boxes up the side of the screen; the bell carries the
+         count and the panel carries the rest. */
+      showNotifToast(res.fresh[res.fresh.length - 1], res.fresh.length);
+    }
+  }catch(err){ /* a blip must not stop the polling */ }
+}
+
+let notifToastTimer = null;
+function showNotifToast(n, alsoCount = 1){
+  if(!n) return;
+  document.querySelectorAll('.notif-toast').forEach(el=>el.remove());
+  if(notifToastTimer) clearTimeout(notifToastTimer);
+  const el = document.createElement('div');
+  el.className = 'notif-toast';
+  el.innerHTML = `
+    <div class="t-title">${n.kind === 'unassigned' ? 'Work reassigned' : 'Assigned to you'}</div>
+    <div class="t-msg">${escapeHTML(n.message)}</div>
+    <div class="t-hint">${alsoCount > 1 ? `and ${alsoCount-1} more — ` : ''}click to open</div>`;
+  el.onclick = ()=>{ el.remove(); openNotification({ id:n.id, asset:n.assetId, project:n.projectId }); };
+  document.body.appendChild(el);
+  requestAnimationFrame(()=>el.classList.add('show'));
+  notifToastTimer = setTimeout(()=>{
+    el.classList.remove('show');
+    setTimeout(()=>el.remove(), 250);
+  }, 6000);
+}
+
+function closeNotifPanel(){
+  notifState.open = false;
+  const panel = document.getElementById('notifPanel');
+  const bell = document.getElementById('notifBell');
+  if(panel) panel.hidden = true;
+  if(bell) bell.setAttribute('aria-expanded','false');
+}
+
+async function toggleNotifPanel(){
+  const panel = document.getElementById('notifPanel');
+  const bell = document.getElementById('notifBell');
+  if(!panel) return;
+  if(notifState.open){ closeNotifPanel(); return; }
+  notifState.open = true;
+  panel.hidden = false;
+  bell.setAttribute('aria-expanded','true');
+  renderNotifList();
+  // Fetch fresh on open, so the list is current even if the poll is mid-cycle.
+  await loadNotifications();
+  renderNotifList();
+}
+
+function startNotifications(){
+  stopNotifications();
+  loadNotifications();
+  notifState.timer = setInterval(pollNotifications, NOTIF_POLL_MS);
+}
+
+document.getElementById('notifBell').addEventListener('click', e=>{ e.stopPropagation(); toggleNotifPanel(); });
+document.getElementById('notifReadAll').addEventListener('click', async e=>{
+  e.stopPropagation();
+  try{
+    const res = await api('/notifications/read-all', { method:'POST' });
+    notifState.items.forEach(n=>{ n.read = true; });
+    notifState.unread = res.unread;
+    paintNotifBadge(); renderNotifList();
+  }catch(err){ showToast(err.message); }
+});
+// Clicking away closes it, the way every other dropdown on this page behaves.
+document.addEventListener('click', e=>{
+  if(!notifState.open) return;
+  if(e.target.closest('.notif-wrap')) return;
+  closeNotifPanel();
+});
+document.addEventListener('keydown', e=>{ if(e.key === 'Escape') closeNotifPanel(); });
+/* Coming back to a tab that was hidden: catch up at once rather than waiting
+   out the rest of the interval. */
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden && state.token) pollNotifications(); });
 
 document.getElementById('profileBtn').addEventListener('click', openProfileModal);
 document.getElementById('cancelProfileModal').addEventListener('click', ()=>profileModalWrap.classList.remove('show'));

@@ -84,8 +84,18 @@ async function close(db, assetId, reason, status) {
 // 'pending_tl_review' here while the asset moves to 'assigned' for the new
 // person, which is what makes the trail read as what happened.
 async function open(db, { assetId, userId, assignedById, status, reason }) {
+  /* Who held it a moment ago, read before anything is closed.
+   *
+   * This is the only point at which both sides of a hand-over are known: after
+   * close() the outgoing person is in a row that has already ended, and the
+   * three routes that call this each know only their own half. Reading it here
+   * is what lets one function tell both people. */
+  const outgoing = await current(db, assetId).catch(() => null);
+  const previousUserId = outgoing ? outgoing.user_id : null;
+
   if (!userId) {
     await close(db, assetId, reason || 'unassigned', status);
+    await notify(db, { assetId, from: previousUserId, to: null, actorId: assignedById });
     return null;
   }
   try {
@@ -96,10 +106,30 @@ async function open(db, { assetId, userId, assignedById, status, reason }) {
        VALUES ($1,$2,$3,$4,$5)`,
       [id, assetId, userId, assignedById || null, status || 'not_started']
     );
+    await notify(db, { assetId, from: previousUserId, to: userId, actorId: assignedById });
     return id;
   } catch (err) {
     if (unavailable(err)) return null;
     throw err;
+  }
+}
+
+/* Telling people, in the same transaction as the move that caused it.
+ *
+ * Every route that changes who holds an asset comes through open(), so raising
+ * notifications here rather than at the three call sites means the fourth route
+ * somebody adds later is covered without them having to remember. Required
+ * lazily to keep the module graph acyclic — notifications knows nothing about
+ * assignments, and this way assignments need not know much about it either.
+ *
+ * Deliberately swallowed on failure: somebody being reassigned and not told is
+ * a far smaller problem than a reassignment that refuses to happen because a
+ * notification could not be written. */
+async function notify(db, { assetId, from, to, actorId }) {
+  try {
+    await require('./notifications').assignmentChanged(db, { assetId, from, to, actorId });
+  } catch (err) {
+    console.warn(`[notifications] could not record the assignment change on ${assetId}: ${err.message}`);
   }
 }
 
