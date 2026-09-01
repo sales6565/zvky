@@ -1172,6 +1172,51 @@ function listGroupOf(statusId){
   return g ? g.id : 'active';
 }
 
+/* The fourth tab, and why it is not in the list above.
+ *
+ * Active, Inactive and Archived partition the status enum: every status is in
+ * exactly one, and a test fails if that stops being true. History is not a
+ * fourth slice of that partition — it cuts across it. An asset that changed
+ * hands is still In Progress, or still Delivered, and it goes on showing in
+ * whichever of the three its status puts it in. Removing it from there would
+ * hide live work from the people currently carrying it, which is the opposite
+ * of what a history tab is for.
+ *
+ * So the partition stays exactly as it was, and the tab strip is the partition
+ * plus this one. */
+const ASSET_LIST_TABS = [...ASSET_LIST_GROUPS, { id:'history', label:'History' }];
+
+/* Has this asset ever been handed on?
+ *
+ * Read off the assignment episodes the asset already carries — the same trail
+ * the "handed on" tag on every row reads, and the same one the Hand over
+ * button and the Assignee dropdown both write through assignments.open() in
+ * src/assignments.js. There is deliberately no second audit log to drift from
+ * it, and no new endpoint: the list payload already carries these.
+ *
+ * More than one episode is the whole test. The first episode is the original
+ * assignment, which is not a handover; every one after it opened because the
+ * asset moved to somebody else. Work sent BACK to the same person does not
+ * open an episode, so a rework loop is correctly not a handover — which is the
+ * distinction asset_assignments exists to draw.
+ *
+ * Note this counts an unassign followed by an assignment to somebody else, and
+ * does not count an unassign on its own: the first changed hands, the second
+ * left them empty. */
+function episodesOf(a){ return Array.isArray(a.assignments) ? a.assignments : []; }
+function handedOn(a){ return episodesOf(a).length > 1; }
+
+/* When it last changed hands, for the default sort. Every episode after the
+   first opened at a handover, so the newest of those is the answer. */
+function lastHandoverAt(a){
+  const eps = episodesOf(a);
+  if(eps.length < 2) return 0;
+  return eps.slice(1).reduce((newest, ep)=>{
+    const at = new Date(ep.assignedAt).getTime();
+    return Number.isFinite(at) && at > newest ? at : newest;
+  }, 0);
+}
+
 /* Which pipeline stages this account sees on the dashboard.
    
    Reads can('asset.add') like every other gate on this page, so switching the
@@ -1807,10 +1852,19 @@ function renderList(){
      whole project instead would put "Active (12)" above a list of two. */
   const matching = filteredAssets()
     .filter(a=>visibleStatuses().some(s=>s.id===a.status));
-  const inGroup = (id)=>matching.filter(a=>listGroupOf(a.status)===id);
+  /* Every tab reads the same filtered pool, which is what makes the search and
+     the type filter behave identically in all four rather than each tab
+     growing its own idea of what is in scope. History differs only in which
+     assets it picks out of it, and in the order. */
+  const inGroup = (id)=> id==='history'
+    ? matching.filter(handedOn).sort((x,y)=>lastHandoverAt(y)-lastHandoverAt(x))
+    : matching.filter(a=>listGroupOf(a.status)===id);
   const shown = inGroup(state.listGroup);
 
-  const tabs = `<div class="sub-tabs">${ASSET_LIST_GROUPS.map(g=>{
+  /* The counts are of ASSETS, not of rows — as they always have been. A tab
+     reading 3 above eight rows is not a miscount: it is three assets that have
+     been through eight stretches of work between them. */
+  const tabs = `<div class="sub-tabs">${ASSET_LIST_TABS.map(g=>{
     const n = inGroup(g.id).length;
     return `<button class="sub-tab${g.id===state.listGroup?' active':''}" data-group="${g.id}">${g.label} <span class="sub-tab-count">${n}</span></button>`;
   }).join('')}</div>`;
@@ -1823,9 +1877,14 @@ function renderList(){
     /* Three different nothings, and saying which matters. Nothing in this tab;
        nothing matching the search; or — for a contributor — nothing in the
        project that is theirs, which is not the same as an empty project. */
-    const why = matching.length
-      ? `No ${ASSET_LIST_GROUPS.find(g=>g.id===state.listGroup).label.toLowerCase()} assets match.`
-      : (state.assets.length ? 'No assets match.' : emptyBoardReason());
+    const why = state.listGroup === 'history'
+      /* Its own wording. "No history assets match" would read as a filter
+         problem, when the usual answer is that nothing here has changed hands
+         — which is not a fault and is worth saying plainly. */
+      ? (matching.length ? 'Nothing here has been handed on yet.' : (state.assets.length ? 'No assets match.' : emptyBoardReason()))
+      : (matching.length
+          ? `No ${ASSET_LIST_TABS.find(g=>g.id===state.listGroup).label.toLowerCase()} assets match.`
+          : (state.assets.length ? 'No assets match.' : emptyBoardReason()));
     el.innerHTML = tabs + `<div class="empty">${why}</div>`;
     wire();
     return;

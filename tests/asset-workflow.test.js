@@ -250,6 +250,70 @@ test('every status belongs to exactly one Assets List tab', () => {
   assert.ok(!workflow.STATE_IDS.includes('final'), 'nothing in the enum is called final');
 });
 
+test('History is a fourth tab and not a fourth slice of the enum', () => {
+  /* The tab strip is the status partition plus History, in that order. The
+   * distinction matters: History cuts ACROSS the partition — a handed-on asset
+   * in TL Review shows in Active and in History both — so it must not be added
+   * to ASSET_LIST_GROUPS, where the test above would then find a group with no
+   * statuses in it, or worse, statuses claimed twice.
+   *
+   * Asserted here because the failure is invisible on the page: History given
+   * statuses of its own would quietly take them out of Active. */
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+
+  const tabs = page.match(/const ASSET_LIST_TABS = \[([^\]]*(?:\][^;]*?)?)\];/);
+  assert.ok(tabs, 'the tab strip should be one named list');
+  assert.match(tabs[1], /\.\.\.ASSET_LIST_GROUPS/,
+    'the three status tabs should come from the partition itself, not be retyped');
+  assert.match(tabs[1], /id:'history'/, 'and History should be appended to them');
+  assert.ok(!/statuses:/.test(tabs[1]),
+    'History must not claim statuses of its own — it is a cross-cut, not a fourth group');
+
+  // Order on screen: Active, Inactive, Archived, History.
+  const groups = page.match(/const ASSET_LIST_GROUPS = \[([\s\S]*?)\n\];/);
+  const ids = [...groups[1].matchAll(/\{ id:'([a-z]+)'/g)].map((m) => m[1]);
+  assert.deepStrictEqual([...ids, 'history'], ['active', 'inactive', 'archived', 'history']);
+
+  // And the three original tabs are untouched: still rendered by the same
+  // status test they always were, with History the only special case.
+  assert.match(page, /id==='history'\s*\?\s*matching\.filter\(handedOn\)/,
+    'History should select on the handover trail');
+  assert.match(page, /:\s*matching\.filter\(a=>listGroupOf\(a\.status\)===id\)/,
+    'and the other three should still select on status alone');
+});
+
+test('an asset counts as handed on only once it has actually changed hands', () => {
+  /* The rule is one line on the page, and getting it wrong is not visible:
+   * off by one either way and History lists every assigned asset in the studio,
+   * or none of them. Extracted and run here against the episode shapes
+   * src/assignments.js produces. */
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+
+  const src = page.match(/function episodesOf\(a\)\{[\s\S]*?\nfunction lastHandoverAt\(a\)\{[\s\S]*?\n\}/);
+  assert.ok(src, 'the handed-on rule should be findable as named functions');
+  // eslint-disable-next-line no-new-func
+  const { handedOn, lastHandoverAt } = new Function(`${src[0]}; return { handedOn, lastHandoverAt };`)();
+
+  const ep = (at) => ({ assignedAt: at });
+  assert.strictEqual(handedOn({}), false, 'an asset with no history has not been handed on');
+  assert.strictEqual(handedOn({ assignments: [] }), false, 'nor one never assigned');
+  assert.strictEqual(handedOn({ assignments: [ep('2026-01-01T09:00:00Z')] }), false,
+    'a first assignment is not a handover — this is the one that would flood the tab');
+  assert.strictEqual(handedOn({ assignments: [ep('2026-01-01T09:00:00Z'), ep('2026-01-02T09:00:00Z')] }), true,
+    'a second episode means it went to somebody else');
+
+  // The sort key is the LAST handover, not the first assignment and not the
+  // most recent episode's end.
+  const twice = { assignments: [ep('2026-01-01T09:00:00Z'), ep('2026-01-02T09:00:00Z'), ep('2026-03-04T15:30:00Z')] };
+  assert.strictEqual(lastHandoverAt(twice), Date.parse('2026-03-04T15:30:00Z'));
+  assert.strictEqual(lastHandoverAt({ assignments: [ep('2026-01-01T09:00:00Z')] }), 0,
+    'never handed on sorts last, rather than sorting by when it was first assigned');
+});
+
 test('a move not in the table cannot happen', () => {
   // The point of a table rather than a pile of if-statements: anything absent
   // is refused, rather than falling through to whatever the last branch did.
