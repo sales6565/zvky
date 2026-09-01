@@ -27,7 +27,7 @@ router.use(authenticate);
  */
 
 const SELECT = `
-  SELECT r.id, r.link, r.description, r.status, r.created_at AS createdAt,
+  SELECT r.id, r.link, r.description, r.status, r.feedback, r.created_at AS createdAt,
          r.reviewed_at AS reviewedAt, r.submitter_email AS submitterEmail,
          r.reviewer_email AS reviewerEmail,
          r.client_id AS clientId, c.\`name\` AS clientName,
@@ -52,16 +52,21 @@ const unavailable = (err) => err && (err.code === 'ER_NO_SUCH_TABLE' || err.code
 // a submission is addressed to whoever is watching rather than to a person.
 router.get('/', requirePermission('project.review_queue'), async (req, res) => {
   const wanted = req.query.status;
-  const where = wanted === 'pending' || wanted === 'reviewed' ? ' WHERE r.status = $1' : '';
+  const KNOWN = ['pending', 'changes_requested', 'approved_for_client'];
+  const where = KNOWN.includes(wanted) ? ' WHERE r.status = $1' : '';
   try {
     const { rows } = await db.query(`${SELECT}${where} ORDER BY r.created_at DESC`,
       where ? [wanted] : []);
     const pending = rows.filter((r) => r.status === 'pending').length;
-    res.json({ requests: rows, pending });
+    /* Answered and still needing somebody to do something about it. Approvals
+       count too: "this is clear to go to the client" is an instruction. */
+    const answered = rows.filter((r) => r.status === 'changes_requested'
+      || r.status === 'approved_for_client').length;
+    res.json({ requests: rows, pending, answered });
   } catch (err) {
     if (!unavailable(err)) throw err;
     console.warn(`[schema] project_review_requests unavailable (${err.code}); the queue reads empty.`);
-    res.json({ requests: [], pending: 0, unavailable: true });
+    res.json({ requests: [], pending: 0, answered: 0, unavailable: true });
   }
 });
 
@@ -121,11 +126,45 @@ router.post('/', requirePermission('project.review_send'), async (req, res) => {
   res.status(201).json({ request: rows[0] });
 });
 
-// POST /api/project-reviews/:id/reviewed — mark one done.
-//
-// Nothing is deleted: it leaves the pending list and stays as the record that
-// it was asked for and answered, with who answered and when.
-router.post('/:id/reviewed', requirePermission('project.review_queue'), async (req, res) => {
+/* POST /api/project-reviews/:id/decision — the Creative Director's answer.
+ * body: { decision: 'changes_requested' | 'approved_for_client', feedback? }
+ *
+ * This replaces the generic "mark it reviewed" it had before. The two decisions
+ * are the only ways a submission leaves Pending, because "somebody looked at
+ * it" was never the useful fact — what Production needs to know is whether the
+ * work is clear or whether there is something to fix.
+ *
+ * WHAT THIS DOES NOT DO, and it is the whole design: it touches no asset. The
+ * submission is project-level and names no asset, so setting every asset under
+ * the project to CD Feedbacks would overwrite work that is Delivered, Not
+ * Assigned or mid-flight on something unrelated. The decision is recorded here,
+ * Production reads the feedback, and Production decides which assets it applies
+ * to — through the reassignment flow they already use. A human maps the
+ * feedback to the work; this does not guess.
+ */
+const DECISIONS = ['changes_requested', 'approved_for_client'];
+
+router.post('/:id/decision', requirePermission('project.review_respond'), async (req, res) => {
+  const { decision, feedback } = req.body || {};
+  if (!DECISIONS.includes(decision)) {
+    return res.status(400).json({
+      error: 'Say whether this is a change request or an approval.',
+      field: 'decision',
+      allowed: DECISIONS,
+    });
+  }
+  const note = String(feedback || '').trim();
+  /* Required to ask for changes, optional to approve. Asking for changes with
+     nothing written tells Production there is something to fix and not what,
+     which is the one thing this decision exists to carry. An approval carries
+     its meaning in the decision itself. */
+  if (decision === 'changes_requested' && !note) {
+    return res.status(400).json({
+      error: 'Say what needs to change — Production has nothing to act on otherwise.',
+      field: 'feedback',
+    });
+  }
+
   let rows;
   try {
     ({ rows } = await db.query('SELECT * FROM project_review_requests WHERE id = $1', [req.params.id]));
@@ -134,18 +173,33 @@ router.post('/:id/reviewed', requirePermission('project.review_queue'), async (r
     return res.status(404).json({ error: 'Not found' });
   }
   if (!rows.length) return res.status(404).json({ error: 'That submission does not exist.' });
-  if (rows[0].status === 'reviewed') {
+  if (rows[0].status !== 'pending') {
+    // Already answered. Not an error — two people opening the same queue is
+    // ordinary — but the first answer stands.
     const { rows: already } = await db.query(`${SELECT} WHERE r.id = $1`, [req.params.id]);
-    return res.json({ request: already[0], alreadyReviewed: true });
+    return res.json({ request: already[0], alreadyAnswered: true });
   }
 
   await db.query(
     `UPDATE project_review_requests
-        SET status = 'reviewed', reviewed_by = $1, reviewer_email = $2, reviewed_at = NOW()
-      WHERE id = $3`,
-    [req.user.id, req.user.email, req.params.id]
+        SET status = $1, feedback = $2, reviewed_by = $3, reviewer_email = $4, reviewed_at = NOW()
+      WHERE id = $5`,
+    [decision, note || null, req.user.id, req.user.email, req.params.id]
   );
-  console.log(`${req.user.email} marked project review ${req.params.id} as reviewed.`);
+
+  try {
+    await notifications.projectReviewDecided(db, {
+      projectId: rows[0].project_id, actorId: req.user.id, decision,
+      recipientIds: await queueWatchers(),
+    });
+  } catch (err) {
+    console.warn(`[notifications] could not announce the decision on ${req.params.id}: ${err.message}`);
+  }
+
+  console.log(
+    `${req.user.email} answered project review ${req.params.id}: ${decision}`
+    + `${note ? ` — ${note}` : ''}.`
+  );
   const { rows: saved } = await db.query(`${SELECT} WHERE r.id = $1`, [req.params.id]);
   res.json({ request: saved[0] });
 });

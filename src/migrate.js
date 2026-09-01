@@ -252,7 +252,8 @@ async function ensureProjectReviews(db, log) {
         description  TEXT          NULL,
         submitted_by CHAR(36)      NULL,
         submitter_email VARCHAR(191) NULL,
-        status       VARCHAR(16)   NOT NULL DEFAULT 'pending',
+        status       VARCHAR(32)   NOT NULL DEFAULT 'pending',
+        feedback     TEXT          NULL,
         reviewed_by  CHAR(36)      NULL,
         reviewer_email VARCHAR(191) NULL,
         reviewed_at  DATETIME      NULL,
@@ -273,6 +274,24 @@ async function ensureProjectReviews(db, log) {
       + 'FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE SET NULL');
     log('Schema: added project_review_requests.');
   }
+  /* Everything below runs whether or not the table was just created, so a
+     deployment that got the first version of it picks up the rest. */
+
+  /* The Creative Director's written answer, added after the table shipped with
+     only a pending/reviewed flag on it. The status column is widened at the
+     same time: 'approved_for_client' does not fit VARCHAR(16). */
+  const { rows: fb } = await db.query(
+    `SELECT COLUMN_NAME AS n FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'project_review_requests'
+        AND COLUMN_NAME = 'feedback'`
+  );
+  if (!fb.length) {
+    await db.query('ALTER TABLE project_review_requests ADD COLUMN feedback TEXT NULL AFTER status')
+      .catch(() => {});
+    log('Schema: added project_review_requests.feedback.');
+  }
+  await db.query("ALTER TABLE project_review_requests MODIFY `status` VARCHAR(32) NOT NULL DEFAULT 'pending'")
+    .catch(() => {});
 
   const { rows: column } = await db.query(
     `SELECT COLUMN_NAME AS n FROM information_schema.COLUMNS

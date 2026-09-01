@@ -1944,47 +1944,123 @@ function filteredAssets(){
 }
 /* The project review queue, on the Dashboard of whoever watches it.
  *
- * A banner rather than a column: these are not assets and do not belong on the
- * board beside them. It says what it is in as many words — "Project Review
- * Requests" — because the studio has two review queues now and the other one is
- * a set of columns two inches below this.
+ * Two lists, because two different people are looking at it.
  *
- * Only on the Dashboard, and only for a holder of project.review_queue. Marking
- * one reviewed takes it out of here and leaves it in the record. */
+ *   WAITING     submissions nobody has answered. A holder of
+ *               project.review_respond gets a feedback box and two buttons on
+ *               each: Request Changes, or Approve for Client.
+ *   ANSWERED    what the Creative Director decided, with the feedback. This is
+ *               Production's half: they read it and decide which assets under
+ *               that project it applies to, and move those through the ordinary
+ *               reassignment flow.
+ *
+ * Nothing here moves an asset. The submission names no asset — it is a link
+ * about the project — so the decision is recorded against the submission and a
+ * person maps it to the work. Setting every asset under the project to CD
+ * Feedbacks would overwrite whatever was Delivered or mid-flight on something
+ * unrelated, which is why this is a list to read rather than a button that
+ * reaches into the pipeline.
+ *
+ * A banner rather than a column: these are not assets and do not belong on the
+ * board beside them. It says what it is in as many words, because the studio
+ * has two review queues now and the other one is a set of columns below this. */
+const PR_STATUS = {
+  pending:             { label: 'Waiting on the Creative Director', color: 'var(--review)' },
+  changes_requested:   { label: 'Changes requested',                color: '#e8402c' },
+  approved_for_client: { label: 'Approved for client',              color: 'var(--approved)' },
+  /* Written by the version of this that had one generic action. Kept so an
+     older row still reads as something rather than as a blank. */
+  reviewed:            { label: 'Reviewed',                         color: 'var(--ink-muted)' },
+};
+const prStatus = (id)=> PR_STATUS[id] || { label: id, color: 'var(--ink-muted)' };
+
 async function renderProjectReviews(){
   const el = document.getElementById('projReviewBanner');
   if(!el) return;
   if(state.view!=='board' || !can('project.review_queue')){ el.innerHTML=''; return; }
 
-  let pending = [];
-  try{ pending = (await api('/project-reviews?status=pending')).requests || []; }
+  let all = [];
+  try{ all = (await api('/project-reviews')).requests || []; }
   catch{ el.innerHTML=''; return; }   /* not available on this deployment */
-  if(!pending.length){ el.innerHTML=''; return; }
 
-  el.innerHTML = `<div class="pr-banner">
-    <h4>Project Review Requests · ${pending.length} waiting</h4>
-    <div class="pr-sub">Whole projects submitted for your review. Not the same as the
-      asset CD Review column below — nothing here is an asset.</div>
-    ${pending.map(r=>`<div class="pr-item">
-      <div class="pr-what">
-        <strong>${escapeHTML(r.projectName || 'A project')}</strong>
-        <span style="color:var(--ink-faint);">· ${escapeHTML(r.clientName || '')}</span>
-        <div class="pr-meta">${escapeHTML(r.submittedByName || r.submitterEmail || 'Somebody')} · ${fmtDate(r.createdAt)}</div>
-        <div style="margin-top:4px;"><a href="${escapeHTML(r.link)}" target="_blank" rel="noopener noreferrer">${escapeHTML(r.link)}</a></div>
-        ${r.description ? `<div class="pr-meta" style="margin-top:4px;color:var(--ink-muted);">${escapeHTML(r.description)}</div>` : ''}
-      </div>
-      <button class="btn btn-ghost btn-sm pr-done" data-id="${r.id}">Mark as Reviewed</button>
-    </div>`).join('')}
-  </div>`;
+  const waiting = all.filter(r=>r.status==='pending');
+  const answered = all.filter(r=>r.status!=='pending');
+  if(!waiting.length && !answered.length){ el.innerHTML=''; return; }
 
-  el.querySelectorAll('.pr-done').forEach(b=>b.addEventListener('click', async ()=>{
-    b.disabled = true;
+  const mayRespond = can('project.review_respond');
+  const who = (r)=>`${escapeHTML(r.submittedByName || r.submitterEmail || 'Somebody')} · ${fmtDate(r.createdAt)}`;
+  const head = (r)=>`<strong>${escapeHTML(r.projectName || 'A project')}</strong>
+      <span style="color:var(--ink-faint);">· ${escapeHTML(r.clientName || '')}</span>
+      <div class="pr-meta">${who(r)}</div>
+      <div style="margin-top:4px;"><a href="${escapeHTML(r.link)}" target="_blank" rel="noopener noreferrer">${escapeHTML(r.link)}</a></div>
+      ${r.description ? `<div class="pr-meta" style="margin-top:4px;color:var(--ink-muted);">${escapeHTML(r.description)}</div>` : ''}`;
+
+  el.innerHTML = `
+    ${waiting.length ? `<div class="pr-banner">
+      <h4>Project Review Requests · ${waiting.length} waiting</h4>
+      <div class="pr-sub">Whole projects submitted for your review. Not the same as the
+        asset CD Review column below — nothing here is an asset.</div>
+      ${waiting.map(r=>`<div class="pr-item">
+        <div class="pr-what">
+          ${head(r)}
+          ${mayRespond ? `
+            <div style="margin-top:8px;">
+              <textarea class="pr-feedback" data-id="${r.id}" rows="2"
+                placeholder="Creative Director feedback (required to request changes)…"></textarea>
+              <div style="display:flex;gap:8px;margin-top:6px;">
+                <button class="btn btn-ghost btn-sm pr-changes" data-id="${r.id}" style="color:#e8402c;">Request Changes</button>
+                <button class="btn btn-brand btn-sm pr-approve" data-id="${r.id}">Approve for Client</button>
+              </div>
+              <div class="ref-err pr-err" data-id="${r.id}"></div>
+            </div>` : `<div class="pr-meta" style="margin-top:6px;">
+              Waiting on the Creative Director. Answering it is a separate permission.
+            </div>`}
+        </div>
+      </div>`).join('')}
+    </div>` : ''}
+
+    ${answered.length ? `<div class="pr-banner" style="border-left-color:var(--approved);background:linear-gradient(90deg,#3ddc9714,transparent);border-color:#3ddc9744;">
+      <h4>Answered Project Reviews · ${answered.length}</h4>
+      <div class="pr-sub">What the Creative Director decided. Nothing has moved in the pipeline —
+        read the feedback and put the assets it applies to through the ordinary flow.</div>
+      ${answered.map(r=>{
+        const st = prStatus(r.status);
+        return `<div class="pr-item">
+          <div class="pr-what">
+            ${head(r)}
+            <div style="margin-top:6px;">
+              <span class="status-pill" style="background:${st.color}22;color:${st.color};"><span class="d" style="background:${st.color}"></span>${st.label}</span>
+              <span class="pr-meta" style="margin-left:6px;">${escapeHTML(r.reviewedByName || r.reviewerEmail || '')}${r.reviewedAt?` · ${fmtDate(r.reviewedAt)}`:''}</span>
+            </div>
+            ${r.feedback ? `<div class="note" style="margin-top:6px;border-left-color:${st.color};"><p>${escapeHTML(r.feedback)}</p></div>` : ''}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>` : ''}
+  `;
+
+  const errFor = (id)=>el.querySelector(`.pr-err[data-id="${id}"]`);
+  const noteFor = (id)=>el.querySelector(`.pr-feedback[data-id="${id}"]`);
+  const decide = async (btn, decision)=>{
+    const id = btn.dataset.id;
+    const err = errFor(id);
+    err.textContent = '';
+    const feedback = (noteFor(id).value || '').trim();
+    /* Checked here so the message lands under the box rather than as a toast.
+       The API requires it too — this is a courtesy, not the rule. */
+    if(decision==='changes_requested' && !feedback){
+      err.textContent = 'Say what needs to change.';
+      return;
+    }
+    btn.disabled = true;
     try{
-      await api('/project-reviews/'+b.dataset.id+'/reviewed', { method:'POST' });
-      showToast('Marked as reviewed.');
+      await api('/project-reviews/'+id+'/decision', { method:'POST', body:{ decision, feedback: feedback || undefined } });
+      showToast(decision==='changes_requested' ? 'Changes requested.' : 'Approved for client.');
       renderProjectReviews();
-    }catch(err){ showToast(err.message); b.disabled = false; }
-  }));
+    }catch(e){ err.textContent = e.message; btn.disabled = false; }
+  };
+  el.querySelectorAll('.pr-changes').forEach(b=>b.addEventListener('click', ()=>decide(b, 'changes_requested')));
+  el.querySelectorAll('.pr-approve').forEach(b=>b.addEventListener('click', ()=>decide(b, 'approved_for_client')));
 }
 
 function renderStats(){

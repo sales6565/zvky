@@ -75,7 +75,10 @@ function defaultsFor(roleKey) {
    * the starting position, so that the queue is not empty on the day it ships.
    *
    * Super Admin gets it from the catalogue itself, like every other permission. */
-  if (roleKey === PROJECT_REVIEW_ROLE) baseline.add('project.review_queue');
+  if (roleKey === PROJECT_REVIEW_ROLE) {
+    baseline.add('project.review_queue');
+    baseline.add('project.review_respond');
+  }
   return baseline;
 }
 

@@ -488,9 +488,19 @@ CREATE TABLE IF NOT EXISTS project_review_requests (
   -- Who asked, kept alongside the id so the record survives the account going.
   submitted_by CHAR(36)      NULL,
   submitter_email VARCHAR(191) NULL,
-  -- 'pending' until somebody marks it reviewed. Nothing is deleted: a reviewed
-  -- request stays as the record that it was asked for and answered.
-  status       VARCHAR(16)   NOT NULL DEFAULT 'pending',
+  -- 'pending' until the Creative Director answers it, then one of
+  -- 'changes_requested' or 'approved_for_client'. Nothing is deleted: an
+  -- answered request stays as the record that it was asked for and answered.
+  --
+  -- These are the SUBMISSION's states and share nothing with the asset statuses
+  -- of similar name. No asset moves when one of these is set — Production reads
+  -- the feedback and decides which assets, if any, it applies to.
+  status       VARCHAR(32)   NOT NULL DEFAULT 'pending',
+  -- What the Creative Director wrote. Required when asking for changes, since
+  -- that is the whole content of the decision; optional on an approval.
+  feedback     TEXT          NULL,
+  -- Who answered it and when. Named 'reviewed' because that is what the columns
+  -- have always been called here; the decision itself is in `status`.
   reviewed_by  CHAR(36)      NULL,
   reviewer_email VARCHAR(191) NULL,
   reviewed_at  DATETIME      NULL,

@@ -242,8 +242,27 @@ const GROUPS = [
         key: 'project.review_queue',
         label: 'Review Project Submissions',
         impliedBy: has('manageAccess'),
-        describe: 'See the projects submitted for review and mark them reviewed. Held by Creative '
-          + 'Art Director out of the box; grant it to anybody else who should watch that queue.',
+        describe: 'See the project review queue — what is waiting, and what has been answered. '
+          + 'Held by Creative Art Director out of the box; grant it to Production so they can act '
+          + 'on the Creative Director\'s answers.',
+      },
+      {
+        /* Separate from review.cd on purpose, and worth saying why since the two
+         * are one word apart. review.cd is standing at the ASSET review gate:
+         * approving one piece of work onward or sending it back, inside the
+         * state machine. This is answering a submission about a whole project,
+         * which moves no asset at all. A role can hold either without the other,
+         * and a studio that wants its Creative Director doing both grants both.
+         *
+         * Split from review_queue for the same reason viewing is split from
+         * acting everywhere else here: Production needs to READ the answers to
+         * act on them, and should not thereby be able to make them. */
+        key: 'project.review_respond',
+        label: 'Respond to Project CD Review',
+        impliedBy: has('manageAccess'),
+        describe: 'Answer a project review submission — Request Changes with feedback, or Approve '
+          + 'for Client. Nothing to do with an asset\'s own CD Review gate, which is CD Review '
+          + 'Actions. Held by Creative Art Director out of the box.',
       },
     ],
   },

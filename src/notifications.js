@@ -32,6 +32,9 @@ const KINDS = {
   // A whole project submitted for the Creative Director to look at. Not an
   // asset moving anywhere — see src/routes/project-reviews.js.
   project_review: 'project_review',
+  // And their answer to it, which Production acts on.
+  project_review_changes: 'project_review_changes',
+  project_review_approved: 'project_review_approved',
 };
 
 const unavailable = (err) => err && (err.code === 'ER_NO_SUCH_TABLE' || /doesn't exist/i.test(err.message || ''));
@@ -48,6 +51,16 @@ function describe(row) {
     return row.other_name
       ? `${row.other_name} submitted ${project} for your review.`
       : `${project} has been submitted for your review.`;
+  }
+  if (row.kind === KINDS.project_review_changes) {
+    const project = row.project_name || 'a project';
+    const who = row.other_name ? `${row.other_name} has` : 'The Creative Director has';
+    return `${who} asked for changes on ${project}.`;
+  }
+  if (row.kind === KINDS.project_review_approved) {
+    const project = row.project_name || 'A project';
+    const who = row.other_name ? `${row.other_name} approved` : 'Approved';
+    return `${who} ${project} for the client.`;
   }
   const code = row.asset_code || 'An asset';
   const name = row.asset_name ? ` — ${row.asset_name}` : '';
@@ -100,6 +113,18 @@ async function raise(db, { recipientId, actorId, kind, assetId, projectId, other
 async function projectReviewRequested(db, { projectId, actorId, recipientIds }) {
   for (const recipientId of recipientIds || []) {
     await raise(db, { recipientId, actorId, kind: KINDS.project_review, projectId, otherUserId: actorId });
+  }
+}
+
+/* The Creative Director's answer, told to everybody watching the queue —
+ * Production among them, since acting on it is their job. Same shared-queue
+ * rule as the submission itself. */
+async function projectReviewDecided(db, { projectId, actorId, recipientIds, decision }) {
+  const kind = decision === 'changes_requested'
+    ? KINDS.project_review_changes
+    : KINDS.project_review_approved;
+  for (const recipientId of recipientIds || []) {
+    await raise(db, { recipientId, actorId, kind, projectId, otherUserId: actorId });
   }
 }
 
@@ -222,6 +247,7 @@ async function markAllRead(db, userId) {
 
 module.exports = {
   projectReviewRequested,
+  projectReviewDecided,
   KINDS, describe, raise, assignmentChanged,
   listFor, unreadCount, since, highWater, markRead, markAllRead,
 };
