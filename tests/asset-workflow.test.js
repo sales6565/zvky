@@ -288,22 +288,25 @@ test('History is a fourth tab and not a fourth slice of the enum', () => {
   assert.deepStrictEqual([...ids, 'history'], ['active', 'inactive', 'archived', 'history']);
 
   // Membership is decided in one place, for every tab, so the counts cannot
-  // disagree with the lists.
-  assert.match(page, /const inGroup = \(id\)=>\{\s*const picked = matching\.filter\(a=>listTabOf\(a\)===id\);/,
-    'every tab should select through listTabOf, not each with its own rule');
+  // disagree with the lists — and it is decided per ROW, which is what puts a
+  // handed-on asset's finished rounds in History while its live one stays in
+  // Active.
+  assert.match(page, /const picked = allRows\.filter\(r=>rowTabOf\(r\)===id\);/,
+    'every tab should select rows through rowTabOf, not each with its own rule');
+  assert.match(page, /const allRows = listRows\(matching\);/,
+    'and the rows should be built once, for every tab');
 });
 
-test('an asset is in exactly one Assets List tab', () => {
+test('every row is in exactly one Assets List tab', () => {
   /* THE tab rule, run as the page runs it.
    *
-   * Priority order is the specification, not an implementation detail, so it is
-   * asserted as an order: History first and unconditionally, then Inactive,
-   * then Archived, then Active. Read as independent conditions these overlap,
-   * and only the order resolves them.
+   * The unit is a ROUND. An asset handed from one person to another has a
+   * finished round and a live one, and they belong in different tabs — the
+   * closed one in History, the live one wherever its status says. Deciding this
+   * per asset put both in History and took live work out of Active with it.
    *
-   * Run against the page's own functions rather than a restatement of them: a
-   * test that re-implements the rule agrees with itself while the app does
-   * something else, which is exactly the drift this replaced. */
+   * Priority order is the specification, so it is asserted as an order. Run
+   * against the page's own functions rather than a restatement of them. */
   const fs = require('node:fs');
   const path = require('node:path');
   const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
@@ -312,9 +315,10 @@ test('an asset is in exactly one Assets List tab', () => {
     /const ASSET_LIST_GROUPS = \[[\s\S]*?\n\];/,
     /function listGroupOf\(statusId\)\{[\s\S]*?\n\}/,
     /function episodesOf\(a\)\{[^\n]*\}/,
-    /function handedOn\(a\)\{[^\n]*\}/,
     /const TAB_RULES = \[[\s\S]*?\n\];/,
-    /function listTabOf\(a\)\{[\s\S]*?\n\}/,
+    /function rowTabOf\(row\)\{[\s\S]*?\n\}/,
+    /function listRows\(assets\)\{[\s\S]*?\n\}/,
+    /function listTabOf\(a\)\{[^\n]*\}/,
     /function tabAudit\(assets\)\{[\s\S]*?\n\}/,
   ].map((re) => {
     const found = page.match(re);
@@ -322,54 +326,70 @@ test('an asset is in exactly one Assets List tab', () => {
     return found[0];
   });
   // eslint-disable-next-line no-new-func
-  const { listTabOf, tabAudit, TAB_RULES } =
-    new Function(`${parts.join('\n')}; return { listTabOf, tabAudit, TAB_RULES };`)();
+  const { rowTabOf, listRows, listTabOf, tabAudit, TAB_RULES } =
+    new Function(`${parts.join('\n')}; return { rowTabOf, listRows, listTabOf, tabAudit, TAB_RULES };`)();
 
-  // The order itself, stated so a reshuffle is a deliberate act.
   assert.deepStrictEqual(TAB_RULES.map((r) => r.id), ['history', 'inactive', 'archived', 'active'],
     'History is checked first and Active last — the order IS the rule');
 
-  const asset = (status, rounds) => ({
-    status,
-    assignments: Array.from({ length: rounds }, () => ({ assignedAt: '2026-01-01T09:00:00Z' })),
-  });
-  const current = (status) => asset(status, 1);
-  const handed = (status) => asset(status, 2);
+  const open = () => ({ id: 'live', active: true, endedAt: null });
+  const closed = (n) => ({ id: `r${n}`, active: false, endedAt: `2026-0${n}-01T09:00:00Z` });
+  const asset = (status, eps) => ({ id: 'a1', code: 'CHR-001', status, assignments: eps });
 
-  // --- the five cases the studio named ------------------------------------
-  assert.strictEqual(listTabOf(current('in_progress')), 'active',
-    '1. Current + In Progress -> Active');
-  assert.strictEqual(listTabOf(handed('in_progress')), 'history',
-    '2. Handed On + In Progress -> History, not Active');
-  assert.strictEqual(listTabOf(handed('delivered')), 'history',
-    '3. Handed On + Delivered -> History, not Archived — History outranks everything');
-  assert.strictEqual(listTabOf(current('not_started')), 'inactive',
-    '4. Current + Not Assigned -> Inactive');
-  assert.strictEqual(listTabOf(current('delivered')), 'archived',
-    '5. Current + Delivered -> Archived');
+  // --- one row per round, plus one for where the asset is now -------------
+  assert.strictEqual(listRows([asset('in_progress', [])]).length, 1,
+    'never assigned: one row');
+  assert.strictEqual(listRows([asset('in_progress', [open()])]).length, 1,
+    'one live round: one row');
+  assert.strictEqual(listRows([asset('in_progress', [closed(1), open()])]).length, 2,
+    'handed on once: the closed round and the live one');
+  assert.strictEqual(listRows([asset('in_progress', [closed(1), closed(2), open()])]).length, 3,
+    'handed on twice: three rows');
+  // Taken off somebody and given to nobody: the live row still exists, or the
+  // asset would vanish from the board it needs picking up from.
+  const orphan = listRows([asset('assigned', [closed(1)])]);
+  assert.strictEqual(orphan.length, 2);
+  assert.strictEqual(orphan.filter((r) => rowTabOf(r) === 'history').length, 1);
+  assert.strictEqual(orphan.filter((r) => rowTabOf(r) !== 'history').length, 1);
 
-  // --- History really is unconditional ------------------------------------
+  // --- a closed round is History whatever the asset's status is now -------
   for (const status of workflow.STATE_IDS) {
-    assert.strictEqual(listTabOf(handed(status)), 'history',
-      `handed on + ${status} belongs in History whatever the status`);
+    assert.strictEqual(rowTabOf({ a: asset(status, []), ep: closed(1) }), 'history',
+      `a finished round on a ${status} asset belongs in History`);
   }
 
-  // --- and every other combination lands somewhere, exactly once ----------
-  const every = [];
-  for (const status of workflow.STATE_IDS) for (const rounds of [0, 1, 2, 5]) every.push(asset(status, rounds));
-  const report = tabAudit(every);
-  assert.deepStrictEqual(report.problems, [],
-    'no status/round combination lands in zero tabs or in several');
-  assert.ok(report.sums, 'and the four counts add up to the number of assets');
-  assert.strictEqual(report.total, workflow.STATE_IDS.length * 4);
-
-  // Never handed on: the status alone decides, as it always did.
+  // --- the live round goes by status, exactly as before -------------------
   for (const status of workflow.STATE_IDS) {
     const expected = status === 'not_started' ? 'inactive' : status === 'delivered' ? 'archived' : 'active';
-    assert.strictEqual(listTabOf(current(status)), expected, `current + ${status}`);
-    assert.strictEqual(listTabOf(asset(status, 0)), expected,
-      `${status} with no assignment history at all`);
+    assert.strictEqual(rowTabOf({ a: asset(status, [open()]), ep: open() }), expected,
+      `a live round on a ${status} asset`);
+    assert.strictEqual(rowTabOf({ a: asset(status, []), ep: null }), expected,
+      `${status} with no round at all`);
   }
+
+  // --- the studio's own worked example ------------------------------------
+  const handed = asset('in_progress', [closed(1), open()]);
+  const rows = listRows([handed]);
+  assert.deepStrictEqual(rows.map(rowTabOf), ['history', 'active'],
+    'A\'s finished round in History, B\'s live round in Active — at the same time');
+
+  // The asset-level answer is its LIVE round, for anything asking about assets.
+  assert.strictEqual(listTabOf(handed), 'active');
+
+  // --- and every combination lands somewhere, exactly once ----------------
+  const every = [];
+  for (const status of workflow.STATE_IDS) {
+    every.push(asset(status, []), asset(status, [open()]),
+      asset(status, [closed(1), open()]), asset(status, [closed(1), closed(2), open()]));
+  }
+  const report = tabAudit(every);
+  assert.deepStrictEqual(report.problems, [], 'no row lands in zero tabs or in several');
+  assert.ok(report.sums, 'and the four counts add up to the number of ROWS');
+  // 1 + 1 + 2 + 3 rows per status.
+  assert.strictEqual(report.total, workflow.STATE_IDS.length * 7);
+  assert.strictEqual(report.assets, workflow.STATE_IDS.length * 4);
+  // Three closed rounds per status, all of them in History.
+  assert.strictEqual(report.counts.history, workflow.STATE_IDS.length * 3);
 });
 
 test('an asset counts as handed on only once it has actually changed hands', () => {
