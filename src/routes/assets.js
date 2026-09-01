@@ -721,6 +721,10 @@ async function contextFor(req, asset) {
     // permissions rather than from its tier.
     canReviewCd: canReviewAsCD(req.user),
     canApproveForClient: holds(req.user, 'review.approve_client'),
+    // The authority to take the Creative Director out of the loop. Separate
+    // from review.tl, which is the standing to act at the TL gate at all — a
+    // lead needs both to send work straight to the client.
+    canSendToClient: holds(req.user, 'review.tl_send_client'),
   };
 }
 
@@ -971,6 +975,33 @@ router.post('/:id/relay', async (req, res) => {
   if (!verdict.ok) return res.status(verdict.status).json({ error: verdict.error, field: verdict.field });
 
   const withDetails = await applyTransition(req, res, asset, verdict, { note: req.body && req.body.text });
+  res.json({ asset: withDetails });
+});
+
+/* POST /api/assets/:id/send-to-client — the team lead skips the CD gate.
+ *
+ * Its own endpoint rather than a third `decision` on /review, for the same
+ * reason /relay is its own: it is a different act, not a third opinion. The
+ * review route writes a row into `feedback` describing a judgement of the work
+ * at a stage; this records that a stage was skipped, which belongs in the event
+ * history and nowhere else. Folding it into /review would also have meant
+ * widening that table's decision values for something no reviewer ever said.
+ *
+ * The state machine decides whether it is allowed — both halves of it, the TL
+ * standing and review.tl_send_client — so this route only carries the note.
+ */
+router.post('/:id/send-to-client', async (req, res) => {
+  const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
+  const asset = rows[0];
+  if (!asset) return res.status(404).json({ error: 'Asset not found' });
+  if (await projectClosedResponse(res, asset.project_id)) return undefined;
+
+  const ctx = await contextFor(req, asset);
+  const verdict = workflow.evaluate('tl_send_to_client', ctx, { note: req.body && req.body.text });
+  if (!verdict.ok) return res.status(verdict.status).json({ error: verdict.error, field: verdict.field });
+
+  const withDetails = await applyTransition(req, res, asset, verdict, { note: req.body && req.body.text });
+  console.log(`${req.user.email} sent ${asset.code} straight to the client, skipping CD review.`);
   res.json({ asset: withDetails });
 });
 

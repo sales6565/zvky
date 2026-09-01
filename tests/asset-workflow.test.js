@@ -447,6 +447,87 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.deepStrictEqual(events.map((e) => e.toStatus), ['assigned', 'in_progress']);
   });
 
+  await t.test('Send to Client: the lead skips the CD gate, and the history says so', async () => {
+    /* The permission split, against a live server. `team_lead` does not hold
+       review.tl_send_client by default, so the same account is used before and
+       after the grant — which is the case the studio will actually meet. */
+    const toReview = async (name) => {
+      const id = await newAsset(name);
+      await call(`/assets/${id}/start`, { token: token.artist, method: 'POST' });
+      await act(id, 'submit', 'artist', { link: 'http://nas/shots/' + name.replace(/\W+/g, '-') });
+      assert.strictEqual(await statusOf(id), 'pending_tl_review');
+      return id;
+    };
+    const relogin = async () => { token.lead = (await call('/auth/login',
+      { method: 'POST', body: { email: 'tl@zvky.test', password: PASSWORD } })).body.token; };
+
+    // --- without the permission -------------------------------------------
+    const denied = await toReview('No Skip For You');
+    const refused = await act(denied, 'send-to-client', 'lead');
+    assert.strictEqual(refused.status, 403,
+      `TL Review Actions alone must not reach it — got ${JSON.stringify(refused.body)}`);
+    assert.strictEqual(await statusOf(denied), 'pending_tl_review', 'and nothing moved');
+
+    // The ordinary two are unaffected: this lead still reviews exactly as before.
+    assert.strictEqual((await act(denied, 'review', 'lead', { decision: 'approved' })).status, 200);
+    assert.strictEqual(await statusOf(denied), 'pending_cd_review');
+
+    // --- with the permission ----------------------------------------------
+    const grant = await call('/permissions/roles/team_lead', {
+      token: token.admin, method: 'PUT', body: { permissions: ['review.tl', 'review.tl_send_client'] },
+    });
+    assert.strictEqual(grant.status, 200, JSON.stringify(grant.body));
+    await relogin();
+
+    const id = await toReview('Straight To The Client');
+    const sent = await act(id, 'send-to-client', 'lead', { text: 'Client signed off on the concept already' });
+    assert.strictEqual(sent.status, 200, JSON.stringify(sent.body));
+    assert.strictEqual(sent.body.asset.status, 'approved_for_client',
+      'the same state the CD route reaches');
+    assert.strictEqual(await statusOf(id), 'approved_for_client');
+
+    /* The audit trail, which is the point of requirement 2: a distinct action,
+       the person, the moment, and the two states it moved between. */
+    const events = await historyOf(id);
+    const skip = events[events.length - 1];
+    assert.strictEqual(skip.action, 'tl_send_to_client',
+      'recorded under its own action, not as an ordinary approval');
+    assert.strictEqual(skip.fromStatus, 'pending_tl_review');
+    assert.strictEqual(skip.toStatus, 'approved_for_client');
+    assert.strictEqual(skip.actor, 'Priya Menon', 'who did it');
+    assert.ok(skip.at, 'and when');
+    assert.match(skip.note, /Client signed off on the concept already/);
+    assert.ok(!events.some((e) => e.action === 'cd_approve'),
+      'and no CD approval was ever recorded, because none happened');
+    assert.ok(!events.some((e) => e.toStatus === 'pending_cd_review'),
+      'the asset never entered CD Review at all');
+
+    /* Countable, which is what "how often does TL skip CD review" needs. Both
+       routes reach approved_for_client, so the status cannot answer it and the
+       action has to. */
+    const skipped = await sql(cfg,
+      "SELECT COUNT(*) AS n FROM asset_events WHERE action = 'tl_send_to_client'");
+    assert.ok(Number(skipped[0].n) >= 1, 'the skip is queryable across the whole studio');
+
+    // Delivered still works from there — the end of the pipeline is unchanged.
+    assert.strictEqual((await act(id, 'deliver', 'admin')).status, 200);
+    assert.strictEqual(await statusOf(id), 'delivered');
+
+    // --- and it is only reachable from TL Review ---------------------------
+    const inCd = await toReview('Already Past The Lead');
+    await act(inCd, 'review', 'lead', { decision: 'approved' });
+    assert.strictEqual(await statusOf(inCd), 'pending_cd_review');
+    assert.strictEqual((await act(inCd, 'send-to-client', 'lead')).status, 409,
+      'no second bite once it is in the CD queue');
+
+    // The artist cannot reach it whatever the lead holds.
+    const mine = await toReview('Not The Artists Call');
+    assert.strictEqual((await act(mine, 'send-to-client', 'artist')).status, 403);
+
+    await call('/permissions/roles/team_lead/reset', { token: token.admin, method: 'POST' });
+    await relogin();
+  });
+
   await t.test('the happy path runs end to end', async () => {
     const id = await newAsset('Hero Character');
     assert.strictEqual(await statusOf(id), 'assigned', 'created with an assignee waits to be accepted');
@@ -889,4 +970,131 @@ test('who sees which dashboard column', () => {
     if (['not_started', 'pending_cd_review', 'cd_changes_requested'].includes(id)) continue;
     assert.ok(neither.includes(id), `${id} should be visible to everyone`);
   }
+});
+
+/* --- Send to Client: the team lead skipping the CD gate ---------------------
+ *
+ * The permission split is the whole feature, so it is tested as a truth table
+ * rather than on the happy path alone: standing at the TL gate and the
+ * authority to skip the next one are two different things, and the button must
+ * appear only where both are held.
+ */
+test('Send to Client needs the TL gate AND the permission to skip the CD one', () => {
+  const at = (status) => ({
+    user: { id: 'lead-1', role: 'team_lead' },
+    asset: { status, assignee_id: 'artist-1' },
+  });
+  const verdict = (extra, status = 'pending_tl_review') =>
+    workflow.evaluate('tl_send_to_client', { ...at(status), ...extra });
+
+  assert.strictEqual(verdict({ isTeamLead: true, canSendToClient: true }).ok, true,
+    'both halves held');
+  assert.strictEqual(verdict({ isTeamLead: true, canSendToClient: false }).ok, false,
+    'TL Review Actions alone is not enough — that is the point of the split');
+  assert.strictEqual(verdict({ isTeamLead: false, canSendToClient: true }).ok, false,
+    'nor is the permission on its own, without standing at the TL gate');
+  assert.strictEqual(verdict({ isTeamLead: false, canSendToClient: false }).ok, false);
+
+  // Full access reaches it, as it reaches every other gate.
+  assert.strictEqual(verdict({ isTeamLead: false, canOverride: true, canSendToClient: true }).ok, true);
+
+  // Only from TL Review. Not from the CD queue, not from rework, not after the
+  // fact — there is no second bite once the asset is past this gate.
+  for (const status of ['not_started', 'assigned', 'in_progress', 'tl_changes_requested',
+                        'pending_cd_review', 'cd_changes_requested',
+                        'approved_for_client', 'delivered']) {
+    assert.strictEqual(verdict({ isTeamLead: true, canSendToClient: true }, status).ok, false,
+      `Send to Client must not be reachable from ${status}`);
+  }
+});
+
+test('Send to Client lands where the CD route lands, by a distinguishable action', () => {
+  const send = workflow.evaluate('tl_send_to_client', {
+    user: { id: 'lead-1', role: 'team_lead' },
+    asset: { status: 'pending_tl_review', assignee_id: 'artist-1' },
+    isTeamLead: true, canSendToClient: true,
+  });
+  const cd = workflow.evaluate('cd_approve', {
+    user: { id: 'cd-1', role: 'art_director' },
+    asset: { status: 'pending_cd_review', assignee_id: 'artist-1' },
+    canReviewCd: true, canApproveForClient: true,
+  });
+
+  /* Same destination, deliberately: reusing approved_for_client is what keeps
+     the dashboard columns, the stats bar and the Delivered flow working with no
+     knowledge of this feature at all. */
+  assert.strictEqual(send.to, 'approved_for_client');
+  assert.strictEqual(send.to, cd.to, 'both routes reach the same state');
+  assert.strictEqual(send.routedTo, cd.routedTo, 'and sit in the same queue');
+
+  /* But NOT the same action. The action id is what asset_events stores, so
+     "how often does a lead skip the CD" stays answerable from history already
+     written, without a column being added for it later. */
+  assert.notStrictEqual(send.action, cd.action);
+  assert.strictEqual(send.action, 'tl_send_to_client');
+  assert.match(send.describe, /skipping Creative Director review/);
+
+  // And Delivered is still reachable from there, by the ordinary route.
+  const deliver = workflow.evaluate('deliver', {
+    user: { id: 'p-1', role: 'producer' },
+    asset: { status: send.to, assignee_id: 'artist-1' },
+    canDeliver: true,
+  });
+  assert.strictEqual(deliver.ok, true, 'the Delivered flow is untouched');
+  assert.strictEqual(deliver.to, 'delivered');
+});
+
+test('the TL Send to Client permission is its own key, off by default', () => {
+  const catalog = require('../src/permission-catalog');
+  const { activeRoles, roleDef } = require('../src/roles');
+  const all = catalog.GROUPS.flatMap((g) => g.permissions);
+
+  const perm = all.find((p) => p.key === 'review.tl_send_client');
+  assert.ok(perm, 'the permission exists');
+  assert.strictEqual(perm.label, 'TL Send to Client');
+
+  // In the Review Workflow group, beside the permissions it relates to.
+  const group = catalog.GROUPS.find((g) => g.permissions.some((p) => p.key === 'review.tl_send_client'));
+  assert.strictEqual(group.label, 'Review Workflow');
+
+  /* Independent of the two it is easiest to confuse it with. review.tl is
+     standing at the TL gate; review.approve_client is signing off while
+     standing IN the CD gate; this is the authority to walk around it. */
+  const holders = (key) => {
+    const p = all.find((x) => x.key === key);
+    return activeRoles().map((r) => r.key).filter((k) => {
+      const def = roleDef(k);
+      return def && p.impliedBy(def);
+    });
+  };
+  const skip = holders('review.tl_send_client');
+  const tl = holders('review.tl');
+
+  assert.ok(skip.includes('super_admin'), 'Super Admin has it by default');
+  assert.ok(skip.length > 1, 'and so do the other full-access roles');
+  assert.ok(!skip.includes('team_lead'),
+    'but an ordinary Team Lead does NOT — bypassing the CD gate is granted deliberately');
+  assert.ok(tl.includes('team_lead'),
+    'while a Team Lead still holds TL Review Actions, so they review exactly as before');
+  assert.ok(tl.length > skip.length,
+    'the skip permission reaches strictly fewer roles than the review one');
+});
+
+test('every workflow action has a name the history can show', () => {
+  /* An action missing from HISTORY_ACTIONS falls back to its raw id, so the
+     asset's history showed "accept" and "reassign_review" as bare code names
+     beside properly worded lines. Adding a transition without a label is the
+     easy way to reintroduce that, so the two lists are checked against each
+     other rather than kept in step by memory. */
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const block = page.match(/const HISTORY_ACTIONS = \{([\s\S]*?)\n\};/);
+  assert.ok(block, 'public/index.html has no HISTORY_ACTIONS map');
+  const labelled = [...block[1].matchAll(/^\s*([a-z_]+):/gm)].map((m) => m[1]);
+
+  const actions = [...new Set(workflow.TRANSITIONS.map((t) => t.action))];
+  const missing = actions.filter((a) => !labelled.includes(a));
+  assert.deepStrictEqual(missing, [],
+    `these actions would appear in the history as raw ids: ${missing.join(', ')}`);
 });

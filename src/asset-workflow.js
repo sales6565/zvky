@@ -8,9 +8,18 @@
 // cannot happen.
 //
 //   Not Assigned -> Assigned -> In Progress -> TL Review -> Approved for Client -> Delivered
-//                       |            ^             |  \
+//                       |            ^             |  \        ^
 //                  (accept starts    |             |   +-> TL Feedbacks -> (assignee reworks)
 //                   the clock)       |             +-> CD Review -> CD Feedbacks -> (TL relays)
+//                                    |             |
+//                                    |             +-> "Send to Client" ---+
+//                                    |                  (skips the CD gate;
+//                                    |                   its own permission)
+//
+// Approved for Client is reachable two ways: the ordinary route through the
+// Creative Director, and a team lead with review.tl_send_client skipping that
+// gate. Same destination, two different actions in the history, so the two are
+// told apart afterwards.
 //
 // Assigned and In Progress are separated by the assignee's own act: assignment
 // puts work on their desk, Accept and Start is them picking it up — and it is
@@ -103,6 +112,14 @@ const actors = {
   // Signing work off for the client — the half of that gate that cannot be
   // taken back. Held separately, so a role can review without signing off.
   clientApprover: (ctx) => Boolean((ctx.canReviewCd && ctx.canApproveForClient) || ctx.canOverride),
+  /* The lead who may skip the Creative Director entirely.
+   *
+   * Both halves are required, and that is the whole point of the split: the
+   * standing to act at the TL gate at all (isTeamLead, which already asks for
+   * review.tl), AND the separate authority to walk around the CD gate rather
+   * than pass work through it. A lead with review.tl and not this one reviews
+   * exactly as before and never sees the button. */
+  tlClientSender: (ctx) => Boolean(ctx.canSendToClient && (ctx.isTeamLead || ctx.canOverride)),
   // Anyone who may set up work on the asset: assign it, or edit it.
   //
   // Both halves, and the second one used to be missing. Assigning is its own
@@ -228,6 +245,27 @@ const TRANSITIONS = [
     who: 'teamLead',
     routeTo: 'reviewQueue',
     describe: 'Team lead approved, sent to the Creative Director',
+  },
+  {
+    /* The Creative Director skipped.
+     *
+     * Deliberately its own action rather than a variant of tl_approve, because
+     * the action id is what asset_events stores — so "how often does a lead go
+     * straight to the client" is a question the history can answer for work
+     * already done, rather than one that needs a new column added later. It
+     * lands in the same Approved for Client state the CD route reaches, so the
+     * dashboard, the stats bar and the Delivered flow need to know nothing
+     * about it.
+     *
+     * There is no route back into CD Review from here. That is the point of the
+     * action: the asset is past the gate, and a studio that wanted it reviewed
+     * after all can send it back through the ordinary path by reassigning it. */
+    action: 'tl_send_to_client',
+    from: ['pending_tl_review'],
+    to: 'approved_for_client',
+    who: 'tlClientSender',
+    routeTo: 'reviewQueue',
+    describe: 'Team lead sent straight to the client, skipping Creative Director review',
   },
   {
     action: 'tl_request_changes',

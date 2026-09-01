@@ -237,11 +237,25 @@ Not Assigned --assign--> Assigned --accept--> In Progress --submit--> TL Review
                                                       +---- TL Feedbacks <|---------+
                                                       |                   v
                                                       |               CD Review --cd_approve--> Approved for Client --deliver--> Delivered
-                                                      |                   |
-                                                      |    cd_request_changes (lands with the lead)
-                                                      |                   v
-                                                      +-- (assignee reworks) <-- relay -- CD Feedbacks
+                                                      |                   |                              ^
+                                                      |    cd_request_changes (lands with the lead)      |
+                                                      |                   v                              |
+                                                      +-- (assignee reworks) <-- relay -- CD Feedbacks   |
+                                                                                                         |
+             TL Review --tl_send_to_client (needs review.tl_send_client)-------------------------------- +
 ```
+
+**Approved for Client is reachable two ways.** The ordinary route runs through
+the Creative Director; a team lead holding `review.tl_send_client` can skip that
+gate outright with the **Send to Client** button. Same destination, so the
+dashboard, the stats bar and the Delivered flow need to know nothing about it —
+but a different `action` in `asset_events`, so "how often does a lead skip the
+CD" stays answerable from history that has already been written.
+
+The permission is deliberately separate from `review.tl`, and off for every role
+except the full-access tier: a lead needs the standing to act at the TL gate
+*and* the authority to walk around the next one. `review.approve_client` is a
+third, different thing — signing off while standing *in* the CD gate.
 
 ### Status is not the same as whose desk it is on
 

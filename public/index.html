@@ -3030,6 +3030,11 @@ async function openDrawer(id){
      resume. */
   const mustStartFirst = canSubmit && a.status === 'assigned';
   const canTlReview = can('review.tl') && a.status==='pending_tl_review';
+  /* Skipping the Creative Director. Needs review.tl to be standing at this gate
+     at all, AND review.tl_send_client to walk around the next one — mirrors
+     tlClientSender in src/asset-workflow.js, which is the authority. A lead
+     without the second permission sees the same two buttons they always had. */
+  const canSendToClient = canTlReview && can('review.tl_send_client');
   const canCdReview = can('review.cd') && a.status==='pending_cd_review';
   /* Signing off for the client is the half of the CD gate that cannot be taken
      back, and is its own permission. A role can review without holding it — it
@@ -3138,8 +3143,13 @@ async function openDrawer(id){
       <textarea id="tlReviewNote" rows="2" placeholder="Feedback for the artist (required if requesting changes)…"></textarea>
       <div style="display:flex;gap:8px;margin-top:8px;">
         <button class="btn btn-ghost" id="tlReqChangesBtn" style="flex:1;color:#e8402c;">Request changes</button>
+        ${canSendToClient ? `<button class="btn btn-ghost" id="tlSendClientBtn" style="flex:1;color:var(--approved);"
+          title="Approve and send straight to the client. The Creative Director will not see this asset.">Send to Client</button>` : ''}
         <button class="btn btn-brand" id="tlApproveBtn" style="flex:1;">Approve → send to CD</button>
       </div>
+      ${canSendToClient ? `<div style="font-size:11px;color:var(--ink-faint);margin-top:6px;">
+        <strong>Send to Client</strong> skips Creative Director review — the asset goes straight to Approved for Client.
+      </div>` : ''}
     ` : ''}
 
     ${canCdReview ? `
@@ -3439,6 +3449,22 @@ async function openDrawer(id){
     const approveBtn = document.getElementById(stage+'ApproveBtn');
     if(approveBtn) approveBtn.onclick = ()=>doReview('approved');
     document.getElementById(stage+'ReqChangesBtn').onclick = ()=>doReview('changes_requested');
+
+    /* Skipping the CD gate. Its own endpoint, not a third decision on /review —
+       it is not a judgement of the work, it is a decision about the pipeline.
+       Confirmed first because there is no way back: the Creative Director never
+       sees the asset, and Approved for Client is one step from Delivered. */
+    const sendClientBtn = document.getElementById('tlSendClientBtn');
+    if(sendClientBtn) sendClientBtn.onclick = async ()=>{
+      const text = document.getElementById('tlReviewNote').value.trim();
+      if(!confirm('Send this straight to the client?\n\nThe Creative Director will not review it. This cannot be undone from here.')) return;
+      sendClientBtn.disabled = true;
+      try{
+        await api('/assets/'+id+'/send-to-client', { method:'POST', body:{ text } });
+        showToast('Sent to the client — Creative Director review skipped.');
+        closeDrawer(); render();
+      }catch(err){ showToast(err.message); sendClientBtn.disabled = false; }
+    };
   }
   if(canHandOver){
     /* The candidates come from the API rather than being filtered here, so the
@@ -3491,11 +3517,21 @@ async function openDrawer(id){
     catch(err){ showToast(err.message); }
   };
 }
+/* One entry per action in src/asset-workflow.js. An action missing from here
+   falls back to its raw id — which is how "accept" and "reassign_review" were
+   appearing in the history as bare code names. */
 const HISTORY_ACTIONS = {
   assign:             { label: 'Assigned',          color: 'var(--prog)' },
+  accept:             { label: 'Accepted — started', color: 'var(--prog)' },
+  reassign_review:    { label: 'Handed to somebody else', color: '#ffd23d' },
   submit:             { label: 'Submitted',         color: 'var(--review)' },
   tl_approve:         { label: 'TL approved',       color: 'var(--approved)' },
   tl_request_changes: { label: 'TL asked for changes', color: '#e8402c' },
+  /* Named for what it skipped, not just for where it went. "Approved for
+     client" beside a team lead's avatar would read as the ordinary CD sign-off
+     to anybody scanning the history, which is the one thing this line exists to
+     distinguish. */
+  tl_send_to_client:  { label: 'TL sent to client — CD review skipped', color: 'var(--approved)' },
   cd_approve:         { label: 'CD approved',       color: 'var(--approved)' },
   cd_request_changes: { label: 'CD asked for changes', color: '#e8402c' },
   relay:              { label: 'Passed to assignee', color: '#ffd23d' },

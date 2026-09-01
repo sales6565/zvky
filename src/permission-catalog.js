@@ -131,6 +131,26 @@ const GROUPS = [
         impliedBy: reviewsAt('cd'),
         describe: 'Sign work off as ready for the client. Requires CD Review Actions as well.',
       },
+      {
+        key: 'review.tl_send_client',
+        label: 'TL Send to Client',
+        /* Skipping a gate, not passing one — which is why it is its own key
+           rather than part of TL Review Actions.
+         *
+         * A lead with review.tl can approve work onward and send it back. This
+         * permission lets them take the Creative Director out of the loop
+         * entirely, and that is a different kind of decision: the CD never sees
+         * the work, and Approved for Client is one step from Delivered. So it
+         * defaults to the full-access tier only, and a studio that wants its
+         * senior leads to have it grants it to them deliberately.
+         *
+         * Distinct from review.approve_client, which is the sign-off at the CD
+         * gate for somebody standing in it. This one is the authority to walk
+         * around that gate. A role can hold either without the other. */
+        impliedBy: fullAccess,
+        describe: 'Send work in TL Review straight to Approved for Client, skipping CD Review. '
+          + 'Requires TL Review Actions as well.',
+      },
       { key: 'review.deliver',        label: 'Mark as Delivered',    impliedBy: has('deliver') },
     ],
   },
