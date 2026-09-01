@@ -1174,16 +1174,12 @@ function listGroupOf(statusId){
 
 /* The fourth tab, and why it is not in the list above.
  *
- * Active, Inactive and Archived partition the status enum: every status is in
- * exactly one, and a test fails if that stops being true. History is not a
- * fourth slice of that partition — it cuts across it. An asset that changed
- * hands is still In Progress, or still Delivered, and it goes on showing in
- * whichever of the three its status puts it in. Removing it from there would
- * hide live work from the people currently carrying it, which is the opposite
- * of what a history tab is for.
+ * ASSET_LIST_GROUPS partitions the status enum: every status is in exactly one
+ * of the three, and a test fails if that stops being true. History is not a
+ * fourth slice of that partition — nothing has the status "handed on" — so it
+ * is appended here rather than added there, and the partition is left alone.
  *
- * So the partition stays exactly as it was, and the tab strip is the partition
- * plus this one. */
+ * Which tab an asset actually lands in is listTabOf() below, not this list. */
 const ASSET_LIST_TABS = [...ASSET_LIST_GROUPS, { id:'history', label:'History' }];
 
 /* Has this asset ever been handed on?
@@ -1215,6 +1211,39 @@ function lastHandoverAt(a){
     const at = new Date(ep.assignedAt).getTime();
     return Number.isFinite(at) && at > newest ? at : newest;
   }, 0);
+}
+
+/* Which ONE tab an asset belongs in.
+ *
+ * Every asset gets exactly one answer, so nothing appears in two tabs and the
+ * counts fall out of the same question the list asks. It used to be that an
+ * asset could be in Active and History both; the studio asked for the opposite,
+ * so membership is now decided here, in this order, and the order IS the rule:
+ *
+ *   1. Delivered      -> Archived. Shipped work is filed, whatever happened on
+ *                        the way there. Archived keeps the definition it has
+ *                        always had.
+ *   2. Ever handed on -> History, and only History. This is the correction: an
+ *                        asset that changed hands comes OUT of Active rather
+ *                        than sitting in both.
+ *   3. Anything else  -> by status, exactly as before.
+ *
+ * What 1-before-2 means, stated because it is a real consequence and not an
+ * oversight: a handed-on asset LEAVES History once it is delivered, and is
+ * found under Archived from then on. Its handover trail is not lost — the rows
+ * still show every stretch of work, and the asset's own History section still
+ * lists each handover with who made it — but this tab lists work that changed
+ * hands and has not yet shipped. Swapping the two lines below makes History
+ * outrank Archived instead; nothing else would need to change.
+ *
+ * Not Assigned is untouched by any of this, and cannot be reached by it: a
+ * handover needs a submission first and returns the asset to Assigned, so a
+ * not_started asset has never been handed on. */
+function listTabOf(a){
+  const byStatus = listGroupOf(a.status);
+  if(byStatus === 'archived') return 'archived';
+  if(handedOn(a)) return 'history';
+  return byStatus;
 }
 
 /* Which pipeline stages this account sees on the dashboard.
@@ -1852,18 +1881,22 @@ function renderList(){
      whole project instead would put "Active (12)" above a list of two. */
   const matching = filteredAssets()
     .filter(a=>visibleStatuses().some(s=>s.id===a.status));
-  /* Every tab reads the same filtered pool, which is what makes the search and
-     the type filter behave identically in all four rather than each tab
-     growing its own idea of what is in scope. History differs only in which
-     assets it picks out of it, and in the order. */
-  const inGroup = (id)=> id==='history'
-    ? matching.filter(handedOn).sort((x,y)=>lastHandoverAt(y)-lastHandoverAt(x))
-    : matching.filter(a=>listGroupOf(a.status)===id);
+  /* Every tab reads the same filtered pool and the same one-tab-per-asset
+     answer, which is what makes the search and the type filter behave
+     identically in all four AND what makes the counts add up: no asset can be
+     in two of these lists, because listTabOf gives it one name. History differs
+     only in its order. */
+  const inGroup = (id)=>{
+    const picked = matching.filter(a=>listTabOf(a)===id);
+    return id==='history' ? picked.sort((x,y)=>lastHandoverAt(y)-lastHandoverAt(x)) : picked;
+  };
   const shown = inGroup(state.listGroup);
 
   /* The counts are of ASSETS, not of rows — as they always have been. A tab
      reading 3 above eight rows is not a miscount: it is three assets that have
-     been through eight stretches of work between them. */
+     been through eight stretches of work between them. Across the four tabs
+     they now sum to the number of assets in scope, because each one is claimed
+     exactly once. */
   const tabs = `<div class="sub-tabs">${ASSET_LIST_TABS.map(g=>{
     const n = inGroup(g.id).length;
     return `<button class="sub-tab${g.id===state.listGroup?' active':''}" data-group="${g.id}">${g.label} <span class="sub-tab-count">${n}</span></button>`;

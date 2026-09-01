@@ -276,12 +276,77 @@ test('History is a fourth tab and not a fourth slice of the enum', () => {
   const ids = [...groups[1].matchAll(/\{ id:'([a-z]+)'/g)].map((m) => m[1]);
   assert.deepStrictEqual([...ids, 'history'], ['active', 'inactive', 'archived', 'history']);
 
-  // And the three original tabs are untouched: still rendered by the same
-  // status test they always were, with History the only special case.
-  assert.match(page, /id==='history'\s*\?\s*matching\.filter\(handedOn\)/,
-    'History should select on the handover trail');
-  assert.match(page, /:\s*matching\.filter\(a=>listGroupOf\(a\.status\)===id\)/,
-    'and the other three should still select on status alone');
+  // Membership is decided in one place, for every tab, so the counts cannot
+  // disagree with the lists.
+  assert.match(page, /const inGroup = \(id\)=>\{\s*const picked = matching\.filter\(a=>listTabOf\(a\)===id\);/,
+    'every tab should select through listTabOf, not each with its own rule');
+});
+
+test('an asset is in exactly one Assets List tab', () => {
+  /* The correction the studio asked for. A handed-on asset used to appear in
+   * Active AND History, so the badges double-counted and work that had changed
+   * hands was in two places at once. Membership is now one answer per asset.
+   *
+   * Run against the page's own functions rather than a restatement of them: a
+   * test that re-implements the rule agrees with itself while the app does
+   * something else. */
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+
+  const parts = [
+    /const ASSET_LIST_GROUPS = \[[\s\S]*?\n\];/,
+    /function listGroupOf\(statusId\)\{[\s\S]*?\n\}/,
+    /function episodesOf\(a\)\{[^\n]*\}/,
+    /function handedOn\(a\)\{[^\n]*\}/,
+    /function listTabOf\(a\)\{[\s\S]*?\n\}/,
+  ].map((re) => {
+    const found = page.match(re);
+    assert.ok(found, `could not find ${re} on the page`);
+    return found[0];
+  });
+  // eslint-disable-next-line no-new-func
+  const { listTabOf, ASSET_LIST_GROUPS } =
+    new Function(`${parts.join('\n')}; return { listTabOf, ASSET_LIST_GROUPS };`)();
+
+  const TABS = [...ASSET_LIST_GROUPS.map((g) => g.id), 'history'];
+  const ep = (n) => ({ assignments: Array.from({ length: n }, () => ({ assignedAt: '2026-01-01T09:00:00Z' })) });
+
+  // Whatever the status and however many hands it has been through, the answer
+  // is one of the four and only one.
+  for (const status of workflow.STATE_IDS) {
+    for (const episodes of [0, 1, 2, 5]) {
+      const tab = listTabOf({ status, ...ep(episodes) });
+      assert.ok(TABS.includes(tab), `${status} with ${episodes} episodes landed in "${tab}"`);
+      assert.strictEqual(TABS.filter((t) => t === tab).length, 1);
+    }
+  }
+
+  // Delivered is filed under Archived, whatever happened on the way there.
+  assert.strictEqual(listTabOf({ status: 'delivered', ...ep(0) }), 'archived');
+  assert.strictEqual(listTabOf({ status: 'delivered', ...ep(3) }), 'archived',
+    'a delivered asset that changed hands is still Archived, not History');
+
+  // Anything else that changed hands is History and nothing else. This is the
+  // bug: every one of these used to answer 'active'.
+  for (const status of ['assigned', 'in_progress', 'pending_tl_review',
+    'tl_changes_requested', 'pending_cd_review', 'cd_changes_requested', 'approved_for_client']) {
+    assert.strictEqual(listTabOf({ status, ...ep(2) }), 'history',
+      `${status} after a handover belongs in History alone`);
+    assert.strictEqual(listTabOf({ status, ...ep(1) }), 'active',
+      `${status} that never changed hands is still Active`);
+    assert.strictEqual(listTabOf({ status, ...ep(0) }), 'active');
+  }
+
+  // Not Assigned is untouched, which the studio asked for explicitly.
+  assert.strictEqual(listTabOf({ status: 'not_started', ...ep(0) }), 'inactive');
+  assert.strictEqual(listTabOf({ status: 'not_started', ...ep(1) }), 'inactive');
+
+  // And nothing ever leaks into Active by falling through: every status has a
+  // home, so the fallback inside listGroupOf is unreachable for real data.
+  const everyStatusPlaced = workflow.STATE_IDS.every((status) =>
+    ASSET_LIST_GROUPS.some((g) => g.statuses.includes(status)));
+  assert.ok(everyStatusPlaced, 'an unplaced status would silently become Active');
 });
 
 test('an asset counts as handed on only once it has actually changed hands', () => {
