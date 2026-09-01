@@ -896,6 +896,160 @@ test('assigned, accepted, stamped', { skip: cfg ? false : SKIP_REASON }, async (
     assert.strictEqual(after.startedAt !== null, true);
   });
 
+  await t.test('a database full of old pause/resume data upgrades without lying about it', async () => {
+    /* What every existing deployment looks like on the morning after this
+       change: rounds made of several rows, because the artist paused for lunch,
+       and `seconds` on each of them meaning ACTIVE worked time. Those rows must
+       survive untouched — and must not be quietly relabelled as elapsed time,
+       because they are not. */
+    const asset = await newAsset('Recorded Under The Old Rule');
+
+    // Three stretches in one round, the way Pause and Resume used to write
+    // them, with no ended_reason because nothing recorded one.
+    const ep = await sql(cfg,
+      `SELECT id FROM asset_assignments WHERE asset_id = '${asset.id}' AND ended_at IS NULL`);
+    for (const [from, to, secs] of [
+      ['2026-02-02 09:00:00', '2026-02-02 12:00:00', 10800],
+      ['2026-02-02 13:00:00', '2026-02-02 15:00:00', 7200],
+      ['2026-02-02 15:30:00', '2026-02-02 17:00:00', 5400],
+    ]) {
+      await sql(cfg, `INSERT INTO work_sessions (id, asset_id, user_id, round, assignment_id,
+        started_at, ended_at, seconds, ended_reason)
+        VALUES (UUID(), '${asset.id}', '${people.ana}', 1, ${ep.length ? `'${ep[0].id}'` : 'NULL'},
+                '${from}', '${to}', ${secs}, NULL)`);
+    }
+
+    // Six and a half worked hours across an eight-hour span. That distinction
+    // is the whole reason the old rows are left alone.
+    const work = await workOf(asset.id);
+    assert.strictEqual(work.totalSeconds, 23400, 'the recorded active time, to the second');
+    assert.strictEqual(work.rounds.length, 1, 'still one round');
+    assert.ok(new Date(work.submittedAt) - new Date(work.startedAt) === 8 * 3600 * 1000,
+      'while the two stamps are eight hours apart — which is exactly the difference');
+
+    // Running the migration again must not backfill a reason onto them. A guess
+    // would destroy the only marker distinguishing old rows from new ones.
+    const mysql = require('mysql2/promise');
+    const conn = await mysql.createConnection({
+      host: cfg.host, port: cfg.port, user: cfg.user, password: cfg.password, database: cfg.database,
+    });
+    const db = { query: async (text, params = []) => {
+      const ordered = [];
+      const sqlText = text.replace(/\$(\d+)/g, (_, n) => { ordered.push(params[Number(n) - 1]); return '?'; });
+      const [out] = await conn.query(sqlText, ordered.length ? ordered : params);
+      return { rows: Array.isArray(out) ? out : [], result: out };
+    } };
+    try { await require('../src/migrate').run(db, () => {}); } finally { await conn.end(); }
+
+    const after = await sessionsOf(asset.id);
+    assert.strictEqual(after.length, 3, 'the three rows are still three rows');
+    assert.deepStrictEqual(after.map((r) => r.ended_reason), [null, null, null],
+      'and still carry no reason — the marker that says they mean something else');
+    assert.deepStrictEqual(after.map((r) => r.seconds), [10800, 7200, 5400], 'untouched');
+
+    /* And the reports say so rather than presenting both kinds as one series.
+       The cutover is derived from the data: the earliest row that HAS a reason. */
+    const workLog = require('../src/work-log');
+    const cutover = await workLog.cutover({ query: async (text) => {
+      const c = await mysql.createConnection({
+        host: cfg.host, port: cfg.port, user: cfg.user, password: cfg.password, database: cfg.database,
+      });
+      try { const [out] = await c.query(text); return { rows: out, result: out }; }
+      finally { await c.end(); }
+    } });
+    assert.ok(cutover.mixed, 'the deployment is flagged as holding both kinds');
+    assert.ok(cutover.legacyRows >= 3, `and counts the old rows — got ${cutover.legacyRows}`);
+    assert.match(cutover.date, /^\d{4}-\d{2}-\d{2}$/, 'with a date the exports can print');
+
+    const exporter = require('../src/report-export');
+    const basis = exporter.timeBasis(cutover);
+    assert.strictEqual(basis.length, 2, 'so every export carries the warning line');
+    assert.match(basis[1][1], new RegExp(cutover.date));
+  });
+
+  await t.test('the whole loop: TL Changes, CD Changes, and a hand-over', async () => {
+    /* One asset through every path that opens or closes a stretch, checking the
+       stamps and the reason at each step. The rounds and the hand-over were
+       each covered on their own above; what this pins is that they compose —
+       that four rounds across two people produce four spans, each with its own
+       pair of stamps, none of them overlapping, and every close explained. */
+    const asset = await newAsset('The Long Way Round');
+
+    // Round 1: ana accepts, works, submits.
+    await start('ana', asset.id);
+    await sleep(1100);
+    await submit('ana', asset.id, 'https://example.test/lw-v1');
+
+    // TL sends it back. Same person, so no new episode — a new round inside it.
+    await as('lee', `/assets/${asset.id}/review`, {
+      method: 'POST', body: { decision: 'changes_requested', text: 'Softer light' },
+    });
+    assert.strictEqual((await assetRow(asset.id)).status, 'tl_changes_requested');
+    await start('ana', asset.id);            // round 2
+    await sleep(1100);
+    await submit('ana', asset.id, 'https://example.test/lw-v2');
+
+    // TL passes it up; the CD sends it back; the lead relays it.
+    await as('lee', `/assets/${asset.id}/review`, { method: 'POST', body: { decision: 'approved' } });
+    await as('dana', `/assets/${asset.id}/review`, {
+      method: 'POST', body: { decision: 'changes_requested', text: 'Rework the silhouette' },
+    });
+    assert.strictEqual((await start('ana', asset.id)).status, 409, 'not until the notes are relayed');
+    await as('lee', `/assets/${asset.id}/relay`, { method: 'POST', body: {} });
+    await start('ana', asset.id);            // round 3
+    await sleep(1100);
+    await submit('ana', asset.id, 'https://example.test/lw-v3');
+
+    // And now it goes to bo, who starts a stretch of their own.
+    const anaTotal = (await workOf(asset.id)).currentSeconds;
+    await as('lee', `/assets/${asset.id}/reassign`, {
+      method: 'POST', body: { assigneeId: people.bo },
+    });
+    const handed = await workOf(asset.id);
+    assert.strictEqual(handed.currentSeconds, 0, 'bo starts with nothing recorded');
+    assert.strictEqual(handed.startedAt, null, 'and no start stamp until they accept');
+    assert.strictEqual(handed.totalSeconds, anaTotal, "and ana's three rounds survive intact");
+
+    await start('bo', asset.id);             // round 4
+    await sleep(1100);
+    await submit('bo', asset.id, 'https://example.test/lw-v4');
+
+    // Four rounds, four rows, four pairs of stamps, all closed by a submission.
+    const rows = await sessionsOf(asset.id);
+    assert.strictEqual(rows.length, 4, 'one row per round — nothing split, nothing merged');
+    assert.deepStrictEqual(rows.map((r) => r.round), [1, 2, 3, 4]);
+    assert.deepStrictEqual(rows.map((r) => r.ended_reason),
+      ['submitted', 'submitted', 'submitted', 'submitted'],
+      'every close is explained, and none of them was a person clicking Pause');
+
+    // No two spans overlap, and each starts after the one before it ended —
+    // which is what makes summing them the same as their union for one person.
+    for (let i = 1; i < rows.length; i += 1) {
+      assert.ok(new Date(rows[i].started_at) >= new Date(rows[i - 1].ended_at),
+        `round ${i + 1} starts no earlier than round ${i} was handed in`);
+    }
+    for (const row of rows) {
+      assert.ok(row.seconds >= 1, `round ${row.round} recorded a span`);
+      assert.strictEqual(row.seconds,
+        Math.round((new Date(row.ended_at) - new Date(row.started_at)) / 1000),
+        `round ${row.round}: the stored figure is the gap between its two stamps`);
+    }
+
+    // The API agrees, and attributes the last round to bo alone.
+    const work = await workOf(asset.id);
+    assert.strictEqual(work.rounds.length, 4);
+    assert.strictEqual(work.currentSeconds, work.rounds[3].seconds, "bo's stretch is round 4 only");
+    assert.strictEqual(work.totalSeconds,
+      work.rounds.reduce((n, r) => n + r.seconds, 0), 'and the total is all four');
+
+    // Two episodes on the list: ana's three rounds, then bo's one.
+    const listed = (await as('root', `/assets/project/${projectId}`)).body.assets
+      .find((a) => a.id === asset.id);
+    assert.strictEqual(listed.assignments.length, 2);
+    assert.strictEqual(listed.assignments[0].rounds, 3, "ana's stretch holds three rounds");
+    assert.strictEqual(listed.assignments[1].rounds, 1, "bo's holds one");
+  });
+
   await t.test('reassigning mid-round closes the outgoing stretch and keeps its time', async () => {
     // Total is lifetime effort on the asset, whoever spent it. The hand-over is
     // what closes ana's stretch — she never clicked anything to end it, because
