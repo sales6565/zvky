@@ -362,7 +362,17 @@ function evaluate(action, ctx, { note } = {}) {
         error: 'Start the work before submitting it — click Accept and Start.',
       };
     }
+    /* One entry per action, and a test holds it to that.
+     *
+     * The fallback below reads the action id as English, which works for none
+     * of them: a missing entry produced "An asset in \"In Progress\" cannot be
+     * deliver." Four actions were falling through to it — deliver, assign,
+     * accept and relay — which went unnoticed while the only way to see the
+     * message was to try an illegal move on one asset. Delivering in bulk
+     * reports a reason per asset, so they are all on screen at once. */
     const PHRASE = {
+      assign: 'assigned to somebody',
+      accept: 'accepted and started',
       submit: 'submitted',
       reassign_review: 'handed to somebody else — that is only possible while it is waiting on a reviewer or waiting on changes',
       tl_approve: 'approved by a team lead',
@@ -370,6 +380,8 @@ function evaluate(action, ctx, { note } = {}) {
       tl_request_changes: 'sent back by a team lead',
       cd_request_changes: 'sent back by the director',
       tl_send_to_client: 'sent straight to the client — that is only possible while it is in TL Review',
+      relay: 'passed on to the assignee — the director\'s notes are only relayed once, from CD Feedbacks',
+      deliver: 'marked delivered — only work the client has approved can be delivered',
     };
     return {
       ok: false,

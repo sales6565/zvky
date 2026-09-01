@@ -394,6 +394,20 @@ tr.past-round{opacity:0.62;}
 /* The live count beside a capped section's heading. Inherits the label's
    spacing; only the weight and colour set it apart from the heading itself. */
 .count-note{font-weight:400;color:var(--ink-muted);text-transform:none;letter-spacing:0;}
+/* The multi-select column and its bar. The column is narrow and the tick box
+   keeps its own size — the same exemption .checklist needs, for the same reason:
+   `.modal input` is not the only rule that would dress a checkbox as a text
+   field, so the size is pinned here rather than inherited. */
+table th.pick-col, table td.pick-col{width:34px;padding-left:12px;padding-right:0;}
+table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
+  width:auto;flex:none;margin:0;accent-color:var(--brand-accent);cursor:pointer;}
+.bulk-bar{display:flex;align-items:center;gap:10px;padding:8px 12px;margin-bottom:10px;
+  border:1px solid var(--border);border-radius:8px;background:var(--surface-2);}
+.bulk-count{font-family:'Inter';font-size:12.5px;color:var(--ink);font-weight:600;margin-right:auto;}
+/* The confirmation list reuses .checklist so the rows line up the way every
+   other list of people or assets in a modal does. */
+#bd_list{max-height:220px;}
+#bd_list label{cursor:default;gap:10px;}
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--surface-3);border:1px solid var(--border);color:var(--ink);padding:10px 18px;border-radius:10px;font-size:13px;opacity:0;transition:all .25s;z-index:60;pointer-events:none;} .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 .empty{text-align:center;padding:40px 20px;color:var(--ink-muted);font-size:13px;}
 
@@ -626,6 +640,19 @@ tr.past-round{opacity:0.62;}
     <div style="font-size:11px;color:var(--ink-faint);margin-top:8px;">Assets already in this project keep their assignees and their place in the pipeline.</div>
     <div class="err" id="ep_err" style="color:#e8402c;font-size:12px;margin-top:8px;"></div>
     <div class="modal-actions"><button class="btn btn-ghost" id="cancelEditProject">Cancel</button><button class="btn btn-brand" id="saveEditProject">Save changes</button></div>
+  </div>
+</div>
+
+<div class="modal-wrap" id="bulkDeliverWrap">
+  <div class="modal" style="width:560px;">
+    <h2 id="bd_title">Mark as delivered</h2>
+    <div id="bd_intro" style="font-size:12.5px;color:var(--ink-muted);margin-bottom:10px;"></div>
+    <div class="checklist" id="bd_list"></div>
+    <div class="ref-err" id="bd_err"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="bd_cancel">Cancel</button>
+      <button class="btn btn-brand" id="bd_confirm">Mark as delivered</button>
+    </div>
   </div>
 </div>
 
@@ -1246,6 +1273,21 @@ function listTabOf(a){
   return byStatus;
 }
 
+/* Can this asset be marked delivered right now?
+ *
+ * One status, and it is the workflow's own: src/asset-workflow.js defines the
+ * deliver transition `from: ['approved_for_client']`, so anything else is
+ * refused by the server whether it is asked for one at a time or in a hundred.
+ * Ticking a box for work still in review is therefore not a dangerous thing the
+ * UI has to guard against — it is simply not offered, because the server would
+ * only say no.
+ *
+ * Whether this PERSON may deliver is a separate question, asked once by
+ * can('review.deliver') rather than per row: the permission is not per asset,
+ * and the server checks each one properly regardless. */
+function deliverable(a){ return a.status === 'approved_for_client'; }
+function mayBulkDeliver(){ return can('review.deliver'); }
+
 /* Which pipeline stages this account sees on the dashboard.
    
    Reads can('asset.add') like every other gate on this page, so switching the
@@ -1352,6 +1394,14 @@ function avatarFellBack(img){
 }
 function escapeHTML(s){ const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
 
+/* Which assets are ticked in the Assets List, by asset id.
+   
+   By ASSET, not by row: the list draws one row per stretch of work, so an asset
+   handed on twice has three rows, and a set of row keys would let the same
+   asset be half-selected. Pruned on every render to what is actually on screen,
+   which is what makes "select all" mean "all of these" rather than "all of the
+   ones I saw two filters ago". */
+let selectedAssets = new Set();
 let state = { view:'board', search:'', filterType:'', listGroup:'active',
   currentProjectId:null, currentUser:null, token:null,
   projects:[], assets:[], usersRenderLimit:60,
@@ -1941,8 +1991,51 @@ function renderList(){
     for(const ep of episodes) rows.push({ a, ep });
   }
 
-  el.innerHTML = tabs + `<table><thead><tr><th>Code</th><th>Assets Name</th><th>Category</th><th>Scope of Work</th><th>Man Hours</th><th>Status</th><th>Assignee</th><th>Round</th><th>Priority</th><th>Tasks</th><th>Time Spent</th></tr></thead><tbody>
-    ${rows.map(({a, ep})=>{
+  /* --- multi-select -------------------------------------------------------
+   *
+   * Exactly one row per asset carries a tick box, because an asset is what gets
+   * delivered — a box on all three rows of a handed-on asset would ask the
+   * reader which of its three rounds they meant. The row that carries it is the
+   * one showing where the asset is NOW: the open stretch, or its last one when
+   * every stretch has closed.
+   *
+   * The offer is only made where the server would say yes, so a tick box that
+   * exists can always be used.
+   */
+  const bulk = mayBulkDeliver();
+  const owns = new Map();          // asset id -> the row index holding its box
+  if(bulk){
+    rows.forEach((row, i)=>{
+      if(!deliverable(row.a)) return;
+      const current = !row.ep || row.ep.active;
+      if(!owns.has(row.a.id) || current) owns.set(row.a.id, i);
+    });
+    /* Selection follows what is on screen. Anything filtered away, moved to
+       another tab by a status change, or no longer deliverable is dropped —
+       which is what stops "select all" from carrying a stale id into the
+       request. */
+    for(const id of [...selectedAssets]) if(!owns.has(id)) selectedAssets.delete(id);
+  }
+  const selectable = [...owns.keys()];
+  const selectedHere = selectable.filter(id=>selectedAssets.has(id));
+  const allTicked = selectable.length > 0 && selectedHere.length === selectable.length;
+
+  /* The bar only exists while something is selected, so the list is unchanged
+     for anybody who is not using this. */
+  const bar = (bulk && selectedHere.length) ? `<div class="bulk-bar">
+      <span class="bulk-count">${selectedHere.length} selected</span>
+      <button class="btn btn-ghost btn-sm" id="bulkClear">Clear</button>
+      <button class="btn btn-brand btn-sm" id="bulkDeliverBtn">Mark as Delivered</button>
+    </div>` : '';
+
+  const headBox = bulk
+    ? `<th class="pick-col">${selectable.length
+        ? `<input type="checkbox" id="bulkAll"${allTicked?' checked':''} title="Select every deliverable asset shown">`
+        : ''}</th>`
+    : '';
+
+  el.innerHTML = tabs + bar + `<table><thead><tr>${headBox}<th>Code</th><th>Assets Name</th><th>Category</th><th>Scope of Work</th><th>Man Hours</th><th>Status</th><th>Assignee</th><th>Round</th><th>Priority</th><th>Tasks</th><th>Time Spent</th></tr></thead><tbody>
+    ${rows.map(({a, ep}, rowIndex)=>{
       const t=typeOf(a.type), doneTasks=a.tasks.filter(x=>x.done).length;
       /* A finished stretch shows where that person LEFT it — somebody who took
          work all the way to TL Review should not have their round labelled with
@@ -1955,7 +2048,12 @@ function renderList(){
       const roundsIn = ep ? ep.rounds : a.work_rounds;
       const who = ep ? ep.userName : (a.assignee_name || '');
       const past = ep && !ep.active;
-      return `<tr data-id="${a.id}"${past?' class="past-round"':''}>
+      const box = bulk
+        ? `<td class="pick-col">${owns.get(a.id) === rowIndex
+            ? `<input type="checkbox" class="pick" data-pick="${a.id}"${selectedAssets.has(a.id)?' checked':''}>`
+            : ''}</td>`
+        : '';
+      return `<tr data-id="${a.id}"${past?' class="past-round"':''}>${box}
       <td class="mono">${a.code}</td><td style="font-weight:600;">${escapeHTML(a.name)}</td>
       <td>${escapeHTML(categoryLabel(a.category))||'—'}</td>
       <td>${t.label}</td>
@@ -1969,8 +2067,109 @@ function renderList(){
       <td class="mono">${seconds?fmtDuration(seconds):'—'}${stampLine(startedAt, submittedAt, roundsIn)}</td></tr>`;
     }).join('')}</tbody></table>`;
   el.querySelectorAll('tr[data-id]').forEach(row=>row.addEventListener('click', ()=>openDrawer(row.dataset.id)));
+
+  /* Ticking a box must not also open the asset. The row's own click handler is
+     what opens the panel, and a checkbox sits inside the row. */
+  el.querySelectorAll('input.pick').forEach(box=>{
+    box.addEventListener('click', ev=>ev.stopPropagation());
+    box.addEventListener('change', ()=>{
+      if(box.checked) selectedAssets.add(box.dataset.pick); else selectedAssets.delete(box.dataset.pick);
+      renderList();
+    });
+  });
+  const all = document.getElementById('bulkAll');
+  if(all){
+    all.addEventListener('click', ev=>ev.stopPropagation());
+    /* "Select all" means all of THESE — the rows the current tab, search and
+       type filter have left on screen — and never the rest of the project. It
+       can only reach `selectable`, which was built from those rows. */
+    all.addEventListener('change', ()=>{
+      if(all.checked) selectable.forEach(id=>selectedAssets.add(id));
+      else selectable.forEach(id=>selectedAssets.delete(id));
+      renderList();
+    });
+  }
+  const clear = document.getElementById('bulkClear');
+  if(clear) clear.addEventListener('click', ()=>{ selectedAssets.clear(); renderList(); });
+  const go = document.getElementById('bulkDeliverBtn');
+  if(go) go.addEventListener('click', ()=>openBulkDeliver(selectedHere.map(id=>assets.find(x=>x.id===id)).filter(Boolean)));
+
   wire();
 }
+
+/* ---------- bulk delivery ----------
+ *
+ * The confirmation, and then the report. Both live in one modal because they
+ * are two halves of one act: what you are about to do, and what happened.
+ *
+ * The list is shown rather than counted. "Mark 12 assets as delivered?" is a
+ * number you cannot check; the codes and names are what let somebody notice
+ * that one of them is not what they meant before it ships to a client. */
+const bulkDeliverWrap = document.getElementById('bulkDeliverWrap');
+let bulkPending = [];
+
+function closeBulkDeliver(){ bulkDeliverWrap.classList.remove('show'); }
+
+function openBulkDeliver(chosen){
+  bulkPending = chosen;
+  document.getElementById('bd_title').textContent =
+    `Mark ${chosen.length} asset${chosen.length===1?'':'s'} as delivered?`;
+  document.getElementById('bd_intro').textContent =
+    'This is the same step as marking each one delivered from its own panel — it goes on '
+    + 'each asset\'s history, and moves it to Archived.';
+  document.getElementById('bd_list').innerHTML = chosen.map(a=>
+    `<label><span class="mono" style="min-width:74px;">${a.code}</span><span>${escapeHTML(a.name)}</span></label>`).join('');
+  document.getElementById('bd_err').textContent = '';
+  const confirm = document.getElementById('bd_confirm');
+  confirm.style.display = '';
+  confirm.disabled = false;
+  document.getElementById('bd_cancel').textContent = 'Cancel';
+  bulkDeliverWrap.classList.add('show');
+}
+
+document.getElementById('bd_cancel').addEventListener('click', closeBulkDeliver);
+bulkDeliverWrap.addEventListener('click', e=>{ if(e.target===bulkDeliverWrap) closeBulkDeliver(); });
+
+document.getElementById('bd_confirm').addEventListener('click', async (ev)=>{
+  const err = document.getElementById('bd_err');
+  err.textContent = '';
+  ev.target.disabled = true;
+  let res;
+  try{
+    res = await api('/assets/bulk/deliver', { method:'POST', body:{ assetIds: bulkPending.map(a=>a.id) } });
+  }catch(e){ err.textContent = e.message; ev.target.disabled = false; return; }
+
+  /* Every asset gets its own line, whether it landed or not. A batch where one
+     of twelve was refused must not read as "done" — and must not read as
+     "failed" either, because eleven of them shipped. */
+  document.getElementById('bd_title').textContent = res.failed
+    ? `Delivered ${res.delivered} of ${res.requested}`
+    : `Delivered ${res.delivered} asset${res.delivered===1?'':'s'}`;
+  document.getElementById('bd_intro').textContent = res.failed
+    ? 'The ones that could not be delivered are listed with the reason. Nothing else was held up by them.'
+    : '';
+  document.getElementById('bd_list').innerHTML = res.results.map(r=>
+    `<label style="align-items:flex-start;">
+       <span class="mono" style="min-width:74px;color:${r.ok?'var(--approved)':'#e8402c'};">${r.ok?'ok':'refused'}</span>
+       <span><span class="mono">${escapeHTML(r.code||r.id)}</span> ${escapeHTML(r.name||'')}
+       ${r.ok?'':`<div style="color:var(--ink-faint);font-size:11.5px;">${escapeHTML(r.error||'')}</div>`}</span>
+     </label>`).join('');
+  document.getElementById('bd_confirm').style.display = 'none';
+  document.getElementById('bd_cancel').textContent = 'Close';
+
+  /* Only the ones that actually moved leave the selection, so a second attempt
+     on the refused ones is one click away rather than a re-tick. */
+  res.results.filter(r=>r.ok).forEach(r=>selectedAssets.delete(r.id));
+  /* render(), not bootApp(). bootApp ends with setTab('board'), so reloading
+     through it threw the reader back to the Dashboard the moment their bulk
+     delivery landed — and left the Assets List showing the counts it had before
+     the delivery, because nothing re-rendered it. render() reloads the assets
+     and redraws whichever view is open, which is the list they are standing on. */
+  await render();
+  showToast(res.failed
+    ? `${res.delivered} delivered, ${res.failed} refused.`
+    : `${res.delivered} asset${res.delivered===1?'':'s'} marked delivered.`);
+});
 /* ---------- Reports ---------- */
 /* Estimated Man Hours against tracked Time Spent.
    

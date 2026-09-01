@@ -379,6 +379,42 @@ test('an asset counts as handed on only once it has actually changed hands', () 
     'never handed on sorts last, rather than sorting by when it was first assigned');
 });
 
+test('every action can say why it was refused, in English', () => {
+  /* The refusal builder falls back to the action id read as words, which is
+   * ungrammatical for every action it has ever been asked about: "An asset in
+   * \"In Progress\" cannot be deliver." Four were falling through to it, and
+   * nobody noticed while the only way to see one was an illegal move on a
+   * single asset. Delivering in bulk puts a reason on screen per asset, so a
+   * missing entry is now read by whoever pressed the button.
+   *
+   * Every action is asked for from a state it is illegal in, and the sentence
+   * is checked for the fallback's fingerprint: the bare action id. */
+  const actions = [...new Set(workflow.TRANSITIONS.map((t) => t.action))];
+  const ctx = (status) => ({
+    user: { id: 'u1', role: 'super_admin' },
+    asset: { status, assignee_id: 'u1', routed_to_id: null },
+    isTeamLead: true, canOverride: true, canEdit: true, canAssign: true,
+    canDeliver: true, canHandOver: true, canReviewCd: true,
+    canApproveForClient: true, canSendToClient: true,
+  });
+
+  for (const action of actions) {
+    const legal = workflow.transitionFor(action).from;
+    // EVERY illegal state, not just the first: some actions have a
+    // purpose-written message for one state — "Start the work before
+    // submitting it" — which would otherwise hide a fallback for another.
+    for (const illegal of workflow.STATE_IDS.filter((s) => !legal.includes(s))) {
+      const verdict = workflow.evaluate(action, ctx(illegal), { note: 'x' });
+      assert.strictEqual(verdict.ok, false, `${action} should be illegal from ${illegal}`);
+      assert.ok(verdict.error && verdict.error.trim(), `${action} from ${illegal} said nothing`);
+      // The fallback's fingerprint: the sentence ends with the bare action id.
+      assert.ok(!verdict.error.endsWith(`cannot be ${action.replace(/_/g, ' ')}.`),
+        `${action} has no phrase of its own, so from ${illegal} it reads "${verdict.error}" `
+        + '— add one to PHRASE in src/asset-workflow.js');
+    }
+  }
+});
+
 test('a move not in the table cannot happen', () => {
   // The point of a table rather than a pile of if-statements: anything absent
   // is refused, rather than falling through to whatever the last branch did.

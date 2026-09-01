@@ -761,22 +761,136 @@ async function contextFor(req, asset) {
 // to answer.
 // `conn` runs the writes on a caller's open transaction rather than the pool,
 // so a transition that fails takes the rest of that transaction down with it.
-async function applyTransition(req, res, asset, verdict, { note, versionId, conn } = {}) {
+async function applyTransition(req, res, asset, verdict, { note, versionId, conn, batchId } = {}) {
   const run = conn || db;
   await run.query(
     'UPDATE assets SET `status` = $1, routed_to_id = $2 WHERE id = $3',
     [verdict.to, verdict.routedTo, asset.id]
   );
-  await run.query(
-    `INSERT INTO asset_events (id, asset_id, action, from_status, to_status, actor_id, actor_email, note, version_id, routed_to_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-    [uuid(), asset.id, verdict.action, asset.status, verdict.to, req.user.id, req.user.email,
-     String(note || '').trim() || null, versionId || null, verdict.routedTo]
-  );
+  /* batch_id is the only thing a bulk action adds to an event, and it is
+     nullable: a bulk delivery writes the SAME row a single delivery writes,
+     and additionally says which act it was part of. Falls back to the older
+     INSERT on a deployment whose migration has not added the column, so a
+     missing repair costs the batch link rather than the delivery. */
+  const columns = 'id, asset_id, action, from_status, to_status, actor_id, actor_email, note, version_id, routed_to_id';
+  const values = [uuid(), asset.id, verdict.action, asset.status, verdict.to, req.user.id, req.user.email,
+    String(note || '').trim() || null, versionId || null, verdict.routedTo];
+  try {
+    await run.query(
+      `INSERT INTO asset_events (${columns}, batch_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [...values, batchId || null]
+    );
+  } catch (err) {
+    if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
+    await run.query(
+      `INSERT INTO asset_events (${columns}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      values
+    );
+  }
   const { rows: updated } = await run.query(`${ASSET_SELECT} WHERE a.id = $1`, [asset.id]);
   const [withDetails] = await attachTasksAndNotes(updated);
   return withDetails;
 }
+
+/* Declared before every '/:id/...' route below, and it has to stay there.
+ * Express matches in definition order: '/:id/deliver' matches '/bulk/deliver'
+ * perfectly well, with id = "bulk", and answers "Asset not found". Moving this
+ * further down the file breaks it in a way that reads as a missing asset
+ * rather than as a routing mistake — tests/bulk-deliver.test.js pins it.
+ */
+/* POST /api/assets/bulk/deliver — mark several assets delivered at once.
+ *
+ * body: { assetIds: [...], note? }
+ *
+ * The whole design of this is "do exactly what the single-asset route does, N
+ * times, and say what happened to each". Every asset goes through the same
+ * three steps that route uses — contextFor, workflow.evaluate('deliver'),
+ * applyTransition — so the permission check, the state-machine guard, the
+ * status write and the event row are not reimplemented here and cannot drift
+ * from the single case. That is also what makes the workflow safe: `deliver` is
+ * defined `from: ['approved_for_client']`, so an asset that has not finished
+ * review is refused by the same table that refuses it one at a time. There is
+ * no way to bulk-deliver past the review process, and none is added here.
+ *
+ * Each asset succeeds or fails ON ITS OWN. One refusal does not roll back the
+ * rest — a producer delivering twenty assets should not lose nineteen good
+ * deliveries because the twentieth was still in review — so the reply is a
+ * per-asset result rather than a status code, and the caller is told which is
+ * which. The batch row records the act itself: who, when, how many asked for
+ * and how many landed.
+ */
+const BULK_DELIVER_MAX = 200;
+
+router.post('/bulk/deliver', async (req, res) => {
+  const { assetIds, note } = req.body || {};
+  if (!Array.isArray(assetIds) || !assetIds.length) {
+    return res.status(400).json({ error: 'Choose at least one asset to deliver.', field: 'assetIds' });
+  }
+  // De-duplicated, because a list sent twice should deliver once and report once.
+  const ids = [...new Set(assetIds.filter((id) => typeof id === 'string' && id))];
+  if (ids.length > BULK_DELIVER_MAX) {
+    return res.status(400).json({
+      error: `That is ${ids.length} assets. ${BULK_DELIVER_MAX} at a time is the most this will do in one go.`,
+      field: 'assetIds',
+    });
+  }
+
+  const { rows: found } = await db.query(`${ASSET_SELECT} WHERE a.id IN ($1)`, [ids]);
+  const byId = new Map(found.map((row) => [row.id, row]));
+
+  const batchId = uuid();
+  const results = [];
+  for (const id of ids) {
+    const asset = byId.get(id);
+    if (!asset) {
+      results.push({ id, ok: false, error: 'That asset no longer exists.' });
+      continue;
+    }
+    const label = { id, code: asset.code, name: asset.name };
+    try {
+      // A closed project refuses every write, in bulk as singly. Asked through
+      // the same lifecycle module rather than by re-reading the rule.
+      const { rows: project } = await db.query('SELECT * FROM projects WHERE id = $1', [asset.project_id]);
+      const shut = project.length ? lifecycle.projectRefusal(project[0]) : null;
+      if (shut) { results.push({ ...label, ok: false, error: shut }); continue; }
+
+      const ctx = await contextFor(req, asset);
+      const verdict = workflow.evaluate('deliver', ctx, { note });
+      if (!verdict.ok) { results.push({ ...label, ok: false, error: verdict.error }); continue; }
+
+      await applyTransition(req, res, asset, verdict, { note, batchId });
+      results.push({ ...label, ok: true, status: verdict.to });
+    } catch (err) {
+      // One asset failing on something unforeseen must not take the batch with
+      // it. Logged in full server-side; the caller is told which one and that
+      // it did not land.
+      console.error(`[bulk deliver] ${asset.code} failed: ${err.stack || err.message}`);
+      results.push({ ...label, ok: false, error: 'Something went wrong delivering this one.' });
+    }
+  }
+
+  const delivered = results.filter((r) => r.ok).length;
+  /* Written after the fact, holding what actually happened rather than what was
+     asked for. Swallowed on failure: a batch whose summary row could not be
+     written is still a batch that delivered the work, and the per-asset events
+     are the record that matters. */
+  try {
+    await db.query(
+      `INSERT INTO asset_event_batches (id, action, actor_id, actor_email, requested, succeeded)
+       VALUES ($1,'deliver',$2,$3,$4,$5)`,
+      [batchId, req.user.id, req.user.email, ids.length, delivered]
+    );
+  } catch (err) {
+    console.warn(`[bulk deliver] could not record the batch ${batchId}: ${err.message}`);
+  }
+
+  console.log(
+    `${req.user.email} delivered ${delivered} of ${ids.length} asset(s) in one action `
+    + `(batch ${batchId}${delivered < ids.length ? `; refused: ${results.filter((r) => !r.ok).map((r) => r.code || r.id).join(', ')}` : ''}).`
+  );
+
+  res.json({ batchId, requested: ids.length, delivered, failed: ids.length - delivered, results });
+});
 
 // POST /api/assets/:id/submit — the assignee sends work for review.
 // body: { link (required), description (optional) }; a file may still be

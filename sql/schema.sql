@@ -463,6 +463,29 @@ CREATE TABLE IF NOT EXISTS asset_assignments (
   CONSTRAINT fk_aa_user  FOREIGN KEY (user_id)  REFERENCES users(id)  ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- One row per bulk action, so "who delivered these twelve, and when" is a
+-- question with an answer. The per-asset events below still carry the whole
+-- story of each asset on their own; this says which of them were one act.
+--
+-- Deliberately not a replacement for those events: a bulk delivery writes a
+-- normal 'deliver' event per asset, through the same transition a single
+-- delivery uses, and only additionally points them at a batch.
+CREATE TABLE IF NOT EXISTS asset_event_batches (
+  id          CHAR(36)     NOT NULL PRIMARY KEY,
+  action      VARCHAR(32)  NOT NULL,
+  actor_id    CHAR(36)     NULL,
+  -- Kept alongside the id so the record survives the account being deleted,
+  -- the same bargain asset_events makes.
+  actor_email VARCHAR(191) NULL,
+  -- What was asked for and what happened, so a partly-failed batch is legible
+  -- without replaying every event under it.
+  requested   INT          NOT NULL DEFAULT 0,
+  succeeded   INT          NOT NULL DEFAULT 0,
+  created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_batches_actor (actor_id, created_at),
+  CONSTRAINT fk_batches_actor FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS asset_events (
   id          CHAR(36)     NOT NULL PRIMARY KEY,
   -- The order things happened in. created_at is only accurate to the second,
@@ -484,8 +507,12 @@ CREATE TABLE IF NOT EXISTS asset_events (
   -- The submission this event concerns, when there is one.
   version_id  CHAR(36)     NULL,
   routed_to_id CHAR(36)    NULL,
+  -- The bulk action this event was part of, when it was part of one. NULL for
+  -- everything done one asset at a time, which is nearly everything.
+  batch_id    CHAR(36)     NULL,
   created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_events_asset (asset_id, seq),
+  KEY idx_events_batch (batch_id),
   CONSTRAINT fk_events_asset  FOREIGN KEY (asset_id)   REFERENCES assets(id)         ON DELETE CASCADE,
   CONSTRAINT fk_events_actor  FOREIGN KEY (actor_id)   REFERENCES users(id)          ON DELETE SET NULL,
   CONSTRAINT fk_events_version FOREIGN KEY (version_id) REFERENCES asset_versions(id) ON DELETE SET NULL

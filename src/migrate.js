@@ -235,6 +235,39 @@ async function ensureReportingAndMembership(db, log) {
   if (top.length) log(`Schema: cleared the reporting line on ${top.length} account(s) at the top of the hierarchy.`);
 }
 
+// Bulk actions, added after the event log already existed: the batch record
+// itself, and the column on each event pointing back at it.
+async function ensureEventBatches(db, log) {
+  const { rows: table } = await db.query(
+    `SELECT TABLE_NAME AS n FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'asset_event_batches'`
+  );
+  if (!table.length) {
+    await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS asset_event_batches (
+        id          CHAR(36)     NOT NULL PRIMARY KEY,
+        action      VARCHAR(32)  NOT NULL,
+        actor_id    CHAR(36)     NULL,
+        actor_email VARCHAR(191) NULL,
+        requested   INT          NOT NULL DEFAULT 0,
+        succeeded   INT          NOT NULL DEFAULT 0,
+        created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_batches_actor (actor_id, created_at),
+        CONSTRAINT fk_batches_actor FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE SET NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+    log('Schema: added asset_event_batches for bulk actions.');
+  }
+
+  const { rows: column } = await db.query(
+    `SELECT COLUMN_NAME AS n FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'asset_events' AND COLUMN_NAME = 'batch_id'`
+  );
+  if (!column.length) {
+    await db.query('ALTER TABLE asset_events ADD COLUMN batch_id CHAR(36) NULL AFTER routed_to_id');
+    await db.query('ALTER TABLE asset_events ADD KEY idx_events_batch (batch_id)');
+    log('Schema: added asset_events.batch_id.');
+  }
+}
+
 // The people answerable for a project's look, added after the project form
 // already had its two membership lists. Its own table, following the shape the
 // other two set, rather than a column on projects: the field holds up to two
@@ -1490,6 +1523,8 @@ const STEPS = [
   ['work session end reason', ensureSessionEndReason],
   // After projects and users, whose keys it points at.
   ['project supervision', ensureProjectSupervision],
+  // After the event log, whose column it adds.
+  ['bulk action batches', ensureEventBatches],
 ];
 
 async function run(db, log = console.log) {
