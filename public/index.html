@@ -386,6 +386,14 @@ tr.past-round{opacity:0.62;}
    halfway down the row — and so the row below it is unaffected either way. */
 .checklist label{display:flex;align-items:flex-start;gap:7px;font-family:'Inter';font-size:12.5px;text-transform:none;letter-spacing:0;color:var(--ink);margin:0;padding:4px 0;line-height:1.35;}
 .checklist label input[type=checkbox]{flex:none;width:auto;margin:1px 0 0;accent-color:var(--brand-accent);}
+/* A list with a cap on it. The unticked rows go quiet once the cap is reached,
+   so the list reads as full rather than as broken — the ticked rows stay at
+   full strength, because they are still the answer and can still be unticked. */
+.checklist label.capped{color:var(--ink-faint);cursor:not-allowed;}
+.checklist label input[type=checkbox]:disabled{cursor:not-allowed;}
+/* The live count beside a capped section's heading. Inherits the label's
+   spacing; only the weight and colour set it apart from the heading itself. */
+.count-note{font-weight:400;color:var(--ink-muted);text-transform:none;letter-spacing:0;}
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--surface-3);border:1px solid var(--border);color:var(--ink);padding:10px 18px;border-radius:10px;font-size:13px;opacity:0;transition:all .25s;z-index:60;pointer-events:none;} .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 .empty{text-align:center;padding:40px 20px;color:var(--ink-muted);font-size:13px;}
 
@@ -573,6 +581,8 @@ tr.past-round{opacity:0.62;}
       <label>Project/Game name</label><input type="text" id="p_name" placeholder="e.g. Nightgarden">
       <label>Team leads on this project</label><div class="checklist" id="p_leads"></div>
       <label>Production coordinators on this project</label><div class="checklist" id="p_coords"></div>
+      <label>Supervision and Creative Direction <span class="count-note" id="p_supervisionCount">(0/2 selected)</span></label>
+      <div class="checklist" id="p_supervision"></div>
     </fieldset>
     <div class="p-locked" id="p_lockedNote">Choose a client first — everything else unlocks once you have.</div>
     <div class="ref-err" id="p_err"></div>
@@ -611,6 +621,8 @@ tr.past-round{opacity:0.62;}
     <label>Project/Game name</label><input type="text" id="ep_name" placeholder="e.g. Nightgarden">
     <label>Team leads on this project</label><div class="checklist" id="ep_leads"></div>
     <label>Production coordinators on this project</label><div class="checklist" id="ep_coords"></div>
+    <label>Supervision and Creative Direction <span class="count-note" id="ep_supervisionCount">(0/2 selected)</span></label>
+    <div class="checklist" id="ep_supervision"></div>
     <div style="font-size:11px;color:var(--ink-faint);margin-top:8px;">Assets already in this project keep their assignees and their place in the pipeline.</div>
     <div class="err" id="ep_err" style="color:#e8402c;font-size:12px;margin-top:8px;"></div>
     <div class="modal-actions"><button class="btn btn-ghost" id="cancelEditProject">Cancel</button><button class="btn btn-brand" id="saveEditProject">Save changes</button></div>
@@ -3833,6 +3845,50 @@ function fillProjectClientOptions(selected){
     (can('client.add') ? `<option value="${NEW_CLIENT}">+ Add New Client</option>` : '');
 }
 
+/* ---------- supervision and creative direction ----------
+
+   The third checklist on both project forms. Two people at most: the studio
+   holds one supervisor and one director answerable for a project's look, and a
+   longer list makes "who signs this off" unanswerable.
+
+   Which designations it offers is read off the role catalogue's own groups
+   rather than a list of keys written here, so a role a Super Admin adds to
+   Supervision in Settings turns up without a code change — the same reason the
+   two lists above it ask for a capability instead of naming roles. Creative
+   Producer is the one named exception: it sits in the Production group, so no
+   group rule reaches it, and the studio asked for it by name.
+
+   Kept in step with supervisionRoles() in src/roles.js and the limit the API
+   enforces in src/routes/projects.js. The API is the one that decides — the
+   boxes below going grey is a courtesy to whoever is filling the form in. */
+const SUPERVISION_LIMIT = 2;
+const SUPERVISION_GROUPS = ['Supervision', 'Creative Direction'];
+function isSupervisionRole(r){ return SUPERVISION_GROUPS.includes(r.group) || r.key==='creative_producer'; }
+function supervisionUsers(){ return api('/users?role='+encodeURIComponent(roleKeys(isSupervisionRole))+'&limit=500'); }
+
+/* Renders into the same .checklist the other two lists use — deliberately the
+   same markup, so the row alignment is decided in one place and this section
+   cannot drift away from it. */
+function supervisionChecklist(listId, countId, people, chosen){
+  const el = document.getElementById(listId);
+  el.innerHTML = people.length
+    ? people.map(u=>`<label><input type="checkbox" value="${u.id}"${chosen.includes(u.id)?' checked':''}>${escapeHTML(u.name)}</label>`).join('')
+    : '<div style="font-size:12px;color:var(--ink-faint);">Nobody in a supervision or creative direction designation is visible to you.</div>';
+  const sync = ()=>{
+    const boxes = [...el.querySelectorAll('input[type=checkbox]')];
+    const picked = boxes.filter(b=>b.checked).length;
+    /* Only the unticked boxes are shut off at the limit. Disabling the ticked
+       ones as well would leave a full section that could never be changed. */
+    boxes.forEach(b=>{
+      b.disabled = !b.checked && picked >= SUPERVISION_LIMIT;
+      b.parentElement.classList.toggle('capped', b.disabled);
+    });
+    document.getElementById(countId).textContent = `(${picked}/${SUPERVISION_LIMIT} selected)`;
+  };
+  el.onchange = sync;
+  sync();
+}
+
 document.getElementById('newProjectBtn').addEventListener('click', async ()=>{
   document.getElementById('p_name').value='';
   document.getElementById('p_newClientName').value='';
@@ -3843,12 +3899,14 @@ document.getElementById('newProjectBtn').addEventListener('click', async ()=>{
   fillProjectClientOptions(state.clientContextId);
   syncProjectForm();
   try{
-    const [{ users: leads }, { users: coords }] = await Promise.all([
+    const [{ users: leads }, { users: coords }, { users: supervisors }] = await Promise.all([
       api('/users?role='+encodeURIComponent(roleKeys(r=>r.leadsTeam))+'&limit=500'),
       api('/users?role='+encodeURIComponent(roleKeys(r=>r.projectScope==='assigned'))+'&limit=500'),
+      supervisionUsers(),
     ]);
     document.getElementById('p_leads').innerHTML = leads.map(u=>`<label><input type="checkbox" value="${u.id}">${escapeHTML(u.name)}</label>`).join('') || '<div style="font-size:12px;color:var(--ink-faint);">No leads or supervisors visible to you.</div>';
     document.getElementById('p_coords').innerHTML = coords.map(u=>`<label><input type="checkbox" value="${u.id}">${escapeHTML(u.name)}</label>`).join('') || '<div style="font-size:12px;color:var(--ink-faint);">No coordinators visible to you.</div>';
+    supervisionChecklist('p_supervision', 'p_supervisionCount', supervisors, []);
   }catch(err){ showToast(err.message); }
   projectModalWrap.classList.add('show');
 });
@@ -3889,8 +3947,9 @@ document.getElementById('saveProjectModal').addEventListener('click', async ()=>
   if(!name){ err.textContent = 'Name the project first.'; return; }
   const leadIds = [...document.querySelectorAll('#p_leads input:checked')].map(i=>i.value);
   const coordIds = [...document.querySelectorAll('#p_coords input:checked')].map(i=>i.value);
+  const supervisionIds = [...document.querySelectorAll('#p_supervision input:checked')].map(i=>i.value);
   try{
-    const { project } = await api('/projects', { method:'POST', body:{ clientId, name, teamLeadIds:leadIds, coordinatorIds:coordIds } });
+    const { project } = await api('/projects', { method:'POST', body:{ clientId, name, teamLeadIds:leadIds, coordinatorIds:coordIds, supervisionIds } });
     projectModalWrap.classList.remove('show');
     /* Land on what was just made, rather than wherever the pickers happened to
        be pointing before. */
@@ -3925,12 +3984,13 @@ function epChecklist(elId, people, chosen){
 async function openEditProject(){
   if(!state.currentProjectId) return;
   epError('');
-  let project, leads, coords;
+  let project, leads, coords, supervisors;
   try{
-    [project, { users: leads }, { users: coords }] = await Promise.all([
+    [project, { users: leads }, { users: coords }, { users: supervisors }] = await Promise.all([
       api('/projects/' + state.currentProjectId).then(r=>r.project),
       api('/users?role='+encodeURIComponent(roleKeys(r=>r.leadsTeam))+'&limit=500'),
       api('/users?role='+encodeURIComponent(roleKeys(r=>r.projectScope==='assigned'))+'&limit=500'),
+      supervisionUsers(),
     ]);
   }catch(err){ showToast(err.message); return; }
 
@@ -3940,6 +4000,7 @@ async function openEditProject(){
   document.getElementById('ep_name').value = project.name;
   epChecklist('ep_leads', leads, project.teamLeadIds || []);
   epChecklist('ep_coords', coords, project.coordinatorIds || []);
+  supervisionChecklist('ep_supervision', 'ep_supervisionCount', supervisors, project.supervisionIds || []);
   editProjectModalWrap.classList.add('show');
 }
 
@@ -3961,6 +4022,7 @@ document.getElementById('saveEditProject').addEventListener('click', async ()=>{
       name,
       teamLeadIds: [...document.querySelectorAll('#ep_leads input:checked')].map(i=>i.value),
       coordinatorIds: [...document.querySelectorAll('#ep_coords input:checked')].map(i=>i.value),
+      supervisionIds: [...document.querySelectorAll('#ep_supervision input:checked')].map(i=>i.value),
     }});
     editProjectModalWrap.classList.remove('show');
     const keep = editingProject.id;

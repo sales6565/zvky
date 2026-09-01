@@ -197,17 +197,39 @@ test('the checklist stays a fixed-height scroller', () => {
 });
 
 test('both project forms render their pickers the same way', () => {
-  // Four lists — leads and coordinators, on New Project and Edit Project. They
-  // share one class precisely so a fix cannot land on some of them.
+  // Six lists — leads, coordinators, and supervision and creative direction, on
+  // New Project and Edit Project. They share one class precisely so a fix
+  // cannot land on some of them.
   const containers = HTML.match(/<div class="checklist" id="(\w+)">/g) || [];
   assert.deepStrictEqual(
     containers.map((c) => c.match(/id="(\w+)"/)[1]).sort(),
-    ['ep_coords', 'ep_leads', 'p_coords', 'p_leads'],
-    'all four pickers should use the .checklist class'
+    ['ep_coords', 'ep_leads', 'ep_supervision', 'p_coords', 'p_leads', 'p_supervision'],
+    'every picker should use the .checklist class'
   );
   // And each is filled with bare <label><input type=checkbox>Name</label> rows,
   // with no per-row wrapper or inline style to drift apart from the CSS.
+  //
+  // This count is the point of the test, not bookkeeping: a section added with
+  // its own markup would leave it unchanged and fail here, which is what stops
+  // the staircase coming back one picker at a time.
   const rowTemplates = HTML.match(/<label><input type="checkbox"[^>]*>\$\{escapeHTML\(u\.name\)\}<\/label>/g) || [];
-  assert.strictEqual(rowTemplates.length, 3,
-    'the three render sites should emit the same row markup (New Project x2, Edit Project x1)');
+  assert.strictEqual(rowTemplates.length, 4,
+    'the four render sites should emit the same row markup (New Project x3, Edit Project x2 through two helpers)');
+});
+
+test('the capped picker greys out its rows without indenting them', () => {
+  // Reaching the limit changes how a row reads, and must not change where it
+  // starts — the staircase was rows starting at different places.
+  const CAPPED_ROW = [
+    { tag: 'div', classes: ['modal'], attrs: [] },
+    { tag: 'div', classes: ['checklist'], attrs: [] },
+    { tag: 'label', classes: ['capped'], attrs: [] },
+  ];
+  const display = resolve('display', CAPPED_ROW);
+  assert.ok(display && display.value === 'flex', 'a capped row is still a flex row');
+  for (const prop of ['margin-left', 'padding-left', 'text-indent', 'left']) {
+    const found = resolve(prop, CAPPED_ROW);
+    assert.strictEqual(found, null,
+      `"${found && found.sel}" sets ${prop} on a capped row; it must start at the same edge as the rest`);
+  }
 });

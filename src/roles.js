@@ -61,6 +61,25 @@ function leadRoles() {
   return entries().filter((r) => r.leadsTeam).map((r) => r.key);
 }
 
+// Who may be named under a project's "Supervision and Creative Direction".
+//
+// Read off the catalogue's own groups rather than a hardcoded list of keys, so
+// a role a Super Admin adds to Supervision in Settings appears here without a
+// code change — the same reason the project form's other two lists ask for a
+// capability instead of naming roles.
+//
+// Creative Producer is the one exception, and is named because the studio asked
+// for it: it sits in the Production group, so no group rule reaches it. Nothing
+// else outside these two groups belongs here.
+const SUPERVISION_GROUPS = ['Supervision', 'Creative Direction'];
+const SUPERVISION_EXTRA = ['creative_producer'];
+
+function supervisionRoles() {
+  return entries()
+    .filter((r) => SUPERVISION_GROUPS.includes(r.group) || SUPERVISION_EXTRA.includes(r.key))
+    .map((r) => r.key);
+}
+
 function can(user, capability) {
   const def = user && roleDef(user.role);
   return def ? Boolean(def[capability]) : false;
@@ -130,6 +149,9 @@ module.exports = {
   roleKeys,
   assignableRoles,
   leadRoles,
+  supervisionRoles,
+  SUPERVISION_GROUPS,
+  SUPERVISION_EXTRA,
   groupOrder,
   describeTiers,
   isTier,

@@ -48,7 +48,9 @@ async function visibleProjects(user) {
       `SELECT DISTINCT p.* FROM projects p
        LEFT JOIN project_coordinators pc ON pc.project_id = p.id AND pc.user_id = $1
        LEFT JOIN project_team_leads  ptl ON ptl.project_id = p.id AND ptl.user_id = $1
-       WHERE p.is_active = 1 AND (pc.user_id IS NOT NULL OR ptl.user_id IS NOT NULL OR p.owner_id = $1)
+       LEFT JOIN project_supervision  ps ON ps.project_id = p.id AND ps.user_id = $1
+       WHERE p.is_active = 1
+         AND (pc.user_id IS NOT NULL OR ptl.user_id IS NOT NULL OR ps.user_id IS NOT NULL OR p.owner_id = $1)
        ORDER BY p.created_at`,
       [user.id]
     );
@@ -56,15 +58,20 @@ async function visibleProjects(user) {
   }
 
   if (def.projectScope === 'team') {
-    // Either they're named as a lead on the project, or one of their reports
-    // has an asset in it. Supervisors who run a discipline rather than a
-    // project are only ever reachable through the second half.
+    // Either they're named as a lead on the project, named under its
+    // supervision and creative direction, or one of their reports has an asset
+    // in it. Supervisors who run a discipline rather than a project used to be
+    // reachable only through the last of those; being named on the project now
+    // counts on its own, so putting somebody in that section is not a change
+    // that leaves them unable to see what they were put on.
     const { rows } = await db.query(
       `SELECT DISTINCT p.* FROM projects p
        LEFT JOIN project_team_leads ptl ON ptl.project_id = p.id AND ptl.user_id = $1
+       LEFT JOIN project_supervision ps ON ps.project_id = p.id AND ps.user_id = $1
        LEFT JOIN assets a ON a.project_id = p.id
        LEFT JOIN users  r ON r.id = a.assignee_id AND r.team_lead_id = $1
-       WHERE p.is_active = 1 AND (ptl.user_id IS NOT NULL OR r.id IS NOT NULL OR p.owner_id = $1)
+       WHERE p.is_active = 1
+         AND (ptl.user_id IS NOT NULL OR ps.user_id IS NOT NULL OR r.id IS NOT NULL OR p.owner_id = $1)
        ORDER BY p.created_at`,
       [user.id]
     );

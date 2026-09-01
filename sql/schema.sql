@@ -251,6 +251,20 @@ CREATE TABLE IF NOT EXISTS project_coordinators (
   CONSTRAINT fk_pc_user    FOREIGN KEY (user_id)    REFERENCES users(id)    ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Supervision and creative direction on a project: the supervisor and the art
+-- director answerable for its look, as opposed to the leads who review its work
+-- and the coordinators who run it. Capped at two people, which the API enforces
+-- -- the table itself will hold any number, because a limit written into a
+-- primary key cannot be relaxed without a migration.
+CREATE TABLE IF NOT EXISTS project_supervision (
+  project_id CHAR(36) NOT NULL,
+  user_id    CHAR(36) NOT NULL,
+  PRIMARY KEY (project_id, user_id),
+  KEY idx_ps_user (user_id),
+  CONSTRAINT fk_ps_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  CONSTRAINT fk_ps_user    FOREIGN KEY (user_id)    REFERENCES users(id)    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- Status pipeline:
 --  not_started -> assigned -> in_progress -> pending_tl_review -> (tl_changes_requested <-> pending_tl_review)
 --    -> pending_cd_review -> (cd_changes_requested <-> pending_cd_review)

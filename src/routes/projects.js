@@ -7,7 +7,7 @@ const db = require('../db');
 const { authenticate, requirePermission } = require('../middleware/auth');
 const lifecycle = require('../lifecycle');
 const { visibleProjects, canAccessProject, holds } = require('../permissions');
-const { assignableRoles, roleDef } = require('../roles');
+const { assignableRoles, roleDef, supervisionRoles } = require('../roles');
 
 router.use(authenticate);
 
@@ -39,9 +39,11 @@ router.get('/', async (req, res) => {
 
 // POST /api/projects — anyone whose role can create projects. The creator becomes the owner.
 router.post('/', requirePermission('project.add'), async (req, res) => {
-  const { name, clientId, teamLeadIds = [], coordinatorIds = [] } = req.body || {};
+  const { name, clientId, teamLeadIds = [], coordinatorIds = [], supervisionIds = [] } = req.body || {};
   const verdict = checkName(name);
   if (!verdict.ok) return res.status(400).json({ error: verdict.error, field: verdict.field });
+  const supervision = await checkSupervision(supervisionIds);
+  if (!supervision.ok) return res.status(400).json({ error: supervision.error, field: 'supervisionIds' });
 
   // Every project belongs to a client, and the caller has to say which.
   //
@@ -77,9 +79,15 @@ router.post('/', requirePermission('project.add'), async (req, res) => {
         [id, coordId]
       );
     }
+    for (const userId of supervision.value) {
+      await client.query(
+        'INSERT IGNORE INTO project_supervision (project_id, user_id) VALUES ($1,$2)',
+        [id, userId]
+      );
+    }
     await client.query('COMMIT');
     const { rows } = await db.query('SELECT * FROM projects WHERE id = $1', [id]);
-    res.status(201).json({ project: rows[0] });
+    res.status(201).json({ project: await withMembers(rows[0]) });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error(err);
@@ -107,6 +115,51 @@ function checkName(name) {
     return { ok: false, error: 'Project name is too long (255 characters at most)', field: 'name' };
   }
   return { ok: true, value: name.trim() };
+}
+
+// How many people may be named under supervision and creative direction. Two,
+// because the studio holds one supervisor and one director answerable for a
+// project's look; naming a committee makes "who signs this off" unanswerable.
+//
+// Checked here and not only in the browser. The form disables the boxes past
+// two, but a disabled checkbox is a courtesy, not a rule — anything reaching
+// this endpoint directly would otherwise write as many rows as it liked.
+const SUPERVISION_LIMIT = 2;
+
+// Whether this list may be written. Returns the de-duplicated ids on success,
+// so the caller writes what was checked rather than what was sent.
+async function checkSupervision(ids) {
+  if (ids === undefined) return { ok: true, value: undefined };
+  if (!Array.isArray(ids)) {
+    return { ok: false, error: 'supervisionIds must be a list of user ids' };
+  }
+  const unique = [...new Set(ids.filter((id) => typeof id === 'string' && id))];
+  if (unique.length > SUPERVISION_LIMIT) {
+    return {
+      ok: false,
+      error: `Supervision and Creative Direction takes ${SUPERVISION_LIMIT} people at most — ${unique.length} were named.`,
+    };
+  }
+  if (!unique.length) return { ok: true, value: unique };
+
+  // Every id has to be a real account in one of the designations the section
+  // offers. Without this the field would accept any user id at all, and the
+  // list the form shows would be the only thing keeping it honest.
+  const { rows } = await db.query(
+    'SELECT id, `name`, `role` FROM users WHERE id IN ($1)', [unique]
+  );
+  const found = new Map(rows.map((r) => [r.id, r]));
+  const missing = unique.filter((id) => !found.has(id));
+  if (missing.length) return { ok: false, error: 'One of those people no longer exists.' };
+  const eligible = new Set(supervisionRoles());
+  const wrong = rows.filter((r) => !eligible.has(r.role));
+  if (wrong.length) {
+    return {
+      ok: false,
+      error: `${wrong[0].name} is not in a supervision or creative direction designation.`,
+    };
+  }
+  return { ok: true, value: unique };
 }
 
 // The code is derived from the name and referenced by nothing else — asset
@@ -141,7 +194,7 @@ router.patch('/:id', requirePermission('project.edit'), async (req, res) => {
   const shut = lifecycle.projectRefusal(project);
   if (shut) return res.status(409).json({ error: shut, projectClosed: true });
 
-  const { name, clientId, teamLeadIds, coordinatorIds } = req.body || {};
+  const { name, clientId, teamLeadIds, coordinatorIds, supervisionIds } = req.body || {};
 
   // Every field is optional; only what was sent is written. Sending nothing is
   // not an error, it just changes nothing.
@@ -156,6 +209,8 @@ router.patch('/:id', requirePermission('project.edit'), async (req, res) => {
       return res.status(400).json({ error: `${label} must be a list of user ids`, field: label });
     }
   }
+  const supervision = await checkSupervision(supervisionIds);
+  if (!supervision.ok) return res.status(400).json({ error: supervision.error, field: 'supervisionIds' });
 
   // Moving a project to another client. How the "Unassigned" pile gets sorted
   // out, so it has to be possible from the edit form.
@@ -181,7 +236,8 @@ router.patch('/:id', requirePermission('project.edit'), async (req, res) => {
     }
     // Replaced wholesale rather than diffed: the form sends the complete list
     // it is showing, so anything missing from it was unticked.
-    for (const [ids, table] of [[teamLeadIds, 'project_team_leads'], [coordinatorIds, 'project_coordinators']]) {
+    for (const [ids, table] of [[teamLeadIds, 'project_team_leads'], [coordinatorIds, 'project_coordinators'],
+      [supervision.value, 'project_supervision']]) {
       if (ids === undefined) continue;
       await client.query(`DELETE FROM ${table} WHERE project_id = $1`, [project.id]);
       for (const userId of ids) {
@@ -216,14 +272,16 @@ router.get('/:id', async (req, res) => {
 // A project plus the ids attached to it, which is what the edit form needs to
 // tick the right boxes.
 async function withMembers(project) {
-  const [leads, coords] = await Promise.all([
+  const [leads, coords, supervision] = await Promise.all([
     db.query('SELECT user_id FROM project_team_leads WHERE project_id = $1', [project.id]),
     db.query('SELECT user_id FROM project_coordinators WHERE project_id = $1', [project.id]),
+    db.query('SELECT user_id FROM project_supervision WHERE project_id = $1', [project.id]),
   ]);
   return {
     ...project,
     teamLeadIds: leads.rows.map((r) => r.user_id),
     coordinatorIds: coords.rows.map((r) => r.user_id),
+    supervisionIds: supervision.rows.map((r) => r.user_id),
   };
 }
 

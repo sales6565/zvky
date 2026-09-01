@@ -235,6 +235,27 @@ async function ensureReportingAndMembership(db, log) {
   if (top.length) log(`Schema: cleared the reporting line on ${top.length} account(s) at the top of the hierarchy.`);
 }
 
+// The people answerable for a project's look, added after the project form
+// already had its two membership lists. Its own table, following the shape the
+// other two set, rather than a column on projects: the field holds up to two
+// user ids and a join table is what the rest of the app already reads.
+async function ensureProjectSupervision(db, log) {
+  const { rows } = await db.query(
+    `SELECT TABLE_NAME AS n FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'project_supervision'`
+  );
+  if (rows.length) return;
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS project_supervision (
+      project_id CHAR(36) NOT NULL,
+      user_id    CHAR(36) NOT NULL,
+      PRIMARY KEY (project_id, user_id),
+      KEY idx_ps_user (user_id),
+      CONSTRAINT fk_ps_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      CONSTRAINT fk_ps_user    FOREIGN KEY (user_id)    REFERENCES users(id)    ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+  log('Schema: added project_supervision for supervision and creative direction.');
+}
+
 // The review pipeline's columns, for databases created before it was a state
 // machine: where an asset is routed, what a submission links to, and the event
 // log behind the asset detail view.
@@ -1467,6 +1488,8 @@ const STEPS = [
   ['notifications', ensureNotifications],
   // After work_sessions, whose column it adds.
   ['work session end reason', ensureSessionEndReason],
+  // After projects and users, whose keys it points at.
+  ['project supervision', ensureProjectSupervision],
 ];
 
 async function run(db, log = console.log) {
