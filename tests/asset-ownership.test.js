@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
+const workflow = require('../src/asset-workflow');
 const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON, systemClientId } = require('./helpers');
 const { ownsAsset, canAssignAsset, isAwaitingRework, REWORK_STATUSES } = require('../src/permissions');
 
@@ -390,7 +391,13 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
       // the review queues do, which is the point of the change.
       ['assign', 'accept', 'submit', 'tl_request_changes', 'reassign_review'],
       'and the whole sequence, with the handover recorded in it');
-    assert.match(history[4].note, /from ana to bo while in TL Changes — ana is out this week/);
+    /* The audit note carries the status's DISPLAY label, rendered when the
+       event was written — so a note kept from before the "TL Changes" rename
+       still reads as it did on the day, which is what an audit trail is for.
+       Built from workflow.label(), so this follows a rename rather than
+       pinning the old words. */
+    assert.match(history[4].note,
+      new RegExp(`from ana to bo while in ${workflow.label('tl_changes_requested')} — ana is out this week`));
     // And what the outgoing round finally recorded, which is what makes the
     // handover answerable rather than just noted.
     assert.match(history[4].note, /ana recorded/);

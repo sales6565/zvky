@@ -992,7 +992,7 @@ router.post('/:id/deliver', async (req, res) => {
 // POST /api/assets/:id/reassign — hand rework to somebody else.
 //
 // The pipeline sends changes-requested work back to whoever submitted it. This
-// is the way out of that: when an asset is sitting in TL Changes or CD Changes,
+// is the way out of that: when an asset is sitting in TL Feedbacks or CD Changes,
 // the person who added it can put a different artist on the rework instead.
 //
 // Deliberately not part of PATCH. Reassigning mid-review is a different act

@@ -9,7 +9,7 @@
 //
 //   Not Assigned -> Assigned -> In Progress -> TL Review -> Approved for Client -> Delivered
 //                       |            ^             |  \
-//                  (accept starts    |             |   +-> TL Changes -> (assignee reworks)
+//                  (accept starts    |             |   +-> TL Feedbacks -> (assignee reworks)
 //                   the clock)       |             +-> CD Review -> CD Changes -> (TL relays)
 //
 // Assigned and In Progress are separated by the assignee's own act: assignment
@@ -31,7 +31,7 @@ const STATES = [
   { id: 'assigned', label: 'Assigned', color: '#5b8def' },
   { id: 'in_progress', label: 'In Progress', color: 'var(--prog)' },
   { id: 'pending_tl_review', label: 'TL Review', color: 'var(--review)' },
-  { id: 'tl_changes_requested', label: 'TL Changes', color: '#e8402c' },
+  { id: 'tl_changes_requested', label: 'TL Feedbacks', color: '#e8402c' },
   { id: 'pending_cd_review', label: 'CD Review', color: '#9b7ef0' },
   { id: 'cd_changes_requested', label: 'CD Changes', color: '#e8402c' },
   { id: 'approved_for_client', label: 'Approved for Client', color: 'var(--approved)' },

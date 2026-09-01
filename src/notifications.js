@@ -7,7 +7,7 @@
 //
 // WHY THIS IS RAISED FROM assignments.open(). Three routes change who holds an
 // asset — creating one with somebody on it, PATCHing the assignee, and the
-// hand-over out of TL Review, TL Changes or CD Changes — and all three already
+// hand-over out of TL Review, TL Feedbacks or CD Changes — and all three already
 // funnel through that one function, because it is what opens and closes the
 // episode. Hooking the three call sites would work today and would silently
 // miss the fourth path somebody adds next year. Hooking the choke point cannot.

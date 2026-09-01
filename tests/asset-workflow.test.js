@@ -14,9 +14,73 @@ test('the nine states match the dashboard, in pipeline order', () => {
     'pending_cd_review', 'cd_changes_requested', 'approved_for_client', 'delivered',
   ]);
   assert.deepStrictEqual(workflow.STATES.map((s) => s.label), [
-    'Not Assigned', 'Assigned', 'In Progress', 'TL Review', 'TL Changes',
+    'Not Assigned', 'Assigned', 'In Progress', 'TL Review', 'TL Feedbacks',
     'CD Review', 'CD Changes', 'Approved for Client', 'Delivered',
   ]);
+});
+
+/* Nothing may branch on what a status is CALLED.
+ *
+ * Two labels have now been renamed without touching a key — 'not_started' is
+ * shown as "Not Assigned", and 'tl_changes_requested' as "TL Feedbacks" — and
+ * the first of those broke a hardcoded comparison against the old wording. That
+ * is the worst shape of bug this codebase can produce: it does not throw, the
+ * page still draws, and a stage test quietly starts answering false somewhere
+ * nobody is looking. The routing back to an assignee out of a review is exactly
+ * such a test.
+ *
+ * So the rule is checked rather than remembered: every stage comparison must be
+ * against the id. A label may be reworded at any time by editing the two lists
+ * and nothing else. */
+test('no code compares against a status label', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const root = path.join(__dirname, '..');
+
+  const files = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.(js|html)$/.test(entry.name)) files.push(full);
+    }
+  };
+  walk(path.join(root, 'src'));
+  files.push(path.join(root, 'public', 'index.html'));
+
+  /* The definition sites, where a label legitimately appears as a string
+     literal. Everywhere else it may only be read off a state object. */
+  const DEFINITIONS = ['src/asset-workflow.js', 'public/index.html'];
+
+  const offenders = [];
+  for (const file of files) {
+    const rel = path.relative(root, file);
+    const lines = fs.readFileSync(file, 'utf8').split('\n');
+    lines.forEach((line, i) => {
+      // Skip the lines that define the labels in the first place.
+      if (DEFINITIONS.includes(rel) && /label:\s*'/.test(line)) return;
+      for (const state of workflow.STATES) {
+        /* A comparison, a membership test, or a switch case against the
+           displayed words. Anything that would change behaviour if somebody
+           reworded the label. */
+        const quoted = state.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const patterns = [
+          new RegExp(`[=!]==?\\s*['"\`]${quoted}['"\`]`),
+          new RegExp(`['"\`]${quoted}['"\`]\\s*[=!]==?`),
+          new RegExp(`\\.(includes|indexOf|startsWith|endsWith)\\(\\s*['"\`]${quoted}['"\`]`),
+          new RegExp(`case\\s+['"\`]${quoted}['"\`]`),
+        ];
+        if (patterns.some((re) => re.test(line))) {
+          offenders.push(`${rel}:${i + 1}  ${line.trim()}`);
+        }
+      }
+    });
+  }
+
+  assert.deepStrictEqual(offenders, [],
+    'these compare against a status LABEL, which is only the display wording — '
+    + `compare against the id instead:\n${offenders.join('\n')}`);
 });
 
 // The dashboard draws its columns and its stats bar from its own copy of the

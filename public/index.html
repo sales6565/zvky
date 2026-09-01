@@ -844,15 +844,29 @@ function categoryOptions(selected){
 function priorityOptions(selected){
   return PRIORITIES.map(p=>`<option value="${p.id}" ${p.id===selected?'selected':''}>${escapeHTML(p.label)}</option>`).join('');
 }
+/* The nine states, and the words the studio sees for them.
+ *
+ * LABELS ARE RENAMED HERE AND IN src/asset-workflow.js, AND NOWHERE ELSE. The
+ * `id` is the state; the `label` is only what it is called on screen. Two of
+ * these have already been renamed without touching a key — 'not_started' is
+ * shown as "Not Assigned", and 'tl_changes_requested' as "TL Feedbacks" — and
+ * each key stays put because it is in the assets CHECK constraint, in every
+ * asset_events row ever written, and in saved filters. Renaming one would be a
+ * data migration, not a rename.
+ *
+ * The corollary, which is what actually bit: NOTHING MAY BRANCH ON A LABEL.
+ * Every stage test in this file and on the server compares against the id —
+ * ASSIGNEE_STATUSES, REWORK_STATUSES, RESTRICTED_STATUSES, ASSET_LIST_GROUPS,
+ * the switch in src/permissions.js. A comparison against the displayed words
+ * would keep working until somebody changed a word, and then fail silently
+ * somewhere nobody was looking. tests/asset-workflow.test.js fails if one
+ * appears, and if these two lists ever drift apart. */
 const STATUSES = [
-  /* Label only. The key stays 'not_started': it is in the assets CHECK
-       constraint, in every asset_events row ever written, and in saved filters.
-       Renaming it would be a data migration, not a rename. */
-    {id:'not_started', label:'Not Assigned', color:'var(--not)'},
+  {id:'not_started', label:'Not Assigned', color:'var(--not)'},
   {id:'assigned', label:'Assigned', color:'#5b8def'},
   {id:'in_progress', label:'In Progress', color:'var(--prog)'},
   {id:'pending_tl_review', label:'TL Review', color:'var(--review)'},
-  {id:'tl_changes_requested', label:'TL Changes', color:'#e8402c'},
+  {id:'tl_changes_requested', label:'TL Feedbacks', color:'#e8402c'},
   {id:'pending_cd_review', label:'CD Review', color:'#9b7ef0'},
   {id:'cd_changes_requested', label:'CD Changes', color:'#e8402c'},
   {id:'approved_for_client', label:'Approved for Client', color:'var(--approved)'},

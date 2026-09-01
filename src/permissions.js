@@ -234,7 +234,7 @@ async function canHandOverInReview(user, asset) {
        TL Review     the lead it is waiting on
        CD Changes    the director who sent it back, and the lead who relays
                      their notes — either may put somebody else on the rework
-       TL Changes    the lead who sent it back
+       TL Feedbacks  the lead who sent it back
        CD Review     the director it is waiting on
      
      The rework stages reached only the creator before, so a lead who had just

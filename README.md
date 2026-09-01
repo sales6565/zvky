@@ -234,7 +234,7 @@ Not Assigned --assign--> Assigned --accept--> In Progress --submit--> TL Review
                                                       ^                   |
                                                       |         tl_approve|  tl_request_changes
                                                       |                   |         |
-                                                      +---- TL Changes <--|---------+
+                                                      +---- TL Feedbacks <|---------+
                                                       |                   v
                                                       |               CD Review --cd_approve--> Approved for Client --deliver--> Delivered
                                                       |                   |
