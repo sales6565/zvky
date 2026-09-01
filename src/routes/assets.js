@@ -750,6 +750,12 @@ async function contextFor(req, asset) {
     // from review.tl, which is the standing to act at the TL gate at all — a
     // lead needs both to send work straight to the client.
     canSendToClient: holds(req.user, 'review.tl_send_client'),
+    /* The client's round. Three separate permissions, because they are three
+       separate decisions — see the catalogue. Scope still comes from the role,
+       the same way canMarkDelivered pairs review.deliver with project reach. */
+    canSendForClientFeedback: holds(req.user, 'review.client_send') && await canAccessProject(req.user, asset.project_id),
+    canDeliverFromClient: holds(req.user, 'review.client_deliver') && await canAccessProject(req.user, asset.project_id),
+    canReturnFromClient: holds(req.user, 'review.client_return') && await canAccessProject(req.user, asset.project_id),
   };
 }
 
@@ -1158,6 +1164,42 @@ router.post('/:id/deliver', async (req, res) => {
   const withDetails = await applyTransition(req, res, asset, verdict, { note: req.body && req.body.text });
   res.json({ asset: withDetails });
 });
+
+/* The client's round: three endpoints, one per transition.
+ *
+ * Each is the deliver route with a different action name — load, contextFor,
+ * evaluate, applyTransition — so the permission check, the state guard and the
+ * audit row are the machinery every other transition already uses. Writing them
+ * out rather than folding them into one parameterised handler keeps each URL
+ * saying what it does, which is how the rest of this file reads.
+ */
+function clientStep(action) {
+  return async (req, res) => {
+    const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
+    const asset = rows[0];
+    if (!asset) return res.status(404).json({ error: 'Asset not found' });
+    if (await projectClosedResponse(res, asset.project_id)) return undefined;
+
+    const note = req.body && req.body.text;
+    const ctx = await contextFor(req, asset);
+    const verdict = workflow.evaluate(action, ctx, { note });
+    if (!verdict.ok) return res.status(verdict.status).json({ error: verdict.error, field: verdict.field });
+
+    const withDetails = await applyTransition(req, res, asset, verdict, { note });
+    console.log(`${req.user.email} ${action} on ${asset.code} (${asset.status} -> ${verdict.to}).`);
+    return res.json({ asset: withDetails });
+  };
+}
+
+// POST /api/assets/:id/send-to-client-review — Approved for Client -> Awaiting Client Feedback.
+router.post('/:id/send-to-client-review', clientStep('client_sent'));
+
+// POST /api/assets/:id/client-approved — the client said yes; close it off as Delivered.
+router.post('/:id/client-approved', clientStep('client_approved'));
+
+// POST /api/assets/:id/client-changes — the client asked for changes; back to TL Feedbacks.
+// body: { text } — required, and it is what the artist will be working from.
+router.post('/:id/client-changes', clientStep('client_changes'));
 
 // POST /api/assets/:id/reassign — hand rework to somebody else.
 //

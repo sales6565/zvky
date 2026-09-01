@@ -34,7 +34,7 @@
 
 const { roleDef } = require('./roles');
 
-// The nine states, in pipeline order. Labels and colours match the dashboard.
+// The ten states, in pipeline order. Labels and colours match the dashboard.
 const STATES = [
   { id: 'not_started', label: 'Not Assigned', color: 'var(--not)' },
   { id: 'assigned', label: 'Assigned', color: '#5b8def' },
@@ -44,6 +44,12 @@ const STATES = [
   { id: 'pending_cd_review', label: 'CD Review', color: '#9b7ef0' },
   { id: 'cd_changes_requested', label: 'CD Feedbacks', color: '#e8402c' },
   { id: 'approved_for_client', label: 'Approved for Client', color: 'var(--approved)' },
+  /* Sent out and waiting on the client's word. Its own colour, and deliberately
+     not the brand red: a status colour says where work is, and reusing the
+     brand for one of them would make that state look like the application
+     rather than like a stage. Teal, so it reads as "waiting on somebody
+     outside" beside the green of approved and the lime of delivered. */
+  { id: 'awaiting_client_feedback', label: 'Awaiting Client Feedback', color: 'var(--client)' },
   { id: 'delivered', label: 'Delivered', color: 'var(--final)' },
 ];
 
@@ -137,6 +143,14 @@ const actors = {
   handOver: (ctx) => Boolean(ctx.canHandOver),
   // Whoever signs off that the client has it.
   deliverer: (ctx) => ctx.canDeliver,
+  /* The client's round, gated by three separate permissions rather than one.
+     Split because they are three different decisions: putting work in front of
+     a client, accepting their yes, and passing their no back into the studio.
+     A studio may well want the same people doing all three — but that is for it
+     to say in Settings, not for this to assume. */
+  clientSender:    (ctx) => Boolean(ctx.canSendForClientFeedback),
+  clientDeliverer: (ctx) => Boolean(ctx.canDeliverFromClient),
+  clientReturner:  (ctx) => Boolean(ctx.canReturnFromClient),
 };
 
 // Where the asset sits after a transition. Returning a function rather than an
@@ -312,6 +326,57 @@ const TRANSITIONS = [
     routeTo: 'reviewQueue',
     describe: 'Delivered to the client',
   },
+  /* --- the client's own round ---------------------------------------------
+   *
+   * Approved for Client means the studio is happy with it. What follows is the
+   * client looking at it, which is a wait rather than a review: nobody inside
+   * the studio is holding it, and the answer comes back as either "fine" or
+   * "change this".
+   *
+   * Three transitions, one for each of those and one to start the wait. They
+   * are separate actions rather than variants of deliver because the action id
+   * is what asset_events stores, so "how long do clients take" and "how often
+   * does work come back from a client" are questions the history can answer for
+   * work already done.
+   *
+   * The route in from Approved for Client is ADDITIONAL, not a replacement: the
+   * direct deliver above still works exactly as it did, so a studio that has
+   * not granted the new permissions is not stuck, and nothing that relied on
+   * that path has been taken away.
+   */
+  {
+    action: 'client_sent',
+    from: ['approved_for_client'],
+    to: 'awaiting_client_feedback',
+    who: 'clientSender',
+    routeTo: 'reviewQueue',
+    describe: 'Sent to the client, waiting on their feedback',
+  },
+  {
+    action: 'client_approved',
+    from: ['awaiting_client_feedback'],
+    to: 'delivered',
+    who: 'clientDeliverer',
+    routeTo: 'reviewQueue',
+    describe: 'The client approved it — delivered',
+  },
+  {
+    /* Back to TL Feedbacks, which is a state that already exists and already
+       knows what to do: the lead reads the note, and hands the rework to
+       whoever should make it, through the same reassign flow they already use.
+       Nothing new is built for that half.
+       
+       requiresNote, like the studio's own two change requests. What the client
+       asked for is the entire content of this transition — an artist receiving
+       rework with no note has been told to change something and not what. */
+    action: 'client_changes',
+    from: ['awaiting_client_feedback'],
+    to: 'tl_changes_requested',
+    who: 'clientReturner',
+    routeTo: 'assignee',
+    requiresNote: true,
+    describe: 'The client asked for changes — back to the team lead',
+  },
 ];
 
 function resolve(value, ctx) {
@@ -382,6 +447,9 @@ function evaluate(action, ctx, { note } = {}) {
       tl_send_to_client: 'sent straight to the client — that is only possible while it is in TL Review',
       relay: 'passed on to the assignee — the director\'s notes are only relayed once, from CD Feedbacks',
       deliver: 'marked delivered — only work the client has approved can be delivered',
+      client_sent: 'sent to the client — only work that has been approved for the client can go out',
+      client_approved: 'closed off as approved by the client — that is only possible while it is waiting on the client',
+      client_changes: 'sent back with the client\'s changes — that is only possible while it is waiting on the client',
     };
     return {
       ok: false,
@@ -445,6 +513,18 @@ function refusal(transition, ctx) {
       return 'Only the Creative Director can act on it at this stage.';
     case 'deliverer':
       return 'You cannot mark this asset as delivered.';
+    /* Each names its own permission, because all three sit on one status and
+       "you cannot do that" would leave the reader unable to tell which of the
+       three they are missing. */
+    case 'clientSender':
+      return 'You do not have permission to send work to the client. '
+        + 'That is the "Send Asset to Client" permission, granted per role in Settings.';
+    case 'clientDeliverer':
+      return 'You do not have permission to close off a client\'s approval. '
+        + 'That is the "Mark Delivered from Client Feedback" permission, granted per role in Settings.';
+    case 'clientReturner':
+      return 'You do not have permission to pass a client\'s changes back to the team lead. '
+        + 'That is the "Send Back to TL Feedbacks from Client Feedback" permission, granted per role in Settings.';
     case 'handOver':
       return 'Handing submitted work on is for the person who added the asset or the reviewer holding it.';
     default:

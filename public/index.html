@@ -22,6 +22,10 @@
      colour at a glance. */
   --brand:#7f1416; --brand-ink:#ffffff; --brand-accent:#ef6b6f; --brand-hover:#96181b;
   --not:#6b7280; --prog:#f2b33d; --review:#9b7ef0; --approved:#3ddc97; --final:#d4ff3d; --artist-blue:#4fb3ff;
+  /* Out with the client. Its own hue rather than the brand red: a status
+     colour says where work is, and one wearing the brand would read as the
+     application rather than as a stage. */
+  --client:#22c1c3;
 }
 *{box-sizing:border-box;} html,body{margin:0;padding:0;}
 body{background:var(--bg);color:var(--ink);font-family:'Inter',sans-serif;min-height:100vh;}
@@ -915,6 +919,7 @@ const STATUSES = [
   {id:'pending_cd_review', label:'CD Review', color:'#9b7ef0'},
   {id:'cd_changes_requested', label:'CD Feedbacks', color:'#e8402c'},
   {id:'approved_for_client', label:'Approved for Client', color:'var(--approved)'},
+  {id:'awaiting_client_feedback', label:'Awaiting Client Feedback', color:'var(--client)'},
   {id:'delivered', label:'Delivered', color:'var(--final)'},
 ];
 /* The studio's designations are defined once on the server (src/roles.js) and
@@ -1175,6 +1180,10 @@ const RESTRICTED_STATUSES = [
   { id: 'not_started',           needs: ['asset.add'] },
   { id: 'pending_cd_review',     needs: ['asset.add', 'review.cd'] },
   { id: 'cd_changes_requested',  needs: ['asset.add', 'review.cd'] },
+  /* Work that is out with the client. Its own permission, so a studio can let
+     people watch that column without giving them any of the three actions on
+     it — which is the split the studio asked for. */
+  { id: 'awaiting_client_feedback', needs: ['review.client_view'] },
 ];
 
 /* The three groups the Assets List is divided into.
@@ -1190,7 +1199,8 @@ const RESTRICTED_STATUSES = [
 const ASSET_LIST_GROUPS = [
   { id:'active',   label:'Active',   statuses:['assigned','in_progress','pending_tl_review',
                                                'tl_changes_requested','pending_cd_review',
-                                               'cd_changes_requested','approved_for_client'] },
+                                               'cd_changes_requested','approved_for_client',
+                                               'awaiting_client_feedback'] },
   { id:'inactive', label:'Inactive', statuses:['not_started'] },
   { id:'archived', label:'Archived', statuses:['delivered'] },
 ];
@@ -3430,6 +3440,17 @@ async function openDrawer(id){
      passed on. */
   const canRelay = can('review.tl') && a.status==='cd_changes_requested' && !a.routed_to_id && a.assignee_id;
   const canDeliver = can('review.deliver') && a.status==='approved_for_client';
+  /* The client's round. Three permissions, three buttons, each mirroring its
+     actor in src/asset-workflow.js — the API decides, this only stops offering
+     a control that would be refused.
+     
+     Sending out is offered alongside the existing Mark delivered, not instead
+     of it: the direct route from Approved for Client is untouched, so a studio
+     that has granted none of these keeps working exactly as before. */
+  const canSendForClientFeedback = can('review.client_send') && a.status==='approved_for_client';
+  const awaitingClient = a.status==='awaiting_client_feedback';
+  const canDeliverFromClient = can('review.client_deliver') && awaitingClient;
+  const canReturnFromClient = can('review.client_return') && awaitingClient;
   const latestFeedback = a.feedback && a.feedback[0];
 
   drawer.innerHTML = `
@@ -3556,6 +3577,35 @@ async function openDrawer(id){
     ` : ''}
 
     ${canDeliver ? `<button class="btn btn-brand" id="deliverBtn" style="width:100%;margin-top:14px;">Mark delivered to client</button>` : ''}
+
+    ${canSendForClientFeedback ? `
+      <div class="field-lbl" style="margin-top:16px;">Send to the client</div>
+      <div style="font-size:11px;color:var(--ink-faint);margin-bottom:6px;">
+        Moves this to <strong>Awaiting Client Feedback</strong> while the client looks at it. Their
+        answer then either closes it off as delivered or sends it back to TL Feedbacks.
+      </div>
+      <button class="btn btn-ghost" id="sendClientReviewBtn" style="width:100%;">Mark as Sent to Client</button>
+    ` : ''}
+
+    ${awaitingClient ? `
+      <div class="field-lbl" style="margin-top:16px;">The client's answer</div>
+      ${(canDeliverFromClient || canReturnFromClient) ? `
+        <div style="font-size:11px;color:var(--ink-faint);margin-bottom:6px;">
+          This is out with the client. Record what they said.
+        </div>
+        <textarea id="clientNote" rows="2" placeholder="What the client asked for (required if sending it back)…"></textarea>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          ${canReturnFromClient ? `<button class="btn btn-ghost" id="clientChangesBtn" style="flex:1;color:#e8402c;">Send to TL Feedbacks</button>` : ''}
+          ${canDeliverFromClient ? `<button class="btn btn-brand" id="clientApprovedBtn" style="flex:1;">Mark as Delivered</button>` : ''}
+        </div>
+        ${(canDeliverFromClient && canReturnFromClient) ? '' : `<div style="font-size:11px;color:var(--ink-faint);margin-top:6px;">
+          You hold one of the two actions at this stage; the other is a separate permission.
+        </div>`}
+        <div class="ref-err" id="clientErr"></div>
+      ` : `<div style="font-size:12px;color:var(--ink-faint);">
+          Waiting on the client. Recording their answer is somebody else's to do.
+        </div>`}
+    ` : ''}
 
     ${canHandOver ? `
       <div class="field-lbl" style="margin-top:16px;">Hand this to someone else</div>
@@ -3889,6 +3939,39 @@ async function openDrawer(id){
       catch(err){ showToast(err.message); }
     };
   }
+  if(canSendForClientFeedback){
+    document.getElementById('sendClientReviewBtn').onclick = async (ev)=>{
+      ev.target.disabled = true;
+      try{
+        await api('/assets/'+id+'/send-to-client-review', { method:'POST' });
+        showToast('Sent to the client. Waiting on their feedback.');
+        closeDrawer(); render();
+      }catch(err){ showToast(err.message); ev.target.disabled = false; }
+    };
+  }
+  if(canDeliverFromClient || canReturnFromClient){
+    const err = document.getElementById('clientErr');
+    const note = ()=>document.getElementById('clientNote').value.trim();
+    const act = async (ev, path, body, said)=>{
+      err.textContent = '';
+      ev.target.disabled = true;
+      try{
+        await api('/assets/'+id+path, { method:'POST', body });
+        showToast(said); closeDrawer(); render();
+      }catch(e){ err.textContent = e.message; ev.target.disabled = false; }
+    };
+    const approved = document.getElementById('clientApprovedBtn');
+    if(approved) approved.onclick = (ev)=>
+      act(ev, '/client-approved', { text: note() || undefined }, 'The client approved it — delivered.');
+    const changes = document.getElementById('clientChangesBtn');
+    if(changes) changes.onclick = (ev)=>{
+      /* Checked here so the message lands under the box rather than as a toast
+         over a closed panel. The API requires it too — this is a courtesy, not
+         the rule. */
+      if(!note()){ err.textContent = 'Say what the client asked for.'; return; }
+      return act(ev, '/client-changes', { text: note() }, 'Sent back to the team lead with the client\'s changes.');
+    };
+  }
 
   document.getElementById('addNoteBtn').onclick = async ()=>{
     const input = document.getElementById('newNoteInput');
@@ -3925,6 +4008,13 @@ const HISTORY_ACTIONS = {
   cd_request_changes: { label: 'CD asked for changes', color: '#e8402c' },
   relay:              { label: 'Passed to assignee', color: '#ffd23d' },
   deliver:            { label: 'Delivered',         color: 'var(--final)' },
+  /* The client's round. Named for what happened rather than for the state it
+     landed in: "Delivered" beside a client's approval and "Delivered" beside a
+     direct sign-off are different events, and the history is where somebody
+     works out which one this was. */
+  client_sent:        { label: 'Sent to the client',  color: 'var(--client)' },
+  client_approved:    { label: 'Client approved — delivered', color: 'var(--final)' },
+  client_changes:     { label: 'Client asked for changes', color: '#e8402c' },
 };
 
 async function loadAssetHistory(id){

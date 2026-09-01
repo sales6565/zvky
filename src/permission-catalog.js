@@ -152,6 +152,51 @@ const GROUPS = [
           + 'Requires TL Review Actions as well.',
       },
       { key: 'review.deliver',        label: 'Mark as Delivered',    impliedBy: has('deliver') },
+
+      /* --- the client's own round -----------------------------------------
+       *
+       * Four permissions rather than one, because the studio asked for them
+       * separately and they really are four decisions: who may see work that is
+       * out with a client, who may put it there, who may accept the client's
+       * yes, and who may pass their no back in.
+       *
+       * All four default to the Super Admin tier alone — has('manageAccess') is
+       * held by no other tier — so nobody gains an action by upgrading. The
+       * studio grants them per role in Settings, which is how it asked to
+       * decide who counts as its production department rather than having a
+       * role list guessed here and baked in.
+       *
+       * Note what that means on the day this ships: until they are granted, the
+       * only route out of Approved for Client is the existing Mark as Delivered,
+       * which is untouched. Nothing is stuck and nothing changes by surprise. */
+      {
+        key: 'review.client_view',
+        label: 'View Awaiting Client Feedback',
+        impliedBy: has('manageAccess'),
+        describe: 'See assets that are out with the client. Without it they are hidden from the '
+          + 'board and the Assets List, the way work in a review stage already is.',
+      },
+      {
+        key: 'review.client_send',
+        label: 'Send Asset to Client',
+        impliedBy: has('manageAccess'),
+        describe: 'Move an asset from Approved for Client to Awaiting Client Feedback — the act of '
+          + 'putting it in front of the client.',
+      },
+      {
+        key: 'review.client_deliver',
+        label: 'Mark Delivered from Client Feedback',
+        impliedBy: has('manageAccess'),
+        describe: 'The client approved it: close it off as Delivered. Separate from Mark as '
+          + 'Delivered, which is the direct route from Approved for Client.',
+      },
+      {
+        key: 'review.client_return',
+        label: 'Send Back to TL Feedbacks from Client Feedback',
+        impliedBy: has('manageAccess'),
+        describe: 'The client asked for changes: pass them to the team lead, who hands the rework '
+          + 'on as they already do from TL Feedbacks.',
+      },
     ],
   },
   {

@@ -1112,7 +1112,8 @@ async function ensureStatusConstraint(db, log) {
 // judge whether an existing one is current.
 const STATUS_VALUES = [
   'not_started', 'assigned', 'in_progress', 'pending_tl_review', 'tl_changes_requested',
-  'pending_cd_review', 'cd_changes_requested', 'approved_for_client', 'delivered',
+  'pending_cd_review', 'cd_changes_requested', 'approved_for_client',
+  'awaiting_client_feedback', 'delivered',
 ];
 
 // Every CHECK constraint on `assets` that constrains `status` and does not admit

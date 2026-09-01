@@ -8,15 +8,26 @@ const cfg = config('workflow');
 
 // --- the machine, on its own --------------------------------------------------
 
-test('the nine states match the dashboard, in pipeline order', () => {
+test('the ten states match the dashboard, in pipeline order', () => {
   assert.deepStrictEqual(workflow.STATES.map((s) => s.id), [
     'not_started', 'assigned', 'in_progress', 'pending_tl_review', 'tl_changes_requested',
-    'pending_cd_review', 'cd_changes_requested', 'approved_for_client', 'delivered',
+    'pending_cd_review', 'cd_changes_requested', 'approved_for_client',
+    'awaiting_client_feedback', 'delivered',
   ]);
   assert.deepStrictEqual(workflow.STATES.map((s) => s.label), [
     'Not Assigned', 'Assigned', 'In Progress', 'TL Review', 'TL Feedbacks',
-    'CD Review', 'CD Feedbacks', 'Approved for Client', 'Delivered',
+    'CD Review', 'CD Feedbacks', 'Approved for Client',
+    'Awaiting Client Feedback', 'Delivered',
   ]);
+
+  // The client's step sits between the studio's sign-off and delivery, which is
+  // the whole point of it — and its colour is its own, not the brand's.
+  const ids = workflow.STATES.map((s) => s.id);
+  assert.strictEqual(ids.indexOf('awaiting_client_feedback'), ids.indexOf('approved_for_client') + 1);
+  assert.strictEqual(ids.indexOf('delivered'), ids.indexOf('awaiting_client_feedback') + 1);
+  const client = workflow.STATES.find((s) => s.id === 'awaiting_client_feedback');
+  assert.ok(!/7f1416/i.test(client.color) && !/--brand\b/.test(client.color),
+    'a status colour must not be the brand colour');
 });
 
 /* Nothing may branch on what a status is CALLED.
@@ -123,7 +134,7 @@ test('the dashboard is drawn from the same states and the same free range', () =
     .map((m) => ({ id: m[1], needs: m[2].split(',').map((v) => v.trim().replace(/'/g, '')).filter(Boolean) }));
 
   assert.deepStrictEqual(rules.map((r) => r.id),
-    ['not_started', 'pending_cd_review', 'cd_changes_requested']);
+    ['not_started', 'pending_cd_review', 'cd_changes_requested', 'awaiting_client_feedback']);
 
   const catalogKeys = new Set(require('../src/permission-catalog').KEYS);
   for (const rule of rules) {
@@ -1140,13 +1151,26 @@ test('who sees which dashboard column', () => {
   assert.ok(!cd.includes('not_started'), 'reviewing is not a reason to see the unassigned queue');
   assert.ok(!neither.includes('not_started'));
 
+  /* Work that is out with the client is its own gate, held by neither of the
+     two above: watching that column is a separate grant from acting on it, and
+     from anything to do with the CD stages. */
+  const watcher = seen(['review.client_view']);
+  assert.ok(watcher.includes('awaiting_client_feedback'), 'the view permission shows the column');
+  assert.ok(!cd.includes('awaiting_client_feedback'), 'reviewing at the CD gate does not');
+  assert.ok(!planner.includes('awaiting_client_feedback'), 'nor does setting work up');
+  assert.ok(!neither.includes('awaiting_client_feedback'));
+
   // Nothing regressed for the case that already worked.
-  assert.deepStrictEqual(both, workflow.STATE_IDS, 'holding both should show every stage');
+  const everything = seen(['asset.add', 'review.cd', 'review.client_view']);
+  assert.deepStrictEqual(everything, workflow.STATE_IDS, 'holding all three should show every stage');
   // And every stage outside the restricted list is everybody's business.
+  const RESTRICTED = ['not_started', 'pending_cd_review', 'cd_changes_requested', 'awaiting_client_feedback'];
   for (const id of workflow.STATE_IDS) {
-    if (['not_started', 'pending_cd_review', 'cd_changes_requested'].includes(id)) continue;
+    if (RESTRICTED.includes(id)) continue;
     assert.ok(neither.includes(id), `${id} should be visible to everyone`);
   }
+  assert.deepStrictEqual(both, workflow.STATE_IDS.filter((id) => id !== 'awaiting_client_feedback'),
+    'and the CD/planner pair still sees everything except the client column');
 });
 
 /* --- Send to Client: the team lead skipping the CD gate ---------------------

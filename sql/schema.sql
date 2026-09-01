@@ -329,7 +329,7 @@ CREATE TABLE IF NOT EXISTS assets (
   -- because it is a fixed pipeline, not a list anyone edits.
   CONSTRAINT chk_assets_status CHECK (`status` IN (
     'not_started','assigned','in_progress','pending_tl_review','tl_changes_requested',
-    'pending_cd_review','cd_changes_requested','approved_for_client','delivered'
+    'pending_cd_review','cd_changes_requested','approved_for_client','awaiting_client_feedback','delivered'
   ))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
