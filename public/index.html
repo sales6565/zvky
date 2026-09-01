@@ -225,6 +225,12 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .eff-track{position:relative;height:8px;background:var(--surface-3);border-radius:20px;overflow:hidden;}
 .eff-fill{height:100%;border-radius:20px;}
 .eff-mark{position:absolute;top:-2px;left:50%;width:1px;height:12px;background:var(--ink-faint);opacity:.55;}
+/* A stage that was skipped rather than failed. Amber, not red: going straight
+   to the client is a decision somebody with the permission was entitled to
+   make, not a fault — the column exists so it can be counted, not accused. */
+.rep-skip{font-size:10.5px;padding:1px 7px;border-radius:20px;background:rgba(242,179,61,.16);
+  color:#f2b33d;font-family:'IBM Plex Mono';letter-spacing:.2px;}
+
 /* Where the meaning of the recorded hours changes. Not an error state, so not
    red: a plain aside above the numbers it qualifies. */
 .rep-cutover{font-size:12px;color:var(--ink-muted);line-height:1.7;margin-top:14px;
@@ -2159,6 +2165,7 @@ async function renderReports(sections = reportSections()){
       <div class="stat"><div class="num" style="color:${effColor(s.total)}">${s.total===null?'N/A':s.total+'%'}</div><div class="lbl">Total efficiency</div></div>
       <div class="stat"><div class="num">${s.manHours}</div><div class="lbl">Man Hours estimated</div></div>
       <div class="stat"><div class="num">${s.timeSpentHours}</div><div class="lbl">Time Spent (h)</div></div>
+      <div class="stat" title="Assets a team lead sent straight to the client, skipping Creative Director review."><div class="num"${s.skippedCd?' style="color:#f2b33d;"':''}>${s.skippedCd}</div><div class="lbl">Skipped CD review</div></div>
       <div class="stat"><div class="num" style="color:var(--ink-faint)">${s.excluded}</div><div class="lbl">Excluded</div></div>
     </div>`;
 
@@ -2173,13 +2180,17 @@ async function renderReports(sections = reportSections()){
   if(reportState.view === 'assets'){
     body = !d.assets.length ? `<div class="empty">No asset has both an estimate and tracked time yet.</div>` : `
       <table><thead><tr><th>Code</th><th>Assets Name</th><th>Assignee</th><th>Category</th><th>Scope of Work</th>
-        <th>Man Hours</th><th>First pass</th><th>Total</th><th>First pass %</th><th>Total %</th><th>Rounds</th></tr></thead><tbody>
+        <th>Man Hours</th><th>First pass</th><th>Total</th><th>First pass %</th><th>Total %</th><th>Rounds</th>
+        <th title="Whether a team lead sent this straight to the client instead of passing it to the Creative Director.">CD review</th></tr></thead><tbody>
       ${d.assets.map(a=>`<tr>
         <td class="mono">${escapeHTML(a.code)}</td><td style="font-weight:600;">${escapeHTML(a.name)}</td>
         <td>${escapeHTML(a.assignee||'—')}</td><td>${escapeHTML(a.category||'—')}</td><td>${escapeHTML(a.scope||'—')}</td>
         <td class="mono">${a.manHours}h</td><td class="mono">${a.firstPassHours}h</td><td class="mono">${a.totalHours}h</td>
         ${effCell(a.firstPass)}${effCell(a.total)}
         <td class="mono">${a.rounds}${a.contributors>1?` <span class="round-tag">${a.contributors} people</span>`:''}</td>
+        <td>${a.skippedCd
+          ? '<span class="rep-skip">skipped</span>'
+          : '<span style="color:var(--ink-faint);">—</span>'}</td>
       </tr>`).join('')}</tbody></table>`;
   } else {
     const rows = reportState.view==='trend' ? d.trend : d[reportState.view].groups;
@@ -2190,13 +2201,15 @@ async function renderReports(sections = reportSections()){
         <button class="sub-tab${reportState.grain==='month'?' active':''}" data-grain="month">Monthly</button>
       </div>` : ''}
       <table><thead><tr><th>${view.head}</th><th>Assets</th><th>First pass</th><th>Total</th><th></th>
-        <th>Man Hours</th><th title="Elapsed time from Accept and Start to Submit for Review, breaks and overnight included.">Time Spent</th>${reportState.view==='byUser'?'<th>Shared</th>':''}</tr></thead><tbody>
+        <th>Man Hours</th><th title="Elapsed time from Accept and Start to Submit for Review, breaks and overnight included.">Time Spent</th>${reportState.view==='byUser'?'<th>Shared</th>':''}
+        <th title="Assets a team lead sent straight to the client, skipping Creative Director review. Counted among the assets in this report only.">Skipped CD</th></tr></thead><tbody>
       ${rows.map(g=>`<tr>
         <td style="font-weight:600;">${escapeHTML(String(g.label))}</td>
         <td class="mono">${g.assets}</td>
         ${effCell(g.firstPass)}${effCell(g.total)}${effBar(g.total)}
         <td class="mono">${g.manHours}h</td><td class="mono">${g.timeSpentHours}h</td>
         ${reportState.view==='byUser'?`<td class="mono">${g.handedOver||''}</td>`:''}
+        <td class="mono">${g.skippedCd ? `<span class="rep-skip">${g.skippedCd}</span>` : ''}</td>
       </tr>`).join('')}</tbody></table>
       ${ungrouped ? `<div class="rep-note">${ungrouped} asset${ungrouped===1?'':'s'} had nothing in this column and ${ungrouped===1?'is':'are'} not counted above.</div>` : ''}`;
   }

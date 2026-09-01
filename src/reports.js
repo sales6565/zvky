@@ -91,6 +91,9 @@ function prepare(rows) {
        the first-pass average simply has one fewer asset in it. */
     included.push({
       ...row,
+      // Carried through from the query as a boolean, so every consumer below
+      // can count it without knowing it arrived from MySQL as 1 or 0.
+      skippedCd: Boolean(Number(row.skippedCd)),
       firstPass: pct(efficiencyOf(row.manHours, row.firstPassSeconds)),
       total: pct(efficiencyOf(row.manHours, row.totalSeconds)),
     });
@@ -136,6 +139,11 @@ function groupBy(assets, keyOf, labelOf) {
        A By User row covers work the named person may not have done all of, and
        a reader deserves to know that rather than infer it. */
     handedOver: b.assets.filter((a) => Number(a.contributors || 1) > 1).length,
+    /* How many went to the client without the Creative Director seeing them.
+       A count rather than a share, because the group's asset count is in the
+       next column along and a reader can do that division themselves — while a
+       percentage of three assets would read as a trend. */
+    skippedCd: b.assets.filter((a) => a.skippedCd).length,
   }));
 
   // Worst first: the point of the report is to find where estimates are wrong,
@@ -189,6 +197,15 @@ function build(rows, { grain = 'week' } = {}) {
       total: mean(included.map((a) => a.total)),
       manHours: Math.round(included.reduce((s, a) => s + Number(a.manHours || 0), 0) * 10) / 10,
       timeSpentHours: Math.round((included.reduce((s, a) => s + Number(a.totalSeconds || 0), 0) / HOUR) * 10) / 10,
+      /* The headline answer to "how often does a lead skip the CD gate".
+       *
+       * Scoped to the assets in this report, like every other number here —
+       * which is NOT the same as the studio-wide count. An asset sent to the
+       * client but carrying no Man Hours estimate is excluded from this report
+       * entirely (see exclusionReason), so it is absent from this figure too.
+       * The screen and the exports say so rather than letting the number be
+       * read as a total. */
+      skippedCd: included.filter((a) => a.skippedCd).length,
     },
     byUser: by((a) => a.assigneeId, (a) => a.assigneeName || 'Unassigned'),
     byCategory: by((a) => a.category, (a) => a.categoryLabel || a.category),
@@ -205,6 +222,10 @@ function build(rows, { grain = 'week' } = {}) {
       totalHours: Math.round((Number(a.totalSeconds) / HOUR) * 100) / 100,
       firstPass: a.firstPass, total: a.total,
       rounds: Number(a.rounds || 1), contributors: Number(a.contributors || 1),
+      /* Whether this one skipped the Creative Director. Comes from the event
+         rather than the status — both routes to Approved for Client end in the
+         same state, so the status cannot tell them apart. */
+      skippedCd: Boolean(Number(a.skippedCd)),
       delivered: Boolean(a.delivered), finishedAt: a.finishedAt,
     })),
     excluded,

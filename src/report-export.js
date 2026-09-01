@@ -75,6 +75,11 @@ function groupRows(groups, { withShared = false } = {}) {
       'Time Spent (h)': hrs(g.timeSpentHours),
     };
     if (withShared) row['Shared with others'] = g.handedOver || 0;
+    /* On every grouped view, not just By User: "which project skips the CD
+       gate" and "is this getting more common by the week" are the same
+       question asked of different columns, and the trend view is grouped by
+       period so it gets the count too. */
+    row['Skipped CD review'] = g.skippedCd || 0;
     return row;
   });
 }
@@ -95,6 +100,10 @@ function assetRows(assets) {
     'Total %': pct(a.total),
     Rounds: a.rounds,
     Contributors: a.contributors,
+    /* Per asset this is a state, not a count — so it says what happened rather
+       than printing a 1, which in a spreadsheet full of hours would invite
+       somebody to sum it. */
+    'CD review': a.skippedCd ? 'skipped' : '',
   }));
 }
 
@@ -151,6 +160,26 @@ function describeFilters(filters = {}, names = {}) {
  * mailed on, and is read by somebody who was never told the definition changed.
  * The second line only appears where there is genuinely old data in range,
  * because a warning that fires on a clean deployment is noise. */
+/* What "Skipped CD review" counts, and what it does not.
+ *
+ * The number is scoped to the assets in this report, like every other figure
+ * in it — and this report leaves out anything never submitted, anything with
+ * no Man Hours estimate, and anything with no recorded time. So an asset a
+ * lead sent straight to the client without an estimate on it is missing from
+ * this count. Stating that is the difference between a figure somebody can act
+ * on and one they will later find was quietly wrong. */
+function skipBasis(summary = {}) {
+  const rows = [['Skipped CD review',
+    'Assets a team lead sent straight to the client, skipping Creative Director review.']];
+  if (Number(summary.excluded) > 0) {
+    rows.push(['Note',
+      `Counted among the ${summary.assets ?? 0} asset(s) in this report only. `
+      + `${summary.excluded} more are left out of it entirely (no estimate, no recorded time, `
+      + 'or never submitted), so any of those that skipped CD review are not in this figure.']);
+  }
+  return rows;
+}
+
 function timeBasis(cutover) {
   const rows = [['Time Spent',
     'The elapsed span from Accept and Start to Submit for Review — breaks, meetings and '
@@ -173,6 +202,7 @@ function summaryRows(report) {
     ['Total efficiency', s.total === null || s.total === undefined ? 'N/A' : `${s.total}%`],
     ['Man Hours estimated', s.manHours ?? 0],
     ['Time Spent (h)', s.timeSpentHours ?? 0],
+    ['Skipped CD review', s.skippedCd ?? 0],
     ['Excluded', s.excluded ?? 0],
   ];
 }
@@ -214,6 +244,6 @@ function idleContext(report) {
 module.exports = {
   VIEWS, viewById, rowsFor, headersFor,
   IDLE_VIEW, idleRows, idleHeaders, idleContext,
-  groupRows, assetRows, describeFilters, timeBasis, summaryRows, exclusionRows,
+  groupRows, assetRows, describeFilters, timeBasis, skipBasis, summaryRows, exclusionRows,
   stamp, fileName,
 };

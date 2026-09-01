@@ -334,6 +334,86 @@ test('efficiency reports', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.ok(monthly.trend.every((p) => /^\d{4}-\d{2}$/.test(p.key)), 'months, not weeks');
   });
 
+  await t.test('the skipped-CD column reflects a real Send to Client', async () => {
+    /* The unit tests above feed the flag in. This one earns it: a lead actually
+       clicks through the endpoint, and the column has to come back true without
+       anything in the report being told about it — because the whole design
+       rests on the report reading the EVENT rather than the status, and both
+       routes to Approved for Client leave the same status behind. */
+    const grant = await as('root', '/permissions/roles/team_lead', {
+      method: 'PUT', body: { permissions: ['review.tl', 'review.tl_send_client'] },
+    });
+    assert.strictEqual(grant.status, 200, JSON.stringify(grant.body));
+    tokens.lee = (await call('/auth/login', { method: 'POST',
+      body: { email: 'lee@zvky.test', password: PASSWORD } })).body.token;
+
+    /* A category, so the By Category view has something to group by —
+       categories start empty in this app and an asset without one falls
+       outside every category group, which is correct and would otherwise
+       make that view look like it had lost the count. */
+    const made = await as('root', '/reference/categories', {
+      method: 'POST', body: { label: 'Slot' },
+    });
+    assert.strictEqual(made.status, 201, JSON.stringify(made.body));
+    const category = made.body.entry.key;
+
+    // Two assets, identical in every way the report can see.
+    const skipped = await makeAsset('Went Straight Out', { manHours: 4, category });
+    const viaCd = await makeAsset('Went Through The CD', { manHours: 4, category });
+    for (const a of [skipped, viaCd]) {
+      await submit(a.id, 'anna', 'http://nas/x');
+      await logWork(a.id, 1, 4 * 3600, people.anna);
+    }
+
+    // One skips the gate; the other takes the ordinary route.
+    assert.strictEqual((await as('lee', `/assets/${skipped.id}/send-to-client`,
+      { method: 'POST', body: {} })).status, 200);
+    assert.strictEqual((await as('lee', `/assets/${viaCd.id}/review`,
+      { method: 'POST', body: { decision: 'approved' } })).status, 200);
+
+    // Same status on both — which is exactly why the status cannot be the source.
+    const statusOf = async (id) => (await as('root', `/assets/${id}/history`)).body.status;
+    assert.strictEqual(await statusOf(skipped.id), 'approved_for_client');
+    assert.strictEqual((await as('root', `/permissions/roles/team_lead/reset`,
+      { method: 'POST' })).status, 200);
+
+    const report = (await as('root', '/reports/efficiency')).body;
+    const row = (code) => report.assets.find((a) => a.code === code);
+    assert.strictEqual(row(skipped.code).skippedCd, true, 'the one that skipped is marked');
+    assert.strictEqual(row(viaCd.code).skippedCd, false, 'the one that did not is not');
+    assert.strictEqual(report.summary.skippedCd, 1, 'and the headline counts exactly one');
+
+    // Every grouped view carries the count, not only By User.
+    for (const view of ['byUser', 'byCategory', 'byScope', 'byProject', 'byClient']) {
+      const total = report[view].groups.reduce((n, g) => n + Number(g.skippedCd || 0), 0);
+      assert.strictEqual(total, 1, `${view} should account for the one skip`);
+    }
+
+    // And it survives into both files.
+    const xlsx = require('xlsx');
+    const res = await fetch(`${server.base}/reports/efficiency.xlsx`,
+      { headers: { Authorization: `Bearer ${root}` } });
+    assert.strictEqual(res.status, 200);
+    const book = xlsx.read(Buffer.from(await res.arrayBuffer()), { type: 'buffer' });
+
+    const assetSheet = xlsx.utils.sheet_to_json(book.Sheets['Every Asset']);
+    assert.strictEqual(assetSheet.find((r) => r.Code === skipped.code)['CD review'], 'skipped');
+    assert.ok(!assetSheet.find((r) => r.Code === viaCd.code)['CD review'],
+      'and the ordinary route leaves the cell empty rather than writing "no"');
+
+    const userSheet = xlsx.utils.sheet_to_json(book.Sheets['By User']);
+    assert.strictEqual(userSheet.reduce((n, r) => n + Number(r['Skipped CD review'] || 0), 0), 1);
+
+    const summary = xlsx.utils.sheet_to_json(book.Sheets.Summary, { header: 1 })
+      .map((r) => r.join(': ')).join(' | ');
+    assert.match(summary, /Skipped CD review: 1/, 'the Summary sheet carries the figure');
+    assert.match(summary, /skipping Creative Director review/, 'and says what it counts');
+
+    const pdf = await fetch(`${server.base}/reports/efficiency.pdf?view=byUser`,
+      { headers: { Authorization: `Bearer ${root}` } });
+    assert.strictEqual(pdf.status, 200, 'and the PDF still renders with the extra column');
+  });
+
   await t.test('the tab is closed to a role without View Reports', async () => {
     assert.strictEqual((await as('anna', '/reports/efficiency')).status, 403,
       'an artist cannot read the studio\'s efficiency figures');
@@ -642,4 +722,72 @@ test('the workflow colours are untouched and still tell each other apart', () =>
     assert.ok(dE(accent, colour) >= 25,
       `the brand accent is ΔE ${dE(accent, colour).toFixed(0)} from ${colour} — too close to tell apart`);
   }
+});
+
+test('skipped CD review is counted per asset, per group, and in the summary', () => {
+  /* The status cannot answer this — both routes to Approved for Client end in
+     the same state, which is precisely why Send to Client was given its own
+     action. So the report carries the flag through from the event, and this
+     pins that it survives all three shapes the screen and the exports read. */
+  const asset = (id, who, skipped) => ({
+    id, code: id, name: id, submitted: true, manHours: 10,
+    firstPassSeconds: 5 * 3600, totalSeconds: 5 * 3600,
+    skippedCd: skipped ? 1 : 0,               // as MySQL EXISTS returns it
+    assigneeId: who, assigneeName: who,
+    projectId: 'p', projectName: 'P', clientId: 'c', clientName: 'C',
+  });
+
+  const report = reports.build([
+    asset('A-1', 'Ana', true),
+    asset('A-2', 'Ana', false),
+    asset('A-3', 'Ana', true),
+    asset('B-1', 'Bo', false),
+  ]);
+
+  // Per asset: a real boolean, not the driver's 1/0.
+  const byCode = Object.fromEntries(report.assets.map((a) => [a.code, a.skippedCd]));
+  assert.deepStrictEqual(byCode, { 'A-1': true, 'A-2': false, 'A-3': true, 'B-1': false });
+
+  // Per group, on every grouped view rather than only By User.
+  const ana = report.byUser.groups.find((g) => g.label === 'Ana');
+  const bo = report.byUser.groups.find((g) => g.label === 'Bo');
+  assert.strictEqual(ana.skippedCd, 2, 'two of Ana\'s three');
+  assert.strictEqual(bo.skippedCd, 0, 'none of Bo\'s');
+  assert.strictEqual(report.byProject.groups[0].skippedCd, 2, 'and the project view counts them too');
+  assert.strictEqual(report.byClient.groups[0].skippedCd, 2);
+
+  // And the headline figure.
+  assert.strictEqual(report.summary.skippedCd, 2);
+  assert.strictEqual(report.summary.assets, 4);
+});
+
+test('the skipped count never includes an asset the report left out', () => {
+  /* The trap this report sets for any count added to it: an asset with no Man
+     Hours estimate is excluded entirely, so a lead could skip the CD gate on it
+     and the figure would not move. That is defensible — every number here is
+     scoped the same way — but only if it is said out loud, which is what
+     skipBasis() is for. A count that silently disagrees with the studio's own
+     tally is worse than no count. */
+  const report = reports.build([
+    { id: '1', code: 'IN', name: 'counted', submitted: true, manHours: 10,
+      firstPassSeconds: 3600, totalSeconds: 3600, skippedCd: 1,
+      assigneeId: 'u', assigneeName: 'Ana', projectId: 'p', projectName: 'P' },
+    { id: '2', code: 'OUT', name: 'no estimate, so excluded', submitted: true, manHours: null,
+      firstPassSeconds: 3600, totalSeconds: 3600, skippedCd: 1,
+      assigneeId: 'u', assigneeName: 'Ana', projectId: 'p', projectName: 'P' },
+  ]);
+
+  assert.strictEqual(report.summary.skippedCd, 1, 'only the asset the report can see');
+  assert.strictEqual(report.summary.excluded, 1);
+  assert.ok(!report.assets.some((a) => a.code === 'OUT'), 'the excluded one is not in the rows');
+
+  // So the exports say what the number covers, and warn when any are missing.
+  const exporter = require('../src/report-export');
+  const basis = exporter.skipBasis(report.summary);
+  assert.match(basis[0][1], /skipping Creative Director review/, 'what it counts');
+  assert.strictEqual(basis.length, 2, 'and a caveat, because this report excluded something');
+  assert.match(basis[1][1], /1 more are left out/);
+
+  // With nothing excluded there is nothing to warn about.
+  assert.strictEqual(exporter.skipBasis({ assets: 3, excluded: 0 }).length, 1);
 });

@@ -87,6 +87,16 @@ async function buildReport(req) {
             (a.status = 'delivered') AS delivered,
             (SELECT COUNT(*) FROM asset_versions v WHERE v.asset_id = a.id) AS rounds,
             (SELECT COUNT(DISTINCT x.user_id) FROM asset_assignments x WHERE x.asset_id = a.id) AS contributors,
+            /* Did a team lead take the Creative Director out of the loop?
+             *
+             * Read from the event rather than from the status, because status
+             * cannot answer it: both routes to Approved for Client end in the
+             * same state, which is exactly why the action was made distinct
+             * when Send to Client was built. EXISTS rather than a count — a
+             * skip can only happen once per asset, since it is only reachable
+             * from TL Review and there is no way back into that queue. */
+            EXISTS(SELECT 1 FROM asset_events e
+                    WHERE e.asset_id = a.id AND e.action = 'tl_send_to_client') AS skippedCd,
             COALESCE((SELECT SUM(COALESCE(w.seconds, 0)) FROM work_sessions w
                        WHERE w.asset_id = a.id), 0) AS totalSeconds,
             COALESCE((SELECT SUM(COALESCE(w.seconds, 0)) FROM work_sessions w
@@ -207,6 +217,7 @@ router.get('/efficiency.xlsx', requirePermission('report.view'), async (req, res
   const filters = [
     ...exporter.describeFilters(filtersFrom(req), report.filters),
     ...exporter.timeBasis(report.cutover),
+    ...exporter.skipBasis(report.summary),
   ];
   const summary = [
     [branding.current().appName],
@@ -307,6 +318,7 @@ router.get('/efficiency.pdf', requirePermission('report.view'), async (req, res)
   const filters = [
     ...exporter.describeFilters(filtersFrom(req), report.filters),
     ...exporter.timeBasis(report.cutover),
+    ...exporter.skipBasis(report.summary),
   ];
   const logo = await branding.readLogo(db).catch(() => null);
 
