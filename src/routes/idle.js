@@ -6,6 +6,7 @@ const { authenticate, requirePermission } = require('../middleware/auth');
 const { visibleProjects } = require('../permissions');
 const { roleDef, activeRoles } = require('../roles');
 const workSchedule = require('../work-schedule');
+const workLog = require('../work-log');
 const idle = require('../idle');
 const exporter = require('../report-export');
 const reportPdf = require('../report-pdf');
@@ -16,11 +17,11 @@ router.use(authenticate);
 
 /* Who this report is about.
  *
- * Only roles that can be assigned work. Producers, leads and Super Admins do
- * not start timers against assets, so every one of them would sit at 100% idle
- * every single day and bury the people the report exists to find. The scope is
- * stated on the screen and in the exports rather than left to be discovered
- * from a surprising absence.
+ * Only roles that can be assigned work. Producers, leads and Super Admins never
+ * click Accept and Start on an asset, so every one of them would sit at 100%
+ * idle every single day and bury the people the report exists to find. The
+ * scope is stated on the screen and in the exports rather than left to be
+ * discovered from a surprising absence.
  */
 const trackingRoleKeys = () => activeRoles()
   .map((r) => r.key)
@@ -53,14 +54,21 @@ function resolvePeriod(query) {
 
 /* GET /api/idle/report
  *
- * Idle = the hours the period expected, minus the hours actually tracked.
- * The maths is in src/idle.js; this is the query that feeds it.
+ * Idle = the working hours in the period during which somebody had nothing in
+ * progress. The maths is in src/idle.js, which explains at length why this is
+ * no longer "expected hours minus time spent"; this is the query that feeds it.
  *
- * The tracked total is deliberately WHOLE-PERSON even when the report is
- * filtered. A project filter decides who is listed — the people who worked on
- * that project in the period — and never shrinks anybody's tracked hours,
- * because somebody who spent a full day on another project is not idle, and
- * printing them at 100% idle here would be a confident wrong answer.
+ * It fetches SPANS rather than a SUM, and that is the whole difference. Summing
+ * is what breaks under wall-clock timing: two assets held open through the same
+ * afternoon each claim it, and a span left open over a weekend claims the
+ * weekend. Only the union of the intervals can answer "was anything on this
+ * person's desk at 3pm on Tuesday", and only that question has a right answer.
+ *
+ * The coverage is deliberately WHOLE-PERSON even when the report is filtered. A
+ * project filter decides who is listed — the people who worked on that project
+ * in the period — and never shrinks anybody's coverage, because somebody who
+ * spent a full day on another project is not idle, and printing them at 100%
+ * idle here would be a confident wrong answer.
  */
 /* Built once, read three ways: the screen, the spreadsheet and the PDF. Same
    reason the efficiency report has a buildReport() — a download that filtered
@@ -71,6 +79,7 @@ async function buildIdleReport(req) {
   const period = resolvePeriod(req.query);
   const schedule = workSchedule.current();
   const workingDays = idle.workingDaysBetween(period.from, period.to, schedule.workingDays);
+  const cutover = await workLog.cutover(db).catch(() => ({ at: null, legacyRows: 0, mixed: false }));
 
   const roles = trackingRoleKeys();
   const empty = {
@@ -78,6 +87,7 @@ async function buildIdleReport(req) {
     expectedHours: idle.round(workingDays * schedule.hoursPerDay),
     rows: [], totals: null,
     caveats: idle.caveats(schedule),
+    cutover,
     scope: { roles: roles.length, projects: projects.length },
     filters: { projects: [], clients: [], categories: [], scopes: [], users: [] },
   };
@@ -129,48 +139,43 @@ async function buildIdleReport(req) {
     if (!onlyUsers.length) return { ...empty, narrowed: true };
   }
 
-  /* Hours tracked per person in the window.
+  /* Every stretch overlapping the window, per person — the rows themselves, not
+   * a total. src/idle.js takes the union and clips it; doing that here in SQL
+   * would need a window function this app cannot rely on across MySQL 8 and
+   * MariaDB, and the result would be far harder to check by hand than the
+   * arithmetic it replaced.
    *
-   * A session that straddles the boundary is counted for the part inside it:
-   * somebody who started at 17:00 on Friday and stopped at 02:00 on Saturday
-   * has not done nine hours of Friday. GREATEST/LEAST clip each session to the
-   * range before the seconds are counted, and an open session is measured to
-   * now rather than treated as zero. */
+   * The stamps come back as strings in UTC rather than as driver Dates, so the
+   * day boundaries the maths draws are the same boundaries the period names.
+   * Letting the driver hand back a local-time Date would put the whole report
+   * an hour out of step with its own date range wherever the server is not on
+   * UTC — a silent error that only shows up in the numbers.
+   *
+   * An open stretch is measured to now rather than treated as zero: work in
+   * progress this morning is not idleness. */
   const params = [projectIds, to, from];
   let where = `a.project_id IN ($1)
       AND w.started_at <= $2
       AND COALESCE(w.ended_at, NOW()) >= $3`;
   if (onlyUsers) { params.push(onlyUsers); where += ` AND w.user_id IN ($${params.length})`; }
 
-  const { rows: tracked } = await db.query(
-    `SELECT w.user_id AS id,
-            SUM(CASE
-              /* Wholly inside the window: use the stored seconds, which is what
-                 the efficiency report counts. Two sheets of one workbook
-                 disagreeing about how long somebody worked would discredit
-                 both, and the stored value is the authority — the timer writes
-                 it from the timestamps, so for real sessions they agree, and
-                 where they do not it is the seconds that were meant. */
-              WHEN w.started_at >= $${params.length + 1}
-               AND COALESCE(w.ended_at, NOW()) <= $${params.length + 2}
-                THEN COALESCE(w.seconds,
-                     TIMESTAMPDIFF(SECOND, w.started_at, COALESCE(w.ended_at, NOW())))
-              /* Straddling the boundary: the stored seconds cover time outside
-                 this period, so the part inside has to be measured. Somebody
-                 who worked 21:00 Friday to 03:00 Saturday did not do six hours
-                 of Friday. */
-              ELSE GREATEST(0, TIMESTAMPDIFF(SECOND,
-                GREATEST(w.started_at, $${params.length + 1}),
-                LEAST(COALESCE(w.ended_at, NOW()), $${params.length + 2})))
-            END) AS seconds,
-            COUNT(DISTINCT w.asset_id) AS assets
+  const { rows: sessions } = await db.query(
+    `SELECT w.user_id AS id, w.asset_id AS assetId,
+            DATE_FORMAT(w.started_at, '%Y-%m-%dT%H:%i:%sZ') AS startedAt,
+            DATE_FORMAT(COALESCE(w.ended_at, NOW()), '%Y-%m-%dT%H:%i:%sZ') AS endedAt
        FROM work_sessions w
        JOIN assets a ON a.id = w.asset_id
-      WHERE ${where}
-      GROUP BY w.user_id`,
-    [...params, from, to]
+      WHERE ${where}`,
+    params
   );
-  const trackedBy = new Map(tracked.map((r) => [r.id, r]));
+  const spansBy = new Map();
+  const assetsBy = new Map();
+  for (const row of sessions) {
+    if (!row.id) continue;
+    if (!spansBy.has(row.id)) { spansBy.set(row.id, []); assetsBy.set(row.id, new Set()); }
+    spansBy.get(row.id).push([Date.parse(row.startedAt), Date.parse(row.endedAt)]);
+    assetsBy.get(row.id).add(row.assetId);
+  }
 
   // Everyone in scope, whether or not they tracked anything — the person with
   // nothing assigned is exactly who a capacity report should surface.
@@ -184,17 +189,18 @@ async function buildIdleReport(req) {
   );
 
   const rows = people.map((u) => {
-    const hit = trackedBy.get(u.id) || {};
     const numbers = idle.forUser({
-      trackedSeconds: Number(hit.seconds || 0),
-      workingDays,
+      spans: spansBy.get(u.id) || [],
+      from: period.from,
+      to: period.to,
+      workingDays: schedule.workingDays,
       hoursPerDay: schedule.hoursPerDay,
     });
     return {
       id: u.id, name: u.name, email: u.email,
       role: u.role, roleLabel: (roleDef(u.role) || {}).label || u.role,
       photoUpdatedAt: u.photoUpdatedAt,
-      assetsWorked: Number(hit.assets || 0),
+      assetsWorked: (assetsBy.get(u.id) || new Set()).size,
       ...numbers,
     };
   }).sort((a, b) => b.idleHours - a.idleHours);
@@ -203,9 +209,9 @@ async function buildIdleReport(req) {
   const totals = rows.length ? {
     people: rows.length,
     expectedHours: sum('expectedHours'),
-    trackedHours: sum('trackedHours'),
+    engagedHours: sum('engagedHours'),
     idleHours: sum('idleHours'),
-    overtimeHours: sum('overtimeHours'),
+    restDaysCovered: rows.reduce((t, r) => t + Number(r.restDaysCovered || 0), 0),
     idlePercent: sum('expectedHours') > 0
       ? idle.round((sum('idleHours') / sum('expectedHours')) * 100) : null,
   } : null;
@@ -215,6 +221,7 @@ async function buildIdleReport(req) {
     expectedHours: idle.round(workingDays * schedule.hoursPerDay),
     rows, totals,
     caveats: idle.caveats(schedule),
+    cutover,
     narrowed: Boolean(onlyUsers),
     scope: { roles: roles.length, projects: projects.length },
   };
@@ -224,15 +231,22 @@ router.get('/report', requirePermission('report.idle'), async (req, res) => {
   res.json(await buildIdleReport(req));
 });
 
-/* GET /api/idle/now — who has no timer running, right now.
+/* GET /api/idle/now — who has nothing in progress, right now.
  *
- * "Currently idle" means no open work session. That is the literal reading, and
- * it is not quite the same as "not working": src/work-timer.js has no
- * inactivity timeout by design, so a timer left running overnight makes
- * somebody look busy who went home hours ago. Rather than silently mis-report
- * them, a session running longer than IDLE_STALE_TIMER_SECONDS is returned
- * separately as `staleTimers` — the same data problem seen from the other side,
- * and the one thing a manager reading this list would otherwise be misled by.
+ * "Currently idle" means no open work session: nothing accepted and not yet
+ * submitted. That is the same definition the Idle Report measures over a
+ * period, seen at one instant, which is what makes the two agree.
+ *
+ * It is not the same as "not working", and the screen says so. Somebody
+ * counted as working may have gone home with an asset still open; somebody
+ * counted as idle may be deep in something this app never sees. What this list
+ * is good for is the actionable half — who has nothing open, and what is
+ * sitting with them unstarted.
+ *
+ * There is no stale-session flag any more. It used to warn about a timer left
+ * running overnight; with the running timer gone, a stretch open for three days
+ * is what work left on a desk over a weekend looks like, and flagging the
+ * ordinary case would only teach people to ignore the flag.
  */
 router.get('/now', requirePermission('user.idle_view'), async (req, res) => {
   const projects = await visibleProjects(req.user);
@@ -241,7 +255,7 @@ router.get('/now', requirePermission('user.idle_view'), async (req, res) => {
   const now = new Date();
 
   if (!roles.length) {
-    return res.json({ at: now.toISOString(), idle: [], working: [], staleTimers: [], scope: { projects: 0 } });
+    return res.json({ at: now.toISOString(), idle: [], working: [], scope: { projects: 0 } });
   }
 
   const { rows: people } = await db.query(
@@ -250,11 +264,12 @@ router.get('/now', requirePermission('user.idle_view'), async (req, res) => {
     [roles]
   );
   if (!people.length || !projectIds.length) {
-    return res.json({ at: now.toISOString(), idle: [], working: [], staleTimers: [], scope: { projects: projects.length } });
+    return res.json({ at: now.toISOString(), idle: [], working: [], scope: { projects: projects.length } });
   }
   const ids = people.map((u) => u.id);
 
-  // Open sessions: the definition of "working right now".
+  // Open stretches: started and not yet handed in. The definition of "has
+  // something in progress right now".
   const { rows: open } = await db.query(
     `SELECT w.user_id AS id, w.started_at, a.id AS assetId, a.\`code\`, a.\`name\`
        FROM work_sessions w
@@ -262,10 +277,22 @@ router.get('/now', requirePermission('user.idle_view'), async (req, res) => {
       WHERE w.ended_at IS NULL AND w.user_id IN ($1) AND a.project_id IN ($2)`,
     [ids, projectIds]
   );
-  const openBy = new Map(open.map((r) => [r.id, r]));
+  /* All of them, not one.
+   *
+   * This kept a single row per person, so somebody holding three assets open
+   * had two of them silently dropped and the screen named whichever the
+   * database happened to return last. That was a small inaccuracy while a
+   * running timer made holding several at once unusual; with wall-clock
+   * timestamps it is the ordinary case, and "what is Omar on" answered with one
+   * arbitrary asset out of three is worse than not answering. */
+  const openBy = new Map();
+  for (const r of open) {
+    if (!openBy.has(r.id)) openBy.set(r.id, []);
+    openBy.get(r.id).push(r);
+  }
 
-  // When each person last had the clock running, so "idle" can carry a length
-  // rather than being a bare yes.
+  // When each person last had something in progress, so "idle" can carry a
+  // length rather than being a bare yes.
   const { rows: last } = await db.query(
     `SELECT w.user_id AS id, MAX(COALESCE(w.ended_at, w.started_at)) AS at
        FROM work_sessions w
@@ -295,24 +322,25 @@ router.get('/now', requirePermission('user.idle_view'), async (req, res) => {
 
   const idleList = [];
   const working = [];
-  const staleTimers = [];
 
   for (const u of people) {
-    const running = openBy.get(u.id);
+    const open = openBy.get(u.id);
     const person = {
       id: u.id, name: u.name, email: u.email, role: u.role, photoUpdatedAt: u.photoUpdatedAt,
       waiting: waitingBy.get(u.id) || [],
     };
-    if (running) {
-      const runningFor = idle.idleFor(running.started_at, now);
-      const entry = {
+    if (open && open.length) {
+      // Oldest first, and the headline figure is the oldest — "open for" should
+      // be how long the longest-standing one has been sitting there.
+      const sorted = [...open].sort((x, y) => new Date(x.started_at) - new Date(y.started_at));
+      working.push({
         ...person,
-        asset: { assetId: running.assetId, code: running.code, name: running.name },
-        runningForSeconds: runningFor,
-        stale: idle.isStaleTimer(runningFor),
-      };
-      working.push(entry);
-      if (entry.stale) staleTimers.push(entry);
+        assets: sorted.map((r) => ({
+          assetId: r.assetId, code: r.code, name: r.name, startedAt: r.started_at,
+        })),
+        startedAt: sorted[0].started_at,
+        openForSeconds: idle.idleFor(sorted[0].started_at, now),
+      });
       continue;
     }
     const lastAt = lastBy.get(u.id) || null;
@@ -320,14 +348,14 @@ router.get('/now', requirePermission('user.idle_view'), async (req, res) => {
       ...person,
       lastActiveAt: lastAt,
       idleForSeconds: idle.idleFor(lastAt, now),
-      neverTracked: !lastAt,
+      neverStarted: !lastAt,
     });
   }
 
-  /* Longest idle first, and anyone who has never tracked anything at the very
+  /* Longest idle first, and anyone who has never started anything at the very
      top — they are the least visible and the most likely to need a word. */
   idleList.sort((a, b) => {
-    if (a.neverTracked !== b.neverTracked) return a.neverTracked ? -1 : 1;
+    if (a.neverStarted !== b.neverStarted) return a.neverStarted ? -1 : 1;
     return (b.idleForSeconds || 0) - (a.idleForSeconds || 0);
   });
 
@@ -335,8 +363,6 @@ router.get('/now', requirePermission('user.idle_view'), async (req, res) => {
     at: now.toISOString(),
     idle: idleList,
     working,
-    staleTimers,
-    staleAfterSeconds: idle.STALE_TIMER_SECONDS,
     scope: { people: people.length, projects: projects.length },
   });
 });
@@ -360,6 +386,17 @@ function idleFileContext(report, req) {
   if (applied.length) {
     applied.push(['Note', 'Filters choose who is listed. Hours are always whole-person.']);
   }
+  /* Where the meaning of the underlying data changes. Rows recorded before the
+     running timer was removed hold active worked time; rows after it hold the
+     elapsed span from Accept and Start to Submit for Review. A report covering
+     both is comparing hours to hours that are not the same hours, and it says
+     so rather than letting somebody read a trend out of the switch. */
+  if (report.cutover && report.cutover.mixed && report.cutover.date) {
+    applied.push(['Note', 'Work recorded before '
+      + `${report.cutover.date} was measured as active worked time, with pauses. `
+      + 'Work after it is the elapsed span from Accept and Start to Submit for Review. '
+      + 'Periods spanning that date mix the two.']);
+  }
   return [...context, ...applied];
 }
 
@@ -379,10 +416,10 @@ router.get('/report.xlsx', requirePermission('report.idle'), async (req, res) =>
     ...(report.totals ? [
       ['People', report.totals.people],
       ['Expected hours', report.totals.expectedHours],
-      ['Tracked hours', report.totals.trackedHours],
+      ['Hours with work in progress', report.totals.engagedHours],
       ['Idle hours', report.totals.idleHours],
-      ['Overtime hours', report.totals.overtimeHours],
       ['Idle %', report.totals.idlePercent === null ? 'N/A' : `${report.totals.idlePercent}%`],
+      ['Rest days with work open', report.totals.restDaysCovered],
     ] : [['(nobody in scope)', '']]),
     [],
     ['What this does not account for'],
@@ -429,15 +466,16 @@ async function writeIdlePdf(req, res) {
     summary: report.totals ? [
       ['People', report.totals.people],
       ['Expected', `${report.totals.expectedHours}h`],
-      ['Tracked', `${report.totals.trackedHours}h`],
+      ['In progress', `${report.totals.engagedHours}h`],
       ['Idle', `${report.totals.idleHours}h`],
       ['Idle %', report.totals.idlePercent === null ? 'N/A' : `${report.totals.idlePercent}%`],
-      ['Overtime', `${report.totals.overtimeHours}h`],
+      ['Rest days open', report.totals.restDaysCovered],
     ] : [['People', 0]],
     excluded: report.caveats.map((c) => [c, '']),
     excludedTitle: 'What this does not account for',
-    blurb: 'Standard working hours for the period, minus the hours actually tracked '
-      + 'against assets. Idle never goes negative — work beyond a full day is shown as overtime.',
+    blurb: 'The working hours in the period during which somebody had nothing in progress — '
+      + 'nothing accepted and not yet submitted. Work open across two assets at once counts '
+      + 'once, and a day counts at most one standard day however long work was left open.',
   });
 }
 

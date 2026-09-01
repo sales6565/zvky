@@ -12,6 +12,7 @@ const branding = require('../branding');
 const xlsx = require('xlsx');
 const { holds } = require('../permissions');
 const idleRoutes = require('./idle');
+const workLog = require('../work-log');
 
 router.use(authenticate);
 
@@ -163,6 +164,10 @@ async function buildReport(req) {
 
   return {
     ...report,
+    /* Where the meaning of Time Spent changes, so the screen and the exports can
+       say so. A period covering the switch mixes active worked time with
+       elapsed time; without this the jump reads as a change in the studio. */
+    cutover: await workLog.cutover(db).catch(() => ({ at: null, legacyRows: 0, mixed: false })),
     filters: {
       projects: projects.map((p) => ({ id: p.id, name: p.name, clientId: p.client_id })),
       clients: clients.map((c) => ({ id: c.id, name: c.name })),
@@ -199,7 +204,10 @@ router.get('/efficiency.xlsx', requirePermission('report.view'), async (req, res
   const report = await buildReport(req);
   const book = xlsx.utils.book_new();
 
-  const filters = exporter.describeFilters(filtersFrom(req), report.filters);
+  const filters = [
+    ...exporter.describeFilters(filtersFrom(req), report.filters),
+    ...exporter.timeBasis(report.cutover),
+  ];
   const summary = [
     [branding.current().appName],
     ['Work efficiency report'],
@@ -296,7 +304,10 @@ router.get('/efficiency.pdf', requirePermission('report.view'), async (req, res)
   const view = exporter.viewById(req.query.view);
   const rows = exporter.rowsFor(report, view.id);
   const headers = exporter.headersFor(report, view.id);
-  const filters = exporter.describeFilters(filtersFrom(req), report.filters);
+  const filters = [
+    ...exporter.describeFilters(filtersFrom(req), report.filters),
+    ...exporter.timeBasis(report.cutover),
+  ];
   const logo = await branding.readLogo(db).catch(() => null);
 
   res.setHeader('Content-Type', 'application/pdf');

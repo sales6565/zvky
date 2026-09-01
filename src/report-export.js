@@ -39,11 +39,11 @@ function idleRows(report) {
     Person: r.name || '',
     Role: r.roleLabel || r.role || '',
     'Expected hours': r.expectedHours,
-    'Tracked hours': r.trackedHours,
+    'Hours in progress': r.engagedHours,
     'Idle hours': r.idleHours,
     'Idle hours per day': r.idlePerDay === null || r.idlePerDay === undefined ? '' : r.idlePerDay,
     'Idle %': r.idlePercent === null || r.idlePercent === undefined ? 'N/A' : r.idlePercent,
-    'Overtime hours': r.overtimeHours || 0,
+    'Rest days with work open': r.restDaysCovered || 0,
     'Assets worked on': r.assetsWorked || 0,
   }));
 }
@@ -58,10 +58,12 @@ const idleHeaders = () => Object.keys(idleRows({ rows: [{}] })[0]);
 const pct = (v) => (v === null || v === undefined ? 'N/A' : v);
 const hrs = (v) => (v === null || v === undefined ? '' : Number(v));
 
-/* The head column of a grouped view carries the outlier flag on screen (a red
-   "over budget" chip). In a file there is nowhere to put a chip, so it becomes
-   its own column — otherwise the one piece of judgement the report offers would
-   be the one thing that does not survive the export. */
+/* One row per group, the same columns the screen shows.
+ *
+ * There was an "Over budget" column here, carrying the red chip the screen used
+ * to draw. It went with the chip: Time Spent is now elapsed turnaround rather
+ * than worked time, so "averaging under 80%" no longer means what the flag
+ * claimed it meant. See the note at the top of src/reports.js. */
 function groupRows(groups, { withShared = false } = {}) {
   return groups.map((g) => {
     const row = {
@@ -70,10 +72,9 @@ function groupRows(groups, { withShared = false } = {}) {
       'First-pass %': pct(g.firstPass),
       'Total %': pct(g.total),
       'Man Hours': hrs(g.manHours),
-      'Tracked hours': hrs(g.trackedHours),
+      'Time Spent (h)': hrs(g.timeSpentHours),
     };
     if (withShared) row['Shared with others'] = g.handedOver || 0;
-    row['Over budget'] = g.outlier ? 'yes' : '';
     return row;
   });
 }
@@ -143,6 +144,25 @@ function describeFilters(filters = {}, names = {}) {
   return out;
 }
 
+/* What Time Spent means in this file, and where it stopped meaning something
+ * else.
+ *
+ * Always the first line — a spreadsheet outlives the screen it came from, gets
+ * mailed on, and is read by somebody who was never told the definition changed.
+ * The second line only appears where there is genuinely old data in range,
+ * because a warning that fires on a clean deployment is noise. */
+function timeBasis(cutover) {
+  const rows = [['Time Spent',
+    'The elapsed span from Accept and Start to Submit for Review — breaks, meetings and '
+    + 'overnight included. Not active worked time.']];
+  if (cutover && cutover.mixed && cutover.date) {
+    rows.push(['Note',
+      `Work recorded before ${cutover.date} was measured as active worked time, `
+      + 'with a timer that could be paused. Figures either side of that date are not comparable.']);
+  }
+  return rows;
+}
+
 /* The headline numbers, the same six the screen shows above the table. Their
    own sheet in the spreadsheet, and the block under the title in the PDF. */
 function summaryRows(report) {
@@ -152,7 +172,7 @@ function summaryRows(report) {
     ['First-pass efficiency', s.firstPass === null || s.firstPass === undefined ? 'N/A' : `${s.firstPass}%`],
     ['Total efficiency', s.total === null || s.total === undefined ? 'N/A' : `${s.total}%`],
     ['Man Hours estimated', s.manHours ?? 0],
-    ['Hours tracked', s.trackedHours ?? 0],
+    ['Time Spent (h)', s.timeSpentHours ?? 0],
     ['Excluded', s.excluded ?? 0],
   ];
 }
@@ -194,6 +214,6 @@ function idleContext(report) {
 module.exports = {
   VIEWS, viewById, rowsFor, headersFor,
   IDLE_VIEW, idleRows, idleHeaders, idleContext,
-  groupRows, assetRows, describeFilters, summaryRows, exclusionRows,
+  groupRows, assetRows, describeFilters, timeBasis, summaryRows, exclusionRows,
   stamp, fileName,
 };

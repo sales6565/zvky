@@ -1,11 +1,31 @@
-// Work-efficiency reporting: what an asset was estimated to take, against what
-// it actually took.
+// Work-efficiency reporting: what an asset was estimated to take, against how
+// long it was open.
 //
 //   Efficiency % = (Man Hours / Time Spent) x 100
 //
-// Above 100 means it came in under the estimate; below means it ran over. The
-// division is that way round on purpose — estimate over actual — so a bigger
-// number is better, which is what "efficiency" reads as.
+// Above 100 means it came in under the estimate; below means it took longer.
+// The division is that way round on purpose — estimate over actual — so a
+// bigger number is better, which is what "efficiency" reads as.
+//
+// WHAT TIME SPENT MEANS NOW, AND WHAT THAT COSTS THIS REPORT. Time Spent used
+// to be active worked time, measured by a running timer with Pause and Resume.
+// The studio removed that: it is now the wall-clock span from Accept and Start
+// to Submit for Review (see src/work-log.js), which includes lunch, meetings,
+// evenings and weekends if the work was left open across them.
+//
+// So this is no longer a measure of effort against estimate. It is elapsed
+// TURNAROUND against estimate. An asset genuinely worked for four hours but
+// accepted on Friday afternoon and handed in on Monday morning scores about 6%,
+// and nothing is wrong with either the estimate or the artist.
+//
+// That is why the over-budget flag was removed rather than re-tuned. It marked
+// any group averaging under 80% across three or more assets, which under the
+// old definition meant "these consistently take longer than estimated" and
+// under this one means "these are usually left open overnight" — which is most
+// work in most studios. A flag that fires on the ordinary case is worse than no
+// flag, because people learn to ignore it and then miss the real one. The
+// percentages are still there to read; what has gone is the app's claim to know
+// which of them is a problem.
 //
 // TWO numbers, because an asset can go round more than once:
 //
@@ -45,7 +65,7 @@ function efficiencyOf(manHours, seconds) {
 function exclusionReason(row) {
   if (!row.submitted) return 'never submitted';
   if (!(Number(row.manHours) > 0)) return 'no Man Hours estimate';
-  if (!(Number(row.totalSeconds) > 0)) return 'no tracked time';
+  if (!(Number(row.totalSeconds) > 0)) return 'no time recorded';
   return null;
 }
 
@@ -66,9 +86,9 @@ function prepare(rows) {
       continue;
     }
     /* First-pass time can be zero on an asset whose whole first round predates
-       the timer, while total time is not. That is not a divide-by-zero to hide;
-       it is a first-pass number that does not exist, so it stays null and the
-       first-pass average simply has one fewer asset in it. */
+       time recording, while total time is not. That is not a divide-by-zero to
+       hide; it is a first-pass number that does not exist, so it stays null and
+       the first-pass average simply has one fewer asset in it. */
     included.push({
       ...row,
       firstPass: pct(efficiencyOf(row.manHours, row.firstPassSeconds)),
@@ -111,7 +131,7 @@ function groupBy(assets, keyOf, labelOf) {
     firstPass: mean(b.assets.map((a) => a.firstPass)),
     total: mean(b.assets.map((a) => a.total)),
     manHours: Math.round(b.assets.reduce((s, a) => s + Number(a.manHours || 0), 0) * 10) / 10,
-    trackedHours: Math.round((b.assets.reduce((s, a) => s + Number(a.totalSeconds || 0), 0) / HOUR) * 10) / 10,
+    timeSpentHours: Math.round((b.assets.reduce((s, a) => s + Number(a.totalSeconds || 0), 0) / HOUR) * 10) / 10,
     /* How many of these assets passed through more than one pair of hands.
        A By User row covers work the named person may not have done all of, and
        a reader deserves to know that rather than infer it. */
@@ -155,30 +175,11 @@ function trend(assets, grain = 'week') {
   return groups.sort((a, b) => String(a.key).localeCompare(String(b.key)));
 }
 
-/* An outlier worth pointing at.
- *
- * 80% is the line the studio asked for: a group averaging below it is taking a
- * quarter longer than estimated, consistently. Small groups are left alone —
- * one asset that ran long is an anecdote, not a pattern, and flagging it would
- * make the report cry wolf. */
-const OUTLIER_BELOW = 80;
-const OUTLIER_MIN_ASSETS = 3;
-
-function isOutlier(group) {
-  return group.total !== null
-    && group.total < OUTLIER_BELOW
-    && group.assets >= OUTLIER_MIN_ASSETS;
-}
-
 /* Everything the Reports tab draws, from one set of rows. */
 function build(rows, { grain = 'week' } = {}) {
   const { included, excluded } = prepare(rows);
 
-  const by = (keyOf, labelOf) => {
-    const result = groupBy(included, keyOf, labelOf);
-    result.groups.forEach((g) => { g.outlier = isOutlier(g); });
-    return result;
-  };
+  const by = (keyOf, labelOf) => groupBy(included, keyOf, labelOf);
 
   return {
     summary: {
@@ -187,7 +188,7 @@ function build(rows, { grain = 'week' } = {}) {
       firstPass: mean(included.map((a) => a.firstPass)),
       total: mean(included.map((a) => a.total)),
       manHours: Math.round(included.reduce((s, a) => s + Number(a.manHours || 0), 0) * 10) / 10,
-      trackedHours: Math.round((included.reduce((s, a) => s + Number(a.totalSeconds || 0), 0) / HOUR) * 10) / 10,
+      timeSpentHours: Math.round((included.reduce((s, a) => s + Number(a.totalSeconds || 0), 0) / HOUR) * 10) / 10,
     },
     byUser: by((a) => a.assigneeId, (a) => a.assigneeName || 'Unassigned'),
     byCategory: by((a) => a.category, (a) => a.categoryLabel || a.category),
@@ -207,7 +208,6 @@ function build(rows, { grain = 'week' } = {}) {
       delivered: Boolean(a.delivered), finishedAt: a.finishedAt,
     })),
     excluded,
-    thresholds: { outlierBelow: OUTLIER_BELOW, outlierMinAssets: OUTLIER_MIN_ASSETS },
   };
 }
 
@@ -220,8 +220,5 @@ module.exports = {
   groupBy,
   periodKey,
   trend,
-  isOutlier,
   build,
-  OUTLIER_BELOW,
-  OUTLIER_MIN_ASSETS,
 };

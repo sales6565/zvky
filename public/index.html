@@ -225,9 +225,10 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .eff-track{position:relative;height:8px;background:var(--surface-3);border-radius:20px;overflow:hidden;}
 .eff-fill{height:100%;border-radius:20px;}
 .eff-mark{position:absolute;top:-2px;left:50%;width:1px;height:12px;background:var(--ink-faint);opacity:.55;}
-.rep-outlier{background:rgba(232,64,44,.06);}
-.rep-flag{font-size:10px;padding:2px 7px;border-radius:20px;background:rgba(232,64,44,.16);
-  color:#e8402c;font-family:'IBM Plex Mono';margin-left:6px;text-transform:uppercase;letter-spacing:.4px;}
+/* Where the meaning of the recorded hours changes. Not an error state, so not
+   red: a plain aside above the numbers it qualifies. */
+.rep-cutover{font-size:12px;color:var(--ink-muted);line-height:1.7;margin-top:14px;
+  border-left:3px solid var(--border);padding:6px 0 6px 11px;}
 .rep-note{font-size:12px;color:var(--ink-muted);margin-top:10px;line-height:1.7;}
 .rep-chip{display:inline-block;font-family:'IBM Plex Mono';font-size:11px;background:var(--surface-2);
   color:var(--ink-muted);border-radius:20px;padding:2px 9px;margin-left:6px;}
@@ -1810,9 +1811,9 @@ function renderList(){
          because for that person they are the same thing. */
       const s = statusOf(ep && !ep.active ? (ep.endedStatus || ep.statusAtAssignment) : a.status);
       const seconds = ep ? ep.seconds : a.time_spent_seconds;
-      const openNow = ep ? ep.workOpen : a.work_open;
       const startedAt = ep ? ep.startedAt : a.started_at;
       const submittedAt = ep ? ep.submittedAt : a.submitted_at;
+      const roundsIn = ep ? ep.rounds : a.work_rounds;
       const who = ep ? ep.userName : (a.assignee_name || '');
       const past = ep && !ep.active;
       return `<tr data-id="${a.id}"${past?' class="past-round"':''}>
@@ -1826,7 +1827,7 @@ function renderList(){
       <td>${who ? `<span class="who-line">${avatarHTML({ id: ep ? ep.userId : a.assignee_id, name: who, photoAt: ep ? ep.userPhotoAt : a.assignee_photo_at }, { size:20, title:false })}<span>${escapeHTML(who)}</span></span>` : '—'}</td>
       <td>${ep ? (past ? `<span class="round-tag">handed on</span>` : `<span class="round-tag round-tag-live">current</span>`) : ''}</td>
       <td style="text-transform:capitalize;">${a.priority}</td><td class="mono">${past?'':`${doneTasks}/${a.tasks.length}`}</td>
-      <td class="mono">${seconds?fmtDuration(seconds):'—'}${stampLine(startedAt, submittedAt, openNow)}</td></tr>`;
+      <td class="mono">${seconds?fmtDuration(seconds):'—'}${stampLine(startedAt, submittedAt, roundsIn)}</td></tr>`;
     }).join('')}</tbody></table>`;
   el.querySelectorAll('tr[data-id]').forEach(row=>row.addEventListener('click', ()=>openDrawer(row.dataset.id)));
   wire();
@@ -2014,20 +2015,20 @@ async function renderIdleReport(sections = reportSections()){
     <div class="stats">
       <div class="stat"><div class="num">${t?t.people:0}</div><div class="lbl">People</div></div>
       <div class="stat"><div class="num">${t?t.expectedHours:0}h</div><div class="lbl">Expected</div></div>
-      <div class="stat"><div class="num">${t?t.trackedHours:0}h</div><div class="lbl">Tracked</div></div>
+      <div class="stat"><div class="num">${t?t.engagedHours:0}h</div><div class="lbl">In progress</div></div>
       <div class="stat"><div class="num" style="color:${idleColor(t?t.idlePercent:null)}">${t?t.idleHours:0}h</div><div class="lbl">Idle</div></div>
       <div class="stat"><div class="num" style="color:${idleColor(t?t.idlePercent:null)}">${t&&t.idlePercent!==null?t.idlePercent+'%':'N/A'}</div><div class="lbl">Idle share</div></div>
-      <div class="stat"><div class="num" style="color:var(--ink-faint)">${t?t.overtimeHours:0}h</div><div class="lbl">Overtime</div></div>
+      <div class="stat"><div class="num" style="color:var(--ink-faint)">${t?t.restDaysCovered:0}</div><div class="lbl">Rest days open</div></div>
     </div>`;
 
   const body = !d.rows.length ? `<div class="empty">Nobody in scope for this period.</div>` : `
-    <table><thead><tr><th>Person</th><th>Role</th><th>Expected</th><th>Tracked</th>
+    <table><thead><tr><th>Person</th><th>Role</th><th>Expected</th><th title="Working hours during which this person had at least one asset in progress. Concurrent assets count once; a day counts at most one standard day.">In progress</th>
       <th>Idle</th><th>Idle / day</th><th>Idle %</th><th></th><th>Assets</th></tr></thead><tbody>
     ${d.rows.map(r=>`<tr>
       <td><span class="who-line">${avatarHTML({ id:r.id, name:r.name, photoAt:r.photoUpdatedAt }, { size:22, title:false })}<span style="font-weight:600;">${escapeHTML(r.name)}</span></span></td>
       <td style="font-size:11.5px;color:var(--ink-muted);">${escapeHTML(r.roleLabel||r.role||'')}</td>
       <td class="mono">${r.expectedHours}h</td>
-      <td class="mono">${r.trackedHours}h${r.overtimeHours?` <span class="round-tag">+${r.overtimeHours}h over</span>`:''}</td>
+      <td class="mono">${r.engagedHours}h${r.restDaysCovered?` <span class="round-tag" title="Work was open across ${r.restDaysCovered} non-working day${r.restDaysCovered===1?'':'s'}. That says the asset was on their desk, not that they worked it.">${r.restDaysCovered} rest day${r.restDaysCovered===1?'':'s'} open</span>`:''}</td>
       <td class="mono" style="color:${idleColor(r.idlePercent)};font-weight:600;">${r.idleHours}h</td>
       <td class="mono">${r.idlePerDay===null?'—':r.idlePerDay+'h'}</td>
       <td class="mono" style="color:${idleColor(r.idlePercent)};font-weight:600;">${r.idlePercent===null?'N/A':r.idlePercent+'%'}</td>
@@ -2043,6 +2044,7 @@ async function renderIdleReport(sections = reportSections()){
     </div>` : '';
 
   const caveats = `
+    ${cutoverNote(d.cutover)}
     <div class="rep-note" style="margin-top:12px;">
       ${d.caveats.map(c=>`<div>${escapeHTML(c)}</div>`).join('')}
       ${can('settings.branding') ? '<div style="margin-top:4px;">The working day is set in Settings.</div>' : ''}
@@ -2058,8 +2060,9 @@ async function renderIdleReport(sections = reportSections()){
     <div class="rep-head">
       <div>
         <h2 class="display" style="margin:0;font-size:17px;">Idle time</h2>
-        <div class="rep-sub">Standard working hours for the period, minus the hours actually tracked.
-          Only people who can be assigned work appear — nobody else starts a timer, so they would all read as fully idle.</div>
+        <div class="rep-sub">The working hours in this period during which somebody had <strong>nothing in progress</strong> —
+          nothing accepted and not yet submitted. Two assets open at once count once, and a day counts at most one standard day.
+          Only people who can be assigned work appear — nobody else clicks Accept and Start, so they would all read as fully idle.</div>
       </div>
       ${downloads}
     </div>
@@ -2141,7 +2144,7 @@ async function renderReports(sections = reportSections()){
       <div class="stat"><div class="num" style="color:${effColor(s.firstPass)}">${s.firstPass===null?'N/A':s.firstPass+'%'}</div><div class="lbl">First-pass efficiency</div></div>
       <div class="stat"><div class="num" style="color:${effColor(s.total)}">${s.total===null?'N/A':s.total+'%'}</div><div class="lbl">Total efficiency</div></div>
       <div class="stat"><div class="num">${s.manHours}</div><div class="lbl">Man Hours estimated</div></div>
-      <div class="stat"><div class="num">${s.trackedHours}</div><div class="lbl">Hours tracked</div></div>
+      <div class="stat"><div class="num">${s.timeSpentHours}</div><div class="lbl">Time Spent (h)</div></div>
       <div class="stat"><div class="num" style="color:var(--ink-faint)">${s.excluded}</div><div class="lbl">Excluded</div></div>
     </div>`;
 
@@ -2173,12 +2176,12 @@ async function renderReports(sections = reportSections()){
         <button class="sub-tab${reportState.grain==='month'?' active':''}" data-grain="month">Monthly</button>
       </div>` : ''}
       <table><thead><tr><th>${view.head}</th><th>Assets</th><th>First pass</th><th>Total</th><th></th>
-        <th>Man Hours</th><th>Tracked</th>${reportState.view==='byUser'?'<th>Shared</th>':''}</tr></thead><tbody>
-      ${rows.map(g=>`<tr${g.outlier?' class="rep-outlier"':''}>
-        <td style="font-weight:600;">${escapeHTML(String(g.label))}${g.outlier?` <span class="rep-flag" title="Averaging below ${d.thresholds.outlierBelow}% across ${d.thresholds.outlierMinAssets} or more assets">over budget</span>`:''}</td>
+        <th>Man Hours</th><th title="Elapsed time from Accept and Start to Submit for Review, breaks and overnight included.">Time Spent</th>${reportState.view==='byUser'?'<th>Shared</th>':''}</tr></thead><tbody>
+      ${rows.map(g=>`<tr>
+        <td style="font-weight:600;">${escapeHTML(String(g.label))}</td>
         <td class="mono">${g.assets}</td>
         ${effCell(g.firstPass)}${effCell(g.total)}${effBar(g.total)}
-        <td class="mono">${g.manHours}h</td><td class="mono">${g.trackedHours}h</td>
+        <td class="mono">${g.manHours}h</td><td class="mono">${g.timeSpentHours}h</td>
         ${reportState.view==='byUser'?`<td class="mono">${g.handedOver||''}</td>`:''}
       </tr>`).join('')}</tbody></table>
       ${ungrouped ? `<div class="rep-note">${ungrouped} asset${ungrouped===1?'':'s'} had nothing in this column and ${ungrouped===1?'is':'are'} not counted above.</div>` : ''}`;
@@ -2187,7 +2190,7 @@ async function renderReports(sections = reportSections()){
   const excluded = d.excluded.length ? `
     <div class="rep-note" style="margin-top:14px;">
       <strong>${d.excluded.length}</strong> asset${d.excluded.length===1?'':'s'} left out, because efficiency cannot be worked out for ${d.excluded.length===1?'it':'them'}:
-      ${['never submitted','no Man Hours estimate','no tracked time'].map(r=>{
+      ${['never submitted','no Man Hours estimate','no time recorded'].map(r=>{
         const n = d.excluded.filter(e=>e.reason===r).length;
         return n ? `<span class="rep-chip">${n} ${escapeHTML(r)}</span>` : '';
       }).join('')}
@@ -2210,13 +2213,16 @@ async function renderReports(sections = reportSections()){
     <div class="rep-head">
       <div>
         <h2 class="display" style="margin:0;font-size:17px;">Work efficiency</h2>
-        <div class="rep-sub">Man Hours estimated ÷ Time Spent tracked. Above 100% came in under the estimate.
-          <strong>First pass</strong> is the work before the first submission; <strong>total</strong> includes every round of rework.</div>
+        <div class="rep-sub">Man Hours estimated ÷ Time Spent. Above 100% came in under the estimate.
+          <strong>First pass</strong> is the work before the first submission; <strong>total</strong> includes every round of rework.
+          <br><strong>Time Spent is elapsed, not worked:</strong> the wall-clock gap from Accept and Start to Submit for Review,
+          so lunch, meetings and anything left open overnight or over a weekend are in it. Read these as turnaround against
+          estimate rather than effort against estimate.</div>
       </div>
       ${downloads}
     </div>
     ${reportSectionTabs(sections)}
-    ${filterBar}${summary}${tabs}${body}${excluded}`;
+    ${filterBar}${summary}${tabs}${body}${excluded}${cutoverNote(d.cutover)}`;
 
   // --- wiring -------------------------------------------------------------
   const reload = async ()=>{ reportState.data=null; await renderReports(); };
@@ -2326,14 +2332,17 @@ async function renderUsersTab(){
 
 /* ---------- Idle Now ----------
  *
- * "Currently idle" means no open work session. That is the literal reading and
- * it is not the same as "not working": src/work-timer.js has no inactivity
- * timeout by design, so a timer left running overnight makes somebody look
- * busy who went home hours ago. Rather than quietly mis-report them, a timer
- * running implausibly long is called out at the top of the screen — the same
- * data problem the list exists to surface, seen from the other side.
+ * "Currently idle" means nothing in progress: nothing accepted and not yet
+ * submitted. Same definition the Idle Report measures over a period, seen at
+ * one instant, which is what makes the two agree.
  *
- * Refreshed on a timer rather than needing a reload, and the interval is torn
+ * It is not the same as "not working", and the screen says so rather than
+ * implying a certainty it does not have — somebody counted as working may have
+ * gone home with an asset still open. What the list is actually good for is the
+ * right-hand column: who has nothing open, and what is sitting with them
+ * unstarted.
+ *
+ * Refreshed periodically rather than needing a reload, and the interval is torn
  * down when the sub-tab is left so it does not keep polling in the background
  * for the rest of the session.
  */
@@ -2343,6 +2352,30 @@ let idleNowData = null;
 
 function stopIdleNow(){
   if(idleNowTimer){ clearInterval(idleNowTimer); idleNowTimer = null; }
+}
+
+/* The one thing a reader has to know before comparing an old number with a new
+   one: they are not the same kind of number.
+ *
+ * Hours recorded before the running timer was removed are ACTIVE worked time,
+ * summed across pause and resume. Hours after it are the ELAPSED span from
+ * Accept and Start to Submit for Review. Both live in the same column, so a
+ * chart across the switch shows a jump that is the definition changing rather
+ * than anything the studio did. Shown only where there is actually old data to
+ * confuse — a deployment with no history says nothing, because there is nothing
+ * to warn about. */
+function cutoverNote(cutover){
+  if(!cutover || !cutover.mixed || !cutover.date) return '';
+  /* The date, not the minute. Which afternoon a deployment happened to run its
+     migration is not information anybody reading a report needs. */
+  const on = new Date(`${cutover.date}T00:00:00Z`).toLocaleDateString(undefined,
+    { year:'numeric', month:'short', day:'numeric', timeZone:'UTC' });
+  return `<div class="rep-cutover">
+    <strong>Time Spent changed meaning on ${escapeHTML(on)}.</strong>
+    Work recorded before then was measured as active worked time, with a timer that could be paused.
+    Work recorded after it is the elapsed span from Accept and Start to Submit for Review, breaks included.
+    A period covering that date mixes the two, and the older figures will look smaller for the same work.
+  </div>`;
 }
 
 function humanDuration(seconds){
@@ -2378,41 +2411,35 @@ async function renderIdleNow(sections = userSections()){
   };
 
   const idleTable = !d.idle.length
-    ? '<div class="empty">Everybody in scope has a timer running.</div>'
-    : `<table><thead><tr><th>Person</th><th>Idle for</th><th>Last tracked</th><th>Assigned, not started</th></tr></thead><tbody>
+    ? '<div class="empty">Everybody in scope has something in progress.</div>'
+    : `<table><thead><tr><th>Person</th><th>Idle for</th><th>Last handed in</th><th>Assigned, not started</th></tr></thead><tbody>
        ${d.idle.map(r=>person(r, `
-         <td class="mono" style="color:${r.neverTracked?'#e8402c':'var(--ink)'};">${r.neverTracked?'never started a timer':escapeHTML(humanDuration(r.idleForSeconds)||'—')}</td>
+         <td class="mono" style="color:${r.neverStarted?'#e8402c':'var(--ink)'};">${r.neverStarted?'never started anything':escapeHTML(humanDuration(r.idleForSeconds)||'—')}</td>
          <td style="font-size:11.5px;color:var(--ink-muted);">${r.lastActiveAt?escapeHTML(fmtDate(r.lastActiveAt)):'—'}</td>
          ${waitingCell(r)}`)).join('')}
        </tbody></table>`;
 
   const workingTable = !d.working.length ? '' : `
     <details class="ip-audit" style="margin-top:16px;">
-      <summary>${d.working.length} working right now</summary>
-      <table><thead><tr><th>Person</th><th>On</th><th>Running for</th></tr></thead><tbody>
+      <summary>${d.working.length} with something in progress</summary>
+      <table><thead><tr><th>Person</th><th>On</th><th>Started</th><th>Open for</th></tr></thead><tbody>
       ${d.working.map(r=>person(r, `
-        <td class="mono">${escapeHTML(r.asset.code)} <span style="color:var(--ink-muted);">${escapeHTML(r.asset.name)}</span></td>
-        <td class="mono"${r.stale?' style="color:#f2b33d;"':''}>${escapeHTML(humanDuration(r.runningForSeconds)||'—')}${r.stale?' ⚠':''}</td>`)).join('')}
+        <td class="mono">${r.assets.map(x=>
+          `<div>${escapeHTML(x.code)} <span style="color:var(--ink-muted);">${escapeHTML(x.name)}</span></div>`).join('')}</td>
+        <td class="mono" style="font-size:11.5px;">${r.assets.map(x=>
+          `<div>${escapeHTML(fmtDate(x.startedAt))}</div>`).join('')}</td>
+        <td class="mono" title="How long the longest-standing of these has been open">${escapeHTML(humanDuration(r.openForSeconds)||'—')}</td>`)).join('')}
       </tbody></table>
     </details>`;
 
-  /* The warning that makes the rest of the screen trustworthy. Without it a
-     forgotten timer silently reads as somebody hard at work. */
-  const stale = d.staleTimers.length ? `
-    <div class="ip-banner open" style="margin-bottom:14px;">
-      <strong>${d.staleTimers.length}</strong> timer${d.staleTimers.length===1?' has':'s have'} been running for more than
-      ${Math.round(d.staleAfterSeconds/3600)} hours: ${d.staleTimers.map(r=>escapeHTML(r.name)).join(', ')}.
-      The clock runs until somebody pauses it, so ${d.staleTimers.length===1?'this person may not be':'these people may not be'}
-      working — ${d.staleTimers.length===1?'they are':'they are'} counted as busy above and not as idle.
-    </div>` : '';
-
   el.innerHTML = `
     ${userSectionTabs(sections)}
-    ${stale}
     <div class="rep-head">
       <div>
         <h2 class="display" style="margin:0;font-size:17px;">Idle now</h2>
-        <div class="rep-sub">Nobody with a timer running. Refreshes every ${IDLE_NOW_REFRESH_MS/1000} seconds —
+        <div class="rep-sub">Nobody with an asset in progress — nothing accepted and not yet submitted.
+          It says what is open, not who is at their desk: work left open overnight still counts as in progress.
+          Refreshes every ${IDLE_NOW_REFRESH_MS/1000} seconds —
           <span class="mono" id="idle_now_at">${escapeHTML(new Date(d.at).toLocaleTimeString())}</span></div>
       </div>
     </div>
@@ -2890,19 +2917,27 @@ function fmtBytes(n){ if(!n) return ''; const kb=n/1024; return kb<1024 ? kb.toF
  * stampLine is the one-line version for a table cell; stampDetail is the
  * two-line version for the panel. Both say "not started" and "in progress"
  * plainly rather than printing an em dash and leaving it ambiguous. */
-function stampLine(startedAt, submittedAt, open){
+function stampLine(startedAt, submittedAt, rounds){
   if(!startedAt) return '';
-  return `<div class="worklog-stamps">${fmtDate(startedAt)} → ${
+  const many = Number(rounds) > 1 ? `${rounds} rounds · ` : '';
+  return `<div class="worklog-stamps">${many}${fmtDate(startedAt)} → ${
     submittedAt ? fmtDate(submittedAt) : '<span class="worklog-open">in progress</span>'}</div>`;
 }
-function stampDetail(startedAt, submittedAt, open){
+function stampDetail(startedAt, submittedAt, rounds){
   if(!startedAt){
-    return `<div class="worklog-stamps">Not started yet. The clock on this is the gap between Accept and Start and Submit for Review.</div>`;
+    return `<div class="worklog-stamps">Not started yet. Time Spent will be the gap between Accept and Start and Submit for Review.</div>`;
   }
+  /* Across more than one round the two stamps are the first start and the last
+     submit, and Time Spent is the rounds added up — not the gap between them,
+     which also contains however long a reviewer held the work. Saying which
+     stops "5h" beside stamps a day apart reading as a mistake. */
+  const many = Number(rounds) > 1
+    ? `<div class="worklog-stamps">${rounds} rounds, added up — the gap between these two also holds the time it sat with a reviewer.</div>`
+    : '';
   return `<div class="worklog-stamps">Started ${fmtDate(startedAt)}</div>` +
     `<div class="worklog-stamps">${submittedAt
       ? `Submitted ${fmtDate(submittedAt)}`
-      : `<span class="worklog-open">In progress</span> — elapsed so far, from the start above`}</div>`;
+      : `<span class="worklog-open">In progress</span> — elapsed so far, from the start above`}</div>` + many;
 }
 function fmtDate(s){ return s ? new Date(s).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : ''; }
 
@@ -2941,7 +2976,17 @@ async function openDrawer(id){
   const mayStart = (a.assignee_id===u.id || fullAccess()) &&
     ['assigned','in_progress','tl_changes_requested','cd_changes_requested'].includes(a.status) &&
     !(a.status==='cd_changes_requested' && a.routed_to_id!==u.id && !fullAccess());
-  const canStart = mayStart && !a.work_open;
+  /* Accepting is the assignee's own act, and only theirs.
+     
+     A full-access reader may open a stretch on work already under way — there is
+     no transition involved, so the server allows it for oversight — but the
+     accept transition out of 'assigned' is refused to anybody but the assignee
+     (src/asset-workflow.js decides, not this). Offering the button there anyway
+     meant a producer clicking Accept and Start on somebody else's unstarted
+     asset and getting "only the person this asset is assigned to can submit
+     it", which reads as a bug in the button rather than the rule it is. */
+  const mine = a.assignee_id===u.id;
+  const canStart = mayStart && !a.work_open && (mine || a.status!=='assigned');
   /* The checklist is set by the creator and the reviewers, not by whoever is
      carrying the work — they read it and work to it. Mirrors canManageTasks in
      src/permissions.js; the API decides, this only stops offering a control
@@ -2995,7 +3040,7 @@ async function openDrawer(id){
         <div>
           <div class="field-lbl" style="margin-top:0;">Time Spent${currentEpisode(a) ? ` · ${escapeHTML(currentEpisode(a).userName)}` : ''}</div>
           <div class="worklog-total">${fmtDuration(roundSeconds(a))}</div>
-          ${stampDetail(a.started_at, a.submitted_at, a.work_open)}
+          ${stampDetail(a.started_at, a.submitted_at, a.work_rounds)}
           ${(a.time_spent_seconds||0) > roundSeconds(a) ? `<div class="worklog-note">${fmtDuration(a.time_spent_seconds)} on this asset in total, across everyone who has held it</div>` : ''}
           <div id="d_rounds" class="worklog-note"></div>
         </div>

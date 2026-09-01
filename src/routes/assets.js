@@ -131,6 +131,9 @@ async function attachTasksAndNotes(assets) {
     work_open: Boolean(currentStamps(episodes, timeSpent, a.id).open),
     started_at: currentStamps(episodes, timeSpent, a.id).startedAt,
     submitted_at: currentStamps(episodes, timeSpent, a.id).submittedAt,
+    // How many rounds those two stamps span. Across more than one they are the
+    // first start and the last submit, not the ends of a single stretch.
+    work_rounds: currentStamps(episodes, timeSpent, a.id).rounds,
     assignments: episodes.get(a.id) || [],
     // MySQL stores the flag as TINYINT(1); hand the browser a real boolean.
     tasks: tasks.filter((t) => t.asset_id === a.id).map((t) => ({ ...t, done: Boolean(t.done) })),
@@ -149,9 +152,17 @@ async function attachTasksAndNotes(assets) {
  * else's stamps. */
 function currentStamps(episodes, totals, assetId) {
   const open = (episodes.get(assetId) || []).find((ep) => ep.active);
-  if (open) return { startedAt: open.startedAt, submittedAt: open.submittedAt, open: open.workOpen };
+  if (open) {
+    return {
+      startedAt: open.startedAt, submittedAt: open.submittedAt,
+      open: open.workOpen, rounds: open.rounds || 0,
+    };
+  }
   const t = totals.get(assetId) || {};
-  return { startedAt: t.startedAt || null, submittedAt: t.submittedAt || null, open: Boolean(t.open) };
+  return {
+    startedAt: t.startedAt || null, submittedAt: t.submittedAt || null,
+    open: Boolean(t.open), rounds: t.rounds || 0,
+  };
 }
 
 // A user's name for an audit line, from whichever connection the caller is on.

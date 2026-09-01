@@ -85,23 +85,51 @@ test('a missing number is N/A, never zero', () => {
      spreadsheet would be a number somebody averages, and the average would be
      wrong — so the cell says N/A and stays text. */
   const rows = exporter.groupRows([
-    { label: 'Ana', assets: 2, firstPass: null, total: null, manHours: 4, trackedHours: 0 },
+    { label: 'Ana', assets: 2, firstPass: null, total: null, manHours: 4, timeSpentHours: 0 },
   ]);
   assert.strictEqual(rows[0]['First-pass %'], 'N/A');
   assert.strictEqual(rows[0]['Total %'], 'N/A');
   assert.notStrictEqual(rows[0]['First-pass %'], 0);
 });
 
-test('the outlier flag survives the export', () => {
-  // On screen it is a red chip. In a file there is nowhere to put a chip, so it
-  // becomes a column — otherwise the report's one piece of judgement is the one
-  // thing that does not survive being downloaded.
-  const [flagged, plain] = exporter.groupRows([
-    { label: 'Table Game', assets: 4, firstPass: 40, total: 44, manHours: 29, trackedHours: 65, outlier: true },
-    { label: 'Slot Game', assets: 5, firstPass: 140, total: 135, manHours: 54, trackedHours: 43, outlier: false },
+test('the export claims no judgement the report can no longer make', () => {
+  /* There was an "Over budget" column here, carrying the red chip the screen
+     drew for any group averaging under 80% across three or more assets.
+     
+     Both went when Time Spent became elapsed rather than worked. Under the old
+     definition that threshold meant "these consistently take longer than
+     estimated". Under this one it means "these are usually left open
+     overnight", which is most work in most studios — so the flag would fire on
+     the ordinary case, and a flag that always fires is one people stop reading.
+     The percentages are still exported; the app's claim to know which of them
+     is a problem is not. */
+  const [a, b] = exporter.groupRows([
+    { label: 'Table Game', assets: 4, firstPass: 40, total: 44, manHours: 29, timeSpentHours: 65 },
+    { label: 'Slot Game', assets: 5, firstPass: 140, total: 135, manHours: 54, timeSpentHours: 43 },
   ]);
-  assert.strictEqual(flagged['Over budget'], 'yes');
-  assert.strictEqual(plain['Over budget'], '');
+  assert.ok(!('Over budget' in a), 'no flag column');
+  assert.strictEqual(a['Total %'], 44, 'but the number itself is still there to read');
+  assert.strictEqual(b['Total %'], 135);
+  assert.strictEqual(a['Time Spent (h)'], 65, 'under a heading that says what it measures');
+});
+
+test('every export states what Time Spent means, and when it changed', () => {
+  /* A spreadsheet outlives the screen it came from. Somebody opening one next
+     quarter was never told the definition changed, so the file has to say it. */
+  const clean = exporter.timeBasis({ at: null, date: null, legacyRows: 0, mixed: false });
+  assert.strictEqual(clean.length, 1, 'a deployment with no old data warns about nothing');
+  assert.match(clean[0][1], /elapsed span from Accept and Start to Submit for Review/);
+  assert.match(clean[0][1], /Not active worked time/);
+
+  /* The date, not the timestamp. src/work-log.js supplies both, because a
+     driver Date String()d and sliced gives "Fri Aug 28" — no year, in a file
+     somebody opens next year. */
+  const mixed = exporter.timeBasis({
+    at: '2026-09-01T10:00:00.000Z', date: '2026-09-01', legacyRows: 12, mixed: true,
+  });
+  assert.strictEqual(mixed.length, 2, 'and one that does gets the second line');
+  assert.match(mixed[1][1], /2026-09-01/, 'naming the date the meaning changed');
+  assert.match(mixed[1][1], /not comparable/);
 });
 
 test('an empty view still has headers', () => {

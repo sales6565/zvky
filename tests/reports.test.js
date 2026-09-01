@@ -15,7 +15,7 @@ test('efficiency is the estimate over the actual, as a percentage', () => {
   assert.strictEqual(reports.efficiencyOf(8, 4 * 3600), 200);
   // 8 estimated, 16 spent -> twice as long as planned.
   assert.strictEqual(reports.efficiencyOf(8, 16 * 3600), 50);
-  // 10 estimated, 12.5 spent -> 80%, which is the outlier line.
+  // 10 estimated, 12.5 spent -> 80%.
   assert.strictEqual(reports.efficiencyOf(10, 12.5 * 3600), 80);
 });
 
@@ -35,7 +35,7 @@ test('an asset is excluded for one stated reason', () => {
   assert.strictEqual(reports.exclusionReason(base), null);
   assert.strictEqual(reports.exclusionReason({ ...base, submitted: false }), 'never submitted');
   assert.strictEqual(reports.exclusionReason({ ...base, manHours: null }), 'no Man Hours estimate');
-  assert.strictEqual(reports.exclusionReason({ ...base, totalSeconds: 0 }), 'no tracked time');
+  assert.strictEqual(reports.exclusionReason({ ...base, totalSeconds: 0 }), 'no time recorded');
 });
 
 test('first pass and total differ exactly by the rework', () => {
@@ -96,13 +96,30 @@ test('groups come back worst first, with unknowns last', () => {
   assert.deepStrictEqual(groups.map((g) => g.key), ['bad', 'good', 'unknown']);
 });
 
-test('an outlier needs to be both bad and repeated', () => {
-  /* One asset that ran long is an anecdote. Flagging it would make the report
-     cry wolf, and a report nobody trusts is worse than no report. */
-  assert.strictEqual(reports.isOutlier({ total: 60, assets: 5 }), true);
-  assert.strictEqual(reports.isOutlier({ total: 60, assets: 1 }), false, 'one asset is not a pattern');
-  assert.strictEqual(reports.isOutlier({ total: 95, assets: 9 }), false, 'and slightly over is not a problem');
-  assert.strictEqual(reports.isOutlier({ total: null, assets: 9 }), false, 'nor is unknown');
+test('the report no longer claims to know which figures are a problem', () => {
+  /* There was an over-budget flag here: any group averaging under 80% across
+     three or more assets. It was a reasonable judgement while Time Spent meant
+     active worked time — "these consistently take longer than estimated".
+     
+     Time Spent is now the elapsed wall-clock span from Accept and Start to
+     Submit for Review, so the same threshold means "these are usually left open
+     overnight", which is most work in most studios. A flag that fires on the
+     ordinary case teaches people to ignore it, and then they miss the real one.
+     So it was removed rather than re-tuned to a number nobody could justify —
+     the percentages stay, the verdict goes. */
+  assert.strictEqual(reports.isOutlier, undefined, 'gone from the module, not merely unused');
+  assert.strictEqual(reports.OUTLIER_BELOW, undefined);
+  assert.strictEqual(reports.OUTLIER_MIN_ASSETS, undefined);
+
+  const report = reports.build([
+    { id: '1', code: 'A-1', name: 'One', submitted: true, manHours: 2,
+      firstPassSeconds: 40 * 3600, totalSeconds: 40 * 3600,
+      assigneeId: 'u1', assigneeName: 'Ana', projectId: 'p', projectName: 'P', clientId: 'c', clientName: 'C' },
+  ]);
+  assert.ok(!('thresholds' in report), 'and nothing left for a screen to draw a chip from');
+  assert.ok(report.byUser.groups.every((g) => !('outlier' in g)));
+  assert.strictEqual(report.byUser.groups[0].total, 5,
+    'the number a weekend-long span produces is still reported, unjudged');
 });
 
 test('the trend buckets by the week or month the work landed in', () => {
@@ -266,7 +283,7 @@ test('efficiency reports', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     const { body } = await as('root', '/reports/efficiency');
     const reasonFor = (name) => (body.excluded.find((e) => e.name === name) || {}).reason;
     assert.strictEqual(reasonFor('No Estimate'), 'no Man Hours estimate');
-    assert.strictEqual(reasonFor('No Time'), 'no tracked time');
+    assert.strictEqual(reasonFor('No Time'), 'no time recorded');
     assert.strictEqual(reasonFor('Never Submitted'), 'never submitted');
     for (const name of ['No Estimate', 'No Time', 'Never Submitted']) {
       assert.ok(!body.assets.some((a) => a.name === name), `${name} must not be averaged in`);

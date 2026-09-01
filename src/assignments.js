@@ -150,6 +150,7 @@ async function listFor(db, assetIds) {
               b.\`name\` AS assigned_by_name,
               COALESCE(t.seconds, 0) AS seconds,
               COALESCE(t.still_open, 0) AS still_open,
+              COALESCE(t.rounds, 0) AS work_rounds,
               t.work_started_at, t.work_ended_at
          FROM asset_assignments ass
          LEFT JOIN users u ON u.id = ass.user_id
@@ -159,7 +160,8 @@ async function listFor(db, assetIds) {
                   SUM(COALESCE(seconds, TIMESTAMPDIFF(SECOND, started_at, NOW()))) AS seconds,
                   SUM(ended_at IS NULL) AS still_open,
                   MIN(started_at) AS work_started_at,
-                  MAX(ended_at) AS work_ended_at
+                  MAX(ended_at) AS work_ended_at,
+                  COUNT(DISTINCT round) AS rounds
              FROM work_sessions WHERE assignment_id IS NOT NULL GROUP BY assignment_id
          ) t ON t.assignment_id = ass.id
         WHERE ass.asset_id IN ($1)
@@ -224,6 +226,13 @@ async function listFor(db, assetIds) {
       workOpen: Number(row.still_open) > 0,
       startedAt: row.work_started_at || null,
       submittedAt: Number(row.still_open) > 0 ? null : (row.work_ended_at || null),
+      /* How many rounds are inside this stretch. Sent because the stamps are
+         the FIRST start and the LAST submit, and across two rounds those are
+         not the ends of one span — an episode with a rework loop can show
+         "5h" beside stamps 26 hours apart, and without the count that reads
+         as an arithmetic error rather than as two rounds with a review
+         between them. */
+      rounds: Number(row.work_rounds) || 0,
       submissions: mine.map((v) => ({
         versionNumber: v.version_number, stage: v.stage, link: v.link,
         description: v.description, at: v.created_at,

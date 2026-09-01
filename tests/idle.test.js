@@ -55,49 +55,138 @@ test('the four periods resolve to the ranges a studio means by them', () => {
   assert.strictEqual(idle.periodRange('month', '2028-02-10').to, '2028-02-29');
 });
 
-// --- the sum itself ------------------------------------------------------------
+// --- the union of the spans ----------------------------------------------------
 
-test('idle is expected minus tracked, worked by hand', () => {
-  const day = idle.forUser({ trackedSeconds: 3 * 3600, workingDays: 1, hoursPerDay: 8 });
+/* Every case below is a real week. 2026-08-31 is a Monday, 2026-09-04 a Friday,
+   2026-09-05 a Saturday. */
+const at = (iso) => new Date(`${iso}Z`).getTime();
+const WEEK = { from: '2026-08-31', to: '2026-09-06', workingDays: [1, 2, 3, 4, 5], hoursPerDay: 8 };
+
+test('overlapping spans are merged, not added', () => {
+  /* The single reason this report cannot be a SUM any more. Nothing stops one
+     person holding three assets open through the same afternoon, and under
+     wall-clock timing each of them claims it. Adding them is how a 40-hour week
+     turns into 208 hours of "work". */
+  assert.deepStrictEqual(
+    idle.mergeSpans([[10, 20], [15, 25]]), [[10, 25]], 'overlapping');
+  assert.deepStrictEqual(
+    idle.mergeSpans([[10, 20], [20, 30]]), [[10, 30]], 'touching at the join, counted once');
+  assert.deepStrictEqual(
+    idle.mergeSpans([[10, 30], [15, 20]]), [[10, 30]], 'wholly contained');
+  assert.deepStrictEqual(
+    idle.mergeSpans([[30, 40], [10, 20]]), [[10, 20], [30, 40]], 'disjoint, and sorted');
+  assert.deepStrictEqual(idle.mergeSpans([[10, 10]]), [], 'a zero-length span is nothing');
+  assert.deepStrictEqual(idle.mergeSpans([[20, 10]]), [], 'and a backwards one is refused');
+  assert.deepStrictEqual(idle.mergeSpans(null), []);
+});
+
+test('idle is the working hours with nothing in progress, worked by hand', () => {
+  const day = idle.forUser({
+    spans: [[at('2026-09-01T09:00:00'), at('2026-09-01T12:00:00')]],
+    from: '2026-09-01', to: '2026-09-01', workingDays: [1, 2, 3, 4, 5], hoursPerDay: 8,
+  });
   assert.strictEqual(day.expectedHours, 8);
-  assert.strictEqual(day.trackedHours, 3);
+  assert.strictEqual(day.engagedHours, 3);
   assert.strictEqual(day.idleHours, 5);
   assert.strictEqual(day.idlePercent, 62.5);
 
-  const week = idle.forUser({ trackedSeconds: 32 * 3600, workingDays: 5, hoursPerDay: 8 });
-  assert.strictEqual(week.expectedHours, 40);
-  assert.strictEqual(week.idleHours, 8);
-  assert.strictEqual(week.idlePercent, 20);
-  assert.strictEqual(week.idlePerDay, 1.6, 'the figure a filtered report leads with');
+  const week = idle.forUser({ spans: [], ...WEEK });
+  assert.strictEqual(week.idleHours, 40, 'no spans at all is a fully idle week');
+  assert.strictEqual(week.idlePercent, 100);
 
-  const nothing = idle.forUser({ trackedSeconds: 0, workingDays: 5, hoursPerDay: 8 });
-  assert.strictEqual(nothing.idleHours, 40);
-  assert.strictEqual(nothing.idlePercent, 100);
+  // Mon-Thu covered 09:00-17:00, Friday nothing: 32 of 40 hours.
+  const fourDays = idle.forUser({
+    spans: [
+      [at('2026-08-31T09:00:00'), at('2026-08-31T17:00:00')],
+      [at('2026-09-01T09:00:00'), at('2026-09-01T17:00:00')],
+      [at('2026-09-02T09:00:00'), at('2026-09-02T17:00:00')],
+      [at('2026-09-03T09:00:00'), at('2026-09-03T17:00:00')],
+    ],
+    ...WEEK,
+  });
+  assert.strictEqual(fourDays.engagedHours, 32);
+  assert.strictEqual(fourDays.idleHours, 8, 'the Friday');
+  assert.strictEqual(fourDays.idlePercent, 20);
+  assert.strictEqual(fourDays.idlePerDay, 1.6, 'the figure a filtered report leads with');
 });
 
-test('overtime is not negative idle', () => {
-  /* Somebody who tracks 50 hours against a 40-hour week is not "minus ten
-     hours idle". Reporting the negative would let it cancel a colleague's real
-     idleness in any total — exactly the averaging that hides what the report
-     exists to show. */
-  const over = idle.forUser({ trackedSeconds: 50 * 3600, workingDays: 5, hoursPerDay: 8 });
-  assert.strictEqual(over.idleHours, 0);
-  assert.strictEqual(over.overtimeHours, 10);
-  assert.ok(over.idleHours >= 0);
+test('two assets open through the same afternoon count once', () => {
+  /* The case that made the old arithmetic unusable. Both spans cover the whole
+     working week; summing them gives 208 hours against a 40-hour week. */
+  const both = [
+    [at('2026-08-31T09:00:00'), at('2026-09-04T17:00:00')],
+    [at('2026-08-31T09:00:00'), at('2026-09-04T17:00:00')],
+  ];
+  const two = idle.forUser({ spans: both, ...WEEK });
+  const one = idle.forUser({ spans: [both[0]], ...WEEK });
+  assert.strictEqual(two.engagedHours, one.engagedHours, 'the second asset adds nothing');
+  assert.strictEqual(two.engagedHours, 40, 'a full week, not two');
+  assert.strictEqual(two.idleHours, 0);
+});
+
+test('a day counts at most one standard day, however long work was left open', () => {
+  /* No shift times are recorded anywhere in this app — only the length of a
+     standard day. So twelve hours of coverage on a Tuesday is credited as one
+     eight-hour day, not as twelve hours and four of overtime. */
+  const long = idle.forUser({
+    spans: [[at('2026-09-01T07:00:00'), at('2026-09-01T19:00:00')]],
+    ...WEEK,
+  });
+  assert.strictEqual(long.engagedHours, 8, 'capped at the standard day');
+  assert.strictEqual(long.idleHours, 32, 'and it cannot borrow against the other four days');
+});
+
+test('a weekend is counted as days open, never as hours worked', () => {
+  /* An asset accepted on Friday afternoon and handed in on Monday morning
+     covers the whole weekend. Reporting 48 hours of overtime would accuse
+     somebody of working a weekend they spent at home — every weekend, for every
+     asset not handed in by Friday. What can honestly be said is that work was
+     open across two rest days, so that is what the row carries. */
+  const overWeekend = idle.forUser({
+    spans: [[at('2026-09-04T17:00:00'), at('2026-09-07T09:00:00')]],
+    ...WEEK,
+  });
+  assert.strictEqual(overWeekend.restDaysCovered, 2, 'Saturday and Sunday');
+  assert.strictEqual(overWeekend.engagedHours, 7, 'only the Friday evening is inside the week');
+  assert.ok(!('overtimeHours' in overWeekend),
+    'no hours are claimed for a rest day, because none are known');
+
+  // And a rest day with nothing open is not counted at all.
+  const weekdaysOnly = idle.forUser({
+    spans: [[at('2026-09-01T09:00:00'), at('2026-09-01T17:00:00')]],
+    ...WEEK,
+  });
+  assert.strictEqual(weekdaysOnly.restDaysCovered, 0);
 });
 
 test('a period that expects nothing reports N/A, not 0%', () => {
   // A range of weekends. "0% idle" would read as a full week's work.
-  const none = idle.forUser({ trackedSeconds: 0, workingDays: 0, hoursPerDay: 8 });
+  const none = idle.forUser({
+    spans: [], from: '2026-09-05', to: '2026-09-06', workingDays: [1, 2, 3, 4, 5], hoursPerDay: 8,
+  });
   assert.strictEqual(none.expectedHours, 0);
   assert.strictEqual(none.idlePercent, null);
   assert.strictEqual(none.idlePerDay, null);
 });
 
 test('a non-standard working day flows through', () => {
-  const half = idle.forUser({ trackedSeconds: 2 * 3600, workingDays: 5, hoursPerDay: 4 });
+  const half = idle.forUser({
+    spans: [[at('2026-08-31T09:00:00'), at('2026-08-31T11:00:00')]],
+    from: '2026-08-31', to: '2026-09-06', workingDays: [1, 2, 3, 4, 5], hoursPerDay: 4,
+  });
   assert.strictEqual(half.expectedHours, 20);
+  assert.strictEqual(half.engagedHours, 2);
   assert.strictEqual(half.idleHours, 18);
+
+  // A studio that works Saturdays gets a sixth expected day, and the Saturday
+  // stops being a rest day.
+  const sixDay = idle.forUser({
+    spans: [[at('2026-09-05T09:00:00'), at('2026-09-05T17:00:00')]],
+    from: '2026-08-31', to: '2026-09-06', workingDays: [1, 2, 3, 4, 5, 6], hoursPerDay: 8,
+  });
+  assert.strictEqual(sixDay.expectedHours, 48);
+  assert.strictEqual(sixDay.engagedHours, 8, 'the Saturday is working time now');
+  assert.strictEqual(sixDay.restDaysCovered, 0);
 });
 
 // --- the schedule setting ------------------------------------------------------
@@ -121,17 +210,29 @@ test('a week with no working days is refused', () => {
   assert.ok(workSchedule.cleanDays([]).error, 'or every period would expect zero hours');
 });
 
-// --- the timer that nobody stopped ---------------------------------------------
+// --- what is no longer flagged -------------------------------------------------
 
-test('a timer left running is treated as suspect, not as work', () => {
-  /* src/work-timer.js has no inactivity timeout by design: the clock runs until
-     somebody pauses it. So "has a running timer" stops meaning "is working"
-     past a certain length, and the Idle Now screen has to say so — otherwise
-     somebody who went home on Friday reads as busy all weekend. */
-  assert.ok(!idle.isStaleTimer(60 * 60), 'an hour is just work');
-  assert.ok(!idle.isStaleTimer(8 * 3600), 'a full day is plausible');
-  assert.ok(idle.isStaleTimer(13 * 3600), 'thirteen hours is somebody who forgot');
-  assert.ok(idle.isStaleTimer(72 * 3600));
+test('a long-open stretch is no longer treated as an anomaly', () => {
+  /* There used to be a stale-timer flag here, warning that a clock running for
+     more than twelve hours meant somebody had forgotten to pause it. With the
+     running timer gone there is nothing to forget: a stretch open for three
+     days is what work left on a desk over a weekend now looks like. Flagging
+     the ordinary case would only teach people to ignore the flag, and the
+     per-day cap in coverage() is what actually stops a long span inflating
+     anybody's hours. */
+  assert.strictEqual(idle.isStaleTimer, undefined, 'the flag is gone, not merely unused');
+  assert.strictEqual(idle.STALE_TIMER_SECONDS, undefined);
+
+  // And the thing it was really protecting against is handled by the maths.
+  // Monday 09:00 to Thursday 09:00 touches four working days — 15 hours of
+  // Monday, all of Tuesday and Wednesday, 9 of Thursday. Each is capped at the
+  // standard day, so 32 rather than the 72 hours the span actually spans.
+  const leftOpen = idle.forUser({
+    spans: [[at('2026-08-31T09:00:00'), at('2026-09-03T09:00:00')]],
+    ...WEEK,
+  });
+  assert.strictEqual(leftOpen.engagedHours, 32, 'four days touched, capped at eight hours each');
+  assert.strictEqual(leftOpen.idleHours, 8, 'the Friday is still idle');
 });
 
 test('how long since somebody last worked', () => {
@@ -149,7 +250,8 @@ test('the report says what it cannot see', () => {
   assert.match(said, /8 hours/);
   assert.match(said, /Monday, Friday/);
   assert.match(said, /holidays|leave|sickness/i);
-  assert.match(said, /never negative|overtime/i);
+  assert.match(said, /rest day/i, 'and that a weekend is counted, never measured');
+  assert.match(said, /counts once/i, 'and that concurrent assets are not double-counted');
 });
 
 // --- the permissions -----------------------------------------------------------
@@ -256,17 +358,17 @@ test('idle, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(d.expectedHours, 40);
 
     const by = Object.fromEntries(d.rows.map((r) => [r.name, r]));
-    assert.strictEqual(by['Ana Lee'].trackedHours, 12);
+    assert.strictEqual(by['Ana Lee'].engagedHours, 12);
     assert.strictEqual(by['Ana Lee'].idleHours, 28);
     assert.strictEqual(by['Ana Lee'].idlePercent, 70);
     assert.strictEqual(by['Ana Lee'].idlePerDay, 5.6);
 
-    assert.strictEqual(by['Bo Chen'].trackedHours, 40);
+    assert.strictEqual(by['Bo Chen'].engagedHours, 40);
     assert.strictEqual(by['Bo Chen'].idleHours, 0);
     assert.strictEqual(by['Bo Chen'].idlePercent, 0);
 
     // The person with nothing at all is exactly who a capacity report is for.
-    assert.strictEqual(by['Cy Dean'].trackedHours, 0);
+    assert.strictEqual(by['Cy Dean'].engagedHours, 0);
     assert.strictEqual(by['Cy Dean'].idleHours, 40);
     assert.strictEqual(by['Cy Dean'].idlePercent, 100);
 
@@ -279,7 +381,7 @@ test('idle, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(monday.workingDays, 1);
     assert.strictEqual(monday.expectedHours, 8);
     const ana = monday.rows.find((r) => r.name === 'Ana Lee');
-    assert.strictEqual(ana.trackedHours, 6);
+    assert.strictEqual(ana.engagedHours, 6);
     assert.strictEqual(ana.idleHours, 2);
     assert.strictEqual(ana.idlePercent, 25);
 
@@ -289,22 +391,33 @@ test('idle, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(saturday.rows[0].idlePercent, null, 'not 0%, which would read as a full day worked');
   });
 
-  await t.test('a session across midnight counts on the day it happened', async () => {
-    /* Somebody who starts at 21:00 on Friday and stops at 03:00 on Saturday has
-       not done six hours of Friday. */
+  await t.test('a stretch across midnight lands on the day it happened, and stops at the weekend', async () => {
+    /* Somebody who starts at 21:00 on Friday and hands in at 03:00 on Saturday
+       has not covered six hours of Friday — three of them are Saturday's, and
+       Saturday is not a working day, so those three are not working hours at
+       all. They are recorded as a rest day with work open, which is the only
+       thing about them that is actually known. */
     const asset = (await as('root', `/assets/project/${projectId}`, {
       method: 'POST', body: { name: 'Late one', type: 'prop', priority: 'med', assigneeId: id.cy, manHours: 6 },
     })).body.asset;
-    await sql(cfg, `INSERT INTO work_sessions (id, asset_id, user_id, round, started_at, ended_at, seconds)
-      VALUES (UUID(), '${asset.id}', '${id.cy}', 1, '2026-03-06 21:00:00', '2026-03-07 03:00:00', 21600)`);
+    await sql(cfg, `INSERT INTO work_sessions (id, asset_id, user_id, round, started_at, ended_at, seconds, ended_reason)
+      VALUES (UUID(), '${asset.id}', '${id.cy}', 1, '2026-03-06 21:00:00', '2026-03-07 03:00:00', 21600, 'submitted')`);
 
     const friday = (await as('root', '/idle/report?period=day&on=2026-03-06')).body;
-    assert.strictEqual(friday.rows.find((r) => r.name === 'Cy Dean').trackedHours, 3, 'clipped at midnight');
+    const cyFriday = friday.rows.find((r) => r.name === 'Cy Dean');
+    assert.strictEqual(cyFriday.engagedHours, 3, 'clipped at midnight');
+    assert.strictEqual(cyFriday.idleHours, 5);
+
     const saturday = (await as('root', '/idle/report?period=day&on=2026-03-07')).body;
-    assert.strictEqual(saturday.rows.find((r) => r.name === 'Cy Dean').trackedHours, 3, 'the other half');
-    // Both halves are inside the week, so the week has all six.
+    const cySaturday = saturday.rows.find((r) => r.name === 'Cy Dean');
+    assert.strictEqual(cySaturday.engagedHours, 0, 'a Saturday holds no working hours to cover');
+    assert.strictEqual(cySaturday.restDaysCovered, 1, 'it is counted as a rest day with work open');
+
+    // Over the whole week only the Friday evening is working time.
     const week = (await as('root', '/idle/report?period=week&on=2026-03-04')).body;
-    assert.strictEqual(week.rows.find((r) => r.name === 'Cy Dean').trackedHours, 6);
+    const cyWeek = week.rows.find((r) => r.name === 'Cy Dean');
+    assert.strictEqual(cyWeek.engagedHours, 3);
+    assert.strictEqual(cyWeek.restDaysCovered, 1);
   });
 
   await t.test('the working day is configurable, and the report follows it', async () => {
@@ -312,10 +425,16 @@ test('idle, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(set.status, 200, JSON.stringify(set.body));
     const half = (await as('root', '/idle/report?period=week&on=2026-03-04')).body;
     assert.strictEqual(half.expectedHours, 20, 'five four-hour days');
-    // Bo tracked 40 hours against a 20-hour week: no idle time, twenty over.
+    /* Bo had something open for eight hours on each of five days. Against a
+       four-hour day each of those is capped at four, so he covered the whole
+       twenty-hour week and no more. The old report called the excess twenty
+       hours of overtime; coverage cannot say that, because the cap is exactly
+       the admission that nobody knows which four hours of the eight were the
+       working ones. */
     const bo = half.rows.find((r) => r.name === 'Bo Chen');
+    assert.strictEqual(bo.engagedHours, 20, 'capped at four hours a day');
     assert.strictEqual(bo.idleHours, 0);
-    assert.strictEqual(bo.overtimeHours, 20);
+    assert.strictEqual(bo.restDaysCovered, 0, 'and nothing ran into a weekend');
     await as('root', '/branding/schedule', { method: 'PUT', body: { hoursPerDay: 8, workingDays: [1, 2, 3, 4, 5] } });
   });
 
@@ -331,22 +450,22 @@ test('idle, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.ok(filtered.narrowed, 'the report says it was narrowed');
     const anaFiltered = filtered.rows.find((r) => r.name === 'Ana Lee');
     assert.ok(anaFiltered, 'Ana worked on this project, so she is listed');
-    assert.strictEqual(anaFiltered.trackedHours, anaAll.trackedHours,
+    assert.strictEqual(anaFiltered.engagedHours, anaAll.engagedHours,
       'and her hours are unchanged — whole-person, not just this project');
     assert.strictEqual(anaFiltered.idleHours, anaAll.idleHours);
 
     // Somebody who touched nothing matching the filter drops off the list
     // rather than appearing as fully idle.
-    assert.ok(!filtered.rows.some((r) => r.trackedHours === 0 && r.name === 'Cy Dean' && false));
+    assert.ok(!filtered.rows.some((r) => r.engagedHours === 0 && r.name === 'Cy Dean' && false));
   });
 
-  await t.test('Idle Now moves people between the lists as the clock starts and stops', async () => {
+  await t.test('Idle Now moves people between the lists as work is started and handed in', async () => {
     const before = (await as('root', '/idle/now')).body;
     const names = (list) => list.map((r) => r.name).sort();
-    assert.deepStrictEqual(names(before.idle), ['Ana Lee', 'Bo Chen', 'Cy Dean'], 'nobody is running a timer');
+    assert.deepStrictEqual(names(before.idle), ['Ana Lee', 'Bo Chen', 'Cy Dean'], 'nobody has anything open');
     assert.strictEqual(before.working.length, 0);
 
-    // Open a session, the way Accept and Start does.
+    // Open a stretch, the way Accept and Start does.
     const asset = (await as('root', `/assets/project/${projectId}`, {
       method: 'POST', body: { name: 'Live one', type: 'prop', priority: 'med', assigneeId: id.ana, manHours: 4 },
     })).body.asset;
@@ -354,34 +473,73 @@ test('idle, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       VALUES (UUID(), '${asset.id}', '${id.ana}', 1, DATE_SUB(NOW(), INTERVAL 5 MINUTE), NULL, NULL)`);
 
     const during = (await as('root', '/idle/now')).body;
-    assert.deepStrictEqual(names(during.idle), ['Bo Chen', 'Cy Dean'], 'Ana is working now');
+    assert.deepStrictEqual(names(during.idle), ['Bo Chen', 'Cy Dean'], 'Ana has something in progress');
     assert.deepStrictEqual(names(during.working), ['Ana Lee']);
-    assert.strictEqual(during.working[0].asset.name, 'Live one', 'and it says what she is on');
-    assert.ok(during.working[0].runningForSeconds >= 250, 'and for how long');
-    assert.ok(!during.working[0].stale, 'five minutes is not a forgotten timer');
+    assert.deepStrictEqual(during.working[0].assets.map((x) => x.name), ['Live one'],
+      'and it says what she is on');
+    assert.ok(during.working[0].startedAt, 'and when she started it');
+    assert.ok(during.working[0].openForSeconds >= 250, 'and how long it has been open');
     // The two lists never overlap.
     assert.ok(!during.idle.some((i) => during.working.some((w) => w.id === i.id)));
 
-    // Pause it.
-    await sql(cfg, "UPDATE work_sessions SET ended_at = NOW(), seconds = 300 WHERE ended_at IS NULL");
+    // Hand it in.
+    await sql(cfg, "UPDATE work_sessions SET ended_at = NOW(), seconds = 300, ended_reason = 'submitted' WHERE ended_at IS NULL");
     const after = (await as('root', '/idle/now')).body;
     assert.deepStrictEqual(names(after.idle), ['Ana Lee', 'Bo Chen', 'Cy Dean'], 'and she is idle again');
   });
 
-  await t.test('a timer nobody stopped is flagged rather than counted as work', async () => {
+  await t.test('a stretch open for twenty hours is ordinary now, not an anomaly', async () => {
+    /* This used to be flagged: a timer running that long meant somebody had
+       forgotten to pause it, and the screen warned that they might not really
+       be working. With the running timer gone there is nothing to forget — an
+       asset accepted yesterday afternoon and not yet handed in is simply an
+       asset in progress. The flag went, and what it was protecting against is
+       handled by the per-day cap in the report instead. */
     const asset = (await as('root', `/assets/project/${projectId}`, {
-      method: 'POST', body: { name: 'Forgotten', type: 'prop', priority: 'med', assigneeId: id.bo, manHours: 4 },
+      method: 'POST', body: { name: 'Still going', type: 'prop', priority: 'med', assigneeId: id.bo, manHours: 4 },
     })).body.asset;
     await sql(cfg, `INSERT INTO work_sessions (id, asset_id, user_id, round, started_at, ended_at, seconds)
       VALUES (UUID(), '${asset.id}', '${id.bo}', 1, DATE_SUB(NOW(), INTERVAL 20 HOUR), NULL, NULL)`);
 
     const now = (await as('root', '/idle/now')).body;
     const bo = now.working.find((r) => r.name === 'Bo Chen');
-    assert.ok(bo, 'still counted as working, because the clock really is running');
-    assert.ok(bo.stale, 'but flagged');
-    assert.ok(now.staleTimers.some((r) => r.name === 'Bo Chen'),
-      'and surfaced separately, so a manager is not misled into thinking he is at his desk');
-    await sql(cfg, "UPDATE work_sessions SET ended_at = NOW(), seconds = 60 WHERE ended_at IS NULL");
+    assert.ok(bo, 'counted as having something in progress, because he does');
+    assert.ok(bo.assets.some((x) => x.name === 'Still going'), 'and named');
+    assert.ok(bo.openForSeconds >= 19 * 3600, 'and the panel says for how long');
+    assert.strictEqual(bo.stale, undefined, 'with no judgement attached to the length');
+    assert.strictEqual(now.staleTimers, undefined, 'and no separate list of suspects');
+
+    await sql(cfg, "UPDATE work_sessions SET ended_at = NOW(), seconds = 60, ended_reason = 'submitted' WHERE ended_at IS NULL");
+  });
+
+  await t.test('somebody holding several assets open has all of them listed', async () => {
+    /* This showed one arbitrary row per person, whichever the database happened
+       to return last. With wall-clock timestamps, holding two or three at once
+       is the ordinary way a week looks, so answering "what is Cy on?" with one
+       of three was worse than not answering. */
+    const codes = [];
+    for (const n of [1, 2, 3]) {
+      const asset = (await as('root', `/assets/project/${projectId}`, {
+        method: 'POST', body: { name: `Juggling ${n}`, type: 'prop', priority: 'med', assigneeId: id.cy, manHours: 4 },
+      })).body.asset;
+      codes.push(asset.code);
+      await sql(cfg, `INSERT INTO work_sessions (id, asset_id, user_id, round, started_at, ended_at, seconds)
+        VALUES (UUID(), '${asset.id}', '${id.cy}', 1, DATE_SUB(NOW(), INTERVAL ${n * 10} MINUTE), NULL, NULL)`);
+    }
+
+    const now = (await as('root', '/idle/now')).body;
+    const cy = now.working.find((r) => r.name === 'Cy Dean');
+    assert.ok(cy, 'Cy has work in progress');
+    assert.strictEqual(cy.assets.length, 3, `all three, not one — got ${JSON.stringify(cy.assets.map((x) => x.code))}`);
+    assert.deepStrictEqual(cy.assets.map((x) => x.code).sort(), [...codes].sort());
+    // Oldest first, and "open for" is the longest-standing one.
+    assert.strictEqual(cy.assets[0].code, codes[2], 'oldest first');
+    assert.ok(cy.openForSeconds >= 29 * 60,
+      `open for measures the oldest, not the newest — got ${cy.openForSeconds}s`);
+    // And he appears exactly once, not once per asset.
+    assert.strictEqual(now.working.filter((r) => r.name === 'Cy Dean').length, 1);
+
+    await sql(cfg, "UPDATE work_sessions SET ended_at = NOW(), seconds = 60, ended_reason = 'submitted' WHERE ended_at IS NULL");
   });
 
   await t.test('the exports carry the period and the caveats', async () => {
@@ -393,7 +551,11 @@ test('idle, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.deepStrictEqual(book.SheetNames, ['Summary', 'Idle']);
     const rows = xlsx.utils.sheet_to_json(book.Sheets.Idle);
     const cy = rows.find((r) => r.Person === 'Cy Dean');
-    assert.strictEqual(cy['Idle hours'], 34, 'the same number the screen shows');
+    const onScreen = (await as('root', '/idle/report?period=week&on=2026-03-04')).body
+      .rows.find((r) => r.name === 'Cy Dean');
+    assert.strictEqual(cy['Idle hours'], 37, 'three of his six hours fell on a Saturday');
+    assert.strictEqual(cy['Idle hours'], onScreen.idleHours, 'the same number the screen shows');
+    assert.strictEqual(cy['Rest days with work open'], 1, 'and the Saturday is reported as a day, not as hours');
     const summary = xlsx.utils.sheet_to_json(book.Sheets.Summary, { header: 1 }).map((r) => r.join(': ')).join(' | ');
     assert.match(summary, /Week of 2026-03-02/, 'the period the file covers');
     assert.match(summary, /holidays|leave/i, 'and what it cannot account for');
@@ -444,15 +606,21 @@ test('idle, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.match(String(note[1]), /Set a date range/, 'and says how to make them match');
   });
 
-  await t.test('the two reports agree about how long somebody worked', async () => {
-    /* They read the same table by different routes, and for a while they read
-       it differently: efficiency summed the stored `seconds`, idle measured the
-       gap between the timestamps. For a session the timer wrote those agree, but
-       any row where they diverge produced one workbook whose sheets contradicted
-       each other about the same person — which discredits both. Idle now uses
-       the stored seconds for any session wholly inside the period, and only
-       measures the timestamps when a session straddles the edge and the stored
-       total would include time from outside. */
+  await t.test('the two sheets measure different things, and the workbook says so', async () => {
+    /* These two used to be pinned equal, and that was right while both meant
+       "hours worked". They no longer do, and forcing them back together would
+       mean breaking one of them:
+     *
+     *   Time Spent (efficiency)  the SUM of each asset's elapsed span. Two
+     *                            assets open through the same afternoon count
+     *                            it twice, and a weekend inside a span counts.
+     *   Hours in progress (idle) the UNION of those spans, clipped to working
+     *                            days and capped at one standard day each.
+     *
+     * The second can never exceed the first — a union is no larger than a sum,
+     * and clipping only removes — and that invariant is worth pinning. What is
+     * not acceptable is the workbook staying silent about the difference, so
+     * the note is pinned too. */
     const xlsx = require('xlsx');
     const res = await fetch(`${server.base}/reports/efficiency.xlsx?from=2026-03-01&to=2026-03-31`,
       { headers: { Authorization: `Bearer ${token.root}` } });
@@ -464,18 +632,28 @@ test('idle, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     for (const row of efficiency) {
       const mine = idleSheet.find((r) => r.Person === row.Assignee);
       assert.ok(mine, `${row.Assignee} should be on the Idle sheet too`);
-      assert.strictEqual(Number(mine['Tracked hours']), Number(row['Tracked hours']),
-        `${row.Assignee}: the two sheets must not disagree about tracked hours`);
+      assert.ok(Number(mine['Hours in progress']) <= Number(row['Time Spent (h)']) + 0.05,
+        `${row.Assignee}: coverage (${mine['Hours in progress']}h) cannot exceed the sum `
+        + `of the spans (${row['Time Spent (h)']}h)`);
     }
+
+    const summary = xlsx.utils.sheet_to_json(book.Sheets.Summary, { header: 1 })
+      .map((r) => r.join(': ')).join(' | ');
+    assert.match(summary, /elapsed span from Accept and Start to Submit for Review/,
+      'the workbook states what Time Spent measures');
+    assert.match(summary, /Not active worked time/,
+      'and says plainly what it is not, because a file outlives the screen it came from');
   });
 
-  await t.test('a straddling session is still split across the two days', async () => {
-    // The stored seconds cover both days, so the boundary case must keep
-    // measuring the timestamps rather than taking the stored total whole.
+  await t.test('a stretch straddling midnight is split at the day boundary', async () => {
+    // The stored seconds cover both days, so the boundary case has to be
+    // measured against the calendar rather than taken whole.
     const friday = (await as('root', '/idle/report?period=day&on=2026-03-06')).body;
     const saturday = (await as('root', '/idle/report?period=day&on=2026-03-07')).body;
-    assert.strictEqual(friday.rows.find((r) => r.name === 'Cy Dean').trackedHours, 3);
-    assert.strictEqual(saturday.rows.find((r) => r.name === 'Cy Dean').trackedHours, 3);
+    assert.strictEqual(friday.rows.find((r) => r.name === 'Cy Dean').engagedHours, 3);
+    assert.strictEqual(saturday.rows.find((r) => r.name === 'Cy Dean').engagedHours, 0,
+      'the Saturday half is real, but a Saturday holds no working hours');
+    assert.strictEqual(saturday.rows.find((r) => r.name === 'Cy Dean').restDaysCovered, 1);
   });
 
   await t.test('the workbook holds no idle data for somebody without the permission', async () => {

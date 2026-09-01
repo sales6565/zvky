@@ -170,7 +170,14 @@ async function cutover(db) {
     return { rows: [{ at: null, legacy: 0 }] };
   });
   const legacyRows = Number(rows[0].legacy) || 0;
-  return { at: rows[0].at || null, legacyRows, mixed: legacyRows > 0 };
+  const at = rows[0].at || null;
+  /* Two shapes because two readers need different things, and neither should
+     have to guess. The driver hands back a Date for a DATETIME, and String()ing
+     one gives "Fri Aug 28 2026 15:00:00 GMT+0000 (…)" — a spreadsheet that
+     slices the front off that prints "Fri Aug 28", with no year, which is worse
+     than useless in a file somebody opens next year. */
+  const date = at ? new Date(at).toISOString().slice(0, 10) : null;
+  return { at: at ? new Date(at).toISOString() : null, date, legacyRows, mixed: legacyRows > 0 };
 }
 
 // The summary a screen needs: the stamps, the elapsed total, and the per-round
@@ -274,6 +281,7 @@ async function totalsFor(db, assetIds) {
             SUM(w.ended_at IS NULL) AS still_open,
             MIN(CASE WHEN w.user_id = a.assignee_id THEN w.started_at END) AS started_at,
             MAX(CASE WHEN w.user_id = a.assignee_id THEN w.ended_at END) AS ended_at,
+            COUNT(DISTINCT CASE WHEN w.user_id = a.assignee_id THEN w.round END) AS rounds,
             SUM(CASE WHEN w.user_id = a.assignee_id
                      THEN COALESCE(w.seconds, TIMESTAMPDIFF(SECOND, w.started_at, NOW()))
                      ELSE 0 END) AS current_seconds
@@ -292,6 +300,7 @@ async function totalsFor(db, assetIds) {
     open: Number(r.still_open) > 0,
     startedAt: r.started_at || null,
     submittedAt: Number(r.still_open) > 0 ? null : (r.ended_at || null),
+    rounds: Number(r.rounds) || 0,
   }]));
 }
 
