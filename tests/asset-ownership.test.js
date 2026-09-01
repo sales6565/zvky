@@ -437,6 +437,89 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     assert.strictEqual(await statusOf(asset.id), 'tl_changes_requested', 'and nothing moved');
   });
 
+  await t.test('a lead sees the whole project they lead, not only their own reports', async () => {
+    /* The empty-dashboard bug. GET /assets/project/:id narrowed a leadsTeam
+       role to `assignee_id IN (their direct reports)`, which was right when a
+       lead's reach WAS their reports. It stopped being right when the review
+       gate was broadened and canViewAsset was widened to match — and this query
+       was not, so it was the last place enforcing the old model.
+       
+       The symptom: a lead named as the team lead OF a project, whose own
+       reports were working elsewhere, opened it and got a completely empty
+       board. The project was in their picker, the request returned 200, and
+       every asset in it answered 200 to a direct read.
+       
+       The invariant, which is what this pins: the board list may never be
+       narrower than canViewAsset. An asset the app says you may read must be
+       one you can find. */
+    const outsider = await call('/users', {
+      token: token.root, method: 'POST',
+      body: { name: 'Quinn Lead', email: 'quinn@own.test', role: 'team_lead', password: PASSWORD },
+    });
+    assert.strictEqual(outsider.status, 201, JSON.stringify(outsider.body));
+    const quinn = outsider.body.user.id;
+
+    // A project Quinn is the named team lead of, holding work by somebody who
+    // does NOT report to them.
+    const theirs = await call('/projects', {
+      token: token.root, method: 'POST',
+      body: { clientId: await systemClientId(server.base, token.root),
+              name: 'Quinn Leads This', teamLeadIds: [quinn] },
+    });
+    assert.strictEqual(theirs.status, 201, JSON.stringify(theirs.body));
+    const projectOfTheirs = theirs.body.project.id;
+
+    const codes = [];
+    for (const n of [1, 2, 3]) {
+      const made = await call(`/assets/project/${projectOfTheirs}`, {
+        token: token.root, method: 'POST',
+        body: { name: `Not Quinn's Report ${n}`, type: 'prop', assigneeId: people.ana },
+      });
+      assert.strictEqual(made.status, 201, JSON.stringify(made.body));
+      codes.push(made.body.asset.code);
+    }
+    const quinnToken = (await call('/auth/login', {
+      method: 'POST', body: { email: 'quinn@own.test', password: PASSWORD },
+    })).body.token;
+
+    // Ana does not report to Quinn — the old query would return nothing.
+    const reports = await sql(cfg, `SELECT COUNT(*) AS n FROM users WHERE team_lead_id = '${quinn}'`);
+    assert.strictEqual(Number(reports[0].n), 0, 'Quinn leads nobody directly');
+
+    const listed = await call(`/assets/project/${projectOfTheirs}`, { token: quinnToken });
+    assert.strictEqual(listed.status, 200);
+    assert.strictEqual(listed.body.assets.length, 3,
+      'the lead sees every asset in the project they lead, not zero');
+    assert.deepStrictEqual(listed.body.assets.map((a) => a.code).sort(), [...codes].sort());
+
+    /* And the invariant stated directly: everything the board hides must also
+       be unreadable. Before the fix these answered 200 while the board showed
+       nothing, which is the contradiction that made the bug so hard to see. */
+    for (const asset of listed.body.assets) {
+      const readable = await call(`/assets/${asset.id}/history`, { token: quinnToken });
+      assert.strictEqual(readable.status, 200,
+        'an asset on the board must be readable — and vice versa');
+    }
+
+    /* A contributor is deliberately still narrow, and that is NOT the same bug:
+       canViewAsset says a contributor sees only their own work, so the list
+       agreeing with it is correct. Ana holds all three, so she sees all three;
+       somebody else assignable sees none and is refused a direct read too. */
+    const anaSees = await call(`/assets/project/${projectOfTheirs}`, { token: token.ana });
+    assert.strictEqual(anaSees.status, 200);
+    assert.strictEqual(anaSees.body.assets.length, 3, 'the assignee sees her own work');
+
+    /* Bo cannot reach this project at all — nothing of theirs is in it and they
+       are not a member — so the list is refused outright rather than returning
+       an empty array. That is the shape an empty board must NEVER have: if the
+       list is empty, a direct read of what it omitted has to be refused too. */
+    const boSees = await call(`/assets/project/${projectOfTheirs}`, { token: token.bo });
+    assert.strictEqual(boSees.status, 403, 'another artist is refused the project outright');
+    const refused = await call(`/assets/${listed.body.assets[0].id}/history`, { token: token.bo });
+    assert.strictEqual(refused.status, 403,
+      'and is refused a direct read too — narrow list, narrow read, no contradiction');
+  });
+
   await t.test('handing CD Feedbacks on stands in for the relay, and keeps the notes', async () => {
     /* In CD Feedbacks the asset waits with the team lead until they relay the
        director's notes, and the artist cannot resubmit before being briefed.

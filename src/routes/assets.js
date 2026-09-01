@@ -217,14 +217,39 @@ router.get('/project/:projectId', async (req, res) => {
   let sql = `${ASSET_SELECT} WHERE a.project_id = $1`;
   const params = [projectId];
 
+  /* Who sees what, and it must agree with canViewAsset — which is the app's
+   * one definition of "may this person see this asset". This list is the
+   * dashboard and the Assets List; a narrower rule here means an asset the
+   * whole rest of the app agrees you may read, which you cannot find.
+   *
+   * The route has already refused anyone who cannot reach this project, so by
+   * here canAccessProject is true. Reading canViewAsset against that:
+   *
+   *   projectScope 'all'  everything                        -> no filter
+   *   assignable          asset.assignee_id === user.id     -> filter, below
+   *   leadsTeam           a report's work OR anything in a
+   *                       project they can access           -> no filter
+   *   anyone else         anything in a project they can
+   *                       access                            -> no filter
+   *
+   * THE leadsTeam FILTER IS GONE, and it was the bug. It read
+   * "assignee_id IN (their direct reports)", which was right when a lead's
+   * reach was their reports and nothing else. That stopped being true when the
+   * review gate was broadened — isTeamLeadOfAsset now covers work whose author
+   * reports to nobody, work handed across teams, and any lead granted review.tl
+   * — and canViewAsset was widened to match. This query was not, so it was the
+   * last place still enforcing the old model.
+   *
+   * What it did: a lead NAMED AS THE TEAM LEAD OF A PROJECT, whose own reports
+   * happened to be working elsewhere, opened that project and got a completely
+   * empty board. The project was in their picker, the request returned 200, and
+   * every asset in it answered 200 to a direct read. Only the board was empty,
+   * and nothing on screen suggested where the work had gone. */
   const def = roleDef(req.user.role);
   if (def.assignable) {
-    // A contributor only ever sees their own work.
+    // A contributor only ever sees their own work — canViewAsset says the same,
+    // so this is the one narrowing that belongs here.
     sql += ' AND a.assignee_id = $2';
-    params.push(req.user.id);
-  } else if (def.leadsTeam) {
-    // A lead sees whatever their reports are carrying on this project.
-    sql += ' AND a.assignee_id IN (SELECT id FROM users WHERE team_lead_id = $2)';
     params.push(req.user.id);
   }
   sql += ' ORDER BY a.created_at DESC';

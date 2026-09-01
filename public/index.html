@@ -1733,12 +1733,24 @@ function cardHTML(a){
         ${avatarHTML({ id:a.assignee_id, name:a.assignee_name, photoAt:a.assignee_photo_at })}</div>
     </div></div>`;
 }
+/* Why the board is empty, in the words that fit this account.
+ *
+ * "No assets here yet" is true for somebody who sees the whole project and
+ * false for a contributor, who only ever sees their own work — for them the
+ * project can be full and the board still bare, and that reading sent people
+ * hunting for a bug that was not there. Say which it is. */
+function emptyBoardReason(){
+  return caps().assignable
+    ? 'Nothing in this project is assigned to you. You only see your own work here — pick another project, or ask whoever runs it.'
+    : 'No assets here yet.';
+}
+
 function renderBoard(){
   const el = document.getElementById('boardView');
   if(!state.currentProjectId){ el.innerHTML = `<div class="empty">No projects assigned to you yet.</div>`; return; }
   const assets = filteredAssets();
   if(state.assets.length && !assets.length){ el.innerHTML = `<div class="empty">No assets match your filters.</div>`; return; }
-  if(!state.assets.length){ el.innerHTML = `<div class="empty">No assets here yet.</div>`; return; }
+  if(!state.assets.length){ el.innerHTML = `<div class="empty">${emptyBoardReason()}</div>`; return; }
   el.innerHTML = `<div class="board">${visibleStatuses().map(s=>{
     const inCol = assets.filter(a=>a.status===s.id);
     return `<div class="column" data-status="${s.id}"><div class="col-head"><span class="chip" style="background:${s.color}"></span><span class="title">${s.label}</span><span class="count">${inCol.length}</span></div>${inCol.map(cardHTML).join('')}</div>`;
@@ -1796,9 +1808,12 @@ function renderList(){
   });
 
   if(!shown.length){
+    /* Three different nothings, and saying which matters. Nothing in this tab;
+       nothing matching the search; or — for a contributor — nothing in the
+       project that is theirs, which is not the same as an empty project. */
     const why = matching.length
       ? `No ${ASSET_LIST_GROUPS.find(g=>g.id===state.listGroup).label.toLowerCase()} assets match.`
-      : 'No assets match.';
+      : (state.assets.length ? 'No assets match.' : emptyBoardReason());
     el.innerHTML = tabs + `<div class="empty">${why}</div>`;
     wire();
     return;
