@@ -116,7 +116,7 @@ test('Assign Work to Anyone, end to end', { skip: cfg ? false : SKIP_REASON }, a
     assert.strictEqual(refused.status, 403, JSON.stringify(refused.body));
   });
 
-  await t.test('both assignee pickers widen for the permission, and only for it', async () => {
+  await t.test('the New Asset picker widens for the permission; the handover picker is always wide', async () => {
     /* Two endpoints, two different filters, neither of which knew about the
        new permission:
        
@@ -154,10 +154,19 @@ test('Assign Work to Anyone, end to end', { skip: cfg ? false : SKIP_REASON }, a
     assert.ok(!narrowNew.artists.some((a) => a.id === outsider.body.user.id),
       'and the outsider is not in the narrow list — that is the original scope, kept');
 
+    /* The handover picker is deliberately NOT one of the narrow lists any more.
+       It used to be, and reported as "Ankita Das is not on this project": the
+       reviewer looking for somebody free could only reach the people already on
+       the project, which is the opposite of what that control is for. Handing
+       work on now offers the whole studio whatever the caller holds, so this is
+       the one picker the permission does not change.
+       
+       The New Asset list above still narrows, and still widens with the
+       permission — that flow was not part of the report and is untouched. */
     const narrowEdit = (await as('pat', `/assets/${asset.id}/reassign-options`)).body;
-    assert.strictEqual(narrowEdit.scope, 'on-this-project');
-    assert.ok(!narrowEdit.options.some((o) => o.id === outsider.body.user.id),
-      'nor in the narrow Asset Edit list');
+    assert.strictEqual(narrowEdit.scope, 'all');
+    assert.ok(narrowEdit.options.some((o) => o.id === outsider.body.user.id),
+      'somebody on another project can be handed work without the broad permission');
 
     // --- with it: everybody, from both places ------------------------------
     await setPerms('coordinator', [...(await permsOf('coordinator')), 'asset.assign_any']);
@@ -172,6 +181,9 @@ test('Assign Work to Anyone, end to end', { skip: cfg ? false : SKIP_REASON }, a
     assert.strictEqual(wideEdit.scope, 'all');
     assert.ok(wideEdit.options.some((o) => o.id === outsider.body.user.id),
       'and so does Asset Edit');
+    assert.deepStrictEqual(wideEdit.options.map((o) => o.id).sort(),
+      narrowEdit.options.map((o) => o.id).sort(),
+      'the handover picker is the same list either way — the permission does not narrow it');
 
     // Both wide lists are the same people, minus whoever holds the asset.
     const wideNames = wideNew.artists.map((a) => a.id).filter((id) => id !== people.ana).sort();

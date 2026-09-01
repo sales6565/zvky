@@ -3574,7 +3574,10 @@ async function openDrawer(id){
       sel.innerHTML = options.length
         ? '<option value="">Choose who picks this up…</option>' +
           options.map(o=>`<option value="${o.id}">${escapeHTML(o.name)} · ${escapeHTML(o.roleLabel)}</option>`).join('')
-        : '<option value="">Nobody else on this project can take it</option>';
+        /* No longer "nobody on this project": the list is the whole studio,
+           so the only way it is empty is a studio with nobody but the person
+           already holding it. */
+        : '<option value="">There is nobody else to hand this to</option>';
     }).catch(e=>{ sel.innerHTML = '<option value="">Could not load</option>'; err.textContent = e.message; });
 
     document.getElementById('reassignBtn').onclick = async (ev)=>{

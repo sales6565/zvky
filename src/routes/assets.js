@@ -1130,9 +1130,25 @@ router.post('/:id/reassign', async (req, res) => {
       field: 'assigneeId',
     });
   }
-  if (!(await canAccessProject(next, asset.project_id))) {
-    return res.status(400).json({ error: `${next.name} is not on this project.`, field: 'assigneeId' });
-  }
+  /* Deliberately NOT checked: whether this person is on the project.
+   *
+   * It was, and it is what "Ankita Das is not on this project" was. Handing
+   * work on is the one moment the studio reaches outside a project on purpose
+   * — the reviewer wants somebody free, and whether that person happens to be
+   * attached to this project is not a fact about whether they can do the work.
+   *
+   * The check also disagreed with the picker in front of it. When "Assign Work
+   * to Anyone" arrived, the two assignee dropdowns were taught to honour it and
+   * this line was not, so a holder of that permission was offered the whole
+   * studio and then refused for choosing from it — a dropdown that lies.
+   *
+   * Being handed the asset is itself what puts them on the project: an assignee
+   * sees their own asset (canViewAsset), and a project with their work in it is
+   * in their project list (visibleProjects). So there is nothing to grant.
+   *
+   * Everything else here stands. Who may hand this on is still checked, three
+   * ways, above; the asset must still be in a stage that can be handed on; and
+   * the person receiving it must still hold a designation that is given work. */
 
   const { rows: previous } = await db.query('SELECT `name` FROM users WHERE id = $1', [asset.assignee_id]);
   const from = previous.length ? previous[0].name : 'nobody';
@@ -1231,29 +1247,31 @@ router.get('/:id/reassign-options', async (req, res) => {
     return res.status(403).json({ error: 'You do not have permission to do that' });
   }
 
-  /* Who to offer. The narrow permission offers the people on this asset's
-     project; the broad one offers everybody, because that is what it says.
+  /* Who to offer: everybody the studio gives work to, minus whoever holds it
+     now. No project filter, and none by permission either.
      
-     The project filter here is a different one from the New Asset form's —
-     that endpoint follows the reporting line to the project's leads, this one
-     asks whether the person can reach the project at all. Two lists that were
-     never the same, in two places, which is why the "partial list" looked
-     different depending on where you opened it. */
-  const anyone = holds(req.user, 'asset.assign_any');
+     It used to offer the people who could reach this project, widening to the
+     whole studio for a holder of "Assign Work to Anyone". Two problems with
+     that, and the second is why it is not simply being widened again. The
+     first: the endpoint that receives the choice did not widen with it, so the
+     permission's holders were shown names their own submission would refuse.
+     The second: scoping the list by permission is what produced the narrow
+     list in the first place, and doing it again only moves the same complaint
+     to whichever role is next to be missed.
+     
+     Reaching outside the project is the point of this control. The gate is on
+     who may hand work on — asked above, and unchanged — not on who may
+     receive it. */
   const { rows: people } = await db.query(
     'SELECT id, `name`, `role` FROM users WHERE role IN ($1) ORDER BY `name`',
     [assignableRoles()]
   );
-  const options = [];
-  for (const person of people) {
-    if (person.id === asset.assignee_id) continue;
-    if (anyone || await canAccessProject(person, asset.project_id)) {
-      options.push({ id: person.id, name: person.name, role: person.role,
-        roleLabel: (roleDef(person.role) || {}).label || person.role });
-    }
-  }
+  const options = people
+    .filter((person) => person.id !== asset.assignee_id)
+    .map((person) => ({ id: person.id, name: person.name, role: person.role,
+      roleLabel: (roleDef(person.role) || {}).label || person.role }));
   res.json({ options, awaitingRework: isAwaitingRework(asset), inReview: reviewing,
-    status: asset.status, scope: anyone ? 'all' : 'on-this-project' });
+    status: asset.status, scope: 'all' });
 });
 
 // GET /api/assets/:id/history — the whole back-and-forth, in order.
