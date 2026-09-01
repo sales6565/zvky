@@ -150,10 +150,14 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .be-hint{font-size:11.5px;color:var(--ink-faint);margin:8px 0 12px;}
 
 /* The clock on an asset. */
-.timer-box{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-top:12px;}
-.timer-total{font-family:'Space Grotesk';font-size:18px;font-weight:600;}
-.timer-rounds{font-size:11px;color:var(--ink-faint);margin-top:2px;}
-.timer-live{color:var(--approved);animation:timerblink 1.2s infinite;}
+.worklog-box{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-top:12px;}
+.worklog-total{font-family:'Space Grotesk';font-size:18px;font-weight:600;}
+.worklog-note{font-size:11px;color:var(--ink-faint);margin-top:2px;}
+/* The two stamps a round is measured by. Tabular figures so a column of them
+   lines up, and no animation of any kind — this is a record of when something
+   happened, not a clock. */
+.worklog-stamps{font-size:11px;color:var(--ink-soft);margin-top:3px;font-variant-numeric:tabular-nums;}
+.worklog-open{color:var(--in-progress);font-weight:600;}
 /* Sub-tabs inside a view. Deliberately lighter than the main nav: these filter
    what a screen shows, they do not change which screen you are on. */
 .sub-tabs{display:flex;gap:4px;margin-bottom:12px;flex-wrap:wrap;}
@@ -233,7 +237,6 @@ tr.past-round{opacity:0.62;}
 .round-tag{font-size:10px;letter-spacing:0.04em;text-transform:uppercase;color:var(--ink-faint);
   border:1px solid var(--surface-3);border-radius:20px;padding:2px 8px;white-space:nowrap;}
 .round-tag-live{color:var(--approved);border-color:var(--approved);}
-@keyframes timerblink{0%,100%{opacity:1}50%{opacity:.25}}
 .note{background:var(--surface-2);border-left:3px solid var(--brand-accent);border-radius:0 8px 8px 0;padding:8px 10px;margin-bottom:8px;}
 .note .who{font-family:'Space Grotesk';font-weight:700;font-size:12px;} .note .when{font-size:10px;color:var(--ink-muted);font-family:'IBM Plex Mono';}
 .note p{margin:4px 0 0;font-size:12.5px;line-height:1.4;}
@@ -536,8 +539,8 @@ tr.past-round{opacity:0.62;}
     <h2>New Asset</h2>
     <label>Assets Name</label><input type="text" id="f_name" placeholder="e.g. River Spirit — Hero">
     <div class="row2"><div><label>Category</label><select id="f_category"></select></div><div><label>Scope of Work</label><select id="f_type"></select></div></div>
-    <!-- The estimate, not the clock. Time Spent is recorded by the timer on the
-         asset panel and is never typed in here. -->
+    <!-- The estimate, not the record. Time Spent is worked out from the start
+         and submit stamps on the asset panel and is never typed in here. -->
     <label>Man Hours</label><input type="text" id="f_hours" placeholder="e.g. 16 — the estimate, not time tracked">
     <div class="row2"><div><label>Priority</label><select id="f_priority"></select></div><div><label>Assignee</label><select id="f_assignee"></select></div></div>
     <label>Deadline</label><input type="date" id="f_due">
@@ -1160,7 +1163,7 @@ function roundSeconds(a){
   /* The server works this out — from the assignment episode where there is one,
      and otherwise from the current assignee's own sessions. Never from the
      asset's lifetime: that is somebody else's time, and reading it here is what
-     made a freshly reassigned asset offer Resume instead of Accept and Start. */
+     made a freshly reassigned asset hide Accept and Start. */
   if(typeof a.round_seconds === 'number') return a.round_seconds;
   const ep = currentEpisode(a);
   return ep ? ep.seconds : 0;
@@ -1807,20 +1810,23 @@ function renderList(){
          because for that person they are the same thing. */
       const s = statusOf(ep && !ep.active ? (ep.endedStatus || ep.statusAtAssignment) : a.status);
       const seconds = ep ? ep.seconds : a.time_spent_seconds;
-      const running = ep ? ep.running : a.timer_running;
+      const openNow = ep ? ep.workOpen : a.work_open;
+      const startedAt = ep ? ep.startedAt : a.started_at;
+      const submittedAt = ep ? ep.submittedAt : a.submitted_at;
       const who = ep ? ep.userName : (a.assignee_name || '');
       const past = ep && !ep.active;
       return `<tr data-id="${a.id}"${past?' class="past-round"':''}>
       <td class="mono">${a.code}</td><td style="font-weight:600;">${escapeHTML(a.name)}</td>
       <td>${escapeHTML(categoryLabel(a.category))||'—'}</td>
       <td>${t.label}</td>
-      <!-- The estimate. Time Spent, the last column, is what the timer recorded. -->
+      <!-- The estimate. Time Spent, the last column, is the elapsed time between
+           the start and submit stamps shown under it. -->
       <td class="mono">${a.man_hours ? a.man_hours+'h' : '—'}</td>
       <td><span class="status-pill" style="background:${s.color}22;color:${s.color}"><span class="d" style="background:${s.color}"></span>${s.label}</span></td>
       <td>${who ? `<span class="who-line">${avatarHTML({ id: ep ? ep.userId : a.assignee_id, name: who, photoAt: ep ? ep.userPhotoAt : a.assignee_photo_at }, { size:20, title:false })}<span>${escapeHTML(who)}</span></span>` : '—'}</td>
       <td>${ep ? (past ? `<span class="round-tag">handed on</span>` : `<span class="round-tag round-tag-live">current</span>`) : ''}</td>
       <td style="text-transform:capitalize;">${a.priority}</td><td class="mono">${past?'':`${doneTasks}/${a.tasks.length}`}</td>
-      <td class="mono">${seconds?fmtDuration(seconds):'—'}${running?' <span class="timer-live" title="The clock is running">●</span>':''}</td></tr>`;
+      <td class="mono">${seconds?fmtDuration(seconds):'—'}${stampLine(startedAt, submittedAt, openNow)}</td></tr>`;
     }).join('')}</tbody></table>`;
   el.querySelectorAll('tr[data-id]').forEach(row=>row.addEventListener('click', ()=>openDrawer(row.dataset.id)));
   wire();
@@ -2873,6 +2879,31 @@ function fmtDuration(seconds){
   return h ? `${h}h ${String(m).padStart(2,'0')}m` : `${m}m`;
 }
 function fmtBytes(n){ if(!n) return ''; const kb=n/1024; return kb<1024 ? kb.toFixed(0)+' KB' : (kb/1024).toFixed(1)+' MB'; }
+
+/* The two stamps a round is measured by.
+ *
+ * Time Spent is the gap between them, so showing the figure without the stamps
+ * would leave somebody unable to check it — 104h reads as an error until you
+ * can see it was started on the Monday and handed in on the Friday, which is
+ * the whole point of the wall-clock definition the studio chose.
+ *
+ * stampLine is the one-line version for a table cell; stampDetail is the
+ * two-line version for the panel. Both say "not started" and "in progress"
+ * plainly rather than printing an em dash and leaving it ambiguous. */
+function stampLine(startedAt, submittedAt, open){
+  if(!startedAt) return '';
+  return `<div class="worklog-stamps">${fmtDate(startedAt)} → ${
+    submittedAt ? fmtDate(submittedAt) : '<span class="worklog-open">in progress</span>'}</div>`;
+}
+function stampDetail(startedAt, submittedAt, open){
+  if(!startedAt){
+    return `<div class="worklog-stamps">Not started yet. The clock on this is the gap between Accept and Start and Submit for Review.</div>`;
+  }
+  return `<div class="worklog-stamps">Started ${fmtDate(startedAt)}</div>` +
+    `<div class="worklog-stamps">${submittedAt
+      ? `Submitted ${fmtDate(submittedAt)}`
+      : `<span class="worklog-open">In progress</span> — elapsed so far, from the start above`}</div>`;
+}
 function fmtDate(s){ return s ? new Date(s).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : ''; }
 
 async function openDrawer(id){
@@ -2900,12 +2931,17 @@ async function openDrawer(id){
                               'tl_changes_requested','cd_changes_requested'];
   const canHandOver = HAND_OVER_STATUSES.includes(a.status) && mayHandOverInReview(a);
   const handingBackRework = REWORK_STATUSES.includes(a.status);
-  /* The clock. The assignee's own, with full access for oversight — mirrors
-     mayRunTimer on the server. Only in the states where working makes sense,
-     and in CD Changes only once the lead has relayed the notes. */
-  const canRunTimer = (a.assignee_id===u.id || fullAccess()) &&
+  /* Accept and Start. The assignee's own, with full access for oversight —
+     mirrors mayStartWork on the server. Only in the states where working makes
+     sense, and in CD Changes only once the lead has relayed the notes.
+
+     The button is offered only while nothing is open. There is no Pause and no
+     Resume any more: a round is one span from this click to the submission, and
+     once it is open the only thing left to do with it is submit. */
+  const mayStart = (a.assignee_id===u.id || fullAccess()) &&
     ['assigned','in_progress','tl_changes_requested','cd_changes_requested'].includes(a.status) &&
     !(a.status==='cd_changes_requested' && a.routed_to_id!==u.id && !fullAccess());
+  const canStart = mayStart && !a.work_open;
   /* The checklist is set by the creator and the reviewers, not by whoever is
      carrying the work — they read it and work to it. Mirrors canManageTasks in
      src/permissions.js; the API decides, this only stops offering a control
@@ -2930,8 +2966,9 @@ async function openDrawer(id){
      to see what submitting will ask for — but the button is refused until the
      work has been started, which is one click away in the box above. Mirrors the
      submit transition in src/asset-workflow.js, which no longer accepts
-     'assigned'; the API is still the authority. Pause and Resume do not come
-     back into it: once accepted the asset is In Progress and stays there. */
+     'assigned'; the API is still the authority. Once accepted the asset is In
+     Progress and stays there — there is nothing to pause and nothing to
+     resume. */
   const mustStartFirst = canSubmit && a.status === 'assigned';
   const canTlReview = can('review.tl') && a.status==='pending_tl_review';
   const canCdReview = can('review.cd') && a.status==='pending_cd_review';
@@ -2953,19 +2990,18 @@ async function openDrawer(id){
     <div class="field-lbl">Status</div>
     <div class="status-pill" style="background:${statusOf(a.status).color}22;color:${statusOf(a.status).color};font-size:12px;padding:5px 11px;"><span class="d" style="background:${statusOf(a.status).color}"></span>${statusOf(a.status).label}</div>
 
-    ${(a.time_spent_seconds || canRunTimer) ? `
-      <div class="timer-box">
+    ${(a.time_spent_seconds || mayStart) ? `
+      <div class="worklog-box">
         <div>
           <div class="field-lbl" style="margin-top:0;">Time Spent${currentEpisode(a) ? ` · ${escapeHTML(currentEpisode(a).userName)}` : ''}</div>
-          <div class="timer-total"><span id="d_timeSpent">${fmtDuration(roundSeconds(a))}</span>${a.timer_running?' <span class="timer-live">●</span>':''}</div>
-          ${(a.time_spent_seconds||0) > roundSeconds(a) ? `<div class="timer-rounds">${fmtDuration(a.time_spent_seconds)} on this asset in total, across everyone who has held it</div>` : ''}
-          <div id="d_rounds" class="timer-rounds"></div>
+          <div class="worklog-total">${fmtDuration(roundSeconds(a))}</div>
+          ${stampDetail(a.started_at, a.submitted_at, a.work_open)}
+          ${(a.time_spent_seconds||0) > roundSeconds(a) ? `<div class="worklog-note">${fmtDuration(a.time_spent_seconds)} on this asset in total, across everyone who has held it</div>` : ''}
+          <div id="d_rounds" class="worklog-note"></div>
         </div>
-        ${canRunTimer ? `<button class="btn ${a.timer_running?'btn-ghost':'btn-brand'}" id="d_timerBtn">${
-          a.timer_running ? 'Pause' : (a.status==='assigned' && !roundSeconds(a) ? 'Accept and Start' : 'Resume')
-        }</button>` : ''}
+        ${canStart ? `<button class="btn btn-brand" id="d_startBtn">Accept and Start</button>` : ''}
       </div>
-      <div class="ref-err" id="d_timerErr"></div>
+      <div class="ref-err" id="d_startErr"></div>
     ` : ''}
 
     <div class="field-lbl">Requirement / Reference Link</div>
@@ -2981,7 +3017,7 @@ async function openDrawer(id){
 
     <div class="row2">
       <div><div class="field-lbl">Man Hours</div><input type="text" id="d_hours" value="${a.man_hours||''}" ${editable?'':'disabled'} placeholder="e.g. 16">
-        <div style="font-size:11px;color:var(--ink-faint);margin-top:4px;">The estimate. Time Spent above is what the timer recorded.</div></div>
+        <div style="font-size:11px;color:var(--ink-faint);margin-top:4px;">The estimate. Time Spent above is the elapsed time from starting to submitting.</div></div>
       <div><div class="field-lbl">Deadline</div><input type="date" id="d_due" value="${a.due_date?a.due_date.slice(0,10):''}" ${editable?'':'disabled'}></div>
     </div>
 
@@ -3243,60 +3279,40 @@ async function openDrawer(id){
   }
   wireTasks();
 
-  /* The clock's wiring.
-
-     One button that is whatever the clock needs next — Accept and Start only
-     ever appears once, before any time exists; after that the pair is
-     Pause/Resume, exactly as asked. The button disables itself for the length
-     of the call, and the server refuses a second open session anyway, so a
-     double-click or a second tab cannot start two clocks.
-
-     The seconds tick locally while the drawer is open and the clock runs; the
-     stored truth is always the server's, re-read after every action. */
-  if(window.__timerTick){ clearInterval(window.__timerTick); window.__timerTick = null; }
-  function startTick(){
-    if(window.__timerTick) clearInterval(window.__timerTick);
-    window.__timerTick = setInterval(()=>{
-      a.time_spent_seconds = (a.time_spent_seconds||0) + 1;
-      const ep = currentEpisode(a);
-      if(ep) ep.seconds += 1;
-      if(typeof a.round_seconds === 'number') a.round_seconds += 1;
-      const el = document.getElementById('d_timeSpent');
-      if(el) el.textContent = fmtDuration(roundSeconds(a));
-      else { clearInterval(window.__timerTick); window.__timerTick = null; }
-    }, 1000);
-  }
-  if(a.timer_running) startTick();
-
   /* The per-round breakdown, when there has been more than one round. */
   if(document.getElementById('d_rounds') && roundSeconds(a)){
-    api(`/assets/${id}/timer`).then(({ timer })=>{
+    api(`/assets/${id}/worklog`).then(({ work })=>{
       const el = document.getElementById('d_rounds');
-      if(el && timer.rounds.length > 1){
-        el.textContent = timer.rounds.map(r=>`Round ${r.round}: ${fmtDuration(r.seconds)}`).join(' · ');
+      if(el && work.rounds.length > 1){
+        el.textContent = work.rounds.map(r=>`Round ${r.round}: ${fmtDuration(r.seconds)}`).join(' · ');
       }
     }).catch(()=>{});
   }
 
-  const timerBtn = document.getElementById('d_timerBtn');
-  if(timerBtn) timerBtn.onclick = async (ev)=>{
-    const err = document.getElementById('d_timerErr');
+  /* Accept and Start, and nothing else.
+     
+     One click, once: it stamps the start and moves the asset to In Progress.
+     The button disables itself for the length of the call, and the server
+     refuses a second open session anyway, so a double-click or a second tab
+     cannot open two stretches. Nothing here ticks — the elapsed figure is
+     whatever the server last reported, and it is re-read after every action. */
+  const startBtn = document.getElementById('d_startBtn');
+  if(startBtn) startBtn.onclick = async (ev)=>{
+    const err = document.getElementById('d_startErr');
     err.textContent = '';
     ev.target.disabled = true;
-    const pausing = a.timer_running;
     try{
-      await api(`/assets/${id}/timer/${pausing?'pause':'start'}`, { method:'POST' });
+      await api(`/assets/${id}/start`, { method:'POST' });
       /* Await the reload before re-rendering the drawer. Kicking it off and
          re-opening immediately re-read state.assets from BEFORE the change, so
-         the button label and the tick ran one step behind the server — a
-         paused clock that still ticked, a Pause button on a paused timer. */
+         the panel ran one step behind the server. */
       await render();
       openDrawer(id);
     }catch(e2){
       err.textContent = e2.message;
       ev.target.disabled = false;
-      /* "Already running" means another tab won the race — show the truth. */
-      if(e2.status===409 && e2.body && e2.body.running){ await render(); openDrawer(id); }
+      /* Already open means another tab won the race — show the truth. */
+      if(e2.status===409 && e2.body && e2.body.open){ await render(); openDrawer(id); }
     }
   };
 
@@ -3452,7 +3468,6 @@ async function loadAssetHistory(id){
 
 function closeDrawer(){
   state.openAssetId = null;
-  if(window.__timerTick){ clearInterval(window.__timerTick); window.__timerTick = null; }
   document.getElementById('overlay').classList.remove('show'); document.getElementById('drawer').classList.remove('show');
 }
 

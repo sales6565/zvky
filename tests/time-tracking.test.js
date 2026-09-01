@@ -5,7 +5,7 @@ const { config, resetSchema, startServer, stopServer, api, sql, systemClientId, 
 const cfg = config('timetrack');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t) => {
+test('assigned, accepted, stamped', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   const PASSWORD = 'Timer-Test-1!';
   let server;
   let projectId;
@@ -16,9 +16,14 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
   const as = (who, path, options = {}) => call(path, { ...options, token: token[who] });
   const assetRow = async (id, who = 'root') =>
     (await as(who, `/assets/project/${projectId}`)).body.assets.find((a) => a.id === id);
-  const timerOf = async (id, who = 'root') => (await as(who, `/assets/${id}/timer`)).body.timer;
-  const start = (who, id) => as(who, `/assets/${id}/timer/start`, { method: 'POST' });
-  const pauseIt = (who, id) => as(who, `/assets/${id}/timer/pause`, { method: 'POST' });
+  const workOf = async (id, who = 'root') => (await as(who, `/assets/${id}/worklog`)).body.work;
+  const start = (who, id) => as(who, `/assets/${id}/start`, { method: 'POST' });
+  const submit = (who, id, link, description) => as(who, `/assets/${id}/submit`, {
+    method: 'POST', body: { link, description },
+  });
+  const sessionsOf = (id) => sql(cfg,
+    `SELECT started_at, ended_at, seconds, round, ended_reason
+       FROM work_sessions WHERE asset_id = '${id}' ORDER BY started_at, id`);
 
   async function newAsset(name) {
     const res = await as('pat', `/assets/project/${projectId}`, {
@@ -79,10 +84,10 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
   });
 
   await t.test('Accept and Start is the assignee\'s act alone', async () => {
-    const asset = await newAsset('Whose Clock');
+    const asset = await newAsset('Whose Stamp');
 
     assert.strictEqual((await start('pat', asset.id)).status, 403,
-      'not the creator — the clock measures the assignee\'s own time');
+      'not the creator — the stamp is the assignee\'s own');
     assert.strictEqual((await start('lee', asset.id)).status, 403, 'not the reviewer');
     assert.strictEqual((await start('bo', asset.id)).status, 403, 'not another artist');
 
@@ -90,84 +95,98 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
     assert.strictEqual(accepted.status, 200, JSON.stringify(accepted.body));
     assert.strictEqual(accepted.body.accepted, true);
     assert.strictEqual(accepted.body.asset.status, 'in_progress');
-    assert.strictEqual(accepted.body.timer.running, true);
+    assert.strictEqual(accepted.body.work.open, true, 'started and not yet handed in');
+    assert.ok(accepted.body.work.startedAt, 'and the moment is recorded');
+    assert.strictEqual(accepted.body.work.submittedAt, null, 'with no submit stamp yet');
 
-    // Full access can pause for oversight.
-    assert.strictEqual((await pauseIt('root', asset.id)).status, 200);
-    assert.strictEqual((await timerOf(asset.id)).running, false);
+    // Nothing a person can click ends a stretch on its own. Pause and Resume
+    // were removed with the running timer, and the endpoint went with them.
+    assert.strictEqual((await as('ana', `/assets/${asset.id}/timer/pause`,
+      { method: 'POST' })).status, 404, 'there is no pause to click');
+    assert.strictEqual((await as('root', `/assets/${asset.id}/timer/pause`,
+      { method: 'POST' })).status, 404, 'not for oversight either');
+    assert.strictEqual((await workOf(asset.id)).open, true, 'so the stretch is still open');
   });
 
-  await t.test('a second start while running is refused, not doubled', async () => {
-    // The double-click, and the same asset open in another tab.
-    const asset = await newAsset('One Clock');
-    assert.strictEqual((await start('ana', asset.id)).status, 200);
+  await t.test('a second start is refused, not doubled', async () => {
+    // The double-click, and the same asset open in another tab. A second start
+    // stamp would silently move the beginning of the round forward and shorten
+    // Time Spent, which under wall-clock is the whole measurement.
+    const asset = await newAsset('One Stamp');
+    const first = await start('ana', asset.id);
+    assert.strictEqual(first.status, 200);
 
     const again = await start('ana', asset.id);
     assert.strictEqual(again.status, 409);
-    assert.strictEqual(again.body.running, true);
+    assert.strictEqual(again.body.open, true);
+    assert.ok(again.body.since, 'and says when the one that is open began');
 
-    // Exactly one open session exists, whatever was clicked.
-    const rows = await sql(cfg,
-      `SELECT COUNT(*) AS n FROM work_sessions WHERE asset_id = '${asset.id}' AND ended_at IS NULL`);
-    assert.strictEqual(Number(rows[0].n), 1);
-    await pauseIt('ana', asset.id);
+    // Exactly one open session exists, whatever was clicked, and its start
+    // stamp is the first one.
+    const rows = await sessionsOf(asset.id);
+    assert.strictEqual(rows.length, 1);
+    assert.strictEqual(rows[0].ended_at, null);
+    assert.strictEqual(new Date(rows[0].started_at).toISOString(),
+      new Date(first.body.work.startedAt).toISOString(), 'the original start, not a later one');
   });
 
-  await t.test('paused time is not counted; each stretch is its own row', async () => {
-    const asset = await newAsset('Stopwatch');
-    await start('ana', asset.id);
-    await sleep(1100);
-    assert.strictEqual((await pauseIt('ana', asset.id)).status, 200);
-    const afterFirst = await timerOf(asset.id);
-    assert.ok(afterFirst.totalSeconds >= 1, `first stretch counted (${afterFirst.totalSeconds}s)`);
-    assert.strictEqual(afterFirst.running, false);
+  await t.test('one round is one row: the two stamps and the gap between them', async () => {
+    // The definition the studio chose. A round is the wall-clock span from
+    // Accept and Start to Submit for Review — one row, two stamps, and Time
+    // Spent is their difference. Nothing subtracts breaks from it, because
+    // nothing records breaks any more.
+    const asset = await newAsset('Two Stamps');
+    const started = await start('ana', asset.id);
+    assert.ok(started.body.work.startedAt);
+    await sleep(2100);
 
-    // The pause itself costs nothing.
-    await sleep(1100);
-    const stillPaused = await timerOf(asset.id);
-    assert.strictEqual(stillPaused.totalSeconds, afterFirst.totalSeconds, 'no clock while paused');
+    const submitted = await submit('ana', asset.id, 'https://example.test/gap', 'First pass');
+    assert.strictEqual(submitted.status, 201, JSON.stringify(submitted.body));
 
-    // Resume is the same start, and pausing a paused clock is a no-op.
-    assert.strictEqual((await pauseIt('ana', asset.id)).status, 200, 'idempotent');
-    await start('ana', asset.id);
-    await sleep(1100);
-    await pauseIt('ana', asset.id);
-    const afterSecond = await timerOf(asset.id);
-    assert.ok(afterSecond.totalSeconds >= afterFirst.totalSeconds + 1, 'the second stretch added on');
+    const rows = await sessionsOf(asset.id);
+    assert.strictEqual(rows.length, 1, 'one round, one row — there is nothing left that splits it');
+    const [row] = rows;
+    assert.ok(row.ended_at, 'closed by the submission');
+    assert.strictEqual(row.round, 1);
+    assert.strictEqual(row.ended_reason, 'submitted', 'and says what closed it');
 
-    // Two closed rows, each with its own start and end — the auditable log.
-    const rows = await sql(cfg,
-      `SELECT started_at, ended_at, seconds, round FROM work_sessions WHERE asset_id = '${asset.id}' ORDER BY started_at`);
-    assert.strictEqual(rows.length, 2);
-    for (const row of rows) {
-      assert.ok(row.ended_at, 'closed');
-      assert.ok(row.seconds >= 1);
-      assert.strictEqual(row.round, 1, 'all before the first submission');
-    }
+    // The stored figure is exactly the gap, not an accumulation of stretches.
+    const elapsed = Math.round((new Date(row.ended_at) - new Date(row.started_at)) / 1000);
+    assert.strictEqual(row.seconds, elapsed,
+      `Time Spent is submittedAt - startedAt — stored ${row.seconds}s against a ${elapsed}s gap`);
+    assert.ok(row.seconds >= 2, `and the wait is in it (${row.seconds}s)`);
+
+    // The same two stamps come back through the API.
+    const work = await workOf(asset.id);
+    assert.strictEqual(work.open, false);
+    assert.strictEqual(new Date(work.startedAt).toISOString(), new Date(row.started_at).toISOString());
+    assert.strictEqual(new Date(work.submittedAt).toISOString(), new Date(row.ended_at).toISOString());
+    assert.strictEqual(work.totalSeconds, row.seconds);
   });
 
-  await t.test('submitting stops the clock and finalises the total', async () => {
+  await t.test('submitting stamps the end and finalises the total', async () => {
     const asset = await newAsset('Submitted');
     await start('ana', asset.id);
     await sleep(1100);
 
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
-    const submitted = await as('ana', `/assets/${asset.id}/submit`, {
-      method: 'POST', body: { link: 'https://example.test/v1', description: 'First pass' },
-    });
+    const submitted = await submit('ana', asset.id, 'https://example.test/v1', 'First pass');
     assert.strictEqual(submitted.status, 201, JSON.stringify(submitted.body));
     assert.strictEqual(submitted.body.asset.status, 'pending_tl_review');
 
-    const timer = await timerOf(asset.id);
-    assert.strictEqual(timer.running, false, 'auto-paused by the submit');
-    assert.ok(timer.totalSeconds >= 1);
+    const work = await workOf(asset.id);
+    assert.strictEqual(work.open, false, 'closed by the submit');
+    assert.ok(work.submittedAt, 'with the moment it was handed in');
+    assert.ok(work.totalSeconds >= 1);
 
-    // Visible on the list row without opening the asset.
+    // Visible on the list row without opening the asset — the figure and both
+    // stamps, so somebody reading a long Time Spent can see what it spans.
     const row = await assetRow(asset.id);
     assert.ok(row.time_spent_seconds >= 1, 'the Assets List can show Time Spent');
-    assert.strictEqual(row.timer_running, false);
+    assert.strictEqual(row.work_open, false);
+    assert.ok(row.started_at, 'and when it started');
+    assert.ok(row.submitted_at, 'and when it was handed in');
 
-    // And the clock cannot be run while a reviewer holds it.
+    // And work cannot be started again while a reviewer holds it.
     assert.strictEqual((await start('ana', asset.id)).status, 409);
   });
 
@@ -175,11 +194,8 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
     const asset = await newAsset('Two Rounds');
     await start('ana', asset.id);
     await sleep(1100);
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
-    await as('ana', `/assets/${asset.id}/submit`, {
-      method: 'POST', body: { link: 'https://example.test/v1', description: 'First pass' },
-    });
-    const round1 = (await timerOf(asset.id)).totalSeconds;
+    await submit('ana', asset.id, 'https://example.test/v1', 'First pass');
+    const round1 = (await workOf(asset.id)).totalSeconds;
 
     await as('lee', `/assets/${asset.id}/review`, {
       method: 'POST', body: { decision: 'changes_requested', text: 'Softer light' },
@@ -191,23 +207,31 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
     assert.notStrictEqual(rework.body.accepted, true, 'no accept transition — the status is TL Changes');
     assert.strictEqual((await assetRow(asset.id)).status, 'tl_changes_requested', 'and stays there');
     await sleep(1100);
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
-    await as('ana', `/assets/${asset.id}/submit`, {
-      method: 'POST', body: { link: 'https://example.test/v2', description: 'Reworked' },
-    });
+    await submit('ana', asset.id, 'https://example.test/v2', 'Reworked');
 
-    const timer = await timerOf(asset.id);
-    assert.strictEqual(timer.rounds.length, 2, 'one entry per round');
-    assert.deepStrictEqual(timer.rounds.map((r) => r.round), [1, 2]);
-    assert.strictEqual(timer.rounds[0].seconds, round1, 'round 1 is untouched by round 2');
-    assert.ok(timer.rounds[1].seconds >= 1);
-    assert.strictEqual(timer.totalSeconds, timer.rounds[0].seconds + timer.rounds[1].seconds,
+    const work = await workOf(asset.id);
+    assert.strictEqual(work.rounds.length, 2, 'one entry per round');
+    assert.deepStrictEqual(work.rounds.map((r) => r.round), [1, 2]);
+    assert.strictEqual(work.rounds[0].seconds, round1, 'round 1 is untouched by round 2');
+    assert.ok(work.rounds[1].seconds >= 1);
+    assert.strictEqual(work.totalSeconds, work.rounds[0].seconds + work.rounds[1].seconds,
       'the total is all rounds combined');
+
+    // Each round carries its own pair of stamps, and the second begins after
+    // the first ended — a rework loop is a new span, not an extension.
+    for (const r of work.rounds) {
+      assert.ok(r.startedAt && r.submittedAt, `round ${r.round} has both stamps`);
+      assert.strictEqual(r.open, false);
+    }
+    assert.ok(new Date(work.rounds[1].startedAt) >= new Date(work.rounds[0].submittedAt),
+      'round 2 starts no earlier than round 1 was handed in');
+    const closes = (await sessionsOf(asset.id)).map((r) => r.ended_reason);
+    assert.deepStrictEqual(closes, ['submitted', 'submitted']);
   });
 
   await t.test('CD Changes: no clock until the lead relays the notes', async () => {
     const asset = await newAsset('Relay First');
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
+    await as('ana', `/assets/${asset.id}/start`, { method: 'POST' });
     await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v1', description: 'First' },
     });
@@ -222,12 +246,12 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
 
     await as('lee', `/assets/${asset.id}/relay`, { method: 'POST', body: {} });
     assert.strictEqual((await start('ana', asset.id)).status, 200, 'and then the cycle runs again');
-    await pauseIt('ana', asset.id);
+    assert.strictEqual((await submit('ana', asset.id, 'https://example.test/relay-v2')).status, 201);
   });
 
-  await t.test('the clock never runs outside the working states', async () => {
+  await t.test('work cannot be started outside the working states', async () => {
     const asset = await newAsset('Wrong Moment');
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
+    await as('ana', `/assets/${asset.id}/start`, { method: 'POST' });
     await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v1', description: 'Done' },
     });
@@ -237,7 +261,7 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
       ['root', 'deliver', {}],
     ]) {
       const refused = await start('ana', asset.id);
-      assert.strictEqual(refused.status, 409, `no clock in ${(await assetRow(asset.id)).status}`);
+      assert.strictEqual(refused.status, 409, `no start in ${(await assetRow(asset.id)).status}`);
       await as(who, `/assets/${asset.id}/${action}`, { method: 'POST', body });
     }
     assert.strictEqual((await start('ana', asset.id)).status, 409, 'nor after delivery');
@@ -493,20 +517,18 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
     assert.strictEqual(orphan.length, 0, 'specifically, not this one');
   });
 
-  await t.test('handing submitted work on: new person, Assigned, a clock at nothing', async () => {
+  await t.test('handing submitted work on: new person, Assigned, a fresh start stamp', async () => {
     // The case this exists for. Ana works, submits, and while a reviewer is
     // holding it the lead gives it to Bo — who has done none of it. Bo starts
-    // from the beginning, with a clock of their own. Ana's hours and Ana's
-    // submission are not discarded; they stay on Ana's now-closed round.
+    // from the beginning, with a start stamp of their own recorded when they
+    // click Accept and Start. Ana's hours and Ana's submission are not
+    // discarded; they stay on Ana's now-closed round.
     const asset = await newAsset('Handed In Review');
     await start('ana', asset.id);
     await sleep(1100);
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
-    await as('ana', `/assets/${asset.id}/submit`, {
-      method: 'POST', body: { link: 'https://example.test/ana-v1', description: 'Ana first pass' },
-    });
+    await submit('ana', asset.id, 'https://example.test/ana-v1', 'Ana first pass');
     assert.strictEqual((await assetRow(asset.id)).status, 'pending_tl_review');
-    const anaSpent = (await timerOf(asset.id)).currentSeconds;
+    const anaSpent = (await workOf(asset.id)).currentSeconds;
     assert.ok(anaSpent >= 1, `ana recorded something — got ${anaSpent}`);
 
     const handed = await as('lee', `/assets/${asset.id}/reassign`, {
@@ -521,8 +543,9 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
     assert.strictEqual(row.status, 'assigned', 'back to Assigned for the person who has not done it');
     assert.strictEqual(row.assignee_id, people.bo);
 
-    const after = await timerOf(asset.id);
-    assert.strictEqual(after.currentSeconds, 0, "bo's clock starts at nothing");
+    const after = await workOf(asset.id);
+    assert.strictEqual(after.currentSeconds, 0, "bo has recorded nothing yet");
+    assert.strictEqual(after.startedAt, null, 'and has no start stamp until they accept');
     assert.strictEqual(after.totalSeconds, anaSpent,
       "and ana's hours are still on the asset — not carried into bo's counter, not thrown away");
 
@@ -553,14 +576,21 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
     assert.match(event.note, /ana is on the trailer/);
     assert.match(event.note, /ana recorded/);
 
-    // Bo can now work it, and their clock is theirs alone.
-    assert.strictEqual((await start('bo', asset.id)).status, 200);
+    // Bo can now work it, and the stamp that opens their stretch is their own.
+    const bosStart = await start('bo', asset.id);
+    assert.strictEqual(bosStart.status, 200);
+    assert.ok(bosStart.body.work.startedAt, "bo's own start stamp, recorded on their click");
     await sleep(1100);
-    await pauseIt('bo', asset.id);
-    const bosOwn = await timerOf(asset.id);
+    await submit('bo', asset.id, 'https://example.test/bo-v1');
+    const bosOwn = await workOf(asset.id);
     assert.ok(bosOwn.currentSeconds >= 1, 'bo accrues');
     assert.ok(bosOwn.currentSeconds < bosOwn.totalSeconds,
       "bo's round is a part of the asset's lifetime, not the whole of it");
+
+    // Ana's stretch was closed by the hand-over, not by anything ana did.
+    const closes = (await sessionsOf(asset.id)).map((r) => r.ended_reason);
+    assert.deepStrictEqual(closes, ['submitted', 'submitted'],
+      "ana's was already closed by her submission before the hand-over reached it");
   });
 
   await t.test('the panel dropdown hands work on the same way the button does', async () => {
@@ -572,12 +602,9 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
     const asset = await newAsset('Dropdown Handover');
     await start('ana', asset.id);
     await sleep(1100);
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
-    await as('ana', `/assets/${asset.id}/submit`, {
-      method: 'POST', body: { link: 'https://example.test/dd-v1' },
-    });
+    await submit('ana', asset.id, 'https://example.test/dd-v1');
     assert.strictEqual((await assetRow(asset.id)).status, 'pending_tl_review');
-    const anaSpent = (await timerOf(asset.id)).currentSeconds;
+    const anaSpent = (await workOf(asset.id)).currentSeconds;
 
     // pat created it, so pat is who the dropdown is offered to.
     const res = await as('pat', `/assets/${asset.id}`, {
@@ -591,8 +618,9 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
     assert.strictEqual(row.assignee_id, people.bo);
 
     // And it is a genuinely new round, not a rename of the old one.
-    const after = await timerOf(asset.id);
-    assert.strictEqual(after.currentSeconds, 0, "bo's clock starts at nothing here too");
+    const after = await workOf(asset.id);
+    assert.strictEqual(after.currentSeconds, 0, 'bo has recorded nothing here either');
+    assert.strictEqual(after.startedAt, null, 'and has no start stamp yet');
     assert.strictEqual(after.totalSeconds, anaSpent, "and ana's hours survive");
 
     const episodes = await sql(cfg,
@@ -615,7 +643,7 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
 
   await t.test("a new assignee's counter never shows the last person's hours", async () => {
     // What made the Accept and Start button disappear. The panel decides
-    // between "Accept and Start" and "Resume" on whether the CURRENT round has
+    // whether to offer Accept and Start on whether the CURRENT round has
     // any time in it, and that figure fell back to the asset's LIFETIME total
     // whenever there was no assignment episode to read — on a deployment where
     // asset_assignments could not be created, every reassigned asset therefore
@@ -623,11 +651,8 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
     const asset = await newAsset('Counter Scope');
     await start('ana', asset.id);
     await sleep(1100);
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
-    await as('ana', `/assets/${asset.id}/submit`, {
-      method: 'POST', body: { link: 'https://example.test/cs-v1' },
-    });
-    const anaSpent = (await timerOf(asset.id)).currentSeconds;
+    await submit('ana', asset.id, 'https://example.test/cs-v1');
+    const anaSpent = (await workOf(asset.id)).currentSeconds;
     assert.ok(anaSpent >= 1);
 
     await as('lee', `/assets/${asset.id}/reassign`, {
@@ -635,11 +660,11 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
     });
 
     // With episodes, and — the case that broke — without them.
-    const withEpisodes = await timerOf(asset.id);
+    const withEpisodes = await workOf(asset.id);
     assert.strictEqual(withEpisodes.currentSeconds, 0);
 
     await sql(cfg, `UPDATE work_sessions SET assignment_id = NULL WHERE asset_id = '${asset.id}'`);
-    const withoutEpisodes = await timerOf(asset.id);
+    const withoutEpisodes = await workOf(asset.id);
     assert.strictEqual(withoutEpisodes.currentSeconds, 0,
       "with nothing to scope by, it falls back to the current assignee's own sessions — never to the lifetime");
     assert.strictEqual(withoutEpisodes.totalSeconds, anaSpent, 'the lifetime is still reported, separately');
@@ -671,7 +696,7 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
     assert.strictEqual(theirArtist.status, 201, JSON.stringify(theirArtist.body));
 
     const asset = await newAsset('Across Teams');
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
+    await as('ana', `/assets/${asset.id}/start`, { method: 'POST' });
     await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/at-v1' },
     });
@@ -701,7 +726,7 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
     assert.ok(!loose[0].r && !loose[0].t, 'nobody leads them');
 
     const asset = await newAsset('No Lead');
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
+    await as('ana', `/assets/${asset.id}/start`, { method: 'POST' });
     await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/nl-v1' },
     });
@@ -712,7 +737,7 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
     const theirToken = (await call('/auth/login', {
       method: 'POST', body: { email: 'oona@zvky.test', password: PASSWORD },
     })).body.token;
-    await call(`/assets/${asset.id}/timer/start`, { token: theirToken, method: 'POST' });
+    await call(`/assets/${asset.id}/start`, { token: theirToken, method: 'POST' });
     const resubmitted = await call(`/assets/${asset.id}/submit`, {
       token: theirToken, method: 'POST', body: { link: 'https://example.test/nl-v2' },
     });
@@ -744,27 +769,29 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
     // Accept and Start, then it goes.
     assert.strictEqual((await start('ana', asset.id)).status, 200);
     assert.strictEqual((await assetRow(asset.id)).status, 'in_progress');
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
+    await as('ana', `/assets/${asset.id}/start`, { method: 'POST' });
     assert.strictEqual((await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/now-ok' },
     })).status, 201);
     assert.strictEqual((await assetRow(asset.id)).status, 'pending_tl_review');
   });
 
-  await t.test('pausing does not put submitting out of reach again', async () => {
-    // Accepting is what unlocks it, not the clock ticking. Pause and Resume
-    // move the timer, never the status, so neither may take the button away.
-    const asset = await newAsset('Paused Midway');
+  await t.test('one Accept and Start is enough — nothing can take it back', async () => {
+    // Accepting is what unlocks submitting. There is nothing left that could
+    // undo it: the stretch stays open from the click to the submission, and
+    // the only endpoint that used to close one early is gone.
+    const asset = await newAsset('Left Open Midway');
     await start('ana', asset.id);
     await sleep(1100);
-    await pauseIt('ana', asset.id);
-    assert.strictEqual((await assetRow(asset.id)).status, 'in_progress', 'pausing leaves it In Progress');
-    assert.strictEqual((await timerOf(asset.id)).running, false, 'the clock is stopped');
+    assert.strictEqual((await assetRow(asset.id)).status, 'in_progress');
+    assert.strictEqual((await workOf(asset.id)).open, true, 'still open, hours later or minutes');
 
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
-    assert.strictEqual((await as('ana', `/assets/${asset.id}/submit`, {
-      method: 'POST', body: { link: 'https://example.test/paused' },
-    })).status, 201, 'and it can still be handed in');
+    // A second click changes nothing, and refusing it is not a state change.
+    assert.strictEqual((await start('ana', asset.id)).status, 409);
+    assert.strictEqual((await assetRow(asset.id)).status, 'in_progress', 'still In Progress');
+
+    assert.strictEqual((await submit('ana', asset.id, 'https://example.test/left-open')).status, 201,
+      'and it can be handed in');
   });
 
   await t.test('a reassigned asset makes its new owner start it too', async () => {
@@ -773,10 +800,7 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
     const asset = await newAsset('Handed Then Submitted');
     await start('ana', asset.id);
     await sleep(1100);
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
-    await as('ana', `/assets/${asset.id}/submit`, {
-      method: 'POST', body: { link: 'https://example.test/ana-v1' },
-    });
+    await submit('ana', asset.id, 'https://example.test/ana-v1');
     await as('lee', `/assets/${asset.id}/reassign`, {
       method: 'POST', body: { assigneeId: people.bo },
     });
@@ -788,12 +812,11 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
     assert.strictEqual(early.status, 409, 'the new owner starts from the beginning too');
     assert.match(early.body.error, /Start the work before submitting it/);
 
-    assert.strictEqual((await start('bo', asset.id)).status, 200);
-    assert.strictEqual((await timerOf(asset.id)).currentSeconds, 0, 'their round begins at nothing');
-    await as('bo', `/assets/${asset.id}/timer/start`, { method: 'POST' });
-    assert.strictEqual((await as('bo', `/assets/${asset.id}/submit`, {
-      method: 'POST', body: { link: 'https://example.test/bo-v1' },
-    })).status, 201);
+    const bosStart = await start('bo', asset.id);
+    assert.strictEqual(bosStart.status, 200);
+    assert.ok(bosStart.body.work.startedAt, 'a fresh start stamp, recorded on their click');
+    assert.strictEqual((await workOf(asset.id)).currentSeconds, 0, 'their round begins at nothing');
+    assert.strictEqual((await submit('bo', asset.id, 'https://example.test/bo-v1')).status, 201);
   });
 
   await t.test('a rework round needs no second acceptance', async () => {
@@ -801,44 +824,40 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
     // underway. Requiring one would strand every round after the first.
     const asset = await newAsset('Rework Round');
     await start('ana', asset.id);
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
-    await as('ana', `/assets/${asset.id}/submit`, {
-      method: 'POST', body: { link: 'https://example.test/rr-v1' },
-    });
+    await submit('ana', asset.id, 'https://example.test/rr-v1');
     await as('lee', `/assets/${asset.id}/review`, {
       method: 'POST', body: { decision: 'changes_requested', text: 'Softer light' },
     });
     assert.strictEqual((await assetRow(asset.id)).status, 'tl_changes_requested');
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
+    await as('ana', `/assets/${asset.id}/start`, { method: 'POST' });
     assert.strictEqual((await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/rr-v2' },
     })).status, 201, 'straight back in, no Accept and Start needed');
   });
 
-  await t.test('a clock with nowhere to write does not trap the work in Assigned', async () => {
-    // Accepting and recording time are two things, and only the second one is
-    // optional. They ran the other way round — a 503 above the transition — so
-    // on a deployment whose work_sessions table could not be created the artist
-    // could not accept, and once submitting required In Progress the asset
-    // would have been stuck in Assigned for good.
+  await t.test('nowhere to write the stamp does not trap the work in Assigned', async () => {
+    // Accepting and recording the stamp are two things, and only the second one
+    // is optional. They ran the other way round — a 503 above the transition —
+    // so on a deployment whose work_sessions table could not be created the
+    // artist could not accept, and once submitting required In Progress the
+    // asset would have been stuck in Assigned for good.
     const asset = await newAsset('No Table To Write To');
     await sql(cfg, 'DROP TABLE IF EXISTS work_sessions');
     try {
       const accepted = await start('ana', asset.id);
       assert.strictEqual(accepted.status, 200, 'accepting still works');
       assert.strictEqual(accepted.body.accepted, true);
-      assert.strictEqual(accepted.body.timerUnavailable, true, 'and says the clock could not run');
+      assert.strictEqual(accepted.body.workLogUnavailable, true, 'and says nothing could be recorded');
       assert.strictEqual((await assetRow(asset.id)).status, 'in_progress');
 
-      await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
-      assert.strictEqual((await as('ana', `/assets/${asset.id}/submit`, {
-        method: 'POST', body: { link: 'https://example.test/no-clock' },
-      })).status, 201, 'and the work can still be handed in');
+      assert.strictEqual((await submit('ana', asset.id, 'https://example.test/no-log')).status, 201,
+        'and the work can still be handed in');
     } finally {
       await sql(cfg, `CREATE TABLE IF NOT EXISTS work_sessions (
         id CHAR(36) NOT NULL PRIMARY KEY, asset_id CHAR(36) NOT NULL, user_id CHAR(36) NULL,
         round INT NOT NULL DEFAULT 1, assignment_id CHAR(36) NULL,
         started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, ended_at DATETIME NULL, seconds INT NULL,
+        ended_reason VARCHAR(24) NULL,
         KEY idx_ws_asset (asset_id), KEY idx_ws_open (asset_id, ended_at)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
     }
@@ -851,11 +870,8 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
     const asset = await newAsset('Back To Ana');
     await start('ana', asset.id);
     await sleep(1100);
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
-    await as('ana', `/assets/${asset.id}/submit`, {
-      method: 'POST', body: { link: 'https://example.test/loop-v1' },
-    });
-    const before = (await timerOf(asset.id)).currentSeconds;
+    await submit('ana', asset.id, 'https://example.test/loop-v1');
+    const before = (await workOf(asset.id)).currentSeconds;
 
     await as('lee', `/assets/${asset.id}/review`, {
       method: 'POST', body: { decision: 'changes_requested', text: 'Softer light' },
@@ -868,27 +884,44 @@ test('assigned, accepted, timed', { skip: cfg ? false : SKIP_REASON }, async (t)
 
     await start('ana', asset.id);
     await sleep(1100);
-    await pauseIt('ana', asset.id);
-    const after = await timerOf(asset.id);
+    await submit('ana', asset.id, 'https://example.test/loop-v2');
+    const after = await workOf(asset.id);
     assert.ok(after.currentSeconds > before,
-      `the same person's clock keeps climbing across the round — ${before} then ${after.currentSeconds}`);
+      `the same person's time keeps climbing across the round — ${before} then ${after.currentSeconds}`);
     assert.strictEqual(after.currentSeconds, after.totalSeconds,
       'and with one person on it, the round and the asset are the same hours');
     assert.ok(after.rounds.length > 1, 'the per-round breakdown still separates them');
+    // One stretch, two rounds inside it — the episode did not end, so the
+    // stamps that matter are per round, not per person.
+    assert.strictEqual(after.startedAt !== null, true);
   });
 
-  await t.test('reassigning mid-round keeps the time already spent', async () => {
-    // Total is lifetime effort on the asset, whoever spent it.
+  await t.test('reassigning mid-round closes the outgoing stretch and keeps its time', async () => {
+    // Total is lifetime effort on the asset, whoever spent it. The hand-over is
+    // what closes ana's stretch — she never clicked anything to end it, because
+    // there is nothing left to click.
     const asset = await newAsset('Handed Over');
     await start('ana', asset.id);
     await sleep(1100);
-    await pauseIt('ana', asset.id);
-    const before = (await timerOf(asset.id)).totalSeconds;
+    assert.strictEqual((await workOf(asset.id)).open, true, 'open while ana holds it');
 
     await as('pat', `/assets/${asset.id}`, { method: 'PATCH', body: { assigneeId: people.bo } });
-    assert.strictEqual((await start('ana', asset.id)).status, 403, 'the old assignee lost the clock');
-    assert.strictEqual((await start('bo', asset.id)).status, 200, 'the new one has it');
-    await pauseIt('bo', asset.id);
-    assert.ok((await timerOf(asset.id)).totalSeconds >= before, 'nothing already spent was lost');
+
+    const closed = await sessionsOf(asset.id);
+    assert.strictEqual(closed.length, 1);
+    assert.ok(closed[0].ended_at, 'the hand-over closed it');
+    assert.strictEqual(closed[0].ended_reason, 'reassigned', 'and recorded why');
+    assert.ok(closed[0].seconds >= 1, 'with the elapsed span on it');
+    const before = (await workOf(asset.id)).totalSeconds;
+
+    assert.strictEqual((await start('ana', asset.id)).status, 403, 'the old assignee cannot start it again');
+    assert.strictEqual((await start('bo', asset.id)).status, 200, 'the new one records their own start');
+    assert.ok((await workOf(asset.id)).totalSeconds >= before, 'nothing already spent was lost');
+
+    // Taking it off everybody closes the stretch too, and says so.
+    await as('pat', `/assets/${asset.id}`, { method: 'PATCH', body: { assigneeId: null } });
+    const reasons = (await sessionsOf(asset.id)).map((r) => r.ended_reason);
+    assert.deepStrictEqual(reasons, ['reassigned', 'unassigned'],
+      'every close records what caused it — nothing a person clicks ends one');
   });
 });

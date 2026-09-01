@@ -205,7 +205,7 @@ test('efficiency reports', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     return made.body.asset;
   };
   const submit = async (assetId, who, link) => {
-    await as(who, `/assets/${assetId}/timer/start`, { method: 'POST' });
+    await as(who, `/assets/${assetId}/start`, { method: 'POST' });
     const r = await as(who, `/assets/${assetId}/submit`, { method: 'POST', body: { link } });
     assert.ok(r.status < 400, JSON.stringify(r.body));
   };

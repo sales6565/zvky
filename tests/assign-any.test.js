@@ -90,7 +90,7 @@ test('Assign Work to Anyone, end to end', { skip: cfg ? false : SKIP_REASON }, a
 
   await t.test('and during a change request, where handing on is the action', async () => {
     const asset = await newAsset('pat', 'In Rework', people.ana);
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
+    await as('ana', `/assets/${asset.id}/start`, { method: 'POST' });
     await as('ana', `/assets/${asset.id}/submit`, { method: 'POST', body: { link: 'https://ex.test/v1' } });
     await as('lee', `/assets/${asset.id}/review`, { method: 'POST',
       body: { decision: 'changes_requested', text: 'again' } });

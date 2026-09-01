@@ -8,18 +8,19 @@
 // rather than in a branch:
 //
 //   work sent back to the SAME person   the assignee does not change, so the
-//   (TL Changes, CD Changes)            episode does not end. Their clock keeps
+//   (TL Changes, CD Changes)            episode does not end. Their time keeps
 //                                       accumulating across the round, which is
 //                                       the rule already agreed.
 //
 //   reassigned to a DIFFERENT person    the assignee changes, so the episode
 //                                       ends and a new one opens. The new
-//                                       person's clock starts at nothing,
-//                                       because it is a different episode with
-//                                       no sessions in it yet. The outgoing
-//                                       person's time is not discarded — it
-//                                       stays on their closed episode, and in
-//                                       the asset's lifetime total.
+//                                       person records a fresh start stamp when
+//                                       they click Accept and Start, because it
+//                                       is a different episode with no sessions
+//                                       in it yet. The outgoing person's time
+//                                       is not discarded — it stays on their
+//                                       closed episode, and in the asset's
+//                                       lifetime total.
 //
 // So nothing has to decide "is this a reset or a continuation". The question is
 // only ever "did the assignee change", and the totals follow.
@@ -32,7 +33,7 @@ const { v4: uuid } = require('uuid');
 // The table arrives with a migration step, and a step can fail — on shared
 // hosting, usually for want of CREATE. When it has not arrived, assignment
 // history is unavailable but assigning, reviewing and delivering all still
-// work. Same bargain work-timer makes for the clock.
+// work. Same bargain work-log makes for the stamps.
 function unavailable(err) {
   const code = err && err.code;
   return code === 'ER_NO_SUCH_TABLE' || code === 'ER_BAD_FIELD_ERROR';
@@ -148,14 +149,17 @@ async function listFor(db, assetIds) {
       `SELECT ass.*, u.\`name\` AS user_name, u.avatar_updated_at AS user_photo_at,
               b.\`name\` AS assigned_by_name,
               COALESCE(t.seconds, 0) AS seconds,
-              COALESCE(t.running, 0) AS running
+              COALESCE(t.still_open, 0) AS still_open,
+              t.work_started_at, t.work_ended_at
          FROM asset_assignments ass
          LEFT JOIN users u ON u.id = ass.user_id
          LEFT JOIN users b ON b.id = ass.assigned_by_id
          LEFT JOIN (
            SELECT assignment_id,
                   SUM(COALESCE(seconds, TIMESTAMPDIFF(SECOND, started_at, NOW()))) AS seconds,
-                  SUM(ended_at IS NULL) AS running
+                  SUM(ended_at IS NULL) AS still_open,
+                  MIN(started_at) AS work_started_at,
+                  MAX(ended_at) AS work_ended_at
              FROM work_sessions WHERE assignment_id IS NOT NULL GROUP BY assignment_id
          ) t ON t.assignment_id = ass.id
         WHERE ass.asset_id IN ($1)
@@ -212,7 +216,14 @@ async function listFor(db, assetIds) {
       endedReason: row.ended_reason,
       active: row.ended_at === null,
       seconds: Number(row.seconds) || 0,
-      running: Number(row.running) > 0,
+      /* The two stamps this stretch of work is measured by. `workOpen` means
+         started and not yet handed in — a state, not a clock. A stretch still
+         open has no submit stamp: reporting MAX(ended_at) there would hand back
+         the end of an earlier closed session in the same episode, which reads
+         on screen as "submitted" when nothing has been. */
+      workOpen: Number(row.still_open) > 0,
+      startedAt: row.work_started_at || null,
+      submittedAt: Number(row.still_open) > 0 ? null : (row.work_ended_at || null),
       submissions: mine.map((v) => ({
         versionNumber: v.version_number, stage: v.stage, link: v.link,
         description: v.description, at: v.created_at,

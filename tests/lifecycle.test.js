@@ -261,7 +261,7 @@ test('client and project lifecycle', { skip: cfg ? false : SKIP_REASON }, async 
     assert.strictEqual((await as('root', `/assets/project/${projectId}`, {
       method: 'POST', body: { name: 'Late Addition', type: 'prop' },
     })).status, 201);
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
+    await as('ana', `/assets/${asset.id}/start`, { method: 'POST' });
     assert.strictEqual((await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v1', description: 'done' },
     })).status, 201);
@@ -285,7 +285,7 @@ test('client and project lifecycle', { skip: cfg ? false : SKIP_REASON }, async 
     const asset = (await as('root', `/assets/project/${projectId}`, {
       method: 'POST', body: { name: 'Kept', type: 'character', assigneeId: people.ana },
     })).body.asset;
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
+    await as('ana', `/assets/${asset.id}/start`, { method: 'POST' });
     await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v1', description: 'First pass' },
     });

@@ -816,14 +816,14 @@ async function ensureAssetPanelColumns(db, log) {
   if (added.length) log(`Schema: added ${added.join(', ')}.`);
 }
 
-// The 'assigned' state, and the work_sessions table behind the timer.
+// The 'assigned' state, and the work_sessions table behind time recording.
 //
 // The status CHECK constraint has to be rebuilt to admit the new value —
 // MySQL/MariaDB cannot widen one in place. Existing rows are untouched: an
 // asset that was in_progress under the old rule stays in_progress, because its
 // work genuinely had started; only assignments made from now on land in
 // 'assigned' and wait for the assignee to accept.
-// The work_sessions table behind the timer.
+// The work_sessions table: when work started and when it was handed in.
 //
 // Its own step, separate from the status constraint below it. They used to be
 // one, with the table first — so on a database where creating the table failed,
@@ -842,7 +842,7 @@ async function ensureWorkSessions(db, log) {
   // Without the foreign keys, then with them. A referential constraint can be
   // refused for reasons that have nothing to do with this table — a collation
   // that does not match assets.id, an engine mismatch, a user without
-  // REFERENCES — and losing the whole table to that would turn the timer off
+  // REFERENCES — and losing the whole table to that would turn time recording off
   // for a reason nobody could see. The cascade is a nicety; the table is not.
   await db.query(await applyTableOptions(db, `CREATE TABLE work_sessions (
     id         CHAR(36)  NOT NULL PRIMARY KEY,
@@ -852,10 +852,11 @@ async function ensureWorkSessions(db, log) {
     started_at DATETIME  NOT NULL DEFAULT CURRENT_TIMESTAMP,
     ended_at   DATETIME  NULL,
     seconds    INT       NULL,
+    ended_reason VARCHAR(24) NULL,
     KEY idx_ws_asset (asset_id),
     KEY idx_ws_open (asset_id, ended_at)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
-  log('Schema: added work_sessions — the auditable log behind the asset timer.');
+  log('Schema: added work_sessions — the auditable log of when work started and was handed in.');
 
   for (const [name, sql] of [
     ['fk_ws_asset', 'ALTER TABLE work_sessions ADD CONSTRAINT fk_ws_asset FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE'],
@@ -865,7 +866,7 @@ async function ensureWorkSessions(db, log) {
       await db.query(sql);
     } catch (err) {
       log(`Schema: work_sessions was created, but ${name} was refused — ${err.sqlMessage || err.message}`);
-      log('         The timer works; deleting an asset will not clear its sessions automatically.');
+      log('         Time recording works; deleting an asset will not clear its sessions automatically.');
     }
   }
 }
@@ -936,7 +937,7 @@ async function ensureAssignmentEpisodes(db, log) {
   }
 
   // Every asset that already has somebody on it gets an open episode, so the
-  // Assets List and the timer have something to attribute to from the first
+  // Assets List and the work log have something to attribute to from the first
   // page load rather than only for work assigned after this deployment.
   const { rows: gap } = await db.query(
     `SELECT COUNT(*) AS n FROM assets a
@@ -1386,6 +1387,33 @@ async function ensureBranding(db, log) {
   }
 }
 
+/* Why a work session ended.
+ *
+ * Added with the change from a running timer to plain start/submit timestamps.
+ * Its second job is to mark where the meaning of work_sessions.seconds changes:
+ * rows written under the old rule hold ACTIVE worked time, summed across
+ * however many pause/resume stretches a round had, and every row written under
+ * the new rule holds ELAPSED time between one start and one submit. Only the
+ * new ones carry a reason, so the earliest row that has one is the cutover —
+ * see cutover() in src/work-log.js. Backfilling the existing rows with a guess
+ * would destroy exactly the distinction the column exists to make, so they are
+ * deliberately left NULL.
+ */
+async function ensureSessionEndReason(db, log) {
+  const { rows: table } = await db.query(
+    `SELECT TABLE_NAME AS t FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'work_sessions'`
+  );
+  if (!table.length) return;
+  const { rows: col } = await db.query(
+    `SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'work_sessions' AND COLUMN_NAME = 'ended_reason'`
+  );
+  if (col.length) return;
+  await db.query('ALTER TABLE work_sessions ADD COLUMN ended_reason VARCHAR(24) NULL');
+  log('Schema: work_sessions rows now record why they ended, and where Time Spent changed meaning.');
+}
+
 const STEPS = [
   ['stale role constraints', dropStaleRoleConstraints],
   ['users.role column width', widenRoleColumn],
@@ -1437,6 +1465,8 @@ const STEPS = [
   ['working hours mirror', (db) => workSchedule.load(db)],
   // After users and assets, whose keys it points at.
   ['notifications', ensureNotifications],
+  // After work_sessions, whose column it adds.
+  ['work session end reason', ensureSessionEndReason],
 ];
 
 async function run(db, log = console.log) {

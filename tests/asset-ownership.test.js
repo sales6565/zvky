@@ -70,7 +70,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
   }
   // Drive an asset to TL Changes, which is where Reassign becomes available.
   async function intoRework(assetId, artist) {
-    await as(artist, `/assets/${assetId}/timer/start`, { method: 'POST' });
+    await as(artist, `/assets/${assetId}/start`, { method: 'POST' });
     assert.strictEqual((await as(artist, `/assets/${assetId}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v1', description: 'First pass' },
     })).status, 201);
@@ -198,7 +198,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
 
     // The pipeline is untouched: submitting is a separate permission, so the
     // work still moves even though the record is not theirs to change.
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
+    await as('ana', `/assets/${asset.id}/start`, { method: 'POST' });
     assert.strictEqual((await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v1', description: 'First pass' },
     })).status, 201, 'and they can still submit it for review');
@@ -260,7 +260,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     // Waiting on a reviewer IS reassignable now — and it means something
     // different from reassigning rework: the work has been submitted, so
     // handing it on returns it to Assigned for somebody who has not done it.
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
+    await as('ana', `/assets/${asset.id}/start`, { method: 'POST' });
     await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v1', description: 'First pass' },
     });
@@ -272,7 +272,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     assert.strictEqual(handed.body.reassigned.inReview, true, 'reported as the in-review case');
 
     // Put it back the way the rest of this test expects.
-    await as('bo', `/assets/${asset.id}/timer/start`, { method: 'POST' });
+    await as('bo', `/assets/${asset.id}/start`, { method: 'POST' });
     await as('bo', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v1b', description: 'Bo picks it up' },
     });
@@ -284,7 +284,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     // not done the work in front of them, whichever stage it was sitting in.
     assert.strictEqual(await statusOf(asset.id), 'assigned');
     // Put it back into rework for the rest of this test.
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
+    await as('ana', `/assets/${asset.id}/start`, { method: 'POST' });
     await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v1c', description: 'Again' },
     });
@@ -296,7 +296,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     assert.strictEqual((await reassign({ assigneeId: people.bo })).status, 200);
 
     // CD Review is the other reviewer's queue, and behaves the same way.
-    await as('bo', `/assets/${asset.id}/timer/start`, { method: 'POST' });
+    await as('bo', `/assets/${asset.id}/start`, { method: 'POST' });
     await as('bo', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v2', description: 'Reworked' },
     });
@@ -307,7 +307,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     assert.strictEqual(fromCd.body.asset.status, 'assigned');
 
     // Delivered is where it stops.
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
+    await as('ana', `/assets/${asset.id}/start`, { method: 'POST' });
     await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v3', description: 'Again' },
     });
@@ -339,7 +339,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     assert.strictEqual(await statusOf(asset.id), 'assigned', 'and it goes back to Assigned');
 
     // The creator can too. Put it back into rework first.
-    await as('bo', `/assets/${asset.id}/timer/start`, { method: 'POST' });
+    await as('bo', `/assets/${asset.id}/start`, { method: 'POST' });
     await as('bo', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/again', description: 'Again' },
     });
@@ -398,7 +398,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
 
     // The person it left no longer holds it.
     assert.strictEqual(await seenBy('ana', asset.id), undefined);
-    assert.strictEqual((await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' })).status,
+    assert.strictEqual((await as('ana', `/assets/${asset.id}/start`, { method: 'POST' })).status,
       403, 'and cannot start its clock again');
     /* Nor submit. The refusal is now 409 rather than 403 — the asset is back in
        Assigned, and "work has to be started before it can be handed in" is
@@ -408,7 +408,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     })).status >= 400, 'and cannot submit against it');
 
     // And the new one can carry on from where it was left.
-    await as('bo', `/assets/${asset.id}/timer/start`, { method: 'POST' });
+    await as('bo', `/assets/${asset.id}/start`, { method: 'POST' });
     assert.strictEqual((await as('bo', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v2', description: 'Reworked' },
     })).status, 201);
@@ -442,7 +442,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
        the two people the relay was protecting. What they must not lose is the
        feedback, so that is asserted here rather than assumed. */
     const asset = await newAsset('pat', 'Relay Check', people.ana);
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
+    await as('ana', `/assets/${asset.id}/start`, { method: 'POST' });
     await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v1', description: 'First' },
     });
@@ -467,7 +467,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     assert.strictEqual(theirs.versions.length, 1, 'and the previous submission');
 
     // They pick it up and carry on, from a round of their own.
-    await as('bo', `/assets/${asset.id}/timer/start`, { method: 'POST' });
+    await as('bo', `/assets/${asset.id}/start`, { method: 'POST' });
     assert.strictEqual(await statusOf(asset.id), 'in_progress');
     assert.strictEqual((await as('bo', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v2', description: 'Reworked' },
@@ -478,7 +478,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     /* The relay is untouched on the ordinary path: the change above is an
        alternative to it, not a replacement for it. */
     const asset = await newAsset('pat', 'Relay Intact', people.ana);
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
+    await as('ana', `/assets/${asset.id}/start`, { method: 'POST' });
     await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v1', description: 'First' },
     });
@@ -488,12 +488,12 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     });
     assert.strictEqual(await statusOf(asset.id), 'cd_changes_requested');
 
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
+    await as('ana', `/assets/${asset.id}/start`, { method: 'POST' });
     assert.strictEqual((await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v2', description: 'Too soon' },
     })).status, 403, 'the notes have not been passed on yet');
     assert.strictEqual((await as('lee', `/assets/${asset.id}/relay`, { method: 'POST', body: {} })).status, 200);
-    await as('ana', `/assets/${asset.id}/timer/start`, { method: 'POST' });
+    await as('ana', `/assets/${asset.id}/start`, { method: 'POST' });
     assert.strictEqual((await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v2', description: 'Reworked' },
     })).status, 201, 'and then it is theirs');

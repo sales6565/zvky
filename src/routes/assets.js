@@ -32,7 +32,7 @@ const {
 } = require('../permissions');
 const { assignableRoles, roleDef } = require('../roles');
 const lifecycle = require('../lifecycle');
-const workTimer = require('../work-timer');
+const workLog = require('../work-log');
 const assignments = require('../assignments');
 const assetImport = require('../asset-import');
 const workflow = require('../asset-workflow');
@@ -106,7 +106,7 @@ async function attachTasksAndNotes(assets) {
     [ids]
   )).rows);
 
-  const timeSpent = await workTimer.totalsFor(db, ids);
+  const timeSpent = await workLog.totalsFor(db, ids);
   // Who has held each asset, in order, with the time and submissions from each
   // stretch. The Assets List draws one row per entry here; the dashboard
   // ignores it and keeps drawing one card per asset.
@@ -118,12 +118,19 @@ async function attachTasksAndNotes(assets) {
     // What the person holding it now has put in, as distinct from the asset's
     // lifetime above. The panel shows this one; showing the lifetime to a new
     // assignee told them somebody else's hours were theirs, and made the panel
-    // offer Resume where it should have offered Accept and Start.
+    // hide Accept and Start where it should have offered it.
     round_seconds: (episodes.get(a.id) || []).reduce(
       (n, ep) => (ep.active ? ep.seconds : n),
       (timeSpent.get(a.id) || {}).currentSeconds || 0
     ),
-    timer_running: Boolean((timeSpent.get(a.id) || {}).running),
+    /* The stamps for the stretch the current holder is on: when they started,
+       and when they handed it in. Taken from the open episode where there is
+       one, so a new assignee's panel shows their own start rather than the last
+       person's. `work_open` is "started and not yet submitted" — a state, not a
+       clock; nothing ticks it. */
+    work_open: Boolean(currentStamps(episodes, timeSpent, a.id).open),
+    started_at: currentStamps(episodes, timeSpent, a.id).startedAt,
+    submitted_at: currentStamps(episodes, timeSpent, a.id).submittedAt,
     assignments: episodes.get(a.id) || [],
     // MySQL stores the flag as TINYINT(1); hand the browser a real boolean.
     tasks: tasks.filter((t) => t.asset_id === a.id).map((t) => ({ ...t, done: Boolean(t.done) })),
@@ -131,6 +138,20 @@ async function attachTasksAndNotes(assets) {
     versions: versions.filter((v) => v.asset_id === a.id),
     feedback: feedback.filter((f) => f.asset_id === a.id),
   }));
+}
+
+/* The start and submit stamps for whoever holds an asset now.
+ *
+ * Prefers the open assignment episode, because that is the stretch the panel is
+ * about. Falls back to the whole-asset figures — which totalsFor already scopes
+ * to the current assignee — on a deployment where asset_assignments could not
+ * be created. Never falls back to the asset's lifetime: those are somebody
+ * else's stamps. */
+function currentStamps(episodes, totals, assetId) {
+  const open = (episodes.get(assetId) || []).find((ep) => ep.active);
+  if (open) return { startedAt: open.startedAt, submittedAt: open.submittedAt, open: open.workOpen };
+  const t = totals.get(assetId) || {};
+  return { startedAt: t.startedAt || null, submittedAt: t.submittedAt || null, open: Boolean(t.open) };
 }
 
 // A user's name for an audit line, from whichever connection the caller is on.
@@ -447,7 +468,7 @@ router.patch('/:id', async (req, res) => {
     // episode ends and their number keeps climbing — the two cases separate
     // themselves here, on the one question that actually distinguishes them.
     if (assigneeChanged) {
-      await workTimer.pause(conn, req.params.id);
+      await workLog.close(conn, req.params.id, req.body.assigneeId ? 'reassigned' : 'unassigned');
       await assignments.open(conn, {
         assetId: req.params.id, userId: req.body.assigneeId || null,
         assignedById: req.user.id, status: asset.status,
@@ -737,9 +758,9 @@ router.post('/:id/submit', upload.single('file'), async (req, res) => {
   // was meant for them.
   const stage = verdict.to === 'pending_cd_review' ? 'cd' : 'tl';
 
-  // Submitting stops the clock. Before the version row is written, so the
-  // closing stretch still counts against the round it belongs to.
-  await workTimer.pause(db, req.params.id);
+  // Submitting stamps the end. Before the version row is written, so the round
+  // is closed against the round number it belongs to rather than the next one.
+  await workLog.close(db, req.params.id, 'submitted');
 
   const { rows: vCount } = await db.query('SELECT COUNT(*) AS n FROM asset_versions WHERE asset_id = $1', [req.params.id]);
   const versionNumber = Number(vCount[0].n) + 1;
@@ -758,39 +779,39 @@ router.post('/:id/submit', upload.single('file'), async (req, res) => {
   res.status(201).json({ asset: withDetails });
 });
 
-// --- the clock ----------------------------------------------------------------
+// --- the work log -------------------------------------------------------------
 //
-// Who may run an asset's timer: the person the asset is assigned to, or a
-// full-access role for oversight. Not the creator — the clock measures the
-// assignee's own hands-on time, and nobody else should be able to start it
+// Who may stamp the start on an asset: the person it is assigned to, or a
+// full-access role for oversight. Not the creator — the log records the
+// assignee's own stretch of work, and nobody else should be able to open one
 // under their name.
-function mayRunTimer(req, asset) {
+function mayStartWork(req, asset) {
   if (hasFullAccess(req.user)) return true;
   return Boolean(asset.assignee_id) && asset.assignee_id === req.user.id;
 }
 
-// The statuses in which working (and therefore timing) makes sense. The two
-// changes-requested states are here because a rework round is the same cycle
-// again — accept the rework, pause, resume, submit — with the next round
-// number, exactly as the first round was.
-const TIMEABLE = ['assigned', 'in_progress', 'tl_changes_requested', 'cd_changes_requested'];
+// The statuses in which starting work makes sense. The two changes-requested
+// states are here because a rework round is the same cycle again — accept the
+// rework, submit — with the next round number, exactly as the first round was.
+const STARTABLE = ['assigned', 'in_progress', 'tl_changes_requested', 'cd_changes_requested'];
 
-// POST /api/assets/:id/timer/start — Accept and Start, and every Resume.
+// POST /api/assets/:id/start — Accept and Start.
 //
-// One endpoint for both, because they are one act: open a session. The only
-// difference is that from 'assigned' it also moves the asset to In Progress,
-// through the state machine's own accept transition rather than a side door.
-router.post('/:id/timer/start', async (req, res) => {
+// The only way a session opens. It stamps started_at and, from 'assigned', also
+// moves the asset to In Progress through the state machine's own accept
+// transition rather than a side door. There is no Resume: a round is one span
+// from this click to the submission, and that span is its Time Spent.
+router.post('/:id/start', async (req, res) => {
   const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
   const asset = rows[0];
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
   if (await projectClosedResponse(res, asset.project_id)) return undefined;
-  if (!mayRunTimer(req, asset)) {
-    return res.status(403).json({ error: 'Only the person this asset is assigned to can run its timer.' });
+  if (!mayStartWork(req, asset)) {
+    return res.status(403).json({ error: 'Only the person this asset is assigned to can start work on it.' });
   }
-  if (!TIMEABLE.includes(asset.status)) {
+  if (!STARTABLE.includes(asset.status)) {
     return res.status(409).json({
-      error: `The timer only runs while the work is on somebody's desk — this asset is in ${workflow.label(asset.status)}.`,
+      error: `Work can only be started while it is on somebody's desk — this asset is in ${workflow.label(asset.status)}.`,
     });
   }
   // CD Changes sits with the lead until relayed; the assignee cannot start
@@ -799,8 +820,8 @@ router.post('/:id/timer/start', async (req, res) => {
     return res.status(409).json({ error: 'The team lead has not passed the Creative Director\'s notes on yet.' });
   }
 
-  // Accepting the work comes first, and happens whether or not the clock can
-  // record it.
+  // Accepting the work comes first, and happens whether or not the start can
+  // be recorded.
   //
   // These were the other way round, with a 503 above the transition — so on a
   // deployment whose work_sessions table could not be created, an artist could
@@ -815,55 +836,52 @@ router.post('/:id/timer/start', async (req, res) => {
     moved = await applyTransition(req, res, asset, verdict, { note: verdict.describe });
   }
 
-  // A clock with nowhere to write says so plainly, rather than answering with a
+  // Nowhere to write the stamp says so plainly, rather than answering with a
   // database error — but only after the work has been accepted.
-  if (!(await workTimer.available(db))) {
+  if (!(await workLog.available(db))) {
     return res.status(moved ? 200 : 503).json({
       asset: moved || undefined,
       accepted: Boolean(moved),
-      timerUnavailable: true,
-      error: 'Time tracking is not available on this deployment yet — its table has not been created. See /api/health.',
+      workLogUnavailable: true,
+      error: 'Time recording is not available on this deployment yet — its table has not been created. See /api/health.',
     });
   }
 
   const episode = await assignments.current(db, req.params.id);
-  const started = await workTimer.start(db, req.params.id, req.user.id, episode && episode.id);
+  const started = await workLog.start(db, req.params.id, req.user.id, episode && episode.id);
   if (!started.ok) {
     // The double-click, the second tab, or a colleague a moment faster. The
-    // clock is already doing what the click wanted, so say so.
-    return res.status(409).json({ error: 'The timer is already running.', running: true, since: started.since });
+    // start is already stamped, so say when.
+    return res.status(409).json({ error: 'Work has already been started on this asset.', open: true, since: started.since });
   }
 
-  const timer = await workTimer.summary(db, req.params.id, episode && episode.id, asset.assignee_id);
-  if (moved) return res.status(200).json({ asset: moved, timer, accepted: true });
+  const work = await workLog.summary(db, req.params.id, episode && episode.id, asset.assignee_id);
+  if (moved) return res.status(200).json({ asset: moved, work, accepted: true });
   const { rows: fresh } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [req.params.id]);
   const [withDetails] = await attachTasksAndNotes(fresh);
-  return res.json({ asset: withDetails, timer });
+  return res.json({ asset: withDetails, work });
 });
 
-// POST /api/assets/:id/timer/pause — stop the clock. Idempotent on purpose:
-// two people pausing, or one person twice, ends at the same place.
-router.post('/:id/timer/pause', async (req, res) => {
-  const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
-  const asset = rows[0];
-  if (!asset) return res.status(404).json({ error: 'Asset not found' });
-  if (!mayRunTimer(req, asset)) {
-    return res.status(403).json({ error: 'Only the person this asset is assigned to can run its timer.' });
-  }
-  await workTimer.pause(db, req.params.id);
-  const paused = await assignments.current(db, req.params.id);
-  res.json({ timer: await workTimer.summary(db, req.params.id, paused && paused.id, asset.assignee_id) });
-});
+/* There is deliberately no pause endpoint.
+ *
+ * Pause and Resume were removed with the running timer: a round is now one span
+ * from Accept and Start to Submit for Review, and Time Spent is the difference
+ * between those two stamps. Every close of a session happens as a consequence
+ * of something else — submitting, being reassigned, being unassigned — so
+ * nothing a person clicks can end one on its own. */
 
-// GET /api/assets/:id/timer — the total, the per-round breakdown, and whether
-// it is running. Readable by anyone who can see the asset.
-router.get('/:id/timer', async (req, res) => {
+// GET /api/assets/:id/worklog — the stamps, the elapsed total and the per-round
+// breakdown. Readable by anyone who can see the asset.
+router.get('/:id/worklog', async (req, res) => {
   const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
   const asset = rows[0];
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
   if (!(await canViewAsset(req.user, asset))) return res.status(403).json({ error: 'No access to this asset' });
   const held = await assignments.current(db, req.params.id);
-  res.json({ timer: await workTimer.summary(db, req.params.id, held && held.id, asset.assignee_id), canRun: mayRunTimer(req, asset) });
+  res.json({
+    work: await workLog.summary(db, req.params.id, held && held.id, asset.assignee_id),
+    canStart: mayStartWork(req, asset),
+  });
 });
 
 // GET /api/assets/versions/:versionId/download — stream the uploaded file
@@ -1058,10 +1076,11 @@ router.post('/:id/reassign', async (req, res) => {
   try {
     await conn.query('BEGIN');
 
-    // Stop the outgoing person's clock and read what it finished on, before
-    // anything else moves. That number goes in the audit line: "who reassigned,
-    // from whom to whom, when, and what the outgoing session finally recorded".
-    await workTimer.pause(conn, asset.id);
+    // Stamp the end of the outgoing person's stretch and read what it came to,
+    // before anything else moves. That number goes in the audit line: "who
+    // reassigned, from whom to whom, when, and what the outgoing stretch came
+    // to".
+    await workLog.close(conn, asset.id, 'reassigned');
     const outgoing = await assignments.current(conn, asset.id);
     if (outgoing) {
       const { rows: spent } = await conn.query(

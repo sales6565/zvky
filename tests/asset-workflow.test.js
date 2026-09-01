@@ -369,12 +369,13 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(assigned.status, 200);
     assert.strictEqual(assigned.body.asset.status, 'assigned', 'not Not Assigned, not In Progress');
 
-    const accepted = await call(`/assets/${id}/timer/start`, { token: token.artist, method: 'POST' });
+    const accepted = await call(`/assets/${id}/start`, { token: token.artist, method: 'POST' });
     assert.strictEqual(accepted.status, 200, JSON.stringify(accepted.body));
     assert.strictEqual(accepted.body.accepted, true);
     assert.strictEqual(accepted.body.asset.status, 'in_progress');
-    assert.strictEqual(accepted.body.timer.running, true, 'and the clock is running');
-    await call(`/assets/${id}/timer/pause`, { token: token.artist, method: 'POST' });
+    assert.strictEqual(accepted.body.work.open, true, 'and the start is stamped');
+    assert.ok(accepted.body.work.startedAt, 'with the moment it was stamped at');
+    assert.strictEqual(accepted.body.work.submittedAt, null, 'and nothing submitted yet');
 
     const events = await historyOf(id);
     assert.deepStrictEqual(events.map((e) => e.action), ['assign', 'accept']);
@@ -385,9 +386,9 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     const id = await newAsset('Hero Character');
     assert.strictEqual(await statusOf(id), 'assigned', 'created with an assignee waits to be accepted');
 
-    assert.strictEqual((await call(`/assets/${id}/timer/start`, { token: token.artist, method: 'POST' })).status, 200);
+    assert.strictEqual((await call(`/assets/${id}/start`, { token: token.artist, method: 'POST' })).status, 200);
     assert.strictEqual(await statusOf(id), 'in_progress');
-    await act(id, 'timer/start', 'artist');
+    await act(id, 'start', 'artist');
     assert.strictEqual((await act(id, 'submit', 'artist',
       { link: 'http://nas/shots/hero-v1', description: 'First pass.' })).status, 201);
     assert.strictEqual(await statusOf(id), 'pending_tl_review');
@@ -407,7 +408,7 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
   await t.test('a TL-changes round goes back to the assignee and keeps both submissions', async () => {
     const id = await newAsset('Villain Character');
-    await act(id, 'timer/start', 'artist');
+    await act(id, 'start', 'artist');
     await act(id, 'submit', 'artist', { link: 'https://review.example.com/v1' });
 
     const rejected = await act(id, 'review', 'lead',
@@ -416,7 +417,7 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(rejected.body.asset.status, 'tl_changes_requested');
     assert.strictEqual(rejected.body.asset.routed_to_id, people.artist, 'routed back to the assignee');
 
-    await act(id, 'timer/start', 'artist');
+    await act(id, 'start', 'artist');
     await act(id, 'submit', 'artist', { link: 'https://review.example.com/v2', description: 'Reworked.' });
     assert.strictEqual(await statusOf(id), 'pending_tl_review');
 
@@ -435,7 +436,7 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
   await t.test('a CD-changes round goes to the lead, who relays it', async () => {
     const id = await newAsset('Sidekick');
-    await act(id, 'timer/start', 'artist');
+    await act(id, 'start', 'artist');
     await act(id, 'submit', 'artist', { link: 'https://review.example.com/s1' });
     await act(id, 'review', 'lead', { decision: 'approved' });
 
@@ -445,7 +446,7 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(rejected.body.asset.routed_to_id, null, 'with the lead, not the artist');
 
     // The artist cannot pick it up before the lead has briefed them.
-    await act(id, 'timer/start', 'artist');
+    await act(id, 'start', 'artist');
     const early = await act(id, 'submit', 'artist', { link: 'https://review.example.com/s2' });
     assert.strictEqual(early.status, 403);
     assert.match(early.body.error, /team lead has not passed/i);
@@ -456,7 +457,7 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(relayed.body.asset.routed_to_id, people.artist, 'only whose desk it is on');
 
     // Default re-entry is the lead, who relayed it.
-    await act(id, 'timer/start', 'artist');
+    await act(id, 'start', 'artist');
     const resubmitted = await act(id, 'submit', 'artist',
       { link: 'https://review.example.com/s2', description: 'Cooled it.' });
     assert.strictEqual(resubmitted.status, 201);
@@ -473,7 +474,7 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     // otherwise legal, so the answer is about who is asking rather than about
     // the state. From Assigned every submission is refused for being too early,
     // whoever sends it, and that would say nothing about permission.
-    await act(id, 'timer/start', 'artist');
+    await act(id, 'start', 'artist');
     const wrongArtist = await act(id, 'submit', 'other', { link: 'https://review.example.com/x' });
     assert.strictEqual(wrongArtist.status, 403);
     assert.match(wrongArtist.body.error, /assigned/i);
@@ -676,7 +677,7 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
   await t.test('a submission without a valid link is refused', async () => {
     const id = await newAsset('Linkless');
-    await act(id, 'timer/start', 'artist');
+    await act(id, 'start', 'artist');
     for (const body of [{}, { link: '' }, { link: 'not a url' }, { description: 'notes only' }]) {
       const res = await act(id, 'submit', 'artist', body);
       assert.strictEqual(res.status, 400, `${JSON.stringify(body)} should be refused`);
@@ -693,10 +694,10 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     // A review round is quicker than one second, so ordering cannot come from
     // the timestamp — it comes from an append-only sequence.
     const id = await newAsset('Fast Round');
-    await act(id, 'timer/start', 'artist');
+    await act(id, 'start', 'artist');
     await act(id, 'submit', 'artist', { link: 'http://nas/a' });
     await act(id, 'review', 'lead', { decision: 'changes_requested', text: 'again' });
-    await act(id, 'timer/start', 'artist');
+    await act(id, 'start', 'artist');
     await act(id, 'submit', 'artist', { link: 'http://nas/b' });
     await act(id, 'review', 'lead', { decision: 'approved' });
     await act(id, 'review', 'cd', { decision: 'approved' });
