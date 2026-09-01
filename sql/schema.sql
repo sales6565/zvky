@@ -470,6 +470,39 @@ CREATE TABLE IF NOT EXISTS asset_assignments (
 -- Deliberately not a replacement for those events: a bulk delivery writes a
 -- normal 'deliver' event per asset, through the same transition a single
 -- delivery uses, and only additionally points them at a batch.
+-- A whole project put in front of the Creative Director, as opposed to one
+-- asset moving through the review pipeline.
+--
+-- Deliberately its own table and NOT a status on assets. It is a different kind
+-- of thing: a link to something — a deck, a milestone build, a cut — that
+-- concerns the project rather than any one asset in it, with no assignee, no
+-- rounds and no place in the asset state machine. Modelling it as an asset
+-- status would have put a review request in the same queue as the work itself
+-- and made "CD Review" mean two things.
+CREATE TABLE IF NOT EXISTS project_review_requests (
+  id           CHAR(36)      NOT NULL PRIMARY KEY,
+  client_id    CHAR(36)      NOT NULL,
+  project_id   CHAR(36)      NOT NULL,
+  link         VARCHAR(2048) NOT NULL,
+  description  TEXT          NULL,
+  -- Who asked, kept alongside the id so the record survives the account going.
+  submitted_by CHAR(36)      NULL,
+  submitter_email VARCHAR(191) NULL,
+  -- 'pending' until somebody marks it reviewed. Nothing is deleted: a reviewed
+  -- request stays as the record that it was asked for and answered.
+  status       VARCHAR(16)   NOT NULL DEFAULT 'pending',
+  reviewed_by  CHAR(36)      NULL,
+  reviewer_email VARCHAR(191) NULL,
+  reviewed_at  DATETIME      NULL,
+  created_at   DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_prr_status (status, created_at),
+  KEY idx_prr_project (project_id),
+  CONSTRAINT fk_prr_client   FOREIGN KEY (client_id)    REFERENCES clients(id)  ON DELETE CASCADE,
+  CONSTRAINT fk_prr_project  FOREIGN KEY (project_id)   REFERENCES projects(id) ON DELETE CASCADE,
+  CONSTRAINT fk_prr_submitter FOREIGN KEY (submitted_by) REFERENCES users(id)   ON DELETE SET NULL,
+  CONSTRAINT fk_prr_reviewer FOREIGN KEY (reviewed_by)  REFERENCES users(id)    ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS asset_event_batches (
   id          CHAR(36)     NOT NULL PRIMARY KEY,
   action      VARCHAR(32)  NOT NULL,

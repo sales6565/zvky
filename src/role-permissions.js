@@ -57,12 +57,25 @@ async function forRole(db, roleKey) {
 // beside it is how two lists drift apart.
 const TL_REVIEW_GROUPS = ['Supervision', 'Creative Direction', 'Production'];
 
+// Whose queue the project review submissions are, to begin with.
+const PROJECT_REVIEW_ROLE = 'creative_art_director';
+
 function defaultsFor(roleKey) {
   const def = roleDef(roleKey);
   if (!def) return new Set();
   const caps = capabilitiesForTier(def.tier) || {};
   const baseline = catalog.baselineFor(caps);
   if (TL_REVIEW_GROUPS.includes(def.group)) baseline.add('review.tl');
+  /* The project review queue starts on the one designation whose queue it is.
+   *
+   * By role key rather than by tier or group, because it really is that one
+   * role: the tier holds Art Director too, and the group holds Associate Art
+   * Director as well, and neither of those was asked for. Everybody else is
+   * granted it in Settings, which is where this decision belongs — this is only
+   * the starting position, so that the queue is not empty on the day it ships.
+   *
+   * Super Admin gets it from the catalogue itself, like every other permission. */
+  if (roleKey === PROJECT_REVIEW_ROLE) baseline.add('project.review_queue');
   return baseline;
 }
 

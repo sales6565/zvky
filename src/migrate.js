@@ -235,6 +235,57 @@ async function ensureReportingAndMembership(db, log) {
   if (top.length) log(`Schema: cleared the reporting line on ${top.length} account(s) at the top of the hierarchy.`);
 }
 
+// A whole project put in front of the Creative Director. Its own table, not a
+// status on assets — see sql/schema.sql for why. The notifications table also
+// gains a project_id, so a request can point at something that is not an asset.
+async function ensureProjectReviews(db, log) {
+  const { rows: table } = await db.query(
+    `SELECT TABLE_NAME AS n FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'project_review_requests'`
+  );
+  if (!table.length) {
+    await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS project_review_requests (
+        id           CHAR(36)      NOT NULL PRIMARY KEY,
+        client_id    CHAR(36)      NOT NULL,
+        project_id   CHAR(36)      NOT NULL,
+        link         VARCHAR(2048) NOT NULL,
+        description  TEXT          NULL,
+        submitted_by CHAR(36)      NULL,
+        submitter_email VARCHAR(191) NULL,
+        status       VARCHAR(16)   NOT NULL DEFAULT 'pending',
+        reviewed_by  CHAR(36)      NULL,
+        reviewer_email VARCHAR(191) NULL,
+        reviewed_at  DATETIME      NULL,
+        created_at   DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_prr_status (status, created_at),
+        KEY idx_prr_project (project_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+    /* Tolerantly, like the notifications keys: a deployment whose user cannot
+       create constraints must still get a working table. */
+    const fk = async (sql) => { await db.query(sql).catch(() => {}); };
+    await fk('ALTER TABLE project_review_requests ADD CONSTRAINT fk_prr_client '
+      + 'FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE');
+    await fk('ALTER TABLE project_review_requests ADD CONSTRAINT fk_prr_project '
+      + 'FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE');
+    await fk('ALTER TABLE project_review_requests ADD CONSTRAINT fk_prr_submitter '
+      + 'FOREIGN KEY (submitted_by) REFERENCES users(id) ON DELETE SET NULL');
+    await fk('ALTER TABLE project_review_requests ADD CONSTRAINT fk_prr_reviewer '
+      + 'FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE SET NULL');
+    log('Schema: added project_review_requests.');
+  }
+
+  const { rows: column } = await db.query(
+    `SELECT COLUMN_NAME AS n FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'notifications' AND COLUMN_NAME = 'project_id'`
+  );
+  if (!column.length) {
+    await db.query('ALTER TABLE notifications ADD COLUMN project_id CHAR(36) NULL AFTER asset_id');
+    await db.query('ALTER TABLE notifications ADD KEY idx_notifications_project (project_id)')
+      .catch(() => {});
+    log('Schema: added notifications.project_id.');
+  }
+}
+
 // Bulk actions, added after the event log already existed: the batch record
 // itself, and the column on each event pointing back at it.
 async function ensureEventBatches(db, log) {
@@ -1526,6 +1577,8 @@ const STEPS = [
   ['project supervision', ensureProjectSupervision],
   // After the event log, whose column it adds.
   ['bulk action batches', ensureEventBatches],
+  // After notifications, whose column it adds, and after clients and projects.
+  ['project review requests', ensureProjectReviews],
 ];
 
 async function run(db, log = console.log) {

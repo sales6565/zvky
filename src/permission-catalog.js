@@ -217,6 +217,34 @@ const GROUPS = [
         impliedBy: has('createProject'),
         describe: 'Close a project so it takes no new assets and its existing ones are read-only, and reopen it.',
       },
+
+      /* --- a whole project put in front of the Creative Director -----------
+       *
+       * Separate from everything in the Review Workflow group above, which is
+       * about one asset moving through the pipeline. This is a link concerning
+       * the project — a deck, a milestone build, a cut — with no asset, no
+       * assignee and no place in the state machine.
+       *
+       * Two permissions, because asking and answering are different jobs.
+       * Sending defaults to the Super Admin tier alone, which is where the
+       * studio has asked new permissions to start; reviewing additionally
+       * starts on Creative Art Director, because that is the queue's whole
+       * purpose and a queue nobody can open is not a feature. Both are granted
+       * per role in Settings like everything else here. */
+      {
+        key: 'project.review_send',
+        label: 'Send Project to CD Review',
+        impliedBy: has('manageAccess'),
+        describe: 'Submit a link for a whole project — a deck, a build, a cut — to the Creative '
+          + 'Director. Nothing to do with an asset\'s own CD Review stage.',
+      },
+      {
+        key: 'project.review_queue',
+        label: 'Review Project Submissions',
+        impliedBy: has('manageAccess'),
+        describe: 'See the projects submitted for review and mark them reviewed. Held by Creative '
+          + 'Art Director out of the box; grant it to anybody else who should watch that queue.',
+      },
     ],
   },
   {

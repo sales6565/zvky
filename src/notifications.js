@@ -29,6 +29,9 @@ const { v4: uuid } = require('uuid');
 const KINDS = {
   assigned: 'assigned',            // it is yours now
   unassigned: 'unassigned',        // it is no longer yours
+  // A whole project submitted for the Creative Director to look at. Not an
+  // asset moving anywhere — see src/routes/project-reviews.js.
+  project_review: 'project_review',
 };
 
 const unavailable = (err) => err && (err.code === 'ER_NO_SUCH_TABLE' || /doesn't exist/i.test(err.message || ''));
@@ -40,6 +43,12 @@ const unavailable = (err) => err && (err.code === 'ER_NO_SUCH_TABLE' || /doesn't
  * are edited after the fact — the row keeps ids, the sentence is made from
  * them. */
 function describe(row) {
+  if (row.kind === KINDS.project_review) {
+    const project = row.project_name || 'A project';
+    return row.other_name
+      ? `${row.other_name} submitted ${project} for your review.`
+      : `${project} has been submitted for your review.`;
+  }
   const code = row.asset_code || 'An asset';
   const name = row.asset_name ? ` — ${row.asset_name}` : '';
   if (row.kind === KINDS.unassigned) {
@@ -55,19 +64,42 @@ function describe(row) {
 /* Raise one. `recipientId` of null, or a recipient who is also the actor, is
  * dropped: telling somebody they assigned something to themselves is noise, and
  * it is the common case when a lead picks up their own work. */
-async function raise(db, { recipientId, actorId, kind, assetId, otherUserId }) {
+async function raise(db, { recipientId, actorId, kind, assetId, projectId, otherUserId }) {
   if (!recipientId || recipientId === actorId) return null;
   const id = uuid();
   try {
     await db.query(
-      `INSERT INTO notifications (id, recipient_id, actor_id, kind, asset_id, other_user_id)
-       VALUES ($1,$2,$3,$4,$5,$6)`,
-      [id, recipientId, actorId || null, kind, assetId || null, otherUserId || null]
+      `INSERT INTO notifications (id, recipient_id, actor_id, kind, asset_id, project_id, other_user_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [id, recipientId, actorId || null, kind, assetId || null, projectId || null, otherUserId || null]
     );
     return id;
   } catch (err) {
+    /* A deployment whose migration has not added project_id still notifies —
+       without the link back to the project, which is worth more than silence. */
+    if (err.code === 'ER_BAD_FIELD_ERROR') {
+      try {
+        await db.query(
+          `INSERT INTO notifications (id, recipient_id, actor_id, kind, asset_id, other_user_id)
+           VALUES ($1,$2,$3,$4,$5,$6)`,
+          [id, recipientId, actorId || null, kind, assetId || null, otherUserId || null]
+        );
+        return id;
+      } catch (e2) { if (unavailable(e2)) return null; throw e2; }
+    }
     if (unavailable(err)) return null;
     throw err;
+  }
+}
+
+/* Everybody watching the project review queue, told at once.
+ *
+ * A shared queue: every holder of project.review_queue is a recipient, because
+ * the submission is not addressed to an individual. The submitter is skipped by
+ * raise() when they happen to hold it themselves. */
+async function projectReviewRequested(db, { projectId, actorId, recipientIds }) {
+  for (const recipientId of recipientIds || []) {
+    await raise(db, { recipientId, actorId, kind: KINDS.project_review, projectId, otherUserId: actorId });
   }
 }
 
@@ -82,12 +114,17 @@ async function assignmentChanged(db, { assetId, from, to, actorId }) {
   await raise(db, { recipientId: from, actorId, kind: KINDS.unassigned, assetId, otherUserId: to });
 }
 
+/* COALESCE, because a row points at one or the other: an asset notification
+   carries the project through the asset, a project one carries it directly. */
 const SELECT = `SELECT n.id, n.seq, n.kind, n.asset_id AS assetId, n.read_at AS readAt, n.created_at AS createdAt,
-       a.\`code\` AS asset_code, a.\`name\` AS asset_name, a.project_id AS projectId,
+       a.\`code\` AS asset_code, a.\`name\` AS asset_name,
+       COALESCE(a.project_id, n.project_id) AS projectId,
+       p.\`name\` AS project_name,
        o.\`name\` AS other_name, o.id AS otherUserId,
        o.avatar_updated_at AS otherPhotoUpdatedAt
   FROM notifications n
   LEFT JOIN assets a ON a.id = n.asset_id
+  LEFT JOIN projects p ON p.id = n.project_id
   LEFT JOIN users o ON o.id = n.other_user_id`;
 
 const shape = (row) => ({
@@ -98,6 +135,7 @@ const shape = (row) => ({
   assetId: row.assetId,
   assetCode: row.asset_code || null,
   projectId: row.projectId || null,
+  projectName: row.project_name || null,
   otherUserId: row.otherUserId || null,
   otherName: row.other_name || null,
   otherPhotoUpdatedAt: row.otherPhotoUpdatedAt || null,
@@ -183,6 +221,7 @@ async function markAllRead(db, userId) {
 }
 
 module.exports = {
+  projectReviewRequested,
   KINDS, describe, raise, assignmentChanged,
   listFor, unreadCount, since, highWater, markRead, markAllRead,
 };

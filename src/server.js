@@ -7,6 +7,7 @@ const rateLimit = require('express-rate-limit');
 
 const authRoutes = require('./routes/auth');
 const projectRoutes = require('./routes/projects');
+const projectReviewRoutes = require('./routes/project-reviews');
 const clientRoutes = require('./routes/clients');
 const assetRoutes = require('./routes/assets');
 const userRoutes = require('./routes/users');
@@ -73,6 +74,7 @@ app.use('/api/auth/password', passwordChangeLimiter);
 app.use('/api/auth', authRoutes);
 app.use('/api/clients', clientRoutes);
 app.use('/api/projects', projectRoutes);
+app.use('/api/project-reviews', projectReviewRoutes);
 app.use('/api/assets', assetRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/team', teamRoutes);

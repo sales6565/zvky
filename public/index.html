@@ -405,6 +405,18 @@ tr.past-round{opacity:0.62;}
 table th.pick-col, table td.pick-col{width:34px;padding-left:12px;padding-right:0;}
 table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
   width:auto;flex:none;margin:0;accent-color:var(--brand-accent);cursor:pointer;}
+/* The project review queue's banner. Its own accent — the CD's review colour —
+   rather than the brand, so it reads as a queue rather than as the app talking
+   about itself, and so it is not mistaken at a glance for an alert. */
+.pr-banner{border:1px solid #9b7ef055;border-left:3px solid #9b7ef0;border-radius:10px;
+  background:linear-gradient(90deg,#9b7ef014,transparent);padding:11px 14px;margin:0 0 14px;}
+.pr-banner h4{margin:0 0 2px;font-family:'Inter';font-size:13px;color:var(--ink);letter-spacing:0;}
+.pr-banner .pr-sub{font-size:11.5px;color:var(--ink-muted);margin-bottom:8px;}
+.pr-item{display:flex;align-items:flex-start;gap:10px;padding:7px 0;border-top:1px solid var(--border);}
+.pr-item:first-of-type{border-top:0;}
+.pr-item .pr-what{flex:1;font-size:12.5px;color:var(--ink);}
+.pr-item .pr-meta{font-size:11px;color:var(--ink-faint);margin-top:2px;}
+.pr-item a{color:var(--brand-accent);word-break:break-all;}
 .bulk-bar{display:flex;align-items:center;gap:10px;padding:8px 12px;margin-bottom:10px;
   border:1px solid var(--border);border-radius:8px;background:var(--surface-2);}
 .bulk-count{font-family:'Inter';font-size:12.5px;color:var(--ink);font-weight:600;margin-right:auto;}
@@ -527,6 +539,7 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
   </header>
   <div class="sprockets"></div>
   <div id="bootError" style="display:none;"></div>
+  <div id="projReviewBanner"></div>
   <div class="stats" id="stats"></div>
   <div class="toolbar">
     <div class="tabs" id="mainTabs">
@@ -644,6 +657,26 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
     <div style="font-size:11px;color:var(--ink-faint);margin-top:8px;">Assets already in this project keep their assignees and their place in the pipeline.</div>
     <div class="err" id="ep_err" style="color:#e8402c;font-size:12px;margin-top:8px;"></div>
     <div class="modal-actions"><button class="btn btn-ghost" id="cancelEditProject">Cancel</button><button class="btn btn-brand" id="saveEditProject">Save changes</button></div>
+  </div>
+</div>
+
+<div class="modal-wrap" id="projReviewWrap">
+  <div class="modal" style="width:520px;">
+    <h2>Send Project to CD Review</h2>
+    <div style="font-size:11.5px;color:var(--ink-muted);margin-bottom:12px;">
+      A link about the whole project — a deck, a build, a cut. Separate from an asset's own
+      CD Review stage, and it goes to whoever watches the project review queue.
+    </div>
+    <label>Client</label><select id="pr_client"></select>
+    <label>Project/Game</label><select id="pr_project" disabled></select>
+    <label>Link</label><input type="text" id="pr_link" placeholder="https://drive.example.com/nightgarden-cut-03">
+    <label>Description <span class="count-note">(optional)</span></label>
+    <textarea id="pr_desc" rows="3" placeholder="Anything the reviewer should know…"></textarea>
+    <div class="ref-err" id="pr_err"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="pr_cancel">Cancel</button>
+      <button class="btn btn-brand" id="pr_send">Send to CD Review</button>
+    </div>
   </div>
 </div>
 
@@ -1909,6 +1942,51 @@ function filteredAssets(){
   if(state.search){ const q=state.search.toLowerCase(); pool = pool.filter(a=>a.name.toLowerCase().includes(q)||a.code.toLowerCase().includes(q)); }
   return pool;
 }
+/* The project review queue, on the Dashboard of whoever watches it.
+ *
+ * A banner rather than a column: these are not assets and do not belong on the
+ * board beside them. It says what it is in as many words — "Project Review
+ * Requests" — because the studio has two review queues now and the other one is
+ * a set of columns two inches below this.
+ *
+ * Only on the Dashboard, and only for a holder of project.review_queue. Marking
+ * one reviewed takes it out of here and leaves it in the record. */
+async function renderProjectReviews(){
+  const el = document.getElementById('projReviewBanner');
+  if(!el) return;
+  if(state.view!=='board' || !can('project.review_queue')){ el.innerHTML=''; return; }
+
+  let pending = [];
+  try{ pending = (await api('/project-reviews?status=pending')).requests || []; }
+  catch{ el.innerHTML=''; return; }   /* not available on this deployment */
+  if(!pending.length){ el.innerHTML=''; return; }
+
+  el.innerHTML = `<div class="pr-banner">
+    <h4>Project Review Requests · ${pending.length} waiting</h4>
+    <div class="pr-sub">Whole projects submitted for your review. Not the same as the
+      asset CD Review column below — nothing here is an asset.</div>
+    ${pending.map(r=>`<div class="pr-item">
+      <div class="pr-what">
+        <strong>${escapeHTML(r.projectName || 'A project')}</strong>
+        <span style="color:var(--ink-faint);">· ${escapeHTML(r.clientName || '')}</span>
+        <div class="pr-meta">${escapeHTML(r.submittedByName || r.submitterEmail || 'Somebody')} · ${fmtDate(r.createdAt)}</div>
+        <div style="margin-top:4px;"><a href="${escapeHTML(r.link)}" target="_blank" rel="noopener noreferrer">${escapeHTML(r.link)}</a></div>
+        ${r.description ? `<div class="pr-meta" style="margin-top:4px;color:var(--ink-muted);">${escapeHTML(r.description)}</div>` : ''}
+      </div>
+      <button class="btn btn-ghost btn-sm pr-done" data-id="${r.id}">Mark as Reviewed</button>
+    </div>`).join('')}
+  </div>`;
+
+  el.querySelectorAll('.pr-done').forEach(b=>b.addEventListener('click', async ()=>{
+    b.disabled = true;
+    try{
+      await api('/project-reviews/'+b.dataset.id+'/reviewed', { method:'POST' });
+      showToast('Marked as reviewed.');
+      renderProjectReviews();
+    }catch(err){ showToast(err.message); b.disabled = false; }
+  }));
+}
+
 function renderStats(){
   const el = document.getElementById('stats');
   if(state.view==='users'){ el.innerHTML=''; return; }
@@ -2988,6 +3066,7 @@ async function render(){
      importing a file are separate permissions, so they are separate gates. */
   const onABoard = (state.view==='board'||state.view==='list') && Boolean(state.currentProjectId);
   ['newAssetBtn','bulkImportBtn','downloadSampleBtn'].forEach(id=>applyGate(id, onABoard));
+  renderProjectReviews();
   if(state.view==='board') renderBoard();
   else if(state.view==='list') renderList();
   else if(state.view==='reports') await renderReportsTab();
@@ -3070,6 +3149,75 @@ async function renderProjects(){
   wireProjects();
 }
 
+/* ---------- Send Project to CD Review ----------
+ *
+ * A link about the whole project rather than about one asset. The Client and
+ * Project pickers cascade exactly as the header's do — same source, same rule:
+ * the project list is projectsUnder(client), and it stays disabled until a
+ * client is chosen so it is never an empty control with no explanation.
+ *
+ * Deliberately not tied to any asset. An asset in CD Review is one piece of
+ * work at a review gate; this is a deck, a build or a cut concerning the
+ * project, and the two queues are kept apart on purpose. */
+const projReviewWrap = document.getElementById('projReviewWrap');
+
+function prFillProjects(){
+  const sel = document.getElementById('pr_project');
+  const clientId = document.getElementById('pr_client').value;
+  const under = clientId ? projectsUnder(clientId).filter(p=>!p.closed_at) : [];
+  sel.disabled = !clientId || !under.length;
+  sel.innerHTML = !clientId
+    ? '<option value="">Choose a client first</option>'
+    : (under.map(p=>`<option value="${p.id}">${escapeHTML(p.name)}</option>`).join('')
+       || '<option value="">No open projects under this client</option>');
+}
+
+function openProjectReview(){
+  document.getElementById('pr_link').value = '';
+  document.getElementById('pr_desc').value = '';
+  document.getElementById('pr_err').textContent = '';
+  document.getElementById('pr_client').innerHTML =
+    '<option value="">Select a client…</option>' +
+    state.clients.map(c=>`<option value="${c.id}"${c.id===state.clientContextId?' selected':''}>${escapeHTML(c.name)}</option>`).join('');
+  prFillProjects();
+  /* Opens on whatever the header is pointing at, since that is almost always
+     the project being talked about. */
+  const sel = document.getElementById('pr_project');
+  if(state.currentProjectId && [...sel.options].some(o=>o.value===state.currentProjectId)){
+    sel.value = state.currentProjectId;
+  }
+  projReviewWrap.classList.add('show');
+}
+
+document.getElementById('pr_client').addEventListener('change', prFillProjects);
+document.getElementById('pr_cancel').addEventListener('click', ()=>projReviewWrap.classList.remove('show'));
+projReviewWrap.addEventListener('click', e=>{ if(e.target===projReviewWrap) projReviewWrap.classList.remove('show'); });
+
+document.getElementById('pr_send').addEventListener('click', async (ev)=>{
+  const err = document.getElementById('pr_err');
+  err.textContent = '';
+  const clientId = document.getElementById('pr_client').value;
+  const projectId = document.getElementById('pr_project').value;
+  if(!clientId){ err.textContent = 'Choose a client.'; return; }
+  if(!projectId){ err.textContent = 'Choose a project.'; return; }
+  const link = document.getElementById('pr_link').value.trim();
+  if(!link){ err.textContent = 'Give the reviewer a link.'; return; }
+
+  ev.target.disabled = true;
+  try{
+    /* Description is optional and sent as undefined when blank, so the row
+       holds NULL rather than an empty string. */
+    const { request } = await api('/project-reviews', { method:'POST', body:{
+      clientId, projectId, link,
+      description: document.getElementById('pr_desc').value.trim() || undefined,
+    }});
+    projReviewWrap.classList.remove('show');
+    showToast(`${request.projectName} sent for CD review.`);
+    render();
+  }catch(e){ err.textContent = e.message; }
+  finally{ ev.target.disabled = false; }
+});
+
 function crumbs(parts){
   return `<div class="crumbs">${parts.map((p,i)=>
     (i<parts.length-1 && p.go)
@@ -3088,6 +3236,7 @@ function clientListHTML(clients){
       ${(can('client.delete') || can('project.delete')) ? `<label style="font-size:12px;color:var(--ink-muted);display:flex;align-items:center;gap:5px;">
         <input type="checkbox" id="showArchived"${state.showArchived?' checked':''}> Show archived
       </label>` : ''}
+      ${can('project.review_send') ? '<button class="btn btn-ghost" id="projReviewBtn">Send Project to CD Review</button>' : ''}
       ${can('client.add') ? '<button class="btn btn-brand" id="newClientBtn">+ Add Client</button>' : ''}
     </div>
     ${clients.length ? `<div class="client-grid">${clients.map(c=>`
@@ -3153,6 +3302,8 @@ function wireProjects(){
   }));
   const add = document.getElementById('newClientBtn');
   if(add) add.addEventListener('click', ()=>openClientModal(null));
+  const pr = document.getElementById('projReviewBtn');
+  if(pr) pr.addEventListener('click', openProjectReview);
   const edit = document.getElementById('editClientBtn');
   if(edit) edit.addEventListener('click', ()=>openClientModal(edit.dataset.client));
   const archived = document.getElementById('showArchived');
