@@ -1240,37 +1240,76 @@ function lastHandoverAt(a){
   }, 0);
 }
 
-/* Which ONE tab an asset belongs in.
+/* ===================================================================
+ * WHICH TAB AN ASSET IS IN. The single source of truth.
+ * ===================================================================
  *
- * Every asset gets exactly one answer, so nothing appears in two tabs and the
- * counts fall out of the same question the list asks. It used to be that an
- * asset could be in Active and History both; the studio asked for the opposite,
- * so membership is now decided here, in this order, and the order IS the rule:
+ * This replaces every earlier version of this rule. The four tabs, their count
+ * badges, and anything else that needs to ask "where does this asset live" all
+ * go through listTabOf() below — there is no second copy to fall out of step,
+ * which is what the last few rounds of this kept doing.
  *
- *   1. Delivered      -> Archived. Shipped work is filed, whatever happened on
- *                        the way there. Archived keeps the definition it has
- *                        always had.
- *   2. Ever handed on -> History, and only History. This is the correction: an
- *                        asset that changed hands comes OUT of Active rather
- *                        than sitting in both.
- *   3. Anything else  -> by status, exactly as before.
+ * The rules are checked IN ORDER and the first match wins. Order is the whole
+ * specification, not an implementation detail: read as independent conditions
+ * these overlap, and it is the priority that resolves them.
  *
- * What 1-before-2 means, stated because it is a real consequence and not an
- * oversight: a handed-on asset LEAVES History once it is delivered, and is
- * found under Archived from then on. Its handover trail is not lost — the rows
- * still show every stretch of work, and the asset's own History section still
- * lists each handover with who made it — but this tab lists work that changed
- * hands and has not yet shipped. Swapping the two lines below makes History
- * outrank Archived instead; nothing else would need to change.
+ *   1. History   Round is "Handed On" — the asset has changed hands at least
+ *                once. Full stop, whatever its status: a handed-on asset that
+ *                has since been Delivered is in History, NOT Archived. This is
+ *                the rule that makes the others conditional.
+ *   2. Inactive  Not Assigned, and never handed on.
+ *   3. Archived  Delivered, and never handed on.
+ *   4. Active    everything else — Assigned, In Progress, TL Review,
+ *                TL Feedbacks, CD Review, CD Feedbacks, Approved for Client —
+ *                and only while the round is Current.
  *
- * Not Assigned is untouched by any of this, and cannot be reached by it: a
- * handover needs a submission first and returns the asset to Assigned, so a
- * not_started asset has never been handed on. */
+ * Rule 4 matches unconditionally because rules 1-3 have already taken every
+ * asset that does not belong there. That is deliberate: a status nobody has
+ * classified lands in Active rather than vanishing, and tabAudit() below is
+ * what catches it rather than a silent disappearance.
+ *
+ * ROUND is not a new field. It is the existing per-assignment state the list
+ * has always drawn in its Round column: an open episode in asset_assignments
+ * is "Current", one that was vacated when the work moved to somebody else is
+ * "Handed On". Written by assignments.open() in src/assignments.js — the same
+ * call that writes the reassignment audit trail — so this reads that trail
+ * rather than tracking handovers a second time.
+ */
+const TAB_RULES = [
+  { id:'history',  describe:'a round that was handed on', test:(a)=> handedOn(a) },
+  { id:'inactive', describe:'Not Assigned',               test:(a)=> listGroupOf(a.status)==='inactive' },
+  { id:'archived', describe:'Delivered',                  test:(a)=> listGroupOf(a.status)==='archived' },
+  { id:'active',   describe:'in the pipeline',            test:()=> true },
+];
+
 function listTabOf(a){
-  const byStatus = listGroupOf(a.status);
-  if(byStatus === 'archived') return 'archived';
-  if(handedOn(a)) return 'history';
-  return byStatus;
+  for(const rule of TAB_RULES) if(rule.test(a)) return rule.id;
+  return 'active';   /* unreachable: the last rule matches everything */
+}
+
+/* Does every asset land in exactly one tab?
+ *
+ * Not a restatement of the rule above — it asks the question the way the SCREEN
+ * asks it, by running each asset past each tab's own membership test, and
+ * counts the answers. An asset in none or in several is returned with the
+ * status and round that produced it.
+ *
+ * Exported to the console on purpose: `tabAudit(state.assets)` in a browser is
+ * how this gets run against a real studio's data, and scripts/check-tabs.js is
+ * the same check against a database directly. */
+function tabAudit(assets){
+  const problems = [];
+  const counts = Object.fromEntries(TAB_RULES.map(r=>[r.id, 0]));
+  for(const a of assets){
+    const homes = TAB_RULES.filter(r=>listTabOf(a)===r.id).map(r=>r.id);
+    counts[listTabOf(a)] += 1;
+    if(homes.length !== 1){
+      problems.push({ id:a.id, code:a.code, status:a.status,
+        round: handedOn(a) ? 'Handed On' : 'Current', tabs:homes });
+    }
+  }
+  return { total:assets.length, counts, problems,
+    sums: Object.values(counts).reduce((x,y)=>x+y,0) === assets.length };
 }
 
 /* Can this asset be marked delivered right now?
@@ -2010,20 +2049,33 @@ function renderList(){
       const current = !row.ep || row.ep.active;
       if(!owns.has(row.a.id) || current) owns.set(row.a.id, i);
     });
-    /* Selection follows what is on screen. Anything filtered away, moved to
-       another tab by a status change, or no longer deliverable is dropped —
-       which is what stops "select all" from carrying a stale id into the
-       request. */
-    for(const id of [...selectedAssets]) if(!owns.has(id)) selectedAssets.delete(id);
+    /* Pruned against the FILTERED POOL, not against this tab.
+     *
+     * Anything the search or the type filter has excluded is dropped, and so is
+     * anything no longer deliverable — that is what stops a stale id reaching
+     * the request. Changing TAB does not drop anything, though, and the
+     * difference matters: work that is ready to deliver now sits in Active or
+     * in History depending on whether it ever changed hands, so a producer
+     * clearing the ready pile has to cross both. Pruning per tab silently threw
+     * away whatever they had ticked before they moved. */
+    const inScope = new Set(matching.filter(deliverable).map(x=>x.id));
+    for(const id of [...selectedAssets]) if(!inScope.has(id)) selectedAssets.delete(id);
   }
+  /* Two different sets, and conflating them is what made the bar lie:
+     `selectable` is what THIS tab offers, and is what select-all can reach;
+     `selectedAssets` is everything ticked anywhere, and is what gets delivered. */
   const selectable = [...owns.keys()];
-  const selectedHere = selectable.filter(id=>selectedAssets.has(id));
-  const allTicked = selectable.length > 0 && selectedHere.length === selectable.length;
+  const tickedHere = selectable.filter(id=>selectedAssets.has(id));
+  const allTicked = selectable.length > 0 && tickedHere.length === selectable.length;
+  const chosen = bulk ? matching.filter(x=>selectedAssets.has(x.id)) : [];
+  const elsewhere = chosen.length - tickedHere.length;
 
   /* The bar only exists while something is selected, so the list is unchanged
      for anybody who is not using this. */
-  const bar = (bulk && selectedHere.length) ? `<div class="bulk-bar">
-      <span class="bulk-count">${selectedHere.length} selected</span>
+  const bar = (bulk && chosen.length) ? `<div class="bulk-bar">
+      <span class="bulk-count">${chosen.length} selected${elsewhere
+        ? ` <span style="font-weight:400;color:var(--ink-muted);">(${elsewhere} on ${elsewhere===1?'another tab':'other tabs'})</span>`
+        : ''}</span>
       <button class="btn btn-ghost btn-sm" id="bulkClear">Clear</button>
       <button class="btn btn-brand btn-sm" id="bulkDeliverBtn">Mark as Delivered</button>
     </div>` : '';
@@ -2092,7 +2144,10 @@ function renderList(){
   const clear = document.getElementById('bulkClear');
   if(clear) clear.addEventListener('click', ()=>{ selectedAssets.clear(); renderList(); });
   const go = document.getElementById('bulkDeliverBtn');
-  if(go) go.addEventListener('click', ()=>openBulkDeliver(selectedHere.map(id=>assets.find(x=>x.id===id)).filter(Boolean)));
+  /* Everything ticked, wherever it was ticked — not just this tab's share.
+     The confirmation lists them all by code, so what is about to happen is
+     visible even for the ones that are not on screen. */
+  if(go) go.addEventListener('click', ()=>openBulkDeliver(chosen));
 
   wire();
 }

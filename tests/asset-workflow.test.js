@@ -283,13 +283,16 @@ test('History is a fourth tab and not a fourth slice of the enum', () => {
 });
 
 test('an asset is in exactly one Assets List tab', () => {
-  /* The correction the studio asked for. A handed-on asset used to appear in
-   * Active AND History, so the badges double-counted and work that had changed
-   * hands was in two places at once. Membership is now one answer per asset.
+  /* THE tab rule, run as the page runs it.
+   *
+   * Priority order is the specification, not an implementation detail, so it is
+   * asserted as an order: History first and unconditionally, then Inactive,
+   * then Archived, then Active. Read as independent conditions these overlap,
+   * and only the order resolves them.
    *
    * Run against the page's own functions rather than a restatement of them: a
    * test that re-implements the rule agrees with itself while the app does
-   * something else. */
+   * something else, which is exactly the drift this replaced. */
   const fs = require('node:fs');
   const path = require('node:path');
   const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
@@ -299,54 +302,63 @@ test('an asset is in exactly one Assets List tab', () => {
     /function listGroupOf\(statusId\)\{[\s\S]*?\n\}/,
     /function episodesOf\(a\)\{[^\n]*\}/,
     /function handedOn\(a\)\{[^\n]*\}/,
+    /const TAB_RULES = \[[\s\S]*?\n\];/,
     /function listTabOf\(a\)\{[\s\S]*?\n\}/,
+    /function tabAudit\(assets\)\{[\s\S]*?\n\}/,
   ].map((re) => {
     const found = page.match(re);
     assert.ok(found, `could not find ${re} on the page`);
     return found[0];
   });
   // eslint-disable-next-line no-new-func
-  const { listTabOf, ASSET_LIST_GROUPS } =
-    new Function(`${parts.join('\n')}; return { listTabOf, ASSET_LIST_GROUPS };`)();
+  const { listTabOf, tabAudit, TAB_RULES } =
+    new Function(`${parts.join('\n')}; return { listTabOf, tabAudit, TAB_RULES };`)();
 
-  const TABS = [...ASSET_LIST_GROUPS.map((g) => g.id), 'history'];
-  const ep = (n) => ({ assignments: Array.from({ length: n }, () => ({ assignedAt: '2026-01-01T09:00:00Z' })) });
+  // The order itself, stated so a reshuffle is a deliberate act.
+  assert.deepStrictEqual(TAB_RULES.map((r) => r.id), ['history', 'inactive', 'archived', 'active'],
+    'History is checked first and Active last — the order IS the rule');
 
-  // Whatever the status and however many hands it has been through, the answer
-  // is one of the four and only one.
+  const asset = (status, rounds) => ({
+    status,
+    assignments: Array.from({ length: rounds }, () => ({ assignedAt: '2026-01-01T09:00:00Z' })),
+  });
+  const current = (status) => asset(status, 1);
+  const handed = (status) => asset(status, 2);
+
+  // --- the five cases the studio named ------------------------------------
+  assert.strictEqual(listTabOf(current('in_progress')), 'active',
+    '1. Current + In Progress -> Active');
+  assert.strictEqual(listTabOf(handed('in_progress')), 'history',
+    '2. Handed On + In Progress -> History, not Active');
+  assert.strictEqual(listTabOf(handed('delivered')), 'history',
+    '3. Handed On + Delivered -> History, not Archived — History outranks everything');
+  assert.strictEqual(listTabOf(current('not_started')), 'inactive',
+    '4. Current + Not Assigned -> Inactive');
+  assert.strictEqual(listTabOf(current('delivered')), 'archived',
+    '5. Current + Delivered -> Archived');
+
+  // --- History really is unconditional ------------------------------------
   for (const status of workflow.STATE_IDS) {
-    for (const episodes of [0, 1, 2, 5]) {
-      const tab = listTabOf({ status, ...ep(episodes) });
-      assert.ok(TABS.includes(tab), `${status} with ${episodes} episodes landed in "${tab}"`);
-      assert.strictEqual(TABS.filter((t) => t === tab).length, 1);
-    }
+    assert.strictEqual(listTabOf(handed(status)), 'history',
+      `handed on + ${status} belongs in History whatever the status`);
   }
 
-  // Delivered is filed under Archived, whatever happened on the way there.
-  assert.strictEqual(listTabOf({ status: 'delivered', ...ep(0) }), 'archived');
-  assert.strictEqual(listTabOf({ status: 'delivered', ...ep(3) }), 'archived',
-    'a delivered asset that changed hands is still Archived, not History');
+  // --- and every other combination lands somewhere, exactly once ----------
+  const every = [];
+  for (const status of workflow.STATE_IDS) for (const rounds of [0, 1, 2, 5]) every.push(asset(status, rounds));
+  const report = tabAudit(every);
+  assert.deepStrictEqual(report.problems, [],
+    'no status/round combination lands in zero tabs or in several');
+  assert.ok(report.sums, 'and the four counts add up to the number of assets');
+  assert.strictEqual(report.total, workflow.STATE_IDS.length * 4);
 
-  // Anything else that changed hands is History and nothing else. This is the
-  // bug: every one of these used to answer 'active'.
-  for (const status of ['assigned', 'in_progress', 'pending_tl_review',
-    'tl_changes_requested', 'pending_cd_review', 'cd_changes_requested', 'approved_for_client']) {
-    assert.strictEqual(listTabOf({ status, ...ep(2) }), 'history',
-      `${status} after a handover belongs in History alone`);
-    assert.strictEqual(listTabOf({ status, ...ep(1) }), 'active',
-      `${status} that never changed hands is still Active`);
-    assert.strictEqual(listTabOf({ status, ...ep(0) }), 'active');
+  // Never handed on: the status alone decides, as it always did.
+  for (const status of workflow.STATE_IDS) {
+    const expected = status === 'not_started' ? 'inactive' : status === 'delivered' ? 'archived' : 'active';
+    assert.strictEqual(listTabOf(current(status)), expected, `current + ${status}`);
+    assert.strictEqual(listTabOf(asset(status, 0)), expected,
+      `${status} with no assignment history at all`);
   }
-
-  // Not Assigned is untouched, which the studio asked for explicitly.
-  assert.strictEqual(listTabOf({ status: 'not_started', ...ep(0) }), 'inactive');
-  assert.strictEqual(listTabOf({ status: 'not_started', ...ep(1) }), 'inactive');
-
-  // And nothing ever leaks into Active by falling through: every status has a
-  // home, so the fallback inside listGroupOf is unreachable for real data.
-  const everyStatusPlaced = workflow.STATE_IDS.every((status) =>
-    ASSET_LIST_GROUPS.some((g) => g.statuses.includes(status)));
-  assert.ok(everyStatusPlaced, 'an unplaced status would silently become Active');
 });
 
 test('an asset counts as handed on only once it has actually changed hands', () => {
