@@ -369,6 +369,7 @@ function evaluate(action, ctx, { note } = {}) {
       cd_approve: 'approved by the director',
       tl_request_changes: 'sent back by a team lead',
       cd_request_changes: 'sent back by the director',
+      tl_send_to_client: 'sent straight to the client — that is only possible while it is in TL Review',
     };
     return {
       ok: false,
@@ -394,9 +395,28 @@ function evaluate(action, ctx, { note } = {}) {
   };
 }
 
-// Why someone was turned away, in terms of the pipeline rather than of code.
+/* Why someone was turned away, in terms of the pipeline rather than of code.
+ *
+ * EVERY actor in `actors` needs a case here. One that does not have one falls
+ * to the default, and the person is told "You cannot do that to this asset." —
+ * which is true, useless, and indistinguishable from a bug. That is not
+ * hypothetical: adding the tl_send_to_client transition added an actor and not
+ * a case, so a team lead clicking a button the page had offered them got
+ * exactly that, with nothing to say whether it was their permissions or the
+ * asset. A test now fails if an actor has no case. */
 function refusal(transition, ctx) {
   switch (transition.who) {
+    /* Two different refusals wearing one actor, and telling them apart is the
+       whole point: one is fixed in Settings by a Super Admin, the other cannot
+       be fixed at all because it is somebody else's artist. */
+    case 'tlClientSender':
+      if (!ctx.canSendToClient) {
+        return 'You do not have permission to send work straight to the client. '
+          + 'That is the "TL Send to Client" permission, granted per role in Settings.';
+      }
+      return 'Only this artist\'s own team lead can send their work straight to the client.';
+    case 'planner':
+      return 'You cannot assign this asset — that is for whoever added it, or a role with Asset Assign.';
     case 'assignee':
       if (ctx.asset.assignee_id !== ctx.user.id) return 'Only the person this asset is assigned to can submit it.';
       if (ctx.asset.status === 'cd_changes_requested') {

@@ -1098,3 +1098,71 @@ test('every workflow action has a name the history can show', () => {
   assert.deepStrictEqual(missing, [],
     `these actions would appear in the history as raw ids: ${missing.join(', ')}`);
 });
+
+/* --- refusals have to say which thing is wrong ------------------------------
+ *
+ * refusal() switches on transition.who, and an actor with no case falls to
+ * "You cannot do that to this asset." — true, useless, and indistinguishable
+ * from a bug. That is what happened: tl_send_to_client added an actor and not
+ * a case, so a lead clicking a button the page had offered them was told
+ * nothing about whether it was their permissions or the asset.
+ */
+test('every actor explains its own refusal', () => {
+  const GENERIC = 'You cannot do that to this asset.';
+  const actors = [...new Set(workflow.TRANSITIONS.map((t) => t.who))];
+
+  /* Refuse each transition by handing it a context where nobody can do
+     anything, and check the message is specific to that gate. */
+  const vague = [];
+  for (const t of workflow.TRANSITIONS) {
+    const verdict = workflow.evaluate(t.action, {
+      user: { id: 'nobody', role: 'game_artist' },
+      asset: { status: t.from[0], assignee_id: 'someone-else', project_id: 'p' },
+    });
+    assert.strictEqual(verdict.ok, false, `${t.action} should refuse a stranger`);
+    if (verdict.error === GENERIC) vague.push(`${t.action} (actor: ${t.who})`);
+  }
+  assert.deepStrictEqual(vague, [],
+    `these refuse with the generic message instead of naming the gate: ${vague.join(', ')}`);
+
+  // And stated directly, so adding an actor without a case fails here too.
+  const src = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'src', 'asset-workflow.js'), 'utf8');
+  const body = src.match(/function refusal\(transition, ctx\) \{([\s\S]*?)\n\}/)[1];
+  const cased = [...body.matchAll(/case '([a-zA-Z]+)':/g)].map((m) => m[1]);
+  const missing = actors.filter((a) => !cased.includes(a));
+  assert.deepStrictEqual(missing, [],
+    `these actors have no case in refusal() and would fall to the generic message: ${missing.join(', ')}`);
+});
+
+test('Send to Client says which of the two things is wrong', () => {
+  const base = {
+    user: { id: 'lead-1', role: 'team_lead' },
+    asset: { status: 'pending_tl_review', assignee_id: 'artist-1' },
+  };
+
+  // Missing the permission — fixable in Settings, and the message says where.
+  const noPerm = workflow.evaluate('tl_send_to_client', { ...base, isTeamLead: true, canSendToClient: false });
+  assert.strictEqual(noPerm.status, 403);
+  assert.match(noPerm.error, /do not have permission/i);
+  assert.match(noPerm.error, /TL Send to Client/, 'naming the permission to grant');
+
+  // Has it, but it is somebody else's artist — not fixable in Settings at all,
+  // so the message must not send them looking there.
+  const notTheirLead = workflow.evaluate('tl_send_to_client', { ...base, isTeamLead: false, canSendToClient: true });
+  assert.strictEqual(notTheirLead.status, 403);
+  assert.match(notTheirLead.error, /own team lead/i);
+  assert.ok(!/permission/i.test(notTheirLead.error),
+    'and does not blame permissions, which are not the problem here');
+
+  // Wrong state — a different status code, and it names the state required.
+  for (const status of ['tl_changes_requested', 'pending_cd_review', 'approved_for_client']) {
+    const wrongState = workflow.evaluate('tl_send_to_client', {
+      ...base, asset: { ...base.asset, status }, isTeamLead: true, canSendToClient: true,
+    });
+    assert.strictEqual(wrongState.status, 409, `${status} is a state problem, not a permission one`);
+    assert.match(wrongState.error, /TL Review/, 'naming the state it has to be in');
+    assert.ok(!/tl send to client/.test(wrongState.error),
+      'and reading as a sentence rather than as the raw action id');
+  }
+});
