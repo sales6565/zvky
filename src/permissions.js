@@ -232,7 +232,7 @@ async function canHandOverInReview(user, asset) {
      asset at that moment may pass it on:
      
        TL Review     the lead it is waiting on
-       CD Changes    the director who sent it back, and the lead who relays
+       CD Feedbacks    the director who sent it back, and the lead who relays
                      their notes — either may put somebody else on the rework
        TL Feedbacks  the lead who sent it back
        CD Review     the director it is waiting on

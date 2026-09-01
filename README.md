@@ -240,20 +240,20 @@ Not Assigned --assign--> Assigned --accept--> In Progress --submit--> TL Review
                                                       |                   |
                                                       |    cd_request_changes (lands with the lead)
                                                       |                   v
-                                                      +-- (assignee reworks) <-- relay -- CD Changes
+                                                      +-- (assignee reworks) <-- relay -- CD Feedbacks
 ```
 
 ### Status is not the same as whose desk it is on
 
 `assets.routed_to_id` exists because status alone could not answer "who is this
-with". An asset in **CD Changes** sits with the *team lead* until they relay the
+with". An asset in **CD Feedbacks** sits with the *team lead* until they relay the
 notes, and with the *assignee* afterwards — without the status moving. `NULL`
 means a review queue that whoever holds that gate picks up.
 
 That distinction is the whole of the relay. Treating "routed to nobody" as
 "routed to anybody" let the assignee resubmit straight past the lead who was
 supposed to brief them; the states that belong to the assignee by definition are
-listed explicitly (`ASSIGNEE_STATUSES`) and CD Changes is not one of them.
+listed explicitly (`ASSIGNEE_STATUSES`) and CD Feedbacks is not one of them.
 
 ### Submissions
 

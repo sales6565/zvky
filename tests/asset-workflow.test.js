@@ -15,15 +15,16 @@ test('the nine states match the dashboard, in pipeline order', () => {
   ]);
   assert.deepStrictEqual(workflow.STATES.map((s) => s.label), [
     'Not Assigned', 'Assigned', 'In Progress', 'TL Review', 'TL Feedbacks',
-    'CD Review', 'CD Changes', 'Approved for Client', 'Delivered',
+    'CD Review', 'CD Feedbacks', 'Approved for Client', 'Delivered',
   ]);
 });
 
 /* Nothing may branch on what a status is CALLED.
  *
- * Two labels have now been renamed without touching a key — 'not_started' is
- * shown as "Not Assigned", and 'tl_changes_requested' as "TL Feedbacks" — and
- * the first of those broke a hardcoded comparison against the old wording. That
+ * Three labels have now been renamed without touching a key — 'not_started' is
+ * shown as "Not Assigned", 'tl_changes_requested' as "TL Feedbacks" and
+ * 'cd_changes_requested' as "CD Feedbacks" — and the first of those broke a
+ * hardcoded comparison against the old wording. That
  * is the worst shape of bug this codebase can produce: it does not throw, the
  * page still draws, and a stage test quietly starts answering false somewhere
  * nobody is looking. The routing back to an assignee out of a review is exactly
@@ -267,7 +268,7 @@ test('a move not in the table cannot happen', () => {
   assert.strictEqual(nonsense.status, 400, 'an action that does not exist is a bad request');
 });
 
-test('CD Changes is not the assignee\'s until the lead passes it on', () => {
+test('CD Feedbacks is not the assignee\'s until the lead passes it on', () => {
   // The distinction the relay rests on: routed to nobody means "in a review
   // queue", which for this state is the lead — not "free for anyone".
   const base = {

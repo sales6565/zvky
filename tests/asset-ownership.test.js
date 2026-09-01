@@ -69,7 +69,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     assert.strictEqual(res.status, 201, JSON.stringify(res.body));
     return res.body.asset;
   }
-  // Drive an asset to TL Changes, which is where Reassign becomes available.
+  // Drive an asset to TL Feedbacks, which is where Reassign becomes available.
   async function intoRework(assetId, artist) {
     await as(artist, `/assets/${assetId}/start`, { method: 'POST' });
     assert.strictEqual((await as(artist, `/assets/${assetId}/submit`, {
@@ -290,7 +290,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
       method: 'POST', body: { link: 'https://example.test/v1c', description: 'Again' },
     });
 
-    // TL Changes: now it is available.
+    // TL Feedbacks: now it is available.
     await as('lee', `/assets/${asset.id}/review`, {
       method: 'POST', body: { decision: 'changes_requested', text: 'Softer light' },
     });
@@ -437,8 +437,8 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     assert.strictEqual(await statusOf(asset.id), 'tl_changes_requested', 'and nothing moved');
   });
 
-  await t.test('handing CD Changes on stands in for the relay, and keeps the notes', async () => {
-    /* In CD Changes the asset waits with the team lead until they relay the
+  await t.test('handing CD Feedbacks on stands in for the relay, and keeps the notes', async () => {
+    /* In CD Feedbacks the asset waits with the team lead until they relay the
        director's notes, and the artist cannot resubmit before being briefed.
        
        Handing it to somebody else is a deliberate exception to that, and this
@@ -481,7 +481,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     })).status, 201, 'and it is theirs to hand in');
   });
 
-  await t.test('CD Changes still relays normally when nobody hands it on', async () => {
+  await t.test('CD Feedbacks still relays normally when nobody hands it on', async () => {
     /* The relay is untouched on the ordinary path: the change above is an
        alternative to it, not a replacement for it. */
     const asset = await newAsset('pat', 'Relay Intact', people.ana);

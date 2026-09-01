@@ -277,7 +277,7 @@ CREATE TABLE IF NOT EXISTS assets (
   project_id    CHAR(36)     NOT NULL,
   assignee_id   CHAR(36)     NULL,
   -- Whose desk this is on right now, which is not the same as its status: an
-  -- asset in CD Changes sits with the team lead until they relay the notes, and
+  -- asset in CD Feedbacks sits with the team lead until they relay the notes, and
   -- with the assignee afterwards, without the status moving. NULL means a
   -- review queue that whoever holds that gate picks up.
   routed_to_id  CHAR(36)     NULL,

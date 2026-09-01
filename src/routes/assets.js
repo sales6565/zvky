@@ -825,7 +825,7 @@ router.post('/:id/start', async (req, res) => {
       error: `Work can only be started while it is on somebody's desk — this asset is in ${workflow.label(asset.status)}.`,
     });
   }
-  // CD Changes sits with the lead until relayed; the assignee cannot start
+  // CD Feedbacks sits with the lead until relayed; the assignee cannot start
   // reworking what they have not been handed.
   if (asset.status === 'cd_changes_requested' && asset.routed_to_id !== req.user.id && !hasFullAccess(req.user)) {
     return res.status(409).json({ error: 'The team lead has not passed the Creative Director\'s notes on yet.' });
@@ -992,7 +992,7 @@ router.post('/:id/deliver', async (req, res) => {
 // POST /api/assets/:id/reassign — hand rework to somebody else.
 //
 // The pipeline sends changes-requested work back to whoever submitted it. This
-// is the way out of that: when an asset is sitting in TL Feedbacks or CD Changes,
+// is the way out of that: when an asset is sitting in TL Feedbacks or CD Feedbacks,
 // the person who added it can put a different artist on the rework instead.
 //
 // Deliberately not part of PATCH. Reassigning mid-review is a different act

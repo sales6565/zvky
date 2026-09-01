@@ -204,7 +204,7 @@ test('assigned, accepted, stamped', { skip: cfg ? false : SKIP_REASON }, async (
     // The same cycle again: start (round 2, no status change), work, submit.
     const rework = await start('ana', asset.id);
     assert.strictEqual(rework.status, 200, JSON.stringify(rework.body));
-    assert.notStrictEqual(rework.body.accepted, true, 'no accept transition — the status is TL Changes');
+    assert.notStrictEqual(rework.body.accepted, true, 'no accept transition — the status is TL Feedbacks');
     assert.strictEqual((await assetRow(asset.id)).status, 'tl_changes_requested', 'and stays there');
     await sleep(1100);
     await submit('ana', asset.id, 'https://example.test/v2', 'Reworked');
@@ -229,7 +229,7 @@ test('assigned, accepted, stamped', { skip: cfg ? false : SKIP_REASON }, async (
     assert.deepStrictEqual(closes, ['submitted', 'submitted']);
   });
 
-  await t.test('CD Changes: no clock until the lead relays the notes', async () => {
+  await t.test('CD Feedbacks: no start until the lead relays the notes', async () => {
     const asset = await newAsset('Relay First');
     await as('ana', `/assets/${asset.id}/start`, { method: 'POST' });
     await as('ana', `/assets/${asset.id}/submit`, {
@@ -967,7 +967,7 @@ test('assigned, accepted, stamped', { skip: cfg ? false : SKIP_REASON }, async (
     assert.match(basis[1][1], new RegExp(cutover.date));
   });
 
-  await t.test('the whole loop: TL Changes, CD Changes, and a hand-over', async () => {
+  await t.test('the whole loop: TL Feedbacks, CD Feedbacks, and a hand-over', async () => {
     /* One asset through every path that opens or closes a stretch, checking the
        stamps and the reason at each step. The rounds and the hand-over were
        each covered on their own above; what this pins is that they compose —

@@ -8,7 +8,7 @@
 // rather than in a branch:
 //
 //   work sent back to the SAME person   the assignee does not change, so the
-//   (TL Feedbacks, CD Changes)          episode does not end. Their time keeps
+//   (TL Feedbacks, CD Feedbacks)          episode does not end. Their time keeps
 //                                       accumulating across the round, which is
 //                                       the rule already agreed.
 //

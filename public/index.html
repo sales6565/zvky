@@ -847,12 +847,12 @@ function priorityOptions(selected){
 /* The nine states, and the words the studio sees for them.
  *
  * LABELS ARE RENAMED HERE AND IN src/asset-workflow.js, AND NOWHERE ELSE. The
- * `id` is the state; the `label` is only what it is called on screen. Two of
+ * `id` is the state; the `label` is only what it is called on screen. Three of
  * these have already been renamed without touching a key — 'not_started' is
- * shown as "Not Assigned", and 'tl_changes_requested' as "TL Feedbacks" — and
- * each key stays put because it is in the assets CHECK constraint, in every
- * asset_events row ever written, and in saved filters. Renaming one would be a
- * data migration, not a rename.
+ * shown as "Not Assigned", 'tl_changes_requested' as "TL Feedbacks" and
+ * 'cd_changes_requested' as "CD Feedbacks" — and each key stays put because it
+ * is in the assets CHECK constraint, in every asset_events row ever written,
+ * and in saved filters. Renaming one would be a data migration, not a rename.
  *
  * The corollary, which is what actually bit: NOTHING MAY BRANCH ON A LABEL.
  * Every stage test in this file and on the server compares against the id —
@@ -868,7 +868,7 @@ const STATUSES = [
   {id:'pending_tl_review', label:'TL Review', color:'var(--review)'},
   {id:'tl_changes_requested', label:'TL Feedbacks', color:'#e8402c'},
   {id:'pending_cd_review', label:'CD Review', color:'#9b7ef0'},
-  {id:'cd_changes_requested', label:'CD Changes', color:'#e8402c'},
+  {id:'cd_changes_requested', label:'CD Feedbacks', color:'#e8402c'},
   {id:'approved_for_client', label:'Approved for Client', color:'var(--approved)'},
   {id:'delivered', label:'Delivered', color:'var(--final)'},
 ];
@@ -2982,7 +2982,7 @@ async function openDrawer(id){
   const handingBackRework = REWORK_STATUSES.includes(a.status);
   /* Accept and Start. The assignee's own, with full access for oversight —
      mirrors mayStartWork on the server. Only in the states where working makes
-     sense, and in CD Changes only once the lead has relayed the notes.
+     sense, and in CD Feedbacks only once the lead has relayed the notes.
 
      The button is offered only while nothing is open. There is no Pause and no
      Resume any more: a round is one span from this click to the submission, and
@@ -3015,7 +3015,7 @@ async function openDrawer(id){
   const drawer = document.getElementById('drawer');
 
   const isMyAssetAsArtist = caps().assignable && a.assignee_id===u.id;
-  /* CD Changes sits with the team lead until they relay it, so being the
+  /* CD Feedbacks sits with the team lead until they relay it, so being the
      assignee is not enough on its own — the API refuses it too. */
   const routedToMe = !a.routed_to_id || a.routed_to_id===u.id;
   const waitingOnRelay = a.status==='cd_changes_requested' && a.routed_to_id!==u.id;

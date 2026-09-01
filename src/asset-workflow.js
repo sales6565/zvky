@@ -10,7 +10,7 @@
 //   Not Assigned -> Assigned -> In Progress -> TL Review -> Approved for Client -> Delivered
 //                       |            ^             |  \
 //                  (accept starts    |             |   +-> TL Feedbacks -> (assignee reworks)
-//                   the clock)       |             +-> CD Review -> CD Changes -> (TL relays)
+//                   the clock)       |             +-> CD Review -> CD Feedbacks -> (TL relays)
 //
 // Assigned and In Progress are separated by the assignee's own act: assignment
 // puts work on their desk, Accept and Start is them picking it up — and it is
@@ -18,7 +18,7 @@
 // straight to In Progress; that rule is gone.
 //
 // `status` says where in the pipeline the asset is. `routed_to_id` says whose
-// desk it is on, which is not the same thing: CD Changes sits with the team
+// desk it is on, which is not the same thing: CD Feedbacks sits with the team
 // lead until they relay it, and with the assignee afterwards, without the
 // status changing. Deriving that from status alone was not possible, which is
 // why it is stored.
@@ -33,7 +33,7 @@ const STATES = [
   { id: 'pending_tl_review', label: 'TL Review', color: 'var(--review)' },
   { id: 'tl_changes_requested', label: 'TL Feedbacks', color: '#e8402c' },
   { id: 'pending_cd_review', label: 'CD Review', color: '#9b7ef0' },
-  { id: 'cd_changes_requested', label: 'CD Changes', color: '#e8402c' },
+  { id: 'cd_changes_requested', label: 'CD Feedbacks', color: '#e8402c' },
   { id: 'approved_for_client', label: 'Approved for Client', color: 'var(--approved)' },
   { id: 'delivered', label: 'Delivered', color: 'var(--final)' },
 ];
@@ -64,7 +64,7 @@ function cdChangesReentry() {
 // of these is theirs; an unrouted asset anywhere else is sitting in a review
 // queue and is not.
 //
-// This distinction is the whole of the CD Changes relay. That state is routed
+// This distinction is the whole of the CD Feedbacks relay. That state is routed
 // to nobody until the lead passes it on, and without the list below "routed to
 // nobody" reads as "routed to anybody" — which let the assignee resubmit
 // straight past the lead who was supposed to brief them.
