@@ -290,6 +290,12 @@ tr.past-round{opacity:0.62;}
    the one mistake this whole screen exists to prevent. Wide enough for the
    longest form, whichever the browser picks. */
 .ref-add input[type="time"].narrow{width:130px;}
+/* The uploaded preview, in the slot the scope-of-work icon already occupied.
+   cover crops to the slot rather than stretching, so a portrait phone photo and
+   a wide screenshot both sit correctly on a card that is fixed at 64px. */
+.thumb-img{width:100%;height:100%;object-fit:cover;display:block;}
+.thumb-actions{display:flex;gap:12px;align-items:center;margin:-8px 0 10px;}
+.thumb-actions .u-link{font-size:11.5px;font-weight:500;color:var(--ink-muted);}
 /* One active task at a time. Amber rather than the refusal red: nothing has
    gone wrong, and there is something the person can do about it.
    
@@ -1877,10 +1883,24 @@ let state = { view:'board', search:'', filterType:'', listGroup:'active',
 
 /* ---------- API helper ---------- */
 async function api(path, options={}){
+  /* A file goes through as itself. Everything else is JSON, exactly as before —
+     the check is on the body's own type, so no existing caller changes.
+     
+     Content-Type is deliberately NOT set for multipart: the browser has to
+     write it, because only it knows the boundary string it generated. Setting
+     it by hand produces a request the server cannot parse and an error that
+     says nothing useful.
+     
+     Going through here rather than a raw fetch (which is what the studio logo
+     upload does) means an upload gets the same session-expiry handling and the
+     same error shaping as every other call. */
+  const multipart = typeof FormData !== 'undefined' && options.body instanceof FormData;
+  const headers = { ...(state.token?{Authorization:'Bearer '+state.token}:{}), ...(options.headers||{}) };
+  if(!multipart) headers['Content-Type'] = 'application/json';
   const res = await fetch(API_BASE + path, {
     ...options,
-    headers: { 'Content-Type':'application/json', ...(state.token?{Authorization:'Bearer '+state.token}:{}), ...(options.headers||{}) },
-    body: options.body ? JSON.stringify(options.body) : undefined,
+    headers,
+    body: multipart ? options.body : (options.body ? JSON.stringify(options.body) : undefined),
   });
   const data = await res.json().catch(()=>({}));
   // A 401 from signing in means the credentials were wrong, not that a session
@@ -3058,6 +3078,85 @@ function typeIconSVG(type, color){
   const custom = `<rect x="7" y="7" width="22" height="22" rx="5" fill="none" stroke="${color}" stroke-width="2" stroke-dasharray="4 3"/><circle cx="18" cy="18" r="3.5" fill="${color}"/>`;
   return `<svg width="36" height="36" viewBox="0 0 36 36">${icons[type]||custom}</svg>`;
 }
+/* --- the asset's preview image --------------------------------------------
+
+   Two places, and both of them already existed: .thumb on the board card and
+   .thumb-big at the top of the side panel. Each has always drawn a
+   scope-of-work icon on a tinted ground, at a fixed height — 64px and 140px.
+   So the uploaded image FILLS those slots rather than being added above them,
+   and the icon that was already there IS the placeholder for an asset without
+   one. Nothing on either layout moves, and there was no new empty state to
+   invent.
+
+   object-fit: cover crops whatever was uploaded to the slot's shape, so a tall
+   phone photo and a wide screenshot both sit correctly rather than stretching
+   or letterboxing the card. The browser has already squared and downscaled it
+   before upload; this is what keeps a stored image that arrived another way
+   from breaking the board. */
+const THUMB_OUTPUT_PX = 640;
+
+function thumbUrl(assetId, at){
+  if(!assetId || !at) return null;
+  return `${API_BASE}/assets/${encodeURIComponent(assetId)}/thumbnail?v=${encodeURIComponent(new Date(at).getTime())}`;
+}
+
+/* The contents of a .thumb or .thumb-big: the image if there is one, and the
+   scope-of-work icon if there is not. One function for both so the card and
+   the panel cannot disagree about what an asset looks like. */
+function thumbInner(a, iconPx){
+  const t = typeOf(a.type);
+  const url = thumbUrl(a.id, a.thumbnail_at);
+  if(url){
+    return `<img src="${escapeHTML(url)}" alt="" class="thumb-img" loading="lazy">`;
+  }
+  return typeIconSVG(a.type, t.color).replace('width="36" height="36"',
+    `width="${iconPx}" height="${iconPx}"`);
+}
+
+/* Whether this account may set the preview. Mirrors mayChange() in
+   src/asset-thumbnail.js — the assignee, or whoever may edit the asset — and
+   the API decides regardless; this only stops offering a control that would be
+   refused. Deliberately one person wider than `editable` above it: the picture
+   is of the work in progress, and the assignee is who is making it. */
+function maySetThumbnail(a){
+  const u = state.currentUser || {};
+  return a.assignee_id === u.id || (can('asset.edit') && ownsAsset(a));
+}
+
+/* Read a file, centre-crop it to the panel's shape and hand back a JPEG blob.
+   The same approach the profile photo takes, at this feature's size: what
+   leaves the browser is tens of kilobytes rather than whatever came off a
+   phone, and the server's 5MB cap is the backstop rather than the norm. */
+async function cropThumbnailToBlob(file){
+  const okTypes = ['image/jpeg', 'image/png'];
+  if(!file) throw new Error('Choose an image.');
+  if(!okTypes.includes(file.type)) throw new Error('Use a JPG or PNG image.');
+  if(file.size > 5 * 1024 * 1024) throw new Error('That image is larger than the 5MB limit.');
+  const { img, url } = await loadImageFile(file);
+  try{
+    /* 16:10, matching .thumb-big — a card is wider than it is tall, and
+       cropping to the shape it will be shown in is what stops a portrait
+       upload arriving as a thin strip between two empty bands. */
+    const outW = THUMB_OUTPUT_PX, outH = Math.round(THUMB_OUTPUT_PX * 0.625);
+    const want = outW / outH;
+    const have = img.width / img.height;
+    let sw = img.width, sh = img.height, sx = 0, sy = 0;
+    if(have > want){ sw = Math.round(img.height * want); sx = Math.round((img.width - sw) / 2); }
+    else { sh = Math.round(img.width / want); sy = Math.round((img.height - sh) / 2); }
+    const c = document.createElement('canvas');
+    c.width = outW; c.height = outH;
+    c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, outW, outH);
+    return await canvasToJpeg(c);
+  } finally { URL.revokeObjectURL(url); }
+}
+
+async function uploadThumbnail(assetId, file){
+  const blob = await cropThumbnailToBlob(file);
+  const form = new FormData();
+  form.append('image', blob, 'thumbnail.jpg');
+  return api(`/assets/${assetId}/thumbnail`, { method:'POST', body: form });
+}
+
 function cardHTML(a){
   const t=typeOf(a.type); const p=priorityOf(a.priority);
   const pClass = a.priority==='high'?'priority-high':a.priority==='med'?'priority-med':'';
@@ -3067,7 +3166,7 @@ function cardHTML(a){
   if(a.due_date) metaBits.push(new Date(a.due_date).toLocaleDateString(undefined,{month:'short',day:'numeric'}));
   return `<div class="card ${pClass}" draggable="true" data-id="${a.id}">
     ${a.priority!=='low' ? '<div class="priority-flag"></div>' : ''}<div class="reg"></div>
-    <div class="thumb" style="background:linear-gradient(135deg, ${t.color}33, ${t.color}0d);">${typeIconSVG(a.type,t.color)}</div>
+    <div class="thumb" style="background:linear-gradient(135deg, ${t.color}33, ${t.color}0d);">${thumbInner(a, 36)}</div>
     <div class="code">${a.code}${metaBits.length? ' · '+metaBits.join(' · ') : ''}</div><div class="name">${escapeHTML(a.name)}</div>
     <div class="meta"><span class="type-tag">${t.label}</span>
       <div style="display:flex;align-items:center;gap:6px;"><span class="mono" style="font-size:10px;color:var(--ink-faint);">${doneTasks}/${a.tasks.length}</span>
@@ -4699,7 +4798,14 @@ async function openDrawer(id){
 
   drawer.innerHTML = `
     <button class="close" id="closeDrawer">×</button>
-    <div class="thumb-big" style="background:linear-gradient(135deg, ${t.color}44, ${t.color}0d); display:flex;align-items:center;justify-content:center;">${typeIconSVG(a.type,t.color).replace('width="36" height="36"','width="64" height="64"')}</div>
+    <div class="thumb-big" style="background:linear-gradient(135deg, ${t.color}44, ${t.color}0d); display:flex;align-items:center;justify-content:center;">${thumbInner(a, 64)}</div>
+    ${maySetThumbnail(a) ? `
+      <div class="thumb-actions">
+        <button class="u-link" id="d_thumbPick">${a.thumbnail_at ? 'Replace preview' : 'Add a preview image'}</button>
+        ${a.thumbnail_at ? '<button class="u-link" id="d_thumbClear">Remove</button>' : ''}
+        <input type="file" id="d_thumbFile" accept="image/jpeg,image/png" style="display:none;">
+      </div>
+      <div class="ref-err" id="d_thumbErr"></div>` : ''}
     <div class="code">${a.code}</div><h2 class="display" style="margin:4px 0 2px;font-size:19px;">${escapeHTML(a.name)}</h2>
     <div class="type-tag" style="display:inline-block;">${t.label}</div>
     <div class="field-lbl">Status</div>
@@ -5067,6 +5173,38 @@ async function openDrawer(id){
      refuses a second open session anyway, so a double-click or a second tab
      cannot open two stretches. Nothing here ticks — the elapsed figure is
      whatever the server last reported, and it is re-read after every action. */
+  /* The preview image. Re-opens the drawer after either action so both the
+     panel and the card behind it redraw from the server's answer — the URL
+     carries the new upload time, so a replacement is a different URL and the
+     browser cannot show the previous image from its cache. */
+  const thumbPick = document.getElementById('d_thumbPick');
+  const thumbFile = document.getElementById('d_thumbFile');
+  const thumbErr = () => document.getElementById('d_thumbErr');
+  if(thumbPick && thumbFile){
+    thumbPick.onclick = ()=>{ thumbErr().textContent = ''; thumbFile.value = ''; thumbFile.click(); };
+    thumbFile.onchange = async ()=>{
+      const file = thumbFile.files && thumbFile.files[0];
+      if(!file) return;
+      thumbPick.disabled = true;
+      try{
+        await uploadThumbnail(id, file);
+        await render();
+        openDrawer(id);
+        showToast('Preview image updated.');
+      }catch(e){ thumbErr().textContent = e.message; thumbPick.disabled = false; }
+    };
+  }
+  const thumbClear = document.getElementById('d_thumbClear');
+  if(thumbClear) thumbClear.onclick = async ()=>{
+    thumbClear.disabled = true;
+    try{
+      await api(`/assets/${id}/thumbnail`, { method:'DELETE' });
+      await render();
+      openDrawer(id);
+      showToast('Preview image removed.');
+    }catch(e){ thumbErr().textContent = e.message; thumbClear.disabled = false; }
+  };
+
   const startBtn = document.getElementById('d_startBtn');
   if(startBtn) startBtn.onclick = async (ev)=>{
     const err = document.getElementById('d_startErr');

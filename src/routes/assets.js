@@ -39,6 +39,43 @@ const workflow = require('../asset-workflow');
 const submissionLink = require('../submission-link');
 const referenceData = require('../reference-data');
 
+/* --- the asset's preview image --------------------------------------------
+
+   GET sits ABOVE router.use(authenticate), for the reason the profile photo
+   route gives at length: an <img src> cannot send an Authorization header, and
+   these appear on every card of every board. The alternatives were inlining
+   each image as a data: URI in the board JSON — tens of kilobytes per card —
+   or putting the token in the query string, where it lands in every proxy log.
+
+   So what protects a thumbnail is its URL: the asset's id is a version 4 UUID,
+   handed out only inside authenticated responses. It is a capability rather
+   than a secret, and anyone given the link can load the image.
+
+   Worth stating plainly because this is a step further than a face: these are
+   previews of client work. The same trade was already accepted for profile
+   photos and the studio logo, and no other route in this application works
+   this way. If client artwork should not be reachable by URL, the fix is not a
+   tweak here — it is signed, expiring URLs for all three, and it is a
+   different piece of work.
+
+   404 when there is none: the page then draws the placeholder, which is the
+   documented fallback rather than a broken image icon.
+*/
+const multer = require('multer');
+const assetThumbnail = require('../asset-thumbnail');
+const permissions = require('../permissions');
+
+router.get('/:id/thumbnail', async (req, res) => {
+  const image = await assetThumbnail.read(db, req.params.id).catch(() => null);
+  if (!image) return res.status(404).json({ error: 'This asset has no preview image.' });
+  res.setHeader('Content-Type', image.mime);
+  /* Revalidated rather than trusted: the page appends the upload time to the
+     URL so a replacement is a new URL and appears at once, but a browser
+     holding the old URL must not go on showing a deleted image for days. */
+  res.setHeader('Cache-Control', 'private, max-age=300, must-revalidate');
+  res.send(image.buffer);
+});
+
 router.use(authenticate);
 
 /* Every asset that leaves this router goes through here, which is why the
@@ -200,8 +237,16 @@ function fmtSeconds(total) {
    into a photo URL, and null means draw their initials instead. The image
    bytes are never selected here — this join runs for every asset on the
    board, and a MEDIUMBLOB per row would be paid for on every load. */
-const ASSET_SELECT = `SELECT a.*, u.name AS assignee_name, u.avatar_updated_at AS assignee_photo_at
-  FROM assets a LEFT JOIN users u ON u.id = a.assignee_id`;
+/* The board's read. `a.*` is deliberate and load-bearing to leave alone — which
+   is why the thumbnail's BYTES live in their own table and only its timestamp
+   is joined here. A MEDIUMBLOB on the assets row would arrive in every board
+   response as a JSON array of byte values, per asset. The page builds the image
+   URL from the id and this stamp, exactly as it does for a profile photo. */
+const ASSET_SELECT = `SELECT a.*, u.name AS assignee_name, u.avatar_updated_at AS assignee_photo_at,
+    t.updated_at AS thumbnail_at
+  FROM assets a
+  LEFT JOIN users u ON u.id = a.assignee_id
+  LEFT JOIN asset_thumbnails t ON t.asset_id = a.id`;
 
 // Nothing is written to an asset in a closed or archived project.
 //
@@ -1032,6 +1077,92 @@ async function activeWorkFor(user) {
     since: open.since,
   };
 }
+
+/* Setting and removing the preview image.
+ *
+ * In memory rather than on disk: one small image on its way into a row, so a
+ * temp file would only be something to clean up. The cap is set here so multer
+ * refuses an oversized upload before it is all read, and again inside
+ * src/asset-thumbnail.js for a request that arrives another way.
+ */
+const uploadThumbnail = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: assetThumbnail.MAX_THUMBNAIL_BYTES, files: 1 },
+});
+
+/* multer aborts an oversized upload before the handler runs, and its own error
+   is a 500 with a code nobody can act on. Turned into the same sentence the
+   module would have given, with the limit in it. */
+const acceptThumbnail = (req, res, next) => uploadThumbnail.single('image')(req, res, (err) => {
+  if (!err) return next();
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(400).json({
+      error: `That image is larger than the ${Math.round(assetThumbnail.MAX_THUMBNAIL_BYTES / (1024 * 1024))}MB limit.`,
+      field: 'image',
+    });
+  }
+  return res.status(400).json({ error: 'That upload could not be read.', field: 'image' });
+});
+
+// One answer to "may this person change this asset's preview", used by both
+// routes below so they cannot come to different conclusions.
+async function thumbnailGuard(req, res) {
+  const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
+  const asset = rows[0];
+  if (!asset) { res.status(404).json({ error: 'Asset not found' }); return null; }
+  if (await projectClosedResponse(res, asset.project_id)) return null;
+  if (!(await assetThumbnail.mayChange(permissions, req.user, asset))) {
+    res.status(403).json({
+      error: 'Only the person this asset is assigned to, or somebody who can edit it, '
+        + 'can change its preview image.',
+    });
+    return null;
+  }
+  return asset;
+}
+
+router.post('/:id/thumbnail', acceptThumbnail, async (req, res) => {
+  const asset = await thumbnailGuard(req, res);
+  if (!asset) return undefined;
+  if (!req.file) return res.status(400).json({ error: 'Choose an image.', field: 'image' });
+
+  const had = Boolean(await assetThumbnail.read(db, req.params.id).catch(() => null));
+  const saved = await assetThumbnail.save(db, req.params.id,
+    { buffer: req.file.buffer, mime: req.file.mimetype }, req.user);
+  if (!saved.ok) return res.status(saved.status).json({ error: saved.error, field: 'image' });
+
+  req.activity({
+    module: 'assets', action: 'asset.thumbnail', entityType: 'asset',
+    entityId: asset.id, entityLabel: `${asset.code || ''} ${asset.name || ''}`.trim(),
+    summary: `${had ? 'Replaced' : 'Added'} the preview image on ${asset.code || 'an asset'}`,
+    changes: { thumbnail: { from: had ? 'an image' : null, to: saved.mime } },
+  });
+
+  const { rows } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [req.params.id]);
+  const [withDetails] = await attachTasksAndNotes(rows, req.user);
+  return res.json({ asset: withDetails });
+});
+
+router.delete('/:id/thumbnail', async (req, res) => {
+  const asset = await thumbnailGuard(req, res);
+  if (!asset) return undefined;
+  const had = Boolean(await assetThumbnail.read(db, req.params.id).catch(() => null));
+  await assetThumbnail.clear(db, req.params.id);
+  if (had) {
+    req.activity({
+      module: 'assets', action: 'asset.thumbnail_removed', entityType: 'asset',
+      entityId: asset.id, entityLabel: `${asset.code || ''} ${asset.name || ''}`.trim(),
+      summary: `Removed the preview image from ${asset.code || 'an asset'}`,
+      changes: { thumbnail: { from: 'an image', to: null } },
+    });
+  } else {
+    // Removing what was not there is not an action.
+    req.activitySkip();
+  }
+  const { rows } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [req.params.id]);
+  const [withDetails] = await attachTasksAndNotes(rows, req.user);
+  return res.json({ asset: withDetails });
+});
 
 const STARTABLE = ['assigned', 'in_progress', 'tl_changes_requested', 'cd_changes_requested'];
 

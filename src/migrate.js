@@ -1608,6 +1608,31 @@ async function ensureWorkSchedule(db, log) {
   log('Schema: the working day (09:30-19:00, lunch 13:00-14:00) is now a setting.');
 }
 
+/* asset_thumbnails — the preview image on an asset's card.
+ *
+ * Its own table so the bytes are never reachable from the board query, which
+ * is SELECT a.*. See the note in sql/schema.sql. */
+async function ensureAssetThumbnails(db, log) {
+  const { rows } = await db.query(
+    `SELECT TABLE_NAME AS n FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'asset_thumbnails'`
+  );
+  if (rows.length) return;
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS asset_thumbnails (
+      asset_id   CHAR(36)     NOT NULL PRIMARY KEY,
+      image      MEDIUMBLOB   NOT NULL,
+      mime       VARCHAR(64)  NOT NULL,
+      updated_by CHAR(36)     NULL,
+      updater_email VARCHAR(191) NULL,
+      updated_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )`));
+  // Tolerant, like the other foreign keys added after the fact: a deployment
+  // whose engine or collation refuses it still gets the table.
+  await db.query('ALTER TABLE asset_thumbnails ADD CONSTRAINT fk_thumb_asset '
+    + 'FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE').catch(() => {});
+  log('Schema: asset_thumbnails created — assets can carry a preview image.');
+}
+
 /* activity_log — what everybody did, in one table.
  *
  * Additive in the strictest sense: the four audit trails that already exist are
@@ -1893,6 +1918,7 @@ const STEPS = [
   ['profile photos', ensureProfilePhotos],
   ['quick tour', ensureTourSeen],
   ['activity log', ensureActivityLog],
+  ['asset thumbnails', ensureAssetThumbnails],
   ['working hours', ensureWorkSchedule],
   // Its mirror, once the table exists and holds its one row.
   ['working hours mirror', (db) => workSchedule.load(db)],

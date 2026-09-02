@@ -615,6 +615,33 @@ CREATE TABLE IF NOT EXISTS project_review_requests (
   CONSTRAINT fk_prr_reviewer FOREIGN KEY (reviewed_by)  REFERENCES users(id)    ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- The preview image on an asset's card.
+--
+-- A table of its own rather than columns on `assets`, and that is the whole
+-- point of it. The board reads assets with SELECT a.* — so a MEDIUMBLOB on
+-- that row would be re-encoded as a JSON array of byte values into every
+-- board response, for every asset on it. That is exactly the bug
+-- src/user-fields.js was written to fix after SELECT * put a profile photo
+-- into every sign-in response.
+--
+-- Naming the columns instead would work until somebody adds the next blob.
+-- Keeping the bytes in a table nothing joins by default makes the mistake
+-- unavailable rather than merely avoided: the board joins this for its
+-- updated_at and never for its image.
+CREATE TABLE IF NOT EXISTS asset_thumbnails (
+  asset_id   CHAR(36)     NOT NULL PRIMARY KEY,
+  image      MEDIUMBLOB   NOT NULL,
+  mime       VARCHAR(64)  NOT NULL,
+  -- Who last changed it, kept with the email so the record survives the
+  -- account going, as the other trails in this schema do.
+  updated_by CHAR(36)     NULL,
+  updater_email VARCHAR(191) NULL,
+  -- The page appends this to the image URL, so a replacement is a new URL and
+  -- appears at once rather than sitting behind a cached copy of the old one.
+  updated_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_thumb_asset FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS asset_event_batches (
   id          CHAR(36)     NOT NULL PRIMARY KEY,
   action      VARCHAR(32)  NOT NULL,
