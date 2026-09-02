@@ -42,6 +42,18 @@ const SELECT = `
     LEFT JOIN users    s ON s.id = r.submitted_by
     LEFT JOIN users    v ON v.id = r.reviewed_by`;
 
+/* The one status the Creative Director's answer now sets.
+ *
+ * ANSWERED is wider than that on purpose: it is every status meaning "the
+ * Creative Director has dealt with this and Production has not". The two older
+ * values are rows written when the answer was a choice between Request Changes
+ * and Approve for Client. Those rows are history — somebody really did make
+ * that decision — so they are not rewritten, and they keep appearing in
+ * Production's queue exactly as they did. New answers are all FEEDBACK_GIVEN.
+ */
+const FEEDBACK_GIVEN = 'feedback_given';
+const ANSWERED = [FEEDBACK_GIVEN, 'changes_requested', 'approved_for_client'];
+
 // The table arrives with a migration, and a step can fail. When it has not
 // arrived the queue is empty rather than a 500 — the same bargain the rest of
 // this codebase makes with its newer tables.
@@ -53,16 +65,14 @@ const unavailable = (err) => err && (err.code === 'ER_NO_SUCH_TABLE' || err.code
 // a submission is addressed to whoever is watching rather than to a person.
 router.get('/', requirePermission('project.review_queue'), async (req, res) => {
   const wanted = req.query.status;
-  const KNOWN = ['pending', 'changes_requested', 'approved_for_client'];
+  const KNOWN = ['pending', ...ANSWERED];
   const where = KNOWN.includes(wanted) ? ' WHERE r.status = $1' : '';
   try {
     const { rows } = await db.query(`${SELECT}${where} ORDER BY r.created_at DESC`,
       where ? [wanted] : []);
     const pending = rows.filter((r) => r.status === 'pending').length;
-    /* Answered and still needing somebody to do something about it. Approvals
-       count too: "this is clear to go to the client" is an instruction. */
-    const answered = rows.filter((r) => r.status === 'changes_requested'
-      || r.status === 'approved_for_client').length;
+    // Answered and still needing somebody to do something about it.
+    const answered = rows.filter((r) => ANSWERED.includes(r.status)).length;
     res.json({ requests: rows, pending, answered });
   } catch (err) {
     if (!unavailable(err)) throw err;
@@ -114,21 +124,22 @@ router.get('/pending-actions', requirePermission('pending.view'), async (req, re
     groups.push({
       key: 'awaiting_review',
       label: 'Waiting on your review',
-      note: 'Projects submitted for the Creative Director. Answer them with feedback or an approval.',
+      note: 'Projects submitted for the Creative Director. Read them and write your feedback.',
       act: 'respond',
       items,
     });
   }
   if (mayFollowUp) {
-    /* Answered and not yet dealt with. Both decisions land here: "changes" is
-       work to route, and "approved for client" is an instruction to act on. */
-    const items = rows.filter((r) =>
-      (r.status === 'changes_requested' || r.status === 'approved_for_client') && !r.closedAt);
+    /* Answered and not yet dealt with — including the rows written back when
+       the answer was one of two decisions. What the feedback MEANS is now
+       Production's reading of it rather than a status, so everything answered
+       lands in one list. */
+    const items = rows.filter((r) => ANSWERED.includes(r.status) && !r.closedAt);
     groups.push({
       key: 'awaiting_followup',
       label: 'Waiting on you to act',
-      note: 'The Creative Director has answered. Route the changes to the assets they apply to, '
-        + 'then mark it done.',
+      note: 'The Creative Director has given feedback. Read it and take it where it goes — route '
+        + 'the assets it applies to, or carry it toward delivery — then mark it done.',
       act: 'close',
       items,
     });
@@ -192,41 +203,38 @@ router.post('/', requirePermission('project.review_send'), async (req, res) => {
   res.status(201).json({ request: rows[0] });
 });
 
-/* POST /api/project-reviews/:id/decision — the Creative Director's answer.
- * body: { decision: 'changes_requested' | 'approved_for_client', feedback? }
+/* POST /api/project-reviews/:id/feedback — the Creative Director's answer.
  *
- * This replaces the generic "mark it reviewed" it had before. The two decisions
- * are the only ways a submission leaves Pending, because "somebody looked at
- * it" was never the useful fact — what Production needs to know is whether the
- * work is clear or whether there is something to fix.
+ * ONE action, and the studio asked for it deliberately. It used to be two —
+ * Request Changes and Approve for Client — and the two set two statuses that
+ * Production then saw as two differently-worded rows.
  *
- * WHAT THIS DOES NOT DO, and it is the whole design: it touches no asset. The
- * submission is project-level and names no asset, so setting every asset under
- * the project to CD Feedbacks would overwrite work that is Delivered, Not
- * Assigned or mid-flight on something unrelated. The decision is recorded here,
- * Production reads the feedback, and Production decides which assets it applies
- * to — through the reassignment flow they already use. A human maps the
- * feedback to the work; this does not guess.
+ * What was lost by collapsing them, stated plainly: the system no longer knows
+ * whether an answer means "fix this" or "this is clear". What was NOT lost is
+ * anything that acted on that knowledge, because nothing did — the close step
+ * accepted either status identically, and routing changes to assets was always
+ * a human reading the feedback and using the reassignment flow. The distinction
+ * was a label on a row, and it is now a sentence in the feedback, which is
+ * where the studio wants the judgement to live.
+ *
+ * So feedback is REQUIRED. Under two buttons an approval could carry no words,
+ * because the button said what it meant. With one button the words are the
+ * whole message, and an empty one would tell Production only that somebody
+ * looked at it.
+ *
+ * WHAT THIS DOES NOT DO, and it is still the whole design: it touches no asset.
+ * The submission is project-level and names no asset, so setting every asset
+ * under the project to CD Feedbacks would overwrite work that is Delivered, Not
+ * Assigned or mid-flight on something unrelated. The feedback is recorded here,
+ * Production reads it, and Production decides which assets it applies to —
+ * through the reassignment flow they already use. A human maps the feedback to
+ * the work; this does not guess.
  */
-const DECISIONS = ['changes_requested', 'approved_for_client'];
-
-router.post('/:id/decision', requirePermission('project.review_respond'), async (req, res) => {
-  const { decision, feedback } = req.body || {};
-  if (!DECISIONS.includes(decision)) {
+router.post('/:id/feedback', requirePermission('project.review_respond'), async (req, res) => {
+  const note = String((req.body || {}).feedback || '').trim();
+  if (!note) {
     return res.status(400).json({
-      error: 'Say whether this is a change request or an approval.',
-      field: 'decision',
-      allowed: DECISIONS,
-    });
-  }
-  const note = String(feedback || '').trim();
-  /* Required to ask for changes, optional to approve. Asking for changes with
-     nothing written tells Production there is something to fix and not what,
-     which is the one thing this decision exists to carry. An approval carries
-     its meaning in the decision itself. */
-  if (decision === 'changes_requested' && !note) {
-    return res.status(400).json({
-      error: 'Say what needs to change — Production has nothing to act on otherwise.',
+      error: 'Write your feedback — it is the whole of what Production will act on.',
       field: 'feedback',
     });
   }
@@ -250,30 +258,28 @@ router.post('/:id/decision', requirePermission('project.review_respond'), async 
     `UPDATE project_review_requests
         SET status = $1, feedback = $2, reviewed_by = $3, reviewer_email = $4, reviewed_at = NOW()
       WHERE id = $5`,
-    [decision, note || null, req.user.id, req.user.email, req.params.id]
+    [FEEDBACK_GIVEN, note, req.user.id, req.user.email, req.params.id]
   );
 
   try {
-    await notifications.projectReviewDecided(db, {
-      projectId: rows[0].project_id, actorId: req.user.id, decision,
-      recipientIds: await queueWatchers(),
+    await notifications.projectReviewAnswered(db, {
+      projectId: rows[0].project_id, actorId: req.user.id, recipientIds: await queueWatchers(),
     });
   } catch (err) {
-    console.warn(`[notifications] could not announce the decision on ${req.params.id}: ${err.message}`);
+    console.warn(`[notifications] could not announce the feedback on ${req.params.id}: ${err.message}`);
   }
 
-  console.log(
-    `${req.user.email} answered project review ${req.params.id}: ${decision}`
-    + `${note ? ` — ${note}` : ''}.`
-  );
+  console.log(`${req.user.email} gave feedback on project review ${req.params.id} — ${note}`);
   const { rows: saved } = await db.query(`${SELECT} WHERE r.id = $1`, [req.params.id]);
   res.json({ request: saved[0] });
 });
 
 /* POST /api/project-reviews/:id/close — Production has dealt with it.
  *
- * The answer has been read and acted on: the changes routed to the assets they
- * apply to, or the approval taken forward. Gated on project.review_queue, which
+ * The feedback has been read and acted on — routed to the assets it applies to,
+ * or carried toward delivery, whichever it turned out to mean. Which of those it
+ * was is not recorded, because the studio asked for that judgement to live in
+ * Production's hands rather than in a status. Gated on project.review_queue, which
  * is the permission Production is given to read these in the first place —
  * acting on what you can see is not a second decision worth a second toggle.
  *
@@ -291,7 +297,7 @@ router.post('/:id/close', requirePermission('project.review_queue'), async (req,
   if (!rows.length) return res.status(404).json({ error: 'That submission does not exist.' });
   if (rows[0].status === 'pending') {
     return res.status(409).json({
-      error: 'The Creative Director has not answered this yet — there is nothing to act on.',
+      error: 'The Creative Director has not given feedback on this yet — there is nothing to act on.',
     });
   }
   if (rows[0].closed_at) {

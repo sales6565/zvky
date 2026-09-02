@@ -488,16 +488,22 @@ CREATE TABLE IF NOT EXISTS project_review_requests (
   -- Who asked, kept alongside the id so the record survives the account going.
   submitted_by CHAR(36)      NULL,
   submitter_email VARCHAR(191) NULL,
-  -- 'pending' until the Creative Director answers it, then one of
-  -- 'changes_requested' or 'approved_for_client'. Nothing is deleted: an
-  -- answered request stays as the record that it was asked for and answered.
+  -- 'pending' until the Creative Director answers it, then 'feedback_given'.
+  -- Nothing is deleted: an answered request stays as the record that it was
+  -- asked for and answered.
+  --
+  -- Rows may also carry 'changes_requested' or 'approved_for_client'. Those are
+  -- from when the answer was a choice between two buttons; one Submit Feedback
+  -- replaced them, and the old rows are left alone because somebody really did
+  -- make that decision. Everything answered is treated alike from here on.
   --
   -- These are the SUBMISSION's states and share nothing with the asset statuses
   -- of similar name. No asset moves when one of these is set — Production reads
   -- the feedback and decides which assets, if any, it applies to.
   status       VARCHAR(32)   NOT NULL DEFAULT 'pending',
-  -- What the Creative Director wrote. Required when asking for changes, since
-  -- that is the whole content of the decision; optional on an approval.
+  -- What the Creative Director wrote. Required, now that it is the entire
+  -- content of their answer: with one button and no status to read, an empty
+  -- note would tell Production only that somebody had looked.
   feedback     TEXT          NULL,
   -- Who answered it and when. Named 'reviewed' because that is what the columns
   -- have always been called here; the decision itself is in `status`.

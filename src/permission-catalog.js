@@ -277,9 +277,10 @@ const GROUPS = [
         key: 'project.review_respond',
         label: 'Respond to Project CD Review',
         impliedBy: has('manageAccess'),
-        describe: 'Answer a project review submission — Request Changes with feedback, or Approve '
-          + 'for Client. Nothing to do with an asset\'s own CD Review gate, which is CD Review '
-          + 'Actions. Held by Creative Art Director out of the box.',
+        describe: 'Answer a project review submission with Submit Feedback — one action, and the '
+          + 'written feedback is required, since it is all Production gets to act on. Nothing to '
+          + 'do with an asset\'s own CD Review gate, which is CD Review Actions. Held by Creative '
+          + 'Art Director out of the box.',
       },
     ],
   },

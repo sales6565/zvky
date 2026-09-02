@@ -33,6 +33,11 @@ const KINDS = {
   // asset moving anywhere — see src/routes/project-reviews.js.
   project_review: 'project_review',
   // And their answer to it, which Production acts on.
+  project_review_feedback: 'project_review_feedback',
+  /* Raised by the version that asked the Creative Director to choose between
+     requesting changes and approving. Nothing writes these any more — one
+     "Submit Feedback" replaced the two buttons — but rows carrying them are in
+     people's bells, so they keep their sentences below. */
   project_review_changes: 'project_review_changes',
   project_review_approved: 'project_review_approved',
 };
@@ -51,6 +56,11 @@ function describe(row) {
     return row.other_name
       ? `${row.other_name} submitted ${project} for your review.`
       : `${project} has been submitted for your review.`;
+  }
+  if (row.kind === KINDS.project_review_feedback) {
+    const project = row.project_name || 'a project';
+    const who = row.other_name ? row.other_name : 'The Creative Director';
+    return `${who} has given feedback on ${project}.`;
   }
   if (row.kind === KINDS.project_review_changes) {
     const project = row.project_name || 'a project';
@@ -116,15 +126,18 @@ async function projectReviewRequested(db, { projectId, actorId, recipientIds }) 
   }
 }
 
-/* The Creative Director's answer, told to everybody watching the queue —
+/* The Creative Director's feedback, told to everybody watching the queue —
  * Production among them, since acting on it is their job. Same shared-queue
- * rule as the submission itself. */
-async function projectReviewDecided(db, { projectId, actorId, recipientIds, decision }) {
-  const kind = decision === 'changes_requested'
-    ? KINDS.project_review_changes
-    : KINDS.project_review_approved;
+ * rule as the submission itself.
+ *
+ * One kind now rather than two. The old pair named which decision was made, and
+ * there is no longer a decision to name: the answer is the feedback, and what
+ * it means is Production's to read. */
+async function projectReviewAnswered(db, { projectId, actorId, recipientIds }) {
   for (const recipientId of recipientIds || []) {
-    await raise(db, { recipientId, actorId, kind, projectId, otherUserId: actorId });
+    await raise(db, {
+      recipientId, actorId, kind: KINDS.project_review_feedback, projectId, otherUserId: actorId,
+    });
   }
 }
 
@@ -247,7 +260,7 @@ async function markAllRead(db, userId) {
 
 module.exports = {
   projectReviewRequested,
-  projectReviewDecided,
+  projectReviewAnswered,
   KINDS, describe, raise, assignmentChanged,
   listFor, unreadCount, since, highWater, markRead, markAllRead,
 };

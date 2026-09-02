@@ -195,43 +195,44 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
     assert.strictEqual((await inbox('ana')).filter((n) => n.kind === 'project_review').length, 0);
   });
 
-  await t.test('Request Changes needs feedback; Approve for Client does not', async () => {
+  await t.test('Submit Feedback is one action, and the feedback is required', async () => {
     const made = await submit('root', { clientId, projectId, link: 'https://example.test/decide' });
     const id = made.body.request.id;
-    const decide = (who, body) => as(who, `/project-reviews/${id}/decision`, { method: 'POST', body });
+    const answer = (who, body) => as(who, `/project-reviews/${id}/feedback`, { method: 'POST', body });
 
-    // Nothing written, asking for changes: refused, and it says why.
-    const blank = await decide('cad', { decision: 'changes_requested' });
+    /* Nothing written: refused, and it says why. This is the rule that changed
+       when the two buttons became one — an approval used to be allowed to carry
+       no words, because the button said what it meant. Now the words are the
+       whole message. */
+    const blank = await answer('cad', {});
     assert.strictEqual(blank.status, 400, JSON.stringify(blank.body));
     assert.strictEqual(blank.body.field, 'feedback');
-    assert.match(blank.body.error, /Say what needs to change/);
-    assert.strictEqual((await decide('cad', { decision: 'changes_requested', feedback: '   ' })).status, 400,
+    assert.match(blank.body.error, /Write your feedback/);
+    assert.strictEqual((await answer('cad', { feedback: '   ' })).status, 400,
       'and whitespace is not feedback');
 
-    // Still pending — a refused decision changes nothing.
+    // Still pending — a refused answer changes nothing.
     assert.strictEqual((await queue('cad')).requests.find((r) => r.id === id).status, 'pending');
 
-    // A decision has to be one of the two.
-    const nonsense = await decide('cad', { decision: 'looks_fine' });
-    assert.strictEqual(nonsense.status, 400);
-    assert.deepStrictEqual(nonsense.body.allowed, ['changes_requested', 'approved_for_client']);
-
-    const ok = await decide('cad', { decision: 'changes_requested', feedback: 'The lighting is too cold' });
+    const ok = await answer('cad', { feedback: 'The lighting is too cold' });
     assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
-    assert.strictEqual(ok.body.request.status, 'changes_requested');
+    assert.strictEqual(ok.body.request.status, 'feedback_given', 'one outcome, whatever it says');
     assert.strictEqual(ok.body.request.feedback, 'The lighting is too cold');
-    assert.strictEqual(ok.body.request.reviewerEmail, 'cad@zvky.test', 'who decided');
+    assert.strictEqual(ok.body.request.reviewerEmail, 'cad@zvky.test', 'who answered');
     assert.ok(ok.body.request.reviewedAt, 'and when');
   });
 
-  await t.test('Approve for Client takes no feedback at all', async () => {
-    const made = await submit('root', { clientId, projectId: otherProjectId, link: 'https://example.test/approve' });
-    const id = made.body.request.id;
-    const res = await as('cad', `/project-reviews/${id}/decision`, {
+  await t.test('there is no second way to answer one', async () => {
+    /* The two-decision endpoint is gone rather than deprecated. A route that
+       still set changes_requested or approved_for_client would put the choice
+       back into the system by the side door, which is the thing the studio
+       asked to remove. */
+    const made = await submit('root', { clientId, projectId: otherProjectId, link: 'https://example.test/gone' });
+    const res = await as('cad', `/project-reviews/${made.body.request.id}/decision`, {
       method: 'POST', body: { decision: 'approved_for_client' } });
-    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
-    assert.strictEqual(res.body.request.status, 'approved_for_client');
-    assert.strictEqual(res.body.request.feedback, null, 'optional, and stored as nothing when blank');
+    assert.strictEqual(res.status, 404, JSON.stringify(res.body));
+    assert.strictEqual((await queue('cad')).requests.find((r) => r.id === made.body.request.id).status,
+      'pending', 'and it answered nothing on its way out');
   });
 
   await t.test('an answered submission leaves Pending and stays in the record', async () => {
@@ -240,24 +241,24 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
     const id = made.body.request.id;
     assert.strictEqual((await queue('cad')).pending, before.pending + 1);
 
-    await as('cad', `/project-reviews/${id}/decision`, {
-      method: 'POST', body: { decision: 'changes_requested', feedback: 'Redo the sky' } });
+    await as('cad', `/project-reviews/${id}/feedback`, {
+      method: 'POST', body: { feedback: 'Redo the sky' } });
 
     const after = await queue('cad');
     assert.strictEqual(after.pending, before.pending, 'out of the waiting count');
     assert.ok(!(await queue('cad', 'pending')).requests.some((r) => r.id === id));
     // And readable in full, which is the point of not deleting it.
-    const kept = (await queue('cad', 'changes_requested')).requests.find((r) => r.id === id);
-    assert.ok(kept, 'still there under its decision');
+    const kept = (await queue('cad', 'feedback_given')).requests.find((r) => r.id === id);
+    assert.ok(kept, 'still there under its status');
     assert.strictEqual(kept.feedback, 'Redo the sky');
     assert.ok(after.answered >= 1, 'and counted as answered');
 
     // The first answer stands; a second is not an error but does not rewrite it.
-    const again = await as('cad2', `/project-reviews/${id}/decision`, {
-      method: 'POST', body: { decision: 'approved_for_client' } });
+    const again = await as('cad2', `/project-reviews/${id}/feedback`, {
+      method: 'POST', body: { feedback: 'Actually it is fine' } });
     assert.strictEqual(again.status, 200);
     assert.strictEqual(again.body.alreadyAnswered, true);
-    assert.strictEqual(again.body.request.status, 'changes_requested');
+    assert.strictEqual(again.body.request.feedback, 'Redo the sky');
     assert.strictEqual(again.body.request.reviewerEmail, 'cad@zvky.test');
   });
 
@@ -270,35 +271,36 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
     await setPerms('producer', [...before, 'project.review_queue']);
     assert.strictEqual((await as('pat', '/project-reviews')).status, 200,
       'they can read it');
-    const refused = await as('pat', `/project-reviews/${id}/decision`, {
-      method: 'POST', body: { decision: 'approved_for_client' } });
+    const refused = await as('pat', `/project-reviews/${id}/feedback`, {
+      method: 'POST', body: { feedback: 'Looks good to me' } });
     assert.strictEqual(refused.status, 403, 'and cannot answer it');
 
     await setPerms('producer', [...before, 'project.review_queue', 'project.review_respond']);
-    assert.strictEqual((await as('pat', `/project-reviews/${id}/decision`, {
-      method: 'POST', body: { decision: 'approved_for_client' } })).status, 200,
+    assert.strictEqual((await as('pat', `/project-reviews/${id}/feedback`, {
+      method: 'POST', body: { feedback: 'Looks good to me' } })).status, 200,
       'until the studio grants that too');
     await setPerms('producer', before);
   });
 
-  await t.test('everybody watching the queue is told of the decision', async () => {
+  await t.test('everybody watching the queue is told of the feedback', async () => {
     const inbox = async (who) => (await as(who, '/notifications')).body.notifications || [];
     const made = await submit('root', { clientId, projectId, link: 'https://example.test/told' });
-    await as('cad', `/project-reviews/${made.body.request.id}/decision`, {
-      method: 'POST', body: { decision: 'changes_requested', feedback: 'Warmer palette' } });
+    await as('cad', `/project-reviews/${made.body.request.id}/feedback`, {
+      method: 'POST', body: { feedback: 'Warmer palette' } });
 
-    // cad2 is watching and did not make the decision, so they are told.
+    // cad2 is watching and did not write it, so they are told.
     const got = await inbox('cad2');
     const latest = got[0];
-    assert.strictEqual(latest.kind, 'project_review_changes');
-    assert.match(latest.message, /asked for changes on Nightgarden/);
+    assert.strictEqual(latest.kind, 'project_review_feedback', 'one kind now, not two');
+    assert.match(latest.message, /has given feedback on Nightgarden/);
     assert.strictEqual(latest.projectId, projectId);
 
-    const approved = await submit('root', { clientId, projectId: otherProjectId, link: 'https://example.test/told2' });
-    await as('cad', `/project-reviews/${approved.body.request.id}/decision`, {
-      method: 'POST', body: { decision: 'approved_for_client' } });
-    assert.strictEqual((await inbox('cad2'))[0].kind, 'project_review_approved');
-    assert.match((await inbox('cad2'))[0].message, /for the client/);
+    /* And it says the same thing however the feedback reads — there is no
+       approval kind left to fall back to. */
+    const second = await submit('root', { clientId, projectId: otherProjectId, link: 'https://example.test/told2' });
+    await as('cad', `/project-reviews/${second.body.request.id}/feedback`, {
+      method: 'POST', body: { feedback: 'This is clear to go to the client' } });
+    assert.strictEqual((await inbox('cad2'))[0].kind, 'project_review_feedback');
 
     // Somebody with no business in the queue is told nothing.
     assert.strictEqual((await inbox('ana')).filter((n) => /project_review/.test(n.kind)).length, 0);
@@ -315,8 +317,8 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
     // A fresh submission, so there is one of each kind waiting.
     const waiting = await submit('root', { clientId, projectId, link: 'https://example.test/pa-1' });
     const answered = await submit('root', { clientId, projectId: otherProjectId, link: 'https://example.test/pa-2' });
-    await as('cad', `/project-reviews/${answered.body.request.id}/decision`, {
-      method: 'POST', body: { decision: 'changes_requested', feedback: 'Second act drags' } });
+    await as('cad', `/project-reviews/${answered.body.request.id}/feedback`, {
+      method: 'POST', body: { feedback: 'Second act drags' } });
 
     // The Creative Director: what is still to be answered, and nothing else.
     const cad = await pending('cad');
@@ -375,8 +377,8 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
     assert.ok(has(await pending('cad'), id), 'waiting on the Creative Director');
     assert.ok(!has(await pending('pat'), id), 'and not yet on Production');
 
-    await as('cad', `/project-reviews/${id}/decision`, {
-      method: 'POST', body: { decision: 'changes_requested', feedback: 'Warmer grade' } });
+    await as('cad', `/project-reviews/${id}/feedback`, {
+      method: 'POST', body: { feedback: 'Warmer grade' } });
 
     const cadAfter = await pending('cad');
     assert.ok(!cadAfter.groups.find((g) => g.key === 'awaiting_review').items.some((i) => i.id === id),
@@ -395,7 +397,7 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
 
     // Nothing is deleted: the whole trail is still readable.
     const kept = (await queue('cad')).requests.find((r) => r.id === id);
-    assert.strictEqual(kept.status, 'changes_requested');
+    assert.strictEqual(kept.status, 'feedback_given');
     assert.strictEqual(kept.feedback, 'Warmer grade');
     assert.strictEqual(kept.submitterEmail, 'root@zvky.test');
     assert.strictEqual(kept.reviewerEmail, 'cad@zvky.test');
@@ -409,25 +411,42 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
     await setPerms('producer', before);
   });
 
-  await t.test('an approval goes through the same follow-up step', async () => {
+  await t.test('rows answered under the old two decisions still work', async () => {
+    /* The studio has submissions already carrying changes_requested and
+       approved_for_client, from when the Creative Director chose between two
+       buttons. Collapsing the buttons must not strand them: they are still
+       answered, still Production's to act on, and still closable. Nothing
+       rewrites them, because somebody really did make that decision. */
     const pending = (who) => as(who, '/project-reviews/pending-actions').then((r) => r.body);
-    const made = await submit('root', { clientId, projectId, link: 'https://example.test/approved-pa' });
-    const id = made.body.request.id;
-    await as('cad', `/project-reviews/${id}/decision`, {
-      method: 'POST', body: { decision: 'approved_for_client' } });
+    const inList = (p, id) => p.groups.some((g) => g.items.some((i) => i.id === id));
 
-    const waiting = (await pending('cad')).groups.find((g) => g.key === 'awaiting_followup');
-    assert.ok(waiting.items.some((i) => i.id === id),
-      'an approval is an instruction to act on, not a dead end');
-    await as('cad', `/project-reviews/${id}/close`, { method: 'POST' });
-    assert.ok(!(await pending('cad')).groups.some((g) => g.items.some((i) => i.id === id)));
+    for (const legacy of ['changes_requested', 'approved_for_client']) {
+      const made = await submit('root', { clientId, projectId, link: `https://example.test/old-${legacy}` });
+      const id = made.body.request.id;
+      // Written straight to the table: there is no longer an endpoint that sets
+      // these. The values are literals from this test, not user input.
+      await sql(cfg, `UPDATE project_review_requests
+                         SET status = '${legacy}', feedback = 'Said under the old buttons',
+                             reviewed_at = NOW()
+                       WHERE id = '${id}'`);
+
+      assert.ok(inList(await pending('cad'), id), `a ${legacy} row is still waiting to be acted on`);
+      assert.ok(!(await queue('cad', 'pending')).requests.some((r) => r.id === id),
+        'and is not back in the unanswered list');
+      const stored = (await queue('cad', legacy)).requests.find((r) => r.id === id);
+      assert.strictEqual(stored.status, legacy, 'its own status is left alone');
+
+      const closed = await as('cad', `/project-reviews/${id}/close`, { method: 'POST' });
+      assert.strictEqual(closed.status, 200, JSON.stringify(closed.body));
+      assert.ok(!inList(await pending('cad'), id), 'and it closes off like any other');
+    }
   });
 
   await t.test('nothing can be closed before it has been answered', async () => {
     const made = await submit('root', { clientId, projectId, link: 'https://example.test/tooearly' });
     const res = await as('cad', `/project-reviews/${made.body.request.id}/close`, { method: 'POST' });
     assert.strictEqual(res.status, 409, JSON.stringify(res.body));
-    assert.match(res.body.error, /has not answered this yet/);
+    assert.match(res.body.error, /has not given feedback on this yet/);
 
     // And closing takes the queue permission.
     assert.strictEqual((await as('ana', `/project-reviews/${made.body.request.id}/close`,
@@ -462,15 +481,15 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
     const wasAll = await snapshot();
 
     const made = await submit('root', { clientId, projectId, link: 'https://example.test/after' });
-    await as('cad', `/project-reviews/${made.body.request.id}/decision`, {
-      method: 'POST', body: { decision: 'changes_requested', feedback: 'Everything is too blue' } });
+    await as('cad', `/project-reviews/${made.body.request.id}/feedback`, {
+      method: 'POST', body: { feedback: 'Everything is too blue' } });
 
     const after = (await as('root', `/assets/project/${projectId}`)).body.assets
       .find((x) => x.id === asset.id).status;
     assert.strictEqual(after, before, 'no asset moved');
     assert.deepStrictEqual(await snapshot(), wasAll,
-      'and asking for changes on the PROJECT moved none of its assets — the whole point of '
-      + 'recording the decision against the submission instead');
+      'and feedback on the PROJECT moved none of its assets — the whole point of '
+      + 'recording it against the submission instead');
 
     // And no asset event was written for it.
     const events = await sql(cfg,
