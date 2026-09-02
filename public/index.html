@@ -618,7 +618,7 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
 <div class="modal-wrap" id="modalWrap">
   <div class="modal">
     <h2>New Asset</h2>
-    <label>Assets Name</label><input type="text" id="f_name" placeholder="e.g. River Spirit — Hero">
+    <label>Asset Name</label><input type="text" id="f_name" placeholder="e.g. River Spirit — Hero">
     <div class="row2"><div><label>Category</label><select id="f_category"></select></div><div><label>Scope of Work</label><select id="f_type"></select></div></div>
     <!-- The estimate, not the record. Time Spent is worked out from the start
          and submit stamps on the asset panel and is never typed in here. -->
@@ -3871,6 +3871,17 @@ async function openDrawer(id){
     <div class="field-lbl">Priority</div>
     <select id="d_priority" ${editable?'':'disabled'}>${priorityOptions(a.priority)}</select>
     <div class="field-lbl">Description</div><textarea id="d_desc" rows="3" ${editable?'':'disabled'}>${escapeHTML(a.description||'')}</textarea>
+    ${can('asset.lead_notes') ? `
+    <!-- The lead's own notes, below Description and deliberately not part of
+         it. Description is the brief everybody on the asset reads and writes;
+         this is gated on asset.lead_notes, and the server hides the field from
+         a response rather than trusting this to hide it on screen. -->
+    <div class="field-lbl">Lead / Supervisor Notes</div>
+    <textarea id="d_leadNotes" rows="3" ${editable?'':'disabled'}
+      placeholder="Notes for the leads on this asset. Not shown to roles without this permission.">${escapeHTML(a.lead_notes||'')}</textarea>
+    <div style="font-size:11px;color:var(--ink-faint);margin:-4px 0 4px;">
+      Visible to roles holding Lead / Supervisor Notes.
+    </div>` : ''}
     <div class="field-lbl" style="display:flex;align-items:center;gap:8px;">
       <span>Tasks</span>
       <span id="d_taskCount" style="font-size:11px;color:var(--ink-faint);text-transform:none;letter-spacing:0;">${taskProgress(a.tasks)}</span>
@@ -4050,6 +4061,11 @@ async function openDrawer(id){
   if(editable){
     document.getElementById('d_priority').onchange = async e=>{ try{ await api('/assets/'+id,{method:'PATCH',body:{priority:e.target.value}}); a.priority=e.target.value; render(); }catch(err){ showToast(err.message); } };
     document.getElementById('d_desc').onchange = async e=>{ try{ await api('/assets/'+id,{method:'PATCH',body:{description:e.target.value}}); a.description=e.target.value; }catch(err){ showToast(err.message); } };
+    const leadBox = document.getElementById('d_leadNotes');
+    if(leadBox) leadBox.onchange = async e=>{
+      try{ await api('/assets/'+id,{method:'PATCH',body:{leadNotes:e.target.value}}); a.lead_notes=e.target.value.trim()||null; }
+      catch(err){ showToast(err.message); e.target.value = a.lead_notes||''; }
+    };
     document.getElementById('d_category').onchange = async e=>{ try{ await api('/assets/'+id,{method:'PATCH',body:{category:e.target.value||null}}); a.category=e.target.value||null; render(); }catch(err){ showToast(err.message); } };
     document.getElementById('d_hours').onchange = async e=>{ try{ await api('/assets/'+id,{method:'PATCH',body:{manHours:e.target.value?Number(e.target.value):null}}); a.man_hours=e.target.value; render(); }catch(err){ showToast(err.message); } };
     document.getElementById('d_due').onchange = async e=>{ try{ await api('/assets/'+id,{method:'PATCH',body:{due:e.target.value||null}}); a.due_date=e.target.value; render(); }catch(err){ showToast(err.message); } };
@@ -4568,6 +4584,10 @@ function showImportResult(data, ok, entity){
   const title = document.getElementById('im_title');
   const body  = document.getElementById('im_body');
   const errors = Array.isArray(data.errors) ? data.errors : [];
+  /* Rows that DID import, with one optional value dropped. A different thing
+     from a skipped row and shown as a different thing: nothing needs
+     re-uploading, but the sheet asked for something the import could not do. */
+  const warnings = Array.isArray(data.warnings) ? data.warnings : [];
   state.lastImport = entity;
 
   if(!ok){
@@ -4591,13 +4611,16 @@ function showImportResult(data, ok, entity){
 
   title.textContent = errors.length
     ? `${noun === 'user' ? 'Users' : 'Assets'} imported, some rows skipped`
-    : `${noun === 'user' ? 'Users' : 'Assets'} imported`;
-  const rows = errors.map(e=>`<tr>
+    : warnings.length
+      ? `${noun === 'user' ? 'Users' : 'Assets'} imported, some values left out`
+      : `${noun === 'user' ? 'Users' : 'Assets'} imported`;
+  const lineRows = (list)=>list.map(e=>`<tr>
       <td class="rownum">${e.row ?? ''}</td>
       <td class="col">${escapeHTML(e.column || '—')}</td>
       <td class="val" title="${escapeHTML(String(e.value ?? ''))}">${escapeHTML(String(e.value ?? '')) || '<span style="color:var(--ink-faint);">(empty)</span>'}</td>
       <td>${escapeHTML(e.message || '')}</td>
     </tr>`).join('');
+  const rows = lineRows(errors);
 
   /* A category named in the sheet but not yet in Settings is added by the
      import. Saying so here is the difference between a feature and a silent
@@ -4617,6 +4640,7 @@ function showImportResult(data, ok, entity){
     <div class="import-summary">
       <div><strong>${data.totalRows ?? (data.created + errors.length)}</strong>rows in file</div>
       <div><strong style="color:var(--approved);">${data.created}</strong>imported</div>
+      ${data.assigned ? `<div><strong style="color:var(--assigned,var(--ink));">${data.assigned}</strong>assigned</div>` : ''}
       <div class="bad"><strong>${errors.length}</strong>skipped</div>
     </div>
     ${addedNote({one:'category', many:'categories'}, newCats, 'Categories')}
@@ -4632,10 +4656,20 @@ function showImportResult(data, ok, entity){
         <table><thead><tr><th>Row</th><th>Column</th><th>Value</th><th>Problem</th></tr></thead>
         <tbody>${rows}</tbody></table>
       </div>` :
-      `<div style="font-size:13px;color:var(--approved);">Every row imported successfully.</div>
+      `${warnings.length ? '' : '<div style="font-size:13px;color:var(--approved);">Every row imported successfully.</div>'}
        ${data.temporaryPassword ? `<div style="font-size:12px;color:var(--ink-muted);margin-top:10px;">
          New accounts were given the temporary password <span class="mono" style="color:var(--ink);">${escapeHTML(data.temporaryPassword)}</span> — they should change it on first sign-in.
        </div>` : ''}`}
+    ${warnings.length ? `
+      <div style="font-size:12px;color:var(--ink-muted);margin:0 0 8px;">
+        <strong style="color:var(--review);">${warnings.length}</strong>
+        ${warnings.length===1?'value was':'values were'} left out. These rows imported —
+        only the value named below is missing, and it can be set in the asset panel.
+      </div>
+      <div class="import-errors" style="margin-bottom:14px;">
+        <table><thead><tr><th>Row</th><th>Column</th><th>Value</th><th>What was left out</th></tr></thead>
+        <tbody>${lineRows(warnings)}</tbody></table>
+      </div>` : ''}
   `;
   importModalWrap.classList.add('show');
 }

@@ -312,6 +312,16 @@ CREATE TABLE IF NOT EXISTS assets (
   -- output, and conflating them would make "the link" ambiguous on a screen
   -- that shows both. Optional, unlike a submission's link.
   reference_link VARCHAR(2048) NULL,
+  -- What the lead or supervisor wants whoever picks this up to know, or wants
+  -- on the record for the other leads. Separate from `description`, which is
+  -- the brief everyone including the assignee reads and edits; this one is
+  -- gated on the asset.lead_notes permission.
+  --
+  -- Its own column rather than a second use of description, because folding the
+  -- two together would have meant either notes nobody could restrict or a
+  -- Description artists could suddenly no longer see — and the second is taking
+  -- a field away from people who have it today.
+  lead_notes    TEXT         NULL,
   created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_assets_project (project_id),
   KEY idx_assets_assignee (assignee_id),

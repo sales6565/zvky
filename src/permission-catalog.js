@@ -103,7 +103,40 @@ const GROUPS = [
         impliedBy: fullAccess,
         describe: 'Assign or reassign any asset in reach to anyone on its project, without having created it.',
       },
-      { key: 'asset.bulk_upload',     label: 'Bulk Upload Assets',   impliedBy: has('createAsset') },
+      {
+        key: 'asset.bulk_upload',
+        label: 'Bulk Upload Assets',
+        impliedBy: has('createAsset'),
+        describe: 'Upload a sheet of assets into a project. The sheet carries an assignee and a '
+          + 'deadline per row, so this grants creating and assigning in bulk what the holder '
+          + 'could already create and assign one at a time.',
+      },
+      {
+        /* Lead/Supervisor Notes, which arrived with the nine-column import.
+         *
+         * Its own permission rather than a reuse of an existing one, and its
+         * own field rather than a second use of Description, for a reason
+         * worth stating: Description is the brief, and everybody working on an
+         * asset — the assignee included — reads and edits it today. Making
+         * Description restricted would have taken a field away from the people
+         * who most need it, to gain a private one. So the private one is new,
+         * and Description is untouched.
+         *
+         * Visibility AND editing, together. A note the assignee can read but
+         * not change is not private, and one they can change but not read is
+         * absurd — there is one meaningful state here, not two toggles.
+         *
+         * Default: the departments that run the first review gate, which is the
+         * studio's own existing answer to "lead and above" (see TL_REVIEW_GROUPS
+         * in role-permissions.js). Every other designation is granted it in
+         * Settings, artists included if the studio decides these notes are for
+         * them after all — which is the reading the column name leaves open. */
+        key: 'asset.lead_notes',
+        label: 'Lead / Supervisor Notes',
+        impliedBy: has('manageAccess'),
+        describe: 'See and edit the Lead / Supervisor Notes on an asset, and import them from a '
+          + 'sheet. Separate from Description, which stays visible to everyone on the asset.',
+      },
       {
         key: 'asset.override_stage',
         label: 'Override Review Stage',

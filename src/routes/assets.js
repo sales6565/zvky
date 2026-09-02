@@ -41,8 +41,20 @@ const referenceData = require('../reference-data');
 
 router.use(authenticate);
 
-async function attachTasksAndNotes(assets) {
+/* Every asset that leaves this router goes through here, which is why the
+   Lead/Supervisor Notes redaction lives here and not at seven call sites.
+   ASSET_SELECT is `SELECT a.*`, so a column added to the table is in the
+   response the moment it exists — convenient until one of those columns is
+   meant to be gated, and then it is a leak that no route ever wrote a line of
+   code to cause. `viewer` is the request's user; without it, nothing is shown,
+   which is the safe end of a mistake. */
+async function attachTasksAndNotes(assets, viewer) {
   if (!assets.length) return assets;
+  if (!holds(viewer, 'asset.lead_notes')) {
+    // Deleted rather than blanked: an absent key and an empty note are
+    // different things, and the panel below tells them apart.
+    assets.forEach((a) => { delete a.lead_notes; });
+  }
   const ids = assets.map((a) => a.id);
 
   // Everything below decorates an asset for the response. None of it is the
@@ -255,7 +267,7 @@ router.get('/project/:projectId', async (req, res) => {
   sql += ' ORDER BY a.created_at DESC';
 
   const { rows } = await db.query(sql, params);
-  const withDetails = await attachTasksAndNotes(rows);
+  const withDetails = await attachTasksAndNotes(rows, req.user);
   res.json({ assets: withDetails });
 });
 
@@ -368,7 +380,7 @@ router.post('/project/:projectId', async (req, res) => {
   }
 
   const { rows } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [id]);
-  const [withDetails] = await attachTasksAndNotes(rows);
+  const [withDetails] = await attachTasksAndNotes(rows, req.user);
   res.status(201).json({ asset: withDetails });
 });
 
@@ -442,6 +454,25 @@ router.patch('/:id', async (req, res) => {
   if (req.body.category !== undefined) {
     const categoryError = validateCategory(req.body.category);
     if (categoryError) return res.status(400).json(categoryError);
+  }
+
+  /* Lead / Supervisor Notes. Refused rather than ignored: quietly dropping a
+     field somebody typed into is how they find out a week later that none of
+     it saved. The read side hides the field from these roles anyway, so this
+     is the second half of one gate rather than a second gate. */
+  if (req.body.leadNotes !== undefined) {
+    if (!holds(req.user, 'asset.lead_notes')) {
+      return res.status(403).json({
+        error: 'Your role does not hold Lead / Supervisor Notes.',
+        field: 'leadNotes',
+      });
+    }
+    const text = req.body.leadNotes === null ? null : String(req.body.leadNotes);
+    if (text !== null && text.length > 20000) {
+      return res.status(400).json({ error: 'Those notes are too long to store.', field: 'leadNotes' });
+    }
+    fields.push(`lead_notes = $${i++}`);
+    values.push(text && text.trim() ? text.trim() : null);
   }
 
   for (const key of ['status', 'priority', 'description', 'assignee_id', 'due_date', 'man_hours', 'category']) {
@@ -579,7 +610,7 @@ router.patch('/:id', async (req, res) => {
   // attachTasksAndNotes degrades rather than throwing, so building the response
   // cannot report a failure over a change that has already happened.
   const { rows: updated } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [req.params.id]);
-  const [withDetails] = await attachTasksAndNotes(updated);
+  const [withDetails] = await attachTasksAndNotes(updated, req.user);
   res.json({ asset: withDetails });
 });
 
@@ -794,7 +825,7 @@ async function applyTransition(req, res, asset, verdict, { note, versionId, conn
     );
   }
   const { rows: updated } = await run.query(`${ASSET_SELECT} WHERE a.id = $1`, [asset.id]);
-  const [withDetails] = await attachTasksAndNotes(updated);
+  const [withDetails] = await attachTasksAndNotes(updated, req.user);
   return withDetails;
 }
 
@@ -1018,7 +1049,7 @@ router.post('/:id/start', async (req, res) => {
   const work = await workLog.summary(db, req.params.id, episode && episode.id, asset.assignee_id);
   if (moved) return res.status(200).json({ asset: moved, work, accepted: true });
   const { rows: fresh } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [req.params.id]);
-  const [withDetails] = await attachTasksAndNotes(fresh);
+  const [withDetails] = await attachTasksAndNotes(fresh, req.user);
   return res.json({ asset: withDetails, work });
 });
 
@@ -1382,7 +1413,7 @@ router.post('/:id/reassign', async (req, res) => {
   );
 
   const { rows: updated } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [asset.id]);
-  const [withDetails] = await attachTasksAndNotes(updated);
+  const [withDetails] = await attachTasksAndNotes(updated, req.user);
   res.json({ asset: withDetails, reassigned: { inReview, from, to: next.name, handedOverSeconds } });
 });
 
@@ -1560,6 +1591,8 @@ router.post('/project/:projectId/bulk', requirePermission('asset.bulk_upload'), 
   if (!allowed) return res.status(403).json({ error: 'No access to this project' });
   if (await projectClosedResponse(res, projectId)) return undefined;
   if (!req.file) return res.status(400).json({ error: 'A CSV or Excel file is required' });
+  // Whether the Lead/Supervisor Notes column in this file means anything.
+  const mayWriteLeadNotes = holds(req.user, 'asset.lead_notes');
 
   let headers;
   let records;
@@ -1608,6 +1641,11 @@ router.post('/project/:projectId/bulk', requirePermission('asset.bulk_upload'), 
   // Nothing is written until the whole file has been checked, so an error on
   // the last row is reported the same way as one on the first.
   const errors = [];
+  /* Warnings are the other half of the per-row contract: an ERROR skips the
+     row, a WARNING drops one optional value and keeps the row. Both name the
+     row and the column, so the results table reads the same either way, and
+     neither ever fails the file. */
+  const warnings = [];
   const valid = [];
   const seenInFile = new Map(); // name + type, within this file
 
@@ -1627,6 +1665,10 @@ router.post('/project/:projectId/bulk', requirePermission('asset.bulk_upload'), 
   for (let i = 0; i < records.length; i++) {
     const rowNumber = i + 2; // the header is row 1
     const result = assetImport.validateRow(records[i], rowNumber);
+    /* Kept even when the row is about to be skipped for an error. Somebody
+       fixing row 12's missing Asset Name should be told in the same pass that
+       its deadline was unreadable, rather than uploading again to find out. */
+    warnings.push(...result.warnings);
     if (!result.ok) {
       errors.push(...result.errors);
       continue;
@@ -1678,6 +1720,12 @@ router.post('/project/:projectId/bulk', requirePermission('asset.bulk_upload'), 
     // first written rather than the way the last row happened to type it.
     const wanted = new Map();
     for (const v of valid) {
+      /* An empty cell is not a value to go looking for. Category became
+         optional with the nine-column format, and without this a blank one
+         reduced to "" and asked the reference list to create a category out of
+         nothing — once per import, silently, from every sheet with a gap in
+         that column. */
+      if (v.values[field] === null || v.values[field] === undefined || v.values[field] === '') continue;
       const flat = flatten(v.values[field]);
       if (!wanted.has(flat)) wanted.set(flat, v.values[field]);
     }
@@ -1708,15 +1756,43 @@ router.post('/project/:projectId/bulk', requirePermission('asset.bulk_upload'), 
   // already in it.
   const scopes = await resolveList('asset_types', 'type');
 
+  /* --- who the sheet names ------------------------------------------------
+
+     One query for every address in the file rather than one per row. An
+     address that matches a real person assigns the asset immediately, which is
+     what adding one by hand with an assignee does — the machinery for it is
+     already below, and used to sit unreachable because there was no column
+     feeding it.
+
+     Everything that can go wrong here is a WARNING and not an error: the asset
+     is valid without an assignee, so an address with a typo in it costs the
+     row its assignee and nothing else. */
+  const wantedEmails = [...new Set(valid.map((v) => v.values.assignee_email).filter(Boolean))];
+  const peopleByEmail = new Map();
+  if (wantedEmails.length) {
+    const holes = wantedEmails.map((_, n) => `$${n + 1}`).join(',');
+    const { rows: found } = await db.query(
+      `SELECT id, \`name\`, email, \`role\` FROM users WHERE LOWER(email) IN (${holes})`,
+      wantedEmails
+    );
+    found.forEach((u) => peopleByEmail.set(String(u.email).toLowerCase(), u));
+  }
+
   const ready = [];
   for (const entry of valid) {
-    const categoryKey = categories.byName.get(flatten(entry.values.category));
-    if (!categoryKey) {
-      errors.push({
+    const categoryKey = entry.values.category === null || entry.values.category === undefined
+      ? null
+      : categories.byName.get(flatten(entry.values.category));
+    /* Category is optional now, so "no category given" and "a category given
+       that could not be matched or created" are different things: the first is
+       an ordinary asset, the second is a value somebody typed that has gone
+       nowhere, and only the second is worth saying anything about. Neither
+       costs the row. */
+    if (entry.values.category && !categoryKey) {
+      warnings.push({
         row: entry.rowNumber, column: 'Category', value: entry.values.category,
-        message: 'could not be matched to a category, and could not be added as a new one',
+        message: 'could not be matched to a category or added as a new one, so it was left unset',
       });
-      continue;
     }
     const scopeKey = scopes.byName.get(flatten(entry.values.type));
     if (!scopeKey) {
@@ -1728,11 +1804,52 @@ router.post('/project/:projectId/bulk', requirePermission('asset.bulk_upload'), 
     }
     // The row carried whatever the sheet said; from here on it is the key.
     entry.values.type = scopeKey;
-    entry.category = categoryKey;
-    // Priority, assignee, deadline and description are not imported columns.
-    // Every imported asset starts unassigned with the default priority, and
-    // gets the rest in the asset panel.
+    entry.category = categoryKey || null;
+
+    /* The assignee. Three ways it can come to nothing, each said differently,
+       because "I left it blank", "I typed it wrong" and "that person is not
+       given work" are three different things to have to fix. */
     entry.assigneeId = null;
+    const email = entry.values.assignee_email;
+    if (email) {
+      const person = peopleByEmail.get(email);
+      if (!person) {
+        warnings.push({
+          row: entry.rowNumber, column: 'Assignee Email', value: email,
+          message: 'does not match anyone here, so the asset was created with nobody on it',
+        });
+      } else {
+        /* The same rule assigning by hand applies: some designations are not
+           given work. Checked here rather than left to the database so the
+           sheet gets the same answer the picker would. */
+        const def = roleDef(person.role);
+        if (!def || !def.assignable) {
+          warnings.push({
+            row: entry.rowNumber, column: 'Assignee Email', value: email,
+            message: `belongs to ${person.name}, who holds a designation that is not assigned work, `
+              + 'so the asset was created with nobody on it',
+          });
+        } else {
+          entry.assigneeId = person.id;
+        }
+      }
+    }
+
+    /* Lead / Supervisor Notes are gated on the permission that shows them.
+       Somebody who cannot see the field must not be able to write it from a
+       sheet either — a gate on one side only is not a gate. Said out loud
+       rather than dropped quietly, so the uploader knows the column did
+       nothing. */
+    if (entry.values.lead_notes && !mayWriteLeadNotes) {
+      warnings.push({
+        row: entry.rowNumber, column: 'Lead/Supervisor Notes', value: entry.values.lead_notes,
+        message: 'was not imported — your role does not hold Lead / Supervisor Notes',
+      });
+      entry.values.lead_notes = null;
+    }
+
+    // Priority is still not an imported column: every imported asset starts
+    // with the default and is changed in the panel like any other field.
     ready.push(entry);
   }
 
@@ -1757,7 +1874,8 @@ router.post('/project/:projectId/bulk', requirePermission('asset.bulk_upload'), 
   // --- insert in batches ---------------------------------------------------
   const DEFAULT_TASKS = ['Rough pass', 'Clean line', 'Color / shade'];
   const ASSET_INSERT =
-    'INSERT INTO assets (id, `code`, `name`, `type`, category, `status`, priority, project_id, assignee_id, created_by, due_date, description, man_hours) VALUES ?';
+    'INSERT INTO assets (id, `code`, `name`, `type`, category, `status`, priority, project_id, '
+    + 'assignee_id, created_by, due_date, description, man_hours, reference_link, lead_notes) VALUES ?';
   const TASK_INSERT = 'INSERT INTO tasks (id, asset_id, `name`, done, `position`) VALUES ?';
   // Imported assets belong to whoever uploaded the file, same as one added by
   // hand — otherwise a bulk upload would produce a projectful of assets its
@@ -1765,7 +1883,12 @@ router.post('/project/:projectId/bulk', requirePermission('asset.bulk_upload'), 
   const assetRow = (e) => [
     e.id, e.code, e.values.name, e.values.type, e.category, 'not_started',
     assetImport.defaultPriority(), projectId, e.assigneeId, req.user.id,
-    null, '', e.values.man_hours,
+    e.values.due_date, '', e.values.man_hours,
+    e.values.reference_link, e.values.lead_notes,
+    /* Description stays empty and is NOT what Lead/Supervisor Notes writes.
+       They are two fields on purpose: Description is the brief everyone on the
+       asset reads and edits, these notes are gated. Folding the sheet's notes
+       into Description would have made the gate meaningless. */
   ];
   const taskRows = (e) => DEFAULT_TASKS.map((name, position) => [uuid(), e.id, name, 0, position]);
 
@@ -1823,16 +1946,52 @@ router.post('/project/:projectId/bulk', requirePermission('asset.bulk_upload'), 
        VALUES ?`,
       [eventRows]
     );
+
+    /* And the first Round.
+     *
+     * The Assets List is built from asset_assignments — one row per stretch of
+     * time an asset sat with one person — so an asset that is assigned without
+     * an episode is assigned to somebody and shows no round at all. Adding one
+     * by hand opens the episode (see the create route); this path had no
+     * assignee to open one for until the sheet gained the column, so the gap
+     * only becomes reachable now.
+     *
+     * One call per asset rather than one INSERT for all of them, because open()
+     * is what enforces "at most one open episode per asset" and what tells the
+     * person they have been given work — the same two things a manual
+     * assignment gets. Yielding every so often keeps a long file from holding
+     * the loop. */
+    for (let i = 0; i < assignedByImport.length; i++) {
+      const e = assignedByImport[i];
+      try {
+        await assignments.open(db, {
+          assetId: e.id, userId: e.assigneeId, assignedById: req.user.id, status: 'not_started',
+        });
+      } catch (err) {
+        /* The asset exists and is assigned; only its history is missing. Worth
+           a line in the log and not worth failing an import over — the same
+           bargain assignments.js makes everywhere else. */
+        console.warn(`[import] could not open the first round on ${e.code}: ${err.message}`);
+      }
+      if (i % 50 === 49) await yieldToLoop();
+    }
   }
 
   errors.sort((a, b) => a.row - b.row || String(a.column).localeCompare(String(b.column)));
 
   // 207 when some rows were skipped, 201 when the whole file went in.
+  warnings.sort((a, b) => a.row - b.row || String(a.column).localeCompare(String(b.column)));
+
   res.status(errors.length ? 207 : 201).json({
     created: created.length,
     skipped: errors.length,
     totalRows: records.length,
     createdAssets: created,
+    /* Rows that imported with something dropped. Deliberately not counted as
+       skipped and deliberately not silent: the import did less than the sheet
+       asked for, and the only honest place to say so is next to the result. */
+    warnings,
+    assigned: assignedByImport.length,
     // Named so a value the sheet invented is visible, not a silent edit to a
     // Settings list.
     createdCategories: categories.created,

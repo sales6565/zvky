@@ -24,6 +24,7 @@ const REQUIRED = [
   { table: 'clients',        column: 'deal_closed_at', step: 'client and project lifecycle' },
   { table: 'assets',         column: 'created_by',     step: 'asset ownership' },
   { table: 'assets',         column: 'reference_link', step: 'asset brief and checklist' },
+  { table: 'assets',         column: 'lead_notes',     step: 'asset brief and checklist' },
   { table: 'tasks',          column: 'created_by',     step: 'asset brief and checklist' },
   { table: 'tasks',          column: 'created_at',     step: 'asset brief and checklist' },
   { table: 'work_sessions',  column: null,             step: 'assigned state and time tracking' },

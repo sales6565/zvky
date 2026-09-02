@@ -65,7 +65,14 @@ function defaultsFor(roleKey) {
   if (!def) return new Set();
   const caps = capabilitiesForTier(def.tier) || {};
   const baseline = catalog.baselineFor(caps);
-  if (TL_REVIEW_GROUPS.includes(def.group)) baseline.add('review.tl');
+  if (TL_REVIEW_GROUPS.includes(def.group)) {
+    baseline.add('review.tl');
+    /* And the lead's own notes on an asset. The same three departments, because
+       this is the same question — who counts as lead-and-above here — and the
+       studio has already answered it once. Answering it twice is how two lists
+       drift apart. */
+    baseline.add('asset.lead_notes');
+  }
   /* The project review queue starts on the one designation whose queue it is.
    *
    * By role key rather than by tier or group, because it really is that one

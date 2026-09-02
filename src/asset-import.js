@@ -5,6 +5,8 @@
 
 const referenceData = require('./reference-data');
 const defaults = require('./reference-defaults');
+// The same validator the asset panel's Requirement / Reference Link box uses.
+const submissionLink = require('./submission-link');
 
 // Types and priorities are managed in Settings, so read them at validation
 // time rather than capturing a list at import time — a type added this morning
@@ -60,8 +62,24 @@ function sampleCells(configured, fallback) {
   return [0, 1, 2].map((n) => configured[n % configured.length]);
 }
 
-// A row that fails validation is skipped and reported; it never reaches the
-// database. Each check returns either { value } or { error }.
+/* --- the columns -----------------------------------------------------------
+
+   Two mandatory (Asset Name, Scope of Work) and everything else optional, which
+   gives each cell three possible outcomes rather than two:
+
+     { value }    good, use it
+     { error }    the row is SKIPPED and reported. Mandatory columns only.
+     { warning }  the row is IMPORTED WITHOUT THIS VALUE, and reported.
+
+   One rule decides which: a bad value in a mandatory column is an error, a bad
+   value in an optional column is a warning. An optional column is one the asset
+   is valid without, so a deadline typed as "next friday" cannot be a reason to
+   throw away a perfectly good asset name and scope of work — but it must not
+   vanish silently either, which is what the warning is for.
+
+   `parse` may return a warning; anything the parser cannot judge on its own —
+   whether an email belongs to a real person — is warned about in the endpoint,
+   where there is a database. */
 const COLUMNS = [
   {
     /* A line number for whoever is filling the sheet in, so they can talk about
@@ -81,12 +99,14 @@ const COLUMNS = [
   },
   {
     name: 'name',
-    header: 'Assets Name',
-    // The screen calls this Assets Name; `name` is what it has always been in
-    // the database and in files saved before the rename.
-    accepts: ['assets_name', 'assets', 'name'],
+    header: 'Asset Name',
+    /* The screen and this sheet both say Asset Name. `name` is what it has
+       always been in the database; 'assets_name' stays accepted because that is
+       the header every sheet saved before this version carries, and a studio
+       with a folder of them should not have to re-type any. */
+    accepts: ['asset_name', 'assets_name', 'assets', 'name'],
     required: true,
-    describe: 'Asset name',
+    describe: 'Asset name — required',
     example: ['Waterfall Spray FX', 'Trader Cart', 'Northern Ridge'],
     parse(raw) {
       const value = String(raw ?? '').trim();
@@ -99,20 +119,26 @@ const COLUMNS = [
   },
   {
     /* Unlike Scope of Work, a category the studio has not configured yet is
-       CREATED from the sheet rather than refused. So this only checks that a
-       value is present and sane; matching it to an existing category, or
-       adding it to the list, happens in the endpoint where there is a database
-       to write to. */
+       CREATED from the sheet rather than refused. So this only checks that the
+       value is sane; matching it to an existing category, or adding it to the
+       list, happens in the endpoint where there is a database to write to.
+
+       Optional as of the nine-column format: an asset with no category is an
+       ordinary asset, and one can be set in the panel afterwards. */
     name: 'category',
     header: 'Category',
     accepts: ['category', 'categories'],
-    required: true,
-    describe: 'Category — added to the Settings list if it is a new one',
-    get example() { return exampleCategories(); },
+    required: false,
+    describe: 'Category — optional; a new one is added to the Settings list',
+    /* Blank in the middle row on purpose. Every optional column is empty in
+       that row, so the sample does not merely SAY the rule — it carries a row
+       that only has the two mandatory columns filled in, and that row imports.
+       A sample where every cell is populated teaches the opposite lesson. */
+    get example() { const c = exampleCategories(); return [c[0], '', c[2]]; },
     parse(raw) {
       const value = String(raw ?? '').trim();
-      if (!value) return { error: 'is required' };
-      if (value.length > 100) return { error: `is ${value.length} characters; the limit is 100` };
+      if (!value) return { value: null };
+      if (value.length > 100) return { warning: `is ${value.length} characters; the limit is 100, so it was left unset` };
       return { value };
     },
   },
@@ -130,7 +156,7 @@ const COLUMNS = [
     /* Like Category, a value Settings does not hold yet is CREATED rather than
        refused, so this checks only that something sane is there. Matching it,
        or adding it, happens in the endpoint where there is a database. */
-    get describe() { return `One of ${assetTypes().join(', ')} — a new one is added to the list`; },
+    get describe() { return `Required — one of ${assetTypes().join(', ')}, or a new one, which is added to the list`; },
     get example() { return exampleScopes(); },
     parse(raw) {
       const value = String(raw ?? '').trim();
@@ -140,25 +166,135 @@ const COLUMNS = [
     },
   },
   {
-    /* The estimate, not tracked time. Required, so no imported asset arrives
-       without one — Time Spent is recorded by the timer and never imported. */
+    /* The estimate, not tracked time — Time Spent is recorded by the timer and
+       never imported. Optional now: an asset without an estimate is one whose
+       estimate has not been decided, which is an ordinary thing for it to be. */
     name: 'man_hours',
     header: 'Man Hours',
     accepts: ['man_hours', 'manhours', 'man_hrs', 'hours'],
-    required: true,
-    describe: 'Estimated hours — a positive number',
-    example: ['20', '8', '26'],
+    required: false,
+    describe: 'Estimated hours — optional; a positive number',
+    example: ['20', '', '26'],
     parse(raw) {
       const text = String(raw ?? '').trim();
-      if (!text) return { error: 'is required' };
+      if (!text) return { value: null };
       const value = Number(text);
-      if (!Number.isFinite(value)) return { error: `is "${text}", which is not a number` };
-      if (value <= 0) return { error: 'must be greater than zero' };
-      if (value > 100000) return { error: 'is larger than 100000, which is not a real estimate' };
+      if (!Number.isFinite(value)) return { warning: `is "${text}", which is not a number, so it was left unset` };
+      if (value <= 0) return { warning: 'must be greater than zero, so it was left unset' };
+      if (value > 100000) return { warning: 'is larger than 100000, which is not a real estimate, so it was left unset' };
+      return { value };
+    },
+  },
+  {
+    /* Who the asset goes to. Checked here only for the SHAPE of an address —
+       whether it belongs to a real person is a database question, answered in
+       the endpoint, and an address nobody holds is a warning there rather than
+       an error, on the same rule as everything else optional. */
+    name: 'assignee_email',
+    header: 'Assignee Email',
+    accepts: ['assignee_email', 'assignee', 'assignee_e_mail', 'email'],
+    required: false,
+    describe: 'Assignee\'s sign-in email — optional; a match assigns the asset immediately',
+    example: ['priya@studio.example', '', 'lena@studio.example'], // blank: nobody assigned yet
+    parse(raw) {
+      const text = String(raw ?? '').trim().toLowerCase();
+      if (!text) return { value: null };
+      if (text.length > 191) return { warning: 'is longer than an email address can be, so nobody was assigned' };
+      // Deliberately loose. The real test is whether a user holds this address,
+      // and that happens against the database; this only catches a cell that is
+      // plainly not an address at all, so the warning can say which of the two
+      // went wrong.
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) {
+        return { warning: `is "${String(raw).trim().slice(0, 60)}", which is not an email address, so nobody was assigned` };
+      }
+      return { value: text };
+    },
+  },
+  {
+    /* DD-MM-YYYY, which is what the studio asked for and what the sample shows.
+       ISO (YYYY-MM-DD) is accepted alongside it because it is unambiguous and
+       is what a database export hands you; a real date cell from Excel arrives
+       as a Date and is taken as-is.
+
+       What is NOT accepted is anything else, and that is the point. 03/04/2026
+       is the fourth of March to half the world and the third of April to the
+       other half, and a deadline quietly read the wrong way round is worse than
+       one refused out loud. */
+    name: 'due_date',
+    header: 'Deadline',
+    accepts: ['deadline', 'due_date', 'due', 'delivery_date'],
+    required: false,
+    describe: 'Deadline as DD-MM-YYYY — optional; YYYY-MM-DD is accepted too',
+    example: ['31-03-2026', '', '15-04-2026'],
+    parse(raw) {
+      // A real date cell out of Excel: readImportFile asks for cellDates, so
+      // there is nothing to parse and nothing to get the wrong way round.
+      if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
+        return { value: iso(raw.getFullYear(), raw.getMonth() + 1, raw.getDate()) };
+      }
+      const text = String(raw ?? '').trim();
+      if (!text) return { value: null };
+
+      const dmy = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/.exec(text);
+      const ymd = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/.exec(text);
+      let y; let m; let d;
+      if (dmy) { [, d, m, y] = dmy; } else if (ymd) { [, y, m, d] = ymd; } else {
+        return { warning: `is "${text}", which is not a date as DD-MM-YYYY, so no deadline was set` };
+      }
+      y = Number(y); m = Number(m); d = Number(d);
+      /* Round-tripped rather than range-checked: 31-02-2026 passes every bound
+         a month and a day can be checked against and is still not a day. */
+      const when = new Date(Date.UTC(y, m - 1, d));
+      if (when.getUTCFullYear() !== y || when.getUTCMonth() !== m - 1 || when.getUTCDate() !== d) {
+        return { warning: `is "${text}", which is not a real date, so no deadline was set` };
+      }
+      return { value: iso(y, m, d) };
+    },
+  },
+  {
+    /* The brief: where the requirement, reference art or spec lives. This is
+       the asset panel's "Requirement / Reference Link" and not a new field —
+       validated by the very same rules a link typed into that box is, so "that
+       is not a valid link" means one thing in this application. */
+    name: 'reference_link',
+    header: 'Project Link',
+    accepts: ['project_link', 'reference_link', 'requirement_link', 'link', 'brief_link'],
+    required: false,
+    describe: 'Link to the brief or reference — optional; shown as Requirement / Reference Link',
+    example: ['https://drive.example.com/brief/waterfall', '', 'https://drive.example.com/brief/ridge'],
+    parse(raw) {
+      const verdict = submissionLink.validate(raw, { optional: true });
+      if (!verdict.ok) return { warning: `${verdict.error} No link was set.` };
+      return { value: verdict.link };
+    },
+  },
+  {
+    /* The lead's own notes. Its own column on the asset, gated on
+       asset.lead_notes — see the permission catalogue for why this is not the
+       Description field wearing a different name. */
+    name: 'lead_notes',
+    header: 'Lead/Supervisor Notes',
+    accepts: ['lead/supervisor_notes', 'lead_supervisor_notes', 'lead_notes', 'supervisor_notes',
+      'lead_/_supervisor_notes'],
+    required: false,
+    describe: 'Notes from the lead or supervisor — optional; visible to roles holding Lead / Supervisor Notes',
+    example: ['Match the ep-02 spray timing.', '', 'Keep the ridge silhouette flat.'],
+    parse(raw) {
+      const value = String(raw ?? '').trim();
+      if (!value) return { value: null };
+      // TEXT holds 65535 bytes; a note past that is a pasted document.
+      if (value.length > 20000) {
+        return { warning: `is ${value.length} characters, which is too long to store, so it was left unset` };
+      }
       return { value };
     },
   },
 ];
+
+// A date the way the database wants it, from parts already known to be a day.
+function iso(y, m, d) {
+  return `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
 
 /* A column is identified to people by its header — the spelling the sample
    file carries and error messages use — and matched in a file by any of the
@@ -198,29 +334,52 @@ function validateHeaders(headers) {
   return { ok: missing.length === 0, present, missing, unknown };
 }
 
-// Validate one row. Returns { ok, values } or { ok: false, errors } where each
-// error names the row, the column and what is wrong with it.
+/* Validate one row.
+ *
+ * Returns { ok: true, values, warnings } or { ok: false, errors, warnings }.
+ * Warnings come back either way and are always about a value that was DROPPED,
+ * never about one that was changed — so a row that imports with three warnings
+ * has imported exactly what it said, minus three cells nobody could read.
+ *
+ * A row is only rejected by an error, and only a mandatory column can raise
+ * one. That keeps "which rows did I lose" answerable by looking at two columns
+ * rather than at nine. */
 function validateRow(row, rowNumber) {
   const values = {};
   const errors = [];
+  const warnings = [];
   for (const column of COLUMNS) {
     if (column.ignored) continue;
     // Tolerate header casing differences by looking the key up loosely.
     const key = Object.keys(row).find((k) => acceptsOf(column).includes(normaliseHeader(k)));
     const raw = key === undefined ? undefined : row[key];
     const result = column.parse(raw);
+    const seen = raw === undefined || raw === null ? ''
+      : (raw instanceof Date ? raw.toISOString().slice(0, 10) : String(raw).slice(0, 80));
     if (result.error) {
       errors.push({
         row: rowNumber,
         column: headerOf(column),
-        value: raw === undefined || raw === null ? '' : String(raw).slice(0, 80),
+        value: seen,
         message: `${headerOf(column)} ${result.error}`,
+      });
+    } else if (result.warning) {
+      /* The value is dropped, the row is not. Recorded against the same column
+         so the results table reads the same whichever kind of line it is. */
+      values[column.name] = null;
+      warnings.push({
+        row: rowNumber,
+        column: headerOf(column),
+        value: seen,
+        message: `${headerOf(column)} ${result.warning}`,
       });
     } else {
       values[column.name] = result.value;
     }
   }
-  return errors.length ? { ok: false, errors } : { ok: true, values };
+  return errors.length
+    ? { ok: false, errors, warnings }
+    : { ok: true, values, warnings };
 }
 
 // The sample file. Built from the same COLUMNS the endpoint validates against,

@@ -47,7 +47,18 @@ test('each importer refuses the other one\'s template', () => {
 
   const userIntoAssets = assetImport.validateHeaders(userHeaders);
   assert.strictEqual(userIntoAssets.ok, false);
-  assert.deepStrictEqual(userIntoAssets.missing, ['Category', 'Scope of Work', 'Man Hours']);
+  /* Only Scope of Work now. Category and Man Hours became optional with the
+     nine-column format, and the user sheet's `name` column is a spelling the
+     asset importer accepts for Asset Name — so one mandatory column is all
+     that stands between the two files. */
+  assert.deepStrictEqual(userIntoAssets.missing, ['Scope of Work']);
+  /* Which is why the endpoint does not rely on the header check alone to tell
+     these two files apart: it looks for columns only the user sheet has. That
+     is tested against the running server in bulk-import.test.js; asserted here
+     so the two halves of the defence stay visible together. */
+  assert.ok(['email', 'role', 'reports_to_email', 'password']
+    .filter((c) => userIntoAssets.present.includes(c)).length >= 2,
+  'the user template must stay recognisable by its own columns');
 });
 
 test('a user row is validated on its own terms', () => {

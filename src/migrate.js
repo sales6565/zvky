@@ -929,6 +929,13 @@ async function ensureAssetPanelColumns(db, log) {
     await db.query('ALTER TABLE assets ADD COLUMN reference_link VARCHAR(2048) NULL AFTER description');
     added.push('assets.reference_link');
   }
+  /* The lead's own notes, which arrived with the nine-column asset import.
+     Checked on its own, like everything else here — see the note below about a
+     step that can never complete. */
+  if (!(await has('assets', 'lead_notes'))) {
+    await db.query('ALTER TABLE assets ADD COLUMN lead_notes TEXT NULL AFTER reference_link');
+    added.push('assets.lead_notes');
+  }
   // Each column checked on its own.
   //
   // These two were gated on one probe: if created_by was absent but created_at
