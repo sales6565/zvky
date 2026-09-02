@@ -1617,11 +1617,28 @@ async function ensureAssetThumbnails(db, log) {
     `SELECT TABLE_NAME AS n FROM information_schema.TABLES
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'asset_thumbnails'`
   );
-  if (rows.length) return;
+  if (rows.length) {
+    /* An install from before the link option: the two file columns become
+       nullable and source_url arrives beside them. Existing rows are untouched
+       and go on being uploaded files. */
+    const { rows: cols } = await db.query(
+      `SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'asset_thumbnails'`
+    );
+    if (cols.some((r) => r.c === 'source_url')) return;
+    for (const sql of [
+      'ALTER TABLE asset_thumbnails MODIFY COLUMN image MEDIUMBLOB NULL',
+      'ALTER TABLE asset_thumbnails MODIFY COLUMN mime VARCHAR(64) NULL',
+      'ALTER TABLE asset_thumbnails ADD COLUMN source_url VARCHAR(2048) NULL AFTER mime',
+    ]) await db.query(sql).catch(() => {});
+    log('Schema: an asset preview can now be a link as well as an uploaded file.');
+    return;
+  }
   await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS asset_thumbnails (
       asset_id   CHAR(36)     NOT NULL PRIMARY KEY,
-      image      MEDIUMBLOB   NOT NULL,
-      mime       VARCHAR(64)  NOT NULL,
+      image      MEDIUMBLOB   NULL,
+      mime       VARCHAR(64)  NULL,
+      source_url VARCHAR(2048) NULL,
       updated_by CHAR(36)     NULL,
       updater_email VARCHAR(191) NULL,
       updated_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP

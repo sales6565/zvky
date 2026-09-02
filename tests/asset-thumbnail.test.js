@@ -61,6 +61,72 @@ test('the size and the empty cases are refused with the numbers in them', () => 
   assert.strictEqual(thumbnail.validate({ buffer: PNG, mime: '' }).ok, false);
 });
 
+test('a pasted link is checked for shape, and only for shape', () => {
+  /* All the server can check. Confirming an address really serves an image
+     means fetching it, which the studio chose not to do — so the browser loads
+     it before saving, and the display falls back if it stops loading later.
+     Neither half is sufficient alone, and this is the half that is testable
+     without a network. */
+  assert.strictEqual(thumbnail.validateUrl('https://cdn.example.com/a.png').url,
+    'https://cdn.example.com/a.png');
+  assert.strictEqual(thumbnail.validateUrl('  http://x.test/i.jpg  ').url, 'http://x.test/i.jpg',
+    'trimmed, because a pasted link brings whitespace with it');
+
+  /* http and https only. An allowlist of two is a smaller thing to be right
+     about than a list of what to refuse — and the refusal names the scheme, so
+     somebody who pasted a data: URI is told which part was wrong. */
+  for (const bad of ['javascript:alert(1)', 'data:image/png;base64,AAAA', 'file:///etc/passwd',
+    'ftp://host/i.png']) {
+    const r = thumbnail.validateUrl(bad);
+    assert.strictEqual(r.ok, false, `${bad} should be refused`);
+    assert.match(r.error, /http or https/);
+  }
+
+  assert.strictEqual(thumbnail.validateUrl('not a url').ok, false);
+  assert.strictEqual(thumbnail.validateUrl('').ok, false);
+  assert.strictEqual(thumbnail.validateUrl(null).ok, false);
+  const long = thumbnail.validateUrl(`https://x.test/${'a'.repeat(3000)}.png`);
+  assert.strictEqual(long.ok, false);
+  assert.match(long.error, /2048/, 'and says what the limit is');
+
+  /* A URL that ends in nothing image-shaped is ACCEPTED. Plenty of real image
+     links carry no extension — a CDN path, a signed URL, a query string — and
+     plenty of .jpg links are 404 pages. Guessing from the spelling would refuse
+     working links and admit broken ones, which is why the browser loads it
+     instead. */
+  assert.strictEqual(thumbnail.validateUrl('https://cdn.test/i/9f3a?size=large').ok, true);
+});
+
+test('the browser tests a link by loading it, not by reading its spelling', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const fn = /function loadsAsImage\([\s\S]*?\n\}/.exec(html);
+  assert.ok(fn, 'loadsAsImage should exist');
+  assert.match(fn[0], /new Image\(\)/, 'a real load');
+  assert.match(fn[0], /onerror/, 'and it reports the failure');
+  assert.match(fn[0], /setTimeout/,
+    'with a timeout — a host that never answers fires neither event, and the dialog would hang');
+  assert.ok(!/\\.(jpe?g|png)\$/i.test(fn[0]), 'and it does not guess from the extension');
+  /* And the scheme is checked before the load is attempted, so a javascript:
+     or data: URL is named as such rather than reported as a load failure —
+     which would send somebody checking an address that was never the problem. */
+  assert.match(fn[0], /http or https/, 'the scheme is refused in the same words the server uses');
+});
+
+test('a dead link reveals the placeholder rather than a broken image', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const fn = /function thumbInner\([\s\S]*?\n\}/.exec(html);
+  assert.ok(fn, 'thumbInner should be findable');
+  assert.match(fn[0], /onerror="this\.remove\(\)"/,
+    'the image removes itself when it fails');
+  /* And the icon is rendered underneath it, always — so removing the image
+     reveals something that is already there rather than needing a re-render. */
+  assert.match(fn[0], /\$\{icon\}<img/, 'the placeholder sits under the image');
+  assert.match(html, /\.card \.thumb svg,\.drawer \.thumb-big svg\{position:absolute/,
+    'behind it rather than above it in flow, so the slot does not grow');
+  // An external link does not carry the studio's page URLs to somebody else's host.
+  assert.match(fn[0], /referrerpolicy="no-referrer"/);
+});
+
 test('the bytes cannot reach the board query', () => {
   /* The check that matters most and that no amount of using the feature would
      surface. The board reads `SELECT a.*`; the image lives in its own table so
@@ -274,6 +340,93 @@ test('the asset thumbnail', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.ok(mine.changes && mine.changes.thumbnail, 'with what it changed from and to');
     // Replacing says so rather than reading as a first upload.
     assert.ok(added.some((e) => /Replaced/.test(e.summary)), 'a replacement reads as one');
+  });
+
+await t.test('a link can be pasted, and replaces an uploaded file', async () => {
+    /* Point 1 and testing step 3 in one: the two are alternatives because they
+       write the same row, so a link arriving drops the bytes rather than
+       sitting alongside them. */
+    assert.strictEqual((await put('ana', asset.id, PNG)).status, 200, 'start from a file');
+    assert.strictEqual(Number((await sql(cfg,
+      `SELECT COUNT(*) AS n FROM asset_thumbnails WHERE asset_id = '${asset.id}' AND image IS NOT NULL`))[0].n),
+    1, 'the bytes are there');
+
+    const linked = await as('ana', `/assets/${asset.id}/thumbnail`, {
+      method: 'POST', body: { sourceUrl: 'https://cdn.example.test/river.png' } });
+    assert.strictEqual(linked.status, 200, JSON.stringify(linked.body));
+    assert.strictEqual(linked.body.asset.thumbnail_url, 'https://cdn.example.test/river.png');
+
+    const [row] = await sql(cfg,
+      `SELECT image IS NULL AS noBytes, mime, source_url FROM asset_thumbnails WHERE asset_id = '${asset.id}'`);
+    assert.strictEqual(Number(row.noBytes), 1, 'the uploaded bytes went with it, not left behind');
+    assert.strictEqual(row.mime, null);
+    assert.strictEqual(row.source_url, 'https://cdn.example.test/river.png');
+    assert.strictEqual(Number((await sql(cfg,
+      `SELECT COUNT(*) AS n FROM asset_thumbnails WHERE asset_id = '${asset.id}'`))[0].n),
+    1, 'and still exactly one row, which is what makes them alternatives');
+
+    // Nothing to serve any more: the image route is for stored bytes only.
+    assert.strictEqual((await fetch(`${server.base}/assets/${asset.id}/thumbnail`)).status, 404,
+      'the app hosts nothing for a linked image');
+  });
+
+  await t.test('and a file replaces a link, the same way round', async () => {
+    assert.strictEqual((await put('ana', asset.id, JPEG, 'back.jpg', 'image/jpeg')).status, 200);
+    const [row] = await sql(cfg,
+      `SELECT image IS NOT NULL AS hasBytes, source_url FROM asset_thumbnails WHERE asset_id = '${asset.id}'`);
+    assert.strictEqual(Number(row.hasBytes), 1);
+    assert.strictEqual(row.source_url, null, 'the link is gone');
+    assert.strictEqual((await fetch(`${server.base}/assets/${asset.id}/thumbnail`)).status, 200);
+  });
+
+  await t.test('a link that is not an http address is refused', async () => {
+    for (const bad of ['javascript:alert(1)', 'data:image/png;base64,AAAA', 'file:///etc/passwd']) {
+      const r = await as('ana', `/assets/${asset.id}/thumbnail`, {
+        method: 'POST', body: { sourceUrl: bad } });
+      assert.strictEqual(r.status, 400, `${bad} should be refused`);
+      assert.match(r.body.error, /http or https/);
+      assert.strictEqual(r.body.field, 'sourceUrl', 'named, so the page can mark the right box');
+    }
+    assert.strictEqual((await as('ana', `/assets/${asset.id}/thumbnail`,
+      { method: 'POST', body: { sourceUrl: 'nonsense' } })).status, 400);
+
+    // And none of it disturbed what was there.
+    assert.strictEqual((await fetch(`${server.base}/assets/${asset.id}/thumbnail`)).status, 200);
+  });
+
+  await t.test('the link reaches the board as a string and nothing else', async () => {
+    await as('ana', `/assets/${asset.id}/thumbnail`, {
+      method: 'POST', body: { sourceUrl: 'https://cdn.example.test/river.png' } });
+    const card = (await board('root')).find((a) => a.id === asset.id);
+    assert.strictEqual(typeof card.thumbnail_url, 'string');
+    assert.ok(card.thumbnail_at, 'with a stamp, as an uploaded one has');
+    // The card is still a card, not an image.
+    const bare = (await board('root')).find((a) => !a.thumbnail_at);
+    if (bare) {
+      const grew = JSON.stringify(card).length - JSON.stringify(bare).length;
+      assert.ok(Math.abs(grew) < 400, `a linked card is ${grew} bytes bigger than a bare one`);
+    }
+  });
+
+  await t.test('the same gate and the same record, whichever way it was set', async () => {
+    /* Point 5 of the brief: this is an alternative input, not a second feature
+       with its own rules. */
+    const stranger = await as('bo', `/assets/${asset.id}/thumbnail`, {
+      method: 'POST', body: { sourceUrl: 'https://cdn.example.test/theirs.png' } });
+    assert.strictEqual(stranger.status, 403, JSON.stringify(stranger.body));
+    assert.match(stranger.body.error, /assigned to, or somebody who can edit/);
+
+    const log = (await as('root', '/activity?action=asset.thumbnail&limit=30')).body.entries;
+    const byLink = log.find((e) => /pasted link/.test(e.summary));
+    assert.ok(byLink, 'a link is recorded like a file is');
+    assert.strictEqual(byLink.actor.name, 'ana', 'attributed to whoever set it');
+    assert.match(JSON.stringify(byLink.changes), /cdn\.example\.test/,
+      'and the record says what it points at');
+    const byFile = log.find((e) => /uploaded file/.test(e.summary));
+    assert.ok(byFile, 'and the two are told apart');
+    // Swapping one for the other reads as a replacement, from what to what.
+    const swap = log.find((e) => /Replaced/.test(e.summary) && /link/.test(JSON.stringify(e.changes || {})));
+    assert.ok(swap, 'a swap says what it was before');
   });
 
   await t.test('removing it puts the placeholder back', async () => {

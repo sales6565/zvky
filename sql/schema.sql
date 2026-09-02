@@ -628,10 +628,22 @@ CREATE TABLE IF NOT EXISTS project_review_requests (
 -- Keeping the bytes in a table nothing joins by default makes the mistake
 -- unavailable rather than merely avoided: the board joins this for its
 -- updated_at and never for its image.
+-- One row per asset, and that primary key is what makes the two ways of
+-- setting a preview alternatives rather than a pair. A file and a link both
+-- write this row, so providing one replaces the other and an asset always has
+-- exactly one active source. Nothing has to remember to clear the other.
 CREATE TABLE IF NOT EXISTS asset_thumbnails (
   asset_id   CHAR(36)     NOT NULL PRIMARY KEY,
-  image      MEDIUMBLOB   NOT NULL,
-  mime       VARCHAR(64)  NOT NULL,
+  -- Set together when the preview is an uploaded file, and both NULL when it
+  -- is a link. src/asset-thumbnail.js is what keeps exactly one of the two
+  -- shapes filled in; a CHECK constraint would say it in the schema, but
+  -- MySQL 5.7 — which this deploys onto — parses and ignores them.
+  image      MEDIUMBLOB   NULL,
+  mime       VARCHAR(64)  NULL,
+  -- And set when it is a link. Rendered straight into an <img src> in the
+  -- browser: nothing is fetched or re-hosted here, so what this holds is a
+  -- promise about somebody else's server rather than a copy of anything.
+  source_url VARCHAR(2048) NULL,
   -- Who last changed it, kept with the email so the record survives the
   -- account going, as the other trails in this schema do.
   updated_by CHAR(36)     NULL,

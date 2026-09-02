@@ -243,7 +243,7 @@ function fmtSeconds(total) {
    response as a JSON array of byte values, per asset. The page builds the image
    URL from the id and this stamp, exactly as it does for a profile photo. */
 const ASSET_SELECT = `SELECT a.*, u.name AS assignee_name, u.avatar_updated_at AS assignee_photo_at,
-    t.updated_at AS thumbnail_at
+    t.updated_at AS thumbnail_at, t.source_url AS thumbnail_url
   FROM assets a
   LEFT JOIN users u ON u.id = a.assignee_id
   LEFT JOIN asset_thumbnails t ON t.asset_id = a.id`;
@@ -1121,21 +1121,40 @@ async function thumbnailGuard(req, res) {
   return asset;
 }
 
+/* One endpoint for both ways of setting a preview, because they set the same
+   thing. A multipart request carries a file; a JSON one carries a link. Which
+   arrived decides which branch runs, and either writes the one row — so
+   providing one replaces the other with nothing left to remember. */
 router.post('/:id/thumbnail', acceptThumbnail, async (req, res) => {
   const asset = await thumbnailGuard(req, res);
   if (!asset) return undefined;
-  if (!req.file) return res.status(400).json({ error: 'Choose an image.', field: 'image' });
 
-  const had = Boolean(await assetThumbnail.read(db, req.params.id).catch(() => null));
-  const saved = await assetThumbnail.save(db, req.params.id,
-    { buffer: req.file.buffer, mime: req.file.mimetype }, req.user);
-  if (!saved.ok) return res.status(saved.status).json({ error: saved.error, field: 'image' });
+  const rawUrl = (req.body || {}).sourceUrl;
+  const wantsLink = !req.file && rawUrl !== undefined && rawUrl !== null;
+  if (!req.file && !wantsLink) {
+    return res.status(400).json({ error: 'Choose an image, or paste a link to one.', field: 'image' });
+  }
 
+  // What was there before, so the entry can say replaced rather than added,
+  // and say what it was replaced FROM.
+  const before = await assetThumbnail.describe(db, req.params.id).catch(() => null);
+
+  const saved = wantsLink
+    ? await assetThumbnail.saveUrl(db, req.params.id, rawUrl, req.user)
+    : await assetThumbnail.save(db, req.params.id,
+      { buffer: req.file.buffer, mime: req.file.mimetype }, req.user);
+  if (!saved.ok) {
+    return res.status(saved.status).json({ error: saved.error, field: wantsLink ? 'sourceUrl' : 'image' });
+  }
+
+  const was = before ? (before.source === 'link' ? `a link (${before.url})` : 'an uploaded image') : null;
+  const now = saved.source === 'link' ? `a link (${saved.url})` : `an uploaded ${saved.mime}`;
   req.activity({
     module: 'assets', action: 'asset.thumbnail', entityType: 'asset',
     entityId: asset.id, entityLabel: `${asset.code || ''} ${asset.name || ''}`.trim(),
-    summary: `${had ? 'Replaced' : 'Added'} the preview image on ${asset.code || 'an asset'}`,
-    changes: { thumbnail: { from: had ? 'an image' : null, to: saved.mime } },
+    summary: `${before ? 'Replaced' : 'Added'} the preview image on ${asset.code || 'an asset'}`
+      + ` — ${saved.source === 'link' ? 'a pasted link' : 'an uploaded file'}`,
+    changes: { thumbnail: { from: was, to: now } },
   });
 
   const { rows } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [req.params.id]);
@@ -1146,14 +1165,16 @@ router.post('/:id/thumbnail', acceptThumbnail, async (req, res) => {
 router.delete('/:id/thumbnail', async (req, res) => {
   const asset = await thumbnailGuard(req, res);
   if (!asset) return undefined;
-  const had = Boolean(await assetThumbnail.read(db, req.params.id).catch(() => null));
+  const had = await assetThumbnail.describe(db, req.params.id).catch(() => null);
   await assetThumbnail.clear(db, req.params.id);
   if (had) {
     req.activity({
       module: 'assets', action: 'asset.thumbnail_removed', entityType: 'asset',
       entityId: asset.id, entityLabel: `${asset.code || ''} ${asset.name || ''}`.trim(),
       summary: `Removed the preview image from ${asset.code || 'an asset'}`,
-      changes: { thumbnail: { from: 'an image', to: null } },
+      changes: {
+        thumbnail: { from: had.source === 'link' ? `a link (${had.url})` : 'an uploaded image', to: null },
+      },
     });
   } else {
     // Removing what was not there is not an action.

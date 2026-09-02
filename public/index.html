@@ -296,6 +296,18 @@ tr.past-round{opacity:0.62;}
 .thumb-img{width:100%;height:100%;object-fit:cover;display:block;}
 .thumb-actions{display:flex;gap:12px;align-items:center;margin:-8px 0 10px;}
 .thumb-actions .u-link{font-size:11.5px;font-weight:500;color:var(--ink-muted);}
+/* Pasting a link. The row is hidden until asked for, so the panel looks as it
+   did for anybody who only ever uploads files. */
+.thumb-link{display:flex;gap:8px;align-items:center;margin:-4px 0 8px;}
+.thumb-link input{flex:1;font-size:12px;}
+.thumb-src{font-size:11px;color:var(--ink-faint);margin:-4px 0 8px;word-break:break-all;}
+.thumb-src span{font-family:'IBM Plex Mono';font-size:10.5px;}
+/* The placeholder sits behind the image so a dead link reveals it. Absolute
+   rather than a sibling in flow: the slot's height is fixed and must not grow
+   by the height of an icon nobody can see. */
+.card .thumb svg,.drawer .thumb-big svg{position:absolute;}
+.drawer .thumb-big{position:relative;overflow:hidden;}
+.thumb-img{position:relative;}
 /* One active task at a time. Amber rather than the refusal red: nothing has
    gone wrong, and there is something the person can do about it.
    
@@ -3100,17 +3112,32 @@ function thumbUrl(assetId, at){
   return `${API_BASE}/assets/${encodeURIComponent(assetId)}/thumbnail?v=${encodeURIComponent(new Date(at).getTime())}`;
 }
 
-/* The contents of a .thumb or .thumb-big: the image if there is one, and the
-   scope-of-work icon if there is not. One function for both so the card and
-   the panel cannot disagree about what an asset looks like. */
+/* The contents of a .thumb or .thumb-big. One function for both, so the card
+   and the panel cannot disagree about what an asset looks like.
+   
+   The icon is ALWAYS rendered, and the image sits on top of it. That is what
+   makes a dead link degrade rather than break: an <img> that fails to load
+   removes itself in its own onerror, and the placeholder underneath is already
+   there — no second request, no flash of a broken-image icon, and nothing to
+   re-render. It costs one hidden SVG per card and it is the only arrangement
+   that works when the image lives on somebody else's server.
+   
+   referrerpolicy="no-referrer" on an external link: the studio's page URLs are
+   not that host's business, and it is the one thing that can be done about a
+   link nobody here controls. Worth being plain that it is not privacy — every
+   viewer's browser still requests the pasted address, so whoever owns it can
+   see that somebody looked and from which IP. That is inherent to rendering a
+   link rather than re-hosting it, which is what was asked for. */
 function thumbInner(a, iconPx){
   const t = typeOf(a.type);
-  const url = thumbUrl(a.id, a.thumbnail_at);
-  if(url){
-    return `<img src="${escapeHTML(url)}" alt="" class="thumb-img" loading="lazy">`;
-  }
-  return typeIconSVG(a.type, t.color).replace('width="36" height="36"',
+  const icon = typeIconSVG(a.type, t.color).replace('width="36" height="36"',
     `width="${iconPx}" height="${iconPx}"`);
+  const external = a.thumbnail_url || null;
+  const url = external || thumbUrl(a.id, a.thumbnail_at);
+  if(!url) return icon;
+  return `${icon}<img src="${escapeHTML(url)}" alt="" class="thumb-img" loading="lazy"`
+    + `${external ? ' referrerpolicy="no-referrer"' : ''}`
+    + ` onerror="this.remove()">`;
 }
 
 /* Whether this account may set the preview. Mirrors mayChange() in
@@ -3148,6 +3175,53 @@ async function cropThumbnailToBlob(file){
     c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, outW, outH);
     return await canvasToJpeg(c);
   } finally { URL.revokeObjectURL(url); }
+}
+
+/* Does this address actually render as an image?
+ *
+ * A real <img> load, because that is the only thing that answers the question
+ * a person is really asking: not "is this a URL" and not "does it end in .png"
+ * — an extension is a naming convention, and plenty of image links have none
+ * while plenty of .jpg links are 404 pages. This asks the browser to draw it,
+ * which is what will happen on the board.
+ *
+ * The timeout is the case the load events do not cover: a host that accepts
+ * the connection and never answers leaves onload and onerror both unfired, and
+ * the dialog would sit on "Checking…" for ever. */
+const LINK_CHECK_MS = 8000;
+function loadsAsImage(url){
+  /* The scheme first, before any of the loading machinery exists — with the
+     same words the server uses.
+     
+     Without this a javascript: or data: URL simply fails to load and the
+     person is told "that did not load as an image": true, but it sends them
+     checking an address when the problem is the kind of address it is.
+     Mirrors validateUrl() in src/asset-thumbnail.js, which refuses it whatever
+     this says. Outside the Promise deliberately — inside it, the early return
+     reached the timeout handle before it was declared. */
+  let scheme = '';
+  try{ scheme = new URL(url).protocol; }
+  catch{ return Promise.reject(new Error('That is not a web address.')); }
+  if(scheme !== 'http:' && scheme !== 'https:'){
+    return Promise.reject(new Error(
+      `${scheme.replace(':','')} links are not supported — paste an http or https address.`));
+  }
+
+  return new Promise((resolve, reject)=>{
+    let settled = false;
+    let timer = null;
+    const done = (fn, arg)=>{ if(settled) return; settled = true; clearTimeout(timer); fn(arg); };
+    const img = new Image();
+    img.referrerPolicy = 'no-referrer';
+    timer = setTimeout(
+      ()=>done(reject, new Error('That link took too long to answer. Check it opens in a browser.')),
+      LINK_CHECK_MS);
+    img.onload = ()=>done(resolve, url);
+    img.onerror = ()=>done(reject, new Error(
+      'That link did not load as an image. Check it is a direct link to a JPG or PNG, '
+      + 'and that the site allows it to be shown elsewhere.'));
+    img.src = url;
+  });
 }
 
 async function uploadThumbnail(assetId, file){
@@ -4801,10 +4875,17 @@ async function openDrawer(id){
     <div class="thumb-big" style="background:linear-gradient(135deg, ${t.color}44, ${t.color}0d); display:flex;align-items:center;justify-content:center;">${thumbInner(a, 64)}</div>
     ${maySetThumbnail(a) ? `
       <div class="thumb-actions">
-        <button class="u-link" id="d_thumbPick">${a.thumbnail_at ? 'Replace preview' : 'Add a preview image'}</button>
+        <button class="u-link" id="d_thumbPick">${a.thumbnail_at ? 'Replace with a file' : 'Upload an image'}</button>
+        <button class="u-link" id="d_thumbLinkToggle">${a.thumbnail_url ? 'Change the link' : 'Paste a link'}</button>
         ${a.thumbnail_at ? '<button class="u-link" id="d_thumbClear">Remove</button>' : ''}
         <input type="file" id="d_thumbFile" accept="image/jpeg,image/png" style="display:none;">
       </div>
+      <div class="thumb-link" id="d_thumbLinkRow" hidden>
+        <input type="text" id="d_thumbLink" placeholder="https://…/image.jpg"
+          value="${escapeHTML(a.thumbnail_url || '')}">
+        <button class="btn btn-brand btn-sm" id="d_thumbLinkSave">Use this</button>
+      </div>
+      ${a.thumbnail_url ? `<div class="thumb-src">Showing a linked image · <span>${escapeHTML(a.thumbnail_url)}</span></div>` : ''}
       <div class="ref-err" id="d_thumbErr"></div>` : ''}
     <div class="code">${a.code}</div><h2 class="display" style="margin:4px 0 2px;font-size:19px;">${escapeHTML(a.name)}</h2>
     <div class="type-tag" style="display:inline-block;">${t.label}</div>
@@ -5194,6 +5275,44 @@ async function openDrawer(id){
       }catch(e){ thumbErr().textContent = e.message; thumbPick.disabled = false; }
     };
   }
+  /* Pasting a link.
+   *
+   * The URL is LOADED before it is saved. The server can only check the shape
+   * of an address — confirming it is really an image would mean fetching it,
+   * and the studio chose not to fetch or re-host — so this is the half that
+   * catches a typo, a page that is not an image, and a host that refuses to be
+   * embedded. Without it a bad link would save cleanly and show as a blank
+   * card, which is the failure this check exists to prevent. */
+  const linkToggle = document.getElementById('d_thumbLinkToggle');
+  const linkRow = document.getElementById('d_thumbLinkRow');
+  if(linkToggle && linkRow){
+    linkToggle.onclick = ()=>{
+      linkRow.hidden = !linkRow.hidden;
+      if(!linkRow.hidden){ thumbErr().textContent = ''; document.getElementById('d_thumbLink').focus(); }
+    };
+    const saveLink = async ()=>{
+      const input = document.getElementById('d_thumbLink');
+      const btn = document.getElementById('d_thumbLinkSave');
+      const url = (input.value || '').trim();
+      thumbErr().textContent = '';
+      if(!url){ thumbErr().textContent = 'Paste a link to the image.'; return; }
+      btn.disabled = true;
+      const was = btn.textContent; btn.textContent = 'Checking…';
+      try{
+        await loadsAsImage(url);
+        await api(`/assets/${id}/thumbnail`, { method:'POST', body:{ sourceUrl: url } });
+        await render();
+        openDrawer(id);
+        showToast('Preview image updated.');
+      }catch(e){
+        thumbErr().textContent = e.message;
+        btn.disabled = false; btn.textContent = was;
+      }
+    };
+    document.getElementById('d_thumbLinkSave').onclick = saveLink;
+    document.getElementById('d_thumbLink').onkeydown = (e)=>{ if(e.key==='Enter') saveLink(); };
+  }
+
   const thumbClear = document.getElementById('d_thumbClear');
   if(thumbClear) thumbClear.onclick = async ()=>{
     thumbClear.disabled = true;
