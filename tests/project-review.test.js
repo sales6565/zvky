@@ -304,11 +304,122 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
     assert.strictEqual((await inbox('ana')).filter((n) => /project_review/.test(n.kind)).length, 0);
   });
 
+  await t.test('Pending Actions shows each person only what is waiting on them', async () => {
+    const pending = (who) => as(who, '/project-reviews/pending-actions').then((r) => r.body);
+    const keys = (p) => p.groups.map((g) => g.key);
+
+    /* Somebody outside the workflow is told nothing is waiting rather than
+       being refused — the tab is empty, not forbidden. */
+    const artist = await pending('ana');
+    assert.deepStrictEqual(artist.groups, []);
+    assert.strictEqual(artist.count, 0);
+
+    // A fresh submission, so there is one of each kind waiting.
+    const waiting = await submit('root', { clientId, projectId, link: 'https://example.test/pa-1' });
+    const answered = await submit('root', { clientId, projectId: otherProjectId, link: 'https://example.test/pa-2' });
+    await as('cad', `/project-reviews/${answered.body.request.id}/decision`, {
+      method: 'POST', body: { decision: 'changes_requested', feedback: 'Second act drags' } });
+
+    // The Creative Director: what is still to be answered, and nothing else.
+    const cad = await pending('cad');
+    assert.deepStrictEqual(keys(cad), ['awaiting_review', 'awaiting_followup'],
+      'they hold both permissions, so they see both groups');
+    const toAnswer = cad.groups.find((g) => g.key === 'awaiting_review');
+    assert.ok(toAnswer.items.some((i) => i.id === waiting.body.request.id));
+    assert.ok(!toAnswer.items.some((i) => i.id === answered.body.request.id),
+      'an answered one is no longer waiting on the reviewer');
+
+    /* Production: given the queue and nothing else, they see only the answers
+       to act on — never the ones still waiting on the Creative Director. */
+    const before = await permsOf('producer');
+    await setPerms('producer', [...before, 'project.review_queue']);
+    const prod = await pending('pat');
+    assert.deepStrictEqual(keys(prod), ['awaiting_followup'],
+      'no review group without the permission to answer');
+    const toAct = prod.groups[0];
+    assert.ok(toAct.items.some((i) => i.id === answered.body.request.id));
+    assert.ok(!toAct.items.some((i) => i.id === waiting.body.request.id),
+      'and never something the Creative Director has not answered');
+    assert.strictEqual(prod.count, toAct.items.length, 'the count is what they can see');
+    await setPerms('producer', before);
+  });
+
+  await t.test('answering moves an item from one queue to the other', async () => {
+    const pending = (who) => as(who, '/project-reviews/pending-actions').then((r) => r.body);
+    const has = (p, id) => p.groups.some((g) => g.items.some((i) => i.id === id));
+
+    const before = await permsOf('producer');
+    await setPerms('producer', [...before, 'project.review_queue']);
+
+    const made = await submit('root', { clientId, projectId, link: 'https://example.test/handoff' });
+    const id = made.body.request.id;
+    assert.ok(has(await pending('cad'), id), 'waiting on the Creative Director');
+    assert.ok(!has(await pending('pat'), id), 'and not yet on Production');
+
+    await as('cad', `/project-reviews/${id}/decision`, {
+      method: 'POST', body: { decision: 'changes_requested', feedback: 'Warmer grade' } });
+
+    const cadAfter = await pending('cad');
+    assert.ok(!cadAfter.groups.find((g) => g.key === 'awaiting_review').items.some((i) => i.id === id),
+      'gone from the reviewer\'s list');
+    const prodAfter = await pending('pat');
+    assert.ok(has(prodAfter, id), 'and on Production\'s');
+    const item = prodAfter.groups[0].items.find((i) => i.id === id);
+    assert.strictEqual(item.feedback, 'Warmer grade', 'with the feedback they have to act on');
+
+    // Production deals with it, and it leaves their list.
+    const closed = await as('pat', `/project-reviews/${id}/close`, { method: 'POST' });
+    assert.strictEqual(closed.status, 200, JSON.stringify(closed.body));
+    assert.strictEqual(closed.body.request.closerEmail, 'pat@zvky.test', 'who closed it');
+    assert.ok(closed.body.request.closedAt, 'and when');
+    assert.ok(!has(await pending('pat'), id), 'gone from Production\'s list');
+
+    // Nothing is deleted: the whole trail is still readable.
+    const kept = (await queue('cad')).requests.find((r) => r.id === id);
+    assert.strictEqual(kept.status, 'changes_requested');
+    assert.strictEqual(kept.feedback, 'Warmer grade');
+    assert.strictEqual(kept.submitterEmail, 'root@zvky.test');
+    assert.strictEqual(kept.reviewerEmail, 'cad@zvky.test');
+    assert.strictEqual(kept.closerEmail, 'pat@zvky.test');
+
+    // Closing twice is not an error and does not rewrite who did it.
+    const again = await as('cad', `/project-reviews/${id}/close`, { method: 'POST' });
+    assert.strictEqual(again.status, 200);
+    assert.strictEqual(again.body.alreadyClosed, true);
+    assert.strictEqual(again.body.request.closerEmail, 'pat@zvky.test');
+    await setPerms('producer', before);
+  });
+
+  await t.test('an approval goes through the same follow-up step', async () => {
+    const pending = (who) => as(who, '/project-reviews/pending-actions').then((r) => r.body);
+    const made = await submit('root', { clientId, projectId, link: 'https://example.test/approved-pa' });
+    const id = made.body.request.id;
+    await as('cad', `/project-reviews/${id}/decision`, {
+      method: 'POST', body: { decision: 'approved_for_client' } });
+
+    const waiting = (await pending('cad')).groups.find((g) => g.key === 'awaiting_followup');
+    assert.ok(waiting.items.some((i) => i.id === id),
+      'an approval is an instruction to act on, not a dead end');
+    await as('cad', `/project-reviews/${id}/close`, { method: 'POST' });
+    assert.ok(!(await pending('cad')).groups.some((g) => g.items.some((i) => i.id === id)));
+  });
+
+  await t.test('nothing can be closed before it has been answered', async () => {
+    const made = await submit('root', { clientId, projectId, link: 'https://example.test/tooearly' });
+    const res = await as('cad', `/project-reviews/${made.body.request.id}/close`, { method: 'POST' });
+    assert.strictEqual(res.status, 409, JSON.stringify(res.body));
+    assert.match(res.body.error, /has not answered this yet/);
+
+    // And closing takes the queue permission.
+    assert.strictEqual((await as('ana', `/project-reviews/${made.body.request.id}/close`,
+      { method: 'POST' })).status, 403);
+  });
+
   await t.test('the record holds everything the studio asked it to', async () => {
     const rows = await sql(cfg, 'SELECT * FROM project_review_requests ORDER BY created_at LIMIT 1');
     const r = rows[0];
     for (const column of ['client_id', 'project_id', 'link', 'submitted_by', 'submitter_email',
-      'status', 'feedback', 'created_at']) {
+      'status', 'feedback', 'closed_by', 'closer_email', 'closed_at', 'created_at']) {
       assert.ok(r[column] !== undefined, `${column} is stored`);
     }
     assert.ok(Object.prototype.hasOwnProperty.call(r, 'description'));

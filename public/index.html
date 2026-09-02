@@ -405,6 +405,12 @@ tr.past-round{opacity:0.62;}
 table th.pick-col, table td.pick-col{width:34px;padding-left:12px;padding-right:0;}
 table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
   width:auto;flex:none;margin:0;accent-color:var(--brand-accent);cursor:pointer;}
+/* The count on the Pending Actions tab. Sits inside the button so it moves with
+   it, and is hidden rather than shown as 0 — a nought is not news. */
+.tab-count{display:inline-block;min-width:17px;padding:1px 5px;margin-left:5px;border-radius:9px;
+  background:var(--brand-accent);color:#1a0e0e;font-family:'IBM Plex Mono';font-size:10px;
+  font-weight:700;line-height:15px;text-align:center;vertical-align:middle;}
+.pending-empty{padding:26px 20px;text-align:center;color:var(--ink-muted);font-size:13px;}
 /* The project review queue's banner. Its own accent — the CD's review colour —
    rather than the brand, so it reads as a queue rather than as the app talking
    about itself, and so it is not mistaken at a glance for an alert. */
@@ -547,6 +553,9 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
            state rather than a URL. There is no router on this page, so no link,
            bookmark or redirect says "board" to a user anywhere. -->
       <button data-tab="board" class="active">Dashboard</button>
+      <!-- Right after Dashboard: it is the other thing somebody checks on
+           arriving, and its count is the reason to check it. -->
+      <button data-tab="pending" id="pendingTabBtn" style="display:none;">Pending Actions <span class="tab-count" id="pendingCount" hidden></span></button>
       <button data-tab="projects" id="projectsTabBtn" style="display:none;">Projects</button>
       <!-- The label is "Assets List"; the internal key stays "list", which is
            app state rather than a URL — there is no router here, so nothing is
@@ -568,6 +577,7 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
     <button class="btn btn-brand" id="newAssetBtn" style="display:none;">+ New Asset</button>
   </div>
   <div id="boardView"></div>
+  <div id="pendingView" style="display:none;"></div>
   <div id="projectsView" style="display:none;"></div>
   <div id="listView" style="display:none;"></div>
   <div id="teamView" style="display:none;"></div>
@@ -1045,6 +1055,10 @@ const UI_GATES = {
   settingsTabBtn:        () => canOpenSettings(),
   reportsTabBtn:         () => can('report.view','report.idle'),
   projectsTabBtn:        () => can('client.view'),
+  /* No permission of its own: this tab shows the things you may already act on,
+     and a toggle saying "you may look at what you may do" would mean nothing.
+     Either half of the project review workflow opens it. */
+  pendingTabBtn:         () => can('project.review_respond','project.review_queue'),
   newClientBtn:          () => can('client.add'),
   newProjectBtn:         () => can('project.add'),
   editProjectBtn:        () => mayEditCurrentProject(),
@@ -1918,6 +1932,7 @@ function setTab(tab){
   document.getElementById('search').style.display = showBoardControls ? '' : 'none';
   document.getElementById('filterType').style.display = showBoardControls ? '' : 'none';
   document.getElementById('boardView').style.display = tab==='board' ? '' : 'none';
+  document.getElementById('pendingView').style.display = tab==='pending' ? '' : 'none';
   document.getElementById('projectsView').style.display = tab==='projects' ? '' : 'none';
   document.getElementById('listView').style.display = tab==='list' ? '' : 'none';
   document.getElementById('teamView').style.display = tab==='team' ? '' : 'none';
@@ -1984,7 +1999,12 @@ async function renderProjectReviews(){
   catch{ el.innerHTML=''; return; }   /* not available on this deployment */
 
   const waiting = all.filter(r=>r.status==='pending');
-  const answered = all.filter(r=>r.status!=='pending');
+  /* Closed ones drop off here too, or this banner and the Pending Actions tab
+     would report different numbers for the same queue — and this list would
+     grow without end, which is the complaint that put a completion step on it
+     in the first place. The record itself is untouched; only the banner stops
+     listing what somebody has already dealt with. */
+  const answered = all.filter(r=>r.status!=='pending' && !r.closedAt);
   if(!waiting.length && !answered.length){ el.innerHTML=''; return; }
 
   const mayRespond = can('project.review_respond');
@@ -2039,6 +2059,115 @@ async function renderProjectReviews(){
     </div>` : ''}
   `;
 
+  /* The same wiring the Pending Actions tab uses. One implementation of what
+     these buttons do, so the two screens cannot drift apart. */
+  wirePendingActions(el, ()=>renderProjectReviews());
+}
+
+/* ---------- Pending Actions ----------
+ *
+ * What is waiting on the person reading it, and nothing else. The server shapes
+ * this from what they hold rather than from their designation:
+ *
+ *   project.review_respond  ->  submissions still to be answered
+ *   project.review_queue    ->  answers Production has not dealt with yet
+ *
+ * Somebody holding both sees both groups, which is how Super Admin sees
+ * everything without that being a special case anywhere.
+ *
+ * `groups` is a list because this is scoped to the project review workflow
+ * today and need not stay that way: another kind of pending item is another
+ * group from the server, and this renders whatever it is handed. The only thing
+ * it knows about an item is which action to offer, which the group carries.
+ *
+ * The actions are the ones already built — the same feedback box and two
+ * decisions the Dashboard banner offers, and Production's "done" — rather than
+ * a second way of doing the same thing. */
+let pendingCount = 0;
+
+async function fetchPending(){
+  try{ return await api('/project-reviews/pending-actions'); }
+  catch{ return { groups:[], count:0 }; }
+}
+
+/* The number on the tab. Cheap enough to ask for on every render, and the point
+   of the tab is that the number is current. */
+async function refreshPendingCount(){
+  const badge = document.getElementById('pendingCount');
+  if(!badge) return;
+  if(!can('project.review_respond','project.review_queue')){ badge.hidden = true; return; }
+  const { count } = await fetchPending();
+  pendingCount = count;
+  badge.textContent = count;
+  badge.hidden = !count;   /* a nought is not news */
+}
+
+async function renderPending(){
+  const el = document.getElementById('pendingView');
+  if(!el) return;
+  if(!can('project.review_respond','project.review_queue')){
+    el.innerHTML = '<div class="pending-empty">Nothing is waiting on you.</div>';
+    return;
+  }
+  const { groups, count } = await fetchPending();
+  pendingCount = count;
+  if(!count){
+    el.innerHTML = '<div class="pending-empty">Nothing is waiting on you right now.</div>';
+    return;
+  }
+
+  const who = (r)=>`${escapeHTML(r.submittedByName || r.submitterEmail || 'Somebody')} · ${fmtDate(r.createdAt)}`;
+  const head = (r)=>`<strong>${escapeHTML(r.projectName || 'A project')}</strong>
+      <span style="color:var(--ink-faint);">· ${escapeHTML(r.clientName || '')}</span>
+      <div class="pr-meta">${who(r)}</div>
+      <div style="margin-top:4px;"><a href="${escapeHTML(r.link)}" target="_blank" rel="noopener noreferrer">${escapeHTML(r.link)}</a></div>
+      ${r.description ? `<div class="pr-meta" style="margin-top:4px;color:var(--ink-muted);">${escapeHTML(r.description)}</div>` : ''}`;
+
+  el.innerHTML = groups.filter(g=>g.items.length).map(g=>`
+    <div class="pr-banner"${g.act==='close' ? ' style="border-left-color:var(--approved);background:linear-gradient(90deg,#3ddc9714,transparent);border-color:#3ddc9744;"' : ''}>
+      <h4>${escapeHTML(g.label)} · ${g.items.length}</h4>
+      <div class="pr-sub">${escapeHTML(g.note)}</div>
+      ${g.items.map(r=>{
+        const st = prStatus(r.status);
+        return `<div class="pr-item">
+          <div class="pr-what">
+            ${head(r)}
+            ${g.act==='respond' ? `
+              <div style="margin-top:8px;">
+                <textarea class="pr-feedback" data-id="${r.id}" rows="2"
+                  placeholder="Creative Director feedback (required to request changes)…"></textarea>
+                <div style="display:flex;gap:8px;margin-top:6px;">
+                  <button class="btn btn-ghost btn-sm pr-changes" data-id="${r.id}" style="color:#e8402c;">Request Changes</button>
+                  <button class="btn btn-brand btn-sm pr-approve" data-id="${r.id}">Approve for Client</button>
+                </div>
+                <div class="ref-err pr-err" data-id="${r.id}"></div>
+              </div>` : `
+              <div style="margin-top:6px;">
+                <span class="status-pill" style="background:${st.color}22;color:${st.color};"><span class="d" style="background:${st.color}"></span>${st.label}</span>
+                <span class="pr-meta" style="margin-left:6px;">${escapeHTML(r.reviewedByName || r.reviewerEmail || '')}${r.reviewedAt?` · ${fmtDate(r.reviewedAt)}`:''}</span>
+              </div>
+              ${r.feedback ? `<div class="note" style="margin-top:6px;border-left-color:${st.color};"><p>${escapeHTML(r.feedback)}</p></div>` : ''}
+              <div style="margin-top:8px;">
+                <button class="btn btn-ghost btn-sm pr-close" data-id="${r.id}">${
+                  r.status==='changes_requested' ? 'Done, routed' : 'Done, acknowledged'}</button>
+                <span class="pr-meta" style="margin-left:8px;">${
+                  r.status==='changes_requested'
+                    ? 'Put the assets this applies to through TL Feedbacks first.'
+                    : 'Clear to move toward delivery.'}</span>
+                <div class="ref-err pr-err" data-id="${r.id}"></div>
+              </div>`}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`).join('');
+
+  wirePendingActions(el, ()=>renderPending());
+}
+
+/* The two decisions and the close, wired the same way wherever they appear —
+   the Dashboard banner calls this too, so there is one implementation of what
+   the buttons do rather than one per screen. */
+function wirePendingActions(el, refresh){
   const errFor = (id)=>el.querySelector(`.pr-err[data-id="${id}"]`);
   const noteFor = (id)=>el.querySelector(`.pr-feedback[data-id="${id}"]`);
   const decide = async (btn, decision)=>{
@@ -2056,11 +2185,23 @@ async function renderProjectReviews(){
     try{
       await api('/project-reviews/'+id+'/decision', { method:'POST', body:{ decision, feedback: feedback || undefined } });
       showToast(decision==='changes_requested' ? 'Changes requested.' : 'Approved for client.');
-      renderProjectReviews();
+      await refresh();
+      refreshPendingCount();
     }catch(e){ err.textContent = e.message; btn.disabled = false; }
   };
   el.querySelectorAll('.pr-changes').forEach(b=>b.addEventListener('click', ()=>decide(b, 'changes_requested')));
   el.querySelectorAll('.pr-approve').forEach(b=>b.addEventListener('click', ()=>decide(b, 'approved_for_client')));
+  el.querySelectorAll('.pr-close').forEach(b=>b.addEventListener('click', async ()=>{
+    const err = errFor(b.dataset.id);
+    if(err) err.textContent = '';
+    b.disabled = true;
+    try{
+      await api('/project-reviews/'+b.dataset.id+'/close', { method:'POST' });
+      showToast('Marked as done.');
+      await refresh();
+      refreshPendingCount();
+    }catch(e){ if(err) err.textContent = e.message; else showToast(e.message); b.disabled = false; }
+  }));
 }
 
 function renderStats(){
@@ -3143,7 +3284,9 @@ async function render(){
   const onABoard = (state.view==='board'||state.view==='list') && Boolean(state.currentProjectId);
   ['newAssetBtn','bulkImportBtn','downloadSampleBtn'].forEach(id=>applyGate(id, onABoard));
   renderProjectReviews();
-  if(state.view==='board') renderBoard();
+  refreshPendingCount();
+  if(state.view==='pending') await renderPending();
+  else if(state.view==='board') renderBoard();
   else if(state.view==='list') renderList();
   else if(state.view==='reports') await renderReportsTab();
   else if(state.view==='team') await renderTeam();

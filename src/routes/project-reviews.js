@@ -30,6 +30,7 @@ const SELECT = `
   SELECT r.id, r.link, r.description, r.status, r.feedback, r.created_at AS createdAt,
          r.reviewed_at AS reviewedAt, r.submitter_email AS submitterEmail,
          r.reviewer_email AS reviewerEmail,
+         r.closed_at AS closedAt, r.closer_email AS closerEmail,
          r.client_id AS clientId, c.\`name\` AS clientName,
          r.project_id AS projectId, p.\`name\` AS projectName, p.\`code\` AS projectCode,
          r.submitted_by AS submittedById, s.\`name\` AS submittedByName,
@@ -68,6 +69,69 @@ router.get('/', requirePermission('project.review_queue'), async (req, res) => {
     console.warn(`[schema] project_review_requests unavailable (${err.code}); the queue reads empty.`);
     res.json({ requests: [], pending: 0, answered: 0, unavailable: true });
   }
+});
+
+/* GET /api/project-reviews/pending-actions — what is waiting on YOU.
+ *
+ * One endpoint, shaped by what the caller holds rather than by their role, so
+ * the tab needs no permission of its own — the two that already gate this
+ * workflow decide what appears, and adding a third to say "you may look at the
+ * things you may act on" would be a toggle that means nothing.
+ *
+ *   project.review_respond  ->  submissions still waiting to be answered
+ *   project.review_queue    ->  answers Production has not dealt with yet
+ *
+ * Somebody holding both — Super Admin holds the whole catalogue — sees both
+ * groups, which is exactly the "all pending items regardless of role" the
+ * studio asked for, and falls out rather than being special-cased.
+ *
+ * `groups` is a list on purpose. This is scoped to the project review workflow
+ * today; another kind of pending item is another entry in it, and the tab
+ * renders whatever it is given.
+ */
+router.get('/pending-actions', async (req, res) => {
+  const mayRespond = holds(req.user, 'project.review_respond');
+  const mayFollowUp = holds(req.user, 'project.review_queue');
+  if (!mayRespond && !mayFollowUp) {
+    // Not an error: this is "nothing is waiting on you", which is what somebody
+    // outside this workflow should be told rather than being refused.
+    return res.json({ groups: [], count: 0 });
+  }
+
+  let rows = [];
+  try {
+    ({ rows } = await db.query(`${SELECT} ORDER BY r.created_at DESC`));
+  } catch (err) {
+    if (!unavailable(err)) throw err;
+    return res.json({ groups: [], count: 0, unavailable: true });
+  }
+
+  const groups = [];
+  if (mayRespond) {
+    const items = rows.filter((r) => r.status === 'pending');
+    groups.push({
+      key: 'awaiting_review',
+      label: 'Waiting on your review',
+      note: 'Projects submitted for the Creative Director. Answer them with feedback or an approval.',
+      act: 'respond',
+      items,
+    });
+  }
+  if (mayFollowUp) {
+    /* Answered and not yet dealt with. Both decisions land here: "changes" is
+       work to route, and "approved for client" is an instruction to act on. */
+    const items = rows.filter((r) =>
+      (r.status === 'changes_requested' || r.status === 'approved_for_client') && !r.closedAt);
+    groups.push({
+      key: 'awaiting_followup',
+      label: 'Waiting on you to act',
+      note: 'The Creative Director has answered. Route the changes to the assets they apply to, '
+        + 'then mark it done.',
+      act: 'close',
+      items,
+    });
+  }
+  res.json({ groups, count: groups.reduce((n, g) => n + g.items.length, 0) });
 });
 
 // POST /api/project-reviews — submit one.
@@ -200,6 +264,46 @@ router.post('/:id/decision', requirePermission('project.review_respond'), async 
     `${req.user.email} answered project review ${req.params.id}: ${decision}`
     + `${note ? ` — ${note}` : ''}.`
   );
+  const { rows: saved } = await db.query(`${SELECT} WHERE r.id = $1`, [req.params.id]);
+  res.json({ request: saved[0] });
+});
+
+/* POST /api/project-reviews/:id/close — Production has dealt with it.
+ *
+ * The answer has been read and acted on: the changes routed to the assets they
+ * apply to, or the approval taken forward. Gated on project.review_queue, which
+ * is the permission Production is given to read these in the first place —
+ * acting on what you can see is not a second decision worth a second toggle.
+ *
+ * Nothing is deleted. It leaves the pending list and stays as the record, with
+ * who closed it and when, beside who submitted it and who answered it.
+ */
+router.post('/:id/close', requirePermission('project.review_queue'), async (req, res) => {
+  let rows;
+  try {
+    ({ rows } = await db.query('SELECT * FROM project_review_requests WHERE id = $1', [req.params.id]));
+  } catch (err) {
+    if (!unavailable(err)) throw err;
+    return res.status(404).json({ error: 'Not found' });
+  }
+  if (!rows.length) return res.status(404).json({ error: 'That submission does not exist.' });
+  if (rows[0].status === 'pending') {
+    return res.status(409).json({
+      error: 'The Creative Director has not answered this yet — there is nothing to act on.',
+    });
+  }
+  if (rows[0].closed_at) {
+    const { rows: already } = await db.query(`${SELECT} WHERE r.id = $1`, [req.params.id]);
+    return res.json({ request: already[0], alreadyClosed: true });
+  }
+
+  await db.query(
+    `UPDATE project_review_requests
+        SET closed_by = $1, closer_email = $2, closed_at = NOW()
+      WHERE id = $3`,
+    [req.user.id, req.user.email, req.params.id]
+  );
+  console.log(`${req.user.email} closed off project review ${req.params.id} (${rows[0].status}).`);
   const { rows: saved } = await db.query(`${SELECT} WHERE r.id = $1`, [req.params.id]);
   res.json({ request: saved[0] });
 });

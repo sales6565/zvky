@@ -293,6 +293,22 @@ async function ensureProjectReviews(db, log) {
   await db.query("ALTER TABLE project_review_requests MODIFY `status` VARCHAR(32) NOT NULL DEFAULT 'pending'")
     .catch(() => {});
 
+  /* Production's "I have dealt with this". Added after the two decisions
+     shipped, so a database that has them picks these up without intervention. */
+  const { rows: closed } = await db.query(
+    `SELECT COLUMN_NAME AS n FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'project_review_requests'
+        AND COLUMN_NAME = 'closed_at'`
+  );
+  if (!closed.length) {
+    for (const sql of [
+      'ALTER TABLE project_review_requests ADD COLUMN closed_by CHAR(36) NULL AFTER reviewed_at',
+      'ALTER TABLE project_review_requests ADD COLUMN closer_email VARCHAR(191) NULL AFTER closed_by',
+      'ALTER TABLE project_review_requests ADD COLUMN closed_at DATETIME NULL AFTER closer_email',
+    ]) await db.query(sql).catch(() => {});
+    log('Schema: added project_review_requests.closed_at and who closed it.');
+  }
+
   const { rows: column } = await db.query(
     `SELECT COLUMN_NAME AS n FROM information_schema.COLUMNS
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'notifications' AND COLUMN_NAME = 'project_id'`

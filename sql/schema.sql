@@ -504,6 +504,16 @@ CREATE TABLE IF NOT EXISTS project_review_requests (
   reviewed_by  CHAR(36)      NULL,
   reviewer_email VARCHAR(191) NULL,
   reviewed_at  DATETIME      NULL,
+  -- Production, saying they have dealt with the Creative Director's answer:
+  -- routed the changes to the assets they apply to, or taken the approval on.
+  --
+  -- A step of its own rather than something inferred, because there is nothing
+  -- to infer it from. The submission names no asset, and the reassignment flow
+  -- Production uses knows nothing about the submission that prompted it — so
+  -- the only honest signal that this has been handled is somebody saying so.
+  closed_by    CHAR(36)      NULL,
+  closer_email VARCHAR(191)  NULL,
+  closed_at    DATETIME      NULL,
   created_at   DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_prr_status (status, created_at),
   KEY idx_prr_project (project_id),
