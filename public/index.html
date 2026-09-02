@@ -2107,6 +2107,10 @@ async function renderPending(){
      Drawn quieter than the other two on purpose: nothing here is asking. */
   const TONE = {
     close: ' style="border-left-color:var(--approved);background:linear-gradient(90deg,#3ddc9714,transparent);border-color:#3ddc9744;"',
+    /* The submitter's answer has arrived — the one thing in their half of this
+       tab that is asking them for something, so it is drawn like the other two
+       things that ask rather than like their record. */
+    acknowledge: ' style="border-left-color:var(--review);background:linear-gradient(90deg,#9b7ef014,transparent);border-color:#9b7ef044;"',
     none:  ' style="border-left-color:var(--ink-faint);background:none;border-color:var(--border);"',
   };
   /* The feedback box is drawn for a group whose act is 'respond'. That is the
@@ -2137,6 +2141,20 @@ async function renderPending(){
                   <button class="btn btn-brand btn-sm pr-submit" data-id="${r.id}">Submit Feedback</button>
                 </div>
                 <div class="ref-err pr-err" data-id="${r.id}"></div>
+              </div>` : g.act==='acknowledge' ? `
+              <!-- Answered, and waiting on the person who asked to read it.
+                   The feedback in full, and one button. No text box: what they
+                   have to do is read, and asking them to type something to
+                   prove it would be asking for the wrong thing. -->
+              <div style="margin-top:6px;">
+                <span class="status-pill" style="background:${st.color}22;color:${st.color};"><span class="d" style="background:${st.color}"></span>${st.label}</span>
+                <span class="pr-meta" style="margin-left:6px;">${escapeHTML(r.reviewedByName || r.reviewerEmail || '')}${r.reviewedAt?` · ${fmtDate(r.reviewedAt)}`:''}</span>
+              </div>
+              ${r.feedback ? `<div class="note" style="margin-top:6px;border-left-color:${st.color};"><p>${escapeHTML(r.feedback)}</p></div>` : ''}
+              <div style="margin-top:8px;">
+                <button class="btn btn-ghost btn-sm pr-ack" data-id="${r.id}">Acknowledge &amp; Close</button>
+                <span class="pr-meta" style="margin-left:8px;">Closes this off in your list. It stays readable in History.</span>
+                <div class="ref-err pr-err" data-id="${r.id}"></div>
               </div>` : (g.act==='none' || g.act==='respond') ? `
               <!-- What you sent and where it got to. No feedback box, no
                    buttons: a submitter has nothing to do here, and a control
@@ -2152,6 +2170,8 @@ async function renderPending(){
                 <span class="pr-meta" style="margin-left:6px;">${
                   r.reviewedAt ? `answered ${fmtDate(r.reviewedAt)}` : 'not answered yet'}${
                   r.reviewedByName || r.reviewerEmail ? ` · ${escapeHTML(r.reviewedByName || r.reviewerEmail)}` : ''}</span>
+                ${r.acknowledgedAt ? `<span class="pr-meta" style="margin-left:6px;">· closed off ${fmtDate(r.acknowledgedAt)}${
+                  r.acknowledgerEmail ? ` by ${escapeHTML(r.acknowledgerEmail)}` : ''}</span>` : ''}
                 ${r.closedAt ? `<span class="pr-meta" style="margin-left:6px;">· dealt with ${fmtDate(r.closedAt)}${
                   r.closerEmail ? ` by ${escapeHTML(r.closerEmail)}` : ''}</span>` : ''}
               </div>
@@ -2220,6 +2240,43 @@ function wirePendingActions(el, refresh){
     }catch(e){ err.textContent = e.message; btn.disabled = false; }
   };
   el.querySelectorAll('.pr-submit').forEach(b=>b.addEventListener('click', ()=>submitFeedback(b)));
+
+  /* Acknowledge & Close, with the confirmation in the button rather than in a
+     modal. One click arms it, the second does it, and clicking anything else
+     puts it back — a dialog for a one-word action is a dialog people learn to
+     dismiss without reading. It cannot be undone, which is why it asks at all. */
+  el.querySelectorAll('.pr-ack').forEach(b=>{
+    const label = b.textContent;
+    let armed = false;
+    b.addEventListener('click', async ()=>{
+      const err = errFor(b.dataset.id);
+      if(err) err.textContent = '';
+      if(!armed){
+        armed = true;
+        b.textContent = 'Yes, close it';
+        b.classList.add('btn-brand');
+        b.blur();
+        /* Disarms on the next click anywhere else, so an armed button left
+           alone on screen does not stay armed for the next person to walk past. */
+        setTimeout(()=>document.addEventListener('click', function off(e){
+          if(e.target === b) return;
+          armed = false; b.textContent = label; b.classList.remove('btn-brand');
+          document.removeEventListener('click', off);
+        }, { once:true }), 0);
+        return;
+      }
+      b.disabled = true;
+      try{
+        await api('/project-reviews/'+b.dataset.id+'/acknowledge', { method:'POST' });
+        showToast('Closed off. It is in your History.');
+        await refresh();
+        refreshPendingCount();
+      }catch(e){
+        if(err) err.textContent = e.message; else showToast(e.message);
+        b.disabled = false; armed = false; b.textContent = label; b.classList.remove('btn-brand');
+      }
+    });
+  });
   el.querySelectorAll('.pr-close').forEach(b=>b.addEventListener('click', async ()=>{
     const err = errFor(b.dataset.id);
     if(err) err.textContent = '';

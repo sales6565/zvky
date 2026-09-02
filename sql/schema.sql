@@ -530,6 +530,18 @@ CREATE TABLE IF NOT EXISTS project_review_requests (
   closed_by    CHAR(36)      NULL,
   closer_email VARCHAR(191)  NULL,
   closed_at    DATETIME      NULL,
+  -- The submitter, saying they have read the answer they asked for.
+  --
+  -- Deliberately NOT a status value. `status` is the submission's own state and
+  -- every role reads it; acknowledgement is one person's completion marker,
+  -- exactly as closed_at is Production's. Modelling it as a status would have
+  -- made one person finishing with a row change what everybody else sees of it.
+  --
+  -- Its own step for the same reason closed_at is: the only honest signal that
+  -- somebody has read something is that somebody says so.
+  acknowledged_by    CHAR(36)     NULL,
+  acknowledger_email VARCHAR(191) NULL,
+  acknowledged_at    DATETIME     NULL,
   created_at   DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_prr_status (status, created_at),
   KEY idx_prr_project (project_id),

@@ -309,6 +309,23 @@ async function ensureProjectReviews(db, log) {
     log('Schema: added project_review_requests.closed_at and who closed it.');
   }
 
+  /* The submitter's own acknowledgement, added after the close step shipped.
+     Checked on its own probe, so a deployment that has one and not the other
+     picks up whichever it is missing. */
+  const { rows: acked } = await db.query(
+    `SELECT COLUMN_NAME AS n FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'project_review_requests'
+        AND COLUMN_NAME = 'acknowledged_at'`
+  );
+  if (!acked.length) {
+    for (const sql of [
+      'ALTER TABLE project_review_requests ADD COLUMN acknowledged_by CHAR(36) NULL AFTER closed_at',
+      'ALTER TABLE project_review_requests ADD COLUMN acknowledger_email VARCHAR(191) NULL AFTER acknowledged_by',
+      'ALTER TABLE project_review_requests ADD COLUMN acknowledged_at DATETIME NULL AFTER acknowledger_email',
+    ]) await db.query(sql).catch(() => {});
+    log('Schema: added project_review_requests.acknowledged_at and who acknowledged it.');
+  }
+
   const { rows: column } = await db.query(
     `SELECT COLUMN_NAME AS n FROM information_schema.COLUMNS
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'notifications' AND COLUMN_NAME = 'project_id'`

@@ -31,6 +31,7 @@ const SELECT = `
          r.reviewed_at AS reviewedAt, r.submitter_email AS submitterEmail,
          r.reviewer_email AS reviewerEmail,
          r.closed_at AS closedAt, r.closer_email AS closerEmail,
+         r.acknowledged_at AS acknowledgedAt, r.acknowledger_email AS acknowledgerEmail,
          r.client_id AS clientId, c.\`name\` AS clientName,
          r.project_id AS projectId, p.\`name\` AS projectName, p.\`code\` AS projectCode,
          r.submitted_by AS submittedById, s.\`name\` AS submittedByName,
@@ -245,14 +246,33 @@ router.get('/pending-actions', requirePermission('pending.view'), async (req, re
       countable: false,
       items: rows.filter((r) => mine(r) && r.status === 'pending'),
     });
+    /* Answered, and the submitter has not said they have read it.
+     *
+     * The one group in the submitter's half that IS an action, and therefore
+     * the one that counts: the answer they asked for has arrived and reading
+     * it is theirs to do. It stays Active until they say so — an answer that
+     * filed itself away the moment it was written would be an answer nobody
+     * had to read.
+     *
+     * The same shape Production already has: arrives in Active when the
+     * feedback lands, leaves when a person says they are done with it. */
+    groups.push({
+      key: 'my_to_acknowledge',
+      label: 'Feedback for you',
+      note: 'The Creative Director has answered. Read it, then close the thread.',
+      act: 'acknowledge',
+      phase: 'active',
+      items: rows.filter((r) => mine(r) && ANSWERED.includes(r.status) && !r.acknowledgedAt),
+    });
     groups.push({
       key: 'my_answered',
-      label: 'Sent by you · answered',
-      note: 'What you sent and what came back. Kept in full, for as long as the record exists.',
+      label: 'Sent by you · closed',
+      note: 'What you sent, what came back, and when you closed it off. Kept in full, for as '
+        + 'long as the record exists.',
       act: 'none',
       phase: 'history',
       countable: false,
-      items: rows.filter((r) => mine(r) && ANSWERED.includes(r.status)),
+      items: rows.filter((r) => mine(r) && ANSWERED.includes(r.status) && r.acknowledgedAt),
     });
   }
 
@@ -406,6 +426,56 @@ router.post('/:id/feedback', requirePermission('project.review_respond'), async 
   }
 
   console.log(`${req.user.email} gave feedback on project review ${req.params.id} — ${note}`);
+  const { rows: saved } = await db.query(`${SELECT} WHERE r.id = $1`, [req.params.id]);
+  res.json({ request: saved[0] });
+});
+
+/* POST /api/project-reviews/:id/acknowledge — the submitter has read the answer.
+ *
+ * Restricted to the person who sent that particular submission, and to them
+ * alone: this is not "may you close these", it is "this one is yours". Holding
+ * project.review_mine lets you see your own record; it does not make anybody
+ * else's record yours to close, so the check is on the row and not on a
+ * permission. Super Admin included — an acknowledgement by somebody who was
+ * not waiting on the answer records something that did not happen.
+ *
+ * Separate from Production's close for the same reason both exist: two people
+ * have to be finished with a submission, and each is only finished when they
+ * say so. One does not imply the other, in either direction.
+ */
+router.post('/:id/acknowledge', requirePermission('project.review_mine'), async (req, res) => {
+  let rows;
+  try {
+    ({ rows } = await db.query('SELECT * FROM project_review_requests WHERE id = $1', [req.params.id]));
+  } catch (err) {
+    if (!unavailable(err)) throw err;
+    return res.status(404).json({ error: 'Not found' });
+  }
+  if (!rows.length) return res.status(404).json({ error: 'That submission does not exist.' });
+
+  if (!rows[0].submitted_by || rows[0].submitted_by !== req.user.id) {
+    return res.status(403).json({
+      error: 'Only the person who sent this can close it off.',
+    });
+  }
+  if (rows[0].status === 'pending') {
+    return res.status(409).json({
+      error: 'There is nothing to acknowledge yet — the Creative Director has not answered this.',
+    });
+  }
+  if (rows[0].acknowledged_at) {
+    // Already done. Not an error, and the first one stands, same as closing.
+    const { rows: already } = await db.query(`${SELECT} WHERE r.id = $1`, [req.params.id]);
+    return res.json({ request: already[0], alreadyAcknowledged: true });
+  }
+
+  await db.query(
+    `UPDATE project_review_requests
+        SET acknowledged_by = $1, acknowledger_email = $2, acknowledged_at = NOW()
+      WHERE id = $3`,
+    [req.user.id, req.user.email, req.params.id]
+  );
+  console.log(`${req.user.email} acknowledged the feedback on project review ${req.params.id}.`);
   const { rows: saved } = await db.query(`${SELECT} WHERE r.id = $1`, [req.params.id]);
   res.json({ request: saved[0] });
 });

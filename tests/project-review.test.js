@@ -518,7 +518,8 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
         const patSent = await submit('pat', { clientId, projectId, link: 'https://example.test/pats-own' });
 
         const seen = (await as('pat', '/project-reviews/pending-actions')).body;
-        assert.deepStrictEqual(seen.groups.map((g) => g.key), ['my_submissions', 'my_answered'],
+        assert.deepStrictEqual(seen.groups.map((g) => g.key),
+          ['my_submissions', 'my_to_acknowledge', 'my_answered'],
           'the record is all they hold, so it is all they get — split across the two sub-tabs');
         const ids = seen.groups.flatMap((g) => g.items.map((i) => i.id));
         assert.ok(ids.includes(patSent.body.request.id));
@@ -543,8 +544,8 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
          record to the History side when it is answered, and the point of the
          record is that it is still there either way. */
       const mine = async () => (await as('pat', '/project-reviews/pending-actions')).body
-        .groups.filter((g) => ['my_submissions', 'my_answered'].includes(g.key))
-        .flatMap((g) => g.items.map((i) => ({ ...i, phase: g.phase })))
+        .groups.filter((g) => ['my_submissions', 'my_to_acknowledge', 'my_answered'].includes(g.key))
+        .flatMap((g) => g.items.map((i) => ({ ...i, phase: g.phase, act: g.act })))
         .find((i) => i.id === id);
 
       const first = await mine();
@@ -556,11 +557,18 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
 
       /* Still there, which is the whole point of a record over an outbox: the
          submitter asked to be able to see what became of what they sent. */
+      /* Answered, and still Active for them: the answer they asked for has
+         arrived and reading it is theirs to do. It leaves when they say so. */
       const after = await mine();
       assert.ok(after, 'the submission vanished from its sender\'s view once answered');
       assert.strictEqual(after.status, 'feedback_given');
-      assert.strictEqual(after.phase, 'history', 'answered, so it has moved to their History');
+      assert.strictEqual(after.phase, 'active', 'answered but unread is still theirs to deal with');
+      assert.strictEqual(after.act, 'acknowledge');
       assert.ok(after.reviewedAt, 'with when it was answered');
+
+      await as('pat', `/project-reviews/${id}/acknowledge`, { method: 'POST' });
+      const closed = await mine();
+      assert.strictEqual(closed.phase, 'history', 'and once acknowledged it moves to History');
 
       // And closing it off does not take it away either.
       await as('pat', `/project-reviews/${id}/close`, { method: 'POST' });
@@ -737,7 +745,8 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
       await setPerms('producer', [...new Set([...before, 'project.review_send', 'pending.view',
         'project.review_mine'])]);
       const withIt = (await as('pat', '/project-reviews/pending-actions')).body;
-      assert.deepStrictEqual(withIt.groups.map((g) => g.key), ['my_submissions', 'my_answered']);
+      assert.deepStrictEqual(withIt.groups.map((g) => g.key),
+        ['my_submissions', 'my_to_acknowledge', 'my_answered']);
     });
 
     // And it is offered in Settings under a name somebody can act on.
@@ -833,6 +842,8 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
         const id = made.body.request.id;
         await as('cad', `/project-reviews/${id}/feedback`, {
           method: 'POST', body: { feedback: 'Warmer through the middle.' } });
+        // The submitter closes their side off; that is what puts it in THEIR History.
+        await as('pat', `/project-reviews/${id}/acknowledge`, { method: 'POST' });
 
         for (const who of ['pat', 'cad']) {
           const { groups } = (await as(who, '/project-reviews/pending-actions')).body;
@@ -854,6 +865,144 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
           method: 'POST', body: { feedback: 'Changed my mind' } });
         assert.strictEqual(again.body.alreadyAnswered, true, 'the first answer stands');
         assert.strictEqual(again.body.request.feedback, 'Warmer through the middle.');
+      });
+  });
+
+  await t.test('the submitter closes their own thread, and only their own', async () => {
+    await withPerms('producer', ['project.review_send', 'pending.view', 'project.review_mine'],
+      async () => {
+        const made = await submit('pat', { clientId, projectId,
+          link: 'https://example.test/ack-flow', description: 'For the CD.' });
+        const id = made.body.request.id;
+        const groupOf = async (who) => {
+          const { groups } = (await as(who, '/project-reviews/pending-actions')).body;
+          return groups.find((g) => g.items.some((i) => i.id === id)) || null;
+        };
+
+        // Nothing to acknowledge before there is an answer.
+        const tooEarly = await as('pat', `/project-reviews/${id}/acknowledge`, { method: 'POST' });
+        assert.strictEqual(tooEarly.status, 409, JSON.stringify(tooEarly.body));
+        assert.match(tooEarly.body.error, /has not answered this/);
+        const waiting = await groupOf('pat');
+        assert.strictEqual(waiting.key, 'my_submissions');
+        assert.strictEqual(waiting.act, 'none', 'read-only while it is with the Creative Director');
+
+        await as('cad', `/project-reviews/${id}/feedback`, {
+          method: 'POST', body: { feedback: 'Push the contrast in the last third.' } });
+
+        /* Answered: still Active for them, now with the feedback and an action.
+           This is the change — it used to file itself away the moment it was
+           written, which is an answer nobody had to read. */
+        const toRead = await groupOf('pat');
+        assert.strictEqual(toRead.key, 'my_to_acknowledge');
+        assert.strictEqual(toRead.phase, 'active');
+        assert.strictEqual(toRead.act, 'acknowledge');
+        assert.strictEqual(toRead.items.find((i) => i.id === id).feedback,
+          'Push the contrast in the last third.', 'with the answer to read');
+
+        /* Somebody else cannot close it, and the two ways of being refused are
+           both worth having. The Creative Art Director does not hold
+           project.review_mine at all, so they never reach the row. Super Admin
+           holds the entire catalogue and reaches it — and is still refused,
+           which is the check that matters: this is not "may you close these",
+           it is "this one is yours". An acknowledgement by somebody who was not
+           waiting on the answer records something that did not happen. */
+        const noPermission = await as('cad', `/project-reviews/${id}/acknowledge`, { method: 'POST' });
+        assert.strictEqual(noPermission.status, 403, JSON.stringify(noPermission.body));
+
+        const notYours = await as('root', `/project-reviews/${id}/acknowledge`, { method: 'POST' });
+        assert.strictEqual(notYours.status, 403,
+          `Super Admin closed off somebody else's thread: ${JSON.stringify(notYours.body)}`);
+        assert.match(notYours.body.error, /Only the person who sent this/,
+          'and refused for being the wrong person, not for lacking a permission');
+
+        assert.strictEqual((await groupOf('pat')).key, 'my_to_acknowledge', 'and it is untouched');
+
+        const done = await as('pat', `/project-reviews/${id}/acknowledge`, { method: 'POST' });
+        assert.strictEqual(done.status, 200, JSON.stringify(done.body));
+        assert.strictEqual(done.body.request.acknowledgerEmail, 'pat@zvky.test', 'who closed it');
+        assert.ok(done.body.request.acknowledgedAt, 'and when — the audit trail for this step');
+
+        const filed = await groupOf('pat');
+        assert.strictEqual(filed.key, 'my_answered');
+        assert.strictEqual(filed.phase, 'history');
+        assert.strictEqual(filed.act, 'none', 'and it offers nothing further');
+        const row = filed.items.find((i) => i.id === id);
+        assert.strictEqual(row.link, 'https://example.test/ack-flow', 'the whole thread is kept');
+        assert.strictEqual(row.description, 'For the CD.');
+        assert.strictEqual(row.feedback, 'Push the contrast in the last third.');
+        assert.ok(row.createdAt && row.reviewedAt && row.acknowledgedAt);
+
+        // Twice is not an error, and the first one stands.
+        const again = await as('pat', `/project-reviews/${id}/acknowledge`, { method: 'POST' });
+        assert.strictEqual(again.status, 200);
+        assert.strictEqual(again.body.alreadyAcknowledged, true);
+        assert.strictEqual(again.body.request.acknowledgedAt, done.body.request.acknowledgedAt);
+      });
+  });
+
+  await t.test('an unread answer counts toward the submitter\'s highlight', async () => {
+    await withPerms('producer', ['project.review_send', 'pending.view', 'project.review_mine'],
+      async () => {
+        const badge = async () => (await as('pat', '/project-reviews/pending-actions')).body.counts.active;
+        const start = await badge();
+
+        const made = await submit('pat', { clientId, projectId, link: 'https://example.test/ack-count' });
+        const id = made.body.request.id;
+        /* Waiting on the Creative Director is not the submitter's action, so it
+           still does not count — the badge means "you", not "something of
+           yours is in flight". */
+        assert.strictEqual(await badge(), start, 'an unanswered submission is not their action');
+
+        await as('cad', `/project-reviews/${id}/feedback`, {
+          method: 'POST', body: { feedback: 'Ready to go.' } });
+        assert.strictEqual(await badge(), start + 1,
+          'an answer they have not read IS their action, and this is the addition the studio asked for');
+
+        await as('pat', `/project-reviews/${id}/acknowledge`, { method: 'POST' });
+        assert.strictEqual(await badge(), start, 'and it clears when they close it off');
+      });
+  });
+
+  await t.test('acknowledging is the submitter\'s step and touches nobody else\'s', async () => {
+    /* The scope guard. Production's close and the Creative Director's split
+       were both explicitly not to change, and both are driven by their own
+       column — so an acknowledgement must move nothing for either of them. */
+    await withPerms('producer', ['project.review_send', 'pending.view', 'project.review_mine'],
+      async () => {
+        const phaseFor = async (who, id) => {
+          const { groups } = (await as(who, '/project-reviews/pending-actions')).body;
+          const g = groups.find((x) => x.items.some((i) => i.id === id));
+          return g ? `${g.key}:${g.phase}` : null;
+        };
+        const made = await submit('pat', { clientId, projectId, link: 'https://example.test/ack-scope' });
+        const id = made.body.request.id;
+        await as('cad', `/project-reviews/${id}/feedback`, {
+          method: 'POST', body: { feedback: 'Fine.' } });
+
+        const cadBefore = await phaseFor('cad', id);
+        assert.strictEqual(cadBefore, 'reviewed_by_me:history',
+          'the Creative Director is finished the moment they answer, as before');
+
+        await as('pat', `/project-reviews/${id}/acknowledge`, { method: 'POST' });
+
+        assert.strictEqual(await phaseFor('cad', id), cadBefore,
+          'and the submitter closing their side moved nothing for the reviewer');
+
+        /* Production: still Active, because acknowledgement is not their close.
+           Two people have to be finished, and neither implies the other. */
+        await withPerms('art_director', ['project.review_queue', 'pending.view'], async () => {
+          assert.strictEqual(await phaseFor('dee', id), 'awaiting_followup:active',
+            'Production still has to deal with it — an acknowledgement is not their close');
+          await as('dee', `/project-reviews/${id}/close`, { method: 'POST' });
+          assert.strictEqual(await phaseFor('dee', id), 'followup_done:history');
+        });
+
+        // And closing does not un-acknowledge, or vice versa.
+        const row = (await queue('cad')).requests.find((r) => r.id === id);
+        assert.ok(row.acknowledgedAt && row.closedAt, 'both marks stand, independently');
+        assert.strictEqual(row.acknowledgerEmail, 'pat@zvky.test');
+        assert.strictEqual(row.closerEmail, 'dee@zvky.test');
       });
   });
 
