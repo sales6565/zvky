@@ -72,6 +72,13 @@ function defaultsFor(roleKey) {
        studio has already answered it once. Answering it twice is how two lists
        drift apart. */
     baseline.add('asset.lead_notes');
+    /* And their team's timesheets, to read and to decide on. The same question
+       again — who is a lead — so the same answer. Reading and approving are
+       separate permissions and both start here; a studio that wants a
+       coordinator who can see the hours without signing them off switches one
+       off in Settings, which is the whole reason they are two. */
+    baseline.add('timesheet.team');
+    baseline.add('timesheet.approve');
   }
   /* The project review queue starts on the one designation whose queue it is.
    *

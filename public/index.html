@@ -437,6 +437,41 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
 .pr-item:first-of-type{border-top:0;}
 .pr-item .pr-what{flex:1;font-size:12.5px;color:var(--ink);}
 .pr-item .pr-meta{font-size:11px;color:var(--ink-faint);margin-top:2px;}
+
+/* --- Time Sheet --- */
+.ts-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px;}
+.ts-range{font-family:'IBM Plex Mono';font-size:12.5px;color:var(--ink);margin-left:6px;}
+.ts-total{font-size:12.5px;color:var(--ink-muted);}
+.ts-total strong{color:var(--ink);font-family:'IBM Plex Mono';font-size:14px;margin-left:4px;}
+.ts-locked{font-size:12px;color:var(--ink-muted);background:var(--surface-2);border:1px solid var(--border);
+  border-radius:8px;padding:8px 12px;margin-bottom:12px;}
+.ts-warn{font-size:12px;color:#e8a33d;background:#e8a33d14;border:1px solid #e8a33d44;
+  border-radius:8px;padding:8px 12px;margin-bottom:12px;}
+/* Seven days across on a wide screen, stacking down on a narrow one — the grid
+   is for filling a week in at once, which is the whole reason it is weekly. */
+.ts-week{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;}
+.ts-day{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px;
+  display:flex;flex-direction:column;gap:8px;}
+.ts-day.over{border-color:#e8a33d66;}
+.ts-day-head{display:flex;align-items:baseline;gap:6px;}
+.ts-day-name{font-weight:700;font-size:12.5px;color:var(--ink);}
+.ts-day-date{font-size:11px;color:var(--ink-faint);}
+.ts-day-total{font-family:'IBM Plex Mono';font-size:12.5px;color:var(--ink);}
+.ts-day-total.zero{color:var(--ink-faint);}
+.ts-lines{width:100%;border-collapse:collapse;}
+.ts-lines td{padding:5px 0;border-top:1px solid var(--border);vertical-align:top;font-size:12px;}
+.ts-lines tr:first-child td{border-top:none;}
+.ts-what{color:var(--ink);line-height:1.35;}
+.ts-client{color:var(--ink-faint);}
+.ts-asset{font-family:'IBM Plex Mono';font-size:10.5px;color:var(--ink-muted);margin-top:2px;}
+.ts-cat{color:var(--review);font-weight:600;}
+.ts-notes{font-size:11px;color:var(--ink-muted);margin-top:3px;}
+.ts-hours{font-family:'IBM Plex Mono';text-align:right;white-space:nowrap;padding-left:8px !important;}
+.ts-act{width:18px;text-align:right;}
+.ts-del{background:none;border:none;color:var(--ink-faint);cursor:pointer;font-size:14px;line-height:1;padding:0 2px;}
+.ts-del:hover{color:var(--brand-accent);}
+.ts-empty{font-size:11.5px;color:var(--ink-faint);}
+.ts-queue-empty{font-size:12.5px;color:var(--ink-faint);margin-top:18px;}
 /* The Creative Director's feedback box. It had no rule of its own and so drew
    as a browser-default white box in a dark app — tolerable when it sat beside
    two buttons that carried the meaning, and not now that it IS the meaning:
@@ -587,6 +622,10 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
            bookmarkable and nothing needs migrating. -->
       <button data-tab="list">Assets List</button>
       <button data-tab="team" id="teamTabBtn" style="display:none;">My Team</button>
+      <!-- Everybody's own week. Sits beside My Team because that is where
+           somebody looks for things about themselves rather than about the
+           work. Its count is weeks waiting on this person to approve. -->
+      <button data-tab="timesheet" id="timesheetTabBtn" style="display:none;">Time Sheet <span class="tab-count" id="timesheetCount" hidden></span></button>
       <button data-tab="reports" id="reportsTabBtn" style="display:none;">Reports</button>
       <button data-tab="users" id="usersTabBtn" style="display:none;">Users</button>
       <button data-tab="settings" id="settingsTabBtn" style="display:none;">Settings</button>
@@ -606,6 +645,7 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
   <div id="projectsView" style="display:none;"></div>
   <div id="listView" style="display:none;"></div>
   <div id="teamView" style="display:none;"></div>
+  <div id="timesheetView" style="display:none;"></div>
   <div id="usersView" style="display:none;"></div>
   <div id="reportsView" style="display:none;"></div>
   <div id="settingsView" style="display:none;"></div>
@@ -724,6 +764,38 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
     <div class="modal-actions">
       <button class="btn btn-ghost" id="bd_cancel">Cancel</button>
       <button class="btn btn-brand" id="bd_confirm">Mark as delivered</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-wrap" id="timesheetLineWrap">
+  <div class="modal">
+    <h2>Add a line — <span id="tl_day"></span></h2>
+    <label>What kind of time</label>
+    <select id="tl_kind">
+      <option value="project">Project work</option>
+      <option value="non">Non-project</option>
+    </select>
+    <div id="tl_projectFields">
+      <label>Client</label>
+      <select id="tl_client"></select>
+      <label>Project</label>
+      <select id="tl_project"></select>
+      <label>Asset <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional)</span></label>
+      <select id="tl_asset"></select>
+    </div>
+    <div id="tl_catFields" style="display:none;">
+      <label>Category</label>
+      <select id="tl_cat"></select>
+    </div>
+    <label>Hours</label>
+    <input type="number" id="tl_hours" min="0.25" max="24" step="0.25" placeholder="e.g. 3.5">
+    <label>Notes <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional)</span></label>
+    <textarea id="tl_notes" rows="2" placeholder="What you did"></textarea>
+    <div class="ref-err" id="tl_err"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="tl_cancel">Cancel</button>
+      <button class="btn btn-brand" id="tl_save">Add line</button>
     </div>
   </div>
 </div>
@@ -1085,6 +1157,7 @@ const UI_GATES = {
      on, so holding this alone opens an empty tab rather than anybody else's
      queue — the server decides that, this only decides whether there is a tab. */
   pendingTabBtn:         () => can('pending.view'),
+  timesheetTabBtn:       () => can('timesheet.own'),
   newClientBtn:          () => can('client.add'),
   newProjectBtn:         () => can('project.add'),
   editProjectBtn:        () => mayEditCurrentProject(),
@@ -1962,6 +2035,7 @@ function setTab(tab){
   document.getElementById('projectsView').style.display = tab==='projects' ? '' : 'none';
   document.getElementById('listView').style.display = tab==='list' ? '' : 'none';
   document.getElementById('teamView').style.display = tab==='team' ? '' : 'none';
+  document.getElementById('timesheetView').style.display = tab==='timesheet' ? '' : 'none';
   document.getElementById('usersView').style.display = tab==='users' ? '' : 'none';
   document.getElementById('reportsView').style.display = tab==='reports' ? '' : 'none';
   document.getElementById('settingsView').style.display = tab==='settings' ? '' : 'none';
@@ -2289,6 +2363,362 @@ function wirePendingActions(el, refresh){
     }catch(e){ if(err) err.textContent = e.message; else showToast(e.message); b.disabled = false; }
   }));
 }
+
+/* ---------- Time Sheet ----------
+
+   A week at a time, seven days down the page, several lines per day. Weekly
+   rather than daily because a week is what gets submitted, and filling one in a
+   day at a time means seven navigations to do one job.
+
+   Deliberately no connection to the Efficiency or Idle reports. Those read the
+   clock the app kept between Accept and Submit; this is what a person says they
+   did, including the parts of a day that are not an asset at all. */
+const tsState = { date: null, userId: null, week: null, people: [], draft: null };
+
+const TS_DAY = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const tsToday = () => new Date().toISOString().slice(0,10);
+const tsShift = (iso, days) => {
+  const [y,m,d] = iso.split('-').map(Number);
+  const at = new Date(Date.UTC(y, m-1, d + days));
+  return at.toISOString().slice(0,10);
+};
+const tsDayName = (iso) => {
+  const [y,m,d] = iso.split('-').map(Number);
+  return TS_DAY[(new Date(Date.UTC(y,m-1,d)).getUTCDay() + 6) % 7];
+};
+const tsPretty = (iso) => {
+  const [y,m,d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y,m-1,d)).toLocaleDateString(undefined,{ day:'numeric', month:'short' });
+};
+
+/* How many weeks are waiting on this person to decide. Lives on the tab for the
+   same reason Pending Actions' does: an approval queue nobody is told about is a
+   queue that grows. */
+async function refreshTimesheetCount(){
+  const badge = document.getElementById('timesheetCount');
+  const tab = document.getElementById('timesheetTabBtn');
+  if(!badge || !can('timesheet.approve')){ if(badge){ badge.hidden = true; } return; }
+  try{
+    const { count } = await api('/timesheets/pending');
+    badge.textContent = count;
+    badge.hidden = !count;
+    if(tab) tab.classList.toggle('has-pending', count > 0);
+  }catch{ badge.hidden = true; }
+}
+
+async function renderTimesheet(){
+  const el = document.getElementById('timesheetView');
+  if(!el) return;
+  if(!can('timesheet.own')){ el.innerHTML = '<div class="empty">Timesheets are not switched on for your designation.</div>'; return; }
+
+  tsState.date = tsState.date || tsToday();
+  const who = tsState.userId && tsState.userId !== state.currentUser.id ? `&userId=${tsState.userId}` : '';
+  let week;
+  try{ week = await api(`/timesheets/week?date=${tsState.date}${who}`); }
+  catch(err){ el.innerHTML = `<div class="empty">${escapeHTML(err.message)}</div>`; return; }
+  tsState.week = week;
+
+  if(!tsState.people.length){
+    try{ tsState.people = (await api('/timesheets/people')).users || []; }catch{ tsState.people = []; }
+  }
+
+  const t = week.totals;
+  const locked = week.locked;
+  const pill = TS_STATUS[week.status] || { label: week.status, color:'var(--ink-muted)' };
+
+  /* The picker is only drawn when there is more than one person to pick, so
+     somebody who only ever sees their own week is not asked to choose. */
+  const picker = tsState.people.length > 1 ? `
+    <select id="ts_person" class="proj-select" style="margin-left:8px;">
+      ${tsState.people.map(u=>`<option value="${u.id}"${u.id===(tsState.userId||state.currentUser.id)?' selected':''}>${
+        escapeHTML(u.name)}${u.id===state.currentUser.id?' (you)':''}</option>`).join('')}
+    </select>` : '';
+
+  const rowsFor = (day) => week.entries.filter(e=>e.date===day);
+
+  el.innerHTML = `
+    <div class="ts-bar">
+      <button class="btn btn-ghost btn-sm" id="ts_prev">← Previous</button>
+      <button class="btn btn-ghost btn-sm" id="ts_thisWeek">This week</button>
+      <button class="btn btn-ghost btn-sm" id="ts_next">Next →</button>
+      <span class="ts-range">${tsPretty(t.days[0])} – ${tsPretty(t.days[6])}, ${t.days[6].slice(0,4)}</span>
+      ${picker}
+      <span class="status-pill" style="background:${pill.color}22;color:${pill.color};margin-left:8px;"><span class="d" style="background:${pill.color}"></span>${pill.label}</span>
+      <div class="spacer"></div>
+      <span class="ts-total">Week total <strong>${t.week}h</strong></span>
+      ${can('timesheet.own') ? `
+        <button class="btn btn-ghost btn-sm" id="ts_xlsx">Excel</button>
+        <button class="btn btn-ghost btn-sm" id="ts_pdf">PDF</button>` : ''}
+      ${week.mayEdit && !locked ? `<button class="btn btn-brand btn-sm" id="ts_submit">Submit week</button>` : ''}
+    </div>
+
+    ${week.status==='rejected' && week.rejectionReason ? `
+      <div class="note" style="border-left-color:#e8402c;margin-bottom:12px;">
+        <span class="who">Sent back by ${escapeHTML(week.decidedBy||'your approver')}</span>
+        <p>${escapeHTML(week.rejectionReason)}</p>
+      </div>` : ''}
+    ${locked ? `<div class="ts-locked">${week.status==='approved'
+      ? `Approved${week.decidedBy?` by ${escapeHTML(week.decidedBy)}`:''}. This week can no longer be changed.`
+      : 'Submitted and waiting on your approver. Ask them to send it back if it needs changing.'}</div>` : ''}
+    ${t.overLong.length ? `<div class="ts-warn">${t.overLong.map(d=>
+      `${tsDayName(d)} ${tsPretty(d)} comes to more than ${week.warnHours} hours — worth a second look.`).join(' ')}</div>` : ''}
+
+    <div class="ts-week">
+      ${t.days.map(day=>{
+        const lines = rowsFor(day);
+        const total = t.perDay[day];
+        return `<div class="ts-day${total>week.warnHours?' over':''}">
+          <div class="ts-day-head">
+            <span class="ts-day-name">${tsDayName(day)}</span>
+            <span class="ts-day-date">${tsPretty(day)}</span>
+            <div class="spacer"></div>
+            <span class="ts-day-total${total?'':' zero'}">${total}h</span>
+          </div>
+          ${lines.length ? `<table class="ts-lines"><tbody>${lines.map(e=>`
+            <tr>
+              <td class="ts-what">${e.nonProject
+                ? `<span class="ts-cat">${escapeHTML(tsCategory(week, e.nonProject))}</span>`
+                : `${escapeHTML(e.projectName||'—')}<span class="ts-client"> · ${escapeHTML(e.clientName||'')}</span>${
+                    e.assetCode ? `<div class="ts-asset">${escapeHTML(e.assetCode)} ${escapeHTML(e.assetName||'')}</div>` : ''}`}
+                ${e.notes ? `<div class="ts-notes">${escapeHTML(e.notes)}</div>` : ''}
+              </td>
+              <td class="ts-hours">${e.hours}h</td>
+              <td class="ts-act">${week.mayEdit && !locked
+                ? `<button class="ts-del" data-id="${e.id}" title="Remove this line">×</button>` : ''}</td>
+            </tr>`).join('')}</tbody></table>` : '<div class="ts-empty">Nothing logged.</div>'}
+          ${week.mayEdit && !locked
+            ? `<button class="btn btn-ghost btn-sm ts-add" data-day="${day}">+ Add a line</button>` : ''}
+        </div>`;
+      }).join('')}
+    </div>
+
+    ${can('timesheet.approve') ? '<div id="ts_queue"></div>' : ''}
+  `;
+
+  wireTimesheet(el);
+  if(can('timesheet.approve')) renderTimesheetQueue();
+}
+
+const TS_STATUS = {
+  draft:     { label: 'Draft',              color: 'var(--ink-muted)' },
+  submitted: { label: 'Submitted',          color: 'var(--review)' },
+  approved:  { label: 'Approved',           color: 'var(--approved)' },
+  rejected:  { label: 'Sent back for correction', color: '#e8402c' },
+};
+const tsCategory = (week, key) =>
+  ((week.nonProjectTypes||[]).find(n=>n.key===key)||{}).label || key;
+
+function wireTimesheet(el){
+  const go = (date)=>{ tsState.date = date; renderTimesheet(); };
+  el.querySelector('#ts_prev').onclick = ()=>go(tsShift(tsState.week.totals.days[0], -7));
+  el.querySelector('#ts_next').onclick = ()=>go(tsShift(tsState.week.totals.days[0], 7));
+  el.querySelector('#ts_thisWeek').onclick = ()=>go(tsToday());
+  const person = el.querySelector('#ts_person');
+  if(person) person.onchange = ()=>{ tsState.userId = person.value; renderTimesheet(); };
+
+  const range = ()=>`from=${tsState.week.totals.days[0]}&to=${tsState.week.totals.days[6]}`
+    + (tsState.userId && tsState.userId!==state.currentUser.id ? `&userId=${tsState.userId}` : '');
+  const dl = (path)=>downloadAuthed(`/timesheets/${path}?${range()}`);
+  if(el.querySelector('#ts_xlsx')) el.querySelector('#ts_xlsx').onclick = ()=>dl('export.xlsx');
+  if(el.querySelector('#ts_pdf'))  el.querySelector('#ts_pdf').onclick  = ()=>dl('export.pdf');
+
+  el.querySelectorAll('.ts-add').forEach(b=>b.onclick = ()=>openTimesheetLine(b.dataset.day));
+  el.querySelectorAll('.ts-del').forEach(b=>b.onclick = async ()=>{
+    b.disabled = true;
+    try{ await api('/timesheets/entries/'+b.dataset.id, { method:'DELETE' }); await renderTimesheet(); }
+    catch(e){ showToast(e.message); b.disabled = false; }
+  });
+
+  const submit = el.querySelector('#ts_submit');
+  if(submit) submit.onclick = async ()=>{
+    submit.disabled = true;
+    try{
+      await api('/timesheets/submit', { method:'POST', body:{ weekStart: tsState.week.totals.days[0] } });
+      showToast('Week submitted.');
+      await renderTimesheet();
+      refreshTimesheetCount();
+    }catch(e){ showToast(e.message); submit.disabled = false; }
+  };
+}
+
+/* Weeks waiting on this person to decide, under their own sheet. Deliberately
+   on the same screen rather than a tab of its own: an approver's own week and
+   their team's are the same job, done once a week. */
+async function renderTimesheetQueue(){
+  const el = document.getElementById('ts_queue');
+  if(!el) return;
+  let data;
+  try{ data = await api('/timesheets/pending'); }catch{ el.innerHTML=''; return; }
+  if(!data.weeks.length){ el.innerHTML = '<div class="ts-queue-empty">No timesheets waiting on you.</div>'; return; }
+
+  el.innerHTML = `<div class="pr-banner" style="margin-top:18px;">
+    <h4>Waiting on you to approve · ${data.weeks.length}</h4>
+    <div class="pr-sub">Submitted weeks from the people you approve for. Approving locks the week; sending it back returns it to them with your reason.</div>
+    ${data.weeks.map(w=>`<div class="pr-item"><div class="pr-what">
+      <strong>${escapeHTML(w.userName)}</strong>
+      <span style="color:var(--ink-faint);">· week of ${tsPretty(w.weekStart)}</span>
+      <span class="ts-total" style="margin-left:8px;">${w.hours}h</span>
+      <div class="pr-meta">submitted ${fmtDate(w.submittedAt)}</div>
+      <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <button class="btn btn-ghost btn-sm ts-open" data-user="${w.userId}" data-week="${w.weekStart}">Open the week</button>
+        <button class="btn btn-brand btn-sm ts-approve" data-user="${w.userId}" data-week="${w.weekStart}">Approve</button>
+        <button class="btn btn-ghost btn-sm ts-reject" data-user="${w.userId}" data-week="${w.weekStart}" style="color:#e8402c;">Send back</button>
+      </div>
+      <div class="ts-reason" data-user="${w.userId}" data-week="${w.weekStart}" style="display:none;margin-top:8px;">
+        <textarea class="pr-feedback" rows="2" placeholder="What needs correcting? (required)"></textarea>
+        <div style="margin-top:6px;"><button class="btn btn-brand btn-sm ts-reject-go">Send it back</button></div>
+      </div>
+      <div class="ref-err ts-err" data-user="${w.userId}" data-week="${w.weekStart}"></div>
+    </div></div>`).join('')}
+  </div>`;
+
+  const key = (b)=>`[data-user="${b.dataset.user}"][data-week="${b.dataset.week}"]`;
+  el.querySelectorAll('.ts-open').forEach(b=>b.onclick = ()=>{
+    tsState.userId = b.dataset.user; tsState.date = b.dataset.week; renderTimesheet();
+  });
+  const decide = async (b, decision, reason)=>{
+    const err = el.querySelector('.ts-err'+key(b));
+    if(err) err.textContent = '';
+    b.disabled = true;
+    try{
+      await api(`/timesheets/${b.dataset.user}/${b.dataset.week}/decision`,
+        { method:'POST', body:{ decision, reason } });
+      showToast(decision==='approve' ? 'Week approved.' : 'Sent back for correction.');
+      await renderTimesheet();
+      refreshTimesheetCount();
+    }catch(e){ if(err) err.textContent = e.message; else showToast(e.message); b.disabled = false; }
+  };
+  el.querySelectorAll('.ts-approve').forEach(b=>b.onclick = ()=>decide(b, 'approve'));
+  el.querySelectorAll('.ts-reject').forEach(b=>b.onclick = ()=>{
+    const box = el.querySelector('.ts-reason'+key(b));
+    box.style.display = box.style.display === 'none' ? '' : 'none';
+    if(box.style.display === '') box.querySelector('textarea').focus();
+  });
+  el.querySelectorAll('.ts-reject-go').forEach(go=>go.onclick = ()=>{
+    const box = go.closest('.ts-reason');
+    const reason = box.querySelector('textarea').value.trim();
+    const b = el.querySelector(`.ts-reject[data-user="${box.dataset.user}"][data-week="${box.dataset.week}"]`);
+    if(!reason){
+      const err = el.querySelector(`.ts-err[data-user="${box.dataset.user}"][data-week="${box.dataset.week}"]`);
+      if(err) err.textContent = 'Say what needs correcting.';
+      return;
+    }
+    decide(b, 'reject', reason);
+  });
+}
+
+
+/* Fetch a file the server will only hand to an authenticated caller, and save
+   it under the name the server chose. The Reports tab has its own copy of this
+   inline; it is not touched here, because this feature was asked to leave the
+   reports alone and a shared helper is not worth reaching into them for. */
+async function downloadAuthed(path){
+  try{
+    const res = await fetch(API_BASE + path, { headers:{ Authorization:'Bearer '+state.token } });
+    if(!res.ok){
+      const problem = await res.json().catch(()=>({}));
+      throw new Error(problem.error || `The download failed (HTTP ${res.status})`);
+    }
+    const disposition = res.headers.get('content-disposition') || '';
+    const named = /filename="([^"]+)"/.exec(disposition);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = named ? named[1] : 'timesheet';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 30000);
+  }catch(err){ showToast(err.message); }
+}
+
+/* One line of a day. A modal rather than an inline row because the cascade —
+   client, then its projects, then that project's assets — needs three fetches
+   and somewhere to put an error, and seven inline copies of that on one screen
+   is seven things to keep in step. */
+function openTimesheetLine(day){
+  tsState.draft = { day };
+  const w = tsState.week;
+  document.getElementById('tl_day').textContent = `${tsDayName(day)} ${tsPretty(day)}`;
+  document.getElementById('tl_kind').value = 'project';
+  document.getElementById('tl_hours').value = '';
+  document.getElementById('tl_notes').value = '';
+  document.getElementById('tl_err').textContent = '';
+  document.getElementById('tl_cat').innerHTML =
+    (w.nonProjectTypes||[]).map(n=>`<option value="${n.key}">${escapeHTML(n.label)}</option>`).join('');
+  document.getElementById('tl_client').innerHTML =
+    '<option value="">Select a client…</option>' +
+    state.clients.map(c=>`<option value="${c.id}">${escapeHTML(c.name)}</option>`).join('');
+  document.getElementById('tl_project').innerHTML = '<option value="">Choose a client first…</option>';
+  document.getElementById('tl_asset').innerHTML = '<option value="">No specific asset</option>';
+  syncTimesheetLine();
+  timesheetLineWrap.classList.add('show');
+  document.getElementById('tl_hours').focus();
+}
+
+function syncTimesheetLine(){
+  const project = document.getElementById('tl_kind').value === 'project';
+  document.getElementById('tl_projectFields').style.display = project ? '' : 'none';
+  document.getElementById('tl_catFields').style.display = project ? 'none' : '';
+}
+
+const timesheetLineWrap = document.getElementById('timesheetLineWrap');
+document.getElementById('tl_kind').addEventListener('change', syncTimesheetLine);
+document.getElementById('tl_cancel').addEventListener('click', ()=>timesheetLineWrap.classList.remove('show'));
+timesheetLineWrap.addEventListener('click', e=>{ if(e.target===timesheetLineWrap) timesheetLineWrap.classList.remove('show'); });
+
+/* The cascade. Projects come from the client, assets from the project — the
+   same shape the header pickers use, read fresh rather than from state.assets,
+   which only ever holds the project currently open on the board. */
+document.getElementById('tl_client').addEventListener('change', async e=>{
+  const sel = document.getElementById('tl_project');
+  sel.innerHTML = '<option value="">Loading…</option>';
+  document.getElementById('tl_asset').innerHTML = '<option value="">No specific asset</option>';
+  if(!e.target.value){ sel.innerHTML = '<option value="">Choose a client first…</option>'; return; }
+  try{
+    const { projects } = await api('/projects');
+    const mine = projects.filter(p=>p.client_id === e.target.value);
+    sel.innerHTML = '<option value="">Select a project…</option>' +
+      mine.map(p=>`<option value="${p.id}">${escapeHTML(p.name)}</option>`).join('');
+    if(!mine.length) sel.innerHTML = '<option value="">No projects under this client</option>';
+  }catch(err){ sel.innerHTML = `<option value="">${escapeHTML(err.message)}</option>`; }
+});
+
+document.getElementById('tl_project').addEventListener('change', async e=>{
+  const sel = document.getElementById('tl_asset');
+  sel.innerHTML = '<option value="">No specific asset</option>';
+  if(!e.target.value) return;
+  try{
+    const { assets } = await api('/assets/project/'+e.target.value);
+    sel.innerHTML = '<option value="">No specific asset</option>' +
+      assets.map(a=>`<option value="${a.id}">${escapeHTML(a.code)} — ${escapeHTML(a.name)}</option>`).join('');
+  }catch{ /* a project with no readable assets still takes non-asset time */ }
+});
+
+document.getElementById('tl_save').addEventListener('click', async ()=>{
+  const err = document.getElementById('tl_err');
+  err.textContent = '';
+  const project = document.getElementById('tl_kind').value === 'project';
+  const body = {
+    date: tsState.draft.day,
+    hours: Number(document.getElementById('tl_hours').value),
+    notes: document.getElementById('tl_notes').value.trim() || undefined,
+  };
+  if(project){
+    body.clientId = document.getElementById('tl_client').value || null;
+    body.projectId = document.getElementById('tl_project').value || null;
+    body.assetId = document.getElementById('tl_asset').value || null;
+  }else{
+    body.nonProject = document.getElementById('tl_cat').value;
+  }
+  const btn = document.getElementById('tl_save');
+  btn.disabled = true;
+  try{
+    await api('/timesheets/entries', { method:'POST', body });
+    timesheetLineWrap.classList.remove('show');
+    await renderTimesheet();
+  }catch(e){ err.textContent = e.message; }
+  finally{ btn.disabled = false; }
+});
+
 
 function renderStats(){
   const el = document.getElementById('stats');
@@ -3370,7 +3800,9 @@ async function render(){
   const onABoard = (state.view==='board'||state.view==='list') && Boolean(state.currentProjectId);
   ['newAssetBtn','bulkImportBtn','downloadSampleBtn'].forEach(id=>applyGate(id, onABoard));
   refreshPendingCount();
-  if(state.view==='pending') await renderPending();
+  refreshTimesheetCount();
+  if(state.view==='timesheet') await renderTimesheet();
+  else if(state.view==='pending') await renderPending();
   else if(state.view==='board') renderBoard();
   else if(state.view==='list') renderList();
   else if(state.view==='reports') await renderReportsTab();

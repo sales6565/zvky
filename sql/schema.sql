@@ -615,3 +615,105 @@ CREATE TABLE IF NOT EXISTS feedback (
   CONSTRAINT chk_feedback_stage    CHECK (stage IN ('tl','cd')),
   CONSTRAINT chk_feedback_decision CHECK (decision IN ('approved','changes_requested'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- The manual timesheet: what somebody says they worked on, as opposed to what
+-- the app watched them do.
+--
+-- Deliberately separate from work_sessions, and the separation is the point.
+-- work_sessions is measured — the clock between Accept and Submit on one asset —
+-- and it is what the Efficiency and Idle reports read. This is declared: a
+-- person's own account of their day, including the parts that are not an asset
+-- at all. Feeding one into the other would make "Time Spent" mean two things,
+-- and neither report would be trustworthy afterwards.
+--
+-- One row per week per person, holding where that week has got to. The weekly
+-- shape is what submission and approval act on: a week is submitted as a whole,
+-- and approving half of one is not a thing a timesheet does.
+CREATE TABLE IF NOT EXISTS timesheet_weeks (
+  id           CHAR(36)     NOT NULL PRIMARY KEY,
+  user_id      CHAR(36)     NOT NULL,
+  -- The Monday. Every read and every lock is keyed on this, so it is stored
+  -- rather than derived: two places computing "which week is this" is two
+  -- places to disagree about a Sunday.
+  week_start   DATE         NOT NULL,
+  -- draft -> submitted -> approved | rejected, and rejected -> draft again on
+  -- the next edit. The entries have no status of their own: they are locked or
+  -- not by the week they sit in, which is what makes "my week is approved"
+  -- answerable without reading every row.
+  status       VARCHAR(16)  NOT NULL DEFAULT 'draft',
+  submitted_at DATETIME     NULL,
+  -- Who approved or rejected it, kept with the email so the record survives the
+  -- account going, exactly as the review trail does.
+  decided_by   CHAR(36)     NULL,
+  decider_email VARCHAR(191) NULL,
+  decided_at   DATETIME     NULL,
+  -- Required on a rejection: sending a week back without saying why asks
+  -- somebody to guess at their own hours.
+  rejection_reason TEXT     NULL,
+  created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_tsw_user_week (user_id, week_start),
+  KEY idx_tsw_status (status, week_start),
+  CONSTRAINT fk_tsw_user    FOREIGN KEY (user_id)    REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_tsw_decider FOREIGN KEY (decided_by) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT chk_tsw_status CHECK (status IN ('draft','submitted','approved','rejected'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- One line of a day. Several per day is the normal case — three hours here, two
+-- there — which is why this is a row per line and not a column per day.
+CREATE TABLE IF NOT EXISTS timesheet_entries (
+  id          CHAR(36)     NOT NULL PRIMARY KEY,
+  user_id     CHAR(36)     NOT NULL,
+  -- Denormalised from entry_date so the week's lock can be checked without
+  -- computing a Monday in SQL. Written by the API, never by hand.
+  week_start  DATE         NOT NULL,
+  entry_date  DATE         NOT NULL,
+  -- All three optional, because a line is either project work or it is not.
+  -- A project line carries client and project and may carry an asset; a
+  -- non-project line carries none of them and carries a category instead. The
+  -- API enforces that it is one or the other, since a row that is both is a row
+  -- nobody can report on.
+  client_id   CHAR(36)     NULL,
+  project_id  CHAR(36)     NULL,
+  asset_id    CHAR(36)     NULL,
+  -- leave | holiday | meeting | training | admin. A fixed list rather than a
+  -- Settings collection for now: five words that every studio uses the same
+  -- way, and one fewer thing to configure before the feature works.
+  non_project VARCHAR(32)  NULL,
+  hours       DECIMAL(5,2) NOT NULL,
+  notes       TEXT         NULL,
+  created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_tse_user_week (user_id, week_start),
+  KEY idx_tse_date (entry_date),
+  KEY idx_tse_project (project_id),
+  CONSTRAINT fk_tse_user    FOREIGN KEY (user_id)    REFERENCES users(id)    ON DELETE CASCADE,
+  -- RESTRICT on none of these: a line pointing at something deleted becomes a
+  -- line with a gap in it, which is better than losing the hours.
+  CONSTRAINT fk_tse_client  FOREIGN KEY (client_id)  REFERENCES clients(id)  ON DELETE SET NULL,
+  CONSTRAINT fk_tse_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL,
+  CONSTRAINT fk_tse_asset   FOREIGN KEY (asset_id)   REFERENCES assets(id)   ON DELETE SET NULL,
+  CONSTRAINT chk_tse_hours  CHECK (hours > 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Who did what to a timesheet. Hours are the input to somebody's pay, so every
+-- edit, submission and decision is on the record — including edits a person
+-- makes to their own week, which is exactly the thing a dispute turns on.
+CREATE TABLE IF NOT EXISTS timesheet_events (
+  id          CHAR(36)     NOT NULL PRIMARY KEY,
+  seq         BIGINT       NOT NULL AUTO_INCREMENT UNIQUE,
+  -- Whose sheet, which week. Not a foreign key to timesheet_weeks: the trail
+  -- outlives the row it describes.
+  user_id     CHAR(36)     NULL,
+  week_start  DATE         NOT NULL,
+  -- entry_added | entry_edited | entry_removed | submitted | approved | rejected
+  action      VARCHAR(32)  NOT NULL,
+  actor_id    CHAR(36)     NULL,
+  actor_email VARCHAR(191) NULL,
+  -- What changed, in words: the line and its hours, or the reason for a
+  -- rejection. Read by people, not parsed.
+  detail      TEXT         NULL,
+  created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_tsev_sheet (user_id, week_start, seq),
+  CONSTRAINT fk_tsev_user  FOREIGN KEY (user_id)  REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_tsev_actor FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

@@ -402,6 +402,62 @@ const GROUPS = [
     ],
   },
   {
+    /* The manual timesheet: what somebody says they worked on, as opposed to
+     * what the app watched them do. Four permissions, because four different
+     * things happen to a timesheet and a studio will want them apart.
+     *
+     * Its own group rather than a corner of Reports: the Reports permissions
+     * are about reading the studio's numbers, and three of these four are
+     * about a person's own week. */
+    key: 'timesheet',
+    label: 'Time Sheet',
+    permissions: [
+      {
+        /* Everybody, by default, and it is the one permission in this
+           application that starts ON for every designation. Filling in your own
+           hours is not a privilege somebody grants you — a studio that keeps
+           timesheets keeps them for everyone, and an account that cannot record
+           its own week cannot be paid from this system. Still a toggle, so a
+           studio that runs timesheets for one department only can say so. */
+        key: 'timesheet.own',
+        label: 'View / Fill Own Timesheet',
+        impliedBy: () => true,
+        describe: 'Open the Time Sheet tab and record your own hours, day by day, against '
+          + 'projects and assets or against non-project time.',
+      },
+      {
+        /* Reading your team's weeks, which is not the same as deciding on
+           them: a coordinator may need to see where the hours went without
+           being the person who signs them off, and a studio should be able to
+           give one without the other. */
+        key: 'timesheet.team',
+        label: 'View Team Timesheets',
+        impliedBy: has('manageAccess'),
+        describe: 'See the timesheets of the people who report to you. Reach stays with the '
+          + 'role — this is your team, not the studio.',
+      },
+      {
+        key: 'timesheet.approve',
+        label: 'Approve Timesheets',
+        impliedBy: has('manageAccess'),
+        describe: 'Approve a submitted week, or send it back with a reason. Approving locks it; '
+          + 'rejecting returns it to the person to correct.',
+      },
+      {
+        /* The studio-wide read. Aligned with Reports by intent rather than by
+           implication: holding report.view does not hand you this, because
+           reading a project's efficiency and reading everybody's attendance are
+           different things to be trusted with. Granted alongside it in Settings
+           for the roles that should have both. */
+        key: 'timesheet.all',
+        label: 'View All Timesheets',
+        impliedBy: fullAccess,
+        describe: 'See everybody\'s timesheets, not only your team\'s. The reporting-level view, '
+          + 'for the roles that already read across the studio.',
+      },
+    ],
+  },
+  {
     key: 'settings',
     label: 'Settings / Admin',
     permissions: [

@@ -925,6 +925,79 @@ async function ensureLifecycleColumns(db, log) {
   }
 }
 
+
+/* The manual timesheet.
+ *
+ * Three tables that arrive together — a week has no meaning without its lines,
+ * and neither is auditable without the trail — so they are one step. Created
+ * with IF NOT EXISTS and the foreign keys added tolerantly, the same bargain
+ * every table here makes with shared hosting: a deployment whose user cannot
+ * create constraints still gets a working timesheet. */
+async function ensureTimesheets(db, log) {
+  const { rows: existing } = await db.query(
+    `SELECT TABLE_NAME AS n FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'timesheet_weeks'`
+  );
+  if (existing.length) return;
+
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS timesheet_weeks (
+      id           CHAR(36)     NOT NULL PRIMARY KEY,
+      user_id      CHAR(36)     NOT NULL,
+      week_start   DATE         NOT NULL,
+      status       VARCHAR(16)  NOT NULL DEFAULT 'draft',
+      submitted_at DATETIME     NULL,
+      decided_by   CHAR(36)     NULL,
+      decider_email VARCHAR(191) NULL,
+      decided_at   DATETIME     NULL,
+      rejection_reason TEXT     NULL,
+      created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_tsw_user_week (user_id, week_start),
+      KEY idx_tsw_status (status, week_start)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS timesheet_entries (
+      id          CHAR(36)     NOT NULL PRIMARY KEY,
+      user_id     CHAR(36)     NOT NULL,
+      week_start  DATE         NOT NULL,
+      entry_date  DATE         NOT NULL,
+      client_id   CHAR(36)     NULL,
+      project_id  CHAR(36)     NULL,
+      asset_id    CHAR(36)     NULL,
+      non_project VARCHAR(32)  NULL,
+      hours       DECIMAL(5,2) NOT NULL,
+      notes       TEXT         NULL,
+      created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      KEY idx_tse_user_week (user_id, week_start),
+      KEY idx_tse_date (entry_date),
+      KEY idx_tse_project (project_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS timesheet_events (
+      id          CHAR(36)     NOT NULL PRIMARY KEY,
+      seq         BIGINT       NOT NULL AUTO_INCREMENT UNIQUE,
+      user_id     CHAR(36)     NULL,
+      week_start  DATE         NOT NULL,
+      action      VARCHAR(32)  NOT NULL,
+      actor_id    CHAR(36)     NULL,
+      actor_email VARCHAR(191) NULL,
+      detail      TEXT         NULL,
+      created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_tsev_sheet (user_id, week_start, seq)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+
+  const fk = async (sql) => { await db.query(sql).catch(() => {}); };
+  await fk('ALTER TABLE timesheet_weeks ADD CONSTRAINT fk_tsw_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE');
+  await fk('ALTER TABLE timesheet_weeks ADD CONSTRAINT fk_tsw_decider FOREIGN KEY (decided_by) REFERENCES users(id) ON DELETE SET NULL');
+  await fk('ALTER TABLE timesheet_entries ADD CONSTRAINT fk_tse_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE');
+  await fk('ALTER TABLE timesheet_entries ADD CONSTRAINT fk_tse_client FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL');
+  await fk('ALTER TABLE timesheet_entries ADD CONSTRAINT fk_tse_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL');
+  await fk('ALTER TABLE timesheet_entries ADD CONSTRAINT fk_tse_asset FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE SET NULL');
+  await fk('ALTER TABLE timesheet_events ADD CONSTRAINT fk_tsev_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL');
+  await fk('ALTER TABLE timesheet_events ADD CONSTRAINT fk_tsev_actor FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE SET NULL');
+  log('Schema: added the timesheet tables.');
+}
+
 // assets.reference_link, and authorship on the checklist.
 //
 // The checklist extends the tasks table that is already there rather than
@@ -1638,6 +1711,7 @@ const STEPS = [
   ['bulk action batches', ensureEventBatches],
   // After notifications, whose column it adds, and after clients and projects.
   ['project review requests', ensureProjectReviews],
+  ['timesheets', ensureTimesheets],
 ];
 
 async function run(db, log = console.log) {

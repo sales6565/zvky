@@ -53,9 +53,14 @@ test('no feature is gated on a role NAME anywhere', () => {
 });
 
 test('the catalogue covers the groups that were asked for', () => {
+  /* Pinned on purpose, so a new group is a decision somebody makes rather than
+     something that appears. Time Sheet is its own group and not a corner of
+     Reports: the Reports permissions are about reading the studio's numbers,
+     and three of the four here are about a person's own week. */
   assert.deepStrictEqual(catalog.GROUPS.map((g) => g.label), [
     'User Management', 'Asset Management', 'Review Workflow',
-    'Project Management', 'Client Management', 'Reports', 'Settings / Admin',
+    'Project Management', 'Client Management', 'Reports', 'Time Sheet',
+    'Settings / Admin',
   ]);
   assert.strictEqual(new Set(catalog.KEYS).size, catalog.KEYS.length);
 });
