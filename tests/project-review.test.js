@@ -1006,6 +1006,66 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
       });
   });
 
+  await t.test('the submitter is told when their answer arrives', async () => {
+    const inbox = async (who) => (await as(who, '/notifications')).body.notifications || [];
+
+    /* Deliberately WITHOUT the queue permissions: Production here can send and
+       see their own record, and nothing else. That is the case the old code
+       missed — the recipient list was built from who watches the queue, so the
+       one person actually waiting on the answer was the one person not told. */
+    await withPerms('producer', ['project.review_send', 'pending.view', 'project.review_mine'],
+      async () => {
+        const before = (await inbox('pat')).length;
+        const made = await submit('pat', { clientId, projectId, link: 'https://example.test/tell-me' });
+        const id = made.body.request.id;
+        assert.strictEqual((await inbox('pat')).length, before,
+          'sending it is not news to the person who sent it');
+
+        await as('cad', `/project-reviews/${id}/feedback`, {
+          method: 'POST', body: { feedback: 'Lift the mids.' } });
+
+        const got = await inbox('pat');
+        assert.strictEqual(got.length, before + 1, 'exactly one notification, not none and not two');
+        const latest = got[0];
+        assert.strictEqual(latest.kind, 'project_review_answered');
+        assert.match(latest.message, /has answered your submission on Nightgarden/);
+        assert.match(latest.message, /close the thread/, 'and says what to do with it');
+        assert.strictEqual(latest.projectId, projectId, 'pointing at the project');
+      });
+  });
+
+  await t.test('somebody who is both submitter and watcher is told once', async () => {
+    const inbox = async (who) => (await as(who, '/notifications')).body.notifications || [];
+    await withPerms('producer', ['project.review_send', 'pending.view', 'project.review_mine',
+      'project.review_queue'], async () => {
+      const before = (await inbox('pat')).length;
+      const made = await submit('pat', { clientId, projectId, link: 'https://example.test/both-hats' });
+      await as('cad', `/project-reviews/${made.body.request.id}/feedback`, {
+        method: 'POST', body: { feedback: 'Fine.' } });
+
+      const got = await inbox('pat');
+      assert.strictEqual(got.length, before + 1,
+        `one event, one notification: ${JSON.stringify(got.slice(0, 3).map((n) => n.kind))}`);
+      assert.strictEqual(got[0].kind, 'project_review_answered',
+        'and it is the sentence addressed to them, not the queue\'s');
+    });
+  });
+
+  await t.test('the queue still hears about it, and outsiders still do not', async () => {
+    const inbox = async (who) => (await as(who, '/notifications')).body.notifications || [];
+    const made = await submit('root', { clientId, projectId, link: 'https://example.test/queue-too' });
+    await as('cad', `/project-reviews/${made.body.request.id}/feedback`, {
+      method: 'POST', body: { feedback: 'Good to go.' } });
+
+    // cad2 watches the queue, did not write it, and did not send it.
+    assert.strictEqual((await inbox('cad2'))[0].kind, 'project_review_feedback',
+      'a watcher still gets the watcher sentence');
+    // Super Admin sent this one, so they get the submitter's sentence instead.
+    assert.strictEqual((await inbox('root'))[0].kind, 'project_review_answered');
+    // And somebody with no business in this workflow is told nothing at all.
+    assert.strictEqual((await inbox('ana')).filter((n) => /project_review/.test(n.kind)).length, 0);
+  });
+
   await t.test('the record holds everything the studio asked it to', async () => {
     const rows = await sql(cfg, 'SELECT * FROM project_review_requests ORDER BY created_at LIMIT 1');
     const r = rows[0];

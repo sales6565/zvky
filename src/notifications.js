@@ -34,6 +34,11 @@ const KINDS = {
   project_review: 'project_review',
   // And their answer to it, which Production acts on.
   project_review_feedback: 'project_review_feedback',
+  /* The same event told to the person who ASKED. A different sentence because
+     it is a different fact: for a queue watcher the feedback is work arriving,
+     for the submitter it is the answer they were waiting for — and the one
+     thing they then have to do with it is read it and close the thread. */
+  project_review_answered: 'project_review_answered',
   /* Raised by the version that asked the Creative Director to choose between
      requesting changes and approving. Nothing writes these any more — one
      "Submit Feedback" replaced the two buttons — but rows carrying them are in
@@ -56,6 +61,11 @@ function describe(row) {
     return row.other_name
       ? `${row.other_name} submitted ${project} for your review.`
       : `${project} has been submitted for your review.`;
+  }
+  if (row.kind === KINDS.project_review_answered) {
+    const project = row.project_name || 'a project';
+    const who = row.other_name ? row.other_name : 'The Creative Director';
+    return `${who} has answered your submission on ${project} — read it and close the thread.`;
   }
   if (row.kind === KINDS.project_review_feedback) {
     const project = row.project_name || 'a project';
@@ -126,15 +136,33 @@ async function projectReviewRequested(db, { projectId, actorId, recipientIds }) 
   }
 }
 
-/* The Creative Director's feedback, told to everybody watching the queue —
- * Production among them, since acting on it is their job. Same shared-queue
- * rule as the submission itself.
+/* The Creative Director's feedback, told to two audiences at once.
  *
- * One kind now rather than two. The old pair named which decision was made, and
- * there is no longer a decision to name: the answer is the feedback, and what
- * it means is Production's to read. */
-async function projectReviewAnswered(db, { projectId, actorId, recipientIds }) {
-  for (const recipientId of recipientIds || []) {
+ * Everybody watching the queue — Production among them, since acting on it is
+ * their job — and the person who submitted it, who until now was told nothing.
+ * They could hold none of the queue permissions and so appear in no recipient
+ * list, which meant the one person actually waiting on the answer was the one
+ * person not informed it had arrived.
+ *
+ * Two kinds rather than one, because they are two different facts: work has
+ * arrived for the queue, and your answer is ready for the submitter. The
+ * submitter is told whatever else they hold — they asked the question, so they
+ * hear the answer; a permission decides what somebody may DO, and being told
+ * that a thing you started has finished is not an action.
+ *
+ * `only` keeps the submitter out of the watcher loop, so somebody who is both
+ * gets the sentence addressed to them and not two rows for one event. raise()
+ * already skips the actor, which is what stops a Creative Director who is also
+ * a watcher from being told about their own answer. */
+async function projectReviewAnswered(db, { projectId, actorId, recipientIds, submitterId }) {
+  if (submitterId) {
+    await raise(db, {
+      recipientId: submitterId, actorId, kind: KINDS.project_review_answered,
+      projectId, otherUserId: actorId,
+    });
+  }
+  const only = (recipientIds || []).filter((id) => id !== submitterId);
+  for (const recipientId of only) {
     await raise(db, {
       recipientId, actorId, kind: KINDS.project_review_feedback, projectId, otherUserId: actorId,
     });

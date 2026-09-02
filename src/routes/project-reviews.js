@@ -420,6 +420,11 @@ router.post('/:id/feedback', requirePermission('project.review_respond'), async 
   try {
     await notifications.projectReviewAnswered(db, {
       projectId: rows[0].project_id, actorId: req.user.id, recipientIds: await queueWatchers(),
+      /* The person who asked. Read from the row rather than from the queue,
+         because they need hold none of the queue permissions — and until this
+         was passed, the one person waiting on the answer was the one person not
+         told it had arrived. */
+      submitterId: rows[0].submitted_by,
     });
   } catch (err) {
     console.warn(`[notifications] could not announce the feedback on ${req.params.id}: ${err.message}`);
