@@ -31,7 +31,9 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "nodemon": "^3.1.4"
+    "docx": "^9.7.1",
+    "nodemon": "^3.1.4",
+    "pptxgenjs": "^4.0.1"
   },
   "engines": {
     "node": ">=18"

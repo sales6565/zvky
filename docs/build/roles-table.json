@@ -1,0 +1,1478 @@
+{
+ "groups": [
+  {
+   "key": "users",
+   "label": "User Management",
+   "permissions": [
+    {
+     "key": "user.view",
+     "label": "User View",
+     "describe": "",
+     "roles": [
+      "Account Manager - Marketing",
+      "Admin",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "user.add",
+     "label": "User Add",
+     "describe": "",
+     "roles": [
+      "Account Manager - Marketing",
+      "Admin",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "user.edit",
+     "label": "User Edit",
+     "describe": "",
+     "roles": [
+      "Account Manager - Marketing",
+      "Admin",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "user.delete",
+     "label": "User Delete",
+     "describe": "",
+     "roles": [
+      "Account Manager - Marketing",
+      "Admin",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "user.idle_view",
+     "label": "View Idle Users",
+     "describe": "The \"Idle Now\" list: who has no timer running, and what is waiting on them.",
+     "roles": [
+      "Account Manager - Marketing",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "user.change_role",
+     "label": "Change Role",
+     "describe": "",
+     "roles": [
+      "Account Manager - Marketing",
+      "Admin",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "user.change_project",
+     "label": "Change Project",
+     "describe": "",
+     "roles": [
+      "Account Manager - Marketing",
+      "Admin",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "user.change_reporting",
+     "label": "Change Reporting To",
+     "describe": "",
+     "roles": [
+      "Account Manager - Marketing",
+      "Admin",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "user.reset_password",
+     "label": "Reset User Password",
+     "describe": "",
+     "roles": [
+      "Account Manager - Marketing",
+      "Admin",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "user.bulk_upload",
+     "label": "Bulk Upload Users",
+     "describe": "",
+     "roles": [
+      "Account Manager - Marketing",
+      "Admin",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "user.view_team",
+     "label": "View Team Roster",
+     "describe": "See the people reporting to you and how their work is going.",
+     "roles": [
+      "Account Manager - Marketing",
+      "Associate Team Lead",
+      "Team Lead",
+      "Associate Animation Supervisor",
+      "Senior Team Lead",
+      "Technical Manager",
+      "Art Supervisor",
+      "Associate Art Director",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    }
+   ]
+  },
+  {
+   "key": "assets",
+   "label": "Asset Management",
+   "permissions": [
+    {
+     "key": "asset.add",
+     "label": "Asset Add",
+     "describe": "",
+     "roles": [
+      "Account Manager - Marketing",
+      "Associate Project Manager",
+      "Production Coordinator",
+      "Senior Production Coordinator",
+      "Project Manager",
+      "Associate Team Lead",
+      "Creative Producer",
+      "Producer",
+      "Team Lead",
+      "Associate Animation Supervisor",
+      "Senior Project Manager",
+      "Senior Producer",
+      "Senior Team Lead",
+      "Technical Manager",
+      "Art Supervisor",
+      "Associate Art Director",
+      "Admin",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "asset.edit",
+     "label": "Asset Edit",
+     "describe": "",
+     "roles": [
+      "Trainee - Test Engineer",
+      "Trainee Game Animator",
+      "Trainee Game Artist",
+      "Associate - UI/UX Designer",
+      "Associate Game Animator",
+      "Associate Game Artist",
+      "Associate Game Designer",
+      "Associate Game Developer",
+      "Associate Game Mathematician",
+      "Associate Math Analyst",
+      "Associate Technical Artist",
+      "Associate Test Engineer",
+      "Associate Unity Developer",
+      "Game Animator",
+      "Game Artist",
+      "Game Developer",
+      "Technical Artist",
+      "Test Engineer",
+      "Unity Developer",
+      "Game Designer",
+      "Game Mathematician",
+      "Account Manager - Marketing",
+      "Senior Game Animator",
+      "Senior Game Artist",
+      "Senior Motion Graphics Artist",
+      "Senior Technical Artist",
+      "Senior UI/UX Designer",
+      "Senior Unity Developer",
+      "Associate Project Manager",
+      "Consultant - Lead Game Designer",
+      "Production Coordinator",
+      "Senior Production Coordinator",
+      "Project Manager",
+      "Associate Team Lead",
+      "Creative Producer",
+      "Producer",
+      "Team Lead",
+      "Associate Animation Supervisor",
+      "Senior Project Manager",
+      "Senior Producer",
+      "Senior Team Lead",
+      "Technical Manager",
+      "Art Supervisor",
+      "Associate Art Director",
+      "Admin",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "asset.delete",
+     "label": "Asset Delete",
+     "describe": "",
+     "roles": [
+      "Account Manager - Marketing",
+      "Admin",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "asset.assign",
+     "label": "Asset Assign/Reassign",
+     "describe": "",
+     "roles": [
+      "Trainee - Test Engineer",
+      "Trainee Game Animator",
+      "Trainee Game Artist",
+      "Associate - UI/UX Designer",
+      "Associate Game Animator",
+      "Associate Game Artist",
+      "Associate Game Designer",
+      "Associate Game Developer",
+      "Associate Game Mathematician",
+      "Associate Math Analyst",
+      "Associate Technical Artist",
+      "Associate Test Engineer",
+      "Associate Unity Developer",
+      "Game Animator",
+      "Game Artist",
+      "Game Developer",
+      "Technical Artist",
+      "Test Engineer",
+      "Unity Developer",
+      "Game Designer",
+      "Game Mathematician",
+      "Account Manager - Marketing",
+      "Senior Game Animator",
+      "Senior Game Artist",
+      "Senior Motion Graphics Artist",
+      "Senior Technical Artist",
+      "Senior UI/UX Designer",
+      "Senior Unity Developer",
+      "Associate Project Manager",
+      "Consultant - Lead Game Designer",
+      "Production Coordinator",
+      "Senior Production Coordinator",
+      "Project Manager",
+      "Associate Team Lead",
+      "Creative Producer",
+      "Producer",
+      "Team Lead",
+      "Associate Animation Supervisor",
+      "Senior Project Manager",
+      "Senior Producer",
+      "Senior Team Lead",
+      "Technical Manager",
+      "Art Supervisor",
+      "Associate Art Director",
+      "Admin",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "asset.assign_any",
+     "label": "Assign Work to Anyone",
+     "describe": "Assign or reassign any asset in reach to anyone on its project, without having created it.",
+     "roles": [
+      "Account Manager - Marketing",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "asset.bulk_upload",
+     "label": "Bulk Upload Assets",
+     "describe": "Upload a sheet of assets into a project. The sheet carries an assignee and a deadline per row, so this grants creating and assigning in bulk what the holder could already create and assign one at a time.",
+     "roles": [
+      "Account Manager - Marketing",
+      "Associate Project Manager",
+      "Production Coordinator",
+      "Senior Production Coordinator",
+      "Project Manager",
+      "Associate Team Lead",
+      "Creative Producer",
+      "Producer",
+      "Team Lead",
+      "Associate Animation Supervisor",
+      "Senior Project Manager",
+      "Senior Producer",
+      "Senior Team Lead",
+      "Technical Manager",
+      "Art Supervisor",
+      "Associate Art Director",
+      "Admin",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "asset.lead_notes",
+     "label": "Lead / Supervisor Notes",
+     "describe": "See and edit the Lead / Supervisor Notes on an asset, and import them from a sheet. Separate from Description, which stays visible to everyone on the asset.",
+     "roles": [
+      "Associate Project Manager",
+      "Senior Production Coordinator",
+      "Project Manager",
+      "Associate Team Lead",
+      "Creative Producer",
+      "Producer",
+      "Team Lead",
+      "Associate Animation Supervisor",
+      "Senior Project Manager",
+      "Senior Producer",
+      "Senior Team Lead",
+      "Technical Manager",
+      "Art Supervisor",
+      "Associate Art Director",
+      "Art Director",
+      "Creative Art Director",
+      "Head of Production",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "asset.override_stage",
+     "label": "Override Review Stage",
+     "describe": "Force a status change outside the normal review flow.",
+     "roles": [
+      "Account Manager - Marketing",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    }
+   ]
+  },
+  {
+   "key": "review",
+   "label": "Review Workflow",
+   "permissions": [
+    {
+     "key": "review.tl",
+     "label": "TL Review Actions",
+     "describe": "",
+     "roles": [
+      "Account Manager - Marketing",
+      "Associate Project Manager",
+      "Senior Production Coordinator",
+      "Project Manager",
+      "Associate Team Lead",
+      "Creative Producer",
+      "Producer",
+      "Team Lead",
+      "Associate Animation Supervisor",
+      "Senior Project Manager",
+      "Senior Producer",
+      "Senior Team Lead",
+      "Technical Manager",
+      "Art Supervisor",
+      "Associate Art Director",
+      "Art Director",
+      "Creative Art Director",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "review.cd",
+     "label": "CD Review Actions",
+     "describe": "",
+     "roles": [
+      "Account Manager - Marketing",
+      "Art Director",
+      "Creative Art Director",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "review.approve_client",
+     "label": "Approve for Client",
+     "describe": "Sign work off as ready for the client. Requires CD Review Actions as well.",
+     "roles": [
+      "Account Manager - Marketing",
+      "Art Director",
+      "Creative Art Director",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "review.tl_send_client",
+     "label": "TL Send to Client",
+     "describe": "Send work in TL Review straight to Approved for Client, skipping CD Review. Requires TL Review Actions as well.",
+     "roles": [
+      "Account Manager - Marketing",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "review.deliver",
+     "label": "Mark as Delivered",
+     "describe": "",
+     "roles": [
+      "Account Manager - Marketing",
+      "Associate Project Manager",
+      "Production Coordinator",
+      "Senior Production Coordinator",
+      "Project Manager",
+      "Creative Producer",
+      "Producer",
+      "Senior Project Manager",
+      "Senior Producer",
+      "Art Director",
+      "Creative Art Director",
+      "Admin",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "review.client_view",
+     "label": "View Awaiting Client Feedback",
+     "describe": "See assets that are out with the client. Without it they are hidden from the board and the Assets List, the way work in a review stage already is.",
+     "roles": [
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "review.client_send",
+     "label": "Send Asset to Client",
+     "describe": "Move an asset from Approved for Client to Awaiting Client Feedback — the act of putting it in front of the client.",
+     "roles": [
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "review.client_deliver",
+     "label": "Mark Delivered from Client Feedback",
+     "describe": "The client approved it: close it off as Delivered. Separate from Mark as Delivered, which is the direct route from Approved for Client.",
+     "roles": [
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "review.client_return",
+     "label": "Send Back to TL Feedbacks from Client Feedback",
+     "describe": "The client asked for changes: pass them to the team lead, who hands the rework on as they already do from TL Feedbacks.",
+     "roles": [
+      "Super Admin"
+     ]
+    }
+   ]
+  },
+  {
+   "key": "projects",
+   "label": "Project Management",
+   "permissions": [
+    {
+     "key": "project.add",
+     "label": "Project Add",
+     "describe": "",
+     "roles": [
+      "Account Manager - Marketing",
+      "Admin",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "project.edit",
+     "label": "Project Edit",
+     "describe": "",
+     "roles": [
+      "Account Manager - Marketing",
+      "Admin",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "project.delete",
+     "label": "Project Delete",
+     "describe": "Archive a project, or delete one outright once it holds nothing.",
+     "roles": [
+      "Account Manager - Marketing",
+      "Admin",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "project.close",
+     "label": "Close / Reopen Project",
+     "describe": "Close a project so it takes no new assets and its existing ones are read-only, and reopen it.",
+     "roles": [
+      "Account Manager - Marketing",
+      "Admin",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "project.review_send",
+     "label": "Send Project to CD Review",
+     "describe": "Submit a link for a whole project — a deck, a build, a cut — to the Creative Director. Nothing to do with an asset's own CD Review stage.",
+     "roles": [
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "project.review_queue",
+     "label": "Review Project Submissions",
+     "describe": "See the project review queue — what is waiting, and what has been answered. Held by Creative Art Director out of the box; grant it to Production so they can act on the Creative Director's answers.",
+     "roles": [
+      "Creative Art Director",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "project.review_mine",
+     "label": "See My Project Review Submissions",
+     "describe": "See your own Send Project to CD Review submissions in Pending Actions, with what you sent and where it has got to. Read-only, and only ever your own.",
+     "roles": [
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "pending.view",
+     "label": "View Pending Actions",
+     "describe": "Open the Pending Actions tab. What it lists is still whatever this role may act on — the project review queue, or the answers waiting to be acted on.",
+     "roles": [
+      "Creative Art Director",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "project.review_respond",
+     "label": "Respond to Project CD Review",
+     "describe": "Answer a project review submission with Submit Feedback — one action, and the written feedback is required, since it is all Production gets to act on. Nothing to do with an asset's own CD Review gate, which is CD Review Actions. Held by Creative Art Director out of the box.",
+     "roles": [
+      "Creative Art Director",
+      "Super Admin"
+     ]
+    }
+   ]
+  },
+  {
+   "key": "clients",
+   "label": "Client Management",
+   "permissions": [
+    {
+     "key": "client.view",
+     "label": "Client View",
+     "describe": "See the client list and the projects under each one.",
+     "roles": [
+      "Trainee - Test Engineer",
+      "Trainee Game Animator",
+      "Trainee Game Artist",
+      "Junior Accountant",
+      "Associate - UI/UX Designer",
+      "Associate Game Animator",
+      "Associate Game Artist",
+      "Associate Game Designer",
+      "Associate Game Developer",
+      "Associate Game Mathematician",
+      "Associate Math Analyst",
+      "Associate Technical Artist",
+      "Associate Test Engineer",
+      "Associate Unity Developer",
+      "Game Animator",
+      "Game Artist",
+      "Game Developer",
+      "Technical Artist",
+      "Test Engineer",
+      "Unity Developer",
+      "Game Designer",
+      "Game Mathematician",
+      "MIS Analyst",
+      "Talent Acquisition Specialist",
+      "Account Manager - Marketing",
+      "Senior Game Animator",
+      "Senior Game Artist",
+      "Senior Motion Graphics Artist",
+      "Senior Technical Artist",
+      "Senior UI/UX Designer",
+      "Senior Unity Developer",
+      "Assistant Manager - HR Generalist",
+      "Associate Project Manager",
+      "Consultant - Lead Game Designer",
+      "Senior Operations Financial Analyst",
+      "People & Culture Partner",
+      "Production Coordinator",
+      "Senior Business Development Executive",
+      "Senior Production Coordinator",
+      "Project Manager",
+      "Associate Team Lead",
+      "Creative Producer",
+      "Producer",
+      "Team Lead",
+      "Associate Animation Supervisor",
+      "Senior Project Manager",
+      "Senior Producer",
+      "Senior Team Lead",
+      "Technical Manager",
+      "Art Supervisor",
+      "Associate Art Director",
+      "Art Director",
+      "Creative Art Director",
+      "Admin",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "client.add",
+     "label": "Client Add",
+     "describe": "",
+     "roles": [
+      "Account Manager - Marketing",
+      "Admin",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "client.edit",
+     "label": "Client Edit",
+     "describe": "",
+     "roles": [
+      "Account Manager - Marketing",
+      "Admin",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "client.delete",
+     "label": "Client Delete",
+     "describe": "Archive a client, or delete one outright once it holds no projects.",
+     "roles": [
+      "Account Manager - Marketing",
+      "Admin",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "client.close",
+     "label": "Close / Reopen Deal",
+     "describe": "Mark a client's deal closed so no new projects go under it, and reopen it.",
+     "roles": [
+      "Account Manager - Marketing",
+      "Admin",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    }
+   ]
+  },
+  {
+   "key": "reports",
+   "label": "Reports",
+   "permissions": [
+    {
+     "key": "report.view",
+     "label": "View Reports",
+     "describe": "Work-efficiency reports: estimated Man Hours against tracked Time Spent.",
+     "roles": [
+      "Account Manager - Marketing",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "report.idle",
+     "label": "View Idle Report",
+     "describe": "Idle Report: standard working hours against hours actually tracked, per person.",
+     "roles": [
+      "Account Manager - Marketing",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    }
+   ]
+  },
+  {
+   "key": "timesheet",
+   "label": "Time Sheet",
+   "permissions": [
+    {
+     "key": "timesheet.own",
+     "label": "View / Fill Own Timesheet",
+     "describe": "Open the Time Sheet tab and record your own hours, day by day, against projects and assets or against non-project time.",
+     "roles": [
+      "Trainee - Test Engineer",
+      "Trainee Game Animator",
+      "Trainee Game Artist",
+      "Junior Accountant",
+      "Associate - UI/UX Designer",
+      "Associate Game Animator",
+      "Associate Game Artist",
+      "Associate Game Designer",
+      "Associate Game Developer",
+      "Associate Game Mathematician",
+      "Associate Math Analyst",
+      "Associate Technical Artist",
+      "Associate Test Engineer",
+      "Associate Unity Developer",
+      "Game Animator",
+      "Game Artist",
+      "Game Developer",
+      "Technical Artist",
+      "Test Engineer",
+      "Unity Developer",
+      "Game Designer",
+      "Game Mathematician",
+      "MIS Analyst",
+      "Talent Acquisition Specialist",
+      "Account Manager - Marketing",
+      "Senior Game Animator",
+      "Senior Game Artist",
+      "Senior Motion Graphics Artist",
+      "Senior Technical Artist",
+      "Senior UI/UX Designer",
+      "Senior Unity Developer",
+      "Assistant Manager - HR Generalist",
+      "Associate Project Manager",
+      "Consultant - Lead Game Designer",
+      "Senior Operations Financial Analyst",
+      "People & Culture Partner",
+      "Production Coordinator",
+      "Senior Business Development Executive",
+      "Senior Production Coordinator",
+      "Project Manager",
+      "Associate Team Lead",
+      "Creative Producer",
+      "Producer",
+      "Team Lead",
+      "Associate Animation Supervisor",
+      "Senior Project Manager",
+      "Senior Producer",
+      "Senior Team Lead",
+      "Technical Manager",
+      "Art Supervisor",
+      "Associate Art Director",
+      "Art Director",
+      "Creative Art Director",
+      "Admin",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "timesheet.team",
+     "label": "View Team Timesheets",
+     "describe": "See the timesheets of the people who report to you. Reach stays with the role — this is your team, not the studio.",
+     "roles": [
+      "Associate Project Manager",
+      "Senior Production Coordinator",
+      "Project Manager",
+      "Associate Team Lead",
+      "Creative Producer",
+      "Producer",
+      "Team Lead",
+      "Associate Animation Supervisor",
+      "Senior Project Manager",
+      "Senior Producer",
+      "Senior Team Lead",
+      "Technical Manager",
+      "Art Supervisor",
+      "Associate Art Director",
+      "Art Director",
+      "Creative Art Director",
+      "Head of Production",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "timesheet.approve",
+     "label": "Approve Timesheets",
+     "describe": "Approve a submitted week, or send it back with a reason. Approving locks it; rejecting returns it to the person to correct.",
+     "roles": [
+      "Associate Project Manager",
+      "Senior Production Coordinator",
+      "Project Manager",
+      "Associate Team Lead",
+      "Creative Producer",
+      "Producer",
+      "Team Lead",
+      "Associate Animation Supervisor",
+      "Senior Project Manager",
+      "Senior Producer",
+      "Senior Team Lead",
+      "Technical Manager",
+      "Art Supervisor",
+      "Associate Art Director",
+      "Art Director",
+      "Creative Art Director",
+      "Head of Production",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "timesheet.all",
+     "label": "View All Timesheets",
+     "describe": "See everybody's timesheets, not only your team's. The reporting-level view, for the roles that already read across the studio.",
+     "roles": [
+      "Account Manager - Marketing",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    }
+   ]
+  },
+  {
+   "key": "settings",
+   "label": "Settings / Admin",
+   "permissions": [
+    {
+     "key": "settings.roles",
+     "label": "Manage Roles",
+     "describe": "",
+     "roles": [
+      "Account Manager - Marketing",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "settings.asset_types",
+     "label": "Manage Scope of Work",
+     "describe": "",
+     "roles": [
+      "Account Manager - Marketing",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "settings.priorities",
+     "label": "Manage Priorities",
+     "describe": "",
+     "roles": [
+      "Account Manager - Marketing",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "settings.categories",
+     "label": "Manage Categories",
+     "describe": "",
+     "roles": [
+      "Account Manager - Marketing",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "settings.branding",
+     "label": "Manage Branding",
+     "describe": "The name, tagline and logo shown in the header and on the sign-in screen.",
+     "roles": [
+      "Account Manager - Marketing",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "settings.working_hours",
+     "label": "Manage Working Hours",
+     "describe": "The length of the working day, which days the studio works, and the hours and lunch break the Time Sheet accepts entries within.",
+     "roles": [
+      "Account Manager - Marketing",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "settings.ip_allowlist",
+     "label": "Manage IP Allowlist",
+     "describe": "",
+     "roles": [
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "settings.audit_logs",
+     "label": "View Audit Logs",
+     "describe": "",
+     "roles": [
+      "Account Manager - Marketing",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "settings.activity_log",
+     "label": "View Activity Log",
+     "describe": "The consolidated record of every action taken in the application, by anybody — who did what, when, and what changed. Read-only, and it cannot be edited or cleared from inside the app.",
+     "roles": [
+      "Account Manager - Marketing",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "settings.permissions",
+     "label": "Manage Role Permissions",
+     "describe": "",
+     "roles": [
+      "Super Admin"
+     ]
+    }
+   ]
+  }
+ ],
+ "roles": [
+  {
+   "key": "trainee_test_engineer",
+   "label": "Trainee - Test Engineer",
+   "tier": "contributor",
+   "dept": "Engineering"
+  },
+  {
+   "key": "trainee_game_animator",
+   "label": "Trainee Game Animator",
+   "tier": "contributor",
+   "dept": "Animation"
+  },
+  {
+   "key": "trainee_game_artist",
+   "label": "Trainee Game Artist",
+   "tier": "contributor",
+   "dept": "Art"
+  },
+  {
+   "key": "junior_accountant",
+   "label": "Junior Accountant",
+   "tier": "staff",
+   "dept": "Business & Operations"
+  },
+  {
+   "key": "associate_ui_ux_designer",
+   "label": "Associate - UI/UX Designer",
+   "tier": "contributor",
+   "dept": "Design"
+  },
+  {
+   "key": "associate_game_animator",
+   "label": "Associate Game Animator",
+   "tier": "contributor",
+   "dept": "Animation"
+  },
+  {
+   "key": "associate_game_artist",
+   "label": "Associate Game Artist",
+   "tier": "contributor",
+   "dept": "Art"
+  },
+  {
+   "key": "associate_game_designer",
+   "label": "Associate Game Designer",
+   "tier": "contributor",
+   "dept": "Design"
+  },
+  {
+   "key": "associate_game_developer",
+   "label": "Associate Game Developer",
+   "tier": "contributor",
+   "dept": "Engineering"
+  },
+  {
+   "key": "associate_game_mathematician",
+   "label": "Associate Game Mathematician",
+   "tier": "contributor",
+   "dept": "Game Math"
+  },
+  {
+   "key": "associate_math_analyst",
+   "label": "Associate Math Analyst",
+   "tier": "contributor",
+   "dept": "Game Math"
+  },
+  {
+   "key": "associate_technical_artist",
+   "label": "Associate Technical Artist",
+   "tier": "contributor",
+   "dept": "Engineering"
+  },
+  {
+   "key": "associate_test_engineer",
+   "label": "Associate Test Engineer",
+   "tier": "contributor",
+   "dept": "Engineering"
+  },
+  {
+   "key": "associate_unity_developer",
+   "label": "Associate Unity Developer",
+   "tier": "contributor",
+   "dept": "Engineering"
+  },
+  {
+   "key": "game_animator",
+   "label": "Game Animator",
+   "tier": "contributor",
+   "dept": "Animation"
+  },
+  {
+   "key": "game_artist",
+   "label": "Game Artist",
+   "tier": "contributor",
+   "dept": "Art"
+  },
+  {
+   "key": "game_developer",
+   "label": "Game Developer",
+   "tier": "contributor",
+   "dept": "Engineering"
+  },
+  {
+   "key": "technical_artist",
+   "label": "Technical Artist",
+   "tier": "contributor",
+   "dept": "Engineering"
+  },
+  {
+   "key": "test_engineer",
+   "label": "Test Engineer",
+   "tier": "contributor",
+   "dept": "Engineering"
+  },
+  {
+   "key": "unity_developer",
+   "label": "Unity Developer",
+   "tier": "contributor",
+   "dept": "Engineering"
+  },
+  {
+   "key": "game_designer",
+   "label": "Game Designer",
+   "tier": "contributor",
+   "dept": "Design"
+  },
+  {
+   "key": "game_mathematician",
+   "label": "Game Mathematician",
+   "tier": "contributor",
+   "dept": "Game Math"
+  },
+  {
+   "key": "mis_analyst",
+   "label": "MIS Analyst",
+   "tier": "staff",
+   "dept": "Business & Operations"
+  },
+  {
+   "key": "talent_acquisition_specialist",
+   "label": "Talent Acquisition Specialist",
+   "tier": "staff",
+   "dept": "People & Culture"
+  },
+  {
+   "key": "account_manager_marketing",
+   "label": "Account Manager - Marketing",
+   "tier": "full_access",
+   "dept": "Business & Operations"
+  },
+  {
+   "key": "senior_game_animator",
+   "label": "Senior Game Animator",
+   "tier": "contributor",
+   "dept": "Animation"
+  },
+  {
+   "key": "senior_game_artist",
+   "label": "Senior Game Artist",
+   "tier": "contributor",
+   "dept": "Art"
+  },
+  {
+   "key": "senior_motion_graphics_artist",
+   "label": "Senior Motion Graphics Artist",
+   "tier": "contributor",
+   "dept": "Art"
+  },
+  {
+   "key": "senior_technical_artist",
+   "label": "Senior Technical Artist",
+   "tier": "contributor",
+   "dept": "Engineering"
+  },
+  {
+   "key": "senior_ui_ux_designer",
+   "label": "Senior UI/UX Designer",
+   "tier": "contributor",
+   "dept": "Design"
+  },
+  {
+   "key": "senior_unity_developer",
+   "label": "Senior Unity Developer",
+   "tier": "contributor",
+   "dept": "Engineering"
+  },
+  {
+   "key": "assistant_manager_hr_generalist",
+   "label": "Assistant Manager - HR Generalist",
+   "tier": "staff",
+   "dept": "People & Culture"
+  },
+  {
+   "key": "associate_project_manager",
+   "label": "Associate Project Manager",
+   "tier": "production",
+   "dept": "Production"
+  },
+  {
+   "key": "consultant_lead_game_designer",
+   "label": "Consultant - Lead Game Designer",
+   "tier": "contributor",
+   "dept": "Design"
+  },
+  {
+   "key": "senior_operations_financial_analyst",
+   "label": "Senior Operations Financial Analyst",
+   "tier": "staff",
+   "dept": "Business & Operations"
+  },
+  {
+   "key": "people_culture_partner",
+   "label": "People & Culture Partner",
+   "tier": "staff",
+   "dept": "People & Culture"
+  },
+  {
+   "key": "coordinator",
+   "label": "Production Coordinator",
+   "tier": "production",
+   "dept": "Administration"
+  },
+  {
+   "key": "senior_business_development_executive",
+   "label": "Senior Business Development Executive",
+   "tier": "staff",
+   "dept": "Business & Operations"
+  },
+  {
+   "key": "senior_production_coordinator",
+   "label": "Senior Production Coordinator",
+   "tier": "production",
+   "dept": "Production"
+  },
+  {
+   "key": "project_manager",
+   "label": "Project Manager",
+   "tier": "production",
+   "dept": "Production"
+  },
+  {
+   "key": "associate_team_lead",
+   "label": "Associate Team Lead",
+   "tier": "lead",
+   "dept": "Supervision"
+  },
+  {
+   "key": "creative_producer",
+   "label": "Creative Producer",
+   "tier": "production",
+   "dept": "Production"
+  },
+  {
+   "key": "producer",
+   "label": "Producer",
+   "tier": "production",
+   "dept": "Production"
+  },
+  {
+   "key": "team_lead",
+   "label": "Team Lead",
+   "tier": "lead",
+   "dept": "Supervision"
+  },
+  {
+   "key": "associate_animation_supervisor",
+   "label": "Associate Animation Supervisor",
+   "tier": "lead",
+   "dept": "Supervision"
+  },
+  {
+   "key": "senior_project_manager",
+   "label": "Senior Project Manager",
+   "tier": "production",
+   "dept": "Production"
+  },
+  {
+   "key": "senior_producer",
+   "label": "Senior Producer",
+   "tier": "production",
+   "dept": "Production"
+  },
+  {
+   "key": "senior_team_lead",
+   "label": "Senior Team Lead",
+   "tier": "lead",
+   "dept": "Supervision"
+  },
+  {
+   "key": "technical_manager",
+   "label": "Technical Manager",
+   "tier": "lead",
+   "dept": "Supervision"
+  },
+  {
+   "key": "art_supervisor",
+   "label": "Art Supervisor",
+   "tier": "lead",
+   "dept": "Supervision"
+  },
+  {
+   "key": "associate_art_director",
+   "label": "Associate Art Director",
+   "tier": "lead",
+   "dept": "Creative Direction"
+  },
+  {
+   "key": "art_director",
+   "label": "Art Director",
+   "tier": "direction",
+   "dept": "Creative Direction"
+  },
+  {
+   "key": "creative_art_director",
+   "label": "Creative Art Director",
+   "tier": "direction",
+   "dept": "Creative Direction"
+  },
+  {
+   "key": "admin",
+   "label": "Admin",
+   "tier": "admin",
+   "dept": "Administration"
+  },
+  {
+   "key": "head_of_production",
+   "label": "Head of Production",
+   "tier": "full_access",
+   "dept": "Production"
+  },
+  {
+   "key": "general_manager",
+   "label": "General Manager",
+   "tier": "full_access",
+   "dept": "Leadership"
+  },
+  {
+   "key": "cto",
+   "label": "CTO",
+   "tier": "full_access",
+   "dept": "Leadership"
+  },
+  {
+   "key": "vice_president_global_operations_business_development",
+   "label": "Vice President - Global Operations & Business Development",
+   "tier": "leadership",
+   "dept": "Leadership"
+  },
+  {
+   "key": "managing_director_ceo",
+   "label": "Managing Director & CEO",
+   "tier": "leadership",
+   "dept": "Leadership"
+  },
+  {
+   "key": "super_admin",
+   "label": "Super Admin",
+   "tier": "super_admin",
+   "dept": "Administration"
+  }
+ ]
+}
