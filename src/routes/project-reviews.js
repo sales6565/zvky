@@ -127,7 +127,28 @@ router.get('/pending-actions', requirePermission('pending.view'), async (req, re
 
   const groups = [];
   if (mayRespond) {
-    const items = rows.filter((r) => r.status === 'pending');
+    /* Waiting on you to answer — and NOT the ones you sent.
+     *
+     * This is the bug the studio reported twice, and the gate was never the
+     * problem: the feedback box is drawn for every row in this group, and this
+     * group was filtered on status alone. Who submitted a row never entered
+     * the decision, so anyone holding both permissions got a feedback box on
+     * their own submission.
+     *
+     * That is not a rare configuration. project.review_send ships to Super
+     * Admin alone, and Super Admin holds review_respond like every other
+     * permission — so on a studio that has not granted sending to anybody
+     * else, the ONLY account that can submit the form is guaranteed to see the
+     * button on what it submitted. It looked like a permission that had not
+     * taken effect. It was a queue that included you.
+     *
+     * The rule is about self-review rather than about permissions, which is
+     * why it belongs here and not in the gate: nobody answers their own
+     * submission, whatever they hold. Holding review_respond still means "you
+     * answer these" — it just no longer means "you answer your own".
+     */
+    const items = rows.filter((r) => r.status === 'pending'
+      && !(r.submittedById && r.submittedById === req.user.id));
     groups.push({
       key: 'awaiting_review',
       label: 'Waiting on your review',
@@ -283,6 +304,21 @@ router.post('/:id/feedback', requirePermission('project.review_respond'), async 
     return res.status(404).json({ error: 'Not found' });
   }
   if (!rows.length) return res.status(404).json({ error: 'That submission does not exist.' });
+
+  /* Nobody answers their own submission.
+   *
+   * Enforced here as well as hidden from the queue above, because a rule that
+   * only removes a button is not a rule — it is a button that is hard to find.
+   * Applies to every role including Super Admin: this is not a permission
+   * anybody can be granted, it is a thing that makes no sense to do.
+   */
+  if (rows[0].submitted_by && rows[0].submitted_by === req.user.id) {
+    return res.status(403).json({
+      error: 'You sent this one — somebody else gives the feedback on it.',
+      field: 'feedback',
+    });
+  }
+
   if (rows[0].status !== 'pending') {
     // Already answered. Not an error — two people opening the same queue is
     // ordinary — but the first answer stands.

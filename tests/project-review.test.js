@@ -557,6 +557,77 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
     });
   });
 
+  await t.test('nobody answers their own submission — not even Super Admin', async () => {
+    /* The bug the studio reported twice, as a test.
+     *
+     * It was never the gate: the feedback box is drawn for every row in the
+     * "waiting on your review" group, and that group was filtered on status
+     * alone. Who sent a row never entered the decision.
+     *
+     * Super Admin is the case that made it certain rather than merely
+     * possible: project.review_send ships to Super Admin alone, so on a studio
+     * that has granted sending to nobody else, the ONLY account that can
+     * submit is one that also holds review_respond — and it saw a feedback box
+     * on everything it sent, every time. */
+    const made = await submit('root', { clientId, projectId, link: 'https://example.test/sa-own' });
+    const id = made.body.request.id;
+
+    const seen = (await as('root', '/project-reviews/pending-actions')).body;
+    const answerable = seen.groups.find((g) => g.key === 'awaiting_review');
+    assert.ok(answerable, 'Super Admin still has an answer queue');
+    assert.ok(!answerable.items.some((i) => i.id === id),
+      'their own submission is in the queue they answer from');
+
+    // And it is refused, not merely hidden — a rule that only removes a button
+    // is a button that is hard to find.
+    const refused = await as('root', `/project-reviews/${id}/feedback`, {
+      method: 'POST', body: { feedback: 'Answering myself' } });
+    assert.strictEqual(refused.status, 403, JSON.stringify(refused.body));
+    assert.match(refused.body.error, /You sent this one/);
+
+    // Still theirs to see, in the read-only record.
+    const own = seen.groups.find((g) => g.key === 'my_submissions');
+    assert.ok(own && own.items.some((i) => i.id === id), 'and it is still in their record');
+
+    // Somebody else can answer it, which is the whole point of the queue.
+    const byCad = await as('cad', `/project-reviews/${id}/feedback`, {
+      method: 'POST', body: { feedback: 'Answered by the Creative Director.' } });
+    assert.strictEqual(byCad.status, 200, JSON.stringify(byCad.body));
+  });
+
+  await t.test('a role holding both send and respond sees no box on its own item', async () => {
+    /* The configuration the last fix was not tested against, and the reason it
+       passed while the bug stood. Production granted BOTH — a studio choice
+       somebody could reasonably make — must still not be able to answer its
+       own submission, and must not see the same item twice. */
+    await withPerms('producer', ['project.review_send', 'pending.view', 'project.review_mine',
+      'project.review_respond'], async () => {
+      const mine = await submit('pat', { clientId, projectId, link: 'https://example.test/pat-both' });
+      const theirs = await submit('root', { clientId, projectId, link: 'https://example.test/root-for-pat' });
+
+      const seen = (await as('pat', '/project-reviews/pending-actions')).body;
+      const answerable = seen.groups.find((g) => g.key === 'awaiting_review');
+      assert.ok(answerable, 'they hold respond, so the queue is there');
+
+      assert.ok(!answerable.items.some((i) => i.id === mine.body.request.id),
+        'their own submission must not be answerable by them');
+      assert.ok(answerable.items.some((i) => i.id === theirs.body.request.id),
+        'and somebody else\'s still is — the queue is not simply empty');
+
+      // The same item, actionable in one place and read-only in another, is
+      // the shape the studio saw. It must not happen for a pending row.
+      const record = seen.groups.find((g) => g.key === 'my_submissions');
+      const answerableIds = new Set(answerable.items.map((i) => i.id));
+      const both = record.items.filter((i) => i.status === 'pending' && answerableIds.has(i.id));
+      assert.deepStrictEqual(both, [],
+        'a pending submission appeared in both the record and the answer queue');
+
+      const refused = await as('pat', `/project-reviews/${mine.body.request.id}/feedback`, {
+        method: 'POST', body: { feedback: 'Approving my own' } });
+      assert.strictEqual(refused.status, 403, JSON.stringify(refused.body));
+    });
+  });
+
   await t.test('Submit Feedback is held by a permission, not by a role name', async () => {
     /* The point of this test is the bug class, not the feature: this app has
        twice shipped a gate written as `role === something`, and a gate like
@@ -615,10 +686,19 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
     assert.ok(seen.groups.some((g) => g.act === 'respond'),
       'Super Admin must keep the answer action');
 
-    const made = await submit('root', { clientId, projectId, link: 'https://example.test/sa-answers' });
-    const res = await as('root', `/project-reviews/${made.body.request.id}/feedback`, {
-      method: 'POST', body: { feedback: 'Answered by Super Admin.' } });
-    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    /* On somebody else's submission. Super Admin keeping this permission and
+       Super Admin not answering its own submission are two different rules,
+       and this test used to conflate them — it had Super Admin answer what it
+       had just sent, which is exactly the thing that turned out to be the bug.
+       Sent by the Creative Art Director here, so the queue has something in it
+       that is genuinely Super Admin's to answer. */
+    await withPerms('creative_art_director', ['project.review_send'], async () => {
+      const made = await submit('cad', { clientId, projectId, link: 'https://example.test/sa-answers' });
+      assert.strictEqual(made.status, 201, JSON.stringify(made.body));
+      const res = await as('root', `/project-reviews/${made.body.request.id}/feedback`, {
+        method: 'POST', body: { feedback: 'Answered by Super Admin.' } });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    });
   });
 
   await t.test('seeing your own record is its own toggle in Settings', async () => {

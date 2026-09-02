@@ -2090,6 +2090,17 @@ async function renderPending(){
     close: ' style="border-left-color:var(--approved);background:linear-gradient(90deg,#3ddc9714,transparent);border-color:#3ddc9744;"',
     none:  ' style="border-left-color:var(--ink-faint);background:none;border-color:var(--border);"',
   };
+  /* The feedback box is drawn for a group whose act is 'respond'. That is the
+     server's answer to "what may this person do", and it has been right — but
+     it is the ONLY thing that was deciding, and a page that draws an action
+     purely because of the list an item arrived in cannot tell "mine" from
+     "not mine". So the page asks the permission directly as well.
+
+     Belt and braces on purpose: the fix for the reported bug is in the queue
+     the server builds, and this is here so that no future change to that
+     grouping can put a Submit Feedback button in front of somebody who does
+     not hold project.review_respond. */
+  const mayRespond = can('project.review_respond');
   el.innerHTML = shown.map(g=>`
     <div class="pr-banner"${TONE[g.act] || ''}>
       <h4>${escapeHTML(g.label)} · ${g.items.length}</h4>
@@ -2099,7 +2110,7 @@ async function renderPending(){
         return `<div class="pr-item">
           <div class="pr-what">
             ${head(r)}
-            ${g.act==='respond' ? `
+            ${(g.act==='respond' && mayRespond) ? `
               <div style="margin-top:8px;">
                 <textarea class="pr-feedback" data-id="${r.id}" rows="2"
                   placeholder="Your feedback on this project (required)…"></textarea>
@@ -2107,7 +2118,7 @@ async function renderPending(){
                   <button class="btn btn-brand btn-sm pr-submit" data-id="${r.id}">Submit Feedback</button>
                 </div>
                 <div class="ref-err pr-err" data-id="${r.id}"></div>
-              </div>` : g.act==='none' ? `
+              </div>` : (g.act==='none' || g.act==='respond') ? `
               <!-- What you sent and where it got to. No feedback box, no
                    buttons: a submitter has nothing to do here, and a control
                    that does nothing is worse than no control. -->
