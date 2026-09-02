@@ -107,6 +107,74 @@ test('clients and their projects', { skip: cfg ? false : SKIP_REASON }, async (t
       'and a project created without naming a client lands in it');
   });
 
+  await t.test('whoever creates a client can see it, before it holds anything', async () => {
+    /* The bug behind "the client I just made is not in the dropdown".
+     *
+     * Clients are reached through the projects you can see, and a brand-new
+     * client has no projects — so for any role that is not studio-wide, the
+     * client vanished the instant it was created. In the Add Project form that
+     * is worse than an odd list: the client is created in order to put a
+     * project under it, and the option to do so was gone.
+     *
+     * Nine of the sixty designations have studio-wide scope, which is why this
+     * held for the accounts that built the feature and not the ones using it. */
+    const admin = (await as('root', '/users', { method: 'POST',
+      body: { name: 'Amy Admin', email: 'amy@zvky.test', role: 'admin', password: PASSWORD } })).body.user;
+    assert.ok(admin, 'the fixture needs a client-creating role that is not studio-wide');
+    token.amy = (await call('/auth/login', { method: 'POST',
+      body: { email: 'amy@zvky.test', password: PASSWORD } })).body.token;
+
+    const made = await as('amy', '/clients', { method: 'POST', body: { name: 'Zephyr Interactive' } });
+    assert.strictEqual(made.status, 201, JSON.stringify(made.body));
+
+    const mine = await listed('amy');
+    assert.ok(mine.some((c) => c.name === 'Zephyr Interactive'),
+      `the creator cannot see the client they just made: ${JSON.stringify(mine.map((c) => c.name))}`);
+    assert.strictEqual((await one(made.body.client.id, 'amy')).name, 'Zephyr Interactive',
+      'and can open it');
+
+    /* Which is the whole point: the project it was created for can now be made.
+       Without this the inline flow was a dead end, not merely an untidy list. */
+    const project = await as('amy', '/projects', { method: 'POST',
+      body: { clientId: made.body.client.id, name: 'Aurora Rise' } });
+    assert.strictEqual(project.status, 201, JSON.stringify(project.body));
+  });
+
+  await t.test('and it is still only reach, not a customer list for everybody', async () => {
+    /* The exception is narrow on purpose. Somebody who neither created the
+       client nor has work under it still sees nothing — otherwise the fix for
+       an empty dropdown would have quietly published the studio's client list
+       to every artist. */
+    const made = await as('amy', '/clients', { method: 'POST', body: { name: 'Private Holdings' } });
+    assert.strictEqual(made.status, 201, JSON.stringify(made.body));
+
+    const artist = await listed('ana');
+    assert.ok(!artist.some((c) => c.name === 'Private Holdings'),
+      `an artist with no work under it should not see it: ${JSON.stringify(artist.map((c) => c.name))}`);
+    /* 404 rather than 403, which is the stronger answer: telling somebody they
+       are forbidden from a client confirms it exists. Asserted as "not 200" and
+       then pinned, so the intent survives if the convention is ever revisited. */
+    const direct = await as('ana', `/clients/${made.body.client.id}`);
+    assert.notStrictEqual(direct.status, 200, 'nor open it directly');
+    assert.strictEqual(direct.status, 404, 'and is not told it exists');
+
+    // A studio-wide role sees it, as it always did.
+    assert.ok((await listed('root')).some((c) => c.name === 'Private Holdings'));
+  });
+
+  await t.test('the inline flow and the Add Client screen are one path', async () => {
+    /* There is no second creation route to drift: the Add Project form POSTs to
+       /clients exactly as the client screen does, so a client made either way
+       is the same row with the same creator recorded on it. Asserted through
+       the API because that is the thing both buttons call. */
+    const inline = await as('amy', '/clients', { method: 'POST', body: { name: 'One Path Co' } });
+    assert.strictEqual(inline.status, 201);
+    const [row] = await sql(cfg, "SELECT created_by FROM clients WHERE `name` = 'One Path Co'");
+    assert.ok(row, 'the client reached the database');
+    assert.strictEqual(row.created_by, (await as('amy', '/auth/me')).body.user.id,
+      'with the creator recorded, which is what the visibility rule reads');
+  });
+
   await t.test('a client is created with several projects in one submission', async () => {
     const res = await as('root', '/clients', {
       method: 'POST',

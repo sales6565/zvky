@@ -26,6 +26,21 @@ function problem(errors) {
 // not the studio's customer list. A client with no visible projects is only
 // shown to somebody who can see the whole studio — otherwise an empty client
 // would leak the fact that it exists.
+//
+// ...with one exception, and it belongs here rather than anywhere else:
+// WHOEVER CREATED A CLIENT SEES IT.
+//
+// A client is empty for exactly as long as it takes to put the first project
+// under it, and "reached through its projects" cannot reach a client that has
+// none. So somebody whose role is not studio-wide created a client and watched
+// it vanish — and worse, the Add Project form then offered no option for it, so
+// the project that was the entire reason for creating it could not be made.
+//
+// Nine of sixty designations have studio-wide scope, which is why this held
+// for the accounts that built the feature and not for the ones that use it.
+//
+// Not a leak: they typed the name in. There is nothing revealed here that they
+// did not already know.
 async function clientsFor(user, { includeArchived = false } = {}) {
   const projects = await visibleProjects(user);
   const byClient = new Map();
@@ -45,7 +60,8 @@ async function clientsFor(user, { includeArchived = false } = {}) {
 
   return rows
     .filter((c) => includeArchived || c.is_active)
-    .filter((c) => seesEverything || byClient.has(c.id) || (includeArchived && archivedProjects.has(c.id)))
+    .filter((c) => seesEverything || c.created_by === user.id || byClient.has(c.id)
+      || (includeArchived && archivedProjects.has(c.id)))
     .map((c) => {
       const live = byClient.get(c.id) || [];
       const archived = archivedProjects.get(c.id) || [];
