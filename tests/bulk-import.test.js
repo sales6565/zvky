@@ -852,6 +852,114 @@ test('the imported assignee, deadline, link and notes', { skip: cfg ? false : SK
     assert.strictEqual((await assetNamed('Impossible Date')).due_date, null);
   });
 
+  await t.test('the four assignee cases the studio asked for', async () => {
+    /* Valid, valid-but-differently-typed, unknown, blank — in one file, because
+       the thing worth proving is that they coexist without interfering. */
+    const res = await upload([
+      'No.,Asset Name,Category,Scope of Work,Man Hours,Assignee Email,Deadline,Project Link,Lead/Supervisor Notes',
+      '1,Case Exact,,prop,,ana@zvky.test,,,',
+      '2,Case Loud,,prop,,"  ANA@Zvky.Test  ",,,',
+      '3,Case Ghost,,prop,,nobody@nowhere.example,,,',
+      '4,Case Blank,,prop,,,,,',
+      '',
+    ].join('\n'));
+    assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+    assert.strictEqual(res.body.created, 4, 'all four are valid assets');
+    assert.strictEqual(res.body.skipped, 0);
+    assert.strictEqual(res.body.assigned, 2, 'and two of them found their person');
+
+    const state = Object.fromEntries((await as(token, `/assets/project/${projectId}`)).body.assets
+      .map((a) => [a.name, { status: a.status, assignee: a.assignee_id }]));
+
+    // 1. An exact match assigns immediately.
+    assert.strictEqual(state['Case Exact'].status, 'assigned');
+    assert.strictEqual(state['Case Exact'].assignee, people.ana);
+
+    /* 2. Different case, leading and trailing spaces. A sheet is typed by a
+          person, so this has to work — and it is the failure mode that looks
+          most like the feature being broken, because the address is right
+          there in the cell. */
+    assert.strictEqual(state['Case Loud'].status, 'assigned');
+    assert.strictEqual(state['Case Loud'].assignee, people.ana);
+
+    // 3. Nobody holds it: the asset lives, the row says why.
+    assert.strictEqual(state['Case Ghost'].status, 'not_started');
+    assert.strictEqual(state['Case Ghost'].assignee, null);
+    const warned = res.body.warnings.find((w) => w.row === 4 && w.column === 'Assignee Email');
+    assert.ok(warned, `no warning for the unmatched address: ${JSON.stringify(res.body.warnings)}`);
+    assert.match(warned.message, /does not match anyone here/);
+
+    // 4. Blank is an ordinary asset, and worth no words at all.
+    assert.strictEqual(state['Case Blank'].status, 'not_started');
+    assert.strictEqual(state['Case Blank'].assignee, null);
+    assert.ok(!res.body.warnings.some((w) => w.row === 5),
+      `a blank optional column must be silent: ${JSON.stringify(res.body.warnings)}`);
+  });
+
+  await t.test('a column this importer cannot match is never silent', async () => {
+    /* The defect behind the studio's report, and the reason it read as "the
+       feature does nothing": an unrecognised OPTIONAL column was dropped
+       without a word, so a header spelt differently from the sample produced a
+       clean import in which nothing was assigned. A missing REQUIRED column has
+       always been named; this is the other half. */
+    const res = await upload(
+      'Asset Name,Scope of Work,Person Responsible\nMystery Column,prop,ana@zvky.test\n');
+    assert.strictEqual(res.status, 201, 'the file still imports — the column is optional');
+    assert.strictEqual(res.body.created, 1);
+    assert.strictEqual(res.body.assigned, 0, 'and nobody was assigned, which is the symptom');
+
+    const said = res.body.warnings.find((w) => w.row === 1);
+    assert.ok(said, `the ignored column was not mentioned: ${JSON.stringify(res.body.warnings)}`);
+    assert.match(said.message, /is not a column this importer knows/);
+    assert.match(said.message, /Assignee Email/, 'and it lists what was expected instead');
+  });
+
+  await t.test('a header spelt with punctuation still finds its column', async () => {
+    /* "Assignee E-mail" used to normalise to assignee_e-mail and match nothing.
+       Any run of non-alphanumerics is one underscore now, so the spellings a
+       person actually types all land on the same column. */
+    for (const [header, name] of [
+      ['Assignee E-mail', 'Punct One'],
+      ['Assignee-Email', 'Punct Two'],
+      ['ASSIGNEE  EMAIL', 'Punct Three'],
+    ]) {
+      const res = await upload(`Asset Name,Scope of Work,${header}\n${name},prop,ana@zvky.test\n`);
+      assert.strictEqual(res.status, 201, `${header}: ${JSON.stringify(res.body)}`);
+      assert.strictEqual(res.body.assigned, 1, `"${header}" did not reach the assignee column`);
+      assert.deepStrictEqual(res.body.warnings.filter((w) => w.row === 1), [],
+        `"${header}" should not read as an unknown column`);
+    }
+  });
+
+  await t.test('a bulk assignment is the same event a manual one is', async () => {
+    /* The studio's step 5: bulk-assigned assets must not be second-class
+       downstream. Same status, same event, same episode, same notification. */
+    const res = await upload(
+      'Asset Name,Scope of Work,Assignee Email\nDownstream Check,prop,ana@zvky.test\n');
+    assert.strictEqual(res.body.assigned, 1, JSON.stringify(res.body));
+    const made = (await as(token, `/assets/project/${projectId}`)).body.assets
+      .find((a) => a.name === 'Downstream Check');
+
+    assert.strictEqual(made.status, 'assigned');
+    assert.strictEqual(made.routed_to_id, people.ana, 'on their desk, not merely named');
+
+    const events = await sql(cfg,
+      `SELECT action, from_status, to_status FROM asset_events WHERE asset_id = '${made.id}'`);
+    assert.ok(events.some((e) => e.action === 'assign' && e.to_status === 'assigned'),
+      `no assign event: ${JSON.stringify(events)}`);
+
+    const rounds = await sql(cfg,
+      `SELECT user_id, ended_at FROM asset_assignments WHERE asset_id = '${made.id}'`);
+    assert.strictEqual(rounds.length, 1, 'exactly one open round, as a manual assignment opens');
+    assert.strictEqual(rounds[0].ended_at, null);
+
+    const inbox = (await as(
+      (await api(server.base, '/auth/login', { method: 'POST',
+        body: { email: 'ana@zvky.test', password: PASSWORD } })).body.token,
+      '/notifications')).body.notifications || [];
+    assert.ok(inbox.some((n) => n.kind === 'assigned'), 'and the assignee is told, as they would be');
+  });
+
   await t.test('Lead/Supervisor Notes need the permission, on the way in and on the way out',
     async () => {
       const perms = async (role) => (await as(token, `/permissions/roles/${role}`))

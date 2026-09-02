@@ -1637,6 +1637,25 @@ router.post('/project/:projectId/bulk', requirePermission('asset.bulk_upload'), 
     });
   }
 
+  /* Columns nobody asked for, said out loud.
+   *
+   * validateHeaders has always worked this out and nothing has ever shown it.
+   * A missing REQUIRED column stops the upload with a message naming it; an
+   * unrecognised OPTIONAL one was dropped in silence — the file imported, the
+   * column did nothing, and there was no way to tell that from the feature
+   * being broken. That is exactly how "Assignee Email is not assigning
+   * anybody" looks from the outside, whether the cause is a header this
+   * importer does not know or a deployment too old to have the column at all.
+   *
+   * Reported against row 1, which is where the headers are. */
+  const unknownColumns = headerCheck.unknown.map((column) => ({
+    row: 1,
+    column,
+    value: '',
+    message: 'is not a column this importer knows, so everything in it was ignored. '
+      + `Expected: ${assetImport.COLUMN_NAMES.join(', ')}.`,
+  }));
+
   // --- validate every row up front -----------------------------------------
   // Nothing is written until the whole file has been checked, so an error on
   // the last row is reported the same way as one on the first.
@@ -1645,7 +1664,7 @@ router.post('/project/:projectId/bulk', requirePermission('asset.bulk_upload'), 
      row, a WARNING drops one optional value and keeps the row. Both name the
      row and the column, so the results table reads the same either way, and
      neither ever fails the file. */
-  const warnings = [];
+  const warnings = [...unknownColumns];
   const valid = [];
   const seenInFile = new Map(); // name + type, within this file
 

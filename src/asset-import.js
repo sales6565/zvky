@@ -62,6 +62,28 @@ function sampleCells(configured, fallback) {
   return [0, 1, 2].map((n) => configured[n % configured.length]);
 }
 
+/* Headers vary between the person filling the sheet in and the sample they were
+ * given. Case and stray whitespace were already handled; punctuation was not,
+ * and that failed SILENTLY rather than loudly — "Assignee E-mail" normalised to
+ * assignee_e-mail, matched nothing, and the column was dropped along with every
+ * value in it. No error, no warning: the assets uploaded and nobody was
+ * assigned, which is indistinguishable from the feature not working.
+ *
+ * So any run of anything that is not a letter or a digit becomes one
+ * underscore. "Assignee E-mail", "Assignee-Email" and "Assignee's Email" all
+ * land on a spelling the importer accepts, and "No." lands on no.
+ *
+ * The accepted spellings go through this same function (see acceptsOf), because
+ * two normalisers that disagree is the bug being replaced here.
+ */
+function normaliseHeader(header) {
+  return String(header ?? '')
+    .replace(/^\uFEFF/, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
 /* --- the columns -----------------------------------------------------------
 
    Two mandatory (Asset Name, Scope of Work) and everything else optional, which
@@ -302,7 +324,11 @@ function iso(y, m, d) {
    written the way the screen writes them ("Assets Name"), while `name` stays
    the database key it has always been. */
 const headerOf = (c) => c.header || c.name;
-const acceptsOf = (c) => c.accepts || [c.name];
+/* Normalised on the way out, so a spelling listed here is compared exactly as
+   a spelling read from a file is. They used to be compared raw against
+   normalised, which held only while every entry happened to already be in
+   normal form — and 'lead/supervisor_notes' and 'no.' were not. */
+const acceptsOf = (c) => (c.accepts || [c.name]).map(normaliseHeader);
 
 const COLUMN_NAMES = COLUMNS.map(headerOf);
 const ACCEPTED_HEADERS = COLUMNS.flatMap(acceptsOf);
@@ -317,9 +343,6 @@ const MAX_BYTES = Number(process.env.IMPORT_MAX_BYTES || 20 * 1024 * 1024);
 const BATCH_SIZE = Number(process.env.IMPORT_BATCH_SIZE || 200);
 
 // Headers vary in case and stray whitespace between exports; compare normalised.
-function normaliseHeader(header) {
-  return String(header ?? '').replace(/^\uFEFF/, '').trim().toLowerCase().replace(/\s+/g, '_');
-}
 
 // Is this a usable header row? Returns the problems, not just a boolean, so the
 // caller can tell someone exactly which column to add.
