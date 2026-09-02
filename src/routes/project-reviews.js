@@ -114,7 +114,7 @@ router.get('/pending-actions', requirePermission('pending.view'), async (req, re
   if (!mayRespond && !mayFollowUp && !maySeeOwn) {
     // Not an error: this is "nothing is waiting on you", which is what somebody
     // outside this workflow should be told rather than being refused.
-    return res.json({ groups: [], count: 0 });
+    return res.json({ groups: [], counts: { active: 0, history: 0 }, count: 0 });
   }
 
   let rows = [];
@@ -122,10 +122,38 @@ router.get('/pending-actions', requirePermission('pending.view'), async (req, re
     ({ rows } = await db.query(`${SELECT} ORDER BY r.created_at DESC`));
   } catch (err) {
     if (!unavailable(err)) throw err;
-    return res.json({ groups: [], count: 0, unavailable: true });
+    return res.json({ groups: [], counts: { active: 0, history: 0 }, count: 0, unavailable: true });
   }
 
+  /* --- Active and History ---------------------------------------------------
+
+     One rule, and it is about MEANING rather than about which column it reads:
+
+         Active  = the part this person owes has not been done
+         History = it has
+
+     The studio proposed reading the status field alone, uniformly, which is
+     uniform in mechanism but comes apart for Production: every row they ever
+     see is feedback_given, so status alone puts their entire workload under
+     "History" and leaves "Active" permanently empty — and, since the badge
+     counts Active only, kills their notification along with it. The words would
+     mean the opposite of what they say for one of the three roles.
+
+     Production already has the completion step that makes this unnecessary:
+     "Done, actioned" (POST /:id/close) has been there since the tab shipped and
+     writes closed_at. So the split needs nothing new built, and every role gets
+     the same sentence:
+
+         Creative Director   answered it yet?
+         Production          finished with it yet?
+         Submitter           has it been answered yet?
+
+     `phase` is what the page reads to place a group; `countable` is what the
+     badge reads. A record — anything with act 'none' — never counts, because
+     nothing in it is asking for anything. */
   const groups = [];
+  const mine = (r) => r.submittedById && r.submittedById === req.user.id;
+
   if (mayRespond) {
     /* Waiting on you to answer — and NOT the ones you sent.
      *
@@ -147,14 +175,26 @@ router.get('/pending-actions', requirePermission('pending.view'), async (req, re
      * submission, whatever they hold. Holding review_respond still means "you
      * answer these" — it just no longer means "you answer your own".
      */
-    const items = rows.filter((r) => r.status === 'pending'
-      && !(r.submittedById && r.submittedById === req.user.id));
     groups.push({
       key: 'awaiting_review',
       label: 'Waiting on your review',
       note: 'Projects submitted for the Creative Director. Read them and write your feedback.',
       act: 'respond',
-      items,
+      phase: 'active',
+      items: rows.filter((r) => r.status === 'pending' && !mine(r)),
+    });
+    /* What they have answered. By reviewed_by rather than by status, so a
+       second Creative Director's History is theirs and not the department's —
+       "what I have dealt with" is the question this tab answers. */
+    groups.push({
+      key: 'reviewed_by_me',
+      label: 'You gave feedback on',
+      note: 'Submissions you have answered. Kept in full — the feedback you wrote is still here.',
+      act: 'none',
+      phase: 'history',
+      countable: false,
+      items: rows.filter((r) => ANSWERED.includes(r.status)
+        && r.reviewedById && r.reviewedById === req.user.id),
     });
   }
   if (mayFollowUp) {
@@ -162,14 +202,23 @@ router.get('/pending-actions', requirePermission('pending.view'), async (req, re
        the answer was one of two decisions. What the feedback MEANS is now
        Production's reading of it rather than a status, so everything answered
        lands in one list. */
-    const items = rows.filter((r) => ANSWERED.includes(r.status) && !r.closedAt);
     groups.push({
       key: 'awaiting_followup',
       label: 'Waiting on you to act',
       note: 'The Creative Director has given feedback. Read it and take it where it goes — route '
         + 'the assets it applies to, or carry it toward delivery — then mark it done.',
       act: 'close',
-      items,
+      phase: 'active',
+      items: rows.filter((r) => ANSWERED.includes(r.status) && !r.closedAt),
+    });
+    groups.push({
+      key: 'followup_done',
+      label: 'Dealt with',
+      note: 'Routed or carried forward, and marked done. Here for good — nothing is deleted.',
+      act: 'none',
+      phase: 'history',
+      countable: false,
+      items: rows.filter((r) => ANSWERED.includes(r.status) && r.closedAt),
     });
   }
   if (maySeeOwn) {
@@ -178,30 +227,45 @@ router.get('/pending-actions', requirePermission('pending.view'), async (req, re
        outbox that empties. Filtered by the id and not the address, so a
        renamed account keeps its history.
 
-       `act: 'none'` is what the page reads to draw these without any control
-       on them. Nothing here routes to an endpoint, because there is no action
-       a submitter takes on their own submission. */
-    const items = rows.filter((r) => r.submittedById && r.submittedById === req.user.id);
+       Split across the two sub-tabs by whether it has been answered, which is
+       the only thing a submitter is waiting on. `act: 'none'` is what the page
+       reads to draw these without any control: there is no action a submitter
+       takes on their own submission. */
     groups.push({
       key: 'my_submissions',
       label: 'Sent by you',
-      note: 'What you have put in front of the Creative Director, and where each one has got to. '
-        + 'Yours to follow, not to act on.',
+      note: 'With the Creative Director now. Yours to follow, not to act on.',
       act: 'none',
+      phase: 'active',
       /* NOT counted in the badge, and this is the point of the flag rather
          than an optimisation. The badge means "things waiting on you"; these
-         are waiting on somebody else, and every one of them stays here for
-         good. Counted, a submitter's tab would light up on their first
-         submission and never go dark again — which would train them to ignore
-         the one signal the tab has. */
+         are waiting on somebody else. Counted, a submitter's tab would light
+         up on their first submission and stay lit until it was answered, for
+         something they can do nothing about. */
       countable: false,
-      items,
+      items: rows.filter((r) => mine(r) && r.status === 'pending'),
+    });
+    groups.push({
+      key: 'my_answered',
+      label: 'Sent by you · answered',
+      note: 'What you sent and what came back. Kept in full, for as long as the record exists.',
+      act: 'none',
+      phase: 'history',
+      countable: false,
+      items: rows.filter((r) => mine(r) && ANSWERED.includes(r.status)),
     });
   }
-  res.json({
-    groups,
-    count: groups.reduce((n, g) => n + (g.countable === false ? 0 : g.items.length), 0),
-  });
+
+  /* The badge counts what is waiting on this person and nothing else: Active
+     only, records excluded. History never contributes — it is by definition
+     the part already done. */
+  const counts = {
+    active: groups.filter((g) => g.phase === 'active' && g.countable !== false)
+      .reduce((n, g) => n + g.items.length, 0),
+    history: groups.filter((g) => g.phase === 'history')
+      .reduce((n, g) => n + g.items.length, 0),
+  };
+  res.json({ groups, counts, count: counts.active });
 });
 
 // POST /api/project-reviews — submit one.

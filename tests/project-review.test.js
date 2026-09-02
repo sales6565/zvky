@@ -71,6 +71,16 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
     const r = await as('root', `/permissions/roles/${role}`, { method: 'PUT', body: { permissions: keys } });
     assert.ok(r.status < 400, JSON.stringify(r.body));
   };
+  /* Give a role some permissions, run something, and put them back whatever
+     happens. Without the finally, one failing assertion leaves the role as the
+     test left it and every test after it is running against a studio somebody
+     else configured — which is how three failures came from one. */
+  const withPerms = async (role, extra, run) => {
+    const before = await permsOf(role);
+    await setPerms(role, [...new Set([...before, ...extra])]);
+    try { return await run(before); } finally { await setPerms(role, before); }
+  };
+
   const submit = (who, body) => as(who, '/project-reviews', { method: 'POST', body });
   const queue = async (who, status) =>
     (await as(who, '/project-reviews' + (status ? `?status=${status}` : ''))).body;
@@ -321,9 +331,13 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
       method: 'POST', body: { feedback: 'Second act drags' } });
 
     // The Creative Director: what is still to be answered, and nothing else.
+    const active = (p) => p.groups.filter((g) => g.phase === 'active').map((g) => g.key);
     const cad = await pending('cad');
-    assert.deepStrictEqual(keys(cad), ['awaiting_review', 'awaiting_followup'],
+    assert.deepStrictEqual(active(cad), ['awaiting_review', 'awaiting_followup'],
       'they hold both permissions, so they see both groups');
+    // And each of those has a History counterpart, which is the sub-tab split.
+    assert.deepStrictEqual(keys(cad).filter((k) => !active(cad).includes(k)),
+      ['reviewed_by_me', 'followup_done']);
     const toAnswer = cad.groups.find((g) => g.key === 'awaiting_review');
     assert.ok(toAnswer.items.some((i) => i.id === waiting.body.request.id));
     assert.ok(!toAnswer.items.some((i) => i.id === answered.body.request.id),
@@ -334,9 +348,9 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
     const before = await permsOf('producer');
     await setPerms('producer', [...before, 'project.review_queue', 'pending.view']);
     const prod = await pending('pat');
-    assert.deepStrictEqual(keys(prod), ['awaiting_followup'],
+    assert.deepStrictEqual(active(prod), ['awaiting_followup'],
       'no review group without the permission to answer');
-    const toAct = prod.groups[0];
+    const toAct = prod.groups.find((g) => g.key === 'awaiting_followup');
     assert.ok(toAct.items.some((i) => i.id === answered.body.request.id));
     assert.ok(!toAct.items.some((i) => i.id === waiting.body.request.id),
       'and never something the Creative Director has not answered');
@@ -367,48 +381,55 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
 
   await t.test('answering moves an item from one queue to the other', async () => {
     const pending = (who) => as(who, '/project-reviews/pending-actions').then((r) => r.body);
-    const has = (p, id) => p.groups.some((g) => g.items.some((i) => i.id === id));
+    /* Phase-aware, because "gone from their list" now means gone from ACTIVE.
+       Nothing leaves this tab any more — it moves to History, which is the
+       whole point of the split. */
+    const inPhase = (p, id, phase) => p.groups
+      .some((g) => g.phase === phase && g.items.some((i) => i.id === id));
 
-    const before = await permsOf('producer');
-    await setPerms('producer', [...before, 'project.review_queue', 'pending.view']);
+    await withPerms('producer', ['project.review_queue', 'pending.view'], async () => {
+      const made = await submit('root', { clientId, projectId, link: 'https://example.test/handoff' });
+      const id = made.body.request.id;
+      assert.ok(inPhase(await pending('cad'), id, 'active'), 'waiting on the Creative Director');
+      assert.ok(!inPhase(await pending('pat'), id, 'active'), 'and not yet on Production');
 
-    const made = await submit('root', { clientId, projectId, link: 'https://example.test/handoff' });
-    const id = made.body.request.id;
-    assert.ok(has(await pending('cad'), id), 'waiting on the Creative Director');
-    assert.ok(!has(await pending('pat'), id), 'and not yet on Production');
+      await as('cad', `/project-reviews/${id}/feedback`, {
+        method: 'POST', body: { feedback: 'Warmer grade' } });
 
-    await as('cad', `/project-reviews/${id}/feedback`, {
-      method: 'POST', body: { feedback: 'Warmer grade' } });
+      const cadAfter = await pending('cad');
+      assert.ok(!cadAfter.groups.find((g) => g.key === 'awaiting_review').items.some((i) => i.id === id),
+        'gone from the reviewer\'s active list');
+      assert.ok(inPhase(cadAfter, id, 'history'), 'and into the reviewer\'s History');
 
-    const cadAfter = await pending('cad');
-    assert.ok(!cadAfter.groups.find((g) => g.key === 'awaiting_review').items.some((i) => i.id === id),
-      'gone from the reviewer\'s list');
-    const prodAfter = await pending('pat');
-    assert.ok(has(prodAfter, id), 'and on Production\'s');
-    const item = prodAfter.groups[0].items.find((i) => i.id === id);
-    assert.strictEqual(item.feedback, 'Warmer grade', 'with the feedback they have to act on');
+      const prodAfter = await pending('pat');
+      assert.ok(inPhase(prodAfter, id, 'active'), 'and active for Production');
+      const item = prodAfter.groups.find((g) => g.key === 'awaiting_followup')
+        .items.find((i) => i.id === id);
+      assert.strictEqual(item.feedback, 'Warmer grade', 'with the feedback they have to act on');
 
-    // Production deals with it, and it leaves their list.
-    const closed = await as('pat', `/project-reviews/${id}/close`, { method: 'POST' });
-    assert.strictEqual(closed.status, 200, JSON.stringify(closed.body));
-    assert.strictEqual(closed.body.request.closerEmail, 'pat@zvky.test', 'who closed it');
-    assert.ok(closed.body.request.closedAt, 'and when');
-    assert.ok(!has(await pending('pat'), id), 'gone from Production\'s list');
+      // Production deals with it, and it leaves their ACTIVE list for History.
+      const closed = await as('pat', `/project-reviews/${id}/close`, { method: 'POST' });
+      assert.strictEqual(closed.status, 200, JSON.stringify(closed.body));
+      assert.strictEqual(closed.body.request.closerEmail, 'pat@zvky.test', 'who closed it');
+      assert.ok(closed.body.request.closedAt, 'and when');
+      const done = await pending('pat');
+      assert.ok(!inPhase(done, id, 'active'), 'gone from Production\'s active list');
+      assert.ok(inPhase(done, id, 'history'), 'and readable in their History');
 
-    // Nothing is deleted: the whole trail is still readable.
-    const kept = (await queue('cad')).requests.find((r) => r.id === id);
-    assert.strictEqual(kept.status, 'feedback_given');
-    assert.strictEqual(kept.feedback, 'Warmer grade');
-    assert.strictEqual(kept.submitterEmail, 'root@zvky.test');
-    assert.strictEqual(kept.reviewerEmail, 'cad@zvky.test');
-    assert.strictEqual(kept.closerEmail, 'pat@zvky.test');
+      // Nothing is deleted: the whole trail is still readable.
+      const kept = (await queue('cad')).requests.find((r) => r.id === id);
+      assert.strictEqual(kept.status, 'feedback_given');
+      assert.strictEqual(kept.feedback, 'Warmer grade');
+      assert.strictEqual(kept.submitterEmail, 'root@zvky.test');
+      assert.strictEqual(kept.reviewerEmail, 'cad@zvky.test');
+      assert.strictEqual(kept.closerEmail, 'pat@zvky.test');
 
-    // Closing twice is not an error and does not rewrite who did it.
-    const again = await as('cad', `/project-reviews/${id}/close`, { method: 'POST' });
-    assert.strictEqual(again.status, 200);
-    assert.strictEqual(again.body.alreadyClosed, true);
-    assert.strictEqual(again.body.request.closerEmail, 'pat@zvky.test');
-    await setPerms('producer', before);
+      // Closing twice is not an error and does not rewrite who did it.
+      const again = await as('cad', `/project-reviews/${id}/close`, { method: 'POST' });
+      assert.strictEqual(again.status, 200);
+      assert.strictEqual(again.body.alreadyClosed, true);
+      assert.strictEqual(again.body.request.closerEmail, 'pat@zvky.test');
+    });
   });
 
   await t.test('rows answered under the old two decisions still work', async () => {
@@ -419,6 +440,8 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
        rewrites them, because somebody really did make that decision. */
     const pending = (who) => as(who, '/project-reviews/pending-actions').then((r) => r.body);
     const inList = (p, id) => p.groups.some((g) => g.items.some((i) => i.id === id));
+    const pending2Active = (p, id) => p.groups
+      .some((g) => g.phase === 'active' && g.items.some((i) => i.id === id));
 
     for (const legacy of ['changes_requested', 'approved_for_client']) {
       const made = await submit('root', { clientId, projectId, link: `https://example.test/old-${legacy}` });
@@ -431,6 +454,7 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
                        WHERE id = '${id}'`);
 
       assert.ok(inList(await pending('cad'), id), `a ${legacy} row is still waiting to be acted on`);
+      assert.ok(pending2Active(await pending('cad'), id), 'and it is Active, not History');
       assert.ok(!(await queue('cad', 'pending')).requests.some((r) => r.id === id),
         'and is not back in the unanswered list');
       const stored = (await queue('cad', legacy)).requests.find((r) => r.id === id);
@@ -438,7 +462,8 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
 
       const closed = await as('cad', `/project-reviews/${id}/close`, { method: 'POST' });
       assert.strictEqual(closed.status, 200, JSON.stringify(closed.body));
-      assert.ok(!inList(await pending('cad'), id), 'and it closes off like any other');
+      assert.ok(!pending2Active(await pending('cad'), id), 'and it closes off like any other');
+      assert.ok(inList(await pending('cad'), id), 'into History, still readable');
     }
   });
 
@@ -453,15 +478,6 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
       { method: 'POST' })).status, 403);
   });
 
-  /* Give a role some permissions, run something, and put them back whatever
-     happens. Without the finally, one failing assertion leaves the role as the
-     test left it and every test after it is running against a studio somebody
-     else configured — which is how three failures came from one. */
-  const withPerms = async (role, extra, run) => {
-    const before = await permsOf(role);
-    await setPerms(role, [...new Set([...before, ...extra])]);
-    try { return await run(before); } finally { await setPerms(role, before); }
-  };
 
   await t.test('the submitter gets a read-only record of what they sent', async () => {
     // What Production is actually given in a studio that uses this: send it,
@@ -502,9 +518,9 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
         const patSent = await submit('pat', { clientId, projectId, link: 'https://example.test/pats-own' });
 
         const seen = (await as('pat', '/project-reviews/pending-actions')).body;
-        assert.deepStrictEqual(seen.groups.map((g) => g.key), ['my_submissions'],
-          'the record is all they hold, so it is all they get');
-        const ids = seen.groups[0].items.map((i) => i.id);
+        assert.deepStrictEqual(seen.groups.map((g) => g.key), ['my_submissions', 'my_answered'],
+          'the record is all they hold, so it is all they get — split across the two sub-tabs');
+        const ids = seen.groups.flatMap((g) => g.items.map((i) => i.id));
         assert.ok(ids.includes(patSent.body.request.id));
         assert.ok(!ids.includes(theirs.body.request.id), 'somebody else\'s submission leaked in');
 
@@ -513,7 +529,8 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
            lit for good — training them to ignore the one signal it has. */
         assert.strictEqual(seen.count, 0,
           `a read-only record must not count: ${JSON.stringify(seen.groups.map((g) => [g.key, g.items.length]))}`);
-        assert.ok(seen.groups[0].items.length > 0, 'even though there is plenty to read');
+        assert.strictEqual(seen.counts.active, 0, 'the badge reads Active, and Active is a record');
+        assert.ok(seen.groups.some((g) => g.items.length), 'even though there is plenty to read');
       });
     });
 
@@ -522,10 +539,17 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
       'project.review_queue'], async () => {
       const made = await submit('pat', { clientId, projectId, link: 'https://example.test/pat-outcome' });
       const id = made.body.request.id;
+      /* Across both sub-tabs: a submission moves from the Active side of the
+         record to the History side when it is answered, and the point of the
+         record is that it is still there either way. */
       const mine = async () => (await as('pat', '/project-reviews/pending-actions')).body
-        .groups.find((g) => g.key === 'my_submissions').items.find((i) => i.id === id);
+        .groups.filter((g) => ['my_submissions', 'my_answered'].includes(g.key))
+        .flatMap((g) => g.items.map((i) => ({ ...i, phase: g.phase })))
+        .find((i) => i.id === id);
 
-      assert.strictEqual((await mine()).status, 'pending');
+      const first = await mine();
+      assert.strictEqual(first.status, 'pending');
+      assert.strictEqual(first.phase, 'active', 'unanswered, so it is Active for them');
 
       await as('cad', `/project-reviews/${id}/feedback`, {
         method: 'POST', body: { feedback: 'Tighten the opening.' } });
@@ -535,6 +559,7 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
       const after = await mine();
       assert.ok(after, 'the submission vanished from its sender\'s view once answered');
       assert.strictEqual(after.status, 'feedback_given');
+      assert.strictEqual(after.phase, 'history', 'answered, so it has moved to their History');
       assert.ok(after.reviewedAt, 'with when it was answered');
 
       // And closing it off does not take it away either.
@@ -712,7 +737,7 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
       await setPerms('producer', [...new Set([...before, 'project.review_send', 'pending.view',
         'project.review_mine'])]);
       const withIt = (await as('pat', '/project-reviews/pending-actions')).body;
-      assert.deepStrictEqual(withIt.groups.map((g) => g.key), ['my_submissions']);
+      assert.deepStrictEqual(withIt.groups.map((g) => g.key), ['my_submissions', 'my_answered']);
     });
 
     // And it is offered in Settings under a name somebody can act on.
@@ -722,6 +747,114 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
     const superAdmin = (await as('root', '/permissions/roles/super_admin')).body.role.permissions
       .find((p) => p.key === 'project.review_mine');
     assert.ok(superAdmin && superAdmin.enabled, 'and Super Admin holds it without being toggled');
+  });
+
+  await t.test('Active and History mean the same thing for all three roles', async () => {
+    /* The studio proposed reading the status field alone, uniformly. That is
+       uniform in mechanism and comes apart for Production: every row they ever
+       see is feedback_given, so status alone would put their whole workload
+       under History and leave Active permanently empty — and, since the badge
+       counts Active only, would silence their notification entirely.
+
+       So the rule is uniform in MEANING instead: Active is the part this person
+       owes and has not done, History is the part they have. Production's half
+       needs nothing new built — "Done, actioned" (POST /:id/close) has been
+       there since the tab shipped. */
+    const phaseOf = async (who, id) => {
+      const { groups } = (await as(who, '/project-reviews/pending-actions')).body;
+      const g = groups.find((x) => x.items.some((i) => i.id === id));
+      return g ? g.phase : null;
+    };
+    const badge = async (who) => (await as(who, '/project-reviews/pending-actions')).body.counts.active;
+
+    await withPerms('producer', ['project.review_send', 'pending.view', 'project.review_mine',
+      'project.review_queue'], async () => {
+      const made = await submit('pat', { clientId, projectId, link: 'https://example.test/three-roles' });
+      const id = made.body.request.id;
+
+      // --- submitted, not yet answered ---
+      assert.strictEqual(await phaseOf('cad', id), 'active', 'CD: theirs to answer');
+      assert.strictEqual(await phaseOf('pat', id), 'active', 'submitter: still waiting on an answer');
+      assert.ok((await badge('cad')) > 0, 'and the CD is told there is work');
+
+      // --- answered ---
+      await as('cad', `/project-reviews/${id}/feedback`, {
+        method: 'POST', body: { feedback: 'Bring the grade down half a stop.' } });
+
+      assert.strictEqual(await phaseOf('cad', id), 'history', 'CD: they have answered it');
+      assert.strictEqual(await phaseOf('pat', id), 'active',
+        'Production: answered is exactly when it becomes theirs to act on');
+
+      /* The heart of it. Under status-alone this would read 'history' for
+         Production while still being the thing they have to do. */
+      const prodActive = (await as('pat', '/project-reviews/pending-actions')).body
+        .groups.find((g) => g.key === 'awaiting_followup');
+      assert.ok(prodActive.items.some((i) => i.id === id));
+      assert.ok((await badge('pat')) > 0,
+        'and Production keeps a badge — status-alone would have left them without one');
+
+      // --- Production finishes with it ---
+      await as('pat', `/project-reviews/${id}/close`, { method: 'POST' });
+      assert.strictEqual(await phaseOf('pat', id), 'history', 'Production: done with it');
+    });
+  });
+
+  await t.test('the badge counts Active only, and History never lights it', async () => {
+    await withPerms('producer', ['project.review_send', 'pending.view', 'project.review_mine',
+      'project.review_queue'], async () => {
+      const read = async (who) => (await as(who, '/project-reviews/pending-actions')).body;
+
+      const made = await submit('pat', { clientId, projectId, link: 'https://example.test/badge-split' });
+      const id = made.body.request.id;
+      await as('cad', `/project-reviews/${id}/feedback`, {
+        method: 'POST', body: { feedback: 'Fine as it is.' } });
+      await as('pat', `/project-reviews/${id}/close`, { method: 'POST' });
+
+      const cad = await read('cad');
+      const history = cad.groups.filter((g) => g.phase === 'history');
+      assert.ok(history.some((g) => g.items.length), 'the CD has something in History');
+      assert.strictEqual(cad.counts.history > 0, true);
+      /* Whatever is in History, the badge is the Active number and only that.
+         An item already dealt with must never keep the tab lit. */
+      assert.strictEqual(cad.count, cad.counts.active, 'count is the Active count');
+      const activeItems = cad.groups.filter((g) => g.phase === 'active' && g.countable !== false)
+        .reduce((n, g) => n + g.items.length, 0);
+      assert.strictEqual(cad.counts.active, activeItems);
+      assert.ok(!cad.groups.some((g) => g.phase === 'history' && g.countable !== false),
+        'no History group may be countable');
+    });
+  });
+
+  await t.test('History keeps everything readable, and offers no action', async () => {
+    await withPerms('producer', ['project.review_send', 'pending.view', 'project.review_mine'],
+      async () => {
+        const made = await submit('pat', { clientId, projectId,
+          link: 'https://example.test/history-readable', description: 'The whole act.' });
+        const id = made.body.request.id;
+        await as('cad', `/project-reviews/${id}/feedback`, {
+          method: 'POST', body: { feedback: 'Warmer through the middle.' } });
+
+        for (const who of ['pat', 'cad']) {
+          const { groups } = (await as(who, '/project-reviews/pending-actions')).body;
+          const g = groups.find((x) => x.phase === 'history' && x.items.some((i) => i.id === id));
+          assert.ok(g, `${who} lost the item on the way to History`);
+          /* A display split, not an archive: everything the row carried is
+             still on it. */
+          const row = g.items.find((i) => i.id === id);
+          assert.strictEqual(row.link, 'https://example.test/history-readable');
+          assert.strictEqual(row.description, 'The whole act.');
+          assert.strictEqual(row.feedback, 'Warmer through the middle.');
+          assert.ok(row.createdAt && row.reviewedAt);
+          // And nothing in History can be acted on — least of all re-answered.
+          assert.strictEqual(g.act, 'none', `${who}'s History group offers an action`);
+        }
+
+        // Not re-answerable, which is what act 'none' is promising.
+        const again = await as('cad', `/project-reviews/${id}/feedback`, {
+          method: 'POST', body: { feedback: 'Changed my mind' } });
+        assert.strictEqual(again.body.alreadyAnswered, true, 'the first answer stands');
+        assert.strictEqual(again.body.request.feedback, 'Warmer through the middle.');
+      });
   });
 
   await t.test('the record holds everything the studio asked it to', async () => {

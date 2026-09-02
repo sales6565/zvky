@@ -2021,10 +2021,12 @@ const prStatus = (id)=> PR_STATUS[id] || { label: id, color: 'var(--ink-muted)' 
  * group from the server, and this renders whatever it is handed. The only thing
  * it knows about an item is which action to offer, which the group carries. */
 let pendingCount = 0;
+/* Which sub-tab is open. Active is where work is, so it is where you land. */
+let pendingPhase = 'active';
 
 async function fetchPending(){
   try{ return await api('/project-reviews/pending-actions'); }
-  catch{ return { groups:[], count:0 }; }
+  catch{ return { groups:[], counts:{ active:0, history:0 }, count:0 }; }
 }
 
 /* The tab's count and its highlight, from ONE number.
@@ -2061,18 +2063,35 @@ async function renderPending(){
     el.innerHTML = '<div class="pending-empty">Nothing is waiting on you.</div>';
     return;
   }
-  const { groups, count } = await fetchPending();
-  applyPendingCount(count);
+  const { groups, counts } = await fetchPending();
+  /* The badge is Active only. History is, by definition, the part already
+     done, so it never lights the tab. */
+  applyPendingCount((counts||{}).active || 0);
+
+  const inPhase = (p)=>groups.filter(g=>g.phase===p && g.items.length);
   /* Emptiness is about what there is to SHOW, not about the count. Those came
      apart when the submitter's own record arrived: it is deliberately not
      counted — nothing in it is waiting on anybody — so a submitter with a
      record and no queue has count 0 and a page full of things to read. Keyed
      off count, this returned early and showed them nothing. */
-  const shown = groups.filter(g=>g.items.length);
-  if(!shown.length){
+  if(!inPhase('active').length && !inPhase('history').length){
     el.innerHTML = '<div class="pending-empty">Nothing is waiting on you right now.</div>';
     return;
   }
+  /* Land on the sub-tab that has something in it. Opening on an empty Active
+     while History is full reads as "nothing here" for somebody whose work is
+     one click away — and the reverse, once Active fills up again, would leave
+     them on History wondering where the new item went. */
+  if(!inPhase(pendingPhase).length){
+    pendingPhase = inPhase('active').length ? 'active' : 'history';
+  }
+  const shown = inPhase(pendingPhase);
+  const tally = (p)=>groups.filter(g=>g.phase===p).reduce((n,g)=>n+g.items.length, 0);
+  const subTabs = `<div class="sub-tabs">${[
+      { id:'active',  label:'Active'  },
+      { id:'history', label:'History' },
+    ].map(t=>`<button class="sub-tab${t.id===pendingPhase?' active':''}" data-phase="${t.id}">${
+      t.label} <span class="sub-tab-count">${tally(t.id)}</span></button>`).join('')}</div>`;
 
   const who = (r)=>`${escapeHTML(r.submittedByName || r.submitterEmail || 'Somebody')} · ${fmtDate(r.createdAt)}`;
   const head = (r)=>`<strong>${escapeHTML(r.projectName || 'A project')}</strong>
@@ -2101,7 +2120,7 @@ async function renderPending(){
      grouping can put a Submit Feedback button in front of somebody who does
      not hold project.review_respond. */
   const mayRespond = can('project.review_respond');
-  el.innerHTML = shown.map(g=>`
+  el.innerHTML = subTabs + (shown.length ? shown.map(g=>`
     <div class="pr-banner"${TONE[g.act] || ''}>
       <h4>${escapeHTML(g.label)} · ${g.items.length}</h4>
       <div class="pr-sub">${escapeHTML(g.note)}</div>
@@ -2121,12 +2140,22 @@ async function renderPending(){
               </div>` : (g.act==='none' || g.act==='respond') ? `
               <!-- What you sent and where it got to. No feedback box, no
                    buttons: a submitter has nothing to do here, and a control
-                   that does nothing is worse than no control. -->
+                   that does nothing is worse than no control.
+
+                   The feedback itself IS shown once there is any. A History
+                   row without it says "answered" and makes you go and find
+                   out what the answer was, which is not a record of anything
+                   much — and for the person who sent it, the answer is the
+                   thing they were waiting for. -->
               <div style="margin-top:6px;">
                 <span class="status-pill" style="background:${st.color}22;color:${st.color};"><span class="d" style="background:${st.color}"></span>${st.label}</span>
                 <span class="pr-meta" style="margin-left:6px;">${
-                  r.reviewedAt ? `answered ${fmtDate(r.reviewedAt)}` : 'not answered yet'}</span>
-              </div>` : `
+                  r.reviewedAt ? `answered ${fmtDate(r.reviewedAt)}` : 'not answered yet'}${
+                  r.reviewedByName || r.reviewerEmail ? ` · ${escapeHTML(r.reviewedByName || r.reviewerEmail)}` : ''}</span>
+                ${r.closedAt ? `<span class="pr-meta" style="margin-left:6px;">· dealt with ${fmtDate(r.closedAt)}${
+                  r.closerEmail ? ` by ${escapeHTML(r.closerEmail)}` : ''}</span>` : ''}
+              </div>
+              ${r.feedback ? `<div class="note" style="margin-top:6px;border-left-color:${st.color};"><p>${escapeHTML(r.feedback)}</p></div>` : ''}` : `
               <div style="margin-top:6px;">
                 <span class="status-pill" style="background:${st.color}22;color:${st.color};"><span class="d" style="background:${st.color}"></span>${st.label}</span>
                 <span class="pr-meta" style="margin-left:6px;">${escapeHTML(r.reviewedByName || r.reviewerEmail || '')}${r.reviewedAt?` · ${fmtDate(r.reviewedAt)}`:''}</span>
@@ -2150,8 +2179,14 @@ async function renderPending(){
           </div>
         </div>`;
       }).join('')}
-    </div>`).join('');
+    </div>`).join('') : `<div class="pending-empty">${pendingPhase==='active'
+      ? 'Nothing is waiting on you right now.'
+      : 'Nothing here yet — this fills up as things are dealt with.'}</div>`);
 
+  el.querySelectorAll('.sub-tab[data-phase]').forEach(b=>b.addEventListener('click', ()=>{
+    pendingPhase = b.dataset.phase;
+    renderPending();
+  }));
   wirePendingActions(el, ()=>renderPending());
 }
 
