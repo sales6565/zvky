@@ -308,11 +308,9 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
     const pending = (who) => as(who, '/project-reviews/pending-actions').then((r) => r.body);
     const keys = (p) => p.groups.map((g) => g.key);
 
-    /* Somebody outside the workflow is told nothing is waiting rather than
-       being refused — the tab is empty, not forbidden. */
-    const artist = await pending('ana');
-    assert.deepStrictEqual(artist.groups, []);
-    assert.strictEqual(artist.count, 0);
+    /* Without the tab's own permission there is no tab and no endpoint. This
+       is the grant the studio asked to be able to withhold on its own. */
+    assert.strictEqual((await as('ana', '/project-reviews/pending-actions')).status, 403);
 
     // A fresh submission, so there is one of each kind waiting.
     const waiting = await submit('root', { clientId, projectId, link: 'https://example.test/pa-1' });
@@ -332,7 +330,7 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
     /* Production: given the queue and nothing else, they see only the answers
        to act on — never the ones still waiting on the Creative Director. */
     const before = await permsOf('producer');
-    await setPerms('producer', [...before, 'project.review_queue']);
+    await setPerms('producer', [...before, 'project.review_queue', 'pending.view']);
     const prod = await pending('pat');
     assert.deepStrictEqual(keys(prod), ['awaiting_followup'],
       'no review group without the permission to answer');
@@ -344,12 +342,33 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
     await setPerms('producer', before);
   });
 
+  await t.test('the tab has its own grant, separate from what it lists', async () => {
+    const pending = (who) => as(who, '/project-reviews/pending-actions');
+    const before = await permsOf('producer');
+
+    // The workflow without the tab: they can read the queue and act on it, and
+    // the tab is closed to them.
+    await setPerms('producer', [...before, 'project.review_queue']);
+    assert.strictEqual((await as('pat', '/project-reviews')).status, 200, 'the queue itself opens');
+    assert.strictEqual((await pending('pat')).status, 403, 'the tab does not');
+
+    // The tab without the workflow: it opens, and there is nothing in it —
+    // never somebody else's queue.
+    await setPerms('producer', [...before, 'pending.view']);
+    const empty = await pending('pat');
+    assert.strictEqual(empty.status, 200);
+    assert.deepStrictEqual(empty.body.groups, [], 'an empty tab, not a borrowed one');
+    assert.strictEqual(empty.body.count, 0);
+
+    await setPerms('producer', before);
+  });
+
   await t.test('answering moves an item from one queue to the other', async () => {
     const pending = (who) => as(who, '/project-reviews/pending-actions').then((r) => r.body);
     const has = (p, id) => p.groups.some((g) => g.items.some((i) => i.id === id));
 
     const before = await permsOf('producer');
-    await setPerms('producer', [...before, 'project.review_queue']);
+    await setPerms('producer', [...before, 'project.review_queue', 'pending.view']);
 
     const made = await submit('root', { clientId, projectId, link: 'https://example.test/handoff' });
     const id = made.body.request.id;

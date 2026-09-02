@@ -247,6 +247,23 @@ const GROUPS = [
           + 'on the Creative Director\'s answers.',
       },
       {
+        /* The Pending Actions tab, as its own grant.
+         *
+         * It used to be inferred — hold either of the two other project-review
+         * permissions and the tab appeared. The studio asked for it to be
+         * separable instead, so somebody can be given the workflow without the
+         * tab, or the tab without waiting for a workflow grant to imply it.
+         *
+         * It controls VISIBILITY, not reach: what the tab lists is still shaped
+         * by the two permissions around it, so holding this alone shows an
+         * empty tab rather than somebody else's queue. */
+        key: 'pending.view',
+        label: 'View Pending Actions',
+        impliedBy: has('manageAccess'),
+        describe: 'Open the Pending Actions tab. What it lists is still whatever this role may act '
+          + 'on — the project review queue, or the answers waiting to be acted on.',
+      },
+      {
         /* Separate from review.cd on purpose, and worth saying why since the two
          * are one word apart. review.cd is standing at the ASSET review gate:
          * approving one piece of work onward or sending it back, inside the

@@ -78,6 +78,10 @@ function defaultsFor(roleKey) {
   if (roleKey === PROJECT_REVIEW_ROLE) {
     baseline.add('project.review_queue');
     baseline.add('project.review_respond');
+    /* And the tab that shows them. Granted here rather than left off so the
+       queue they are given is one they can actually open on day one; every
+       other designation is given it in Settings. */
+    baseline.add('pending.view');
   }
   return baseline;
 }

@@ -410,6 +410,21 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
 .tab-count{display:inline-block;min-width:17px;padding:1px 5px;margin-left:5px;border-radius:9px;
   background:var(--brand-accent);color:#1a0e0e;font-family:'IBM Plex Mono';font-size:10px;
   font-weight:700;line-height:15px;text-align:center;vertical-align:middle;}
+/* Setting .hidden alone was not enough: the display above is an author rule and
+   beats the browser's own [hidden] one, so the badge went on showing a nought
+   with the highlight correctly off. Said explicitly here, at the same
+   specificity, so hiding it actually hides it. */
+.tab-count[hidden]{display:none;}
+/* Something is waiting on you. Readable before the number is: a dot ahead of
+   the label and a tinted, outlined tab, so the eye lands on it while scanning
+   the row rather than having to read each count.
+
+   Both this and the count come from one number in one function, so the tab
+   cannot glow above a nought or sit quiet above a three. No animation: a
+   pulsing tab in the corner of the eye all day is a cost, not a signal. */
+#mainTabs button.has-pending{background:#ef6b6f1f;border-color:#ef6b6f66;color:var(--ink);}
+#mainTabs button.has-pending::before{content:'';display:inline-block;width:6px;height:6px;
+  margin-right:6px;border-radius:50%;background:var(--brand-accent);vertical-align:middle;}
 .pending-empty{padding:26px 20px;text-align:center;color:var(--ink-muted);font-size:13px;}
 /* The project review queue's banner. Its own accent — the CD's review colour —
    rather than the brand, so it reads as a queue rather than as the app talking
@@ -545,7 +560,6 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
   </header>
   <div class="sprockets"></div>
   <div id="bootError" style="display:none;"></div>
-  <div id="projReviewBanner"></div>
   <div class="stats" id="stats"></div>
   <div class="toolbar">
     <div class="tabs" id="mainTabs">
@@ -1055,10 +1069,11 @@ const UI_GATES = {
   settingsTabBtn:        () => canOpenSettings(),
   reportsTabBtn:         () => can('report.view','report.idle'),
   projectsTabBtn:        () => can('client.view'),
-  /* No permission of its own: this tab shows the things you may already act on,
-     and a toggle saying "you may look at what you may do" would mean nothing.
-     Either half of the project review workflow opens it. */
-  pendingTabBtn:         () => can('project.review_respond','project.review_queue'),
+  /* Its own grant, so the tab can be given or withheld independently of the
+     workflow behind it. What the tab LISTS is still whatever this role may act
+     on, so holding this alone opens an empty tab rather than anybody else's
+     queue — the server decides that, this only decides whether there is a tab. */
+  pendingTabBtn:         () => can('pending.view'),
   newClientBtn:          () => can('client.add'),
   newProjectBtn:         () => can('project.add'),
   editProjectBtn:        () => mayEditCurrentProject(),
@@ -1957,28 +1972,14 @@ function filteredAssets(){
   if(state.search){ const q=state.search.toLowerCase(); pool = pool.filter(a=>a.name.toLowerCase().includes(q)||a.code.toLowerCase().includes(q)); }
   return pool;
 }
-/* The project review queue, on the Dashboard of whoever watches it.
+/* How a submission's state reads on screen. Shared by the Pending Actions tab
+ * and anything else that shows one.
  *
- * Two lists, because two different people are looking at it.
- *
- *   WAITING     submissions nobody has answered. A holder of
- *               project.review_respond gets a feedback box and two buttons on
- *               each: Request Changes, or Approve for Client.
- *   ANSWERED    what the Creative Director decided, with the feedback. This is
- *               Production's half: they read it and decide which assets under
- *               that project it applies to, and move those through the ordinary
- *               reassignment flow.
- *
- * Nothing here moves an asset. The submission names no asset — it is a link
- * about the project — so the decision is recorded against the submission and a
- * person maps it to the work. Setting every asset under the project to CD
- * Feedbacks would overwrite whatever was Delivered or mid-flight on something
- * unrelated, which is why this is a list to read rather than a button that
- * reaches into the pipeline.
- *
- * A banner rather than a column: these are not assets and do not belong on the
- * board beside them. It says what it is in as many words, because the studio
- * has two review queues now and the other one is a set of columns below this. */
+ * The Dashboard used to carry a banner of these as well. It has been taken out:
+ * the Pending Actions tab shows the same queue in full, with the same actions,
+ * and two places listing one queue is two places to disagree about it. The data
+ * it read is still here — fetchPending() below — and the tab is what renders it
+ * now. */
 const PR_STATUS = {
   pending:             { label: 'Waiting on the Creative Director', color: 'var(--review)' },
   changes_requested:   { label: 'Changes requested',                color: '#e8402c' },
@@ -1989,100 +1990,23 @@ const PR_STATUS = {
 };
 const prStatus = (id)=> PR_STATUS[id] || { label: id, color: 'var(--ink-muted)' };
 
-async function renderProjectReviews(){
-  const el = document.getElementById('projReviewBanner');
-  if(!el) return;
-  if(state.view!=='board' || !can('project.review_queue')){ el.innerHTML=''; return; }
-
-  let all = [];
-  try{ all = (await api('/project-reviews')).requests || []; }
-  catch{ el.innerHTML=''; return; }   /* not available on this deployment */
-
-  const waiting = all.filter(r=>r.status==='pending');
-  /* Closed ones drop off here too, or this banner and the Pending Actions tab
-     would report different numbers for the same queue — and this list would
-     grow without end, which is the complaint that put a completion step on it
-     in the first place. The record itself is untouched; only the banner stops
-     listing what somebody has already dealt with. */
-  const answered = all.filter(r=>r.status!=='pending' && !r.closedAt);
-  if(!waiting.length && !answered.length){ el.innerHTML=''; return; }
-
-  const mayRespond = can('project.review_respond');
-  const who = (r)=>`${escapeHTML(r.submittedByName || r.submitterEmail || 'Somebody')} · ${fmtDate(r.createdAt)}`;
-  const head = (r)=>`<strong>${escapeHTML(r.projectName || 'A project')}</strong>
-      <span style="color:var(--ink-faint);">· ${escapeHTML(r.clientName || '')}</span>
-      <div class="pr-meta">${who(r)}</div>
-      <div style="margin-top:4px;"><a href="${escapeHTML(r.link)}" target="_blank" rel="noopener noreferrer">${escapeHTML(r.link)}</a></div>
-      ${r.description ? `<div class="pr-meta" style="margin-top:4px;color:var(--ink-muted);">${escapeHTML(r.description)}</div>` : ''}`;
-
-  el.innerHTML = `
-    ${waiting.length ? `<div class="pr-banner">
-      <h4>Project Review Requests · ${waiting.length} waiting</h4>
-      <div class="pr-sub">Whole projects submitted for your review. Not the same as the
-        asset CD Review column below — nothing here is an asset.</div>
-      ${waiting.map(r=>`<div class="pr-item">
-        <div class="pr-what">
-          ${head(r)}
-          ${mayRespond ? `
-            <div style="margin-top:8px;">
-              <textarea class="pr-feedback" data-id="${r.id}" rows="2"
-                placeholder="Creative Director feedback (required to request changes)…"></textarea>
-              <div style="display:flex;gap:8px;margin-top:6px;">
-                <button class="btn btn-ghost btn-sm pr-changes" data-id="${r.id}" style="color:#e8402c;">Request Changes</button>
-                <button class="btn btn-brand btn-sm pr-approve" data-id="${r.id}">Approve for Client</button>
-              </div>
-              <div class="ref-err pr-err" data-id="${r.id}"></div>
-            </div>` : `<div class="pr-meta" style="margin-top:6px;">
-              Waiting on the Creative Director. Answering it is a separate permission.
-            </div>`}
-        </div>
-      </div>`).join('')}
-    </div>` : ''}
-
-    ${answered.length ? `<div class="pr-banner" style="border-left-color:var(--approved);background:linear-gradient(90deg,#3ddc9714,transparent);border-color:#3ddc9744;">
-      <h4>Answered Project Reviews · ${answered.length}</h4>
-      <div class="pr-sub">What the Creative Director decided. Nothing has moved in the pipeline —
-        read the feedback and put the assets it applies to through the ordinary flow.</div>
-      ${answered.map(r=>{
-        const st = prStatus(r.status);
-        return `<div class="pr-item">
-          <div class="pr-what">
-            ${head(r)}
-            <div style="margin-top:6px;">
-              <span class="status-pill" style="background:${st.color}22;color:${st.color};"><span class="d" style="background:${st.color}"></span>${st.label}</span>
-              <span class="pr-meta" style="margin-left:6px;">${escapeHTML(r.reviewedByName || r.reviewerEmail || '')}${r.reviewedAt?` · ${fmtDate(r.reviewedAt)}`:''}</span>
-            </div>
-            ${r.feedback ? `<div class="note" style="margin-top:6px;border-left-color:${st.color};"><p>${escapeHTML(r.feedback)}</p></div>` : ''}
-          </div>
-        </div>`;
-      }).join('')}
-    </div>` : ''}
-  `;
-
-  /* The same wiring the Pending Actions tab uses. One implementation of what
-     these buttons do, so the two screens cannot drift apart. */
-  wirePendingActions(el, ()=>renderProjectReviews());
-}
-
 /* ---------- Pending Actions ----------
  *
  * What is waiting on the person reading it, and nothing else. The server shapes
- * this from what they hold rather than from their designation:
+ * this from what they hold:
  *
+ *   pending.view            whether there is a tab at all — the studio's own
+ *                           toggle, so it can be given or withheld on its own
  *   project.review_respond  ->  submissions still to be answered
  *   project.review_queue    ->  answers Production has not dealt with yet
  *
- * Somebody holding both sees both groups, which is how Super Admin sees
- * everything without that being a special case anywhere.
+ * Somebody holding both of the last two sees both groups, which is how Super
+ * Admin sees everything without that being a special case anywhere.
  *
  * `groups` is a list because this is scoped to the project review workflow
  * today and need not stay that way: another kind of pending item is another
  * group from the server, and this renders whatever it is handed. The only thing
- * it knows about an item is which action to offer, which the group carries.
- *
- * The actions are the ones already built — the same feedback box and two
- * decisions the Dashboard banner offers, and Production's "done" — rather than
- * a second way of doing the same thing. */
+ * it knows about an item is which action to offer, which the group carries. */
 let pendingCount = 0;
 
 async function fetchPending(){
@@ -2090,27 +2014,42 @@ async function fetchPending(){
   catch{ return { groups:[], count:0 }; }
 }
 
-/* The number on the tab. Cheap enough to ask for on every render, and the point
-   of the tab is that the number is current. */
-async function refreshPendingCount(){
+/* The tab's count and its highlight, from ONE number.
+ *
+ * Kept in one function on purpose: the two must never disagree — a glow above a
+ * nought, or a quiet tab above a three, is worse than either signal alone. Both
+ * are set here or neither is. */
+function applyPendingCount(count){
   const badge = document.getElementById('pendingCount');
-  if(!badge) return;
-  if(!can('project.review_respond','project.review_queue')){ badge.hidden = true; return; }
-  const { count } = await fetchPending();
+  const tab = document.getElementById('pendingTabBtn');
   pendingCount = count;
-  badge.textContent = count;
-  badge.hidden = !count;   /* a nought is not news */
+  if(badge){
+    badge.textContent = count;
+    badge.hidden = !count;          /* a nought is not news */
+  }
+  if(tab) tab.classList.toggle('has-pending', count > 0);
+}
+
+/* Ask the server what is waiting, and show it. Cheap enough to run on every
+   render, and it also rides the notification poll, so the highlight clears
+   within moments of the last item being dealt with rather than at the next
+   page load. */
+async function refreshPendingCount(){
+  if(!document.getElementById('pendingCount')) return;
+  if(!can('pending.view')){ applyPendingCount(0); return; }
+  const { count } = await fetchPending();
+  applyPendingCount(count);
 }
 
 async function renderPending(){
   const el = document.getElementById('pendingView');
   if(!el) return;
-  if(!can('project.review_respond','project.review_queue')){
+  if(!can('pending.view')){
     el.innerHTML = '<div class="pending-empty">Nothing is waiting on you.</div>';
     return;
   }
   const { groups, count } = await fetchPending();
-  pendingCount = count;
+  applyPendingCount(count);
   if(!count){
     el.innerHTML = '<div class="pending-empty">Nothing is waiting on you right now.</div>';
     return;
@@ -2164,9 +2103,8 @@ async function renderPending(){
   wirePendingActions(el, ()=>renderPending());
 }
 
-/* The two decisions and the close, wired the same way wherever they appear —
-   the Dashboard banner calls this too, so there is one implementation of what
-   the buttons do rather than one per screen. */
+/* The two decisions and the close, wired in one place so the buttons behave the
+   same wherever they are drawn. */
 function wirePendingActions(el, refresh){
   const errFor = (id)=>el.querySelector(`.pr-err[data-id="${id}"]`);
   const noteFor = (id)=>el.querySelector(`.pr-feedback[data-id="${id}"]`);
@@ -3283,7 +3221,6 @@ async function render(){
      importing a file are separate permissions, so they are separate gates. */
   const onABoard = (state.view==='board'||state.view==='list') && Boolean(state.currentProjectId);
   ['newAssetBtn','bulkImportBtn','downloadSampleBtn'].forEach(id=>applyGate(id, onABoard));
-  renderProjectReviews();
   refreshPendingCount();
   if(state.view==='pending') await renderPending();
   else if(state.view==='board') renderBoard();
@@ -6594,7 +6531,11 @@ async function toggleNotifPanel(){
 function startNotifications(){
   stopNotifications();
   loadNotifications();
-  notifState.timer = setInterval(pollNotifications, NOTIF_POLL_MS);
+  /* The Pending Actions count rides this poll rather than starting a second
+     timer of its own: it is the same question — "is something waiting on me" —
+     asked on the same cadence, and one interval is one thing to stop when the
+     session ends. */
+  notifState.timer = setInterval(()=>{ pollNotifications(); refreshPendingCount(); }, NOTIF_POLL_MS);
 }
 
 document.getElementById('notifBell').addEventListener('click', e=>{ e.stopPropagation(); toggleNotifPanel(); });

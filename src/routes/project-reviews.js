@@ -73,13 +73,15 @@ router.get('/', requirePermission('project.review_queue'), async (req, res) => {
 
 /* GET /api/project-reviews/pending-actions — what is waiting on YOU.
  *
- * One endpoint, shaped by what the caller holds rather than by their role, so
- * the tab needs no permission of its own — the two that already gate this
- * workflow decide what appears, and adding a third to say "you may look at the
- * things you may act on" would be a toggle that means nothing.
+ * Two questions, deliberately separate:
  *
+ *   pending.view            may they open this at all — the studio's own toggle,
+ *                           so the tab can be given or withheld on its own
  *   project.review_respond  ->  submissions still waiting to be answered
  *   project.review_queue    ->  answers Production has not dealt with yet
+ *
+ * The first decides whether there is a tab; the second two decide what is IN
+ * it. Holding the first alone is an empty tab, not somebody else's queue.
  *
  * Somebody holding both — Super Admin holds the whole catalogue — sees both
  * groups, which is exactly the "all pending items regardless of role" the
@@ -89,7 +91,7 @@ router.get('/', requirePermission('project.review_queue'), async (req, res) => {
  * today; another kind of pending item is another entry in it, and the tab
  * renders whatever it is given.
  */
-router.get('/pending-actions', async (req, res) => {
+router.get('/pending-actions', requirePermission('pending.view'), async (req, res) => {
   const mayRespond = holds(req.user, 'project.review_respond');
   const mayFollowUp = holds(req.user, 'project.review_queue');
   if (!mayRespond && !mayFollowUp) {
