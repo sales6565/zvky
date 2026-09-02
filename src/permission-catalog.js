@@ -290,6 +290,25 @@ const GROUPS = [
          * It controls VISIBILITY, not reach: what the tab lists is still shaped
          * by the two permissions around it, so holding this alone shows an
          * empty tab rather than somebody else's queue. */
+        /* The submitter's own record of what they sent.
+         *
+         * Reading your own submissions, and nothing else — it carries no
+         * action and shows nobody else's rows, so it is the mildest thing in
+         * this group. It exists as a toggle rather than as "obviously you can
+         * see your own" because the studio asked for every feature to be one,
+         * and because a studio that wants sending without a running list
+         * should be able to have that.
+         *
+         * Travels with project.review_send by default (see role-permissions.js):
+         * granting somebody the form and not the record of what they put
+         * through it is a papercut nobody would choose on purpose. */
+        key: 'project.review_mine',
+        label: 'See My Project Review Submissions',
+        impliedBy: has('manageAccess'),
+        describe: 'See your own Send Project to CD Review submissions in Pending Actions, with '
+          + 'what you sent and where it has got to. Read-only, and only ever your own.',
+      },
+      {
         key: 'pending.view',
         label: 'View Pending Actions',
         impliedBy: has('manageAccess'),

@@ -2063,7 +2063,13 @@ async function renderPending(){
   }
   const { groups, count } = await fetchPending();
   applyPendingCount(count);
-  if(!count){
+  /* Emptiness is about what there is to SHOW, not about the count. Those came
+     apart when the submitter's own record arrived: it is deliberately not
+     counted — nothing in it is waiting on anybody — so a submitter with a
+     record and no queue has count 0 and a page full of things to read. Keyed
+     off count, this returned early and showed them nothing. */
+  const shown = groups.filter(g=>g.items.length);
+  if(!shown.length){
     el.innerHTML = '<div class="pending-empty">Nothing is waiting on you right now.</div>';
     return;
   }
@@ -2075,8 +2081,17 @@ async function renderPending(){
       <div style="margin-top:4px;"><a href="${escapeHTML(r.link)}" target="_blank" rel="noopener noreferrer">${escapeHTML(r.link)}</a></div>
       ${r.description ? `<div class="pr-meta" style="margin-top:4px;color:var(--ink-muted);">${escapeHTML(r.description)}</div>` : ''}`;
 
-  el.innerHTML = groups.filter(g=>g.items.length).map(g=>`
-    <div class="pr-banner"${g.act==='close' ? ' style="border-left-color:var(--approved);background:linear-gradient(90deg,#3ddc9714,transparent);border-color:#3ddc9744;"' : ''}>
+  /* Three kinds of group, and the third is a record rather than a queue:
+       respond  the Creative Director answering
+       close    Production acting on an answer
+       none     what you sent — read-only, no control of any kind on it
+     Drawn quieter than the other two on purpose: nothing here is asking. */
+  const TONE = {
+    close: ' style="border-left-color:var(--approved);background:linear-gradient(90deg,#3ddc9714,transparent);border-color:#3ddc9744;"',
+    none:  ' style="border-left-color:var(--ink-faint);background:none;border-color:var(--border);"',
+  };
+  el.innerHTML = shown.map(g=>`
+    <div class="pr-banner"${TONE[g.act] || ''}>
       <h4>${escapeHTML(g.label)} · ${g.items.length}</h4>
       <div class="pr-sub">${escapeHTML(g.note)}</div>
       ${g.items.map(r=>{
@@ -2092,6 +2107,14 @@ async function renderPending(){
                   <button class="btn btn-brand btn-sm pr-submit" data-id="${r.id}">Submit Feedback</button>
                 </div>
                 <div class="ref-err pr-err" data-id="${r.id}"></div>
+              </div>` : g.act==='none' ? `
+              <!-- What you sent and where it got to. No feedback box, no
+                   buttons: a submitter has nothing to do here, and a control
+                   that does nothing is worse than no control. -->
+              <div style="margin-top:6px;">
+                <span class="status-pill" style="background:${st.color}22;color:${st.color};"><span class="d" style="background:${st.color}"></span>${st.label}</span>
+                <span class="pr-meta" style="margin-left:6px;">${
+                  r.reviewedAt ? `answered ${fmtDate(r.reviewedAt)}` : 'not answered yet'}</span>
               </div>` : `
               <div style="margin-top:6px;">
                 <span class="status-pill" style="background:${st.color}22;color:${st.color};"><span class="d" style="background:${st.color}"></span>${st.label}</span>

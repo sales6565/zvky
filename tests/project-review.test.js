@@ -453,6 +453,197 @@ test('project review end to end', { skip: cfg ? false : SKIP_REASON }, async (t)
       { method: 'POST' })).status, 403);
   });
 
+  /* Give a role some permissions, run something, and put them back whatever
+     happens. Without the finally, one failing assertion leaves the role as the
+     test left it and every test after it is running against a studio somebody
+     else configured — which is how three failures came from one. */
+  const withPerms = async (role, extra, run) => {
+    const before = await permsOf(role);
+    await setPerms(role, [...new Set([...before, ...extra])]);
+    try { return await run(before); } finally { await setPerms(role, before); }
+  };
+
+  await t.test('the submitter gets a read-only record of what they sent', async () => {
+    // What Production is actually given in a studio that uses this: send it,
+    // see the tab, and keep the record.
+    await withPerms('producer', ['project.review_send', 'pending.view', 'project.review_mine'], async () => {
+      const mine = await submit('pat', { clientId, projectId,
+        link: 'https://example.test/pat-record', description: 'The act two cut.' });
+      assert.strictEqual(mine.status, 201, JSON.stringify(mine.body));
+      const id = mine.body.request.id;
+
+      const seen = (await as('pat', '/project-reviews/pending-actions')).body;
+      const own = seen.groups.find((g) => g.key === 'my_submissions');
+      assert.ok(own, `no record group: ${JSON.stringify(seen.groups.map((g) => g.key))}`);
+
+      const row = own.items.find((i) => i.id === id);
+      assert.ok(row, 'their own submission is missing from it');
+      // Everything the studio asked the record to carry.
+      assert.strictEqual(typeof row.clientName, 'string', 'the client they chose');
+      assert.ok(row.clientName.length, 'named, not blank');
+      assert.strictEqual(row.projectName, 'Nightgarden');
+      assert.strictEqual(row.link, 'https://example.test/pat-record');
+      assert.strictEqual(row.description, 'The act two cut.');
+      assert.ok(row.createdAt, 'and when they sent it');
+      assert.strictEqual(row.status, 'pending', 'with where it has got to');
+
+      /* Read-only, said in the data rather than left to the page to remember.
+         'none' is what the renderer reads to draw no control at all. */
+      assert.strictEqual(own.act, 'none');
+      assert.strictEqual(own.countable, false);
+    });
+  });
+
+  await t.test('their record is not somebody else\'s queue, and does not light the tab',
+    async () => {
+      await withPerms('producer', ['project.review_send', 'pending.view', 'project.review_mine'], async () => {
+        // Somebody else's submission, which they must not see.
+        const theirs = await submit('root', { clientId, projectId, link: 'https://example.test/not-pats' });
+        const patSent = await submit('pat', { clientId, projectId, link: 'https://example.test/pats-own' });
+
+        const seen = (await as('pat', '/project-reviews/pending-actions')).body;
+        assert.deepStrictEqual(seen.groups.map((g) => g.key), ['my_submissions'],
+          'the record is all they hold, so it is all they get');
+        const ids = seen.groups[0].items.map((i) => i.id);
+        assert.ok(ids.includes(patSent.body.request.id));
+        assert.ok(!ids.includes(theirs.body.request.id), 'somebody else\'s submission leaked in');
+
+        /* The badge means "waiting on you". A record that never empties must not
+           drive it, or the tab lights up on somebody's first submission and stays
+           lit for good — training them to ignore the one signal it has. */
+        assert.strictEqual(seen.count, 0,
+          `a read-only record must not count: ${JSON.stringify(seen.groups.map((g) => [g.key, g.items.length]))}`);
+        assert.ok(seen.groups[0].items.length > 0, 'even though there is plenty to read');
+      });
+    });
+
+  await t.test('the record keeps the item after the Creative Director answers', async () => {
+    await withPerms('producer', ['project.review_send', 'pending.view', 'project.review_mine',
+      'project.review_queue'], async () => {
+      const made = await submit('pat', { clientId, projectId, link: 'https://example.test/pat-outcome' });
+      const id = made.body.request.id;
+      const mine = async () => (await as('pat', '/project-reviews/pending-actions')).body
+        .groups.find((g) => g.key === 'my_submissions').items.find((i) => i.id === id);
+
+      assert.strictEqual((await mine()).status, 'pending');
+
+      await as('cad', `/project-reviews/${id}/feedback`, {
+        method: 'POST', body: { feedback: 'Tighten the opening.' } });
+
+      /* Still there, which is the whole point of a record over an outbox: the
+         submitter asked to be able to see what became of what they sent. */
+      const after = await mine();
+      assert.ok(after, 'the submission vanished from its sender\'s view once answered');
+      assert.strictEqual(after.status, 'feedback_given');
+      assert.ok(after.reviewedAt, 'with when it was answered');
+
+      // And closing it off does not take it away either.
+      await as('pat', `/project-reviews/${id}/close`, { method: 'POST' });
+      assert.ok(await mine(), 'nor does Production finishing with it');
+    });
+  });
+
+  await t.test('a submitter cannot answer their own submission', async () => {
+    await withPerms('producer', ['project.review_send', 'pending.view', 'project.review_mine'], async () => {
+      const made = await submit('pat', { clientId, projectId, link: 'https://example.test/pat-cannot' });
+      const refused = await as('pat', `/project-reviews/${made.body.request.id}/feedback`, {
+        method: 'POST', body: { feedback: 'Looks great, if I say so myself' } });
+      assert.strictEqual(refused.status, 403, JSON.stringify(refused.body));
+
+      // Seeing your own record grants nothing at all beyond seeing it.
+      const seen = (await as('pat', '/project-reviews/pending-actions')).body;
+      assert.ok(!seen.groups.some((g) => g.act === 'respond' || g.act === 'close'),
+        'the record must not come with anybody else\'s actions attached');
+    });
+  });
+
+  await t.test('Submit Feedback is held by a permission, not by a role name', async () => {
+    /* The point of this test is the bug class, not the feature: this app has
+       twice shipped a gate written as `role === something`, and a gate like
+       that cannot be turned off in Settings. So the proof is behavioural —
+       take the permission away from the role that has it and the action must
+       go; give it to a role that never had it and the action must appear. */
+    const made = await submit('root', { clientId, projectId, link: 'https://example.test/not-hardcoded' });
+    const id = made.body.request.id;
+    /* Without pending.view there is no tab at all, which is a different answer
+       from "the tab is there and the action is not". Both count as "cannot
+       respond" here, and conflating them would have let a 403 masquerade as
+       proof the gate worked. */
+    const canRespond = async (who) => {
+      const res = await as(who, '/project-reviews/pending-actions');
+      return res.status === 200 && res.body.groups.some((g) => g.act === 'respond');
+    };
+
+    // As it ships: the Creative Art Director, and nobody else below Super Admin.
+    assert.strictEqual(await canRespond('cad'), true);
+
+    // Off in Settings, and the Creative Art Director loses it — a hardcoded
+    // check would sail straight past this.
+    const cadPerms = await permsOf('creative_art_director');
+    try {
+      await setPerms('creative_art_director', cadPerms.filter((p) => p !== 'project.review_respond'));
+      assert.strictEqual(await canRespond('cad'), false,
+        'the action survived the permission being switched off — it is hardcoded somewhere');
+      const blocked = await as('cad', `/project-reviews/${id}/feedback`, {
+        method: 'POST', body: { feedback: 'still here?' } });
+      assert.strictEqual(blocked.status, 403, 'and the endpoint must refuse them too, not just the page');
+    } finally {
+      await setPerms('creative_art_director', cadPerms);
+    }
+    assert.strictEqual(await canRespond('cad'), true, 'and switching it back on restores it');
+
+    /* And the other direction. An Art Director is a different designation with
+       no claim on this queue; granted the permission, they can answer. A gate
+       reading the role name could never do this. */
+    assert.strictEqual(await canRespond('dee'), false, 'not theirs to begin with');
+    await withPerms('art_director', ['project.review_respond', 'pending.view'], async () => {
+      assert.strictEqual(await canRespond('dee'), true, 'granted in Settings, and it works');
+      const answered = await as('dee', `/project-reviews/${id}/feedback`, {
+        method: 'POST', body: { feedback: 'Answered by a designation granted this in Settings.' } });
+      assert.strictEqual(answered.status, 200, JSON.stringify(answered.body));
+    });
+  });
+
+  await t.test('Super Admin keeps the action, as it keeps every permission', async () => {
+    /* Stated as a test because the studio asked whether this feature should be
+       the first to exclude Super Admin, and the answer was no. Super Admin is
+       the role that repairs everyone else's access; a queue it cannot reach is
+       a queue nobody can unblock when the Creative Director is away or the
+       permission is set wrong. If that answer ever changes, this test is what
+       has to change with it. */
+    const seen = (await as('root', '/project-reviews/pending-actions')).body;
+    assert.ok(seen.groups.some((g) => g.act === 'respond'),
+      'Super Admin must keep the answer action');
+
+    const made = await submit('root', { clientId, projectId, link: 'https://example.test/sa-answers' });
+    const res = await as('root', `/project-reviews/${made.body.request.id}/feedback`, {
+      method: 'POST', body: { feedback: 'Answered by Super Admin.' } });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+  });
+
+  await t.test('seeing your own record is its own toggle in Settings', async () => {
+    await withPerms('producer', ['project.review_send', 'pending.view'], async (before) => {
+      await submit('pat', { clientId, projectId, link: 'https://example.test/toggle' });
+
+      // Sending without the record: the tab opens and holds nothing.
+      const without = (await as('pat', '/project-reviews/pending-actions')).body;
+      assert.deepStrictEqual(without.groups, [], 'the record must not arrive unasked');
+
+      await setPerms('producer', [...new Set([...before, 'project.review_send', 'pending.view',
+        'project.review_mine'])]);
+      const withIt = (await as('pat', '/project-reviews/pending-actions')).body;
+      assert.deepStrictEqual(withIt.groups.map((g) => g.key), ['my_submissions']);
+    });
+
+    // And it is offered in Settings under a name somebody can act on.
+    const listed = (await as('root', '/permissions/roles/producer')).body.role.permissions
+      .find((p) => p.key === 'project.review_mine');
+    assert.ok(listed, 'Settings must offer it');
+    const superAdmin = (await as('root', '/permissions/roles/super_admin')).body.role.permissions
+      .find((p) => p.key === 'project.review_mine');
+    assert.ok(superAdmin && superAdmin.enabled, 'and Super Admin holds it without being toggled');
+  });
+
   await t.test('the record holds everything the studio asked it to', async () => {
     const rows = await sql(cfg, 'SELECT * FROM project_review_requests ORDER BY created_at LIMIT 1');
     const r = rows[0];

@@ -89,9 +89,15 @@ router.get('/', requirePermission('project.review_queue'), async (req, res) => {
  *                           so the tab can be given or withheld on its own
  *   project.review_respond  ->  submissions still waiting to be answered
  *   project.review_queue    ->  answers Production has not dealt with yet
+ *   project.review_mine     ->  what THIS person sent, whatever became of it
  *
- * The first decides whether there is a tab; the second two decide what is IN
- * it. Holding the first alone is an empty tab, not somebody else's queue.
+ * The first decides whether there is a tab; the rest decide what is IN it.
+ * Holding the first alone is an empty tab, not somebody else's queue.
+ *
+ * The last group is different in kind from the other two and the difference is
+ * load-bearing: it is a RECORD, not a queue. Nothing in it is waiting on the
+ * reader, nothing in it can be acted on, and — see `countable` below — nothing
+ * in it counts toward the tab's badge.
  *
  * Somebody holding both — Super Admin holds the whole catalogue — sees both
  * groups, which is exactly the "all pending items regardless of role" the
@@ -104,7 +110,8 @@ router.get('/', requirePermission('project.review_queue'), async (req, res) => {
 router.get('/pending-actions', requirePermission('pending.view'), async (req, res) => {
   const mayRespond = holds(req.user, 'project.review_respond');
   const mayFollowUp = holds(req.user, 'project.review_queue');
-  if (!mayRespond && !mayFollowUp) {
+  const maySeeOwn = holds(req.user, 'project.review_mine');
+  if (!mayRespond && !mayFollowUp && !maySeeOwn) {
     // Not an error: this is "nothing is waiting on you", which is what somebody
     // outside this workflow should be told rather than being refused.
     return res.json({ groups: [], count: 0 });
@@ -144,7 +151,36 @@ router.get('/pending-actions', requirePermission('pending.view'), async (req, re
       items,
     });
   }
-  res.json({ groups, count: groups.reduce((n, g) => n + g.items.length, 0) });
+  if (maySeeOwn) {
+    /* Everything this person has sent, at every status, oldest decision and
+       newest alike — the studio asked for a running record rather than an
+       outbox that empties. Filtered by the id and not the address, so a
+       renamed account keeps its history.
+
+       `act: 'none'` is what the page reads to draw these without any control
+       on them. Nothing here routes to an endpoint, because there is no action
+       a submitter takes on their own submission. */
+    const items = rows.filter((r) => r.submittedById && r.submittedById === req.user.id);
+    groups.push({
+      key: 'my_submissions',
+      label: 'Sent by you',
+      note: 'What you have put in front of the Creative Director, and where each one has got to. '
+        + 'Yours to follow, not to act on.',
+      act: 'none',
+      /* NOT counted in the badge, and this is the point of the flag rather
+         than an optimisation. The badge means "things waiting on you"; these
+         are waiting on somebody else, and every one of them stays here for
+         good. Counted, a submitter's tab would light up on their first
+         submission and never go dark again — which would train them to ignore
+         the one signal the tab has. */
+      countable: false,
+      items,
+    });
+  }
+  res.json({
+    groups,
+    count: groups.reduce((n, g) => n + (g.countable === false ? 0 : g.items.length), 0),
+  });
 });
 
 // POST /api/project-reviews — submit one.

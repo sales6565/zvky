@@ -82,6 +82,12 @@ function defaultsFor(roleKey) {
    * the starting position, so that the queue is not empty on the day it ships.
    *
    * Super Admin gets it from the catalogue itself, like every other permission. */
+  /* Whoever may send one may see what they sent. Derived from the baseline
+     rather than listed against a role, so a designation the studio grants
+     sending to in Settings is a decision about sending — this follows it by
+     default and can still be split apart there. */
+  if (baseline.has('project.review_send')) baseline.add('project.review_mine');
+
   if (roleKey === PROJECT_REVIEW_ROLE) {
     baseline.add('project.review_queue');
     baseline.add('project.review_respond');
