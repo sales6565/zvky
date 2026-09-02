@@ -290,6 +290,29 @@ tr.past-round{opacity:0.62;}
    the one mistake this whole screen exists to prevent. Wide enough for the
    longest form, whichever the browser picks. */
 .ref-add input[type="time"].narrow{width:130px;}
+/* --- Activity Log ---------------------------------------------------------- */
+.al-filters{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;padding:10px 0 12px;}
+.al-filters > div{display:flex;flex-direction:column;gap:3px;min-width:110px;}
+.al-filters label{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint);}
+.al-table{width:100%;border-collapse:collapse;font-size:12px;}
+.al-table th{text-align:left;font-size:10px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-faint);font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line);}
+.al-table td{padding:8px;border-bottom:1px solid var(--line-soft,rgba(255,255,255,.05));vertical-align:top;}
+.al-when{font-family:'IBM Plex Mono';font-size:11px;color:var(--ink-muted);white-space:nowrap;}
+.al-name{font-weight:600;}
+.al-role{font-size:10.5px;color:var(--ink-faint);}
+/* The module tag, in the neutral surface colour rather than a status colour:
+   these are areas of the app, not workflow states, and borrowing a status
+   colour here would make "assets" look like a stage an asset can be in. */
+.al-module{display:inline-block;font-family:'IBM Plex Mono';font-size:10px;padding:1px 6px;
+  border-radius:9px;background:var(--surface-3);color:var(--ink-muted);margin-right:6px;}
+.al-entity{font-size:11px;color:var(--ink-faint);margin-top:2px;}
+.al-changes{font-family:'IBM Plex Mono';font-size:10.5px;color:var(--ink-muted);max-width:280px;}
+.al-field{color:var(--ink-faint);}
+.al-from{color:#e8402c;}
+.al-to{color:var(--approved,#3fa66a);}
+.al-pager{display:flex;align-items:center;gap:8px;padding-top:10px;font-size:11.5px;color:var(--ink-faint);}
+.al-pager .spacer{flex:1;}
 /* --- Quick Tour -------------------------------------------------------------
    An overlay that sits on top of the app and changes nothing underneath it.
    The spotlight is four panels around the target rather than one box with a
@@ -6149,12 +6172,14 @@ async function renderSettings(){
     ${can('settings.working_hours') ? '<div id="scheduleSection"></div>' : ''}
     ${can('settings.ip_allowlist') ? '<div id="ipAllowlistSection"></div>' : ''}
     ${can('settings.permissions') ? '<div id="rolePermissionsSection"></div>' : ''}
+    ${can('settings.activity_log') ? '<div id="activityLogSection"></div>' : ''}
   `;
   el.querySelectorAll('.sii-link').forEach(b=>b.addEventListener('click', ()=>setTab(b.dataset.tab)));
   wireSettings();
   if(can('settings.branding')) renderBranding();
   if(can('settings.working_hours')) renderSchedule();
   if(can('settings.permissions')) await renderRolePermissions();
+  if(can('settings.activity_log')) renderActivityLog();
   /* Managing who may reach the app stays with whoever has been given that one
      permission — it is not implied by holding the rest of this screen. The API
      refuses it regardless; hiding it keeps the screen honest about the offer. */
@@ -6709,6 +6734,124 @@ async function renderSchedule(){
       showToast('Working hours saved.');
     }catch(e){ err.textContent = e.message; }
   };
+}
+
+
+/* ---------- Activity Log ----------
+
+   Everything anybody did, filterable, paged, and read-only. The page cannot
+   edit or clear it, because there is no endpoint that would let it — which is
+   what makes the table worth reading.
+
+   Paged from the start rather than when it becomes slow: this is the one table
+   in the app with no upper bound on its size. */
+const alState = { offset: 0, limit: 50, filters: {}, data: null, busy: false };
+
+async function renderActivityLog(){
+  const el = document.getElementById('activityLogSection');
+  if(!el) return;
+  const f = alState.filters;
+  const params = new URLSearchParams({ limit: alState.limit, offset: alState.offset });
+  for(const [k,v] of Object.entries(f)) if(v) params.set(k, v);
+
+  let data;
+  try{ data = await api('/activity?' + params.toString()); }
+  catch(err){
+    el.innerHTML = `<div class="ref-section"><div class="ref-head"><h3>Activity Log</h3></div>
+      <div class="ref-err">${escapeHTML(err.message)}</div></div>`;
+    return;
+  }
+  alState.data = data;
+
+  const from = data.total ? alState.offset + 1 : 0;
+  const to = Math.min(alState.offset + data.entries.length, data.total);
+  const opt = (value, label, selected) =>
+    `<option value="${escapeHTML(value)}"${selected===value?' selected':''}>${escapeHTML(label)}</option>`;
+
+  el.innerHTML = `
+    <div class="ref-section">
+      <div class="ref-head"><h3>Activity Log</h3><span class="ref-count">${data.total} entries</span></div>
+      <div class="ref-note">Every action anybody has taken, newest first. Times are ${escapeHTML(data.timezone)}.
+        This is a record, not a workspace — nothing here can be edited or removed, from this screen or any other.
+        Each feature also keeps its own detailed trail (an asset's history, a timesheet's approvals); this is the
+        one view that crosses all of them.</div>
+      <div class="al-filters">
+        <div><label>Person</label>
+          <select id="al_actor">${opt('', 'Everybody', f.actorId)}${
+            data.actors.map(a=>opt(a.id, a.name || a.email, f.actorId)).join('')}</select></div>
+        <div><label>Module</label>
+          <select id="al_module">${opt('', 'All', f.module)}${
+            data.modules.map(m=>opt(m, m, f.module)).join('')}</select></div>
+        <div><label>Action</label>
+          <select id="al_action">${opt('', 'All', f.action)}${
+            data.actions.map(a=>opt(a, a, f.action)).join('')}</select></div>
+        <div><label>From</label><input type="date" id="al_from" value="${escapeHTML(f.from||'')}"></div>
+        <div><label>To</label><input type="date" id="al_to" value="${escapeHTML(f.to||'')}"></div>
+        <div style="flex:1.4;"><label>Search</label>
+          <input type="text" id="al_q" placeholder="Name, entity or description" value="${escapeHTML(f.q||'')}"></div>
+        <button class="btn btn-brand btn-sm" id="al_apply">Filter</button>
+        <button class="btn btn-ghost btn-sm" id="al_clear">Clear</button>
+        <button class="btn btn-ghost btn-sm" id="al_xlsx">Excel</button>
+        <button class="btn btn-ghost btn-sm" id="al_pdf">PDF</button>
+      </div>
+      ${data.entries.length ? `
+      <table class="al-table"><thead><tr>
+        <th>When</th><th>Who</th><th>What happened</th><th>Changed</th>
+      </tr></thead><tbody>${data.entries.map(e=>`
+        <tr>
+          <td class="al-when">${escapeHTML(alStamp(e.at))}</td>
+          <td class="al-who">
+            <div class="al-name">${escapeHTML(e.actor.name)}</div>
+            <div class="al-role">${escapeHTML(e.actor.roleLabel || '—')}</div>
+          </td>
+          <td>
+            <span class="al-module">${escapeHTML(e.module)}</span>
+            ${escapeHTML(e.summary)}
+            ${e.entity && e.entity.label ? `<div class="al-entity">${escapeHTML(e.entity.label)}</div>` : ''}
+          </td>
+          <td class="al-changes">${e.changes ? Object.entries(e.changes).map(([field,c])=>`
+            <div><span class="al-field">${escapeHTML(field)}</span>
+              <span class="al-from">${escapeHTML(String(c.from ?? '—'))}</span> →
+              <span class="al-to">${escapeHTML(String(c.to ?? '—'))}</span></div>`).join('') : ''}</td>
+        </tr>`).join('')}</tbody></table>
+      <div class="al-pager">
+        <span>${from}–${to} of ${data.total}</span>
+        <div class="spacer"></div>
+        <button class="btn btn-ghost btn-sm" id="al_prev"${alState.offset ? '' : ' disabled'}>← Newer</button>
+        <button class="btn btn-ghost btn-sm" id="al_next"${to >= data.total ? ' disabled' : ''}>Older →</button>
+      </div>`
+      : '<div class="ref-note">Nothing matches those filters.</div>'}
+    </div>`;
+
+  const val = (id) => (document.getElementById(id)||{}).value || '';
+  const apply = () => {
+    alState.filters = { actorId: val('al_actor'), module: val('al_module'), action: val('al_action'),
+      from: val('al_from'), to: val('al_to'), q: val('al_q') };
+    alState.offset = 0;
+    renderActivityLog();
+  };
+  el.querySelector('#al_apply').onclick = apply;
+  el.querySelector('#al_clear').onclick = ()=>{ alState.filters = {}; alState.offset = 0; renderActivityLog(); };
+  el.querySelector('#al_q').onkeydown = (e)=>{ if(e.key==='Enter') apply(); };
+  const prev = el.querySelector('#al_prev'), next = el.querySelector('#al_next');
+  if(prev) prev.onclick = ()=>{ alState.offset = Math.max(0, alState.offset - alState.limit); renderActivityLog(); };
+  if(next) next.onclick = ()=>{ alState.offset += alState.limit; renderActivityLog(); };
+  /* The exports carry the filters that are showing, so what downloads is what
+     was on screen — an export that quietly ignored the filters would be the
+     kind of mismatch nobody notices until it matters. */
+  const dl = (kind) => downloadAuthed(`/activity/export.${kind}?${params.toString()}`);
+  el.querySelector('#al_xlsx').onclick = ()=>dl('xlsx');
+  el.querySelector('#al_pdf').onclick = ()=>dl('pdf');
+}
+
+/* The timestamp, as the studio reads it. The server stores an instant; this
+   shows it in the browser's own zone, which for this studio is IST — the same
+   assumption every other timestamp on this page already makes. */
+function alStamp(value){
+  const d = new Date(value);
+  if(isNaN(d.getTime())) return String(value);
+  const p = (n)=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
 function renderBranding(){

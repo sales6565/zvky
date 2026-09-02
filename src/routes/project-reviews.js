@@ -432,6 +432,14 @@ router.post('/:id/feedback', requirePermission('project.review_respond'), async 
 
   console.log(`${req.user.email} gave feedback on project review ${req.params.id} — ${note}`);
   const { rows: saved } = await db.query(`${SELECT} WHERE r.id = $1`, [req.params.id]);
+  req.activity({
+    module: 'reviews', action: 'review.feedback', entityType: 'project_review',
+    entityId: req.params.id,
+    entityLabel: (saved[0] || {}).project_name || (saved[0] || {}).projectName || 'Project review',
+    summary: `Gave feedback on the review of `
+      + `${(saved[0] || {}).project_name || (saved[0] || {}).projectName || 'a project'} — ${note.slice(0, 160)}`,
+    changes: { status: { from: rows[0].status, to: FEEDBACK_GIVEN } },
+  });
   res.json({ request: saved[0] });
 });
 

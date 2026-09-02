@@ -141,6 +141,12 @@ router.post('/', requirePermission('client.add'), async (req, res) => {
   if (!result.ok) return res.status(result.status).json(problem(result.errors));
   console.log(`${req.user.email} added client "${(req.body || {}).name}" with ${result.projects.length} project(s).`);
   const { rows } = await db.query('SELECT * FROM clients WHERE id = $1', [result.clientId]);
+  req.activity({
+    module: 'clients', action: 'client.create', entityType: 'client',
+    entityId: rows[0].id, entityLabel: rows[0].name,
+    summary: `Added the client "${rows[0].name}"`
+      + (result.projects.length ? ` with ${result.projects.length} project(s)` : ''),
+  });
   res.status(201).json({
     client: { id: rows[0].id, name: rows[0].name, isSystem: Boolean(rows[0].is_system) },
     projects: result.projects,

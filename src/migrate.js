@@ -1608,6 +1608,48 @@ async function ensureWorkSchedule(db, log) {
   log('Schema: the working day (09:30-19:00, lunch 13:00-14:00) is now a setting.');
 }
 
+/* activity_log — what everybody did, in one table.
+ *
+ * Additive in the strictest sense: the four audit trails that already exist are
+ * not read, not written and not touched by this step. They remain the authority
+ * for their own features. This answers the question none of them can — "what
+ * did this person do, across everything" — and it starts empty, because there
+ * is no honest way to back-fill who did what before anybody was recording it.
+ */
+async function ensureActivityLog(db, log) {
+  const { rows } = await db.query(
+    `SELECT TABLE_NAME AS n FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'activity_log'`
+  );
+  if (rows.length) return;
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS activity_log (
+      id           CHAR(36)     NOT NULL PRIMARY KEY,
+      seq          BIGINT       NOT NULL AUTO_INCREMENT UNIQUE,
+      actor_id     CHAR(36)     NULL,
+      actor_name   VARCHAR(255) NULL,
+      actor_email  VARCHAR(191) NULL,
+      actor_role   VARCHAR(64)  NULL,
+      module       VARCHAR(32)  NOT NULL,
+      action       VARCHAR(64)  NOT NULL,
+      entity_type  VARCHAR(32)  NULL,
+      entity_id    CHAR(36)     NULL,
+      entity_label VARCHAR(255) NULL,
+      summary      VARCHAR(500) NOT NULL,
+      changes      TEXT         NULL,
+      method       VARCHAR(8)   NULL,
+      path         VARCHAR(255) NULL,
+      created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_activity_seq (seq),
+      KEY idx_activity_actor (actor_id, seq),
+      KEY idx_activity_module (module, seq),
+      KEY idx_activity_when (created_at)
+    )`));
+  /* No foreign key to users on purpose. The actor is copied in by name and
+     email precisely so the record outlives the account, and a cascade or a
+     SET NULL would be the one thing that could quietly rewrite history. */
+  log('Schema: activity_log created — every action is now on the record.');
+}
+
 /* users.tour_seen_at — when somebody finished or skipped the Quick Tour.
  *
  * Nullable with no default, so every account that already exists reads as
@@ -1850,6 +1892,7 @@ const STEPS = [
   ['asset category', ensureAssetCategory],
   ['profile photos', ensureProfilePhotos],
   ['quick tour', ensureTourSeen],
+  ['activity log', ensureActivityLog],
   ['working hours', ensureWorkSchedule],
   // Its mirror, once the table exists and holds its one row.
   ['working hours mirror', (db) => workSchedule.load(db)],

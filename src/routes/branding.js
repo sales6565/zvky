@@ -6,6 +6,7 @@ const db = require('../db');
 const { authenticate, requirePermission } = require('../middleware/auth');
 const branding = require('../branding');
 const workSchedule = require('../work-schedule');
+const activity = require('../activity');
 
 /* The logo arrives in memory, not on disk. It is one small image on its way
  * into a table, so writing it to a temp file first would only create something
@@ -82,10 +83,25 @@ router.get('/schedule', async (req, res) => {
 
 router.put('/schedule', requirePermission('settings.working_hours'), async (req, res) => {
   const { hoursPerDay, workingDays, dayStart, dayEnd, lunchStart, lunchEnd } = req.body || {};
+  const before = workSchedule.current();
   const result = await workSchedule.save(db,
     { hoursPerDay, workingDays, dayStart, dayEnd, lunchStart, lunchEnd });
   if (!result.ok) return res.status(result.status).json({ errors: result.errors, error: result.errors[0].message });
   const s = result.schedule;
+  req.activity({
+    module: 'settings', action: 'settings.working_hours', entityType: 'setting',
+    entityLabel: 'Working Hours',
+    summary: `Set the working day to ${s.dayStartLabel}–${s.dayEndLabel} ${s.timezone}, `
+      + `${s.hoursPerDay}h, ${s.workingDayNames.join('/')}`,
+    changes: activity.diff(
+      { day: `${before.dayStartLabel}–${before.dayEndLabel}`,
+        lunch: before.hasLunch ? `${before.lunchStartLabel}–${before.lunchEndLabel}` : 'none',
+        hoursPerDay: before.hoursPerDay, workingDays: before.workingDayNames.join(', ') },
+      { day: `${s.dayStartLabel}–${s.dayEndLabel}`,
+        lunch: s.hasLunch ? `${s.lunchStartLabel}–${s.lunchEndLabel}` : 'none',
+        hoursPerDay: s.hoursPerDay, workingDays: s.workingDayNames.join(', ') }
+    ),
+  });
   /* On the record with the times in it. This setting decides what everybody's
      Time Sheet will accept, so "who changed the studio's hours, and to what"
      is a question somebody will eventually ask. */

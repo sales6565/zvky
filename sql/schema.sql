@@ -186,6 +186,62 @@ CREATE TABLE IF NOT EXISTS role_permission_audit (
   KEY idx_role_perm_audit (role_key, seq)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Everything anybody did, in one place.
+--
+-- This is not a replacement for the four audit trails that already exist
+-- (asset_events, role_permission_audit, ip_allowlist_audit, timesheet_events).
+-- Those stay exactly as they are, and they stay the authority for their own
+-- feature: an asset's history is read off asset_events, and it always will be.
+-- They answer "what happened to THIS THING". This answers the different
+-- question nobody could ask before — "what did this PERSON do", across
+-- everything — and the two need different shapes, which is why merging them
+-- would have made both worse.
+--
+-- The actor is denormalised on purpose. name, email and role are copied in at
+-- the time of the action, so the entry still reads correctly after the account
+-- is deleted and after somebody's designation changes. A log that says
+-- "Ankita Das, Team Lead" must go on saying that even once Ankita is a Senior
+-- Team Lead, or it is not a record of what happened.
+CREATE TABLE IF NOT EXISTS activity_log (
+  id           CHAR(36)     NOT NULL PRIMARY KEY,
+  -- The order things happened in. created_at is accurate to the second and a
+  -- bulk action lands many rows inside one, so this is what the page sorts on.
+  -- Same reasoning as asset_events.seq, which had the same problem first.
+  seq          BIGINT       NOT NULL AUTO_INCREMENT UNIQUE,
+  actor_id     CHAR(36)     NULL,
+  actor_name   VARCHAR(255) NULL,
+  actor_email  VARCHAR(191) NULL,
+  -- The designation held when this happened, not the one held now.
+  actor_role   VARCHAR(64)  NULL,
+  -- Which part of the app: assets, projects, users, permissions, timesheet,
+  -- settings, auth. Used by the module filter, and the prefix of `action`.
+  module       VARCHAR(32)  NOT NULL,
+  -- What was done, as a stable key: asset.create, permission.grant, and so on.
+  action       VARCHAR(64)  NOT NULL,
+  -- What it was done to. entity_label is the human name at the time ("FX-001",
+  -- "Project Alpha"), kept for the same reason the actor's name is.
+  entity_type  VARCHAR(32)  NULL,
+  entity_id    CHAR(36)     NULL,
+  entity_label VARCHAR(255) NULL,
+  -- One line a person can read without knowing the schema.
+  summary      VARCHAR(500) NOT NULL,
+  -- What changed, as {field: {from, to}}. JSON rather than two columns because
+  -- one action can change several fields at once, and a row per field would
+  -- turn one edit into five entries in a timeline read by humans.
+  changes      TEXT         NULL,
+  -- The request behind it, which is what makes an entry traceable back to code.
+  method       VARCHAR(8)   NULL,
+  path         VARCHAR(255) NULL,
+  created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  -- The three ways the page reads this table: newest first, one person's
+  -- actions, and one module's. Indexed because this is the table that grows
+  -- without limit and the only one whose queries will get slower every month.
+  KEY idx_activity_seq (seq),
+  KEY idx_activity_actor (actor_id, seq),
+  KEY idx_activity_module (module, seq),
+  KEY idx_activity_when (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- Who the work is for. A project belongs to exactly one client.
 --
 -- One row is a system client, "Unassigned": it exists so that projects created

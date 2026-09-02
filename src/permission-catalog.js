@@ -501,6 +501,23 @@ const GROUPS = [
       },
       { key: 'settings.audit_logs',   label: 'View Audit Logs',      impliedBy: has('manageSettings'), pending: PENDING },
       {
+        key: 'settings.activity_log',
+        label: 'View Activity Log',
+        /* Every action every person has taken, in one page. Its own permission
+           rather than part of general Settings access, because reading what
+           everybody in the studio has been doing is a different kind of
+           authority from changing a priority list — and one a Super Admin
+           should be able to grant, or withhold, on its own.
+
+           Defaults to the seven designations that already hold manageSettings,
+           which is the same set the brief named as top-of-hierarchy. Off for
+           the other fifty-three until somebody switches it on. */
+        impliedBy: has('manageSettings'),
+        describe: 'The consolidated record of every action taken in the application, by anybody — '
+          + 'who did what, when, and what changed. Read-only, and it cannot be edited or cleared '
+          + 'from inside the app.',
+      },
+      {
         key: 'settings.permissions',
         label: 'Manage Role Permissions',
         // This screen itself. Held by the Super Admin role and not switchable

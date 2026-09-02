@@ -87,6 +87,11 @@ router.post('/', requirePermission('project.add'), async (req, res) => {
     }
     await client.query('COMMIT');
     const { rows } = await db.query('SELECT * FROM projects WHERE id = $1', [id]);
+    req.activity({
+      module: 'projects', action: 'project.create', entityType: 'project',
+      entityId: rows[0].id, entityLabel: rows[0].name,
+      summary: `Created the project "${rows[0].name}"`,
+    });
     res.status(201).json({ project: await withMembers(rows[0]) });
   } catch (err) {
     await client.query('ROLLBACK');

@@ -110,6 +110,29 @@ router.put('/roles/:key', async (req, res) => {
   // and letting the screen show something that did not happen.
   const refused = rolePermissions.lockedFor(req.params.key).filter((k) => !wanted.includes(k));
 
+  /* The Activity Log entry, in the shape the brief asked for: which permission,
+     for which role, from what to what. role_permission_audit still records the
+     same change in its own shape and is untouched — this is the copy that turns
+     up when somebody filters the log by the person who made it. */
+  if (result.enabled.length || result.disabled.length) {
+    const changes = {};
+    for (const key of result.enabled) changes[key] = { from: 'off', to: 'on' };
+    for (const key of result.disabled) changes[key] = { from: 'on', to: 'off' };
+    req.activity({
+      module: 'permissions',
+      action: 'permission.change',
+      entityType: 'role',
+      entityId: null,
+      entityLabel: def.label,
+      summary: `Changed permissions for ${def.label}: `
+        + `${result.enabled.length} enabled, ${result.disabled.length} disabled`,
+      changes,
+    });
+  } else {
+    // Saving the screen without changing anything is not an action.
+    req.activitySkip();
+  }
+
   res.json({
     ok: true,
     role: await describeRole(req.params.key),
@@ -134,7 +157,16 @@ router.post('/roles/:key/reset', async (req, res) => {
     return res.status(409).json({ error: `Confirm to reset ${def.label}.`, requiresConfirmation: true });
   }
   const defaults = rolePermissions.defaultsFor(req.params.key);
+  const had = await rolePermissions.effectiveFor(db, req.params.key);
   await rolePermissions.setForRole(db, req.params.key, [...defaults], req.user);
+  req.activity({
+    module: 'permissions',
+    action: 'permission.reset',
+    entityType: 'role',
+    entityLabel: def.label,
+    summary: `Reset ${def.label} to its default permissions`,
+    changes: { permissions: { from: `${had.size} held`, to: `${defaults.size} default` } },
+  });
   res.json({ ok: true, role: await describeRole(req.params.key), summary: 'Reset to this role\'s defaults.' });
 });
 

@@ -62,6 +62,7 @@ const REQUIRED = [
   { table: 'users',            column: 'avatar',        step: 'profile photos' },
   { table: 'users',            column: 'avatar_mime',   step: 'profile photos' },
   { table: 'users',            column: 'tour_seen_at',  step: 'quick tour' },
+  { table: 'activity_log',     column: null,            step: 'activity log' },
   { table: 'work_schedule',    column: null,            step: 'working hours' },
   { table: 'work_schedule',    column: 'day_start_min', step: 'working hours' },
   { table: 'notifications',    column: null,            step: 'notifications' },

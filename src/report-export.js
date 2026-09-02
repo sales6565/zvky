@@ -220,11 +220,29 @@ function exclusionRows(report) {
 
 const stamp = (at = new Date()) => at.toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
 
-// A filename someone can find again in their downloads folder.
+/* A filename someone can find again in their downloads folder.
+ *
+ * viewId is one of the Efficiency report's views ("byUser"), and the file is
+ * then named for it: zvky-forge-efficiency-by-user-2026-09-02.xlsx.
+ *
+ * Anything else is a report of its own and is named for itself. That case was
+ * missing, and because viewById() falls back to the first efficiency view for
+ * an id it does not recognise, every such export downloaded as
+ * "efficiency-by-user" — the Time Sheet's two exports have been doing exactly
+ * that since they shipped. A wrong name is a quiet fault: the file opens, the
+ * contents are right, and it is only the third one in a downloads folder that
+ * tells somebody the name means nothing.
+ */
 function fileName(appName, viewId, ext, at = new Date()) {
   const slug = (s) => String(s || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-  const parts = [slug(appName) || 'report', 'efficiency'];
-  if (viewId) parts.push(slug(viewById(viewId).label));
+  const known = viewId ? VIEWS.some((v) => v.id === viewId) : false;
+  const parts = [slug(appName) || 'report'];
+  if (!viewId || known) {
+    parts.push('efficiency');
+    if (known) parts.push(slug(viewById(viewId).label));
+  } else {
+    parts.push(slug(viewId));
+  }
   parts.push(at.toISOString().slice(0, 10));
   return `${parts.join('-')}.${ext}`;
 }

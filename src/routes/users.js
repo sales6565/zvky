@@ -9,6 +9,7 @@ const { v4: uuid } = require('uuid');
 const db = require('../db');
 const { authenticate, requireCapability, requirePermission, can } = require('../middleware/auth');
 const { roleKeys, activeRoles, isRole, roleDef, capabilitiesFor } = require('../roles');
+const activity = require('../activity');
 const passwordPolicy = require('../password-policy');
 const fs = require('node:fs');
 const importFile = require('../import-file');
@@ -271,6 +272,11 @@ router.post('/', requirePermission('user.add'), async (req, res) => {
     'SELECT id, name, email, role, manager_id, team_lead_id FROM users WHERE id = $1',
     [id]
   );
+  req.activity({
+    module: 'users', action: 'user.create', entityType: 'user',
+    entityId: rows[0].id, entityLabel: rows[0].name,
+    summary: `Added ${rows[0].name} <${rows[0].email}> as ${activity.labelForRole(role)}`,
+  });
   res.status(201).json({
     user: { ...rows[0], capabilities: capabilitiesFor(role) },
     temporaryPassword: password ? undefined : DEFAULT_PASSWORD,
@@ -437,6 +443,29 @@ router.patch('/:id', requirePermission('user.edit'), async (req, res) => {
   }
 
   const { rows: updated } = await db.query(`SELECT ${USER_COLUMNS} FROM users u WHERE u.id = $1`, [req.params.id]);
+
+  /* Before and after on the fields an administrator actually changes here.
+     Only what differs is kept, so moving one person's reporting line reads as
+     one change rather than as five fields that mostly stayed the same. */
+  const after = updated[0] || {};
+  const changes = activity.diff(
+    { role: target.role, reportsToId: target.reports_to_id, teamLeadId: target.team_lead_id,
+      managerId: target.manager_id, name: target.name, email: target.email },
+    { role: after.role, reportsToId: after.reports_to_id, teamLeadId: after.team_lead_id,
+      managerId: after.manager_id, name: after.name, email: after.email }
+  );
+  if (changes) {
+    req.activity({
+      module: 'users', action: 'user.update', entityType: 'user',
+      entityId: target.id, entityLabel: after.name || target.name,
+      summary: `Updated ${after.name || target.name}`
+        + (changes.role ? ` — designation ${activity.labelForRole(changes.role.from)} → ${activity.labelForRole(changes.role.to)}` : ''),
+      changes,
+    });
+  } else {
+    req.activitySkip();
+  }
+
   res.json({ user: await describeUser(updated[0]) });
 });
 
@@ -457,6 +486,12 @@ router.delete('/:id', requirePermission('user.delete'), async (req, res) => {
   if (!mayAdministerUser(req.user, target)) {
     return res.status(403).json({ error: 'You do not have permission to do that' });
   }
+  req.activity({
+    module: 'users', action: 'user.delete', entityType: 'user',
+    entityId: target.id, entityLabel: target.name,
+    summary: `Removed the account for ${target.name} <${target.email}>`,
+    changes: { account: { from: `${target.name} (${activity.labelForRole(target.role)})`, to: null } },
+  });
   await db.query('DELETE FROM users WHERE id = $1', [req.params.id]);
   res.json({ ok: true });
 });

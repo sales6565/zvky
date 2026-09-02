@@ -19,6 +19,8 @@ const ipAllowlistRoutes = require('./routes/ip-allowlist');
 const permissionRoutes = require('./routes/permissions');
 const reportRoutes = require('./routes/reports');
 const brandingRoutes = require('./routes/branding');
+const activityRoutes = require('./routes/activity');
+const { activityLogger } = require('./middleware/activity');
 const idleRoutes = require('./routes/idle');
 const notificationRoutes = require('./routes/notifications');
 const branding = require('./branding');
@@ -72,6 +74,12 @@ const passwordChangeLimiter = rateLimit({
 });
 app.use('/api/auth/password', passwordChangeLimiter);
 
+/* Before every route, so the handle exists by the time one runs, and so that
+   coverage is a property of this line rather than of sixty-six others. It
+   records on response `finish`, which means it sees the status the route
+   actually returned and never delays it. */
+app.use('/api', activityLogger);
+
 app.use('/api/auth', authRoutes);
 app.use('/api/clients', clientRoutes);
 app.use('/api/projects', projectRoutes);
@@ -87,6 +95,7 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/idle', idleRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/branding', brandingRoutes);
+app.use('/api/activity', activityRoutes);
 
 // Health check. Deliberately reports the database too: a deployment whose
 // process is up but whose credentials are wrong looks identical from outside

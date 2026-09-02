@@ -824,6 +824,35 @@ async function applyTransition(req, res, asset, verdict, { note, versionId, conn
       values
     );
   }
+  /* The Activity Log's copy of the same transition.
+   *
+   * Here rather than in each route because every status change in the
+   * application goes through this function — that is what makes the log's
+   * coverage of the workflow complete rather than a list of the transitions
+   * somebody remembered. asset_events is written above and is untouched; it
+   * stays the authority for an asset's own history panel.
+   *
+   * A bulk action calls this once per asset inside one request, and the
+   * middleware writes one entry per request, so the transitions are counted
+   * and the last one describes the batch. One line saying "delivered 40
+   * assets" is what a person reading a timeline wants; forty identical lines
+   * is what would bury everything else that happened that day. */
+  if (typeof req.activity === 'function') {
+    req._assetMoves = (req._assetMoves || 0) + 1;
+    const many = req._assetMoves > 1;
+    req.activity({
+      module: 'assets',
+      action: `asset.${verdict.action}`,
+      entityType: 'asset',
+      entityId: many ? null : asset.id,
+      entityLabel: many ? `${req._assetMoves} assets` : `${asset.code || ''} ${asset.name || ''}`.trim(),
+      summary: many
+        ? `${verdict.action.replace(/_/g, ' ')} — ${req._assetMoves} assets`
+        : `${asset.code || 'Asset'}: ${asset.status} → ${verdict.to}`,
+      changes: many ? null : { status: { from: asset.status, to: verdict.to } },
+    });
+  }
+
   const { rows: updated } = await run.query(`${ASSET_SELECT} WHERE a.id = $1`, [asset.id]);
   const [withDetails] = await attachTasksAndNotes(updated, req.user);
   return withDetails;

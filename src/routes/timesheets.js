@@ -308,8 +308,14 @@ router.post('/entries', requirePermission('timesheet.own'), async (req, res) => 
   );
 
   const { rows } = await db.query(`${ENTRY_SELECT} WHERE e.id = $1`, [id]);
-  await record(req.user.id, line.date, 'entry_added', req.user,
-    `${sheets.clockLabel(line.startMin)}–${sheets.clockLabel(line.endMin)} (${line.hours}h) — ${describeLine(rows[0])}`);
+  const said = `${sheets.clockLabel(line.startMin)}–${sheets.clockLabel(line.endMin)} `
+    + `(${line.hours}h) — ${describeLine(rows[0])}`;
+  await record(req.user.id, line.date, 'entry_added', req.user, said);
+  req.activity({
+    module: 'timesheet', action: 'timesheet.entry', entityType: 'day',
+    entityId: id, entityLabel: line.date,
+    summary: `Logged ${said} on ${line.date}`,
+  });
   res.status(201).json({
     entry: { ...rows[0], date: sheets.toISO(rows[0].date), hours: Number(rows[0].hours) },
     // Said out loud rather than shown as a smaller number with no explanation.
@@ -443,6 +449,12 @@ router.post('/submit', requirePermission('timesheet.own'), async (req, res) => {
     `${total.hours}h across ${total.lines} line(s)${total.overLong ? ' — over the eight-hour day' : ''}`);
   console.log(`${req.user.email} submitted their timesheet for ${date} (${total.hours}h).`);
 
+  req.activity({
+    module: 'timesheet', action: 'timesheet.submit', entityType: 'day', entityLabel: date,
+    summary: `Submitted their timesheet for ${date} — ${total.hours}h across ${total.lines} line(s)`,
+    changes: { status: { from: 'draft', to: 'submitted' } },
+  });
+
   const saved = await dayRow(req.user.id, date);
   res.json({
     day: { date, status: saved.status, submittedAt: saved.submitted_at, locked: true },
@@ -537,6 +549,19 @@ router.post('/:userId/:date/decision', requirePermission('timesheet.approve'), a
   );
   await record(userId, date, next, req.user, decision === 'reject' ? note : 'approved');
   console.log(`${req.user.email} ${next} the timesheet of ${userId} for ${date}.`);
+
+  /* Whose day it was, by name. Read here rather than carried down from the
+     authorisation check above, which only needed the id — an entry saying
+     "approved the timesheet of 8f3c-..." is not a record anybody can read. */
+  const { rows: whoRows } = await db.query('SELECT `name` FROM users WHERE id = $1', [userId]);
+  const whose = (whoRows[0] || {}).name || userId;
+  req.activity({
+    module: 'timesheet', action: `timesheet.${next}`, entityType: 'day',
+    entityId: userId, entityLabel: `${date} — ${whose}`,
+    summary: `${next === 'approved' ? 'Approved' : 'Sent back'} the timesheet of ${whose} for ${date}`
+      + (decision === 'reject' && note ? ` — ${note.slice(0, 120)}` : ''),
+    changes: { status: { from: 'submitted', to: next } },
+  });
 
   const saved = await dayRow(userId, date);
   res.json({

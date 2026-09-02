@@ -63,6 +63,23 @@ router.post('/login', async (req, res) => {
     // session, so a permission switched on for the role was invisible until the
     // person happened to refresh and pick it up from /auth/me.
     user.permissions = [...await rolePermissions.effectiveFor(db, user.role).catch(() => new Set())];
+
+    /* Sign-in is the one action whose actor the middleware cannot work out for
+       itself: there is no req.user on the way in, because authenticating is
+       what this request does. So the route hands over the account it just
+       became. Point 1 of the brief asks for login events, and an audit trail
+       that cannot say who signed in and when is missing the entry most often
+       asked for after something goes wrong. */
+    req.activity({
+      actor: user,
+      module: 'auth',
+      action: 'auth.login',
+      entityType: 'user',
+      entityId: user.id,
+      entityLabel: user.name,
+      summary: `${user.name} signed in`,
+    });
+
     res.json({ token, user });
   } catch (err) {
     console.error(err);
