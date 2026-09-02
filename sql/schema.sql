@@ -135,6 +135,14 @@ CREATE TABLE IF NOT EXISTS users (
   -- Any token issued before this moment is refused, which signs out every
   -- other device when someone changes their password.
   password_changed_at BIGINT UNSIGNED NULL,
+  -- When this person finished or skipped the Quick Tour. NULL means they have
+  -- never been shown it, which is what makes it launch itself once.
+  --
+  -- On the account rather than in the browser deliberately: it is a fact about
+  -- a person, not about a machine. In localStorage it would replay for the same
+  -- person on a second device and vanish when a browser is cleared, which is
+  -- exactly the behaviour a "don't show this again" flag exists to prevent.
+  tour_seen_at  DATETIME     NULL,
   created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_users_email (email),
   KEY idx_users_manager (manager_id),

@@ -22,6 +22,9 @@ const USER_COLUMNS = [
   'manager_id', 'team_lead_id', 'reports_to_id',
   'password_changed_at', 'created_at',
   'avatar_updated_at AS `photoUpdatedAt`',
+  // NULL until somebody finishes or skips the Quick Tour, which is what
+  // decides whether it launches itself on sign-in.
+  'tour_seen_at AS `tourSeenAt`',
 ];
 
 // The same list plus the hash, for the two places that verify a password.

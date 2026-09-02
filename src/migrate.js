@@ -1608,6 +1608,22 @@ async function ensureWorkSchedule(db, log) {
   log('Schema: the working day (09:30-19:00, lunch 13:00-14:00) is now a setting.');
 }
 
+/* users.tour_seen_at — when somebody finished or skipped the Quick Tour.
+ *
+ * Nullable with no default, so every account that already exists reads as
+ * "never seen it" and gets the tour once on their next sign-in, which is the
+ * behaviour a studio upgrading into this feature wants. */
+async function ensureTourSeen(db, log) {
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users'
+        AND COLUMN_NAME = 'tour_seen_at'`
+  );
+  if (rows.length) return;
+  await db.query('ALTER TABLE users ADD COLUMN tour_seen_at DATETIME NULL');
+  log('Schema: added users.tour_seen_at — everyone gets the Quick Tour once.');
+}
+
 async function ensureProfilePhotos(db, log) {
   const { rows } = await db.query(
     `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
@@ -1833,6 +1849,7 @@ const STEPS = [
   ['IP allowlist', ensureIpAllowlist],
   ['asset category', ensureAssetCategory],
   ['profile photos', ensureProfilePhotos],
+  ['quick tour', ensureTourSeen],
   ['working hours', ensureWorkSchedule],
   // Its mirror, once the table exists and holds its one row.
   ['working hours mirror', (db) => workSchedule.load(db)],

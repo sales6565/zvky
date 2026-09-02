@@ -74,6 +74,28 @@ router.get('/me', authenticate, (req, res) => {
   res.json({ user: req.user });
 });
 
+/* POST /api/auth/tour-seen — "I have been shown the Quick Tour."
+ *
+ * Under /api/auth for the same reason the password endpoint is: it acts only on
+ * the caller's own account, so there is no id to authorise and no question of
+ * who may do it to whom. Every signed-in account may call it, and it is the one
+ * endpoint in the application with no permission check at all — the tour is an
+ * orientation aid, and a help screen somebody can be denied is not one.
+ *
+ * Idempotent, and it keeps the FIRST time rather than the latest: this answers
+ * "has this person been shown the tour", not "when did they last watch it", so
+ * relaunching it by hand from the header does not move the date.
+ */
+router.post('/tour-seen', authenticate, async (req, res) => {
+  await db.query(
+    'UPDATE users SET tour_seen_at = COALESCE(tour_seen_at, NOW()) WHERE id = $1',
+    [req.user.id]
+  );
+  const { rows } = await db.query(
+    'SELECT tour_seen_at AS `tourSeenAt` FROM users WHERE id = $1', [req.user.id]);
+  res.json({ tourSeenAt: rows[0] ? rows[0].tourSeenAt : null });
+});
+
 // The password rules, so the browser shows the same checklist the API enforces.
 router.get('/password-policy', (req, res) => {
   res.json(passwordPolicy.describe());

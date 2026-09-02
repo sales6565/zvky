@@ -290,6 +290,37 @@ tr.past-round{opacity:0.62;}
    the one mistake this whole screen exists to prevent. Wide enough for the
    longest form, whichever the browser picks. */
 .ref-add input[type="time"].narrow{width:130px;}
+/* --- Quick Tour -------------------------------------------------------------
+   An overlay that sits on top of the app and changes nothing underneath it.
+   The spotlight is four panels around the target rather than one box with a
+   hole in it: a hole needs either an SVG mask or box-shadow tricks that stop
+   working the moment the target is near an edge, and four rectangles are
+   exactly as dark and never wrong. */
+.tour-veil{position:fixed;background:rgba(8,9,12,.72);z-index:9000;
+  transition:all .18s ease;}
+.tour-ring{position:fixed;z-index:9001;border-radius:8px;pointer-events:none;
+  box-shadow:0 0 0 2px var(--brand), 0 0 0 6px rgba(127,20,22,.28);
+  transition:all .18s ease;}
+.tour-pop{position:fixed;z-index:9002;width:330px;max-width:calc(100vw - 24px);
+  background:var(--surface-2);border:1px solid var(--line);border-radius:12px;
+  padding:15px 16px 13px;box-shadow:0 18px 48px rgba(0,0,0,.55);
+  transition:top .18s ease,left .18s ease;}
+.tour-pop h4{margin:0 0 6px;font-size:14px;color:var(--ink);}
+.tour-pop p{margin:0 0 12px;font-size:12.5px;line-height:1.55;color:var(--ink-muted);}
+.tour-foot{display:flex;align-items:center;gap:8px;}
+/* nowrap, because "3 of 12" breaking across two lines in a 330px card is what
+   it does otherwise, and it drags the buttons out of line with it. */
+.tour-count{font-family:'IBM Plex Mono';font-size:11px;color:var(--ink-faint);white-space:nowrap;}
+.tour-foot .spacer{flex:1;}
+/* .u-link is font-size:inherit, which here means the card's 12.5px body — next
+   to two btn-sm buttons that sets Skip noticeably larger than the things it
+   sits between. Sized to match them instead. */
+.tour-foot .u-link{font-size:11.5px;font-weight:500;color:var(--ink-muted);}
+/* Centred card for the opening and closing steps, which point at nothing. */
+.tour-pop.centre{top:50%;left:50%;transform:translate(-50%,-50%);width:400px;}
+/* The header button. Deliberately not in UI_GATES — see the comment there. */
+#tourBtn{font-size:14px;line-height:1;}
+@media (max-width:720px){ .tour-pop{width:calc(100vw - 24px);} }
 .ref-err{color:var(--brand-accent);font-size:11.5px;margin-top:8px;min-height:14px;}
 /* The IP allowlist section. Mostly borrows the reference-list styling; the
    extra pieces are the banners, which have to be hard to miss — this is the
@@ -619,6 +650,11 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
           <div class="notif-list" id="notifList"></div>
         </div>
       </div>
+      <!-- No permission gate, deliberately, and so no entry in UI_GATES: the
+           tour is an orientation aid, and a help button somebody can be denied
+           is not one. What it SHOWS varies by permission; whether it is here
+           does not. -->
+      <button class="btn btn-ghost btn-sm" id="tourBtn" title="Quick Tour — a walk through the tabs you can see" aria-label="Quick Tour">?</button>
       <button class="btn btn-ghost btn-sm" id="profileBtn">Profile</button>
       <button class="btn btn-ghost btn-sm" id="logoutBtn">Log out</button>
     </div>
@@ -1190,6 +1226,147 @@ const UI_GATES = {
   bulkImportBtn:         () => can('asset.bulk_upload'),
   downloadSampleBtn:     () => can('asset.bulk_upload'),
 };
+
+/* --- the Quick Tour ---------------------------------------------------------
+
+   A guided walk through the tabs this account can actually see.
+
+   The one design decision that matters: a step does not carry a permission of
+   its own. It carries a `gate` — the key of an entry in UI_GATES above — and
+   asks that same function. So the step describing the Reports tab and the
+   Reports tab itself are answered by one predicate, and a change to what opens
+   that tab moves the tour with it. A step holding its own copy of the rule
+   ("show if can('report.view')") would be a second set of visibility rules to
+   keep in step with the first, and the bug this file already caught three
+   times — a screen asking a different question from the thing it gates — would
+   have a fourth place to happen.
+
+   `gate: null` means always shown: Dashboard and Assets List have no entry in
+   UI_GATES because they are not permission questions — everybody gets them.
+
+   Adding a feature later means adding a step here beside its permission. The
+   test suite enforces both halves of that: every gated top-level tab must have
+   a step, and every step's gate must name a real UI_GATES key.
+*/
+const TOUR_STEPS = [
+  {
+    id: 'welcome',
+    target: null,                    // centred, no spotlight — the opening card
+    gate: null,
+    title: 'Welcome to the studio pipeline',
+    body: 'A quick walk through the tabs you can see. Everyone sees a different set, '
+        + 'because the tour follows the permissions your designation actually holds — '
+        + 'so this is your app, not a general tour.',
+  },
+  {
+    id: 'board',
+    target: '#mainTabs button[data-tab="board"]',
+    gate: null,
+    title: 'Dashboard',
+    body: 'Where the work stands right now: counts by stage for the project you have '
+        + 'selected at the top. Start here to see what is moving and what is stuck.',
+  },
+  {
+    id: 'pending',
+    target: '#pendingTabBtn',
+    gate: 'pendingTabBtn',
+    title: 'Pending Actions',
+    body: 'Things waiting on you specifically. Active holds what still needs doing; '
+        + 'History holds what is finished. The number on the tab is the count in Active — '
+        + 'if it is showing, something is waiting.',
+  },
+  {
+    id: 'projects',
+    target: '#projectsTabBtn',
+    gate: 'projectsTabBtn',
+    title: 'Projects',
+    body: 'Clients and their projects. Add a project, set who supervises it, and send a '
+        + 'project to the Creative Director for review from here.',
+  },
+  {
+    id: 'list',
+    target: '#mainTabs button[data-tab="list"]',
+    gate: null,
+    title: 'Assets List',
+    body: 'Every asset you can reach, in four sub-tabs: Active is work in flight, '
+        + 'Inactive has not started, Archived is delivered, and History shows work that '
+        + 'was handed on to somebody else. An asset appears in exactly one of them.',
+  },
+  {
+    id: 'team',
+    target: '#teamTabBtn',
+    gate: 'teamTabBtn',
+    title: 'My Team',
+    body: 'The people who report to you, and what each of them is carrying.',
+  },
+  {
+    id: 'timesheet',
+    target: '#timesheetTabBtn',
+    gate: 'timesheetTabBtn',
+    title: 'Time Sheet',
+    body: 'Your own hours, a day at a time, logged as a start and an end. Submit each day '
+        + 'when it is done. If you approve other people\'s days too, the count on this tab '
+        + 'is how many are waiting on you.',
+  },
+  {
+    id: 'reports',
+    target: '#reportsTabBtn',
+    gate: 'reportsTabBtn',
+    title: 'Reports',
+    body: 'Throughput and idle time across the studio, with Excel and PDF downloads. '
+        + 'The numbers come from the clock the app kept between Accept and Submit.',
+  },
+  {
+    id: 'users',
+    target: '#usersTabBtn',
+    gate: 'usersTabBtn',
+    title: 'Users',
+    body: 'Accounts, designations and who reports to whom. What you may change here '
+        + 'depends on which of the user permissions your designation holds.',
+  },
+  {
+    id: 'settings',
+    target: '#settingsTabBtn',
+    gate: 'settingsTabBtn',
+    title: 'Settings',
+    body: 'The studio\'s own settings — scopes of work, priorities, branding, working '
+        + 'hours, and who may do what. Changes here apply to everybody.',
+  },
+  {
+    id: 'bell',
+    target: '#notifBell',
+    gate: null,
+    title: 'Notifications',
+    body: 'You are told here when work is assigned to you, when a review comes back, and '
+        + 'when feedback you were waiting on arrives. The badge counts what you have not read.',
+  },
+  {
+    id: 'tourBtn',
+    target: '#tourBtn',
+    gate: null,
+    title: 'And this brings it back',
+    body: 'That is the tour. It will not open by itself again — click this whenever you '
+        + 'want it, and it will show whatever you can see at the time.',
+  },
+];
+
+/* The steps this account gets, in order.
+ *
+ * Two filters, and the second is the one that keeps the tour honest: a step
+ * whose gate says yes but whose target is not actually on the page is dropped
+ * rather than pointed at nothing. That covers the case a permission check
+ * cannot — an element hidden for a reason that is not a permission, or a
+ * renamed id — and it is why the tour cannot end up spotlighting empty space.
+ */
+function tourStepsFor(){
+  return TOUR_STEPS.filter(step => {
+    const gate = step.gate ? UI_GATES[step.gate] : null;
+    if(step.gate && (!gate || !gate())) return false;
+    if(!step.target) return true;
+    const el = document.querySelector(step.target);
+    return Boolean(el) && el.offsetParent !== null;
+  });
+}
 
 /* Whose asset is this? Mirrors ownsAsset() in src/permissions.js, clause for
    clause: a full-access role, or the person who added it. "Asset Edit" is not a
@@ -1804,6 +1981,9 @@ function logout(options = {}){
   /* Stop polling before the reload: an in-flight request against a cleared
      token would 401 and, through api(), call straight back into here. */
   stopNotifications();
+  /* And take the overlay down with it. A session that expires mid-tour would
+     otherwise leave a veil and a spotlight sitting over the login form. */
+  tourTeardown();
   try{ localStorage.removeItem('zvky_token'); }catch{ /* nothing else to do */ }
 
   /* Up front, so that whatever is on screen for the length of the reload is
@@ -1899,6 +2079,16 @@ async function bootApp(){
   document.getElementById('filterType').innerHTML = '<option value="">All scopes of work</option>' + TYPES.map(t=>`<option value="${t.id}">${escapeHTML(t.label)}</option>`).join('');
   document.getElementById('f_priority').innerHTML = priorityOptions(PRIORITIES.some(p=>p.id==='med') ? 'med' : (PRIORITIES[Math.floor(PRIORITIES.length/2)]||{}).id);
   setTab('board');
+
+  /* And once, for somebody who has never seen it. Last in boot deliberately:
+     the tour points at tabs, and the line above is what decides which tabs are
+     on the page. Opening it any earlier would spotlight elements that are still
+     hidden, and tourStepsFor() would drop the very steps it exists to show.
+
+     Deferred a frame so the first paint lands before the veil does — the tour
+     measures the elements it points at, and measuring them mid-layout is how a
+     spotlight ends up eight pixels off. */
+  setTimeout(()=>startTour({ auto:true }), 400);
 }
 
 /* ---------- the header's Client → Project cascade ----------
@@ -7277,6 +7467,143 @@ document.addEventListener('keydown', e=>{ if(e.key === 'Escape') closeNotifPanel
    out the rest of the interval. */
 document.addEventListener('visibilitychange', ()=>{ if(!document.hidden && state.token) pollNotifications(); });
 
+
+/* --- the Quick Tour engine --------------------------------------------------
+
+   Purely an overlay. It reads the page and draws on top of it; it does not
+   change a tab, a permission, or any state the app keeps. The only thing it
+   writes anywhere is "this person has been shown the tour", once.
+*/
+const tour = { open:false, at:0, steps:[], onKey:null, els:null };
+
+function tourTeardown(){
+  if(tour.els){ tour.els.forEach(el=>el.remove()); tour.els = null; }
+  if(tour.onKey){ document.removeEventListener('keydown', tour.onKey); tour.onKey = null; }
+  window.removeEventListener('resize', tourDraw);
+  window.removeEventListener('scroll', tourDraw, true);
+  tour.open = false;
+}
+
+/* Finish or skip — the same thing as far as the flag is concerned. Somebody who
+   skipped has been shown it, and a help screen that keeps reopening because it
+   was dismissed the "wrong" way is the thing people disable. */
+async function tourEnd(){
+  tourTeardown();
+  const btn = document.getElementById('tourBtn');
+  if(btn) btn.focus();
+  if(state.currentUser && !state.currentUser.tourSeenAt){
+    /* Optimistic: the flag is set locally whatever the server says, so a failed
+       request cannot make the tour reopen on every navigation for the rest of
+       the session. Worst case it opens once more on the next sign-in, which is
+       a far better failure than a help overlay that will not stay shut. */
+    state.currentUser.tourSeenAt = new Date().toISOString();
+    try{ await api('/auth/tour-seen', { method:'POST' }); }catch(e){}
+  }
+}
+
+function tourGo(n){
+  if(n < 0 || n >= tour.steps.length) return tourEnd();
+  tour.at = n;
+  tourDraw();
+}
+
+/* Where the four veil panels and the ring go for the current step.
+   Called on every step, and again on resize and scroll, because the header is
+   sticky and the thing being pointed at moves under it. */
+function tourDraw(){
+  if(!tour.open || !tour.els) return;
+  const step = tour.steps[tour.at];
+  const [top, right, bottom, left, ring, pop] = tour.els;
+  const W = window.innerWidth, H = window.innerHeight;
+  const el = step.target ? document.querySelector(step.target) : null;
+
+  if(!el){
+    // No target: one full-screen veil and a centred card.
+    Object.assign(top.style, { top:'0px', left:'0px', width:W+'px', height:H+'px' });
+    [right,bottom,left].forEach(p=>Object.assign(p.style,{width:'0px',height:'0px'}));
+    ring.style.display = 'none';
+    pop.classList.add('centre');
+    pop.style.top = ''; pop.style.left = '';
+  }else{
+    const r = el.getBoundingClientRect();
+    const pad = 6;
+    const t = Math.max(0, r.top - pad), b = Math.min(H, r.bottom + pad);
+    const l = Math.max(0, r.left - pad), rt = Math.min(W, r.right + pad);
+    Object.assign(top.style,    { top:'0px',  left:'0px',   width:W+'px',      height:t+'px' });
+    Object.assign(bottom.style, { top:b+'px', left:'0px',   width:W+'px',      height:Math.max(0,H-b)+'px' });
+    Object.assign(left.style,   { top:t+'px', left:'0px',   width:l+'px',      height:Math.max(0,b-t)+'px' });
+    Object.assign(right.style,  { top:t+'px', left:rt+'px', width:Math.max(0,W-rt)+'px', height:Math.max(0,b-t)+'px' });
+    Object.assign(ring.style,   { display:'block', top:t+'px', left:l+'px',
+      width:Math.max(0,rt-l)+'px', height:Math.max(0,b-t)+'px' });
+
+    pop.classList.remove('centre');
+    /* Below the target by default, above it when there is no room — and never
+       off the right edge, which is where the last tab and the bell both are. */
+    const popW = 330, gap = 12;
+    let py = b + gap;
+    if(py + 200 > H && t > 220) py = Math.max(8, t - 200 - gap);
+    let px = Math.min(Math.max(8, r.left - 8), W - popW - 8);
+    pop.style.top = py + 'px';
+    pop.style.left = Math.max(8, px) + 'px';
+  }
+
+  const last = tour.at === tour.steps.length - 1;
+  pop.innerHTML = `
+    <h4>${escapeHTML(step.title)}</h4>
+    <p>${escapeHTML(step.body)}</p>
+    <div class="tour-foot">
+      <span class="tour-count">${tour.at + 1} of ${tour.steps.length}</span>
+      <div class="spacer"></div>
+      ${tour.at > 0 ? '<button class="btn btn-ghost btn-sm" id="tourBack">Back</button>' : ''}
+      <button class="u-link" id="tourSkip">${last ? 'Close' : 'Skip'}</button>
+      <button class="btn btn-brand btn-sm" id="tourNext">${last ? 'Done' : 'Next'}</button>
+    </div>`;
+  const on = (id, fn) => { const b = document.getElementById(id); if(b) b.onclick = fn; };
+  on('tourBack', ()=>tourGo(tour.at - 1));
+  on('tourNext', ()=>tourGo(tour.at + 1));
+  on('tourSkip', tourEnd);
+  const next = document.getElementById('tourNext');
+  if(next) next.focus();
+}
+
+/* Open it. `auto` marks the one that launches itself on first sign-in, which is
+   the only one that can decline to open. */
+function startTour({ auto = false } = {}){
+  if(tour.open) return false;
+  if(auto && state.currentUser && state.currentUser.tourSeenAt) return false;
+  const steps = tourStepsFor();
+  /* Fewer than two steps means the welcome card and nothing else — an account
+     that can see almost nothing. Opening a tour that says only "welcome" is
+     worse than not opening one, so the auto-launch stays shut; the button
+     still works, because somebody who clicked it is owed a response. */
+  if(auto && steps.length < 2) return false;
+  if(!steps.length) return false;
+
+  tour.steps = steps;
+  tour.at = 0;
+  tour.open = true;
+
+  const mk = (cls) => { const d = document.createElement('div'); d.className = cls;
+    document.body.appendChild(d); return d; };
+  tour.els = [mk('tour-veil'), mk('tour-veil'), mk('tour-veil'), mk('tour-veil'),
+              mk('tour-ring'), mk('tour-pop')];
+  // Clicking the dimmed area leaves, which is what an overlay is expected to do.
+  tour.els.slice(0,4).forEach(v=>{ v.onclick = tourEnd; });
+
+  tour.onKey = (e)=>{
+    if(e.key === 'Escape'){ e.preventDefault(); tourEnd(); }
+    else if(e.key === 'ArrowRight'){ e.preventDefault(); tourGo(tour.at + 1); }
+    else if(e.key === 'ArrowLeft' && tour.at > 0){ e.preventDefault(); tourGo(tour.at - 1); }
+  };
+  document.addEventListener('keydown', tour.onKey);
+  window.addEventListener('resize', tourDraw);
+  // Capture phase: the scroll that moves a target may be on a panel, not window.
+  window.addEventListener('scroll', tourDraw, true);
+  tourDraw();
+  return true;
+}
+
+document.getElementById('tourBtn').addEventListener('click', ()=>startTour());
 document.getElementById('profileBtn').addEventListener('click', openProfileModal);
 document.getElementById('cancelProfileModal').addEventListener('click', ()=>profileModalWrap.classList.remove('show'));
 profileModalWrap.addEventListener('click', e=>{ if(e.target===profileModalWrap) profileModalWrap.classList.remove('show'); });
