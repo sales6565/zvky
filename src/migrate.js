@@ -934,68 +934,163 @@ async function ensureLifecycleColumns(db, log) {
  * every table here makes with shared hosting: a deployment whose user cannot
  * create constraints still gets a working timesheet. */
 async function ensureTimesheets(db, log) {
-  const { rows: existing } = await db.query(
-    `SELECT TABLE_NAME AS n FROM information_schema.TABLES
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'timesheet_weeks'`
-  );
-  if (existing.length) return;
-
-  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS timesheet_weeks (
-      id           CHAR(36)     NOT NULL PRIMARY KEY,
-      user_id      CHAR(36)     NOT NULL,
-      week_start   DATE         NOT NULL,
-      status       VARCHAR(16)  NOT NULL DEFAULT 'draft',
-      submitted_at DATETIME     NULL,
-      decided_by   CHAR(36)     NULL,
-      decider_email VARCHAR(191) NULL,
-      decided_at   DATETIME     NULL,
-      rejection_reason TEXT     NULL,
-      created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE KEY uq_tsw_user_week (user_id, week_start),
-      KEY idx_tsw_status (status, week_start)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
-
-  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS timesheet_entries (
-      id          CHAR(36)     NOT NULL PRIMARY KEY,
-      user_id     CHAR(36)     NOT NULL,
-      week_start  DATE         NOT NULL,
-      entry_date  DATE         NOT NULL,
-      client_id   CHAR(36)     NULL,
-      project_id  CHAR(36)     NULL,
-      asset_id    CHAR(36)     NULL,
-      non_project VARCHAR(32)  NULL,
-      hours       DECIMAL(5,2) NOT NULL,
-      notes       TEXT         NULL,
-      created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      KEY idx_tse_user_week (user_id, week_start),
-      KEY idx_tse_date (entry_date),
-      KEY idx_tse_project (project_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
-
-  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS timesheet_events (
-      id          CHAR(36)     NOT NULL PRIMARY KEY,
-      seq         BIGINT       NOT NULL AUTO_INCREMENT UNIQUE,
-      user_id     CHAR(36)     NULL,
-      week_start  DATE         NOT NULL,
-      action      VARCHAR(32)  NOT NULL,
-      actor_id    CHAR(36)     NULL,
-      actor_email VARCHAR(191) NULL,
-      detail      TEXT         NULL,
-      created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      KEY idx_tsev_sheet (user_id, week_start, seq)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
-
+  const table = async (name) => {
+    const { rows } = await db.query(
+      `SELECT TABLE_NAME AS n FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = $1`, [name]
+    );
+    return rows.length > 0;
+  };
+  const columns = async (name) => {
+    const { rows } = await db.query(
+      `SELECT COLUMN_NAME AS n FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = $1`, [name]
+    );
+    return rows.map((r) => r.n);
+  };
   const fk = async (sql) => { await db.query(sql).catch(() => {}); };
-  await fk('ALTER TABLE timesheet_weeks ADD CONSTRAINT fk_tsw_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE');
-  await fk('ALTER TABLE timesheet_weeks ADD CONSTRAINT fk_tsw_decider FOREIGN KEY (decided_by) REFERENCES users(id) ON DELETE SET NULL');
-  await fk('ALTER TABLE timesheet_entries ADD CONSTRAINT fk_tse_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE');
-  await fk('ALTER TABLE timesheet_entries ADD CONSTRAINT fk_tse_client FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL');
-  await fk('ALTER TABLE timesheet_entries ADD CONSTRAINT fk_tse_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL');
-  await fk('ALTER TABLE timesheet_entries ADD CONSTRAINT fk_tse_asset FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE SET NULL');
-  await fk('ALTER TABLE timesheet_events ADD CONSTRAINT fk_tsev_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL');
-  await fk('ALTER TABLE timesheet_events ADD CONSTRAINT fk_tsev_actor FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE SET NULL');
-  log('Schema: added the timesheet tables.');
+
+  if (!(await table('timesheet_days'))) {
+    await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS timesheet_days (
+        id           CHAR(36)     NOT NULL PRIMARY KEY,
+        user_id      CHAR(36)     NOT NULL,
+        work_date    DATE         NOT NULL,
+        status       VARCHAR(16)  NOT NULL DEFAULT 'draft',
+        submitted_at DATETIME     NULL,
+        decided_by   CHAR(36)     NULL,
+        decider_email VARCHAR(191) NULL,
+        decided_at   DATETIME     NULL,
+        rejection_reason TEXT     NULL,
+        created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_tsd_user_day (user_id, work_date),
+        KEY idx_tsd_status (status, work_date)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+    await fk('ALTER TABLE timesheet_days ADD CONSTRAINT fk_tsd_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE');
+    await fk('ALTER TABLE timesheet_days ADD CONSTRAINT fk_tsd_decider FOREIGN KEY (decided_by) REFERENCES users(id) ON DELETE SET NULL');
+    log('Schema: added timesheet_days.');
+  }
+
+  if (!(await table('timesheet_entries'))) {
+    await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS timesheet_entries (
+        id          CHAR(36)     NOT NULL PRIMARY KEY,
+        user_id     CHAR(36)     NOT NULL,
+        entry_date  DATE         NOT NULL,
+        start_min   SMALLINT     NOT NULL,
+        end_min     SMALLINT     NOT NULL,
+        client_id   CHAR(36)     NULL,
+        project_id  CHAR(36)     NULL,
+        asset_id    CHAR(36)     NULL,
+        non_project VARCHAR(32)  NULL,
+        hours       DECIMAL(5,2) NOT NULL,
+        notes       TEXT         NULL,
+        created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        KEY idx_tse_user_day (user_id, entry_date),
+        KEY idx_tse_date (entry_date),
+        KEY idx_tse_project (project_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+    await fk('ALTER TABLE timesheet_entries ADD CONSTRAINT fk_tse_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE');
+    await fk('ALTER TABLE timesheet_entries ADD CONSTRAINT fk_tse_client FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL');
+    await fk('ALTER TABLE timesheet_entries ADD CONSTRAINT fk_tse_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL');
+    await fk('ALTER TABLE timesheet_entries ADD CONSTRAINT fk_tse_asset FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE SET NULL');
+    log('Schema: added timesheet_entries.');
+  }
+
+  if (!(await table('timesheet_events'))) {
+    await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS timesheet_events (
+        id          CHAR(36)     NOT NULL PRIMARY KEY,
+        seq         BIGINT       NOT NULL AUTO_INCREMENT UNIQUE,
+        user_id     CHAR(36)     NULL,
+        work_date   DATE         NOT NULL,
+        action      VARCHAR(32)  NOT NULL,
+        actor_id    CHAR(36)     NULL,
+        actor_email VARCHAR(191) NULL,
+        detail      TEXT         NULL,
+        created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_tsev_sheet (user_id, work_date, seq)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+    await fk('ALTER TABLE timesheet_events ADD CONSTRAINT fk_tsev_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL');
+    await fk('ALTER TABLE timesheet_events ADD CONSTRAINT fk_tsev_actor FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE SET NULL');
+    log('Schema: added timesheet_events.');
+  }
+
+  /* --- from the weekly shape to the daily one ------------------------------
+
+     The timesheet shipped submitting a week at a time, with a typed number of
+     hours. The studio then asked for a working window, a lunch break and a
+     daily cycle, and none of those can be expressed as "3.5 hours, some week".
+     So this carries a deployment that already ran the first version across,
+     rather than leaving it holding tables the code no longer reads.
+
+     Two judgement calls, stated because neither is derivable from the data:
+
+       the clock   an old line has no start or end. It is laid out from 09:30
+                   forwards, in order, stepping over the lunch hour, so the
+                   HOURS are preserved exactly and the times are plausible
+                   rather than precisely invented. Anybody who cares can
+                   correct them; the alternative was discarding hours somebody
+                   actually worked.
+
+       the status  a week's status is copied onto every day in that week that
+                   has lines. An approved week was approved as a whole, so each
+                   of its days was approved along with it.
+  */
+  const entryColumns = await columns('timesheet_entries');
+  if (entryColumns.includes('week_start') && !entryColumns.includes('start_min')) {
+    for (const sql of [
+      'ALTER TABLE timesheet_entries ADD COLUMN start_min SMALLINT NOT NULL DEFAULT 570 AFTER entry_date',
+      'ALTER TABLE timesheet_entries ADD COLUMN end_min SMALLINT NOT NULL DEFAULT 1050 AFTER start_min',
+    ]) await db.query(sql).catch(() => {});
+
+    /* Laid end to end per person per day. Done here rather than in SQL because
+       it is a running total, which SQL can express and nobody can read. */
+    const { rows: lines } = await db.query(
+      'SELECT id, user_id, entry_date, hours FROM timesheet_entries ORDER BY user_id, entry_date, created_at'
+    );
+    const cursor = new Map();
+    for (const line of lines) {
+      const key = String(line.user_id) + '|' + String(line.entry_date).slice(0, 10);
+      let at = cursor.has(key) ? cursor.get(key) : 570;   // 09:30
+      const minutes = Math.round(Number(line.hours) * 60);
+      if (at < 780 && at + minutes > 780) at = 840;        // never sit across lunch
+      const end = Math.min(at + minutes, 1140);             // and never past 19:00
+      await db.query('UPDATE timesheet_entries SET start_min = $1, end_min = $2 WHERE id = $3',
+        [at, end, line.id]).catch(() => {});
+      cursor.set(key, end === 780 ? 840 : end);
+    }
+    await db.query('ALTER TABLE timesheet_entries DROP COLUMN week_start').catch(() => {});
+    log('Schema: gave ' + lines.length + ' timesheet line(s) a start and end time, and dropped week_start.');
+  }
+
+  if (await table('timesheet_weeks')) {
+    const { rows: weeks } = await db.query('SELECT * FROM timesheet_weeks');
+    let carried = 0;
+    for (const week of weeks) {
+      const { rows: days } = await db.query(
+        `SELECT DISTINCT entry_date FROM timesheet_entries
+          WHERE user_id = $1 AND entry_date BETWEEN $2 AND DATE_ADD($2, INTERVAL 6 DAY)`,
+        [week.user_id, week.week_start]
+      );
+      for (const day of days) {
+        await db.query(
+          `INSERT IGNORE INTO timesheet_days
+             (id, user_id, work_date, status, submitted_at, decided_by, decider_email, decided_at, rejection_reason)
+           VALUES (UUID(),$1,$2,$3,$4,$5,$6,$7,$8)`,
+          [week.user_id, day.entry_date, week.status, week.submitted_at, week.decided_by,
+           week.decider_email, week.decided_at, week.rejection_reason]
+        ).catch(() => {});
+        carried += 1;
+      }
+    }
+    await db.query('DROP TABLE timesheet_weeks').catch(() => {});
+    log('Schema: carried ' + carried + ' timesheet day(s) over from the weekly cycle, and dropped timesheet_weeks.');
+  }
+
+  const eventColumns = await columns('timesheet_events');
+  if (eventColumns.includes('week_start') && !eventColumns.includes('work_date')) {
+    await db.query('ALTER TABLE timesheet_events CHANGE week_start work_date DATE NOT NULL').catch(() => {});
+    log('Schema: the timesheet audit trail now keys on the day.');
+  }
 }
 
 // assets.reference_link, and authorship on the checklist.

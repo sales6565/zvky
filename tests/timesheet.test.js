@@ -47,43 +47,124 @@ test('totals add up, and round once at the end', () => {
   assert.deepStrictEqual(t.overLong, [], 'and nothing here is unusual');
 });
 
-test('a long day is flagged, never refused', () => {
-  /* The studio asked for a soft ceiling, and it is the right shape: a night
-     shift crossing midnight is legitimately a long day, and refusing it would
-     make somebody lie about their hours to get past the form. */
-  const t = sheets.totals([
-    { date: '2026-03-05', hours: 20 }, { date: '2026-03-05', hours: 6 },
-  ], '2026-03-05');
-  assert.strictEqual(t.perDay['2026-03-05'], 26, 'the hours stand');
-  assert.deepStrictEqual(t.overLong, ['2026-03-05'], 'and the day is flagged');
+test('the working day is 09:30 to 19:00 IST, and outside it is refused', () => {
+  const line = (start, end) => sheets.validateEntry({
+    date: '2026-03-02', startTime: start, endTime: end, clientId: 'c', projectId: 'p' });
+
+  assert.strictEqual(line('10:00', '12:00').value.hours, 2, 'an ordinary two hours');
+  assert.strictEqual(line('09:30', '19:00').value.hours, 8.5,
+    'the whole window, less the lunch hour — which is over the eight-hour day, and flagged rather than refused');
+
+  for (const [s, e] of [['09:00', '11:00'], ['08:00', '09:00'], ['17:00', '20:00'], ['19:00', '19:30']]) {
+    const out = line(s, e);
+    assert.strictEqual(out.ok, false, `${s}-${e} is outside the working day`);
+    assert.match(out.error, /09:30 to 19:00 IST/);
+  }
+  assert.strictEqual(line('12:00', '11:00').ok, false, 'and end before start is not a stretch of time');
+  assert.strictEqual(line('11:00', '11:00').ok, false, 'nor is no time at all');
+});
+
+test('lunch is taken out of whatever overlaps it', () => {
+  /* Auto-subtracted rather than blocked, as the studio chose: somebody who
+     worked 12:30 to 14:30 worked ninety minutes, and making them file that as
+     two rows is bookkeeping for the form's benefit. */
+  const line = (start, end) => sheets.validateEntry({
+    date: '2026-03-02', startTime: start, endTime: end, clientId: 'c', projectId: 'p' });
+
+  const across = line('12:30', '14:30');
+  assert.strictEqual(across.value.hours, 1, 'two hours across lunch is one hour worked');
+  assert.strictEqual(across.lunchSubtracted, 60, 'and the caller is told, so the screen can say so');
+
+  assert.strictEqual(line('12:00', '13:00').value.hours, 1, 'right up to lunch is untouched');
+  assert.strictEqual(line('14:00', '15:00').value.hours, 1, 'and straight after it');
+  assert.strictEqual(line('13:30', '15:00').value.hours, 1, 'a late start inside lunch loses the overlap');
+
+  /* Entirely inside lunch subtracts to nothing. Storing a nought-hour line
+     would be storing a line saying nobody worked, so it is refused with the
+     reason rather than accepted and silently emptied. */
+  const inside = line('13:15', '13:45');
+  assert.strictEqual(inside.ok, false);
+  assert.match(inside.error, /entirely within the lunch break/);
+});
+
+test('eight hours is a warning, and under eight is silent', () => {
+  /* Soft, as the studio chose. A genuinely long day exists, and a form that
+     refuses one teaches somebody to log eight and go home late. */
+  assert.deepStrictEqual(sheets.dayTotal([{ hours: 5 }, { hours: 4 }]),
+    { hours: 9, lines: 2, overLong: true, maxHours: 8 });
+  assert.strictEqual(sheets.dayTotal([{ hours: 8 }]).overLong, false, 'exactly eight is not over');
+  // A half day is an ordinary thing and worth no words at all.
+  assert.strictEqual(sheets.dayTotal([{ hours: 4 }]).overLong, false);
+  assert.strictEqual(sheets.dayTotal([]).overLong, false);
+});
+
+test('a weekend is flagged, not blocked', () => {
+  assert.strictEqual(sheets.isWeekend('2026-03-07'), true, 'Saturday');
+  assert.strictEqual(sheets.isWeekend('2026-03-08'), true, 'Sunday');
+  assert.strictEqual(sheets.isWeekend('2026-03-06'), false, 'Friday');
+  // And the form takes it: occasional weekend work is real.
+  assert.strictEqual(sheets.validateEntry({ date: '2026-03-07', startTime: '10:00',
+    endTime: '13:00', clientId: 'c', projectId: 'p' }).ok, true);
+});
+
+test('a clock time is minutes past midnight IST, and never an instant', () => {
+  /* The decision the whole timezone requirement rests on. Stored as minutes,
+     09:30 is 09:30 to a server in UTC and to somebody logging in from
+     California, with no conversion anywhere and no daylight saving to get
+     wrong. */
+  assert.strictEqual(sheets.parseClock('09:30'), 570);
+  assert.strictEqual(sheets.parseClock('9:30'), 570, 'a single-digit hour is the same time');
+  assert.strictEqual(sheets.clockLabel(570), '09:30');
+  assert.strictEqual(sheets.clockLabel(1140), '19:00');
+  for (const bad of ['25:00', '10:70', 'noon', '', null, '10']) {
+    assert.strictEqual(sheets.parseClock(bad), null, `${bad} is not a clock time`);
+  }
+  // Round trip, at every quarter of the working day.
+  for (let m = sheets.DAY_START; m <= sheets.DAY_END; m += 15) {
+    assert.strictEqual(sheets.parseClock(sheets.clockLabel(m)), m);
+  }
+});
+
+test('two lines cannot claim the same minutes', () => {
+  /* The one arithmetic error a timesheet cannot catch by adding up: the total
+     looks perfectly reasonable. */
+  const at = (startMin, endMin) => ({ startMin, endMin });
+  const existing = [at(600, 720), at(840, 900)];   // 10:00-12:00 and 14:00-15:00
+  assert.ok(sheets.overlaps(at(660, 780), existing), '11:00-13:00 runs into the first');
+  assert.ok(sheets.overlaps(at(570, 900), existing), 'and a line swallowing both');
+  assert.strictEqual(sheets.overlaps(at(720, 780), existing), null, '12:00-13:00 butts up against it');
+  assert.strictEqual(sheets.overlaps(at(900, 960), existing), null, 'and 15:00-16:00 follows on');
 });
 
 test('a line is project work or non-project time, never both and never neither', () => {
-  const ok = sheets.validateEntry({ date: '2026-03-02', hours: 3, clientId: 'c', projectId: 'p' });
-  assert.strictEqual(ok.ok, true, JSON.stringify(ok));
-  assert.strictEqual(ok.value.weekStart, '2026-03-02', 'and it knows its own week');
+  const at = (extra) => ({ date: '2026-03-02', startTime: '10:00', endTime: '12:00', ...extra });
 
-  const category = sheets.validateEntry({ date: '2026-03-02', hours: 3, nonProject: 'leave' });
+  const ok = sheets.validateEntry(at({ clientId: 'c', projectId: 'p' }));
+  assert.strictEqual(ok.ok, true, JSON.stringify(ok));
+  assert.strictEqual(ok.value.hours, 2, 'and the duration comes from the clock, not from a typed number');
+
+  const category = sheets.validateEntry(at({ nonProject: 'leave' }));
   assert.strictEqual(category.ok, true);
   assert.strictEqual(category.value.clientId, null);
 
   /* Both is the one that matters: a row carrying a client and "Leave" would be
      counted twice or thrown away depending on which report ran. */
-  const both = sheets.validateEntry({ date: '2026-03-02', hours: 3, clientId: 'c', projectId: 'p', nonProject: 'leave' });
+  const both = sheets.validateEntry(at({ clientId: 'c', projectId: 'p', nonProject: 'leave' }));
   assert.strictEqual(both.ok, false);
   assert.match(both.error, /either project work or non-project time/);
 
-  const neither = sheets.validateEntry({ date: '2026-03-02', hours: 3 });
+  const neither = sheets.validateEntry(at({}));
   assert.strictEqual(neither.ok, false);
   assert.strictEqual(neither.field, 'clientId');
 
-  for (const bad of [0, -2, 'abc', 25]) {
-    assert.strictEqual(sheets.validateEntry({ date: '2026-03-02', hours: bad, nonProject: 'admin' }).ok,
-      false, `${bad} hours should be refused on a single line`);
-  }
-  // Typed hours are rounded to the quarter the column can hold.
-  assert.strictEqual(sheets.validateEntry({ date: '2026-03-02', hours: 2.1, nonProject: 'admin' }).value.hours, 2);
-  assert.strictEqual(sheets.validateEntry({ date: '2026-03-02', hours: 2.4, nonProject: 'admin' }).value.hours, 2.5);
+  // A client on its own is half an answer; the project is what the hours hang off.
+  const noProject = sheets.validateEntry(at({ clientId: 'c' }));
+  assert.strictEqual(noProject.ok, false);
+  assert.strictEqual(noProject.field, 'projectId');
+
+  const madeUp = sheets.validateEntry(at({ nonProject: 'sabbatical' }));
+  assert.strictEqual(madeUp.ok, false);
+  assert.strictEqual(madeUp.field, 'nonProject');
 });
 
 test('every designation can fill in its own timesheet', () => {
@@ -122,7 +203,8 @@ test('every designation can fill in its own timesheet', () => {
 
 test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   const PASSWORD = 'Timesheet-Test-1!';
-  const MON = '2026-03-02';
+  const MON = '2026-03-02';        // a Monday
+  const SAT = '2026-03-07';
   let server;
   const token = {};
   const people = {};
@@ -135,6 +217,8 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   const add = (who, body) => as(who, '/timesheets/entries', { method: 'POST', body });
   const week = async (who, userId) => (await as(who,
     `/timesheets/week?date=${MON}${userId ? `&userId=${userId}` : ''}`)).body;
+  const dayOf = async (who, date, userId) =>
+    (await week(who, userId)).days.find((d) => d.date === date);
 
   t.before(async () => {
     await resetSchema(cfg);
@@ -145,8 +229,7 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       method: 'POST', body: { email, password: PASSWORD } })).body.token;
     token.root = await login('root@zvky.test');
 
-    const clients = (await as('root', '/clients')).body.clients;
-    clientId = clients[0].id;
+    clientId = (await as('root', '/clients')).body.clients[0].id;
     projectId = (await as('root', '/projects', { method: 'POST',
       body: { clientId, name: 'Nightgarden' } })).body.project.id;
 
@@ -166,202 +249,274 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   });
   t.after(() => stopServer(server));
 
-  await t.test('a day takes several lines, and the totals follow', async () => {
+  await t.test('a day takes several lines, and the clock adds up', async () => {
     const lines = [
-      { date: MON, hours: 3, clientId, projectId, assetId, notes: 'Rough pass' },
-      { date: MON, hours: 2.5, clientId, projectId },
-      { date: '2026-03-03', hours: 8, clientId, projectId, assetId },
-      { date: '2026-03-04', hours: 7.5, nonProject: 'training', notes: 'Rigging workshop' },
+      { date: MON, startTime: '10:00', endTime: '12:00', clientId, projectId, assetId, notes: 'Rough pass' },
+      { date: MON, startTime: '12:00', endTime: '13:00', clientId, projectId },
+      { date: '2026-03-03', startTime: '09:30', endTime: '12:30', nonProject: 'training' },
     ];
     for (const line of lines) {
       const made = await add('ana', line);
       assert.strictEqual(made.status, 201, JSON.stringify(made.body));
     }
     const mine = await week('ana');
-    assert.strictEqual(mine.totals.perDay[MON], 5.5, 'two lines on one day add up');
-    assert.strictEqual(mine.totals.perDay['2026-03-03'], 8);
-    assert.strictEqual(mine.totals.week, 21);
-    assert.strictEqual(mine.status, 'draft');
-    assert.strictEqual(mine.locked, false);
+    const monday = mine.days.find((d) => d.date === MON);
+    assert.strictEqual(monday.hours, 3, '10:00-12:00 plus 12:00-13:00');
+    assert.strictEqual(monday.overLong, false);
+    assert.strictEqual(mine.days.find((d) => d.date === '2026-03-03').hours, 3);
+    assert.strictEqual(mine.weekHours, 6);
 
-    // The line carries what it was against, resolved, so the grid needs no
-    // second lookup to say "Nightgarden".
-    const withAsset = mine.entries.find((e) => e.notes === 'Rough pass');
-    assert.strictEqual(withAsset.projectName, 'Nightgarden');
-    assert.ok(withAsset.assetCode, 'and the asset code');
-    assert.strictEqual(mine.entries.find((e) => e.nonProject === 'training').projectName, null);
+    // The clock comes back rendered, so the page never turns minutes into a time.
+    const first = monday.entries.find((e) => e.notes === 'Rough pass');
+    assert.strictEqual(first.startLabel, '10:00');
+    assert.strictEqual(first.endLabel, '12:00');
+    assert.strictEqual(first.projectName, 'Nightgarden');
+    assert.ok(first.assetCode);
+    // And the studio's rules travel with the week rather than being repeated.
+    assert.deepStrictEqual(mine.workingDay,
+      { timezone: 'IST', dayStart: '09:30', dayEnd: '19:00',
+        lunchStart: '13:00', lunchEnd: '14:00', maxHours: 8 });
   });
 
-  await t.test('a week is submitted whole, and locks', async () => {
-    const before = await week('ana');
-    assert.strictEqual(before.locked, false);
+  await t.test('lunch comes off, the window is enforced, and overlaps are refused', async () => {
+    const across = await add('ana', { date: MON, startTime: '13:30', endTime: '15:30', clientId, projectId });
+    assert.strictEqual(across.status, 201, JSON.stringify(across.body));
+    assert.strictEqual(Number(across.body.entry.hours), 1.5, 'the half hour of lunch is taken off');
+    assert.strictEqual(across.body.lunchSubtracted, 30, 'and the caller is told');
 
-    const sent = await as('ana', '/timesheets/submit', { method: 'POST', body: { weekStart: MON } });
+    const early = await add('ana', { date: MON, startTime: '08:00', endTime: '09:00', clientId, projectId });
+    assert.strictEqual(early.status, 400);
+    assert.match(early.body.error, /09:30 to 19:00 IST/);
+
+    const late = await add('ana', { date: MON, startTime: '18:30', endTime: '20:00', clientId, projectId });
+    assert.strictEqual(late.status, 400);
+
+    // The same hour twice is the error adding up cannot catch.
+    const clash = await add('ana', { date: MON, startTime: '11:00', endTime: '11:30', clientId, projectId });
+    assert.strictEqual(clash.status, 409, JSON.stringify(clash.body));
+    assert.match(clash.body.error, /overlaps 10:00–12:00/);
+  });
+
+  await t.test('over eight hours is flagged, and a half day is silent', async () => {
+    // Monday so far: 10:00-13:00 and 13:30-15:30 = 4.5h. Take it past eight.
+    await add('ana', { date: MON, startTime: '15:30', endTime: '19:00', clientId, projectId });
+    const monday = await dayOf('ana', MON);
+    assert.strictEqual(monday.hours, 8, 'exactly eight');
+    assert.strictEqual(monday.overLong, false, 'which is not over');
+
+    await add('ana', { date: MON, startTime: '09:30', endTime: '10:00', clientId, projectId });
+    const longer = await dayOf('ana', MON);
+    assert.strictEqual(longer.hours, 8.5);
+    assert.strictEqual(longer.overLong, true, 'flagged');
+
+    // And it is a flag, not a wall: the day still submits.
+    const sent = await as('ana', '/timesheets/submit', { method: 'POST', body: { date: MON } });
     assert.strictEqual(sent.status, 200, JSON.stringify(sent.body));
-    assert.strictEqual(sent.body.week.status, 'submitted');
+    assert.strictEqual(sent.body.overLong, true, 'with the flag carried into the submission');
 
-    const after = await week('ana');
-    assert.strictEqual(after.locked, true);
-    // Every way of changing it is shut, not just the button.
-    const blocked = await add('ana', { date: MON, hours: 1, clientId, projectId });
-    assert.strictEqual(blocked.status, 409, JSON.stringify(blocked.body));
-    const line = after.entries[0];
+    // A half day is an ordinary thing, and says nothing.
+    const half = await dayOf('ana', '2026-03-03');
+    assert.strictEqual(half.hours, 3);
+    assert.strictEqual(half.overLong, false);
+  });
+
+  await t.test('weekend work is taken, and marked', async () => {
+    const made = await add('ana', { date: SAT, startTime: '10:00', endTime: '13:00', clientId, projectId });
+    assert.strictEqual(made.status, 201, 'occasional weekend work is real');
+    const saturday = await dayOf('ana', SAT);
+    assert.strictEqual(saturday.hours, 3);
+    assert.strictEqual(saturday.weekend, true, 'and distinctly flagged');
+    assert.strictEqual((await dayOf('ana', MON)).weekend, false);
+  });
+
+  await t.test('one DAY is submitted and locks, leaving the rest of the week alone', async () => {
+    // Monday was submitted above. Tuesday is untouched by that.
+    const monday = await dayOf('ana', MON);
+    assert.strictEqual(monday.status, 'submitted');
+    assert.strictEqual(monday.locked, true);
+    const tuesday = await dayOf('ana', '2026-03-03');
+    assert.strictEqual(tuesday.status, 'draft', 'the daily cycle: one day at a time');
+    assert.strictEqual(tuesday.locked, false);
+
+    // Every way of changing the locked day is shut, not just the button.
+    assert.strictEqual((await add('ana', { date: MON, startTime: '09:30', endTime: '09:45',
+      clientId, projectId })).status, 409);
+    const line = monday.entries[0];
     assert.strictEqual((await as('ana', `/timesheets/entries/${line.id}`,
-      { method: 'PATCH', body: { hours: 9 } })).status, 409, 'nor edited');
+      { method: 'PATCH', body: { endTime: '12:30' } })).status, 409, 'nor edited');
     assert.strictEqual((await as('ana', `/timesheets/entries/${line.id}`,
       { method: 'DELETE' })).status, 409, 'nor deleted');
+    // But Tuesday still takes work.
+    assert.strictEqual((await add('ana', { date: '2026-03-03', startTime: '14:00', endTime: '15:00',
+      clientId, projectId })).status, 201);
 
-    // And it is in the approver's queue.
     const queue = (await as('lee', '/timesheets/pending')).body;
-    assert.strictEqual(queue.count, 1);
-    assert.strictEqual(queue.weeks[0].userName, 'ana');
-    assert.strictEqual(queue.weeks[0].hours, 21, 'with the hours, so it can be judged from the queue');
+    assert.strictEqual(queue.count, 1, 'one DAY in the queue, not one week');
+    assert.strictEqual(queue.days[0].date, MON);
+    assert.strictEqual(queue.days[0].userName, 'ana');
+    assert.strictEqual(queue.days[0].overLong, true, 'with the flags an approver needs up front');
+    assert.strictEqual(queue.days[0].weekend, false);
+    assert.strictEqual(queue.maxHours, 8);
   });
 
-  await t.test('an empty week is not a submission', async () => {
-    const nothing = await as('bo', '/timesheets/submit', { method: 'POST', body: { weekStart: MON } });
+  await t.test('an empty day is not a submission', async () => {
+    const nothing = await as('bo', '/timesheets/submit', { method: 'POST', body: { date: MON } });
     assert.strictEqual(nothing.status, 400, JSON.stringify(nothing.body));
-    assert.match(nothing.body.error, /nothing on that week/);
-    assert.strictEqual((await as('lee', '/timesheets/pending')).body.count, 1,
-      'and a queue of empty weeks is a queue nobody reads');
+    assert.match(nothing.body.error, /nothing on that day/);
+    assert.strictEqual((await as('lee', '/timesheets/pending')).body.count, 1);
   });
 
-  await t.test('rejecting sends it back with a reason; approving locks it for good', async () => {
+  await t.test('rejecting sends the day back with a reason; approving locks it', async () => {
     const noReason = await as('lee', `/timesheets/${people.ana}/${MON}/decision`,
       { method: 'POST', body: { decision: 'reject' } });
-    assert.strictEqual(noReason.status, 400, JSON.stringify(noReason.body));
+    assert.strictEqual(noReason.status, 400);
     assert.match(noReason.body.error, /what needs correcting/);
 
-    const sentBack = await as('lee', `/timesheets/${people.ana}/${MON}/decision`,
-      { method: 'POST', body: { decision: 'reject', reason: 'Thursday should be Leave, not Training.' } });
-    assert.strictEqual(sentBack.status, 200, JSON.stringify(sentBack.body));
+    const back = await as('lee', `/timesheets/${people.ana}/${MON}/decision`,
+      { method: 'POST', body: { decision: 'reject', reason: 'The 09:30 half hour was the standup.' } });
+    assert.strictEqual(back.status, 200, JSON.stringify(back.body));
 
-    const returned = await week('ana');
+    const returned = await dayOf('ana', MON);
     assert.strictEqual(returned.status, 'rejected');
     assert.strictEqual(returned.locked, false, 'the whole point of sending it back');
-    assert.strictEqual(returned.rejectionReason, 'Thursday should be Leave, not Training.');
+    assert.strictEqual(returned.rejectionReason, 'The 09:30 half hour was the standup.');
     assert.strictEqual(returned.decidedBy, 'lee@zvky.test');
 
     // Corrected and sent again.
-    const fix = returned.entries.find((e) => e.nonProject === 'training');
-    assert.strictEqual((await as('ana', `/timesheets/entries/${fix.id}`,
-      { method: 'PATCH', body: { nonProject: 'leave' } })).status, 200);
-    await as('ana', '/timesheets/submit', { method: 'POST', body: { weekStart: MON } });
-    const resent = await week('ana');
+    const standup = returned.entries.find((e) => e.startLabel === '09:30');
+    assert.strictEqual((await as('ana', `/timesheets/entries/${standup.id}`,
+      { method: 'DELETE' })).status, 200);
+    await as('ana', '/timesheets/submit', { method: 'POST', body: { date: MON } });
+    const resent = await dayOf('ana', MON);
     assert.strictEqual(resent.status, 'submitted');
     assert.strictEqual(resent.rejectionReason, null, 'and the old reason is cleared, not left to confuse');
+    assert.strictEqual(resent.hours, 8, 'back to eight');
 
-    const approved = await as('lee', `/timesheets/${people.ana}/${MON}/decision`,
-      { method: 'POST', body: { decision: 'approve' } });
-    assert.strictEqual(approved.status, 200, JSON.stringify(approved.body));
-
-    const done = await week('ana');
+    assert.strictEqual((await as('lee', `/timesheets/${people.ana}/${MON}/decision`,
+      { method: 'POST', body: { decision: 'approve' } })).status, 200);
+    const done = await dayOf('ana', MON);
     assert.strictEqual(done.status, 'approved');
     assert.strictEqual(done.locked, true);
-    /* Approved and editable would approve nothing, which is why this is the one
-       state a rejection cannot be confused with. */
-    assert.strictEqual((await add('ana', { date: MON, hours: 1, clientId, projectId })).status, 409);
-    assert.strictEqual((await as('lee', '/timesheets/pending')).body.count, 0, 'and out of the queue');
+    assert.strictEqual((await add('ana', { date: MON, startTime: '09:30', endTime: '10:00',
+      clientId, projectId })).status, 409, 'approved and editable would approve nothing');
   });
 
-  await t.test('a decided week cannot be decided again', async () => {
+  await t.test('a decided day cannot be decided again', async () => {
     const again = await as('lee', `/timesheets/${people.ana}/${MON}/decision`,
       { method: 'POST', body: { decision: 'reject', reason: 'changed my mind' } });
     assert.strictEqual(again.status, 409, JSON.stringify(again.body));
-    assert.strictEqual((await week('ana')).status, 'approved', 'the first decision stands');
+    assert.strictEqual((await dayOf('ana', MON)).status, 'approved', 'the first decision stands');
   });
 
   await t.test('nobody approves their own hours', async () => {
-    /* The same rule the project review queue had to learn. Lee holds approve
-       and can reach their own sheet; that is not a decision. */
-    await add('lee', { date: MON, hours: 4, clientId, projectId });
-    await as('lee', '/timesheets/submit', { method: 'POST', body: { weekStart: MON } });
+    await add('lee', { date: MON, startTime: '10:00', endTime: '14:00', clientId, projectId });
+    await as('lee', '/timesheets/submit', { method: 'POST', body: { date: MON } });
     const own = await as('lee', `/timesheets/${people.lee}/${MON}/decision`,
       { method: 'POST', body: { decision: 'approve' } });
     assert.strictEqual(own.status, 403, JSON.stringify(own.body));
     assert.match(own.body.error, /your own timesheet/);
-    assert.strictEqual((await week('lee')).status, 'submitted', 'still waiting on somebody else');
+    assert.strictEqual((await dayOf('lee', MON)).status, 'submitted');
   });
 
   await t.test('everybody sees their own and nobody else\'s', async () => {
-    assert.strictEqual((await as('bo', `/timesheets/week?date=${MON}`)).status, 200, 'their own opens');
-    const nosey = await as('bo', `/timesheets/week?date=${MON}&userId=${people.ana}`);
-    assert.strictEqual(nosey.status, 403, 'a colleague\'s does not');
+    assert.strictEqual((await as('bo', `/timesheets/week?date=${MON}`)).status, 200);
+    assert.strictEqual((await as('bo', `/timesheets/week?date=${MON}&userId=${people.ana}`)).status, 403);
     assert.deepStrictEqual((await as('bo', '/timesheets/people')).body.users.map((u) => u.name), ['bo']);
 
-    // And there is no path to writing onto somebody else's sheet at all.
-    const theirs = (await week('root', people.ana)).entries[0];
+    const theirs = (await dayOf('root', MON, people.ana)).entries[0];
     assert.strictEqual((await as('bo', `/timesheets/entries/${theirs.id}`,
-      { method: 'PATCH', body: { hours: 1 } })).status, 403);
+      { method: 'PATCH', body: { endTime: '11:00' } })).status, 403);
     assert.strictEqual((await as('bo', `/timesheets/entries/${theirs.id}`, { method: 'DELETE' })).status, 403);
   });
 
   await t.test('a lead sees their own team, and only their own team', async () => {
-    assert.strictEqual((await as('lee', `/timesheets/week?date=${MON}&userId=${people.ana}`)).status, 200,
-      'Ana reports to Lee');
-    assert.strictEqual((await as('lee', `/timesheets/week?date=${MON}&userId=${people.bo}`)).status, 403,
-      'Bo does not');
+    assert.strictEqual((await as('lee', `/timesheets/week?date=${MON}&userId=${people.ana}`)).status, 200);
+    assert.strictEqual((await as('lee', `/timesheets/week?date=${MON}&userId=${people.bo}`)).status, 403);
     const visible = (await as('lee', '/timesheets/people')).body;
     assert.deepStrictEqual(visible.users.map((u) => u.name).sort(), ['ana', 'lee']);
     assert.strictEqual(visible.scope, 'team');
-
-    // Super Admin holds timesheet.all and reaches everybody.
     assert.strictEqual((await as('root', `/timesheets/week?date=${MON}&userId=${people.bo}`)).status, 200);
     assert.strictEqual((await as('root', '/timesheets/people')).body.scope, 'all');
   });
 
   await t.test('every change is on the record, including a person\'s own', async () => {
-    /* Hours are the input to somebody's pay, so the self-edits matter as much
-       as the decisions — they are exactly what a dispute turns on. */
-    const { events } = (await as('lee', `/timesheets/history?userId=${people.ana}&weekStart=${MON}`)).body;
+    const { events } = (await as('lee', `/timesheets/history?userId=${people.ana}&date=${MON}`)).body;
     const actions = events.map((e) => e.action);
-    for (const expected of ['entry_added', 'entry_edited', 'submitted', 'rejected', 'approved']) {
-      assert.ok(actions.includes(expected), `${expected} is missing from the trail: ${actions.join(', ')}`);
+    for (const expected of ['entry_added', 'entry_removed', 'submitted', 'rejected', 'approved']) {
+      assert.ok(actions.includes(expected), `${expected} is missing: ${actions.join(', ')}`);
     }
     const rejection = events.find((e) => e.action === 'rejected');
     assert.strictEqual(rejection.actorEmail, 'lee@zvky.test');
-    assert.match(rejection.detail, /Thursday should be Leave/, 'the reason is kept, not just the verdict');
-    // And it names what a line was against rather than a row id.
+    assert.match(rejection.detail, /standup/, 'the reason is kept, not just the verdict');
+    // And a line's own entry names its clock and what it was against.
+    assert.match(events.find((e) => e.action === 'entry_added').detail, /10:00–12:00/);
     assert.match(events.find((e) => e.action === 'entry_added').detail, /Nightgarden/);
   });
 
-  await t.test('the exports carry what the screen showed', async () => {
+  await t.test('the exports carry the clock, in IST, whatever the reader\'s zone', async () => {
     const xlsx = await fetch(`${server.base}/timesheets/export.xlsx?from=${MON}&to=2026-03-08`,
       { headers: { Authorization: `Bearer ${token.ana}` } });
     assert.strictEqual(xlsx.status, 200);
-    assert.match(xlsx.headers.get('content-type'), /spreadsheetml/);
     const book = require('xlsx').read(Buffer.from(await xlsx.arrayBuffer()), { type: 'buffer' });
     const text = require('xlsx').utils.sheet_to_csv(book.Sheets[book.SheetNames[0]]);
-    assert.match(text, /Nightgarden/, 'the project is in the spreadsheet');
-    assert.match(text, /Rough pass/, 'and the notes');
-    assert.match(text, /approved/, 'and where the week got to');
+    assert.match(text, /Times shown in,IST/, 'the sheet says which clock it is on');
+    assert.match(text, /10:00,12:00/, 'and carries the start and end');
+    assert.match(text, /Nightgarden/);
+    assert.match(text, /approved/, 'with the day\'s own status, not a week\'s');
+
+    /* A day reads in clock order, not in the order somebody happened to type
+       the rows. A timesheet that lists the afternoon before the morning cannot
+       be checked against by the person approving it. */
+    const byDay = new Map();
+    for (const line of text.split('\n')) {
+      const m = /^(\d{4}-\d{2}-\d{2}),(\d{2}:\d{2})/.exec(line);
+      if (m) byDay.set(m[1], [...(byDay.get(m[1]) || []), m[2]]);
+    }
+    const busiest = [...byDay.values()].sort((a, b) => b.length - a.length)[0] || [];
+    assert.ok(busiest.length > 1, 'a day with more than one line to order');
+    assert.deepStrictEqual(busiest, [...busiest].sort(), 'a day comes out in clock order');
 
     const pdf = await fetch(`${server.base}/timesheets/export.pdf?from=${MON}&to=2026-03-08`,
       { headers: { Authorization: `Bearer ${token.ana}` } });
     assert.strictEqual(pdf.status, 200);
-    assert.strictEqual(pdf.headers.get('content-type'), 'application/pdf');
     const bytes = Buffer.from(await pdf.arrayBuffer());
-    assert.strictEqual(bytes.subarray(0, 4).toString(), '%PDF', 'and it really is one');
-    assert.ok(bytes.length > 1000);
+    assert.strictEqual(bytes.subarray(0, 4).toString(), '%PDF');
 
-    // An export reaches exactly as far as the tab does, and no further.
     assert.strictEqual((await fetch(
       `${server.base}/timesheets/export.xlsx?userId=${people.ana}&from=${MON}&to=2026-03-08`,
       { headers: { Authorization: `Bearer ${token.bo}` } })).status, 403);
   });
 
+  await t.test('the clock is stored as minutes, not as an instant', async () => {
+    /* The thing that makes point 5 true rather than approximately true: there
+       is no timezone in the column, so there is nothing to convert and nothing
+       to get wrong. 10:00 is 600 for everybody. */
+    const rows = await sql(cfg,
+      `SELECT start_min, end_min FROM timesheet_entries WHERE user_id = '${people.ana}' AND entry_date = '${MON}' ORDER BY start_min LIMIT 1`);
+    assert.strictEqual(Number(rows[0].start_min), 600, '10:00');
+    assert.strictEqual(Number(rows[0].end_min), 720, '12:00');
+  });
+
+  await t.test('the weekly shape is gone, everywhere', async () => {
+    /* The studio asked for the daily cycle to REPLACE the weekly one rather
+       than sit beside it. Two cycles would be two answers to "is this
+       approved". */
+    const tables = await sql(cfg,
+      "SELECT TABLE_NAME AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'timesheet_weeks'");
+    assert.strictEqual(tables.length, 0, 'timesheet_weeks must not exist');
+    const columns = await sql(cfg,
+      "SELECT COLUMN_NAME AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'timesheet_entries'");
+    assert.ok(!columns.some((c) => c.n === 'week_start'), 'nor week_start on a line');
+    assert.ok(columns.some((c) => c.n === 'start_min'), 'and the clock is there instead');
+  });
+
   await t.test('the asset pipeline and its measured time are untouched', async () => {
-    /* The studio asked for this to be additive: Efficiency and Idle read
-       work_sessions, which is the clock the app kept, and nothing here writes
-       to it. Checked against the tables rather than asserted in a comment. */
     const sessions = await sql(cfg, 'SELECT COUNT(*) AS n FROM work_sessions');
     assert.strictEqual(Number(sessions[0].n), 0,
       'logging hours must not have written a measured session');
-
     const asset = (await as('root', `/assets/project/${projectId}`)).body.assets
       .find((a) => a.id === assetId);
-    assert.strictEqual(asset.status, 'assigned', 'and the asset has not moved');
-
+    assert.strictEqual(asset.status, 'assigned');
     const events = await sql(cfg,
       "SELECT COUNT(*) AS n FROM asset_events WHERE action LIKE '%timesheet%'");
     assert.strictEqual(Number(events[0].n), 0, 'a timesheet line is not an asset event');

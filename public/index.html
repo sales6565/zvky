@@ -472,6 +472,19 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
 .ts-del:hover{color:var(--brand-accent);}
 .ts-empty{font-size:11.5px;color:var(--ink-faint);}
 .ts-queue-empty{font-size:12.5px;color:var(--ink-faint);margin-top:18px;}
+.ts-hint{font-size:11px;color:var(--ink-faint);font-family:'IBM Plex Mono';}
+.ts-day-status{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.ts-day-status .status-pill{font-size:10.5px;padding:2px 7px;}
+.ts-clock{font-family:'IBM Plex Mono';font-size:11px;color:var(--ink-muted);}
+/* Flags, not errors. A long day and a weekend are both real; the colour says
+   "look at this", not "this is wrong". */
+.ts-flag{font-size:10px;font-family:'IBM Plex Mono';padding:1px 6px;border-radius:9px;
+  background:var(--surface-3);color:var(--ink-muted);}
+.ts-flag.over{background:#e8a33d1f;color:#e8a33d;}
+.ts-day.weekend{background:var(--surface-1);}
+.ts-sentback{font-size:11.5px;background:#e8402c14;border:1px solid #e8402c44;border-radius:8px;
+  padding:7px 9px;color:var(--ink);}
+.ts-sentback strong{display:block;color:#e8402c;font-size:11px;margin-bottom:2px;}
 /* The Creative Director's feedback box. It had no rule of its own and so drew
    as a browser-default white box in a dark app — tolerable when it sat beside
    two buttons that carried the meaning, and not now that it IS the meaning:
@@ -788,8 +801,13 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
       <label>Category</label>
       <select id="tl_cat"></select>
     </div>
-    <label>Hours</label>
-    <input type="number" id="tl_hours" min="0.25" max="24" step="0.25" placeholder="e.g. 3.5">
+    <!-- Times, not a number of hours. The window and the lunch break cannot be
+         checked against "3.5", and the duration falls out of the two anyway. -->
+    <div style="display:flex;gap:10px;">
+      <div style="flex:1;"><label>Start</label><input type="time" id="tl_start" step="900"></div>
+      <div style="flex:1;"><label>End</label><input type="time" id="tl_end" step="900"></div>
+    </div>
+    <div id="tl_calc" style="font-size:11.5px;color:var(--ink-muted);margin:2px 0 4px;"></div>
     <label>Notes <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional)</span></label>
     <textarea id="tl_notes" rows="2" placeholder="What you did"></textarea>
     <div class="ref-err" id="tl_err"></div>
@@ -797,6 +815,7 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
       <button class="btn btn-ghost" id="tl_cancel">Cancel</button>
       <button class="btn btn-brand" id="tl_save">Add line</button>
     </div>
+    <div id="tl_window" style="font-size:11px;color:var(--ink-faint);margin-top:8px;"></div>
   </div>
 </div>
 
@@ -2422,9 +2441,7 @@ async function renderTimesheet(){
     try{ tsState.people = (await api('/timesheets/people')).users || []; }catch{ tsState.people = []; }
   }
 
-  const t = week.totals;
-  const locked = week.locked;
-  const pill = TS_STATUS[week.status] || { label: week.status, color:'var(--ink-muted)' };
+  const wd = week.workingDay;
 
   /* The picker is only drawn when there is more than one person to pick, so
      somebody who only ever sees their own week is not asked to choose. */
@@ -2434,60 +2451,65 @@ async function renderTimesheet(){
         escapeHTML(u.name)}${u.id===state.currentUser.id?' (you)':''}</option>`).join('')}
     </select>` : '';
 
-  const rowsFor = (day) => week.entries.filter(e=>e.date===day);
-
   el.innerHTML = `
     <div class="ts-bar">
       <button class="btn btn-ghost btn-sm" id="ts_prev">← Previous</button>
       <button class="btn btn-ghost btn-sm" id="ts_thisWeek">This week</button>
       <button class="btn btn-ghost btn-sm" id="ts_next">Next →</button>
-      <span class="ts-range">${tsPretty(t.days[0])} – ${tsPretty(t.days[6])}, ${t.days[6].slice(0,4)}</span>
+      <span class="ts-range">${tsPretty(week.weekStart)} – ${tsPretty(week.weekEnd)}, ${week.weekEnd.slice(0,4)}</span>
       ${picker}
-      <span class="status-pill" style="background:${pill.color}22;color:${pill.color};margin-left:8px;"><span class="d" style="background:${pill.color}"></span>${pill.label}</span>
       <div class="spacer"></div>
-      <span class="ts-total">Week total <strong>${t.week}h</strong></span>
+      <span class="ts-hint">${wd.dayStart}–${wd.dayEnd} ${wd.timezone} · lunch ${wd.lunchStart}–${wd.lunchEnd} · ${wd.maxHours}h a day</span>
+      <span class="ts-total">Week <strong>${week.weekHours}h</strong></span>
       ${can('timesheet.own') ? `
         <button class="btn btn-ghost btn-sm" id="ts_xlsx">Excel</button>
         <button class="btn btn-ghost btn-sm" id="ts_pdf">PDF</button>` : ''}
-      ${week.mayEdit && !locked ? `<button class="btn btn-brand btn-sm" id="ts_submit">Submit week</button>` : ''}
     </div>
 
-    ${week.status==='rejected' && week.rejectionReason ? `
-      <div class="note" style="border-left-color:#e8402c;margin-bottom:12px;">
-        <span class="who">Sent back by ${escapeHTML(week.decidedBy||'your approver')}</span>
-        <p>${escapeHTML(week.rejectionReason)}</p>
-      </div>` : ''}
-    ${locked ? `<div class="ts-locked">${week.status==='approved'
-      ? `Approved${week.decidedBy?` by ${escapeHTML(week.decidedBy)}`:''}. This week can no longer be changed.`
-      : 'Submitted and waiting on your approver. Ask them to send it back if it needs changing.'}</div>` : ''}
-    ${t.overLong.length ? `<div class="ts-warn">${t.overLong.map(d=>
-      `${tsDayName(d)} ${tsPretty(d)} comes to more than ${week.warnHours} hours — worth a second look.`).join(' ')}</div>` : ''}
-
+    <!-- Seven days, each with its own status, its own lock and its own Submit.
+         The cycle is daily now: Tuesday can be approved while Wednesday is
+         still being filled in, which a single weekly row could not express. -->
     <div class="ts-week">
-      ${t.days.map(day=>{
-        const lines = rowsFor(day);
-        const total = t.perDay[day];
-        return `<div class="ts-day${total>week.warnHours?' over':''}">
+      ${week.days.map(day=>{
+        const pill = TS_STATUS[day.status] || { label: day.status, color:'var(--ink-muted)' };
+        const editable = week.mayEdit && !day.locked;
+        return `<div class="ts-day${day.overLong?' over':''}${day.weekend?' weekend':''}">
           <div class="ts-day-head">
-            <span class="ts-day-name">${tsDayName(day)}</span>
-            <span class="ts-day-date">${tsPretty(day)}</span>
+            <span class="ts-day-name">${tsDayName(day.date)}</span>
+            <span class="ts-day-date">${tsPretty(day.date)}</span>
             <div class="spacer"></div>
-            <span class="ts-day-total${total?'':' zero'}">${total}h</span>
+            <span class="ts-day-total${day.hours?'':' zero'}">${day.hours}h</span>
           </div>
-          ${lines.length ? `<table class="ts-lines"><tbody>${lines.map(e=>`
+          <div class="ts-day-status">
+            <span class="status-pill" style="background:${pill.color}22;color:${pill.color};"><span class="d" style="background:${pill.color}"></span>${pill.label}</span>
+            ${day.weekend && day.hours ? '<span class="ts-flag">Weekend</span>' : ''}
+            ${day.overLong ? `<span class="ts-flag over">Over ${wd.maxHours}h</span>` : ''}
+          </div>
+          ${day.status==='rejected' && day.rejectionReason ? `
+            <div class="ts-sentback">
+              <strong>Sent back by ${escapeHTML(day.decidedBy||'your approver')}</strong>
+              <div>${escapeHTML(day.rejectionReason)}</div>
+            </div>` : ''}
+          ${day.entries.length ? `<table class="ts-lines"><tbody>${day.entries.map(e=>`
             <tr>
-              <td class="ts-what">${e.nonProject
+              <td class="ts-what">
+                <div class="ts-clock">${e.startLabel}–${e.endLabel}</div>
+                ${e.nonProject
                 ? `<span class="ts-cat">${escapeHTML(tsCategory(week, e.nonProject))}</span>`
                 : `${escapeHTML(e.projectName||'—')}<span class="ts-client"> · ${escapeHTML(e.clientName||'')}</span>${
                     e.assetCode ? `<div class="ts-asset">${escapeHTML(e.assetCode)} ${escapeHTML(e.assetName||'')}</div>` : ''}`}
                 ${e.notes ? `<div class="ts-notes">${escapeHTML(e.notes)}</div>` : ''}
               </td>
               <td class="ts-hours">${e.hours}h</td>
-              <td class="ts-act">${week.mayEdit && !locked
+              <td class="ts-act">${editable
                 ? `<button class="ts-del" data-id="${e.id}" title="Remove this line">×</button>` : ''}</td>
             </tr>`).join('')}</tbody></table>` : '<div class="ts-empty">Nothing logged.</div>'}
-          ${week.mayEdit && !locked
-            ? `<button class="btn btn-ghost btn-sm ts-add" data-day="${day}">+ Add a line</button>` : ''}
+          ${editable ? `<button class="btn btn-ghost btn-sm ts-add" data-day="${day.date}">+ Add a line</button>` : ''}
+          ${editable && day.entries.length
+            ? `<button class="btn btn-brand btn-sm ts-submit-day" data-day="${day.date}">Submit this day</button>` : ''}
+          ${day.locked ? `<div class="ts-empty">${day.status==='approved'
+            ? `Approved${day.decidedBy?` by ${escapeHTML(day.decidedBy)}`:''}.`
+            : 'With your approver.'}</div>` : ''}
         </div>`;
       }).join('')}
     </div>
@@ -2510,13 +2532,13 @@ const tsCategory = (week, key) =>
 
 function wireTimesheet(el){
   const go = (date)=>{ tsState.date = date; renderTimesheet(); };
-  el.querySelector('#ts_prev').onclick = ()=>go(tsShift(tsState.week.totals.days[0], -7));
-  el.querySelector('#ts_next').onclick = ()=>go(tsShift(tsState.week.totals.days[0], 7));
+  el.querySelector('#ts_prev').onclick = ()=>go(tsShift(tsState.week.weekStart, -7));
+  el.querySelector('#ts_next').onclick = ()=>go(tsShift(tsState.week.weekStart, 7));
   el.querySelector('#ts_thisWeek').onclick = ()=>go(tsToday());
   const person = el.querySelector('#ts_person');
   if(person) person.onchange = ()=>{ tsState.userId = person.value; renderTimesheet(); };
 
-  const range = ()=>`from=${tsState.week.totals.days[0]}&to=${tsState.week.totals.days[6]}`
+  const range = ()=>`from=${tsState.week.weekStart}&to=${tsState.week.weekEnd}`
     + (tsState.userId && tsState.userId!==state.currentUser.id ? `&userId=${tsState.userId}` : '');
   const dl = (path)=>downloadAuthed(`/timesheets/${path}?${range()}`);
   if(el.querySelector('#ts_xlsx')) el.querySelector('#ts_xlsx').onclick = ()=>dl('export.xlsx');
@@ -2529,16 +2551,19 @@ function wireTimesheet(el){
     catch(e){ showToast(e.message); b.disabled = false; }
   });
 
-  const submit = el.querySelector('#ts_submit');
-  if(submit) submit.onclick = async ()=>{
-    submit.disabled = true;
+  /* One Submit per day, which is the cycle now. A day submitted is a day
+     locked; the rest of the week carries on. */
+  el.querySelectorAll('.ts-submit-day').forEach(b=>b.onclick = async ()=>{
+    b.disabled = true;
     try{
-      await api('/timesheets/submit', { method:'POST', body:{ weekStart: tsState.week.totals.days[0] } });
-      showToast('Week submitted.');
+      const res = await api('/timesheets/submit', { method:'POST', body:{ date: b.dataset.day } });
+      showToast(res.overLong
+        ? 'Submitted — flagged as over the eight-hour day.'
+        : 'Day submitted.');
       await renderTimesheet();
       refreshTimesheetCount();
-    }catch(e){ showToast(e.message); submit.disabled = false; }
-  };
+    }catch(e){ showToast(e.message); b.disabled = false; }
+  });
 }
 
 /* Weeks waiting on this person to decide, under their own sheet. Deliberately
@@ -2549,26 +2574,28 @@ async function renderTimesheetQueue(){
   if(!el) return;
   let data;
   try{ data = await api('/timesheets/pending'); }catch{ el.innerHTML=''; return; }
-  if(!data.weeks.length){ el.innerHTML = '<div class="ts-queue-empty">No timesheets waiting on you.</div>'; return; }
+  if(!data.days.length){ el.innerHTML = '<div class="ts-queue-empty">No timesheets waiting on you.</div>'; return; }
 
   el.innerHTML = `<div class="pr-banner" style="margin-top:18px;">
-    <h4>Waiting on you to approve · ${data.weeks.length}</h4>
-    <div class="pr-sub">Submitted weeks from the people you approve for. Approving locks the week; sending it back returns it to them with your reason.</div>
-    ${data.weeks.map(w=>`<div class="pr-item"><div class="pr-what">
+    <h4>Waiting on you to approve · ${data.days.length}</h4>
+    <div class="pr-sub">Submitted days from the people you approve for. Approving locks the day; sending it back returns it to them with your reason. A day over ${data.maxHours} hours, or worked at the weekend, is flagged — neither is refused, and approving accepts it.</div>
+    ${data.days.map(w=>`<div class="pr-item"><div class="pr-what">
       <strong>${escapeHTML(w.userName)}</strong>
-      <span style="color:var(--ink-faint);">· week of ${tsPretty(w.weekStart)}</span>
+      <span style="color:var(--ink-faint);">· ${tsDayName(w.date)} ${tsPretty(w.date)}</span>
       <span class="ts-total" style="margin-left:8px;">${w.hours}h</span>
+      ${w.overLong ? `<span class="ts-flag over">Over ${data.maxHours}h</span>` : ''}
+      ${w.weekend ? '<span class="ts-flag">Weekend</span>' : ''}
       <div class="pr-meta">submitted ${fmtDate(w.submittedAt)}</div>
       <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-        <button class="btn btn-ghost btn-sm ts-open" data-user="${w.userId}" data-week="${w.weekStart}">Open the week</button>
-        <button class="btn btn-brand btn-sm ts-approve" data-user="${w.userId}" data-week="${w.weekStart}">Approve</button>
-        <button class="btn btn-ghost btn-sm ts-reject" data-user="${w.userId}" data-week="${w.weekStart}" style="color:#e8402c;">Send back</button>
+        <button class="btn btn-ghost btn-sm ts-open" data-user="${w.userId}" data-week="${w.date}">Open the day</button>
+        <button class="btn btn-brand btn-sm ts-approve" data-user="${w.userId}" data-week="${w.date}">Approve</button>
+        <button class="btn btn-ghost btn-sm ts-reject" data-user="${w.userId}" data-week="${w.date}" style="color:#e8402c;">Send back</button>
       </div>
-      <div class="ts-reason" data-user="${w.userId}" data-week="${w.weekStart}" style="display:none;margin-top:8px;">
+      <div class="ts-reason" data-user="${w.userId}" data-week="${w.date}" style="display:none;margin-top:8px;">
         <textarea class="pr-feedback" rows="2" placeholder="What needs correcting? (required)"></textarea>
         <div style="margin-top:6px;"><button class="btn btn-brand btn-sm ts-reject-go">Send it back</button></div>
       </div>
-      <div class="ref-err ts-err" data-user="${w.userId}" data-week="${w.weekStart}"></div>
+      <div class="ref-err ts-err" data-user="${w.userId}" data-week="${w.date}"></div>
     </div></div>`).join('')}
   </div>`;
 
@@ -2639,9 +2666,22 @@ function openTimesheetLine(day){
   const w = tsState.week;
   document.getElementById('tl_day').textContent = `${tsDayName(day)} ${tsPretty(day)}`;
   document.getElementById('tl_kind').value = 'project';
-  document.getElementById('tl_hours').value = '';
   document.getElementById('tl_notes').value = '';
   document.getElementById('tl_err').textContent = '';
+  document.getElementById('tl_calc').textContent = '';
+  const wd = w.workingDay;
+  /* Opens on the start of the working day, or on the end of whatever is
+     already logged — so filling a day in is a sequence of end times rather
+     than a sequence of both. */
+  const last = (w.days.find(d=>d.date===day)||{entries:[]}).entries.slice(-1)[0];
+  document.getElementById('tl_start').value = last ? last.endLabel : wd.dayStart;
+  document.getElementById('tl_end').value = '';
+  document.getElementById('tl_start').min = wd.dayStart;
+  document.getElementById('tl_start').max = wd.dayEnd;
+  document.getElementById('tl_end').min = wd.dayStart;
+  document.getElementById('tl_end').max = wd.dayEnd;
+  document.getElementById('tl_window').textContent =
+    `Working day ${wd.dayStart}–${wd.dayEnd} ${wd.timezone}. Lunch ${wd.lunchStart}–${wd.lunchEnd} is not working time and is taken off automatically.`;
   document.getElementById('tl_cat').innerHTML =
     (w.nonProjectTypes||[]).map(n=>`<option value="${n.key}">${escapeHTML(n.label)}</option>`).join('');
   document.getElementById('tl_client').innerHTML =
@@ -2650,9 +2690,30 @@ function openTimesheetLine(day){
   document.getElementById('tl_project').innerHTML = '<option value="">Choose a client first…</option>';
   document.getElementById('tl_asset').innerHTML = '<option value="">No specific asset</option>';
   syncTimesheetLine();
+  tlRecalc();
   timesheetLineWrap.classList.add('show');
-  document.getElementById('tl_hours').focus();
+  document.getElementById('tl_end').focus();
 }
+
+/* What the two times come to, before it is sent — the lunch subtraction shown
+   as it happens rather than as a smaller number appearing afterwards. */
+function tlRecalc(){
+  const out = document.getElementById('tl_calc');
+  const wd = (tsState.week||{}).workingDay;
+  if(!wd){ out.textContent=''; return; }
+  const mins = (v)=>{ const m=/^(\d{1,2}):(\d{2})$/.exec(v||''); return m ? Number(m[1])*60+Number(m[2]) : null; };
+  const s = mins(document.getElementById('tl_start').value);
+  const e = mins(document.getElementById('tl_end').value);
+  if(s===null || e===null || e<=s){ out.textContent=''; return; }
+  const ls = mins(wd.lunchStart), le = mins(wd.lunchEnd);
+  const lunch = Math.max(0, Math.min(e,le) - Math.max(s,ls));
+  const net = (e - s - lunch) / 60;
+  out.textContent = net <= 0
+    ? 'That is entirely within the lunch break.'
+    : `${Math.round(net*100)/100}h${lunch ? ` — ${lunch} minutes of lunch taken off` : ''}`;
+}
+document.getElementById('tl_start').addEventListener('input', tlRecalc);
+document.getElementById('tl_end').addEventListener('input', tlRecalc);
 
 function syncTimesheetLine(){
   const project = document.getElementById('tl_kind').value === 'project';
@@ -2699,7 +2760,8 @@ document.getElementById('tl_save').addEventListener('click', async ()=>{
   const project = document.getElementById('tl_kind').value === 'project';
   const body = {
     date: tsState.draft.day,
-    hours: Number(document.getElementById('tl_hours').value),
+    startTime: document.getElementById('tl_start').value,
+    endTime: document.getElementById('tl_end').value,
     notes: document.getElementById('tl_notes').value.trim() || undefined,
   };
   if(project){
@@ -2712,8 +2774,9 @@ document.getElementById('tl_save').addEventListener('click', async ()=>{
   const btn = document.getElementById('tl_save');
   btn.disabled = true;
   try{
-    await api('/timesheets/entries', { method:'POST', body });
+    const res = await api('/timesheets/entries', { method:'POST', body });
     timesheetLineWrap.classList.remove('show');
+    if(res.lunchSubtracted) showToast(`Lunch taken off — ${res.lunchSubtracted} minutes.`);
     await renderTimesheet();
   }catch(e){ err.textContent = e.message; }
   finally{ btn.disabled = false; }

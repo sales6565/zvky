@@ -30,6 +30,7 @@ const unavailable = (err) => err && (err.code === 'ER_NO_SUCH_TABLE' || err.code
 
 const ENTRY_SELECT = `
   SELECT e.id, e.user_id AS userId, e.entry_date AS date, e.hours, e.notes,
+         e.start_min AS startMin, e.end_min AS endMin,
          e.non_project AS nonProject,
          e.client_id AS clientId,  c.\`name\` AS clientName,
          e.project_id AS projectId, p.\`name\` AS projectName,
@@ -83,21 +84,21 @@ async function readableUserIds(viewer) {
 
 // The week row, made on demand. A week nobody has touched has no row, which is
 // the right default: a draft is the absence of a decision, not a record of one.
-async function weekRow(userId, weekStart) {
+async function dayRow(userId, workDate) {
   const { rows } = await db.query(
-    'SELECT * FROM timesheet_weeks WHERE user_id = $1 AND week_start = $2', [userId, weekStart]
+    'SELECT * FROM timesheet_days WHERE user_id = $1 AND work_date = $2', [userId, workDate]
   );
   return rows[0] || null;
 }
 
-async function ensureWeek(userId, weekStart) {
-  const found = await weekRow(userId, weekStart);
+async function ensureDay(userId, workDate) {
+  const found = await dayRow(userId, workDate);
   if (found) return found;
   await db.query(
-    'INSERT INTO timesheet_weeks (id, user_id, week_start, status) VALUES ($1,$2,$3,$4)',
-    [uuid(), userId, weekStart, 'draft']
+    'INSERT INTO timesheet_days (id, user_id, work_date, status) VALUES ($1,$2,$3,$4)',
+    [uuid(), userId, workDate, 'draft']
   );
-  return weekRow(userId, weekStart);
+  return dayRow(userId, workDate);
 }
 
 /* Every change to a timesheet, on the record.
@@ -108,15 +109,15 @@ async function ensureWeek(userId, weekStart) {
  * notifications are: an edit that happened and was not logged beats an edit
  * refused because the log could not be written.
  */
-async function record(userId, weekStart, action, actor, detail) {
+async function record(userId, workDate, action, actor, detail) {
   try {
     await db.query(
-      `INSERT INTO timesheet_events (id, user_id, week_start, action, actor_id, actor_email, detail)
+      `INSERT INTO timesheet_events (id, user_id, work_date, action, actor_id, actor_email, detail)
        VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [uuid(), userId, weekStart, action, actor.id, actor.email, detail || null]
+      [uuid(), userId, workDate, action, actor.id, actor.email, detail || null]
     );
   } catch (err) {
-    console.warn(`[timesheet] could not log ${action} on ${weekStart}: ${err.message}`);
+    console.warn(`[timesheet] could not log ${action} on ${workDate}: ${err.message}`);
   }
 }
 
@@ -132,55 +133,103 @@ function describeLine(row) {
   return row.assetCode ? `${where} · ${row.assetCode}` : where;
 }
 
-const shape = (week, entries, weekStart) => ({
-  weekStart,
-  status: week ? week.status : 'draft',
-  submittedAt: week ? week.submitted_at : null,
-  decidedAt: week ? week.decided_at : null,
-  decidedBy: week ? week.decider_email : null,
-  rejectionReason: week ? week.rejection_reason : null,
-  locked: sheets.isLocked(week ? week.status : 'draft'),
-  entries: entries.map((e) => ({ ...e, date: sheets.toISO(e.date), hours: Number(e.hours) })),
-  totals: sheets.totals(entries, weekStart),
+/* One day, in the shape the page and the exports both read.
+ *
+ * `dayTotal` carries the two flags an approver needs — over eight hours, and
+ * work on a weekend — which are flags rather than refusals because both are
+ * real things that happen and a form that blocks them teaches people to lie to
+ * it. Everything to do with the clock is minutes past midnight IST, which is
+ * what makes the times identical for a reader in any timezone.
+ */
+const shapeDay = (day, entries, workDate) => {
+  const total = sheets.dayTotal(entries);
+  return {
+    date: workDate,
+    status: day ? day.status : 'draft',
+    submittedAt: day ? day.submitted_at : null,
+    decidedAt: day ? day.decided_at : null,
+    decidedBy: day ? day.decider_email : null,
+    rejectionReason: day ? day.rejection_reason : null,
+    locked: sheets.isLocked(day ? day.status : 'draft'),
+    entries: entries.map((e) => ({
+      ...e,
+      date: sheets.toISO(e.date),
+      hours: Number(e.hours),
+      startMin: Number(e.startMin),
+      endMin: Number(e.endMin),
+      // Rendered here so the page never turns a number into a clock itself.
+      startLabel: sheets.clockLabel(Number(e.startMin)),
+      endLabel: sheets.clockLabel(Number(e.endMin)),
+    })),
+    hours: total.hours,
+    overLong: total.overLong,
+    weekend: sheets.isWeekend(workDate),
+  };
+};
+
+/* The studio's working day, handed to the page rather than repeated in it.
+   A change to the window, the lunch hour or the cap happens in one file. */
+const workingDay = () => ({
+  timezone: sheets.IST_LABEL,
+  dayStart: sheets.clockLabel(sheets.DAY_START),
+  dayEnd: sheets.clockLabel(sheets.DAY_END),
+  lunchStart: sheets.clockLabel(sheets.LUNCH_START),
+  lunchEnd: sheets.clockLabel(sheets.LUNCH_END),
+  maxHours: sheets.DAY_MAX_MINUTES / 60,
 });
 
-/* GET /api/timesheets/week?date=&userId= — one person's week.
+/* GET /api/timesheets/week?date=&userId= — seven days, for filling in.
  *
- * `date` is any day in the week wanted; the Monday is worked out here so the
- * browser never has to. Omitting userId means your own, which is what the tab
- * opens on.
+ * Still a week on screen even though submission is now daily: a week is how
+ * somebody wants to SEE their time, and one day at a time is seven navigations
+ * to do one job. Each day carries its own status and its own lock, which is
+ * what changed.
  */
 router.get('/week', requirePermission('timesheet.own'), async (req, res) => {
-  const weekStart = sheets.weekStart(req.query.date || new Date().toISOString().slice(0, 10));
+  const anchor = sheets.toISO(req.query.date) || sheets.toISO(new Date().toISOString().slice(0, 10));
+  const days = sheets.weekDays(anchor);
   const userId = req.query.userId || req.user.id;
 
   const verdict = await mayRead(req.user, userId);
   if (!verdict.ok) return res.status(403).json({ error: 'That is not your timesheet.' });
 
   try {
-    const week = await weekRow(userId, weekStart);
-    const { rows } = await db.query(
-      `${ENTRY_SELECT} WHERE e.user_id = $1 AND e.week_start = $2 ORDER BY e.entry_date, e.created_at`,
-      [userId, weekStart]
+    const { rows: entries } = await db.query(
+      `${ENTRY_SELECT} WHERE e.user_id = $1 AND e.entry_date BETWEEN $2 AND $3
+        ORDER BY e.entry_date, e.start_min`,
+      [userId, days[0], days[6]]
     );
+    const { rows: dayRows } = await db.query(
+      'SELECT * FROM timesheet_days WHERE user_id = $1 AND work_date BETWEEN $2 AND $3',
+      [userId, days[0], days[6]]
+    );
+    const byDate = new Map(dayRows.map((d) => [sheets.toISO(d.work_date), d]));
     const { rows: who } = await db.query('SELECT id, `name`, email FROM users WHERE id = $1', [userId]);
+
+    const shaped = days.map((d) =>
+      shapeDay(byDate.get(d) || null, entries.filter((e) => sheets.toISO(e.date) === d), d));
+
     res.json({
       user: who[0] || null,
       mine: userId === req.user.id,
-      // What this reader may do with what they are looking at, decided here so
-      // the page does not have to work it out from a permission list.
       mayEdit: userId === req.user.id,
       mayDecide: holds(req.user, 'timesheet.approve') && userId !== req.user.id,
       nonProjectTypes: sheets.NON_PROJECT,
-      warnHours: sheets.DAY_WARN_HOURS,
-      ...shape(week, rows, weekStart),
+      workingDay: workingDay(),
+      days: shaped,
+      weekStart: days[0],
+      weekEnd: days[6],
+      weekHours: Math.round(shaped.reduce((n, d) => n + d.hours, 0) * 100) / 100,
     });
   } catch (err) {
     if (!unavailable(err)) throw err;
     console.warn(`[schema] timesheet tables unavailable (${err.code}); the week reads empty.`);
-    res.json({ user: null, mine: true, mayEdit: false, mayDecide: false, unavailable: true,
-      nonProjectTypes: sheets.NON_PROJECT, warnHours: sheets.DAY_WARN_HOURS,
-      ...shape(null, [], weekStart) });
+    res.json({
+      user: null, mine: true, mayEdit: false, mayDecide: false, unavailable: true,
+      nonProjectTypes: sheets.NON_PROJECT, workingDay: workingDay(),
+      days: days.map((d) => shapeDay(null, [], d)),
+      weekStart: days[0], weekEnd: days[6], weekHours: 0,
+    });
   }
 });
 
@@ -196,52 +245,68 @@ router.get('/people', requirePermission('timesheet.own'), async (req, res) => {
     : (holds(req.user, 'timesheet.team') ? 'team' : 'own') });
 });
 
-/* POST /api/timesheets/entries — add a line to your own week.
+/* POST /api/timesheets/entries — add a line to your own day.
  *
  * Your own, always: there is no path here to writing hours onto somebody else's
- * sheet. An approver sends a week back for its owner to correct rather than
+ * sheet. An approver sends a day back for its owner to correct rather than
  * correcting it themselves, because a timesheet somebody else edited is no
- * longer that person's statement of their week.
+ * longer that person's statement of their day.
  */
 router.post('/entries', requirePermission('timesheet.own'), async (req, res) => {
   const verdict = sheets.validateEntry(req.body || {});
   if (!verdict.ok) return res.status(400).json(verdict);
   const line = verdict.value;
 
-  const week = await ensureWeek(req.user.id, line.weekStart).catch((err) => {
+  const day = await ensureDay(req.user.id, line.date).catch((err) => {
     if (unavailable(err)) return null;
     throw err;
   });
-  if (!week) {
+  if (!day) {
     return res.status(503).json({
       error: 'Timesheets are not available on this deployment yet — the database is missing the '
         + 'timesheet tables. See /api/health.',
     });
   }
-  if (sheets.isLocked(week.status)) {
+  if (sheets.isLocked(day.status)) {
     return res.status(409).json({
-      error: week.status === 'approved'
-        ? 'That week has been approved and can no longer be changed.'
-        : 'That week is with your approver. Ask them to send it back if it needs changing.',
-      status: week.status,
+      error: day.status === 'approved'
+        ? 'That day has been approved and can no longer be changed.'
+        : 'That day is with your approver. Ask them to send it back if it needs changing.',
+      status: day.status,
+    });
+  }
+
+  /* The same hour claimed twice is the one arithmetic error a timesheet cannot
+     catch by adding up — the total looks perfectly reasonable. */
+  const { rows: existing } = await db.query(
+    'SELECT start_min AS startMin, end_min AS endMin FROM timesheet_entries WHERE user_id = $1 AND entry_date = $2',
+    [req.user.id, line.date]
+  );
+  const clash = sheets.overlaps(line, existing.map((e) => ({ startMin: Number(e.startMin), endMin: Number(e.endMin) })));
+  if (clash) {
+    return res.status(409).json({
+      error: `That overlaps ${sheets.clockLabel(clash.startMin)}–${sheets.clockLabel(clash.endMin)}, which is already logged.`,
+      field: 'startTime',
     });
   }
 
   const id = uuid();
   await db.query(
     `INSERT INTO timesheet_entries
-       (id, user_id, week_start, entry_date, client_id, project_id, asset_id, non_project, hours, notes)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-    [id, req.user.id, line.weekStart, line.date, line.clientId, line.projectId, line.assetId,
-     line.nonProject, line.hours, line.notes]
+       (id, user_id, entry_date, start_min, end_min, client_id, project_id, asset_id, non_project, hours, notes)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+    [id, req.user.id, line.date, line.startMin, line.endMin, line.clientId, line.projectId,
+     line.assetId, line.nonProject, line.hours, line.notes]
   );
+
   const { rows } = await db.query(`${ENTRY_SELECT} WHERE e.id = $1`, [id]);
-  /* Logged from the row as read back, so the trail names the project rather
-     than its id. An audit line somebody has to look up is an audit line nobody
-     reads. */
-  await record(req.user.id, line.weekStart, 'entry_added', req.user,
-    `${line.date}: ${line.hours}h — ${describeLine(rows[0])}`);
-  res.status(201).json({ entry: { ...rows[0], date: sheets.toISO(rows[0].date), hours: Number(rows[0].hours) } });
+  await record(req.user.id, line.date, 'entry_added', req.user,
+    `${sheets.clockLabel(line.startMin)}–${sheets.clockLabel(line.endMin)} (${line.hours}h) — ${describeLine(rows[0])}`);
+  res.status(201).json({
+    entry: { ...rows[0], date: sheets.toISO(rows[0].date), hours: Number(rows[0].hours) },
+    // Said out loud rather than shown as a smaller number with no explanation.
+    lunchSubtracted: verdict.lunchSubtracted || 0,
+  });
 });
 
 // PATCH /api/timesheets/entries/:id — change one of your own lines.
@@ -253,16 +318,18 @@ router.patch('/entries/:id', requirePermission('timesheet.own'), async (req, res
     return res.status(403).json({ error: 'That line is on somebody else\'s timesheet.' });
   }
 
-  const week = await weekRow(req.user.id, sheets.toISO(found[0].week_start));
-  if (week && sheets.isLocked(week.status)) {
-    return res.status(409).json({ error: 'That week is locked.', status: week.status });
+  const wasOn = sheets.toISO(found[0].entry_date);
+  const day = await dayRow(req.user.id, wasOn);
+  if (day && sheets.isLocked(day.status)) {
+    return res.status(409).json({ error: 'That day is locked.', status: day.status });
   }
 
-  // Validated as a whole rather than field by field: the either/or rule between
-  // project work and non-project time is about the row, not about one cell.
+  // Validated as a whole rather than field by field: the window, the lunch hour
+  // and the either/or rule are all about the row, not about one cell.
   const merged = {
-    date: req.body.date ?? sheets.toISO(found[0].entry_date),
-    hours: req.body.hours ?? Number(found[0].hours),
+    date: req.body.date ?? wasOn,
+    startTime: req.body.startTime ?? Number(found[0].start_min),
+    endTime: req.body.endTime ?? Number(found[0].end_min),
     clientId: 'clientId' in req.body ? req.body.clientId : found[0].client_id,
     projectId: 'projectId' in req.body ? req.body.projectId : found[0].project_id,
     assetId: 'assetId' in req.body ? req.body.assetId : found[0].asset_id,
@@ -273,18 +340,40 @@ router.patch('/entries/:id', requirePermission('timesheet.own'), async (req, res
   if (!verdict.ok) return res.status(400).json(verdict);
   const line = verdict.value;
 
+  const { rows: others } = await db.query(
+    'SELECT start_min AS startMin, end_min AS endMin FROM timesheet_entries WHERE user_id = $1 AND entry_date = $2 AND id <> $3',
+    [req.user.id, line.date, req.params.id]
+  );
+  const clash = sheets.overlaps(line, others.map((e) => ({ startMin: Number(e.startMin), endMin: Number(e.endMin) })));
+  if (clash) {
+    return res.status(409).json({
+      error: `That overlaps ${sheets.clockLabel(clash.startMin)}–${sheets.clockLabel(clash.endMin)}, which is already logged.`,
+      field: 'startTime',
+    });
+  }
+  // Moving a line to another day needs that day to exist and to be unlocked.
+  if (line.date !== wasOn) {
+    const target = await ensureDay(req.user.id, line.date);
+    if (sheets.isLocked(target.status)) {
+      return res.status(409).json({ error: 'That day is locked.', status: target.status });
+    }
+  }
+
   await db.query(
     `UPDATE timesheet_entries
-        SET entry_date = $1, week_start = $2, client_id = $3, project_id = $4, asset_id = $5,
-            non_project = $6, hours = $7, notes = $8
-      WHERE id = $9`,
-    [line.date, line.weekStart, line.clientId, line.projectId, line.assetId,
+        SET entry_date = $1, start_min = $2, end_min = $3, client_id = $4, project_id = $5,
+            asset_id = $6, non_project = $7, hours = $8, notes = $9
+      WHERE id = $10`,
+    [line.date, line.startMin, line.endMin, line.clientId, line.projectId, line.assetId,
      line.nonProject, line.hours, line.notes, req.params.id]
   );
   const { rows } = await db.query(`${ENTRY_SELECT} WHERE e.id = $1`, [req.params.id]);
-  await record(req.user.id, line.weekStart, 'entry_edited', req.user,
-    `${line.date}: now ${line.hours}h — ${describeLine(rows[0])}`);
-  res.json({ entry: { ...rows[0], date: sheets.toISO(rows[0].date), hours: Number(rows[0].hours) } });
+  await record(req.user.id, line.date, 'entry_edited', req.user,
+    `now ${sheets.clockLabel(line.startMin)}–${sheets.clockLabel(line.endMin)} (${line.hours}h) — ${describeLine(rows[0])}`);
+  res.json({
+    entry: { ...rows[0], date: sheets.toISO(rows[0].date), hours: Number(rows[0].hours) },
+    lunchSubtracted: verdict.lunchSubtracted || 0,
+  });
 });
 
 // DELETE /api/timesheets/entries/:id
@@ -295,91 +384,108 @@ router.delete('/entries/:id', requirePermission('timesheet.own'), async (req, re
   if (found[0].user_id !== req.user.id) {
     return res.status(403).json({ error: 'That line is on somebody else\'s timesheet.' });
   }
-  const weekStart = sheets.toISO(found[0].week_start);
-  const week = await weekRow(req.user.id, weekStart);
-  if (week && sheets.isLocked(week.status)) {
-    return res.status(409).json({ error: 'That week is locked.', status: week.status });
+  const on = sheets.toISO(found[0].entry_date);
+  const day = await dayRow(req.user.id, on);
+  if (day && sheets.isLocked(day.status)) {
+    return res.status(409).json({ error: 'That day is locked.', status: day.status });
   }
   await db.query('DELETE FROM timesheet_entries WHERE id = $1', [req.params.id]);
-  await record(req.user.id, weekStart, 'entry_removed', req.user,
-    `${sheets.toISO(found[0].entry_date)}: ${Number(found[0].hours)}h removed`);
+  await record(req.user.id, on, 'entry_removed', req.user,
+    `${sheets.clockLabel(Number(found[0].start_min))}–${sheets.clockLabel(Number(found[0].end_min))} removed`);
   res.json({ ok: true });
 });
 
-/* POST /api/timesheets/submit — hand a week to your approver.
- * body: { weekStart } (or any date in the week)
+/* POST /api/timesheets/submit — hand ONE DAY to your approver.
+ * body: { date }
+ *
+ * Daily, replacing the weekly cycle the feature shipped with. A day is what
+ * gets approved now, which means a Tuesday can be approved while Wednesday is
+ * still being filled in — the thing a weekly row could not express.
  */
 router.post('/submit', requirePermission('timesheet.own'), async (req, res) => {
-  const weekStart = sheets.weekStart(req.body.weekStart || req.body.date || new Date().toISOString().slice(0, 10));
-  const week = await ensureWeek(req.user.id, weekStart).catch((err) => {
+  const date = sheets.toISO(req.body.date || new Date().toISOString().slice(0, 10));
+  if (!date) return res.status(400).json({ error: 'Which day?', field: 'date' });
+
+  const day = await ensureDay(req.user.id, date).catch((err) => {
     if (unavailable(err)) return null; throw err;
   });
-  if (!week) return res.status(503).json({ error: 'Timesheets are not available on this deployment yet.' });
-  if (sheets.isLocked(week.status)) {
-    return res.status(409).json({ error: 'That week has already been submitted.', status: week.status });
+  if (!day) return res.status(503).json({ error: 'Timesheets are not available on this deployment yet.' });
+  if (sheets.isLocked(day.status)) {
+    return res.status(409).json({ error: 'That day has already been submitted.', status: day.status });
   }
 
   const { rows } = await db.query(
-    'SELECT hours, entry_date FROM timesheet_entries WHERE user_id = $1 AND week_start = $2',
-    [req.user.id, weekStart]
+    'SELECT hours FROM timesheet_entries WHERE user_id = $1 AND entry_date = $2',
+    [req.user.id, date]
   );
-  // An empty week is not a submission. Somebody who worked nothing that week has
-  // nothing to approve, and a queue full of empty weeks is a queue nobody reads.
+  // An empty day is not a submission. Somebody who worked nothing has nothing
+  // to approve, and a queue of empty days is a queue nobody reads.
   if (!rows.length) {
-    return res.status(400).json({ error: 'There is nothing on that week to submit.' });
+    return res.status(400).json({ error: 'There is nothing on that day to submit.' });
   }
 
   await db.query(
-    `UPDATE timesheet_weeks SET status = 'submitted', submitted_at = NOW(),
+    `UPDATE timesheet_days SET status = 'submitted', submitted_at = NOW(),
         decided_by = NULL, decider_email = NULL, decided_at = NULL, rejection_reason = NULL
-      WHERE user_id = $1 AND week_start = $2`,
-    [req.user.id, weekStart]
+      WHERE user_id = $1 AND work_date = $2`,
+    [req.user.id, date]
   );
-  const total = sheets.totals(rows.map((r) => ({ date: r.entry_date, hours: r.hours })), weekStart).week;
-  await record(req.user.id, weekStart, 'submitted', req.user, `${total}h across ${rows.length} lines`);
-  console.log(`${req.user.email} submitted their timesheet for the week of ${weekStart} (${total}h).`);
+  const total = sheets.dayTotal(rows);
+  await record(req.user.id, date, 'submitted', req.user,
+    `${total.hours}h across ${total.lines} line(s)${total.overLong ? ' — over the eight-hour day' : ''}`);
+  console.log(`${req.user.email} submitted their timesheet for ${date} (${total.hours}h).`);
 
-  const saved = await weekRow(req.user.id, weekStart);
-  res.json({ week: { weekStart, status: saved.status, submittedAt: saved.submitted_at, locked: true } });
+  const saved = await dayRow(req.user.id, date);
+  res.json({
+    day: { date, status: saved.status, submittedAt: saved.submitted_at, locked: true },
+    overLong: total.overLong,
+  });
 });
 
-/* GET /api/timesheets/pending — submitted weeks waiting on this approver.
+/* GET /api/timesheets/pending — submitted DAYS waiting on this approver.
  * Scoped exactly as reading is: your team, or the studio if you hold all.
  */
 router.get('/pending', requirePermission('timesheet.approve'), async (req, res) => {
   const ids = (await readableUserIds(req.user)).filter((id) => id !== req.user.id);
-  if (!ids.length) return res.json({ weeks: [], count: 0 });
+  if (!ids.length) return res.json({ days: [], count: 0 });
   const holes = ids.map((_, n) => `$${n + 1}`).join(',');
   try {
     const { rows } = await db.query(
-      `SELECT w.id, w.user_id AS userId, w.week_start AS weekStart, w.status,
-              w.submitted_at AS submittedAt, u.\`name\` AS userName, u.email AS userEmail,
+      `SELECT d.id, d.user_id AS userId, d.work_date AS date, d.status,
+              d.submitted_at AS submittedAt, u.\`name\` AS userName, u.email AS userEmail,
               (SELECT COALESCE(SUM(e.hours), 0) FROM timesheet_entries e
-                WHERE e.user_id = w.user_id AND e.week_start = w.week_start) AS hours
-         FROM timesheet_weeks w
-         JOIN users u ON u.id = w.user_id
-        WHERE w.status = 'submitted' AND w.user_id IN (${holes})
-        ORDER BY w.week_start DESC, u.\`name\``,
+                WHERE e.user_id = d.user_id AND e.entry_date = d.work_date) AS hours
+         FROM timesheet_days d
+         JOIN users u ON u.id = d.user_id
+        WHERE d.status = 'submitted' AND d.user_id IN (${holes})
+        ORDER BY d.work_date DESC, u.\`name\``,
       ids
     );
     res.json({
-      weeks: rows.map((r) => ({ ...r, weekStart: sheets.toISO(r.weekStart), hours: Number(r.hours) })),
+      days: rows.map((r) => {
+        const date = sheets.toISO(r.date);
+        const hours = Number(r.hours);
+        return {
+          ...r, date, hours,
+          /* The two things worth an approver's second look, carried into the
+             queue so they are visible before opening the day. */
+          overLong: hours > sheets.DAY_MAX_MINUTES / 60,
+          weekend: sheets.isWeekend(date),
+        };
+      }),
       count: rows.length,
+      maxHours: sheets.DAY_MAX_MINUTES / 60,
     });
   } catch (err) {
     if (!unavailable(err)) throw err;
-    res.json({ weeks: [], count: 0, unavailable: true });
+    res.json({ days: [], count: 0, unavailable: true });
   }
 });
 
-/* POST /api/timesheets/:userId/:weekStart/decision — approve, or send it back.
+/* POST /api/timesheets/:userId/:date/decision — approve a day, or send it back.
  * body: { decision: 'approve' | 'reject', reason? }
- *
- * A rejection carries a reason and is refused without one: returning somebody's
- * week with no explanation asks them to guess at their own hours. An approval
- * needs none — the decision is the whole of it.
  */
-router.post('/:userId/:weekStart/decision', requirePermission('timesheet.approve'), async (req, res) => {
+router.post('/:userId/:date/decision', requirePermission('timesheet.approve'), async (req, res) => {
   const { decision, reason } = req.body || {};
   if (!['approve', 'reject'].includes(decision)) {
     return res.status(400).json({ error: 'Say whether this is an approval or a rejection.', field: 'decision' });
@@ -387,7 +493,7 @@ router.post('/:userId/:weekStart/decision', requirePermission('timesheet.approve
   const note = String(reason || '').trim();
   if (decision === 'reject' && !note) {
     return res.status(400).json({
-      error: 'Say what needs correcting — a week sent back without a reason cannot be fixed.',
+      error: 'Say what needs correcting — a day sent back without a reason cannot be fixed.',
       field: 'reason',
     });
   }
@@ -401,57 +507,55 @@ router.post('/:userId/:weekStart/decision', requirePermission('timesheet.approve
   const verdict = await mayRead(req.user, userId);
   if (!verdict.ok) return res.status(403).json({ error: 'That is not somebody you approve for.' });
 
-  const weekStart = sheets.weekStart(req.params.weekStart);
-  const week = await weekRow(userId, weekStart);
-  if (!week) return res.status(404).json({ error: 'There is no timesheet for that week.' });
-  if (week.status !== 'submitted') {
+  const date = sheets.toISO(req.params.date);
+  if (!date) return res.status(400).json({ error: 'That is not a date.' });
+  const day = await dayRow(userId, date);
+  if (!day) return res.status(404).json({ error: 'There is no timesheet for that day.' });
+  if (day.status !== 'submitted') {
     return res.status(409).json({
-      error: week.status === 'draft'
-        ? 'That week has not been submitted yet.'
-        : `That week has already been ${week.status}.`,
-      status: week.status,
+      error: day.status === 'draft'
+        ? 'That day has not been submitted yet.'
+        : `That day has already been ${day.status}.`,
+      status: day.status,
     });
   }
 
   const next = decision === 'approve' ? 'approved' : 'rejected';
   await db.query(
-    `UPDATE timesheet_weeks
+    `UPDATE timesheet_days
         SET status = $1, decided_by = $2, decider_email = $3, decided_at = NOW(), rejection_reason = $4
-      WHERE user_id = $5 AND week_start = $6`,
-    [next, req.user.id, req.user.email, decision === 'reject' ? note : null, userId, weekStart]
+      WHERE user_id = $5 AND work_date = $6`,
+    [next, req.user.id, req.user.email, decision === 'reject' ? note : null, userId, date]
   );
-  await record(userId, weekStart, next, req.user, decision === 'reject' ? note : 'approved');
-  console.log(`${req.user.email} ${next} the timesheet of ${userId} for the week of ${weekStart}.`);
+  await record(userId, date, next, req.user, decision === 'reject' ? note : 'approved');
+  console.log(`${req.user.email} ${next} the timesheet of ${userId} for ${date}.`);
 
-  const saved = await weekRow(userId, weekStart);
+  const saved = await dayRow(userId, date);
   res.json({
-    week: {
-      weekStart, status: saved.status, decidedBy: saved.decider_email,
+    day: {
+      date, status: saved.status, decidedBy: saved.decider_email,
       decidedAt: saved.decided_at, rejectionReason: saved.rejection_reason,
       locked: sheets.isLocked(saved.status),
     },
   });
 });
 
-/* GET /api/timesheets/history?userId=&weekStart= — the audit trail for a week.
- * Read by whoever may read the week itself; there is nothing in it that is not
- * already visible on the sheet, only when and by whom.
- */
+/* GET /api/timesheets/history?userId=&date= — the audit trail for a day. */
 router.get('/history', requirePermission('timesheet.own'), async (req, res) => {
   const userId = req.query.userId || req.user.id;
   const verdict = await mayRead(req.user, userId);
   if (!verdict.ok) return res.status(403).json({ error: 'That is not your timesheet.' });
-  const weekStart = sheets.weekStart(req.query.weekStart || req.query.date || new Date().toISOString().slice(0, 10));
+  const date = sheets.toISO(req.query.date || new Date().toISOString().slice(0, 10));
   try {
     const { rows } = await db.query(
       `SELECT action, actor_email AS actorEmail, detail, created_at AS at
-         FROM timesheet_events WHERE user_id = $1 AND week_start = $2 ORDER BY seq`,
-      [userId, weekStart]
+         FROM timesheet_events WHERE user_id = $1 AND work_date = $2 ORDER BY seq`,
+      [userId, date]
     );
-    res.json({ weekStart, events: rows });
+    res.json({ date, events: rows });
   } catch (err) {
     if (!unavailable(err)) throw err;
-    res.json({ weekStart, events: [], unavailable: true });
+    res.json({ date, events: [], unavailable: true });
   }
 });
 
@@ -473,15 +577,18 @@ async function exportRows(req) {
 
   const { rows } = await db.query(
     `${ENTRY_SELECT} WHERE e.user_id = $1 AND e.entry_date BETWEEN $2 AND $3
-      ORDER BY e.entry_date, e.created_at`,
+      ORDER BY e.entry_date, e.start_min`,
     [userId, from, to]
   );
   const { rows: who } = await db.query('SELECT `name`, email FROM users WHERE id = $1', [userId]);
-  const { rows: weeks } = await db.query(
-    'SELECT week_start AS weekStart, status FROM timesheet_weeks WHERE user_id = $1 AND week_start BETWEEN $2 AND $3',
-    [userId, sheets.weekStart(from), to]
+  /* Status per DAY now, not per week — an export of a fortnight can legitimately
+     show some days approved and others still in draft, which the weekly shape
+     could not express. */
+  const { rows: dayRows } = await db.query(
+    'SELECT work_date AS date, status FROM timesheet_days WHERE user_id = $1 AND work_date BETWEEN $2 AND $3',
+    [userId, from, to]
   );
-  const statusOf = new Map(weeks.map((w) => [sheets.toISO(w.weekStart), w.status]));
+  const statusOf = new Map(dayRows.map((d) => [sheets.toISO(d.date), d.status]));
 
   const nonProjectLabel = Object.fromEntries(sheets.NON_PROJECT.map((n) => [n.key, n.label]));
   return {
@@ -492,18 +599,23 @@ async function exportRows(req) {
     total: Math.round(rows.reduce((n, r) => n + Number(r.hours), 0) * 100) / 100,
     rows: rows.map((r) => ({
       Date: sheets.toISO(r.date),
+      // The clock, as the studio reads it. IST for every reader, because these
+      // are minutes past midnight rather than instants needing a timezone.
+      Start: sheets.clockLabel(Number(r.startMin)),
+      End: sheets.clockLabel(Number(r.endMin)),
       Client: r.clientName || '',
       Project: r.projectName || '',
       Asset: r.assetCode ? `${r.assetCode} — ${r.assetName}` : '',
       Category: r.nonProject ? (nonProjectLabel[r.nonProject] || r.nonProject) : '',
       Hours: Number(r.hours),
       Notes: r.notes || '',
-      Status: statusOf.get(sheets.weekStart(sheets.toISO(r.date))) || 'draft',
+      Status: statusOf.get(sheets.toISO(r.date)) || 'draft',
     })),
   };
 }
 
-const EXPORT_HEADERS = ['Date', 'Client', 'Project', 'Asset', 'Category', 'Hours', 'Notes', 'Status'];
+const EXPORT_HEADERS = ['Date', 'Start', 'End', 'Client', 'Project', 'Asset', 'Category',
+  'Hours', 'Notes', 'Status'];
 
 router.get('/export.xlsx', requirePermission('timesheet.own'), async (req, res) => {
   const data = await exportRows(req);
@@ -518,6 +630,7 @@ router.get('/export.xlsx', requirePermission('timesheet.own'), async (req, res) 
     ['From', data.from],
     ['To', data.to],
     ['Total hours', data.total],
+    ['Times shown in', sheets.IST_LABEL],
     [],
   ];
   const sheet = xlsx.utils.aoa_to_sheet(head);

@@ -26,7 +26,7 @@ const REQUIRED = [
   { table: 'assets',         column: 'reference_link', step: 'asset brief and checklist' },
   { table: 'assets',         column: 'lead_notes',     step: 'asset brief and checklist' },
   { table: 'project_review_requests', column: 'acknowledged_at', step: 'project review requests' },
-  { table: 'timesheet_weeks',   column: null, step: 'timesheets' },
+  { table: 'timesheet_days',    column: null, step: 'timesheets' },
   { table: 'timesheet_entries', column: null, step: 'timesheets' },
   { table: 'timesheet_events',  column: null, step: 'timesheets' },
   { table: 'tasks',          column: 'created_by',     step: 'asset brief and checklist' },

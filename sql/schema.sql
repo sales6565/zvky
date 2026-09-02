@@ -629,33 +629,31 @@ CREATE TABLE IF NOT EXISTS feedback (
 -- One row per week per person, holding where that week has got to. The weekly
 -- shape is what submission and approval act on: a week is submitted as a whole,
 -- and approving half of one is not a thing a timesheet does.
-CREATE TABLE IF NOT EXISTS timesheet_weeks (
+CREATE TABLE IF NOT EXISTS timesheet_days (
   id           CHAR(36)     NOT NULL PRIMARY KEY,
   user_id      CHAR(36)     NOT NULL,
-  -- The Monday. Every read and every lock is keyed on this, so it is stored
-  -- rather than derived: two places computing "which week is this" is two
-  -- places to disagree about a Sunday.
-  week_start   DATE         NOT NULL,
+  -- One row per person per DAY. It was a week when this shipped; the studio
+  -- moved the cycle to daily, which is not a setting but a different unit of
+  -- the thing being approved — approving Tuesday and rejecting Wednesday is
+  -- meaningless if the row is a week.
+  work_date    DATE         NOT NULL,
   -- draft -> submitted -> approved | rejected, and rejected -> draft again on
-  -- the next edit. The entries have no status of their own: they are locked or
-  -- not by the week they sit in, which is what makes "my week is approved"
-  -- answerable without reading every row.
+  -- the next edit. The lines have no status of their own: they are locked or
+  -- not by the day they sit in.
   status       VARCHAR(16)  NOT NULL DEFAULT 'draft',
   submitted_at DATETIME     NULL,
-  -- Who approved or rejected it, kept with the email so the record survives the
-  -- account going, exactly as the review trail does.
   decided_by   CHAR(36)     NULL,
   decider_email VARCHAR(191) NULL,
   decided_at   DATETIME     NULL,
-  -- Required on a rejection: sending a week back without saying why asks
+  -- Required on a rejection: sending a day back without saying why asks
   -- somebody to guess at their own hours.
   rejection_reason TEXT     NULL,
   created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE KEY uq_tsw_user_week (user_id, week_start),
-  KEY idx_tsw_status (status, week_start),
-  CONSTRAINT fk_tsw_user    FOREIGN KEY (user_id)    REFERENCES users(id) ON DELETE CASCADE,
-  CONSTRAINT fk_tsw_decider FOREIGN KEY (decided_by) REFERENCES users(id) ON DELETE SET NULL,
-  CONSTRAINT chk_tsw_status CHECK (status IN ('draft','submitted','approved','rejected'))
+  UNIQUE KEY uq_tsd_user_day (user_id, work_date),
+  KEY idx_tsd_status (status, work_date),
+  CONSTRAINT fk_tsd_user    FOREIGN KEY (user_id)    REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_tsd_decider FOREIGN KEY (decided_by) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT chk_tsd_status CHECK (status IN ('draft','submitted','approved','rejected'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- One line of a day. Several per day is the normal case — three hours here, two
@@ -663,10 +661,22 @@ CREATE TABLE IF NOT EXISTS timesheet_weeks (
 CREATE TABLE IF NOT EXISTS timesheet_entries (
   id          CHAR(36)     NOT NULL PRIMARY KEY,
   user_id     CHAR(36)     NOT NULL,
-  -- Denormalised from entry_date so the week's lock can be checked without
-  -- computing a Monday in SQL. Written by the API, never by hand.
-  week_start  DATE         NOT NULL,
   entry_date  DATE         NOT NULL,
+  /* When, as minutes past midnight India Standard Time — 570 is 09:30.
+   *
+   * Minutes rather than a DATETIME, and this is the decision the whole
+   * timezone requirement rests on. A timesheet time is a wall-clock time in
+   * the studio, not an instant: stored as an instant it needs a zone to read
+   * back, and the studio's 9:30 then lands at 04:00 for a server in UTC and at
+   * 23:00 for somebody logging in from California. Stored as 570 it is 09:30
+   * to everybody, on every machine, with no conversion anywhere. IST has no
+   * daylight saving, so there is no second case to get wrong.
+   *
+   * The consequence, stated: these are NOT comparable with the asset
+   * pipeline's timestamps, which are real instants. Same wall this feature
+   * already has with the Efficiency report, and the right one. */
+  start_min   SMALLINT     NOT NULL,
+  end_min     SMALLINT     NOT NULL,
   -- All three optional, because a line is either project work or it is not.
   -- A project line carries client and project and may carry an asset; a
   -- non-project line carries none of them and carries a category instead. The
@@ -679,11 +689,14 @@ CREATE TABLE IF NOT EXISTS timesheet_entries (
   -- Settings collection for now: five words that every studio uses the same
   -- way, and one fewer thing to configure before the feature works.
   non_project VARCHAR(32)  NULL,
+  -- Derived from start_min and end_min with the lunch hour taken out, and
+  -- stored so the totals, the exports and the approver's queue read one number
+  -- instead of dividing by sixty in four places.
   hours       DECIMAL(5,2) NOT NULL,
   notes       TEXT         NULL,
   created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  KEY idx_tse_user_week (user_id, week_start),
+  KEY idx_tse_user_day (user_id, entry_date),
   KEY idx_tse_date (entry_date),
   KEY idx_tse_project (project_id),
   CONSTRAINT fk_tse_user    FOREIGN KEY (user_id)    REFERENCES users(id)    ON DELETE CASCADE,
@@ -704,7 +717,7 @@ CREATE TABLE IF NOT EXISTS timesheet_events (
   -- Whose sheet, which week. Not a foreign key to timesheet_weeks: the trail
   -- outlives the row it describes.
   user_id     CHAR(36)     NULL,
-  week_start  DATE         NOT NULL,
+  work_date   DATE         NOT NULL,
   -- entry_added | entry_edited | entry_removed | submitted | approved | rejected
   action      VARCHAR(32)  NOT NULL,
   actor_id    CHAR(36)     NULL,
@@ -713,7 +726,7 @@ CREATE TABLE IF NOT EXISTS timesheet_events (
   -- rejection. Read by people, not parsed.
   detail      TEXT         NULL,
   created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  KEY idx_tsev_sheet (user_id, week_start, seq),
+  KEY idx_tsev_sheet (user_id, work_date, seq),
   CONSTRAINT fk_tsev_user  FOREIGN KEY (user_id)  REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT fk_tsev_actor FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
