@@ -46,6 +46,46 @@ async function currentRound(db, assetId) {
   return Number(rows[0].n) + 1;
 }
 
+/* The one thing this person has started and not yet finished, anywhere.
+ *
+ * The studio's rule is one active task at a time, and this is what it is
+ * checked against. Note what it is NOT checked against: the in_progress
+ * status. A round returned through TL or CD Feedbacks is started with the same
+ * Accept and Start button and worked on with the asset still sitting in
+ * tl_changes_requested — the status never becomes in_progress for rework. A
+ * rule written against the status would let somebody hold a rework round and a
+ * fresh task at the same time, which is the case it most needs to catch.
+ *
+ * An open session is the honest signal: it opens on Accept and Start and closes
+ * on submit, reassign or unassign, so it is exactly "started, not yet handed
+ * on" whatever the asset's status happens to say.
+ *
+ * The asset's code and name come back with it so a refusal can name what to go
+ * and finish. A block that cannot say what is blocking you is indistinguishable
+ * from the application being broken.
+ */
+async function openForUser(db, userId, exceptAssetId = null) {
+  const params = [userId];
+  let sql = `SELECT s.id, s.asset_id AS assetId, s.started_at AS since,
+                    a.\`code\`, a.\`name\`, a.status
+               FROM work_sessions s
+               JOIN assets a ON a.id = s.asset_id
+              WHERE s.user_id = $1 AND s.ended_at IS NULL`;
+  if (exceptAssetId) {
+    params.push(exceptAssetId);
+    sql += ' AND s.asset_id <> $2';
+  }
+  sql += ' ORDER BY s.started_at LIMIT 1';
+  const { rows } = await db.query(sql, params).catch((err) => {
+    if (!unavailable(err)) throw err;
+    /* No table means no sessions to find, which means nobody is blocked. The
+       right failure for a deployment that cannot record time is that this rule
+       does not apply, rather than that nobody can start anything. */
+    return { rows: [] };
+  });
+  return rows[0] || null;
+}
+
 async function openSession(db, assetId) {
   const { rows } = await db.query(
     'SELECT * FROM work_sessions WHERE asset_id = $1 AND ended_at IS NULL LIMIT 1',
@@ -304,4 +344,7 @@ async function totalsFor(db, assetIds) {
   }]));
 }
 
-module.exports = { REASONS, start, close, summary, totalsFor, openSession, currentRound, available, cutover };
+module.exports = {
+  REASONS, start, close, summary, totalsFor,
+  openSession, openForUser, currentRound, available, cutover,
+};

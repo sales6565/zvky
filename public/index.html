@@ -290,6 +290,18 @@ tr.past-round{opacity:0.62;}
    the one mistake this whole screen exists to prevent. Wide enough for the
    longest form, whichever the browser picks. */
 .ref-add input[type="time"].narrow{width:130px;}
+/* One active task at a time. Amber rather than the refusal red: nothing has
+   gone wrong, and there is something the person can do about it.
+   
+   flex-basis:100% puts it on its own line inside .worklog-box, which is a flex
+   row — squeezed in beside the button it took a third of a narrow drawer and
+   wrapped "Accept and Start" over three lines. */
+.worklog-box{flex-wrap:wrap;}
+.start-blocked{flex-basis:100%;font-size:11.5px;line-height:1.5;color:#e8a33d;
+  background:#e8a33d14;border:1px solid #e8a33d33;border-radius:8px;padding:8px 10px;margin-top:4px;}
+.start-blocked strong{font-family:'IBM Plex Mono';font-size:11px;}
+/* And the button keeps its shape rather than collapsing to fit. */
+.worklog-box #d_startBtn{white-space:nowrap;}
 /* --- Activity Log ---------------------------------------------------------- */
 .al-filters{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;padding:10px 0 12px;}
 .al-filters > div{display:flex;flex-direction:column;gap:3px;min-width:110px;}
@@ -1856,7 +1868,7 @@ function escapeHTML(s){ const d=document.createElement('div'); d.textContent=s||
    ones I saw two filters ago". */
 let selectedAssets = new Set();
 let state = { view:'board', search:'', filterType:'', listGroup:'active',
-  currentProjectId:null, currentUser:null, token:null,
+  currentProjectId:null, currentUser:null, token:null, activeWork:null,
   projects:[], assets:[], usersRenderLimit:60,
   /* The Projects tab: the client list, and which one is open (null = the list). */
   clients:[], clientId:null, showArchived:false,
@@ -2285,9 +2297,27 @@ document.getElementById('filterType').addEventListener('change', e=>{ state.filt
 
 /* ---------- data + render ---------- */
 async function loadAssets(){
-  if(!state.currentProjectId){ state.assets=[]; return; }
-  const { assets } = await api('/assets/project/'+state.currentProjectId);
+  if(!state.currentProjectId){ state.assets=[]; state.activeWork=null; return; }
+  const { assets, activeWork } = await api('/assets/project/'+state.currentProjectId);
   state.assets = assets;
+  /* The one task this person already has open, anywhere in the studio —
+     including in a project that is not the one on screen, which is why it
+     comes from the server rather than being worked out from state.assets. */
+  state.activeWork = activeWork || null;
+}
+
+/* Is another task holding this person up?
+ *
+ * The studio's rule is one active task at a time. Answered here for the button
+ * and enforced again in POST /assets/:id/start, because a disabled button is a
+ * courtesy and the server is the rule.
+ *
+ * Not the asset in front of us: re-opening the drawer on the task you are
+ * already working on must not tell you to go and finish it. */
+function blockingWork(a){
+  const open = state.activeWork;
+  if(!open || !a || open.assetId === a.id) return null;
+  return open;
 }
 function filteredAssets(){
   let pool = state.assets;
@@ -4605,7 +4635,12 @@ async function openDrawer(id){
      asset and getting "only the person this asset is assigned to can submit
      it", which reads as a bug in the button rather than the rule it is. */
   const mine = a.assignee_id===u.id;
-  const canStart = mayStart && !a.work_open && (mine || a.status!=='assigned');
+  const blocked = blockingWork(a);
+  const canStart = mayStart && !a.work_open && (mine || a.status!=='assigned') && !blocked;
+  /* Offered and refused, rather than absent: somebody looking for the button
+     they used yesterday should find it and be told why it is not available,
+     not be left wondering whether the asset is theirs at all. */
+  const startBlocked = mayStart && !a.work_open && (mine || a.status!=='assigned') && blocked;
   /* The checklist is set by the creator and the reviewers, not by whoever is
      carrying the work — they read it and work to it. Mirrors canManageTasks in
      src/permissions.js; the API decides, this only stops offering a control
@@ -4680,6 +4715,12 @@ async function openDrawer(id){
           <div id="d_rounds" class="worklog-note"></div>
         </div>
         ${canStart ? `<button class="btn btn-brand" id="d_startBtn">Accept and Start</button>` : ''}
+        ${startBlocked ? `
+          <button class="btn btn-brand" id="d_startBtn" disabled
+            title="Finish ${escapeHTML(blocked.code || 'your current task')} first">Accept and Start</button>
+          <div class="start-blocked">Finish your current task before starting another —
+            <strong>${escapeHTML(blocked.code || 'an asset')}</strong>${blocked.name ? ` (${escapeHTML(blocked.name)})` : ''}
+            is still open. Submit it for review and this one unlocks.</div>` : ''}
       </div>
       <div class="ref-err" id="d_startErr"></div>
     ` : ''}

@@ -181,6 +181,13 @@ test('bulk delivery', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     const [batch] = await sql(cfg, `SELECT * FROM asset_event_batches WHERE id = '${res.body.batchId}'`);
     assert.strictEqual(Number(batch.requested), 3);
     assert.strictEqual(Number(batch.succeeded), 2);
+
+    /* Hand the parked one on. It was left In Progress on purpose, to give the
+       batch something to refuse — but an artist may now hold only one task at a
+       time, so leaving it open would refuse Accept and Start for every test
+       after this one. */
+    await as('ana', `/assets/${early.id}/submit`, {
+      method: 'POST', body: { link: 'https://example.test/not-ready', description: 'parked' } });
   });
 
   await t.test('review cannot be skipped in bulk any more than singly', async () => {

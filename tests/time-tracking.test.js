@@ -106,6 +106,13 @@ test('assigned, accepted, stamped', { skip: cfg ? false : SKIP_REASON }, async (
     assert.strictEqual((await as('root', `/assets/${asset.id}/timer/pause`,
       { method: 'POST' })).status, 404, 'not for oversight either');
     assert.strictEqual((await workOf(asset.id)).open, true, 'so the stretch is still open');
+
+    /* And hand it on, which is what this test does not otherwise do. An artist
+       may now hold only one task at a time, so a stretch left open here would
+       refuse Accept and Start for every test below — in a file about stamps,
+       not about that rule. */
+    await as('ana', `/assets/${asset.id}/submit`,
+      { method: 'POST', body: { link: 'https://example.test/park', description: 'park' } });
   });
 
   await t.test('a second start is refused, not doubled', async () => {
@@ -128,6 +135,10 @@ test('assigned, accepted, stamped', { skip: cfg ? false : SKIP_REASON }, async (
     assert.strictEqual(rows[0].ended_at, null);
     assert.strictEqual(new Date(rows[0].started_at).toISOString(),
       new Date(first.body.work.startedAt).toISOString(), 'the original start, not a later one');
+
+    // Released for the same reason as above: one open task at a time.
+    await as('ana', `/assets/${asset.id}/submit`,
+      { method: 'POST', body: { link: 'https://example.test/one-stamp', description: 'park' } });
   });
 
   await t.test('one round is one row: the two stamps and the gap between them', async () => {

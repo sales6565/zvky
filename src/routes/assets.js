@@ -268,7 +268,10 @@ router.get('/project/:projectId', async (req, res) => {
 
   const { rows } = await db.query(sql, params);
   const withDetails = await attachTasksAndNotes(rows, req.user);
-  res.json({ assets: withDetails });
+  /* What this person already has open, if anything. Sent with the board rather
+     than asked per asset: the answer is the same for every row, and the page
+     needs it to decide whether to offer Accept and Start at all. */
+  res.json({ assets: withDetails, activeWork: await activeWorkFor(req.user) });
 });
 
 /* Category is managed in Settings like Scope of Work and Priority, so an
@@ -1013,6 +1016,23 @@ function mayStartWork(req, asset) {
 // The statuses in which starting work makes sense. The two changes-requested
 // states are here because a rework round is the same cycle again — accept the
 // rework, submit — with the next round number, exactly as the first round was.
+/* The one task this person has under way, in the shape the page reads.
+ *
+ * null when they are free. Used by the board, by a single asset's drawer and by
+ * the refusal in /start, so "what is holding me up" has one answer everywhere
+ * rather than three that can drift. */
+async function activeWorkFor(user) {
+  const open = await workLog.openForUser(db, user.id).catch(() => null);
+  if (!open) return null;
+  return {
+    assetId: open.assetId,
+    code: open.code,
+    name: open.name,
+    status: open.status,
+    since: open.since,
+  };
+}
+
 const STARTABLE = ['assigned', 'in_progress', 'tl_changes_requested', 'cd_changes_requested'];
 
 // POST /api/assets/:id/start — Accept and Start.
@@ -1038,6 +1058,38 @@ router.post('/:id/start', async (req, res) => {
   // reworking what they have not been handed.
   if (asset.status === 'cd_changes_requested' && asset.routed_to_id !== req.user.id && !hasFullAccess(req.user)) {
     return res.status(409).json({ error: 'The team lead has not passed the Creative Director\'s notes on yet.' });
+  }
+
+  /* One active task at a time.
+   *
+   * Deliberately ABOVE the accept transition rather than beside the session
+   * start below it. Accepting moves the asset to In Progress and is the part
+   * that cannot be undone; refusing after that would leave somebody holding an
+   * asset they were then told they may not start, which is a worse state than
+   * either answer. So the rule is applied while nothing has happened yet.
+   *
+   * Checked against an open work session rather than the in_progress status,
+   * because rework after TL or CD Feedbacks is started with this same button
+   * and never becomes in_progress — see workLog.openForUser.
+   *
+   * Scoped to this endpoint and no other: it stops somebody starting a SECOND
+   * piece of their own work, and has nothing to say about reviewing, approving,
+   * relaying feedback or filling in a timesheet. A lead with their own asset
+   * under way still runs their queue.
+   */
+  const elsewhere = await workLog.openForUser(db, req.user.id, req.params.id);
+  if (elsewhere) {
+    return res.status(409).json({
+      error: `Finish your current task before starting another — `
+        + `${elsewhere.code || 'an asset'}${elsewhere.name ? ` (${elsewhere.name})` : ''} `
+        + 'is still open. Submit it for review and this one will unlock.',
+      activeWork: {
+        assetId: elsewhere.assetId,
+        code: elsewhere.code,
+        name: elsewhere.name,
+        since: elsewhere.since,
+      },
+    });
   }
 
   // Accepting the work comes first, and happens whether or not the start can

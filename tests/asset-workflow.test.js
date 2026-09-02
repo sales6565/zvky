@@ -653,6 +653,12 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     const events = await historyOf(id);
     assert.deepStrictEqual(events.map((e) => e.action), ['assign', 'accept']);
     assert.deepStrictEqual(events.map((e) => e.toStatus), ['assigned', 'in_progress']);
+
+    /* Hand it on before leaving. This test is about the moment of accepting and
+       stops there, but the artist now may only have one task open at a time —
+       so a session left dangling here would refuse Accept and Start for every
+       test after it, in a file where none of them is about that rule. */
+    await act(id, 'submit', 'artist', { link: 'http://nas/shots/unassigned-prop' });
   });
 
   await t.test('Send to Client: the lead skips the CD gate, and the history says so', async () => {
