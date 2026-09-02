@@ -233,7 +233,12 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     projectId = (await as('root', '/projects', { method: 'POST',
       body: { clientId, name: 'Nightgarden' } })).body.project.id;
 
-    for (const [who, role] of [['lee', 'team_lead'], ['ana', 'game_artist'], ['bo', 'game_artist']]) {
+    /* hop holds a designation that has settings.working_hours by default and
+       is not Super Admin, so the permission can actually be switched off for
+       it — which is the only way to prove the endpoint reads that key and
+       not the branding one beside it. */
+    for (const [who, role] of [['lee', 'team_lead'], ['ana', 'game_artist'],
+      ['bo', 'game_artist'], ['hop', 'head_of_production']]) {
       const made = await as('root', '/users', { method: 'POST',
         body: { name: who, email: `${who}@zvky.test`, role, password: PASSWORD, projectId } });
       assert.strictEqual(made.status, 201, JSON.stringify(made.body));
@@ -274,8 +279,10 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.ok(first.assetCode);
     // And the studio's rules travel with the week rather than being repeated.
     assert.deepStrictEqual(mine.workingDay,
-      { timezone: 'IST', dayStart: '09:30', dayEnd: '19:00',
-        lunchStart: '13:00', lunchEnd: '14:00', maxHours: 8 });
+      { timezone: 'IST', dayStart: '09:30', dayEnd: '19:00', hasLunch: true,
+        lunchStart: '13:00', lunchEnd: '14:00', maxHours: 8 },
+      'and these are the defaults, which is what an install that has never '
+      + 'opened Settings -> Working Hours still gets');
   });
 
   await t.test('lunch comes off, the window is enforced, and overlaps are refused', async () => {
@@ -495,6 +502,130 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       `SELECT start_min, end_min FROM timesheet_entries WHERE user_id = '${people.ana}' AND entry_date = '${MON}' ORDER BY start_min LIMIT 1`);
     assert.strictEqual(Number(rows[0].start_min), 600, '10:00');
     assert.strictEqual(Number(rows[0].end_min), 720, '12:00');
+  });
+
+  await t.test('moving the window in Settings moves what the Time Sheet accepts', async () => {
+    /* The point of the setting. Not "the form draws different numbers" — that
+       would be a label change — but that the SAME entry is refused before the
+       change and accepted after it, and refused again when it is put back.
+       Anything less and the screen is decoration over a hardcoded rule. */
+    // A day the rest of the suite has not touched, so these times are the only
+    // ones on it and an overlap here would mean a real fault, not a fixture.
+    const WED = '2026-03-04';
+    const early = { date: WED, startTime: '08:00', endTime: '09:15', clientId, projectId };
+
+    const before = await add('ana', early);
+    assert.strictEqual(before.status, 400, 'refused under the default window');
+    assert.match(before.body.error, /09:30 to 19:00/);
+
+    // An early-starting studio: 08:00-17:00, lunch 12:00-13:00.
+    const set = await as('root', '/branding/schedule', {
+      method: 'PUT',
+      body: { hoursPerDay: 8, workingDays: [1, 2, 3, 4, 5],
+        dayStart: '08:00', dayEnd: '17:00', lunchStart: '12:00', lunchEnd: '13:00' },
+    });
+    assert.strictEqual(set.status, 200, JSON.stringify(set.body));
+    assert.strictEqual(set.body.schedule.dayStartLabel, '08:00');
+
+    const after = await add('ana', early);
+    assert.strictEqual(after.status, 201, JSON.stringify(after.body));
+    assert.strictEqual(Number(after.body.entry.hours), 1.25, 'and it counts as an hour and a quarter');
+
+    // The lunch hour moved with it: 11:30-13:30 is now two hours less the new
+    // lunch, not less the old one.
+    const straddle = await add('ana', { date: WED, startTime: '11:30', endTime: '13:30', clientId, projectId });
+    assert.strictEqual(straddle.status, 201, JSON.stringify(straddle.body));
+    assert.strictEqual(Number(straddle.body.entry.hours), 1, 'the new lunch is what comes off');
+    assert.strictEqual(straddle.body.lunchSubtracted, 60);
+
+    // And what used to be allowed is not any more.
+    const late = await add('ana', { date: WED, startTime: '17:30', endTime: '18:30', clientId, projectId });
+    assert.strictEqual(late.status, 400, '18:30 was inside the old day and is outside this one');
+    assert.match(late.body.error, /08:00 to 17:00/);
+
+    // The window the page draws its form from followed too.
+    const shown = (await week('ana')).workingDay;
+    assert.deepStrictEqual(shown,
+      { timezone: 'IST', dayStart: '08:00', dayEnd: '17:00', hasLunch: true,
+        lunchStart: '12:00', lunchEnd: '13:00', maxHours: 8 });
+
+    // A studio with no fixed lunch break: nothing is subtracted from anything.
+    assert.strictEqual((await as('root', '/branding/schedule', {
+      method: 'PUT',
+      body: { hoursPerDay: 8, workingDays: [1, 2, 3, 4, 5],
+        dayStart: '08:00', dayEnd: '17:00', lunchStart: '', lunchEnd: '' },
+    })).status, 200);
+    const noLunch = await add('ana', { date: WED, startTime: '14:00', endTime: '16:00', clientId, projectId });
+    assert.strictEqual(Number(noLunch.body.entry.hours), 2);
+    assert.strictEqual(noLunch.body.lunchSubtracted, 0);
+    assert.strictEqual((await week('ana')).workingDay.hasLunch, false,
+      'and the form says there is no break rather than showing one of length zero');
+
+    // Put it back, so the rest of the suite sees the studio it started with.
+    assert.strictEqual((await as('root', '/branding/schedule', {
+      method: 'PUT',
+      body: { hoursPerDay: 8, workingDays: [1, 2, 3, 4, 5],
+        dayStart: '09:30', dayEnd: '19:00', lunchStart: '13:00', lunchEnd: '14:00' },
+    })).status, 200);
+    assert.strictEqual((await add('ana', { date: WED, startTime: '08:00', endTime: '09:15',
+      clientId, projectId })).status, 400, 'and the old window is enforced again');
+  });
+
+  await t.test('changing the studio\'s hours is its own permission', async () => {
+    /* Not branding's. Whoever can change the logo should not automatically be
+       able to change what every account may record — and the artist whose hours
+       these are certainly should not. */
+    const asArtist = await as('ana', '/branding/schedule', {
+      method: 'PUT',
+      body: { hoursPerDay: 8, workingDays: [1, 2, 3, 4, 5], dayStart: '00:00', dayEnd: '23:45' },
+    });
+    assert.strictEqual(asArtist.status, 403, JSON.stringify(asArtist.body));
+
+    // Reading it is open to anyone signed in: the form has to draw the window
+    // it will be judged against.
+    assert.strictEqual((await as('ana', '/branding/schedule')).status, 200);
+
+    /* And the gate is settings.working_hours specifically, not the branding
+       permission that used to sit beside it. The two are held by exactly the
+       same designations by default, so the only way to tell them apart is to
+       switch one off and watch the answer change. */
+    const permsOf = async (role) => (await as('root', `/permissions/roles/${role}`))
+      .body.role.permissions.filter((p) => p.enabled).map((p) => p.key);
+    const setPerms = async (role, keys) => {
+      const r = await as('root', `/permissions/roles/${role}`, { method: 'PUT', body: { permissions: keys } });
+      assert.ok(r.status < 400, JSON.stringify(r.body));
+    };
+    const held = await permsOf('head_of_production');
+    assert.ok(held.includes('settings.working_hours') && held.includes('settings.branding'),
+      'the fixture role starts with both');
+
+    const move = (who) => as(who, '/branding/schedule', {
+      method: 'PUT',
+      body: { hoursPerDay: 8, workingDays: [1, 2, 3, 4, 5],
+        dayStart: '09:00', dayEnd: '19:00', lunchStart: '13:00', lunchEnd: '14:00' },
+    });
+    assert.strictEqual((await move('hop')).status, 200, 'with the permission, it works');
+
+    try {
+      await setPerms('head_of_production', held.filter((k) => k !== 'settings.working_hours'));
+      const denied = await move('hop');
+      assert.strictEqual(denied.status, 403,
+        'without it, it does not — even though the role still has settings.branding');
+    } finally {
+      await setPerms('head_of_production', held);
+    }
+    assert.strictEqual((await move('hop')).status, 200, 'and switching it back restores it');
+
+    // And a window that cannot hold a day's work is refused even from an
+    // account that may set it.
+    const silly = await as('root', '/branding/schedule', {
+      method: 'PUT',
+      body: { hoursPerDay: 8, workingDays: [1, 2, 3, 4, 5],
+        dayStart: '09:30', dayEnd: '15:00', lunchStart: '13:00', lunchEnd: '14:00' },
+    });
+    assert.strictEqual(silly.status, 400, JSON.stringify(silly.body));
+    assert.match(silly.body.error, /loggable hours/);
+    assert.strictEqual((await week('ana')).workingDay.dayEnd, '19:00', 'and nothing was written');
   });
 
   await t.test('the weekly shape is gone, everywhere', async () => {

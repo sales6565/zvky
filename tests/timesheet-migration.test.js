@@ -39,6 +39,19 @@ test('a weekly timesheet install migrates to the daily one', { skip: cfg ? false
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '${table}'`)).length > 0;
   assert.ok(await has('timesheet_weeks'), 'the fixture really is the weekly shape');
 
+  /* And a work_schedule as it stood before the window was a setting: the two
+     columns it had, holding a studio that had already changed its hours. The
+     upgrade must add the clock without touching what they set. */
+  await sql(cfg, `
+    CREATE TABLE work_schedule (
+      id            TINYINT      NOT NULL PRIMARY KEY,
+      hours_per_day DECIMAL(4,2) NOT NULL DEFAULT 8.00,
+      working_days  VARCHAR(32)  NOT NULL DEFAULT '1,2,3,4,5',
+      updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    );
+    INSERT INTO work_schedule (id, hours_per_day, working_days) VALUES (1, 7.50, '1,2,3,4,5,6');
+  `);
+
   // 2. A person with a week already approved, and a second week still in draft.
   const U = '11111111-1111-1111-1111-111111111111';
   await sql(cfg, `
@@ -115,6 +128,21 @@ test('a weekly timesheet install migrates to the daily one', { skip: cfg ? false
     ['2026-03-09', 'draft'],
   ], 'a day per day that had lines, carrying its week\'s status');
   assert.strictEqual(days[0].decider, 'lee@zvky.test', 'and who decided it');
+
+  /* --- the working day became a setting, without changing what it was ------
+     The values seeded are exactly the constants that were compiled into the
+     Time Sheet before this, so a studio upgrading gets the behaviour it already
+     had and can then change it. What they had already set is left alone. */
+  const schedule = (await sql(cfg,
+    `SELECT hours_per_day AS hours, working_days AS days, day_start_min AS ds,
+            day_end_min AS de, lunch_start_min AS ls, lunch_end_min AS le
+       FROM work_schedule WHERE id = 1`))[0];
+  assert.strictEqual(Number(schedule.hours), 7.5, 'their hours per day is untouched');
+  assert.strictEqual(schedule.days, '1,2,3,4,5,6', 'and so are their working days');
+  assert.deepStrictEqual(
+    [Number(schedule.ds), Number(schedule.de), Number(schedule.ls), Number(schedule.le)],
+    [570, 1140, 780, 840],
+    'and the window arrives as 09:30-19:00 with lunch 13:00-14:00');
 
   // --- the audit trail keys on the day now, without losing its history -----
   const events = await sql(cfg, `SELECT DATE_FORMAT(work_date, '%Y-%m-%d') AS d, action FROM timesheet_events`);

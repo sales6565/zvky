@@ -70,20 +70,29 @@ router.delete('/logo', requirePermission('settings.branding'), async (req, res) 
  * edited on the same Settings screen, and because giving a single field its own
  * file and mount would be more moving parts than the thing is worth. Read by
  * anyone signed in — a report that shows the number has to be able to say what
- * the number was — and written behind settings.branding, the existing
- * "may change studio-wide settings" permission. */
+ * the number was, and the Time Sheet form has to be able to draw the window it
+ * accepts — and written behind settings.working_hours, which is its own
+ * permission rather than branding's: changing the studio's clock changes what
+ * every account may record, and that is not the same authority as changing a
+ * logo. */
 router.get('/schedule', async (req, res) => {
   if (!workSchedule.isLoaded()) await workSchedule.load(db).catch(() => {});
   res.json({ schedule: workSchedule.current() });
 });
 
-router.put('/schedule', requirePermission('settings.branding'), async (req, res) => {
-  const { hoursPerDay, workingDays } = req.body || {};
-  const result = await workSchedule.save(db, { hoursPerDay, workingDays });
+router.put('/schedule', requirePermission('settings.working_hours'), async (req, res) => {
+  const { hoursPerDay, workingDays, dayStart, dayEnd, lunchStart, lunchEnd } = req.body || {};
+  const result = await workSchedule.save(db,
+    { hoursPerDay, workingDays, dayStart, dayEnd, lunchStart, lunchEnd });
   if (!result.ok) return res.status(result.status).json({ errors: result.errors, error: result.errors[0].message });
-  console.log(`${req.user.email} set the working day to ${result.schedule.hoursPerDay}h, `
-    + `${result.schedule.workingDayNames.join('/')}.`);
-  res.json({ schedule: result.schedule });
+  const s = result.schedule;
+  /* On the record with the times in it. This setting decides what everybody's
+     Time Sheet will accept, so "who changed the studio's hours, and to what"
+     is a question somebody will eventually ask. */
+  console.log(`${req.user.email} set the working day to ${s.hoursPerDay}h, `
+    + `${s.workingDayNames.join('/')}, ${s.dayStartLabel}-${s.dayEndLabel}, `
+    + `lunch ${s.hasLunch ? `${s.lunchStartLabel}-${s.lunchEndLabel}` : 'none'}.`);
+  res.json({ schedule: s });
 });
 
 module.exports = router;

@@ -475,6 +475,23 @@ const GROUPS = [
         describe: 'The name, tagline and logo shown in the header and on the sign-in screen.',
       },
       {
+        key: 'settings.working_hours',
+        label: 'Manage Working Hours',
+        /* The studio's day: how long it is, which days it runs, when it starts
+           and ends, and when lunch is. Split out from Manage Branding, which is
+           where the screen used to sit, because these are two different kinds
+           of change — one alters a logo, the other alters what the Time Sheet
+           will accept and what the Idle Report measures against, on everyone's
+           account at once.
+
+           Implied by manageSettings, which is exactly the set that could already
+           reach the section through settings.branding, so nobody loses the
+           access they have today and Super Admin can now separate the two. */
+        impliedBy: has('manageSettings'),
+        describe: 'The length of the working day, which days the studio works, and the hours and '
+          + 'lunch break the Time Sheet accepts entries within.',
+      },
+      {
         key: 'settings.ip_allowlist',
         label: 'Manage IP Allowlist',
         impliedBy: has('manageAccess'),

@@ -284,6 +284,12 @@ tr.past-round{opacity:0.62;}
 .ref-add input,.ref-add select{margin:0;}
 .ref-add input[type=text]{width:170px;}
 .ref-add input.narrow{width:74px;}
+/* A time input renders on the reader's locale, so a 12-hour browser shows
+   "07:00 PM" where a 24-hour one shows "19:00". At .narrow's 74px the AM/PM
+   segment is clipped off and 19:00 reads as seven in the morning — which is
+   the one mistake this whole screen exists to prevent. Wide enough for the
+   longest form, whichever the browser picks. */
+.ref-add input[type="time"].narrow{width:130px;}
 .ref-err{color:var(--brand-accent);font-size:11.5px;margin-top:8px;min-height:14px;}
 /* The IP allowlist section. Mostly borrows the reference-list styling; the
    extra pieces are the banners, which have to be hard to miss — this is the
@@ -2459,7 +2465,7 @@ async function renderTimesheet(){
       <span class="ts-range">${tsPretty(week.weekStart)} – ${tsPretty(week.weekEnd)}, ${week.weekEnd.slice(0,4)}</span>
       ${picker}
       <div class="spacer"></div>
-      <span class="ts-hint">${wd.dayStart}–${wd.dayEnd} ${wd.timezone} · lunch ${wd.lunchStart}–${wd.lunchEnd} · ${wd.maxHours}h a day</span>
+      <span class="ts-hint">${wd.dayStart}–${wd.dayEnd} ${wd.timezone}${wd.hasLunch===false?'':` · lunch ${wd.lunchStart}–${wd.lunchEnd}`} · ${wd.maxHours}h a day</span>
       <span class="ts-total">Week <strong>${week.weekHours}h</strong></span>
       ${can('timesheet.own') ? `
         <button class="btn btn-ghost btn-sm" id="ts_xlsx">Excel</button>
@@ -5950,13 +5956,14 @@ async function renderSettings(){
     </div>` : ''}
     ${lists.map(sec=>renderRefSection(sec)).join('')}
     ${can('settings.branding') ? '<div id="brandingSection"></div>' : ''}
-    ${can('settings.branding') ? '<div id="scheduleSection"></div>' : ''}
+    ${can('settings.working_hours') ? '<div id="scheduleSection"></div>' : ''}
     ${can('settings.ip_allowlist') ? '<div id="ipAllowlistSection"></div>' : ''}
     ${can('settings.permissions') ? '<div id="rolePermissionsSection"></div>' : ''}
   `;
   el.querySelectorAll('.sii-link').forEach(b=>b.addEventListener('click', ()=>setTab(b.dataset.tab)));
   wireSettings();
-  if(can('settings.branding')){ renderBranding(); renderSchedule(); }
+  if(can('settings.branding')) renderBranding();
+  if(can('settings.working_hours')) renderSchedule();
   if(can('settings.permissions')) await renderRolePermissions();
   /* Managing who may reach the app stays with whoever has been given that one
      permission — it is not implied by holding the rest of this screen. The API
@@ -6443,9 +6450,10 @@ async function renderSchedule(){
   el.innerHTML = `
     <div class="ref-section">
       <div class="ref-head"><h3>Working Hours</h3></div>
-      <div class="ref-note">What a full working day is. The Idle Report measures tracked time against this;
-        nothing else in the app uses it. Public holidays and leave are not recorded anywhere, so time away
-        still reads as idle time.</div>
+      <div class="ref-note">The studio's day. Two things read it: the Idle Report measures tracked time
+        against the hours and days, and the Time Sheet only accepts entries inside the window below,
+        with the lunch break taken off whatever overlaps it. Public holidays and leave are not recorded
+        anywhere, so time away still reads as idle time.</div>
       <div class="ref-add">
         <div>
           <label>Hours in a working day</label>
@@ -6457,23 +6465,56 @@ async function renderSchedule(){
             ${days.map(([n,label])=>`<label><input type="checkbox" value="${n}"${SCHEDULE.workingDays.includes(n)?' checked':''}>${label}</label>`).join('')}
           </div>
         </div>
+      </div>
+      <div class="ref-add" style="margin-top:2px;">
+        <div>
+          <label>Day starts</label>
+          <input type="time" id="sch_dayStart" class="narrow" step="900" value="${SCHEDULE.dayStartLabel}">
+        </div>
+        <div>
+          <label>Day ends</label>
+          <input type="time" id="sch_dayEnd" class="narrow" step="900" value="${SCHEDULE.dayEndLabel}">
+        </div>
+        <div>
+          <label>Lunch from</label>
+          <input type="time" id="sch_lunchStart" class="narrow" step="900" value="${SCHEDULE.hasLunch?SCHEDULE.lunchStartLabel:''}">
+        </div>
+        <div>
+          <label>Lunch until</label>
+          <input type="time" id="sch_lunchEnd" class="narrow" step="900" value="${SCHEDULE.hasLunch?SCHEDULE.lunchEndLabel:''}">
+        </div>
         <button class="btn btn-brand" id="sch_save">Save</button>
       </div>
       <div class="ref-err" id="sch_err"></div>
       <div class="ref-note" id="sch_now">A week currently expects
         <strong>${(SCHEDULE.hoursPerDay*SCHEDULE.workingDays.length).toFixed(2).replace(/\.00$/,'')} hours</strong>
-        (${SCHEDULE.workingDayNames.join(', ')}).</div>
+        (${SCHEDULE.workingDayNames.join(', ')}).
+        The Time Sheet accepts <strong>${SCHEDULE.dayStartLabel}–${SCHEDULE.dayEndLabel} ${escapeHTML(SCHEDULE.timezone||'IST')}</strong>,
+        ${SCHEDULE.hasLunch
+          ? `lunch ${SCHEDULE.lunchStartLabel}–${SCHEDULE.lunchEndLabel} not counted as work,`
+          : 'no fixed lunch break,'}
+        and flags a day over ${SCHEDULE.maxHours}h.
+        <br>Leave both lunch boxes empty if the studio has no fixed break. Times are wall-clock times in
+        the studio — changing them does not convert anything already logged.</div>
     </div>`;
 
   document.getElementById('sch_save').onclick = async ()=>{
     const err = document.getElementById('sch_err');
     err.textContent = '';
     const workingDays = [...el.querySelectorAll('.checklist input:checked')].map(i=>Number(i.value));
+    const val = (id)=>document.getElementById(id).value;
     try{
       const res = await api('/branding/schedule', { method:'PUT',
-        body:{ hoursPerDay: Number(document.getElementById('sch_hours').value), workingDays } });
+        body:{ hoursPerDay: Number(document.getElementById('sch_hours').value), workingDays,
+               dayStart: val('sch_dayStart'), dayEnd: val('sch_dayEnd'),
+               lunchStart: val('sch_lunchStart'), lunchEnd: val('sch_lunchEnd') } });
       SCHEDULE = res.schedule;
       idleState.data = null;   // the report's expected hours just changed
+      /* And so has the window the Time Sheet draws its form from, which is
+         cached on that tab. Cleared here rather than left to go stale: somebody
+         who changes the hours and switches straight to the Time Sheet would
+         otherwise be shown the old window and refused by the new one. */
+      tsState.week = null;
       renderSchedule();
       showToast('Working hours saved.');
     }catch(e){ err.textContent = e.message; }

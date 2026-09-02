@@ -7,6 +7,7 @@ const db = require('../db');
 const { authenticate, requirePermission } = require('../middleware/auth');
 const { holds } = require('../permissions');
 const sheets = require('../timesheets');
+const workSchedule = require('../work-schedule');
 const xlsx = require('xlsx');
 const branding = require('../branding');
 const exporter = require('../report-export');
@@ -142,7 +143,7 @@ function describeLine(row) {
  * what makes the times identical for a reader in any timezone.
  */
 const shapeDay = (day, entries, workDate) => {
-  const total = sheets.dayTotal(entries);
+  const total = sheets.dayTotal(entries, workSchedule.timesheetWindow());
   return {
     date: workDate,
     status: day ? day.status : 'draft',
@@ -168,15 +169,22 @@ const shapeDay = (day, entries, workDate) => {
 };
 
 /* The studio's working day, handed to the page rather than repeated in it.
-   A change to the window, the lunch hour or the cap happens in one file. */
-const workingDay = () => ({
-  timezone: sheets.IST_LABEL,
-  dayStart: sheets.clockLabel(sheets.DAY_START),
-  dayEnd: sheets.clockLabel(sheets.DAY_END),
-  lunchStart: sheets.clockLabel(sheets.LUNCH_START),
-  lunchEnd: sheets.clockLabel(sheets.LUNCH_END),
-  maxHours: sheets.DAY_MAX_MINUTES / 60,
-});
+   It comes from Settings -> Working Hours, so changing the window there changes
+   the form, its refusals and its hints together, with nothing to redeploy.
+   hasLunch is false for a studio with no fixed break, which is a real answer
+   and not the same as a lunch hour of length zero. */
+const workingDay = () => {
+  const win = workSchedule.timesheetWindow();
+  return {
+    timezone: win.timezone,
+    dayStart: sheets.clockLabel(win.dayStart),
+    dayEnd: sheets.clockLabel(win.dayEnd),
+    hasLunch: win.lunchStart !== null && win.lunchEnd !== null,
+    lunchStart: sheets.clockLabel(win.lunchStart),
+    lunchEnd: sheets.clockLabel(win.lunchEnd),
+    maxHours: win.maxHours,
+  };
+};
 
 /* GET /api/timesheets/week?date=&userId= — seven days, for filling in.
  *
@@ -253,7 +261,7 @@ router.get('/people', requirePermission('timesheet.own'), async (req, res) => {
  * longer that person's statement of their day.
  */
 router.post('/entries', requirePermission('timesheet.own'), async (req, res) => {
-  const verdict = sheets.validateEntry(req.body || {});
+  const verdict = sheets.validateEntry(req.body || {}, workSchedule.timesheetWindow());
   if (!verdict.ok) return res.status(400).json(verdict);
   const line = verdict.value;
 
@@ -336,7 +344,7 @@ router.patch('/entries/:id', requirePermission('timesheet.own'), async (req, res
     nonProject: 'nonProject' in req.body ? req.body.nonProject : found[0].non_project,
     notes: 'notes' in req.body ? req.body.notes : found[0].notes,
   };
-  const verdict = sheets.validateEntry(merged);
+  const verdict = sheets.validateEntry(merged, workSchedule.timesheetWindow());
   if (!verdict.ok) return res.status(400).json(verdict);
   const line = verdict.value;
 
@@ -430,7 +438,7 @@ router.post('/submit', requirePermission('timesheet.own'), async (req, res) => {
       WHERE user_id = $1 AND work_date = $2`,
     [req.user.id, date]
   );
-  const total = sheets.dayTotal(rows);
+  const total = sheets.dayTotal(rows, workSchedule.timesheetWindow());
   await record(req.user.id, date, 'submitted', req.user,
     `${total.hours}h across ${total.lines} line(s)${total.overLong ? ' — over the eight-hour day' : ''}`);
   console.log(`${req.user.email} submitted their timesheet for ${date} (${total.hours}h).`);
@@ -469,12 +477,12 @@ router.get('/pending', requirePermission('timesheet.approve'), async (req, res) 
           ...r, date, hours,
           /* The two things worth an approver's second look, carried into the
              queue so they are visible before opening the day. */
-          overLong: hours > sheets.DAY_MAX_MINUTES / 60,
+          overLong: hours > workSchedule.timesheetWindow().maxHours,
           weekend: sheets.isWeekend(date),
         };
       }),
       count: rows.length,
-      maxHours: sheets.DAY_MAX_MINUTES / 60,
+      maxHours: workSchedule.timesheetWindow().maxHours,
     });
   } catch (err) {
     if (!unavailable(err)) throw err;
@@ -630,7 +638,7 @@ router.get('/export.xlsx', requirePermission('timesheet.own'), async (req, res) 
     ['From', data.from],
     ['To', data.to],
     ['Total hours', data.total],
-    ['Times shown in', sheets.IST_LABEL],
+    ['Times shown in', workSchedule.timesheetWindow().timezone],
     [],
   ];
   const sheet = xlsx.utils.aoa_to_sheet(head);

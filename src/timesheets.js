@@ -75,17 +75,50 @@ function toISO(value) {
    same wall the Time Sheet already has with the Efficiency report, and it is
    the right one.
 */
+/* The clock these times are read on. A label, not a conversion: the numbers
+   below are minutes past midnight with no timezone in them. Owned by
+   src/work-schedule.js, which is where the rest of the window now lives; this
+   is the fallback for a caller that passes no window at all. */
 const IST_LABEL = 'IST';
-const DAY_START = 9 * 60 + 30;   // 09:30
-const DAY_END = 19 * 60;         // 19:00
-const LUNCH_START = 13 * 60;     // 13:00
-const LUNCH_END = 14 * 60;       // 14:00
-/* Eight hours, and it is a WARNING rather than a wall — the studio asked for
-   the soft version, and it is the right one: a genuinely long day exists, and a
-   form that refuses it teaches somebody to log eight and go home late. The day
-   is flagged instead, and the flag travels to whoever approves it. */
-const DAY_MAX_MINUTES = 8 * 60;
-/* Under eight is silent. A half day of leave is not a problem to report. */
+
+/* The window is a SETTING now (Settings -> Working Hours), not a constant, so
+   every function that checks a clock takes it as an argument. These are the
+   fallbacks, and they are the values that were compiled in before, so a caller
+   that passes nothing behaves exactly as the feature did when the numbers were
+   hardcoded — which is what keeps the arithmetic here a pure function and
+   testable without a database.
+
+   maxHours is eight, and it is a WARNING rather than a wall — the studio asked
+   for the soft version, and it is the right one: a genuinely long day exists,
+   and a form that refuses it teaches somebody to log eight and go home late.
+   The day is flagged instead, and the flag travels to whoever approves it.
+   Under eight is silent: a half day of leave is not a problem to report. */
+const DEFAULT_WINDOW = {
+  dayStart: 9 * 60 + 30,   // 09:30
+  dayEnd: 19 * 60,         // 19:00
+  lunchStart: 13 * 60,     // 13:00
+  lunchEnd: 14 * 60,       // 14:00
+  maxHours: 8,
+  timezone: IST_LABEL,
+};
+
+/* Fills in whatever a caller left out. Written once because a half-supplied
+   window — a day start with no day end — would otherwise compare a number
+   against undefined, and every such comparison is false, which is the quiet
+   kind of wrong: the check would simply stop happening. */
+function windowOf(win) {
+  if (!win) return { ...DEFAULT_WINDOW };
+  const pick = (key) => (win[key] === undefined ? DEFAULT_WINDOW[key] : win[key]);
+  return {
+    dayStart: Number(pick('dayStart')),
+    dayEnd: Number(pick('dayEnd')),
+    // Null is meaningful: the studio with no fixed lunch break.
+    lunchStart: pick('lunchStart') === null ? null : Number(pick('lunchStart')),
+    lunchEnd: pick('lunchEnd') === null ? null : Number(pick('lunchEnd')),
+    maxHours: Number(pick('maxHours')),
+    timezone: pick('timezone'),
+  };
+}
 
 // "09:30", "9:30", "09:30:00" -> 570. Anything else -> null.
 function parseClock(value) {
@@ -116,9 +149,12 @@ function clockLabel(minutes) {
  * caller is told it happened so the screen can say so rather than quietly
  * showing a smaller number than the person typed.
  */
-function workedMinutes(start, end) {
+function workedMinutes(start, end, win) {
+  const { lunchStart, lunchEnd } = windowOf(win);
   const gross = Math.max(0, end - start);
-  const overlap = Math.max(0, Math.min(end, LUNCH_END) - Math.max(start, LUNCH_START));
+  const overlap = lunchStart === null || lunchEnd === null
+    ? 0
+    : Math.max(0, Math.min(end, lunchEnd) - Math.max(start, lunchStart));
   return { gross, lunch: overlap, net: gross - overlap };
 }
 
@@ -176,33 +212,38 @@ const DAY_WARN_HOURS = 24;
  * Over eight hours in a day and work at the weekend are both allowed and both
  * flagged, because both are real things that happen.
  */
-function validateEntry(raw = {}) {
+function validateEntry(raw = {}, win) {
+  const { dayStart, dayEnd, lunchStart, lunchEnd, timezone } = windowOf(win);
   const date = toISO(raw.date);
   if (!date) return { ok: false, error: 'That is not a date.', field: 'date' };
 
   const start = parseClock(raw.startTime ?? raw.start);
   const end = parseClock(raw.endTime ?? raw.end);
-  if (start === null) return { ok: false, error: 'Give a start time, as 09:30.', field: 'startTime' };
-  if (end === null) return { ok: false, error: 'Give an end time, as 17:30.', field: 'endTime' };
+  if (start === null) {
+    return { ok: false, error: `Give a start time, as ${clockLabel(dayStart)}.`, field: 'startTime' };
+  }
+  if (end === null) {
+    return { ok: false, error: `Give an end time, as ${clockLabel(dayEnd)}.`, field: 'endTime' };
+  }
   if (end <= start) {
     return { ok: false, error: 'The end time has to be after the start time.', field: 'endTime' };
   }
-  if (start < DAY_START || end > DAY_END) {
+  if (start < dayStart || end > dayEnd) {
     return {
       ok: false,
-      error: `The working day is ${clockLabel(DAY_START)} to ${clockLabel(DAY_END)} ${IST_LABEL}.`,
-      field: start < DAY_START ? 'startTime' : 'endTime',
+      error: `The working day is ${clockLabel(dayStart)} to ${clockLabel(dayEnd)} ${timezone}.`,
+      field: start < dayStart ? 'startTime' : 'endTime',
     };
   }
 
-  const { gross, lunch, net } = workedMinutes(start, end);
+  const { gross, lunch, net } = workedMinutes(start, end, win);
   /* A line entirely inside the lunch hour subtracts to nothing. Storing a
      nought-hour row would be storing a line that says nobody worked, so it is
      refused with the reason rather than accepted and silently emptied. */
   if (net <= 0) {
     return {
       ok: false,
-      error: `That is entirely within the lunch break (${clockLabel(LUNCH_START)}–${clockLabel(LUNCH_END)}), which is not working time.`,
+      error: `That is entirely within the lunch break (${clockLabel(lunchStart)}–${clockLabel(lunchEnd)}), which is not working time.`,
       field: 'startTime',
     };
   }
@@ -265,7 +306,8 @@ function overlaps(line, others) {
 /* The totals the grid shows while somebody types, worked out here so the number
    on screen and the number in the export come from one place. Hours arrive from
    MySQL as strings (DECIMAL), which is why everything is put through Number. */
-function totals(entries, date) {
+function totals(entries, date, win) {
+  const { maxHours } = windowOf(win);
   const days = weekDays(date);
   const perDay = Object.fromEntries(days.map((d) => [d, 0]));
   let week = 0;
@@ -286,21 +328,22 @@ function totals(entries, date) {
        the studio's soft cap; a weekend is work on a day the studio does not
        normally open. Both are flagged for whoever approves rather than refused
        at the form, because both are things that genuinely happen. */
-    overLong: days.filter((d) => perDay[d] > DAY_MAX_MINUTES / 60),
+    overLong: days.filter((d) => perDay[d] > maxHours),
     weekend: days.filter((d) => isWeekend(d) && perDay[d] > 0),
   };
 }
 
 /* One day's worth, which is what submission and approval now act on. Returns
    the number a person sees plus the two flags an approver needs. */
-function dayTotal(entries) {
+function dayTotal(entries, win) {
+  const { maxHours } = windowOf(win);
   const minutes = entries.reduce((n, e) => n + (Number(e.hours) || 0) * 60, 0);
   const hours = Math.round((minutes / 60) * 100) / 100;
   return {
     hours,
     lines: entries.length,
-    overLong: minutes > DAY_MAX_MINUTES,
-    maxHours: DAY_MAX_MINUTES / 60,
+    overLong: minutes > maxHours * 60,
+    maxHours,
   };
 }
 
@@ -310,14 +353,12 @@ module.exports = {
   NON_PROJECT_KEYS,
   STATUSES,
   LOCKED,
-  // The studio's working day, in one place. Everything that draws a clock, or
-  // checks one, reads these rather than repeating 9.5 and 19 anywhere.
+  // The studio's working day. The live values come from Settings -> Working
+  // Hours via work-schedule.timesheetWindow(); these are what the rules fall
+  // back to, and what they were before the setting existed.
   IST_LABEL,
-  DAY_START,
-  DAY_END,
-  LUNCH_START,
-  LUNCH_END,
-  DAY_MAX_MINUTES,
+  DEFAULT_WINDOW,
+  windowOf,
   parseClock,
   clockLabel,
   workedMinutes,

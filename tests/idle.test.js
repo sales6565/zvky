@@ -210,6 +210,47 @@ test('a week with no working days is refused', () => {
   assert.ok(workSchedule.cleanDays([]).error, 'or every period would expect zero hours');
 });
 
+test('the working day window has to be one somebody can fill in', () => {
+  /* This setting feeds a form. Every check here exists because getting it
+     wrong produces the same symptom at the other end — a Time Sheet that
+     refuses everything — and by then nobody remembers this screen was
+     touched. */
+  const win = (o) => workSchedule.cleanWindow({ dayStart: '09:30', dayEnd: '19:00',
+    lunchStart: '13:00', lunchEnd: '14:00', ...o });
+  const bad = (o, field) => {
+    const r = win(o);
+    assert.ok(r.errors, `${JSON.stringify(o)} should be refused`);
+    if (field) assert.strictEqual(r.errors[0].field, field);
+    return r.errors[0].message;
+  };
+
+  assert.deepStrictEqual(win({}).value,
+    { dayStart: 570, dayEnd: 1140, lunchStart: 780, lunchEnd: 840 },
+    'clocks become minutes past midnight, which is what the entries store');
+
+  // No fixed lunch break is an answer, not an omission.
+  assert.deepStrictEqual(win({ dayStart: '09:00', dayEnd: '18:00', lunchStart: '', lunchEnd: '' }).value,
+    { dayStart: 540, dayEnd: 1080, lunchStart: null, lunchEnd: null });
+  // Half of one is not.
+  assert.match(bad({ lunchEnd: '' }, 'lunchEnd'), /both empty for no fixed break/);
+
+  assert.match(bad({ dayStart: '19:00', dayEnd: '09:30' }, 'dayEnd'), /end after it starts/);
+  assert.match(bad({ lunchStart: '14:00', lunchEnd: '13:00' }, 'lunchEnd'), /end after it starts/);
+  assert.match(bad({ lunchStart: '20:00', lunchEnd: '21:00' }, 'lunchStart'),
+    /inside the working day \(09:30–19:00\)/);
+  assert.ok(bad({ dayStart: 'half nine' }, 'dayStart'));
+
+  /* The one that is not obvious from any single field: a window too short to
+     hold a day's work. Eight hours between 09:30 and 15:00 is not a stricter
+     policy, it is a Time Sheet nobody can ever complete — and the numbers go in
+     the message so whoever set it can see which end to move. */
+  const tooShort = bad({ dayEnd: '15:00' }, 'dayEnd');
+  assert.match(tooShort, /4\.5 loggable hours/);
+  assert.match(tooShort, /allows up to 8/);
+  // Exactly enough is enough.
+  assert.ok(win({ dayStart: '09:00', dayEnd: '18:00' }).value, 'nine hours less lunch is eight');
+});
+
 // --- what is no longer flagged -------------------------------------------------
 
 test('a long-open stretch is no longer treated as an anomaly', () => {

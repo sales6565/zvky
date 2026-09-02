@@ -1560,12 +1560,52 @@ async function ensureWorkSchedule(db, log) {
       id            TINYINT      NOT NULL PRIMARY KEY,
       hours_per_day DECIMAL(4,2) NOT NULL DEFAULT 8.00,
       working_days  VARCHAR(32)  NOT NULL DEFAULT '1,2,3,4,5',
+      -- When in the day that happens. Minutes past midnight, matching
+      -- timesheet_entries: wall clock times in the studio, with no timezone in
+      -- them to convert and none to get wrong. The lunch pair is nullable,
+      -- which is the "no fixed break" studio.
+      day_start_min   SMALLINT   NOT NULL DEFAULT 570,
+      day_end_min     SMALLINT   NOT NULL DEFAULT 1140,
+      lunch_start_min SMALLINT   NULL DEFAULT 780,
+      lunch_end_min   SMALLINT   NULL DEFAULT 840,
       updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )`));
   const { rows } = await db.query('SELECT id FROM work_schedule WHERE id = 1');
-  if (rows.length) return;
-  await db.query("INSERT INTO work_schedule (id, hours_per_day, working_days) VALUES (1, 8.00, '1,2,3,4,5')");
-  log('Schema: work_schedule created (8 hours a day, Monday to Friday).');
+  if (!rows.length) {
+    await db.query("INSERT INTO work_schedule (id, hours_per_day, working_days) VALUES (1, 8.00, '1,2,3,4,5')");
+    log('Schema: work_schedule created (8 hours a day, Monday to Friday).');
+  }
+
+  /* The clock the Time Sheet runs on, moved out of the source and into the
+     setting it always was.
+     
+     Minutes past midnight, matching timesheet_entries: a studio's 09:30 is a
+     wall clock time, and storing it as anything with a timezone in it is how
+     it becomes 04:00 on a UTC server. The lunch columns are nullable, which is
+     the "no fixed lunch break" case — a zero-length lunch and no lunch are the
+     same thing to the arithmetic, but only one of them is a sentence a person
+     can read on the screen.
+
+     Seeded with exactly the constants that were compiled in before, so an
+     existing deployment upgrades to the behaviour it already had. */
+  const { rows: cols } = await db.query(
+    `SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'work_schedule'`
+  );
+  const have = cols.map((r) => r.c);
+  if (have.includes('day_start_min')) return;
+
+  for (const sql of [
+    'ALTER TABLE work_schedule ADD COLUMN day_start_min   SMALLINT NOT NULL DEFAULT 570',
+    'ALTER TABLE work_schedule ADD COLUMN day_end_min     SMALLINT NOT NULL DEFAULT 1140',
+    'ALTER TABLE work_schedule ADD COLUMN lunch_start_min SMALLINT NULL DEFAULT 780',
+    'ALTER TABLE work_schedule ADD COLUMN lunch_end_min   SMALLINT NULL DEFAULT 840',
+  ]) await db.query(sql).catch(() => {});
+  await db.query(
+    `UPDATE work_schedule SET day_start_min = 570, day_end_min = 1140,
+            lunch_start_min = 780, lunch_end_min = 840 WHERE id = 1`
+  ).catch(() => {});
+  log('Schema: the working day (09:30-19:00, lunch 13:00-14:00) is now a setting.');
 }
 
 async function ensureProfilePhotos(db, log) {
