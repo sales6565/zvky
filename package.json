@@ -13,7 +13,8 @@
     "tabs:check": "node scripts/check-tabs.js",
     "seed": "node src/seed/seed.js",
     "package": "bash scripts/build-godaddy-zip.sh",
-    "sample:data": "node scripts/sample-data.js"
+    "sample:data": "node scripts/sample-data.js",
+    "outbound:check": "node scripts/check-outbound.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
