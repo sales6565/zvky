@@ -690,8 +690,16 @@ router.get('/export.pdf', requirePermission('timesheet.own'), async (req, res) =
     tagline: branding.current().tagline,
     logo,
     view: { label: 'Time sheet', sheet: 'Time sheet' },
+    title: 'Time sheet',
+    blurb: `Every line logged in this range, in ${workSchedule.timesheetWindow().timezone}. `
+      + 'Hours exclude the lunch break. Status is the state of the day the line belongs to.',
+    footer: 'time sheet',
+    emptyMessage: 'No time was logged in this range.',
     headers: EXPORT_HEADERS,
-    rows: data.rows.map((r) => EXPORT_HEADERS.map((h) => r[h])),
+    /* The row objects, not a positional mapping of them. report-pdf reads each
+       cell by header name, so mapping to arrays here produced a document with
+       the right totals and forty blank rows under them. */
+    rows: data.rows,
     filters: [
       ['Person', `${data.person.name} <${data.person.email}>`],
       ['From', data.from],

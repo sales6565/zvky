@@ -4,7 +4,7 @@ const sheets = require('../src/timesheets');
 const catalog = require('../src/permission-catalog');
 const rolePermissions = require('../src/role-permissions');
 const { ROLES } = require('../src/reference-defaults');
-const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON } = require('./helpers');
+const { config, resetSchema, startServer, stopServer, api, sql, pdfText, SKIP_REASON } = require('./helpers');
 
 const cfg = config('timesheet');
 
@@ -483,11 +483,40 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.ok(busiest.length > 1, 'a day with more than one line to order');
     assert.deepStrictEqual(busiest, [...busiest].sort(), 'a day comes out in clock order');
 
+    /* The PDF has to carry the same lines, not merely be a PDF.
+     *
+     * This assertion used to stop at the "%PDF" magic bytes, and that is
+     * exactly how the export shipped empty: the route handed report-pdf an
+     * array of positional arrays where it reads each cell by header name, so
+     * every row drew blank. The bytes were a valid PDF the whole time. What
+     * follows compares the document's text against the spreadsheet's. */
     const pdf = await fetch(`${server.base}/timesheets/export.pdf?from=${MON}&to=2026-03-08`,
       { headers: { Authorization: `Bearer ${token.ana}` } });
     assert.strictEqual(pdf.status, 200);
     const bytes = Buffer.from(await pdf.arrayBuffer());
     assert.strictEqual(bytes.subarray(0, 4).toString(), '%PDF');
+
+    const printed = pdfText(bytes).text;
+    assert.match(printed, /Time sheet/, 'and says what it is, not "Work efficiency"');
+    assert.match(printed, /10:00/, 'the clock is on the page');
+    assert.match(printed, /Nightgarden/, 'and the project');
+    assert.match(printed, /approved/, 'and the day\'s status');
+    // Every value in the spreadsheet's data rows appears in the document too.
+    for (const line of text.split('\n')) {
+      if (!/^\d{4}-\d{2}-\d{2},/.test(line)) continue;
+      for (const cell of line.split(',')) {
+        const value = cell.trim();
+        if (!value) continue;
+        assert.ok(printed.includes(value),
+          `the PDF is missing ${JSON.stringify(value)}, which the spreadsheet has`);
+      }
+    }
+
+    // A range with nothing in it says so, rather than looking like a failure.
+    const quiet = await fetch(`${server.base}/timesheets/export.pdf?from=2019-01-07&to=2019-01-13`,
+      { headers: { Authorization: `Bearer ${token.ana}` } });
+    assert.strictEqual(quiet.status, 200);
+    assert.match(pdfText(Buffer.from(await quiet.arrayBuffer())).text, /No time was logged in this range/);
 
     assert.strictEqual((await fetch(
       `${server.base}/timesheets/export.xlsx?userId=${people.ana}&from=${MON}&to=2026-03-08`,

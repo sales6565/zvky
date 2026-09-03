@@ -166,8 +166,16 @@ router.get('/export.pdf', requirePermission('settings.activity_log'), async (req
     tagline: branding.current().tagline,
     logo,
     view: { label: 'Activity log', sheet: 'Activity log' },
+    title: 'Activity log',
+    blurb: 'Every action taken in the period, newest first, with the person who took it. '
+      + 'Times are IST. Nothing in this record can be edited or removed.',
+    footer: 'activity log',
+    emptyMessage: 'No activity was recorded in this range.',
+    // Eight columns, two of them sentences. Portrait truncates the timestamps.
+    landscape: true,
     headers: EXPORT_HEADERS,
-    rows: rows.map((r) => EXPORT_HEADERS.map((h) => r[h])),
+    // The row objects themselves — see the note on rows in src/report-pdf.js.
+    rows,
     filters: describeFilters(req.query),
     summary: [['Entries', String(rows.length)]],
     excluded: [],

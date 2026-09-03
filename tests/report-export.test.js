@@ -4,44 +4,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const zlib = require('node:zlib');
 const xlsx = require('xlsx');
-const { config, resetSchema, startServer, stopServer, api, raw, sql, systemClientId, SKIP_REASON } = require('./helpers');
+const { config, resetSchema, startServer, stopServer, api, raw, sql, systemClientId, pdfText, SKIP_REASON } = require('./helpers');
 const exporter = require('../src/report-export');
 const reportPdf = require('../src/report-pdf');
 const reports = require('../src/reports');
 
 const cfg = config('repexp');
-
-/* The text a PDF actually shows.
- *
- * Asserting on the byte length would only prove a file was produced. pdfkit
- * writes hex strings in WinAnsi, so this inflates each content stream and reads
- * them back — which is the only way to claim a report "says" something. */
-function pdfText(buffer) {
-  const WINANSI = { 0x91: '‘', 0x92: '’', 0x93: '“', 0x94: '”', 0x95: '•', 0x96: '–', 0x97: '—', 0xf7: '÷', 0x85: '…' };
-  const s = buffer.toString('latin1');
-  const pages = [];
-  let i = 0;
-  while ((i = s.indexOf('stream', i)) >= 0) {
-    const start = s.indexOf('\n', i) + 1;
-    const end = s.indexOf('endstream', start);
-    if (end < 0) break;
-    let body = null;
-    try { body = zlib.inflateSync(buffer.subarray(start, end)).toString('latin1'); } catch { /* not a stream we can read */ }
-    i = end + 9;
-    if (!body || !/\bTf\b/.test(body)) continue;
-    let out = '';
-    const rx = /<([0-9a-fA-F]+)>/g;
-    let m;
-    while ((m = rx.exec(body))) {
-      for (let k = 0; k + 1 < m[1].length; k += 2) {
-        const b = parseInt(m[1].substr(k, 2), 16);
-        out += WINANSI[b] || String.fromCharCode(b);
-      }
-    }
-    pages.push(out);
-  }
-  return { pages: pages.length, text: pages.join('\n'), byPage: pages };
-}
 
 // A report shaped like the real one, without needing a database.
 function fakeReport(n = 3) {
@@ -148,6 +116,36 @@ test('an empty view still has headers', () => {
       assert.strictEqual(headers[0], 'Code');
     }
   }
+});
+
+test('the PDF renderer refuses rows it would draw blank', () => {
+  /* The Time Sheet and the Activity Log both shipped an export whose table was
+     entirely empty: their routes mapped each row object through the header list
+     into a positional array, and the renderer reads every cell by header name.
+     row['Hours'] on an array is undefined, which is indistinguishable from an
+     empty cell, so the document came out valid, correctly totalled, and blank.
+
+     A silent wrong answer is the failure mode worth closing, so the shape is
+     now a checked contract. Each case below is one way a caller can get it
+     wrong, and each has to raise rather than render. */
+  const { checkRows } = require('../src/report-pdf');
+  const headers = ['Date', 'Hours', 'Notes'];
+
+  assert.doesNotThrow(() => checkRows(headers, [{ Date: '2026-03-02', Hours: 3, Notes: '' }]),
+    'row objects keyed by header are the contract');
+  assert.doesNotThrow(() => checkRows(headers, []), 'and no rows at all is a legitimate answer');
+
+  // The bug as it actually shipped.
+  assert.throws(() => checkRows(headers, [['2026-03-02', 3, '']]),
+    /positional array/, 'positional arrays must be refused, not drawn as blanks');
+
+  // The subtler version: objects, but keyed by something else.
+  assert.throws(() => checkRows(headers, [{ date: '2026-03-02', hours: 3 }]),
+    /no header matches/, 'a rename on one side of the call must not render an empty table');
+
+  assert.throws(() => checkRows(headers, [null]), /must be an object/);
+  assert.throws(() => checkRows(headers, ['2026-03-02']), /must be an object/);
+  assert.throws(() => checkRows(headers, null), /must be an array/);
 });
 
 test('the filters are described in words, not ids', () => {

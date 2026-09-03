@@ -34,6 +34,39 @@ function bandColour(text) {
 
 const isPercentColumn = (header) => /%$/.test(header);
 
+/* Rows are read by HEADER NAME — row['Hours'], not row[7].
+ *
+ * That is worth stating in code rather than in a comment, because a caller
+ * passing positional arrays instead gets row['Hours'] === undefined for every
+ * cell, which this renderer cannot tell apart from a genuinely empty one. The
+ * result is a document with the right heading, the right row count, the right
+ * banding and the right totals, and not one value in the table. Both the Time
+ * Sheet and the Activity Log shipped that way: the data reached this function
+ * intact and was rendered as several dozen blank rows.
+ *
+ * So the shape is checked before a single byte is written, and a mismatch is
+ * an error rather than an empty table. The second check catches the subtler
+ * version of the same fault — objects whose keys do not match the headers,
+ * which a rename on one side of the call produces.
+ */
+function checkRows(headers, rows) {
+  if (!Array.isArray(rows)) {
+    throw new TypeError(`report-pdf: rows must be an array, received ${typeof rows}`);
+  }
+  if (!rows.length) return;
+  const first = rows[0];
+  if (first === null || typeof first !== 'object' || Array.isArray(first)) {
+    throw new TypeError('report-pdf: each row must be an object keyed by header name, not '
+      + `${Array.isArray(first) ? 'a positional array' : typeof first}. `
+      + 'Pass the row objects themselves rather than mapping them through the header list.');
+  }
+  if (!headers.some((h) => Object.prototype.hasOwnProperty.call(first, h))) {
+    throw new TypeError('report-pdf: no header matches a key on the rows, so every cell would '
+      + `be blank. Headers are [${headers.join(', ')}]; the first row has `
+      + `[${Object.keys(first).join(', ')}].`);
+  }
+}
+
 /* Cut a string to what will actually fit, with an ellipsis.
  *
  * pdfkit will happily wrap a long name inside a 16pt row, which draws the
@@ -61,12 +94,36 @@ function write(stream, opts) {
     appName, tagline, logo, view, headers, rows, filters, summary, excluded,
   } = opts;
 
+  /* Checked before the document exists, so a bad call fails loudly with
+     nothing written rather than quietly with a blank table.
+
+     The two headers the caller has already set have to come off first: Express
+     leaves an existing Content-Type alone, so an error body sent afterwards
+     would still be labelled application/pdf and land in the browser as a
+     download the reader cannot open. Nothing has been sent yet at this point,
+     so they are still removable. */
+  try {
+    checkRows(headers, rows);
+  } catch (err) {
+    if (typeof stream.removeHeader === 'function' && !stream.headersSent) {
+      stream.removeHeader('Content-Type');
+      stream.removeHeader('Content-Disposition');
+    }
+    throw err;
+  }
+
   /* Portrait for the grouped views, which are seven or eight columns and read
      like a page. The Every Asset view is fourteen, and in portrait its last
      five columns fell off the right-hand edge — the efficiency percentages,
      which are the point of the report. So the page turns sideways when the
-     table needs it to, rather than the table losing columns. */
-  const landscape = headers.length > 8;
+     table needs it to, rather than the table losing columns.
+
+     A count is a rough proxy for the width the content needs, and the Activity
+     Log is where it breaks down: eight columns, but two of them hold sentences,
+     so portrait squeezed every column until the timestamps read "2026-09-…".
+     A caller that knows its own content is wide says so rather than the rule
+     being retuned underneath the reports it already gets right. */
+  const landscape = opts.landscape === undefined ? headers.length > 8 : Boolean(opts.landscape);
   const doc = new PDFDocument({
     size: 'A4', layout: landscape ? 'landscape' : 'portrait',
     margin: MARGIN, bufferPages: true,
@@ -249,9 +306,12 @@ function write(stream, opts) {
     y += rowHeight;
   }
 
+  /* An empty result is a real answer and has to read like one. Left to the
+     efficiency wording, a Time Sheet covering a quiet week would say "nothing
+     to report on with these filters", which sounds like the report failed. */
   if (!rows.length) {
     doc.font('Helvetica-Oblique').fontSize(9).fillColor(MUTED)
-      .text('Nothing to report on with these filters.', MARGIN, y + 10, { width });
+      .text(opts.emptyMessage || 'Nothing to report on with these filters.', MARGIN, y + 10, { width });
     y = doc.y;
   }
 
@@ -287,4 +347,4 @@ function write(stream, opts) {
   return doc;
 }
 
-module.exports = { write, bandColour };
+module.exports = { write, bandColour, checkRows };

@@ -20,7 +20,7 @@ const activity = require('../src/activity');
 const catalog = require('../src/permission-catalog');
 const rolePermissions = require('../src/role-permissions');
 const { ROLES } = require('../src/reference-defaults');
-const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON } = require('./helpers');
+const { config, resetSchema, startServer, stopServer, api, sql, pdfText, SKIP_REASON } = require('./helpers');
 
 const cfg = config('activity');
 
@@ -368,7 +368,20 @@ test('the activity log', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     const pdf = await fetch(`${server.base}/activity/export.pdf?module=permissions`,
       { headers: { Authorization: `Bearer ${token.root}` } });
     assert.strictEqual(pdf.status, 200);
-    assert.strictEqual(Buffer.from(await pdf.arrayBuffer()).subarray(0, 4).toString(), '%PDF');
+    const bytes = Buffer.from(await pdf.arrayBuffer());
+    assert.strictEqual(bytes.subarray(0, 4).toString(), '%PDF');
+
+    /* And it carries the entries, not just the headings. This export had the
+       same defect the Time Sheet's did — rows handed to the renderer as
+       positional arrays where it reads them by header name — and a test that
+       stopped at the magic bytes could not see it. */
+    const printed = pdfText(bytes).text;
+    assert.match(printed, /Activity log/, 'the document says what it is');
+    assert.ok(!/Work efficiency/.test(printed), 'and not that it is the efficiency report');
+    assert.match(printed, /permissions/, 'the module filtered on appears in the rows');
+    const timestamps = printed.match(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/g) || [];
+    assert.ok(timestamps.length >= dataRows.length,
+      `every one of the ${dataRows.length} entries should be printed in full, found ${timestamps.length}`);
   });
 
   await t.test('without the permission there is no log, and no export either', async () => {

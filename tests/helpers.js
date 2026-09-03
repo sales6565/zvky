@@ -158,4 +158,46 @@ async function sql(cfg, statement) {
   }
 }
 
-module.exports = { config, resetSchema, startServer, stopServer, api, raw, sql, systemClientId, SKIP_REASON };
+/* The text a PDF actually shows a reader.
+ *
+ * Asserting on the byte length, or on the "%PDF" magic bytes, only proves a
+ * file was produced — which is how the Time Sheet shipped an export with every
+ * cell blank. pdfkit writes hex strings in WinAnsi, so this inflates each
+ * content stream and reads them back, and that is the only way to claim a
+ * document "says" something.
+ *
+ * Lifted here from report-export.test.js, which had it first. Two copies of a
+ * reader is how two suites end up disagreeing about what a document contains —
+ * the same divergence, one level up, as the bug this was written to catch.
+ */
+function pdfText(buffer) {
+  const zlib = require('node:zlib');
+  const WINANSI = { 0x91: '‘', 0x92: '’', 0x93: '“', 0x94: '”', 0x95: '•', 0x96: '–', 0x97: '—', 0xf7: '÷', 0x85: '…' };
+  const s = buffer.toString('latin1');
+  const pages = [];
+  let i = 0;
+  while ((i = s.indexOf('stream', i)) >= 0) {
+    const start = s.indexOf('\n', i) + 1;
+    const end = s.indexOf('endstream', start);
+    if (end < 0) break;
+    let body = null;
+    try { body = zlib.inflateSync(buffer.subarray(start, end)).toString('latin1'); } catch { /* not a stream we can read */ }
+    i = end + 9;
+    if (!body || !/\bTf\b/.test(body)) continue;
+    let out = '';
+    const rx = /<([0-9a-fA-F]+)>/g;
+    let m;
+    while ((m = rx.exec(body))) {
+      for (let k = 0; k + 1 < m[1].length; k += 2) {
+        const b = parseInt(m[1].substr(k, 2), 16);
+        out += WINANSI[b] || String.fromCharCode(b);
+      }
+    }
+    pages.push(out);
+  }
+  return { pages: pages.length, text: pages.join('\n'), byPage: pages };
+}
+
+module.exports = {
+  config, resetSchema, startServer, stopServer, api, raw, sql, systemClientId, pdfText, SKIP_REASON,
+};
