@@ -1889,7 +1889,7 @@ let state = { view:'board', search:'', filterType:'', listGroup:'active',
   currentProjectId:null, currentUser:null, token:null, activeWork:null,
   projects:[], assets:[], usersRenderLimit:60,
   /* The Projects tab: the client list, and which one is open (null = the list). */
-  clients:[], clientId:null, showArchived:false,
+  clients:[], clientId:null, showArchived:false, archivedClients:0,
   /* The header's Client picker, which narrows the Project picker beside it. */
   clientContextId:null };
 
@@ -4359,9 +4359,15 @@ async function renderProjects(){
      client, "what happened to that project" is exactly the question being
      asked, and hiding the answer behind a second toggle would be unhelpful. */
   const wantArchived = state.showArchived || Boolean(state.clientId);
-  try{ clients = (await api('/clients' + (wantArchived ? '?includeArchived=1' : ''))).clients; }
+  let archivedCount = 0;
+  try{
+    const res = await api('/clients' + (wantArchived ? '?includeArchived=1' : ''));
+    clients = res.clients;
+    archivedCount = res.archivedCount || 0;
+  }
   catch(err){ el.innerHTML = `<div class="empty">${escapeHTML(err.message)}</div>`; return; }
   state.clients = clients;
+  state.archivedClients = archivedCount;
 
   const open = state.clientId ? clients.find(c=>c.id===state.clientId) : null;
   if(state.clientId && !open) state.clientId = null;
@@ -4455,7 +4461,8 @@ function clientListHTML(clients){
         Every project belongs to a client. Choose one to see its projects.
       </div>
       ${(can('client.delete') || can('project.delete')) ? `<label style="font-size:12px;color:var(--ink-muted);display:flex;align-items:center;gap:5px;">
-        <input type="checkbox" id="showArchived"${state.showArchived?' checked':''}> Show archived
+        <input type="checkbox" id="showArchived"${state.showArchived?' checked':''}> Show archived${
+          state.archivedClients ? ` (${state.archivedClients})` : ''}
       </label>` : ''}
       ${can('project.review_send') ? '<button class="btn btn-ghost" id="projReviewBtn">Send Project to CD Review</button>' : ''}
       ${can('client.add') ? '<button class="btn btn-brand" id="newClientBtn">+ Add Client</button>' : ''}
@@ -4509,6 +4516,16 @@ function clientDetailHTML(c){
           ${can('project.delete') ? (p.isActive
             ? `<button class="btn btn-ghost btn-sm projArchiveBtn" data-id="${p.id}" data-name="${escapeHTML(p.name)}">Archive</button>`
             : `<button class="btn btn-ghost btn-sm projRestoreBtn" data-id="${p.id}" data-name="${escapeHTML(p.name)}">Restore</button>`) : ''}
+          ${/* The same three conditions the client's own permanent delete uses:
+                the permission, already archived, and holding nothing. The
+                endpoint has always accepted this and no button ever offered it,
+                so an empty project could be archived and never removed. A
+                project with assets is deliberately absent rather than disabled
+                — it can never be deleted, so a greyed button would be an offer
+                that is never going to come good. */''}
+          ${can('project.delete') && !p.isActive && !p.assetCount
+            ? `<button class="btn btn-ghost btn-sm projPurgeBtn" data-id="${p.id}" data-name="${escapeHTML(p.name)}"
+                 style="color:var(--brand-accent);">Delete permanently</button>` : ''}
         </td></tr>`).join('')}
     </tbody></table>` : '<div class="empty">No projects under this client yet.</div>'}
   `;
@@ -4574,7 +4591,15 @@ function wireProjects(){
     }catch(err){ showToast(err.message); }
   });
   on('reopenDealBtn', ()=>act(`/clients/${clientOf(document.getElementById('reopenDealBtn')).id}/reopen-deal`, {}, 'Deal reopened.'));
-  on('archiveClientBtn', ()=>act(`/clients/${clientOf(document.getElementById('archiveClientBtn')).id}`, { method:'DELETE' }, 'Archived — nothing was deleted.'));
+  /* Archiving takes the client out of the default list, so without this the
+     screen empties the moment the button is pressed — taking with it the
+     Restore and Delete permanently buttons that only exist once it IS
+     archived. Turning the filter on keeps what was just acted on in view. */
+  on('archiveClientBtn', ()=>{
+    state.showArchived = true;
+    return act(`/clients/${clientOf(document.getElementById('archiveClientBtn')).id}`,
+      { method:'DELETE' }, 'Archived — nothing was deleted. It stays listed under Show archived.');
+  });
   on('restoreClientBtn', ()=>act(`/clients/${clientOf(document.getElementById('restoreClientBtn')).id}/restore`, {}, 'Restored.'));
   on('purgeClientBtn', async ()=>{
     const c = clientOf(document.getElementById('purgeClientBtn'));
@@ -4592,6 +4617,17 @@ function wireProjects(){
   for(const [sel, path, opts, done] of perProject){
     document.querySelectorAll(sel).forEach(b=>b.addEventListener('click', ()=>act(path(b.dataset.id), opts, `${b.dataset.name}: ${done}`)));
   }
+  /* Permanent deletion is asked about first, like the client one, and not
+     through act(): it is the one action on this screen with nothing to
+     restore afterwards. */
+  document.querySelectorAll('.projPurgeBtn').forEach(b=>b.addEventListener('click', async ()=>{
+    if(!confirm(`Delete ${b.dataset.name} permanently?\n\nIt holds no assets, so nothing is lost — but this cannot be undone.`)) return;
+    try{
+      await api(`/projects/${b.dataset.id}?purge=1`, { method:'DELETE' });
+      await bootApp(); await renderProjects();
+      showToast(`${b.dataset.name} deleted.`);
+    }catch(err){ showToast(err.message); }
+  }));
   /* Opening a project's board is what the header dropdown does, so it does the
      same thing rather than a second mechanism. */
   document.querySelectorAll('.openProjectBtn').forEach(b=>b.addEventListener('click', ()=>{

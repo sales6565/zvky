@@ -214,8 +214,35 @@ module.exports = [
   h2('4.3 Closing a project'),
   p('A finished project is closed rather than deleted, so its assets, time sheets and history stay readable. '
     + 'A closed project accepts no new assets and no changes to the ones it holds.'),
+
+  h2('4.4 Archiving, and deleting for good'),
+  p('There are two levels, and the application steers you to the first. Archiving hides a client or a project from '
+    + 'every dashboard and keeps everything under it — assets, submissions, review history, time sheets — ready to '
+    + 'be restored. Permanent deletion is offered only where it costs nothing: something holding nothing.'),
+  h3('Archiving'),
+  steps([
+    'Projects tab, then click the client.',
+    'Archive client for the whole client, or Archive on a project\u2019s row for one project.',
+    'A project with undelivered assets asks you to confirm, and says how many.',
+    'Restore brings either one back exactly as it was.',
+  ]),
+  h3('Deleting permanently'),
+  p('The Delete permanently button appears only once two things are true: the client or project is already '
+    + 'archived, and it holds nothing. A client with any project, or a project with any asset, cannot be deleted '
+    + 'at all — the button is not shown, because it is not something that could be allowed.'),
+  steps([
+    'Move or delete whatever it holds, until it holds nothing.',
+    'Archive it.',
+    'For a client: go back to the client list and tick Show archived \u2014 archived clients are not listed by default. The tick box says how many are hidden.',
+    'Open it and press Delete permanently. This one cannot be undone.',
+  ]),
+  note('Where the delete option seems to have gone',
+    'Archiving a client takes it out of the default list, and the Delete permanently button only exists once it is '
+    + 'archived \u2014 so both can appear to vanish at the same moment. Tick Show archived and it is there. The '
+    + 'built-in Unassigned client can never be deleted; it is where projects go before they have a client.'),
   roles('Adding, editing, closing and deleting projects and clients sits with the administration band. Everyone can '
-    + 'see the clients they work under.', ['administration', 'everyone']),
+    + 'see the clients they work under. One extra rule on projects: unless your designation sees the whole studio, '
+    + 'you can only delete projects you created.', ['administration', 'everyone']),
 
   pagebreak(),
   // ============================================================ 5

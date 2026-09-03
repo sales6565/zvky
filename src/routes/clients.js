@@ -58,6 +58,18 @@ async function clientsFor(user, { includeArchived = false } = {}) {
   // at on purpose.
   const archivedProjects = includeArchived ? await archivedProjectsByClient(db) : new Map();
 
+  /* How many assets each project holds, so the page can offer permanent
+     deletion only where it costs nothing. One grouped query rather than one per
+     project: a studio with sixty projects would otherwise make sixty round
+     trips to draw one screen. A project with no assets at all is absent from
+     this map, which reads as nought. */
+  const assetsPerProject = new Map();
+  const { rows: counts } = await db.query(
+    'SELECT project_id, COUNT(*) AS n FROM assets GROUP BY project_id'
+  ).catch(() => ({ rows: [] }));
+  for (const row of counts) assetsPerProject.set(row.project_id, Number(row.n));
+  const assetsIn = (projectId) => assetsPerProject.get(projectId) || 0;
+
   return rows
     .filter((c) => includeArchived || c.is_active)
     .filter((c) => seesEverything || c.created_by === user.id || byClient.has(c.id)
@@ -84,10 +96,12 @@ async function clientsFor(user, { includeArchived = false } = {}) {
           id: p.id, name: p.name, code: p.code,
           isActive: true, closedAt: p.closed_at || null,
           status: p.closed_at ? 'closed' : 'active',
+          assetCount: assetsIn(p.id),
         })),
         archivedProjects: archived.map((p) => ({
           id: p.id, name: p.name, code: p.code, isActive: false,
           closedAt: p.closed_at || null, status: 'archived',
+          assetCount: assetsIn(p.id),
         })),
         projectCount: live.length,
       };
@@ -113,7 +127,25 @@ router.get('/', requirePermission('client.view'), async (req, res) => {
   // Archived clients and projects are only listed when asked for, so the
   // ordinary list stays the live studio.
   const includeArchived = req.query.includeArchived === '1' || req.query.includeArchived === 'true';
-  res.json({ clients: await clientsFor(req.user, { includeArchived }), includeArchived });
+  const clients = await clientsFor(req.user, { includeArchived });
+
+  /* How much is hidden, even when it is hidden.
+   *
+   * Archiving a client takes it out of this list, so the thing somebody has
+   * just archived — and the Delete permanently button that only appears once
+   * it is archived — disappears from the screen together. Reported as the
+   * delete option having gone missing, which is a fair reading of what it
+   * looks like. The toggle now says how many are behind it, so a list that is
+   * hiding something says so.
+   *
+   * Computed by asking the same question with archived included and taking the
+   * difference, so it counts exactly what ticking the box would show this
+   * person and cannot drift from it. */
+  const archivedCount = includeArchived
+    ? clients.filter((c) => !c.isActive).length
+    : (await clientsFor(req.user, { includeArchived: true })).filter((c) => !c.isActive).length;
+
+  res.json({ clients, includeArchived, archivedCount });
 });
 
 // GET /api/clients/:id — one client and its projects, for the breadcrumb view.

@@ -304,6 +304,75 @@ test('clients and their projects', { skip: cfg ? false : SKIP_REASON }, async (t
     assert.ok(!gone.some((c) => c.name === 'Quiet Co'), 'purge really removes it');
   });
 
+  await t.test('the list says how much it is hiding, and each project says whether it is empty', async () => {
+    /* Two things the Projects screen needs from this endpoint, and neither was
+       here before.
+     *
+     * The count, because archiving takes a client out of the default list and
+       the Delete permanently button only exists once it IS archived — so the
+       thing somebody just archived and the button for finishing it off vanish
+       together. Reported as the delete option going missing, which is a fair
+       reading of it. A list that hides something now says how much.
+     *
+     * The asset count, because permanent deletion of a project is refused
+       unless it holds nothing, and until now the page had no way to know that
+       — so it could only offer the button blindly or not at all. It offered it
+       not at all, which left the endpoint unreachable from the screen. */
+    const spare = (await as('root', '/clients', { method: 'POST', body: { name: 'Countable Co' } })).body.client;
+
+    const before = (await as('root', '/clients')).body;
+    assert.strictEqual(before.archivedCount, 0, 'nothing archived, nothing hidden');
+
+    await as('root', `/clients/${spare.id}`, { method: 'DELETE' });
+    const after = (await as('root', '/clients')).body;
+    assert.ok(!after.clients.some((c) => c.name === 'Countable Co'), 'out of the default list');
+    assert.strictEqual(after.archivedCount, 1, 'but the list admits it is hiding one');
+
+    // The same number whether or not the archived ones are being listed.
+    assert.strictEqual((await as('root', '/clients?includeArchived=1')).body.archivedCount, 1);
+    await as('root', `/clients/${spare.id}?purge=1`, { method: 'DELETE' });
+
+    // And every project row carries what it holds.
+    const acme = await named('Acme Corp');
+    const detail = (await as('root', `/clients/${acme.id}`)).body.client;
+    for (const p of [...detail.projects, ...detail.archivedProjects]) {
+      assert.strictEqual(typeof p.assetCount, 'number', `${p.name} should report its asset count`);
+    }
+  });
+
+  await t.test('an empty project can be deleted outright; one holding work cannot', async () => {
+    const acme = await named('Acme Corp');
+    const empty = (await as('root', '/projects', { method: 'POST',
+      body: { name: 'Nothing Here', clientId: acme.id } })).body.project;
+
+    const detail = () => as('root', `/clients/${acme.id}`).then((r) => r.body.client);
+    const rowFor = async (name) => {
+      const c = await detail();
+      return [...c.projects, ...c.archivedProjects].find((p) => p.name === name);
+    };
+    assert.strictEqual((await rowFor('Nothing Here')).assetCount, 0);
+
+    // Archive first, then purge — the same two steps the screen offers.
+    assert.strictEqual((await as('root', `/projects/${empty.id}`, { method: 'DELETE' })).status, 200);
+    assert.strictEqual((await as('root', `/projects/${empty.id}?purge=1`, { method: 'DELETE' })).status, 200);
+    assert.strictEqual(await rowFor('Nothing Here'), undefined, 'really gone');
+
+    /* A project holding work is refused, and says to archive instead. This is
+       what the button's asset-count condition mirrors: offering it here would
+       be offering something the server will always refuse. */
+    const target = (await detail()).projects[0];
+    assert.ok(target, 'a project to put an asset in');
+    assert.strictEqual((await as('root', `/assets/project/${target.id}`, { method: 'POST',
+      body: { name: 'Ballast', type: 'prop' } })).status, 201);
+
+    const busy = await rowFor(target.name);
+    assert.strictEqual(busy.assetCount, 1, 'and the row now says it holds one');
+    const refused = await as('root', `/projects/${busy.id}?purge=1`, { method: 'DELETE' });
+    assert.strictEqual(refused.status, 409);
+    assert.match(refused.body.error, /archive it instead/i);
+    assert.ok(await rowFor(busy.name), 'and it is still there');
+  });
+
   await t.test('a project can be moved to another client', async () => {
     // How the Unassigned pile gets sorted out.
     const acme = await named('Acme Corp');
