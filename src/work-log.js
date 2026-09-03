@@ -32,7 +32,40 @@ const REASONS = {
   submitted: 'submitted',     // handed in for review
   reassigned: 'reassigned',   // somebody else has it now
   unassigned: 'unassigned',   // taken off everybody
+  moved: 'moved',             // the asset was put in a status nobody works in
 };
+
+/* The statuses in which somebody's stretch of work is legitimately still open.
+ *
+ * A session is opened by Accept and Start and closed by submitting, by a
+ * handover, or by the asset being unassigned. Nothing else closed one, and
+ * every OTHER way an asset's status can change — a lead moving a started asset
+ * back to Assigned, a Super Admin forcing a stage — left the session open on an
+ * asset that no longer looked like it was being worked on.
+ *
+ * That is not a cosmetic leak. The open session is what "one active task at a
+ * time" reads, so the person is blocked on every other asset they hold; and
+ * because the asset is back in Assigned they can neither submit it ("start the
+ * work before submitting it") nor start it again ("work has already been
+ * started on this asset"). Deadlocked, with nothing on screen to explain it.
+ *
+ * So the rule is stated once, here, and asked at every point that writes a
+ * status: work stays open only while the asset is in a state its holder is
+ * actually working in.
+ */
+const WORK_CONTINUES = ['in_progress', 'tl_changes_requested', 'cd_changes_requested'];
+const worksIn = (status) => WORK_CONTINUES.includes(status);
+
+/* Close whatever is open if this status change means the work is not.
+ *
+ * Deliberately a no-op when the status has not changed — the relay leaves an
+ * asset in CD Feedbacks and hands the notes on, which is the middle of a round,
+ * not the end of one — and when nothing was open, which is the ordinary case.
+ */
+async function closeIfWorkStopped(db, assetId, fromStatus, toStatus, reason = 'moved') {
+  if (!toStatus || toStatus === fromStatus || worksIn(toStatus)) return { ok: true, wasOpen: false };
+  return close(db, assetId, reason);
+}
 
 // Which spell of work this is: 1 until the first submission, 2 for the rework
 // after the first change request, and so on. Derived from how many submissions
@@ -345,6 +378,6 @@ async function totalsFor(db, assetIds) {
 }
 
 module.exports = {
-  REASONS, start, close, summary, totalsFor,
+  REASONS, WORK_CONTINUES, start, close, closeIfWorkStopped, summary, totalsFor,
   openSession, openForUser, currentRound, available, cutover,
 };

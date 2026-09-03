@@ -9,6 +9,7 @@ const rolePermissions = require('./role-permissions');
 const defaults = require('./reference-defaults');
 const branding = require('./branding');
 const workSchedule = require('./work-schedule');
+const workLog = require('./work-log');
 const { normalizeCheckClause } = require('./schema-check');
 
 // Small, idempotent schema repairs applied at startup.
@@ -1887,6 +1888,50 @@ async function ensureSessionEndReason(db, log) {
   log('Schema: work_sessions rows now record why they ended, and where Time Spent changed meaning.');
 }
 
+/* Close work sessions stranded on assets nobody is working on.
+ *
+ * Only submitting, a handover and an unassignment ever closed a session. Every
+ * other way an asset's status could change left one open — most reachably, a
+ * lead moving a started asset back to Assigned, which any holder of asset.edit
+ * can do. The open session is what "one active task at a time" reads, so the
+ * person it belonged to was blocked on every other asset they held, and could
+ * neither submit that asset (it is not started) nor start it again (it already
+ * is). Nothing on screen explained it and nothing they could click cleared it.
+ *
+ * The routes no longer create these. This closes the ones already out there,
+ * because somebody deadlocked by the old behaviour cannot free themselves.
+ * `ended_at` is set from the row's own started_at rather than NOW(), so a
+ * session stranded three weeks ago does not book three weeks of Time Spent.
+ */
+async function closeStrandedSessions(db, log) {
+  const { rows: table } = await db.query(
+    `SELECT TABLE_NAME AS t FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'work_sessions'`
+  );
+  if (!table.length) return;
+  const working = workLog.WORK_CONTINUES.map((s) => `'${s}'`).join(', ');
+  const { rows: stranded } = await db.query(
+    `SELECT s.id FROM work_sessions s JOIN assets a ON a.id = s.asset_id
+      WHERE s.ended_at IS NULL AND a.status NOT IN (${working})`
+  );
+  if (!stranded.length) return;
+  await db.query(
+    `UPDATE work_sessions s JOIN assets a ON a.id = s.asset_id
+        SET s.ended_at = s.started_at, s.seconds = 0, s.ended_reason = 'moved'
+      WHERE s.ended_at IS NULL AND a.status NOT IN (${working})`
+  ).catch(async (err) => {
+    // A deployment without ended_reason still gets unblocked.
+    if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
+    await db.query(
+      `UPDATE work_sessions s JOIN assets a ON a.id = s.asset_id
+          SET s.ended_at = s.started_at, s.seconds = 0
+        WHERE s.ended_at IS NULL AND a.status NOT IN (${working})`
+    );
+  });
+  log(`Repair: closed ${stranded.length} work session(s) stranded on assets nobody is working on — `
+    + 'whoever held them was blocked from starting anything else.');
+}
+
 const STEPS = [
   ['stale role constraints', dropStaleRoleConstraints],
   ['users.role column width', widenRoleColumn],
@@ -1950,6 +1995,8 @@ const STEPS = [
   // After notifications, whose column it adds, and after clients and projects.
   ['project review requests', ensureProjectReviews],
   ['timesheets', ensureTimesheets],
+  // Last: it reads assets.status, which every step above may have changed.
+  ['stranded work sessions', closeStrandedSessions],
 ];
 
 async function run(db, log = console.log) {

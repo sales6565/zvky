@@ -196,6 +196,41 @@ test('the single-active-task rule', { skip: cfg ? false : SKIP_REASON }, async (
     assert.strictEqual((await board('ana', projectA)).activeWork, null, 'unassigning too');
   });
 
+  await t.test('a status change that is not a submit also releases the person', async () => {
+    /* The deadlock this closes.
+     *
+     * Only submit, reassign and unassign ever closed a session. Every other way
+     * an asset's status can change left one open, and the most reachable of
+     * them is an ordinary correction: a lead moving a started asset back to
+     * Assigned, which any holder of asset.edit can do.
+     *
+     * The result was not a cosmetic leak. The open session is what this whole
+     * rule reads, so the person was blocked on every other asset they held —
+     * and could not clear it, because the asset was back in Assigned: too early
+     * to submit ("start the work before submitting it") and too late to start
+     * ("work has already been started on this asset"). Stuck, with nothing on
+     * screen to explain why, which is exactly how it was reported. */
+    const stuck = await makeAsset(projectA, 'Kiln Warden', people.ana);
+    assert.strictEqual((await start('ana', stuck.id)).status, 200);
+    assert.strictEqual((await board('ana', projectA)).activeWork.assetId, stuck.id);
+
+    // The correction: put it back to Assigned. No submit, no handover.
+    const moved = await as('root', `/assets/${stuck.id}`, { method: 'PATCH', body: { status: 'assigned' } });
+    assert.strictEqual(moved.status, 200, JSON.stringify(moved.body));
+
+    assert.strictEqual((await board('ana', projectA)).activeWork, null,
+      'the session went with the status, so she is free');
+
+    const other = await makeAsset(projectA, 'Reed Warden', people.ana);
+    assert.strictEqual((await start('ana', other.id)).status, 200, 'and she can start something else');
+
+    /* And the asset she was moved off is workable again rather than being a
+       hole she can never climb out of. */
+    await submit('ana', other.id);
+    assert.strictEqual((await start('ana', stuck.id)).status, 200, 'the moved asset starts again');
+    await submit('ana', stuck.id);
+  });
+
   await t.test('a new assignment still lands while a task is open', async () => {
     /* Point 4: the assignment is allowed, the button is not. Blocking the
        assignment would make somebody else's planning wait on this person's

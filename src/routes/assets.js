@@ -558,6 +558,15 @@ router.patch('/:id', async (req, res) => {
 
     await conn.query(`UPDATE assets SET ${fields.join(', ')} WHERE id = $${i}`, values);
 
+    /* This route writes the status itself rather than through applyTransition,
+       so it asks the same question separately. Moving a started asset back to
+       Assigned is the everyday version — a correction any holder of asset.edit
+       can make — and it used to leave the session open, which blocked that
+       person on every other asset they held with no way to clear it. */
+    if (req.body.status !== undefined && req.body.status !== asset.status) {
+      await workLog.closeIfWorkStopped(conn, req.params.id, asset.status, req.body.status);
+    }
+
     // Changing who an asset is assigned to means the same thing however it was
     // asked for. The Hand over button and this panel dropdown are two controls
     // for one operation, and they used to disagree: the button ran the proper
@@ -852,6 +861,13 @@ async function applyTransition(req, res, asset, verdict, { note, versionId, conn
     'UPDATE assets SET `status` = $1, routed_to_id = $2 WHERE id = $3',
     [verdict.to, verdict.routedTo, asset.id]
   );
+  /* An asset that has left the states somebody works in has no open stretch of
+     work on it. Here rather than in each route because this is where every
+     workflow transition writes a status — the same reason the Activity Log
+     entry is written here. Submitting closes its own session a few lines
+     earlier and with the reason that belongs to it, so this finds nothing to do
+     on that path; it is the transitions nobody thought to close that it is for. */
+  await workLog.closeIfWorkStopped(run, asset.id, asset.status, verdict.to);
   /* batch_id is the only thing a bulk action adds to an event, and it is
      nullable: a bulk delivery writes the SAME row a single delivery writes,
      and additionally says which act it was part of. Falls back to the older
