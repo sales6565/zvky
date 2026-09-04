@@ -100,7 +100,21 @@ async function buildReport(req) {
             COALESCE((SELECT SUM(COALESCE(w.seconds, 0)) FROM work_sessions w
                        WHERE w.asset_id = a.id), 0) AS totalSeconds,
             COALESCE((SELECT SUM(COALESCE(w.seconds, 0)) FROM work_sessions w
-                       WHERE w.asset_id = a.id AND w.round = 1), 0) AS firstPassSeconds
+                       WHERE w.asset_id = a.id AND w.round = 1), 0) AS firstPassSeconds,
+            /* Was any of this asset's time declared as a hold?
+             *
+             * Time Spent is a SUM over session rows, so a held stretch is
+             * already absent from it — nothing has to subtract anything. What
+             * this flag buys is honesty about WHICH assets that happened to:
+             * two assets showing eight hours mean different things if one of
+             * them had a day of holds taken out and the other did not, and a
+             * report that cannot say so invites a comparison it cannot support.
+             *
+             * EXISTS rather than a total, because the held time itself is not
+             * recorded anywhere — it is the gap BETWEEN rows, which is exactly
+             * why it costs nothing to exclude. */
+            EXISTS(SELECT 1 FROM work_sessions w
+                    WHERE w.asset_id = a.id AND w.ended_reason = 'held') AS wasHeld
        FROM assets a
        JOIN projects p ON p.id = a.project_id
        LEFT JOIN clients c ON c.id = p.client_id
@@ -178,6 +192,11 @@ async function buildReport(req) {
        say so. A period covering the switch mixes active worked time with
        elapsed time; without this the jump reads as a change in the studio. */
     cutover: await workLog.cutover(db).catch(() => ({ at: null, legacyRows: 0, mixed: false })),
+    /* How much of this report had time deliberately left out of it, so the
+       screen and the exports can say so rather than leaving a reader to assume
+       every figure was measured the same way. Counted from the assets actually
+       reported on, not from the whole database. */
+    held: { assets: prepared.filter((r) => Number(r.wasHeld) > 0).length },
     filters: {
       projects: projects.map((p) => ({ id: p.id, name: p.name, clientId: p.client_id })),
       clients: clients.map((c) => ({ id: c.id, name: c.name })),
@@ -216,7 +235,7 @@ router.get('/efficiency.xlsx', requirePermission('report.view'), async (req, res
 
   const filters = [
     ...exporter.describeFilters(filtersFrom(req), report.filters),
-    ...exporter.timeBasis(report.cutover),
+    ...exporter.timeBasis(report.cutover, report.held),
     ...exporter.skipBasis(report.summary),
   ];
   const summary = [
@@ -317,7 +336,7 @@ router.get('/efficiency.pdf', requirePermission('report.view'), async (req, res)
   const headers = exporter.headersFor(report, view.id);
   const filters = [
     ...exporter.describeFilters(filtersFrom(req), report.filters),
-    ...exporter.timeBasis(report.cutover),
+    ...exporter.timeBasis(report.cutover, report.held),
     ...exporter.skipBasis(report.summary),
   ];
   const logo = await branding.readLogo(db).catch(() => null);

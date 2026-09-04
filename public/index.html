@@ -601,6 +601,13 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
    called, so the header dropdown, the client grid and the project table cannot
    describe the same client three different ways. */
 .badge{font-size:9px;text-transform:uppercase;letter-spacing:.06em;padding:2px 6px;border-radius:4px;white-space:nowrap;}
+/* On hold. Deliberately a muted slate rather than a warning colour: a held task
+   is a person being honest about an interruption, not a fault, and it must also
+   stay clear of the brand red and of every workflow status colour so a card
+   badge is never mistaken for a stage. */
+.hold-badge{background:#3b4252;color:#c6ccd8;border:1px solid #4c566a;}
+.worklog-held{color:#9aa4b8;font-weight:600;}
+.held-note{color:#9aa4b8;}
 .badge-archived{background:#6b6b6b33;color:#a8a8a8;}
 .badge-deal{background:#e8402c22;color:#e8402c;}
 .badge-closed{background:#c9a22722;color:#d8b53f;}
@@ -3283,7 +3290,9 @@ function cardHTML(a){
     <div class="thumb" style="background:linear-gradient(135deg, ${t.color}33, ${t.color}0d);">${thumbInner(a, 36)}</div>
     <div class="code">${a.code}${metaBits.length? ' · '+metaBits.join(' · ') : ''}</div><div class="name">${escapeHTML(a.name)}</div>
     <div class="meta"><span class="type-tag">${t.label}</span>
-      <div style="display:flex;align-items:center;gap:6px;"><span class="mono" style="font-size:10px;color:var(--ink-faint);">${doneTasks}/${a.tasks.length}</span>
+      <div style="display:flex;align-items:center;gap:6px;">
+        ${a.held ? `<span class="badge hold-badge" title="On hold since ${escapeHTML(fmtDate(a.held.since))}${a.held.note ? ` — ${escapeHTML(a.held.note)}` : ''}">On hold</span>` : ''}
+        <span class="mono" style="font-size:10px;color:var(--ink-faint);">${doneTasks}/${a.tasks.length}</span>
         ${avatarHTML({ id:a.assignee_id, name:a.assignee_name, photoAt:a.assignee_photo_at })}</div>
     </div></div>`;
 }
@@ -3495,11 +3504,17 @@ function renderList(){
            against other rows, so the year has to be there. -->
       <td class="mono">${fmtDay(a.start_date)}</td>
       <td class="mono">${fmtDay(a.due_date)}</td>
-      <td><span class="status-pill" style="background:${s.color}22;color:${s.color}"><span class="d" style="background:${s.color}"></span>${s.label}</span></td>
+      <!-- Held sits beside the status rather than in a column of its own: it is
+           not a stage, and a column would be empty on almost every row. A lead
+           scanning this list for work that has stopped needs it next to the
+           stage that says it has not. Live rows only — a finished round cannot
+           be on hold, whatever it ended with. -->
+      <td><span class="status-pill" style="background:${s.color}22;color:${s.color}"><span class="d" style="background:${s.color}"></span>${s.label}</span>${
+        (!past && a.held) ? ` <span class="badge hold-badge" title="On hold since ${escapeHTML(fmtDate(a.held.since))}${a.held.note ? ` — ${escapeHTML(a.held.note)}` : ''}">On hold</span>` : ''}</td>
       <td>${who ? `<span class="who-line">${avatarHTML({ id: ep ? ep.userId : a.assignee_id, name: who, photoAt: ep ? ep.userPhotoAt : a.assignee_photo_at }, { size:20, title:false })}<span>${escapeHTML(who)}</span></span>` : '—'}</td>
       <td>${ep ? (past ? `<span class="round-tag">handed on</span>` : `<span class="round-tag round-tag-live">current</span>`) : ''}</td>
       <td style="text-transform:capitalize;">${a.priority}</td><td class="mono">${past?'':`${doneTasks}/${a.tasks.length}`}</td>
-      <td class="mono">${seconds?fmtDuration(seconds):'—'}${stampLine(startedAt, submittedAt, roundsIn)}</td></tr>`;
+      <td class="mono">${seconds?fmtDuration(seconds):'—'}${stampLine(startedAt, submittedAt, roundsIn, !past && a.held)}</td></tr>`;
     }).join('')}</tbody></table>`;
   /* Two kinds of row, two things to open. A live round opens the asset panel
      with everything on it; a finished round opens the record of that round,
@@ -4820,13 +4835,18 @@ function fmtBytes(n){ if(!n) return ''; const kb=n/1024; return kb<1024 ? kb.toF
  * stampLine is the one-line version for a table cell; stampDetail is the
  * two-line version for the panel. Both say "not started" and "in progress"
  * plainly rather than printing an em dash and leaving it ambiguous. */
-function stampLine(startedAt, submittedAt, rounds){
+function stampLine(startedAt, submittedAt, rounds, held){
   if(!startedAt) return '';
   const many = Number(rounds) > 1 ? `${rounds} rounds · ` : '';
-  return `<div class="worklog-stamps">${many}${fmtDate(startedAt)} → ${
-    submittedAt ? fmtDate(submittedAt) : '<span class="worklog-open">in progress</span>'}</div>`;
+  /* Three states, not two. "in progress" was the honest word for everything
+     that had started and not been submitted, until a task could be put down
+     without being handed in — after which it told a lead that work was under
+     way on something nobody was touching. */
+  const now = submittedAt ? fmtDate(submittedAt)
+    : (held ? '<span class="worklog-held">on hold</span>' : '<span class="worklog-open">in progress</span>');
+  return `<div class="worklog-stamps">${many}${fmtDate(startedAt)} → ${now}</div>`;
 }
-function stampDetail(startedAt, submittedAt, rounds){
+function stampDetail(startedAt, submittedAt, rounds, held){
   if(!startedAt){
     return `<div class="worklog-stamps">Not started yet. Time Spent will be the gap between Accept and Start and Submit for Review.</div>`;
   }
@@ -4837,10 +4857,15 @@ function stampDetail(startedAt, submittedAt, rounds){
   const many = Number(rounds) > 1
     ? `<div class="worklog-stamps">${rounds} rounds, added up — the gap between these two also holds the time it sat with a reviewer.</div>`
     : '';
+  /* Held is its own line, not a shade of "in progress": the number above it has
+     stopped growing, and a panel saying the work is in progress beside a badge
+     saying it is on hold makes the reader decide which to believe. */
+  const state = submittedAt ? `Submitted ${fmtDate(submittedAt)}`
+    : (held
+      ? `<span class="worklog-held">On hold</span> — the count above has stopped, and starts again on Resume`
+      : `<span class="worklog-open">In progress</span> — elapsed so far, from the start above`);
   return `<div class="worklog-stamps">Started ${fmtDate(startedAt)}</div>` +
-    `<div class="worklog-stamps">${submittedAt
-      ? `Submitted ${fmtDate(submittedAt)}`
-      : `<span class="worklog-open">In progress</span> — elapsed so far, from the start above`}</div>` + many;
+    `<div class="worklog-stamps">${state}</div>` + many;
 }
 function fmtDate(s){ return s ? new Date(s).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : ''; }
 
@@ -4895,11 +4920,26 @@ async function openDrawer(id){
      alone disables it; it opens only when both allow. Both are also checked in
      POST /assets/:id/start — the button is a courtesy, the server is the rule. */
   const waiting = notYetStartable(a);
-  const canStart = mayStart && !a.work_open && (mine || a.status!=='assigned') && !blocked && !waiting;
+  /* Put down on purpose, and by whom it can be picked up again.
+     
+     A held asset has no open session, so without this it would satisfy every
+     condition for Accept and Start and offer that button beside Resume — two
+     controls for one act, one of them describing work that has already begun.
+     So held is a third reason the start button is not offered, and unlike the
+     other two it is not a refusal: there is a button here, it just says Resume.
+     
+     Only the assignee sees either. A lead reading the panel sees the badge and
+     the reason, which is what they need; holding somebody else's work is not
+     something this build allows anybody to do. */
+  const held = a.held || null;
+  const mayHold = mine && can('asset.hold');
+  const canHold = mayHold && a.work_open;
+  const canResume = mayHold && Boolean(held) && !a.work_open;
+  const canStart = mayStart && !a.work_open && !held && (mine || a.status!=='assigned') && !blocked && !waiting;
   /* Offered and refused, rather than absent: somebody looking for the button
      they used yesterday should find it and be told why it is not available,
      not be left wondering whether the asset is theirs at all. */
-  const startBlocked = mayStart && !a.work_open && (mine || a.status!=='assigned') && Boolean(blocked || waiting);
+  const startBlocked = mayStart && !a.work_open && !held && (mine || a.status!=='assigned') && Boolean(blocked || waiting);
   /* The checklist is set by the creator and the reviewers, not by whoever is
      carrying the work — they read it and work to it. Mirrors canManageTasks in
      src/permissions.js; the API decides, this only stops offering a control
@@ -4983,11 +5023,18 @@ async function openDrawer(id){
         <div>
           <div class="field-lbl" style="margin-top:0;">Time Spent${currentEpisode(a) ? ` · ${escapeHTML(currentEpisode(a).userName)}` : ''}</div>
           <div class="worklog-total">${fmtDuration(roundSeconds(a))}</div>
-          ${stampDetail(a.started_at, a.submitted_at, a.work_rounds)}
+          ${stampDetail(a.started_at, a.submitted_at, a.work_rounds, held)}
           ${(a.time_spent_seconds||0) > roundSeconds(a) ? `<div class="worklog-note">${fmtDuration(a.time_spent_seconds)} on this asset in total, across everyone who has held it</div>` : ''}
           <div id="d_rounds" class="worklog-note"></div>
         </div>
         ${canStart ? `<button class="btn btn-brand" id="d_startBtn">Accept and Start</button>` : ''}
+        ${canHold ? `<button class="btn btn-ghost" id="d_holdBtn"
+          title="Stop the clock on this task and free yourself to start another">Hold</button>` : ''}
+        ${canResume ? `<button class="btn btn-brand" id="d_resumeBtn">Resume</button>` : ''}
+        ${held ? `<div class="start-blocked held-note">
+          <strong>On hold</strong> since ${escapeHTML(fmtDate(held.since))}${held.note ? ` — ${escapeHTML(held.note)}` : ''}.
+          Time from then until it is resumed is left out of Time Spent.
+        </div>` : ''}
         ${startBlocked ? (blocked ? `
           <button class="btn btn-brand" id="d_startBtn" disabled
             title="Finish ${escapeHTML(blocked.code || 'your current task')} first">Accept and Start</button>
@@ -5441,6 +5488,54 @@ async function openDrawer(id){
       if(e2.status===409 && e2.body && e2.body.open){ await render(); openDrawer(id); }
     }
   };
+
+  /* Hold and Resume, which share everything but the verb.
+     
+     Both re-read the board before redrawing the panel, for the same reason
+     Accept and Start does: the buttons a person sees next depend on state the
+     server has just changed, and a panel drawn from the old copy offers the
+     control that was there a moment ago. */
+  const holdAction = (button, path, ask) => {
+    if(!button) return;
+    button.onclick = async (ev)=>{
+      const err = document.getElementById('d_startErr');
+      err.textContent = '';
+      let body;
+      if(ask){
+        /* One line, optional, and cancelling means cancel the hold — not hold
+           without a reason. A person who hits Escape here meant to stop. */
+        const note = window.prompt('Why is this going on hold? (optional — leave blank if you would rather not say)');
+        if(note === null) return;
+        body = { note: note.trim() };
+      }
+      ev.target.disabled = true;
+      try{
+        await api(`/assets/${id}${path}`, { method:'POST', body });
+        await render();
+        openDrawer(id);
+      }catch(e2){
+        ev.target.disabled = false;
+        /* Two kinds of 409, and they need opposite handling.
+           
+           "Finish your current task first" means the panel was RIGHT — this task
+           is held, Resume is the correct button, and the refusal is about a
+           different asset. Redrawing there would be pointless, and it also wiped
+           the only explanation the person was given: the redraw rebuilds this
+           panel, taking the error message with it, so the button appeared to do
+           nothing at all. Found by clicking it.
+           
+           Every other 409 — already held, already under way, not on hold —
+           means the panel is showing a state the server has moved past, so
+           redraw and then put the message back on the fresh panel. */
+        const stale = e2.status===409 && !(e2.body && e2.body.activeWork);
+        if(stale){ await render(); openDrawer(id); }
+        const box = document.getElementById('d_startErr');
+        if(box) box.textContent = e2.message;
+      }
+    };
+  };
+  holdAction(document.getElementById('d_holdBtn'), '/hold', true);
+  holdAction(document.getElementById('d_resumeBtn'), '/resume', false);
 
   if(manageTasks){
     const input = document.getElementById('d_newTask');

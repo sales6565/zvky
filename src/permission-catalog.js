@@ -138,6 +138,35 @@ const GROUPS = [
           + 'sheet. Separate from Description, which stays visible to everyone on the asset.',
       },
       {
+        /* Putting your OWN task down, and picking it up again.
+         *
+         * On for every designation by default, like timesheet.own and for the
+         * same reason: this is not a privilege somebody grants you over other
+         * people's work, it is the ability to say honestly what happened to
+         * your own. A studio that cannot record an interruption records it as
+         * time worked instead, which is the outcome this exists to avoid.
+         *
+         * Still a toggle, so a studio that would rather nobody paused anything
+         * can turn it off for a designation and keep the plain start-to-submit
+         * span. Turning it off does not strand anybody: a held task is resumed
+         * with the same button that starts one, and Time Spent goes back to
+         * counting every hour between the stamps.
+         *
+         * WHAT THIS DOES NOT GRANT, deliberately and for now: holding somebody
+         * ELSE'S task. A lead who thinks an artist's work should stop has the
+         * existing ways to say so — reassign it, or move its stage — and each
+         * of those leaves a record naming who did it. A cross-person hold would
+         * need its own permission and its own audit line rather than quietly
+         * riding on this one, so it is out of scope until the studio asks for
+         * it. See docs/PERMISSIONS.md.
+         */
+        key: 'asset.hold',
+        label: 'Hold / Resume Own Task',
+        impliedBy: () => true,
+        describe: 'Put your own in-progress task on hold and pick it up later. Held time is left '
+          + 'out of its Time Spent, and holding frees you to start another task.',
+      },
+      {
         key: 'asset.override_stage',
         label: 'Override Review Stage',
         // Only the studio-wide tier holds this from a role. Moving an asset

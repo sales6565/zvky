@@ -55,6 +55,8 @@ const REQUIRED = [
      it here, and a test checks the two agree. */
   { table: 'work_sessions',    column: 'round',         step: 'assigned state and time tracking' },
   { table: 'work_sessions',    column: 'assignment_id', step: 'assignment history' },
+  { table: 'work_sessions',    column: 'ended_reason',  step: 'work session end reason' },
+  { table: 'work_sessions',    column: 'hold_note',     step: 'hold reason' },
   { table: 'asset_assignments', column: null,           step: 'assignment history' },
   { table: 'asset_assignments', column: 'ended_status', step: 'assignment history' },
   { table: 'ip_allowlist',     column: null,            step: 'IP allowlist' },

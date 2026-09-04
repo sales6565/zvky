@@ -184,6 +184,11 @@ async function attachTasksAndNotes(assets, viewer) {
     // How many rounds those two stamps span. Across more than one they are the
     // first start and the last submit, not the ends of a single stretch.
     work_rounds: currentStamps(episodes, timeSpent, a.id).rounds,
+    /* Put down on purpose, and when — or null, which is every asset that is not
+       held. Carried on the asset rather than fetched per card so the board, the
+       Assets List and the panel all read one field, and so a lead scanning the
+       board can see that In Progress work has stopped without opening it. */
+    held: (timeSpent.get(a.id) || {}).held || null,
     assignments: episodes.get(a.id) || [],
     // MySQL stores the flag as TINYINT(1); hand the browser a real boolean.
     tasks: tasks.filter((t) => t.asset_id === a.id).map((t) => ({ ...t, done: Boolean(t.done) })),
@@ -1325,13 +1330,171 @@ router.post('/:id/start', async (req, res) => {
   return res.json({ asset: withDetails, work });
 });
 
-/* There is deliberately no pause endpoint.
+/* Hold and Resume.
  *
- * Pause and Resume were removed with the running timer: a round is now one span
- * from Accept and Start to Submit for Review, and Time Spent is the difference
- * between those two stamps. Every close of a session happens as a consequence
- * of something else — submitting, being reassigned, being unassigned — so
- * nothing a person clicks can end one on its own. */
+ * These reinstate, on purpose and with a narrower scope, the one thing the
+ * running timer had that the plain start/submit model lost: the ability to say
+ * "I stopped, and this gap is not work". Everything else about the old timer
+ * stays gone — nothing ticks, nothing is polled, and Time Spent is still read
+ * from stamps rather than counted up.
+ *
+ * The mechanism is deliberately thin. Hold is a close with reason 'held';
+ * Resume is an ordinary start. work_sessions has always allowed several rows
+ * per round and every reader already SUMS them, so the held gap drops out of
+ * Time Spent without a line of arithmetic changing anywhere. See the note at
+ * the top of src/work-log.js for what that costs the Efficiency report, which
+ * the studio accepted knowingly.
+ *
+ * Held is NOT a workflow status. An asset on hold stays in In Progress (or in
+ * whichever changes-requested state its rework belongs to) and the state
+ * machine never learns the word. A status would have needed an edge from and
+ * to every working state, a column in every export, a colour, and a place in
+ * the tab rules — all to express something already derivable from the session
+ * rows. What the studio sees instead is a badge, which is a display concern and
+ * lives with the display.
+ */
+
+/* A line in the asset's history for something that changed no status.
+ *
+ * Every other write to asset_events happens inside applyTransition, which has a
+ * from and a to. Hold and Resume have neither — the asset stays exactly where
+ * it was — so they write their own row, with from and to equal to the status
+ * they left alone. That keeps the history readable as a sequence rather than
+ * introducing a second kind of row with null stamps in it.
+ *
+ * Failure here is logged and swallowed. On a deployment whose asset_events
+ * table predates the note or routed_to_id columns, losing the history line is
+ * regrettable; refusing to let somebody put their work down because their
+ * studio has an old audit table is worse, and the session row — which is what
+ * Time Spent and the one-active-task rule actually read — has already landed.
+ */
+async function recordAssetEvent(req, asset, action, note) {
+  try {
+    await db.query(
+      `INSERT INTO asset_events (id, asset_id, action, from_status, to_status, actor_id, actor_email, note)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [uuid(), asset.id, action, asset.status, asset.status, req.user.id, req.user.email, note || null]
+    );
+  } catch (err) {
+    console.warn(`[assets] ${action} on ${asset.id} was not written to the history — ${err.sqlMessage || err.message}`);
+  }
+}
+
+// Both endpoints answer the same three questions before doing anything, and
+// answer them identically. Written once so Hold and Resume cannot come to
+// different conclusions about whose task it is.
+async function holdableAsset(req, res) {
+  const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
+  const asset = rows[0];
+  if (!asset) { res.status(404).json({ error: 'Asset not found' }); return null; }
+  if (await projectClosedResponse(res, asset.project_id)) return null;
+  /* Your own task, and nobody else's.
+   *
+   * mayStartWork lets a full-access role stamp a start for oversight; holding
+   * is not the same kind of act, so this is stricter — a hold on somebody
+   * else's work would look to them exactly like the app losing their session.
+   * A lead who wants work stopped reassigns it or moves its stage, both of
+   * which already say in the history who did it. */
+  if (!asset.assignee_id || asset.assignee_id !== req.user.id) {
+    res.status(403).json({ error: 'Only the person a task is assigned to can put it on hold or resume it.' });
+    return null;
+  }
+  if (!(await workLog.available(db))) {
+    res.status(503).json({
+      error: 'Time recording is not available on this deployment yet — its table has not been created. See /api/health.',
+      workLogUnavailable: true,
+    });
+    return null;
+  }
+  return asset;
+}
+
+// The stamps and the held state, in the one shape both endpoints answer with.
+async function workStateFor(assetId, asset) {
+  const episode = await assignments.current(db, assetId);
+  return workLog.summary(db, assetId, episode && episode.id, asset.assignee_id);
+}
+
+// POST /api/assets/:id/hold — put the open stretch down, keeping the round.
+router.post('/:id/hold', requirePermission('asset.hold'), async (req, res) => {
+  const asset = await holdableAsset(req, res);
+  if (!asset) return undefined;
+
+  const open = await workLog.openSession(db, req.params.id);
+  if (!open) {
+    /* Nothing to put down. Two different situations, and the difference is
+       what the person needs told: already held, or never started. */
+    const held = await workLog.heldFor(db, req.params.id, asset.assignee_id);
+    return res.status(409).json({
+      error: held
+        ? 'This task is already on hold. Resume it to carry on working.'
+        : 'Start the work before putting it on hold.',
+      held: held || undefined,
+    });
+  }
+
+  // Optional, and one line. A required reason turns a two-second action into a
+  // form, and a studio made to type something types a full stop.
+  const note = String((req.body && req.body.note) || '').trim().slice(0, 255) || null;
+  await workLog.hold(db, req.params.id, note);
+  await recordAssetEvent(req, asset, 'hold', note);
+
+  return res.json({ work: await workStateFor(req.params.id, asset), held: true });
+});
+
+// POST /api/assets/:id/resume — pick it up again, in the same round.
+router.post('/:id/resume', requirePermission('asset.hold'), async (req, res) => {
+  const asset = await holdableAsset(req, res);
+  if (!asset) return undefined;
+
+  const held = await workLog.heldFor(db, req.params.id, asset.assignee_id);
+  if (!held) {
+    const open = await workLog.openSession(db, req.params.id);
+    return res.status(409).json({
+      error: open
+        ? 'This task is already under way.'
+        : 'This task is not on hold — use Accept and Start to begin work on it.',
+    });
+  }
+
+  /* Resuming is starting, so it obeys the rule starting obeys.
+   *
+   * Without this, Hold would be a way around the one-active-task rule rather
+   * than a use of it: hold A, start B, resume A, and two tasks are open at
+   * once. The refusal names what to finish first, exactly as /start's does, so
+   * the two reasons a person can be blocked read the same wherever they meet
+   * them. */
+  const elsewhere = await workLog.openForUser(db, req.user.id, req.params.id);
+  if (elsewhere) {
+    return res.status(409).json({
+      error: 'Finish your current task before resuming this one — '
+        + `${elsewhere.code || 'an asset'}${elsewhere.name ? ` (${elsewhere.name})` : ''} `
+        + 'is still open. Submit it for review and this one will unlock.',
+      activeWork: {
+        assetId: elsewhere.assetId,
+        code: elsewhere.code,
+        name: elsewhere.name,
+        since: elsewhere.since,
+      },
+    });
+  }
+
+  /* The start date is NOT re-checked here, and that is deliberate.
+   *
+   * It is a rule about when work may BEGIN, and this work began — the date was
+   * checked at Accept and Start. Re-applying it on resume would only ever fire
+   * if somebody moved the date forward mid-round, and would then strand a task
+   * its holder had already put hours into, with a refusal about the future on
+   * work already done. */
+  const episode = await assignments.current(db, req.params.id);
+  const started = await workLog.start(db, req.params.id, req.user.id, episode && episode.id);
+  if (!started.ok) {
+    return res.status(409).json({ error: 'Work has already been started on this asset.', open: true, since: started.since });
+  }
+  await recordAssetEvent(req, asset, 'resume', null);
+
+  return res.json({ work: await workStateFor(req.params.id, asset), held: false });
+});
 
 // GET /api/assets/:id/worklog — the stamps, the elapsed total and the per-round
 // breakdown. Readable by anyone who can see the asset.

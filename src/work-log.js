@@ -1,17 +1,23 @@
 // When work started and when it was handed in.
 //
 // One row in work_sessions per stretch of work: opened when somebody clicks
-// Accept and Start, closed when they submit for review or the asset moves to
-// somebody else. `seconds` on the closed row is the elapsed wall-clock time
-// between those two stamps.
+// Accept and Start or Resume, closed when they submit for review, put the task
+// on hold, or the asset moves to somebody else. `seconds` on the closed row is
+// the elapsed wall-clock time between those two stamps.
 //
-// WHAT THIS USED TO BE, AND WHY IT CHANGED. This was a running timer with Pause
-// and Resume, and `seconds` meant active worked time — a round could hold
-// several rows, one per unpaused stretch. The studio asked for that to go: a
-// round now records two timestamps and nothing else, and Time Spent is the
-// difference between them. That means Time Spent now includes lunch, meetings,
-// overnight and weekends if the work was left open across them. That is the
-// agreed definition, not an oversight.
+// WHAT THIS USED TO BE, AND WHERE IT HAS ARRIVED. This was a running timer with
+// Pause and Resume, and `seconds` meant active worked time — a round could hold
+// several rows, one per unpaused stretch. The studio removed that: a round
+// recorded two timestamps and nothing else, and Time Spent was the difference
+// between them, lunch and evenings and weekends included.
+//
+// Hold reopens the middle ground, deliberately and with the cost understood.
+// Time Spent is once again the SUM of a round's rows rather than the span of
+// it, so declared holds are excluded — but nothing forces anybody to declare
+// one. The number is therefore neither turnaround nor effort: it is elapsed
+// time less whatever was actually put down on purpose, and its accuracy rests
+// on people clicking the button, exactly as the Time Sheet's does. That is the
+// studio's agreed definition, arrived at knowingly, not an oversight.
 //
 // The invariant everything here protects is unchanged: AT MOST ONE OPEN SESSION
 // PER ASSET. start() refuses while one is open, which is what makes a
@@ -33,7 +39,34 @@ const REASONS = {
   reassigned: 'reassigned',   // somebody else has it now
   unassigned: 'unassigned',   // taken off everybody
   moved: 'moved',             // the asset was put in a status nobody works in
+  held: 'held',               // put down on purpose, to be picked up again
 };
+
+/* HOLD, AND WHY IT NEEDS NO NEW TABLE.
+ *
+ * Hold closes the open session with reason 'held'; Resume opens a new one. So a
+ * round is once again several rows whose `seconds` sum to the time actually
+ * worked — which is the shape this table had under pause/resume and never lost.
+ * Every reader already sums rather than subtracting stamps, so the held gap
+ * falls out of Time Spent with no arithmetic added anywhere.
+ *
+ * Three consequences worth stating, because each is a decision:
+ *
+ *   THE ONE-ACTIVE-TASK SLOT IS FREED. openForUser() reads ended_at IS NULL,
+ *   so a hold releases the person to start something else — which is the point
+ *   of the feature — and Resume goes through the same check, or holding would
+ *   be a way around the rule rather than a use of it.
+ *
+ *   THE ROUND SURVIVES. currentRound() counts submissions, and a hold submits
+ *   nothing, so the resumed session lands back in the round it left. Nothing
+ *   has to be carried across the gap.
+ *
+ *   HELD IS DERIVED, NOT STORED ON THE ASSET. There is no on_hold status and no
+ *   column: an asset is held when the newest session belonging to whoever holds
+ *   it now ended 'held'. Scoping to the current assignee is what makes a
+ *   reassignment clear it for free — the new person has no rows yet, so they
+ *   inherit somebody else's pause as a fresh start, which is right.
+ */
 
 /* The statuses in which somebody's stretch of work is legitimately still open.
  *
@@ -181,30 +214,149 @@ async function start(db, assetId, userId, assignmentId) {
  * `seconds` is the elapsed wall-clock span. It is stored rather than derived on
  * read so a later edit to either stamp cannot silently rewrite history, and so
  * the reports can sum one column instead of subtracting dates in SQL. */
-async function close(db, assetId, reason) {
+async function close(db, assetId, reason, note = null) {
   const running = await openSession(db, assetId);
   if (!running) return { ok: true, wasOpen: false };
   const why = REASONS[reason] || null;
-  try {
-    await db.query(
-      `UPDATE work_sessions
-          SET ended_at = NOW(), seconds = TIMESTAMPDIFF(SECOND, started_at, NOW()), ended_reason = $1
-        WHERE id = $2 AND ended_at IS NULL`,
-      [why, running.id]
-    );
-  } catch (err) {
-    // A deployment that has not run the ended_reason migration still closes the
-    // session; it just cannot say why. Losing the stamp for want of a column
-    // would be far worse than losing the reason.
-    if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
-    await db.query(
-      `UPDATE work_sessions
-          SET ended_at = NOW(), seconds = TIMESTAMPDIFF(SECOND, started_at, NOW())
-        WHERE id = $1 AND ended_at IS NULL`,
-      [running.id]
-    );
+  const text = typeof note === 'string' && note.trim() ? note.trim().slice(0, 255) : null;
+
+  /* Three shapes of the same UPDATE, tried widest first.
+   *
+   * A deployment that has not run one of the column migrations still closes the
+   * session; it just cannot say why, or cannot keep the note. Losing the stamp
+   * for want of a column would be far worse than losing either — the stamp is
+   * what Time Spent is made of, and what the one-active-task rule reads. */
+  const STAMP = 'ended_at = NOW(), seconds = TIMESTAMPDIFF(SECOND, started_at, NOW())';
+  const attempts = [
+    [`${STAMP}, ended_reason = $1, hold_note = $2`, [why, text, running.id], '$3'],
+    [`${STAMP}, ended_reason = $1`, [why, running.id], '$2'],
+    [STAMP, [running.id], '$1'],
+  ];
+  for (const [sets, params, idParam] of attempts) {
+    try {
+      await db.query(
+        `UPDATE work_sessions SET ${sets} WHERE id = ${idParam} AND ended_at IS NULL`,
+        params
+      );
+      break;
+    } catch (err) {
+      if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
+    }
   }
-  return { ok: true, wasOpen: true, round: running.round, reason: why };
+  return { ok: true, wasOpen: true, round: running.round, reason: why, note: text };
+}
+
+/* Put the open stretch down, keeping the round.
+ *
+ * Nothing more than a close with a particular reason — which is the whole
+ * economy of doing it this way. The gap between this row's ended_at and the
+ * next row's started_at is time nobody is charged for, because no row covers
+ * it, and every reader was already summing rows.
+ */
+async function hold(db, assetId, note = null) {
+  return close(db, assetId, 'held', note);
+}
+
+/* Is this asset held, and what was said about it?
+ *
+ * The newest session for whoever holds the asset now. Held when that session
+ * ended with reason 'held' — which also means nothing is open, since a row
+ * newer than it would be the open one.
+ *
+ * Scoped by user rather than by assignment episode on purpose: the question is
+ * about the person looking at the asset today, and a deployment whose
+ * asset_assignments could not be created must still answer it. A reassignment
+ * therefore clears the hold without anything having to clear it.
+ */
+async function heldFor(db, assetId, userId) {
+  if (!userId) return null;
+  const { rows } = await selectHeld(db, 'w.asset_id = $1 AND w.user_id = $2', [assetId, userId]);
+  const row = rows[0];
+  return row ? { since: row.ended_at, note: row.hold_note || null, round: Number(row.round) || null } : null;
+}
+
+/* "This row is the newest stretch of this person's work on this asset, and it
+ * ended on hold."
+ *
+ * Written once and used by both the single-asset question above and the
+ * list-wide one in totalsFor, because a panel and a list that disagree about
+ * who is held is precisely the bug this shape exists to prevent.
+ *
+ * Two clauses, and both are needed. Nothing OPEN, or a resume has already
+ * happened and the hold is over. Nothing started LATER, or an older hold inside
+ * a round that has since moved on would still read as current.
+ *
+ * The tie-break on ended_at is for the second-granularity of DATETIME: a hold
+ * and a resume in the same second sort equally by start, and the open row is
+ * what separates them. The one case left indistinguishable — hold, resume and
+ * submit inside a single second — describes a round with no work in it.
+ */
+const HELD_ROW = `w.ended_reason = 'held' AND NOT EXISTS (
+      SELECT 1 FROM work_sessions n
+       WHERE n.asset_id = w.asset_id AND n.user_id = w.user_id
+         AND (n.ended_at IS NULL
+              OR n.started_at > w.started_at
+              OR (n.started_at = w.started_at AND n.ended_at > w.ended_at)))`;
+
+/* The end of a stretch that was a HAND-IN rather than a hold.
+ *
+ * MAX(ended_at) across a round used to be the submit stamp, and with one row
+ * per round it was exactly that. A held round's newest row also carries an
+ * ended_at, so without this a task somebody put down at 11am reads as submitted
+ * at 11am — on the asset panel, in the Assets List, and to every lead looking
+ * for something to review that was never handed in.
+ *
+ * Only 'held' is excluded, not every reason that is not 'submitted'. Rows
+ * written before the reason column existed carry NULL and WERE submissions, and
+ * excluding those would erase the very history that column was added to keep.
+ */
+const submitStamp = (prefix = '') =>
+  `CASE WHEN ${prefix}ended_reason = 'held' THEN NULL ELSE ${prefix}ended_at END`;
+
+/* Ask with the hold-aware stamp, and fall back to the plain one.
+ *
+ * A deployment that has not run the reason migration has never recorded a hold,
+ * so plain ended_at is not an approximation there — it is the same answer. The
+ * retry exists so that asking about holds cannot cost such a deployment its
+ * work log entirely, which is what the surrounding catch would otherwise do:
+ * it treats a missing column exactly like a missing table, and returns nothing.
+ */
+async function askStamped(db, build, params, ifUnavailable) {
+  let last = null;
+  for (const stamp of [submitStamp, (prefix = '') => `${prefix}ended_at`]) {
+    try {
+      return await db.query(build(stamp), params);
+    } catch (err) {
+      if (!unavailable(err)) throw err;
+      last = err;
+    }
+  }
+  /* Callers that have an answer for a schema this cannot query say so. One that
+     does not gets the error, so it can log which piece is missing rather than
+     silently reporting no time at all — the failure mode a report cannot
+     distinguish from a studio that did no work. */
+  if (ifUnavailable === undefined) throw last;
+  return ifUnavailable;
+}
+
+/* Held rows matching a scope, tolerating a schema that predates either column.
+ *
+ * A deployment mid-migration still learns that an asset is held; it just
+ * cannot say why. No ended_reason column at all means no holds have ever been
+ * recorded, so nothing is held — which is the honest answer, not a guess. */
+async function selectHeld(db, where, params) {
+  const ask = (noteColumn) => db.query(
+    `SELECT w.asset_id, w.ended_at, ${noteColumn} AS hold_note, w.round
+       FROM work_sessions w WHERE ${where} AND ${HELD_ROW}`,
+    params
+  );
+  return ask('w.hold_note').catch((err) => {
+    if (!unavailable(err)) throw err;
+    return ask('NULL').catch((again) => {
+      if (!unavailable(again)) throw again;
+      return { rows: [] };
+    });
+  });
 }
 
 // Everything below tolerates work_sessions not existing yet.
@@ -257,18 +409,14 @@ async function cutover(db) {
 // breakdown. A round still open counts up to now — that is elapsed-so-far, not
 // a clock, and nothing on screen ticks it.
 async function summary(db, assetId, assignmentId, assigneeId) {
-  const { rows } = await db.query(
+  const { rows } = await askStamped(db, (stamp) =>
     `SELECT round,
             SUM(COALESCE(seconds, TIMESTAMPDIFF(SECOND, started_at, NOW()))) AS seconds,
             MIN(started_at) AS started_at,
-            MAX(ended_at) AS ended_at,
+            MAX(${stamp()}) AS ended_at,
             SUM(ended_at IS NULL) AS still_open
        FROM work_sessions WHERE asset_id = $1 GROUP BY round ORDER BY round`,
-    [assetId]
-  ).catch((err) => {
-    if (!unavailable(err)) throw err;
-    return { rows: [] };
-  });
+  [assetId], { rows: [] });
   const rounds = rows.map((r) => ({
     round: Number(r.round),
     seconds: Number(r.seconds) || 0,
@@ -308,17 +456,13 @@ async function summary(db, assetId, assignmentId, assigneeId) {
     ? { sql: 'assignment_id = $1', value: assignmentId }
     : (assigneeId ? { sql: 'user_id = $1', value: assigneeId } : null);
   if (scope) {
-    const { rows: mine } = await db.query(
+    const { rows: mine } = await askStamped(db, (stamp) =>
       `SELECT SUM(COALESCE(seconds, TIMESTAMPDIFF(SECOND, started_at, NOW()))) AS seconds,
               MIN(started_at) AS started_at,
-              MAX(ended_at) AS ended_at,
+              MAX(${stamp()}) AS ended_at,
               SUM(ended_at IS NULL) AS still_open
          FROM work_sessions WHERE asset_id = $2 AND ${scope.sql}`,
-      [scope.value, assetId]
-    ).catch((err) => {
-      if (!unavailable(err)) throw err;
-      return { rows: [{ seconds: null, started_at: null, ended_at: null, still_open: 0 }] };
-    });
+    [scope.value, assetId], { rows: [{ seconds: null, started_at: null, ended_at: null, still_open: 0 }] });
     currentSeconds = Number(mine[0].seconds) || 0;
     currentStamps = {
       startedAt: mine[0].started_at || null,
@@ -337,6 +481,10 @@ async function summary(db, assetId, assignmentId, assigneeId) {
     currentSeconds: currentSeconds === null ? totalSeconds : currentSeconds,
     rounds,
     ...stamps,
+    /* Held, and since when. Asked about the ASSIGNEE rather than the reader, so
+       a lead opening the panel sees that the artist has put it down — which is
+       the whole reason this state is visible rather than private. */
+    held: await heldFor(db, assetId, assigneeId),
   };
 }
 
@@ -348,12 +496,12 @@ async function summary(db, assetId, assignmentId, assigneeId) {
 // somebody else's hours are theirs.
 async function totalsFor(db, assetIds) {
   if (!assetIds.length) return new Map();
-  const { rows } = await db.query(
+  const { rows } = await askStamped(db, (stamp) =>
     `SELECT w.asset_id,
             SUM(COALESCE(w.seconds, TIMESTAMPDIFF(SECOND, w.started_at, NOW()))) AS seconds,
             SUM(w.ended_at IS NULL) AS still_open,
             MIN(CASE WHEN w.user_id = a.assignee_id THEN w.started_at END) AS started_at,
-            MAX(CASE WHEN w.user_id = a.assignee_id THEN w.ended_at END) AS ended_at,
+            MAX(CASE WHEN w.user_id = a.assignee_id THEN ${stamp('w.')} END) AS ended_at,
             COUNT(DISTINCT CASE WHEN w.user_id = a.assignee_id THEN w.round END) AS rounds,
             SUM(CASE WHEN w.user_id = a.assignee_id
                      THEN COALESCE(w.seconds, TIMESTAMPDIFF(SECOND, w.started_at, NOW()))
@@ -361,12 +509,22 @@ async function totalsFor(db, assetIds) {
        FROM work_sessions w
        JOIN assets a ON a.id = w.asset_id
       WHERE w.asset_id IN ($1) GROUP BY w.asset_id`,
+  [assetIds], { rows: [] });
+
+  /* Who is held, asked once for the whole list rather than per row.
+   *
+   * A separate query because "the newest row ended on hold" is not something a
+   * GROUP BY can answer without picking a row, and the alternative — a
+   * correlated subquery per asset — is the shape that makes an Assets List of
+   * four hundred assets slow. It uses the same HELD_ROW predicate the single
+   * asset panel uses, so the two cannot come to different conclusions. */
+  const { rows: heldRows } = await selectHeld(
+    db,
+    'w.asset_id IN ($1) AND w.user_id = (SELECT assignee_id FROM assets WHERE id = w.asset_id)',
     [assetIds]
-  ).catch((err) => {
-    if (!unavailable(err)) throw err;
-    console.warn(`[schema] work_sessions unavailable (${err.code}) — time recording is off until it exists. See /api/health.`);
-    return { rows: [] };
-  });
+  );
+  const heldBy = new Map(heldRows.map((r) => [r.asset_id, { since: r.ended_at, note: r.hold_note || null }]));
+
   return new Map(rows.map((r) => [r.asset_id, {
     seconds: Number(r.seconds) || 0,
     currentSeconds: Number(r.current_seconds) || 0,
@@ -374,10 +532,14 @@ async function totalsFor(db, assetIds) {
     startedAt: r.started_at || null,
     submittedAt: Number(r.still_open) > 0 ? null : (r.ended_at || null),
     rounds: Number(r.rounds) || 0,
+    held: heldBy.get(r.asset_id) || null,
   }]));
 }
 
 module.exports = {
-  REASONS, WORK_CONTINUES, start, close, closeIfWorkStopped, summary, totalsFor,
+  REASONS, WORK_CONTINUES, start, close, closeIfWorkStopped, hold, heldFor, summary, totalsFor,
   openSession, openForUser, currentRound, available, cutover,
+  // Exported so every reader of a submit stamp uses the same expression. There
+  // are three, and the third was found by a test rather than by reading.
+  submitStamp, askStamped,
 };

@@ -34,14 +34,22 @@ test('the rule is keyed on an open session, not on the in_progress status', () =
   assert.ok(!/in_progress/.test(fn[0]), 'and the status has nothing to do with it');
 });
 
-test('the guard is on starting work and on nothing else', () => {
+test('the guard is on taking up work and on nothing else', () => {
   /* Point 3 of the brief: a lead with their own task under way still reviews,
      approves, relays and files a timesheet. Counted rather than eyeballed, so
-     that adding the check to a second endpoint fails here. */
+     that adding the check to an endpoint that is not about taking up work
+     fails here.
+     
+     Three, since Hold arrived. RESUME is the third, and it has to be: holding
+     closes the session, so without the same check somebody could hold A, start
+     B and resume A, and hold their way to two open tasks — which would make
+     this feature a way around the rule instead of a use of it. The count is the
+     point. If it moves again, the question to ask is whether the new call site
+     is somebody TAKING UP work, or somebody merely doing their job around it. */
   const routes = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'assets.js'), 'utf8');
   const uses = routes.match(/workLog\.openForUser\(/g) || [];
-  assert.strictEqual(uses.length, 2,
-    'exactly two: the guard in /start and the shared shaper the page reads');
+  assert.strictEqual(uses.length, 3,
+    'exactly three: the guards in /start and /resume, and the shared shaper the page reads');
 
   for (const file of ['timesheets.js', 'project-reviews.js', 'users.js', 'projects.js']) {
     const body = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', file), 'utf8');

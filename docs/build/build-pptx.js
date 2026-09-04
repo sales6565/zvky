@@ -389,7 +389,7 @@ module_({
   head: 'Accept and Start, then Submit for Review',
   items: [
     'Accept and Start moves the asset to In Progress and stamps the time.',
-    'Time Spent is the gap between that stamp and your submission — not a timer you can pause.',
+    'Time Spent is the gap between that stamp and your submission, less any stretch put on hold.',
     'Submit for Review sends it to the first gate with the file or the link attached.',
     'You cannot submit work you never started, which is what makes Time Spent mean anything.',
   ],
@@ -411,6 +411,22 @@ module_({
   whoText: 'Applies to everybody who accepts work. A lead with an asset under way still runs their queue.',
   shotName: '13-start-blocked',
   caption: 'A second asset, refused, naming the open one.',
+});
+
+module_({
+  module: 'Hold',
+  head: 'Put a task down without handing it in',
+  items: [
+    'Hold stops the count on a task and frees you to start another one.',
+    'The held time is left out of that asset\u2019s Time Spent. Say why in a line, or leave it blank.',
+    'It stays in its stage and carries an On hold badge, so a lead can see the work has stopped.',
+    'Resume obeys the same one-task rule as starting, so holding is not a way around it.',
+    'Time Spent now depends on people pressing the button, exactly as the Time Sheet does.',
+  ],
+  whoText: 'The person the task is assigned to, with Hold / Resume Own Task \u2014 on for every designation by '
+    + 'default, and switchable off in Settings. Nobody can hold somebody else\u2019s task in this version.',
+  shotName: '13-work-in-progress',
+  caption: 'A task in progress, where the Hold button sits.',
 });
 
 module_({
@@ -492,6 +508,7 @@ module_({
   head: 'Estimate against actual, and time with nothing open',
   items: [
     'Efficiency compares each asset’s man hours against Time Spent, by user, asset, project or scope of work.',
+    'It says how many assets had time held back, and Idle counts that same held time as idle — the two reports are meant to disagree there.',
     'Idle is working time during which somebody had nothing started.',
     'Idle counts against the configured working hours, so evenings and lunch are not counted as idle.',
     'Idle Now answers the immediate question: who has nothing open right now.',

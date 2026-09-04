@@ -29,6 +29,9 @@
 // whatever was open first, in the caller's transaction.
 
 const { v4: uuid } = require('uuid');
+// For the one expression that says which stretch-ends are submissions and which
+// are holds. See the note in listFor below.
+const workLog = require('./work-log');
 
 // The table arrives with a migration step, and a step can fail — on shared
 // hosting, usually for want of CREATE. When it has not arrived, assignment
@@ -145,7 +148,15 @@ async function listFor(db, assetIds) {
   if (!assetIds.length) return new Map();
   let rows = [];
   try {
-    ({ rows } = await db.query(
+    /* Asked through work-log's helper so this query's submit stamp is the same
+       expression as the panel's and the Assets List's.
+       
+       It has to be. This is the query the Assets List actually reads — the
+       other two are the fallback for a deployment with no episodes — so a
+       held asset read as submitted HERE regardless of what the other two said.
+       Three readers of one idea, which is two more than there should be; the
+       expression is shared so they cannot drift again. */
+    ({ rows } = await workLog.askStamped(db, (stamp) =>
       `SELECT ass.*, u.\`name\` AS user_name, u.avatar_updated_at AS user_photo_at,
               b.\`name\` AS assigned_by_name,
               COALESCE(t.seconds, 0) AS seconds,
@@ -160,14 +171,13 @@ async function listFor(db, assetIds) {
                   SUM(COALESCE(seconds, TIMESTAMPDIFF(SECOND, started_at, NOW()))) AS seconds,
                   SUM(ended_at IS NULL) AS still_open,
                   MIN(started_at) AS work_started_at,
-                  MAX(ended_at) AS work_ended_at,
+                  MAX(${stamp()}) AS work_ended_at,
                   COUNT(DISTINCT round) AS rounds
              FROM work_sessions WHERE assignment_id IS NOT NULL GROUP BY assignment_id
          ) t ON t.assignment_id = ass.id
         WHERE ass.asset_id IN ($1)
         ORDER BY ass.seq`,
-      [assetIds]
-    ));
+    [assetIds]));
   } catch (err) {
     if (!unavailable(err)) throw err;
     console.warn(`[schema] assignment history unavailable (${err.code}) — the Assets List falls back to one row per asset. See /api/health.`);

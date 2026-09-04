@@ -1895,6 +1895,32 @@ async function ensureSessionEndReason(db, log) {
   log('Schema: work_sessions rows now record why they ended, and where Time Spent changed meaning.');
 }
 
+/* What somebody said when they put a task on hold.
+ *
+ * On the session row rather than in a table of its own, because a note belongs
+ * to the stretch of work it ended: one hold, one note, and the derivation that
+ * asks "is this asset held" already has that row in its hand. The alternative
+ * — a second query per asset on every board draw — buys nothing.
+ *
+ * Nullable, and stays null on every row closed any other way. The reason is
+ * optional by design: a required one turns a two-second action into a form,
+ * and a studio that has to type something types a full stop.
+ */
+async function ensureHoldNote(db, log) {
+  const { rows: table } = await db.query(
+    `SELECT TABLE_NAME AS t FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'work_sessions'`
+  );
+  if (!table.length) return;
+  const { rows: col } = await db.query(
+    `SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'work_sessions' AND COLUMN_NAME = 'hold_note'`
+  );
+  if (col.length) return;
+  await db.query('ALTER TABLE work_sessions ADD COLUMN hold_note VARCHAR(255) NULL');
+  log('Schema: work_sessions rows can now carry the reason a task was put on hold.');
+}
+
 /* Close work sessions stranded on assets nobody is working on.
  *
  * Only submitting, a handover and an unassignment ever closed a session. Every
@@ -1995,6 +2021,9 @@ const STEPS = [
   ['notifications', ensureNotifications],
   // After work_sessions, whose column it adds.
   ['work session end reason', ensureSessionEndReason],
+
+  // After the reason column, whose values it extends with 'held'.
+  ['hold reason', ensureHoldNote],
   // After projects and users, whose keys it points at.
   ['project supervision', ensureProjectSupervision],
   // After the event log, whose column it adds.

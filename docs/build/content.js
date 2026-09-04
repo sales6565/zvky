@@ -24,7 +24,7 @@ const pagebreak = () => ({ t: 'pagebreak' });
 const STATES = [
   ['Not Assigned', 'The asset exists and nobody is holding it.', 'Whoever creates it, or a bulk upload with the Assignee Email column left blank.'],
   ['Assigned', 'It is on somebody’s desk, not yet accepted.', 'Anyone who may assign work.'],
-  ['In Progress', 'The assignee has pressed Accept and Start. The clock for Time Spent runs from here.', 'The assignee, and nobody else.'],
+  ['In Progress', 'The assignee has pressed Accept and Start. Time Spent runs from here, and pauses while the task is on hold.', 'The assignee, and nobody else.'],
   ['TL Review', 'Submitted, waiting on the first review gate.', 'The assignee, on Submit for Review.'],
   ['TL Feedbacks', 'The team lead asked for changes. Back with the assignee.', 'The reviewer at the first gate.'],
   ['CD Review', 'Past the first gate, waiting on the Creative Director.', 'The reviewer at the first gate, on approval.'],
@@ -37,6 +37,7 @@ const STATES = [
 const TRANSITIONS = [
   ['Assign', 'Not Assigned', 'Assigned', 'Asset Assign'],
   ['Accept and Start', 'Assigned', 'In Progress', 'The assignee'],
+  ['Hold / Resume', 'In Progress / TL Feedbacks / CD Feedbacks', 'No change — the stage stays put', 'The assignee, with Hold / Resume Own Task'],
   ['Submit for Review', 'Not Assigned / In Progress / TL Feedbacks', 'TL Review', 'The assignee'],
   ['Submit for Review (after CD notes)', 'CD Feedbacks', 'CD Review or TL Review', 'The assignee'],
   ['Approve', 'TL Review', 'CD Review', 'TL Review'],
@@ -375,8 +376,8 @@ module.exports = [
     'Press Accept and Start.',
   ]),
   shot('13-accept-and-start', 'An asset assigned to you, before you accept it. Time Spent reads 0s and has not begun.'),
-  p('The asset moves to In Progress and the clock starts. Time Spent is not a timer you can pause — it is the gap '
-    + 'between this moment and the moment you submit.'),
+  p('The asset moves to In Progress and the clock starts. Nothing ticks on screen: Time Spent is the gap between '
+    + 'this moment and the moment you submit, less any stretch you put on hold (7.6).'),
   shot('13-work-in-progress', 'The same asset once started. The panel now shows when you started, and Time Spent is running.'),
 
   h2('7.4 Not before the start date'),
@@ -401,16 +402,46 @@ module.exports = [
     'Rework after TL or CD feedback counts as open work, because it is started with the same button.',
   ]),
 
-  h2('7.6 Submitting for review'),
+  h2('7.6 Putting a task on hold'),
+  p('Work stops for reasons that are nobody\u2019s fault \u2014 a client call, a machine being reimaged, a day off in '
+    + 'the middle of a long asset. Hold is how you say so, and the time between holding and resuming is left out of '
+    + 'that asset\u2019s Time Spent.'),
+  steps([
+    'With the asset In Progress, press Hold in the Time Spent box.',
+    'Say why, in a line, or leave it blank \u2014 the reason is optional.',
+    'Press Resume when you pick it up again.',
+  ]),
+  bullets([
+    'Holding frees you to start something else. It is the one way to have a second task open without finishing the first.',
+    'Resuming obeys the same one-task rule as starting. If something else is open when you press Resume, it is refused and names what to finish \u2014 holding is not a way around the rule.',
+    'The asset does not change stage. It stays In Progress, or in whichever feedback stage its rework belongs to, and carries an On hold badge on the board and in the Assets List so a lead can see the work has stopped.',
+    'The round is unchanged. A hold is not a submission, so picking the work up again continues the same round rather than starting a new one.',
+    'You may hold as many tasks as you like. Each one keeps its badge, so none of them can be quietly forgotten.',
+    'Hand a held task to somebody else and the hold does not follow it. Their Time Spent starts at nothing, and your hours stay on the asset.',
+  ]),
+  p('WHAT THIS COSTS, AND WHY IT IS WORTH SAYING. Time Spent is now elapsed time less whatever was declared as a '
+    + 'hold, which means its accuracy depends on people pressing the button \u2014 exactly as the Time Sheet\u2019s '
+    + 'does. Two assets showing the same hours can mean different things, so the Efficiency report says how many of '
+    + 'the assets it covers had time held back. Note also that the Idle report and the Efficiency report move in '
+    + 'opposite directions for the same honest hold: the held gap is time nothing was open, so it reads as idle, '
+    + 'while the asset\u2019s efficiency improves. They measure different things and are meant to disagree here.'),
+  p('A studio that would rather nobody paused anything can switch Hold / Resume Own Task off for a designation in '
+    + 'Settings \u2192 Role Permissions. Nobody is stranded by that: a task already on hold is picked up with the '
+    + 'ordinary Accept and Start button, and Time Spent goes back to counting every hour between the two stamps.'),
+  p('Holding somebody ELSE\u2019s task is not something anybody can do in this version, Super Admin included. A lead '
+    + 'who needs work stopped reassigns the asset or moves its stage, both of which record who did it. A separate '
+    + 'permission for holding on another person\u2019s behalf could be added if the studio asks for one.'),
+
+  h2('7.7 Submitting for review'),
   steps([
     'With the asset In Progress, scroll to Submissions in the panel.',
     'Attach the file, or paste the link to it.',
     'Press Submit for Review.',
   ]),
-  p('The asset moves to TL Review, Time Spent is fixed at the gap between your two stamps, and the reviewer is '
-    + 'notified. You cannot submit work you never started — the two stamps are what make Time Spent mean anything.'),
+  p('The asset moves to TL Review, Time Spent is fixed, and the reviewer is notified. You cannot submit work you '
+    + 'never started — the stamps are what make Time Spent mean anything.'),
 
-  h2('7.7 The first review gate'),
+  h2('7.8 The first review gate'),
   shot('06-tl-review-panel', 'An asset at TL Review, seen by the team lead.'),
   steps([
     'Open the asset from your queue.',
@@ -420,22 +451,22 @@ module.exports = [
   p('A studio that does not use a Creative Director gate can send work straight from here to Approved for Client, '
     + 'if the reviewer holds TL Send to Client.'),
 
-  h2('7.8 TL Feedbacks'),
+  h2('7.9 TL Feedbacks'),
   shot('05-asset-tl-feedback', 'An asset returned with the lead’s notes, seen by the artist who holds it.'),
   p('The asset comes back to you with the note attached. Press Accept and Start again to reopen it — which counts '
     + 'as your one active task — and Submit for Review when the changes are done. It goes back to the same gate.'),
 
-  h2('7.9 The Creative Director gate'),
+  h2('7.10 The Creative Director gate'),
   shot('07-cd-review-panel', 'An asset at CD Review.'),
   p('The Creative Director either approves it for the client, or submits feedback — one action, not two decisions. '
     + 'Approval moves it to Approved for Client. Feedback moves it to CD Feedbacks, which sits with the team lead.'),
 
-  h2('7.10 CD Feedbacks and the relay'),
+  h2('7.11 CD Feedbacks and the relay'),
   p('CD Feedbacks does not go straight back to the artist. It stops with the team lead, who reads the Creative '
     + 'Director’s notes, adds their own reading of them if needed, and relays them on. Until they do, the artist '
     + 'cannot start the rework — and the application says so plainly rather than leaving the button silently dead.'),
 
-  h2('7.11 Leaving the studio'),
+  h2('7.12 Leaving the studio'),
   p('From Approved for Client there are two routes, and a studio uses whichever matches how it works with that client.'),
   bullets([
     'Deliver — the work is handed over and the asset is Delivered. One step.',
@@ -547,13 +578,21 @@ module.exports = [
   h2('10.1 Efficiency'),
   shot('10-reports-efficiency', 'The Efficiency report: estimated against actual, by whichever view is chosen.'),
   p('Efficiency compares the estimate on each asset — its man hours — against Time Spent, the gap between Accept '
-    + 'and Start and Submit for Review. It can be read by user, by asset, by project or by scope of work.'),
+    + 'and Start and Submit for Review, less any stretch put on hold. It can be read by user, by asset, by project '
+    + 'or by scope of work.'),
+  p('The report says how many of the assets it covers had time held back, because two assets showing the same hours '
+    + 'mean different things if one had a day taken out of it. Holding is something a person chooses to record, so '
+    + 'an asset with no holds may still have been interrupted — the number is a measure of turnaround, not of effort.'),
 
   h2('10.2 Idle'),
   shot('10-reports-idle', 'The Idle report: working time with no asset open.'),
   p('Idle is working time during which somebody had nothing started. It is computed against the studio’s configured '
     + 'working hours, so time outside the working day and the lunch hour are not counted as idle. Overlapping '
     + 'sessions are counted once, not twice.'),
+  p('Time put on hold counts as idle here, and that is deliberate rather than an oversight: nothing was open, which '
+    + 'is what this report measures. So a hold improves an asset’s efficiency and worsens the holder’s idle figure '
+    + 'at the same time. The two reports answer different questions and are meant to disagree on this point — read '
+    + 'either alone and the other will look wrong.'),
 
   h2('10.3 Idle Now'),
   p('A sub-tab answering the immediate question: who has nothing open at this moment, and what is waiting on them. '

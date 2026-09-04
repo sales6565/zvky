@@ -144,14 +144,17 @@ async function systemClientId(base, token) {
   return found.id;
 }
 
-async function sql(cfg, statement) {
+async function sql(cfg, statement, params) {
   const mysql = require('mysql2/promise');
   const conn = await mysql.createConnection({
     host: cfg.host, port: cfg.port, user: cfg.user, password: cfg.password,
     database: cfg.database, multipleStatements: true,
   });
   try {
-    const [rows] = await conn.query(statement);
+    // Placeholders are optional, so the many callers that pass a plain
+    // statement keep working; a test that needs to name an id passes params
+    // rather than building the string, which is the same rule the app follows.
+    const [rows] = params === undefined ? await conn.query(statement) : await conn.query(statement, params);
     return rows;
   } finally {
     await conn.end();

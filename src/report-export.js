@@ -180,14 +180,23 @@ function skipBasis(summary = {}) {
   return rows;
 }
 
-function timeBasis(cutover) {
+function timeBasis(cutover, held) {
   const rows = [['Time Spent',
     'The elapsed span from Accept and Start to Submit for Review — breaks, meetings and '
-    + 'overnight included. Not active worked time.']];
+    + 'overnight included, except any stretch put on hold. Not active worked time.']];
   if (cutover && cutover.mixed && cutover.date) {
     rows.push(['Note',
       `Work recorded before ${cutover.date} was measured as active worked time, `
       + 'with a timer that could be paused. Figures either side of that date are not comparable.']);
+  }
+  /* Said only when it applies to something in THIS report. A standing caveat
+     about a feature nobody in the period used is noise, and a reader who learns
+     to skip one line skips the next one too. */
+  if (held && Number(held.assets) > 0) {
+    rows.push(['Held time',
+      `${held.assets} of the assets below had time put on hold, which is left out of their `
+      + 'Time Spent. Holding is something a person chooses to record, so an asset with none '
+      + 'may still have been interrupted.']);
   }
   return rows;
 }
