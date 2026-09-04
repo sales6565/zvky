@@ -33,6 +33,7 @@ const {
 const { assignableRoles, roleDef } = require('../roles');
 const lifecycle = require('../lifecycle');
 const workLog = require('../work-log');
+const assetSchedule = require('../asset-schedule');
 const assignments = require('../assignments');
 const assetImport = require('../asset-import');
 const workflow = require('../asset-workflow');
@@ -342,7 +343,8 @@ router.post('/project/:projectId', async (req, res) => {
   if (!allowed) return res.status(403).json({ error: 'No access to this project' });
   if (await projectClosedResponse(res, projectId)) return undefined;
 
-  const { name, type, category = null, priority = assetImport.defaultPriority(), assigneeId = null, due = null, description = '', manHours = null } = req.body || {};
+  const { name, type, category = null, priority = assetImport.defaultPriority(), assigneeId = null,
+    due = null, startDate = null, description = '', manHours = null } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: 'Asset name is required' });
   /* Category is optional — the list ships empty and a studio that has not set
      one up yet must still be able to add assets. A value that IS given has to
@@ -381,9 +383,10 @@ router.post('/project/:projectId', async (req, res) => {
   try {
     await conn.query('BEGIN');
     await conn.query(
-      `INSERT INTO assets (id, \`code\`, \`name\`, \`type\`, category, \`status\`, priority, project_id, assignee_id, created_by, due_date, description, man_hours)
-       VALUES ($1,$2,$3,$4,$5,'not_started',$6,$7,$8,$9,$10,$11,$12)`,
-      [id, code, name.trim(), type, category || null, priority, projectId, assigneeId, req.user.id, due, description, manHours]
+      `INSERT INTO assets (id, \`code\`, \`name\`, \`type\`, category, \`status\`, priority, project_id, assignee_id, created_by, due_date, start_date, description, man_hours)
+       VALUES ($1,$2,$3,$4,$5,'not_started',$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [id, code, name.trim(), type, category || null, priority, projectId, assigneeId, req.user.id,
+       due, assetSchedule.asISODate(startDate), description, manHours]
     );
   // Created Not Assigned, as the pipeline says. If it was created with somebody
   // already on it, the same rule that applies to assigning later applies here:
@@ -523,8 +526,11 @@ router.patch('/:id', async (req, res) => {
     values.push(text && text.trim() ? text.trim() : null);
   }
 
-  for (const key of ['status', 'priority', 'description', 'assignee_id', 'due_date', 'man_hours', 'category']) {
-    const bodyKey = key === 'assignee_id' ? 'assigneeId' : key === 'due_date' ? 'due' : key === 'man_hours' ? 'manHours' : key;
+  for (const key of ['status', 'priority', 'description', 'assignee_id', 'due_date', 'start_date', 'man_hours', 'category']) {
+    const bodyKey = key === 'assignee_id' ? 'assigneeId'
+      : key === 'due_date' ? 'due'
+        : key === 'start_date' ? 'startDate'
+          : key === 'man_hours' ? 'manHours' : key;
     if (req.body[bodyKey] !== undefined) {
       fields.push(`\`${key}\` = $${i++}`);
       // Clearing a category comes through as '' from a <select>; store the
@@ -1226,6 +1232,23 @@ router.post('/:id/start', async (req, res) => {
   // reworking what they have not been handed.
   if (asset.status === 'cd_changes_requested' && asset.routed_to_id !== req.user.id && !hasFullAccess(req.user)) {
     return res.status(409).json({ error: 'The team lead has not passed the Creative Director\'s notes on yet.' });
+  }
+
+  /* Not before the day it is scheduled to begin.
+   *
+   * Alongside the one-active-task rule below rather than merged with it: they
+   * are two independent reasons the same button is refused, and either alone is
+   * enough. The page disables the button for both, and both are checked here
+   * too, because a disabled button is a courtesy and the server is the rule.
+   *
+   * src/asset-schedule.js owns the comparison so the tooltip and this refusal
+   * cannot drift — the failure worth designing against is somebody being told
+   * they may start and then being refused when they click. */
+  if (assetSchedule.startsInFuture(asset)) {
+    return res.status(409).json({
+      error: assetSchedule.notYetMessage(asset),
+      startsOn: assetSchedule.asISODate(asset.start_date),
+    });
   }
 
   /* One active task at a time.
@@ -2143,7 +2166,7 @@ router.post('/project/:projectId/bulk', requirePermission('asset.bulk_upload'), 
   const DEFAULT_TASKS = ['Rough pass', 'Clean line', 'Color / shade'];
   const ASSET_INSERT =
     'INSERT INTO assets (id, `code`, `name`, `type`, category, `status`, priority, project_id, '
-    + 'assignee_id, created_by, due_date, description, man_hours, reference_link, lead_notes) VALUES ?';
+    + 'assignee_id, created_by, due_date, start_date, description, man_hours, reference_link, lead_notes) VALUES ?';
   const TASK_INSERT = 'INSERT INTO tasks (id, asset_id, `name`, done, `position`) VALUES ?';
   // Imported assets belong to whoever uploaded the file, same as one added by
   // hand — otherwise a bulk upload would produce a projectful of assets its
@@ -2151,7 +2174,7 @@ router.post('/project/:projectId/bulk', requirePermission('asset.bulk_upload'), 
   const assetRow = (e) => [
     e.id, e.code, e.values.name, e.values.type, e.category, 'not_started',
     assetImport.defaultPriority(), projectId, e.assigneeId, req.user.id,
-    e.values.due_date, '', e.values.man_hours,
+    e.values.due_date, e.values.start_date, '', e.values.man_hours,
     e.values.reference_link, e.values.lead_notes,
     /* Description stays empty and is NOT what Lead/Supervisor Notes writes.
        They are two fields on purpose: Description is the brief everyone on the

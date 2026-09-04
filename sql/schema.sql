@@ -369,6 +369,7 @@ CREATE TABLE IF NOT EXISTS assets (
   created_by    CHAR(36)     NULL,
   man_hours     DECIMAL(6,1) NULL,
   due_date      DATE         NULL,
+  start_date    DATE         NULL,
   description   TEXT         NULL,
   -- The brief: a link to the requirement, reference art, or spec that the work
   -- is made FROM. Deliberately not the same thing as asset_versions.link, which

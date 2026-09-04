@@ -1122,6 +1122,13 @@ async function ensureAssetPanelColumns(db, log) {
     await db.query('ALTER TABLE assets ADD COLUMN lead_notes TEXT NULL AFTER reference_link');
     added.push('assets.lead_notes');
   }
+  /* When the work is scheduled to begin, beside the date it is due. Nullable,
+     and null means what it always did: nothing scheduled, so nothing to wait
+     for. Next to due_date because the two are read together everywhere. */
+  if (!(await has('assets', 'start_date'))) {
+    await db.query('ALTER TABLE assets ADD COLUMN start_date DATE NULL AFTER due_date');
+    added.push('assets.start_date');
+  }
   // Each column checked on its own.
   //
   // These two were gated on one probe: if created_by was absent but created_at

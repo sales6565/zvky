@@ -1,4 +1,4 @@
-name,type,priority,assignee_email,man_hours,deadline,description
-Waterfall Spray FX,fx,high,,20,2026-09-15,Mist and spray pass for the falls establishing shot
-Trader Cart,prop,med,,8,2026-09-10,Wooden cart with awning for the market scene
-Northern Ridge,environment,low,,26,2026-09-20,Snow-capped ridge backdrop for the finale
+No.,Asset Name,Category,Scope of Work,Man Hours,Assignee Email,Start Date,End Date (Deadline),Project Link,Lead/Supervisor Notes
+1,Waterfall Spray FX,Slot Game,character,20,priya@studio.example,01-03-2026,31-03-2026,https://drive.example.com/brief/waterfall,Match the ep-02 spray timing.
+2,Trader Cart,,prop,,,,,,
+3,Northern Ridge,Slot Game,environment,26,lena@studio.example,10-04-2026,15-04-2026,https://drive.example.com/brief/ridge,Keep the ridge silhouette flat.

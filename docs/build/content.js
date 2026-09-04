@@ -253,7 +253,8 @@ module.exports = [
     'On the Dashboard, press + New Asset.',
     'Give it a name.',
     'Choose the scope of work — Character, Prop, Environment, FX, Animation, Background, or whatever the studio has added. This decides the code prefix, so a character becomes CHR-004.',
-    'Optionally set a category, a priority, an estimate in man hours, a deadline and a description.',
+    'Optionally set a category, a priority, an estimate in man hours, a description, and the two dates: '
+      + 'Start Date and End Date (Deadline). Both are optional and independent of each other.',
     'Optionally choose an assignee. Leave it blank and the asset starts in Not Assigned.',
     'Save. The code is generated for you.',
   ]),
@@ -270,7 +271,8 @@ module.exports = [
       ['Scope of Work', 'YES', 'Character, Prop, Environment, FX, Animation, Background, or a new one.'],
       ['Man Hours', 'no', 'The estimate. A positive number.'],
       ['Assignee Email', 'no', 'A match assigns the asset immediately; a blank leaves it Not Assigned.'],
-      ['Deadline', 'no', 'DD-MM-YYYY. YYYY-MM-DD is accepted too.'],
+      ['Start Date', 'no', 'DD-MM-YYYY. The asset cannot be started before this day.'],
+      ['End Date (Deadline)', 'no', 'DD-MM-YYYY. YYYY-MM-DD is accepted too. Sheets using the older "Deadline" heading still import.'],
       ['Project Link', 'no', 'The brief or reference. Shown as Requirement / Reference Link.'],
       ['Lead/Supervisor Notes', 'no', 'Visible only to designations holding Lead / Supervisor Notes.'],
     ],
@@ -284,6 +286,8 @@ module.exports = [
   h2('5.3 The Assets List'),
   p('The same assets as a table, which is easier than the board when there are many. It has four sub-tabs, and an '
     + 'asset appears in exactly one of them.'),
+  p('The table carries Start Date and End Date (Deadline) as columns, so a whole project\u2019s schedule can be '
+    + 'read down two columns without opening anything.'),
   shot('04-assets-active', 'Active: everything still moving through the pipeline.'),
   shot('04-assets-inactive', 'Inactive: assets on hold.'),
   shot('04-assets-archived', 'Archived: delivered work, kept for the record.'),
@@ -315,7 +319,7 @@ module.exports = [
     'Status — the stage the asset is at.',
     'Time Spent — the gap between Accept and Start and Submit for Review, and the button for whichever of those is next.',
     'Requirement / Reference Link — the brief. Not the finished work.',
-    'Man Hours, Deadline, Category, Priority, Description.',
+    'Man Hours, Start Date, End Date (Deadline), Category, Priority, Description.',
     'Tasks — the checklist, and the count the card shows.',
     'Notes, submissions and history, further down.',
   ]),
@@ -375,7 +379,17 @@ module.exports = [
     + 'between this moment and the moment you submit.'),
   shot('13-work-in-progress', 'The same asset once started. The panel now shows when you started, and Time Spent is running.'),
 
-  h2('7.4 One active task at a time'),
+  h2('7.4 Not before the start date'),
+  p('An asset carrying a Start Date cannot be accepted before that day. The button is disabled until then and says '
+    + 'which day it is waiting for, and the server refuses an early start as well \u2014 a disabled button is a '
+    + 'courtesy, not the rule.'),
+  bullets([
+    'On or after, not only on. A start date that slipped past unnoticed leaves the task late, not forbidden \u2014 it stays startable.',
+    'No start date means no waiting. The field is optional, and blank behaves exactly as it did before the field existed.',
+    'Today is IST, the same day boundary the Time Sheet uses, so a reader in another timezone sees the same answer as the studio.',
+  ]),
+
+  h2('7.5 One active task at a time'),
   p('You may hold one piece of work open at a time. While an asset of yours is open, Accept and Start on every other '
     + 'asset assigned to you is disabled, and the panel says which asset is holding you up.'),
   shot('13-start-blocked', 'A second asset, refused. The button is greyed and the message names CHR-002 (Lantern Keeper) as the open one.'),
@@ -387,7 +401,7 @@ module.exports = [
     'Rework after TL or CD feedback counts as open work, because it is started with the same button.',
   ]),
 
-  h2('7.5 Submitting for review'),
+  h2('7.6 Submitting for review'),
   steps([
     'With the asset In Progress, scroll to Submissions in the panel.',
     'Attach the file, or paste the link to it.',
@@ -396,7 +410,7 @@ module.exports = [
   p('The asset moves to TL Review, Time Spent is fixed at the gap between your two stamps, and the reviewer is '
     + 'notified. You cannot submit work you never started — the two stamps are what make Time Spent mean anything.'),
 
-  h2('7.6 The first review gate'),
+  h2('7.7 The first review gate'),
   shot('06-tl-review-panel', 'An asset at TL Review, seen by the team lead.'),
   steps([
     'Open the asset from your queue.',
@@ -406,22 +420,22 @@ module.exports = [
   p('A studio that does not use a Creative Director gate can send work straight from here to Approved for Client, '
     + 'if the reviewer holds TL Send to Client.'),
 
-  h2('7.7 TL Feedbacks'),
+  h2('7.8 TL Feedbacks'),
   shot('05-asset-tl-feedback', 'An asset returned with the lead’s notes, seen by the artist who holds it.'),
   p('The asset comes back to you with the note attached. Press Accept and Start again to reopen it — which counts '
     + 'as your one active task — and Submit for Review when the changes are done. It goes back to the same gate.'),
 
-  h2('7.8 The Creative Director gate'),
+  h2('7.9 The Creative Director gate'),
   shot('07-cd-review-panel', 'An asset at CD Review.'),
   p('The Creative Director either approves it for the client, or submits feedback — one action, not two decisions. '
     + 'Approval moves it to Approved for Client. Feedback moves it to CD Feedbacks, which sits with the team lead.'),
 
-  h2('7.9 CD Feedbacks and the relay'),
+  h2('7.10 CD Feedbacks and the relay'),
   p('CD Feedbacks does not go straight back to the artist. It stops with the team lead, who reads the Creative '
     + 'Director’s notes, adds their own reading of them if needed, and relays them on. Until they do, the artist '
     + 'cannot start the rework — and the application says so plainly rather than leaving the button silently dead.'),
 
-  h2('7.10 Leaving the studio'),
+  h2('7.11 Leaving the studio'),
   p('From Approved for Client there are two routes, and a studio uses whichever matches how it works with that client.'),
   bullets([
     'Deliver — the work is handed over and the asset is Delivered. One step.',

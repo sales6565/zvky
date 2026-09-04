@@ -772,7 +772,12 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
          and submit stamps on the asset panel and is never typed in here. -->
     <label>Man Hours</label><input type="text" id="f_hours" placeholder="e.g. 16 — the estimate, not time tracked">
     <div class="row2"><div><label>Priority</label><select id="f_priority"></select></div><div><label>Assignee</label><select id="f_assignee"></select></div></div>
-    <label>Deadline</label><input type="date" id="f_due">
+    <!-- Both optional. A start date in the future holds Accept and Start closed
+         until the day arrives; blank means there is nothing to wait for. -->
+    <div class="row2">
+      <div><label>Start Date</label><input type="date" id="f_start"></div>
+      <div><label>End Date (Deadline)</label><input type="date" id="f_due"></div>
+    </div>
     <label>Description</label><textarea id="f_desc" rows="3" placeholder="Brief notes for the artist…"></textarea>
     <div class="modal-actions"><button class="btn btn-ghost" id="cancelModal">Cancel</button><button class="btn btn-brand" id="saveModal">Create Asset</button></div>
   </div>
@@ -2351,6 +2356,41 @@ function blockingWork(a){
   if(!open || !a || open.assetId === a.id) return null;
   return open;
 }
+
+/* Today in IST, as YYYY-MM-DD.
+ *
+ * The browser's own clock is wherever the reader is, and an artist working from
+ * another timezone must not see a task open a day early or late. The studio's
+ * day is IST everywhere else in this application — the Time Sheet's whole
+ * design rests on it — so it is IST here too. India has never observed daylight
+ * saving, so the offset is a constant; src/asset-schedule.js says the same
+ * thing on the server, and the two have to agree or the button and the endpoint
+ * disagree in front of somebody. */
+/* A stored date as the table shows it. Sliced rather than passed through Date:
+   new Date('2026-09-12') is midnight UTC, which prints as the 11th to anybody
+   west of Greenwich — the same trap src/asset-schedule.js avoids on the
+   server. */
+function fmtDay(value){
+  if(!value) return '—';
+  const iso = String(value).slice(0,10);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '—';
+  const [y,m,d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y, m-1, d)).toLocaleDateString(undefined,
+    { day:'numeric', month:'short', year:'numeric' });
+}
+
+function todayIST(now = new Date()){
+  return new Date(now.getTime() + (5*60+30)*60*1000).toISOString().slice(0,10);
+}
+
+/* The date this asset cannot be started before, or null when nothing is
+   scheduled. Blank keeps meaning what it meant before the field existed. */
+function notYetStartable(a){
+  const raw = a && a.start_date;
+  if(!raw) return null;
+  const start = String(raw).slice(0,10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(start) && start > todayIST() ? start : null;
+}
 function filteredAssets(){
   let pool = state.assets;
   if(state.filterType) pool = pool.filter(a=>a.type===state.filterType);
@@ -3421,7 +3461,7 @@ function renderList(){
         : ''}</th>`
     : '';
 
-  el.innerHTML = tabs + bar + `<table><thead><tr>${headBox}<th>Code</th><th>Assets Name</th><th>Category</th><th>Scope of Work</th><th>Man Hours</th><th>Status</th><th>Assignee</th><th>Round</th><th>Priority</th><th>Tasks</th><th>Time Spent</th></tr></thead><tbody>
+  el.innerHTML = tabs + bar + `<table><thead><tr>${headBox}<th>Code</th><th>Assets Name</th><th>Category</th><th>Scope of Work</th><th>Man Hours</th><th>Start Date</th><th>End Date (Deadline)</th><th>Status</th><th>Assignee</th><th>Round</th><th>Priority</th><th>Tasks</th><th>Time Spent</th></tr></thead><tbody>
     ${rows.map(({a, ep}, rowIndex)=>{
       const t=typeOf(a.type), doneTasks=a.tasks.filter(x=>x.done).length;
       /* A finished stretch shows where that person LEFT it — somebody who took
@@ -3450,6 +3490,11 @@ function renderList(){
       <!-- The estimate. Time Spent, the last column, is the elapsed time between
            the start and submit stamps shown under it. -->
       <td class="mono">${a.man_hours ? a.man_hours+'h' : '—'}</td>
+      <!-- The pair, in the order the work runs. Written out in full rather than
+           the card's short "12 Sep": a table is scanned down a column and read
+           against other rows, so the year has to be there. -->
+      <td class="mono">${fmtDay(a.start_date)}</td>
+      <td class="mono">${fmtDay(a.due_date)}</td>
       <td><span class="status-pill" style="background:${s.color}22;color:${s.color}"><span class="d" style="background:${s.color}"></span>${s.label}</span></td>
       <td>${who ? `<span class="who-line">${avatarHTML({ id: ep ? ep.userId : a.assignee_id, name: who, photoAt: ep ? ep.userPhotoAt : a.assignee_photo_at }, { size:20, title:false })}<span>${escapeHTML(who)}</span></span>` : '—'}</td>
       <td>${ep ? (past ? `<span class="round-tag">handed on</span>` : `<span class="round-tag round-tag-live">current</span>`) : ''}</td>
@@ -4845,11 +4890,16 @@ async function openDrawer(id){
      it", which reads as a bug in the button rather than the rule it is. */
   const mine = a.assignee_id===u.id;
   const blocked = blockingWork(a);
-  const canStart = mayStart && !a.work_open && (mine || a.status!=='assigned') && !blocked;
+  /* The second reason the same button is refused, independent of the first: an
+     asset scheduled to begin later cannot be started yet. Either condition
+     alone disables it; it opens only when both allow. Both are also checked in
+     POST /assets/:id/start — the button is a courtesy, the server is the rule. */
+  const waiting = notYetStartable(a);
+  const canStart = mayStart && !a.work_open && (mine || a.status!=='assigned') && !blocked && !waiting;
   /* Offered and refused, rather than absent: somebody looking for the button
      they used yesterday should find it and be told why it is not available,
      not be left wondering whether the asset is theirs at all. */
-  const startBlocked = mayStart && !a.work_open && (mine || a.status!=='assigned') && blocked;
+  const startBlocked = mayStart && !a.work_open && (mine || a.status!=='assigned') && Boolean(blocked || waiting);
   /* The checklist is set by the creator and the reviewers, not by whoever is
      carrying the work — they read it and work to it. Mirrors canManageTasks in
      src/permissions.js; the API decides, this only stops offering a control
@@ -4938,12 +4988,17 @@ async function openDrawer(id){
           <div id="d_rounds" class="worklog-note"></div>
         </div>
         ${canStart ? `<button class="btn btn-brand" id="d_startBtn">Accept and Start</button>` : ''}
-        ${startBlocked ? `
+        ${startBlocked ? (blocked ? `
           <button class="btn btn-brand" id="d_startBtn" disabled
             title="Finish ${escapeHTML(blocked.code || 'your current task')} first">Accept and Start</button>
           <div class="start-blocked">Finish your current task before starting another —
             <strong>${escapeHTML(blocked.code || 'an asset')}</strong>${blocked.name ? ` (${escapeHTML(blocked.name)})` : ''}
-            is still open. Submit it for review and this one unlocks.</div>` : ''}
+            is still open. Submit it for review and this one unlocks.</div>` : `
+          <button class="btn btn-brand" id="d_startBtn" disabled
+            title="This task can't be started until ${escapeHTML(waiting)}">Accept and Start</button>
+          <div class="start-blocked">This task can't be started until
+            <strong>${escapeHTML(waiting)}</strong> — its start date has not arrived yet.
+            Today is ${escapeHTML(todayIST())} in IST.</div>`) : ''}
       </div>
       <div class="ref-err" id="d_startErr"></div>
     ` : ''}
@@ -4962,7 +5017,8 @@ async function openDrawer(id){
     <div class="row2">
       <div><div class="field-lbl">Man Hours</div><input type="text" id="d_hours" value="${a.man_hours||''}" ${editable?'':'disabled'} placeholder="e.g. 16">
         <div style="font-size:11px;color:var(--ink-faint);margin-top:4px;">The estimate. Time Spent above is the elapsed time from starting to submitting.</div></div>
-      <div><div class="field-lbl">Deadline</div><input type="date" id="d_due" value="${a.due_date?a.due_date.slice(0,10):''}" ${editable?'':'disabled'}></div>
+      <div><div class="field-lbl">Start Date</div><input type="date" id="d_start" value="${a.start_date?String(a.start_date).slice(0,10):''}" ${editable?'':'disabled'}></div>
+      <div><div class="field-lbl">End Date (Deadline)</div><input type="date" id="d_due" value="${a.due_date?String(a.due_date).slice(0,10):''}" ${editable?'':'disabled'}></div>
     </div>
 
     <!-- Added here rather than in the row above so the section order this panel
@@ -5173,6 +5229,12 @@ async function openDrawer(id){
     document.getElementById('d_category').onchange = async e=>{ try{ await api('/assets/'+id,{method:'PATCH',body:{category:e.target.value||null}}); a.category=e.target.value||null; render(); }catch(err){ showToast(err.message); } };
     document.getElementById('d_hours').onchange = async e=>{ try{ await api('/assets/'+id,{method:'PATCH',body:{manHours:e.target.value?Number(e.target.value):null}}); a.man_hours=e.target.value; render(); }catch(err){ showToast(err.message); } };
     document.getElementById('d_due').onchange = async e=>{ try{ await api('/assets/'+id,{method:'PATCH',body:{due:e.target.value||null}}); a.due_date=e.target.value; render(); }catch(err){ showToast(err.message); } };
+    /* Editing the start date can open or close Accept and Start, so the whole
+       drawer is redrawn rather than just the board behind it. */
+    document.getElementById('d_start').onchange = async e=>{
+      try{ await api('/assets/'+id,{method:'PATCH',body:{startDate:e.target.value||null}});
+        a.start_date=e.target.value; await render(); openDrawer(id);
+      }catch(err){ showToast(err.message); } };
     /* The brief's link. Saved on blur like every other field here, and the
        server's message lands under the input rather than as a toast that has
        drifted away from the thing it is about. */
@@ -5692,7 +5754,8 @@ function closeDrawer(){
 /* ---------- new asset modal ---------- */
 const modalWrap = document.getElementById('modalWrap');
 document.getElementById('newAssetBtn').addEventListener('click', async ()=>{
-  document.getElementById('f_name').value=''; document.getElementById('f_due').value=''; document.getElementById('f_desc').value=''; document.getElementById('f_priority').value='med'; document.getElementById('f_hours').value='';
+  document.getElementById('f_name').value=''; document.getElementById('f_due').value='';
+  document.getElementById('f_start').value=''; document.getElementById('f_desc').value=''; document.getElementById('f_priority').value='med'; document.getElementById('f_hours').value='';
   document.getElementById('f_type').innerHTML = TYPES.map(t=>`<option value="${t.id}">${t.label}</option>`).join('');
   document.getElementById('f_category').innerHTML = categoryOptions('');
   try{
@@ -5712,6 +5775,7 @@ document.getElementById('saveModal').addEventListener('click', async ()=>{
       category: document.getElementById('f_category').value || null,
       priority: document.getElementById('f_priority').value,
       assigneeId: document.getElementById('f_assignee').value || null, due: document.getElementById('f_due').value || null,
+      startDate: document.getElementById('f_start').value || null,
       description: document.getElementById('f_desc').value.trim(),
       manHours: document.getElementById('f_hours').value ? Number(document.getElementById('f_hours').value) : null,
     }});

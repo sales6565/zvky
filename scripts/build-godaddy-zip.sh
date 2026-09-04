@@ -24,6 +24,13 @@ ZIP="$OUT_DIR/zvky-backend-godaddy.zip"
 rm -rf "$STAGE" "$ZIP"
 mkdir -p "$STAGE"
 
+# The bulk-upload sample, generated from the column spec the importer validates
+# against rather than kept by hand. The checked-in copy had drifted two rewrites
+# behind — it still described the seven-column format, so the one file meant to
+# show a studio the right shape was itself rejected by the importer.
+node -e "process.stdout.write(require('$ROOT/src/asset-import').buildTemplateCsv())" \
+  > "$ROOT/sample-bulk-import.csv"
+
 # Application files only. node_modules, .git, uploads and any local .env stay out.
 for item in app.js package.json README.md DEPLOY-GODADDY.md sample-bulk-import.csv src public sql; do
   [ -e "$ROOT/$item" ] && cp -r "$ROOT/$item" "$STAGE/"

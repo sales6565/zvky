@@ -102,6 +102,47 @@ function normaliseHeader(header) {
    `parse` may return a warning; anything the parser cannot judge on its own —
    whether an email belongs to a real person — is warned about in the endpoint,
    where there is a database. */
+/* A date cell, for the two columns that hold one.
+ *
+ * DD-MM-YYYY, which is what the studio asked for and what the sample shows.
+ * ISO (YYYY-MM-DD) is accepted alongside it because it is unambiguous and is
+ * what a database export hands you; a real date cell from Excel arrives as a
+ * Date and is taken as-is.
+ *
+ * What is NOT accepted is anything else, and that is the point. 03/04/2026 is
+ * the fourth of March to half the world and the third of April to the other
+ * half, and a date quietly read the wrong way round is worse than one refused
+ * out loud.
+ *
+ * Shared by Start Date and Deadline rather than written twice: two copies of a
+ * date parser is two answers to "is 31-02-2026 a day", and the columns sit
+ * next to each other in the same sheet.
+ */
+function parseDateCell(raw, nothingSet) {
+  // A real date cell out of Excel: readImportFile asks for cellDates, so there
+  // is nothing to parse and nothing to get the wrong way round.
+  if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
+    return { value: iso(raw.getFullYear(), raw.getMonth() + 1, raw.getDate()) };
+  }
+  const text = String(raw ?? '').trim();
+  if (!text) return { value: null };
+
+  const dmy = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/.exec(text);
+  const ymd = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/.exec(text);
+  let y; let m; let d;
+  if (dmy) { [, d, m, y] = dmy; } else if (ymd) { [, y, m, d] = ymd; } else {
+    return { warning: `is "${text}", which is not a date as DD-MM-YYYY, so ${nothingSet}` };
+  }
+  y = Number(y); m = Number(m); d = Number(d);
+  /* Round-tripped rather than range-checked: 31-02-2026 passes every bound a
+     month and a day can be checked against and is still not a day. */
+  const when = new Date(Date.UTC(y, m - 1, d));
+  if (when.getUTCFullYear() !== y || when.getUTCMonth() !== m - 1 || when.getUTCDate() !== d) {
+    return { warning: `is "${text}", which is not a real date, so ${nothingSet}` };
+  }
+  return { value: iso(y, m, d) };
+}
+
 const COLUMNS = [
   {
     /* A line number for whoever is filling the sheet in, so they can talk about
@@ -233,45 +274,27 @@ const COLUMNS = [
     },
   },
   {
-    /* DD-MM-YYYY, which is what the studio asked for and what the sample shows.
-       ISO (YYYY-MM-DD) is accepted alongside it because it is unambiguous and
-       is what a database export hands you; a real date cell from Excel arrives
-       as a Date and is taken as-is.
-
-       What is NOT accepted is anything else, and that is the point. 03/04/2026
-       is the fourth of March to half the world and the third of April to the
-       other half, and a deadline quietly read the wrong way round is worse than
-       one refused out loud. */
-    name: 'due_date',
-    header: 'Deadline',
-    accepts: ['deadline', 'due_date', 'due', 'delivery_date'],
+    /* When the work is scheduled to begin. Optional, like the Deadline beside
+       it — and the two are independent: either, both or neither may be given.
+       An asset with a start date in the future cannot be started until that
+       day arrives, so a blank here is not a missing value but an instruction:
+       nothing scheduled, start when you like. */
+    name: 'start_date',
+    header: 'Start Date',
+    accepts: ['start_date', 'start', 'begin_date', 'start_on'],
     required: false,
-    describe: 'Deadline as DD-MM-YYYY — optional; YYYY-MM-DD is accepted too',
+    describe: 'Start Date as DD-MM-YYYY — optional; the asset cannot be started before it',
+    example: ['01-03-2026', '', '10-04-2026'],
+    parse: (raw) => parseDateCell(raw, 'no start date was set'),
+  },
+  {
+    name: 'due_date',
+    header: 'End Date (Deadline)',
+    accepts: ['end_date_(deadline)', 'end_date', 'deadline', 'due_date', 'due', 'delivery_date'],
+    required: false,
+    describe: 'End Date (Deadline) as DD-MM-YYYY — optional; YYYY-MM-DD is accepted too',
     example: ['31-03-2026', '', '15-04-2026'],
-    parse(raw) {
-      // A real date cell out of Excel: readImportFile asks for cellDates, so
-      // there is nothing to parse and nothing to get the wrong way round.
-      if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
-        return { value: iso(raw.getFullYear(), raw.getMonth() + 1, raw.getDate()) };
-      }
-      const text = String(raw ?? '').trim();
-      if (!text) return { value: null };
-
-      const dmy = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/.exec(text);
-      const ymd = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/.exec(text);
-      let y; let m; let d;
-      if (dmy) { [, d, m, y] = dmy; } else if (ymd) { [, y, m, d] = ymd; } else {
-        return { warning: `is "${text}", which is not a date as DD-MM-YYYY, so no deadline was set` };
-      }
-      y = Number(y); m = Number(m); d = Number(d);
-      /* Round-tripped rather than range-checked: 31-02-2026 passes every bound
-         a month and a day can be checked against and is still not a day. */
-      const when = new Date(Date.UTC(y, m - 1, d));
-      if (when.getUTCFullYear() !== y || when.getUTCMonth() !== m - 1 || when.getUTCDate() !== d) {
-        return { warning: `is "${text}", which is not a real date, so no deadline was set` };
-      }
-      return { value: iso(y, m, d) };
-    },
+    parse: (raw) => parseDateCell(raw, 'no deadline was set'),
   },
   {
     /* The brief: where the requirement, reference art or spec lives. This is

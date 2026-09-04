@@ -34,22 +34,26 @@ test('header validation names what is missing rather than just failing', () => {
   assert.deepStrictEqual(check.missing, ['Asset Name', 'Scope of Work']);
 });
 
-test('the sample asks for the nine columns the sheet uses, in order', () => {
+test('the sample asks for the ten columns the sheet uses, in order', () => {
+  /* Start Date sits immediately before the deadline, so the sheet reads left to
+     right the way the work runs. The deadline's header carries its fuller name
+     — it is the same column and the same data, said less ambiguously now that
+     there are two dates to tell apart. */
   const header = assetImport.buildTemplateCsv().split('\n')[0].split(',');
   assert.deepStrictEqual(header, ['No.', 'Asset Name', 'Category', 'Scope of Work', 'Man Hours',
-    'Assignee Email', 'Deadline', 'Project Link', 'Lead/Supervisor Notes']);
+    'Assignee Email', 'Start Date', 'End Date (Deadline)', 'Project Link', 'Lead/Supervisor Notes']);
 });
 
 test('the sample carries a row with only the mandatory columns filled in', () => {
   /* The sample is the format's documentation, and the rule most easily got
      wrong is which columns are optional. A sample where every cell is
-     populated teaches that all nine are needed, so one row deliberately is
+     populated teaches that all ten are needed, so one row deliberately is
      not — and it has to be a row this importer accepts. */
   const { parse } = require('csv-parse/sync');
   const rows = parse(assetImport.buildTemplateCsv(),
     { bom: true, columns: true, skip_empty_lines: true, trim: true });
   const bare = rows.find((r) => !r.Category && !r['Man Hours'] && !r['Assignee Email']
-    && !r.Deadline && !r['Project Link'] && !r['Lead/Supervisor Notes']);
+    && !r['Start Date'] && !r['End Date (Deadline)'] && !r['Project Link'] && !r['Lead/Supervisor Notes']);
   assert.ok(bare, 'no row in the sample shows the mandatory-only case');
   assert.ok(bare['Asset Name'] && bare['Scope of Work'], 'and it still fills the two that are required');
   assert.strictEqual(assetImport.validateRow(bare, 2).ok, true);
@@ -86,7 +90,8 @@ test('the No. column is accepted and never stored', () => {
   assert.strictEqual(row.ok, true, JSON.stringify(row.errors));
   assert.ok(!('no' in row.values), 'No. must not reach the insert');
   assert.deepStrictEqual(Object.keys(row.values).sort(),
-    ['assignee_email', 'category', 'due_date', 'lead_notes', 'man_hours', 'name', 'reference_link', 'type']);
+    ['assignee_email', 'category', 'due_date', 'lead_notes', 'man_hours', 'name',
+      'reference_link', 'start_date', 'type']);
 });
 
 test('headers are matched despite case, spacing and a byte-order mark', () => {
@@ -756,6 +761,50 @@ test('the imported assignee, deadline, link and notes', { skip: cfg ? false : SK
     assert.strictEqual(made.reference_link, null);
   });
 
+  await t.test('both dates are optional, in every combination', async () => {
+    /* The four cases somebody filling the sheet in will actually produce. Both
+       columns are optional and independent of each other, so all four have to
+       import — a sheet refused because one date was left out would make the
+       word "optional" untrue in the only place it matters. */
+    const res = await upload(
+      'Asset Name,Scope of Work,Start Date,End Date (Deadline)\n'
+      + 'Neither Date,prop,,\n'
+      + 'Both Dates,prop,01-03-2026,31-03-2026\n'
+      + 'Start Only,prop,05-03-2026,\n'
+      + 'End Only,prop,,20-03-2026\n');
+    assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+    assert.strictEqual(res.body.created, 4, 'all four rows import');
+    assert.deepStrictEqual(res.body.warnings, [], 'and none of them is worth a word');
+
+    const iso = (v) => (v ? String(new Date(v).toISOString()).slice(0, 10) : null);
+    const neither = await assetNamed('Neither Date');
+    assert.strictEqual(neither.start_date, null);
+    assert.strictEqual(neither.due_date, null);
+
+    const both = await assetNamed('Both Dates');
+    assert.strictEqual(iso(both.start_date), '2026-03-01');
+    assert.strictEqual(iso(both.due_date), '2026-03-31');
+
+    const startOnly = await assetNamed('Start Only');
+    assert.strictEqual(iso(startOnly.start_date), '2026-03-05');
+    assert.strictEqual(startOnly.due_date, null, 'a start with no end is a complete row');
+
+    const endOnly = await assetNamed('End Only');
+    assert.strictEqual(endOnly.start_date, null, 'and an end with no start is too');
+    assert.strictEqual(iso(endOnly.due_date), '2026-03-20');
+  });
+
+  await t.test('the older Deadline spelling still imports after the relabel', async () => {
+    /* The header changed; the sheets already sitting on people's machines did
+       not. Renaming a column that studios have saved files for would make every
+       one of those files fail on the next upload, which is why the old spelling
+       stays accepted. */
+    const res = await upload('Asset Name,Scope of Work,Deadline\nOld Header,prop,12-05-2026\n');
+    assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+    const made = await assetNamed('Old Header');
+    assert.strictEqual(String(new Date(made.due_date).toISOString()).slice(0, 10), '2026-05-12');
+  });
+
   await t.test('a registered assignee is assigned on arrival, with a round open', async () => {
     const res = await upload(
       'Asset Name,Scope of Work,Assignee Email,Deadline,Project Link,Lead/Supervisor Notes\n'
@@ -844,7 +893,7 @@ test('the imported assignee, deadline, link and notes', { skip: cfg ? false : SK
 
     assert.deepStrictEqual(res.body.warnings.map((w) => w.row), [3, 4],
       `only the two bad dates: ${JSON.stringify(res.body.warnings)}`);
-    assert.ok(res.body.warnings.every((w) => w.column === 'Deadline'));
+    assert.ok(res.body.warnings.every((w) => w.column === 'End Date (Deadline)'));
 
     assert.strictEqual(String((await assetNamed('Good Date')).due_date).slice(0, 10), '2026-04-15');
     assert.strictEqual(String((await assetNamed('Another Good One')).due_date).slice(0, 10), '2026-05-01');
