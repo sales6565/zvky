@@ -1,9 +1,9 @@
-// Files sent in chat, and their eight hours.
+// Files sent in chat, and their twelve hours.
 //
 // These are not studio records. A screenshot pasted into a conversation to ask
 // "is this the right blue" has done its job by the afternoon, and keeping it
 // for ever would fill a shared-hosting disk with the least valuable bytes in
-// the application. So a chat attachment expires eight hours after it was
+// the application. So a chat attachment expires twelve hours after it was
 // uploaded and the bytes are deleted. The MESSAGE stays: see the note on
 // chat_attachments in src/migrate.js for why the row outlives the file.
 //
@@ -17,7 +17,7 @@
 // upload; every read compares it against now. The sweep only reclaims disk.
 // That ordering matters: if the sweep is late, has crashed, or is running on
 // another worker, an expired file is still refused rather than served — the
-// promise is "gone after eight hours", and a promise that depends on a timer
+// promise is "gone after twelve hours", and a promise that depends on a timer
 // having fired is not one worth making.
 
 const fs = require('node:fs');
@@ -42,9 +42,15 @@ const ADVERTISED = '.png, .jpg, .svg, .webp, .mov, .mp4';
 
 const MAX_BYTES = 30 * 1024 * 1024;
 
-/* Eight hours. Overridable because the alternative — proving the expiry works
-   by waiting eight hours — is not a test anybody runs twice. */
-const HOURS = Number(process.env.CHAT_ATTACHMENT_HOURS || 8);
+/* Twelve hours, which covers a working day and the evening after it — eight
+   was cutting off a file sent in the morning before the person who needed it
+   came back from a shoot.
+   
+   Overridable because the alternative — proving the expiry works by waiting
+   twelve hours — is not a test anybody runs twice. Read by the sweep, by the
+   stamp put on a new upload, and by the migration that lengthened the stamps
+   already written, so there is one number and it cannot drift. */
+const HOURS = Number(process.env.CHAT_ATTACHMENT_HOURS || 12);
 const SWEEP_MINUTES = Number(process.env.CHAT_SWEEP_MINUTES || 10);
 
 /* The type the file is SERVED as, derived from its extension rather than from
@@ -189,7 +195,7 @@ async function forDownload(db, attachmentId, userId) {
   if (!rows.length) return { ok: false, status: 404, error: 'No such file.' };
   const row = rows[0];
   if (isExpired(row)) {
-    return { ok: false, status: 410, error: 'This file has expired. Chat files are deleted eight hours after they are sent.' };
+    return { ok: false, status: 410, error: `This file has expired. Chat files are deleted ${HOURS} hours after they are sent.` };
   }
   if (!row.storedName) return { ok: false, status: 410, error: 'This file is no longer available.' };
   const full = path.join(CHAT_DIR, path.basename(row.storedName));

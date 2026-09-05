@@ -84,7 +84,19 @@ async function startServer(cfg, extraEnv = {}) {
   child.stderr.on('data', (d) => { output += d.toString(); });
 
   const base = `http://127.0.0.1:${port}/api`;
-  const deadline = Date.now() + 30000;
+  /* Sixty seconds, not thirty.
+   *
+   * Every suite in this file's care starts its own server, and each one runs
+   * the whole startup migration against its own database — twenty of those at
+   * once, on four cores, against one MariaDB. A cold migration is under three
+   * seconds on an idle machine and several times that under twenty-way
+   * contention, which is why a run would fail with "server did not start" in a
+   * DIFFERENT suite each time: the servers all start, and one of them loses the
+   * race against the clock rather than against anything real.
+   *
+   * The loop polls every 250ms and returns the moment health answers, so a
+   * longer deadline costs nothing when the machine is quiet. */
+  const deadline = Date.now() + 60000;
   while (Date.now() < deadline) {
     try {
       const res = await fetch(`${base}/health`);
@@ -95,7 +107,7 @@ async function startServer(cfg, extraEnv = {}) {
     await new Promise((r) => setTimeout(r, 250));
   }
   child.kill();
-  throw new Error(`Server did not start within 30s. Output:\n${output}`);
+  throw new Error(`Server did not start within 60s. Output:\n${output}`);
 }
 
 function stopServer(server) {

@@ -71,8 +71,8 @@ module.exports = [
     + 'how a Super Admin changes that.'),
 
   h2('1.2 Roles, permissions and access bands'),
-  p('The studio ships with 60 designations and 62 permissions. Rather than repeat eight or twenty designations on '
-    + 'every page, this manual names the thirteen groups of designations that the permissions actually fall into, '
+  p('The studio ships with 60 designations and 64 permissions. Rather than repeat eight or twenty designations on '
+    + 'every page, this manual names the fourteen groups of designations that the permissions actually fall into, '
     + 'and calls them access bands. Appendix A lists every band and its members; Appendix B lists every permission '
     + 'and the band that holds it.'),
   p('Two rules hold throughout. A permission says what somebody may do, never how much of the studio they may do it '
@@ -771,14 +771,32 @@ module.exports = [
   h2('12.4 Files in chat'),
   p('The paperclip attaches a file. Six formats are carried — .png, .jpg, .svg, .webp, .mov and .mp4 — up to '
     + '30MB each. Anything else is refused with a message naming what was wrong.'),
-  note('Chat files are deleted after eight hours',
-    'A screenshot pasted in to ask “is this the right blue” has done its job by the afternoon, and chat is not '
-    + 'the studio\u2019s archive. Eight hours after it is sent, the file is deleted. THE MESSAGE STAYS: the words are '
-    + 'kept, and the attachment is replaced by a line naming the file and saying it has expired. Anything worth '
-    + 'keeping belongs on the asset, where submissions and reference links live.'),
+  note('Chat files are deleted after twelve hours',
+    'A screenshot pasted in to ask “is this the right blue” has done its job by the end of the day, and chat '
+    + 'is not the studio\u2019s archive. Twelve hours after it is sent \u2014 a working day and the evening after '
+    + 'it \u2014 the file is deleted. THE MESSAGE STAYS: the words are kept, and the attachment is replaced by a '
+    + 'line naming the file and saying it has expired. Anything worth keeping belongs on the asset, where '
+    + 'submissions and reference links live.'),
   p('Text messages do not expire. A conversation\u2019s history stays until the conversation itself is gone.'),
 
-  h2('12.5 Who can read a conversation'),
+  h2('12.5 Designations nobody may write to unasked'),
+  p('A designation can be shielded: nobody starts a conversation with it, or adds it to a group, unless they '
+    + 'hold Message a Shielded Designation. Out of the box that shields Managing Director & CEO and Vice '
+    + 'President \u2014 Global Operations & Business Development, and only the Super Admin can reach them.'),
+  roles('Going through a shield.', ['super_only']),
+  bullets([
+    'The shield is one way round. A shielded designation still messages anybody it likes.',
+    'Anybody it has written to can write back \u2014 otherwise its own messages would be unanswerable.',
+    'Shielded people are left out of the New message and Add people lists rather than shown and refused.',
+    'History stays readable. What stops is writing more into a conversation they never took part in.',
+  ]),
+  note('It is a switch, not two names in the code',
+    'Open Inbox is an ordinary permission on the Role Permissions screen, held by every designation by default '
+    + 'and switched OFF to shield one. So a studio that wants a third designation shielded, or wants one of '
+    + 'these two reachable again, changes a checkbox \u2014 there is no list of job titles buried in the '
+    + 'application to keep in step with the studio\u2019s own.'),
+
+  h2('12.6 Who can read a conversation'),
   note('Chat is private to the people in it',
     'Nobody outside a conversation can read it \u2014 not a Super Admin, not the holder of any permission. There is '
     + 'no screen, export or setting that shows one person another person\u2019s messages, and no permission that '
@@ -790,7 +808,7 @@ module.exports = [
     + 'know is readable by whoever administers the system is a conversation in which nobody says the difficult '
     + 'thing.'),
 
-  h2('12.6 Your profile'),
+  h2('12.7 Your profile'),
   shot('14-profile', 'The Profile panel: your photo, and your password.'),
   h3('Your photo'),
   steps([
@@ -871,7 +889,7 @@ module.exports = [
     'Tick or untick the actions it should hold. They are grouped by module.',
     'Save. Everyone holding that designation changes on their next request.',
   ]),
-  shot('12-settings-permissions-role', 'The permission grid for one designation. Shown here to the first screenful; the real grid runs to all 62 permissions.'),
+  shot('12-settings-permissions-role', 'The permission grid for one designation. Shown here to the first screenful; the real grid runs to all 64 permissions.'),
   bullets([
     'A change here applies to everybody holding that designation, not to one person.',
     'Super Admin holds every permission, including any added in future, and cannot be edited down.',

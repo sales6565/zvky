@@ -58,13 +58,49 @@ test('chat.use is on for every designation, and group creation is not', () => {
   }
 });
 
+test('the shield is a permission, seeded onto two designations, not a role check', () => {
+  /* The studio named Managing Director & CEO and the VP. Written as an `if` on
+     those two names it would be the hardcoded role check this application has
+     been bitten by repeatedly; as a permission it is a switch in Settings that
+     starts in the right position. */
+  const rp = require('../src/role-permissions');
+  for (const key of ['managing_director_ceo', 'vice_president_global_operations_business_development']) {
+    assert.strictEqual(rp.defaultsFor(key).has('chat.open_inbox'), false, `${key} starts shielded`);
+  }
+  for (const key of ['game_artist', 'team_lead', 'general_manager', 'head_of_production']) {
+    assert.strictEqual(rp.defaultsFor(key).has('chat.open_inbox'), true, `${key} does not`);
+  }
+  /* Held by default, and taken away to shield. That way round because a Super
+     Admin holds the whole catalogue by construction — a key meaning "I am
+     shielded" would shield the Super Admin and make the one account the studio
+     must be able to reach unreachable. */
+  assert.strictEqual(catalogue.BY_KEY.get('chat.open_inbox').impliedBy({}), true);
+  assert.strictEqual(catalogue.BY_KEY.get('chat.message_protected').impliedBy({}), false,
+    'and going through a shield is nobody\'s by default');
+
+  // No role name appears in the code that enforces it.
+  const fs = require('node:fs');
+  for (const file of ['../src/chat.js', '../src/routes/chat.js']) {
+    const src = fs.readFileSync(require('node:path').join(__dirname, file), 'utf8');
+    assert.ok(!/managing_director_ceo|vice_president_global/.test(src),
+      `${file} must not name a designation — the shield is a permission`);
+  }
+});
+
+test('the attachment window is twelve hours', () => {
+  assert.strictEqual(chatFiles.HOURS, 12);
+  const at = chatFiles.expiryFor(new Date('2026-01-01T00:00:00Z'));
+  assert.strictEqual(at.toISOString(), '2026-01-01T12:00:00.000Z');
+});
+
 test('there is no permission that grants reading other people\'s chat', () => {
   /* The privacy decision, asserted against the catalogue rather than against a
      route. A future "chat.view_all" would be a product decision with a
      disclosure policy attached, not a checkbox somebody adds in passing — so
      this fails loudly if one appears. */
   const chatKeys = catalogue.KEYS.filter((k) => k.startsWith('chat.'));
-  assert.deepStrictEqual(chatKeys.sort(), ['chat.group_create', 'chat.use']);
+  assert.deepStrictEqual(chatKeys.sort(),
+    ['chat.group_create', 'chat.message_protected', 'chat.open_inbox', 'chat.use']);
 });
 
 test('the allowlist is the six formats the studio asked for, plus the jpeg alias', () => {
@@ -157,6 +193,11 @@ test('chat', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     // A lead, who may. And someone outside every conversation below.
     people.lee = await person('Lee', 'lee@zvky.test', 'team_lead');
     people.cass = await person('Cass', 'cass@zvky.test', 'game_artist');
+    // The two designations the studio shields, and one of each.
+    people.md = await person('Dee', 'dee@zvky.test', 'managing_director_ceo');
+    people.vp = await person('Vic', 'vic@zvky.test', 'vice_president_global_operations_business_development');
+    token.md = await login('dee@zvky.test');
+    token.vp = await login('vic@zvky.test');
     token.ana = await login('ana@zvky.test');
     token.bo = await login('bo@zvky.test');
     token.lee = await login('lee@zvky.test');
@@ -302,7 +343,11 @@ test('chat', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   });
 
   await t.test('creating a group larger than thirty is refused outright', async () => {
-    const many = (await as('root', '/users')).body.users.map((u) => u.id).slice(0, 31);
+    /* Built from the people Lee can actually message, so this tests the SIZE
+       cap rather than tripping the shield on the MD or the VP first — both
+       refusals are correct, and this subtest is about the other one. */
+    const many = (await as('lee', '/chat/people')).body.people.map((u) => u.id).slice(0, 31);
+    assert.ok(many.length >= 31, `needs 31 reachable people, found ${many.length}`);
     const res = await as('lee', '/chat/groups', { method: 'POST', body: { title: 'Too Many', memberIds: many } });
     assert.strictEqual(res.status, 400);
     assert.match(res.body.error, /at most 30/i);
@@ -438,9 +483,9 @@ test('chat', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.match(empty.body.error, /Type something/i);
   });
 
-  await t.test('a file expires after eight hours and its message does not', async () => {
+  await t.test('a file expires after twelve hours and its message does not', async () => {
     /* The studio's fifth testing step, driven by moving the clock rather than
-       by waiting eight hours. */
+       by waiting twelve hours. */
     const id = (await openDirect('ana', people.bo)).body.conversationId;
     const sent = await post('ana', id, {
       body: 'here is the reference',
@@ -571,6 +616,145 @@ test('chat', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     // Named, so the entry is readable — and carrying no message content.
     assert.match(rows[0].summary, /Lee created the chat group "Audited" with 2 member\(s\)\./);
     assert.match(rows[1].summary, /renamed the chat group "Audited" to "Audited v2"/);
+  });
+
+  // ---------------------------------------------------------------- the shield
+
+  await t.test('a shielded designation cannot be opened, from the picker or the API', async () => {
+    /* The studio's second and sixth testing steps. Ana is an ordinary Game
+       Artist; Dee holds Managing Director & CEO, whose Open Inbox is off. */
+    const picker = (await as('ana', '/chat/people')).body.people.map((x) => x.name);
+    assert.ok(!picker.includes('Dee'), 'the MD is not offered in the picker');
+    assert.ok(!picker.includes('Vic'), 'nor the VP');
+    assert.ok(picker.includes('Lee'), 'while everybody else still is');
+
+    /* And the API refuses it, which is the control — the picker is only a
+       convenience, and a request can always be made by hand. */
+    const refused = await as('ana', '/chat/direct', { method: 'POST', body: { userId: people.md } });
+    assert.strictEqual(refused.status, 403);
+    assert.match(refused.body.error, /not available for direct messages/i);
+    assert.strictEqual((await as('ana', '/chat/direct', { method: 'POST', body: { userId: people.vp } })).status, 403);
+
+    // Nothing was created by the attempt.
+    const rows = await sql(cfg,
+      'SELECT COUNT(*) AS n FROM chat_conversations WHERE pair_key = ?',
+      [[people.ana, people.md].sort().join('|')]);
+    assert.strictEqual(Number(rows[0].n), 0);
+  });
+
+  await t.test('the Super Admin reaches them normally', async () => {
+    // The studio's third testing step.
+    const opened = await as('root', '/chat/direct', { method: 'POST', body: { userId: people.md } });
+    assert.strictEqual(opened.status, 200, JSON.stringify(opened.body));
+    const sent = await post('root', opened.body.conversationId, { body: 'A word when you have a moment.' });
+    assert.strictEqual(sent.status, 201);
+    // And they are in the Super Admin's picker, because the Super Admin may reach them.
+    const picker = (await as('root', '/chat/people')).body.people.map((x) => x.name);
+    assert.ok(picker.includes('Dee') && picker.includes('Vic'));
+  });
+
+  await t.test('a shielded person still messages anybody, and can be answered', async () => {
+    /* The studio's fourth testing step, and the reason the shield is on OPENING
+       rather than on sending: a message nobody may reply to is not a message. */
+    const opened = await as('md', '/chat/direct', { method: 'POST', body: { userId: people.ana } });
+    assert.strictEqual(opened.status, 200, 'the MD opens a conversation with an artist');
+    const id = opened.body.conversationId;
+    assert.strictEqual((await post('md', id, { body: 'Can you send me the ridge sequence?' })).status, 201);
+
+    // Ana could not have started this, and may answer it.
+    const reply = await post('ana', id, { body: 'Sending it now.' });
+    assert.strictEqual(reply.status, 201, JSON.stringify(reply.body));
+  });
+
+  await t.test('a one-sided thread the shielded person never answered goes quiet', async () => {
+    /* The studio's seventh testing step. History stays readable; what stops is
+       writing more into a conversation they never took part in — which is the
+       case the shield exists for, and the shape a conversation that predates
+       the shield takes.
+       
+       Built by opening it as the Super Admin, who may, and then having Cass
+       write into it — the same state as a thread opened before the switch was
+       thrown. */
+    const id = (await as('root', '/chat/groups', { method: 'POST', body: {
+      title: 'Quarterly', memberIds: [people.cass, people.vp],
+    } })).body.conversationId;
+
+    const refused = await post('cass', id, { body: 'A question for you' });
+    assert.strictEqual(refused.status, 403, JSON.stringify(refused.body));
+    assert.match(refused.body.error, /not available for messages/i);
+
+    // Readable, though — the history is not hidden, only closed to new messages.
+    const seen = await as('cass', `/chat/${id}/messages`);
+    assert.strictEqual(seen.status, 200);
+    assert.ok(seen.body.messages.length >= 1, 'the group and its system line are readable');
+
+    // The moment the shielded person speaks, it is a conversation again.
+    assert.strictEqual((await post('vp', id, { body: 'Go ahead.' })).status, 201);
+    assert.strictEqual((await post('cass', id, { body: 'A question for you' })).status, 201,
+      'answering somebody who has written to you is always allowed');
+  });
+
+  await t.test('a shielded person cannot be added to a group by somebody who could not message them', async () => {
+    // The studio's fifth testing step, at creation and at add-a-member.
+    const atCreation = await as('lee', '/chat/groups', {
+      method: 'POST', body: { title: 'Nope', memberIds: [people.ana, people.md] },
+    });
+    assert.strictEqual(atCreation.status, 403);
+    assert.match(atCreation.body.error, /not available for messages/i);
+
+    const id = (await as('lee', '/chat/groups', {
+      method: 'POST', body: { title: 'Fine', memberIds: [people.ana] },
+    })).body.conversationId;
+    const later = await as('lee', `/chat/${id}/members`, { method: 'POST', body: { userIds: [people.vp] } });
+    assert.strictEqual(later.status, 403);
+    assert.strictEqual((await thread('lee', id)).conversation.memberCount, 2, 'and nobody was added');
+
+    /* And holding the key does not put the Super Admin inside somebody else's
+       group: this is Lee's, the Super Admin is not in it, so it is a 404 the
+       same as any other conversation they are not part of. The shield did not
+       weaken the privacy rule. */
+    assert.strictEqual((await as('root', `/chat/${id}/members`, { method: 'POST', body: { userIds: [people.vp] } })).status, 404);
+
+    // In a group the Super Admin DOES own, they may add a shielded person.
+    const theirs = (await as('root', '/chat/groups', {
+      method: 'POST', body: { title: 'Board', memberIds: [people.ana] },
+    })).body.conversationId;
+    assert.strictEqual((await as('root', `/chat/${theirs}/members`, { method: 'POST', body: { userIds: [people.md] } })).status, 200);
+  });
+
+  await t.test('a shielded person may make their own group', async () => {
+    /* The creator is exempt from their own shield: putting yourself in a group
+       you are making is not somebody reaching you. Without the exemption a
+       shielded person could not create a group at all, which nobody asked for. */
+    const made = await as('md', '/chat/groups', {
+      method: 'POST', body: { title: 'Board update', memberIds: [people.ana, people.lee] },
+    });
+    assert.strictEqual(made.status, 201, JSON.stringify(made.body));
+    assert.strictEqual(made.body.members, 3);
+  });
+
+  await t.test('unshielding a designation in Settings opens it, with no code change', async () => {
+    /* What the permission buys over an `if` on two role names: the studio can
+       change its mind from the screen. */
+    const held = async () => (await sql(cfg,
+      'SELECT permission_key FROM role_permissions WHERE role_key = ? AND enabled = 1',
+      ['managing_director_ceo'])).map((r) => r.permission_key);
+    const before = await held();
+    assert.ok(!before.includes('chat.open_inbox'), 'shielded to begin with');
+
+    const saved = await as('root', '/permissions/roles/managing_director_ceo', {
+      method: 'PUT', body: { permissions: [...before, 'chat.open_inbox'] },
+    });
+    assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
+
+    const opened = await as('bo', '/chat/direct', { method: 'POST', body: { userId: people.md } });
+    assert.strictEqual(opened.status, 200, 'an ordinary artist can now reach them');
+    assert.ok((await as('bo', '/chat/people')).body.people.some((x) => x.name === 'Dee'),
+      'and they are back in the picker');
+
+    // Put it back, so the order of tests in this file cannot matter.
+    await as('root', '/permissions/roles/managing_director_ceo', { method: 'PUT', body: { permissions: before } });
+    assert.strictEqual((await as('cass', '/chat/direct', { method: 'POST', body: { userId: people.md } })).status, 403);
   });
 
   await t.test('a role with chat switched off loses the whole feature', async () => {

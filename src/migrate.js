@@ -2131,6 +2131,38 @@ async function ensureChat(db, log) {
   log('Schema: chat tables ready.');
 }
 
+/* Chat attachments were stamped to expire eight hours after upload; the studio
+ * moved that to twelve.
+ *
+ * `expires_at` is written once, at upload, and every read compares it against
+ * now — which is what makes the guarantee independent of the sweep, and also
+ * what means a change to the window does nothing to rows already written. Left
+ * alone, every file uploaded before this deploy would still go at eight hours
+ * while everything after it went at twelve, and nobody could tell which they
+ * had.
+ *
+ * So the stamps are recomputed from created_at, for anything not already swept.
+ * From created_at rather than by adding four hours, so re-running it is a
+ * no-op instead of pushing every deadline out again — and by reading the window
+ * out of src/chat-files.js rather than writing 12 here, so the number cannot
+ * come to differ between the module that enforces it and the migration that
+ * backfilled it.
+ *
+ * A file that is already past eight hours but has not been swept yet is
+ * extended rather than left to die: nothing should be deleted early under a
+ * rule the studio has replaced. */
+async function ensureChatExpiryWindow(db, log) {
+  const { HOURS } = require('./chat-files');
+  const out = await db.query(
+    `UPDATE chat_attachments
+        SET expires_at = created_at + INTERVAL ${Number(HOURS)} HOUR
+      WHERE deleted_at IS NULL
+        AND expires_at <> created_at + INTERVAL ${Number(HOURS)} HOUR`
+  );
+  const moved = Number((out && out.result && out.result.affectedRows) || 0);
+  if (moved) log(`Schema: chat attachment expiry restamped to ${HOURS} hours on ${moved} file(s).`);
+}
+
 async function closeStrandedSessions(db, log) {
   const { rows: table } = await db.query(
     `SELECT TABLE_NAME AS t FROM information_schema.TABLES
@@ -2235,6 +2267,8 @@ const STEPS = [
   ['timesheet hours only', ensureTimesheetHoursOnly],
   // After users, whose key every chat table points at.
   ['chat', ensureChat],
+  // After the tables exist, and reading the window from the module that owns it.
+  ['chat attachment expiry window', ensureChatExpiryWindow],
   // Last: it reads assets.status, which every step above may have changed.
   ['stranded work sessions', closeStrandedSessions],
 ];

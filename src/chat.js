@@ -21,6 +21,7 @@
 
 const { v4: uuid } = require('uuid');
 const files = require('./chat-files');
+const rolePermissions = require('./role-permissions');
 
 /* Thirty people in a group, the owner included.
  *
@@ -96,6 +97,85 @@ async function membersOf(db, conversationIds) {
     photoUpdatedAt: r.photoUpdatedAt || null,
     isOwner: Boolean(Number(r.isOwner)),
   }));
+}
+
+// ------------------------------------------------------------------ shielding
+
+/* Whose inbox is shut, and who may knock anyway.
+ *
+ * Asked of the PERMISSION TABLE, never of a role name. The two designations the
+ * studio named are a seeded default in defaultsFor(), and a Super Admin can
+ * shield a third or unshield one of these from Settings without this file
+ * changing. See the note on chat.open_inbox in src/permission-catalog.js for
+ * why the key is phrased as "open" rather than "protected".
+ *
+ * One query for a list of people rather than one per person: the people picker
+ * asks about sixty of them at once, and sixty round trips to answer one
+ * question is how a dropdown becomes slow.
+ */
+async function shieldedAmong(db, userIds) {
+  const list = [...new Set((Array.isArray(userIds) ? userIds : [userIds]).map(String).filter(Boolean))];
+  if (!list.length) return new Set();
+  const { rows } = await db.query('SELECT id, role FROM users WHERE id IN ($1)', [list]);
+  const byRole = new Map();
+  const shielded = new Set();
+  for (const row of rows) {
+    if (!byRole.has(row.role)) {
+      // eslint-disable-next-line no-await-in-loop
+      byRole.set(row.role, await rolePermissions.effectiveFor(db, row.role));
+    }
+    if (!byRole.get(row.role).has('chat.open_inbox')) shielded.add(String(row.id));
+  }
+  return shielded;
+}
+
+/* Has the shielded person spoken in this conversation?
+ *
+ * The one thing that reopens it. Without this the shield would make their own
+ * messages unanswerable: the studio asked that they still message anybody they
+ * like, and a message nobody may reply to is not a message. So the rule is the
+ * ordinary one for a shielded inbox anywhere — you may write to them if they
+ * have written to you.
+ *
+ * It also settles what happens to conversations that predate the shield: one
+ * where they replied stays a conversation, and one where somebody wrote at them
+ * and got no answer goes quiet, which is the case the shield exists for. */
+async function hasSpokenIn(db, conversationId, userId) {
+  const { rows } = await db.query(
+    `SELECT 1 FROM chat_messages
+      WHERE conversation_id = $1 AND sender_id = $2 AND kind = 'text' LIMIT 1`,
+    [conversationId, userId]
+  ).catch((err) => { if (unavailable(err)) return { rows: [] }; throw err; });
+  return rows.length > 0;
+}
+
+/* May this person write into this conversation?
+ *
+ * Everybody in it may, unless somebody in it is shielded, they are not that
+ * person, they do not hold the key, and the shielded party has not spoken.
+ */
+async function mayWriteTo(db, { conversationId, senderId, senderMay }) {
+  const { rows } = await db.query(
+    'SELECT user_id AS id FROM chat_members WHERE conversation_id = $1', [conversationId]);
+  const others = rows.map((r) => String(r.id)).filter((id) => id !== String(senderId));
+  if (!others.length) return { ok: true };
+  if (senderMay) return { ok: true };
+
+  const shielded = await shieldedAmong(db, others);
+  if (!shielded.size) return { ok: true };
+  for (const id of shielded) {
+    // eslint-disable-next-line no-await-in-loop
+    if (!(await hasSpokenIn(db, conversationId, id))) {
+      return {
+        ok: false,
+        status: 403,
+        error: shielded.size === 1 && others.length === 1
+          ? 'This person is not available for direct messages.'
+          : 'Somebody in this conversation is not available for messages.',
+      };
+    }
+  }
+  return { ok: true };
 }
 
 // ------------------------------------------------------------ system entries
@@ -601,6 +681,7 @@ async function markRead(db, conversationId, userId, seq) {
 module.exports = {
   MAX_GROUP_MEMBERS, MAX_BODY, MAX_TITLE, KINDS,
   pairKey, membership, memberCount, membersOf,
+  shieldedAmong, hasSpokenIn, mayWriteTo,
   openDirect, createGroup, rename, addMembers, removeMember, leave,
   listFor, messagesIn, send, messageById, since, highWater, unreadTotal, markRead,
 };

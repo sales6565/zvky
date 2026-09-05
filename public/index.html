@@ -363,7 +363,7 @@ body.chat-open #app{padding-left:calc(var(--chat-w, 380px) + 24px);}
   border-radius:8px;padding:6px 9px;color:var(--ink-muted);}
 .chat-file a{color:var(--brand-accent);text-decoration:none;cursor:pointer;}
 .chat-file a:hover{text-decoration:underline;}
-/* An attachment whose eight hours are up. Deliberately still a row: the message
+/* An attachment whose time is up. Deliberately still a row: the message
    said a file was here, and showing nothing would rewrite that. */
 .chat-file.gone{opacity:.72;font-style:italic;}
 
@@ -1696,8 +1696,9 @@ const TOUR_STEPS = [
     title: 'Chat',
     body: 'Message anybody in the studio, one to one — no permission needed for that. '
         + 'Leads, Production and Managers can also start a group of up to thirty. '
-        + 'Files can be attached, and they are deleted eight hours later; the messages stay. '
-        + 'Nobody but the people in a conversation can read it, administrators included.',
+        + 'Files can be attached, and they are deleted twelve hours later; the messages stay. '
+        + 'Nobody but the people in a conversation can read it, administrators included \u2014 and a few '
+        + 'designations can only be written to by the Super Admin.',
   },
   {
     id: 'tourBtn',

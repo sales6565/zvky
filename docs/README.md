@@ -21,7 +21,7 @@ so a rebuild cannot leave last month's screenshot or last month's role behind.
 - `build/crop.js` trims each capture to its content, in place.
 - `build/roles-table.js` reads the permission table out of a deployment and
   writes `build/roles-table.json`.
-- `build/bands.js` groups the 62 permissions into the thirteen distinct sets of
+- `build/bands.js` groups the 64 permissions into the fourteen distinct sets of
   holders the manual calls access bands, and fails loudly if the catalogue has
   changed shape.
 - `build/content.js` is the manual's prose. It names screenshots and access

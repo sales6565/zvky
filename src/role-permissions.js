@@ -60,6 +60,22 @@ const TL_REVIEW_GROUPS = ['Supervision', 'Creative Direction', 'Production'];
 // Whose queue the project review submissions are, to begin with.
 const PROJECT_REVIEW_ROLE = 'creative_art_director';
 
+/* Whose inbox is shielded, to begin with.
+ *
+ * A STARTING POSITION, not a rule, and the difference is the whole point of
+ * putting it here rather than in an `if` in the chat routes. These two
+ * designations are the ones the studio named; a Super Admin shields a third, or
+ * unshields one of these, from Settings > Role Permissions without anybody
+ * touching the code. Same shape as PROJECT_REVIEW_ROLE above, for the same
+ * reason.
+ *
+ * Named by KEY rather than by label: a studio that renames "Managing Director &
+ * CEO" keeps the shield, because the key is what the row is filed under. */
+const SHIELDED_ROLES = [
+  'managing_director_ceo',
+  'vice_president_global_operations_business_development',
+];
+
 function defaultsFor(roleKey) {
   const def = roleDef(roleKey);
   if (!def) return new Set();
@@ -94,6 +110,11 @@ function defaultsFor(roleKey) {
      sending to in Settings is a decision about sending — this follows it by
      default and can still be split apart there. */
   if (baseline.has('project.review_send')) baseline.add('project.review_mine');
+
+  /* Off, not absent: chat.open_inbox is held by every designation by default —
+     see the note on it in the catalogue for why it is phrased that way round —
+     so shielding one means taking it away. */
+  if (SHIELDED_ROLES.includes(roleKey)) baseline.delete('chat.open_inbox');
 
   if (roleKey === PROJECT_REVIEW_ROLE) {
     baseline.add('project.review_queue');

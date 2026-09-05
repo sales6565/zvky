@@ -1,5 +1,5 @@
-/* The 62 permissions land on only thirteen distinct sets of designations. Naming
-   those thirteen is what makes the role notes in the manual readable: "the
+/* The 64 permissions land on only fourteen distinct sets of designations. Naming
+   those fourteen is what makes the role notes in the manual readable: "the
    administration band" instead of eight designations repeated on every page.
    The membership comes from roles-table.json, which is read out of a pristine
    instance — so a band is never hand-maintained, only named here. */
@@ -26,6 +26,8 @@ const NAMES = [
     'The people who run the studio’s records: staff, projects and clients.'],
   ['leadership', 'Studio leadership',
     'Administration without the Admin designation — the settings, reports and overrides tier.'],
+  ['unshielded', 'Everyone except the shielded designations',
+    'Everybody whose Open Inbox is on \u2014 which is every designation except the two the studio shields from unsolicited chat.'],
   ['runs_work', 'Production planning and creative direction',
     'The production planning band with Art Director and Creative Art Director added — everyone who runs work rather than doing it. Who may start a chat group.'],
   ['cd_and_super', 'Creative Art Director and Super Admin',
@@ -57,6 +59,7 @@ const SEED = {
   cd_gate: 'review.cd',
   administration: 'user.view',
   leadership: 'user.idle_view',
+  unshielded: 'chat.open_inbox',
   runs_work: 'chat.group_create',
   cd_and_super: 'project.review_queue',
   super_only: 'review.client_view',

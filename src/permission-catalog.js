@@ -548,6 +548,54 @@ const GROUPS = [
           + 'and take part in any group you have been added to.',
       },
       {
+        /* The one key here that describes a PROPERTY rather than an action, and
+         * it is worth saying why it is a permission at all — and why it is
+         * phrased the way round it is.
+         *
+         * The studio wanted two designations shielded from unsolicited chat.
+         * Written as `if (role === 'managing_director_ceo' || ...)` that is a
+         * hardcoded role check, which is the thing that has caused repeated
+         * bugs in this application: a studio that renames a designation, adds a
+         * second VP, or decides somebody else needs the same shield has to have
+         * the code changed. As a permission it is a switch on the Role
+         * Permissions screen, seeded off for the two designations that asked
+         * for it and available for any other.
+         *
+         * PHRASED AS "OPEN", NOT "PROTECTED", and that is not a style choice.
+         * A Super Admin holds every key in this catalogue by construction — see
+         * effectiveFor() in src/role-permissions.js — so a key meaning "I am
+         * shielded" would shield the Super Admin, and the one account the whole
+         * studio needs to be able to reach would quietly become unreachable.
+         * Held-by-default and switched OFF to protect somebody inverts cleanly
+         * against that rule, and gives a designation added in Settings next year
+         * the safe default: reachable, rather than accidentally silent. */
+        key: 'chat.open_inbox',
+        label: 'Open Inbox',
+        impliedBy: () => true,
+        describe: 'Anybody in the studio may start a conversation with this designation, and add it '
+          + 'to a group. Switch this OFF to shield a designation: only somebody holding "Message a '
+          + 'Shielded Designation" can then reach it, though it can still message anyone it likes '
+          + 'and anyone it has written to can write back.',
+      },
+      {
+        key: 'chat.message_protected',
+        label: 'Message a Shielded Designation',
+        /* managePermissions rather than `() => false`, which is the same set —
+           the Super Admin tier is the only one holding it — but arrives by the
+           front door.
+           
+           A Super Admin holds every key by construction, so a key nothing
+           implies is one the SEEDED ROWS lack while the effective set has it:
+           the startup repair switches it back on and the Settings screen shows
+           a switch that disagrees with the behaviour until it does. Implying it
+           from the capability the tier actually has means the stored rows are
+           right the first time. Same reasoning, and the same predicate, as
+           settings.permissions. */
+        impliedBy: has('managePermissions'),
+        describe: 'Start a conversation with a designation whose Open Inbox is switched off, and add '
+          + 'one to a group.',
+      },
+      {
         key: 'chat.group_create',
         label: 'Create Chat Group',
         /* Runs a team, signs off delivery, or manages people — which is Lead,

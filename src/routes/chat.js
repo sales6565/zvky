@@ -102,7 +102,14 @@ router.get('/people', async (req, res) => {
     'SELECT id, `name`, role, avatar_updated_at AS photoUpdatedAt FROM users WHERE id <> $1 ORDER BY `name`',
     [req.user.id]
   );
-  res.json({ people: rows });
+  /* A shielded designation is left OUT of the picker rather than shown and
+     refused. The studio's choice, and the right one: an option that exists to
+     say no teaches people the studio is hiding something, where an absence
+     simply is not offered. The server still refuses it — see openDirect below —
+     because a list is a convenience and never a control. */
+  if (can(req, 'chat.message_protected')) return res.json({ people: rows });
+  const shielded = await chat.shieldedAmong(db, rows.map((r) => r.id));
+  res.json({ people: rows.filter((r) => !shielded.has(String(r.id))) });
 });
 
 /* GET /api/chat/poll?since=<seq>
@@ -156,6 +163,16 @@ router.get('/:id/messages', async (req, res) => {
 
 // POST /api/chat/direct { userId } — open (or find) the 1:1 with somebody.
 router.post('/direct', async (req, res) => {
+  const wanted = String((req.body || {}).userId || '');
+  /* The shield, enforced here as well as by leaving them out of the picker.
+     The picker is a convenience; this is the control, and it is what answers a
+     request made straight to the API. */
+  if (wanted && !can(req, 'chat.message_protected')) {
+    const shielded = await chat.shieldedAmong(db, [wanted]);
+    if (shielded.has(wanted)) {
+      return res.status(403).json({ error: 'This person is not available for direct messages.' });
+    }
+  }
   const result = await chat.openDirect(db, req.user.id, (req.body || {}).userId);
   if (!result.ok) return res.status(result.status).json({ error: result.error });
   /* Opening a conversation is not an action worth a line in the studio's
@@ -168,6 +185,23 @@ router.post('/direct', async (req, res) => {
 // POST /api/chat/groups { title, memberIds[] }
 router.post('/groups', requirePermission('chat.group_create'), async (req, res) => {
   const { title, memberIds } = req.body || {};
+  /* Shielded people cannot be put in a group by somebody who could not message
+     them directly — otherwise the shield is bypassed by making a room and
+     talking at them in it.
+     
+     The creator is exempt from their own check: a shielded person making a
+     group is putting THEMSELVES in it, which is not somebody reaching them. */
+  const wanted = (Array.isArray(memberIds) ? memberIds : []).map(String)
+    .filter((id) => id && id !== String(req.user.id));
+  if (wanted.length && !can(req, 'chat.message_protected')) {
+    const shielded = await chat.shieldedAmong(db, wanted);
+    if (shielded.size) {
+      return res.status(403).json({
+        error: 'Somebody you picked is not available for messages, so they cannot be added to a group.',
+        field: 'memberIds',
+      });
+    }
+  }
   const result = await chat.createGroup(db, {
     title,
     ownerId: req.user.id,
@@ -202,6 +236,18 @@ router.post('/:id/messages', files.upload.array('files', 5), async (req, res) =>
   if (!body && !uploaded.length) {
     return res.status(400).json({ error: 'Type something, or attach a file.', field: 'body' });
   }
+
+  /* And the shield again, because being IN a conversation is not the same as
+     being allowed to write into it — a group made before somebody was shielded,
+     or a direct thread somebody opened before the switch was thrown, both leave
+     a member who may read and may not send. mayWriteTo lets it through once the
+     shielded person has spoken, so their own messages stay answerable. */
+  const allowed = await chat.mayWriteTo(db, {
+    conversationId: req.params.id,
+    senderId: req.user.id,
+    senderMay: can(req, 'chat.message_protected'),
+  });
+  if (!allowed.ok) return res.status(allowed.status).json({ error: allowed.error });
 
   const messageId = await chat.send(db, {
     conversationId: req.params.id,
@@ -302,7 +348,17 @@ router.post('/:id/members', async (req, res) => {
   if (!seat) return;
   if (!ownerOnly(seat, res)) return;
   const { userIds } = req.body || {};
-  const result = await chat.addMembers(db, req.params.id, req.user, Array.isArray(userIds) ? userIds : []);
+  const wanted = (Array.isArray(userIds) ? userIds : []).map(String).filter(Boolean);
+  if (wanted.length && !can(req, 'chat.message_protected')) {
+    const shielded = await chat.shieldedAmong(db, wanted);
+    if (shielded.size) {
+      return res.status(403).json({
+        error: 'Somebody you picked is not available for messages, so they cannot be added to a group.',
+        field: 'userIds',
+      });
+    }
+  }
+  const result = await chat.addMembers(db, req.params.id, req.user, wanted);
   if (!result.ok) {
     return res.status(result.status).json({ error: result.error, field: result.field, room: result.room });
   }

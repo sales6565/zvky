@@ -342,7 +342,7 @@ async function start() {
     await require('./bootstrap-token').announce(db);
     ipGate.describeAtStartup();
     startReferenceRefresh(db);
-    /* Chat attachments live eight hours. The first pass runs now rather than
+    /* Chat attachments live twelve hours. The first pass runs now rather than
        in ten minutes' time: a process that was restarted comes back holding
        files that expired while it was down, and no timer ever fired for those.
        Safe on more than one worker — see the sweep in src/chat-files.js. */
