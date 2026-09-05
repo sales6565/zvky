@@ -203,13 +203,15 @@ test('both project forms render their pickers the same way', () => {
   const containers = HTML.match(/<div class="checklist" id="(\w+)"/g) || [];
   assert.deepStrictEqual(
     containers.map((c) => c.match(/id="(\w+)"/)[1]).sort(),
-    ['bd_list', 'ep_coords', 'ep_leads', 'ep_supervision', 'p_coords', 'p_leads', 'p_supervision'],
+    ['ba_list', 'bd_list', 'ep_coords', 'ep_leads', 'ep_supervision',
+     'p_coords', 'p_leads', 'p_supervision'],
     'every checklist should use the .checklist class'
   );
-  /* bd_list is the odd one out and is listed here deliberately: it is the bulk
-     delivery confirmation, a read-only list of assets rather than a picker. It
-     borrows the scroller and the row alignment — which is the point of the
-     class — but has no tick boxes, so it is excluded from the row-markup count
+  /* bd_list and ba_list are the odd ones out and are listed here deliberately:
+     they are the two bulk-action panels — Mark as Delivered, and Assign &
+     Schedule — each a read-only list of assets rather than a picker. They
+     borrow the scroller and the row alignment, which is the point of the class,
+     but have no tick boxes, so they are excluded from the row-markup count
      below rather than being given a private class that could drift out of step
      with the alignment fix. The `id="..."` match no longer requires a closing
      bracket, so an inline style cannot smuggle a new list past this. */

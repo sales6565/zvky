@@ -290,7 +290,8 @@ module.exports = [
   p('The table carries Start Date and End Date (Deadline) as columns, so a whole project\u2019s schedule can be '
     + 'read down two columns without opening anything.'),
   shot('04-assets-active', 'Active: everything still moving through the pipeline.'),
-  shot('04-assets-inactive', 'Inactive: assets on hold.'),
+  shot('04-assets-inactive', 'Inactive: work nobody has picked up \u2014 assets that are Not Assigned, or '
+    + 'assigned and not yet accepted. This is where a batch is selected for 5.5.'),
   shot('04-assets-archived', 'Archived: delivered work, kept for the record.'),
   shot('04-assets-history', 'History: every stage change, who made it and when.'),
 
@@ -302,10 +303,39 @@ module.exports = [
   ]),
   p('Every asset in the batch is recorded individually in its own history, and the batch itself is recorded too, so '
     + 'a bulk delivery is as auditable as fifteen single ones.'),
+  h2('5.5 Assigning and scheduling several at once'),
+  p('Handing out a batch of new work. Select the assets, choose one assignee and one pair of dates, and press '
+    + 'Apply \u2014 whatever is filled in is applied to every asset selected.'),
+  steps([
+    'On the Assets List, open the Inactive sub-tab, where work nobody has picked up sits.',
+    'Tick the assets you want to set up.',
+    'Press Assign & Schedule. The button says how many of your selection it will touch.',
+    'Fill in any of Assignee, Start Date and End Date (Deadline), and press Apply.',
+  ]),
+  bullets([
+    'Each field is optional. Set only the dates to schedule a batch without changing who holds it, or only the assignee to hand work out without inventing a schedule for it.',
+    'One value for all of them, not a value per asset. This is for the forty assets that all begin on the same Monday and all belong to the same person; anything more varied is done on each asset.',
+    'A blank field is left alone, not cleared. Emptying a date that is already set is done on the asset itself, where you can see what you are clearing.',
+    'A start date after the end date is refused before anything is written, and the message quotes both dates back.',
+    'Every asset is reported on its own line. One that cannot be set up does not hold up the rest.',
+  ]),
+  note('Only work nobody has started',
+    'This sets up assets that are Not Assigned. Anything already on somebody\u2019s desk is skipped and listed with '
+    + 'the reason. That is not because the record would be lost \u2014 handing work over in bulk would keep the '
+    + 'round and the history exactly as the single flow does \u2014 but because a handover ends somebody\u2019s '
+    + 'round and resets the Time Spent they can see, and doing that to forty assets from a tick list is a different '
+    + 'act from doing it once with a name in front of you. Work under way is handed over one asset at a time, from '
+    + 'its own panel.'),
+  p('Everything a single assignment does, a bulk one does: the asset moves to Assigned, a Round opens, the person is '
+    + 'notified, and the change is written to that asset\u2019s history and to the Activity Log. The batch itself is '
+    + 'recorded too, so each asset\u2019s history says which act it was part of. A Start Date set this way gates '
+    + 'Accept and Start exactly as one typed on the asset does (7.4).'),
   roles('Creating assets and bulk upload sit with production planning. Editing and assigning are open to everyone '
     + 'who works on assets, within the reach their designation gives them. Deleting an asset is administration only. '
-    + 'Delivery sits with the delivery band.',
-    ['planners', 'asset_workers', 'delivery', 'administration']),
+    + 'Delivery sits with the delivery band. Bulk Assign & Schedule starts with Super Admin alone and is granted in '
+    + 'Settings \u2192 Role Permissions to the coordinators who plan work \u2014 and granting it opens the bulk '
+    + 'panel without widening whose assets anybody may touch: each asset is still checked one by one.',
+    ['planners', 'asset_workers', 'delivery', 'administration', 'super_only']),
 
   pagebreak(),
   // ============================================================ 6

@@ -1033,6 +1033,273 @@ router.post('/bulk/deliver', async (req, res) => {
   res.json({ batchId, requested: ids.length, delivered, failed: ids.length - delivered, results });
 });
 
+/* POST /api/assets/bulk/assign — give several assets one assignee and/or one
+ * pair of dates in a single action.
+ *
+ * body: { assetIds: [...], assigneeId?, startDate?, due? }
+ *
+ * Declared up here with bulk/deliver, and for the same reason: Express matches
+ * in definition order, so a '/bulk/...' path below the '/:id/...' routes is
+ * swallowed by them and answers "Asset not found". One place for both keeps
+ * that hazard in one place.
+ *
+ * ONE VALUE, APPLIED TO ALL OF THEM. Not a per-asset mapping. Every field is
+ * optional and only the ones sent are written, so this is equally a way to set
+ * dates on a batch without touching who holds it, or to hand a batch to
+ * somebody without inventing a schedule for it.
+ *
+ * NOT ASSIGNED ONLY, and this is the restriction worth explaining because it
+ * is not the one it looks like. It is NOT that assigning an active asset in
+ * bulk would bypass the handover record — it would not: PATCH /assets/:id and
+ * the Hand over button are already one operation, and this route calls the same
+ * primitives in the same order. It is that a handover is a decision about a
+ * person's half-finished work: it ends their round, starts somebody else's, and
+ * resets the Time Spent they can see. Doing that to forty assets from a tick
+ * list, in one click, is a different act from doing it once with a name in
+ * front of you. So initial assignment is offered in bulk and handover is not.
+ *
+ * Relaxing it later is one list: BULK_ASSIGNABLE below. Everything else here —
+ * the per-row authorisation, the episode, the event, the notification — already
+ * handles any status, because it is the same code the single route uses.
+ *
+ * Each asset succeeds or fails ON ITS OWN, as in bulk/deliver: a coordinator
+ * scheduling thirty assets should not lose twenty-nine because the thirtieth
+ * was picked up a minute ago.
+ */
+const BULK_ASSIGN_MAX = 200;
+
+/* The statuses this action will touch. One asset, one stage: work nobody has
+   accepted yet. Mirrored in public/index.html as bulkAssignable(); the two are
+   a line each and the server is the one that decides. */
+const BULK_ASSIGNABLE = ['not_started'];
+
+router.post('/bulk/assign', requirePermission('asset.bulk_assign'), async (req, res) => {
+  const { assetIds, assigneeId, startDate, due } = req.body || {};
+  if (!Array.isArray(assetIds) || !assetIds.length) {
+    return res.status(400).json({ error: 'Choose at least one asset first.', field: 'assetIds' });
+  }
+  const ids = [...new Set(assetIds.filter((id) => typeof id === 'string' && id))];
+  if (ids.length > BULK_ASSIGN_MAX) {
+    return res.status(400).json({
+      error: `That is ${ids.length} assets. ${BULK_ASSIGN_MAX} at a time is the most this will do in one go.`,
+      field: 'assetIds',
+    });
+  }
+
+  /* Which of the three fields this request is actually about.
+   *
+   * `undefined` means "leave it alone" and null means "clear it", which is the
+   * same convention PATCH uses — so sending assigneeId: null through here
+   * unassigns, exactly as it does one at a time. */
+  const setsAssignee = assigneeId !== undefined;
+  const setsStart = startDate !== undefined;
+  const setsDue = due !== undefined;
+  if (!setsAssignee && !setsStart && !setsDue) {
+    return res.status(400).json({ error: 'Fill in at least one of assignee, start date or end date.' });
+  }
+
+  /* --- everything that is wrong with the REQUEST, before touching any asset --
+   *
+   * A bad date or a person who does not exist is wrong for all of them at once,
+   * so it is refused as a request rather than reported forty times in a results
+   * list. Only per-ASSET facts — its stage, whether it is yours — belong in the
+   * per-row results below. */
+  const wantedStart = setsStart && startDate !== null ? assetSchedule.asISODate(startDate) : null;
+  const wantedDue = setsDue && due !== null ? assetSchedule.asISODate(due) : null;
+  if (setsStart && startDate !== null && !wantedStart) {
+    return res.status(400).json({ error: 'That start date is not a date.', field: 'startDate' });
+  }
+  if (setsDue && due !== null && !wantedDue) {
+    return res.status(400).json({ error: 'That end date is not a date.', field: 'due' });
+  }
+  /* Only when BOTH are being set in this request. Checking a new start against
+     a deadline already on the asset would be a different rule — a per-asset one
+     — and it would refuse rows for a value the person cannot see in front of
+     them. The single-asset form does not check that either. */
+  if (wantedStart && wantedDue && wantedStart > wantedDue) {
+    return res.status(400).json({
+      error: `The start date (${wantedStart}) is after the end date (${wantedDue}). Work cannot be due before it begins.`,
+      field: 'startDate',
+    });
+  }
+
+  /* A real person. The single-asset route trusts its dropdown for this; a batch
+   * is worth asking properly, because one stale id here is wrong on every asset
+   * in the list rather than on one.
+   *
+   * Existence is the whole check, and deliberately so. There is no active/
+   * inactive flag on people in this application — an account either exists or
+   * has been deleted — so there is no dormant state to screen out. Nor is
+   * membership of the asset's project required: that restriction was removed
+   * from handover on purpose, so that work can be given to somebody brought in
+   * from another team, and reinstating it here would make the bulk route
+   * stricter than the single one for no reason anybody asked for. */
+  if (setsAssignee && assigneeId !== null) {
+    const { rows: people } = await db.query('SELECT id FROM users WHERE id = $1', [assigneeId]);
+    if (!people.length) {
+      return res.status(400).json({ error: 'That person is not in this studio.', field: 'assigneeId' });
+    }
+  }
+
+  const { rows: found } = await db.query(`${ASSET_SELECT} WHERE a.id IN ($1)`, [ids]);
+  const byId = new Map(found.map((row) => [row.id, row]));
+
+  const batchId = uuid();
+  const results = [];
+  for (const id of ids) {
+    const asset = byId.get(id);
+    if (!asset) {
+      results.push({ id, ok: false, error: 'That asset no longer exists.' });
+      continue;
+    }
+    const label = { id, code: asset.code, name: asset.name };
+    try {
+      const { rows: project } = await db.query('SELECT * FROM projects WHERE id = $1', [asset.project_id]);
+      const shut = project.length ? lifecycle.projectRefusal(project[0]) : null;
+      if (shut) { results.push({ ...label, ok: false, error: shut }); continue; }
+
+      /* The scope rule, reported rather than hidden. Somebody who ticked a
+         mixed list gets told which ones were left alone and why, instead of
+         finding out by noticing the board did not change. */
+      if (!BULK_ASSIGNABLE.includes(asset.status)) {
+        results.push({
+          ...label,
+          ok: false,
+          skipped: true,
+          error: `Already ${workflow.label(asset.status)}. Work that is under way is handed over one asset at a time, `
+            + 'so the round and the time spent on it are not lost.',
+        });
+        continue;
+      }
+
+      /* The same two questions the single-asset route asks, asked per asset.
+         This permission opens the bulk action; it does not widen whose assets
+         anybody may touch. */
+      if (setsAssignee && !(await mayAssign(req.user, asset))) {
+        results.push({ ...label, ok: false, error: 'You cannot assign this asset.' });
+        continue;
+      }
+      if ((setsStart || setsDue) && !(await canEditAsset(req.user, asset))) {
+        results.push({ ...label, ok: false, error: 'You cannot edit this asset.' });
+        continue;
+      }
+
+      const changed = await applyBulkAssign(req, res, asset, {
+        setsAssignee, assigneeId: setsAssignee ? (assigneeId || null) : undefined,
+        setsStart, startDate: wantedStart, setsDue, due: wantedDue, batchId,
+      });
+      results.push({
+        ...label, ok: true, status: changed.status,
+        assigneeName: changed.assignee_name || null,
+        startDate: assetSchedule.asISODate(changed.start_date),
+        dueDate: assetSchedule.asISODate(changed.due_date),
+      });
+    } catch (err) {
+      console.error(`[bulk assign] ${asset.code} failed: ${err.stack || err.message}`);
+      results.push({ ...label, ok: false, error: 'Something went wrong updating this one.' });
+    }
+  }
+
+  const applied = results.filter((r) => r.ok).length;
+  try {
+    await db.query(
+      `INSERT INTO asset_event_batches (id, action, actor_id, actor_email, requested, succeeded)
+       VALUES ($1,'assign_schedule',$2,$3,$4,$5)`,
+      [batchId, req.user.id, req.user.email, ids.length, applied]
+    );
+  } catch (err) {
+    console.warn(`[bulk assign] could not record the batch ${batchId}: ${err.message}`);
+  }
+
+  console.log(
+    `${req.user.email} updated ${applied} of ${ids.length} asset(s) in one action `
+    + `(batch ${batchId}${applied < ids.length ? `; left alone: ${results.filter((r) => !r.ok).map((r) => r.code || r.id).join(', ')}` : ''}).`
+  );
+
+  res.json({ batchId, requested: ids.length, applied, failed: ids.length - applied, results });
+});
+
+/* One asset's share of the batch, in one transaction.
+ *
+ * Deliberately the same primitives in the same order as PATCH /assets/:id, and
+ * deliberately NOT a refactor of that route into a shared function — it carries
+ * cases this one cannot reach (handing on work in a review queue, forcing a
+ * stage) and rewriting it to serve both would put every one of those at risk
+ * for a feature that never uses them. What keeps the two honest instead is
+ * tests/bulk-assign.test.js, which asserts a bulk assignment leaves the same
+ * episode, the same event and the same notification as a single one.
+ *
+ * The order matters and is the order PATCH uses:
+ *   the row first, so the transition below reads the values it is about;
+ *   then the work session, closed if one was somehow open;
+ *   then the episode, which is also what notifies the incoming person;
+ *   then the transition, which writes the status and the history row.
+ */
+async function applyBulkAssign(req, res, asset, opts) {
+  const conn = await db.connect();
+  try {
+    await conn.query('BEGIN');
+
+    const fields = [];
+    const values = [];
+    let i = 1;
+    if (opts.setsAssignee) { fields.push(`assignee_id = $${i++}`); values.push(opts.assigneeId); }
+    if (opts.setsStart) { fields.push(`start_date = $${i++}`); values.push(opts.startDate); }
+    if (opts.setsDue) { fields.push(`due_date = $${i++}`); values.push(opts.due); }
+    values.push(asset.id);
+    await conn.query(`UPDATE assets SET ${fields.join(', ')} WHERE id = $${i}`, values);
+
+    const assigneeChanged = opts.setsAssignee && opts.assigneeId !== asset.assignee_id;
+    if (assigneeChanged) {
+      /* Nothing is open on a Not Assigned asset, so this is a no-op today. It
+         is here because it is part of what assigning means, and because the day
+         BULK_ASSIGNABLE grows a status where work can be open, leaving it out
+         would strand a session on somebody who no longer holds the asset. */
+      await workLog.close(conn, asset.id, opts.assigneeId ? 'reassigned' : 'unassigned');
+      await assignments.open(conn, {
+        assetId: asset.id, userId: opts.assigneeId || null,
+        assignedById: req.user.id, status: asset.status,
+      });
+    }
+
+    /* Not Assigned to Assigned, through the state machine rather than by
+       writing the status. A bulk action that set the column directly would be
+       the one place in this app where a stage moved without the workflow's
+       consent — and it is the same 'assign' transition the panel dropdown runs,
+       so the history row is the one a single assignment leaves. */
+    if (assigneeChanged && opts.assigneeId) {
+      const { rows: fresh } = await conn.query('SELECT * FROM assets WHERE id = $1', [asset.id]);
+      const ctx = await contextFor(req, fresh[0]);
+      const verdict = workflow.evaluate('assign', ctx);
+      if (verdict.ok) {
+        await applyTransition(req, res, fresh[0], verdict, {
+          note: verdict.describe, conn, batchId: opts.batchId,
+        });
+      } else {
+        /* The row is already written, so a refused transition would leave an
+           asset assigned to somebody and still reading Not Assigned. Never
+           silently: this is the shape of a bug that took three passes to find
+           on the single-asset route. */
+        console.error(
+          `Asset ${asset.code} was bulk-assigned but the assign transition was refused: `
+          + `${verdict.error} (actor ${req.user.email}, role ${req.user.role}). `
+          + 'The asset is assigned and still reads Not Assigned.'
+        );
+      }
+    }
+
+    await conn.query('COMMIT');
+  } catch (err) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    conn.release();
+  }
+
+  const { rows: updated } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [asset.id]);
+  return updated[0];
+}
+
 // POST /api/assets/:id/submit — the assignee sends work for review.
 // body: { link (required), description (optional) }; a file may still be
 // attached alongside, for studios that were uploading them.

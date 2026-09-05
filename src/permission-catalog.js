@@ -167,6 +167,35 @@ const GROUPS = [
           + 'out of its Time Spent, and holding frees you to start another task.',
       },
       {
+        /* Assigning and scheduling several assets in one action.
+         *
+         * Its own key rather than a reuse of asset.assign, because it is a
+         * different kind of trust: asset.assign is "may you put a person on
+         * this asset", asked one asset at a time with a name in front of you.
+         * This is "may you do that to forty assets from a tick list", where the
+         * mistake is forty times the size and nobody reads forty confirmations.
+         * A studio should be able to grant the first and withhold the second.
+         *
+         * WHAT IT DOES NOT REPLACE. The per-asset question is still asked, for
+         * every asset in the batch: this permission opens the bulk action, and
+         * mayAssign() then decides each asset exactly as it would singly. So
+         * holding this does not widen anybody's reach by one asset — a role
+         * that cannot assign a given asset one at a time cannot assign it in a
+         * batch either, and is told so in that asset's row of the result.
+         *
+         * Super Admin alone by default, like the client-feedback four:
+         * has('manageAccess') is held by no other tier, so nobody gains a bulk
+         * action by being promoted, and a studio grants it in Settings to the
+         * coordinators who actually plan work.
+         */
+        key: 'asset.bulk_assign',
+        label: 'Bulk Assign & Schedule Assets',
+        impliedBy: has('manageAccess'),
+        describe: 'Select several Not Assigned assets in the Assets List and give them all one '
+          + 'assignee, one Start Date and one End Date in a single action. Assets already on '
+          + 'somebody\u2019s desk are left alone \u2014 those are handed over one at a time.',
+      },
+      {
         key: 'asset.override_stage',
         label: 'Override Review Stage',
         // Only the studio-wide tier holds this from a role. Moving an asset

@@ -478,6 +478,14 @@
      ]
     },
     {
+     "key": "asset.bulk_assign",
+     "label": "Bulk Assign & Schedule Assets",
+     "describe": "Select several Not Assigned assets in the Assets List and give them all one assignee, one Start Date and one End Date in a single action. Assets already on somebody’s desk are left alone — those are handed over one at a time.",
+     "roles": [
+      "Super Admin"
+     ]
+    },
+    {
      "key": "asset.override_stage",
      "label": "Override Review Stage",
      "describe": "Force a status change outside the normal review flow.",

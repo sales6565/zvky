@@ -888,6 +888,36 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
   </div>
 </div>
 
+<div class="modal-wrap" id="bulkAssignWrap">
+  <div class="modal" style="width:560px;">
+    <h2 id="ba_title">Assign &amp; schedule</h2>
+    <div id="ba_intro" style="font-size:12.5px;color:var(--ink-muted);margin-bottom:10px;"></div>
+    <div id="ba_form">
+      <label>Assignee <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional — leave as is to change nobody)</span></label>
+      <select id="ba_assignee"><option value="">Leave as they are</option></select>
+      <div class="row2">
+        <div>
+          <label>Start Date <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional)</span></label>
+          <input type="date" id="ba_start">
+        </div>
+        <div>
+          <label>End Date (Deadline) <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional)</span></label>
+          <input type="date" id="ba_due">
+        </div>
+      </div>
+      <div style="font-size:11.5px;color:var(--ink-faint);margin:8px 0 4px;">
+        Whatever you fill in is applied to every asset listed below. Anything left blank is left alone.
+      </div>
+    </div>
+    <div class="checklist" id="ba_list"></div>
+    <div class="ref-err" id="ba_err"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="ba_cancel">Cancel</button>
+      <button class="btn btn-brand" id="ba_confirm">Apply</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-wrap" id="timesheetLineWrap">
   <div class="modal">
     <h2>Add a line — <span id="tl_day"></span></h2>
@@ -1780,8 +1810,40 @@ function tabAudit(assets){
  * Whether this PERSON may deliver is a separate question, asked once by
  * can('review.deliver') rather than per row: the permission is not per asset,
  * and the server checks each one properly regardless. */
+/* --- what the tick boxes are for -------------------------------------------
+ *
+ * There are two bulk actions now, and their eligible sets do not overlap at
+ * all: an asset ready to deliver is Approved for Client, and one ready to be
+ * assigned in bulk is Not Assigned. So "show a tick box where the action
+ * applies" — which was the rule while there was one action — would have given
+ * the new one no reachable row anywhere.
+ *
+ * The rule is therefore "a box where ANY bulk action you hold could apply", and
+ * the bar then says how many of the selection each action will actually touch.
+ * That keeps the old promise in the form that still holds: a button that is
+ * offered can be pressed, and it tells you what it is about to do before you
+ * press it, rather than a box that silently does nothing on half the rows.
+ *
+ * Each predicate mirrors the server: deliverable is the deliver transition's
+ * `from`, bulkAssignable is BULK_ASSIGNABLE in src/routes/assets.js. The server
+ * decides; these only decide what is offered.
+ */
 function deliverable(a){ return a.status === 'approved_for_client'; }
 function mayBulkDeliver(){ return can('review.deliver'); }
+function bulkAssignable(a){ return a.status === 'not_started'; }
+function mayBulkAssign(){ return can('asset.bulk_assign'); }
+
+// Every bulk action this account holds, with the rule for what each one reaches.
+// One list, so the tick boxes, the bar and the pruning cannot disagree about
+// which rows are worth selecting.
+function bulkActions(){
+  const out = [];
+  if(mayBulkDeliver()) out.push({ key:'deliver', label:'Mark as Delivered', applies: deliverable });
+  if(mayBulkAssign()) out.push({ key:'assign', label:'Assign & Schedule', applies: bulkAssignable });
+  return out;
+}
+// Is this asset worth offering a box on at all?
+function bulkSelectable(a){ return bulkActions().some(x=>x.applies(a)); }
 
 /* Which pipeline stages this account sees on the dashboard.
    
@@ -3419,11 +3481,12 @@ function renderList(){
    * The offer is only made where the server would say yes, so a tick box that
    * exists can always be used.
    */
-  const bulk = mayBulkDeliver();
+  const actions = bulkActions();
+  const bulk = actions.length > 0;
   const owns = new Map();          // asset id -> the row index holding its box
   if(bulk){
     rows.forEach((row, i)=>{
-      if(!deliverable(row.a)) return;
+      if(!bulkSelectable(row.a)) return;
       /* Only ever on the LIVE row. A closed round is a record of work that has
          already moved on — a tick box there would offer to deliver an asset
          from a page about somebody else's finished stretch, and those rows are
@@ -3442,7 +3505,7 @@ function renderList(){
      * in History depending on whether it ever changed hands, so a producer
      * clearing the ready pile has to cross both. Pruning per tab silently threw
      * away whatever they had ticked before they moved. */
-    const inScope = new Set(matching.filter(deliverable).map(x=>x.id));
+    const inScope = new Set(matching.filter(bulkSelectable).map(x=>x.id));
     for(const id of [...selectedAssets]) if(!inScope.has(id)) selectedAssets.delete(id);
   }
   /* Two different sets, and conflating them is what made the bar lie:
@@ -3456,17 +3519,30 @@ function renderList(){
 
   /* The bar only exists while something is selected, so the list is unchanged
      for anybody who is not using this. */
+  /* One button per action, each saying how many of the SELECTION it will touch.
+     
+     The count is the whole point of showing them together. A mixed tick list is
+     the ordinary case now that a box appears on more than one kind of row, and
+     "Assign & Schedule (5)" beside "Mark as Delivered (3)" tells somebody what
+     is about to happen while they can still change their mind — which is better
+     than a single button that quietly skips two thirds of what they ticked.
+     An action that reaches nothing is disabled and says so. */
   const bar = (bulk && chosen.length) ? `<div class="bulk-bar">
       <span class="bulk-count">${chosen.length} selected${elsewhere
         ? ` <span style="font-weight:400;color:var(--ink-muted);">(${elsewhere} on ${elsewhere===1?'another tab':'other tabs'})</span>`
         : ''}</span>
       <button class="btn btn-ghost btn-sm" id="bulkClear">Clear</button>
-      <button class="btn btn-brand btn-sm" id="bulkDeliverBtn">Mark as Delivered</button>
+      ${actions.map(act=>{
+        const n = chosen.filter(act.applies).length;
+        return `<button class="btn btn-brand btn-sm" id="bulk_${act.key}" data-bulk="${act.key}"${
+          n ? '' : ' disabled title="None of the assets you have selected are at a stage this can be used on"'
+        }>${act.label}${chosen.length ? ` (${n})` : ''}</button>`;
+      }).join('')}
     </div>` : '';
 
   const headBox = bulk
     ? `<th class="pick-col">${selectable.length
-        ? `<input type="checkbox" id="bulkAll"${allTicked?' checked':''} title="Select every deliverable asset shown">`
+        ? `<input type="checkbox" id="bulkAll"${allTicked?' checked':''} title="Select every asset here a bulk action can be used on">`
         : ''}</th>`
     : '';
 
@@ -3549,13 +3625,49 @@ function renderList(){
   }
   const clear = document.getElementById('bulkClear');
   if(clear) clear.addEventListener('click', ()=>{ selectedAssets.clear(); renderList(); });
-  const go = document.getElementById('bulkDeliverBtn');
   /* Everything ticked, wherever it was ticked — not just this tab's share.
-     The confirmation lists them all by code, so what is about to happen is
-     visible even for the ones that are not on screen. */
-  if(go) go.addEventListener('click', ()=>openBulkDeliver(chosen));
+     The confirmation lists them by code, so what is about to happen is visible
+     even for the ones that are not on screen.
+     
+     Each action is handed only the assets IT applies to, rather than the whole
+     selection. The server would skip the rest and report them, but a
+     confirmation listing eight assets to deliver when three of them are Not
+     Assigned is a confirmation nobody can check — and checking it is the only
+     reason the list is shown instead of a count. */
+  const openers = {
+    deliver: openBulkDeliver,
+    assign: openBulkAssign,
+  };
+  el.querySelectorAll('[data-bulk]').forEach(btn=>{
+    const act = actions.find(x=>x.key===btn.dataset.bulk);
+    if(!act || !openers[act.key]) return;
+    btn.addEventListener('click', ()=>openers[act.key](chosen.filter(act.applies)));
+  });
 
   wire();
+}
+
+/* One line per asset, landed or not, for either bulk action.
+ *
+ * Shared because the shape of the answer is the same and the reader's question
+ * is the same: which ones went through, and what happened to the rest. A batch
+ * where one of twelve was refused must not read as "done", and must not read as
+ * "failed" either, because eleven of them landed.
+ *
+ * "Skipped" is its own word, and a milder colour than a refusal. An asset left
+ * out because it is already on somebody's desk is not an error — it is the
+ * scope rule doing its job — and colouring it like a failure would make a
+ * normal mixed selection look like something went wrong. */
+function bulkResultsHTML(results){
+  return results.map(r=>{
+    const tone = r.ok ? 'var(--approved)' : (r.skipped ? 'var(--ink-muted)' : '#e8402c');
+    const word = r.ok ? 'ok' : (r.skipped ? 'skipped' : 'refused');
+    return `<label style="align-items:flex-start;">
+       <span class="mono" style="min-width:74px;color:${tone};">${word}</span>
+       <span><span class="mono">${escapeHTML(r.code||r.id)}</span> ${escapeHTML(r.name||'')}
+       ${r.ok?'':`<div style="color:var(--ink-faint);font-size:11.5px;">${escapeHTML(r.error||'')}</div>`}</span>
+     </label>`;
+  }).join('');
 }
 
 /* ---------- bulk delivery ----------
@@ -3609,12 +3721,7 @@ document.getElementById('bd_confirm').addEventListener('click', async (ev)=>{
   document.getElementById('bd_intro').textContent = res.failed
     ? 'The ones that could not be delivered are listed with the reason. Nothing else was held up by them.'
     : '';
-  document.getElementById('bd_list').innerHTML = res.results.map(r=>
-    `<label style="align-items:flex-start;">
-       <span class="mono" style="min-width:74px;color:${r.ok?'var(--approved)':'#e8402c'};">${r.ok?'ok':'refused'}</span>
-       <span><span class="mono">${escapeHTML(r.code||r.id)}</span> ${escapeHTML(r.name||'')}
-       ${r.ok?'':`<div style="color:var(--ink-faint);font-size:11.5px;">${escapeHTML(r.error||'')}</div>`}</span>
-     </label>`).join('');
+  document.getElementById('bd_list').innerHTML = bulkResultsHTML(res.results);
   document.getElementById('bd_confirm').style.display = 'none';
   document.getElementById('bd_cancel').textContent = 'Close';
 
@@ -3630,6 +3737,114 @@ document.getElementById('bd_confirm').addEventListener('click', async (ev)=>{
   showToast(res.failed
     ? `${res.delivered} delivered, ${res.failed} refused.`
     : `${res.delivered} asset${res.delivered===1?'':'s'} marked delivered.`);
+});
+
+/* ---------- bulk assign and schedule ----------
+ *
+ * One assignee, one Start Date, one End Date, applied to everything selected —
+ * not a per-asset mapping. A mapping would be a spreadsheet editor, and the
+ * thing this is for is the opposite: forty assets that all begin on the same
+ * Monday and all belong to the same person.
+ *
+ * Every field is optional and only the ones filled in are sent, which is what
+ * makes it equally a way to schedule a batch without touching who holds it. The
+ * distinction the form has to preserve is between "leave this alone" and "set
+ * this to nothing" — so a blank date is simply not sent, rather than sent as
+ * null. Clearing a date is done on the asset itself, where you can see what you
+ * are clearing.
+ */
+const bulkAssignWrap = document.getElementById('bulkAssignWrap');
+let bulkAssignPending = [];
+
+function closeBulkAssign(){ bulkAssignWrap.classList.remove('show'); }
+
+function openBulkAssign(chosen){
+  bulkAssignPending = chosen;
+  document.getElementById('ba_title').textContent =
+    `Assign & schedule ${chosen.length} asset${chosen.length===1?'':'s'}`;
+  document.getElementById('ba_intro').textContent =
+    'Only assets that are Not Assigned can be set up this way. Work already on somebody\u2019s '
+    + 'desk is handed over one asset at a time, so its round and the time spent on it are kept.';
+  document.getElementById('ba_list').innerHTML = chosen.map(a=>
+    `<label><span class="mono" style="min-width:74px;">${a.code}</span><span>${escapeHTML(a.name)}</span></label>`).join('');
+  document.getElementById('ba_err').textContent = '';
+  document.getElementById('ba_form').style.display = '';
+  document.getElementById('ba_start').value = '';
+  document.getElementById('ba_due').value = '';
+  const confirm = document.getElementById('ba_confirm');
+  confirm.style.display = '';
+  confirm.disabled = false;
+  document.getElementById('ba_cancel').textContent = 'Cancel';
+
+  /* The same list of people the asset panel offers, from the same endpoint.
+     Scoped to the current project, which is what the Assets List is showing —
+     there is no way to select across two projects from here. */
+  const sel = document.getElementById('ba_assignee');
+  sel.innerHTML = '<option value="">Leave as they are</option>';
+  if(state.currentProjectId){
+    api(`/projects/${state.currentProjectId}/artists`).then(({ artists })=>{
+      sel.innerHTML = '<option value="">Leave as they are</option>' +
+        artists.map(x=>`<option value="${x.id}">${escapeHTML(x.name)}</option>`).join('');
+    }).catch(e=>{ document.getElementById('ba_err').textContent = e.message; });
+  }
+  bulkAssignWrap.classList.add('show');
+}
+
+document.getElementById('ba_cancel').addEventListener('click', closeBulkAssign);
+bulkAssignWrap.addEventListener('click', e=>{ if(e.target===bulkAssignWrap) closeBulkAssign(); });
+
+document.getElementById('ba_confirm').addEventListener('click', async (ev)=>{
+  const err = document.getElementById('ba_err');
+  err.textContent = '';
+  const assigneeId = document.getElementById('ba_assignee').value;
+  const startDate = document.getElementById('ba_start').value;
+  const due = document.getElementById('ba_due').value;
+
+  if(!assigneeId && !startDate && !due){
+    err.textContent = 'Fill in at least one of assignee, start date or end date.';
+    return;
+  }
+  /* Checked here as well as on the server, and worded the same way. The server
+     is the rule — it has to be, since this panel is not the only way in — but
+     catching it here means the mistake is corrected in front of the dates that
+     caused it rather than after a round trip. */
+  if(startDate && due && startDate > due){
+    err.textContent = `The start date (${startDate}) is after the end date (${due}). `
+      + 'Work cannot be due before it begins.';
+    return;
+  }
+
+  const body = { assetIds: bulkAssignPending.map(a=>a.id) };
+  // Only what was filled in. An untouched field is absent, which is what tells
+  // the server to leave that column alone on every asset.
+  if(assigneeId) body.assigneeId = assigneeId;
+  if(startDate) body.startDate = startDate;
+  if(due) body.due = due;
+
+  ev.target.disabled = true;
+  let res;
+  try{
+    res = await api('/assets/bulk/assign', { method:'POST', body });
+  }catch(e){ err.textContent = e.message; ev.target.disabled = false; return; }
+
+  document.getElementById('ba_form').style.display = 'none';
+  document.getElementById('ba_title').textContent = res.failed
+    ? `Updated ${res.applied} of ${res.requested}`
+    : `Updated ${res.applied} asset${res.applied===1?'':'s'}`;
+  document.getElementById('ba_intro').textContent = res.failed
+    ? 'The ones that were left alone are listed with the reason. Nothing else was held up by them.'
+    : '';
+  document.getElementById('ba_list').innerHTML = bulkResultsHTML(res.results);
+  document.getElementById('ba_confirm').style.display = 'none';
+  document.getElementById('ba_cancel').textContent = 'Close';
+
+  // Only what actually changed leaves the selection, so a second go at the rest
+  // is one click away rather than a re-tick.
+  res.results.filter(r=>r.ok).forEach(r=>selectedAssets.delete(r.id));
+  await render();
+  showToast(res.failed
+    ? `${res.applied} updated, ${res.failed} left alone.`
+    : `${res.applied} asset${res.applied===1?'':'s'} updated.`);
 });
 /* ---------- Reports ---------- */
 /* Estimated Man Hours against tracked Time Spent.

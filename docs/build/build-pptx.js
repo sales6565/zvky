@@ -399,6 +399,22 @@ module_({
 });
 
 module_({
+  module: 'Bulk assign',
+  head: 'Hand out and schedule a batch in one action',
+  items: [
+    'Tick the assets on the Assets List \u2014 Inactive sub-tab \u2014 and press Assign & Schedule.',
+    'One assignee, one Start Date, one End Date, applied to all of them. Each field is optional.',
+    'Only work nobody has started. Anything already on somebody\u2019s desk is skipped and listed with the reason.',
+    'Each asset gets its own Round, its own history line and its own notification, exactly as a single assignment does.',
+    'The button says how many of your selection it will touch before you press it.',
+  ],
+  whoText: 'Super Admin alone out of the box. Granted in Settings to the coordinators who plan work \u2014 which '
+    + 'opens the bulk panel without widening whose assets anybody may touch.',
+  shotName: '04-assets-inactive',
+  caption: 'The Assets List, where a batch is selected.',
+});
+
+module_({
   module: 'One at a time',
   head: 'One active task, enforced',
   items: [
