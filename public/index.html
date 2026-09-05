@@ -805,6 +805,22 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
     </div>
     <fieldset id="p_fields" disabled>
       <label>Project/Game name</label><input type="text" id="p_name" placeholder="e.g. Nightgarden">
+      <label>Category <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional)</span></label>
+      <select id="p_category"></select>
+      <div id="p_newCategoryWrap" style="display:none;">
+        <label>New category name</label>
+        <div class="new-client-row">
+          <input type="text" id="p_newCategoryName" placeholder="e.g. Slot Game">
+          <button type="button" class="btn btn-brand btn-sm" id="p_createCategory">Create</button>
+        </div>
+        <div class="ref-err" id="p_categoryErr"></div>
+      </div>
+      <div class="row2">
+        <div><label>Start Date <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional)</span></label>
+          <input type="date" id="p_start"></div>
+        <div><label>End Date <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional)</span></label>
+          <input type="date" id="p_end"></div>
+      </div>
       <label>Team leads on this project</label><div class="checklist" id="p_leads"></div>
       <label>Production coordinators on this project</label><div class="checklist" id="p_coords"></div>
       <label>Supervision and Creative Direction <span class="count-note" id="p_supervisionCount">(0/2 selected)</span></label>
@@ -845,6 +861,14 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
     <h2>Edit Project</h2>
     <div id="ep_who" style="font-size:12px;color:var(--ink-muted);margin-bottom:10px;"></div>
     <label>Project/Game name</label><input type="text" id="ep_name" placeholder="e.g. Nightgarden">
+    <label>Category <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional)</span></label>
+    <select id="ep_category"></select>
+    <div class="row2">
+      <div><label>Start Date <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional)</span></label>
+        <input type="date" id="ep_start"></div>
+      <div><label>End Date <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional)</span></label>
+        <input type="date" id="ep_end"></div>
+    </div>
     <label>Team leads on this project</label><div class="checklist" id="ep_leads"></div>
     <label>Production coordinators on this project</label><div class="checklist" id="ep_coords"></div>
     <label>Supervision and Creative Direction <span class="count-note" id="ep_supervisionCount">(0/2 selected)</span></label>
@@ -1110,6 +1134,12 @@ document.getElementById('apiBaseLabel').textContent = API_BASE;
 let TYPES = [];
 let PRIORITIES = [];
 let CATEGORIES = [];
+/* The PROJECT category list. A separate array from CATEGORIES above, holding a
+   separate list from a separate table — a project is a slot game or a pitch,
+   an asset is a character or an environment, and nothing is shared between
+   them. Ships empty, like the asset list, so the field is optional until a
+   studio fills it in. */
+let PROJECT_CATEGORIES = [];
 
 /* The studio's own name, tagline and logo. Fetched without a token, because the
    sign-in screen wears them and that screen has no token yet. Falls back to the
@@ -1158,6 +1188,7 @@ async function loadReferenceData(){
   /* Ships empty. Every consumer treats "no categories yet" as a normal state,
      so the field is simply optional until a Super Admin fills the list in. */
   CATEGORIES = (data.categories || []).map(c=>({ id:c.key, label:c.label, color:c.color||'var(--ink-muted)' }));
+  PROJECT_CATEGORIES = (data.projectCategories || []).map(c=>({ id:c.key, label:c.label, color:c.color||'var(--ink-muted)' }));
   ROLE_GROUPS = data.groups || [];
   ROLE_TIERS = data.tiers || [];
 }
@@ -1185,6 +1216,29 @@ function categoryOptions(selected){
     : '';
   return `<option value=""${selected?'':' selected'}>— None —</option>` + orphan +
     CATEGORIES.map(c=>`<option value="${c.id}"${c.id===selected?' selected':''}>${escapeHTML(c.label)}</option>`).join('');
+}
+/* The project pair, mirroring categoryLabel/categoryOptions above.
+ *
+ * Written out rather than made generic over a list argument: there are two
+ * lists and four call sites, and threading the list through every one of them
+ * would cost more than the six lines it saved. What they must NOT do is read
+ * CATEGORIES, which is the one mistake that would quietly merge the two
+ * vocabularies the tables were split to keep apart. */
+function projectCategoryLabel(id){
+  if(!id) return '';
+  const c = PROJECT_CATEGORIES.find(x=>x.id===id);
+  return c ? c.label : id;
+}
+function projectCategoryOptions(selected){
+  // A stored value the list no longer holds keeps an option of its own, for the
+  // same reason the asset version does: without one the browser silently
+  // selects the first entry and the next save looks like somebody cleared it.
+  const known = PROJECT_CATEGORIES.some(c=>c.id===selected);
+  const orphan = selected && !known
+    ? `<option value="${escapeHTML(selected)}" selected>${escapeHTML(projectCategoryLabel(selected))}</option>`
+    : '';
+  return `<option value=""${selected?'':' selected'}>— None —</option>` + orphan +
+    PROJECT_CATEGORIES.map(c=>`<option value="${c.id}"${c.id===selected?' selected':''}>${escapeHTML(c.label)}</option>`).join('');
 }
 function priorityOptions(selected){
   return PRIORITIES.map(p=>`<option value="${p.id}" ${p.id===selected?'selected':''}>${escapeHTML(p.label)}</option>`).join('');
@@ -1566,7 +1620,8 @@ const SETTINGS_SECTIONS = [
   { permission:'settings.asset_types',  label:'Scope of Work',    note:'The Scope of Work dropdown and the code prefix each asset gets.' },
   { permission:'settings.branding',     label:'Branding',         note:'The name, tagline and logo shown in the header and on the sign-in screen.' },
   { permission:'settings.priorities',   label:'Priorities',       note:'The Priority dropdown.' },
-  { permission:'settings.categories',   label:'Categories',       note:'The Category dropdown. Starts empty — add the studio\'s own list.' },
+  { permission:'settings.categories',   label:'Asset Categories', note:'The Category dropdown on an asset. Starts empty — add the studio\'s own list.' },
+  { permission:'settings.project_categories', label:'Project Categories', note:'The Category dropdown on a project. A separate list from the asset one.' },
   { permission:'settings.roles',        label:'Roles',            note:'The studio\'s designations and what each one can do.' },
   { permission:'settings.ip_allowlist', label:'IP Allowlist',     note:'Which addresses may reach this application at all.' },
 ];
@@ -4778,10 +4833,21 @@ function clientDetailHTML(c){
       ${can('client.delete') && !c.isSystem && !c.isActive && !all.length
         ? `<button class="btn btn-ghost btn-sm" id="purgeClientBtn" data-client="${c.id}" style="color:var(--brand-accent);">Delete permanently</button>` : ''}
     </div>
-    ${all.length ? `<table style="margin-top:14px;"><thead><tr><th>Project</th><th>Code</th><th>Status</th><th></th></tr></thead><tbody>
+    ${all.length ? `<table style="margin-top:14px;"><thead><tr><th>Project</th><th>Code</th><th>Category</th><th>Start Date</th><th>End Date</th><th>Total Bid Hours</th><th>Spent Time</th><th>Status</th><th></th></tr></thead><tbody>
       ${all.map(p=>`<tr class="${p.status!=='active'?'row-muted':''}">
         <td style="font-weight:600;">${escapeHTML(p.name)}</td>
         <td class="mono" style="font-size:11.5px;">${escapeHTML(p.code||'')}</td>
+        <td>${escapeHTML(projectCategoryLabel(p.category)) || '—'}</td>
+        <!-- Written out in full, like the Assets List's two date columns: a
+             table is read down a column and against other rows, so the year
+             has to be there. -->
+        <td class="mono">${fmtDay(p.startDate)}</td>
+        <td class="mono">${fmtDay(p.endDate)}</td>
+        <!-- Both computed from the assets underneath, on every draw. Neither is
+             stored, so neither can be stale — see projectTotals in
+             src/routes/clients.js for what each one counts. -->
+        <td class="mono">${p.bidHours ? p.bidHours + 'h' : '—'}</td>
+        <td class="mono">${p.spentSeconds ? fmtDuration(p.spentSeconds) : '—'}</td>
         <td>${projectBadge(p) || '<span style="font-size:11.5px;color:var(--ink-faint);">active</span>'}</td>
         <td style="text-align:right;white-space:nowrap;">
           ${p.status==='active' ? `<button class="btn btn-ghost btn-sm openProjectBtn" data-id="${p.id}">Open dashboard</button>` : ''}
@@ -6295,6 +6361,7 @@ const projectModalWrap = document.getElementById('projectModalWrap');
    focused, typed into or submitted, so the rule holds even for somebody
    tabbing through. */
 const NEW_CLIENT = '__new__';
+const NEW_PROJECT_CATEGORY = '__newcat__';
 
 function projectFormClientId(){
   const v = document.getElementById('p_client').value;
@@ -6309,6 +6376,33 @@ function syncProjectForm(){
   document.getElementById('p_newClientWrap').style.display = creating ? '' : 'none';
   document.getElementById('p_lockedNote').style.display = chosen ? 'none' : '';
   if(creating) document.getElementById('p_newClientName').focus();
+}
+
+/* The project's category picker, and the "+ Add Category" row underneath it.
+ *
+ * Built the same way the client picker above is, and creating one follows the
+ * SAME three steps the inline Add Client follows — POST, re-read the list from
+ * the server, redraw the dropdown with the new value selected. Pushing the new
+ * entry onto the local array instead would leave this dropdown right and every
+ * other reader of the list wrong until a reload, which is exactly the bug that
+ * was fixed for clients and is not being reintroduced here. */
+function fillProjectCategoryOptions(selected){
+  document.getElementById('p_category').innerHTML =
+    projectCategoryOptions(selected) +
+    (can('settings.project_categories') ? `<option value="${NEW_PROJECT_CATEGORY}">+ Add Category</option>` : '');
+}
+
+function syncProjectCategory(){
+  const creating = document.getElementById('p_category').value === NEW_PROJECT_CATEGORY;
+  document.getElementById('p_newCategoryWrap').style.display = creating ? '' : 'none';
+  if(creating) document.getElementById('p_newCategoryName').focus();
+}
+
+// The chosen category, or null — "+ Add Category" is a control, not a value, so
+// it must never reach the server as one.
+function projectFormCategory(){
+  const v = document.getElementById('p_category').value;
+  return v && v !== NEW_PROJECT_CATEGORY ? v : null;
 }
 
 function fillProjectClientOptions(selected){
@@ -6367,8 +6461,14 @@ function supervisionChecklist(listId, countId, people, chosen){
 document.getElementById('newProjectBtn').addEventListener('click', async ()=>{
   document.getElementById('p_name').value='';
   document.getElementById('p_newClientName').value='';
+  document.getElementById('p_newCategoryName').value='';
+  document.getElementById('p_start').value='';
+  document.getElementById('p_end').value='';
   document.getElementById('p_err').textContent='';
   document.getElementById('p_clientErr').textContent='';
+  document.getElementById('p_categoryErr').textContent='';
+  fillProjectCategoryOptions(null);
+  syncProjectCategory();
   /* Opens on whichever client the header is pointing at, since that is almost
      always the one meant. */
   fillProjectClientOptions(state.clientContextId);
@@ -6387,6 +6487,42 @@ document.getElementById('newProjectBtn').addEventListener('click', async ()=>{
 });
 
 document.getElementById('p_client').addEventListener('change', syncProjectForm);
+document.getElementById('p_category').addEventListener('change', syncProjectCategory);
+
+/* Creating a project category without leaving the form.
+ *
+ * The three steps, in this order, are the fix that was made for the inline Add
+ * Client and is being applied here from the start rather than after somebody
+ * finds the dropdown empty:
+ *
+ *   1. POST it.
+ *   2. RE-READ the whole list from the server — not push the new entry onto the
+ *      local array. Everything that draws a category dropdown reads the same
+ *      arrays, and half of them being right is worse than all of them being
+ *      stale, because it looks like it worked.
+ *   3. Redraw this dropdown with the new value selected, so the thing just
+ *      created is the thing chosen.
+ *
+ * loadReferenceData() is the same call the app makes at startup, so step 2
+ * refreshes every list at once and nothing here has to know which. */
+document.getElementById('p_createCategory').addEventListener('click', async (ev)=>{
+  const err = document.getElementById('p_categoryErr');
+  err.textContent = '';
+  const label = document.getElementById('p_newCategoryName').value.trim();
+  if(!label){ err.textContent = 'Name the category first.'; return; }
+
+  ev.target.disabled = true;
+  try{
+    const { entry } = await api('/reference/project-categories', { method:'POST', body:{ label } });
+    await loadReferenceData();
+    fillProjectCategoryOptions(entry.key);
+    document.getElementById('p_newCategoryName').value = '';
+    syncProjectCategory();
+    document.getElementById('p_name').focus();
+    showToast(`Category "${entry.label}" added.`);
+  }catch(e){ err.textContent = e.message; }
+  finally{ ev.target.disabled = false; }
+});
 
 /* Creating a client without leaving the form. One POST to the same endpoint the
    Add Client screen uses — no projects on it, since the one being filled in
@@ -6424,7 +6560,22 @@ document.getElementById('saveProjectModal').addEventListener('click', async ()=>
   const coordIds = [...document.querySelectorAll('#p_coords input:checked')].map(i=>i.value);
   const supervisionIds = [...document.querySelectorAll('#p_supervision input:checked')].map(i=>i.value);
   try{
-    const { project } = await api('/projects', { method:'POST', body:{ clientId, name, teamLeadIds:leadIds, coordinatorIds:coordIds, supervisionIds } });
+    /* Only what was filled in. An untouched date is absent rather than sent as
+       an empty string, which keeps "leave it alone" and "clear it" distinct on
+       the edit route that shares this endpoint's validator. */
+    const body = { clientId, name, teamLeadIds:leadIds, coordinatorIds:coordIds, supervisionIds };
+    const category = projectFormCategory();
+    const startDate = document.getElementById('p_start').value;
+    const endDate = document.getElementById('p_end').value;
+    if(category) body.category = category;
+    if(startDate) body.startDate = startDate;
+    if(endDate) body.endDate = endDate;
+    if(startDate && endDate && startDate > endDate){
+      err.textContent = `The start date (${startDate}) is after the end date (${endDate}). `
+        + 'A project cannot end before it begins.';
+      return;
+    }
+    const { project } = await api('/projects', { method:'POST', body });
     projectModalWrap.classList.remove('show');
     /* Land on what was just made, rather than wherever the pickers happened to
        be pointing before. */
@@ -6473,6 +6624,13 @@ async function openEditProject(){
   document.getElementById('ep_who').innerHTML =
     `<span class="mono">${escapeHTML(project.code||'')}</span> · created ${new Date(project.created_at).toLocaleDateString()}`;
   document.getElementById('ep_name').value = project.name;
+  /* No "+ Add Category" here on purpose. This form is reached from the header,
+     often mid-task, and creating a value for the whole studio from it is a
+     bigger act than the moment invites; Add Project is where a new category
+     gets made, and Settings is where the list is managed. */
+  document.getElementById('ep_category').innerHTML = projectCategoryOptions(project.category || null);
+  document.getElementById('ep_start').value = project.start_date ? String(project.start_date).slice(0,10) : '';
+  document.getElementById('ep_end').value = project.end_date ? String(project.end_date).slice(0,10) : '';
   epChecklist('ep_leads', leads, project.teamLeadIds || []);
   epChecklist('ep_coords', coords, project.coordinatorIds || []);
   supervisionChecklist('ep_supervision', 'ep_supervisionCount', supervisors, project.supervisionIds || []);
@@ -6489,12 +6647,24 @@ document.getElementById('saveEditProject').addEventListener('click', async ()=>{
      form rather than as a toast over a closed modal. The API checks it too. */
   const name = document.getElementById('ep_name').value.trim();
   if(!name){ epError('Name the project first.'); return; }
+  const startDate = document.getElementById('ep_start').value;
+  const endDate = document.getElementById('ep_end').value;
+  if(startDate && endDate && startDate > endDate){
+    epError(`The start date (${startDate}) is after the end date (${endDate}). A project cannot end before it begins.`);
+    return;
+  }
 
   const btn = document.getElementById('saveEditProject');
   btn.disabled = true;
   try{
+    /* All three are sent every time, empty ones as null. This form SHOWS them,
+       so a field left blank here is somebody clearing it — unlike Add Project,
+       where a blank field was simply never filled in. */
     await api('/projects/' + editingProject.id, { method:'PATCH', body:{
       name,
+      category: document.getElementById('ep_category').value || null,
+      startDate: startDate || null,
+      endDate: endDate || null,
       teamLeadIds: [...document.querySelectorAll('#ep_leads input:checked')].map(i=>i.value),
       coordinatorIds: [...document.querySelectorAll('#ep_coords input:checked')].map(i=>i.value),
       supervisionIds: [...document.querySelectorAll('#ep_supervision input:checked')].map(i=>i.value),
@@ -6830,8 +7000,25 @@ const REF_SECTIONS = [
   {
     collection: 'categories',
     permission: 'settings.categories',
-    title: 'Categories',
-    note: 'The Category dropdown on Add Asset and in the asset drawer. This list starts empty — nothing is assumed about how the studio groups its work.',
+    /* Renamed from "Categories" when the project list arrived beside it. Two
+       panels both called Categories is the confusion the separate tables exist
+       to prevent, and it would land on the one screen where somebody is about
+       to change a list for the whole studio. */
+    title: 'Asset Categories',
+    note: 'The Category dropdown on Add Asset and in the asset drawer. Separate from Project Categories below. This list starts empty — nothing is assumed about how the studio groups its work.',
+    columns: [
+      { key:'label', label:'Name',   input:'text', placeholder:'e.g. Slot Game', required:true },
+      { key:'color', label:'Colour', input:'color' },
+    ],
+  },
+  {
+    /* Its own panel, beside the asset one and never merged with it. Two lists,
+       two permissions, two tables — a studio can hand out one without the
+       other, and a value added here never appears in an asset's dropdown. */
+    collection: 'project-categories',
+    permission: 'settings.project_categories',
+    title: 'Project Categories',
+    note: 'The Category dropdown on Add Project — what kind of job a project is. Separate from the asset Categories above, and starts empty.',
     columns: [
       { key:'label', label:'Name',   input:'text', placeholder:'e.g. Slot Game', required:true },
       { key:'color', label:'Colour', input:'color' },

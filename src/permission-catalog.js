@@ -522,7 +522,26 @@ const GROUPS = [
       { key: 'settings.roles',        label: 'Manage Roles',         impliedBy: has('manageSettings') },
       { key: 'settings.asset_types',  label: 'Manage Scope of Work', impliedBy: has('manageSettings') },
       { key: 'settings.priorities',   label: 'Manage Priorities',    impliedBy: has('manageSettings') },
-      { key: 'settings.categories',   label: 'Manage Categories',    impliedBy: has('manageSettings') },
+      { key: 'settings.categories',   label: 'Manage Asset Categories', impliedBy: has('manageSettings'),
+        describe: 'The Category dropdown on an asset. Separate from project categories below \u2014 an asset is '
+          + 'a character or an environment, which is a different question from what kind of job a project is.' },
+      {
+        /* The project category list, which is not the asset one.
+         *
+         * Its own key rather than a reuse of settings.categories, for the same
+         * reason the tables are separate: they are two vocabularies, and a
+         * studio may well want its production coordinator naming job types
+         * without also editing the list its artists file work under.
+         *
+         * Same default as the rest of this group, so a role already trusted
+         * with Settings picks it up rather than losing a list it would expect
+         * to find beside the others. */
+        key: 'settings.project_categories',
+        label: 'Manage Project Categories',
+        impliedBy: has('manageSettings'),
+        describe: 'The Category dropdown on Add Project \u2014 what kind of job a project is. Independent of the '
+          + 'asset category list, with no values shared between them.',
+      },
       {
         key: 'settings.branding',
         label: 'Manage Branding',

@@ -197,17 +197,46 @@ module.exports = [
   h2('4.1 The Projects tab'),
   shot('03-projects-list', 'The projects under the chosen client.'),
   p('Clients sit above projects. Choosing a client in the header narrows the project picker to that client’s work.'),
+  p('Opening a client lists its projects with what each one is and how it is going:'),
+  table(
+    ['Column', 'What it shows'],
+    [
+      ['Project', 'Its name, and its code beside it.'],
+      ['Category', 'What kind of job it is \u2014 from the Project Categories list, which the studio keeps in Settings.'],
+      ['Start Date', 'When the project begins. Optional.'],
+      ['End Date', 'When it is due to finish. Optional.'],
+      ['Total Bid Hours', 'Every asset\u2019s Man Hours estimate, added up. What the project was quoted at.'],
+      ['Spent Time', 'The hours actually recorded against its assets.'],
+      ['Status', 'Active, closed or archived.'],
+    ],
+    [2200, 7160]
+  ),
+  note('The two figures are worked out as you look at them',
+    'Total Bid Hours and Spent Time are never stored on the project. They are counted from its assets on every read, '
+    + 'so editing an estimate or finishing a round shows immediately, and there is nothing anybody has to remember to '
+    + 'recalculate. Total Bid Hours counts EVERY asset under the project, whatever stage it is at and whichever tab it '
+    + 'is on \u2014 an asset that has been delivered was still estimated, so it stays in the bid. Spent Time counts '
+    + 'every round of every asset, including the finished rounds of people who have since handed the work on, and '
+    + 'leaves out any stretch that was put on hold. It is the same figure, worked out the same way, that the '
+    + 'Efficiency report shows per asset.'),
 
   h2('4.2 Creating a project'),
   steps([
     'Press + Project, at the right of the tab row.',
     'Give the project a name and pick the client it belongs to.',
+    'Choose a Category, or leave it blank \u2014 it is optional. If the one you want is not in the list, pick "+ Add Category", type it and press Create: it is added to the studio\u2019s list and selected straight away, without leaving the form.',
+    'Give it a Start Date and an End Date if the project has them. Both are optional, and a start date after the end date is refused.',
     'Name the team leads who will run its first review gate.',
     'Name the production coordinators, if the studio uses them.',
     'Add up to two people to the supervision list — the ones accountable for the project overall.',
     'Save.',
   ]),
   shot('03-project-new-form', 'The new-project form.'),
+  note('A project\u2019s dates describe it, they do not police it',
+    'Start Date and End Date on a project are plain information. Nothing warns, blocks or moves when an end date '
+    + 'passes with work outstanding, and a project whose dates are long past still takes new assets and still lets '
+    + 'work be started on them. This is not the same field as an asset\u2019s Start Date, which does hold Accept and '
+    + 'Start closed until the day arrives (7.4).'),
   note('Two supervisors, and no more',
     'The supervision list is capped at two people, and the cap is enforced by the server, not only by the form. '
     + 'This is deliberate: a list of five supervisors means nobody is supervising.'),
@@ -720,21 +749,28 @@ module.exports = [
   roles('The studio name and colour are leadership’s to set.', ['leadership']),
 
   h2('13.4 The value lists'),
-  p('Four lists feed the dropdowns on the forms. Each is edited in Settings.'),
+  p('Five lists feed the dropdowns on the forms. Each is edited in Settings, and each is its own permission.'),
   table(
     ['List', 'What it feeds'],
     [
       ['Scope of Work', 'The Scope of Work dropdown, and the prefix each asset code is built from (CHR-001).'],
       ['Priorities', 'The Priority dropdown on Add Asset and in the asset panel.'],
-      ['Categories', 'The Category dropdown. This list starts empty — nothing is assumed about how a studio groups its work.'],
+      ['Asset Categories', 'The Category dropdown on an asset \u2014 what kind of thing it is. Starts empty.'],
+      ['Project Categories', 'The Category dropdown on a project \u2014 what kind of job it is. A separate list, starting empty.'],
       ['Roles', 'The Role dropdown on Add User. What a designation can do comes from the tier behind it.'],
     ],
     [2400, 6960]
   ),
+  note('The two category lists are separate on purpose',
+    'A project\u2019s category answers "what kind of work is this" \u2014 a slot game, a pitch, a co-development. An '
+    + 'asset\u2019s answers "what kind of thing is this" \u2014 a character, an environment, an effect. Sharing one '
+    + 'list would put both vocabularies in both dropdowns and make each of them wrong, and there is no way back once '
+    + 'a studio has filled it in. They are two lists, in two tables, behind two permissions, with no values in '
+    + 'common.'),
   note('Renaming is safe; deleting in-use values is not allowed',
     'Renaming a value leaves every record that uses it working. A value in use cannot be deleted at all — '
     + 'deactivate it instead and it disappears from the dropdowns while the existing records keep their meaning.'),
-  roles('Each list is a separate permission, so a studio can let somebody manage its categories without also handing them the designations list. All four sit with leadership by default.', ['leadership']),
+  roles('Each list is a separate permission, so a studio can let somebody manage its project categories without also handing them the asset categories or the designations list. All five sit with leadership by default.', ['leadership']),
 
   h2('13.5 The IP allowlist'),
   shot('12-settings-ip', 'The IP allowlist.'),

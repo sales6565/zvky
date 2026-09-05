@@ -156,6 +156,26 @@ const REFERENCE_TABLES = {
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE KEY uq_categories_key (\`key\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  /* The projects' own category list, deliberately a SEPARATE table from
+     `categories` above rather than a second use of it.
+     
+     A project's category answers "what kind of work is this" — a slot game, a
+     pitch, a co-development — and an asset's answers "what kind of thing is
+     this" — a character, an environment. Sharing one list would put both
+     vocabularies in both dropdowns and make each of them wrong, and there is no
+     way back from that once a studio has filled it in. Two tables, two
+     permissions, no crossover. */
+  project_categories: `CREATE TABLE IF NOT EXISTS project_categories (
+      id CHAR(36) NOT NULL PRIMARY KEY,
+      \`key\` VARCHAR(64) NOT NULL,
+      label VARCHAR(100) NOT NULL,
+      color VARCHAR(16) NULL,
+      position INT NOT NULL DEFAULT 0,
+      is_active TINYINT(1) NOT NULL DEFAULT 1,
+      is_system TINYINT(1) NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_project_categories_key (\`key\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   roles: `CREATE TABLE IF NOT EXISTS roles (
       id CHAR(36) NOT NULL PRIMARY KEY,
       \`key\` VARCHAR(64) NOT NULL,
@@ -1895,6 +1915,45 @@ async function ensureSessionEndReason(db, log) {
   log('Schema: work_sessions rows now record why they ended, and where Time Spent changed meaning.');
 }
 
+/* A project's own category, and the dates it runs between.
+ *
+ * All three are plain data, and nothing in the pipeline reads them: an End Date
+ * that has passed does not warn, block or move anything. That is the studio's
+ * decision, recorded here so a later reader does not mistake the absence of a
+ * rule for a rule somebody forgot to write. The asset-level Start Date, which
+ * DOES gate Accept and Start, is a different field on a different table.
+ *
+ * `category` holds a key from project_categories, not a label — the same
+ * arrangement assets.category has with categories, so renaming a category in
+ * Settings cannot orphan the projects using it.
+ */
+async function ensureProjectFields(db, log) {
+  const has = async (column) => {
+    const { rows } = await db.query(
+      `SELECT COLUMN_NAME AS n FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'projects' AND COLUMN_NAME = $1`,
+      [column]
+    );
+    return rows.length > 0;
+  };
+  const added = [];
+  // Each checked on its own, so a half-applied run can complete on the next
+  // boot rather than failing on a duplicate column for ever.
+  if (!(await has('category'))) {
+    await db.query('ALTER TABLE projects ADD COLUMN category VARCHAR(64) NULL');
+    added.push('projects.category');
+  }
+  if (!(await has('start_date'))) {
+    await db.query('ALTER TABLE projects ADD COLUMN start_date DATE NULL');
+    added.push('projects.start_date');
+  }
+  if (!(await has('end_date'))) {
+    await db.query('ALTER TABLE projects ADD COLUMN end_date DATE NULL');
+    added.push('projects.end_date');
+  }
+  if (added.length) log(`Schema: added ${added.join(', ')}.`);
+}
+
 /* What somebody said when they put a task on hold.
  *
  * On the session row rather than in a table of its own, because a note belongs
@@ -2024,6 +2083,9 @@ const STEPS = [
 
   // After the reason column, whose values it extends with 'held'.
   ['hold reason', ensureHoldNote],
+
+  // After the reference tables, whose project_categories list `category` points into.
+  ['project fields', ensureProjectFields],
   // After projects and users, whose keys it points at.
   ['project supervision', ensureProjectSupervision],
   // After the event log, whose column it adds.

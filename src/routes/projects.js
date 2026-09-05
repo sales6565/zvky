@@ -8,6 +8,68 @@ const { authenticate, requirePermission } = require('../middleware/auth');
 const lifecycle = require('../lifecycle');
 const { visibleProjects, canAccessProject, holds } = require('../permissions');
 const { assignableRoles, roleDef, supervisionRoles } = require('../roles');
+const referenceData = require('../reference-data');
+const assetSchedule = require('../asset-schedule');
+
+/* The three fields a project carries besides its name and its client, checked
+ * once for both the create and the edit route.
+ *
+ * All three are DESCRIPTIVE. Nothing in the pipeline reads them: an End Date
+ * that has passed does not warn, block, or move anything, and a project with no
+ * category behaves exactly as one with one. That is the studio's decision, and
+ * it is written here so a later reader does not take the absence of a rule for
+ * an oversight. The asset-level Start Date is the one that gates anything, and
+ * it is a different field on a different table.
+ *
+ * Returns { ok:false, error, field } or { ok:true, sets:[[column, value], …] }
+ * holding only the fields this request actually sent — so an edit that names
+ * one of them leaves the other two alone, and `null` clears rather than skips.
+ */
+function checkProjectFields(body) {
+  const sets = [];
+  const b = body || {};
+
+  if (b.category !== undefined) {
+    const value = b.category === null || b.category === '' ? null : String(b.category);
+    if (value !== null) {
+      /* Against the PROJECT list, never the asset one. Reading the wrong
+         collection here is the single mistake that would quietly merge two
+         vocabularies that were deliberately kept apart. */
+      const entry = referenceData.get('project_categories', value);
+      if (!entry || !entry.isActive) {
+        return { ok: false, field: 'category',
+          error: 'That is not a project category. Add it in Settings first, or pick one from the list.' };
+      }
+    }
+    sets.push(['category', value]);
+  }
+
+  // Dates are stored as they are typed. asISODate is the same reader the asset
+  // schedule uses, so "2026-03-10" means the tenth here and there alike.
+  const dates = {};
+  for (const [key, column] of [['startDate', 'start_date'], ['endDate', 'end_date']]) {
+    if (b[key] === undefined) continue;
+    const raw = b[key];
+    if (raw === null || raw === '') { sets.push([column, null]); dates[key] = null; continue; }
+    const iso = assetSchedule.asISODate(raw);
+    if (!iso) {
+      return { ok: false, field: key, error: `That ${key === 'startDate' ? 'start' : 'end'} date is not a date.` };
+    }
+    sets.push([column, iso]);
+    dates[key] = iso;
+  }
+
+  /* Only when BOTH are in this request. Checking a new start against an end
+     date already stored would refuse an edit for a value the person cannot see
+     in the form, which is the same reasoning the bulk asset scheduler uses. */
+  if (dates.startDate && dates.endDate && dates.startDate > dates.endDate) {
+    return { ok: false, field: 'startDate',
+      error: `The start date (${dates.startDate}) is after the end date (${dates.endDate}). `
+        + 'A project cannot end before it begins.' };
+  }
+
+  return { ok: true, sets };
+}
 
 router.use(authenticate);
 
@@ -44,6 +106,8 @@ router.post('/', requirePermission('project.add'), async (req, res) => {
   if (!verdict.ok) return res.status(400).json({ error: verdict.error, field: verdict.field });
   const supervision = await checkSupervision(supervisionIds);
   if (!supervision.ok) return res.status(400).json({ error: supervision.error, field: 'supervisionIds' });
+  const extras = checkProjectFields(req.body);
+  if (!extras.ok) return res.status(400).json({ error: extras.error, field: extras.field });
 
   // Every project belongs to a client, and the caller has to say which.
   //
@@ -63,10 +127,19 @@ router.post('/', requirePermission('project.add'), async (req, res) => {
   try {
     await client.query('BEGIN');
     const id = uuid();
+    /* The row first, then whichever of the three optional fields were sent.
+       Written as a second statement rather than folded into the INSERT so the
+       column list above stays the one every project has ever had — a create
+       that names none of them writes exactly what it wrote before. */
     await client.query(
       'INSERT INTO projects (id, name, code, client_id, owner_id) VALUES ($1,$2,$3,$4,$5)',
       [id, verdict.value, codeFor(verdict.value), clientRow.id, req.user.id]
     );
+    if (extras.sets.length) {
+      const columns = extras.sets.map(([column], i) => `\`${column}\` = $${i + 1}`).join(', ');
+      await client.query(`UPDATE projects SET ${columns} WHERE id = $${extras.sets.length + 1}`,
+        [...extras.sets.map(([, value]) => value), id]);
+    }
     for (const leadId of teamLeadIds) {
       await client.query(
         'INSERT IGNORE INTO project_team_leads (project_id, user_id) VALUES ($1,$2)',
@@ -216,6 +289,8 @@ router.patch('/:id', requirePermission('project.edit'), async (req, res) => {
   }
   const supervision = await checkSupervision(supervisionIds);
   if (!supervision.ok) return res.status(400).json({ error: supervision.error, field: 'supervisionIds' });
+  const extras = checkProjectFields(req.body);
+  if (!extras.ok) return res.status(400).json({ error: extras.error, field: extras.field });
 
   // Moving a project to another client. How the "Unassigned" pile gets sorted
   // out, so it has to be possible from the edit form.
@@ -238,6 +313,13 @@ router.patch('/:id', requirePermission('project.edit'), async (req, res) => {
     }
     if (newClient) {
       await client.query('UPDATE projects SET client_id = $1 WHERE id = $2', [newClient, project.id]);
+    }
+    // Only the ones this request named. An edit form that does not carry these
+    // fields therefore cannot blank them by omission.
+    if (extras.sets.length) {
+      const columns = extras.sets.map(([column], i) => `\`${column}\` = $${i + 1}`).join(', ');
+      await client.query(`UPDATE projects SET ${columns} WHERE id = $${extras.sets.length + 1}`,
+        [...extras.sets.map(([, value]) => value), project.id]);
     }
     // Replaced wholesale rather than diffed: the form sends the complete list
     // it is showing, so anything missing from it was unticked.

@@ -20,6 +20,7 @@ router.use(authenticate);
 const COLLECTION_BY_PATH = {
   'asset-types': 'asset_types',
   'categories': 'categories',
+  'project-categories': 'project_categories',
   priorities: 'priorities',
   roles: 'roles',
 };
@@ -29,6 +30,9 @@ const COLLECTION_BY_PATH = {
 const PERMISSION_BY_PATH = {
   'asset-types': 'settings.asset_types',
   'categories': 'settings.categories',
+  // Its own key, not a reuse of settings.categories: the two lists are separate
+  // and a studio should be able to trust somebody with one and not the other.
+  'project-categories': 'settings.project_categories',
   priorities: 'settings.priorities',
   roles: 'settings.roles',
 };
@@ -82,6 +86,9 @@ router.get('/', async (req, res) => {
   res.json({
     assetTypes: referenceData.list('asset_types'),
     categories: referenceData.list('categories'),
+    // The project list, alongside the asset one and never merged with it. Both
+    // travel in the same bundle because both fill a dropdown on first paint.
+    projectCategories: referenceData.list('project_categories'),
     priorities: referenceData.list('priorities'),
     roles: catalogue(),
     // Only meaningful to whoever can manage these; harmless to everyone else.

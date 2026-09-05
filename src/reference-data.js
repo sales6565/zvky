@@ -36,6 +36,19 @@ const COLLECTIONS = {
     extra: ['color'],
     usedBy: { table: 'assets', column: 'category' },
   },
+  /* The PROJECT category list, separate from the asset one above.
+   *
+   * Two lists rather than one because they answer different questions — a
+   * project is a slot game or a pitch; an asset is a character or an
+   * environment — and a shared list would put both vocabularies in both
+   * dropdowns. `usedBy` therefore points at projects, so retiring a project
+   * category asks about projects and never about assets. */
+  project_categories: {
+    table: 'project_categories',
+    singular: 'project category',
+    extra: ['color'],
+    usedBy: { table: 'projects', column: 'category' },
+  },
   roles: {
     table: 'roles',
     singular: 'role',
@@ -45,6 +58,12 @@ const COLLECTIONS = {
 };
 
 const COLLECTION_NAMES = Object.keys(COLLECTIONS);
+
+/* The collections whose every column is label, colour and position. Kept beside
+   the definitions rather than inline in create(), so adding a list of this
+   shape is one entry in each place and not a condition somebody has to notice
+   inside a function. */
+const PLAIN = ['priorities', 'categories', 'project_categories'];
 
 let cache = Object.fromEntries(COLLECTION_NAMES.map((name) => [name, []]));
 let loaded = false;
@@ -301,18 +320,27 @@ async function create(db, name, payload) {
       'INSERT INTO asset_types (id, `key`, label, code_prefix, color, position, is_active, is_system) VALUES ($1,$2,$3,$4,$5,$6,1,0)',
       [id, key, label, prefix, color, position]
     );
-  } else if (name === 'priorities' || name === 'categories') {
-    // Both are label, colour and position and nothing else, so they share the
-    // insert rather than each having a near-identical branch.
+  } else if (PLAIN.includes(name)) {
+    /* Label, colour and position and nothing else, so they share one insert
+       rather than each having a near-identical branch.
+       
+       Named explicitly rather than caught by an `else`. This was an else-chain
+       ending in roles, so a collection added to COLLECTIONS and forgotten here
+       was silently inserted into the roles table with `undefined` for its group
+       and tier — which fails as a 500 saying "cannot read properties of null",
+       naming neither the collection nor the real problem. Adding a list is now
+       either handled here or refused by name. */
     await db.query(
       `INSERT INTO ${COLLECTIONS[name].table} (id, \`key\`, label, color, position, is_active, is_system) VALUES ($1,$2,$3,$4,$5,1,0)`,
       [id, key, label, color, position]
     );
-  } else {
+  } else if (name === 'roles') {
     await db.query(
       'INSERT INTO roles (id, `key`, label, group_name, tier, color, position, is_active, is_system) VALUES ($1,$2,$3,$4,$5,$6,$7,1,0)',
       [id, key, label, String(payload.group).trim(), String(payload.tier).trim(), color, position]
     );
+  } else {
+    throw new Error(`No insert is defined for the "${name}" reference collection.`);
   }
 
   await load(db);

@@ -1101,8 +1101,22 @@
     },
     {
      "key": "settings.categories",
-     "label": "Manage Categories",
-     "describe": "",
+     "label": "Manage Asset Categories",
+     "describe": "The Category dropdown on an asset. Separate from project categories below — an asset is a character or an environment, which is a different question from what kind of job a project is.",
+     "roles": [
+      "Account Manager - Marketing",
+      "Head of Production",
+      "General Manager",
+      "CTO",
+      "Vice President - Global Operations & Business Development",
+      "Managing Director & CEO",
+      "Super Admin"
+     ]
+    },
+    {
+     "key": "settings.project_categories",
+     "label": "Manage Project Categories",
+     "describe": "The Category dropdown on Add Project — what kind of job a project is. Independent of the asset category list, with no values shared between them.",
      "roles": [
       "Account Manager - Marketing",
       "Head of Production",

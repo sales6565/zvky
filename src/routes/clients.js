@@ -65,10 +65,49 @@ async function clientsFor(user, { includeArchived = false } = {}) {
      this map, which reads as nought. */
   const assetsPerProject = new Map();
   const { rows: counts } = await db.query(
-    'SELECT project_id, COUNT(*) AS n FROM assets GROUP BY project_id'
-  ).catch(() => ({ rows: [] }));
-  for (const row of counts) assetsPerProject.set(row.project_id, Number(row.n));
-  const assetsIn = (projectId) => assetsPerProject.get(projectId) || 0;
+    `SELECT a.project_id,
+            COUNT(*) AS n,
+            /* TOTAL BID HOURS: every asset's Man Hours estimate, added up
+               without condition — no filter on status, on which Assets List tab
+               the asset happens to sit in, or on whether it was ever started.
+               The bid is what the project was estimated at, and an asset does
+               not stop having been estimated because it was delivered. */
+            COALESCE(SUM(a.man_hours), 0) AS bid_hours,
+            /* SPENT TIME: every session row on every asset, which means every
+               round, every person who has held it, and the finished rounds now
+               showing in History. Summing rows rather than subtracting stamps
+               is what makes held stretches fall out of it automatically — the
+               gap is between two rows, so no row covers it — and it is the same
+               figure, computed the same way, that the Efficiency report calls
+               totalSeconds. One number, one definition, two screens. */
+            COALESCE((SELECT SUM(COALESCE(w.seconds, 0))
+                        FROM work_sessions w
+                        JOIN assets x ON x.id = w.asset_id
+                       WHERE x.project_id = a.project_id), 0) AS spent_seconds
+       FROM assets a GROUP BY a.project_id`
+  ).catch(async (err) => {
+    /* A deployment whose work_sessions table could not be created still gets
+       its asset counts and its bid hours: the count is what decides whether a
+       project may be permanently deleted, and losing that to a missing time
+       table would take a button away for an unrelated reason. */
+    if (err.code !== 'ER_NO_SUCH_TABLE' && err.code !== 'ER_BAD_FIELD_ERROR') return { rows: [] };
+    console.warn(`[clients] time totals unavailable (${err.code}) — showing counts and bid hours only. See /api/health.`);
+    return db.query(
+      'SELECT project_id, COUNT(*) AS n, COALESCE(SUM(man_hours), 0) AS bid_hours, 0 AS spent_seconds'
+      + ' FROM assets GROUP BY project_id'
+    ).catch(() => ({ rows: [] }));
+  });
+  for (const row of counts) {
+    assetsPerProject.set(row.project_id, {
+      count: Number(row.n) || 0,
+      bidHours: Number(row.bid_hours) || 0,
+      spentSeconds: Number(row.spent_seconds) || 0,
+    });
+  }
+  /* A project with no assets is absent from the map, which reads as nought on
+     all three figures rather than as an empty cell. */
+  const NONE = { count: 0, bidHours: 0, spentSeconds: 0 };
+  const totalsIn = (projectId) => assetsPerProject.get(projectId) || NONE;
 
   return rows
     .filter((c) => includeArchived || c.is_active)
@@ -93,19 +132,56 @@ async function clientsFor(user, { includeArchived = false } = {}) {
         takesNewProjects: lifecycle.clientTakesNewProjects(c),
         createdAt: c.created_at,
         projects: live.map((p) => ({
-          id: p.id, name: p.name, code: p.code,
+          ...projectFields(p),
           isActive: true, closedAt: p.closed_at || null,
           status: p.closed_at ? 'closed' : 'active',
-          assetCount: assetsIn(p.id),
+          ...projectTotals(totalsIn(p.id)),
         })),
         archivedProjects: archived.map((p) => ({
-          id: p.id, name: p.name, code: p.code, isActive: false,
+          ...projectFields(p), isActive: false,
           closedAt: p.closed_at || null, status: 'archived',
-          assetCount: assetsIn(p.id),
+          ...projectTotals(totalsIn(p.id)),
         })),
         projectCount: live.length,
       };
     });
+}
+
+/* The stored half of a project row, as the browser reads it.
+ *
+ * One shape for the live list and the archived one, so a field added to a
+ * project turns up in both rather than in whichever of the two somebody
+ * remembered. Category is the KEY, not the label: the browser already holds the
+ * project-category list for its dropdowns and labels it from there, the same
+ * arrangement an asset's category has. */
+function projectFields(p) {
+  return {
+    id: p.id,
+    name: p.name,
+    code: p.code,
+    category: p.category || null,
+    startDate: p.start_date || null,
+    endDate: p.end_date || null,
+  };
+}
+
+/* The two computed figures, never stored.
+ *
+ * Read on every request rather than kept on the project row, because they are
+ * answers about the assets underneath it: adding an asset, editing an estimate
+ * or finishing a round changes them, and a stored copy would be wrong from the
+ * moment any of those happened without something remembering to recalculate.
+ * There is nothing to recalculate here, so there is nothing to forget.
+ *
+ * Hours come back as hours because Man Hours is entered in hours; time comes
+ * back as seconds because that is what work_sessions stores, and the browser
+ * formats it with the same helper the asset panel uses. */
+function projectTotals(totals) {
+  return {
+    assetCount: totals.count,
+    bidHours: totals.bidHours,
+    spentSeconds: totals.spentSeconds,
+  };
 }
 
 // Archived projects, which visibleProjects deliberately leaves out. Only read

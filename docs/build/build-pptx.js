@@ -399,6 +399,22 @@ module_({
 });
 
 module_({
+  module: 'Projects',
+  head: 'What a project is, and how it is going',
+  items: [
+    'Category, Start Date and End Date describe the project. They are set on Add Project and are plain information \u2014 nothing warns or blocks when an end date passes.',
+    '"+ Add Category" creates a category from inside the form and selects it straight away.',
+    'Total Bid Hours adds up every asset\u2019s Man Hours \u2014 every asset, at every stage, including delivered ones.',
+    'Spent Time adds up every round of every asset, held time excluded. The same figure the Efficiency report shows.',
+    'Neither figure is stored. Both are counted from the assets each time the tab is drawn, so they are never out of date.',
+  ],
+  whoText: 'Anyone who can see clients sees the columns. Creating and editing projects is the existing project '
+    + 'permission; managing the Project Categories list is its own Settings permission, separate from asset categories.',
+  shotName: '03-projects-list',
+  caption: 'The projects under a client.',
+});
+
+module_({
   module: 'Bulk assign',
   head: 'Hand out and schedule a batch in one action',
   items: [
