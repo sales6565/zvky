@@ -5,6 +5,19 @@ const { roleDef, capabilitiesFor } = require('../roles');
 const referenceData = require('../reference-data');
 const rolePermissions = require('../role-permissions');
 
+/* What an account with must_change_password set may still reach.
+ *
+ * req.path here is the path WITHIN the mount — authenticate() runs under
+ * /api/auth for two of these and directly on the router for the rest — so both
+ * shapes are matched. Kept deliberately short: every entry is a hole in the
+ * lock, and none of these changes anything but the caller's own password.
+ */
+const ALLOWED_WHILE_LOCKED = [
+  /^\/(api\/auth\/)?password$/,
+  /^\/(api\/auth\/)?password-policy$/,
+  /^\/(api\/auth\/)?me$/,
+];
+
 // Verifies the bearer token and attaches the current user (fetched fresh
 // from the database, not just trusted from the token) to req.user.
 // Fetching fresh means a role change or removal takes effect immediately
@@ -65,6 +78,27 @@ async function authenticate(req, res, next) {
     req.permissions = held;
 
     req.user = user;
+
+    /* An account whose password somebody else reset does one thing and nothing
+       else: choose a new password.
+       
+       Enforced here rather than in the browser, because a lock only the page
+       honours is not a lock — the temporary password would otherwise be a
+       working credential for as long as its holder never opened the modal. The
+       allowlist below is the minimum a person needs to get out of this state:
+       the rules to type against, the change itself, and the read that tells
+       the page which state it is in. Signing out is a GET of nothing, so it
+       needs no entry.
+       
+       The flag is cleared by the change (see POST /api/auth/password), which
+       means the way out is always available and always sufficient. */
+    if (user.mustChangePassword && !ALLOWED_WHILE_LOCKED.some((re) => re.test(req.path))) {
+      return res.status(403).json({
+        error: 'Your password was reset by an administrator. Choose a new password to carry on.',
+        mustChangePassword: true,
+      });
+    }
+
     next();
   } catch (err) {
     return res.status(401).json({ error: 'Invalid or expired session' });

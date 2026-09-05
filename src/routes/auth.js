@@ -164,8 +164,12 @@ router.post('/password', authenticate, async (req, res) => {
 
   const hash = await bcrypt.hash(String(newPassword), BCRYPT_ROUNDS);
   const changedAt = Date.now(); // milliseconds; only ever compared for equality
+  /* And this is the way out of a forced change. Cleared unconditionally rather
+     than only when it was set: an ordinary change and a forced one both end
+     with a password nobody else has chosen, which is the whole condition the
+     flag records. */
   await db.query(
-    'UPDATE users SET password_hash = $1, password_changed_at = $2 WHERE id = $3',
+    'UPDATE users SET password_hash = $1, password_changed_at = $2, must_change_password = 0 WHERE id = $3',
     [hash, changedAt, req.user.id]
   );
   console.log(`Password changed for ${req.user.email}.`);
@@ -176,6 +180,8 @@ router.post('/password', authenticate, async (req, res) => {
   res.json({
     ok: true,
     token: signToken(req.user.id, changedAt),
+    /* So the page can drop a forced-change modal without another round trip. */
+    mustChangePassword: false,
     message: 'Password changed. Any other devices signed in to this account have been signed out.',
   });
 });

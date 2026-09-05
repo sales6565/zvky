@@ -646,6 +646,31 @@ tr.past-round{opacity:0.62;}
 .pw-toggle{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:0;color:var(--ink-faint);font-size:10.5px;font-family:'IBM Plex Mono';text-transform:uppercase;letter-spacing:.6px;cursor:pointer;padding:4px 6px;border-radius:6px;}
 .pw-toggle:hover{color:var(--ink);background:var(--surface-3);}
 .field-err{color:var(--brand-accent);font-size:11.5px;margin-top:5px;min-height:14px;}
+/* The forced-change banner, and the temporary password beside it. Warning
+   colour rather than brand red: this is a state to get out of, not an action.
+   [hidden] is spelled out because .pw-forced sets display — the same trap the
+   notification badge and the chat panel both fell into. */
+/* The desktop-notification bar. Fixed to the top, above everything, because
+   its whole job is to be seen — a person who has denied the browser prompt has
+   no other way of finding out why nothing is arriving. */
+.perm-bar{position:fixed;top:0;left:0;right:0;z-index:70;display:flex;align-items:center;gap:12px;
+  padding:9px 16px;background:var(--surface-3);border-bottom:1px solid var(--border);
+  font-size:12.5px;color:var(--ink-muted);box-shadow:0 2px 12px rgba(0,0,0,.28);}
+.perm-bar[hidden]{display:none;}
+.perm-bar .pb-icon{font-size:14px;line-height:1;}
+.perm-bar .pb-msg{flex:1;line-height:1.5;}
+.perm-bar .pb-msg strong{color:var(--ink);}
+.perm-bar .pb-close{background:none;border:0;color:var(--ink-faint);font-size:14px;
+  cursor:pointer;padding:2px 6px;line-height:1;}
+.perm-bar .pb-close:hover{color:var(--ink);}
+body.perm-bar-on{padding-top:38px;}
+.pw-forced{border:1px solid #f2b33d55;background:#f2b33d14;border-radius:9px;
+  padding:10px 12px;margin-bottom:14px;font-size:12px;line-height:1.55;color:var(--ink-muted);display:block;}
+.pw-forced[hidden]{display:none;}
+.pw-forced strong{display:block;color:var(--ink);font-size:12.5px;margin-bottom:4px;}
+.temp-pw{font-family:'IBM Plex Mono';font-size:17px;letter-spacing:1px;color:var(--ink);
+  background:var(--surface-3);border:1px solid var(--border);border-radius:8px;
+  padding:10px 12px;margin:10px 0;user-select:all;text-align:center;}
 .pw-rules{list-style:none;padding:0;margin:8px 0 0;font-size:11.5px;}
 .pw-rules li{color:var(--ink-faint);padding:2px 0;display:flex;gap:7px;align-items:center;}
 .pw-rules li .tick{font-family:'IBM Plex Mono';width:11px;display:inline-block;}
@@ -768,6 +793,15 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
 .bulk-bar{display:flex;align-items:center;gap:10px;padding:8px 12px;margin-bottom:10px;
   border:1px solid var(--border);border-radius:8px;background:var(--surface-2);}
 .bulk-count{font-family:'Inter';font-size:12.5px;color:var(--ink);font-weight:600;margin-right:auto;}
+/* The Inactive tab's own filter, above its tick boxes. Same shell as the bulk
+   bar below it, because the two are read together: narrow the list, then tick
+   what is left. */
+.list-filter{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;margin-bottom:10px;
+  border:1px solid var(--border);border-radius:8px;background:var(--surface-2);}
+.list-filter .lf-label{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink-faint);}
+.list-filter select{padding:5px 8px;font:inherit;font-size:12px;background:var(--surface-3);
+  color:var(--ink);border:1px solid var(--border);border-radius:7px;}
+.list-filter .lf-count{margin-left:auto;font-size:11.5px;color:var(--ink-muted);font-family:'IBM Plex Mono';}
 /* The confirmation list reuses .checklist so the rows line up the way every
    other list of people or assets in a modal does. */
 #bd_list{max-height:220px;}
@@ -1188,14 +1222,23 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
 
 <div class="modal-wrap" id="profileModalWrap">
   <div class="modal">
-    <h2>Your Profile</h2>
+    <h2 id="pf_heading">Your Profile</h2>
+    <!-- Shown only when an administrator has reset this account's password.
+         The same form either way: one implementation of the rules, one place
+         that can be wrong. What changes is that there is no way out of it. -->
+    <div class="pw-forced" id="pf_forced" hidden>
+      <strong>Choose a new password</strong>
+      <div>Your password was reset by an administrator, so the one you were given is temporary.
+        Enter it as your current password and pick a new one. Nothing else in the app will
+        answer until you do.</div>
+    </div>
     <div class="field-lbl">Signed in as</div>
     <div id="pf_identity" style="font-size:13px;"></div>
 
     <!-- Above the password section, as asked. The photo is the lighter of the
          two things on this screen: it is changed casually and often, where a
          password is changed rarely and carefully. -->
-    <div class="field-lbl" style="margin-top:20px;">Profile photo</div>
+    <div class="field-lbl" id="pf_photo_label" style="margin-top:20px;">Profile photo</div>
     <div class="photo-row">
       <div id="pf_photo"></div>
       <div class="photo-actions">
@@ -1256,6 +1299,21 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
     <div class="modal-actions">
       <button class="btn btn-ghost" id="cancelProfileModal">Close</button>
       <button class="btn btn-brand" id="savePasswordBtn">Change password</button>
+    </div>
+  </div>
+</div>
+
+<!-- What an administrator hands over after a reset. Shown once and never
+     retrievable: the value is not stored anywhere readable, so closing this
+     without copying it means resetting again. -->
+<div class="modal-wrap" id="resetPwWrap">
+  <div class="modal" style="width:480px;">
+    <h2 id="rp_title">Reset password</h2>
+    <div id="rp_body" style="font-size:12.5px;color:var(--ink-muted);line-height:1.6;"></div>
+    <div class="ref-err" id="rp_err"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="rp_cancel">Cancel</button>
+      <button class="btn btn-brand" id="rp_confirm">Reset password</button>
     </div>
   </div>
 </div>
@@ -1333,6 +1391,16 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
     <span aria-hidden="true">&#128172;</span>
     <span class="chat-badge" id="chatBadge" hidden></span>
   </button>
+</div>
+<!-- Desktop notifications: whether the browser has been asked, and what to do
+     if it has already said no. Fixed rather than in the flow so it cannot be
+     scrolled past, and it is the only thing on the page that says why a
+     notification did not appear. -->
+<div class="perm-bar" id="notifPermBar" hidden>
+  <span class="pb-icon" id="pb_icon">🔔</span>
+  <span class="pb-msg" id="pb_msg"></span>
+  <button class="btn btn-brand btn-sm" id="pb_allow">Turn on notifications</button>
+  <button class="pb-close" id="pb_later" title="Not now">✕</button>
 </div>
 <div class="toast" id="toast"></div>
 
@@ -2252,6 +2320,17 @@ function escapeHTML(s){ const d=document.createElement('div'); d.textContent=s||
    ones I saw two filters ago". */
 let selectedAssets = new Set();
 let state = { view:'board', search:'', filterType:'', listGroup:'active',
+  /* The Inactive tab's own narrowing, on top of the header's search and scope
+     filter. Tab-local on purpose: it exists to shrink the pile somebody is
+     about to bulk-assign, and a filter set there must not quietly change what
+     the Board shows.
+     
+     Not cleared when the project changes: Category and Scope of Work are
+     studio-wide reference lists, so the same choice means the same thing under
+     any project. What stops a stale filter hiding rows silently is that its
+     bar is always on screen, saying how many of the tab's rows it is showing
+     and offering to clear itself. */
+  inactiveFilter:{ category:'', type:'' },
   currentProjectId:null, currentUser:null, token:null, activeWork:null,
   projects:[], assets:[], usersRenderLimit:60,
   /* The Projects tab: the client list, and which one is open (null = the list). */
@@ -2297,6 +2376,13 @@ async function api(path, options={}){
     logout({ reload: !booting, notice: 'Your session has expired — please sign in again.' });
     throw new Error('Your session has expired — please sign in again.');
   }
+  /* An administrator reset this account's password, so the API is answering
+     nothing but the change. Caught here rather than at each caller: the reset
+     can happen while somebody is already signed in, and then it is whichever
+     poll or click comes next that finds out. */
+  if(res.status===403 && data.mustChangePassword && !booting){
+    forcePasswordChange();
+  }
   if(!res.ok){
     const err = new Error(data.error || `Request failed (HTTP ${res.status})`);
     err.status = res.status;
@@ -2338,6 +2424,11 @@ async function boot(){
       state.currentUser = user;
       booting = false;
       await showApp();
+      /* After the app is drawn, not before: showApp() is what puts the frame
+         on screen for the modal to sit over. Everything it loaded came back
+         403 while the account is locked, which is why the change clears the
+         flag and boots again. */
+      if(user.mustChangePassword) forcePasswordChange();
       return;
     }catch(e){ localStorage.removeItem('zvky_token'); state.token = null; }
   }
@@ -2360,6 +2451,7 @@ async function attemptLogin(){
        exactly what should survive. */
     forgetChatOpen();
     await showApp();
+    if(user.mustChangePassword) forcePasswordChange();
   }catch(e){ err.textContent = e.message; }
 }
 /* Logging out reloads the page, and the reason is worth writing down.
@@ -2425,6 +2517,8 @@ function logout(options = {}){
      belongs to the person who set it. */
   stopChat();
   forgetChatOpen();
+  const bar = document.getElementById('notifPermBar');
+  if(bar){ bar.hidden = true; document.body.classList.remove('perm-bar-on'); }
   /* And take the overlay down with it. A session that expires mid-tour would
      otherwise leave a veil and a spotlight sitting over the login form. */
   tourTeardown();
@@ -2482,7 +2576,16 @@ async function showApp(){
     // Once there is a session to poll for.
     startNotifications();
     startChat();
+    /* Asked on every sign-in, which is the "and periodically if declined" the
+       studio asked for. The bar it paints is also the only place a person who
+       has been refused by their browser can find out why nothing arrives. */
+    askForDesktopNotifications();
   }catch(err){
+    /* An account locked to a password change fails every one of those loads,
+       by design — and a red "the app could not load its data, Retry" behind
+       the modal explaining why is the app blaming itself for doing the right
+       thing. The modal is the message in that case. */
+    if(passwordChangeForced) return;
     /* The login path used to surface this on the login form — which this
        function had already hidden, so the message went nowhere. It lands in
        the shell now, with a retry. */
@@ -2621,7 +2724,11 @@ function projectsUnder(clientId){
 function clientBadge(c){
   if(c.isSystem) return '<span class="badge badge-system">system</span>';
   if(c.status==='archived') return '<span class="badge badge-archived">archived</span>';
-  if(c.status==='deal_closed') return '<span class="badge badge-deal">deal closed</span>';
+  /* "client closed", not "deal closed" — the studio renamed the action and a
+     badge that still said the old thing would describe the same state by
+     another name. The stored value is unchanged: it is still 'deal_closed',
+     because renaming a status value would break every row already carrying it. */
+  if(c.status==='deal_closed') return '<span class="badge badge-deal">client closed</span>';
   return '';
 }
 function projectBadge(p){
@@ -2647,12 +2754,12 @@ function renderContextPickers(){
   }else{
     clientSel.style.display = '';
     /* A <option> cannot carry markup, so the badge is spelled out in the text.
-       Somebody picking a client from the header should see that its deal is
-       closed without opening the Projects tab to find out. */
+       Somebody picking a client from the header should see that it is closed
+       without opening the Projects tab to find out. */
     clientSel.innerHTML = '<option value="">Select a client…</option>' +
       state.clients.map(c=>{
         const n = projectsUnder(c.id).length;
-        const tag = c.status==='deal_closed' ? ' · deal closed' : '';
+        const tag = c.status==='deal_closed' ? ' · client closed' : '';
         return `<option value="${c.id}"${c.id===state.clientContextId?' selected':''}>${escapeHTML(c.name)}${n?` (${n})`:''}${tag}</option>`;
       }).join('');
   }
@@ -3794,7 +3901,22 @@ function renderList(){
       ? picked.sort((x,y)=>roundEndedAt(y)-roundEndedAt(x))
       : picked;
   };
-  const shownRows = inGroup(state.listGroup);
+  /* The Inactive tab's own filter, applied to its rows and to nothing else.
+     
+     Deliberately NOT folded into filteredAssets(): that pool feeds the Board,
+     the tab counts and the pruning of the selection, and narrowing it here
+     would make a choice meant to shrink one pile change all three. The tab
+     counts above therefore keep saying how many rows the tab holds, and the
+     bar below says how many of them the filter is showing — two numbers that
+     answer two different questions. */
+  const inactiveNarrow = (rows)=>{
+    const f = state.inactiveFilter;
+    return rows.filter(r=>
+      (!f.category || r.a.category === f.category) &&
+      (!f.type || r.a.type === f.type));
+  };
+  const groupRows = inGroup(state.listGroup);
+  const shownRows = state.listGroup==='inactive' ? inactiveNarrow(groupRows) : groupRows;
 
   /* The counts are of ROWS — one badge unit is one round, which is one line in
      the list below it. An asset handed on twice counts three times across the
@@ -3805,15 +3927,78 @@ function renderList(){
     return `<button class="sub-tab${g.id===state.listGroup?' active':''}" data-group="${g.id}">${g.label} <span class="sub-tab-count">${n}</span></button>`;
   }).join('')}</div>`;
 
-  const wire = ()=>document.querySelectorAll('#listView .sub-tab').forEach(b=>{
-    b.addEventListener('click', ()=>{ state.listGroup = b.dataset.group; renderList(); });
-  });
+  /* --- the Inactive tab's filter bar --------------------------------------
+   *
+   * Only on Inactive, because that is the only tab a bulk action starts from:
+   * Assign & Schedule applies to Not Assigned assets, and the point of the
+   * filter is to shrink that pile before ticking it.
+   *
+   * Always on screen while the tab is open, set or not. A filter that appears
+   * only once it is set is a filter somebody forgets they set, and the row
+   * they then cannot find looks like missing data rather than a narrowing they
+   * chose. The count on the right says exactly what it is doing.
+   *
+   * The options are built from the tab's OWN rows rather than from the whole
+   * reference list, so the dropdown never offers a category that would show
+   * nothing. What it cannot offer is Project or Client: the Assets List is
+   * already one project, under one client, chosen in the header — a control
+   * for either would have a single option in it.
+   */
+  const inactiveBar = ()=>{
+    if(state.listGroup !== 'inactive') return '';
+    const f = state.inactiveFilter;
+    const present = (get)=>[...new Set(groupRows.map(r=>get(r.a)).filter(Boolean))];
+    const cats = present(a=>a.category).map(id=>({ id, label: categoryLabel(id) }))
+      .sort((x,y)=>x.label.localeCompare(y.label));
+    const kinds = present(a=>a.type).map(id=>({ id, label: typeOf(id).label }))
+      .sort((x,y)=>x.label.localeCompare(y.label));
+    /* A value that is set but no longer present keeps its option, or the
+       browser would silently move the select to the first entry and the list
+       would disagree with the control above it. */
+    const opts = (list, selected, none)=>{
+      const orphan = selected && !list.some(x=>x.id===selected)
+        ? `<option value="${escapeHTML(selected)}" selected>${escapeHTML(selected)}</option>` : '';
+      return `<option value=""${selected?'':' selected'}>${none}</option>` + orphan +
+        list.map(x=>`<option value="${escapeHTML(x.id)}"${x.id===selected?' selected':''}>${escapeHTML(x.label)}</option>`).join('');
+    };
+    const on = Boolean(f.category || f.type);
+    return `<div class="list-filter">
+      <span class="lf-label">Narrow by</span>
+      <select id="lfCategory" title="Category">${opts(cats, f.category, 'All categories')}</select>
+      <select id="lfType" title="Scope of Work">${opts(kinds, f.type, 'All scopes of work')}</select>
+      ${on ? `<button class="btn btn-ghost btn-sm" id="lfClear">Clear</button>` : ''}
+      <span class="lf-count">${on
+        ? `showing ${shownRows.length} of ${groupRows.length}`
+        : `${groupRows.length} not assigned`}</span>
+    </div>`;
+  };
+  const filterBar = inactiveBar();
+
+  const wire = ()=>{
+    document.querySelectorAll('#listView .sub-tab').forEach(b=>{
+      b.addEventListener('click', ()=>{ state.listGroup = b.dataset.group; renderList(); });
+    });
+    const set = (key)=>(e)=>{ state.inactiveFilter[key] = e.target.value; renderList(); };
+    const cat = document.getElementById('lfCategory');
+    const kind = document.getElementById('lfType');
+    const clear = document.getElementById('lfClear');
+    if(cat) cat.addEventListener('change', set('category'));
+    if(kind) kind.addEventListener('change', set('type'));
+    if(clear) clear.addEventListener('click', ()=>{
+      state.inactiveFilter = { category:'', type:'' }; renderList();
+    });
+  };
 
   if(!shownRows.length){
     /* Three different nothings, and saying which matters. Nothing in this tab;
        nothing matching the search; or — for a contributor — nothing in the
        project that is theirs, which is not the same as an empty project. */
-    const why = state.listGroup === 'history'
+    const why = (state.listGroup === 'inactive' && groupRows.length)
+      /* A fourth, added with the filter: the tab has rows and the narrowing is
+         what is hiding them. Saying "no assets match" there would send
+         somebody looking for data that is right in front of them. */
+      ? 'Nothing here matches that filter. Clear it to see the rest.'
+      : state.listGroup === 'history'
       /* Its own wording. "No history assets match" would read as a filter
          problem, when the usual answer is that nothing here has changed hands
          — which is not a fault and is worth saying plainly. */
@@ -3821,7 +4006,7 @@ function renderList(){
       : (matching.length
           ? `No ${ASSET_LIST_TABS.find(g=>g.id===state.listGroup).label.toLowerCase()} assets match.`
           : (state.assets.length ? 'No assets match.' : emptyBoardReason()));
-    el.innerHTML = tabs + `<div class="empty">${why}</div>`;
+    el.innerHTML = tabs + filterBar + `<div class="empty">${why}</div>`;
     wire();
     return;
   }
@@ -3877,7 +4062,21 @@ function renderList(){
   const tickedHere = selectable.filter(id=>selectedAssets.has(id));
   const allTicked = selectable.length > 0 && tickedHere.length === selectable.length;
   const chosen = bulk ? matching.filter(x=>selectedAssets.has(x.id)) : [];
-  const elsewhere = chosen.length - tickedHere.length;
+  /* Ticked, in THIS tab, and hidden by the tab's own filter.
+     
+     Counted separately from `elsewhere` because the two are different facts and
+     the bar used to conflate them: after narrowing the Inactive list, an asset
+     ticked before the narrowing is still in this tab and still going to be
+     assigned — telling somebody it is "on another tab" would send them looking
+     for it under Active. The tab filter deliberately does not drop the tick,
+     for the same reason changing tab does not: a selection somebody built is
+     not the filter's to throw away. */
+  const shownIds = new Set(shownRows.map(r=>r.a.id));
+  const hiddenHere = state.listGroup==='inactive'
+    ? new Set(groupRows.filter(r=>selectedAssets.has(r.a.id) && !shownIds.has(r.a.id))
+        .map(r=>r.a.id)).size
+    : 0;
+  const elsewhere = chosen.length - tickedHere.length - hiddenHere;
 
   /* The bar only exists while something is selected, so the list is unchanged
      for anybody who is not using this. */
@@ -3890,8 +4089,11 @@ function renderList(){
      than a single button that quietly skips two thirds of what they ticked.
      An action that reaches nothing is disabled and says so. */
   const bar = (bulk && chosen.length) ? `<div class="bulk-bar">
-      <span class="bulk-count">${chosen.length} selected${elsewhere
-        ? ` <span style="font-weight:400;color:var(--ink-muted);">(${elsewhere} on ${elsewhere===1?'another tab':'other tabs'})</span>`
+      <span class="bulk-count">${chosen.length} selected${(elsewhere || hiddenHere)
+        ? ` <span style="font-weight:400;color:var(--ink-muted);">(${[
+            elsewhere ? `${elsewhere} on ${elsewhere===1?'another tab':'other tabs'}` : '',
+            hiddenHere ? `${hiddenHere} hidden by the filter` : '',
+          ].filter(Boolean).join(', ')})</span>`
         : ''}</span>
       <button class="btn btn-ghost btn-sm" id="bulkClear">Clear</button>
       ${actions.map(act=>{
@@ -3908,7 +4110,7 @@ function renderList(){
         : ''}</th>`
     : '';
 
-  el.innerHTML = tabs + bar + `<table><thead><tr>${headBox}<th>Code</th><th>Assets Name</th><th>Category</th><th>Scope of Work</th><th>Man Hours</th><th>Start Date</th><th>End Date (Deadline)</th><th>Status</th><th>Assignee</th><th>Round</th><th>Priority</th><th>Tasks</th><th>Time Spent</th></tr></thead><tbody>
+  el.innerHTML = tabs + filterBar + bar + `<table><thead><tr>${headBox}<th>Code</th><th>Assets Name</th><th>Category</th><th>Scope of Work</th><th>Man Hours</th><th>Start Date</th><th>End Date (Deadline)</th><th>Status</th><th>Assignee</th><th>Round</th><th>Priority</th><th>Tasks</th><th>Time Spent</th></tr></thead><tbody>
     ${rows.map(({a, ep}, rowIndex)=>{
       const t=typeOf(a.type), doneTasks=a.tasks.filter(x=>x.done).length;
       /* A finished stretch shows where that person LEFT it — somebody who took
@@ -4863,6 +5065,10 @@ async function renderUsers(sections = userSections()){
         const mayAdminister = caps().projectScope==='all' ? true : !targetRunsStudio;
         const canDelete = can('user.delete') && mayAdminister && x.id!==u.id && !targetRunsStudio;
         const canEditRow = can('user.edit') && mayAdminister;
+        /* Not your own — Profile is where you change that, with your current
+           password. The server refuses it either way; the button is left off so
+           nobody is offered an action that will be turned down. */
+        const canReset = can('user.reset_password') && mayAdminister && x.id!==u.id;
         /* Top of the hierarchy is stated, not left blank: an empty cell reads as
            "nobody has filled this in yet", which invites someone to fill it in. */
         const reporting = x.topOfHierarchy
@@ -4875,6 +5081,7 @@ async function renderUsers(sections = userSections()){
           <td>${reporting}</td>
           <td style="text-align:right;white-space:nowrap;">
             ${canEditRow ? `<button class="btn btn-ghost btn-sm editUserBtn" data-id="${x.id}">Edit</button>` : ''}
+            ${canReset ? `<button class="btn btn-ghost btn-sm resetPwBtn" data-id="${x.id}" data-name="${escapeHTML(x.name)}">Reset password</button>` : ''}
             ${canDelete ? `<button class="btn btn-ghost btn-sm delUserBtn" data-id="${x.id}" data-name="${escapeHTML(x.name)}">Remove</button>` : ''}</td></tr>`;
       }).join('')}
     </tbody></table>
@@ -4893,6 +5100,9 @@ async function renderUsers(sections = userSections()){
   if(lm) lm.addEventListener('click', ()=>{ state.usersRenderLimit+=60; renderUsersTab(); });
   el.querySelectorAll('.editUserBtn').forEach(btn=>btn.addEventListener('click', ()=>openEditUser(btn.dataset.id)));
   el.querySelectorAll('.userDetailBtn').forEach(btn=>btn.addEventListener('click', ()=>openUserDetail(btn.dataset.id)));
+  el.querySelectorAll('.resetPwBtn').forEach(btn=>{
+    btn.addEventListener('click', ()=>openResetPassword(btn.dataset.id, btn.dataset.name));
+  });
   el.querySelectorAll('.delUserBtn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       if(!confirm(`Remove ${btn.dataset.name} from the studio?`)) return;
@@ -5125,15 +5335,15 @@ function clientDetailHTML(c){
         <div style="font-size:18px;font-weight:600;display:flex;align-items:center;gap:8px;">${escapeHTML(c.name)}${clientBadge(c)}</div>
         ${c.contactName||c.contactEmail ? `<div class="client-meta">${escapeHTML(c.contactName||'')}${c.contactEmail?` · <span class="mono">${escapeHTML(c.contactEmail)}</span>`:''}</div>`:''}
         ${c.notes ? `<div class="client-notes" style="margin-top:6px;">${escapeHTML(c.notes)}</div>`:''}
-        ${c.status==='deal_closed' ? `<div class="client-notes" style="margin-top:6px;">The deal is closed, so no new projects go under this client. Projects already here keep running.</div>`:''}
+        ${c.status==='deal_closed' ? `<div class="client-notes" style="margin-top:6px;">This client is closed, so no new projects go under it. Projects already here keep running.</div>`:''}
         ${c.status==='archived' ? `<div class="client-notes" style="margin-top:6px;">Archived — nothing is deleted. Restore to bring this client and its projects back.</div>`:''}
       </div>
       ${can('client.edit') && c.status==='active' ? `<button class="btn btn-ghost" id="editClientBtn" data-client="${c.id}">Edit client</button>` : ''}
     </div>
     <div class="lifecycle-actions">
       ${can('client.close') && !c.isSystem && c.isActive ? (c.status==='deal_closed'
-        ? `<button class="btn btn-ghost btn-sm" id="reopenDealBtn" data-client="${c.id}">Reopen deal</button>`
-        : `<button class="btn btn-ghost btn-sm" id="closeDealBtn" data-client="${c.id}">Mark deal closed</button>`) : ''}
+        ? `<button class="btn btn-ghost btn-sm" id="reopenDealBtn" data-client="${c.id}">Reopen client</button>`
+        : `<button class="btn btn-ghost btn-sm" id="closeDealBtn" data-client="${c.id}">Mark Client Closed</button>`) : ''}
       ${can('client.delete') && !c.isSystem ? (c.isActive
         ? `<button class="btn btn-ghost btn-sm" id="archiveClientBtn" data-client="${c.id}">Archive client</button>`
         : `<button class="btn btn-ghost btn-sm" id="restoreClientBtn" data-client="${c.id}">Restore client</button>`) : ''}
@@ -5229,16 +5439,16 @@ function wireProjects(){
 
   on('closeDealBtn', async ()=>{
     const c = clientOf(document.getElementById('closeDealBtn'));
-    if(!confirm(`Mark the deal with ${c.name} as closed?\n\nNo new projects can be added under it. Projects already running are left alone — close those separately if the work is finished too.`)) return;
+    if(!confirm(`Mark ${c.name} as closed?\n\nNo new projects can be added under it. Projects already running are left alone — close those separately if the work is finished too.`)) return;
     try{
       const res = await api(`/clients/${c.id}/close-deal`, { method:'POST' });
       await bootApp(); await renderProjects();
       showToast(res.stillRunning.length
-        ? `Deal closed. ${res.stillRunning.length} project${res.stillRunning.length===1?'':'s'} still running.`
-        : 'Deal closed.');
+        ? `Client closed. ${res.stillRunning.length} project${res.stillRunning.length===1?'':'s'} still running.`
+        : 'Client closed.');
     }catch(err){ showToast(err.message); }
   });
-  on('reopenDealBtn', ()=>act(`/clients/${clientOf(document.getElementById('reopenDealBtn')).id}/reopen-deal`, {}, 'Deal reopened.'));
+  on('reopenDealBtn', ()=>act(`/clients/${clientOf(document.getElementById('reopenDealBtn')).id}/reopen-deal`, {}, 'Client reopened.'));
   /* Archiving takes the client out of the default list, so without this the
      screen empties the moment the button is pressed — taking with it the
      Restore and Delete permanently buttons that only exist once it IS
@@ -8307,8 +8517,100 @@ function passwordMeetsPolicy(pw){
   return Boolean(passwordPolicy) && passwordPolicy.rules.every(r => checkRule(r.id, pw));
 }
 
+/* ---------- resetting somebody else's password ----------
+ *
+ * Two steps in one modal: confirm, then hand over what came back. The second
+ * step is the only time the temporary password exists anywhere a person can
+ * read it — it is hashed on the way into the database and nothing can retrieve
+ * it — so the panel says so rather than letting somebody close it expecting to
+ * find it again later.
+ */
+const resetPwWrap = document.getElementById('resetPwWrap');
+let resetPwTarget = null;
+
+function closeResetPw(){ resetPwWrap.classList.remove('show'); resetPwTarget = null; }
+
+function openResetPassword(id, name){
+  resetPwTarget = { id, name };
+  document.getElementById('rp_title').textContent = `Reset password for ${name}`;
+  document.getElementById('rp_err').textContent = '';
+  document.getElementById('rp_body').innerHTML = `
+    <p>This gives ${escapeHTML(name)} a temporary password and signs out every device they are
+      signed in on. They will have to choose a new password before they can use the app again.</p>
+    <p>You will see the temporary password once, on the next screen, to pass on to them.
+      You will never see the password they then choose.</p>`;
+  const confirm = document.getElementById('rp_confirm');
+  confirm.style.display = '';
+  confirm.disabled = false;
+  confirm.textContent = 'Reset password';
+  document.getElementById('rp_cancel').textContent = 'Cancel';
+  resetPwWrap.classList.add('show');
+}
+
+document.getElementById('rp_cancel').addEventListener('click', closeResetPw);
+resetPwWrap.addEventListener('click', e=>{ if(e.target===resetPwWrap) closeResetPw(); });
+document.getElementById('rp_confirm').addEventListener('click', async ()=>{
+  if(!resetPwTarget) return;
+  const btn = document.getElementById('rp_confirm');
+  const err = document.getElementById('rp_err');
+  err.textContent = '';
+  btn.disabled = true; btn.textContent = 'Resetting…';
+  let res;
+  try{
+    res = await api(`/users/${resetPwTarget.id}/reset-password`, { method:'POST' });
+  }catch(e){
+    err.textContent = e.message;
+    btn.disabled = false; btn.textContent = 'Reset password';
+    return;
+  }
+  document.getElementById('rp_title').textContent = `Temporary password for ${resetPwTarget.name}`;
+  document.getElementById('rp_body').innerHTML = `
+    <p>Give ${escapeHTML(resetPwTarget.name)} this password. It is shown once and cannot be
+      looked up again — if it is lost, reset the password a second time.</p>
+    <div class="temp-pw" id="rp_value">${escapeHTML(res.temporaryPassword)}</div>
+    <p>${escapeHTML(res.message || '')}</p>`;
+  btn.style.display = 'none';
+  document.getElementById('rp_cancel').textContent = 'Done';
+  showToast(`Password reset for ${resetPwTarget.name}.`);
+});
+
+/* Is this session locked out of everything but its own password?
+ *
+ * One flag, set from the login response and from any 403 that says so, and
+ * read in the two places that must not let somebody past: the Close button on
+ * the modal, and the click-outside handler. The server is the real lock — see
+ * ALLOWED_WHILE_LOCKED in src/middleware/auth.js — so this only decides whether
+ * the page pretends otherwise. */
+let passwordChangeForced = false;
+
+function paintForcedPasswordChange(){
+  const banner = document.getElementById('pf_forced');
+  const close = document.getElementById('cancelProfileModal');
+  const heading = document.getElementById('pf_heading');
+  if(banner) banner.hidden = !passwordChangeForced;
+  /* Hidden rather than disabled: a disabled Close still reads as a way out
+     that is temporarily unavailable, and there is no way out. */
+  if(close) close.style.display = passwordChangeForced ? 'none' : '';
+  if(heading) heading.textContent = passwordChangeForced ? 'Change your password' : 'Your Profile';
+  /* The photo section is not part of getting out of this state, and offering
+     it would invite somebody to spend a locked session cropping a picture. */
+  document.querySelectorAll('#profileModalWrap .photo-row, #profileModalWrap #pf_preview, '
+    + '#profileModalWrap #pf_photo_label, #profileModalWrap #pf_photo_err')
+    .forEach(el=>{ el.style.display = passwordChangeForced ? 'none' : ''; });
+}
+
+/* Called when the API says this account must change its password: at sign-in,
+   and on any later 403 carrying the flag — which is what catches a reset that
+   happens while somebody is already signed in. */
+function forcePasswordChange(){
+  if(passwordChangeForced) return;
+  passwordChangeForced = true;
+  openProfileModal();
+}
+
 async function openProfileModal(){
   const u = state.currentUser;
+  paintForcedPasswordChange();
   document.getElementById('pf_identity').innerHTML =
     `<strong>${escapeHTML(u.name)}</strong><br><span class="mono" style="font-size:11.5px;color:var(--ink-muted);">${escapeHTML(u.email)}</span>`;
   PF_FIELDS.forEach(f => { document.getElementById(f).value = ''; });
@@ -8579,7 +8881,158 @@ document.getElementById('pf_remove').addEventListener('click', removeProfilePhot
  * background window costs nothing, and the catch-up on return is a single
  * request rather than the hundred that would have queued.
  */
+/* ---------- desktop notifications ----------------------------------------
+ *
+ * The studio asked for these to be "forceful". What that can mean on the web,
+ * and what it cannot, is worth stating plainly because the difference is not a
+ * shortcut anybody took:
+ *
+ *   A browser will not show a notification from a site the person has not
+ *   granted permission to, and permission can only be granted through the
+ *   browser's own prompt. No page can raise that prompt more than once per
+ *   decision, suppress it, pre-answer it, or work around a refusal. A site that
+ *   has been denied is denied until the person changes it in browser settings.
+ *
+ * So "forceful" here is: everyone is asked, everyone who has not answered is
+ * asked again on their next sign-in, there is no in-app switch to turn these
+ * off once granted, and anybody the browser has refused is TOLD so, in a bar
+ * they cannot miss, rather than left wondering why nothing arrives. That is
+ * the ceiling, and the bar is what makes the ceiling visible.
+ *
+ * Two further conditions the page cannot change either, and both are reported
+ * in the same bar rather than failing silently:
+ *
+ *   A SECURE CONTEXT. Notification is unavailable over plain http. On a
+ *   deployment served without https this can never work, whatever anybody
+ *   grants, so the bar says that instead of offering a button that does
+ *   nothing.
+ *
+ *   THE OPERATING SYSTEM. Granting the browser permission is not the same as
+ *   the browser being allowed to post to the desktop. A person with Focus or
+ *   Do Not Disturb on gets nothing, and the page is never told.
+ */
+const NOTIF_ASK_AGAIN_MS = 24 * 60 * 60 * 1000;   // a dismissal postpones, never cancels
+const NOTIF_ASK_KEY = 'zvky_notif_asked_at';
+
+const desktopSupported = () => typeof Notification !== 'undefined';
+const desktopState = () => {
+  if (!window.isSecureContext) return 'insecure';
+  if (!desktopSupported()) return 'unsupported';
+  return Notification.permission;            // 'granted' | 'denied' | 'default'
+};
+
+/* Raise one, and never let it break the caller.
+ *
+ * `tag` collapses a burst: five assignments in one poll replace each other on
+ * the desktop rather than stacking, which is the same reasoning as the single
+ * in-app toast. Clicking one focuses this window and runs `onOpen`, so a
+ * notification is a way back into the work rather than only an announcement. */
+function desktopNotify({ title, body, tag, onOpen }){
+  if(desktopState() !== 'granted') return null;
+  try{
+    const n = new Notification(title, {
+      body,
+      tag: tag || 'zvky',
+      icon: '/favicon.ico',
+      /* Not renotify: a replaced notification that buzzes again is what makes
+         people turn the whole thing off. */
+    });
+    n.onclick = ()=>{
+      try{ window.focus(); }catch{}
+      n.close();
+      if(onOpen) { try{ onOpen(); }catch{} }
+    };
+    return n;
+  }catch(err){
+    /* Some browsers throw on `new Notification` in contexts that only allow
+       the service-worker form. Nothing to do about it, and a chat poll must
+       not stop because of it. */
+    return null;
+  }
+}
+
+function paintNotifPermBar(){
+  const bar = document.getElementById('notifPermBar');
+  if(!bar) return;
+  const msg = document.getElementById('pb_msg');
+  const allow = document.getElementById('pb_allow');
+  const later = document.getElementById('pb_later');
+  const icon = document.getElementById('pb_icon');
+  const state = desktopState();
+
+  let show = false;
+  if(state === 'denied'){
+    show = true;
+    icon.textContent = '🔕';
+    msg.innerHTML = '<strong>Desktop notifications are blocked by your browser.</strong> '
+      + 'Assignments and messages will still appear in the bell and the chat panel, but nothing '
+      + 'will pop up outside this tab. Only you can change this: open your browser\u2019s site '
+      + 'settings for this address and set Notifications to Allow, then reload.';
+    allow.style.display = 'none';
+    /* No dismiss either. This is a state to fix, not a message to clear, and
+       hiding it would put somebody back to not knowing why nothing arrives. */
+    later.style.display = 'none';
+  }else if(state === 'insecure'){
+    show = true;
+    icon.textContent = '🔕';
+    msg.innerHTML = '<strong>Desktop notifications need a secure connection.</strong> '
+      + 'This page is served over http, and browsers do not allow notifications there. '
+      + 'They will start working once the site is reached over https.';
+    allow.style.display = 'none';
+    later.style.display = 'none';
+  }else if(state === 'unsupported'){
+    show = false;   // nothing anybody can do, and no action to offer
+  }else if(state === 'default'){
+    const asked = Number(localStorage.getItem(NOTIF_ASK_KEY) || 0);
+    show = !asked || (Date.now() - asked) > NOTIF_ASK_AGAIN_MS;
+    icon.textContent = '🔔';
+    msg.innerHTML = '<strong>Turn on desktop notifications.</strong> '
+      + 'You will be told when work is assigned to you and when somebody messages you, even when '
+      + 'this tab is in the background.';
+    allow.style.display = '';
+    later.style.display = '';
+  }
+
+  bar.hidden = !show;
+  document.body.classList.toggle('perm-bar-on', show);
+}
+
+document.getElementById('pb_allow').addEventListener('click', async ()=>{
+  /* From a real click, always. Browsers ignore — or auto-deny — a permission
+     request that did not come from a gesture, and a refusal spent that way is
+     spent for good. */
+  try{ await Notification.requestPermission(); }catch{}
+  localStorage.setItem(NOTIF_ASK_KEY, String(Date.now()));
+  paintNotifPermBar();
+  if(desktopState() === 'granted'){
+    desktopNotify({ title: 'Notifications are on', body: 'This is what one looks like.', tag: 'zvky-test' });
+    showToast('Desktop notifications are on.');
+  }
+});
+document.getElementById('pb_later').addEventListener('click', ()=>{
+  /* Postpones, never cancels: the timestamp is what NOTIF_ASK_AGAIN_MS is
+     measured from, and signing in again asks regardless. There is deliberately
+     no "do not ask me again". */
+  localStorage.setItem(NOTIF_ASK_KEY, String(Date.now()));
+  paintNotifPermBar();
+});
+
+/* Asked on every sign-in, whatever was decided last time — which is the
+   "periodically if declined" half of the studio's requirement. A browser that
+   has been denied cannot be re-prompted, so for those this only paints the bar
+   explaining it. */
+function askForDesktopNotifications(){
+  if(desktopState() === 'default') localStorage.removeItem(NOTIF_ASK_KEY);
+  paintNotifPermBar();
+}
+
 const NOTIF_POLL_MS = 30000;
+/* A hidden tab still polls, just less often. It used to return immediately,
+   which was right when the only consumer was the on-screen bell — and became
+   wrong the moment a desktop notification was the point, since the background
+   tab is exactly when one is worth having. */
+const NOTIF_POLL_HIDDEN_MS = 90000;
+let lastHiddenNotifPoll = 0;
 /* `cursor` is the sequence number of the newest notification this tab has
    seen, not a timestamp: created_at has second precision and a reassignment
    raises two rows at once, so a time-based cursor could skip one for good. */
@@ -8713,7 +9166,11 @@ async function loadNotifications(){
    last look. Anything new both updates the list and raises a pop-up. */
 async function pollNotifications(){
   if(!state.token) { stopNotifications(); return; }
-  if(document.hidden) return;
+  if(document.hidden){
+    // Slower, not never: see NOTIF_POLL_HIDDEN_MS.
+    if(Date.now() - lastHiddenNotifPoll < NOTIF_POLL_HIDDEN_MS) return;
+    lastHiddenNotifPoll = Date.now();
+  }
   try{
     const q = notifState.cursor === null ? '' : '?since=' + encodeURIComponent(notifState.cursor);
     const res = await api('/notifications/poll' + q);
@@ -8727,6 +9184,18 @@ async function pollNotifications(){
          not stack five boxes up the side of the screen; the bell carries the
          count and the panel carries the rest. */
       showNotifToast(res.fresh[res.fresh.length - 1], res.fresh.length);
+      /* And on the desktop, for the same one. The in-app toast is only seen by
+         somebody already looking at this tab; this is the half that reaches
+         the person who is not. Same collapsing rule — one for the burst. */
+      const latest = res.fresh[res.fresh.length - 1];
+      desktopNotify({
+        title: res.fresh.length > 1
+          ? `${res.fresh.length} updates`
+          : (latest.kind === 'unassigned' ? 'Work reassigned' : 'Assigned to you'),
+        body: latest.message,
+        tag: 'zvky-work',
+        onOpen: ()=>openNotification({ id:latest.id, asset:latest.assetId, project:latest.projectId }),
+      });
     }
   }catch(err){ /* a blip must not stop the polling */ }
 }
@@ -8918,7 +9387,10 @@ async function markChatRead(){
 /* The poll. Cheap: a count, plus whatever has arrived since the last look. */
 async function pollChat(){
   if(!state.token){ stopChat(); return; }
-  if(document.hidden) return;
+  /* A hidden tab polls on the slow cadence scheduleChatPoll() already sets for
+     it (CHAT_POLL_HIDDEN_MS) rather than not at all. It used to return here,
+     which made that cadence dead code — and meant the one situation a desktop
+     notification exists for was the one situation nothing was fetched. */
   try{
     const q = chatState.cursor === null ? '' : '?since=' + encodeURIComponent(chatState.cursor);
     const res = await api('/chat/poll' + q);
@@ -8945,6 +9417,30 @@ async function pollChat(){
         await markChatRead();
       }
     }
+    /* On the desktop, for messages from other people.
+     *
+     * Skipped only for the thread that is open in a focused window: a pop-up
+     * about the line somebody is watching arrive is noise, and it is the one
+     * case where the message has already been delivered to their attention.
+     * Everything else — panel shut, another conversation, another tab, another
+     * application — raises one. */
+    const others = res.fresh.filter(m=>m.senderId !== state.currentUser.id);
+    const watching = chatState.open && chatState.view === 'thread' && document.hasFocus();
+    const worthTelling = others.filter(m=>!(watching && m.conversationId === chatState.conversationId));
+    if(worthTelling.length){
+      const last = worthTelling[worthTelling.length - 1];
+      const from = last.senderName || 'Someone';
+      desktopNotify({
+        title: worthTelling.length > 1 ? `${worthTelling.length} new messages` : from,
+        body: last.body || 'Sent an attachment',
+        tag: 'zvky-chat',
+        onOpen: async ()=>{
+          if(!chatState.open) await openChatPanel({ resetView: false });
+          await openChatConversation(last.conversationId);
+        },
+      });
+    }
+
     if(chatState.open && chatState.view === 'list'){ await loadChatList(); renderChat(); }
     else if(res.fresh.some(m=>m.conversationId !== chatState.conversationId)){
       // Keep the list fresh underneath, so going back shows the right order.
@@ -9680,8 +10176,15 @@ function startTour({ auto = false } = {}){
 
 document.getElementById('tourBtn').addEventListener('click', ()=>startTour());
 document.getElementById('profileBtn').addEventListener('click', openProfileModal);
-document.getElementById('cancelProfileModal').addEventListener('click', ()=>profileModalWrap.classList.remove('show'));
-profileModalWrap.addEventListener('click', e=>{ if(e.target===profileModalWrap) profileModalWrap.classList.remove('show'); });
+document.getElementById('cancelProfileModal').addEventListener('click', ()=>{
+  if(passwordChangeForced) return;
+  profileModalWrap.classList.remove('show');
+});
+profileModalWrap.addEventListener('click', e=>{
+  // Clicking the backdrop is the other way out, and it is shut for the same reason.
+  if(passwordChangeForced) return;
+  if(e.target===profileModalWrap) profileModalWrap.classList.remove('show');
+});
 
 document.querySelectorAll('.pw-toggle').forEach(btn=>{
   btn.addEventListener('click', ()=>{
@@ -9726,7 +10229,14 @@ async function submitPasswordChange(){
     const res = await api('/auth/password', { method:'POST', body:{ currentPassword, newPassword, confirmPassword } });
     /* The old token was invalidated by the change; keep this session on the new one. */
     if(res.token){ state.token = res.token; localStorage.setItem('zvky_token', res.token); }
+    /* Out of the locked state, and the page has to be drawn: everything it
+       tried to load while locked came back 403, so the screen behind this
+       modal is empty. */
+    const wasForced = passwordChangeForced;
+    passwordChangeForced = false;
+    paintForcedPasswordChange();
     profileModalWrap.classList.remove('show');
+    if(wasForced){ if(state.currentUser) state.currentUser.mustChangePassword = 0; await boot(); }
     PF_FIELDS.forEach(f => { document.getElementById(f).value = ''; });
     showToast(res.message || 'Password changed.');
   }catch(err){

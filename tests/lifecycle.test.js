@@ -20,13 +20,44 @@ test('the three states are independent axes', () => {
 
   const client = { name: 'C', is_active: 1, deal_closed_at: null };
   assert.ok(lifecycle.clientTakesNewProjects(client));
-  assert.match(lifecycle.clientRefusal({ ...client, deal_closed_at: new Date() }), /deal with C is closed/);
+  assert.match(lifecycle.clientRefusal({ ...client, deal_closed_at: new Date() }), /^C is closed/);
   assert.match(lifecycle.clientRefusal({ ...client, is_active: 0 }), /archived/);
 
   // A closed deal says nothing about whether the client is archived, and a
   // closed project says nothing about its client.
   assert.ok(!lifecycle.clientTakesNewProjects({ ...client, deal_closed_at: new Date() }));
   assert.ok(lifecycle.projectIsOpen(open), 'a project is judged on its own two columns');
+});
+
+test('the action is called Mark Client Closed, and nothing underneath it moved', () => {
+  /* A rename of DISPLAY TEXT only. Four things deliberately did not change, and
+     each would have broken something if it had:
+
+       the stored value    'deal_closed' is on every client row already closed
+       the permission key  'client.close' is in every role's granted set
+       the route path      the Activity Log names actions by path, so renaming
+                           the route would rewrite the audit trail's wording
+       the column          clients.deal_closed_at is what schema-check looks for
+
+     This test exists because the next person to read "deal" in the code will be
+     tempted to finish the job, and finishing it is the bug. */
+  const page = require('fs').readFileSync(
+    require('path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  assert.ok(page.includes('>Mark Client Closed<'), 'the button carries the new label');
+  assert.ok(page.includes('>Reopen client<'), 'and so does its opposite');
+  assert.ok(!/>Mark deal closed</.test(page), 'the old label is gone from the page');
+  assert.ok(!/badge-deal">deal closed</.test(page), 'and from the badge beside it');
+
+  const routes = require('fs').readFileSync(
+    require('path').join(__dirname, '..', 'src', 'routes', 'clients.js'), 'utf8');
+  assert.ok(routes.includes("'/:id/close-deal'"), 'the route path is untouched');
+  assert.ok(routes.includes("'/:id/reopen-deal'"));
+  assert.ok(routes.includes('deal_closed_at'), 'and so is the column');
+  assert.ok(page.includes("c.status==='deal_closed'"), 'and so is the status value');
+  assert.ok(catalog.KEYS.includes('client.close'), 'and so is the permission key');
+  assert.strictEqual(catalog.BY_KEY.get('client.close').label, 'Close / Reopen Client',
+    'while the Settings label follows the button it gates');
+  assert.ok(!/Deal closed\./.test(page), 'and the toast after the action says Client closed');
 });
 
 test('the new permission keys are in the right groups', () => {
@@ -349,7 +380,7 @@ test('client and project lifecycle', { skip: cfg ? false : SKIP_REASON }, async 
     assert.strictEqual(warned.status, 409);
     assert.strictEqual(warned.body.requiresConfirmation, true);
     assert.deepStrictEqual(warned.body.activeProjects.map((p) => p.name).sort(), ['One', 'Two']);
-    assert.match(warned.body.error, /mark the deal closed instead/);
+    assert.match(warned.body.error, /mark the client closed instead/);
 
     const done = await as('root', `/clients/${clientId}?confirm=1`, { method: 'DELETE' });
     assert.strictEqual(done.status, 200);
@@ -414,7 +445,7 @@ test('client and project lifecycle', { skip: cfg ? false : SKIP_REASON }, async 
     // No new projects, through either door.
     const direct = await as('root', '/projects', { method: 'POST', body: { clientId, name: 'Nope' } });
     assert.strictEqual(direct.status, 409);
-    assert.match(direct.body.error, /deal with Deal Co is closed/);
+    assert.match(direct.body.error, /Deal Co is closed/);
     const viaClient = await as('root', `/clients/${clientId}`, {
       method: 'PATCH', body: { projects: [{ name: 'Nope' }] },
     });
@@ -437,10 +468,10 @@ test('client and project lifecycle', { skip: cfg ? false : SKIP_REASON }, async 
     await as('root', `/clients/${clientId}?confirm=1`, { method: 'DELETE' });
   });
 
-  await t.test('the placeholder client has no deal to close', async () => {
+  await t.test('the placeholder client cannot be closed', async () => {
     const res = await as('root', `/clients/${systemClient}/close-deal`, { method: 'POST' });
     assert.strictEqual(res.status, 409);
-    assert.match(res.body.error, /no deal to close/);
+    assert.match(res.body.error, /not a client that can be closed/);
   });
 
   // --- permissions ---------------------------------------------------------------

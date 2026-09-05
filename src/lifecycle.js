@@ -12,7 +12,7 @@
 //               working.
 //   closed    — a project whose work is finished. It takes no new assets and
 //               its existing ones are read-only.
-//   deal closed — a client whose engagement is finished. No new projects go
+//   client closed — a client whose engagement is finished. No new projects go
 //               under it. Its existing projects are NOT touched: closing a
 //               deal is a commercial fact, and work in flight on it is a
 //               separate decision somebody makes per project.
@@ -45,7 +45,7 @@ function clientTakesNewProjects(client) {
 function clientRefusal(client) {
   if (!client) return 'That client does not exist.';
   if (!client.is_active) return `${client.name} is archived. Restore it before adding projects.`;
-  if (client.deal_closed_at) return `The deal with ${client.name} is closed, so it takes no new projects. Reopen it first.`;
+  if (client.deal_closed_at) return `${client.name} is closed, so it takes no new projects. Reopen it first.`;
   return null;
 }
 

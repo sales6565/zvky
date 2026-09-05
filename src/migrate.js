@@ -2192,6 +2192,60 @@ async function ensureTimesheetFlag(db, log) {
   }
 }
 
+/* A password an administrator reset, and the change it forces.
+ *
+ * Two pieces, both here because both have to survive a deployment that has
+ * already run:
+ *
+ *   users.must_change_password  set when somebody else resets your password,
+ *                               cleared when you choose a new one. While it is
+ *                               set the API answers nothing but the change, so
+ *                               the temporary password cannot be used to work.
+ *
+ *   the permission's default     'user.reset_password' has been in the catalogue
+ *                               for a while, implied by manageUsers and marked
+ *                               as not yet built. Every role with manageUsers
+ *                               therefore already has an enabled row for it. The
+ *                               studio asked for the action to arrive switched
+ *                               on for the Super Admin and nobody else, so those
+ *                               seeded rows are switched off — and ONLY the
+ *                               seeded ones. A row somebody has actually saved
+ *                               in Settings carries their email in
+ *                               updated_by_email, and is left exactly as they
+ *                               set it. That is also what makes this safe to run
+ *                               on every boot: once a person has granted it,
+ *                               this can never take it back.
+ */
+async function ensurePasswordReset(db, log) {
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users'
+        AND COLUMN_NAME = 'must_change_password'`
+  ).catch(() => ({ rows: [] }));
+  if (!rows.length) {
+    await db.query(
+      'ALTER TABLE users ADD COLUMN must_change_password TINYINT(1) NOT NULL DEFAULT 0');
+    log('Schema: added users.must_change_password.');
+  }
+
+  const { rows: tables } = await db.query(
+    `SELECT TABLE_NAME AS t FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('role_permissions','roles')`
+  ).catch(() => ({ rows: [] }));
+  if (tables.length < 2) return;
+
+  // db.query hands an UPDATE's OkPacket back as `result` — see src/db.js.
+  const { result } = await db.query(
+    `UPDATE role_permissions SET enabled = 0
+      WHERE permission_key = 'user.reset_password'
+        AND enabled = 1
+        AND updated_by_email = 'system'
+        AND role_key NOT IN (SELECT \`key\` FROM roles WHERE tier = 'super_admin')`
+  ).catch(() => ({ result: null }));
+  const n = (result && result.affectedRows) || 0;
+  if (n) log(`Permissions: "Reset User Password" switched off for ${n} designation(s) that had never been given it deliberately.`);
+}
+
 async function closeStrandedSessions(db, log) {
   const { rows: table } = await db.query(
     `SELECT TABLE_NAME AS t FROM information_schema.TABLES
@@ -2300,6 +2354,9 @@ const STEPS = [
   ['chat', ensureChat],
   // After the tables exist, and reading the window from the module that owns it.
   ['chat attachment expiry window', ensureChatExpiryWindow],
+  // After users and after role_permissions: it touches a column on one and a
+  // default on the other.
+  ['admin password reset', ensurePasswordReset],
   // Last: it reads assets.status, which every step above may have changed.
   ['stranded work sessions', closeStrandedSessions],
 ];

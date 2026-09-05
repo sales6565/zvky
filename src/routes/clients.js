@@ -367,7 +367,7 @@ router.delete('/:id', requirePermission('client.delete'), async (req, res) => {
   if (live.length && !confirmed) {
     return res.status(409).json({
       requiresConfirmation: true,
-      error: `${client.name} has ${live.length} project${live.length === 1 ? '' : 's'} still open. Close or move ${live.length === 1 ? 'it' : 'them'} first, mark the deal closed instead, or confirm to archive the client and everything under it.`,
+      error: `${client.name} has ${live.length} project${live.length === 1 ? '' : 's'} still open. Close or move ${live.length === 1 ? 'it' : 'them'} first, mark the client closed instead, or confirm to archive the client and everything under it.`,
       activeProjects: live.map((p) => ({ id: p.id, name: p.name })),
     });
   }
@@ -446,13 +446,13 @@ router.post('/:id/close-deal', requirePermission('client.close'), async (req, re
   const client = rows[0];
   if (!client) return res.status(404).json({ error: 'Client not found' });
   if (client.is_system) {
-    return res.status(409).json({ error: `${client.name} is where projects go when they have no client yet — it has no deal to close.` });
+    return res.status(409).json({ error: `${client.name} is where projects go when they have no client yet — it is not a client that can be closed.` });
   }
   if (client.deal_closed_at) return res.json({ ok: true, dealClosed: true, alreadyClosed: true });
 
   await db.query('UPDATE clients SET deal_closed_at = NOW() WHERE id = $1', [req.params.id]);
   const live = await lifecycle.activeProjectsUnder(db, req.params.id);
-  console.log(`${req.user.email} closed the deal with "${client.name}" (${live.length} project(s) left running).`);
+  console.log(`${req.user.email} closed the client "${client.name}" (${live.length} project(s) left running).`);
   res.json({
     ok: true,
     dealClosed: true,
@@ -467,7 +467,7 @@ router.post('/:id/reopen-deal', requirePermission('client.close'), async (req, r
   const client = rows[0];
   if (!client) return res.status(404).json({ error: 'Client not found' });
   await db.query('UPDATE clients SET deal_closed_at = NULL WHERE id = $1', [req.params.id]);
-  console.log(`${req.user.email} reopened the deal with "${client.name}".`);
+  console.log(`${req.user.email} reopened the client "${client.name}".`);
   res.json({ ok: true, dealClosed: false });
 });
 

@@ -27,6 +27,38 @@ const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON, sys
 
 const cfg = config('bulkAssign');
 
+test('the Inactive tab narrows before ticking, and narrows nothing else', () => {
+  /* The filter that feeds this action. It lives in the page, so what is pinned
+     here is the SHAPE of it — the browser check covers the behaviour.
+
+     What matters and is easy to undo by accident: the narrowing is applied to
+     the Inactive tab's rows and NOT inside filteredAssets(). That pool feeds
+     the Board, the tab counts and the pruning of the selection, so folding the
+     filter into it would make a choice meant to shrink one pile silently
+     change all three — including dropping ticks the person had already made. */
+  const page = require('fs').readFileSync(
+    require('path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
+
+  assert.ok(page.includes('inactiveFilter:{ category:\'\', type:\'\' }'),
+    'the filter has its own state, separate from the header search and scope');
+  assert.ok(/state\.listGroup==='inactive' \? inactiveNarrow\(groupRows\)/.test(page),
+    'and is applied to the Inactive tab\'s rows only');
+
+  const filtered = page.slice(page.indexOf('function filteredAssets()'));
+  assert.ok(!filtered.slice(0, filtered.indexOf('}')).includes('inactiveFilter'),
+    'filteredAssets stays the pool everything else reads');
+
+  // The two controls, and the honest reason there is no Project or Client one.
+  assert.ok(page.includes('id="lfCategory"') && page.includes('id="lfType"'));
+  assert.ok(page.includes('already one project, under one client'),
+    'the code says why Project and Client are not offered');
+
+  /* A tick hidden by the filter is still a tick. Losing it would make
+     "narrow, tick, widen, tick again" quietly assign less than it showed. */
+  assert.ok(page.includes('hidden by the filter'),
+    'and the bar counts them separately from ticks on other tabs');
+});
+
 test('the bulk action has a permission of its own, off by default', () => {
   const perm = catalogue.BY_KEY.get('asset.bulk_assign');
   assert.ok(perm, 'asset.bulk_assign is in the catalogue');

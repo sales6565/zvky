@@ -70,4 +70,46 @@ function describe() {
   return { minLength: MIN_LENGTH, maxLength: MAX_LENGTH, rules: RULES.map(({ id, label }) => ({ id, label })) };
 }
 
-module.exports = { check, describe, MIN_LENGTH, MAX_LENGTH };
+/* A temporary password, for an administrator to hand over.
+ *
+ * Generated here rather than in the route so it is the same module that decides
+ * what is acceptable — a generator living somewhere else is a generator that
+ * drifts out of the rules and starts producing passwords its own API rejects.
+ * The result is checked against check() before it is returned, so that cannot
+ * happen silently.
+ *
+ * Readable on purpose. This gets read aloud, or typed off a screen, so it
+ * avoids the characters people mistake for each other: no 0/O, no 1/l/I, no
+ * 5/S (all six are gone, on both sides of each pair). That costs a little entropy and buys a password that arrives intact —
+ * and it is a password with one job, which the account is forced to replace
+ * before it can do anything else.
+ *
+ * crypto.randomInt, not Math.random: this is a credential, and Math.random is
+ * not a source of those.
+ */
+const { randomInt } = require('crypto');
+
+const LETTERS_UPPER = 'ABCDEFGHJKMNPQRTUVWXY';   // no I, L, O, S
+const LETTERS_LOWER = 'abcdefghjkmnpqrtuvwxy';
+const DIGITS = '2346789';                         // no 0, 1 or 5
+const SYMBOLS = '!@#$%?';
+
+const pick = (from, n) => Array.from({ length: n }, () => from[randomInt(from.length)]).join('');
+
+function temporaryPassword() {
+  /* Shaped so every rule is met by construction — Aaaa-nnnn-!x is 12
+     characters with an upper, a lower, a digit and a symbol in it — rather
+     than by generating and retrying until one happens to pass. */
+  const word = LETTERS_UPPER[randomInt(LETTERS_UPPER.length)] + pick(LETTERS_LOWER, 4);
+  const password = `${word}-${pick(DIGITS, 4)}-${SYMBOLS[randomInt(SYMBOLS.length)]}${pick(LETTERS_LOWER, 2)}`;
+  const verdict = check(password);
+  if (!verdict.valid) {
+    // Unreachable while the rules and the shape agree. If somebody tightens the
+    // rules without revisiting the shape, this says so instead of handing
+    // somebody a password the API will refuse.
+    throw new Error(`Generated temporary password does not meet the policy: ${verdict.message}`);
+  }
+  return password;
+}
+
+module.exports = { check, describe, temporaryPassword, MIN_LENGTH, MAX_LENGTH };

@@ -19,6 +19,8 @@ const { userFields } = require('../user-fields');
 const multer = require('multer');
 const avatar = require('../avatar');
 const { visibleProjects, hasFullAccess, mayAdministerUser, holds } = require('../permissions');
+const rolePermissions = require('../role-permissions');
+const notifications = require('../notifications');
 
 // The cost used everywhere passwords are hashed in this codebase.
 const BCRYPT_ROUNDS = 10;
@@ -494,6 +496,94 @@ router.delete('/:id', requirePermission('user.delete'), async (req, res) => {
   });
   await db.query('DELETE FROM users WHERE id = $1', [req.params.id]);
   res.json({ ok: true });
+});
+
+/* POST /api/users/:id/reset-password — give somebody a temporary password.
+ *
+ * The shape of this is a security decision, not a convenience one.
+ *
+ * WHY A GENERATED PASSWORD RATHER THAN ONE THE ADMINISTRATOR TYPES. If the
+ * person doing the reset chooses the value, they know a password the account
+ * holder may keep — and every later action on that account is deniable. A
+ * generated one that must be replaced before the account can do anything is a
+ * credential with a single use and a short life. Nobody, at any permission
+ * level, ever learns the password somebody actually chooses.
+ *
+ * WHERE IT GOES. Back in this response, once, for the person doing the reset to
+ * hand over. This deployment has no mail transport — there is no SMTP
+ * configuration and no mail dependency in package.json — so an email cannot be
+ * the delivery route, and pretending otherwise would mean an account locked out
+ * with its password in a message nobody sent. The account holder is told in the
+ * app that their password was reset and that they must change it; the value
+ * itself travels by whatever channel the two people already use.
+ *
+ * WHO MAY DO IT TO WHOM. Resetting a password is taking over an account, so
+ * this cannot be a ladder: somebody granted this permission must not be able to
+ * reset the password of an account that could take the permission away again.
+ * The test is by PERMISSION, not by role name — you may not reset an account
+ * that holds settings.permissions unless you hold it yourself.
+ *
+ * AND NOT YOUR OWN. Your own password is changed from Profile, with the current
+ * one, which is a different act with a different check. Resetting your own here
+ * would sign you out of your own session to no purpose.
+ */
+router.post('/:id/reset-password', requirePermission('user.reset_password'), async (req, res) => {
+  const { rows } = await db.query(`SELECT ${userFields()} FROM users WHERE id = $1`, [req.params.id]);
+  const target = rows[0];
+  if (!target) return res.status(404).json({ error: 'User not found' });
+  if (target.id === req.user.id) {
+    return res.status(400).json({
+      error: 'Change your own password from Profile, where it asks for your current one.',
+    });
+  }
+  if (!mayAdministerUser(req.user, target)) {
+    return res.status(403).json({ error: 'You do not have permission to do that' });
+  }
+
+  /* The escalation guard. Asked of the TARGET's role rather than of the target
+     as an individual, which is where this permission set comes from. */
+  const theirs = await rolePermissions.effectiveFor(db, target.role).catch(() => new Set());
+  if (theirs.has('settings.permissions') && !can(req, 'settings.permissions')) {
+    return res.status(403).json({
+      error: `${target.name} can change who may do what, so only somebody who can do the same may `
+        + 'reset their password.',
+    });
+  }
+
+  const temporaryPassword = passwordPolicy.temporaryPassword();
+  const hash = await bcrypt.hash(temporaryPassword, BCRYPT_ROUNDS);
+  /* Moving password_changed_at is what signs the account's other devices out —
+     see the `pwd` claim in src/routes/auth.js. An account whose password has
+     just been taken over by somebody else is exactly the case that has to end
+     its existing sessions. */
+  const changedAt = Date.now();
+  await db.query(
+    'UPDATE users SET password_hash = $1, password_changed_at = $2, must_change_password = 1 WHERE id = $3',
+    [hash, changedAt, target.id]
+  );
+
+  // Never the value. An administrator reading the log must not be able to read
+  // a password out of it, and neither must the Activity Log below.
+  console.log(`${req.user.email} reset the password for ${target.email}.`);
+  req.activity({
+    module: 'users', action: 'user.reset_password', entityType: 'user',
+    entityId: target.id, entityLabel: target.name,
+    summary: `Reset the password for ${target.name} <${target.email}> to a temporary one`,
+  });
+  /* Failing to tell them must not fail the reset — the same rule the rest of
+     this module follows. A password already changed and a notification that
+     did not land is recoverable; a reset that refused halfway is not. */
+  await notifications.passwordReset(db, { userId: target.id, byId: req.user.id }).catch(() => {});
+
+  res.json({
+    ok: true,
+    user: { id: target.id, name: target.name, email: target.email },
+    /* Once, and only here. It is not stored anywhere in readable form and
+       cannot be asked for again — a second reset is the way to get another. */
+    temporaryPassword,
+    message: `${target.name} must change this before they can use the app, and their other `
+      + 'sessions have been signed out.',
+  });
 });
 
 // GET /api/users/import-template.csv — the sample file for the user import.

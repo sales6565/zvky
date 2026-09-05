@@ -45,6 +45,16 @@ const KINDS = {
      people's bells, so they keep their sentences below. */
   project_review_changes: 'project_review_changes',
   project_review_approved: 'project_review_approved',
+  /* An administrator reset this account's password. Raised for the ACCOUNT
+     HOLDER, never for the administrator: it is the one person who has to act
+     on it, and the one person who has not just been told by doing it.
+     
+     The temporary password is deliberately not in here. This table is read
+     back by the API and rendered in a panel; a credential in it would be a
+     credential sitting in the database in plain text and on screen for as long
+     as the bell keeps it. The value goes to the person who did the reset, in
+     that response, once. */
+  password_reset: 'password_reset',
 };
 
 const unavailable = (err) => err && (err.code === 'ER_NO_SUCH_TABLE' || /doesn't exist/i.test(err.message || ''));
@@ -81,6 +91,11 @@ function describe(row) {
     const project = row.project_name || 'A project';
     const who = row.other_name ? `${row.other_name} approved` : 'Approved';
     return `${who} ${project} for the client.`;
+  }
+  if (row.kind === KINDS.password_reset) {
+    const who = row.other_name || 'An administrator';
+    return `${who} reset your password. Choose a new one to carry on — you will be asked as soon `
+      + 'as you sign in.';
   }
   const code = row.asset_code || 'An asset';
   const name = row.asset_name ? ` — ${row.asset_name}` : '';
@@ -286,7 +301,24 @@ async function markAllRead(db, userId) {
   return affected(out);
 }
 
+/* Told to the account holder, and to nobody else.
+ *
+ * The administrator is carried as `otherUserId` so describe() names them off
+ * the same join every other kind uses — a reset that arrives unattributed is
+ * one the recipient cannot tell from a compromise. Also as `actorId`, which is
+ * what stops it being raised at all if somebody ever routes a self-reset
+ * through here: raise() drops a notification whose recipient is its actor. */
+async function passwordReset(db, { userId, byId }) {
+  return raise(db, {
+    recipientId: userId,
+    actorId: byId || null,
+    kind: KINDS.password_reset,
+    otherUserId: byId || null,
+  });
+}
+
 module.exports = {
+  passwordReset,
   projectReviewRequested,
   projectReviewAnswered,
   KINDS, describe, raise, assignmentChanged,

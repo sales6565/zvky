@@ -135,7 +135,7 @@ module.exports = [
     'Your name and designation — what the studio has you down as. If it is wrong, that is a Users change (chapter 11).',
     'The bell — notifications, with a count of the unread ones (chapter 12.1).',
     'The question mark — reopens the Quick Tour.',
-    'Profile — your photo and your password (chapter 12.2).',
+    'Profile — your photo and your password (chapter 12.8).',
   ]),
 
   h2('2.4 The tabs'),
@@ -740,7 +740,38 @@ module.exports = [
     + 'password — the first three required. The asset uploader and the user uploader are separate and labelled, and '
     + 'each rejects the other’s file clearly rather than importing nonsense.'),
 
-  h2('11.4 My Team'),
+  h2('11.4 Resetting somebody\u2019s password'),
+  p('When somebody is locked out, an administrator gives them a temporary one rather than being '
+    + 'told what they had. Press Reset password on their row in the Users tab.'),
+  steps([
+    'The screen says what will happen, and asks you to confirm.',
+    'A temporary password is shown \u2014 once. Copy it and give it to them.',
+    'Close the panel.',
+  ]),
+  shot('11-user-reset-password', 'The confirmation. The screen after it shows the temporary password, once.'),
+  note('What the reset does, and what it deliberately does not',
+    'It signs out every device that account is signed in on, and it locks the account to one '
+    + 'action: choosing a new password. Until they do, nothing else in the app answers them \u2014 '
+    + 'enforced by the server, not just hidden by the screen, so the temporary password cannot be '
+    + 'used to work.\n\n'
+    + 'It does NOT tell you their old password, and nobody \u2014 at any permission level \u2014 '
+    + 'ever sees the password they then choose. The temporary one is shown once and is not stored '
+    + 'anywhere readable: if it is lost before it reaches them, reset again.\n\n'
+    + 'There is no email. This deployment has no mail transport configured, so the temporary '
+    + 'password travels by whatever channel the two of you already use. The account holder is told '
+    + 'in the app that their password was reset and by whom.'),
+  note('Who may do it',
+    'Reset User Password is a permission like any other, and it starts switched on for the Super '
+    + 'Admin and nobody else. Grant it in Settings \u2192 Permissions (chapter 13.1) to hand it to '
+    + 'another designation.\n\n'
+    + 'One rule holds whoever has it: you cannot reset the password of an account that can change '
+    + 'who may do what. Otherwise the permission would be a way of taking over the studio \u2014 '
+    + 'grant it to somebody, and they reset the Super Admin. Nor can you reset your own from here; '
+    + 'that is Profile, with your current password.'),
+  p('Every reset is on the Activity Log, naming who did it and to whom. The temporary password is '
+    + 'not in it, and is not in the notification either.'),
+
+  h2('11.5 My Team'),
   shot('15-my-team', 'My Team: the people who report to you, what they are carrying and how far along it is.'),
   roles('Adding, editing and deleting people, changing designations, reporting lines, projects and passwords all sit '
     + 'with the administration band. My Team is open to anyone who supervises people.',
@@ -756,9 +787,36 @@ module.exports = [
     'The bell carries the number of unread notifications.',
     'You are notified when work is assigned to you, when a review comes back, and when feedback on your project submission lands.',
     'Mark all as read clears the count.',
+    'The same events also appear on your DESKTOP, outside the browser \u2014 see below.',
   ]),
 
-  h2('12.2 Chat'),
+  h2('12.2 Desktop notifications'),
+  p('Assignments and chat messages raise a notification on your desktop as well as in the app, so '
+    + 'you are told while working in something else. A bar at the top of the screen asks for '
+    + 'permission the first time you sign in; press Turn on notifications and answer your '
+    + 'browser\u2019s own prompt.'),
+  note('What "on" and "off" mean here, exactly',
+    'There is no switch inside Zvky Forge to turn desktop notifications off. The only control is '
+    + 'the browser\u2019s, and that is not a choice the studio made \u2014 it is how the web '
+    + 'works: no site can show a desktop notification without the browser\u2019s permission, and '
+    + 'no site can raise that prompt more than once per answer, suppress it, pre-answer it, or get '
+    + 'around a refusal.\n\n'
+    + 'So: everybody is asked, anybody who has not answered is asked again next time they sign in, '
+    + 'and Not now postpones rather than cancels. If somebody REFUSES the browser prompt, the app '
+    + 'says so in a bar that cannot be dismissed, with what to change \u2014 rather than leaving '
+    + 'them to wonder why nothing arrives. Only they can undo it, in their browser\u2019s site '
+    + 'settings.'),
+  note('Two things that also stop one arriving',
+    'Notifications need a SECURE CONNECTION. Over plain http browsers do not allow them at all, '
+    + 'and the same bar says so. They start working once the site is reached over https.\n\n'
+    + 'And granting the browser permission is not the same as the operating system letting it '
+    + 'through. Somebody with Do Not Disturb or Focus on will see nothing, and the app is never '
+    + 'told. The bell and the chat panel still carry everything either way \u2014 a desktop '
+    + 'notification is a second copy, never the only one.'),
+  p('A message in the conversation you already have open, in a window you are looking at, does not '
+    + 'raise one \u2014 you are reading it. Everything else does.'),
+
+  h2('12.3 Chat'),
   shot('14-chat-thread', 'A one-to-one conversation, opened from the chat icon in the header.'),
   p('The speech-bubble icon beside the bell opens chat. It carries the number of unread messages, the way the '
     + 'bell carries notifications.'),
@@ -777,7 +835,7 @@ module.exports = [
     + 'starts on for every designation — the same reasoning as filling in your own time sheet. It is still a '
     + 'toggle, so a studio that wants chat closed for a department can say so in Settings.'),
 
-  h2('12.3 Groups'),
+  h2('12.4 Groups'),
   shot('14-chat-group', 'The member list of a group, as its owner sees it.'),
   roles('Starting a group is restricted. Everybody can already chat one to one without it.', ['runs_work']),
   steps([
@@ -793,7 +851,7 @@ module.exports = [
     'Ownership moves to whoever has been in the group longest, so a group never ends up with nobody able to '
     + 'manage it. When the last person leaves, the group is closed.'),
 
-  h2('12.4 Files in chat'),
+  h2('12.5 Files in chat'),
   p('The paperclip attaches a file. Six formats are carried — .png, .jpg, .svg, .webp, .mov and .mp4 — up to '
     + '30MB each. Anything else is refused with a message naming what was wrong.'),
   note('Chat files are deleted after twelve hours',
@@ -804,7 +862,7 @@ module.exports = [
     + 'submissions and reference links live.'),
   p('Text messages do not expire. A conversation\u2019s history stays until the conversation itself is gone.'),
 
-  h2('12.5 Designations nobody may write to unasked'),
+  h2('12.6 Designations nobody may write to unasked'),
   p('A designation can be shielded: nobody starts a conversation with it, or adds it to a group, unless they '
     + 'hold Message a Shielded Designation. Out of the box that shields Managing Director & CEO and Vice '
     + 'President \u2014 Global Operations & Business Development, and only the Super Admin can reach them.'),
@@ -821,7 +879,7 @@ module.exports = [
     + 'these two reachable again, changes a checkbox \u2014 there is no list of job titles buried in the '
     + 'application to keep in step with the studio\u2019s own.'),
 
-  h2('12.6 Who can read a conversation'),
+  h2('12.7 Who can read a conversation'),
   note('Chat is private to the people in it',
     'Nobody outside a conversation can read it \u2014 not a Super Admin, not the holder of any permission. There is '
     + 'no screen, export or setting that shows one person another person\u2019s messages, and no permission that '
@@ -833,7 +891,7 @@ module.exports = [
     + 'know is readable by whoever administers the system is a conversation in which nobody says the difficult '
     + 'thing.'),
 
-  h2('12.7 Your profile'),
+  h2('12.8 Your profile'),
   shot('14-profile', 'The Profile panel: your photo, and your password.'),
   h3('Your photo'),
   steps([

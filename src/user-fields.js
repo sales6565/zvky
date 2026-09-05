@@ -25,6 +25,10 @@ const USER_COLUMNS = [
   // NULL until somebody finishes or skips the Quick Tour, which is what
   // decides whether it launches itself on sign-in.
   'tour_seen_at AS `tourSeenAt`',
+  /* Set when an administrator resets this account's password. While it is on,
+     authenticate() answers nothing but the password change — so it has to
+     travel with the user on every request, not just at sign-in. */
+  'must_change_password AS `mustChangePassword`',
 ];
 
 // The same list plus the hash, for the two places that verify a password.

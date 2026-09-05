@@ -60,7 +60,27 @@ const GROUPS = [
       { key: 'user.change_role',      label: 'Change Role',          impliedBy: has('manageUsers') },
       { key: 'user.change_project',   label: 'Change Project',       impliedBy: has('manageUsers') },
       { key: 'user.change_reporting', label: 'Change Reporting To',  impliedBy: has('manageUsers') },
-      { key: 'user.reset_password',   label: 'Reset User Password',  impliedBy: has('manageUsers'), pending: PENDING },
+      {
+        key: 'user.reset_password',
+        label: 'Reset User Password',
+        /* managePermissions, not manageUsers: the studio asked for this to
+           arrive switched on for the Super Admin and nobody else, and to be
+           handed out from Settings after that. Same predicate, and the same
+           reasoning, as settings.permissions and chat.message_protected — see
+           the note on the latter for why it is a capability rather than a
+           `() => false` that would leave the seeded rows disagreeing with the
+           effective set.
+
+           It USED to be implied by manageUsers, with a `pending` note saying
+           the action did not exist. Those rows are already written and enabled
+           on any deployment that has run, so narrowing the predicate here is
+           not enough on its own — see ensurePasswordReset in src/migrate.js,
+           which switches off the ones nobody deliberately granted. */
+        impliedBy: has('managePermissions'),
+        describe: 'Reset somebody else\'s password to a temporary one. They are forced to choose a '
+          + 'new password before they can do anything else, and their other sessions are signed '
+          + 'out. Nobody ever sees the password the person chooses.',
+      },
       { key: 'user.bulk_upload',      label: 'Bulk Upload Users',    impliedBy: has('manageUsers') },
       {
         key: 'user.view_team',
@@ -419,9 +439,12 @@ const GROUPS = [
       },
       {
         key: 'client.close',
-        label: 'Close / Reopen Deal',
+        /* The Settings label follows the button it gates. The KEY is untouched:
+           'client.close' is in every role's granted set and in every row of
+           role_permissions already written. */
+        label: 'Close / Reopen Client',
         impliedBy: has('createProject'),
-        describe: 'Mark a client\'s deal closed so no new projects go under it, and reopen it.',
+        describe: 'Mark a client closed so no new projects go under it, and reopen it.',
       },
     ],
   },

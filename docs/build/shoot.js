@@ -244,6 +244,17 @@ const reset = () => {
   const newUser = await p.$('#newUserBtn, button:has-text("+ User"), button:has-text("Add User")');
   if (newUser) { await newUser.click(); await p.waitForTimeout(1300); await shot(p, '11-user-new-form');
     await closeModal(p); }
+  /* The CONFIRMATION step, not the one after it. The screen that follows shows
+     a working temporary password, and a manual is not the place for one — even
+     a demo account's. */
+  const resetBtn = await p.$('#usersView .resetPwBtn');
+  if (resetBtn) {
+    await resetBtn.click();
+    await p.waitForTimeout(1200);
+    await shot(p, '11-user-reset-password', '#resetPwWrap .modal');
+    await tryClick(p, '#rp_cancel');
+    await closeModal(p);
+  } else { console.log('  (no Reset password button — is user.reset_password granted?)'); }
 
   // ---------- 12 Settings ---------------------------------------------------
   console.log('12 settings');
