@@ -342,12 +342,22 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(row[0].start_min, null, 'and leave nothing behind');
   });
 
-  await t.test('the hours are suggested from that day\'s own recorded work', async () => {
-    /* The pre-fill, and the reason it can be offered per DAY at all: a session
-       is a stretch with its own start and end, so a round spanning Monday to
-       Wednesday still has a Monday stretch whose hours are exactly known. */
+  await t.test('the hours offered are what is left, not what the asset came to', async () => {
+    /* The arithmetic this feature turns on: this person's recorded time on the
+       asset, less whatever they have already filed against it on ANY day.
+       
+       The property being protected is that the values offered across an
+       asset's days ADD UP TO its recorded time, once. Offering the total each
+       day files a three-day asset three times over; offering only that day's
+       stretches drops anything that ran past midnight and never makes it up. */
     const day = '2026-03-09';
     const other = '2026-03-10';
+    /* Its own asset, not the suite's shared one. The figure this test is about
+       is "recorded minus already filed", and the shared asset already has hours
+       filed against it by earlier subtests — which would make every number here
+       depend on the order the file happens to run in. */
+    const assetId = (await as('root', `/assets/project/${projectId}`, { method: 'POST',
+      body: { name: 'Three Day Job', type: 'prop', assigneeId: people.ana } })).body.asset.id;
     const mk = async (startedAt, endedAt, seconds, userId = people.ana) => sql(cfg,
       `INSERT INTO work_sessions (id, asset_id, user_id, round, started_at, ended_at, seconds, ended_reason)
        VALUES (UUID(), ?, ?, 1, ?, ?, ?, 'submitted')`,
@@ -358,44 +368,113 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     await mk(`${day} 14:00:00`, `${day} 15:30:00`, 5400);
     await mk(`${other} 09:00:00`, `${other} 10:00:00`, 3600);
 
-    const suggested = await as('ana', `/timesheets/suggest?assetId=${assetId}&date=${day}`);
-    assert.strictEqual(suggested.status, 200, JSON.stringify(suggested.body));
-    assert.strictEqual(suggested.body.hours, 3.5, 'both of that day\'s stretches, and only that day\'s');
-    assert.strictEqual(suggested.body.sessions, 2);
-    assert.strictEqual(suggested.body.spanning, 0);
+    const ask = async (who, date) =>
+      (await as(who, `/timesheets/suggest?assetId=${assetId}&date=${date}`)).body;
 
-    // The next day answers for itself.
-    assert.strictEqual((await as('ana', `/timesheets/suggest?assetId=${assetId}&date=${other}`)).body.hours, 1);
+    let s1 = await ask('ana', day);
+    assert.strictEqual(s1.recorded, 4.5, 'everything Ana has recorded on it, across both days');
+    assert.strictEqual(s1.logged, 0, 'none of it filed yet');
+    assert.strictEqual(s1.hours, 4.5, 'so all of it is offered');
+    assert.strictEqual(s1.onThisDay, 3.5, 'with the day\'s own share shown beside it');
 
-    /* A stretch running past midnight cannot be split, so it is left out and
-       counted — the screen says so rather than offering a smaller number with
-       no explanation. */
-    /* Straddling IST midnight, which is what the rule is about — the stamps are
-       instants and the day is the studio's, so these are chosen to land either
-       side of 00:00 IST rather than either side of 00:00 on the server. */
+    /* THE STUDIO'S SECOND TESTING STEP. File a day, come back to the same
+       asset on another day, and only what has not been filed is offered. */
+    await add('ana', { date: day, hours: 3.5, clientId, projectId, assetId });
+    const s2 = await ask('ana', other);
+    assert.strictEqual(s2.logged, 3.5);
+    assert.strictEqual(s2.hours, 1, 'the hour that is left, not the whole 4.5 again');
+
+    // And filing that hour leaves nothing to offer, rather than offering it twice.
+    await add('ana', { date: other, hours: 1, clientId, projectId, assetId });
+    const s3 = await ask('ana', other);
+    assert.strictEqual(s3.logged, 4.5);
+    assert.strictEqual(s3.hours, null, 'nothing left');
+    assert.strictEqual(s3.recorded, 4.5, 'though it still says what was recorded');
+
+    /* THE STUDIO'S SIXTH TESTING STEP, as an equation rather than a reading:
+       what was filed equals what was recorded. This is the whole point. */
+    const filed = await sql(cfg,
+      'SELECT COALESCE(SUM(hours),0) AS h FROM timesheet_entries WHERE user_id = ? AND asset_id = ?',
+      [people.ana, assetId]);
+    assert.strictEqual(Number(filed[0].h), 4.5, 'filed hours equal recorded hours, with no double count');
+
+    /* A stretch across midnight is IN the total even though the daily figure
+       cannot claim it — which is exactly what the old per-day rule got wrong,
+       dropping it and never making it up. */
     const across = '2026-03-11';
     await mk(`${across} 17:00:00`, `${across} 20:00:00`, 10800);  // 22:30 to 01:30 IST
-    const crossed = await as('ana', `/timesheets/suggest?assetId=${assetId}&date=${across}`);
-    assert.strictEqual(crossed.body.hours, null, 'nothing is invented for it');
-    assert.strictEqual(crossed.body.spanning, 1, 'and the caller is told why');
+    const crossed = await ask('ana', across);
+    assert.strictEqual(crossed.recorded, 7.5, 'the midnight stretch counts towards the total');
+    assert.strictEqual(crossed.hours, 3, 'and is offered, where before it was silently lost');
+    assert.strictEqual(crossed.onThisDay, null, 'the daily figure still cannot split it');
+    assert.strictEqual(crossed.spanning, 1, 'and the caller is told why');
 
-    // Somebody else's hours on the same asset are not yours to file.
+    /* Somebody else's hours on the same asset are not yours to file. After a
+       hand-over the asset's Time Spent includes the previous holder; this
+       figure must not, and the two are allowed to differ. */
     await mk(`${day} 16:00:00`, `${day} 18:00:00`, 7200, people.bo);
-    assert.strictEqual((await as('ana', `/timesheets/suggest?assetId=${assetId}&date=${day}`)).body.hours, 3.5,
-      'still only Ana\'s own stretches');
-    assert.strictEqual((await as('bo', `/timesheets/suggest?assetId=${assetId}&date=${day}`)).body.hours, 2);
+    assert.strictEqual((await ask('ana', day)).recorded, 7.5, 'still only Ana\'s own stretches');
+    assert.strictEqual((await ask('bo', day)).recorded, 2);
+    assert.strictEqual((await ask('bo', day)).hours, 2, 'and Bo is offered his own two hours');
 
     // An asset with nothing recorded offers nothing, which is not an error.
     const idle = (await as('root', `/assets/project/${projectId}`, { method: 'POST',
       body: { name: 'Untouched', type: 'prop' } })).body.asset.id;
-    assert.strictEqual((await as('ana', `/timesheets/suggest?assetId=${idle}&date=${day}`)).body.hours, null);
+    const nothing = (await as('ana', `/timesheets/suggest?assetId=${idle}&date=${day}`)).body;
+    assert.strictEqual(nothing.hours, null);
+    assert.strictEqual(nothing.recorded, 0);
+
+    /* Filing MORE than the clock recorded is allowed — the field is theirs to
+       correct — and what is left then clamps at nothing rather than going
+       negative into an input that would refuse it. */
+    const overfilled = (await as('root', `/assets/project/${projectId}`, { method: 'POST',
+      body: { name: 'Overfiled', type: 'prop', assigneeId: people.ana } })).body.asset.id;
+    await sql(cfg,
+      `INSERT INTO work_sessions (id, asset_id, user_id, round, started_at, ended_at, seconds, ended_reason)
+       VALUES (UUID(), ?, ?, 1, '2026-03-12 10:00:00', '2026-03-12 11:00:00', 3600, 'submitted')`,
+      [overfilled, people.ana]);
+    await add('ana', { date: '2026-03-12', hours: 4, clientId, projectId, assetId: overfilled });
+    const clamped = (await as('ana', `/timesheets/suggest?assetId=${overfilled}&date=2026-03-12`)).body;
+    assert.strictEqual(clamped.recorded, 1);
+    assert.strictEqual(clamped.logged, 4);
+    assert.strictEqual(clamped.hours, null, 'nothing left, and never a negative number');
 
     /* And it is a SUGGESTION. Nothing refuses a different number, which is what
        keeps this a manual timesheet with a helpful default rather than an
        automatic one somebody has to argue with. */
     const typed = await add('ana', { date: day, hours: 6, clientId, projectId, assetId });
-    assert.strictEqual(typed.status, 201, 'six hours against three and a half recorded');
+    assert.strictEqual(typed.status, 201, 'six hours against what the clock says');
     assert.strictEqual(Number(typed.body.entry.hours), 6);
+  });
+
+  await t.test('an asset still in progress offers its live elapsed time', async () => {
+    /* The studio's third testing step. An open session has no `seconds` yet, so
+       the figure is now-minus-started — the same expression the asset panel and
+       the Efficiency report use, so the three cannot disagree.
+       
+       And the held gap is excluded without any subtraction: a hold CLOSES a row
+       and a resume opens another, so the gap between them was never in a row to
+       begin with. */
+    const live = (await as('root', `/assets/project/${projectId}`, { method: 'POST',
+      body: { name: 'Still Going', type: 'prop', assigneeId: people.ana } })).body.asset.id;
+
+    // Two closed hours, an hour of hold, and a stretch that is still running.
+    await sql(cfg,
+      `INSERT INTO work_sessions (id, asset_id, user_id, round, started_at, ended_at, seconds, ended_reason)
+       VALUES (UUID(), ?, ?, 1, NOW() - INTERVAL 4 HOUR, NOW() - INTERVAL 2 HOUR, 7200, 'held')`,
+      [live, people.ana]);
+    await sql(cfg,
+      `INSERT INTO work_sessions (id, asset_id, user_id, round, started_at, ended_at, seconds, ended_reason)
+       VALUES (UUID(), ?, ?, 1, NOW() - INTERVAL 1 HOUR, NULL, NULL, NULL)`,
+      [live, people.ana]);
+
+    const s = (await as('ana', `/timesheets/suggest?assetId=${live}&date=2026-03-13`)).body;
+    assert.strictEqual(s.open, true, 'the endpoint says it is still running');
+    /* Two closed hours plus about one live one. NOT four: the hour held between
+       them is the gap between two rows and is in neither. */
+    assert.ok(s.recorded >= 2.9 && s.recorded <= 3.1,
+      `about three hours, not the four that have elapsed — got ${s.recorded}`);
+    assert.strictEqual(s.hours, s.recorded, 'and all of it is offered, none filed yet');
   });
 
   await t.test('over eight hours is flagged, and a half day is silent', async () => {
@@ -742,13 +821,20 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   });
 
   await t.test('the asset pipeline and its measured time are untouched', async () => {
-    /* Filing hours must not write a measured session. Counted against what the
-       suggestion test put there deliberately, rather than against nought —
-       nought stopped being the right answer when this suite started seeding
-       sessions to have something to suggest from. */
-    const seeded = await sql(cfg, "SELECT COUNT(*) AS n FROM work_sessions WHERE ended_reason = 'submitted'");
-    const all = await sql(cfg, 'SELECT COUNT(*) AS n FROM work_sessions');
-    assert.strictEqual(Number(all[0].n), Number(seeded[0].n),
+    /* Filing hours must not write a measured session.
+       
+       Measured directly — count, file a line, count again — rather than by
+       comparing the total against the sessions carrying ended_reason
+       'submitted', which was a proxy for "the ones this suite seeded" and
+       stopped being true the moment a subtest seeded a held or an open one.
+       A proxy that has to be kept in step with the fixtures is a test that
+       fails for reasons unrelated to what it checks. */
+    const count = async () => Number(
+      (await sql(cfg, 'SELECT COUNT(*) AS n FROM work_sessions'))[0].n);
+    const before = await count();
+    const filed = await add('ana', { date: '2026-03-06', hours: 2, clientId, projectId, assetId });
+    assert.strictEqual(filed.status, 201);
+    assert.strictEqual(await count(), before,
       'logging hours must not have written a measured session of its own');
     const asset = (await as('root', `/assets/project/${projectId}`)).body.assets
       .find((a) => a.id === assetId);

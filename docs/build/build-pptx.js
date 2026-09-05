@@ -526,7 +526,8 @@ module_({
   head: 'A day at a time, in IST',
   items: [
     'A line is a number of HOURS against a project, an asset or non-project time. No start and end times.',
-    'Pick an asset and the hours it recorded that day are offered — a suggestion in a field you can change.',
+    'Pick an asset and the hours it has left to log are filled in — what it recorded, less what you have already filed against it, so a multi-day job is never counted twice.',
+    'A starting figure in a field you can change, and it never overwrites a number you have typed.',
     'A day over 8 hours is flagged, not refused. A long day is real; a form that refuses one is not.',
     'Submission is daily, and nobody approves it. Submitting locks the day; its owner can reopen it.',
     'A lead reads their team\u2019s hours and nothing more — the approval queue is gone.',

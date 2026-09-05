@@ -508,36 +508,62 @@ router.post('/reopen', requirePermission('timesheet.own'), async (req, res) => {
   res.json({ day: { date, status: saved.status, locked: sheets.isLocked(saved.status) } });
 });
 
-/* GET /api/timesheets/suggest?assetId=&date= — how many hours to offer.
+/* GET /api/timesheets/suggest?assetId=&date=&exclude= — the hours to fill in.
  *
- * What the Add-a-line form pre-fills the Hours field with. Only ever a
- * SUGGESTION: it arrives in an editable field, nothing refuses a different
- * number, and a day with nothing recorded simply offers none.
+ * WHAT IS LEFT, not what the asset came to. The figure is this person's own
+ * recorded time on the asset minus whatever they have already filed against it
+ * on any day, clamped at zero.
  *
- * The arithmetic is workLog.dayTotalFor, which counts the stretches that began
- * and ended on this day — see the note there for why that is per session rather
- * than per asset, and why a stretch crossing midnight is left out instead of
- * being guessed at.
+ * That subtraction is the whole design, and the property it buys is worth
+ * naming: the values offered across every day of an asset ADD UP TO the time
+ * recorded on it, once. Offer the asset's total each day and a three-day asset
+ * is filed three times over. Offer only what a given day's stretches came to —
+ * which is what this endpoint did before — and any stretch that ran past
+ * midnight is dropped and never made up, so the timesheet quietly ends up
+ * short. Subtracting what is already filed is self-correcting: whatever one
+ * day misses, the next day still offers.
+ *
+ * IT IS STILL A SUGGESTION. It lands in an editable field, and a person who
+ * was interrupted types over it. Nothing here refuses a different number.
+ *
+ * The day figure goes back too, unused by the field and shown beside it. Filling
+ * Monday in on Wednesday is a real thing people do, and it is the one case this
+ * arithmetic answers badly — it would offer everything accrued since Monday.
+ * Saying "of which N h was recorded on this day" gives them the number they
+ * actually want without the field having to guess which case it is in.
  */
 router.get('/suggest', requirePermission('timesheet.own'), async (req, res) => {
   const date = sheets.toISO(req.query.date);
   if (!date) return res.status(400).json({ error: 'Which day?', field: 'date' });
   const assetId = String(req.query.assetId || '').trim();
-  if (!assetId) return res.json({ hours: null, sessions: 0, spanning: 0 });
+  if (!assetId) return res.json({ hours: null, recorded: 0, logged: 0, onThisDay: null, spanning: 0 });
 
   /* Your own recorded time, never anybody else's. An asset you hold now may
      have been worked on by the person who had it last week, and their hours are
-     not yours to file. */
-  const found = await workLog.dayTotalFor(db, { assetId, userId: req.user.id, day: date });
+     not yours to file — so this figure and the asset's Time Spent on the
+     Efficiency report are allowed to differ, and do, after a hand-over. */
+  const [recorded, logged, day] = await Promise.all([
+    workLog.recordedFor(db, { assetId, userId: req.user.id }),
+    sheets.hoursLoggedOn(db, { assetId, userId: req.user.id, exceptId: req.query.exclude || null }),
+    workLog.dayTotalFor(db, { assetId, userId: req.user.id, day: date }),
+  ]);
+
+  const round = (n) => Math.round(n * 100) / 100;
+  const recordedHours = round(recorded.seconds / 3600);
+  /* Never below zero. Somebody who filed more hours than the clock recorded —
+     which is allowed, the field is theirs to correct — is offered nothing
+     rather than a negative number the input would refuse anyway. */
+  const left = round(Math.max(0, recordedHours - logged));
+
   res.json({
-    // Two decimals, matching the column and the quarter-hour grain of the form.
-    hours: found.seconds > 0 ? Math.round((found.seconds / 3600) * 100) / 100 : null,
-    seconds: found.seconds,
-    sessions: found.sessions,
-    /* How many stretches on this asset ran across midnight and are therefore
-       NOT in the figure above. The screen says so rather than quietly offering
-       a number smaller than the day felt. */
-    spanning: found.spanning,
+    // Below the minimum line, there is nothing worth offering.
+    hours: left >= sheets.MIN_LINE_HOURS ? left : null,
+    recorded: recordedHours,
+    logged,
+    open: recorded.open,
+    // Context for the person, not for the field.
+    onThisDay: day.seconds > 0 ? round(day.seconds / 3600) : null,
+    spanning: day.spanning,
   });
 });
 

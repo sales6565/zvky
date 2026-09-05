@@ -342,6 +342,40 @@ function dayTotal(entries, win) {
   };
 }
 
+/* How many hours this person has already filed against one asset, ever.
+ *
+ * The other half of the Hours figure: recorded time minus this, clamped at
+ * zero, is what has not been written down yet. Counted across EVERY day rather
+ * than the one being filled in, which is the whole point — an asset worked on
+ * over three days offers its first day's hours, then only what accrued since,
+ * then only what accrued after that. The three add up to the recorded total
+ * instead of to three times it.
+ *
+ * Drafts count as well as submitted days. A line somebody has filed but not
+ * yet submitted is still hours they have claimed; leaving it out would offer
+ * them the same hours twice on the same afternoon.
+ *
+ * `exceptId` takes a line out of the sum — the one being edited. Without it,
+ * re-opening a 3-hour line would subtract its own 3 hours from what is left
+ * and offer 3 fewer than it should.
+ */
+async function hoursLoggedOn(db, { assetId, userId, exceptId = null }) {
+  if (!assetId || !userId) return 0;
+  const params = [userId, assetId];
+  let where = 'user_id = $1 AND asset_id = $2';
+  if (exceptId) { where += ' AND id <> $3'; params.push(exceptId); }
+  const { rows } = await db.query(
+    `SELECT COALESCE(SUM(hours), 0) AS hours FROM timesheet_entries WHERE ${where}`,
+    params
+  ).catch((err) => {
+    if (err && (err.code === 'ER_NO_SUCH_TABLE' || err.code === 'ER_BAD_FIELD_ERROR')) {
+      return { rows: [{ hours: 0 }] };
+    }
+    throw err;
+  });
+  return Math.round((Number(rows[0].hours) || 0) * 100) / 100;
+}
+
 module.exports = {
   WEEK_DAYS,
   NON_PROJECT,
@@ -371,4 +405,5 @@ module.exports = {
   validateEntry,
   totals,
   dayTotal,
+  hoursLoggedOn,
 };

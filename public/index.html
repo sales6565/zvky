@@ -3301,9 +3301,10 @@ function openTimesheetLine(day){
   // Which day this line is for, read by the suggestion and by the running total.
   tlDay = day;
   document.getElementById('tl_hours').value = '';
+  tlHoursTyped = false;
   document.getElementById('tl_suggest').textContent = '';
   document.getElementById('tl_window').textContent =
-    `A day over ${wd.maxHours} hours is flagged, not refused. Pick an asset and the hours it recorded today are offered.`;
+    `A day over ${wd.maxHours} hours is flagged, not refused. Pick an asset and its recorded hours, less what you have already logged against it, are filled in.`;
   document.getElementById('tl_cat').innerHTML =
     (w.nonProjectTypes||[]).map(n=>`<option value="${n.key}">${escapeHTML(n.label)}</option>`).join('');
   document.getElementById('tl_client').innerHTML =
@@ -3333,34 +3334,72 @@ function tlRecalc(){
     ? `That makes ${total}h on this day — over the ${wd.maxHours}-hour day. It is allowed; it will be flagged.`
     : `That makes ${total}h on this day.`;
 }
-document.getElementById('tl_hours').addEventListener('input', tlRecalc);
-
-/* What the day's own recorded work suggests, dropped into the Hours field.
+/* Has a person typed in the Hours field on this line?
  *
- * A SUGGESTION and nothing more: it lands in a field somebody can change, and
- * an asset with nothing recorded that day simply leaves it empty. The server
- * counts the stretches that began and ended on this day — a stretch running
- * across midnight cannot be split and is left out, which is said rather than
- * quietly subtracted. */
+ * Set by hand, not inferred: "the field is not empty" cannot tell a figure the
+ * app fetched from one somebody corrected, and the difference decides whether
+ * changing asset may overwrite it. */
+let tlHoursTyped = false;
+document.getElementById('tl_hours').addEventListener('input', ()=>{ tlHoursTyped = true; tlRecalc(); });
+
+/* The Hours field, filled from the asset's own recorded time.
+ *
+ * The number is what is LEFT: this person's recorded time on the asset, less
+ * whatever they have already filed against it on any day. See the endpoint for
+ * why it is a subtraction — the short of it is that the values offered across
+ * an asset's days add up to the time it recorded, once, instead of to that
+ * total repeated per day.
+ *
+ * Still a suggestion. It lands in an editable field, and tlHoursTyped below is
+ * what keeps it from ever arguing with a person who has corrected it. */
 async function tlSuggest(){
   const note = document.getElementById('tl_suggest');
   const field = document.getElementById('tl_hours');
   const assetId = document.getElementById('tl_asset').value;
   note.textContent = '';
-  if(!assetId || !tlDay) return;
+  if(!assetId || !tlDay){ return; }
   try{
+    /* No `exclude` here: this form only ever adds a line. The endpoint takes
+       one, because PATCH /entries/:id exists and an edit screen built on it
+       would have to leave its own line out of the "already logged" sum — but
+       passing a parameter from a state key nothing sets would only look like a
+       feature that is not there. */
     const s = await api(`/timesheets/suggest?assetId=${encodeURIComponent(assetId)}&date=${tlDay}`);
-    if(s.hours){
-      /* Only into an empty field. Overwriting a number somebody has already
-         typed would make the suggestion an instruction. */
-      if(!field.value){ field.value = s.hours; tlRecalc(); }
-      note.textContent = `${s.hours}h recorded on this asset today${
-        s.spanning ? ` — ${s.spanning} stretch${s.spanning===1?'':'es'} ran past midnight and ${s.spanning===1?'is':'are'} not included` : ''}.`;
-    }else if(s.spanning){
-      note.textContent = `Nothing recorded on this asset today that began and ended on one day — ${s.spanning} stretch${
-        s.spanning===1?'':'es'} ran past midnight, which cannot be split.`;
+
+    /* Fill it, unless the person has typed. tlHoursTyped is set by the input
+       handler and cleared when the fetch writes the value itself — so picking
+       another asset and coming back re-fetches over a figure the app put there,
+       and never over one somebody put there. That is the difference between a
+       default and an override, and it is not something an empty-field check can
+       tell apart: a value this function wrote is not empty either. */
+    if(!tlHoursTyped && s.hours){
+      field.value = s.hours;
+      tlRecalc();
     }
-  }catch{ /* a suggestion nobody can fetch is simply not made */ }
+
+    /* What the number is made of. Shown because the arithmetic is not obvious
+       from one figure, and because somebody filling in a past day needs to see
+       the day's own hours to correct it to. */
+    const bits = [];
+    if(s.recorded > 0){
+      bits.push(`${s.recorded}h recorded by you on this asset${s.open ? ' so far' : ''}`);
+      if(s.logged > 0) bits.push(`${s.logged}h already on your timesheet`);
+    }
+    if(s.onThisDay !== null && s.onThisDay !== s.recorded){
+      bits.push(`${s.onThisDay}h of it on this day`);
+    }
+    if(s.spanning){
+      bits.push(`${s.spanning} stretch${s.spanning===1?'':'es'} ran past midnight, so ${
+        s.spanning===1?'it is':'they are'} in the total but not in the daily figure`);
+    }
+    if(!s.recorded){
+      note.textContent = 'Nothing recorded against this asset by you yet — fill the hours in yourself.';
+    }else if(s.hours === null){
+      note.textContent = `${bits.join(' · ')}. All of it is already on your timesheet.`;
+    }else{
+      note.textContent = `${bits.join(' · ')}. ${s.hours}h left to log.`;
+    }
+  }catch{ /* a figure nobody can fetch is simply not offered */ }
 }
 
 function syncTimesheetLine(){

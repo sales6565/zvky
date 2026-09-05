@@ -423,6 +423,51 @@ async function dayTotalFor(db, { assetId, userId, day, offsetMinutes = 330 }) {
   };
 }
 
+/* Everything THIS PERSON has recorded against ONE asset, whenever it happened.
+ *
+ * What the Time Sheet's Hours field is filled from, together with what they
+ * have already filed — see hoursLoggedOn() in src/timesheets.js. The pair is
+ * "how much of my recorded time on this asset is not yet on a timesheet".
+ *
+ * SCOPED TO ONE USER, and that is not a detail. An asset's Time Spent on the
+ * Efficiency report is the sum over everybody who has held it, because that is
+ * what the asset cost. A hand-over means the previous holder's hours are in
+ * that number, and they are not this person's to file. So this query filters on
+ * user_id and the two figures are deliberately allowed to differ.
+ *
+ * OPEN SESSIONS COUNT LIVE. COALESCE(seconds, TIMESTAMPDIFF(... NOW())) is the
+ * same expression totalsFor() uses two functions below, on purpose: an asset
+ * still in progress must offer the same elapsed figure the panel and the report
+ * are showing, or the studio has three numbers for one thing.
+ *
+ * HELD TIME NEEDS NO EXCLUDING. A hold CLOSES a session row and a resume opens
+ * a new one, so the held gap is the space between two rows and was never in any
+ * of them. Summing rows excludes it by construction — there is no subtraction
+ * here to get wrong, which is why the hold feature was built that way.
+ */
+async function recordedFor(db, { assetId, userId }) {
+  if (!assetId || !userId) return { seconds: 0, sessions: 0, open: false };
+  const { rows } = await db.query(
+    `SELECT COALESCE(SUM(COALESCE(seconds, TIMESTAMPDIFF(SECOND, started_at, NOW()))), 0) AS seconds,
+            COUNT(*) AS sessions,
+            SUM(ended_at IS NULL) AS still_open
+       FROM work_sessions
+      WHERE asset_id = $1 AND user_id = $2`,
+    [assetId, userId]
+  ).catch((err) => {
+    /* No table, no figure — and that is the right failure. The field is filled
+       in by hand anyway; refusing to draw the form because time recording is
+       unavailable would take the timesheet down with it. */
+    if (!unavailable(err)) throw err;
+    return { rows: [{ seconds: 0, sessions: 0, still_open: 0 }] };
+  });
+  return {
+    seconds: Number(rows[0].seconds) || 0,
+    sessions: Number(rows[0].sessions) || 0,
+    open: Number(rows[0].still_open) > 0,
+  };
+}
+
 /* Where the meaning of `seconds` changes.
  *
  * Rows written before this change hold ACTIVE worked time, summed across
@@ -590,7 +635,7 @@ async function totalsFor(db, assetIds) {
 
 module.exports = {
   REASONS, WORK_CONTINUES, start, close, closeIfWorkStopped, hold, heldFor, summary, totalsFor,
-  openSession, openForUser, currentRound, available, cutover, dayTotalFor,
+  openSession, openForUser, currentRound, available, cutover, dayTotalFor, recordedFor,
   // Exported so every reader of a submit stamp uses the same expression. There
   // are three, and the third was found by a test rather than by reading.
   submitStamp, askStamped,

@@ -593,17 +593,26 @@ module.exports = [
   steps([
     'Press + Add a line on the day.',
     'Choose the project, and the asset if the time was against one.',
-    'Give the number of hours. Pick an asset first and this is filled in for you where the application can tell \u2014 see below.',
+    'Give the number of hours. Pick an asset first and this is filled in for you \u2014 see below.',
     'Say what you did.',
     'Save.',
   ]),
-  note('Where the suggested hours come from, and when there are none',
-    'Choosing an asset offers the hours it recorded on that day, and the figure lands in a field you can change '
-    + '\u2014 it is a suggestion, not an instruction. What it counts is each STRETCH of work that both began and '
-    + 'ended on that day, so an asset started on Monday, put on hold and picked up on Wednesday offers Monday\u2019s '
-    + 'hours on Monday and Wednesday\u2019s on Wednesday, each exactly right. A stretch that ran past midnight cannot '
-    + 'be split between two days and is left out; the form says so rather than quietly offering a smaller number. '
-    + 'An asset with nothing recorded that day offers nothing, and the field is typed in by hand.'),
+  note('Where the filled-in hours come from',
+    'Choosing an asset fills in WHAT IS LEFT: the time you have recorded on that asset, less whatever you have '
+    + 'already logged against it on any day. So a job that took three days offers its first day\u2019s hours, then '
+    + 'only what has accrued since, then only what accrued after that \u2014 the three add up to the time the asset '
+    + 'recorded, once, instead of to that total three times over. The line under the field shows the arithmetic: '
+    + 'what was recorded, what is already on your timesheet, and what is left.'),
+  note('It is a starting figure, not an instruction',
+    'The number lands in a field you can change, and nothing refuses a different one. If you were interrupted and '
+    + 'the clock does not reflect the hours you actually worked, type over it \u2014 and once you have, changing '
+    + 'asset and coming back will not quietly overwrite your correction. An asset still in progress offers the time '
+    + 'elapsed so far, not counting anything it spent on hold. An asset you have already logged in full offers '
+    + 'nothing and says so.'),
+  note('It is your own recorded time, not the asset\u2019s',
+    'An asset handed over from somebody else carries their hours in its Time Spent on the Efficiency report, '
+    + 'because that is what the asset cost. The figure offered here counts only your own stretches, because their '
+    + 'hours are not yours to file. After a hand-over the two numbers differ, and both are right.'),
   shot('09-timesheet-line-form', 'Adding a line.'),
 
   h2('9.3 The rules'),
