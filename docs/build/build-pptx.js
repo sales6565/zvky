@@ -524,15 +524,16 @@ module_({
   module: 'Time Sheet',
   head: 'A day at a time, in IST',
   items: [
-    'The working window is printed above the week — 09:30 to 19:00 IST, lunch 13:00 to 14:00, 8 hours a day.',
-    'Lines outside the day are refused; the lunch hour is taken out of any line that crosses it.',
-    'Submission is daily. A submitted day is with your approver and no longer yours to edit.',
-    'Approvers see their team’s days, with the count carried on the tab.',
-    'Every rule reads the configured window — change it in Settings and the rules change with it.',
+    'A line is a number of HOURS against a project, an asset or non-project time. No start and end times.',
+    'Pick an asset and the hours it recorded that day are offered — a suggestion in a field you can change.',
+    'A day over 8 hours is flagged, not refused. A long day is real; a form that refuses one is not.',
+    'Submission is daily, and nobody approves it. Submitting locks the day; its owner can reopen it.',
+    'A lead reads their team\u2019s hours and nothing more — the approval queue is gone.',
   ],
-  whoText: 'Everybody fills in their own. Approving sits with leads and producers — 18 designations.',
+  whoText: 'Everybody fills in their own. Reading a team\u2019s sits with leads and producers \u2014 18 designations. '
+    + 'There is no Approve Timesheets permission any more.',
   shotName: '09-timesheet-week',
-  caption: 'A week: Submitted, Approved and Draft days.',
+  caption: 'A week of Draft and Submitted days.',
 });
 
 module_({
@@ -583,9 +584,9 @@ module_({
   module: 'Settings',
   head: 'Not one screen, but the ones you hold',
   items: [
-    'Working hours and lunch — the window the Time Sheet and the Idle report both read.',
+    'Working hours — the standard day the Idle report measures against.',
     'Branding — the studio name and the colour used across the application.',
-    'Four value lists: Scope of Work, Priorities, Categories and Roles.',
+    'Five value lists: Scope of Work, Priorities, Asset Categories, Project Categories and Roles.',
     'Renaming a value is safe; a value in use cannot be deleted, only deactivated.',
     'A person given one Settings permission gets this page with exactly that one section on it.',
   ],

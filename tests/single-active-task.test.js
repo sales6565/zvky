@@ -261,7 +261,7 @@ test('the single-active-task rule', { skip: cfg ? false : SKIP_REASON }, async (
 
     // Her own timesheet.
     assert.strictEqual((await as('ana', '/timesheets/entries', { method: 'POST',
-      body: { date: '2026-03-02', startTime: '10:00', endTime: '12:00', clientId, projectId: projectA } })).status,
+      body: { date: '2026-03-02', hours: 2, clientId, projectId: projectA } })).status,
     201, 'timesheet entry');
     assert.strictEqual((await as('ana', '/timesheets/submit', { method: 'POST',
       body: { date: '2026-03-02' } })).status, 200, 'timesheet submit');

@@ -494,13 +494,15 @@ const GROUPS = [
         describe: 'See the timesheets of the people who report to you. Reach stays with the '
           + 'role — this is your team, not the studio.',
       },
-      {
-        key: 'timesheet.approve',
-        label: 'Approve Timesheets',
-        impliedBy: has('manageAccess'),
-        describe: 'Approve a submitted week, or send it back with a reason. Approving locks it; '
-          + 'rejecting returns it to the person to correct.',
-      },
+      /* timesheet.approve was here, and the studio removed the step it gated:
+         a submitted timesheet is nobody else's to approve. Deleted rather than
+         kept as a switch that does nothing, because a permission a Super Admin
+         can grant and which then changes nothing is worse than an absence —
+         somebody would grant it and wait for a queue that never fills.
+         
+         What is left is the pair above: seeing your team's hours, and seeing
+         the studio's. Both are read-only. A day is unlocked by the person whose
+         day it is; see the reopen route in src/routes/timesheets.js. */
       {
         /* The studio-wide read. Aligned with Reports by intent rather than by
            implication: holding report.view does not hand you this, because

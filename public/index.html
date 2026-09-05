@@ -962,12 +962,13 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
       <label>Category</label>
       <select id="tl_cat"></select>
     </div>
-    <!-- Times, not a number of hours. The window and the lunch break cannot be
-         checked against "3.5", and the duration falls out of the two anyway. -->
-    <div style="display:flex;gap:10px;">
-      <div style="flex:1;"><label>Start</label><input type="time" id="tl_start" step="900"></div>
-      <div style="flex:1;"><label>End</label><input type="time" id="tl_end" step="900"></div>
-    </div>
+    <!-- One number, not a stretch of the clock. What it costs is the overlap
+         check and the working-window rules, which needed two times to compare;
+         what it buys is a form somebody fills in at the end of a day from
+         memory, which is how a timesheet is actually filled in. -->
+    <label>Hours</label>
+    <input type="number" id="tl_hours" step="0.25" min="0.25" max="24" placeholder="e.g. 3.5">
+    <div id="tl_suggest" style="font-size:11.5px;color:var(--ink-faint);margin:2px 0 0;"></div>
     <div id="tl_calc" style="font-size:11.5px;color:var(--ink-muted);margin:2px 0 4px;"></div>
     <label>Notes <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional)</span></label>
     <textarea id="tl_notes" rows="2" placeholder="What you did"></textarea>
@@ -2858,16 +2859,15 @@ const tsPretty = (iso) => {
 /* How many weeks are waiting on this person to decide. Lives on the tab for the
    same reason Pending Actions' does: an approval queue nobody is told about is a
    queue that grows. */
+/* The Time Sheet tab counted the days waiting on you to approve. Nothing waits
+   on anybody now, so the badge is hidden and stays hidden — kept as a function
+   because several places call it, and each of those is a place that used to
+   mean "the queue may have changed". */
 async function refreshTimesheetCount(){
   const badge = document.getElementById('timesheetCount');
   const tab = document.getElementById('timesheetTabBtn');
-  if(!badge || !can('timesheet.approve')){ if(badge){ badge.hidden = true; } return; }
-  try{
-    const { count } = await api('/timesheets/pending');
-    badge.textContent = count;
-    badge.hidden = !count;
-    if(tab) tab.classList.toggle('has-pending', count > 0);
-  }catch{ badge.hidden = true; }
+  if(badge) badge.hidden = true;
+  if(tab) tab.classList.remove('has-pending');
 }
 
 async function renderTimesheet(){
@@ -2904,7 +2904,7 @@ async function renderTimesheet(){
       <span class="ts-range">${tsPretty(week.weekStart)} – ${tsPretty(week.weekEnd)}, ${week.weekEnd.slice(0,4)}</span>
       ${picker}
       <div class="spacer"></div>
-      <span class="ts-hint">${wd.dayStart}–${wd.dayEnd} ${wd.timezone}${wd.hasLunch===false?'':` · lunch ${wd.lunchStart}–${wd.lunchEnd}`} · ${wd.maxHours}h a day</span>
+      <span class="ts-hint">Hours against an asset, a project or non-project time · a day over ${wd.maxHours}h is flagged</span>
       <span class="ts-total">Week <strong>${week.weekHours}h</strong></span>
       ${can('timesheet.own') ? `
         <button class="btn btn-ghost btn-sm" id="ts_xlsx">Excel</button>
@@ -2938,7 +2938,9 @@ async function renderTimesheet(){
           ${day.entries.length ? `<table class="ts-lines"><tbody>${day.entries.map(e=>`
             <tr>
               <td class="ts-what">
-                <div class="ts-clock">${e.startLabel}–${e.endLabel}</div>
+                <!-- Only on lines filed while the form asked for a span. Everything
+                     since is an hours figure, and the Hours column is where it is. -->
+                ${e.startLabel && e.endLabel ? `<div class="ts-clock">${e.startLabel}–${e.endLabel}</div>` : ''}
                 ${e.nonProject
                 ? `<span class="ts-cat">${escapeHTML(tsCategory(week, e.nonProject))}</span>`
                 : `${escapeHTML(e.projectName||'—')}<span class="ts-client"> · ${escapeHTML(e.clientName||'')}</span>${
@@ -2952,23 +2954,27 @@ async function renderTimesheet(){
           ${editable ? `<button class="btn btn-ghost btn-sm ts-add" data-day="${day.date}">+ Add a line</button>` : ''}
           ${editable && day.entries.length
             ? `<button class="btn btn-brand btn-sm ts-submit-day" data-day="${day.date}">Submit this day</button>` : ''}
-          ${day.locked ? `<div class="ts-empty">${day.status==='approved'
-            ? `Approved${day.decidedBy?` by ${escapeHTML(day.decidedBy)}`:''}.`
-            : 'With your approver.'}</div>` : ''}
+          ${/* Submitted is the end of it — there is nobody to approve it. So the
+                 way back is the owner's own, and it has to be offered here or a
+                 mistyped figure would be permanent. Only on your own sheet. */''}
+          ${day.locked ? `<div class="ts-empty">Submitted${day.submittedAt?` ${fmtDate(day.submittedAt)}`:''}.${
+            week.mine ? ' Reopen it if something needs changing.' : ''}</div>` : ''}
+          ${day.locked && week.mine
+            ? `<button class="btn btn-ghost btn-sm ts-reopen" data-day="${day.date}">Reopen this day</button>` : ''}
         </div>`;
       }).join('')}
     </div>
-
-    ${can('timesheet.approve') ? '<div id="ts_queue"></div>' : ''}
   `;
 
   wireTimesheet(el);
-  if(can('timesheet.approve')) renderTimesheetQueue();
 }
 
+/* Two states now, not four. Approved and rejected were the approver's side of
+   a cycle that no longer exists; days already carrying them keep their word,
+   which is why the map still answers for them. */
 const TS_STATUS = {
   draft:     { label: 'Draft',              color: 'var(--ink-muted)' },
-  submitted: { label: 'Submitted',          color: 'var(--review)' },
+  submitted: { label: 'Submitted',          color: 'var(--approved)' },
   approved:  { label: 'Approved',           color: 'var(--approved)' },
   rejected:  { label: 'Sent back for correction', color: '#e8402c' },
 };
@@ -2998,6 +3004,17 @@ function wireTimesheet(el){
 
   /* One Submit per day, which is the cycle now. A day submitted is a day
      locked; the rest of the week carries on. */
+  /* Taking a day back. The only way out of a locked day now that nobody
+     approves one, so it has to work — a submitted day with no way back would
+     make a mistyped figure permanent. */
+  el.querySelectorAll('.ts-reopen').forEach(b=>b.onclick = async ()=>{
+    b.disabled = true;
+    try{
+      await api('/timesheets/reopen', { method:'POST', body:{ date: b.dataset.day } });
+      showToast('Day reopened — change it and submit again.');
+      await renderTimesheet();
+    }catch(e){ showToast(e.message); b.disabled = false; }
+  });
   el.querySelectorAll('.ts-submit-day').forEach(b=>b.onclick = async ()=>{
     b.disabled = true;
     try{
@@ -3011,79 +3028,16 @@ function wireTimesheet(el){
   });
 }
 
-/* Weeks waiting on this person to decide, under their own sheet. Deliberately
-   on the same screen rather than a tab of its own: an approver's own week and
-   their team's are the same job, done once a week. */
-async function renderTimesheetQueue(){
-  const el = document.getElementById('ts_queue');
-  if(!el) return;
-  let data;
-  try{ data = await api('/timesheets/pending'); }catch{ el.innerHTML=''; return; }
-  if(!data.days.length){ el.innerHTML = '<div class="ts-queue-empty">No timesheets waiting on you.</div>'; return; }
+/* The approval queue was here.
+ *
+ * A submitted timesheet is nobody else's to approve now, so there is no queue,
+ * no Approve or Send back, and no badge counting days that are waiting. What is
+ * left of somebody else's sheet is reading it — the person picker above still
+ * opens a colleague's week for anybody holding View Team Timesheets, and every
+ * control on it is absent rather than disabled, because there is nothing there
+ * to be permitted to do.
+ */
 
-  el.innerHTML = `<div class="pr-banner" style="margin-top:18px;">
-    <h4>Waiting on you to approve · ${data.days.length}</h4>
-    <div class="pr-sub">Submitted days from the people you approve for. Approving locks the day; sending it back returns it to them with your reason. A day over ${data.maxHours} hours, or worked at the weekend, is flagged — neither is refused, and approving accepts it.</div>
-    ${data.days.map(w=>`<div class="pr-item"><div class="pr-what">
-      <strong>${escapeHTML(w.userName)}</strong>
-      <span style="color:var(--ink-faint);">· ${tsDayName(w.date)} ${tsPretty(w.date)}</span>
-      <span class="ts-total" style="margin-left:8px;">${w.hours}h</span>
-      ${w.overLong ? `<span class="ts-flag over">Over ${data.maxHours}h</span>` : ''}
-      ${w.weekend ? '<span class="ts-flag">Weekend</span>' : ''}
-      <div class="pr-meta">submitted ${fmtDate(w.submittedAt)}</div>
-      <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-        <button class="btn btn-ghost btn-sm ts-open" data-user="${w.userId}" data-week="${w.date}">Open the day</button>
-        <button class="btn btn-brand btn-sm ts-approve" data-user="${w.userId}" data-week="${w.date}">Approve</button>
-        <button class="btn btn-ghost btn-sm ts-reject" data-user="${w.userId}" data-week="${w.date}" style="color:#e8402c;">Send back</button>
-      </div>
-      <div class="ts-reason" data-user="${w.userId}" data-week="${w.date}" style="display:none;margin-top:8px;">
-        <textarea class="pr-feedback" rows="2" placeholder="What needs correcting? (required)"></textarea>
-        <div style="margin-top:6px;"><button class="btn btn-brand btn-sm ts-reject-go">Send it back</button></div>
-      </div>
-      <div class="ref-err ts-err" data-user="${w.userId}" data-week="${w.date}"></div>
-    </div></div>`).join('')}
-  </div>`;
-
-  const key = (b)=>`[data-user="${b.dataset.user}"][data-week="${b.dataset.week}"]`;
-  el.querySelectorAll('.ts-open').forEach(b=>b.onclick = ()=>{
-    tsState.userId = b.dataset.user; tsState.date = b.dataset.week; renderTimesheet();
-  });
-  const decide = async (b, decision, reason)=>{
-    const err = el.querySelector('.ts-err'+key(b));
-    if(err) err.textContent = '';
-    b.disabled = true;
-    try{
-      await api(`/timesheets/${b.dataset.user}/${b.dataset.week}/decision`,
-        { method:'POST', body:{ decision, reason } });
-      showToast(decision==='approve' ? 'Week approved.' : 'Sent back for correction.');
-      await renderTimesheet();
-      refreshTimesheetCount();
-    }catch(e){ if(err) err.textContent = e.message; else showToast(e.message); b.disabled = false; }
-  };
-  el.querySelectorAll('.ts-approve').forEach(b=>b.onclick = ()=>decide(b, 'approve'));
-  el.querySelectorAll('.ts-reject').forEach(b=>b.onclick = ()=>{
-    const box = el.querySelector('.ts-reason'+key(b));
-    box.style.display = box.style.display === 'none' ? '' : 'none';
-    if(box.style.display === '') box.querySelector('textarea').focus();
-  });
-  el.querySelectorAll('.ts-reject-go').forEach(go=>go.onclick = ()=>{
-    const box = go.closest('.ts-reason');
-    const reason = box.querySelector('textarea').value.trim();
-    const b = el.querySelector(`.ts-reject[data-user="${box.dataset.user}"][data-week="${box.dataset.week}"]`);
-    if(!reason){
-      const err = el.querySelector(`.ts-err[data-user="${box.dataset.user}"][data-week="${box.dataset.week}"]`);
-      if(err) err.textContent = 'Say what needs correcting.';
-      return;
-    }
-    decide(b, 'reject', reason);
-  });
-}
-
-
-/* Fetch a file the server will only hand to an authenticated caller, and save
-   it under the name the server chose. The Reports tab has its own copy of this
-   inline; it is not touched here, because this feature was asked to leave the
-   reports alone and a shared helper is not worth reaching into them for. */
 async function downloadAuthed(path){
   try{
     const res = await fetch(API_BASE + path, { headers:{ Authorization:'Bearer '+state.token } });
@@ -3118,15 +3072,12 @@ function openTimesheetLine(day){
   /* Opens on the start of the working day, or on the end of whatever is
      already logged — so filling a day in is a sequence of end times rather
      than a sequence of both. */
-  const last = (w.days.find(d=>d.date===day)||{entries:[]}).entries.slice(-1)[0];
-  document.getElementById('tl_start').value = last ? last.endLabel : wd.dayStart;
-  document.getElementById('tl_end').value = '';
-  document.getElementById('tl_start').min = wd.dayStart;
-  document.getElementById('tl_start').max = wd.dayEnd;
-  document.getElementById('tl_end').min = wd.dayStart;
-  document.getElementById('tl_end').max = wd.dayEnd;
+  // Which day this line is for, read by the suggestion and by the running total.
+  tlDay = day;
+  document.getElementById('tl_hours').value = '';
+  document.getElementById('tl_suggest').textContent = '';
   document.getElementById('tl_window').textContent =
-    `Working day ${wd.dayStart}–${wd.dayEnd} ${wd.timezone}. Lunch ${wd.lunchStart}–${wd.lunchEnd} is not working time and is taken off automatically.`;
+    `A day over ${wd.maxHours} hours is flagged, not refused. Pick an asset and the hours it recorded today are offered.`;
   document.getElementById('tl_cat').innerHTML =
     (w.nonProjectTypes||[]).map(n=>`<option value="${n.key}">${escapeHTML(n.label)}</option>`).join('');
   document.getElementById('tl_client').innerHTML =
@@ -3137,28 +3088,54 @@ function openTimesheetLine(day){
   syncTimesheetLine();
   tlRecalc();
   timesheetLineWrap.classList.add('show');
-  document.getElementById('tl_end').focus();
+  document.getElementById('tl_hours').focus();
 }
 
-/* What the two times come to, before it is sent — the lunch subtraction shown
-   as it happens rather than as a smaller number appearing afterwards. */
+/* What this line would make the day come to, as it is typed.
+   
+   The soft cap is the only rule left, so this is where somebody meets it — and
+   it says the day is long rather than refusing it, which is what "soft" means. */
 function tlRecalc(){
   const out = document.getElementById('tl_calc');
   const wd = (tsState.week||{}).workingDay;
-  if(!wd){ out.textContent=''; return; }
-  const mins = (v)=>{ const m=/^(\d{1,2}):(\d{2})$/.exec(v||''); return m ? Number(m[1])*60+Number(m[2]) : null; };
-  const s = mins(document.getElementById('tl_start').value);
-  const e = mins(document.getElementById('tl_end').value);
-  if(s===null || e===null || e<=s){ out.textContent=''; return; }
-  const ls = mins(wd.lunchStart), le = mins(wd.lunchEnd);
-  const lunch = Math.max(0, Math.min(e,le) - Math.max(s,ls));
-  const net = (e - s - lunch) / 60;
-  out.textContent = net <= 0
-    ? 'That is entirely within the lunch break.'
-    : `${Math.round(net*100)/100}h${lunch ? ` — ${lunch} minutes of lunch taken off` : ''}`;
+  const hours = Number(document.getElementById('tl_hours').value);
+  if(!wd || !Number.isFinite(hours) || hours <= 0){ out.textContent=''; return; }
+  const day = (tsState.week.days||[]).find(d=>d.date===tlDay);
+  const already = day ? Number(day.hours)||0 : 0;
+  const total = Math.round((already + hours)*100)/100;
+  out.textContent = total > wd.maxHours
+    ? `That makes ${total}h on this day — over the ${wd.maxHours}-hour day. It is allowed; it will be flagged.`
+    : `That makes ${total}h on this day.`;
 }
-document.getElementById('tl_start').addEventListener('input', tlRecalc);
-document.getElementById('tl_end').addEventListener('input', tlRecalc);
+document.getElementById('tl_hours').addEventListener('input', tlRecalc);
+
+/* What the day's own recorded work suggests, dropped into the Hours field.
+ *
+ * A SUGGESTION and nothing more: it lands in a field somebody can change, and
+ * an asset with nothing recorded that day simply leaves it empty. The server
+ * counts the stretches that began and ended on this day — a stretch running
+ * across midnight cannot be split and is left out, which is said rather than
+ * quietly subtracted. */
+async function tlSuggest(){
+  const note = document.getElementById('tl_suggest');
+  const field = document.getElementById('tl_hours');
+  const assetId = document.getElementById('tl_asset').value;
+  note.textContent = '';
+  if(!assetId || !tlDay) return;
+  try{
+    const s = await api(`/timesheets/suggest?assetId=${encodeURIComponent(assetId)}&date=${tlDay}`);
+    if(s.hours){
+      /* Only into an empty field. Overwriting a number somebody has already
+         typed would make the suggestion an instruction. */
+      if(!field.value){ field.value = s.hours; tlRecalc(); }
+      note.textContent = `${s.hours}h recorded on this asset today${
+        s.spanning ? ` — ${s.spanning} stretch${s.spanning===1?'':'es'} ran past midnight and ${s.spanning===1?'is':'are'} not included` : ''}.`;
+    }else if(s.spanning){
+      note.textContent = `Nothing recorded on this asset today that began and ended on one day — ${s.spanning} stretch${
+        s.spanning===1?'':'es'} ran past midnight, which cannot be split.`;
+    }
+  }catch{ /* a suggestion nobody can fetch is simply not made */ }
+}
 
 function syncTimesheetLine(){
   const project = document.getElementById('tl_kind').value === 'project';
@@ -3166,6 +3143,9 @@ function syncTimesheetLine(){
   document.getElementById('tl_catFields').style.display = project ? 'none' : '';
 }
 
+// The day the open line form is for. Read by the suggestion and by the running
+// total, both of which need it before the form is saved.
+let tlDay = null;
 const timesheetLineWrap = document.getElementById('timesheetLineWrap');
 document.getElementById('tl_kind').addEventListener('change', syncTimesheetLine);
 document.getElementById('tl_cancel').addEventListener('click', ()=>timesheetLineWrap.classList.remove('show'));
@@ -3197,7 +3177,9 @@ document.getElementById('tl_project').addEventListener('change', async e=>{
     sel.innerHTML = '<option value="">No specific asset</option>' +
       assets.map(a=>`<option value="${a.id}">${escapeHTML(a.code)} — ${escapeHTML(a.name)}</option>`).join('');
   }catch{ /* a project with no readable assets still takes non-asset time */ }
+  document.getElementById('tl_suggest').textContent = '';
 });
+document.getElementById('tl_asset').addEventListener('change', tlSuggest);
 
 document.getElementById('tl_save').addEventListener('click', async ()=>{
   const err = document.getElementById('tl_err');
@@ -3205,8 +3187,7 @@ document.getElementById('tl_save').addEventListener('click', async ()=>{
   const project = document.getElementById('tl_kind').value === 'project';
   const body = {
     date: tsState.draft.day,
-    startTime: document.getElementById('tl_start').value,
-    endTime: document.getElementById('tl_end').value,
+    hours: document.getElementById('tl_hours').value,
     notes: document.getElementById('tl_notes').value.trim() || undefined,
   };
   if(project){
@@ -3221,7 +3202,7 @@ document.getElementById('tl_save').addEventListener('click', async ()=>{
   try{
     const res = await api('/timesheets/entries', { method:'POST', body });
     timesheetLineWrap.classList.remove('show');
-    if(res.lunchSubtracted) showToast(`Lunch taken off — ${res.lunchSubtracted} minutes.`);
+    if(res.overLong) showToast('Logged — that day is over the standard day, and is flagged.');
     await renderTimesheet();
   }catch(e){ err.textContent = e.message; }
   finally{ btn.disabled = false; }
@@ -7576,48 +7557,40 @@ async function renderSchedule(){
           </div>
         </div>
       </div>
+      ${/* Day starts / Day ends / Lunch from / Lunch until were here.
+           
+           They set the window a timesheet line had to fall inside and the hour
+           subtracted from one. A line is a number of hours now, so nothing
+           reads any of the four — and four inputs that save a value nothing
+           consults is worse than no inputs at all: somebody would set the
+           studio's hours and believe they had changed something.
+           
+           The values are still in the database and still returned by the API,
+           so a studio that goes back to clock times gets its window back
+           rather than its defaults. */''}
       <div class="ref-add" style="margin-top:2px;">
-        <div>
-          <label>Day starts</label>
-          <input type="time" id="sch_dayStart" class="narrow" step="900" value="${SCHEDULE.dayStartLabel}">
-        </div>
-        <div>
-          <label>Day ends</label>
-          <input type="time" id="sch_dayEnd" class="narrow" step="900" value="${SCHEDULE.dayEndLabel}">
-        </div>
-        <div>
-          <label>Lunch from</label>
-          <input type="time" id="sch_lunchStart" class="narrow" step="900" value="${SCHEDULE.hasLunch?SCHEDULE.lunchStartLabel:''}">
-        </div>
-        <div>
-          <label>Lunch until</label>
-          <input type="time" id="sch_lunchEnd" class="narrow" step="900" value="${SCHEDULE.hasLunch?SCHEDULE.lunchEndLabel:''}">
-        </div>
         <button class="btn btn-brand" id="sch_save">Save</button>
       </div>
       <div class="ref-err" id="sch_err"></div>
       <div class="ref-note" id="sch_now">A week currently expects
         <strong>${(SCHEDULE.hoursPerDay*SCHEDULE.workingDays.length).toFixed(2).replace(/\.00$/,'')} hours</strong>
         (${SCHEDULE.workingDayNames.join(', ')}).
-        The Time Sheet accepts <strong>${SCHEDULE.dayStartLabel}–${SCHEDULE.dayEndLabel} ${escapeHTML(SCHEDULE.timezone||'IST')}</strong>,
-        ${SCHEDULE.hasLunch
-          ? `lunch ${SCHEDULE.lunchStartLabel}–${SCHEDULE.lunchEndLabel} not counted as work,`
-          : 'no fixed lunch break,'}
-        and flags a day over ${SCHEDULE.maxHours}h.
-        <br>Leave both lunch boxes empty if the studio has no fixed break. Times are wall-clock times in
-        the studio — changing them does not convert anything already logged.</div>
+        The Idle report measures against that day; the Time Sheet separately flags anything over
+        <strong>${SCHEDULE.maxHours}h</strong> — flags it, not refuses it. The two are deliberately
+        different numbers: a studio can expect eight hours and only want a second look above ten.
+        <br>A timesheet line is a number of hours, so there is no start or end time to check against a
+        working window any more.</div>
     </div>`;
 
   document.getElementById('sch_save').onclick = async ()=>{
     const err = document.getElementById('sch_err');
     err.textContent = '';
     const workingDays = [...el.querySelectorAll('.checklist input:checked')].map(i=>Number(i.value));
-    const val = (id)=>document.getElementById(id).value;
     try{
+      /* Only the two the studio can still set. The endpoint leaves a field it
+         is not sent alone, so the stored window survives untouched. */
       const res = await api('/branding/schedule', { method:'PUT',
-        body:{ hoursPerDay: Number(document.getElementById('sch_hours').value), workingDays,
-               dayStart: val('sch_dayStart'), dayEnd: val('sch_dayEnd'),
-               lunchStart: val('sch_lunchStart'), lunchEnd: val('sch_lunchEnd') } });
+        body:{ hoursPerDay: Number(document.getElementById('sch_hours').value), workingDays } });
       SCHEDULE = res.schedule;
       idleState.data = null;   // the report's expected hours just changed
       /* And so has the window the Time Sheet draws its form from, which is

@@ -148,7 +148,7 @@ module.exports = [
       ['Projects', 'The projects under the chosen client, and the form to add one.', 'Anyone who may see or add projects'],
       ['Assets List', 'The same assets as a table, with Active, Inactive, Archived and History.', 'Everyone'],
       ['My Team', 'The people who report to you, and their load.', 'View Team'],
-      ['Time Sheet', 'Your week, and your team’s if you approve them.', 'Everyone'],
+      ['Time Sheet', 'Your week, and your team\u2019s to read if you lead one.', 'Everyone'],
       ['Reports', 'Efficiency and Idle.', 'View Reports'],
       ['Users', 'The staff list.', 'User View'],
       ['Settings', 'Everything configurable, and the Activity Log.', 'Any one Settings permission'],
@@ -585,50 +585,70 @@ module.exports = [
 
   h2('9.1 Your week'),
   shot('09-timesheet-week', 'A week. Each day is a card with its lines, its total and its state. The window in force is printed at the top right.'),
-  p('The line above the days — 09:30-19:00 IST, lunch 13:00-14:00, 8h a day — is the studio’s configured window, '
-    + 'not a fixed rule of the software. A Super Admin changes it in Settings (chapter 13.2) and the change applies '
-    + 'to everybody from that moment.'),
+  p('The line above the days says what a day is flagged at. It is the studio’s own number rather than a fixed '
+    + 'rule of the software: a Super Admin changes it in Settings (chapter 13.2) and the change applies to '
+    + 'everybody from that moment.'),
 
   h2('9.2 Adding a line'),
   steps([
     'Press + Add a line on the day.',
-    'Give a start and an end time.',
     'Choose the project, and the asset if the time was against one.',
+    'Give the number of hours. Pick an asset first and this is filled in for you where the application can tell \u2014 see below.',
     'Say what you did.',
     'Save.',
   ]),
+  note('Where the suggested hours come from, and when there are none',
+    'Choosing an asset offers the hours it recorded on that day, and the figure lands in a field you can change '
+    + '\u2014 it is a suggestion, not an instruction. What it counts is each STRETCH of work that both began and '
+    + 'ended on that day, so an asset started on Monday, put on hold and picked up on Wednesday offers Monday\u2019s '
+    + 'hours on Monday and Wednesday\u2019s on Wednesday, each exactly right. A stretch that ran past midnight cannot '
+    + 'be split between two days and is left out; the form says so rather than quietly offering a smaller number. '
+    + 'An asset with nothing recorded that day offers nothing, and the field is typed in by hand.'),
   shot('09-timesheet-line-form', 'Adding a line.'),
 
   h2('9.3 The rules'),
   bullets([
-    'Times are Indian Standard Time, always. Nothing is converted.',
-    'A line must fall inside the working day. Outside it, the form refuses and says what the window is.',
-    'Lunch is not loggable. A line crossing it has the lunch hour taken out of its total automatically.',
-    'A day holds at most 8 loggable hours. The eighth hour is the limit, not a target.',
-    'Every rule above reads the configured window. Change the window and the rules change with it.',
+    'A line is a number of hours against one thing. There are no start and end times to give.',
+    'The smallest line is a quarter of an hour; the largest single line is a day.',
+    'A day over 8 hours is FLAGGED, not refused. A long day is a real thing, and a form that refuses one teaches people to log eight and go home late.',
+    'A line is either project work or non-project time, never both.',
+    'Weekend work is taken and marked, not blocked.',
   ]),
+  note('What the simpler form gives up',
+    'A line used to be a stretch of the clock, and three rules went with it. Two are no loss: the 09:30\u201319:00 '
+    + 'working window and the automatic lunch subtraction were only ever checks against times nobody types any '
+    + 'more. The third is a real one. Two lines claiming the same hours used to be refused, and that is the single '
+    + 'arithmetic mistake a timesheet cannot catch by adding up \u2014 the total looks perfectly reasonable. With '
+    + 'hours alone there is nothing to compare, so the day total and its flag are the only defence left. Worth '
+    + 'knowing when reading somebody\u2019s week.'),
 
   h2('9.4 Submitting a day'),
   steps([
     'Fill in the day.',
     'Press Submit this day.',
   ]),
-  p('Submission is daily, not weekly. A submitted day is with your approver and is no longer yours to edit. '
-    + 'The state on each card — Draft, Submitted, Approved — says where it is.'),
+  p('Submission is daily, not weekly, and it is the end of it: a submitted timesheet is nobody else\u2019s to '
+    + 'approve. Submitting locks the day so that filing it is a definite act rather than an autosave, and the '
+    + 'state on each card \u2014 Draft or Submitted \u2014 says where it is.'),
+  note('You can take a day back yourself',
+    'A locked day carries a Reopen button for the person whose day it is. This exists BECAUSE approval does not: '
+    + 'the way out of a locked day used to be asking your approver to send it back, and with nobody to ask, a '
+    + 'mistyped 8 that should have been 0.8 would be permanent. Reopening is written to the day\u2019s own history '
+    + 'and to the Activity Log, so a day submitted, changed and submitted again says so. Only its owner can do it '
+    + '\u2014 a lead reading their team\u2019s hours has no such button.'),
 
-  h2('9.5 Approving'),
-  shot('09-timesheet-approval-queue', 'The approver’s view: the days waiting on them, with the count carried on the tab.'),
-  steps([
-    'Open Time Sheet. The tab count is the number of days waiting on you.',
-    'Read the day.',
-    'Approve it, or send it back with a reason.',
-  ]),
+  h2('9.5 Reading your team\u2019s hours'),
+  p('Holding View Team Timesheets puts a person picker above the week. Pick somebody and their week is drawn '
+    + 'exactly as their own is, and entirely read-only. There is nothing to approve, nothing to send back and no '
+    + 'queue \u2014 those went with the approval step. What is left is oversight, which is what a lead needed.'),
 
   h2('9.6 Excel and PDF'),
   p('Excel and PDF buttons sit at the top right of the week. Both export exactly what is on screen, for the week and '
     + 'the person shown.'),
-  roles('Everybody fills in their own time sheet. Seeing and approving a team’s sits with the leads and producers '
-    + 'band. Studio leadership can see everybody’s.', ['everyone', 'leads', 'leadership']),
+  roles('Everybody fills in their own time sheet. Seeing a team\u2019s sits with the leads and producers band, and '
+    + 'seeing it is all it does. Studio leadership can see everybody\u2019s. There is no Approve Timesheets '
+    + 'permission any more \u2014 it was removed with the step it gated, rather than left as a switch that turns '
+    + 'nothing on.', ['everyone', 'leads', 'leadership']),
 
   pagebreak(),
   // ============================================================ 10

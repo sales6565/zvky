@@ -190,10 +190,12 @@ const reset = () => {
   if (add) { await add.click(); await p.waitForTimeout(900); await shot(p, '09-timesheet-line-form', '#timesheetLineWrap .modal, #timesheetLineWrap');
     await tryClick(p, '#tl_cancel'); await closeModal(p); }
   await p.close();
+  /* The approval queue is gone, so there is no queue to photograph. A lead's
+     Time Sheet is now their team's week, read-only, which is what this shows. */
   p = await page();
   await signIn(p, 'lead@zvky.test');
   await tab(p, 'timesheet');
-  await shot(p, '09-timesheet-approval-queue');
+  await shot(p, '09-timesheet-team-view');
   await p.close();
 
   // ---------- 10 Reports ----------------------------------------------------

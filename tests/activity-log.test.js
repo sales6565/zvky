@@ -300,7 +300,7 @@ test('the activity log', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
   await t.test('filtering by person shows only that person, across every module', async () => {
     await as('ana', '/timesheets/entries', { method: 'POST',
-      body: { date: '2026-03-02', startTime: '10:00', endTime: '12:00', clientId, projectId } });
+      body: { date: '2026-03-02', hours: 2, clientId, projectId } });
 
     const mine = await logOf('root', `?actorId=${people.ana}`);
     assert.ok(mine.total >= 2, `expected several, got ${mine.total}`);

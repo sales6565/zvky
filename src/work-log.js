@@ -371,6 +371,58 @@ function unavailable(err) {
   return code === 'ER_NO_SUCH_TABLE' || code === 'ER_BAD_FIELD_ERROR';
 }
 
+/* How much of this person's work on an asset happened on ONE calendar day.
+ *
+ * What the Time Sheet suggests when somebody adds a line, and the reason it can
+ * suggest anything at all is Hold. The unit here is the SESSION, not the asset
+ * and not the round:
+ *
+ *   An asset started Monday, put down Monday evening, picked up Wednesday and
+ *   submitted Wednesday has a round spanning three days and no daily breakdown
+ *   — but it has TWO session rows, each of which begins and ends on one day.
+ *   Monday's hours and Wednesday's are both exactly known. Asking the question
+ *   per round would answer "no idea" for both.
+ *
+ * A session that CROSSES MIDNIGHT is left out, and the count of those comes
+ * back so the screen can say so. There is genuinely no way to know how much of
+ * a stretch running from Tuesday afternoon to Wednesday morning was Tuesday's,
+ * and a suggestion invented for it would be a number somebody signs their name
+ * to. Better to offer nothing and say why.
+ *
+ * IST, because a timesheet day is a calendar day in the studio. The stamps are
+ * instants, so they are shifted by the offset before the date is taken — the
+ * same conversion, and the same reasoning, as src/asset-schedule.js.
+ *
+ * Scoped to ONE PERSON on purpose: this is their timesheet, and an asset they
+ * hold now may have been worked on by somebody else last week.
+ */
+async function dayTotalFor(db, { assetId, userId, day, offsetMinutes = 330 }) {
+  if (!assetId || !userId || !day) return { seconds: 0, sessions: 0, spanning: 0 };
+  const shift = `INTERVAL ${Number(offsetMinutes) || 0} MINUTE`;
+  const { rows } = await db.query(
+    `SELECT
+        COALESCE(SUM(CASE WHEN DATE(started_at + ${shift}) = DATE(ended_at + ${shift})
+                          THEN COALESCE(seconds, 0) ELSE 0 END), 0) AS seconds,
+        SUM(DATE(started_at + ${shift}) = DATE(ended_at + ${shift})) AS same_day,
+        SUM(DATE(started_at + ${shift}) <> DATE(ended_at + ${shift})) AS spanning
+       FROM work_sessions
+      WHERE asset_id = $1 AND user_id = $2 AND ended_at IS NOT NULL
+        AND (DATE(started_at + ${shift}) = $3 OR DATE(ended_at + ${shift}) = $3)`,
+    [assetId, userId, day]
+  ).catch((err) => {
+    /* No table, no suggestion — and that is the right failure. The field is
+       filled in by hand anyway; refusing to draw the form because time
+       recording is unavailable would take the timesheet down with it. */
+    if (!unavailable(err)) throw err;
+    return { rows: [{ seconds: 0, same_day: 0, spanning: 0 }] };
+  });
+  return {
+    seconds: Number(rows[0].seconds) || 0,
+    sessions: Number(rows[0].same_day) || 0,
+    spanning: Number(rows[0].spanning) || 0,
+  };
+}
+
 /* Where the meaning of `seconds` changes.
  *
  * Rows written before this change hold ACTIVE worked time, summed across
@@ -538,7 +590,7 @@ async function totalsFor(db, assetIds) {
 
 module.exports = {
   REASONS, WORK_CONTINUES, start, close, closeIfWorkStopped, hold, heldFor, summary, totalsFor,
-  openSession, openForUser, currentRound, available, cutover,
+  openSession, openForUser, currentRound, available, cutover, dayTotalFor,
   // Exported so every reader of a submit stamp uses the same expression. There
   // are three, and the third was found by a test rather than by reading.
   submitStamp, askStamped,

@@ -141,22 +141,11 @@ function clockLabel(minutes) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
-/* How much of [start, end) is not lunch.
+/* Lunch was subtracted from a span here, and there is no span any more.
  *
- * Auto-subtracted rather than blocked, as the studio chose: somebody who worked
- * 12:30 to 14:30 worked ninety minutes, and making them file it as two rows to
- * say so is bookkeeping for the form's benefit. The overlap is removed, and the
- * caller is told it happened so the screen can say so rather than quietly
- * showing a smaller number than the person typed.
- */
-function workedMinutes(start, end, win) {
-  const { lunchStart, lunchEnd } = windowOf(win);
-  const gross = Math.max(0, end - start);
-  const overlap = lunchStart === null || lunchEnd === null
-    ? 0
-    : Math.max(0, Math.min(end, lunchEnd) - Math.max(start, lunchStart));
-  return { gross, lunch: overlap, net: gross - overlap };
-}
+ * Removed rather than left unused: a function nothing calls is a claim that
+ * something still works this way, and the next person to read it would spend a
+ * while working out where the lunch rule went. It went with the clock. */
 
 // Saturday or Sunday, from the date string alone.
 function isWeekend(iso) {
@@ -198,54 +187,69 @@ const isLocked = (status) => LOCKED.includes(status);
    right response to "almost always" is to say so rather than to refuse. */
 const DAY_WARN_HOURS = 24;
 
+/* The smallest and largest a line can be.
+ *
+ * A quarter of an hour is the finest grain anybody fills a timesheet in at, and
+ * a line of nought hours is a line saying nobody worked — refused rather than
+ * stored, the same answer the clock version gave a span that subtracted to
+ * nothing. Twenty-four is the ceiling on ONE line; the day's soft warning is a
+ * separate and much lower number.
+ */
+const MIN_LINE_HOURS = 0.25;
+const MAX_LINE_HOURS = 24;
+
+/* Hours, from whatever the form sent. Accepts "3", "3.5", " 3.50 " and 3.5.
+ * Rejects anything that is not a finite number, which is what an empty field
+ * and a typed word both come through as. */
+function parseHours(value) {
+  if (value === null || value === undefined || String(value).trim() === '') return null;
+  const n = Number(String(value).trim());
+  if (!Number.isFinite(n)) return null;
+  // Two decimals, which is what the column stores and what quarter hours need.
+  return Math.round(n * 100) / 100;
+}
+
 /* One line, checked. Returns { ok, value } or { ok: false, error, field }.
  *
- * A line is now a stretch of the clock rather than a number of hours: the
- * studio asked for a working window and a lunch break, and neither can be
- * checked against "3.5". The duration is worked out here and stored alongside,
- * so everything that already reads hours — the totals, the exports, the
- * approver's queue — keeps working without knowing about minutes.
+ * A line is a NUMBER OF HOURS against one asset, project or non-project
+ * category. It was a stretch of the clock, and the studio asked for the simpler
+ * shape; what that costs is worth writing down rather than discovering later:
  *
- * Two rules that are rules, and everything else is a flag:
- *   the window   09:30-19:00, refused outside it
- *   lunch        13:00-14:00, subtracted from whatever overlaps it
- * Over eight hours in a day and work at the weekend are both allowed and both
- * flagged, because both are real things that happen.
+ *   THE WORKING WINDOW AND THE LUNCH RULE ARE GONE. Both were checks against a
+ *   clock, and there is no clock here to check. 09:30-19:00 and the lunch hour
+ *   are no longer read by anything, which is why the fields that set them have
+ *   been taken out of Settings rather than left there configuring nothing.
+ *
+ *   SO IS THE OVERLAP CHECK, AND THAT ONE IS A REAL LOSS. Two lines claiming
+ *   the same minutes used to be refused, and it is the one arithmetic error a
+ *   timesheet cannot catch by adding up — the total looks perfectly reasonable.
+ *   With hours alone there is nothing to compare, so the day total and its
+ *   warning are the only defence left. Nothing here can bring it back; it needs
+ *   the clock times to return.
+ *
+ * What survives is the soft eight-hour day, which is a warning and not a wall,
+ * and the rule that a line is either project work or non-project time.
  */
 function validateEntry(raw = {}, win) {
-  const { dayStart, dayEnd, lunchStart, lunchEnd, timezone } = windowOf(win);
+  const { maxHours } = windowOf(win);
   const date = toISO(raw.date);
   if (!date) return { ok: false, error: 'That is not a date.', field: 'date' };
 
-  const start = parseClock(raw.startTime ?? raw.start);
-  const end = parseClock(raw.endTime ?? raw.end);
-  if (start === null) {
-    return { ok: false, error: `Give a start time, as ${clockLabel(dayStart)}.`, field: 'startTime' };
+  const hours = parseHours(raw.hours);
+  if (hours === null) {
+    return { ok: false, error: 'Say how many hours, as 3 or 3.5.', field: 'hours' };
   }
-  if (end === null) {
-    return { ok: false, error: `Give an end time, as ${clockLabel(dayEnd)}.`, field: 'endTime' };
-  }
-  if (end <= start) {
-    return { ok: false, error: 'The end time has to be after the start time.', field: 'endTime' };
-  }
-  if (start < dayStart || end > dayEnd) {
+  if (hours < MIN_LINE_HOURS) {
     return {
       ok: false,
-      error: `The working day is ${clockLabel(dayStart)} to ${clockLabel(dayEnd)} ${timezone}.`,
-      field: start < dayStart ? 'startTime' : 'endTime',
+      error: hours <= 0
+        ? 'A line has to be more than nought hours.'
+        : `The smallest a line can be is ${MIN_LINE_HOURS} of an hour.`,
+      field: 'hours',
     };
   }
-
-  const { gross, lunch, net } = workedMinutes(start, end, win);
-  /* A line entirely inside the lunch hour subtracts to nothing. Storing a
-     nought-hour row would be storing a line that says nobody worked, so it is
-     refused with the reason rather than accepted and silently emptied. */
-  if (net <= 0) {
-    return {
-      ok: false,
-      error: `That is entirely within the lunch break (${clockLabel(lunchStart)}–${clockLabel(lunchEnd)}), which is not working time.`,
-      field: 'startTime',
-    };
+  if (hours > MAX_LINE_HOURS) {
+    return { ok: false, error: `A single line cannot be more than ${MAX_LINE_HOURS} hours.`, field: 'hours' };
   }
 
   const nonProject = raw.nonProject ? String(raw.nonProject).trim() : null;
@@ -276,31 +280,22 @@ function validateEntry(raw = {}, win) {
 
   return {
     ok: true,
-    // Told, not hidden: the screen says "lunch removed" rather than showing a
-    // number smaller than the one that was typed with no explanation.
-    lunchSubtracted: lunch,
+    /* Over the soft cap on this line alone, which the day total also reports.
+       Neither refuses; a genuinely long day exists and a form that refuses one
+       teaches somebody to log eight and go home late. */
+    overLong: hours > maxHours,
     value: {
       date,
-      startMin: start,
-      endMin: end,
-      // Kept in hours as well as minutes so the exports, totals and queue read
-      // one number and never divide by sixty in four places.
-      hours: Math.round((net / 60) * 100) / 100,
+      // Null, not a made-up span. These stay filled on lines written while the
+      // form asked for clock times, and empty on everything since.
+      startMin: null,
+      endMin: null,
+      hours,
       clientId, projectId, assetId,
       nonProject,
       notes: notes || null,
     },
   };
-}
-
-/* Do two lines on the same day cover the same minutes?
- *
- * Worth refusing: the same hour claimed twice is the one arithmetic error a
- * timesheet cannot catch by adding up, because the total looks perfectly
- * reasonable. Half-open intervals, so 10:00-11:00 and 11:00-12:00 sit together.
- */
-function overlaps(line, others) {
-  return others.find((o) => line.startMin < o.endMin && o.startMin < line.endMin) || null;
 }
 
 /* The totals the grid shows while somebody types, worked out here so the number
@@ -353,17 +348,22 @@ module.exports = {
   NON_PROJECT_KEYS,
   STATUSES,
   LOCKED,
-  // The studio's working day. The live values come from Settings -> Working
-  // Hours via work-schedule.timesheetWindow(); these are what the rules fall
-  // back to, and what they were before the setting existed.
+  /* The studio's working day, which is now ONE number: how long a day is
+     expected to be, used as the soft warning. The clock window and the lunch
+     hour went with the clock times — see validateEntry.
+     
+     parseClock and clockLabel stay because lines filed before the change still
+     hold their spans, and the exports still print them. Nothing writes one any
+     more. */
   IST_LABEL,
   DEFAULT_WINDOW,
   windowOf,
   parseClock,
   clockLabel,
-  workedMinutes,
   isWeekend,
-  overlaps,
+  MIN_LINE_HOURS,
+  MAX_LINE_HOURS,
+  parseHours,
   weekStart,
   weekDays,
   toISO,

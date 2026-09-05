@@ -1013,31 +1013,6 @@
      ]
     },
     {
-     "key": "timesheet.approve",
-     "label": "Approve Timesheets",
-     "describe": "Approve a submitted week, or send it back with a reason. Approving locks it; rejecting returns it to the person to correct.",
-     "roles": [
-      "Associate Project Manager",
-      "Senior Production Coordinator",
-      "Project Manager",
-      "Associate Team Lead",
-      "Creative Producer",
-      "Producer",
-      "Team Lead",
-      "Associate Animation Supervisor",
-      "Senior Project Manager",
-      "Senior Producer",
-      "Senior Team Lead",
-      "Technical Manager",
-      "Art Supervisor",
-      "Associate Art Director",
-      "Art Director",
-      "Creative Art Director",
-      "Head of Production",
-      "Super Admin"
-     ]
-    },
-    {
      "key": "timesheet.all",
      "label": "View All Timesheets",
      "describe": "See everybody's timesheets, not only your team's. The reporting-level view, for the roles that already read across the studio.",

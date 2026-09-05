@@ -996,8 +996,11 @@ async function ensureTimesheets(db, log) {
         id          CHAR(36)     NOT NULL PRIMARY KEY,
         user_id     CHAR(36)     NOT NULL,
         entry_date  DATE         NOT NULL,
-        start_min   SMALLINT     NOT NULL,
-        end_min     SMALLINT     NOT NULL,
+        /* Nullable: a line is a number of hours now. These two hold the clock
+           span for lines filed while the form asked for one, and stay empty on
+           everything filed since. */
+        start_min   SMALLINT     NULL,
+        end_min     SMALLINT     NULL,
         client_id   CHAR(36)     NULL,
         project_id  CHAR(36)     NULL,
         asset_id    CHAR(36)     NULL,
@@ -1915,6 +1918,38 @@ async function ensureSessionEndReason(db, log) {
   log('Schema: work_sessions rows now record why they ended, and where Time Spent changed meaning.');
 }
 
+/* A timesheet line is a number of hours, not a stretch of the clock.
+ *
+ * start_min and end_min are made NULLABLE rather than dropped. Every line filed
+ * before this change was filed as a span, and those two columns are the record
+ * of what somebody actually claimed — hours are paid from this table, so
+ * deleting the detail behind a figure that has already been submitted is not a
+ * schema tidy-up, it is destroying a record. New lines leave them null; old
+ * lines keep them and the exports still print them.
+ */
+async function ensureTimesheetHoursOnly(db, log) {
+  const { rows: table } = await db.query(
+    `SELECT TABLE_NAME AS t FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'timesheet_entries'`
+  );
+  if (!table.length) return;
+  const { rows: columns } = await db.query(
+    `SELECT COLUMN_NAME AS n, IS_NULLABLE AS nullable FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'timesheet_entries'
+        AND COLUMN_NAME IN ('start_min', 'end_min')`
+  );
+  const changed = [];
+  for (const column of columns) {
+    if (column.nullable === 'YES') continue;
+    await db.query(`ALTER TABLE timesheet_entries MODIFY \`${column.n}\` SMALLINT NULL`);
+    changed.push(column.n);
+  }
+  if (changed.length) {
+    log(`Schema: timesheet_entries.${changed.join(' and ')} no longer required — a line is now a number of hours. `
+      + 'Lines filed before this keep their times.');
+  }
+}
+
 /* A project's own category, and the dates it runs between.
  *
  * All three are plain data, and nothing in the pipeline reads them: an End Date
@@ -2093,6 +2128,10 @@ const STEPS = [
   // After notifications, whose column it adds, and after clients and projects.
   ['project review requests', ensureProjectReviews],
   ['timesheets', ensureTimesheets],
+
+  // AFTER the step that creates the table, or a fresh database would have it
+  // created NOT NULL and this would find nothing to relax.
+  ['timesheet hours only', ensureTimesheetHoursOnly],
   // Last: it reads assets.status, which every step above may have changed.
   ['stranded work sessions', closeStrandedSessions],
 ];

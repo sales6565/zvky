@@ -47,44 +47,61 @@ test('totals add up, and round once at the end', () => {
   assert.deepStrictEqual(t.overLong, [], 'and nothing here is unusual');
 });
 
-test('the working day is 09:30 to 19:00 IST, and outside it is refused', () => {
-  const line = (start, end) => sheets.validateEntry({
-    date: '2026-03-02', startTime: start, endTime: end, clientId: 'c', projectId: 'p' });
+test('a line is a number of hours', () => {
+  const line = (hours) => sheets.validateEntry({ date: '2026-03-02', hours, clientId: 'c', projectId: 'p' });
 
-  assert.strictEqual(line('10:00', '12:00').value.hours, 2, 'an ordinary two hours');
-  assert.strictEqual(line('09:30', '19:00').value.hours, 8.5,
-    'the whole window, less the lunch hour — which is over the eight-hour day, and flagged rather than refused');
+  assert.strictEqual(line('3.5').value.hours, 3.5, 'a string from a form');
+  assert.strictEqual(line(3).value.hours, 3, 'and a number from a script');
+  assert.strictEqual(line(' 7.25 ').value.hours, 7.25, 'trimmed');
 
-  for (const [s, e] of [['09:00', '11:00'], ['08:00', '09:00'], ['17:00', '20:00'], ['19:00', '19:30']]) {
-    const out = line(s, e);
-    assert.strictEqual(out.ok, false, `${s}-${e} is outside the working day`);
-    assert.match(out.error, /09:30 to 19:00 IST/);
+  // Nothing typed is not nought hours, it is nothing — and says so.
+  for (const empty of ['', '   ', null, undefined]) {
+    const verdict = line(empty);
+    assert.strictEqual(verdict.ok, false, `${JSON.stringify(empty)} is not an amount`);
+    assert.strictEqual(verdict.field, 'hours');
+    assert.match(verdict.error, /how many hours/i);
   }
-  assert.strictEqual(line('12:00', '11:00').ok, false, 'and end before start is not a stretch of time');
-  assert.strictEqual(line('11:00', '11:00').ok, false, 'nor is no time at all');
+  assert.strictEqual(line('half a day').ok, false, 'and neither is a word');
+
+  // A line of nothing is a line saying nobody worked.
+  assert.strictEqual(line(0).ok, false);
+  assert.match(line(0).error, /more than nought/i);
+  assert.strictEqual(line(-2).ok, false, 'and negative hours are not a correction');
+  assert.strictEqual(line(0.1).ok, false, 'below the quarter-hour grain');
+  assert.strictEqual(line(0.25).ok, true, 'which a quarter of an hour meets');
+  assert.strictEqual(line(25).ok, false, 'and no single line is longer than a day');
+  assert.strictEqual(line(24).ok, true);
 });
 
-test('lunch is taken out of whatever overlaps it', () => {
-  /* Auto-subtracted rather than blocked, as the studio chose: somebody who
-     worked 12:30 to 14:30 worked ninety minutes, and making them file that as
-     two rows is bookkeeping for the form's benefit. */
-  const line = (start, end) => sheets.validateEntry({
-    date: '2026-03-02', startTime: start, endTime: end, clientId: 'c', projectId: 'p' });
+test('the clock rules went with the clock, and nothing pretends otherwise', () => {
+  /* Three rules were removed with the Start/End fields, and this pins their
+     absence rather than leaving it to be rediscovered as a bug:
 
-  const across = line('12:30', '14:30');
-  assert.strictEqual(across.value.hours, 1, 'two hours across lunch is one hour worked');
-  assert.strictEqual(across.lunchSubtracted, 60, 'and the caller is told, so the screen can say so');
+       the 09:30-19:00 window   there is no time to be outside it
+       the lunch subtraction    there is no span to overlap it
+       the overlap check        two hours figures cannot be compared
 
-  assert.strictEqual(line('12:00', '13:00').value.hours, 1, 'right up to lunch is untouched');
-  assert.strictEqual(line('14:00', '15:00').value.hours, 1, 'and straight after it');
-  assert.strictEqual(line('13:30', '15:00').value.hours, 1, 'a late start inside lunch loses the overlap');
+     The third is a real loss and is written down as one — it caught the single
+     arithmetic error a timesheet cannot catch by adding up. */
+  const line = (extra) => sheets.validateEntry(
+    { date: '2026-03-02', hours: 3, clientId: 'c', projectId: 'p', ...extra });
 
-  /* Entirely inside lunch subtracts to nothing. Storing a nought-hour line
-     would be storing a line saying nobody worked, so it is refused with the
-     reason rather than accepted and silently emptied. */
-  const inside = line('13:15', '13:45');
-  assert.strictEqual(inside.ok, false);
-  assert.match(inside.error, /entirely within the lunch break/);
+  // Anything the old form would have refused for being outside the day is now
+  // simply not a question the line can be asked.
+  assert.strictEqual(line({ startTime: '06:00', endTime: '09:00' }).ok, true,
+    'clock fields are ignored, not honoured and not refused');
+  const value = line({}).value;
+  assert.strictEqual(value.startMin, null, 'and nothing is invented to store');
+  assert.strictEqual(value.endMin, null);
+
+  // The functions that implemented the removed rules are gone from the module,
+  // so nothing can quietly start calling them again.
+  assert.strictEqual(sheets.workedMinutes, undefined, 'the lunch subtraction is gone');
+  assert.strictEqual(sheets.overlaps, undefined, 'and so is the overlap check');
+  // These two survive: rows filed before the change still hold a span, and the
+  // week view still prints one.
+  assert.strictEqual(typeof sheets.clockLabel, 'function');
+  assert.strictEqual(typeof sheets.parseClock, 'function');
 });
 
 test('eight hours is a warning, and under eight is silent', () => {
@@ -103,8 +120,8 @@ test('a weekend is flagged, not blocked', () => {
   assert.strictEqual(sheets.isWeekend('2026-03-08'), true, 'Sunday');
   assert.strictEqual(sheets.isWeekend('2026-03-06'), false, 'Friday');
   // And the form takes it: occasional weekend work is real.
-  assert.strictEqual(sheets.validateEntry({ date: '2026-03-07', startTime: '10:00',
-    endTime: '13:00', clientId: 'c', projectId: 'p' }).ok, true);
+  assert.strictEqual(sheets.validateEntry({ date: '2026-03-07', hours: 3,
+    clientId: 'c', projectId: 'p' }).ok, true);
 });
 
 test('a clock time is minutes past midnight IST, and never an instant', () => {
@@ -125,23 +142,12 @@ test('a clock time is minutes past midnight IST, and never an instant', () => {
   }
 });
 
-test('two lines cannot claim the same minutes', () => {
-  /* The one arithmetic error a timesheet cannot catch by adding up: the total
-     looks perfectly reasonable. */
-  const at = (startMin, endMin) => ({ startMin, endMin });
-  const existing = [at(600, 720), at(840, 900)];   // 10:00-12:00 and 14:00-15:00
-  assert.ok(sheets.overlaps(at(660, 780), existing), '11:00-13:00 runs into the first');
-  assert.ok(sheets.overlaps(at(570, 900), existing), 'and a line swallowing both');
-  assert.strictEqual(sheets.overlaps(at(720, 780), existing), null, '12:00-13:00 butts up against it');
-  assert.strictEqual(sheets.overlaps(at(900, 960), existing), null, 'and 15:00-16:00 follows on');
-});
-
 test('a line is project work or non-project time, never both and never neither', () => {
-  const at = (extra) => ({ date: '2026-03-02', startTime: '10:00', endTime: '12:00', ...extra });
+  const at = (extra) => ({ date: '2026-03-02', hours: 3, ...extra });
 
   const ok = sheets.validateEntry(at({ clientId: 'c', projectId: 'p' }));
   assert.strictEqual(ok.ok, true, JSON.stringify(ok));
-  assert.strictEqual(ok.value.hours, 2, 'and the duration comes from the clock, not from a typed number');
+  assert.strictEqual(ok.value.hours, 3, 'and the duration is the number that was typed');
 
   const category = sheets.validateEntry(at({ nonProject: 'leave' }));
   assert.strictEqual(category.ok, true);
@@ -181,21 +187,25 @@ test('every designation can fill in its own timesheet', () => {
   for (const artist of artists) {
     const held = rolePermissions.defaultsFor(artist.key);
     assert.ok(!held.has('timesheet.team'), `${artist.label} should not read the team's by default`);
-    assert.ok(!held.has('timesheet.approve'), `${artist.label} should not approve by default`);
     assert.ok(!held.has('timesheet.all'), `${artist.label} should not read the studio's by default`);
   }
 
   // Super Admin holds the whole catalogue, these four included, without anybody
   // toggling anything.
   const superAdmin = rolePermissions.defaultsFor('super_admin');
-  for (const key of ['timesheet.own', 'timesheet.team', 'timesheet.approve', 'timesheet.all']) {
+  /* Three, not four. timesheet.approve went with the step it gated — see the
+     note where it used to sit in src/permission-catalog.js. */
+  assert.ok(!catalog.KEYS.includes('timesheet.approve'),
+    'a permission that gates nothing must not be grantable');
+  for (const key of ['timesheet.own', 'timesheet.team', 'timesheet.all']) {
     assert.ok(catalog.KEYS.includes(key), `${key} must be in the catalogue`);
     assert.ok(superAdmin.has(key), `Super Admin must hold ${key}`);
   }
 
   // Team Lead gets team + approve, which is the studio's "lead and above".
   const lead = rolePermissions.defaultsFor('team_lead');
-  assert.ok(lead.has('timesheet.team') && lead.has('timesheet.approve'));
+  assert.ok(lead.has('timesheet.team'), 'a lead reads their team\'s hours');
+  assert.ok(!lead.has('timesheet.approve'), 'and has nothing to approve');
   assert.ok(!lead.has('timesheet.all'), 'but not the whole studio');
 });
 
@@ -254,11 +264,11 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   });
   t.after(() => stopServer(server));
 
-  await t.test('a day takes several lines, and the clock adds up', async () => {
+  await t.test('a day takes several lines, and the hours add up', async () => {
     const lines = [
-      { date: MON, startTime: '10:00', endTime: '12:00', clientId, projectId, assetId, notes: 'Rough pass' },
-      { date: MON, startTime: '12:00', endTime: '13:00', clientId, projectId },
-      { date: '2026-03-03', startTime: '09:30', endTime: '12:30', nonProject: 'training' },
+      { date: MON, hours: 2, clientId, projectId, assetId, notes: 'Rough pass' },
+      { date: MON, hours: 1, clientId, projectId },
+      { date: '2026-03-03', hours: 3, nonProject: 'training' },
     ];
     for (const line of lines) {
       const made = await add('ana', line);
@@ -266,163 +276,225 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     }
     const mine = await week('ana');
     const monday = mine.days.find((d) => d.date === MON);
-    assert.strictEqual(monday.hours, 3, '10:00-12:00 plus 12:00-13:00');
+    assert.strictEqual(monday.hours, 3, '2 plus 1');
     assert.strictEqual(monday.overLong, false);
     assert.strictEqual(mine.days.find((d) => d.date === '2026-03-03').hours, 3);
     assert.strictEqual(mine.weekHours, 6);
 
-    // The clock comes back rendered, so the page never turns minutes into a time.
     const first = monday.entries.find((e) => e.notes === 'Rough pass');
-    assert.strictEqual(first.startLabel, '10:00');
-    assert.strictEqual(first.endLabel, '12:00');
+    assert.strictEqual(Number(first.hours), 2);
     assert.strictEqual(first.projectName, 'Nightgarden');
     assert.ok(first.assetCode);
-    // And the studio's rules travel with the week rather than being repeated.
-    assert.deepStrictEqual(mine.workingDay,
-      { timezone: 'IST', dayStart: '09:30', dayEnd: '19:00', hasLunch: true,
-        lunchStart: '13:00', lunchEnd: '14:00', maxHours: 8 },
-      'and these are the defaults, which is what an install that has never '
-      + 'opened Settings -> Working Hours still gets');
+    /* No clock labels on a line filed as hours. Empty rather than "00:00",
+       which is what rendering a null minute would print and which reads as
+       midnight rather than as absent. */
+    assert.strictEqual(first.startLabel, '');
+    assert.strictEqual(first.endLabel, '');
+
+    /* One rule travels with the week now, where four used to. The window and
+       the lunch hour went with the clock fields, so a payload still carrying
+       them would mean a form still drawing them. */
+    assert.deepStrictEqual(mine.workingDay, { timezone: 'IST', maxHours: 8 });
   });
 
-  await t.test('lunch comes off, the window is enforced, and overlaps are refused', async () => {
-    const across = await add('ana', { date: MON, startTime: '13:30', endTime: '15:30', clientId, projectId });
-    assert.strictEqual(across.status, 201, JSON.stringify(across.body));
-    assert.strictEqual(Number(across.body.entry.hours), 1.5, 'the half hour of lunch is taken off');
-    assert.strictEqual(across.body.lunchSubtracted, 30, 'and the caller is told');
+  await t.test('a line filed before the change keeps its clock', async () => {
+    /* The reason start_min and end_min were relaxed rather than dropped. Hours
+       are paid from this table, and the span is the record of what somebody
+       claimed — a schema tidy-up that deletes it is destroying evidence. */
+    const before = await add('ana', { date: '2026-03-04', hours: 2, clientId, projectId });
+    await sql(cfg, 'UPDATE timesheet_entries SET start_min = 600, end_min = 720 WHERE id = ?',
+      [before.body.entry.id]);
 
-    const early = await add('ana', { date: MON, startTime: '08:00', endTime: '09:00', clientId, projectId });
-    assert.strictEqual(early.status, 400);
-    assert.match(early.body.error, /09:30 to 19:00 IST/);
+    const day = await dayOf('ana', '2026-03-04');
+    const old = day.entries.find((e) => e.id === before.body.entry.id);
+    assert.strictEqual(old.startLabel, '10:00', 'the older row still reads as it was written');
+    assert.strictEqual(old.endLabel, '12:00');
+    assert.strictEqual(Number(old.hours), 2, 'and its hours are unchanged');
 
-    const late = await add('ana', { date: MON, startTime: '18:30', endTime: '20:00', clientId, projectId });
-    assert.strictEqual(late.status, 400);
+    // New rows leave the columns empty rather than inventing a span.
+    const fresh = await sql(cfg, 'SELECT start_min, end_min FROM timesheet_entries WHERE id = ?',
+      [(await add('ana', { date: '2026-03-04', hours: 1, clientId, projectId })).body.entry.id]);
+    assert.strictEqual(fresh[0].start_min, null);
+    assert.strictEqual(fresh[0].end_min, null);
+  });
 
-    // The same hour twice is the error adding up cannot catch.
-    const clash = await add('ana', { date: MON, startTime: '11:00', endTime: '11:30', clientId, projectId });
-    assert.strictEqual(clash.status, 409, JSON.stringify(clash.body));
-    assert.match(clash.body.error, /overlaps 10:00–12:00/);
+  await t.test('nothing checks a clock any more', async () => {
+    /* Every rule that needed two times, gone — asserted through the endpoint,
+       because a rule can survive in a route after it has left the module.
+       
+       The overlap is the one that stings: two lines claiming the same three
+       hours are now both accepted, and nothing in the application can tell.
+       Written down as a fact of the design rather than left to be found. */
+    const early = await add('ana', { date: '2026-03-05', hours: 3, clientId, projectId, notes: 'Before nine' });
+    assert.strictEqual(early.status, 201, 'work outside the old 09:30-19:00 window is taken');
+
+    const twice = await add('ana', { date: '2026-03-05', hours: 3, clientId, projectId, notes: 'Same hours again' });
+    assert.strictEqual(twice.status, 201, 'and so is a second line that would once have overlapped');
+    assert.strictEqual((await dayOf('ana', '2026-03-05')).hours, 6,
+      'both count, which is the whole cost of losing the clock');
+
+    // Clock fields sent by an old client are ignored, not honoured.
+    const stale = await add('ana', {
+      date: '2026-03-05', hours: 1, clientId, projectId, startTime: '03:00', endTime: '04:00' });
+    assert.strictEqual(stale.status, 201);
+    const row = await sql(cfg, 'SELECT start_min FROM timesheet_entries WHERE id = ?',
+      [stale.body.entry.id]);
+    assert.strictEqual(row[0].start_min, null, 'and leave nothing behind');
+  });
+
+  await t.test('the hours are suggested from that day\'s own recorded work', async () => {
+    /* The pre-fill, and the reason it can be offered per DAY at all: a session
+       is a stretch with its own start and end, so a round spanning Monday to
+       Wednesday still has a Monday stretch whose hours are exactly known. */
+    const day = '2026-03-09';
+    const other = '2026-03-10';
+    const mk = async (startedAt, endedAt, seconds, userId = people.ana) => sql(cfg,
+      `INSERT INTO work_sessions (id, asset_id, user_id, round, started_at, ended_at, seconds, ended_reason)
+       VALUES (UUID(), ?, ?, 1, ?, ?, ?, 'submitted')`,
+      [assetId, userId, startedAt, endedAt, seconds]);
+
+    // Two stretches on one day — a hold in the middle — and one the day after.
+    await mk(`${day} 10:00:00`, `${day} 12:00:00`, 7200);
+    await mk(`${day} 14:00:00`, `${day} 15:30:00`, 5400);
+    await mk(`${other} 09:00:00`, `${other} 10:00:00`, 3600);
+
+    const suggested = await as('ana', `/timesheets/suggest?assetId=${assetId}&date=${day}`);
+    assert.strictEqual(suggested.status, 200, JSON.stringify(suggested.body));
+    assert.strictEqual(suggested.body.hours, 3.5, 'both of that day\'s stretches, and only that day\'s');
+    assert.strictEqual(suggested.body.sessions, 2);
+    assert.strictEqual(suggested.body.spanning, 0);
+
+    // The next day answers for itself.
+    assert.strictEqual((await as('ana', `/timesheets/suggest?assetId=${assetId}&date=${other}`)).body.hours, 1);
+
+    /* A stretch running past midnight cannot be split, so it is left out and
+       counted — the screen says so rather than offering a smaller number with
+       no explanation. */
+    /* Straddling IST midnight, which is what the rule is about — the stamps are
+       instants and the day is the studio's, so these are chosen to land either
+       side of 00:00 IST rather than either side of 00:00 on the server. */
+    const across = '2026-03-11';
+    await mk(`${across} 17:00:00`, `${across} 20:00:00`, 10800);  // 22:30 to 01:30 IST
+    const crossed = await as('ana', `/timesheets/suggest?assetId=${assetId}&date=${across}`);
+    assert.strictEqual(crossed.body.hours, null, 'nothing is invented for it');
+    assert.strictEqual(crossed.body.spanning, 1, 'and the caller is told why');
+
+    // Somebody else's hours on the same asset are not yours to file.
+    await mk(`${day} 16:00:00`, `${day} 18:00:00`, 7200, people.bo);
+    assert.strictEqual((await as('ana', `/timesheets/suggest?assetId=${assetId}&date=${day}`)).body.hours, 3.5,
+      'still only Ana\'s own stretches');
+    assert.strictEqual((await as('bo', `/timesheets/suggest?assetId=${assetId}&date=${day}`)).body.hours, 2);
+
+    // An asset with nothing recorded offers nothing, which is not an error.
+    const idle = (await as('root', `/assets/project/${projectId}`, { method: 'POST',
+      body: { name: 'Untouched', type: 'prop' } })).body.asset.id;
+    assert.strictEqual((await as('ana', `/timesheets/suggest?assetId=${idle}&date=${day}`)).body.hours, null);
+
+    /* And it is a SUGGESTION. Nothing refuses a different number, which is what
+       keeps this a manual timesheet with a helpful default rather than an
+       automatic one somebody has to argue with. */
+    const typed = await add('ana', { date: day, hours: 6, clientId, projectId, assetId });
+    assert.strictEqual(typed.status, 201, 'six hours against three and a half recorded');
+    assert.strictEqual(Number(typed.body.entry.hours), 6);
   });
 
   await t.test('over eight hours is flagged, and a half day is silent', async () => {
-    // Monday so far: 10:00-13:00 and 13:30-15:30 = 4.5h. Take it past eight.
-    await add('ana', { date: MON, startTime: '15:30', endTime: '19:00', clientId, projectId });
-    const monday = await dayOf('ana', MON);
-    assert.strictEqual(monday.hours, 8, 'exactly eight');
-    assert.strictEqual(monday.overLong, false, 'which is not over');
+    /* Inside the week the suite reads, or the day would not be in it to check
+       — and one no other subtest writes to, so nine is nine. */
+    const day = '2026-03-08';
+    assert.strictEqual((await dayOf('ana', day)).hours, 0, 'starting from an empty day');
+    await add('ana', { date: day, hours: 5, clientId, projectId });
+    const long = await add('ana', { date: day, hours: 4, clientId, projectId });
+    assert.strictEqual(long.status, 201, 'nine hours is allowed');
+    assert.strictEqual(long.body.overLong, true, 'and flagged');
 
-    await add('ana', { date: MON, startTime: '09:30', endTime: '10:00', clientId, projectId });
-    const longer = await dayOf('ana', MON);
-    assert.strictEqual(longer.hours, 8.5);
-    assert.strictEqual(longer.overLong, true, 'flagged');
+    const shown = await dayOf('ana', day);
+    assert.strictEqual(shown.hours, 9);
+    assert.strictEqual(shown.overLong, true, 'the day says so without any clock times');
 
-    // And it is a flag, not a wall: the day still submits.
-    const sent = await as('ana', '/timesheets/submit', { method: 'POST', body: { date: MON } });
-    assert.strictEqual(sent.status, 200, JSON.stringify(sent.body));
-    assert.strictEqual(sent.body.overLong, true, 'with the flag carried into the submission');
-
-    // A half day is an ordinary thing, and says nothing.
-    const half = await dayOf('ana', '2026-03-03');
-    assert.strictEqual(half.hours, 3);
-    assert.strictEqual(half.overLong, false);
+    const easy = '2026-03-04';
+    assert.strictEqual((await dayOf('ana', easy)).overLong, false, 'a shorter day says nothing');
   });
 
   await t.test('weekend work is taken, and marked', async () => {
-    const made = await add('ana', { date: SAT, startTime: '10:00', endTime: '13:00', clientId, projectId });
-    assert.strictEqual(made.status, 201, 'occasional weekend work is real');
-    const saturday = await dayOf('ana', SAT);
-    assert.strictEqual(saturday.hours, 3);
-    assert.strictEqual(saturday.weekend, true, 'and distinctly flagged');
-    assert.strictEqual((await dayOf('ana', MON)).weekend, false);
+    const made = await add('ana', { date: SAT, hours: 2, clientId, projectId });
+    assert.strictEqual(made.status, 201);
+    assert.strictEqual((await dayOf('ana', SAT)).weekend, true);
   });
 
   await t.test('one DAY is submitted and locks, leaving the rest of the week alone', async () => {
-    // Monday was submitted above. Tuesday is untouched by that.
-    const monday = await dayOf('ana', MON);
-    assert.strictEqual(monday.status, 'submitted');
-    assert.strictEqual(monday.locked, true);
-    const tuesday = await dayOf('ana', '2026-03-03');
-    assert.strictEqual(tuesday.status, 'draft', 'the daily cycle: one day at a time');
-    assert.strictEqual(tuesday.locked, false);
+    const sent = await as('ana', '/timesheets/submit', { method: 'POST', body: { date: MON } });
+    assert.strictEqual(sent.status, 200, JSON.stringify(sent.body));
+    assert.strictEqual(sent.body.day.status, 'submitted');
+    assert.strictEqual(sent.body.day.locked, true);
 
-    // Every way of changing the locked day is shut, not just the button.
-    assert.strictEqual((await add('ana', { date: MON, startTime: '09:30', endTime: '09:45',
-      clientId, projectId })).status, 409);
-    const line = monday.entries[0];
-    assert.strictEqual((await as('ana', `/timesheets/entries/${line.id}`,
-      { method: 'PATCH', body: { endTime: '12:30' } })).status, 409, 'nor edited');
-    assert.strictEqual((await as('ana', `/timesheets/entries/${line.id}`,
-      { method: 'DELETE' })).status, 409, 'nor deleted');
-    // But Tuesday still takes work.
-    assert.strictEqual((await add('ana', { date: '2026-03-03', startTime: '14:00', endTime: '15:00',
-      clientId, projectId })).status, 201);
+    const blocked = await add('ana', { date: MON, hours: 1, clientId, projectId });
+    assert.strictEqual(blocked.status, 409, 'a submitted day takes no more lines');
 
-    const queue = (await as('lee', '/timesheets/pending')).body;
-    assert.strictEqual(queue.count, 1, 'one DAY in the queue, not one week');
-    assert.strictEqual(queue.days[0].date, MON);
-    assert.strictEqual(queue.days[0].userName, 'ana');
-    assert.strictEqual(queue.days[0].overLong, true, 'with the flags an approver needs up front');
-    assert.strictEqual(queue.days[0].weekend, false);
-    assert.strictEqual(queue.maxHours, 8);
+    const tuesday = await add('ana', { date: '2026-03-03', hours: 1, nonProject: 'admin' });
+    assert.strictEqual(tuesday.status, 201, 'and the rest of the week carries on');
+
+    assert.strictEqual((await as('ana', '/timesheets/submit', { method: 'POST',
+      body: { date: MON } })).status, 409, 'submitting twice is refused');
+  });
+
+  await t.test('a submitted day is reopened by the person whose day it is', async () => {
+    /* What replaced approval. Submitting still locks — the studio kept that —
+       but with nobody to ask for it back, a locked day would be locked for
+       ever and a mistyped figure would be permanent. */
+    const reopened = await as('ana', '/timesheets/reopen', { method: 'POST', body: { date: MON } });
+    assert.strictEqual(reopened.status, 200, JSON.stringify(reopened.body));
+    assert.strictEqual(reopened.body.day.status, 'draft');
+    assert.strictEqual(reopened.body.day.locked, false);
+
+    const fixed = await add('ana', { date: MON, hours: 1, clientId, projectId, notes: 'The correction' });
+    assert.strictEqual(fixed.status, 201, 'and it takes lines again');
+
+    // Nobody else can reopen it, because it is not their day.
+    await as('ana', '/timesheets/submit', { method: 'POST', body: { date: MON } });
+    const byLead = await as('lee', '/timesheets/reopen', { method: 'POST', body: { date: MON } });
+    assert.notStrictEqual(byLead.status, 200, 'a lead reopens their own days, not Ana\'s');
+    assert.strictEqual((await dayOf('ana', MON)).status, 'submitted');
+
+    // A day that is not locked has nothing to reopen.
+    assert.strictEqual((await as('ana', '/timesheets/reopen', { method: 'POST',
+      body: { date: '2026-03-03' } })).status, 409);
+    await as('ana', '/timesheets/reopen', { method: 'POST', body: { date: MON } });
+  });
+
+  await t.test('there is nothing left to approve, anywhere', async () => {
+    /* Removed, not hidden. A route that still answers is a route somebody can
+       still call — the buttons being gone from the page would prove nothing. */
+    await as('ana', '/timesheets/submit', { method: 'POST', body: { date: SAT } });
+    for (const [who, path, body] of [
+      ['lee', `/timesheets/${people.ana}/${SAT}/decision`, { decision: 'approve' }],
+      ['root', `/timesheets/${people.ana}/${SAT}/decision`, { decision: 'reject', reason: 'no' }],
+    ]) {
+      const gone = await as(who, path, { method: 'POST', body });
+      assert.strictEqual(gone.status, 404, `${path} should not exist — got ${gone.status}`);
+    }
+    /* The queue is a GET, and an unmatched GET falls through to the single-page
+       app rather than 404ing — so what is asserted is that no queue comes back,
+       which is the thing that matters, plus that the route is not in the source
+       at all. Asserting a status here would have been asserting Express's
+       fallback, not this feature. */
+    const queue = await as('lee', '/timesheets/pending');
+    assert.ok(!queue.body || queue.body.days === undefined,
+      `no queue should come back — got ${JSON.stringify(queue.body).slice(0, 80)}`);
+    const source = require('fs').readFileSync(
+      require('path').join(__dirname, '..', 'src', 'routes', 'timesheets.js'), 'utf8');
+    for (const gone of ["'/pending'", "'/:userId/:date/decision'"]) {
+      assert.ok(!source.includes(gone), `${gone} is still declared in the route file`);
+    }
+
+    // The day stays exactly as its owner left it.
+    assert.strictEqual((await dayOf('lee', SAT, people.ana)).status, 'submitted');
   });
 
   await t.test('an empty day is not a submission', async () => {
-    const nothing = await as('bo', '/timesheets/submit', { method: 'POST', body: { date: MON } });
-    assert.strictEqual(nothing.status, 400, JSON.stringify(nothing.body));
-    assert.match(nothing.body.error, /nothing on that day/);
-    assert.strictEqual((await as('lee', '/timesheets/pending')).body.count, 1);
-  });
-
-  await t.test('rejecting sends the day back with a reason; approving locks it', async () => {
-    const noReason = await as('lee', `/timesheets/${people.ana}/${MON}/decision`,
-      { method: 'POST', body: { decision: 'reject' } });
-    assert.strictEqual(noReason.status, 400);
-    assert.match(noReason.body.error, /what needs correcting/);
-
-    const back = await as('lee', `/timesheets/${people.ana}/${MON}/decision`,
-      { method: 'POST', body: { decision: 'reject', reason: 'The 09:30 half hour was the standup.' } });
-    assert.strictEqual(back.status, 200, JSON.stringify(back.body));
-
-    const returned = await dayOf('ana', MON);
-    assert.strictEqual(returned.status, 'rejected');
-    assert.strictEqual(returned.locked, false, 'the whole point of sending it back');
-    assert.strictEqual(returned.rejectionReason, 'The 09:30 half hour was the standup.');
-    assert.strictEqual(returned.decidedBy, 'lee@zvky.test');
-
-    // Corrected and sent again.
-    const standup = returned.entries.find((e) => e.startLabel === '09:30');
-    assert.strictEqual((await as('ana', `/timesheets/entries/${standup.id}`,
-      { method: 'DELETE' })).status, 200);
-    await as('ana', '/timesheets/submit', { method: 'POST', body: { date: MON } });
-    const resent = await dayOf('ana', MON);
-    assert.strictEqual(resent.status, 'submitted');
-    assert.strictEqual(resent.rejectionReason, null, 'and the old reason is cleared, not left to confuse');
-    assert.strictEqual(resent.hours, 8, 'back to eight');
-
-    assert.strictEqual((await as('lee', `/timesheets/${people.ana}/${MON}/decision`,
-      { method: 'POST', body: { decision: 'approve' } })).status, 200);
-    const done = await dayOf('ana', MON);
-    assert.strictEqual(done.status, 'approved');
-    assert.strictEqual(done.locked, true);
-    assert.strictEqual((await add('ana', { date: MON, startTime: '09:30', endTime: '10:00',
-      clientId, projectId })).status, 409, 'approved and editable would approve nothing');
-  });
-
-  await t.test('a decided day cannot be decided again', async () => {
-    const again = await as('lee', `/timesheets/${people.ana}/${MON}/decision`,
-      { method: 'POST', body: { decision: 'reject', reason: 'changed my mind' } });
-    assert.strictEqual(again.status, 409, JSON.stringify(again.body));
-    assert.strictEqual((await dayOf('ana', MON)).status, 'approved', 'the first decision stands');
-  });
-
-  await t.test('nobody approves their own hours', async () => {
-    await add('lee', { date: MON, startTime: '10:00', endTime: '14:00', clientId, projectId });
-    await as('lee', '/timesheets/submit', { method: 'POST', body: { date: MON } });
-    const own = await as('lee', `/timesheets/${people.lee}/${MON}/decision`,
-      { method: 'POST', body: { decision: 'approve' } });
-    assert.strictEqual(own.status, 403, JSON.stringify(own.body));
-    assert.match(own.body.error, /your own timesheet/);
-    assert.strictEqual((await dayOf('lee', MON)).status, 'submitted');
+    const nothing = await as('ana', '/timesheets/submit', { method: 'POST', body: { date: '2026-03-06' } });
+    assert.strictEqual(nothing.status, 400);
+    assert.match(nothing.body.error, /nothing on that day/i);
   });
 
   await t.test('everybody sees their own and nobody else\'s', async () => {
@@ -447,41 +519,56 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   });
 
   await t.test('every change is on the record, including a person\'s own', async () => {
+    // A line added and taken away again, so the record has both to show.
+    const spare = await add('ana', { date: MON, hours: 1, clientId, projectId, notes: 'Mistake' });
+    assert.strictEqual(spare.status, 201, JSON.stringify(spare.body));
+    await as('ana', `/timesheets/entries/${spare.body.entry.id}`, { method: 'DELETE' });
+
     const { events } = (await as('lee', `/timesheets/history?userId=${people.ana}&date=${MON}`)).body;
     const actions = events.map((e) => e.action);
-    for (const expected of ['entry_added', 'entry_removed', 'submitted', 'rejected', 'approved']) {
+    /* The four that exist now. `rejected` and `approved` are gone with the step
+       that wrote them; `reopened` is what took their place, and it is here
+       because a day taken back and refiled has to say so. */
+    for (const expected of ['entry_added', 'entry_removed', 'submitted', 'reopened']) {
       assert.ok(actions.includes(expected), `${expected} is missing: ${actions.join(', ')}`);
     }
-    const rejection = events.find((e) => e.action === 'rejected');
-    assert.strictEqual(rejection.actorEmail, 'lee@zvky.test');
-    assert.match(rejection.detail, /standup/, 'the reason is kept, not just the verdict');
-    // And a line's own entry names its clock and what it was against.
-    assert.match(events.find((e) => e.action === 'entry_added').detail, /10:00–12:00/);
-    assert.match(events.find((e) => e.action === 'entry_added').detail, /Nightgarden/);
+    assert.ok(!actions.includes('approved') && !actions.includes('rejected'),
+      'and nothing approves or rejects any more');
+
+    const reopen = events.find((e) => e.action === 'reopened');
+    assert.strictEqual(reopen.actorEmail, 'ana@zvky.test', 'a day is reopened by its own owner');
+
+    // A line's own entry names its hours and what they were against.
+    const added = events.find((e) => e.action === 'entry_added');
+    assert.match(added.detail, /\dh/, 'the hours are in the record');
+    assert.match(added.detail, /Nightgarden/);
+    assert.match(events.find((e) => e.action === 'entry_removed').detail, /\dh removed/);
   });
 
-  await t.test('the exports carry the clock, in IST, whatever the reader\'s zone', async () => {
+  await t.test('the exports carry the hours, and no longer a clock', async () => {
     const xlsx = await fetch(`${server.base}/timesheets/export.xlsx?from=${MON}&to=2026-03-08`,
       { headers: { Authorization: `Bearer ${token.ana}` } });
     assert.strictEqual(xlsx.status, 200);
     const book = require('xlsx').read(Buffer.from(await xlsx.arrayBuffer()), { type: 'buffer' });
     const text = require('xlsx').utils.sheet_to_csv(book.Sheets[book.SheetNames[0]]);
-    assert.match(text, /Times shown in,IST/, 'the sheet says which clock it is on');
-    assert.match(text, /10:00,12:00/, 'and carries the start and end');
+    assert.match(text, /Times shown in,IST/, 'the sheet still says which studio clock the days are on');
     assert.match(text, /Nightgarden/);
-    assert.match(text, /approved/, 'with the day\'s own status, not a week\'s');
+    assert.match(text, /submitted/, 'with the day\'s own status');
 
-    /* A day reads in clock order, not in the order somebody happened to type
-       the rows. A timesheet that lists the afternoon before the morning cannot
-       be checked against by the person approving it. */
-    const byDay = new Map();
-    for (const line of text.split('\n')) {
-      const m = /^(\d{4}-\d{2}-\d{2}),(\d{2}:\d{2})/.exec(line);
-      if (m) byDay.set(m[1], [...(byDay.get(m[1]) || []), m[2]]);
-    }
-    const busiest = [...byDay.values()].sort((a, b) => b.length - a.length)[0] || [];
-    assert.ok(busiest.length > 1, 'a day with more than one line to order');
-    assert.deepStrictEqual(busiest, [...busiest].sort(), 'a day comes out in clock order');
+    /* The two clock columns are gone, header and all. Kept as a check on the
+       HEADER rather than on the absence of "10:00" anywhere, because a note or
+       a project name could contain a time and the point is the shape of the
+       sheet. */
+    const header = text.split('\n').find((l) => l.startsWith('Date,'));
+    assert.ok(header, `there is a header row — got ${text.split('\n').slice(0, 6).join(' | ')}`);
+    assert.deepStrictEqual(header.trim().split(','),
+      ['Date', 'Client', 'Project', 'Asset', 'Category', 'Hours', 'Notes', 'Status'],
+      'and it is the hours-based shape, with no Start and no End');
+
+    // The hours themselves are on the rows.
+    const dataRows = text.split('\n').filter((l) => /^\d{4}-\d{2}-\d{2},/.test(l));
+    assert.ok(dataRows.length > 1, 'there is more than one line to read');
+    assert.ok(dataRows.some((l) => /,\d+(\.\d+)?,/.test(l)), 'each carries a number of hours');
 
     /* The PDF has to carry the same lines, not merely be a PDF.
      *
@@ -498,9 +585,10 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
     const printed = pdfText(bytes).text;
     assert.match(printed, /Time sheet/, 'and says what it is, not "Work efficiency"');
-    assert.match(printed, /10:00/, 'the clock is on the page');
+    assert.match(printed, /Hours/, 'the Hours column is on the page');
+    assert.ok(!/\bStart\b/.test(printed), 'and the Start column is not');
     assert.match(printed, /Nightgarden/, 'and the project');
-    assert.match(printed, /approved/, 'and the day\'s status');
+    assert.match(printed, /submitted/, 'and the day\'s status');
     // Every value in the spreadsheet's data rows appears in the document too.
     for (const line of text.split('\n')) {
       if (!/^\d{4}-\d{2}-\d{2},/.test(line)) continue;
@@ -523,81 +611,57 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       { headers: { Authorization: `Bearer ${token.bo}` } })).status, 403);
   });
 
-  await t.test('the clock is stored as minutes, not as an instant', async () => {
-    /* The thing that makes point 5 true rather than approximately true: there
-       is no timezone in the column, so there is nothing to convert and nothing
-       to get wrong. 10:00 is 600 for everybody. */
+  await t.test('an hours figure is stored as hours, with no clock beside it', async () => {
+    /* What replaced "the clock is stored as minutes". A line is one number now,
+       and the two columns that held its span stay empty rather than holding a
+       span nobody typed. */
     const rows = await sql(cfg,
-      `SELECT start_min, end_min FROM timesheet_entries WHERE user_id = '${people.ana}' AND entry_date = '${MON}' ORDER BY start_min LIMIT 1`);
-    assert.strictEqual(Number(rows[0].start_min), 600, '10:00');
-    assert.strictEqual(Number(rows[0].end_min), 720, '12:00');
+      'SELECT start_min, end_min, hours FROM timesheet_entries WHERE user_id = ? AND entry_date = ?',
+      [people.ana, MON]);
+    assert.ok(rows.length, 'there are lines on that day');
+    for (const row of rows) {
+      assert.strictEqual(row.start_min, null, 'nothing invents a start');
+      assert.strictEqual(row.end_min, null);
+      assert.ok(Number(row.hours) > 0, 'and the hours are what was typed');
+    }
   });
 
-  await t.test('moving the window in Settings moves what the Time Sheet accepts', async () => {
-    /* The point of the setting. Not "the form draws different numbers" — that
-       would be a label change — but that the SAME entry is refused before the
-       change and accepted after it, and refused again when it is put back.
-       Anything less and the screen is decoration over a hardcoded rule. */
-    // A day the rest of the suite has not touched, so these times are the only
-    // ones on it and an overlap here would mean a real fault, not a fixture.
+  await t.test('the soft cap is its own number, not the standard day', async () => {
+    /* Found while rewriting this suite, and worth pinning rather than
+       assuming: the eight hours a Time Sheet flags at is NOT the hours-per-day
+       in Settings. hoursPerDay is what a full day is EXPECTED to be and is what
+       the Idle report divides by; the cap is the point past which a day is
+       worth a second look. A studio could expect eight and only want flagging
+       above ten, which is why they were never merged.
+       
+       The old version of this subtest proved a settings change moved what the
+       form ACCEPTED. Nothing is refused now, so what is proved instead is that
+       the two numbers stay independent — and that the stored clock window
+       survives a save from a form that no longer carries it. */
     const WED = '2026-03-04';
-    const early = { date: WED, startTime: '08:00', endTime: '09:15', clientId, projectId };
+    const before = (await week('ana')).workingDay.maxHours;
+    assert.strictEqual(before, 8);
 
-    const before = await add('ana', early);
-    assert.strictEqual(before.status, 400, 'refused under the default window');
-    assert.match(before.body.error, /09:30 to 19:00/);
+    const short = await as('root', '/branding/schedule', {
+      method: 'PUT', body: { hoursPerDay: 4, workingDays: [1, 2, 3, 4, 5] } });
+    assert.strictEqual(short.status, 200, JSON.stringify(short.body));
+    assert.strictEqual(short.body.schedule.hoursPerDay, 4, 'the expected day moved');
+    assert.strictEqual((await week('ana')).workingDay.maxHours, 8,
+      'and the flag did not follow it');
+    assert.strictEqual((await dayOf('ana', WED)).overLong, false,
+      'so a day under eight is still unremarkable');
 
-    // An early-starting studio: 08:00-17:00, lunch 12:00-13:00.
-    const set = await as('root', '/branding/schedule', {
-      method: 'PUT',
-      body: { hoursPerDay: 8, workingDays: [1, 2, 3, 4, 5],
-        dayStart: '08:00', dayEnd: '17:00', lunchStart: '12:00', lunchEnd: '13:00' },
-    });
-    assert.strictEqual(set.status, 200, JSON.stringify(set.body));
-    assert.strictEqual(set.body.schedule.dayStartLabel, '08:00');
+    /* The clock half of the setting is left alone by a request that does not
+       mention it. The four inputs have gone from the form, and the stored
+       window has to survive that rather than being blanked by every save —
+       a studio that goes back to clock times should get its own back. */
+    const stored = await sql(cfg, 'SELECT day_start_min, lunch_start_min FROM work_schedule LIMIT 1');
+    assert.strictEqual(Number(stored[0].day_start_min), 570, '09:30 is still on the row');
+    assert.strictEqual(Number(stored[0].lunch_start_min), 780);
 
-    const after = await add('ana', early);
-    assert.strictEqual(after.status, 201, JSON.stringify(after.body));
-    assert.strictEqual(Number(after.body.entry.hours), 1.25, 'and it counts as an hour and a quarter');
-
-    // The lunch hour moved with it: 11:30-13:30 is now two hours less the new
-    // lunch, not less the old one.
-    const straddle = await add('ana', { date: WED, startTime: '11:30', endTime: '13:30', clientId, projectId });
-    assert.strictEqual(straddle.status, 201, JSON.stringify(straddle.body));
-    assert.strictEqual(Number(straddle.body.entry.hours), 1, 'the new lunch is what comes off');
-    assert.strictEqual(straddle.body.lunchSubtracted, 60);
-
-    // And what used to be allowed is not any more.
-    const late = await add('ana', { date: WED, startTime: '17:30', endTime: '18:30', clientId, projectId });
-    assert.strictEqual(late.status, 400, '18:30 was inside the old day and is outside this one');
-    assert.match(late.body.error, /08:00 to 17:00/);
-
-    // The window the page draws its form from followed too.
-    const shown = (await week('ana')).workingDay;
-    assert.deepStrictEqual(shown,
-      { timezone: 'IST', dayStart: '08:00', dayEnd: '17:00', hasLunch: true,
-        lunchStart: '12:00', lunchEnd: '13:00', maxHours: 8 });
-
-    // A studio with no fixed lunch break: nothing is subtracted from anything.
+    // Put it back for the rest of the suite.
     assert.strictEqual((await as('root', '/branding/schedule', {
-      method: 'PUT',
-      body: { hoursPerDay: 8, workingDays: [1, 2, 3, 4, 5],
-        dayStart: '08:00', dayEnd: '17:00', lunchStart: '', lunchEnd: '' },
-    })).status, 200);
-    const noLunch = await add('ana', { date: WED, startTime: '14:00', endTime: '16:00', clientId, projectId });
-    assert.strictEqual(Number(noLunch.body.entry.hours), 2);
-    assert.strictEqual(noLunch.body.lunchSubtracted, 0);
-    assert.strictEqual((await week('ana')).workingDay.hasLunch, false,
-      'and the form says there is no break rather than showing one of length zero');
-
-    // Put it back, so the rest of the suite sees the studio it started with.
-    assert.strictEqual((await as('root', '/branding/schedule', {
-      method: 'PUT',
-      body: { hoursPerDay: 8, workingDays: [1, 2, 3, 4, 5],
-        dayStart: '09:30', dayEnd: '19:00', lunchStart: '13:00', lunchEnd: '14:00' },
-    })).status, 200);
-    assert.strictEqual((await add('ana', { date: WED, startTime: '08:00', endTime: '09:15',
-      clientId, projectId })).status, 400, 'and the old window is enforced again');
+      method: 'PUT', body: { hoursPerDay: 8, workingDays: [1, 2, 3, 4, 5] } })).status, 200);
   });
 
   await t.test('changing the studio\'s hours is its own permission', async () => {
@@ -606,7 +670,7 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
        these are certainly should not. */
     const asArtist = await as('ana', '/branding/schedule', {
       method: 'PUT',
-      body: { hoursPerDay: 8, workingDays: [1, 2, 3, 4, 5], dayStart: '00:00', dayEnd: '23:45' },
+      body: { hoursPerDay: 8, workingDays: [1, 2, 3, 4, 5] },
     });
     assert.strictEqual(asArtist.status, 403, JSON.stringify(asArtist.body));
 
@@ -654,7 +718,14 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     });
     assert.strictEqual(silly.status, 400, JSON.stringify(silly.body));
     assert.match(silly.body.error, /loggable hours/);
-    assert.strictEqual((await week('ana')).workingDay.dayEnd, '19:00', 'and nothing was written');
+    /* Read from the stored row, not from the Time Sheet's window: the form no
+       longer carries the clock and the week payload no longer reports it, so
+       the only place left that can say whether anything was written is the
+       table. The endpoint still validates the window because a studio can set
+       it through the API, and a refusal that half-applies would be worse than
+       no validation at all. */
+    const untouched = await sql(cfg, 'SELECT day_end_min FROM work_schedule LIMIT 1');
+    assert.strictEqual(Number(untouched[0].day_end_min), 1140, 'and nothing was written');
   });
 
   await t.test('the weekly shape is gone, everywhere', async () => {
@@ -671,9 +742,14 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   });
 
   await t.test('the asset pipeline and its measured time are untouched', async () => {
-    const sessions = await sql(cfg, 'SELECT COUNT(*) AS n FROM work_sessions');
-    assert.strictEqual(Number(sessions[0].n), 0,
-      'logging hours must not have written a measured session');
+    /* Filing hours must not write a measured session. Counted against what the
+       suggestion test put there deliberately, rather than against nought —
+       nought stopped being the right answer when this suite started seeding
+       sessions to have something to suggest from. */
+    const seeded = await sql(cfg, "SELECT COUNT(*) AS n FROM work_sessions WHERE ended_reason = 'submitted'");
+    const all = await sql(cfg, 'SELECT COUNT(*) AS n FROM work_sessions');
+    assert.strictEqual(Number(all[0].n), Number(seeded[0].n),
+      'logging hours must not have written a measured session of its own');
     const asset = (await as('root', `/assets/project/${projectId}`)).body.assets
       .find((a) => a.id === assetId);
     assert.strictEqual(asset.status, 'assigned');
