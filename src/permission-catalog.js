@@ -518,6 +518,50 @@ const GROUPS = [
     ],
   },
   {
+    /* Chat.
+     *
+     * Two permissions, and the asymmetry between them is the whole design.
+     *
+     * Talking to one other person is not a privilege the studio grants: it is
+     * what a colleague does, and gating it would mean an account that can be
+     * assigned work but not asked about it. So chat.use starts ON for every
+     * designation, like timesheet.own, and exists as a toggle only so a studio
+     * that wants chat closed for a department can say so.
+     *
+     * Creating a GROUP is different. A group is a room with a name and a
+     * membership that outlives any one conversation, and a studio that let
+     * everybody make them ends up with forty of them and no idea which is
+     * current. That one starts with the roles that already run people.
+     *
+     * There is deliberately no permission here for reading somebody else's
+     * conversation, and adding one later would not be a toggle — it would be a
+     * different product. See the note at the top of src/routes/chat.js.
+     */
+    key: 'chat',
+    label: 'Chat',
+    permissions: [
+      {
+        key: 'chat.use',
+        label: 'Use Chat',
+        impliedBy: () => true,
+        describe: 'Open the chat panel, hold one-to-one conversations with anybody in the studio, '
+          + 'and take part in any group you have been added to.',
+      },
+      {
+        key: 'chat.group_create',
+        label: 'Create Chat Group',
+        /* Runs a team, signs off delivery, or manages people — which is Lead,
+           Production, Creative Direction and everything above them, and is not
+           Contributor or Staff. Written as the three capabilities rather than
+           as a list of tier names so a role added in Settings lands on the
+           right side of it without anybody remembering to come back here. */
+        impliedBy: anyOf(has('leadsTeam'), has('deliver'), has('manageUsers')),
+        describe: 'Start a group conversation and manage its members, up to thirty. '
+          + 'Everybody can already chat one-to-one without this.',
+      },
+    ],
+  },
+  {
     key: 'settings',
     label: 'Settings / Admin',
     permissions: [

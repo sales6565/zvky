@@ -4,8 +4,8 @@ Two deliverables, both built from a running instance rather than typed by hand.
 
 | File | What it is |
 | --- | --- |
-| `ZVKY-FORGE-User-Manual.docx` | The full manual: every screen, as steps somebody can follow, with role-access notes and three appendices. 56 pages. |
-| `ZVKY-FORGE-Overview.pptx` | The induction deck: roughly one slide per module. 27 slides. |
+| `ZVKY-FORGE-User-Manual.docx` | The full manual: every screen, as steps somebody can follow, with role-access notes and three appendices. Word paginates it on open, so the page count depends on your settings; it runs to about sixty. |
+| `ZVKY-FORGE-Overview.pptx` | The induction deck: roughly one slide per module. 31 slides. |
 
 Open them in Word and PowerPoint. The manual's table of contents is a field that
 Word refreshes when the document opens; if it ever looks blank, `Ctrl+A` then `F9`.
@@ -17,11 +17,11 @@ permission tables. Both are produced here from a live deployment on every build,
 so a rebuild cannot leave last month's screenshot or last month's role behind.
 
 - `build/shoot.js` signs in as each demo designation and drives the real buttons,
-  writing 42 captures into `shots/`.
+  writing 44 captures into `shots/`.
 - `build/crop.js` trims each capture to its content, in place.
 - `build/roles-table.js` reads the permission table out of a deployment and
   writes `build/roles-table.json`.
-- `build/bands.js` groups the 58 permissions into the twelve distinct sets of
+- `build/bands.js` groups the 62 permissions into the thirteen distinct sets of
   holders the manual calls access bands, and fails loudly if the catalogue has
   changed shape.
 - `build/content.js` is the manual's prose. It names screenshots and access
@@ -45,10 +45,14 @@ node docs/build/build-pptx.js
 ```
 
 To re-take the screenshots as well, stand up a demo instance on port 4415, run
-the `build/seed*.js` scripts in order to populate it, then:
+the `build/seed*.js` scripts in order to populate it (`seed.js`, then `seed2` … `seed7`), then:
+
+`seed.js` prints a `SEED_IDS {...}` line; that JSON is what `build/ids.json`
+holds, and the later seeds and `shoot.js` read it. Write it there before running
+them, or they will address the previous demo instance and fail with 403s.
 
 ```bash
-node docs/build/shoot.js     # 42 captures into docs/shots
+node docs/build/shoot.js     # 44 captures into docs/shots
 node docs/build/crop.js      # trims each to its content, in place
 ```
 

@@ -168,7 +168,7 @@ const module_ = ({ module, head, sub, items, whoText, shotName, caption, notes }
   const stats = [
     ['10', 'stages from Not Assigned to Delivered'],
     ['60', 'designations, each with its own view'],
-    ['58', 'permissions a Super Admin controls'],
+    ['62', 'permissions a Super Admin controls'],
     ['1', 'active task per person at a time'],
   ];
   stats.forEach(([big, small], i) => {
@@ -213,10 +213,11 @@ const module_ = ({ module, head, sub, items, whoText, shotName, caption, notes }
     ['Time Sheet', '19'],
     ['Reports', '20'],
     ['People', '21'],
-    ['Notifications and your profile', '22'],
-    ['Settings and permissions', '23-25'],
-    ['The Activity Log', '26'],
-    ['Keeping the documentation current', '27'],
+    ['Chat', '22'],
+    ['Notifications and your profile', '23'],
+    ['Settings and permissions', '24-26'],
+    ['The Activity Log', '27'],
+    ['Keeping the documentation current', '28'],
   ];
   items.forEach((row, i) => {
     const col = i < 8 ? 0 : 1;
@@ -567,10 +568,25 @@ module_({
 });
 
 module_({
+  module: 'Chat',
+  head: 'Talk to anybody; groups are for the people who run work',
+  items: [
+    'The speech-bubble icon beside the bell. One to one with anybody in the studio, with no permission needed.',
+    'Groups hold thirty people, counting whoever made them, and are started by Leads, Production and Creative Direction.',
+    'The owner renames the group, adds and removes people; anybody can leave. An owner who leaves hands it on.',
+    'Files: .png, .jpg, .svg, .webp, .mov, .mp4 up to 30MB — deleted after eight hours. The message stays and says the file expired.',
+    'Private to the people in it. No Super Admin view, no export, and no permission that could create one.',
+  ],
+  whoText: 'Everybody chats. Production planning and creative direction \u2014 25 designations \u2014 may start a group.',
+  shotName: '14-chat-thread',
+  caption: 'A one-to-one conversation.',
+});
+
+module_({
   module: 'You',
   head: 'Notifications, your photo, your password',
   items: [
-    'The bell carries unread notifications: work assigned to you, reviews coming back, feedback landing, time sheets waiting.',
+    'The bell carries unread notifications: work assigned to you, reviews coming back, feedback landing.',
     'Profile holds your photo, which then appears everywhere you are represented.',
     'Profile also holds your password.',
     'Changing your password signs out every other session — deliberately, since a password is changed because it may be known.',
@@ -601,7 +617,7 @@ module_({
   mark(s, 'Permissions');
   title(s, 'Twelve access bands, not sixty role lists',
     `${bands.groups.reduce((a, g) => a + g.permissions.length, 0)} permissions across ${bands.roles.length} designations, `
-    + 'in only twelve distinct groups of holders.');
+    + 'in only thirteen distinct groups of holders.');
   const list = Object.values(bands.band);
   list.forEach((b, i) => {
     const col = i % 3, row = Math.floor(i / 3);
@@ -628,7 +644,7 @@ module_({
     x: 0.62, y: 6.55, w: 11.9, h: 0.6, isTextBox: true, margin: 0,
     fontSize: 13, color: MUTED, fontFace: 'Calibri',
   });
-  s.addNotes('These twelve bands are generated from the permission table, not written by hand. '
+  s.addNotes('These thirteen bands are generated from the permission table, not written by hand. '
     + 'Appendix A of the manual lists every designation in each.');
 }
 

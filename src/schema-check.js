@@ -77,6 +77,11 @@ const REQUIRED = [
   { table: 'notifications',    column: null,            step: 'notifications' },
   { table: 'branding',         column: null,            step: 'branding' },
   { table: 'branding',         column: 'logo',          step: 'branding' },
+  { table: 'chat_conversations', column: null,          step: 'chat' },
+  { table: 'chat_members',       column: null,          step: 'chat' },
+  { table: 'chat_messages',      column: null,          step: 'chat' },
+  { table: 'chat_attachments',   column: null,          step: 'chat' },
+  { table: 'chat_attachments',   column: 'expires_at',  step: 'chat' },
 ];
 
 // Two queries for the whole check, rather than one per column.

@@ -36,6 +36,25 @@ const IGNORE = [
   /^\/api\/notifications\/[^/]*\/?read/,
   /^\/api\/notifications\/read-all/,
   /^\/api\/auth\/tour-seen/,
+  /* Chat message traffic, and it is here as well as at the routes for the same
+     reason the whole middleware exists: the routes call req.activitySkip(), and
+     an exclusion that depends on every future route remembering to is one that
+     is correct on the day it ships and quietly wrong afterwards. This is the
+     latch that does not depend on anybody's diligence.
+     
+     Not because it would leak the words — the middleware never sees a request
+     body, so it could not — but because a line per message would record who
+     talked to whom and how often, which is most of what a message log is for.
+     Chat is private between its participants; see the header of
+     src/routes/chat.js for the whole of that decision.
+     
+     Group ADMINISTRATION is deliberately not matched here. Creating a group,
+     renaming it and changing who is in it are administrative facts about a
+     studio object, and they stay in the log. */
+  /^\/api\/chat\/[^/]+\/messages/,
+  /^\/api\/chat\/[^/]+\/read\b/,
+  /^\/api\/chat\/[^/]+\/leave/,
+  /^\/api\/chat\/direct/,
 ];
 
 function activityLogger(req, res, next) {

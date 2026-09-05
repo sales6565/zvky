@@ -2030,6 +2030,107 @@ async function ensureHoldNote(db, log) {
  * `ended_at` is set from the row's own started_at rather than NOW(), so a
  * session stranded three weeks ago does not book three weeks of Time Spent.
  */
+/* Chat.
+ *
+ * Four tables, and the shapes of two of them are decisions rather than
+ * bookkeeping.
+ *
+ * `pair_key` on a conversation is the two user ids sorted and joined, UNIQUE.
+ * A one-to-one conversation has to be the SAME conversation whichever end
+ * opens it, and two people who message each other at the same moment would
+ * otherwise each create one and then talk past each other in separate rooms
+ * with no error anywhere. Sorting removes the direction; UNIQUE makes the race
+ * impossible rather than unlikely. It is NULL for groups, and MySQL allows any
+ * number of NULLs in a unique index, which is exactly the behaviour wanted.
+ *
+ * `seq` is monotonic, for the same reason notifications has one: created_at
+ * has second precision, a burst of messages ties within it, and a cursor built
+ * on a timestamp silently drops whatever landed in the same second the browser
+ * last polled. With polling as the transport that is not an edge case, it is
+ * the normal case — a poll every few seconds against a column that ticks once
+ * a second. A sequence cannot tie and cannot skip.
+ *
+ * sender_id is ON DELETE SET NULL rather than CASCADE. Deleting an account
+ * must not punch holes in a group's history; the message stays and is shown
+ * against a removed member.
+ *
+ * An attachment row OUTLIVES its file, deliberately. `expires_at` is written
+ * at upload and is what decides whether the file is offered; `stored_name` is
+ * cleared and `deleted_at` set when the sweep actually removes the bytes. The
+ * row remains so the message can say a file was here and has expired, which is
+ * a different thing from the message never having had one. */
+async function ensureChat(db, log) {
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS chat_conversations (
+      id         CHAR(36)     NOT NULL PRIMARY KEY,
+      kind       VARCHAR(16)  NOT NULL DEFAULT 'direct',
+      title      VARCHAR(120) NULL,
+      pair_key   VARCHAR(80)  NULL,
+      created_by CHAR(36)     NULL,
+      created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_chat_pair (pair_key),
+      KEY idx_chat_conv_kind (kind)
+    )`));
+
+  /* `seq` here is join ORDER, and it is not decoration.
+   *
+   * When the owner leaves, the group is handed to whoever has been in it
+   * longest — and joined_at is a DATETIME, so every member added in the insert
+   * that created the group shares one second and "longest" has no answer. That
+   * is not a rare tie: for a group created in one request it is every time.
+   * A sequence makes the order total. Same column, same reason, as
+   * notifications.seq and chat_messages.seq. */
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS chat_members (
+      conversation_id CHAR(36)   NOT NULL,
+      user_id         CHAR(36)   NOT NULL,
+      seq             BIGINT     NOT NULL AUTO_INCREMENT UNIQUE,
+      is_owner        TINYINT(1) NOT NULL DEFAULT 0,
+      joined_at       DATETIME   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_read_seq   BIGINT     NOT NULL DEFAULT 0,
+      PRIMARY KEY (conversation_id, user_id),
+      KEY idx_chat_members_user (user_id)
+    )`));
+
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS chat_messages (
+      id              CHAR(36)    NOT NULL PRIMARY KEY,
+      seq             BIGINT      NOT NULL AUTO_INCREMENT UNIQUE,
+      conversation_id CHAR(36)    NOT NULL,
+      sender_id       CHAR(36)    NULL,
+      kind            VARCHAR(24) NOT NULL DEFAULT 'text',
+      body            TEXT        NULL,
+      created_at      DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_chat_messages_conv (conversation_id, seq)
+    )`));
+
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS chat_attachments (
+      id          CHAR(36)     NOT NULL PRIMARY KEY,
+      message_id  CHAR(36)     NOT NULL,
+      file_name   VARCHAR(255) NOT NULL,
+      mime        VARCHAR(120) NULL,
+      byte_size   BIGINT       NOT NULL DEFAULT 0,
+      stored_name VARCHAR(160) NULL,
+      expires_at  DATETIME     NOT NULL,
+      deleted_at  DATETIME     NULL,
+      created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_chat_attach_message (message_id),
+      KEY idx_chat_attach_sweep (deleted_at, expires_at)
+    )`));
+
+  /* Tolerantly, like the notifications keys: a deployment whose database user
+     cannot create constraints still gets working tables. */
+  const fk = async (sql) => { await db.query(sql).catch(() => {}); };
+  await fk('ALTER TABLE chat_members ADD CONSTRAINT fk_chat_members_conv '
+    + 'FOREIGN KEY (conversation_id) REFERENCES chat_conversations(id) ON DELETE CASCADE');
+  await fk('ALTER TABLE chat_members ADD CONSTRAINT fk_chat_members_user '
+    + 'FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE');
+  await fk('ALTER TABLE chat_messages ADD CONSTRAINT fk_chat_messages_conv '
+    + 'FOREIGN KEY (conversation_id) REFERENCES chat_conversations(id) ON DELETE CASCADE');
+  await fk('ALTER TABLE chat_messages ADD CONSTRAINT fk_chat_messages_sender '
+    + 'FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE SET NULL');
+  await fk('ALTER TABLE chat_attachments ADD CONSTRAINT fk_chat_attach_message '
+    + 'FOREIGN KEY (message_id) REFERENCES chat_messages(id) ON DELETE CASCADE');
+  log('Schema: chat tables ready.');
+}
+
 async function closeStrandedSessions(db, log) {
   const { rows: table } = await db.query(
     `SELECT TABLE_NAME AS t FROM information_schema.TABLES
@@ -2132,6 +2233,8 @@ const STEPS = [
   // AFTER the step that creates the table, or a fresh database would have it
   // created NOT NULL and this would find nothing to relax.
   ['timesheet hours only', ensureTimesheetHoursOnly],
+  // After users, whose key every chat table points at.
+  ['chat', ensureChat],
   // Last: it reads assets.status, which every step above may have changed.
   ['stranded work sessions', closeStrandedSessions],
 ];

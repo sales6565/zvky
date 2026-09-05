@@ -23,6 +23,8 @@ const activityRoutes = require('./routes/activity');
 const { activityLogger } = require('./middleware/activity');
 const idleRoutes = require('./routes/idle');
 const notificationRoutes = require('./routes/notifications');
+const chatRoutes = require('./routes/chat');
+const chatFiles = require('./chat-files');
 const branding = require('./branding');
 const ipGate = require('./middleware/ip-allowlist');
 
@@ -94,6 +96,7 @@ app.use('/api/permissions', permissionRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/idle', idleRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/chat', chatRoutes);
 app.use('/api/branding', brandingRoutes);
 app.use('/api/activity', activityRoutes);
 
@@ -339,6 +342,11 @@ async function start() {
     await require('./bootstrap-token').announce(db);
     ipGate.describeAtStartup();
     startReferenceRefresh(db);
+    /* Chat attachments live eight hours. The first pass runs now rather than
+       in ten minutes' time: a process that was restarted comes back holding
+       files that expired while it was down, and no timer ever fired for those.
+       Safe on more than one worker — see the sweep in src/chat-files.js. */
+    chatFiles.schedule(db);
   } catch (err) {
     // Start anyway: a server that is up can report through /api/health why the
     // database is unreachable, where one that exited says nothing at all.

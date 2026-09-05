@@ -276,6 +276,37 @@ const reset = () => {
   } else console.log('  \u2717 no Profile button');
   await p.close();
 
+  // ---------- 14b Chat -------------------------------------------------------
+  console.log('14 chat');
+  /* Two captures, from two accounts: the artist reads a one-to-one, and the
+     lead — who holds Create Chat Group — opens a group's member list, which is
+     the half an artist never sees. The conversations themselves are made by
+     seed6.js so this only has to photograph them. */
+  p = await page();
+  await signIn(p, 'artist@zvky.test');
+  if (await tryClick(p, '#chatBtn')) {
+    await p.waitForTimeout(1200);
+    // The one-to-one, not the group: the list is newest-first, so which one
+    // is on top depends on who spoke last.
+    const conv = await p.$('.chat-conv:not(:has(.chat-groupmark))');
+    if (conv) { await conv.click(); await p.waitForTimeout(1600); await shot(p, '14-chat-thread'); }
+    else console.log('  \u2717 no conversation to open');
+  } else console.log('  \u2717 no chat button');
+  await p.close();
+
+  p = await page();
+  await signIn(p, 'lead@zvky.test');
+  if (await tryClick(p, '#chatBtn')) {
+    await p.waitForTimeout(1200);
+    const group = await p.$('.chat-conv:has(.chat-groupmark)');
+    if (group) {
+      await group.click();
+      await p.waitForSelector('#chatManage', { timeout: 8000 }).catch(()=>{});
+      if (await tryClick(p, '#chatManage')) { await p.waitForTimeout(1400); await shot(p, '14-chat-group'); }
+    } else console.log('  \u2717 no group to open');
+  }
+  await p.close();
+
   // ---------- 15 My Team ----------------------------------------------------
   console.log('15 my team');
   p = await page();

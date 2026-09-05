@@ -193,6 +193,12 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
   border-radius:20px;background:var(--brand);color:var(--brand-ink);font-size:9.5px;font-weight:700;
   font-family:'IBM Plex Mono';display:flex;align-items:center;justify-content:center;
   border:1px solid var(--bg);}
+/* `display:flex` above beats the browser's own [hidden]{display:none}, which
+   is an author rule against a user-agent one — so paintNotifBadge() setting
+   .hidden did nothing and the bell carried a red "0" permanently, for every
+   account, whether or not anything was unread. Found while building the chat
+   badge, which was copied from this rule and inherited the same fault. */
+.notif-badge[hidden]{display:none;}
 .notif-panel{position:absolute;top:calc(100% + 8px);right:0;width:340px;max-width:calc(100vw - 32px);
   background:var(--surface);border:1px solid var(--border);border-radius:12px;z-index:70;
   box-shadow:0 12px 32px rgba(0,0,0,.45);overflow:hidden;}
@@ -224,6 +230,119 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
   color:var(--brand-accent);font-family:'IBM Plex Mono';margin-bottom:4px;}
 .notif-toast .t-msg{font-size:12.5px;line-height:1.4;}
 .notif-toast .t-hint{font-size:10.5px;color:var(--ink-faint);margin-top:5px;}
+
+/* --- chat -------------------------------------------------------------------
+   Beside the bell and built on the same shape: a wrapper, a button with a
+   badge, a panel hanging below it. Wider than the bell's panel because this one
+   holds a conversation rather than a list of one-liners, and taller for the
+   same reason. */
+.chat-wrap{position:relative;}
+.chat-btn{position:relative;padding:8px 10px;font-size:14px;line-height:1;}
+.chat-badge{position:absolute;top:-4px;right:-4px;min-width:16px;height:16px;padding:0 4px;
+  border-radius:20px;background:var(--brand);color:var(--brand-ink);font-size:9.5px;font-weight:700;
+  font-family:'IBM Plex Mono';display:flex;align-items:center;justify-content:center;
+  border:1px solid var(--bg);}
+/* See the note on .notif-badge: display:flex would otherwise override the
+   browser's [hidden] rule and leave a red "0" sitting there for ever. */
+.chat-badge[hidden]{display:none;}
+.chat-panel{position:absolute;top:calc(100% + 8px);right:0;width:400px;max-width:calc(100vw - 32px);
+  background:var(--surface);border:1px solid var(--border);border-radius:12px;z-index:70;
+  box-shadow:0 12px 32px rgba(0,0,0,.45);overflow:hidden;display:flex;flex-direction:column;
+  height:min(72vh,560px);}
+.chat-head{display:flex;align-items:center;gap:8px;padding:10px 12px;
+  border-bottom:1px solid var(--border);font-size:13px;flex:0 0 auto;}
+.chat-head strong{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.chat-head .u-link{font-size:11.5px;color:var(--ink-muted);font-weight:500;white-space:nowrap;}
+.chat-head .u-link:hover{color:var(--brand-accent);}
+.chat-back{background:none;border:0;color:var(--ink-muted);font:inherit;cursor:pointer;
+  padding:2px 6px;border-radius:6px;line-height:1;}
+.chat-back:hover{background:var(--surface-2);color:var(--ink);}
+.chat-sub{font-size:10.5px;color:var(--ink-faint);font-family:'IBM Plex Mono';}
+.chat-body{flex:1;min-height:0;overflow-y:auto;}
+.chat-foot{flex:0 0 auto;border-top:1px solid var(--border);padding:9px 12px;}
+
+/* the conversation list */
+.chat-conv{display:flex;gap:10px;align-items:center;width:100%;text-align:left;
+  padding:10px 12px;border:0;border-bottom:1px solid var(--border);background:none;
+  color:var(--ink);font:inherit;cursor:pointer;}
+.chat-conv:last-child{border-bottom:0;}
+.chat-conv:hover{background:var(--surface-2);}
+.chat-conv.unread{background:rgba(127,20,22,.10);border-left:2px solid var(--brand);padding-left:10px;}
+.chat-conv .body{flex:1;min-width:0;}
+.chat-conv .who{font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.chat-conv.unread .who{font-weight:600;}
+.chat-conv .last{font-size:11px;color:var(--ink-faint);margin-top:2px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.chat-count{min-width:18px;height:18px;padding:0 5px;border-radius:20px;background:var(--brand);
+  color:var(--brand-ink);font-size:9.5px;font-weight:700;font-family:'IBM Plex Mono';
+  display:flex;align-items:center;justify-content:center;flex:0 0 auto;}
+/* A group has no one face, so it gets a mark rather than an avatar. */
+.chat-groupmark{width:32px;height:32px;border-radius:10px;background:var(--surface-3);
+  color:var(--ink-muted);display:flex;align-items:center;justify-content:center;
+  font-size:13px;flex:0 0 auto;}
+
+/* the thread */
+.chat-msgs{padding:10px 12px;display:flex;flex-direction:column;gap:9px;}
+.chat-msg{display:flex;gap:8px;align-items:flex-end;max-width:100%;}
+.chat-msg.mine{flex-direction:row-reverse;}
+.chat-bubble{background:var(--surface-2);border-radius:12px;padding:7px 10px;max-width:78%;
+  font-size:12.5px;line-height:1.45;word-wrap:break-word;overflow-wrap:anywhere;}
+.chat-msg.mine .chat-bubble{background:rgba(127,20,22,.20);}
+.chat-bubble .from{font-size:10px;color:var(--brand-accent);font-family:'IBM Plex Mono';
+  margin-bottom:3px;letter-spacing:.3px;}
+.chat-bubble .when{font-size:9.5px;color:var(--ink-faint);font-family:'IBM Plex Mono';margin-top:4px;}
+/* Added, removed, renamed, left — the transcript's own voice, centred and
+   quiet so it reads as scenery rather than as somebody talking. */
+.chat-sys{align-self:center;text-align:center;font-size:10.5px;color:var(--ink-faint);
+  padding:2px 10px;max-width:90%;line-height:1.5;}
+.chat-more{display:block;width:100%;background:none;border:0;color:var(--ink-muted);
+  font:inherit;font-size:11px;padding:8px;cursor:pointer;}
+.chat-more:hover{color:var(--brand-accent);}
+.chat-empty{padding:26px 16px;text-align:center;color:var(--ink-muted);font-size:12.5px;line-height:1.6;}
+
+/* attachments */
+.chat-att{margin-top:6px;display:flex;flex-direction:column;gap:5px;}
+.chat-att img,.chat-att video{max-width:100%;max-height:190px;border-radius:8px;display:block;
+  background:var(--surface-3);}
+.chat-file{display:flex;align-items:center;gap:7px;font-size:11.5px;background:var(--surface-3);
+  border-radius:8px;padding:6px 9px;color:var(--ink-muted);}
+.chat-file a{color:var(--brand-accent);text-decoration:none;cursor:pointer;}
+.chat-file a:hover{text-decoration:underline;}
+/* An attachment whose eight hours are up. Deliberately still a row: the message
+   said a file was here, and showing nothing would rewrite that. */
+.chat-file.gone{opacity:.72;font-style:italic;}
+
+/* the composer */
+.chat-compose{display:flex;gap:7px;align-items:flex-end;}
+.chat-compose textarea{flex:1;min-height:34px;max-height:110px;resize:none;padding:7px 9px;
+  font:inherit;font-size:12.5px;background:var(--surface-2);color:var(--ink);
+  border:1px solid var(--border);border-radius:9px;}
+.chat-clip{background:none;border:1px solid var(--border);border-radius:9px;color:var(--ink-muted);
+  cursor:pointer;padding:6px 9px;font-size:14px;line-height:1;}
+.chat-clip:hover{color:var(--brand-accent);border-color:var(--brand-accent);}
+.chat-picked{font-size:10.5px;color:var(--ink-muted);margin-bottom:6px;display:flex;
+  flex-wrap:wrap;gap:6px;align-items:center;}
+.chat-picked .drop{cursor:pointer;color:var(--ink-faint);}
+.chat-picked .drop:hover{color:var(--brand-accent);}
+.chat-hint{font-size:10px;color:var(--ink-faint);margin-top:6px;line-height:1.5;}
+
+/* the people picker and group management */
+.chat-search{width:100%;padding:7px 9px;font:inherit;font-size:12.5px;background:var(--surface-2);
+  color:var(--ink);border:1px solid var(--border);border-radius:9px;}
+.chat-person{display:flex;gap:9px;align-items:center;width:100%;text-align:left;padding:8px 12px;
+  border:0;border-bottom:1px solid var(--border);background:none;color:var(--ink);font:inherit;
+  cursor:pointer;}
+.chat-person:hover{background:var(--surface-2);}
+.chat-person .body{flex:1;min-width:0;}
+.chat-person .nm{font-size:12.5px;}
+.chat-person .rl{font-size:10.5px;color:var(--ink-faint);}
+.chat-person input[type=checkbox]{accent-color:var(--brand-accent);}
+/* The row's own actions — Remove, Add — sized to the row rather than to the
+   body text they inherit from, which left them looming over the name. */
+.chat-person .u-link{font-size:11.5px;font-weight:500;white-space:nowrap;}
+.chat-form{padding:10px 12px;display:flex;flex-direction:column;gap:8px;
+  border-bottom:1px solid var(--border);}
+.chat-danger{color:var(--brand-accent);}
 .idle-period{align-items:center;}
 .idle-range{font-size:11.5px;color:var(--ink-faint);}
 .eff-track{position:relative;height:8px;background:var(--surface-3);border-radius:20px;overflow:hidden;}
@@ -708,6 +827,19 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
             <button class="u-link" id="notifReadAll">Mark all as read</button>
           </div>
           <div class="notif-list" id="notifList"></div>
+        </div>
+      </div>
+      <!-- Chat, beside the bell and following its pattern: the panel is a
+           sibling of the button so the header's overflow cannot clip it. -->
+      <div class="chat-wrap" id="chatWrap" style="display:none;">
+        <button class="btn btn-ghost btn-sm chat-btn" id="chatBtn" title="Chat" aria-haspopup="true" aria-expanded="false">
+          <span aria-hidden="true">&#128172;</span>
+          <span class="chat-badge" id="chatBadge" hidden></span>
+        </button>
+        <div class="chat-panel" id="chatPanel" hidden>
+          <div class="chat-head" id="chatHead"></div>
+          <div class="chat-body" id="chatBody"></div>
+          <div class="chat-foot" id="chatFoot" hidden></div>
         </div>
       </div>
       <!-- No permission gate, deliberately, and so no entry in UI_GATES: the
@@ -1369,6 +1501,10 @@ const UI_GATES = {
      queue — the server decides that, this only decides whether there is a tab. */
   pendingTabBtn:         () => can('pending.view'),
   timesheetTabBtn:       () => can('timesheet.own'),
+  /* The header's chat button. In UI_GATES, unlike the bell beside it, because
+     this one IS a permission question: a studio can close chat for a
+     designation, and when it does the button must go with it. */
+  chatWrap:              () => can('chat.use'),
   newClientBtn:          () => can('client.add'),
   newProjectBtn:         () => can('project.add'),
   editProjectBtn:        () => mayEditCurrentProject(),
@@ -1489,6 +1625,16 @@ const TOUR_STEPS = [
     title: 'Notifications',
     body: 'You are told here when work is assigned to you, when a review comes back, and '
         + 'when feedback you were waiting on arrives. The badge counts what you have not read.',
+  },
+  {
+    id: 'chat',
+    target: '#chatBtn',
+    gate: 'chatWrap',
+    title: 'Chat',
+    body: 'Message anybody in the studio, one to one — no permission needed for that. '
+        + 'Leads, Production and Managers can also start a group of up to thirty. '
+        + 'Files can be attached, and they are deleted eight hours later; the messages stay. '
+        + 'Nobody but the people in a conversation can read it, administrators included.',
   },
   {
     id: 'tourBtn',
@@ -2178,6 +2324,10 @@ function logout(options = {}){
   /* Stop polling before the reload: an in-flight request against a cleared
      token would 401 and, through api(), call straight back into here. */
   stopNotifications();
+  /* The chat poll too, and the blob URLs it made for attachments — a reload
+     would drop them anyway, but leaving them is a habit that leaks in the
+     paths that do not reload. */
+  stopChat();
   /* And take the overlay down with it. A session that expires mid-tour would
      otherwise leave a veil and a spotlight sitting over the login form. */
   tourTeardown();
@@ -2234,6 +2384,7 @@ async function showApp(){
     await bootApp();
     // Once there is a session to poll for.
     startNotifications();
+    startChat();
   }catch(err){
     /* The login path used to surface this on the login form — which this
        function had already hidden, so the message went nowhere. It lands in
@@ -2259,7 +2410,7 @@ async function bootApp(){
   /* Every tab and toolbar button, from the one table. The asset buttons are
      turned on again by render(), which knows whether there is a board and a
      project to add to. */
-  [...TAB_GATE_IDS,'newProjectBtn'].forEach(id=>applyGate(id));
+  [...TAB_GATE_IDS,'newProjectBtn','chatWrap'].forEach(id=>applyGate(id));
   ['newAssetBtn','bulkImportBtn','downloadSampleBtn'].forEach(id=>applyGate(id, false));
 
   const { projects } = await api('/projects');
@@ -4583,7 +4734,7 @@ async function render(){
      toolbar buttons have to be re-decided too — they are applied once at boot
      and would otherwise keep the shape they had at sign-in. */
   if(await refreshPermissions()){
-    [...TAB_GATE_IDS,'newProjectBtn'].forEach(id=>applyGate(id));
+    [...TAB_GATE_IDS,'newProjectBtn','chatWrap'].forEach(id=>applyGate(id));
     if(state.openAssetId && document.getElementById('drawer').classList.contains('show')){
       openDrawer(state.openAssetId);
     }
@@ -8478,6 +8629,689 @@ document.addEventListener('keydown', e=>{ if(e.key === 'Escape') closeNotifPanel
    out the rest of the interval. */
 document.addEventListener('visibilitychange', ()=>{ if(!document.hidden && state.token) pollNotifications(); });
 
+
+
+/* --- chat -------------------------------------------------------------------
+
+   A panel in the header, beside the bell, holding three views: the list of
+   conversations, one open thread, and the pickers for starting or managing a
+   group. One panel rather than a tab because chat is something you do WHILE
+   doing something else — a tab would mean leaving the asset you are asking
+   about.
+
+   TRANSPORT: polling, and that is a decision rather than a fallback. The
+   reasoning is in src/chat.js; the short of it is that this app runs as more
+   than one Node worker, and a message pushed from the worker holding one
+   browser cannot reach a browser held by another without a shared bus that
+   this deployment does not have. Polling is correct under any number of
+   workers.
+
+   The cadence follows attention rather than running flat out: a few seconds
+   while the panel is open, less often while it is shut, and not at all in a
+   hidden tab — with an immediate catch-up when the tab comes back. A forgotten
+   window in a background monitor should not cost the server anything.
+*/
+const CHAT_POLL_OPEN_MS = 4000;    // reading a conversation: near enough to live
+const CHAT_POLL_IDLE_MS = 25000;   // panel shut, tab visible: just the badge
+const CHAT_POLL_HIDDEN_MS = 90000; // another tab entirely: barely at all
+
+const chatState = {
+  open:false, view:'list', conversations:[], unread:0, cursor:null,
+  conversationId:null, messages:[], conversation:null, hasMore:false,
+  people:[], pick:new Set(), search:'', files:[], timer:null, loading:false,
+  limits:{ allowed:'', maxBytes:0, hours:8 }, canCreateGroup:false, maxMembers:30,
+  /* Blob URLs made for attachments, by attachment id. An <img src> cannot
+     carry an Authorization header, so every attachment is fetched with one and
+     turned into a blob — which means they have to be revoked, or a long
+     session leaks a copy of every picture anybody sent. */
+  blobs:new Map(),
+};
+
+function stopChat(){
+  if(chatState.timer){ clearTimeout(chatState.timer); chatState.timer = null; }
+  releaseChatBlobs();
+}
+function releaseChatBlobs(){
+  chatState.blobs.forEach(url=>URL.revokeObjectURL(url));
+  chatState.blobs.clear();
+}
+
+function paintChatBadge(){
+  const badge = document.getElementById('chatBadge');
+  if(!badge) return;
+  badge.hidden = chatState.unread === 0;
+  badge.textContent = chatState.unread > 99 ? '99+' : String(chatState.unread);
+  const btn = document.getElementById('chatBtn');
+  if(btn) btn.title = chatState.unread
+    ? `${chatState.unread} unread message${chatState.unread===1?'':'s'}`
+    : 'Chat';
+}
+
+/* ---- fetching --------------------------------------------------------------- */
+
+async function loadChatList(){
+  const res = await api('/chat');
+  chatState.conversations = res.conversations;
+  chatState.unread = res.unread;
+  chatState.cursor = res.cursor;
+  chatState.canCreateGroup = res.canCreateGroup;
+  chatState.maxMembers = res.maxGroupMembers;
+  chatState.limits = res.attachments;
+  paintChatBadge();
+}
+
+async function loadChatThread(id, { keepScroll = false } = {}){
+  const res = await api(`/chat/${encodeURIComponent(id)}/messages`);
+  chatState.conversationId = id;
+  chatState.messages = res.messages;
+  chatState.conversation = res.conversation;
+  chatState.hasMore = res.hasMore;
+  renderChat();
+  if(!keepScroll) chatScrollToEnd();
+  await markChatRead();
+}
+
+/* Older messages, prepended. The scroll position is held by measuring the
+   distance from the BOTTOM rather than the top: prepending changes every
+   element's offset from the top, so keeping scrollTop would jump the reader
+   somewhere else entirely. */
+async function loadChatOlder(){
+  const first = chatState.messages[0];
+  if(!first) return;
+  const body = document.getElementById('chatBody');
+  const fromBottom = body ? body.scrollHeight - body.scrollTop : 0;
+  const res = await api(`/chat/${encodeURIComponent(chatState.conversationId)}/messages?before=${first.seq}`);
+  chatState.messages = [...res.messages, ...chatState.messages];
+  chatState.hasMore = res.hasMore;
+  renderChat();
+  if(body) body.scrollTop = body.scrollHeight - fromBottom;
+}
+
+async function markChatRead(){
+  const last = chatState.messages[chatState.messages.length - 1];
+  if(!last) return;
+  try{
+    const res = await api(`/chat/${encodeURIComponent(chatState.conversationId)}/read`,
+      { method:'POST', body:{ seq:last.seq } });
+    chatState.unread = res.unread;
+    const conv = chatState.conversations.find(c=>c.id === chatState.conversationId);
+    if(conv){ conv.unread = 0; conv.lastReadSeq = last.seq; }
+    paintChatBadge();
+  }catch(err){ /* the count simply stays as it was */ }
+}
+
+/* The poll. Cheap: a count, plus whatever has arrived since the last look. */
+async function pollChat(){
+  if(!state.token){ stopChat(); return; }
+  if(document.hidden) return;
+  try{
+    const q = chatState.cursor === null ? '' : '?since=' + encodeURIComponent(chatState.cursor);
+    const res = await api('/chat/poll' + q);
+    chatState.cursor = res.cursor;
+    chatState.unread = res.unread;
+    paintChatBadge();
+    if(!res.fresh || !res.fresh.length) return;
+
+    /* Anything in the conversation on screen is appended; anything else only
+       moves the list. Refreshing the whole list on every message would reorder
+       the panel under somebody's cursor while they were reading. */
+    const mine = res.fresh.filter(m=>m.conversationId === chatState.conversationId);
+    if(chatState.open && chatState.view === 'thread' && mine.length){
+      const known = new Set(chatState.messages.map(m=>m.id));
+      const add = mine.filter(m=>!known.has(m.id));
+      if(add.length){
+        const body = document.getElementById('chatBody');
+        // Only follow the conversation down if the reader was already at the
+        // bottom — otherwise scrolling up to re-read something is impossible.
+        const atEnd = body ? (body.scrollHeight - body.scrollTop - body.clientHeight) < 40 : true;
+        chatState.messages = [...chatState.messages, ...add];
+        renderChat();
+        if(atEnd) chatScrollToEnd();
+        await markChatRead();
+      }
+    }
+    if(chatState.open && chatState.view === 'list'){ await loadChatList(); renderChat(); }
+    else if(res.fresh.some(m=>m.conversationId !== chatState.conversationId)){
+      // Keep the list fresh underneath, so going back shows the right order.
+      loadChatList().catch(()=>{});
+    }
+  }catch(err){ /* a blip must not stop the polling */ }
+}
+
+function scheduleChatPoll(){
+  if(chatState.timer) clearTimeout(chatState.timer);
+  const delay = document.hidden ? CHAT_POLL_HIDDEN_MS
+    : (chatState.open && chatState.view === 'thread' ? CHAT_POLL_OPEN_MS : CHAT_POLL_IDLE_MS);
+  chatState.timer = setTimeout(async ()=>{ await pollChat(); scheduleChatPoll(); }, delay);
+}
+
+function startChat(){
+  stopChat();
+  if(!can('chat.use')) return;
+  loadChatList().then(paintChatBadge).catch(()=>{});
+  scheduleChatPoll();
+}
+
+/* ---- rendering -------------------------------------------------------------- */
+
+function chatScrollToEnd(){
+  const body = document.getElementById('chatBody');
+  if(body) body.scrollTop = body.scrollHeight;
+}
+
+function chatWhen(at){
+  const then = new Date(at);
+  if(Number.isNaN(then.getTime())) return '';
+  const today = new Date();
+  const sameDay = then.toDateString() === today.toDateString();
+  const clock = then.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+  return sameDay ? clock : `${then.toLocaleDateString()} ${clock}`;
+}
+
+function renderChat(){
+  const head = document.getElementById('chatHead');
+  const body = document.getElementById('chatBody');
+  const foot = document.getElementById('chatFoot');
+  if(!head || !body || !foot) return;
+  if(chatState.view === 'thread'){ renderChatThread(head, body, foot); return; }
+  if(chatState.view === 'people'){ renderChatPeople(head, body, foot); return; }
+  if(chatState.view === 'group')  { renderChatGroupForm(head, body, foot); return; }
+  if(chatState.view === 'manage') { renderChatManage(head, body, foot); return; }
+  renderChatList(head, body, foot);
+}
+
+function renderChatList(head, body, foot){
+  head.innerHTML = `<strong>Chat</strong>
+    <button class="u-link" id="chatNew">New message</button>
+    ${chatState.canCreateGroup ? '<button class="u-link" id="chatNewGroup">New group</button>' : ''}`;
+  foot.hidden = true;
+  if(!chatState.conversations.length){
+    body.innerHTML = `<div class="chat-empty">No conversations yet.<br>
+      Use <strong>New message</strong> to start one with anybody in the studio.</div>`;
+  }else{
+    body.innerHTML = chatState.conversations.map(c=>{
+      const face = c.kind === 'group'
+        ? '<div class="chat-groupmark" aria-hidden="true">&#128101;</div>'
+        : avatarHTML({ id:(c.other||{}).id, name:c.title, photoAt:(c.other||{}).photoUpdatedAt },
+            { size:32, title:false });
+      const last = c.lastMessage
+        ? `${c.kind === 'group' && c.lastMessage.senderName ? escapeHTML(c.lastMessage.senderName) + ': ' : ''}${escapeHTML(c.lastMessage.preview)}`
+        : 'No messages yet';
+      const sub = c.kind === 'group' ? ` <span class="chat-sub">${c.memberCount}</span>` : '';
+      return `<button class="chat-conv${c.unread ? ' unread' : ''}" data-conv="${escapeHTML(c.id)}">
+        ${face}
+        <div class="body">
+          <div class="who">${escapeHTML(c.title)}${sub}</div>
+          <div class="last">${last}</div>
+        </div>
+        ${c.unread ? `<span class="chat-count">${c.unread > 99 ? '99+' : c.unread}</span>` : ''}
+      </button>`;
+    }).join('');
+  }
+}
+
+function renderChatThread(head, body, foot){
+  const conv = chatState.conversation || {};
+  const isGroup = conv.kind === 'group';
+  head.innerHTML = `<button class="chat-back" id="chatBack" title="Back to conversations">&#8592;</button>
+    <strong>${escapeHTML(conv.title || '')}</strong>
+    ${isGroup ? `<button class="u-link" id="chatManage">${conv.memberCount} member${conv.memberCount===1?'':'s'}</button>` : ''}`;
+
+  const rows = chatState.messages.map(m=>{
+    if(m.kind === 'system') return `<div class="chat-sys">${escapeHTML(m.body)}</div>`;
+    const mine = m.senderId === (state.currentUser||{}).id;
+    const face = mine ? '' : avatarHTML(
+      { id:m.senderId, name:m.senderName, photoAt:m.senderPhotoUpdatedAt }, { size:26, title:m.senderName });
+    return `<div class="chat-msg${mine ? ' mine' : ''}">
+      ${face}
+      <div class="chat-bubble">
+        ${(!mine && isGroup) ? `<div class="from">${escapeHTML(m.senderName || 'Removed user')}</div>` : ''}
+        ${m.body ? escapeHTML(m.body).replace(/\n/g,'<br>') : ''}
+        ${chatAttachmentsHTML(m)}
+        <div class="when">${escapeHTML(chatWhen(m.createdAt))}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  body.innerHTML = `${chatState.hasMore ? '<button class="chat-more" id="chatOlder">Load earlier messages</button>' : ''}
+    <div class="chat-msgs">${rows || '<div class="chat-empty">No messages yet. Say something.</div>'}</div>`;
+
+  foot.hidden = false;
+  const picked = chatState.files.length
+    ? `<div class="chat-picked">${chatState.files.map((f,i)=>
+        `<span>&#128206; ${escapeHTML(f.name)} <span class="drop" data-drop="${i}" title="Remove">&times;</span></span>`).join('')}</div>`
+    : '';
+  foot.innerHTML = `${picked}
+    <div class="chat-compose">
+      <button class="chat-clip" id="chatClip" title="Attach a file" aria-label="Attach a file">&#128206;</button>
+      <textarea id="chatInput" rows="1" placeholder="Write a message…"></textarea>
+      <button class="btn btn-sm" id="chatSend">Send</button>
+    </div>
+    <input type="file" id="chatFile" multiple accept="${escapeHTML(chatFileAccept())}" style="display:none;">
+    <div class="chat-hint">${escapeHTML(chatState.limits.allowed)} &middot; up to ${Math.round(chatState.limits.maxBytes/1048576)}MB
+      &middot; files are deleted ${chatState.limits.hours} hours after they are sent</div>`;
+
+  // Fetch the pictures, which cannot be done through a plain src — see chatState.blobs.
+  body.querySelectorAll('[data-attach]').forEach(loadChatAttachment);
+}
+
+/* One attachment, as HTML. The bytes are not here — see loadChatAttachment. */
+function chatAttachmentsHTML(m){
+  if(!m.attachments || !m.attachments.length) return '';
+  return `<div class="chat-att">${m.attachments.map(a=>{
+    if(a.expired){
+      /* The placeholder. Named, so the reader knows WHICH file went, and
+         phrased as an expiry rather than an error — nothing went wrong. */
+      return `<div class="chat-file gone">&#128206; ${escapeHTML(a.fileName)} — file no longer available
+        (chat files are deleted ${chatState.limits.hours} hours after they are sent)</div>`;
+    }
+    const id = escapeHTML(a.id);
+    const name = escapeHTML(a.fileName);
+    /* downloadOnly is the server saying this format can carry a script, so it
+       must never become a page on this origin. Shown as a row with a download,
+       not rendered. */
+    if(a.downloadOnly || a.kind === 'file'){
+      return `<div class="chat-file"><span>&#128206;</span>
+        <a data-download="${id}" data-name="${name}">${name}</a>
+        <span class="chat-sub">${chatSize(a.byteSize)}</span></div>`;
+    }
+    if(a.kind === 'video'){
+      return `<video data-attach="${id}" data-kind="video" controls preload="none" title="${name}"></video>`;
+    }
+    return `<img data-attach="${id}" data-kind="image" alt="${name}" title="${name}">`;
+  }).join('')}</div>`;
+}
+
+function chatSize(bytes){
+  const n = Number(bytes) || 0;
+  if(n < 1024) return `${n} B`;
+  if(n < 1048576) return `${Math.round(n/1024)} KB`;
+  return `${(n/1048576).toFixed(1)} MB`;
+}
+
+function chatFileAccept(){
+  return String(chatState.limits.allowed || '').split(',').map(s=>s.trim()).filter(Boolean).join(',');
+}
+
+/* An <img src> cannot carry an Authorization header, and this application
+   authenticates with a bearer token rather than a cookie. Profile photos get
+   round that by being served on an unguessable URL with no check at all — a
+   documented trade for a picture of somebody's face. A chat attachment is not
+   that: the membership check lives inside the download query on purpose, so
+   the bytes are fetched properly and handed to the element as a blob. */
+async function loadChatAttachment(el){
+  const id = el.dataset.attach;
+  if(!id) return;
+  const had = chatState.blobs.get(id);
+  if(had){ el.src = had; return; }
+  try{
+    const res = await fetch(`${API_BASE}/chat/attachments/${encodeURIComponent(id)}`,
+      { headers:{ Authorization:'Bearer ' + state.token } });
+    if(!res.ok) throw new Error('gone');
+    const url = URL.createObjectURL(await res.blob());
+    chatState.blobs.set(id, url);
+    el.src = url;
+  }catch(err){
+    /* Expired between the render and the fetch, or removed. Say so in place
+       rather than leaving a broken-image icon. */
+    const note = document.createElement('div');
+    note.className = 'chat-file gone';
+    note.textContent = `📎 ${el.getAttribute('alt') || el.title || 'file'} — file no longer available`;
+    el.replaceWith(note);
+  }
+}
+
+async function downloadChatAttachment(id, name){
+  try{
+    const res = await fetch(`${API_BASE}/chat/attachments/${encodeURIComponent(id)}`,
+      { headers:{ Authorization:'Bearer ' + state.token } });
+    if(!res.ok){
+      const said = await res.json().catch(()=>({}));
+      throw new Error(said.error || 'That file is no longer available.');
+    }
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement('a');
+    a.href = url; a.download = name || 'file';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 30000);
+  }catch(err){ showToast(err.message); }
+}
+
+/* ---- the pickers ------------------------------------------------------------ */
+
+async function loadChatPeople(){
+  if(chatState.people.length) return;
+  const res = await api('/chat/people');
+  chatState.people = res.people;
+}
+
+function chatPeopleMatching(){
+  const q = chatState.search.trim().toLowerCase();
+  if(!q) return chatState.people;
+  return chatState.people.filter(p=>String(p.name||'').toLowerCase().includes(q));
+}
+
+function renderChatPeople(head, body, foot){
+  head.innerHTML = `<button class="chat-back" id="chatBack" title="Back">&#8592;</button>
+    <strong>New message</strong>`;
+  foot.hidden = true;
+  const people = chatPeopleMatching();
+  body.innerHTML = `<div class="chat-form">
+      <input class="chat-search" id="chatSearch" placeholder="Search people…" value="${escapeHTML(chatState.search)}">
+    </div>
+    ${people.length ? people.map(p=>`
+      <button class="chat-person" data-person="${escapeHTML(p.id)}">
+        ${avatarHTML({ id:p.id, name:p.name, photoAt:p.photoUpdatedAt }, { size:30, title:false })}
+        <div class="body"><div class="nm">${escapeHTML(p.name)}</div>
+          <div class="rl">${escapeHTML(roleInfo(p.role).label)}</div></div>
+      </button>`).join('')
+      : '<div class="chat-empty">Nobody matches that.</div>'}`;
+}
+
+function renderChatGroupForm(head, body, foot){
+  head.innerHTML = `<button class="chat-back" id="chatBack" title="Back">&#8592;</button>
+    <strong>New group</strong>
+    <button class="u-link" id="chatCreateGroup">Create</button>`;
+  foot.hidden = true;
+  const people = chatPeopleMatching();
+  /* The count includes the person making it, because the cap does — a group of
+     thirty is thirty people who can read it. Saying "3 of 30" when the server
+     is counting four would be a limit that appears to move. */
+  const total = chatState.pick.size + 1;
+  body.innerHTML = `<div class="chat-form">
+      <input class="chat-search" id="chatTitle" placeholder="Group name" maxlength="120">
+      <input class="chat-search" id="chatSearch" placeholder="Search people…" value="${escapeHTML(chatState.search)}">
+      <div class="chat-sub">${total} of ${chatState.maxMembers} — you are counted${total > chatState.maxMembers ? ' — too many' : ''}</div>
+    </div>
+    ${people.map(p=>`
+      <label class="chat-person">
+        <input type="checkbox" data-pick="${escapeHTML(p.id)}"${chatState.pick.has(p.id)?' checked':''}>
+        ${avatarHTML({ id:p.id, name:p.name, photoAt:p.photoUpdatedAt }, { size:30, title:false })}
+        <div class="body"><div class="nm">${escapeHTML(p.name)}</div>
+          <div class="rl">${escapeHTML(roleInfo(p.role).label)}</div></div>
+      </label>`).join('')}`;
+}
+
+function renderChatManage(head, body, foot){
+  const conv = chatState.conversation || {};
+  head.innerHTML = `<button class="chat-back" id="chatBackThread" title="Back to the conversation">&#8592;</button>
+    <strong>${escapeHTML(conv.title || '')}</strong>`;
+  foot.hidden = true;
+  const inIt = new Set((conv.members||[]).map(m=>m.id));
+  const room = chatState.maxMembers - (conv.memberCount || 0);
+  const others = chatPeopleMatching().filter(p=>!inIt.has(p.id));
+  body.innerHTML = `
+    ${conv.isOwner ? `<div class="chat-form">
+      <input class="chat-search" id="chatRename" value="${escapeHTML(conv.title||'')}" maxlength="120">
+      <button class="btn btn-sm btn-ghost" id="chatRenameGo">Rename group</button>
+    </div>` : ''}
+    <div class="chat-form"><div class="chat-sub">
+      ${conv.memberCount} of ${chatState.maxMembers} members${room > 0 ? ` — room for ${room} more` : ' — full'}
+    </div></div>
+    ${(conv.members||[]).map(m=>`
+      <div class="chat-person">
+        ${avatarHTML({ id:m.id, name:m.name, photoAt:m.photoUpdatedAt }, { size:30, title:false })}
+        <div class="body"><div class="nm">${escapeHTML(m.name)}${m.isOwner?' <span class="chat-sub">owner</span>':''}</div>
+          <div class="rl">${escapeHTML(roleInfo(m.role).label)}</div></div>
+        ${(conv.isOwner && !m.isOwner) ? `<button class="u-link chat-danger" data-remove="${escapeHTML(m.id)}">Remove</button>` : ''}
+      </div>`).join('')}
+    ${(conv.isOwner && room > 0) ? `<div class="chat-form">
+      <div class="chat-sub">Add people</div>
+      <input class="chat-search" id="chatSearch" placeholder="Search people…" value="${escapeHTML(chatState.search)}">
+    </div>
+    ${others.map(p=>`
+      <button class="chat-person" data-add="${escapeHTML(p.id)}">
+        ${avatarHTML({ id:p.id, name:p.name, photoAt:p.photoUpdatedAt }, { size:30, title:false })}
+        <div class="body"><div class="nm">${escapeHTML(p.name)}</div>
+          <div class="rl">${escapeHTML(roleInfo(p.role).label)}</div></div>
+        <span class="u-link">Add</span>
+      </button>`).join('')}` : ''}
+    <div class="chat-form"><button class="btn btn-sm btn-ghost chat-danger" id="chatLeave">Leave group</button></div>`;
+}
+
+/* ---- actions ---------------------------------------------------------------- */
+
+async function openChatConversation(id){
+  chatState.view = 'thread';
+  chatState.files = [];
+  await loadChatThread(id);
+  scheduleChatPoll();
+}
+
+async function sendChatMessage(){
+  const input = document.getElementById('chatInput');
+  const text = input ? input.value.trim() : '';
+  if(!text && !chatState.files.length) return;
+  const form = new FormData();
+  form.set('body', text);
+  chatState.files.forEach(f=>form.append('files', f, f.name));
+  const sendBtn = document.getElementById('chatSend');
+  if(sendBtn) sendBtn.disabled = true;
+  try{
+    const res = await api(`/chat/${encodeURIComponent(chatState.conversationId)}/messages`,
+      { method:'POST', body:form });
+    chatState.messages = [...chatState.messages, res.message];
+    chatState.files = [];
+    if(res.message.seq > (chatState.cursor||0)) chatState.cursor = res.message.seq;
+    renderChat();
+    chatScrollToEnd();
+    loadChatList().catch(()=>{});
+  }catch(err){
+    showToast(err.message);
+  }finally{
+    const again = document.getElementById('chatSend');
+    if(again) again.disabled = false;
+  }
+}
+
+async function chatOpenWith(userId){
+  try{
+    const res = await api('/chat/direct', { method:'POST', body:{ userId } });
+    chatState.search = '';
+    await loadChatList();
+    await openChatConversation(res.conversationId);
+  }catch(err){ showToast(err.message); }
+}
+
+async function createChatGroup(){
+  const title = (document.getElementById('chatTitle')||{}).value || '';
+  try{
+    const res = await api('/chat/groups', { method:'POST',
+      body:{ title, memberIds:[...chatState.pick] } });
+    chatState.pick.clear();
+    chatState.search = '';
+    await loadChatList();
+    await openChatConversation(res.conversationId);
+    showToast('Group created.');
+  }catch(err){ showToast(err.message); }
+}
+
+async function refreshChatConversation(){
+  await loadChatThread(chatState.conversationId, { keepScroll:true });
+}
+
+function closeChatPanel(){
+  chatState.open = false;
+  const panel = document.getElementById('chatPanel');
+  const btn = document.getElementById('chatBtn');
+  if(panel) panel.hidden = true;
+  if(btn) btn.setAttribute('aria-expanded','false');
+  scheduleChatPoll();
+}
+
+async function toggleChatPanel(){
+  const panel = document.getElementById('chatPanel');
+  const btn = document.getElementById('chatBtn');
+  if(!panel) return;
+  if(chatState.open){ closeChatPanel(); return; }
+  chatState.open = true;
+  chatState.view = 'list';
+  panel.hidden = false;
+  btn.setAttribute('aria-expanded','true');
+  renderChat();
+  try{ await loadChatList(); }catch(err){ /* show what we had */ }
+  renderChat();
+  scheduleChatPoll();
+}
+
+/* One delegated listener for the whole panel rather than handlers rebound on
+   every render. The panel redraws on every poll; rebinding there is how a
+   click ends up firing twice. */
+document.addEventListener('click', async e=>{
+  const btn = document.getElementById('chatBtn');
+  if(btn && e.target.closest('#chatBtn')){ e.stopPropagation(); await toggleChatPanel(); return; }
+
+  const panel = document.getElementById('chatPanel');
+  if(!chatState.open) return;
+  if(!panel || !e.target.closest('#chatPanel')){ closeChatPanel(); return; }
+
+  const conv = e.target.closest('[data-conv]');
+  if(conv){ await openChatConversation(conv.dataset.conv); return; }
+
+  if(e.target.closest('#chatBack')){
+    chatState.search = '';
+    chatState.view = 'list';
+    releaseChatBlobs();
+    await loadChatList().catch(()=>{});
+    renderChat(); scheduleChatPoll(); return;
+  }
+  if(e.target.closest('#chatBackThread')){ chatState.view = 'thread'; renderChat(); chatScrollToEnd(); return; }
+  if(e.target.closest('#chatNew')){
+    chatState.view = 'people'; chatState.search = '';
+    try{ await loadChatPeople(); }catch(err){ showToast(err.message); }
+    renderChat(); return;
+  }
+  if(e.target.closest('#chatNewGroup')){
+    chatState.view = 'group'; chatState.search = ''; chatState.pick.clear();
+    try{ await loadChatPeople(); }catch(err){ showToast(err.message); }
+    renderChat(); return;
+  }
+  if(e.target.closest('#chatManage')){
+    chatState.view = 'manage'; chatState.search = '';
+    /* Re-read the conversation before showing who is in it. The membership can
+       have changed since this thread was opened — somebody else added three
+       people, or the owner left — and a member list drawn from what was true
+       ten minutes ago is worse than no member list: it is what the panel would
+       use to decide whether there is room for one more. */
+    try{
+      await Promise.all([loadChatPeople(), refreshChatConversation()]);
+      chatState.view = 'manage';
+    }catch(err){ /* fall back to what is already loaded */ }
+    renderChat(); return;
+  }
+  if(e.target.closest('#chatCreateGroup')){ await createChatGroup(); return; }
+  if(e.target.closest('#chatOlder')){ await loadChatOlder(); return; }
+  if(e.target.closest('#chatSend')){ await sendChatMessage(); return; }
+  if(e.target.closest('#chatClip')){ const f = document.getElementById('chatFile'); if(f) f.click(); return; }
+
+  const drop = e.target.closest('[data-drop]');
+  if(drop){ chatState.files.splice(Number(drop.dataset.drop), 1); renderChat(); return; }
+
+  const person = e.target.closest('[data-person]');
+  if(person){ await chatOpenWith(person.dataset.person); return; }
+
+  const dl = e.target.closest('[data-download]');
+  if(dl){ await downloadChatAttachment(dl.dataset.download, dl.dataset.name); return; }
+
+  const add = e.target.closest('[data-add]');
+  if(add){
+    try{
+      await api(`/chat/${encodeURIComponent(chatState.conversationId)}/members`,
+        { method:'POST', body:{ userIds:[add.dataset.add] } });
+      await refreshChatConversation();
+      chatState.view = 'manage'; renderChat();
+    }catch(err){ showToast(err.message); }
+    return;
+  }
+  const rm = e.target.closest('[data-remove]');
+  if(rm){
+    try{
+      await api(`/chat/${encodeURIComponent(chatState.conversationId)}/members/${encodeURIComponent(rm.dataset.remove)}`,
+        { method:'DELETE' });
+      await refreshChatConversation();
+      chatState.view = 'manage'; renderChat();
+    }catch(err){ showToast(err.message); }
+    return;
+  }
+  if(e.target.closest('#chatRenameGo')){
+    const title = (document.getElementById('chatRename')||{}).value || '';
+    try{
+      await api(`/chat/${encodeURIComponent(chatState.conversationId)}`, { method:'PATCH', body:{ title } });
+      await refreshChatConversation();
+      chatState.view = 'manage'; renderChat();
+      await loadChatList().catch(()=>{});
+    }catch(err){ showToast(err.message); }
+    return;
+  }
+  if(e.target.closest('#chatLeave')){
+    if(!confirm('Leave this group? You will stop receiving its messages.')) return;
+    try{
+      await api(`/chat/${encodeURIComponent(chatState.conversationId)}/leave`, { method:'POST' });
+      chatState.view = 'list'; chatState.conversationId = null; releaseChatBlobs();
+      await loadChatList(); renderChat();
+      showToast('You have left the group.');
+    }catch(err){ showToast(err.message); }
+  }
+});
+
+// Typing in a search box, and picking people for a new group.
+document.addEventListener('input', e=>{
+  if(!chatState.open) return;
+  if(e.target.id === 'chatSearch'){
+    chatState.search = e.target.value;
+    const at = e.target.selectionStart;
+    renderChat();
+    /* Focus and caret restored by hand: the list below the box is rebuilt on
+       every keystroke, and rebuilding the box with it would drop the cursor
+       after the first letter. */
+    const again = document.getElementById('chatSearch');
+    if(again){ again.focus(); again.setSelectionRange(at, at); }
+    return;
+  }
+  const pick = e.target.closest('[data-pick]');
+  if(pick){
+    if(pick.checked) chatState.pick.add(pick.dataset.pick);
+    else chatState.pick.delete(pick.dataset.pick);
+    const count = document.querySelector('#chatBody .chat-form .chat-sub');
+    const total = chatState.pick.size + 1;
+    if(count) count.textContent = `${total} of ${chatState.maxMembers} — you are counted`
+      + (total > chatState.maxMembers ? ' — too many' : '');
+  }
+});
+
+document.addEventListener('change', e=>{
+  if(e.target.id !== 'chatFile') return;
+  const max = chatState.limits.maxBytes || Infinity;
+  const chosen = [...e.target.files];
+  /* Refused here as well as at the server. The server is the authority — see
+     the size test — but a 30MB upload that travels the whole way to be told no
+     is a slow way to learn it. */
+  const tooBig = chosen.filter(f=>f.size > max);
+  if(tooBig.length) showToast(`${tooBig[0].name} is larger than ${Math.round(max/1048576)}MB.`);
+  chatState.files = [...chatState.files, ...chosen.filter(f=>f.size <= max)].slice(0, 5);
+  e.target.value = '';
+  renderChat();
+});
+
+// Enter sends; Shift+Enter is a new line, the way every chat box behaves.
+document.addEventListener('keydown', async e=>{
+  if(e.target && e.target.id === 'chatInput' && e.key === 'Enter' && !e.shiftKey){
+    e.preventDefault();
+    await sendChatMessage();
+    const box = document.getElementById('chatInput');
+    if(box){ box.value = ''; box.focus(); }
+    return;
+  }
+  if(e.key === 'Escape' && chatState.open) closeChatPanel();
+});
+
+/* Coming back to a tab that was hidden: catch up at once rather than waiting
+   out the rest of the interval, and go back to the visible cadence. */
+document.addEventListener('visibilitychange', ()=>{
+  if(document.hidden || !state.token || !can('chat.use')) return;
+  pollChat();
+  scheduleChatPoll();
+});
 
 /* --- the Quick Tour engine --------------------------------------------------
 

@@ -71,8 +71,8 @@ module.exports = [
     + 'how a Super Admin changes that.'),
 
   h2('1.2 Roles, permissions and access bands'),
-  p('The studio ships with 60 designations and 58 permissions. Rather than repeat eight or twenty designations on '
-    + 'every page, this manual names the twelve groups of designations that the permissions actually fall into, '
+  p('The studio ships with 60 designations and 62 permissions. Rather than repeat eight or twenty designations on '
+    + 'every page, this manual names the thirteen groups of designations that the permissions actually fall into, '
     + 'and calls them access bands. Appendix A lists every band and its members; Appendix B lists every permission '
     + 'and the band that holds it.'),
   p('Two rules hold throughout. A permission says what somebody may do, never how much of the studio they may do it '
@@ -714,17 +714,74 @@ module.exports = [
 
   pagebreak(),
   // ============================================================ 12
-  h1('12. Notifications and your profile'),
+  h1('12. Notifications, chat and your profile'),
 
   h2('12.1 Notifications'),
   shot('14-notifications', 'The notification panel, opened from the bell.'),
   bullets([
     'The bell carries the number of unread notifications.',
-    'You are notified when work is assigned to you, when a review comes back, when feedback on your project submission lands, and when a time sheet needs you.',
+    'You are notified when work is assigned to you, when a review comes back, and when feedback on your project submission lands.',
     'Mark all as read clears the count.',
   ]),
 
-  h2('12.2 Your profile'),
+  h2('12.2 Chat'),
+  shot('14-chat-thread', 'A one-to-one conversation, opened from the chat icon in the header.'),
+  p('The speech-bubble icon beside the bell opens chat. It carries the number of unread messages, the way the '
+    + 'bell carries notifications.'),
+  roles('Chat is open to everybody by default. A Super Admin can close it for a designation in Settings.', ['everyone']),
+  h3('Messaging one person'),
+  steps([
+    'Press the chat icon.',
+    'Press New message.',
+    'Search for the person and pick them.',
+    'Type, and press Enter. Shift+Enter starts a new line instead of sending.',
+  ]),
+  p('There is one conversation per pair of people, and it is the same conversation from both ends — messaging '
+    + 'somebody you have spoken to before reopens the thread rather than starting a second one.'),
+  note('You do not need a permission to message a colleague',
+    'Talking to one other person is what a colleague does, not a privilege the studio hands out, so Use Chat '
+    + 'starts on for every designation — the same reasoning as filling in your own time sheet. It is still a '
+    + 'toggle, so a studio that wants chat closed for a department can say so in Settings.'),
+
+  h2('12.3 Groups'),
+  shot('14-chat-group', 'The member list of a group, as its owner sees it.'),
+  roles('Starting a group is restricted. Everybody can already chat one to one without it.', ['runs_work']),
+  steps([
+    'Press the chat icon, then New group.',
+    'Give the group a name and tick the people to put in it.',
+    'Press Create.',
+  ]),
+  p('A group holds thirty people, counting the person who made it. The panel shows the count as you tick, and '
+    + 'the thirty-first is refused rather than quietly dropped.'),
+  p('The person who created the group owns it. The owner renames it, adds people and removes them, from the '
+    + 'member list behind the “N members” link in the conversation header. Anybody in a group can leave it.'),
+  note('An owner who leaves hands the group on',
+    'Ownership moves to whoever has been in the group longest, so a group never ends up with nobody able to '
+    + 'manage it. When the last person leaves, the group is closed.'),
+
+  h2('12.4 Files in chat'),
+  p('The paperclip attaches a file. Six formats are carried — .png, .jpg, .svg, .webp, .mov and .mp4 — up to '
+    + '30MB each. Anything else is refused with a message naming what was wrong.'),
+  note('Chat files are deleted after eight hours',
+    'A screenshot pasted in to ask “is this the right blue” has done its job by the afternoon, and chat is not '
+    + 'the studio\u2019s archive. Eight hours after it is sent, the file is deleted. THE MESSAGE STAYS: the words are '
+    + 'kept, and the attachment is replaced by a line naming the file and saying it has expired. Anything worth '
+    + 'keeping belongs on the asset, where submissions and reference links live.'),
+  p('Text messages do not expire. A conversation\u2019s history stays until the conversation itself is gone.'),
+
+  h2('12.5 Who can read a conversation'),
+  note('Chat is private to the people in it',
+    'Nobody outside a conversation can read it \u2014 not a Super Admin, not the holder of any permission. There is '
+    + 'no screen, export or setting that shows one person another person\u2019s messages, and no permission that '
+    + 'could be granted to produce one. The Activity Log records that a group was created, renamed, or had its '
+    + 'membership changed, because a group is a studio object with a membership; it does not record who messaged '
+    + 'whom, or what anybody said.'),
+  p('The consequence is worth stating plainly: chat cannot be used for compliance review or an HR '
+    + 'investigation. That is the cost of the guarantee, and it was chosen deliberately \u2014 a conversation people '
+    + 'know is readable by whoever administers the system is a conversation in which nobody says the difficult '
+    + 'thing.'),
+
+  h2('12.6 Your profile'),
   shot('14-profile', 'The Profile panel: your photo, and your password.'),
   h3('Your photo'),
   steps([
@@ -805,7 +862,7 @@ module.exports = [
     'Tick or untick the actions it should hold. They are grouped by module.',
     'Save. Everyone holding that designation changes on their next request.',
   ]),
-  shot('12-settings-permissions-role', 'The permission grid for one designation. Shown here to the first screenful; the real grid runs to all 58 permissions.'),
+  shot('12-settings-permissions-role', 'The permission grid for one designation. Shown here to the first screenful; the real grid runs to all 62 permissions.'),
   bullets([
     'A change here applies to everybody holding that designation, not to one person.',
     'Super Admin holds every permission, including any added in future, and cannot be edited down.',
