@@ -231,26 +231,81 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .notif-toast .t-msg{font-size:12.5px;line-height:1.4;}
 .notif-toast .t-hint{font-size:10.5px;color:var(--ink-faint);margin-top:5px;}
 
+/* The panel's width, written once. The launcher slides right by exactly this
+   much when the panel opens, so the icon ends up beside the panel's edge rather
+   than underneath it — still visible, and still the way to close it again — and
+   #app shifts by the same amount so nothing is hidden behind it. */
+:root{--chat-w:min(380px, 88vw);}
+
 /* --- chat -------------------------------------------------------------------
-   Beside the bell and built on the same shape: a wrapper, a button with a
-   badge, a panel hanging below it. Wider than the bell's panel because this one
-   holds a conversation rather than a list of one-liners, and taller for the
-   same reason. */
-.chat-wrap{position:relative;}
-.chat-btn{position:relative;padding:8px 10px;font-size:14px;line-height:1;}
-.chat-badge{position:absolute;top:-4px;right:-4px;min-width:16px;height:16px;padding:0 4px;
-  border-radius:20px;background:var(--brand);color:var(--brand-ink);font-size:9.5px;font-weight:700;
+   A launcher pinned to the bottom-left corner and a panel that slides in from
+   the left edge. It was a dropdown under a header button before; the studio
+   asked for it out of the way until wanted, and reachable from every tab.
+   
+   WHY OPEN/CLOSED IS A CLASS AND A TRANSFORM, not the `hidden` attribute.
+   The first version of this panel used `hidden`, and `display:flex` below
+   silently overrode the browser's [hidden]{display:none} — an author rule
+   against a user-agent one — so the panel sat open over the Dashboard for
+   every account, permanently. That is the same fault .notif-badge had. A
+   transform cannot be defeated that way: the panel is always displayed and is
+   simply translated off-screen, which is also what makes it slide. */
+.chat-wrap{position:fixed;left:0;bottom:0;z-index:45;}
+
+/* The launcher: a circle in the bottom-left corner, on every tab. */
+.chat-btn{position:fixed;left:20px;bottom:20px;width:46px;height:46px;border-radius:50%;
+  background:var(--brand);color:var(--brand-ink);border:1px solid rgba(255,255,255,.10);
+  font-size:19px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  box-shadow:0 6px 20px rgba(0,0,0,.45);z-index:47;
+  transition:transform .24s ease, filter .15s ease;}
+.chat-btn:hover{filter:brightness(1.15);}
+.chat-btn:focus-visible{outline:2px solid var(--brand-accent);outline-offset:2px;}
+/* Open: step out from behind the panel and sit against its edge. */
+.chat-wrap.open .chat-btn{transform:translateX(var(--chat-w));}
+
+.chat-badge{position:absolute;top:-2px;right:-2px;min-width:18px;height:18px;padding:0 5px;
+  border-radius:20px;background:var(--brand-accent);color:#12080a;font-size:10px;font-weight:700;
   font-family:'IBM Plex Mono';display:flex;align-items:center;justify-content:center;
-  border:1px solid var(--bg);}
+  border:2px solid var(--bg);}
 /* See the note on .notif-badge: display:flex would otherwise override the
-   browser's [hidden] rule and leave a red "0" sitting there for ever. */
+   browser's [hidden] rule and leave a "0" sitting there for ever. */
 .chat-badge[hidden]{display:none;}
-.chat-panel{position:absolute;top:calc(100% + 8px);right:0;width:400px;max-width:calc(100vw - 32px);
-  background:var(--surface);border:1px solid var(--border);border-radius:12px;z-index:70;
-  box-shadow:0 12px 32px rgba(0,0,0,.45);overflow:hidden;display:flex;flex-direction:column;
-  height:min(72vh,560px);}
-.chat-head{display:flex;align-items:center;gap:8px;padding:10px 12px;
-  border-bottom:1px solid var(--border);font-size:13px;flex:0 0 auto;}
+
+/* The panel itself: full height against the left edge, parked off-screen. */
+.chat-panel{position:fixed;left:0;top:0;height:100%;width:var(--chat-w);
+  background:var(--surface);border-right:1px solid var(--border);z-index:46;
+  box-shadow:8px 0 32px rgba(0,0,0,.45);overflow:hidden;display:flex;flex-direction:column;
+  transform:translateX(-100%);transition:transform .24s ease;}
+.chat-wrap.open .chat-panel{transform:translateX(0);}
+/* Parked means unreachable: without this, everything inside the closed panel
+   is still in the tab order and still read out by a screen reader. */
+.chat-panel[aria-hidden="true"]{visibility:hidden;}
+.chat-wrap.open .chat-panel{visibility:visible;}
+/* Somebody who would rather the interface did not move gets the same panel
+   without the travel. */
+/* The page moves over rather than being covered.
+ *
+ * A panel laid on top of the left edge hides the main tab bar, which is where
+ * Dashboard, Projects, Assets List and Time Sheet live — so a panel that is
+ * meant to stay open while you work would make it impossible to change tab
+ * without closing it first. Shifting #app instead keeps every control
+ * reachable, which is the whole point of leaving it open. */
+#app{transition:padding-left .24s ease;}
+body.chat-open #app{padding-left:calc(var(--chat-w, 380px) + 24px);}
+/* Below that, the page is too narrow to give away 380px, so the panel goes
+   back to lying over the top and is closed the way it was opened. */
+@media (max-width: 900px){
+  body.chat-open #app{padding-left:24px;}
+}
+@media (prefers-reduced-motion: reduce){
+  .chat-panel,.chat-btn,#app{transition:none;}
+}
+
+.chat-topbar{display:flex;align-items:stretch;border-bottom:1px solid var(--border);flex:0 0 auto;}
+.chat-close{background:none;border:0;color:var(--ink-muted);font-size:20px;line-height:1;
+  cursor:pointer;padding:0 14px;}
+.chat-close:hover{color:var(--ink);background:var(--surface-2);}
+.chat-head{display:flex;align-items:center;gap:8px;padding:10px 12px;flex:1;min-width:0;
+  font-size:13px;}
 .chat-head strong{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .chat-head .u-link{font-size:11.5px;color:var(--ink-muted);font-weight:500;white-space:nowrap;}
 .chat-head .u-link:hover{color:var(--brand-accent);}
@@ -829,19 +884,6 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
           <div class="notif-list" id="notifList"></div>
         </div>
       </div>
-      <!-- Chat, beside the bell and following its pattern: the panel is a
-           sibling of the button so the header's overflow cannot clip it. -->
-      <div class="chat-wrap" id="chatWrap" style="display:none;">
-        <button class="btn btn-ghost btn-sm chat-btn" id="chatBtn" title="Chat" aria-haspopup="true" aria-expanded="false">
-          <span aria-hidden="true">&#128172;</span>
-          <span class="chat-badge" id="chatBadge" hidden></span>
-        </button>
-        <div class="chat-panel" id="chatPanel" hidden>
-          <div class="chat-head" id="chatHead"></div>
-          <div class="chat-body" id="chatBody"></div>
-          <div class="chat-foot" id="chatFoot" hidden></div>
-        </div>
-      </div>
       <!-- No permission gate, deliberately, and so no entry in UI_GATES: the
            tour is an orientation aid, and a help button somebody can be denied
            is not one. What it SHOWS varies by permission; whether it is here
@@ -1254,6 +1296,24 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
   </div>
 </div>
 
+<!-- Chat. A launcher pinned to the bottom-left corner and a panel that slides
+     in from the left edge, both fixed to the viewport and outside the header —
+     so they are on every tab rather than on the Dashboard, and nothing that
+     scrolls can take them with it. -->
+<div class="chat-wrap" id="chatWrap" style="display:none;">
+  <div class="chat-panel" id="chatPanel" aria-hidden="true">
+    <div class="chat-topbar">
+      <div class="chat-head" id="chatHead"></div>
+      <button class="chat-close" id="chatClose" title="Close chat" aria-label="Close chat">&times;</button>
+    </div>
+    <div class="chat-body" id="chatBody"></div>
+    <div class="chat-foot" id="chatFoot" hidden></div>
+  </div>
+  <button class="chat-btn" id="chatBtn" title="Chat" aria-expanded="false" aria-controls="chatPanel">
+    <span aria-hidden="true">&#128172;</span>
+    <span class="chat-badge" id="chatBadge" hidden></span>
+  </button>
+</div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -1590,9 +1650,12 @@ const TOUR_STEPS = [
     target: '#timesheetTabBtn',
     gate: 'timesheetTabBtn',
     title: 'Time Sheet',
-    body: 'Your own hours, a day at a time, logged as a start and an end. Submit each day '
-        + 'when it is done. If you approve other people\'s days too, the count on this tab '
-        + 'is how many are waiting on you.',
+    /* Rewritten when the Time Sheet moved to a single Hours field and lost its
+       approval step: this described clock times and an approval queue, neither
+       of which still exists. */
+    body: 'Your own hours, a day at a time, as a single Hours figure — pick an asset and the '
+        + 'hours it recorded that day are offered. Submit each day when it is done. Nobody '
+        + 'has to approve it, and you can reopen a day yourself if you need to correct it.',
   },
   {
     id: 'reports',
@@ -1660,7 +1723,12 @@ function tourStepsFor(){
     if(step.gate && (!gate || !gate())) return false;
     if(!step.target) return true;
     const el = document.querySelector(step.target);
-    return Boolean(el) && el.offsetParent !== null;
+    /* getClientRects() rather than offsetParent, which is null for a
+       position:fixed element as well as for a hidden one. The chat launcher
+       moved to a fixed corner and its step silently vanished from the tour —
+       no error, just one fewer card. This answers the question actually being
+       asked: does this element render a box on the page? */
+    return Boolean(el) && el.getClientRects().length > 0;
   });
 }
 
@@ -2264,6 +2332,11 @@ async function attemptLogin(){
     const { token, user } = await api('/auth/login', { method:'POST', body:{ email, password } });
     state.token = token; state.currentUser = user;
     localStorage.setItem('zvky_token', token);
+    /* A fresh sign-in starts with chat collapsed, however the last person to
+       use this tab left it. Cleared HERE rather than in showApp(), which also
+       runs on a page refresh with a stored token — where the preference is
+       exactly what should survive. */
+    forgetChatOpen();
     await showApp();
   }catch(e){ err.textContent = e.message; }
 }
@@ -2326,8 +2399,10 @@ function logout(options = {}){
   stopNotifications();
   /* The chat poll too, and the blob URLs it made for attachments — a reload
      would drop them anyway, but leaving them is a habit that leaks in the
-     paths that do not reload. */
+     paths that do not reload. The open/closed preference goes with them: it
+     belongs to the person who set it. */
   stopChat();
+  forgetChatOpen();
   /* And take the overlay down with it. A session that expires mid-tour would
      otherwise leave a veil and a spotlight sitting over the login form. */
   tourTeardown();
@@ -8788,7 +8863,14 @@ function scheduleChatPoll(){
 function startChat(){
   stopChat();
   if(!can('chat.use')) return;
-  loadChatList().then(paintChatBadge).catch(()=>{});
+  /* Collapsed unless this tab was told otherwise. attemptLogin() clears the
+     key, so a fresh sign-in always starts collapsed however the last person
+     left it; a page refresh mid-session does not. */
+  chatState.open = chatWasOpen();
+  paintChatOpen();
+  loadChatList()
+    .then(()=>{ paintChatBadge(); if(chatState.open) renderChat(); })
+    .catch(()=>{});
   scheduleChatPoll();
 }
 
@@ -9130,28 +9212,64 @@ async function refreshChatConversation(){
   await loadChatThread(chatState.conversationId, { keepScroll:true });
 }
 
-function closeChatPanel(){
-  chatState.open = false;
+/* Open and closed are a class on the wrapper, which the CSS turns into a
+   transform. Nothing here touches `hidden` — see the note above .chat-panel
+   for what that cost the first time. */
+function paintChatOpen(){
+  const wrap = document.getElementById('chatWrap');
   const panel = document.getElementById('chatPanel');
   const btn = document.getElementById('chatBtn');
-  if(panel) panel.hidden = true;
-  if(btn) btn.setAttribute('aria-expanded','false');
+  if(wrap) wrap.classList.toggle('open', chatState.open);
+  /* On <body> as well, because #app is not inside the wrapper and it is #app
+     that shifts over to keep the tab bar clear of the panel. */
+  document.body.classList.toggle('chat-open', chatState.open);
+  if(panel) panel.setAttribute('aria-hidden', chatState.open ? 'false' : 'true');
+  if(btn){
+    btn.setAttribute('aria-expanded', chatState.open ? 'true' : 'false');
+    btn.title = chatState.open ? 'Close chat' : 'Chat';
+  }
+  rememberChatOpen();
+}
+
+/* The preference, for this browser tab only.
+ *
+ * sessionStorage rather than localStorage because the studio asked for it to
+ * last a session and start collapsed at a fresh sign-in; a value that outlived
+ * the browser would reopen the panel for whoever sat down next. Wrapped
+ * because a browser set to block site data throws on the accessor itself
+ * rather than returning nothing, and a chat panel is not worth a broken page. */
+const CHAT_OPEN_KEY = 'zvky_chat_open';
+function rememberChatOpen(){
+  try{ sessionStorage.setItem(CHAT_OPEN_KEY, chatState.open ? '1' : '0'); }catch{ /* nothing to do */ }
+}
+function forgetChatOpen(){
+  try{ sessionStorage.removeItem(CHAT_OPEN_KEY); }catch{ /* nothing to do */ }
+}
+function chatWasOpen(){
+  try{ return sessionStorage.getItem(CHAT_OPEN_KEY) === '1'; }catch{ return false; }
+}
+
+function closeChatPanel(){
+  if(!chatState.open) return;
+  chatState.open = false;
+  paintChatOpen();
   scheduleChatPoll();
 }
 
-async function toggleChatPanel(){
-  const panel = document.getElementById('chatPanel');
-  const btn = document.getElementById('chatBtn');
-  if(!panel) return;
-  if(chatState.open){ closeChatPanel(); return; }
+async function openChatPanel({ resetView = true } = {}){
+  if(!document.getElementById('chatPanel')) return;
   chatState.open = true;
-  chatState.view = 'list';
-  panel.hidden = false;
-  btn.setAttribute('aria-expanded','true');
+  if(resetView) chatState.view = 'list';
+  paintChatOpen();
   renderChat();
   try{ await loadChatList(); }catch(err){ /* show what we had */ }
   renderChat();
   scheduleChatPoll();
+}
+
+async function toggleChatPanel(){
+  if(chatState.open){ closeChatPanel(); return; }
+  await openChatPanel();
 }
 
 /* One delegated listener for the whole panel rather than handlers rebound on
@@ -9161,9 +9279,13 @@ document.addEventListener('click', async e=>{
   const btn = document.getElementById('chatBtn');
   if(btn && e.target.closest('#chatBtn')){ e.stopPropagation(); await toggleChatPanel(); return; }
 
-  const panel = document.getElementById('chatPanel');
   if(!chatState.open) return;
-  if(!panel || !e.target.closest('#chatPanel')){ closeChatPanel(); return; }
+  if(e.target.closest('#chatClose')){ closeChatPanel(); return; }
+  /* Clicking away no longer closes it. It did while chat was a dropdown, which
+     is right for a dropdown and wrong for this: the panel is meant to stay put
+     while you work in the tab beside it, and closing on every click on the
+     board is the opposite of the persistence that was asked for. */
+  if(!e.target.closest('#chatPanel')) return;
 
   const conv = e.target.closest('[data-conv]');
   if(conv){ await openChatConversation(conv.dataset.conv); return; }
@@ -9302,7 +9424,15 @@ document.addEventListener('keydown', async e=>{
     if(box){ box.value = ''; box.focus(); }
     return;
   }
-  if(e.key === 'Escape' && chatState.open) closeChatPanel();
+  /* Escape closes chat only when the focus is inside it. Escape is also how a
+     person shuts an asset drawer or a modal, and a panel that is supposed to
+     stay open across tabs should not go with them. */
+  if(e.key === 'Escape' && chatState.open
+     && document.activeElement && document.activeElement.closest('#chatPanel')){
+    closeChatPanel();
+    const btn = document.getElementById('chatBtn');
+    if(btn) btn.focus();
+  }
 });
 
 /* Coming back to a tab that was hidden: catch up at once rather than waiting
