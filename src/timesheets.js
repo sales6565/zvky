@@ -43,6 +43,25 @@ function weekDays(date) {
   });
 }
 
+/* The days a week actually offers, which is not the same as the days it spans.
+ *
+ * The studio does not work weekends, so Saturday and Sunday are not fillable —
+ * they are not shown as rows at all. weekDays() above still returns all seven,
+ * because the RANGE a week's entries are read over is still Monday to Sunday
+ * and its totals still have to add up whatever is in there.
+ *
+ * `alsoShow` is what stops the removal hiding anything. A weekend day that
+ * already carries filed hours — from before this rule, or from a deployment
+ * that had it switched off — is still listed, so its hours stay visible in the
+ * week and in its total. It just cannot be added to. Dropping those rows from
+ * the view would leave a week whose days do not sum to its own total, and
+ * somebody's Saturday quietly missing from their own record.
+ */
+function workingDays(date, { alsoShow = [] } = {}) {
+  const keep = new Set(alsoShow.map((d) => toISO(d)).filter(Boolean));
+  return weekDays(date).filter((day) => !isWeekend(day) || keep.has(day));
+}
+
 /* A date as the database stores it. Accepts what MySQL hands back (a Date), what
    a browser sends (a string) and what a test writes, and gives one shape back —
    the alternative is every caller remembering which it has. */
@@ -230,10 +249,17 @@ function parseHours(value) {
  * What survives is the soft eight-hour day, which is a warning and not a wall,
  * and the rule that a line is either project work or non-project time.
  */
+/* Saturday and Sunday are not working days here, and a line cannot be filed on
+ * one. Checked in validateEntry rather than at the route so the API and the
+ * form give the same answer, and so a client that has not been updated cannot
+ * put a row somewhere the screen will not show it. */
+const WEEKEND_REFUSAL = 'The studio does not work weekends, so hours cannot be logged on a Saturday or Sunday.';
+
 function validateEntry(raw = {}, win) {
   const { maxHours } = windowOf(win);
   const date = toISO(raw.date);
   if (!date) return { ok: false, error: 'That is not a date.', field: 'date' };
+  if (isWeekend(date)) return { ok: false, error: WEEKEND_REFUSAL, field: 'date' };
 
   const hours = parseHours(raw.hours);
   if (hours === null) {
@@ -278,6 +304,16 @@ function validateEntry(raw = {}, win) {
     return { ok: false, error: 'Those notes are too long.', field: 'notes' };
   }
 
+  /* The dispute path for a figure nobody can edit.
+   *
+   * A flag with no reason is a flag nobody can act on, so the reason is
+   * required when the flag is set — and setting the reason is what sets the
+   * flag, so the two cannot disagree. */
+  const flagNote = String(raw.flagNote ?? '').trim().slice(0, 500);
+  if (raw.flagged && !flagNote) {
+    return { ok: false, error: 'Say briefly what looks wrong with the figure.', field: 'flagNote' };
+  }
+
   return {
     ok: true,
     /* Over the soft cap on this line alone, which the day total also reports.
@@ -292,6 +328,7 @@ function validateEntry(raw = {}, win) {
       endMin: null,
       hours,
       clientId, projectId, assetId,
+      flagNote: flagNote || null,
       nonProject,
       notes: notes || null,
     },
@@ -397,9 +434,11 @@ module.exports = {
   isWeekend,
   MIN_LINE_HOURS,
   MAX_LINE_HOURS,
+  WEEKEND_REFUSAL,
   parseHours,
   weekStart,
   weekDays,
+  workingDays,
   toISO,
   isLocked,
   validateEntry,

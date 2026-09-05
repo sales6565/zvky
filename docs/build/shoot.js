@@ -187,8 +187,37 @@ const reset = () => {
   await tab(p, 'timesheet');
   await shot(p, '09-timesheet-week');
   const add = await p.$('#timesheetView .ts-add');
-  if (add) { await add.click(); await p.waitForTimeout(900); await shot(p, '09-timesheet-line-form', '#timesheetLineWrap .modal, #timesheetLineWrap');
-    await tryClick(p, '#tl_cancel'); await closeModal(p); }
+  if (add) {
+    await add.click(); await p.waitForTimeout(900);
+    /* With an asset chosen, so the picture shows the thing the chapter is
+       about: the calculated hours, the locked field and the flag under it. An
+       empty form shows none of that. */
+    try {
+      const pickBy = async (sel, text) => {
+        const v = await p.evaluate(([s2, t]) => {
+          const o = [...document.querySelectorAll(s2 + ' option')].find((x) => x.textContent.includes(t));
+          return o ? o.value : null; }, [sel, text]);
+        if (v) { await p.selectOption(sel, v); }
+        return Boolean(v);
+      };
+      if (await pickBy('#tl_client', 'Aurora Games')) {
+        await p.waitForTimeout(1000);
+        await pickBy('#tl_project', 'Nightgarden'); await p.waitForTimeout(1600);
+        /* The first asset that actually yields a figure. An asset whose hours
+           are all filed already shows an empty field and says so, which is a
+           true screen but not the one this chapter is about. */
+        const assets = await p.evaluate(() =>
+          [...document.querySelectorAll('#tl_asset option')].map((x) => x.value).filter(Boolean));
+        for (const a of assets) {
+          await p.selectOption('#tl_asset', a);
+          await p.waitForTimeout(1800);
+          if (await p.inputValue('#tl_hours')) break;
+        }
+      }
+    } catch { /* an empty form is still a usable picture */ }
+    await shot(p, '09-timesheet-line-form', '#timesheetLineWrap .modal, #timesheetLineWrap');
+    await tryClick(p, '#tl_cancel'); await closeModal(p);
+  }
   await p.close();
   /* The approval queue is gone, so there is no queue to photograph. A lead's
      Time Sheet is now their team's week, read-only, which is what this shows. */

@@ -115,15 +115,23 @@ test('eight hours is a warning, and under eight is silent', () => {
   assert.strictEqual(sheets.dayTotal([]).overLong, false);
 });
 
-test('a weekend is flagged, not blocked', () => {
-  assert.strictEqual(sheets.isWeekend('2026-03-07'), true, 'Saturday');
-  assert.strictEqual(sheets.isWeekend('2026-03-08'), true, 'Sunday');
-  assert.strictEqual(sheets.isWeekend('2026-03-06'), false, 'Friday');
-  // And the form takes it: occasional weekend work is real.
-  assert.strictEqual(sheets.validateEntry({ date: '2026-03-07', hours: 3,
-    clientId: 'c', projectId: 'p' }).ok, true);
-});
+test('a weekend line is refused outright', () => {
+  /* It used to be taken and marked. The studio does not work weekends, so a
+     Saturday is no longer a day the sheet has — and the domain layer is where
+     that is decided, so the API and the form give one answer. */
+  const sat = sheets.validateEntry({ date: '2026-03-07', hours: 2, nonProject: 'admin' });
+  assert.strictEqual(sat.ok, false);
+  assert.strictEqual(sat.field, 'date');
+  assert.match(sat.error, /does not work weekends/i);
+  assert.strictEqual(sheets.validateEntry({ date: '2026-03-08', hours: 2, nonProject: 'admin' }).ok, false);
+  assert.strictEqual(sheets.validateEntry({ date: '2026-03-06', hours: 2, nonProject: 'admin' }).ok, true);
 
+  // The week offers five days, and six when a weekend day already has hours.
+  assert.strictEqual(sheets.workingDays('2026-03-04').length, 5);
+  assert.strictEqual(sheets.workingDays('2026-03-04', { alsoShow: ['2026-03-07'] }).length, 6);
+  // weekDays still spans seven — the RANGE a week is read over has not changed.
+  assert.strictEqual(sheets.weekDays('2026-03-04').length, 7);
+});
 test('a clock time is minutes past midnight IST, and never an instant', () => {
   /* The decision the whole timezone requirement rests on. Stored as minutes,
      09:30 is 09:30 to a server in UTC and to somebody logging in from
@@ -214,7 +222,11 @@ test('every designation can fill in its own timesheet', () => {
 test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   const PASSWORD = 'Timesheet-Test-1!';
   const MON = '2026-03-02';        // a Monday
+  /* A Saturday, kept because two subtests are about the studio not working
+     weekends. Everything else that used it wanted "some day of this week" and
+     now names a weekday, since a weekend line is refused. */
   const SAT = '2026-03-07';
+  const FRI = '2026-03-06';
   let server;
   const token = {};
   const people = {};
@@ -261,7 +273,20 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       body: { reportsToId: people.lee, teamLeadId: people.lee } });
     assetId = (await as('root', `/assets/project/${projectId}`, { method: 'POST',
       body: { name: 'River Spirit', type: 'character', assigneeId: people.ana } })).body.asset.id;
+    /* An asset line is now worth whatever the timer recorded, so the fixture
+       has to have run the timer. Two hours on the Monday, which is what the
+       lines below used to type by hand. */
+    await record(assetId, 7200, { on: MON, from: '10:00:00', to: '12:00:00' });
   });
+
+  /* The timer, without the endpoints: an asset line's hours are read from
+     work_sessions now, so a test that files one has to put a stretch there
+     first. Closed and submitted, because that is the ordinary case. */
+  const record = (asset, seconds, { userId = people.ana, on = MON, from = '10:00:00', to = '12:00:00' } = {}) =>
+    sql(cfg,
+      `INSERT INTO work_sessions (id, asset_id, user_id, round, started_at, ended_at, seconds, ended_reason)
+       VALUES (UUID(), ?, ?, 1, ?, ?, ?, 'submitted')`,
+      [asset, userId, `${on} ${from}`, `${on} ${to}`, seconds]);
   t.after(() => stopServer(server));
 
   await t.test('a day takes several lines, and the hours add up', async () => {
@@ -377,26 +402,32 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(s1.hours, 4.5, 'so all of it is offered');
     assert.strictEqual(s1.onThisDay, 3.5, 'with the day\'s own share shown beside it');
 
-    /* THE STUDIO'S SECOND TESTING STEP. File a day, come back to the same
-       asset on another day, and only what has not been filed is offered. */
-    await add('ana', { date: day, hours: 3.5, clientId, projectId, assetId });
-    const s2 = await ask('ana', other);
-    assert.strictEqual(s2.logged, 3.5);
-    assert.strictEqual(s2.hours, 1, 'the hour that is left, not the whole 4.5 again');
+    /* THE NUMBER IS THE SERVER'S. The field is locked, so what the request
+       carries is ignored and the line is worth whatever is outstanding —
+       filing here with a typed 3.5 files all 4.5, because that is what had
+       been recorded and not yet claimed. */
+    const filed = await add('ana', { date: day, hours: 3.5, clientId, projectId, assetId });
+    assert.strictEqual(filed.status, 201);
+    assert.strictEqual(Number(filed.body.entry.hours), 4.5,
+      'the calculated figure, not the 3.5 the request asked for');
 
-    // And filing that hour leaves nothing to offer, rather than offering it twice.
-    await add('ana', { date: other, hours: 1, clientId, projectId, assetId });
+    // Which leaves nothing to offer, rather than offering it twice.
     const s3 = await ask('ana', other);
     assert.strictEqual(s3.logged, 4.5);
     assert.strictEqual(s3.hours, null, 'nothing left');
     assert.strictEqual(s3.recorded, 4.5, 'though it still says what was recorded');
 
+    // And a second line against it is refused rather than filed as nought.
+    const again = await add('ana', { date: other, hours: 1, clientId, projectId, assetId });
+    assert.strictEqual(again.status, 400);
+    assert.match(again.body.error, /already on your timesheet/i);
+
     /* THE STUDIO'S SIXTH TESTING STEP, as an equation rather than a reading:
        what was filed equals what was recorded. This is the whole point. */
-    const filed = await sql(cfg,
+    const banked = await sql(cfg,
       'SELECT COALESCE(SUM(hours),0) AS h FROM timesheet_entries WHERE user_id = ? AND asset_id = ?',
       [people.ana, assetId]);
-    assert.strictEqual(Number(filed[0].h), 4.5, 'filed hours equal recorded hours, with no double count');
+    assert.strictEqual(Number(banked[0].h), 4.5, 'filed hours equal recorded hours, with no double count');
 
     /* A stretch across midnight is IN the total even though the daily figure
        cannot claim it — which is exactly what the old per-day rule got wrong,
@@ -424,27 +455,110 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(nothing.hours, null);
     assert.strictEqual(nothing.recorded, 0);
 
-    /* Filing MORE than the clock recorded is allowed — the field is theirs to
-       correct — and what is left then clamps at nothing rather than going
-       negative into an input that would refuse it. */
+    /* More filed than the clock recorded can no longer be TYPED — the field is
+       locked — but the rows filed before the lock still exist, and the
+       subtraction has to clamp at nothing rather than go negative into an
+       input that would refuse it. So the state is made the way those rows were
+       made: filed at the calculated hour, then raised behind the API's back. */
     const overfilled = (await as('root', `/assets/project/${projectId}`, { method: 'POST',
       body: { name: 'Overfiled', type: 'prop', assigneeId: people.ana } })).body.asset.id;
-    await sql(cfg,
-      `INSERT INTO work_sessions (id, asset_id, user_id, round, started_at, ended_at, seconds, ended_reason)
-       VALUES (UUID(), ?, ?, 1, '2026-03-12 10:00:00', '2026-03-12 11:00:00', 3600, 'submitted')`,
-      [overfilled, people.ana]);
-    await add('ana', { date: '2026-03-12', hours: 4, clientId, projectId, assetId: overfilled });
+    await record(overfilled, 3600, { on: '2026-03-12', from: '10:00:00', to: '11:00:00' });
+    const one = await add('ana', { date: '2026-03-12', hours: 4, clientId, projectId, assetId: overfilled });
+    assert.strictEqual(Number(one.body.entry.hours), 1, 'the hour recorded, not the four asked for');
+    await sql(cfg, 'UPDATE timesheet_entries SET hours = 4 WHERE id = ?', [one.body.entry.id]);
     const clamped = (await as('ana', `/timesheets/suggest?assetId=${overfilled}&date=2026-03-12`)).body;
     assert.strictEqual(clamped.recorded, 1);
     assert.strictEqual(clamped.logged, 4);
     assert.strictEqual(clamped.hours, null, 'nothing left, and never a negative number');
 
-    /* And it is a SUGGESTION. Nothing refuses a different number, which is what
-       keeps this a manual timesheet with a helpful default rather than an
-       automatic one somebody has to argue with. */
-    const typed = await add('ana', { date: day, hours: 6, clientId, projectId, assetId });
-    assert.strictEqual(typed.status, 201, 'six hours against what the clock says');
-    assert.strictEqual(Number(typed.body.entry.hours), 6);
+    /* NOT a suggestion any more. A request asking for six hours against an
+       asset gets whatever is outstanding, or a refusal — the studio asked for
+       the figure to be non-negotiable, and a lock the API ignores is not one. */
+    const overfilled2 = (await as('root', `/assets/project/${projectId}`, { method: 'POST',
+      body: { name: 'Six Requested', type: 'prop', assigneeId: people.ana } })).body.asset.id;
+    await record(overfilled2, 7200, { on: '2026-03-13', from: '10:00:00', to: '12:00:00' });
+    const typed = await add('ana', { date: day, hours: 6, clientId, projectId, assetId: overfilled2 });
+    assert.strictEqual(typed.status, 201);
+    assert.strictEqual(Number(typed.body.entry.hours), 2, 'the two hours recorded, not the six asked for');
+  });
+
+  await t.test('the calculated figure cannot be edited round either', async () => {
+    /* The field being locked in the form is a convenience; the lock is the
+       API's. A PATCH is the obvious way round a disabled input, so it applies
+       the same subtraction — with this row's own hours left out of it, or an
+       edit that changed only the notes would shrink the line to nothing. */
+    const day = '2026-03-16';
+    const asset = (await as('root', `/assets/project/${projectId}`, { method: 'POST',
+      body: { name: 'Not Yours To Type', type: 'prop', assigneeId: people.ana } })).body.asset.id;
+    await record(asset, 9000, { on: day, from: '10:00:00', to: '12:30:00' });   // 2.5h
+
+    const line = await add('ana', { date: day, hours: 8, clientId, projectId, assetId: asset });
+    assert.strictEqual(Number(line.body.entry.hours), 2.5, 'the recorded figure on the way in');
+
+    const edited = await as('ana', `/timesheets/entries/${line.body.entry.id}`, {
+      method: 'PATCH', body: { hours: 8 } });
+    assert.strictEqual(edited.status, 200);
+    assert.strictEqual(Number(edited.body.entry.hours), 2.5, 'and on the way out');
+
+    // Changing something else about the line leaves the figure where it was.
+    const renoted = await as('ana', `/timesheets/entries/${line.body.entry.id}`, {
+      method: 'PATCH', body: { notes: 'Ridge pass' } });
+    assert.strictEqual(Number(renoted.body.entry.hours), 2.5,
+      'its own hours are not subtracted from itself');
+
+    /* A line with no asset has nothing to calculate from, so it stays typed —
+       leave, holidays, meetings and training have no timer to read. */
+    const own = await add('ana', { date: day, hours: 3, nonProject: 'training' });
+    assert.strictEqual(Number(own.body.entry.hours), 3);
+    const changed = await as('ana', `/timesheets/entries/${own.body.entry.id}`, {
+      method: 'PATCH', body: { hours: 4 } });
+    assert.strictEqual(Number(changed.body.entry.hours), 4, 'and is still editable');
+  });
+
+  await t.test('a figure that looks wrong is flagged, with a reason', async () => {
+    /* The safety valve. Nobody can correct a locked figure, so the only honest
+       alternative to typing over it is saying so on the record. */
+    const day = '2026-03-17';
+    const asset = (await as('root', `/assets/project/${projectId}`, { method: 'POST',
+      body: { name: 'Looks Wrong', type: 'prop', assigneeId: people.ana } })).body.asset.id;
+    await record(asset, 3600, { on: day, from: '10:00:00', to: '11:00:00' });
+
+    // A flag with no reason is a flag nobody can act on.
+    const bare = await add('ana', { date: day, hours: 1, clientId, projectId,
+      assetId: asset, flagged: true });
+    assert.strictEqual(bare.status, 400);
+    assert.strictEqual(bare.body.field, 'flagNote');
+    assert.match(bare.body.error, /what looks wrong/i);
+
+    const flagged = await add('ana', { date: day, hours: 1, clientId, projectId, assetId: asset,
+      flagged: true, flagNote: 'Worked three hours; the timer was never started.' });
+    assert.strictEqual(flagged.status, 201, JSON.stringify(flagged.body));
+    assert.strictEqual(flagged.body.entry.flagNote, 'Worked three hours; the timer was never started.');
+    assert.ok(flagged.body.entry.flaggedAt, 'and stamped with when it was raised');
+
+    // It travels with the day, which is the point — an approver has to see it.
+    /* Read through the week endpoint for that day's own week — dayOf reads the
+       suite's Monday, and this is a fortnight later. */
+    const shown = (await as('ana', `/timesheets/week?date=${day}`)).body.days
+      .find((d) => d.date === day).entries.find((e) => e.id === flagged.body.entry.id);
+    assert.strictEqual(shown.flagNote, 'Worked three hours; the timer was never started.');
+    const theirs = (await as('lee', `/timesheets/week?date=${day}&userId=${people.ana}`))
+      .body.days.find((d) => d.date === day).entries.find((e) => e.id === flagged.body.entry.id);
+    assert.strictEqual(theirs.flagNote, 'Worked three hours; the timer was never started.',
+      'and the lead sees the reason, not just a mark');
+
+    // Raised and lowered by editing, and the hours are untouched either way.
+    const cleared = await as('ana', `/timesheets/entries/${flagged.body.entry.id}`, {
+      method: 'PATCH', body: { flagged: false, flagNote: '' } });
+    assert.strictEqual(cleared.status, 200);
+    assert.strictEqual(cleared.body.entry.flagNote, null);
+    assert.strictEqual(cleared.body.entry.flaggedAt, null);
+    assert.strictEqual(Number(cleared.body.entry.hours), 1);
+
+    // And a note is enough on its own — the mark and the reason are one thing.
+    const again = await as('ana', `/timesheets/entries/${flagged.body.entry.id}`, {
+      method: 'PATCH', body: { flagNote: 'Still looks short.' } });
+    assert.ok(again.body.entry.flaggedAt, 'the reason is what raises the flag');
   });
 
   await t.test('an asset still in progress offers its live elapsed time', async () => {
@@ -477,10 +591,84 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(s.hours, s.recorded, 'and all of it is offered, none filed yet');
   });
 
+  await t.test('the edge cases the studio named: a weekend, a handover, and repeated holds', async () => {
+    /* Three shapes that break a per-day reading of the timer, checked together
+       because the fix for each is the same one: the figure is the person's
+       whole recorded time on the asset, less what they have already filed. */
+
+    // ---- worked over a weekend the sheet no longer has --------------------
+    /* Somebody comes in on the Saturday. There is no Saturday row to file it
+       on any more, so if the figure were per-day those hours would be
+       unclaimable — which is the way this could have gone wrong quietly. */
+    const weekender = (await as('root', `/assets/project/${projectId}`, { method: 'POST',
+      body: { name: 'Weekend Push', type: 'prop', assigneeId: people.ana } })).body.asset.id;
+    await record(weekender, 7200, { on: '2026-03-20', from: '10:00:00', to: '12:00:00' }); // Fri
+    await record(weekender, 5400, { on: '2026-03-21', from: '11:00:00', to: '12:30:00' }); // Sat
+    await record(weekender, 3600, { on: '2026-03-22', from: '11:00:00', to: '12:00:00' }); // Sun
+
+    const sat = (await as('ana', `/timesheets/suggest?assetId=${weekender}&date=2026-03-21`)).body;
+    assert.strictEqual(sat.recorded, 4.5, 'the weekend stretches are recorded all the same');
+    assert.strictEqual((await add('ana', { date: '2026-03-21', hours: 1,
+      clientId, projectId, assetId: weekender })).status, 400, 'but no line can be put there');
+
+    const monday = await add('ana', { date: '2026-03-23', hours: 1, clientId, projectId,
+      assetId: weekender });
+    assert.strictEqual(monday.status, 201);
+    assert.strictEqual(Number(monday.body.entry.hours), 4.5,
+      'and the Monday carries all of it, weekend included — none of it is lost');
+
+    // ---- held and resumed several times -----------------------------------
+    /* Each hold CLOSES a row and each resume opens another, so the gaps are
+       excluded by construction rather than by subtracting anything. Three
+       stretches with two holds between them: five hours across a nine-hour
+       span. */
+    const stuttered = (await as('root', `/assets/project/${projectId}`, { method: 'POST',
+      body: { name: 'Stop And Start', type: 'prop', assigneeId: people.ana } })).body.asset.id;
+    const day = '2026-03-24';
+    await sql(cfg,
+      `INSERT INTO work_sessions (id, asset_id, user_id, round, started_at, ended_at, seconds, ended_reason)
+       VALUES (UUID(), ?, ?, 1, '${day} 09:00:00', '${day} 11:00:00', 7200, 'held'),
+              (UUID(), ?, ?, 1, '${day} 13:00:00', '${day} 14:00:00', 3600, 'held'),
+              (UUID(), ?, ?, 1, '${day} 16:00:00', '${day} 18:00:00', 7200, 'submitted')`,
+      [stuttered, people.ana, stuttered, people.ana, stuttered, people.ana]);
+    const stutter = (await as('ana', `/timesheets/suggest?assetId=${stuttered}&date=${day}`)).body;
+    assert.strictEqual(stutter.recorded, 5,
+      'five worked hours across a nine-hour span — the four held are in no row');
+    assert.strictEqual(Number((await add('ana', { date: day, hours: 9, clientId, projectId,
+      assetId: stuttered })).body.entry.hours), 5, 'and five is what gets filed');
+
+    // ---- handed over part-way through -------------------------------------
+    /* After a hand-over the ASSET's Time Spent is both people's. Each
+       timesheet figure is that person's own, and the two are meant to differ
+       — filing the asset's total twice is exactly the double count this
+       feature exists to prevent. */
+    const handed = (await as('root', `/assets/project/${projectId}`, { method: 'POST',
+      body: { name: 'Handed On', type: 'prop', assigneeId: people.ana } })).body.asset.id;
+    const over = '2026-03-25';
+    await record(handed, 7200, { on: over, from: '09:00:00', to: '11:00:00' });
+    await as('root', `/assets/${handed}`, { method: 'PATCH', body: { assigneeId: people.bo } });
+    await record(handed, 5400, { on: over, from: '11:00:00', to: '12:30:00', userId: people.bo });
+
+    assert.strictEqual((await as('ana', `/timesheets/suggest?assetId=${handed}&date=${over}`)).body.recorded, 2,
+      'Ana is offered her own two hours');
+    assert.strictEqual((await as('bo', `/timesheets/suggest?assetId=${handed}&date=${over}`)).body.recorded, 1.5,
+      'and Bo his own hour and a half, not the three and a half the asset came to');
+
+    assert.strictEqual(Number((await add('ana', { date: over, hours: 3.5, clientId, projectId,
+      assetId: handed })).body.entry.hours), 2);
+    assert.strictEqual(Number((await add('bo', { date: over, hours: 3.5, clientId, projectId,
+      assetId: handed })).body.entry.hours), 1.5);
+    const both = await sql(cfg,
+      'SELECT COALESCE(SUM(hours),0) AS h FROM timesheet_entries WHERE asset_id = ?', [handed]);
+    assert.strictEqual(Number(both[0].h), 3.5,
+      'and between them they file the asset\'s time exactly once');
+  });
+
   await t.test('over eight hours is flagged, and a half day is silent', async () => {
-    /* Inside the week the suite reads, or the day would not be in it to check
-       — and one no other subtest writes to, so nine is nine. */
-    const day = '2026-03-08';
+    /* Inside the week the suite reads, or the day would not be in it to check,
+       and one no other subtest writes to, so nine is nine. It used to be the
+       Sunday, which stopped being a day the sheet has. */
+    const day = FRI;
     assert.strictEqual((await dayOf('ana', day)).hours, 0, 'starting from an empty day');
     await add('ana', { date: day, hours: 5, clientId, projectId });
     const long = await add('ana', { date: day, hours: 4, clientId, projectId });
@@ -495,10 +683,46 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual((await dayOf('ana', easy)).overLong, false, 'a shorter day says nothing');
   });
 
-  await t.test('weekend work is taken, and marked', async () => {
-    const made = await add('ana', { date: SAT, hours: 2, clientId, projectId });
-    assert.strictEqual(made.status, 201);
-    assert.strictEqual((await dayOf('ana', SAT)).weekend, true);
+  await t.test('a weekend cannot be filled in at all', async () => {
+    /* The studio does not work weekends, so Saturday and Sunday are not
+       fillable — refused by the API as well as absent from the week, because a
+       client that has not been updated must not be able to put a row somewhere
+       the screen will never show it. */
+    const sat = await add('ana', { date: SAT, hours: 2, clientId, projectId });
+    assert.strictEqual(sat.status, 400);
+    assert.match(sat.body.error, /does not work weekends/i);
+    assert.strictEqual(sat.body.field, 'date');
+
+    const sun = await add('ana', { date: '2026-03-08', hours: 2, clientId, projectId });
+    assert.strictEqual(sun.status, 400, 'Sunday too');
+
+    // And the week it belongs to offers five days, not seven.
+    const week = (await as('ana', `/timesheets/week?date=${FRI}`)).body;
+    assert.strictEqual(week.days.length, 5, week.days.map((d) => d.date).join(', '));
+    assert.ok(!week.days.some((d) => d.weekend), 'and none of them is a weekend');
+    assert.strictEqual(week.weekendOff, true, 'the screen is told why');
+  });
+
+  await t.test('a weekend day that already has hours on it is still shown', async () => {
+    /* Nothing already filed disappears. A row written before the rule — or on a
+       deployment that had it switched off — keeps its place in the week, and in
+       the week's total, so a person's Saturday is not quietly missing from
+       their own record. It simply cannot be added to. */
+    await sql(cfg,
+      `INSERT INTO timesheet_entries (id, user_id, entry_date, client_id, project_id, hours, notes)
+       VALUES (UUID(), ?, ?, ?, ?, 3, 'filed before the rule')`,
+      [people.ana, SAT, clientId, projectId]);
+
+    const week = (await as('ana', `/timesheets/week?date=${FRI}`)).body;
+    assert.strictEqual(week.days.length, 6, 'five weekdays and the filled Saturday');
+    const saturday = week.days.find((d) => d.date === SAT);
+    assert.ok(saturday, 'the Saturday is there');
+    assert.strictEqual(saturday.hours, 3, 'with its hours');
+    assert.ok(week.weekHours >= 3, 'and they count towards the week');
+
+    // Still cannot be added to.
+    assert.strictEqual((await add('ana', { date: SAT, hours: 1, clientId, projectId })).status, 400);
+    await sql(cfg, 'DELETE FROM timesheet_entries WHERE user_id = ? AND entry_date = ?', [people.ana, SAT]);
   });
 
   await t.test('one DAY is submitted and locks, leaving the rest of the week alone', async () => {
@@ -544,10 +768,11 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   await t.test('there is nothing left to approve, anywhere', async () => {
     /* Removed, not hidden. A route that still answers is a route somebody can
        still call — the buttons being gone from the page would prove nothing. */
-    await as('ana', '/timesheets/submit', { method: 'POST', body: { date: SAT } });
+    const submitted = await as('ana', '/timesheets/submit', { method: 'POST', body: { date: FRI } });
+    assert.strictEqual(submitted.status, 200, JSON.stringify(submitted.body));
     for (const [who, path, body] of [
-      ['lee', `/timesheets/${people.ana}/${SAT}/decision`, { decision: 'approve' }],
-      ['root', `/timesheets/${people.ana}/${SAT}/decision`, { decision: 'reject', reason: 'no' }],
+      ['lee', `/timesheets/${people.ana}/${FRI}/decision`, { decision: 'approve' }],
+      ['root', `/timesheets/${people.ana}/${FRI}/decision`, { decision: 'reject', reason: 'no' }],
     ]) {
       const gone = await as(who, path, { method: 'POST', body });
       assert.strictEqual(gone.status, 404, `${path} should not exist — got ${gone.status}`);
@@ -567,11 +792,13 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     }
 
     // The day stays exactly as its owner left it.
-    assert.strictEqual((await dayOf('lee', SAT, people.ana)).status, 'submitted');
+    assert.strictEqual((await dayOf('lee', FRI, people.ana)).status, 'submitted');
   });
 
   await t.test('an empty day is not a submission', async () => {
-    const nothing = await as('ana', '/timesheets/submit', { method: 'POST', body: { date: '2026-03-06' } });
+    /* A weekday nothing in this suite has filed against — the Friday it used
+       to name now carries the nine-hour day above. */
+    const nothing = await as('ana', '/timesheets/submit', { method: 'POST', body: { date: '2026-03-13' } });
     assert.strictEqual(nothing.status, 400);
     assert.match(nothing.body.error, /nothing on that day/i);
   });
@@ -832,7 +1059,8 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     const count = async () => Number(
       (await sql(cfg, 'SELECT COUNT(*) AS n FROM work_sessions'))[0].n);
     const before = await count();
-    const filed = await add('ana', { date: '2026-03-06', hours: 2, clientId, projectId, assetId });
+    // A day still open: the Friday this used to name is submitted by now.
+    const filed = await add('ana', { date: '2026-03-13', hours: 2, clientId, projectId });
     assert.strictEqual(filed.status, 201);
     assert.strictEqual(await count(), before,
       'logging hours must not have written a measured session of its own');

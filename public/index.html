@@ -382,6 +382,10 @@ body.chat-open #app{padding-left:calc(var(--chat-w, 380px) + 24px);}
 .chat-hint{font-size:10px;color:var(--ink-faint);margin-top:6px;line-height:1.5;}
 
 /* the people picker and group management */
+/* A calculated figure. Still legible, visibly not yours to type in. */
+#tl_hours.locked{background:var(--surface-3);color:var(--ink-muted);cursor:default;}
+#tl_hours.locked:focus{outline:none;border-color:var(--border);}
+.ts-flagged{font-size:10.5px;color:var(--brand-accent);margin-top:3px;}
 .chat-search{width:100%;padding:7px 9px;font:inherit;font-size:12.5px;background:var(--surface-2);
   color:var(--ink);border:1px solid var(--border);border-radius:9px;}
 .chat-person{display:flex;gap:9px;align-items:center;width:100%;text-align:left;padding:8px 12px;
@@ -1144,6 +1148,22 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
     <input type="number" id="tl_hours" step="0.25" min="0.25" max="24" placeholder="e.g. 3.5">
     <div id="tl_suggest" style="font-size:11.5px;color:var(--ink-faint);margin:2px 0 0;"></div>
     <div id="tl_calc" style="font-size:11.5px;color:var(--ink-muted);margin:2px 0 4px;"></div>
+    <!-- The way to disagree with a number nobody can edit, below the figure and
+         its running total so it reads as a response to them. Shown only when
+         the figure is a calculated one: a typed number needs no dispute.
+         text-transform is turned off because the form's labels are set in
+         small caps, and a shouted sentence reads as a warning. -->
+    <div id="tl_flagWrap" style="display:none;margin:2px 0 6px;">
+      <label style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--ink-muted);
+        text-transform:none;letter-spacing:0;cursor:pointer;">
+        <input type="checkbox" id="tl_flag" style="accent-color:var(--brand-accent);">
+        <span>This figure looks wrong</span>
+      </label>
+      <div id="tl_flagNoteWrap" style="display:none;margin-top:6px;">
+        <textarea id="tl_flagNote" rows="2" maxlength="500"
+          placeholder="What looks wrong? Your lead sees this beside the figure."></textarea>
+      </div>
+    </div>
     <label>Notes <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional)</span></label>
     <textarea id="tl_notes" rows="2" placeholder="What you did"></textarea>
     <div class="ref-err" id="tl_err"></div>
@@ -1650,12 +1670,13 @@ const TOUR_STEPS = [
     target: '#timesheetTabBtn',
     gate: 'timesheetTabBtn',
     title: 'Time Sheet',
-    /* Rewritten when the Time Sheet moved to a single Hours field and lost its
-       approval step: this described clock times and an approval queue, neither
-       of which still exists. */
-    body: 'Your own hours, a day at a time, as a single Hours figure — pick an asset and the '
-        + 'hours it recorded that day are offered. Submit each day when it is done. Nobody '
-        + 'has to approve it, and you can reopen a day yourself if you need to correct it.',
+    /* Rewritten twice: once when the Time Sheet moved to a single Hours field
+       and lost its approval step, and again when the weekend rows went and the
+       figure stopped being something anybody types. */
+    body: 'Your own hours, Monday to Friday. Pick an asset and its hours are worked out from '
+        + 'what the timer recorded; leave, training and time with no asset are typed in. If a '
+        + 'worked-out figure looks wrong, flag it rather than editing it. Submit each day when '
+        + 'it is done — nobody approves it, and you can reopen a day yourself.',
   },
   {
     id: 'reports',
@@ -3128,10 +3149,15 @@ async function renderTimesheet(){
       <button class="btn btn-ghost btn-sm" id="ts_prev">← Previous</button>
       <button class="btn btn-ghost btn-sm" id="ts_thisWeek">This week</button>
       <button class="btn btn-ghost btn-sm" id="ts_next">Next →</button>
-      <span class="ts-range">${tsPretty(week.weekStart)} – ${tsPretty(week.weekEnd)}, ${week.weekEnd.slice(0,4)}</span>
+      <!-- The days actually shown, not the calendar week behind them. Naming a
+           Sunday the week runs to, in a sheet with no Sunday row on it, invites
+           somebody to go looking for the row. A filled Saturday is still shown,
+           and then the range says so of its own accord. -->
+      <span class="ts-range">${tsPretty(week.days[0].date)} – ${
+        tsPretty(week.days[week.days.length-1].date)}, ${week.weekEnd.slice(0,4)}</span>
       ${picker}
       <div class="spacer"></div>
-      <span class="ts-hint">Hours against an asset, a project or non-project time · a day over ${wd.maxHours}h is flagged</span>
+      <span class="ts-hint">Monday to Friday · hours against an asset are worked out from its recorded time · a day over ${wd.maxHours}h is flagged</span>
       <span class="ts-total">Week <strong>${week.weekHours}h</strong></span>
       ${can('timesheet.own') ? `
         <button class="btn btn-ghost btn-sm" id="ts_xlsx">Excel</button>
@@ -3173,6 +3199,7 @@ async function renderTimesheet(){
                 : `${escapeHTML(e.projectName||'—')}<span class="ts-client"> · ${escapeHTML(e.clientName||'')}</span>${
                     e.assetCode ? `<div class="ts-asset">${escapeHTML(e.assetCode)} ${escapeHTML(e.assetName||'')}</div>` : ''}`}
                 ${e.notes ? `<div class="ts-notes">${escapeHTML(e.notes)}</div>` : ''}
+                ${e.flagNote ? `<div class="ts-flagged">\u26a0 Flagged: ${escapeHTML(e.flagNote)}</div>` : ''}
               </td>
               <td class="ts-hours">${e.hours}h</td>
               <td class="ts-act">${editable
@@ -3302,10 +3329,10 @@ function openTimesheetLine(day){
   // Which day this line is for, read by the suggestion and by the running total.
   tlDay = day;
   document.getElementById('tl_hours').value = '';
-  tlHoursTyped = false;
+  tlLockHours(false);
   document.getElementById('tl_suggest').textContent = '';
   document.getElementById('tl_window').textContent =
-    `A day over ${wd.maxHours} hours is flagged, not refused. Pick an asset and its recorded hours, less what you have already logged against it, are filled in.`;
+    `Monday to Friday. A day over ${wd.maxHours} hours is flagged, not refused. Pick an asset and its hours are worked out for you; leave, training and time with no asset are typed in.`;
   document.getElementById('tl_cat').innerHTML =
     (w.nonProjectTypes||[]).map(n=>`<option value="${n.key}">${escapeHTML(n.label)}</option>`).join('');
   document.getElementById('tl_client').innerHTML =
@@ -3335,13 +3362,31 @@ function tlRecalc(){
     ? `That makes ${total}h on this day — over the ${wd.maxHours}-hour day. It is allowed; it will be flagged.`
     : `That makes ${total}h on this day.`;
 }
-/* Has a person typed in the Hours field on this line?
+/* Hours is locked wherever it can be calculated, and typed where it cannot.
  *
- * Set by hand, not inferred: "the field is not empty" cannot tell a figure the
- * app fetched from one somebody corrected, and the difference decides whether
- * changing asset may overwrite it. */
-let tlHoursTyped = false;
-document.getElementById('tl_hours').addEventListener('input', ()=>{ tlHoursTyped = true; tlRecalc(); });
+ * readOnly rather than disabled: a disabled input is skipped by the form, drops
+ * out of the tab order and reads to a screen reader as unavailable, where this
+ * one has a value and is worth reading — it simply is not yours to change. */
+function tlLockHours(locked){
+  const field = document.getElementById('tl_hours');
+  if(!field) return;
+  field.readOnly = Boolean(locked);
+  field.classList.toggle('locked', Boolean(locked));
+  field.title = locked
+    ? 'Worked out from the asset\u2019s own recorded time. Flag it below if it looks wrong.'
+    : '';
+  document.getElementById('tl_flagWrap').style.display = locked ? '' : 'none';
+  if(!locked){
+    document.getElementById('tl_flag').checked = false;
+    document.getElementById('tl_flagNote').value = '';
+    document.getElementById('tl_flagNoteWrap').style.display = 'none';
+  }
+}
+document.getElementById('tl_hours').addEventListener('input', tlRecalc);
+document.getElementById('tl_flag').addEventListener('change', e=>{
+  document.getElementById('tl_flagNoteWrap').style.display = e.target.checked ? '' : 'none';
+  if(e.target.checked) document.getElementById('tl_flagNote').focus();
+});
 
 /* The Hours field, filled from the asset's own recorded time.
  *
@@ -3351,8 +3396,10 @@ document.getElementById('tl_hours').addEventListener('input', ()=>{ tlHoursTyped
  * an asset's days add up to the time it recorded, once, instead of to that
  * total repeated per day.
  *
- * Still a suggestion. It lands in an editable field, and tlHoursTyped below is
- * what keeps it from ever arguing with a person who has corrected it. */
+ * NOT a suggestion any more. Where a line names an asset the figure is
+ * calculated, the field is locked, and the server works it out again on save —
+ * so nothing typed here would survive. Where a line names no asset there is
+ * nothing to calculate from, and the field is typed as it always was. */
 async function tlSuggest(){
   const note = document.getElementById('tl_suggest');
   const field = document.getElementById('tl_hours');
@@ -3367,16 +3414,15 @@ async function tlSuggest(){
        feature that is not there. */
     const s = await api(`/timesheets/suggest?assetId=${encodeURIComponent(assetId)}&date=${tlDay}`);
 
-    /* Fill it, unless the person has typed. tlHoursTyped is set by the input
-       handler and cleared when the fetch writes the value itself — so picking
-       another asset and coming back re-fetches over a figure the app put there,
-       and never over one somebody put there. That is the difference between a
-       default and an override, and it is not something an empty-field check can
-       tell apart: a value this function wrote is not empty either. */
-    if(!tlHoursTyped && s.hours){
-      field.value = s.hours;
-      tlRecalc();
-    }
+    /* Calculated, so locked. The number is the asset's own recorded time less
+       what has already been filed against it, and the server works it out
+       again on save — so a field somebody could type into would only be a
+       field whose contents are thrown away. Non-project time and a line with
+       no asset stay typed by hand: there is nothing to calculate them from.
+       See tlLockHours below. */
+    field.value = s.hours ? s.hours : '';
+    tlLockHours(true);
+    tlRecalc();
 
     /* What the number is made of. Shown because the arithmetic is not obvious
        from one figure, and because somebody filling in a past day needs to see
@@ -3445,7 +3491,19 @@ document.getElementById('tl_project').addEventListener('change', async e=>{
   }catch{ /* a project with no readable assets still takes non-asset time */ }
   document.getElementById('tl_suggest').textContent = '';
 });
-document.getElementById('tl_asset').addEventListener('change', tlSuggest);
+document.getElementById('tl_asset').addEventListener('change', e=>{
+  if(!e.target.value){
+    /* No asset, nothing to calculate from — the field goes back to being
+       typed, which is how leave, training and unattributed project time have
+       always been filed. */
+    tlLockHours(false);
+    document.getElementById('tl_hours').value = '';
+    document.getElementById('tl_suggest').textContent = '';
+    tlRecalc();
+    return;
+  }
+  tlSuggest();
+});
 
 document.getElementById('tl_save').addEventListener('click', async ()=>{
   const err = document.getElementById('tl_err');
@@ -3454,6 +3512,8 @@ document.getElementById('tl_save').addEventListener('click', async ()=>{
   const body = {
     date: tsState.draft.day,
     hours: document.getElementById('tl_hours').value,
+    flagged: document.getElementById('tl_flag').checked,
+    flagNote: document.getElementById('tl_flagNote').value,
     notes: document.getElementById('tl_notes').value.trim() || undefined,
   };
   if(project){

@@ -580,20 +580,29 @@ module.exports = [
   pagebreak(),
   // ============================================================ 9
   h1('9. Time Sheet'),
-  lead('Everybody fills in their own. It is a day at a time, in Indian Standard Time, against the studio’s '
-    + 'configured working hours.'),
+  lead('Everybody fills in their own. It is a weekday at a time, Monday to Friday, in Indian Standard Time, '
+    + 'against the studio’s configured working hours.'),
 
   h2('9.1 Your week'),
   shot('09-timesheet-week', 'A week. Each day is a card with its lines, its total and its state. The window in force is printed at the top right.'),
   p('The line above the days says what a day is flagged at. It is the studio’s own number rather than a fixed '
     + 'rule of the software: a Super Admin changes it in Settings (chapter 13.2) and the change applies to '
     + 'everybody from that moment.'),
+  note('There is no Saturday or Sunday',
+    'The week shows five cards, Monday to Friday, and the API refuses a line dated to a weekend as well — so '
+    + 'an out-of-date browser cannot put a row somewhere the screen will never show it. The date range at the top '
+    + 'names the days actually shown, not the calendar week behind them.\n\n'
+    + 'Weekend WORK is not lost. Time recorded by the timer on a Saturday still counts towards the asset, and the '
+    + 'hours it recorded are offered on the next weekday you file against that asset — because the figure is '
+    + 'your whole recorded time on the asset, not that one day’s. What is gone is the weekend ROW, not the '
+    + 'weekend’s hours. A weekend day that already carries lines from before this change is still shown, so '
+    + 'nothing already filed disappears.'),
 
   h2('9.2 Adding a line'),
   steps([
     'Press + Add a line on the day.',
     'Choose the project, and the asset if the time was against one.',
-    'Give the number of hours. Pick an asset first and this is filled in for you \u2014 see below.',
+    'If the line names an asset, the hours are worked out for you and the field is locked. If it does not \u2014 leave, a meeting, training, or project time with no asset named \u2014 type the hours in.',
     'Say what you did.',
     'Save.',
   ]),
@@ -603,12 +612,24 @@ module.exports = [
     + 'only what has accrued since, then only what accrued after that \u2014 the three add up to the time the asset '
     + 'recorded, once, instead of to that total three times over. The line under the field shows the arithmetic: '
     + 'what was recorded, what is already on your timesheet, and what is left.'),
-  note('It is a starting figure, not an instruction',
-    'The number lands in a field you can change, and nothing refuses a different one. If you were interrupted and '
-    + 'the clock does not reflect the hours you actually worked, type over it \u2014 and once you have, changing '
-    + 'asset and coming back will not quietly overwrite your correction. An asset still in progress offers the time '
-    + 'elapsed so far, not counting anything it spent on hold. An asset you have already logged in full offers '
-    + 'nothing and says so.'),
+  note('The figure is not yours to type',
+    'Where a line names an asset the hours are the software\u2019s answer, not a suggestion: the field is locked, '
+    + 'and the server works the number out again when the line is saved, so nothing typed into it would survive. '
+    + 'The lock is the server\u2019s rather than the field\u2019s \u2014 a request made outside the form is worth '
+    + 'the same calculated figure.\n\n'
+    + 'An asset still in progress offers the time elapsed so far, not counting anything it spent on hold. An asset '
+    + 'you have already logged in full offers nothing and says so, and a second line against it is refused rather '
+    + 'than filed as nought. An asset the timer has never run on cannot be logged against at all: time is measured '
+    + 'from Accept and Start, and there is nothing for the sheet to read.\n\n'
+    + 'Because the figure is the whole outstanding balance rather than a part of it, filing a line claims '
+    + 'everything not yet claimed. Skip a day and the next day\u2019s line carries the earlier day\u2019s hours '
+    + 'too \u2014 the total across the asset is right either way, but the hours sit on the day they were filed.'),
+  note('If the number looks wrong, flag it',
+    'Nobody can correct a locked figure, so the way to disagree with one is on the record instead of over it. '
+    + 'Tick THIS FIGURE LOOKS WRONG under the Hours field and say briefly what is wrong \u2014 a timer left '
+    + 'running, a stretch worked without starting it. The reason is required: a mark with no reason is one nobody '
+    + 'can act on. It is stored with the line and shown beside the hours on the day, to you and to whoever reads '
+    + 'your week. Raising or clearing a flag never changes the hours.'),
   note('It is your own recorded time, not the asset\u2019s',
     'An asset handed over from somebody else carries their hours in its Time Spent on the Efficiency report, '
     + 'because that is what the asset cost. The figure offered here counts only your own stretches, because their '
@@ -618,10 +639,11 @@ module.exports = [
   h2('9.3 The rules'),
   bullets([
     'A line is a number of hours against one thing. There are no start and end times to give.',
-    'The smallest line is a quarter of an hour; the largest single line is a day.',
+    'The smallest line is a quarter of an hour; the largest single line is a day. A timer left running longer than that files a day and offers the rest again tomorrow.',
     'A day over 8 hours is FLAGGED, not refused. A long day is a real thing, and a form that refuses one teaches people to log eight and go home late.',
     'A line is either project work or non-project time, never both.',
-    'Weekend work is taken and marked, not blocked.',
+    'Saturday and Sunday are not days the sheet has. A line dated to one is refused.',
+    'Hours against an asset are calculated and locked; hours with no asset are typed.',
   ]),
   note('What the simpler form gives up',
     'A line used to be a stretch of the clock, and three rules went with it. Two are no loss: the 09:30\u201319:00 '
@@ -650,6 +672,9 @@ module.exports = [
   p('Holding View Team Timesheets puts a person picker above the week. Pick somebody and their week is drawn '
     + 'exactly as their own is, and entirely read-only. There is nothing to approve, nothing to send back and no '
     + 'queue \u2014 those went with the approval step. What is left is oversight, which is what a lead needed.'),
+  p('A flagged line shows its reason here too. Since the hours themselves are calculated, a flag is the only '
+    + 'thing on the sheet somebody has written about a figure, and it is worth reading: it usually means the '
+    + 'timer and the day did not agree.'),
 
   h2('9.6 Excel and PDF'),
   p('Excel and PDF buttons sit at the top right of the week. Both export exactly what is on screen, for the week and '

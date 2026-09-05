@@ -30,6 +30,8 @@ const REQUIRED = [
   { table: 'timesheet_days',    column: null, step: 'timesheets' },
   { table: 'timesheet_entries', column: null, step: 'timesheets' },
   { table: 'timesheet_events',  column: null, step: 'timesheets' },
+  { table: 'timesheet_entries', column: 'flagged_at', step: 'timesheet entry flag' },
+  { table: 'timesheet_entries', column: 'flag_note',  step: 'timesheet entry flag' },
   { table: 'tasks',          column: 'created_by',     step: 'asset brief and checklist' },
   { table: 'tasks',          column: 'created_at',     step: 'asset brief and checklist' },
   { table: 'work_sessions',  column: null,             step: 'assigned state and time tracking' },

@@ -31,17 +31,39 @@ router.use(authenticate);
 // codebase makes with its newer tables.
 const unavailable = (err) => err && (err.code === 'ER_NO_SUCH_TABLE' || err.code === 'ER_BAD_FIELD_ERROR');
 
-const ENTRY_SELECT = `
+/* The flag columns are named separately because a deployment can be missing
+ * them: they arrive in a migration, a migration step can fail, and this file
+ * already reads ER_BAD_FIELD_ERROR as "no timesheet on this deployment". Left
+ * inline, a database that did not get the ALTER would answer every week with an
+ * empty sheet rather than with a sheet that has no flags on it — losing the
+ * hours to save the marker. selectEntries() below asks with them and asks again
+ * without. */
+const ENTRY_SELECT_BASE = `
   SELECT e.id, e.user_id AS userId, e.entry_date AS date, e.hours, e.notes,
          e.start_min AS startMin, e.end_min AS endMin,
          e.non_project AS nonProject,
          e.client_id AS clientId,  c.\`name\` AS clientName,
          e.project_id AS projectId, p.\`name\` AS projectName,
-         e.asset_id AS assetId,     a.\`code\` AS assetCode, a.\`name\` AS assetName
+         e.asset_id AS assetId,     a.\`code\` AS assetCode, a.\`name\` AS assetName`;
+const ENTRY_SELECT_FROM = `
     FROM timesheet_entries e
     LEFT JOIN clients  c ON c.id = e.client_id
     LEFT JOIN projects p ON p.id = e.project_id
     LEFT JOIN assets   a ON a.id = e.asset_id`;
+
+async function selectEntries(tail, params) {
+  try {
+    const { rows } = await db.query(
+      `${ENTRY_SELECT_BASE},\n         e.flagged_at AS flaggedAt, e.flag_note AS flagNote${ENTRY_SELECT_FROM} ${tail}`,
+      params
+    );
+    return rows;
+  } catch (err) {
+    if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
+    const { rows } = await db.query(`${ENTRY_SELECT_BASE}${ENTRY_SELECT_FROM} ${tail}`, params);
+    return rows.map((r) => ({ ...r, flaggedAt: null, flagNote: null }));
+  }
+}
 
 /* Whose sheet may this person open?
  *
@@ -208,9 +230,8 @@ router.get('/week', requirePermission('timesheet.own'), async (req, res) => {
   if (!verdict.ok) return res.status(403).json({ error: 'That is not your timesheet.' });
 
   try {
-    const { rows: entries } = await db.query(
-      `${ENTRY_SELECT} WHERE e.user_id = $1 AND e.entry_date BETWEEN $2 AND $3
-        ORDER BY e.entry_date, e.created_at`,
+    const entries = await selectEntries(
+      'WHERE e.user_id = $1 AND e.entry_date BETWEEN $2 AND $3 ORDER BY e.entry_date, e.created_at',
       [userId, days[0], days[6]]
     );
     const { rows: dayRows } = await db.query(
@@ -220,7 +241,14 @@ router.get('/week', requirePermission('timesheet.own'), async (req, res) => {
     const byDate = new Map(dayRows.map((d) => [sheets.toISO(d.work_date), d]));
     const { rows: who } = await db.query('SELECT id, `name`, email FROM users WHERE id = $1', [userId]);
 
-    const shaped = days.map((d) =>
+    /* Monday to Friday, plus any weekend day that already has hours on it.
+       The RANGE above is still the whole week, so the totals below add up
+       whatever is really there — what changes is which days are offered as
+       rows. See workingDays() for why a filled Saturday is still shown. */
+    const filledWeekend = entries.map((e) => sheets.toISO(e.date)).filter((d) => sheets.isWeekend(d));
+    const shownDays = sheets.workingDays(anchor, { alsoShow: filledWeekend });
+
+    const shaped = shownDays.map((d) =>
       shapeDay(byDate.get(d) || null, entries.filter((e) => sheets.toISO(e.date) === d), d));
 
     res.json({
@@ -235,6 +263,8 @@ router.get('/week', requirePermission('timesheet.own'), async (req, res) => {
       days: shaped,
       weekStart: days[0],
       weekEnd: days[6],
+      /* So the screen can say why Saturday and Sunday are not there. */
+      weekendOff: true,
       weekHours: Math.round(shaped.reduce((n, d) => n + d.hours, 0) * 100) / 100,
     });
   } catch (err) {
@@ -268,10 +298,131 @@ router.get('/people', requirePermission('timesheet.own'), async (req, res) => {
  * correcting it themselves, because a timesheet somebody else edited is no
  * longer that person's statement of their day.
  */
+/* One INSERT, tolerant of a deployment whose flag columns did not apply.
+ * The flag is a convenience; losing it must not lose the hours. */
+async function insertEntry(id, userId, line) {
+  const base = [id, userId, line.date, line.startMin, line.endMin, line.clientId,
+    line.projectId, line.assetId, line.nonProject, line.hours, line.notes];
+  try {
+    await db.query(
+      `INSERT INTO timesheet_entries
+         (id, user_id, entry_date, start_min, end_min, client_id, project_id, asset_id,
+          non_project, hours, notes, flagged_at, flag_note)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [...base, line.flagNote ? new Date() : null, line.flagNote]
+    );
+  } catch (err) {
+    if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
+    await db.query(
+      `INSERT INTO timesheet_entries
+         (id, user_id, entry_date, start_min, end_min, client_id, project_id, asset_id,
+          non_project, hours, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      base
+    );
+  }
+}
+
+/* The same tolerance on the way back out. An unchanged flag keeps its original
+ * stamp: re-stamping it on every edit would make the flag look raised at the
+ * moment of the last unrelated change. */
+async function updateEntry(id, line, was) {
+  const base = [line.date, line.startMin, line.endMin, line.clientId, line.projectId,
+    line.assetId, line.nonProject, line.hours, line.notes];
+  const stamp = line.flagNote
+    ? (was.flag_note === line.flagNote && was.flagged_at ? was.flagged_at : new Date())
+    : null;
+  try {
+    await db.query(
+      `UPDATE timesheet_entries
+          SET entry_date = $1, start_min = $2, end_min = $3, client_id = $4, project_id = $5,
+              asset_id = $6, non_project = $7, hours = $8, notes = $9,
+              flagged_at = $10, flag_note = $11
+        WHERE id = $12`,
+      [...base, stamp, line.flagNote, id]
+    );
+  } catch (err) {
+    if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
+    await db.query(
+      `UPDATE timesheet_entries
+          SET entry_date = $1, start_min = $2, end_min = $3, client_id = $4, project_id = $5,
+              asset_id = $6, non_project = $7, hours = $8, notes = $9
+        WHERE id = $10`,
+      [...base, id]
+    );
+  }
+}
+
+/* The hours a line is worth, decided here rather than taken from the caller.
+ *
+ * WHEN A LINE NAMES AN ASSET the figure is calculated and the field is locked,
+ * so whatever the request carried is ignored: the same subtraction the form
+ * shows — this person's recorded time on that asset, less what they have
+ * already filed against it — clamped at zero. A locked field that the API will
+ * happily overwrite is not locked, it is decorated, and this application has
+ * both layers of every other restriction for the same reason.
+ *
+ * WHEN IT DOES NOT, the number is typed and kept. Leave, Holiday, Internal
+ * Meeting, Training and Admin have no asset to calculate from, and neither does
+ * project time somebody logs without naming one. Calculating those is not
+ * possible, so locking them would not make them automatic — it would make them
+ * unfileable, and take five categories of time out of the timesheet on the way.
+ *
+ * Nothing left to log is refused rather than filed as nought: a zero-hour line
+ * is not a record of anything, and the message says which case it is.
+ */
+async function hoursFor(userId, { assetId, hours }, { exceptId = null } = {}) {
+  if (!assetId) return { ok: true, hours, calculated: false };
+
+  const [recorded, logged] = await Promise.all([
+    workLog.recordedFor(db, { assetId, userId }),
+    sheets.hoursLoggedOn(db, { assetId, userId, exceptId }),
+  ]);
+  const round = (n) => Math.round(n * 100) / 100;
+  const recordedHours = round(recorded.seconds / 3600);
+  const outstanding = round(Math.max(0, recordedHours - logged));
+  /* No single line is longer than a day, and that rule predates this one. A
+     timer left running over a weekend can leave more outstanding than a line
+     can hold, so the excess stays outstanding and is offered again tomorrow —
+     which is a split across two lines, not hours quietly dropped. */
+  const left = Math.min(outstanding, sheets.MAX_LINE_HOURS);
+
+  if (recordedHours === 0) {
+    return {
+      ok: false,
+      error: 'Nothing has been recorded against that asset by you, so there are no hours to log. '
+        + 'Time is measured from Accept and Start; if you worked on it without starting the timer, '
+        + 'there is nothing for the timesheet to read.',
+      field: 'assetId',
+    };
+  }
+  if (left < sheets.MIN_LINE_HOURS) {
+    return {
+      ok: false,
+      error: `All ${recordedHours}h recorded against that asset is already on your timesheet.`,
+      field: 'assetId',
+    };
+  }
+  return { ok: true, hours: left, calculated: true };
+}
+
 router.post('/entries', requirePermission('timesheet.own'), async (req, res) => {
-  const verdict = sheets.validateEntry(req.body || {}, workSchedule.timesheetWindow());
+  /* The figure BEFORE the validation, not after.
+   *
+   * Where a line names an asset the hours are the server's, so validating what
+   * the caller sent would be validating a number nobody can type and that is
+   * about to be thrown away — a request carrying 99 would be refused for being
+   * over the daily limit rather than simply filed as the three hours the timer
+   * recorded. Calculating first means every rule below applies to the figure
+   * that actually gets filed. */
+  const worth = await hoursFor(req.user.id, req.body || {});
+  if (!worth.ok) return res.status(400).json({ error: worth.error, field: worth.field });
+
+  const verdict = sheets.validateEntry(
+    { ...(req.body || {}), hours: worth.hours }, workSchedule.timesheetWindow());
   if (!verdict.ok) return res.status(400).json(verdict);
   const line = verdict.value;
+  line.calculated = worth.calculated;
 
   const day = await ensureDay(req.user.id, line.date).catch((err) => {
     if (unavailable(err)) return null;
@@ -300,15 +451,9 @@ router.post('/entries', requirePermission('timesheet.own'), async (req, res) => 
      left. See validateEntry in src/timesheets.js. */
 
   const id = uuid();
-  await db.query(
-    `INSERT INTO timesheet_entries
-       (id, user_id, entry_date, start_min, end_min, client_id, project_id, asset_id, non_project, hours, notes)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-    [id, req.user.id, line.date, line.startMin, line.endMin, line.clientId, line.projectId,
-     line.assetId, line.nonProject, line.hours, line.notes]
-  );
+  await insertEntry(id, req.user.id, line);
 
-  const { rows } = await db.query(`${ENTRY_SELECT} WHERE e.id = $1`, [id]);
+  const rows = await selectEntries('WHERE e.id = $1', [id]);
   const said = `${line.hours}h `
     + `(${line.hours}h) — ${describeLine(rows[0])}`;
   await record(req.user.id, line.date, 'entry_added', req.user, said);
@@ -360,8 +505,18 @@ router.patch('/entries/:id', requirePermission('timesheet.own'), async (req, res
     assetId: 'assetId' in req.body ? req.body.assetId : found[0].asset_id,
     nonProject: 'nonProject' in req.body ? req.body.nonProject : found[0].non_project,
     notes: 'notes' in req.body ? req.body.notes : found[0].notes,
+    flagged: 'flagged' in req.body ? req.body.flagged : Boolean(found[0].flagged_at),
+    flagNote: 'flagNote' in req.body ? req.body.flagNote : found[0].flag_note,
   };
-  const verdict = sheets.validateEntry(merged, workSchedule.timesheetWindow());
+  /* The same lock as on the way in, and in the same order: a line naming an
+     asset is worth what the timer recorded, and this row's own hours are
+     excluded from the subtraction so an untouched edit does not shrink itself
+     to nothing. */
+  const worth = await hoursFor(req.user.id, merged, { exceptId: req.params.id });
+  if (!worth.ok) return res.status(400).json({ error: worth.error, field: worth.field });
+
+  const verdict = sheets.validateEntry(
+    { ...merged, hours: worth.hours }, workSchedule.timesheetWindow());
   if (!verdict.ok) return res.status(400).json(verdict);
   const line = verdict.value;
 
@@ -373,15 +528,8 @@ router.patch('/entries/:id', requirePermission('timesheet.own'), async (req, res
     }
   }
 
-  await db.query(
-    `UPDATE timesheet_entries
-        SET entry_date = $1, start_min = $2, end_min = $3, client_id = $4, project_id = $5,
-            asset_id = $6, non_project = $7, hours = $8, notes = $9
-      WHERE id = $10`,
-    [line.date, line.startMin, line.endMin, line.clientId, line.projectId, line.assetId,
-     line.nonProject, line.hours, line.notes, req.params.id]
-  );
-  const { rows } = await db.query(`${ENTRY_SELECT} WHERE e.id = $1`, [req.params.id]);
+  await updateEntry(req.params.id, line, found[0]);
+  const rows = await selectEntries('WHERE e.id = $1', [req.params.id]);
   await record(req.user.id, line.date, 'entry_edited', req.user,
     `now ${line.hours}h — ${describeLine(rows[0])}`);
   res.json({
@@ -603,7 +751,7 @@ async function exportRows(req) {
   const to = sheets.toISO(req.query.to) || from;
 
   const { rows } = await db.query(
-    `${ENTRY_SELECT} WHERE e.user_id = $1 AND e.entry_date BETWEEN $2 AND $3
+    `${ENTRY_SELECT_BASE}${ENTRY_SELECT_FROM} WHERE e.user_id = $1 AND e.entry_date BETWEEN $2 AND $3
       ORDER BY e.entry_date, e.created_at`,
     [userId, from, to]
   );

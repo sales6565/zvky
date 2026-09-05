@@ -523,19 +523,20 @@ module_({
 
 module_({
   module: 'Time Sheet',
-  head: 'A day at a time, in IST',
+  head: 'A weekday at a time, in IST',
   items: [
+    'Monday to Friday. There is no Saturday or Sunday row, and the API refuses a line dated to one.',
     'A line is a number of HOURS against a project, an asset or non-project time. No start and end times.',
-    'Pick an asset and the hours it has left to log are filled in — what it recorded, less what you have already filed against it, so a multi-day job is never counted twice.',
-    'A starting figure in a field you can change, and it never overwrites a number you have typed.',
+    'Pick an asset and its hours are WORKED OUT and the field locks — what it recorded, less what you have already filed against it, so a multi-day job is never counted twice. Weekend work still counts towards it.',
+    'Time with no asset — leave, a meeting, training — is typed in as before. There is nothing to calculate it from.',
+    'If a calculated figure looks wrong, flag it with a reason. Nobody edits it; the disagreement goes on the record beside it.',
     'A day over 8 hours is flagged, not refused. A long day is real; a form that refuses one is not.',
     'Submission is daily, and nobody approves it. Submitting locks the day; its owner can reopen it.',
-    'A lead reads their team\u2019s hours and nothing more — the approval queue is gone.',
   ],
   whoText: 'Everybody fills in their own. Reading a team\u2019s sits with leads and producers \u2014 18 designations. '
     + 'There is no Approve Timesheets permission any more.',
   shotName: '09-timesheet-week',
-  caption: 'A week of Draft and Submitted days.',
+  caption: 'A working week: an asset line, a flagged figure and non-project time.',
 });
 
 module_({

@@ -2163,6 +2163,35 @@ async function ensureChatExpiryWindow(db, log) {
   if (moved) log(`Schema: chat attachment expiry restamped to ${HOURS} hours on ${moved} file(s).`);
 }
 
+/* The way to disagree with a number you cannot change.
+ *
+ * Hours on an asset line are calculated and locked, so the person filling the
+ * sheet in has no way to correct one that is wrong. A locked figure with no
+ * dispute path is a figure people work around — they file the time as Admin, or
+ * stop filling the sheet in — so the entry carries a flag and a short reason
+ * instead. It changes nothing about the number; it marks it for whoever reads
+ * the team's hours.
+ *
+ * Nullable and added tolerantly, like every other column here: a deployment
+ * whose database user cannot ALTER still runs, with the flag unavailable rather
+ * than the timesheet down. */
+async function ensureTimesheetFlag(db, log) {
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'timesheet_entries'
+        AND COLUMN_NAME IN ('flagged_at','flag_note')`
+  ).catch(() => ({ rows: [] }));
+  const have = new Set(rows.map((r) => r.COLUMN_NAME));
+  if (!have.has('flagged_at')) {
+    await db.query('ALTER TABLE timesheet_entries ADD COLUMN flagged_at DATETIME NULL');
+    log('Schema: added timesheet_entries.flagged_at.');
+  }
+  if (!have.has('flag_note')) {
+    await db.query('ALTER TABLE timesheet_entries ADD COLUMN flag_note VARCHAR(500) NULL');
+    log('Schema: added timesheet_entries.flag_note.');
+  }
+}
+
 async function closeStrandedSessions(db, log) {
   const { rows: table } = await db.query(
     `SELECT TABLE_NAME AS t FROM information_schema.TABLES
@@ -2265,6 +2294,8 @@ const STEPS = [
   // AFTER the step that creates the table, or a fresh database would have it
   // created NOT NULL and this would find nothing to relax.
   ['timesheet hours only', ensureTimesheetHoursOnly],
+  // After the table exists, whose columns it adds.
+  ['timesheet entry flag', ensureTimesheetFlag],
   // After users, whose key every chat table points at.
   ['chat', ensureChat],
   // After the tables exist, and reading the window from the module that owns it.
