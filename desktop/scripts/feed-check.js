@@ -3,13 +3,55 @@
    feed precedence can be exercised for real rather than reasoned about. */
 const assert = require('node:assert');
 const Module = require('node:module');
+const fsBoot = require('node:fs');
+const osBoot = require('node:os');
+const pathBoot = require('node:path');
+
+/* Stand-in modules live in a real directory, resolved through realpathSync,
+ * and each gets a name of its own.
+ *
+ * NOT /tmp with a fixed filename, which is what this did first and what passed
+ * on Linux and failed on macOS: /tmp there is a symlink to /private/tmp, so
+ * Node caches a module under the real path while a delete keyed on /tmp misses
+ * it. Every scenario after the first then silently reused the first one's
+ * Electron — which had no isPackaged, so all three reported "run from source"
+ * while claiming to test something else. Unique paths cannot have that problem
+ * on any platform. */
+const STUBS = fsBoot.realpathSync(fsBoot.mkdtempSync(pathBoot.join(osBoot.tmpdir(), 'zvky-stubs-')));
+
+/* ONE stub file per module, whose contents are read live from globals.
+ *
+ * Not a new file per scenario, which is what this tried first and what only
+ * looked right: Node resolved and cached the boot stub, later ones were never
+ * loaded, and every scenario silently ran against an Electron with no
+ * isPackaged — reporting "run from source" while claiming to test a packaged
+ * app. It passed on Linux by luck and failed on macOS, where /tmp is a symlink
+ * and the cache keys stop lining up.
+ *
+ * Getters sidestep the whole problem. The module is loaded once and cached
+ * forever, exactly as Node wants; what it hands back is decided per scenario.
+ * updates.js destructures { app, dialog } at load, so the getter runs then and
+ * returns whatever this scenario put in place.
+ */
+const ELECTRON_STUB = pathBoot.join(STUBS, 'electron.js');
+const UPDATER_STUB = pathBoot.join(STUBS, 'electron-updater.js');
+fsBoot.writeFileSync(ELECTRON_STUB, `module.exports = {
+  get app() { return global.__zvkyApp; },
+  get dialog() { return global.__zvkyDialog; },
+  get BrowserWindow() { return global.__zvkyBrowserWindow; },
+};`);
+fsBoot.writeFileSync(UPDATER_STUB, 'module.exports = { get autoUpdater() { return global.__zvkyUpdater; } };');
+
 const realResolve = Module._resolveFilename;
 Module._resolveFilename = function (req, ...rest) {
-  if (req === 'electron') return require.resolve('/tmp/fake-electron.js');
+  if (req === 'electron') return ELECTRON_STUB;
+  if (req === 'electron-updater') return UPDATER_STUB;
   return realResolve.call(this, req, ...rest);
 };
-require('fs').writeFileSync('/tmp/fake-electron.js',
-  'module.exports = { app: { getPath: () => { throw new Error("no userData outside electron"); } } };');
+
+// What the config tests below see: no userData, because they are not in
+// Electron and read() is meant to cope with exactly that.
+global.__zvkyApp = { getPath: () => { throw new Error('no userData outside electron'); } };
 
 let pass = 0, fail = 0;
 const t = (label, fn) => { try { fn(); console.log('  ✓ ' + label); pass++; }
@@ -95,12 +137,15 @@ function scenario({ packagedFeed, settingsFeed }) {
     setFeedURL(opts) { this.feedSetTo = opts; },
   };
 
-  fs.writeFileSync('/tmp/fake-electron.js', `module.exports = {
-    app: { isPackaged: true, getPath: () => ${JSON.stringify(userData)}, getVersion: () => '1.0.1', whenReady: () => Promise.resolve() },
-    dialog: { showMessageBox: async () => ({ response: 1 }) },
-    BrowserWindow: function () {},
-  };`);
-  fs.writeFileSync('/tmp/fake-updater.js', `module.exports = { autoUpdater: global.__zvkyUpdater };`);
+  // What this scenario's Electron is. Read through the getters above.
+  global.__zvkyApp = {
+    isPackaged: true,
+    getPath: () => userData,
+    getVersion: () => '1.0.2',
+    whenReady: () => Promise.resolve(),
+  };
+  global.__zvkyDialog = { showMessageBox: async () => ({ response: 1 }) };
+  global.__zvkyBrowserWindow = function () {};
   global.__zvkyUpdater = updater;
 
   /* Left in place for the lifetime of the scenario, NOT restored after the
@@ -113,25 +158,21 @@ function scenario({ packagedFeed, settingsFeed }) {
   delete process.env.ZVKY_UPDATE_FEED_DEFAULT;
   delete process.env.ZVKY_APP_URL;
 
-  const realResolve2 = Module._resolveFilename;
-  Module._resolveFilename = function (req, ...rest) {
-    if (req === 'electron') return '/tmp/fake-electron.js';
-    if (req === 'electron-updater') return '/tmp/fake-updater.js';
-    return realResolve2.call(this, req, ...rest);
-  };
-  /* The stand-ins are cached under their own paths, so without this every
-     scenario after the first silently reuses the first one's Electron — which
-     is how scenario three came to report "not run from source" while asserting
-     something else entirely. */
-  for (const stub of ['/tmp/fake-electron.js', '/tmp/fake-updater.js']) {
-    delete require.cache[stub];
-  }
-  for (const m of ['./src/updates.js', './src/config.js']) {
-    const full = pathMod.join(__dirname, '..', m.slice(2));
-    delete require.cache[require.resolve(full)];
+  // Only these two need clearing now: the stubs are at new paths each time.
+  for (const m of ['src/updates.js', 'src/config.js']) {
+    delete require.cache[require.resolve(pathMod.join(__dirname, '..', m))];
   }
   const updates = require(pathMod.join(__dirname, '..', 'src', 'updates.js'));
-  Module._resolveFilename = realResolve2;
+
+  /* Asserted rather than assumed, because the failure mode this replaced was
+     silent: a stale stub makes every scenario below pass or fail for a reason
+     that has nothing to do with what it says it is testing. */
+  if (!updates.state) throw new Error('updates.js did not load');
+  /* The check that would have caught the whole mess above: if the stub is not
+     the one in force, nothing below is testing what it says it is. */
+  if (updates.state().status !== 'idle') {
+    throw new Error(`stale updates.js — state was ${updates.state().status} before wire()`);
+  }
 
   return { updates, updater, userData, resources };
 }
