@@ -499,6 +499,21 @@ tr.past-round{opacity:0.62;}
 /* And the button keeps its shape rather than collapsing to fit. */
 .worklog-box #d_startBtn{white-space:nowrap;}
 /* --- Activity Log ---------------------------------------------------------- */
+/* Chat Activity. Its own colours for the two things the Activity Log has no
+   equivalent of: the words somebody typed, and a file that has since gone. */
+.ca-warn{border:1px solid #f2b33d55;background:#f2b33d14;border-radius:9px;padding:10px 12px;
+  margin:10px 0 14px;font-size:11.5px;line-height:1.6;color:var(--ink-muted);}
+.ca-warn strong{color:var(--ink);}
+.ca-body{white-space:pre-wrap;word-break:break-word;color:var(--ink);line-height:1.5;}
+.ca-conv{font-size:10.5px;color:var(--ink-faint);margin-top:4px;}
+.ca-kind{display:inline-block;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;
+  padding:1px 6px;border-radius:5px;background:var(--surface-3);color:var(--ink-muted);margin-right:6px;}
+.ca-file{display:block;font-size:11px;margin-top:5px;}
+.ca-file a{color:var(--brand-accent);}
+.ca-gone{color:var(--ink-faint);font-style:italic;}
+.ca-system{color:var(--ink-faint);font-style:italic;}
+.ca-stats{display:flex;gap:18px;flex-wrap:wrap;font-size:11.5px;color:var(--ink-muted);margin:2px 0 4px;}
+.ca-stats b{color:var(--ink);font-family:'IBM Plex Mono';}
 .al-filters{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;padding:10px 0 12px;}
 .al-filters > div{display:flex;flex-direction:column;gap:3px;min-width:110px;}
 .al-filters label{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint);}
@@ -1929,6 +1944,14 @@ const SETTINGS_SECTIONS = [
   { permission:'settings.project_categories', label:'Project Categories', note:'The Category dropdown on a project. A separate list from the asset one.' },
   { permission:'settings.roles',        label:'Roles',            note:'The studio\'s designations and what each one can do.' },
   { permission:'settings.ip_allowlist', label:'IP Allowlist',     note:'Which addresses may reach this application at all.' },
+  /* The two read-only records. They were missing from this list, which is a
+     bug rather than an omission: canOpenSettings() below is what gates the
+     Settings TAB, so a designation granted the Activity Log and nothing else
+     held a permission it could not reach — the tab was not there to open. The
+     same would have been true of Chat Activity the moment somebody granted it
+     to a role that runs nothing else. */
+  { permission:'settings.activity_log', label:'Activity Log',     note:'Every action anybody has taken, across the whole application.' },
+  { permission:'settings.chat_activity', label:'Chat Activity',   note:'Every chat message in the studio. Reading it is itself recorded.' },
 ];
 /* Settings opens for anyone holding at least one of them, and shows only the
    sections they hold. */
@@ -7585,6 +7608,7 @@ async function renderSettings(){
     ${can('settings.ip_allowlist') ? '<div id="ipAllowlistSection"></div>' : ''}
     ${can('settings.permissions') ? '<div id="rolePermissionsSection"></div>' : ''}
     ${can('settings.activity_log') ? '<div id="activityLogSection"></div>' : ''}
+    ${can('settings.chat_activity') ? '<div id="chatActivitySection"></div>' : ''}
   `;
   el.querySelectorAll('.sii-link').forEach(b=>b.addEventListener('click', ()=>setTab(b.dataset.tab)));
   wireSettings();
@@ -7592,6 +7616,13 @@ async function renderSettings(){
   if(can('settings.working_hours')) renderSchedule();
   if(can('settings.permissions')) await renderRolePermissions();
   if(can('settings.activity_log')) renderActivityLog();
+  /* Drawn, not LOADED. renderChatActivity paints the header, the notice and a
+     button; nothing is fetched until somebody presses it. That is deliberate:
+     every fetch writes "Read Chat Activity" to the Activity Log, and a section
+     that loaded itself would put that line there every time anybody opened
+     Settings for any reason — which would bury the times somebody actually
+     went looking, and would be a false record of what they did. */
+  if(can('settings.chat_activity')) renderChatActivity();
   /* Managing who may reach the app stays with whoever has been given that one
      permission — it is not implied by holding the rest of this screen. The API
      refuses it regardless; hiding it keeps the screen honest about the offer. */
@@ -8246,6 +8277,176 @@ async function renderActivityLog(){
   const dl = (kind) => downloadAuthed(`/activity/export.${kind}?${params.toString()}`);
   el.querySelector('#al_xlsx').onclick = ()=>dl('xlsx');
   el.querySelector('#al_pdf').onclick = ()=>dl('pdf');
+}
+
+/* ---------- Chat Activity -------------------------------------------------
+ *
+ * The oversight screen: every message in the studio, one-to-one and group, for
+ * whoever holds settings.chat_activity. It sits under the Activity Log because
+ * they are the same kind of thing to a reader, and it is deliberately NOT part
+ * of it: what people did to the work and what people said to each other are
+ * different records with different permissions, and merging them would mean
+ * granting one to grant the other.
+ *
+ * NOTHING IS FETCHED UNTIL SOMEBODY ASKS. Every request writes a line to the
+ * Activity Log naming who looked and what they searched for, so a section that
+ * loaded itself would record a visit every time anybody opened Settings to
+ * change a priority list. The button is what makes the record mean something.
+ */
+const caState = { offset: 0, limit: 50, filters: {}, data: null, opened: false, summary: null };
+
+async function renderChatActivity(){
+  const el = document.getElementById('chatActivitySection');
+  if(!el) return;
+
+  /* The figures come from their own endpoint, which reads counts and no
+     content — so the header can say how much there is without anybody having
+     read anything, and without writing a line to the log. */
+  if(!caState.summary){
+    try{ caState.summary = await api('/chat-activity/summary'); }catch{ caState.summary = null; }
+  }
+  const sum = caState.summary;
+
+  const head = `
+    <div class="ref-head"><h3>Chat Activity</h3>
+      ${sum ? `<span class="ref-count">${sum.messages} message${sum.messages===1?'':'s'}</span>` : ''}</div>
+    <div class="ref-note">Every chat message in the studio, one-to-one and group, newest first.
+      Read-only: nothing here can be edited, removed or replied to.</div>
+    <div class="ca-warn">
+      <strong>This screen reads private conversations between colleagues.</strong>
+      Every visit is recorded in the Activity Log, naming you and what you searched for.
+      Chat files are deleted ${sum ? sum.retentionHours : 12} hours after they are sent and cannot
+      be recovered from here — an expired file shows as a placeholder, exactly as it does in chat.
+      Staff should be told that chat is logged.
+    </div>
+    ${sum ? `<div class="ca-stats">
+      <span><b>${sum.conversations}</b> conversations</span>
+      <span><b>${sum.groups}</b> of them groups</span>
+      <span><b>${sum.filesLive}</b> files still readable</span>
+      <span><b>${sum.filesExpired}</b> expired</span>
+    </div>` : ''}`;
+
+  if(!caState.opened){
+    el.innerHTML = `<div class="ref-section">${head}
+      <div style="margin-top:12px;">
+        <button class="btn btn-brand btn-sm" id="ca_open">Show chat activity</button>
+        <span style="font-size:11px;color:var(--ink-faint);margin-left:10px;">
+          Nothing is read, and nothing is logged, until you press this.</span>
+      </div></div>`;
+    el.querySelector('#ca_open').onclick = ()=>{ caState.opened = true; renderChatActivity(); };
+    return;
+  }
+
+  const f = caState.filters;
+  const params = new URLSearchParams({ limit: caState.limit, offset: caState.offset });
+  for(const [k,v] of Object.entries(f)) if(v) params.set(k, v);
+
+  let data;
+  try{ data = await api('/chat-activity?' + params.toString()); }
+  catch(err){
+    el.innerHTML = `<div class="ref-section">${head}<div class="ref-err">${escapeHTML(err.message)}</div></div>`;
+    return;
+  }
+  caState.data = data;
+
+  const from = data.total ? caState.offset + 1 : 0;
+  const to = Math.min(caState.offset + data.messages.length, data.total);
+  const opt = (value, label, selected) =>
+    `<option value="${escapeHTML(value)}"${String(selected||'')===String(value)?' selected':''}>${escapeHTML(label)}</option>`;
+
+  /* One file, as it stands right now. Two states and no third: readable, or
+     gone. The link points at the oversight download, not the panel's — see
+     src/routes/chat-activity.js for why they are separate URLs. */
+  const fileHTML = (a) => a.url
+    ? `<span class="ca-file">📎 <a href="#" data-file="${escapeHTML(a.url)}" data-name="${escapeHTML(a.fileName)}">${escapeHTML(a.fileName)}</a>
+         <span style="color:var(--ink-faint);">${Math.round((a.byteSize||0)/1024)} KB</span></span>`
+    : `<span class="ca-file ca-gone">📎 ${escapeHTML(a.fileName)} — expired and deleted</span>`;
+
+  el.innerHTML = `
+    <div class="ref-section">
+      ${head}
+      <div class="al-filters">
+        <div><label>Person</label>
+          <select id="ca_person">${opt('', 'Everybody', f.personId)}${
+            data.people.map(p=>opt(p.id, `${p.name} (${p.messages})`, f.personId)).join('')}</select></div>
+        <div><label>Kind</label>
+          <select id="ca_kind">${opt('', 'All', f.kind)}${opt('direct', 'One to one', f.kind)}${opt('group', 'Groups', f.kind)}</select></div>
+        <div><label>From</label><input type="date" id="ca_from" value="${escapeHTML(f.from||'')}"></div>
+        <div><label>To</label><input type="date" id="ca_to" value="${escapeHTML(f.to||'')}"></div>
+        <div style="flex:1.4;"><label>Search</label>
+          <input type="text" id="ca_q" placeholder="Message text, sender or group name" value="${escapeHTML(f.q||'')}"></div>
+        <div style="min-width:auto;"><label>&nbsp;</label>
+          <label style="flex-direction:row;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11.5px;color:var(--ink-muted);cursor:pointer;">
+            <input type="checkbox" id="ca_files" style="accent-color:var(--brand-accent);"${f.withFiles?' checked':''}> With a file
+          </label></div>
+        <button class="btn btn-brand btn-sm" id="ca_apply">Filter</button>
+        <button class="btn btn-ghost btn-sm" id="ca_clear">Clear</button>
+      </div>
+      ${data.messages.length ? `
+      <table class="al-table"><thead><tr>
+        <th>When</th><th>From</th><th>Message</th><th>Conversation</th>
+      </tr></thead><tbody>${data.messages.map(m=>`
+        <tr>
+          <td class="al-when">${escapeHTML(alStamp(m.at))}</td>
+          <td class="al-who">
+            <!-- Two different reasons for having no sender, and calling them the
+                 same thing was wrong: a NOTICE ("X created this group") is
+                 written by the app and never had one, while a text message with
+                 no sender is one whose author has since been deleted. Saying "a
+                 removed account" for the first invents a person who never
+                 existed. -->
+            <div class="al-name">${escapeHTML(m.sender ? m.sender.name
+              : (m.kind === 'text' ? 'A removed account' : 'The app'))}</div>
+            <div class="al-role">${escapeHTML(m.sender ? (roleInfo(m.sender.role).label || '—')
+              : (m.kind === 'text' ? '—' : 'notice'))}</div>
+          </td>
+          <td>
+            ${m.kind === 'text'
+              ? `<div class="ca-body">${escapeHTML(m.body || '')}</div>`
+              : `<div class="ca-system">${escapeHTML(m.body || m.kind)}</div>`}
+            ${(m.attachments||[]).map(fileHTML).join('')}
+          </td>
+          <td>
+            <span class="ca-kind">${m.conversation.kind === 'group' ? 'Group' : '1:1'}</span>
+            ${escapeHTML(m.conversation.label)}
+            <div class="ca-conv">${escapeHTML((m.conversation.members||[]).map(x=>x.name).join(', ') || 'nobody left in it')}</div>
+          </td>
+        </tr>`).join('')}</tbody></table>
+      <div class="al-pager">
+        <span>${from}–${to} of ${data.total}</span>
+        <div class="spacer"></div>
+        <button class="btn btn-ghost btn-sm" id="ca_prev"${caState.offset ? '' : ' disabled'}>← Newer</button>
+        <button class="btn btn-ghost btn-sm" id="ca_next"${to >= data.total ? ' disabled' : ''}>Older →</button>
+      </div>`
+      : '<div class="ref-note">Nothing matches those filters.</div>'}
+    </div>`;
+
+  const val = (id) => (document.getElementById(id)||{}).value || '';
+  const apply = () => {
+    caState.filters = {
+      personId: val('ca_person'), kind: val('ca_kind'),
+      from: val('ca_from'), to: val('ca_to'), q: val('ca_q'),
+      withFiles: document.getElementById('ca_files').checked ? '1' : '',
+    };
+    caState.offset = 0;
+    renderChatActivity();
+  };
+  el.querySelector('#ca_apply').onclick = apply;
+  el.querySelector('#ca_clear').onclick = ()=>{ caState.filters = {}; caState.offset = 0; renderChatActivity(); };
+  el.querySelector('#ca_q').onkeydown = (e)=>{ if(e.key==='Enter') apply(); };
+  const prev = el.querySelector('#ca_prev'), next = el.querySelector('#ca_next');
+  if(prev) prev.onclick = ()=>{ caState.offset = Math.max(0, caState.offset - caState.limit); renderChatActivity(); };
+  if(next) next.onclick = ()=>{ caState.offset += caState.limit; renderChatActivity(); };
+
+  /* An <a href> cannot carry an Authorization header, so a file is fetched the
+     same way the chat panel fetches one — as a blob, through api's headers. */
+  el.querySelectorAll('[data-file]').forEach(a=>{
+    a.onclick = async (e)=>{
+      e.preventDefault();
+      try{ await downloadAuthed(a.dataset.file.replace(/^\/api/, '')); }
+      catch(err){ showToast(err.message); }
+    };
+  });
 }
 
 /* The timestamp, as the studio reads it. The server stores an instant; this

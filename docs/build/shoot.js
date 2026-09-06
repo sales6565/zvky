@@ -265,7 +265,13 @@ const reset = () => {
                              ['12-settings-branding','#brandingSection'],
                              ['12-settings-ip','#ipAllowlistSection'],
                              ['12-settings-permissions','#rolePermissionsSection'],
-                             ['12-settings-activity','#activityLogSection']]) {
+                             ['12-settings-activity','#activityLogSection'],
+                             /* Chat Activity in its RESTING state: the notice, the
+                                figures and the button, with nothing read. Opening it
+                                for the picture would put a "Read Chat Activity" line
+                                in the demo's own Activity Log, and the screenshot of
+                                that screen is taken above. */
+                             ['12-settings-chat-activity','#chatActivitySection']]) {
     await shot(p, name, sel);
   }
   // The permissions screen with a role chosen.

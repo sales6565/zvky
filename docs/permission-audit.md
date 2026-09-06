@@ -13,11 +13,17 @@ first, as asked.
 
 | | |
 |---|---|
-| Permissions in the catalogue | **64**, in 9 groups |
+| Permissions in the catalogue | **65**, in 9 groups |
 | API routes | **139** |
 | Gated by a catalogue permission | **~120** (61 by `requirePermission`, the rest by a permission read inside the handler — `holds()`, `can()`, or a guard that calls one) |
 | Gated by something that is **not** a permission | **7 actions** (listed below) |
 | Deliberately open | **12** (sign-in, the password rules, your own password, your own notifications, the branding and working-hours *reads*, the Quick Tour) |
+
+One correction to this report, found while building the Chat Activity screen and left here rather
+than quietly fixed: **`settings.activity_log` was not in the page's `SETTINGS_SECTIONS` list**, and
+that list is what `canOpenSettings()` reads to decide whether the Settings TAB exists at all. So a
+designation granted the Activity Log and nothing else in Settings held a permission it could not
+reach — the tab was not there to open. Both it and `settings.chat_activity` are in the list now.
 
 Two structural points worth stating, because they explain most of the "no gate" hits in a naive scan:
 
@@ -144,6 +150,9 @@ wants. Each was flagged in an earlier round and is still as it was:
 - `user.reset_password` — **now** Super Admin only, as asked in this round. It used to be implied
   by "manage users", so a migration switched it off for the seven designations that had it only
   because it was seeded that way. Anybody who had been *given* it deliberately keeps it.
+- `settings.chat_activity` — added after this audit was written, when the studio asked for the Chat
+  Activity screen. Super Admin only, deliberately narrower than `settings.activity_log` beside it,
+  and it carries a warning shown at the moment somebody grants it.
 
 ---
 

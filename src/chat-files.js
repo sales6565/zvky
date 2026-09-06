@@ -212,6 +212,50 @@ async function forDownload(db, attachmentId, userId) {
   };
 }
 
+/* The same file, for the Chat Activity screen, WITHOUT the membership join.
+ *
+ * Written as its own function rather than as a flag on forDownload(), and named
+ * so the call site cannot be misread: a reader glancing at
+ * `forDownload(db, id, userId)` sees an authorisation argument, and a reader
+ * glancing at `forOversight(db, id)` sees that there is none. A boolean
+ * parameter would have made the safe call and the unsafe one look alike.
+ *
+ * The authorisation for this one is the route's — settings.chat_activity — and
+ * nothing else. It is deliberately not exported to anything the chat router
+ * imports.
+ *
+ * EXPIRY IS UNCHANGED. Oversight does not extend the life of a file: this asks
+ * the same isExpired() the panel asks, and returns the same 410 once the twelve
+ * hours are up. A screen that could still fetch what everybody else had lost
+ * would be a retention policy nobody wrote down. */
+async function forOversight(db, attachmentId) {
+  const { rows } = await db.query(
+    `SELECT a.id, a.file_name AS fileName, a.mime, a.byte_size AS byteSize,
+            a.stored_name AS storedName, a.expires_at AS expiresAt, a.deleted_at AS deletedAt
+       FROM chat_attachments a
+      WHERE a.id = $1`,
+    [attachmentId]
+  );
+  if (!rows.length) return { ok: false, status: 404, error: 'No such file.' };
+  const row = rows[0];
+  if (isExpired(row)) {
+    return { ok: false, status: 410, error: `This file has expired. Chat files are deleted ${HOURS} hours after they are sent.` };
+  }
+  if (!row.storedName) return { ok: false, status: 410, error: 'This file is no longer available.' };
+  const full = path.join(CHAT_DIR, path.basename(row.storedName));
+  if (!fs.existsSync(full)) {
+    return { ok: false, status: 410, error: 'This file is no longer available.' };
+  }
+  const ext = path.extname(row.fileName || '').toLowerCase();
+  return {
+    ok: true,
+    path: full,
+    fileName: row.fileName,
+    contentType: MIME[ext] || 'application/octet-stream',
+    scriptable: isScriptable(row.fileName),
+  };
+}
+
 // ------------------------------------------------------------------ sweeping
 
 /* Reclaim the disk. Two passes, because they catch different things.
@@ -292,6 +336,6 @@ function schedule(db, log = console.log) {
 
 module.exports = {
   CHAT_DIR, EXTENSIONS, ADVERTISED, MAX_BYTES, HOURS, MIME,
-  upload, record, forDownload, shape, kindOf, isExpired, isScriptable, expiryFor,
+  upload, record, forDownload, forOversight, shape, kindOf, isExpired, isScriptable, expiryFor,
   sweep, schedule,
 };

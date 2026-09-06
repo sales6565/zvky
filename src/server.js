@@ -24,6 +24,7 @@ const { activityLogger } = require('./middleware/activity');
 const idleRoutes = require('./routes/idle');
 const notificationRoutes = require('./routes/notifications');
 const chatRoutes = require('./routes/chat');
+const chatActivityRoutes = require('./routes/chat-activity');
 const chatFiles = require('./chat-files');
 const branding = require('./branding');
 const ipGate = require('./middleware/ip-allowlist');
@@ -97,6 +98,11 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/idle', idleRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/chat', chatRoutes);
+/* Its own mount, NOT a path under /api/chat. The chat router applies chat.use
+   and membership to everything below it; hanging oversight off it would put a
+   screen that reads everybody's messages behind the gate that decides whether
+   somebody may send their own. Separate mount, separate permission. */
+app.use('/api/chat-activity', chatActivityRoutes);
 app.use('/api/branding', brandingRoutes);
 app.use('/api/activity', activityRoutes);
 

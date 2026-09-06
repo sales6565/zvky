@@ -556,9 +556,17 @@ const GROUPS = [
      * everybody make them ends up with forty of them and no idea which is
      * current. That one starts with the roles that already run people.
      *
-     * There is deliberately no permission here for reading somebody else's
-     * conversation, and adding one later would not be a toggle — it would be a
-     * different product. See the note at the top of src/routes/chat.js.
+     * READING SOMEBODY ELSE'S CONVERSATION is not in this group, and that is
+     * not an omission — it is where it is on purpose. The studio asked for an
+     * oversight screen after this feature shipped, and it is
+     * settings.chat_activity, next to the Activity Log. It is not a chat
+     * permission: nothing it grants makes chat work differently, and putting it
+     * here would suggest a studio could hand it out along with "use chat".
+     *
+     * The membership rule on this router is untouched by it. Nobody reads a
+     * conversation through /api/chat that they are not in, Super Admin
+     * included; the oversight screen is a separate router with its own gate and
+     * its own record of who used it. See the header of src/routes/chat.js.
      */
     key: 'chat',
     label: 'Chat',
@@ -710,6 +718,35 @@ const GROUPS = [
         describe: 'The consolidated record of every action taken in the application, by anybody — '
           + 'who did what, when, and what changed. Read-only, and it cannot be edited or cleared '
           + 'from inside the app.',
+      },
+      {
+        key: 'settings.chat_activity',
+        label: 'View Chat Activity',
+        /* Reading what people said to each other. Its own key, in Settings
+         * rather than in the Chat group, because it is not a chat feature: it
+         * is an oversight screen that happens to be about chat, and it belongs
+         * beside the Activity Log it sits next to.
+         *
+         * SUPER ADMIN ONLY BY DEFAULT, and deliberately narrower than
+         * settings.activity_log beside it. That one defaults to the seven
+         * designations holding manageSettings, on the reasoning that a record
+         * of what people DID to the work is administrative. This is a record of
+         * what people SAID, which is a different kind of access — so it starts
+         * with one account and is extended, if at all, by somebody deciding to.
+         *
+         * managePermissions rather than `() => false`: same set, same reasoning
+         * as user.reset_password and chat.message_protected. A key nothing
+         * implies is one the seeded rows lack while the effective set has it.
+         *
+         * The danger line is shown on the Role Permissions screen beside the
+         * switch, so whoever grants it is told what they are granting at the
+         * moment they grant it. */
+        impliedBy: has('managePermissions'),
+        describe: 'Read every chat message in the studio — one-to-one and group — with its sender, '
+          + 'its conversation, when it was sent and any file still inside its retention window. '
+          + 'Every use of this screen is itself recorded in the Activity Log.',
+        danger: 'This reads private conversations between colleagues. Staff should be told that '
+          + 'chat is logged before it is granted, not after.',
       },
       {
         key: 'settings.permissions',

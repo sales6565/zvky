@@ -93,14 +93,25 @@ test('the attachment window is twelve hours', () => {
   assert.strictEqual(at.toISOString(), '2026-01-01T12:00:00.000Z');
 });
 
-test('there is no permission that grants reading other people\'s chat', () => {
-  /* The privacy decision, asserted against the catalogue rather than against a
-     route. A future "chat.view_all" would be a product decision with a
-     disclosure policy attached, not a checkbox somebody adds in passing — so
-     this fails loudly if one appears. */
+test('no CHAT permission grants reading other people\'s chat', () => {
+  /* This test used to assert that no such permission existed anywhere. The
+     studio has since asked for an oversight screen and confirmed it, so what is
+     asserted now is the narrower thing that is still true and still matters:
+     the chat.* group is unchanged, and nothing in it reads other people's
+     messages.
+
+     Oversight is settings.chat_activity, in the Settings group, behind its own
+     router. It is checked in tests/chat-activity.test.js. The split is the
+     point: a studio hands out "use chat" without handing out "read everybody's
+     chat", and that is only true while the two keys live apart. */
   const chatKeys = catalogue.KEYS.filter((k) => k.startsWith('chat.'));
   assert.deepStrictEqual(chatKeys.sort(),
     ['chat.group_create', 'chat.message_protected', 'chat.open_inbox', 'chat.use']);
+
+  const oversight = catalogue.BY_KEY.get('settings.chat_activity');
+  assert.ok(oversight, 'the oversight key exists');
+  assert.strictEqual(oversight.group, 'settings', 'and is a Settings permission, not a chat one');
+  assert.ok(oversight.danger, 'and carries the warning shown when it is granted');
 });
 
 test('the allowlist is the six formats the studio asked for, plus the jpeg alias', () => {
@@ -541,16 +552,21 @@ test('chat', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
   // ----------------------------------------------------------------- privacy
 
-  await t.test('nobody reads a conversation they are not in — the Super Admin included', async () => {
-    /* The studio's seventh testing step, and the assertion this feature is
-       most likely to lose in a later refactor. Root holds every permission in
-       the catalogue; that is what makes it the right account to refuse. */
+  await t.test('nobody reads a conversation they are not in through /api/chat — the Super Admin included', async () => {
+    /* Still true, and still the assertion this feature is most likely to lose
+       in a refactor. Root holds every permission in the catalogue — including
+       settings.chat_activity, added when the studio asked for oversight — and
+       is refused here anyway. That is the whole point of the oversight screen
+       being a separate router: granting it did not widen this one by a single
+       route. */
     const id = (await openDirect('ana', people.bo)).body.conversationId;
     await post('ana', id, { body: 'something private' });
 
     const rootPerms = (await as('root', '/auth/me')).body.user.permissions;
     assert.ok(rootPerms.includes('chat.use') && rootPerms.includes('chat.group_create'),
       'Root really does hold everything');
+    assert.ok(rootPerms.includes('settings.chat_activity'),
+      'including the one that reads everybody\'s chat — and it still does not help here');
 
     for (const who of ['root', 'cass']) {
       assert.strictEqual((await as(who, `/chat/${id}/messages`)).status, 404, `${who} is refused`);
@@ -574,10 +590,13 @@ test('chat', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   });
 
   await t.test('no chat message reaches the Activity Log', async () => {
-    /* Message content was never at risk — the middleware does not see request
-       bodies. What this pins is the METADATA: an entry per message would record
-       who talked to whom and how often, which is most of what a message log is
-       for. */
+    /* Still excluded, and the reason has changed rather than gone. It used to
+       be secrecy; it is now noise. Chat Activity reads the messages themselves,
+       from the messages table, and does it better than a line per message in a
+       log people read for something else would. What this pins is that sending
+       a message writes nothing to activity_log — so the Activity Log stays a
+       record of what people DID, and the entries in it about chat are the ones
+       about somebody READING it. */
     const id = (await openDirect('ana', people.bo)).body.conversationId;
     await post('ana', id, { body: 'not for the record' });
     await as('ana', `/chat/${id}/read`, { method: 'POST', body: { seq: 1 } });

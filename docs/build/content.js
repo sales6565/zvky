@@ -880,16 +880,27 @@ module.exports = [
     + 'application to keep in step with the studio\u2019s own.'),
 
   h2('12.7 Who can read a conversation'),
-  note('Chat is private to the people in it',
-    'Nobody outside a conversation can read it \u2014 not a Super Admin, not the holder of any permission. There is '
-    + 'no screen, export or setting that shows one person another person\u2019s messages, and no permission that '
-    + 'could be granted to produce one. The Activity Log records that a group was created, renamed, or had its '
-    + 'membership changed, because a group is a studio object with a membership; it does not record who messaged '
-    + 'whom, or what anybody said.'),
-  p('The consequence is worth stating plainly: chat cannot be used for compliance review or an HR '
-    + 'investigation. That is the cost of the guarantee, and it was chosen deliberately \u2014 a conversation people '
-    + 'know is readable by whoever administers the system is a conversation in which nobody says the difficult '
-    + 'thing.'),
+  p('This chapter said, until the studio decided otherwise, that nobody could ever read a conversation '
+    + 'they were not in. That is no longer true, and the paragraph saying it has been replaced rather '
+    + 'than left standing. What follows is what is true now.'),
+  note('Inside chat, a conversation is private to the people in it',
+    'Nobody reads a conversation through the chat panel that they are not in \u2014 not a Super Admin, not '
+    + 'the holder of any permission. There is no chat permission that opens somebody else\u2019s messages, '
+    + 'no way to reach one from the panel, and a file link is not a way round it: the membership check is '
+    + 'inside the query that fetches the bytes.'),
+  note('Outside it, there is now one screen that reads everything',
+    'Settings \u2192 Chat Activity shows every message in the studio, one-to-one and group, with its sender, '
+    + 'its conversation and its text. It is behind its own permission \u2014 View Chat Activity \u2014 which '
+    + 'starts held by the Super Admin and nobody else, and is deliberately narrower than the Activity Log '
+    + 'beside it.\n\n'
+    + 'It is a separate screen with a separate key on purpose. Granting it changes nothing about how chat '
+    + 'works, and holding every chat permission does not open it. See chapter 13.5.'),
+  p('The cost is worth stating plainly, because it did not stop being real when the studio authorised it: '
+    + 'people say different things when they know they are read, including \u201cI think this brief is '
+    + 'wrong\u201d \u2014 the sentence a studio most needs somebody to be able to send. Tell people that '
+    + 'chat is logged. In some places that is a legal expectation as well as a decent one; either way, the '
+    + 'application cannot do it for you, and the permission carries a warning saying so to whoever grants '
+    + 'it.'),
 
   h2('12.8 Your profile'),
   shot('14-profile', 'The Profile panel: your photo, and your password.'),
@@ -994,4 +1005,35 @@ module.exports = [
     'An asset still keeps its own history, a project review its own feedback trail, and a time sheet its own approval '
     + 'log. The Activity Log is the one view that crosses all of them.'),
   roles('Studio leadership. The log is readable, filterable and exportable, and editable by nobody.', ['leadership']),
+
+  h2('13.8 Chat Activity'),
+  shot('12-settings-chat-activity', 'Chat Activity, before anything has been read. Nothing is fetched, and nothing is logged, until the button is pressed.'),
+  p('Every chat message in the studio \u2014 one-to-one and group \u2014 with its sender, its conversation, when '
+    + 'it was sent and its full text. Read-only: nothing here can be edited, removed or replied to, and there is '
+    + 'no way to join a conversation from it.'),
+  bullets([
+    'Filter by person, by whether it was one-to-one or a group, by date range, by whether there was a file, or search the text.',
+    'The person filter reaches BOTH SIDES \u2014 what somebody said, and what was said in a room they are in.',
+    'A one-to-one conversation is named by both people in it; a group by its title and its current membership.',
+    'A file inside its twelve-hour window opens from here. Past it, the same placeholder as in chat.',
+    'Group notices \u2014 "X created this group" \u2014 are in the record too, marked as notices rather than as somebody\u2019s message.',
+  ]),
+  note('Reading it is itself recorded',
+    'Every visit writes a line to the Activity Log naming who looked and what they filtered by \u2014 not what they '
+    + 'read. Opening a file writes its own line naming the file. That is what makes the screen accountable rather '
+    + 'than merely permitted, and it is why the listing sits behind a button: a section that loaded itself would '
+    + 'record a visit every time anybody opened Settings for any reason, and bury the times somebody actually went '
+    + 'looking.'),
+  note('It preserves nothing',
+    'Chat files are still deleted twelve hours after they are sent, here as everywhere. This screen cannot recover '
+    + 'one, and cannot keep one alive \u2014 oversight reads what is there, it does not extend what would otherwise '
+    + 'have gone.'),
+  note('Before you grant it',
+    'View Chat Activity starts held by the Super Admin and nobody else \u2014 deliberately narrower than the '
+    + 'Activity Log above it, because what people DID to the work and what people SAID to each other are different '
+    + 'kinds of access. Extending it is a decision, not a default.\n\n'
+    + 'Tell staff that chat is logged before granting it, not after. Many organisations disclose this as a matter of '
+    + 'practice and in some places it is a legal expectation; the application cannot do it for you. The permission '
+    + 'carries this warning on the Role Permissions screen so whoever grants it reads it at the moment they do.'),
+  roles('The Super Admin alone, until somebody decides otherwise.', ['administration']),
 ];

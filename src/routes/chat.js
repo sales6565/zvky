@@ -9,36 +9,45 @@ const files = require('../chat-files');
 
 /* Chat, and the one decision in it that is a policy rather than a design.
  *
- * NOBODY CAN READ A CONVERSATION THEY ARE NOT IN. Not a Super Admin, not the
- * holder of any permission, not through any endpoint on this router. There is
- * no "view all chats" screen, no export, and no permission that could be
- * granted to produce one — the catalogue does not contain a key for it, so it
- * is not a switch somebody could find and turn on by accident.
+ * THIS HEADER USED TO SAY NOBODY COULD EVER READ A CONVERSATION THEY WERE NOT
+ * IN, and that no permission to do so existed or would be added. The studio has
+ * since asked for an oversight screen and confirmed it deliberately, so that is
+ * no longer true and the paragraph saying it has been replaced rather than left
+ * standing. What follows is what is true now.
  *
- * That is a deliberate answer to a real question, not an omission. The studio
- * already has an Activity Log, and it records what people DID to the work:
- * assignments, reviews, deliveries, settings. Chat is what people SAID to each
- * other, and the two are different in kind. A record of the second, readable by
- * whoever administers the system, changes what people are willing to say in it
- * — including "I think this brief is wrong", which is the sentence a studio
- * most needs somebody to be able to send.
+ * NOBODY READS A CONVERSATION THEY ARE NOT IN *THROUGH THIS ROUTER*. Not a
+ * Super Admin, not the holder of any permission, not through any endpoint
+ * below. Every route here is behind chat.use and every route touching one
+ * conversation is behind membership as well, and neither of those gates has
+ * been loosened. An attachment id is still not a bearer token: the membership
+ * join is inside the download query rather than checked beside it.
  *
- * The consequence, stated plainly because it is the cost of the choice: this
- * feature cannot be used for HR investigations or compliance review. If the
- * studio ever needs that, it is not a toggle to add here — it needs a decision
- * about disclosure, a retention policy, and the people using it being told
- * before they type rather than after. Building the capability quietly now and
- * deciding later is the one route that is not available, because the thing that
- * makes it safe is that it does not exist.
+ * READING EVERYBODY'S CHAT is a separate router — src/routes/chat-activity.js
+ * — behind a separate permission, settings.chat_activity, which starts held by
+ * the Super Admin alone. It is separate on purpose:
  *
- * WHAT IS RECORDED. Group administration — created, renamed, members added and
- * removed — goes to the Activity Log, because a group is a studio object with a
- * membership, and who was put in one is an administrative fact. Message traffic
- * does not, and is excluded by path in src/middleware/activity.js. That
- * exclusion covers metadata as much as content: the middleware never sees a
- * request body, so text was never at risk, but an entry per message would
- * record who talked to whom and how often, which is most of what a message log
- * is for.
+ *   - Nothing about ordinary chat changes when it is granted. There is no
+ *     branch in this file that reads it, so a mistake there cannot widen this.
+ *   - Every use of it is recorded in the Activity Log, naming who looked and
+ *     what they filtered by. Reading other people's messages leaves a trace;
+ *     taking part in your own does not.
+ *   - It is a Settings screen, next to the Activity Log, rather than a mode of
+ *     the chat panel — so it reads as oversight, which is what it is.
+ *
+ * THE COST OF THE CHANGE, stated because it is real and did not stop being real
+ * when it was authorised: people say different things when they know they are
+ * being read, including "I think this brief is wrong" — the sentence a studio
+ * most needs somebody to be able to send. That is why the permission carries a
+ * `danger` line telling whoever grants it that staff should be told first, and
+ * why the oversight screen says on its face that every visit is logged. Neither
+ * of those is a substitute for the studio actually telling people.
+ *
+ * WHAT IS RECORDED HERE. Group administration — created, renamed, members added
+ * and removed — goes to the Activity Log, because a group is a studio object
+ * with a membership. Message TRAFFIC still does not, and is still excluded by
+ * path in src/middleware/activity.js. That exclusion is now about noise rather
+ * than secrecy — a line per message would bury the log — but it stays, because
+ * the oversight screen reads the messages themselves and does it better.
  */
 
 router.use(authenticate);

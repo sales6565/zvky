@@ -1,4 +1,4 @@
-/* The 64 permissions land on only fourteen distinct sets of designations. Naming
+/* The 65 permissions land on only fourteen distinct sets of designations. Naming
    those fourteen is what makes the role notes in the manual readable: "the
    administration band" instead of eight designations repeated on every page.
    The membership comes from roles-table.json, which is read out of a pristine
