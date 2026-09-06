@@ -1,44 +1,47 @@
-# ZVKY FORGE for Windows — 1.0.0
+# ZVKY FORGE 1.0.0
 
-**[ZVKY-FORGE-Setup-1.0.0.exe](ZVKY-FORGE-Setup-1.0.0.exe)** — 78 MB
+The studio pipeline in a native window, for Windows and Mac. It opens the same
+ZVKY FORGE you use in a browser, with the same login and the same data — and
+adds an icon in your task bar or dock, notifications the operating system
+delivers, and a way to update itself.
 
-Click the file above, then the **Download** button. Run it.
+**On first launch it asks for your studio address** — the same one you type into
+a browser. Your Super Admin has it. It is remembered, and can be changed later
+from **File → Studio Address**.
 
-## What you will see
+**Notifications:** Windows and macOS each ask once, the first time a
+notification is raised, whether ZVKY FORGE may show them. Say yes. To change it
+later, that is Settings → System → Notifications on Windows, or System Settings
+→ Notifications on a Mac. The app has no setting of its own for this and cannot
+override what you tell the operating system.
 
-A blue screen: *"Windows protected your PC — unrecognised publisher."*
+Neither installer is code-signed — a certificate the studio has not bought,
+rather than anything wrong with the files. Each platform warns once, and each
+section below says exactly what you will see and what to click.
 
-That is expected. The installer is not code-signed — a certificate the studio has
-not bought, rather than anything wrong with the file.
+> This branch exists only to hand out the installers. The source is on
+> `claude/tool-roles-server-deploy-cynvp7`, under `desktop/`. **Delete this
+> branch once everyone has installed** — it has no history and shares no commits
+> with the code, so deleting it is what puts the space back.
 
-- Click **More info**, then **Run anyway**.
+## Windows
+
+**[ZVKY-FORGE-Setup-1.0.0.exe](ZVKY-FORGE-Setup-1.0.0.exe)** — 78 MB. Click it,
+then **Download**, then run it.
+
+You will see a blue screen: *"Windows protected your PC — unrecognised
+publisher."* That is expected. Click **More info**, then **Run anyway**.
 
 It installs for **you**, not for the whole machine, so it does not ask for an
 administrator password.
 
-## First launch
-
-It asks for your **studio address** — the same one you type into a browser.
-Your Super Admin has it. It is remembered, and can be changed later from
-**File → Studio Address**.
-
-## Notifications
-
-Windows asks once, the first time a notification is raised, whether ZVKY FORGE
-may show them. Say yes. To change it later: Settings → System → Notifications →
-ZVKY FORGE.
-
-## Checking the download
+To check the download arrived whole:
 
 ```
 certutil -hashfile "ZVKY-FORGE-Setup-1.0.0.exe" SHA256
 ```
 
-should print:
-
-```
-c5adf7542f3551b376cfecbf80ac8777c9ea5f90489fe8fb0c6169105082ae49
-```
+sha256 `c5adf7542f3551b376cfecbf80ac8777c9ea5f90489fe8fb0c6169105082ae49`
 
 ## Mac
 
