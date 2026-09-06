@@ -158,6 +158,12 @@ group('Installers', () => {
   ok('the installer is not one-click', builder.nsis.oneClick === false);
   ok('settings survive an uninstall', builder.nsis.deleteAppDataOnUninstall === false);
   ok('macOS target is dmg', builder.mac.target.some((t) => t.target === 'dmg'));
+  /* The two architectures are built AT THE SAME TIME and each mounts a volume
+     named after this. Without the ${arch} they collide on /Volumes, one
+     detaches the volume the other is still using, and the build dies — but
+     only sometimes, depending on which finishes first. */
+  ok('each disk image mounts under its own name', /\$\{arch\}/.test(builder.dmg.title || ''),
+    `title is "${builder.dmg.title}" — concurrent builds would share a volume`);
   ok('macOS uses no certificate, as agreed', builder.mac.identity === null);
   ok('hardened runtime off (it requires signing)', builder.mac.hardenedRuntime === false);
   /* identity: null makes electron-builder skip signing ENTIRELY. On Apple

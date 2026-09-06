@@ -83,7 +83,17 @@ mac:
     NSHumanReadableCopyright: © Zvky Design Studio
 
 dmg:
-  title: ZVKY FORGE
+  # THE ${arch} IS LOAD-BEARING. This is the name the disk image mounts under,
+  # at /Volumes/<title>, and electron-builder builds the Intel and Apple Silicon
+  # images CONCURRENTLY. Give them the same title and they mount the same
+  # volume: one finishes and detaches it, the other's detach then fails with
+  # "no such volume" and retries six times against something already gone. The
+  # build dies after a minute of that, and whether it happens at all depends on
+  # which finishes first — it passed once before failing.
+  #
+  # electron-builder's own default is "${productName} ${version}${arch}" for
+  # exactly this reason. This keeps that shape.
+  title: ZVKY FORGE ${version}${arch}
   icon: build/icon.png
   # LZFSE rather than the default zlib. The disk image lands around 15% smaller
   # for the same contents, which is the difference between a file GitHub will
