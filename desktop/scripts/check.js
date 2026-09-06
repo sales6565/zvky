@@ -218,6 +218,22 @@ group('Installers', () => {
   ok('the installer is not one-click', builder.nsis.oneClick === false);
   ok('settings survive an uninstall', builder.nsis.deleteAppDataOnUninstall === false);
   ok('macOS target is dmg', builder.mac.target.some((t) => t.target === 'dmg'));
+  /* AND a zip, which is not a duplicate of the dmg — it is the only thing
+     electron-updater will install a macOS update from. MacUpdater.js calls
+     findFile(files, 'zip', ['pkg', 'dmg']) and throws
+     ERR_UPDATER_ZIP_FILE_NOT_FOUND when there is none, so a dmg-only build
+     installs perfectly and can never update itself. That failure surfaces
+     months later, on the first release, on somebody else's Mac — exactly the
+     silent kind this file exists to catch. */
+  ok('macOS also builds the zip that updates require',
+    builder.mac.target.some((t) => t.target === 'zip'),
+    `targets are ${JSON.stringify(builder.mac.target.map((t) => t.target))} — `
+    + 'updates would fail with ERR_UPDATER_ZIP_FILE_NOT_FOUND');
+  /* Both architectures, or an Apple Silicon Mac finds only an Intel update and
+     refuses it. The dmg list above and this one have to agree. */
+  ok('the zip covers both architectures',
+    (builder.mac.target.find((t) => t.target === 'zip') || {}).arch
+      ?.join(',') === 'x64,arm64');
   /* The two architectures are built AT THE SAME TIME and each mounts a volume
      named after this. Without the ${arch} they collide on /Volumes, one
      detaches the volume the other is still using, and the build dies — but

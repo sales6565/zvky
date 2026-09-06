@@ -66,8 +66,21 @@ electronLanguages:
   - en-US
 
 mac:
+  # TWO TARGETS, AND THE ZIP IS NOT OPTIONAL.
+  #
+  # The .dmg is what a person downloads and installs from. The .zip is what
+  # electron-updater installs FROM, and it will not use anything else: see
+  # MacUpdater.js, which calls findFile(files, "zip", ["pkg", "dmg"]) and throws
+  # ERR_UPDATER_ZIP_FILE_NOT_FOUND when there isn't one. A dmg-only build
+  # therefore installs perfectly and can never update itself — and the failure
+  # arrives months later, on the first release, on somebody else's Mac.
+  #
+  # Squirrel.Mac is the reason. It swaps the .app bundle in place from an
+  # archive; a disk image is not one. There is no setting that changes this.
   target:
     - target: dmg
+      arch: [x64, arm64]
+    - target: zip
       arch: [x64, arm64]
   icon: build/icon.png
   category: public.app-category.productivity
