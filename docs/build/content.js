@@ -745,21 +745,32 @@ module.exports = [
     + 'told what they had. Press Reset password on their row in the Users tab.'),
   steps([
     'The screen says what will happen, and asks you to confirm.',
-    'A temporary password is shown \u2014 once. Copy it and give it to them.',
+    'The password they have been given is shown. Pass it on to them.',
     'Close the panel.',
   ]),
   shot('11-user-reset-password', 'The confirmation. The screen after it shows the temporary password, once.'),
   note('What the reset does, and what it deliberately does not',
     'It signs out every device that account is signed in on, and it locks the account to one '
     + 'action: choosing a new password. Until they do, nothing else in the app answers them \u2014 '
-    + 'enforced by the server, not just hidden by the screen, so the temporary password cannot be '
-    + 'used to work.\n\n'
+    + 'enforced by the server, not just hidden by the screen, so the password they are given '
+    + 'cannot be used to work.\n\n'
     + 'It does NOT tell you their old password, and nobody \u2014 at any permission level \u2014 '
-    + 'ever sees the password they then choose. The temporary one is shown once and is not stored '
-    + 'anywhere readable: if it is lost before it reaches them, reset again.\n\n'
-    + 'There is no email. This deployment has no mail transport configured, so the temporary '
-    + 'password travels by whatever channel the two of you already use. The account holder is told '
-    + 'in the app that their password was reset and by whom.'),
+    + 'ever sees the password they then choose.\n\n'
+    + 'There is no email. This deployment has no mail transport configured, so the password '
+    + 'travels by whatever channel the two of you already use. The account holder is told in the '
+    + 'app that their password was reset and by whom.'),
+  note('It is the studio\u2019s standing password, not a one-off',
+    'A reset sets the same password every time \u2014 the one every new account is also created '
+    + 'with. That is the studio\u2019s choice, so an administrator has one thing to remember and '
+    + 'one thing to say over the phone rather than a different string each time.\n\n'
+    + 'It carries a cost worth understanding. The password is not a secret and is not unique to '
+    + 'the person: anybody who knows it and their email address could sign in and set a new one '
+    + 'for them, in the window between the reset and that person signing in. The lock does not '
+    + 'prevent this \u2014 it only prevents the account being USED without a change, and the '
+    + 'change is exactly what an impostor would do. So tell the person promptly.\n\n'
+    + 'Two things reduce the risk. Set DEFAULT_USER_PASSWORD in the deployment\u2019s .env so the '
+    + 'value is not the one printed in this manual or in the source. And reset a password when the '
+    + 'person is there to receive it, rather than in advance.'),
   note('Who may do it',
     'Reset User Password is a permission like any other, and it starts switched on for the Super '
     + 'Admin and nobody else. Grant it in Settings \u2192 Permissions (chapter 13.1) to hand it to '
@@ -768,8 +779,9 @@ module.exports = [
     + 'who may do what. Otherwise the permission would be a way of taking over the studio \u2014 '
     + 'grant it to somebody, and they reset the Super Admin. Nor can you reset your own from here; '
     + 'that is Profile, with your current password.'),
-  p('Every reset is on the Activity Log, naming who did it and to whom. The temporary password is '
-    + 'not in it, and is not in the notification either.'),
+  p('Every reset is on the Activity Log, naming who did it and to whom. The password itself is not '
+    + 'in it, and is not in the notification either \u2014 the value is settable per deployment, so '
+    + 'a log quoting it would be a log that leaks whatever a studio set it to.'),
 
   h2('11.5 My Team'),
   shot('15-my-team', 'My Team: the people who report to you, what they are carrying and how far along it is.'),

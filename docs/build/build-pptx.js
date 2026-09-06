@@ -562,7 +562,7 @@ module_({
     'Add a person with their name, sign-in email, designation, reporting line and project.',
     'What a designation can do comes from the tier behind it — pick the closest match.',
     'Bulk import takes name, email and role as required columns.',
-    'RESET PASSWORD gives somebody a temporary one, signs their devices out and forces them to choose a new one. Nobody ever sees the password they pick. Super Admin only until granted in Settings.',
+    'RESET PASSWORD sets the studio\u2019s standing password \u2014 the same one new accounts get \u2014 signs their devices out and forces them to choose a new one. Tell them promptly: until they do, anybody who knows that password could set it for them. Super Admin only until granted in Settings.',
     'My Team shows the people who report to you, what they are carrying and how far along it is.',
   ],
   whoText: 'Administration — 8 designations. My Team is open to anyone who supervises people — 14.',

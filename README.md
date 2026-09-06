@@ -507,6 +507,14 @@ accidental double-seeding. To start over, drop and recreate the schema.
 **Change the demo passwords before this touches anything real.** They're
 deliberately simple for testing the permission model, not for production use.
 
+`zvky2026` is also the standing value used in two live paths: the password a new
+account is created with, and the one a Super Admin's **Reset password** sets an
+existing account back to. Both lock the account until it chooses a new one, so
+the value cannot be used to work — but it can be used to make that change, which
+means anybody who knows it and somebody's email could take over a just-created or
+just-reset account before its owner signs in. Set `DEFAULT_USER_PASSWORD` in
+`.env` so the value on your deployment is not the one printed here.
+
 ## 6. Run it
 
 ```bash

@@ -139,7 +139,29 @@ router.delete('/:id/photo', async (req, res) => {
   res.json({ ok: true, hasPhoto: false, photoUpdatedAt: null });
 });
 
-const DEFAULT_PASSWORD = 'zvky2026'; // demo default; real deployments should force a reset on first login
+/* The studio's standing password: what a new account is created with, and what
+ * an administrator's reset sets an existing one back to.
+ *
+ * ONE VALUE FOR BOTH, at the studio's request, so there is one thing to
+ * remember and one thing to say over the phone. It used to be one fixed value
+ * for a new account and a generated one for a reset, which meant an
+ * administrator handling both had two different conventions to keep straight.
+ *
+ * WHAT IT COSTS, written here rather than left to be discovered. A fixed value
+ * in the source is a value everybody with the repository knows. The account is
+ * locked to a password change the moment it is set — see must_change_password
+ * in src/middleware/auth.js — so it cannot be used to WORK. It can be used to
+ * COMPLETE THE CHANGE, which means anybody who knows this string and somebody's
+ * email can take over a just-reset account in the window before its owner signs
+ * in. Two things narrow that window and neither closes it: tell the person
+ * promptly, and set DEFAULT_USER_PASSWORD on the deployment so the value is not
+ * the one printed here.
+ *
+ * Deliberately NOT checked against passwordPolicy: it does not meet it (eight
+ * characters, no uppercase, no symbol) and it is not supposed to — it is a
+ * credential with one use, which the policy is then enforced on. Nothing sets
+ * it as a password anybody keeps. */
+const DEFAULT_PASSWORD = process.env.DEFAULT_USER_PASSWORD || 'zvky2026';
 
 // Which designations a given manager is allowed to hand out. Super admins can
 // assign anything; an admin can staff up their own projects but cannot mint
@@ -550,7 +572,10 @@ router.post('/:id/reset-password', requirePermission('user.reset_password'), asy
     });
   }
 
-  const temporaryPassword = passwordPolicy.temporaryPassword();
+  /* The studio's standing value, not a generated one — see DEFAULT_PASSWORD
+     above, including what that costs. The same string a new account is created
+     with, so an administrator has one convention rather than two. */
+  const temporaryPassword = DEFAULT_PASSWORD;
   const hash = await bcrypt.hash(temporaryPassword, BCRYPT_ROUNDS);
   /* Moving password_changed_at is what signs the account's other devices out —
      see the `pwd` claim in src/routes/auth.js. An account whose password has
@@ -562,8 +587,10 @@ router.post('/:id/reset-password', requirePermission('user.reset_password'), asy
     [hash, changedAt, target.id]
   );
 
-  // Never the value. An administrator reading the log must not be able to read
-  // a password out of it, and neither must the Activity Log below.
+  /* Still never the value in the log, even though it is now a known one. Two
+     reasons it stays out: the value can be changed per deployment, so a log
+     quoting it would be a log that leaks whatever it was set to; and a record
+     that names passwords is a habit rather than a one-off. */
   console.log(`${req.user.email} reset the password for ${target.email}.`);
   req.activity({
     module: 'users', action: 'user.reset_password', entityType: 'user',

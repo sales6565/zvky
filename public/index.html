@@ -8738,7 +8738,7 @@ function openResetPassword(id, name){
   document.getElementById('rp_body').innerHTML = `
     <p>This gives ${escapeHTML(name)} a temporary password and signs out every device they are
       signed in on. They will have to choose a new password before they can use the app again.</p>
-    <p>You will see the temporary password once, on the next screen, to pass on to them.
+    <p>They are given the studio's standing password, shown on the next screen, to pass on to them.
       You will never see the password they then choose.</p>`;
   const confirm = document.getElementById('rp_confirm');
   confirm.style.display = '';
@@ -8766,10 +8766,17 @@ document.getElementById('rp_confirm').addEventListener('click', async ()=>{
   }
   document.getElementById('rp_title').textContent = `Temporary password for ${resetPwTarget.name}`;
   document.getElementById('rp_body').innerHTML = `
-    <p>Give ${escapeHTML(resetPwTarget.name)} this password. It is shown once and cannot be
-      looked up again — if it is lost, reset the password a second time.</p>
+    <p>Give ${escapeHTML(resetPwTarget.name)} this password.</p>
     <div class="temp-pw" id="rp_value">${escapeHTML(res.temporaryPassword)}</div>
-    <p>${escapeHTML(res.message || '')}</p>`;
+    <p>${escapeHTML(res.message || '')}</p>
+    <!-- Said here rather than only in the manual, because this is the screen
+         somebody is looking at when it matters. The account is locked to a
+         password change, so this cannot be used to work — but it can be used
+         to make that change, which is why the window matters. -->
+    <p style="color:var(--ink-faint);">This is the studio's standing password, the same one every
+      new account starts with. It is not unique to ${escapeHTML(resetPwTarget.name)} and is not a
+      secret, so tell them promptly: until they choose a new one, anybody who knows this password
+      and their email address could set it for them.</p>`;
   btn.style.display = 'none';
   document.getElementById('rp_cancel').textContent = 'Done';
   showToast(`Password reset for ${resetPwTarget.name}.`);
