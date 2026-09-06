@@ -81,20 +81,30 @@ operating system's answer, in either direction.
 
 ## Updating
 
-It checks quietly a few seconds after it starts. **Nothing downloads and nothing
-installs on its own.**
+**Automatic. Nobody presses anything.**
 
-- When there is a new version, a red bar appears across the top of the window:
-  *"Version 1.1.0 of ZVKY FORGE is available."* with **Update Now** and
-  **Later**.
-- **Check for Updates…** under File (Windows) or the application menu (Mac) does
-  the same check on demand, and always answers — including "you have the latest
-  version", which a silent button never tells you.
-- **Update Now** downloads, showing progress. When it has finished it asks
-  again before restarting, because that is the step that closes what you are
-  looking at.
+- The app checks a few seconds after it starts, and every six hours while it
+  stays open. The second part matters: this is an application people leave
+  running for a week, and without it "automatic" would only hold for whoever
+  restarted anyway.
+- A new version **downloads in the background**. A red bar appears saying so —
+  it is a notice, not a question. Ignoring it is fine.
+- It **installs when you close ZVKY FORGE**, silently, adding a few seconds to
+  a close you were doing anyway. Nothing is interrupted, because nothing is
+  running.
 
-### If Check for Updates says there is nowhere to check
+That last point is the whole reason this is safe to leave automatic. An updater
+that restarts an application while somebody is mid-review is the kind people
+learn to switch off; this one only ever acts at a moment the person chose.
+
+**Restart Now**, on the bar or in the dialog, is there for somebody who wants it
+immediately. It is an accelerator, not a step — if nobody ever presses it, every
+copy still ends up updated.
+
+**Check for Updates…** in the menu still exists, for asking on demand and
+because it is the one place that reports a misconfigured update address.
+
+### If Check for Updates says### If Check for Updates says there is nowhere to check
 
 A copy built without an update address has no `app-update.yml` inside it, and
 older builds reported that as a raw

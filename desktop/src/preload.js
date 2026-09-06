@@ -130,6 +130,8 @@ function build() {
     parts.go.disabled = true;
     ipcRenderer.invoke('zvky:install-update');
   });
+  /* Hiding the bar is safe: the update is already downloading and will apply
+     on the next close whether this is on screen or not. */
   parts.dismiss.addEventListener('click', () => remove());
 
   /* documentElement, not body: the application owns <body>, and appending to
@@ -156,21 +158,26 @@ function paint(state) {
   build();
   const version = state.version ? `Version ${state.version}` : 'A new version';
 
+  /* A NOTICE, not a prompt. Updates download and install by themselves now, so
+     none of these states is waiting on the person reading them — the wording
+     says what will happen rather than asking whether it should. The button is
+     an accelerator for somebody who wants it sooner; dismissing it, or ignoring
+     it entirely, changes nothing about the outcome. */
   if (s === 'available') {
-    parts.msg.innerHTML = `<b>${version}</b> of ZVKY FORGE is available.`;
+    parts.msg.innerHTML = `<b>${version}</b> of ZVKY FORGE is downloading.`;
     parts.track.hidden = true;
-    parts.go.textContent = 'Update Now';
+    parts.go.textContent = 'Restart Now';
     parts.go.disabled = false;
     parts.dismiss.hidden = false;
   } else if (s === 'downloading') {
-    parts.msg.innerHTML = `Downloading <b>${version}</b>…`;
+    parts.msg.innerHTML = `Downloading <b>${version}</b>… it installs when you close the app.`;
     parts.track.hidden = false;
     parts.fill.style.width = `${Math.max(2, state.percent || 0)}%`;
-    parts.go.textContent = 'Downloading…';
-    parts.go.disabled = true;
-    parts.dismiss.hidden = true;
+    parts.go.textContent = 'Restart Now';
+    parts.go.disabled = false;
+    parts.dismiss.hidden = false;
   } else {
-    parts.msg.innerHTML = `<b>${version}</b> is ready. It installs when you restart.`;
+    parts.msg.innerHTML = `<b>${version}</b> is ready — it installs when you close ZVKY FORGE.`;
     parts.track.hidden = true;
     parts.go.textContent = 'Restart Now';
     parts.go.disabled = false;

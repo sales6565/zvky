@@ -1,18 +1,30 @@
 /* Updating the wrapper.
  *
- * THE SHAPE THE STUDIO ASKED FOR, and each part of it is a decision:
+ * FULLY AUTOMATIC, as the studio asked for after living with the alternative.
+ * Nobody presses anything:
  *
- *   CHECKED SILENTLY ON LAUNCH. autoDownload is off, so the check is a few
- *   kilobytes of manifest and nothing is fetched behind anybody's back.
+ *   CHECKED ON LAUNCH, and every few hours after it. The second part matters
+ *   more than it looks — a machine left signed in for a fortnight would
+ *   otherwise never look again, and this app is the kind that stays open.
  *
- *   SHOWN, NOT ACTED ON. A new version puts a bar at the top of the window
- *   saying so. Nothing downloads and nothing installs until somebody presses
- *   Update Now — an application that restarts itself mid-review is one people
- *   learn to distrust.
+ *   DOWNLOADED IN THE BACKGROUND. autoDownload is on, so by the time anybody
+ *   is told anything, the new version is already on the disk and the install
+ *   cannot fail halfway for want of a network.
  *
- *   INSTALLED ONLY ON A CLICK, and the click is the same one whether it came
- *   from the bar or from the menu. One path, so the two cannot behave
- *   differently.
+ *   INSTALLED WHEN THE APP IS CLOSED, not while somebody is using it. That is
+ *   the whole reason this shape is safe to make automatic. An updater that
+ *   restarts an application mid-review is the one people learn to distrust —
+ *   so this one waits for a moment the person chose anyway, and takes a few
+ *   extra seconds of a close they were already doing.
+ *
+ * THE BAR IS NOW A NOTICE, NOT A PROMPT. It says a new version is ready and
+ * will apply when the app is closed. The Restart Now on it is an accelerator
+ * for somebody who wants it immediately — not a step, and not something the
+ * update waits for.
+ *
+ * WHAT IS STILL A CLICK: nothing, on the ordinary path. Check for Updates in
+ * the menu remains, because somebody who wants to know now should be able to
+ * ask, and because it is the one place that can report a misconfigured feed.
  *
  * WHERE IT LOOKS is baked into the package by electron-builder from the
  * `publish` block in electron-builder.yml — a plain folder on the studio's own
@@ -61,6 +73,9 @@ function set(patch) {
   Object.assign(current, patch);
   publish();
 }
+
+// How often a running copy looks again. See wire().
+const RECHECK_MS = 6 * 60 * 60 * 1000;
 
 const usable = () => Boolean(autoUpdater) && app.isPackaged;
 
@@ -190,9 +205,14 @@ function wire(windowGetter) {
     return;
   }
 
-  // Nothing is fetched until somebody asks for it. This is the whole policy.
-  autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = false;
+  /* The two lines that make it automatic.
+     
+     autoInstallOnAppQuit is the one doing the careful work: electron-updater
+     installs the downloaded version as the app exits, silently, with no window
+     and no prompt. Per-user NSIS, so no administrator either. Nothing is
+     interrupted, because the app was closing anyway. */
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.logger = null;
 
   autoUpdater.on('checking-for-update', () => set({ status: 'checking', message: null }));
@@ -217,6 +237,17 @@ function wire(windowGetter) {
      neither the window appearing nor the application's own first load — an
      update check is never the most urgent thing happening at startup. */
   setTimeout(() => { checkQuietly(); }, 4000);
+
+  /* And again while it runs. Without this, an automatic updater is only
+     automatic for people who restart — and a studio leaves this open across a
+     week. Six hours is often enough that a version published in the morning is
+     downloaded by the afternoon, and rare enough to be nothing on a manifest of
+     a few hundred bytes.
+     
+     unref() so a pending timer never keeps the process alive at quit, which is
+     precisely the moment the install wants to happen. */
+  const timer = setInterval(() => { checkQuietly(); }, RECHECK_MS);
+  if (timer.unref) timer.unref();
 }
 
 /* An error somebody can act on. electron-updater's own messages are accurate
@@ -320,63 +351,82 @@ async function checkManually(win) {
     return { ...current };
   }
 
-  /* There is one. Ask, rather than starting: this is the click the studio
-     asked to be the only thing that begins an install. */
+  /* There is one, and it is ALREADY DOWNLOADING — autoDownload started it the
+     moment the check found it. So this reports rather than asks: offering
+     "Update Now / Not Now" would be a choice about something already under way,
+     and "Not Now" would not stop it.
+     
+     The one thing worth offering is going faster. Restart Now is there for
+     somebody who does not want to wait for their next close; declining changes
+     nothing, because the install happens on that close either way. */
   set({ status: 'available', version });
   const { response } = await dialog.showMessageBox(win || undefined, {
     type: 'info',
     title: 'Update available',
-    message: `ZVKY FORGE ${version} is available.`,
-    detail: `You are running ${app.getVersion()}. The update downloads first, and installs when you choose to restart.`,
-    buttons: ['Update Now', 'Not Now'],
-    defaultId: 0,
+    message: `ZVKY FORGE ${version} is downloading.`,
+    detail: `You are running ${app.getVersion()}. It installs by itself when you next close `
+      + 'ZVKY FORGE — there is nothing to do. Restart now if you would rather have it straight away.',
+    buttons: ['Restart Now', 'OK'],
+    defaultId: 1,
     cancelId: 1,
   });
-  if (response === 0) downloadAndInstall(win);
+  if (response === 0) await installNow(win);
   return { ...current };
 }
 
-/* Download, then install on a second confirmation.
+/* Install the downloaded version right now, rather than waiting for a close.
  *
- * Two steps rather than one, because they interrupt differently: a download
- * costs bandwidth and can happen while somebody keeps working, and an install
- * closes the application. Collapsing them would mean pressing "Update Now"
- * quits the app at an unpredictable moment later, which is the behaviour people
- * complain about in every application that does it. */
-async function downloadAndInstall(win) {
+ * An ACCELERATOR, and nothing depends on it. If nobody ever presses it the
+ * update still applies — autoInstallOnAppQuit sees to that when the app is
+ * closed. This exists only for somebody who has just been told an update is
+ * waiting and would rather have it immediately.
+ *
+ * Still confirms, because this one DOES interrupt: it closes the application
+ * there and then. That is the opposite of the automatic path, which is safe
+ * precisely because it never does.
+ */
+async function installNow(win) {
   if (!usable()) return { ...current };
-  // The check that found this update may have been a while ago, and the address
-  // could have been changed since.
-  const feed = applyFeed();
-  if (!feed.ok) {
-    set({ status: 'unsupported', message: feed.missing ? NO_FEED : feed.error });
-    return { ...current };
-  }
-  try {
-    set({ status: 'downloading', percent: 0 });
-    await autoUpdater.downloadUpdate();
-  } catch (err) {
-    set({ status: 'error', message: friendly(err) });
-    await dialog.showMessageBox(win || undefined, {
-      type: 'warning', title: 'Update', message: 'The update could not be downloaded.',
-      detail: current.message, buttons: ['OK'],
+
+  if (current.status !== 'ready') {
+    /* Downloaded in the background, so it may not have finished. Waiting here
+       rather than refusing: the person asked for it now, and "not yet" is a
+       worse answer than a few seconds. */
+    const waited = await new Promise((resolve) => {
+      if (current.status === 'ready') return resolve(true);
+      const started = Date.now();
+      const poll = setInterval(() => {
+        if (current.status === 'ready') { clearInterval(poll); resolve(true); }
+        else if (current.status === 'error' || Date.now() - started > 120000) {
+          clearInterval(poll); resolve(false);
+        }
+      }, 500);
     });
-    return { ...current };
+    if (!waited) {
+      await dialog.showMessageBox(win || undefined, {
+        type: 'info', title: 'Update',
+        message: 'The update is still downloading.',
+        detail: 'It will install by itself when you next close ZVKY FORGE. Nothing needs doing.',
+        buttons: ['OK'],
+      });
+      return { ...current };
+    }
   }
 
   const { response } = await dialog.showMessageBox(win || undefined, {
     type: 'info',
-    title: 'Update ready',
-    message: `ZVKY FORGE ${current.version || ''} is ready to install.`,
+    title: 'Restart to update',
+    message: `ZVKY FORGE ${current.version || ''} is ready.`,
     detail: 'The application will close and reopen. Anything unsaved in a form should be saved first.',
-    buttons: ['Restart Now', 'Later'],
+    buttons: ['Restart Now', 'Cancel'],
     defaultId: 0,
     cancelId: 1,
   });
   if (response === 0) {
     /* isSilent false so a person sees the installer do its work rather than
        wondering whether anything happened; isForceRunAfter true so they land
-       back where they were. */
+       back where they were. The automatic path on quit is silent instead —
+       nobody is watching it. */
     setImmediate(() => autoUpdater.quitAndInstall(false, true));
   }
   return { ...current };
@@ -430,7 +480,7 @@ module.exports = {
   wire,
   checkQuietly,
   checkManually,
-  downloadAndInstall,
+  installNow,
   promptForFeed,
   hasPackagedFeed,
   state: () => ({ ...current }),

@@ -1,7 +1,7 @@
 {
   "name": "zvky-forge-desktop",
   "productName": "ZVKY FORGE",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "The ZVKY FORGE pipeline, in a native window.",
   "private": true,
   "main": "src/main.js",

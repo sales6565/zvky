@@ -111,17 +111,37 @@ group('No address is baked in', () => {
   ok('the address is validated before it becomes an origin', /function normalise/.test(config));
 });
 
-group('Updates: checked quietly, installed on a click', () => {
-  ok('nothing downloads by itself', /autoDownload = false/.test(updates));
-  ok('nothing installs on quit', /autoInstallOnAppQuit = false/.test(updates));
+group('Updates: automatic, and installed only on a close', () => {
+  /* THE POLICY CHANGED. It was: check quietly, download and install only on a
+     click. It is now fully automatic at the studio's request, and these
+     assertions moved with it — a check that still demanded autoDownload be off
+     would have failed honestly, but one that merely mentioned the old wording
+     would have passed while describing something untrue. */
+  ok('updates download by themselves', /autoDownload = true/.test(updates));
+  ok('and install as the app closes', /autoInstallOnAppQuit = true/.test(updates));
   ok('the launch check is quiet', /setTimeout\(\(\) => \{ checkQuietly\(\); \}/.test(updates));
-  ok('quitAndInstall runs only from downloadAndInstall',
-    (updates.match(/quitAndInstall/g) || []).length === 1);
-  /* The click has to be a click. If the bar called quitAndInstall on paint, an
-     update would restart somebody's machine mid-review. */
-  ok('the bar installs only from a click handler',
+  /* The half that is easy to leave out. Without it, an app left open for a
+     fortnight — which is how this one is used — never looks again, and
+     "automatic" holds only for people who restart anyway. */
+  ok('a running copy keeps looking', /setInterval\(\(\) => \{ checkQuietly\(\); \}, RECHECK_MS\)/.test(updates),
+    'otherwise it is automatic only for whoever restarts');
+  ok('and that timer cannot hold the process open at quit', /timer\.unref/.test(updates),
+    'quit is exactly when the install wants to run');
+
+  /* THE ONE THING THAT MUST STILL NEVER HAPPEN BY ITSELF. Automatic means
+     installed on a close the person chose — never a restart in the middle of
+     their work. quitAndInstall is what would do that, so it stays reachable
+     only from the explicit Restart Now. */
+  ok('nothing restarts the app without being asked',
+    (updates.match(/quitAndInstall/g) || []).length === 1
+    && /async function installNow/.test(updates),
+    'the automatic path installs on quit; quitAndInstall is the accelerator only');
+  ok('and the bar never triggers it on paint',
     /parts\.go\.addEventListener\('click'/.test(preload)
     && !/paint[\s\S]{0,200}install-update/.test(preload));
+  ok('the bar reads as a notice, not a prompt',
+    /installs when you close/.test(preload),
+    'nothing there is waiting on the person reading it');
   ok('a manual check answers every outcome',
     (updates.match(/showMessageBox/g) || []).length >= 4);
 

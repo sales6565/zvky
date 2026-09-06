@@ -262,7 +262,7 @@ ipcMain.handle('zvky:close-window', (event) => {
   if (w && w !== win) w.close();
 });
 ipcMain.handle('zvky:check-updates', () => updates.checkManually(win));
-ipcMain.handle('zvky:install-update', () => updates.downloadAndInstall(win));
+ipcMain.handle('zvky:install-update', () => updates.installNow(win));
 
 app.on('second-instance', () => {
   if (!win) return;
