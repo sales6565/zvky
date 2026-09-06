@@ -97,6 +97,14 @@ function place(file) {
   const sum = sha256(source);
   const lines = [`### ${name}`, ''];
 
+  /* Whatever a previous build left under this name goes first — including when
+     it was split and this one is not. Leaving those behind would put orphaned
+     .part files on the page next to the whole file they no longer belong to,
+     which is worse than either on its own. */
+  for (const stale of fs.readdirSync(page)) {
+    if (stale.startsWith(`${name}.part`)) fs.unlinkSync(path.join(page, stale));
+  }
+
   if (size < LIMIT) {
     fs.copyFileSync(source, path.join(page, name));
     lines.push(`**[${name}](${name})** — ${mb(size)} MB. Click it, then **Download**.`);
@@ -104,9 +112,6 @@ function place(file) {
     /* Too big for one file. Split, and say plainly how to put it back — with
        the command for the platform the file is for, since somebody collecting
        a Mac build is on a Mac. */
-    for (const stale of fs.readdirSync(page)) {
-      if (stale.startsWith(`${name}.part`)) fs.unlinkSync(path.join(page, stale));
-    }
     execFileSync('split', ['-b', String(PART_SIZE), '-d', '-a', '1', source,
       path.join(page, `${name}.part`)]);
     const parts = fs.readdirSync(page).filter((f) => f.startsWith(`${name}.part`)).sort();
