@@ -49,6 +49,22 @@ const COLLECTIONS = {
     extra: ['color'],
     usedBy: { table: 'projects', column: 'category' },
   },
+  /* The stages a project is planned in — Art, Animation, and whatever else a
+   * studio adds. Deliberately NOT the asset type list, which the first two
+   * names overlap with: an asset type says what a thing is, a milestone type
+   * says which stretch of a project's calendar you are naming, and a studio
+   * that added "Rigging" as a milestone would not want it appearing in the
+   * dropdown on Add Asset.
+   *
+   * `usedBy` points at the milestone rows rather than at projects, because
+   * that is where a type is actually held: retiring "Art" asks whether any
+   * project has an Art milestone, which is the question worth asking. */
+  milestone_types: {
+    table: 'milestone_types',
+    singular: 'milestone type',
+    extra: ['color'],
+    usedBy: { table: 'project_milestones', column: 'milestone_type' },
+  },
   roles: {
     table: 'roles',
     singular: 'role',
@@ -63,7 +79,7 @@ const COLLECTION_NAMES = Object.keys(COLLECTIONS);
    the definitions rather than inline in create(), so adding a list of this
    shape is one entry in each place and not a condition somebody has to notice
    inside a function. */
-const PLAIN = ['priorities', 'categories', 'project_categories'];
+const PLAIN = ['priorities', 'categories', 'project_categories', 'milestone_types'];
 
 let cache = Object.fromEntries(COLLECTION_NAMES.map((name) => [name, []]));
 let loaded = false;

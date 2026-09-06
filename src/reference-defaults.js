@@ -27,6 +27,22 @@ const PRIORITIES = [
   { key: 'low',  label: 'Low',    color: '#6b7a8f', position: 10, isSystem: false },
 ];
 
+/* The stages a project is planned in.
+ *
+ * Two, and only two, because those are the two the studio named — and unlike
+ * the category lists, which start empty so nothing is assumed about how a
+ * studio groups its work, this one has to start non-empty: the Milestones
+ * column cannot be used at all until at least one type exists, and shipping an
+ * empty list would mean the feature does nothing until somebody finds Settings.
+ * Rigging, Lighting and the rest are added there, not here.
+ *
+ * Colours are the two the board already uses for those words, so a milestone
+ * chip and an Animation asset are not two different blues. */
+const MILESTONE_TYPES = [
+  { key: 'art',       label: 'Art',       color: '#ff5a36', position: 20, isSystem: false },
+  { key: 'animation', label: 'Animation', color: '#4fb3ff', position: 10, isSystem: false },
+];
+
 const ROLES = [
   {
     key: "super_admin",
@@ -570,4 +586,4 @@ const ROLES = [
   }
 ];
 
-module.exports = { ASSET_TYPES, PRIORITIES, ROLES };
+module.exports = { ASSET_TYPES, PRIORITIES, MILESTONE_TYPES, ROLES };

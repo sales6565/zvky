@@ -5,6 +5,7 @@ const router = asyncRouter();
 const db = require('../db');
 const { authenticate, requirePermission } = require('../middleware/auth');
 const { visibleProjects } = require('../permissions');
+const projectMilestones = require('../project-milestones');
 const clients = require('../clients');
 const lifecycle = require('../lifecycle');
 
@@ -109,6 +110,18 @@ async function clientsFor(user, { includeArchived = false } = {}) {
   const NONE = { count: 0, bidHours: 0, spentSeconds: 0 };
   const totalsIn = (projectId) => assetsPerProject.get(projectId) || NONE;
 
+  /* The dated stages under each project, for the Milestones column. Fetched
+     here, for every project on the screen at once, rather than per row — the
+     same reasoning as the asset counts above. A project with none is absent
+     from the map and reads as an empty list, which is what the column draws a
+     dash for. */
+  const allProjectIds = [
+    ...projects.map((p) => p.id),
+    ...[...archivedProjects.values()].flat().map((p) => p.id),
+  ];
+  const milestonesBy = await projectMilestones.forProjects(db, allProjectIds);
+  const milestonesIn = (projectId) => milestonesBy.get(projectId) || [];
+
   return rows
     .filter((c) => includeArchived || c.is_active)
     .filter((c) => seesEverything || c.created_by === user.id || byClient.has(c.id)
@@ -136,11 +149,13 @@ async function clientsFor(user, { includeArchived = false } = {}) {
           isActive: true, closedAt: p.closed_at || null,
           status: p.closed_at ? 'closed' : 'active',
           ...projectTotals(totalsIn(p.id)),
+          milestones: milestonesIn(p.id),
         })),
         archivedProjects: archived.map((p) => ({
           ...projectFields(p), isActive: false,
           closedAt: p.closed_at || null, status: 'archived',
           ...projectTotals(totalsIn(p.id)),
+          milestones: milestonesIn(p.id),
         })),
         projectCount: live.length,
       };

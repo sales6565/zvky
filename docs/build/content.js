@@ -205,6 +205,8 @@ module.exports = [
       ['Category', 'What kind of job it is \u2014 from the Project Categories list, which the studio keeps in Settings.'],
       ['Start Date', 'When the project begins. Optional.'],
       ['End Date', 'When it is due to finish. Optional.'],
+      ['Milestones', 'The dated stages inside the project \u2014 Art from here to here, Animation from there to '
+        + 'there \u2014 one line each. Only the stages that apply to that project; a project with none shows a dash.'],
       ['Total Bid Hours', 'Every asset\u2019s Man Hours estimate, added up. What the project was quoted at.'],
       ['Spent Time', 'The hours actually recorded against its assets.'],
       ['Status', 'Active, closed or archived.'],
@@ -959,7 +961,7 @@ module.exports = [
   roles('The studio name and colour are leadership’s to set.', ['leadership']),
 
   h2('13.4 The value lists'),
-  p('Five lists feed the dropdowns on the forms. Each is edited in Settings, and each is its own permission.'),
+  p('Six lists feed the dropdowns on the forms. Each is edited in Settings, and each is its own permission.'),
   table(
     ['List', 'What it feeds'],
     [
@@ -967,6 +969,8 @@ module.exports = [
       ['Priorities', 'The Priority dropdown on Add Asset and in the asset panel.'],
       ['Asset Categories', 'The Category dropdown on an asset \u2014 what kind of thing it is. Starts empty.'],
       ['Project Categories', 'The Category dropdown on a project \u2014 what kind of job it is. A separate list, starting empty.'],
+      ['Milestone Types', 'The stages a project can be planned in \u2014 the Milestones column. Art and Animation to '
+        + 'begin with; add the studio\u2019s own.'],
       ['Roles', 'The Role dropdown on Add User. What a designation can do comes from the tier behind it.'],
     ],
     [2400, 6960]

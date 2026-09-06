@@ -607,7 +607,7 @@ module_({
   items: [
     'Working hours — the standard day the Idle report measures against.',
     'Branding — the studio name and the colour used across the application.',
-    'Five value lists: Scope of Work, Priorities, Asset Categories, Project Categories and Roles.',
+    'Six value lists: Scope of Work, Priorities, Asset Categories, Project Categories, Milestone Types and Roles.',
     'Renaming a value is safe; a value in use cannot be deleted, only deactivated.',
     'A person given one Settings permission gets this page with exactly that one section on it.',
   ],

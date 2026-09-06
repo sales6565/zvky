@@ -867,6 +867,20 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
 .cm-existing{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px;}
 .pill{font-size:11.5px;background:var(--surface-3);color:var(--ink-muted);padding:3px 8px;border-radius:10px;}
 .new-client-row{display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center;}
+/* The milestone rows on both project forms. A type, two dates and a way to take
+   the row off again — laid out in a grid rather than a table so it collapses
+   sensibly in a modal that is narrower than the screen. */
+.ms-wrap{margin-top:4px;}
+.ms-note{font-size:11px;color:var(--ink-faint);margin:-2px 0 7px;line-height:1.4;}
+.ms-row{display:grid;grid-template-columns:1.3fr 1fr 1fr auto;gap:6px;align-items:center;margin-bottom:6px;}
+.ms-row select,.ms-row input{margin:0;}
+.ms-row .ms-drop{border:0;background:transparent;color:var(--ink-faint);cursor:pointer;font-size:16px;line-height:1;padding:0 4px;width:auto;}
+.ms-row .ms-drop:hover{color:var(--brand-accent);}
+.ms-empty{font-size:11.5px;color:var(--ink-faint);margin-bottom:7px;}
+/* The soft one. Amber rather than the refusal red used by .ref-err, because
+   nothing here is being refused — the save goes through either way. */
+.ms-warn{font-size:11.5px;color:#f2b33d;margin-top:7px;line-height:1.45;}
+.ms-warn:empty{display:none;}
 .new-client-row input{margin:0;}
 #p_fields{border:none;padding:0;margin:0;}
 #p_fields:disabled{opacity:.45;}
@@ -1048,6 +1062,13 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
         <div><label>End Date <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional)</span></label>
           <input type="date" id="p_end"></div>
       </div>
+      <div id="p_milestonesWrap" class="ms-wrap">
+        <label>Milestones <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional)</span></label>
+        <div class="ms-note">The stages inside this project, each with its own dates. Only the ones that apply — a project needing just Art and Animation shows just those.</div>
+        <div id="p_milestones"></div>
+        <button type="button" class="btn btn-ghost btn-sm" id="p_addMilestone">+ Add Milestone</button>
+        <div class="ms-warn" id="p_milestoneWarn"></div>
+      </div>
       <label>Team leads on this project</label><div class="checklist" id="p_leads"></div>
       <label>Production coordinators on this project</label><div class="checklist" id="p_coords"></div>
       <label>Supervision and Creative Direction <span class="count-note" id="p_supervisionCount">(0/2 selected)</span></label>
@@ -1095,6 +1116,13 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
         <input type="date" id="ep_start"></div>
       <div><label>End Date <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional)</span></label>
         <input type="date" id="ep_end"></div>
+    </div>
+    <div id="ep_milestonesWrap" class="ms-wrap">
+      <label>Milestones <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional)</span></label>
+      <div class="ms-note">The stages inside this project, each with its own dates.</div>
+      <div id="ep_milestones"></div>
+      <button type="button" class="btn btn-ghost btn-sm" id="ep_addMilestone">+ Add Milestone</button>
+      <div class="ms-warn" id="ep_milestoneWarn"></div>
     </div>
     <label>Team leads on this project</label><div class="checklist" id="ep_leads"></div>
     <label>Production coordinators on this project</label><div class="checklist" id="ep_coords"></div>
@@ -1436,6 +1464,12 @@ let CATEGORIES = [];
    them. Ships empty, like the asset list, so the field is optional until a
    studio fills it in. */
 let PROJECT_CATEGORIES = [];
+/* The stages a project can be planned in. A third list, separate again: two of
+   its labels also appear in the asset TYPES list above, and reading that one
+   here would offer Character and Prop as milestones. Ships with Art and
+   Animation rather than empty — unlike the two category lists — because the
+   Milestones column cannot be used at all until at least one type exists. */
+let MILESTONE_TYPES = [];
 
 /* The studio's own name, tagline and logo. Fetched without a token, because the
    sign-in screen wears them and that screen has no token yet. Falls back to the
@@ -1485,6 +1519,7 @@ async function loadReferenceData(){
      so the field is simply optional until a Super Admin fills the list in. */
   CATEGORIES = (data.categories || []).map(c=>({ id:c.key, label:c.label, color:c.color||'var(--ink-muted)' }));
   PROJECT_CATEGORIES = (data.projectCategories || []).map(c=>({ id:c.key, label:c.label, color:c.color||'var(--ink-muted)' }));
+  MILESTONE_TYPES = (data.milestoneTypes || []).map(m=>({ id:m.key, label:m.label, color:m.color||'var(--ink-muted)' }));
   ROLE_GROUPS = data.groups || [];
   ROLE_TIERS = data.tiers || [];
 }
@@ -1535,6 +1570,28 @@ function projectCategoryOptions(selected){
     : '';
   return `<option value=""${selected?'':' selected'}>— None —</option>` + orphan +
     PROJECT_CATEGORIES.map(c=>`<option value="${c.id}"${c.id===selected?' selected':''}>${escapeHTML(c.label)}</option>`).join('');
+}
+/* The milestone pair, mirroring the two above. Reads MILESTONE_TYPES and
+   nothing else — TYPES holds an "Animation" of its own, and reaching for it
+   here would put asset types in a milestone dropdown. */
+function milestoneTypeLabel(id){
+  if(!id) return '';
+  const m = MILESTONE_TYPES.find(x=>x.id===id);
+  return m ? m.label : String(id).replace(/_/g,' ');
+}
+/* `taken` are the types already used by other rows on the same project — one
+   milestone of each per project, so a type in use is not offered twice. The
+   row's own current value stays selectable, or changing another row would
+   silently blank this one. */
+function milestoneTypeOptions(selected, taken){
+  const used = new Set(taken || []);
+  const known = MILESTONE_TYPES.some(m=>m.id===selected);
+  const orphan = selected && !known
+    ? `<option value="${escapeHTML(selected)}" selected>${escapeHTML(milestoneTypeLabel(selected))}</option>`
+    : '';
+  return `<option value=""${selected?'':' selected'}>— Pick a type —</option>` + orphan +
+    MILESTONE_TYPES.filter(m=>m.id===selected || !used.has(m.id))
+      .map(m=>`<option value="${m.id}"${m.id===selected?' selected':''}>${escapeHTML(m.label)}</option>`).join('');
 }
 function priorityOptions(selected){
   return PRIORITIES.map(p=>`<option value="${p.id}" ${p.id===selected?'selected':''}>${escapeHTML(p.label)}</option>`).join('');
@@ -1942,6 +1999,7 @@ const SETTINGS_SECTIONS = [
   { permission:'settings.priorities',   label:'Priorities',       note:'The Priority dropdown.' },
   { permission:'settings.categories',   label:'Asset Categories', note:'The Category dropdown on an asset. Starts empty — add the studio\'s own list.' },
   { permission:'settings.project_categories', label:'Project Categories', note:'The Category dropdown on a project. A separate list from the asset one.' },
+  { permission:'settings.milestone_types', label:'Milestone Types', note:'The stages a project can be planned in — Art, Animation, and whatever the studio adds.' },
   { permission:'settings.roles',        label:'Roles',            note:'The studio\'s designations and what each one can do.' },
   { permission:'settings.ip_allowlist', label:'IP Allowlist',     note:'Which addresses may reach this application at all.' },
   /* The two read-only records. They were missing from this list, which is a
@@ -5349,6 +5407,27 @@ function clientListHTML(clients){
   `;
 }
 
+/* The Milestones cell: one line per milestone, stacked.
+ *
+ * Stacked rather than summarised ("3 milestones") because the dates are the
+ * point — a summary would mean opening the edit form to read what the column
+ * exists to show. Two or three lines is a comfortable row; the API caps a
+ * project at twenty, and if studios routinely reach numbers that make rows
+ * unwieldy this is the one function that has to change.
+ *
+ * A project with none gets the same em dash every other empty cell on this
+ * table uses, not an error and not a blank. */
+function milestonesCell(list){
+  const milestones = list || [];
+  if(!milestones.length) return '<span style="color:var(--ink-faint);">—</span>';
+  return `<div style="display:flex;flex-direction:column;gap:3px;">${milestones.map(m=>`
+    <div style="display:flex;align-items:baseline;gap:6px;white-space:nowrap;font-size:11.5px;">
+      <span style="width:6px;height:6px;border-radius:2px;flex:none;background:${escapeHTML(m.color||'var(--ink-muted)')};"></span>
+      <span style="font-weight:600;">${escapeHTML(m.label)}${m.retired?' <span style="font-weight:400;color:var(--ink-faint);">(retired)</span>':''}:</span>
+      <span class="mono" style="color:var(--ink-muted);">${fmtDay(m.startDate)} – ${fmtDay(m.endDate)}</span>
+    </div>`).join('')}</div>`;
+}
+
 function clientDetailHTML(c){
   const all = [...c.projects, ...(c.archivedProjects || [])];
   return `
@@ -5373,7 +5452,7 @@ function clientDetailHTML(c){
       ${can('client.delete') && !c.isSystem && !c.isActive && !all.length
         ? `<button class="btn btn-ghost btn-sm" id="purgeClientBtn" data-client="${c.id}" style="color:var(--brand-accent);">Delete permanently</button>` : ''}
     </div>
-    ${all.length ? `<table style="margin-top:14px;"><thead><tr><th>Project</th><th>Code</th><th>Category</th><th>Start Date</th><th>End Date</th><th>Total Bid Hours</th><th>Spent Time</th><th>Status</th><th></th></tr></thead><tbody>
+    ${all.length ? `<table style="margin-top:14px;"><thead><tr><th>Project</th><th>Code</th><th>Category</th><th>Start Date</th><th>End Date</th><th>Milestones</th><th>Total Bid Hours</th><th>Spent Time</th><th>Status</th><th></th></tr></thead><tbody>
       ${all.map(p=>`<tr class="${p.status!=='active'?'row-muted':''}">
         <td style="font-weight:600;">${escapeHTML(p.name)}</td>
         <td class="mono" style="font-size:11.5px;">${escapeHTML(p.code||'')}</td>
@@ -5383,6 +5462,11 @@ function clientDetailHTML(c){
              has to be there. -->
         <td class="mono">${fmtDay(p.startDate)}</td>
         <td class="mono">${fmtDay(p.endDate)}</td>
+        <!-- One line per milestone, in the cell, as the studio asked. Sits
+             immediately after the project's own two dates because that is what
+             it is read against: the project runs from here to here, and these
+             are the stages inside it. -->
+        <td>${milestonesCell(p.milestones)}</td>
         <!-- Both computed from the assets underneath, on every draw. Neither is
              stored, so neither can be stale — see projectTotals in
              src/routes/clients.js for what each one counts. -->
@@ -7023,6 +7107,9 @@ document.getElementById('newProjectBtn').addEventListener('click', async ()=>{
     document.getElementById('p_coords').innerHTML = coords.map(u=>`<label><input type="checkbox" value="${u.id}">${escapeHTML(u.name)}</label>`).join('') || '<div style="font-size:12px;color:var(--ink-faint);">No coordinators visible to you.</div>';
     supervisionChecklist('p_supervision', 'p_supervisionCount', supervisors, []);
   }catch(err){ showToast(err.message); }
+  // A new project starts with none. Nothing is assumed about which stages it
+  // is planned in — that is the point of picking them per project.
+  loadMilestones('p', []);
   projectModalWrap.classList.add('show');
 });
 
@@ -7115,7 +7202,11 @@ document.getElementById('saveProjectModal').addEventListener('click', async ()=>
         + 'A project cannot end before it begins.';
       return;
     }
-    const { project } = await api('/projects', { method:'POST', body });
+    /* Only from somebody who may set them — same reasoning as the edit form:
+       an empty list from everybody else would be a silent instruction to have
+       none. */
+    if(can('project.milestones')) body.milestones = milestonePayload('p');
+    const { project, warnings } = await api('/projects', { method:'POST', body });
     projectModalWrap.classList.remove('show');
     /* Land on what was just made, rather than wherever the pickers happened to
        be pointing before. */
@@ -7124,6 +7215,7 @@ document.getElementById('saveProjectModal').addEventListener('click', async ()=>
     saveContext();
     await bootApp();
     showToast(`${name} created.`);
+    milestoneToast(warnings);
   }catch(e){ err.textContent = e.message; }
 });
 
@@ -7174,6 +7266,7 @@ async function openEditProject(){
   epChecklist('ep_leads', leads, project.teamLeadIds || []);
   epChecklist('ep_coords', coords, project.coordinatorIds || []);
   supervisionChecklist('ep_supervision', 'ep_supervisionCount', supervisors, project.supervisionIds || []);
+  loadMilestones('ep', project.milestones || []);
   editProjectModalWrap.classList.add('show');
 }
 
@@ -7200,7 +7293,7 @@ document.getElementById('saveEditProject').addEventListener('click', async ()=>{
     /* All three are sent every time, empty ones as null. This form SHOWS them,
        so a field left blank here is somebody clearing it — unlike Add Project,
        where a blank field was simply never filled in. */
-    await api('/projects/' + editingProject.id, { method:'PATCH', body:{
+    const saved = await api('/projects/' + editingProject.id, { method:'PATCH', body:{
       name,
       category: document.getElementById('ep_category').value || null,
       startDate: startDate || null,
@@ -7208,6 +7301,11 @@ document.getElementById('saveEditProject').addEventListener('click', async ()=>{
       teamLeadIds: [...document.querySelectorAll('#ep_leads input:checked')].map(i=>i.value),
       coordinatorIds: [...document.querySelectorAll('#ep_coords input:checked')].map(i=>i.value),
       supervisionIds: [...document.querySelectorAll('#ep_supervision input:checked')].map(i=>i.value),
+      /* Sent only by somebody who may set them. Without this the field would
+         travel as an empty list for everybody else and wipe the milestones on
+         every save — the permission would read as "cannot add" while quietly
+         meaning "removes them all". */
+      ...(can('project.milestones') ? { milestones: milestonePayload('ep') } : {}),
     }});
     editProjectModalWrap.classList.remove('show');
     const keep = editingProject.id;
@@ -7216,8 +7314,162 @@ document.getElementById('saveEditProject').addEventListener('click', async ()=>{
     const sel = document.getElementById('projectSelect');
     if([...sel.options].some(o=>o.value===keep)){ sel.value = keep; state.currentProjectId = keep; await render(); }
     showToast(`${name} updated.`);
+    milestoneToast(saved && saved.warnings);
   }catch(err){ epError(err.message); }
   finally{ btn.disabled = false; }
+});
+
+/* ---------- milestones, shared by both project forms ----------
+ *
+ * ONE ENGINE, TWO FORMS. New Project and Edit Project each get a set of rows,
+ * held here by prefix, and every function below takes that prefix. Written this
+ * way rather than twice because the two forms must not be able to disagree
+ * about what a milestone is — the last time a rule was written out twice in
+ * this file, one copy learned about a change and the other did not.
+ *
+ * Rows are re-drawn only when a TYPE changes or a row is added or removed,
+ * never while somebody is typing a date: rebuilding the HTML under a focused
+ * date input takes the focus with it. Date edits update the held state and the
+ * warning line, and leave the DOM alone.
+ */
+const milestoneRows = { p: [], ep: [] };
+
+function milestoneBox(prefix){ return document.getElementById(prefix + '_milestones'); }
+
+function paintMilestones(prefix){
+  const rows = milestoneRows[prefix];
+  const box = milestoneBox(prefix);
+  if(!box) return;
+  const taken = rows.map(r=>r.type).filter(Boolean);
+
+  box.innerHTML = rows.length ? rows.map((row,i)=>`
+    <div class="ms-row" data-i="${i}">
+      <select class="ms-type">${milestoneTypeOptions(row.type, taken.filter((t,j)=>j!==i))}</select>
+      <input type="date" class="ms-start" value="${escapeHTML(row.startDate||'')}" title="Start date">
+      <input type="date" class="ms-end" value="${escapeHTML(row.endDate||'')}" title="End date">
+      <button type="button" class="ms-drop" title="Remove this milestone">&times;</button>
+    </div>`).join('')
+    : '<div class="ms-empty">None yet. Add one for each stage this project is planned in.</div>';
+
+  box.querySelectorAll('.ms-row').forEach(el=>{
+    const i = Number(el.dataset.i);
+    // A type change alters what the OTHER rows may offer, so this one repaints.
+    el.querySelector('.ms-type').addEventListener('change', e=>{
+      milestoneRows[prefix][i].type = e.target.value;
+      paintMilestones(prefix);
+    });
+    // Dates do not, so these only update what is held and what is warned about.
+    el.querySelector('.ms-start').addEventListener('change', e=>{
+      milestoneRows[prefix][i].startDate = e.target.value;
+      paintMilestoneWarning(prefix);
+    });
+    el.querySelector('.ms-end').addEventListener('change', e=>{
+      milestoneRows[prefix][i].endDate = e.target.value;
+      paintMilestoneWarning(prefix);
+    });
+    el.querySelector('.ms-drop').addEventListener('click', ()=>{
+      milestoneRows[prefix].splice(i,1);
+      paintMilestones(prefix);
+    });
+  });
+
+  /* Nothing left to add — every type is on this project already. Disabled with
+     a reason rather than hidden, so pressing it is not the way somebody finds
+     out the list is exhausted. */
+  const add = document.getElementById(prefix + '_addMilestone');
+  if(add){
+    const spare = MILESTONE_TYPES.filter(m=>!taken.includes(m.id)).length;
+    add.disabled = spare === 0;
+    add.title = spare ? '' : 'Every milestone type is already on this project. Add more types in Settings.';
+  }
+  paintMilestoneWarning(prefix);
+}
+
+/* The soft warning, per point 3: said, never blocking.
+ *
+ * Live, as the dates are typed, rather than only on save — a warning that
+ * arrives after the modal has closed is a warning about something somebody can
+ * no longer see. The server checks the same rule and returns the same warnings,
+ * so this is the convenience and not the enforcement. */
+function paintMilestoneWarning(prefix){
+  const el = document.getElementById(prefix + '_milestoneWarn');
+  if(!el) return;
+  const pStart = (document.getElementById(prefix + '_start')||{}).value || '';
+  const pEnd = (document.getElementById(prefix + '_end')||{}).value || '';
+  const notes = [];
+  milestoneRows[prefix].forEach(row=>{
+    const label = milestoneTypeLabel(row.type) || 'This milestone';
+    if(row.startDate && row.endDate && row.startDate > row.endDate){
+      notes.push(`${label} ends before it begins (${row.startDate} → ${row.endDate}).`);
+      return;
+    }
+    if(pStart && row.startDate && row.startDate < pStart){
+      notes.push(`${label} starts on ${row.startDate}, before the project's own start date of ${pStart}.`);
+    }
+    if(pEnd && row.endDate && row.endDate > pEnd){
+      notes.push(`${label} ends on ${row.endDate}, after the project's own end date of ${pEnd}.`);
+    }
+  });
+  el.innerHTML = notes.length
+    ? `<strong>Worth checking.</strong> ${notes.map(escapeHTML).join(' ')} You can still save this.`
+    : '';
+}
+
+/* What goes to the API: complete rows only.
+ *
+ * A row somebody added and never filled in is dropped rather than refused. The
+ * button that made it is one click away from the field they were about to fill,
+ * and an empty row is much more likely to be an abandoned click than a mistake
+ * worth stopping a save for. Anything half-filled IS refused, by the server,
+ * because that is somebody who meant something by it. */
+/* What the server warned about, once the modal has gone.
+ *
+ * Separate from the toast that says the save worked, and shown after it: the
+ * save DID work, and collapsing the two into one message would make a warning
+ * read like a failure. Nothing here is actionable in the moment — the person
+ * can reopen the form whenever they like — so this is a notice, not a prompt.
+ */
+function milestoneToast(warnings){
+  const notes = warnings || [];
+  if(!notes.length) return;
+  setTimeout(()=>showToast(`Saved. ${notes.map(w=>w.message).join(' ')}`), 900);
+}
+
+function milestonePayload(prefix){
+  return milestoneRows[prefix]
+    .filter(r=>r.type || r.startDate || r.endDate)
+    .map(r=>({ type:r.type, startDate:r.startDate || null, endDate:r.endDate || null }));
+}
+
+/* Fill the rows from a project, and show or hide the whole block by permission.
+   Called by both forms as they open. */
+function loadMilestones(prefix, list){
+  milestoneRows[prefix] = (list||[]).map(m=>({
+    type: m.type,
+    startDate: m.startDate ? String(m.startDate).slice(0,10) : '',
+    endDate: m.endDate ? String(m.endDate).slice(0,10) : '',
+  }));
+  const wrap = document.getElementById(prefix + '_milestonesWrap');
+  if(wrap) wrap.style.display = can('project.milestones') ? '' : 'none';
+  paintMilestones(prefix);
+}
+
+['p','ep'].forEach(prefix=>{
+  const add = document.getElementById(prefix + '_addMilestone');
+  if(add) add.addEventListener('click', ()=>{
+    const taken = milestoneRows[prefix].map(r=>r.type).filter(Boolean);
+    const next = MILESTONE_TYPES.find(m=>!taken.includes(m.id));
+    // Pre-picked with the first type not already on the project, so the common
+    // case — Art, then Animation — is two clicks and two dates.
+    milestoneRows[prefix].push({ type: next ? next.id : '', startDate:'', endDate:'' });
+    paintMilestones(prefix);
+  });
+  // The project's own dates decide what counts as outside them, so moving one
+  // re-reads the warning without anybody touching a milestone.
+  ['_start','_end'].forEach(suffix=>{
+    const el = document.getElementById(prefix + suffix);
+    if(el) el.addEventListener('change', ()=>paintMilestoneWarning(prefix));
+  });
 });
 
 /* ---------- new user modal ---------- */
@@ -7561,6 +7813,20 @@ const REF_SECTIONS = [
     note: 'The Category dropdown on Add Project — what kind of job a project is. Separate from the asset Categories above, and starts empty.',
     columns: [
       { key:'label', label:'Name',   input:'text', placeholder:'e.g. Slot Game', required:true },
+      { key:'color', label:'Colour', input:'color' },
+    ],
+  },
+  {
+    /* The stages a project is planned in. Sits after the two category lists
+       because it is read the same way — a short list of labels somebody adds
+       to — and before Roles, which is the one panel on this screen that changes
+       what people can do rather than what a dropdown offers. */
+    collection: 'milestone-types',
+    permission: 'settings.milestone_types',
+    title: 'Milestone Types',
+    note: 'The stages a project can be planned in — the Milestones column on the Projects list. Art and Animation to begin with; add the studio\'s own. Adding one here does not put it on any project: each project picks the ones that apply to it.',
+    columns: [
+      { key:'label', label:'Name',   input:'text', placeholder:'e.g. Rigging', required:true },
       { key:'color', label:'Colour', input:'color' },
     ],
   },

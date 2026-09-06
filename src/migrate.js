@@ -176,6 +176,17 @@ const REFERENCE_TABLES = {
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE KEY uq_project_categories_key (\`key\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  milestone_types: `CREATE TABLE IF NOT EXISTS milestone_types (
+      id CHAR(36) NOT NULL PRIMARY KEY,
+      \`key\` VARCHAR(64) NOT NULL,
+      label VARCHAR(100) NOT NULL,
+      color VARCHAR(16) NULL,
+      position INT NOT NULL DEFAULT 0,
+      is_active TINYINT(1) NOT NULL DEFAULT 1,
+      is_system TINYINT(1) NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_milestone_types_key (\`key\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   roles: `CREATE TABLE IF NOT EXISTS roles (
       id CHAR(36) NOT NULL PRIMARY KEY,
       \`key\` VARCHAR(64) NOT NULL,
@@ -595,6 +606,16 @@ async function ensureReferenceData(db, log) {
   }), log);
 
   await seedReferenceTable(db, 'priorities', defaults.PRIORITIES, (r) => ({
+    columns: ['id', '`key`', 'label', 'color', 'position', 'is_active', 'is_system'],
+    values: [uuid(), r.key, r.label, r.color, r.position, 1, r.isSystem ? 1 : 0],
+  }), log);
+
+  /* Art and Animation, the two the studio named. Unlike the category lists,
+     which start empty on purpose, this one starts with the two stages every
+     project here is planned in — an empty list would mean the Milestones
+     column could not be used at all until somebody visited Settings. Anything
+     further is added there. */
+  await seedReferenceTable(db, 'milestone_types', defaults.MILESTONE_TYPES, (r) => ({
     columns: ['id', '`key`', 'label', 'color', 'position', 'is_active', 'is_system'],
     values: [uuid(), r.key, r.label, r.color, r.position, 1, r.isSystem ? 1 : 0],
   }), log);
@@ -1989,6 +2010,51 @@ async function ensureProjectFields(db, log) {
   if (added.length) log(`Schema: added ${added.join(', ')}.`);
 }
 
+/* The dated stages inside a project: Art from here to here, Animation from
+ * there to there.
+ *
+ * A TABLE RATHER THAN COLUMNS, because the whole point of the feature is that
+ * the studio adds its own types later. Two columns named art_start and
+ * art_end would have meant a schema change for every new type, which is the
+ * thing the reference lists exist to avoid.
+ *
+ * `milestone_type` holds a KEY from milestone_types, never a label — the same
+ * arrangement projects.category has with project_categories, so renaming
+ * "Art" to "Art Pass" in Settings cannot orphan the milestones using it.
+ *
+ * UNIQUE on (project_id, milestone_type) is a decision, not bookkeeping: one
+ * Art milestone per project. Two rows both called Art would render as two
+ * lines in the same cell saying different things about the same stage, with no
+ * way for a reader to know which is current. A project needing two stretches of
+ * art wants two types.
+ *
+ * Deleted with the project — ON DELETE CASCADE — because a milestone has no
+ * meaning without one, and permanent project deletion is already offered for
+ * empty projects.
+ */
+async function ensureProjectMilestones(db, log) {
+  const { rows: present } = await db.query(
+    `SELECT TABLE_NAME AS t FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'project_milestones'`
+  );
+  if (present.length) return;
+  await db.query(await applyTableOptions(db,
+    `CREATE TABLE IF NOT EXISTS project_milestones (
+       id CHAR(36) NOT NULL PRIMARY KEY,
+       project_id CHAR(36) NOT NULL,
+       milestone_type VARCHAR(64) NOT NULL,
+       start_date DATE NULL,
+       end_date DATE NULL,
+       position INT NOT NULL DEFAULT 0,
+       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       UNIQUE KEY uq_project_milestone (project_id, milestone_type),
+       KEY idx_project_milestones_project (project_id),
+       CONSTRAINT fk_project_milestones_project
+         FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+  log('Schema: projects can now carry dated milestones.');
+}
+
 /* What somebody said when they put a task on hold.
  *
  * On the session row rather than in a table of its own, because a note belongs
@@ -2337,6 +2403,9 @@ const STEPS = [
 
   // After the reference tables, whose project_categories list `category` points into.
   ['project fields', ensureProjectFields],
+  // After the projects table it points at, and after the reference tables
+  // whose milestone_types list its milestone_type column holds a key from.
+  ['project milestones', ensureProjectMilestones],
   // After projects and users, whose keys it points at.
   ['project supervision', ensureProjectSupervision],
   // After the event log, whose column it adds.

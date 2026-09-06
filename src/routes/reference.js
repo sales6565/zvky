@@ -21,6 +21,7 @@ const COLLECTION_BY_PATH = {
   'asset-types': 'asset_types',
   'categories': 'categories',
   'project-categories': 'project_categories',
+  'milestone-types': 'milestone_types',
   priorities: 'priorities',
   roles: 'roles',
 };
@@ -33,6 +34,9 @@ const PERMISSION_BY_PATH = {
   // Its own key, not a reuse of settings.categories: the two lists are separate
   // and a studio should be able to trust somebody with one and not the other.
   'project-categories': 'settings.project_categories',
+  // The stages a project is planned in. Its own key too, for the same reason:
+  // the list changes a dropdown for the whole studio.
+  'milestone-types': 'settings.milestone_types',
   priorities: 'settings.priorities',
   roles: 'settings.roles',
 };
@@ -89,6 +93,9 @@ router.get('/', async (req, res) => {
     // The project list, alongside the asset one and never merged with it. Both
     // travel in the same bundle because both fill a dropdown on first paint.
     projectCategories: referenceData.list('project_categories'),
+    // The stages a project can be planned in. Travels in the same bundle for
+    // the same reason: the Add Milestone dropdown needs it on first paint.
+    milestoneTypes: referenceData.list('milestone_types'),
     priorities: referenceData.list('priorities'),
     roles: catalogue(),
     // Only meaningful to whoever can manage these; harmless to everyone else.

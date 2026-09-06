@@ -67,6 +67,8 @@ const REQUIRED = [
   { table: 'projects',         column: 'category',      step: 'project fields' },
   { table: 'projects',         column: 'start_date',    step: 'project fields' },
   { table: 'projects',         column: 'end_date',      step: 'project fields' },
+  { table: 'milestone_types',  column: null,            step: 'reference tables' },
+  { table: 'project_milestones', column: null,          step: 'project milestones' },
   { table: 'assets',           column: 'category',      step: 'asset category' },
   { table: 'users',            column: 'avatar',        step: 'profile photos' },
   { table: 'users',            column: 'avatar_mime',   step: 'profile photos' },

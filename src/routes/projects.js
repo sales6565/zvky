@@ -4,12 +4,13 @@ const { asyncRouter } = require('../async-router');
 const router = asyncRouter();
 const { v4: uuid } = require('uuid');
 const db = require('../db');
-const { authenticate, requirePermission } = require('../middleware/auth');
+const { authenticate, requirePermission, can } = require('../middleware/auth');
 const lifecycle = require('../lifecycle');
 const { visibleProjects, canAccessProject, holds } = require('../permissions');
 const { assignableRoles, roleDef, supervisionRoles } = require('../roles');
 const referenceData = require('../reference-data');
 const assetSchedule = require('../asset-schedule');
+const projectMilestones = require('../project-milestones');
 
 /* The three fields a project carries besides its name and its client, checked
  * once for both the create and the edit route.
@@ -71,6 +72,45 @@ function checkProjectFields(body) {
   return { ok: true, sets };
 }
 
+/* The milestones this request is asking for, checked against the dates the
+ * project will HAVE once it is saved.
+ *
+ * That last part is the subtle bit, and getting it wrong would produce a
+ * warning nobody could act on. An edit that moves the project's own start date
+ * AND sets a milestone has to be judged against the new start date, not the
+ * stored one — otherwise moving a project forward and dragging its milestones
+ * along with it warns about every milestone, against dates that are about to
+ * stop being true. `extras` holds what this request is setting; the stored row
+ * fills in whatever it is not touching.
+ *
+ * Returns { ok:false, status, error, field } or { ok:true, milestones, warnings }.
+ * `milestones` is null when the request did not mention them at all, which is
+ * how a form that does not carry the field avoids wiping the ones already there.
+ */
+function checkMilestones(req, stored = {}, extras = { sets: [] }) {
+  const body = req.body || {};
+  if (body.milestones === undefined) return { ok: true, milestones: null, warnings: [] };
+
+  /* Its own permission, checked here rather than on the route: project.edit is
+     what opens the form, and somebody may hold that without being trusted with
+     the plan. Only a request that actually names milestones is refused, so a
+     plain rename by somebody without this permission still goes through. */
+  if (!can(req, 'project.milestones')) {
+    return { ok: false, status: 403, field: 'milestones',
+      error: 'You do not have permission to set milestones on a project.' };
+  }
+
+  const setting = new Map(extras.sets || []);
+  const effective = (column, storedValue) => (setting.has(column) ? setting.get(column) : (storedValue || null));
+
+  const verdict = projectMilestones.validate(body.milestones, {
+    startDate: effective('start_date', stored.start_date),
+    endDate: effective('end_date', stored.end_date),
+  });
+  if (!verdict.ok) return { ok: false, status: 400, error: verdict.error, field: verdict.field };
+  return verdict;
+}
+
 router.use(authenticate);
 
 // GET /api/projects — only the projects this user is allowed to see
@@ -108,6 +148,10 @@ router.post('/', requirePermission('project.add'), async (req, res) => {
   if (!supervision.ok) return res.status(400).json({ error: supervision.error, field: 'supervisionIds' });
   const extras = checkProjectFields(req.body);
   if (!extras.ok) return res.status(400).json({ error: extras.error, field: extras.field });
+  /* Checked before anything is written, against the dates this same request is
+     setting — there is no stored row to fall back on yet. */
+  const plan = checkMilestones(req, {}, extras);
+  if (!plan.ok) return res.status(plan.status).json({ error: plan.error, field: plan.field });
 
   // Every project belongs to a client, and the caller has to say which.
   //
@@ -158,6 +202,7 @@ router.post('/', requirePermission('project.add'), async (req, res) => {
         [id, userId]
       );
     }
+    if (plan.milestones) await projectMilestones.replaceFor(client, id, plan.milestones);
     await client.query('COMMIT');
     const { rows } = await db.query('SELECT * FROM projects WHERE id = $1', [id]);
     req.activity({
@@ -165,7 +210,10 @@ router.post('/', requirePermission('project.add'), async (req, res) => {
       entityId: rows[0].id, entityLabel: rows[0].name,
       summary: `Created the project "${rows[0].name}"`,
     });
-    res.status(201).json({ project: await withMembers(rows[0]) });
+    /* Warnings ride back with the saved project rather than refusing it — see
+       the note at the top of src/project-milestones.js for why a milestone
+       outside the project's own window is said and not blocked. */
+    res.status(201).json({ project: await withMembers(rows[0]), warnings: plan.warnings });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error(err);
@@ -291,6 +339,11 @@ router.patch('/:id', requirePermission('project.edit'), async (req, res) => {
   if (!supervision.ok) return res.status(400).json({ error: supervision.error, field: 'supervisionIds' });
   const extras = checkProjectFields(req.body);
   if (!extras.ok) return res.status(400).json({ error: extras.error, field: extras.field });
+  /* Against the dates the project will have AFTER this save, not the ones it
+     has now: an edit that moves the project and its milestones together must
+     not warn about every one of them. */
+  const plan = checkMilestones(req, project, extras);
+  if (!plan.ok) return res.status(plan.status).json({ error: plan.error, field: plan.field });
 
   // Moving a project to another client. How the "Unassigned" pile gets sorted
   // out, so it has to be possible from the edit form.
@@ -332,6 +385,10 @@ router.patch('/:id', requirePermission('project.edit'), async (req, res) => {
           [project.id, userId]);
       }
     }
+    // Same rule as the member lists above: the form sends the whole set, so
+    // what is missing from it was removed. An edit that never mentions
+    // milestones leaves the stored ones alone.
+    if (plan.milestones) await projectMilestones.replaceFor(client, project.id, plan.milestones);
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK');
@@ -343,7 +400,7 @@ router.patch('/:id', requirePermission('project.edit'), async (req, res) => {
 
   const { rows: saved } = await db.query('SELECT * FROM projects WHERE id = $1', [project.id]);
   console.log(`${req.user.email} updated project "${saved[0].name}".`);
-  return res.json({ project: await withMembers(saved[0]) });
+  return res.json({ project: await withMembers(saved[0]), warnings: plan.warnings });
 });
 
 // GET /api/projects/:id — one project with who is attached to it, for the edit
@@ -359,16 +416,18 @@ router.get('/:id', async (req, res) => {
 // A project plus the ids attached to it, which is what the edit form needs to
 // tick the right boxes.
 async function withMembers(project) {
-  const [leads, coords, supervision] = await Promise.all([
+  const [leads, coords, supervision, milestones] = await Promise.all([
     db.query('SELECT user_id FROM project_team_leads WHERE project_id = $1', [project.id]),
     db.query('SELECT user_id FROM project_coordinators WHERE project_id = $1', [project.id]),
     db.query('SELECT user_id FROM project_supervision WHERE project_id = $1', [project.id]),
+    projectMilestones.forProjects(db, [project.id]),
   ]);
   return {
     ...project,
     teamLeadIds: leads.rows.map((r) => r.user_id),
     coordinatorIds: coords.rows.map((r) => r.user_id),
     supervisionIds: supervision.rows.map((r) => r.user_id),
+    milestones: milestones.get(project.id) || [],
   };
 }
 

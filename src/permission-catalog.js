@@ -328,6 +328,25 @@ const GROUPS = [
         impliedBy: has('createProject'),
         describe: 'Close a project so it takes no new assets and its existing ones are read-only, and reopen it.',
       },
+      {
+        /* Setting the dates on a project's own stages — Art from here to here,
+         * Animation from there to there — shown in the Milestones column.
+         *
+         * Its own key rather than folding into project.edit, so a coordinator
+         * who maintains the plan can be trusted with it without also being able
+         * to rename a project or change who is on it. Defaults with the rest of
+         * this group, so nobody who could already edit a project loses anything.
+         *
+         * Distinct from Manage Milestone Types in Settings, which is what
+         * decides the list itself. That one is the tighter of the two: adding
+         * "Rigging" changes a dropdown for the whole studio; putting a date on
+         * this project's Art milestone changes this project. */
+        key: 'project.milestones',
+        label: 'Set Project Milestones',
+        impliedBy: has('createProject'),
+        describe: 'Add, change and remove the dated milestones on a project — the Milestones column on the '
+          + 'Projects list. Which types exist is a separate permission, under Settings.',
+      },
 
       /* --- a whole project put in front of the Creative Director -----------
        *
@@ -666,6 +685,25 @@ const GROUPS = [
         impliedBy: has('manageSettings'),
         describe: 'The Category dropdown on Add Project \u2014 what kind of job a project is. Independent of the '
           + 'asset category list, with no values shared between them.',
+      },
+      {
+        /* The list of stages a project can be planned in: Art, Animation, and
+         * whatever the studio adds. Separate from the asset type list even
+         * though two of the words appear in both \u2014 an asset type says what a
+         * thing is, a milestone type names a stretch of a project's calendar,
+         * and a studio adding "Rigging" here would not want it in the dropdown
+         * on Add Asset.
+         *
+         * Same default as the rest of this group, which also makes it the
+         * tighter of the milestone pair: putting a date on one project's Art
+         * milestone travels with project editing, changing which types exist at
+         * all travels with Settings. */
+        key: 'settings.milestone_types',
+        label: 'Manage Milestone Types',
+        impliedBy: has('manageSettings'),
+        describe: 'The stages a project can be planned in \u2014 Art and Animation to begin with, plus anything '
+          + 'the studio adds. Adding one changes a dropdown for every project; setting the dates on a '
+          + 'particular project is a separate permission, under Project Management.',
       },
       {
         key: 'settings.branding',
