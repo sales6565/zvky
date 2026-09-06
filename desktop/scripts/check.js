@@ -158,8 +158,18 @@ group('Installers', () => {
   ok('the installer is not one-click', builder.nsis.oneClick === false);
   ok('settings survive an uninstall', builder.nsis.deleteAppDataOnUninstall === false);
   ok('macOS target is dmg', builder.mac.target.some((t) => t.target === 'dmg'));
-  ok('macOS builds unsigned, as agreed', builder.mac.identity === null);
+  ok('macOS uses no certificate, as agreed', builder.mac.identity === null);
   ok('hardened runtime off (it requires signing)', builder.mac.hardenedRuntime === false);
+  /* identity: null makes electron-builder skip signing ENTIRELY. On Apple
+     Silicon that is not "unsigned", it is unlaunchable — so the ad-hoc hook
+     has to be there, and the two settings have to stay together. */
+  ok('an ad-hoc signature is applied anyway', builder.afterPack === 'scripts/adhoc-sign.js',
+    'without it the arm64 build will not start at all');
+  ok('the hook exists', exists('scripts/adhoc-sign.js'));
+  ok('it stands aside for a real certificate',
+    /CSC_LINK \|\| process\.env\.CSC_NAME/.test(read('scripts/adhoc-sign.js')));
+  ok('and it verifies what it signed',
+    /'--verify'/.test(read('scripts/adhoc-sign.js')));
   /* This wrapper ships no web assets. If a build ever started including some,
      it would mean a copy of the application had been vendored in here — which
      is exactly what must not happen. */

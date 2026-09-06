@@ -1,15 +1,12 @@
 # Building the Mac installer, on a Mac you do not own.
 #
-# WHY THIS FILE IS HERE AS WELL AS IN .github/workflows/
+# HOW TO RUN IT
 #
-# This is the source; .github/workflows/desktop-macos.yml is the copy GitHub
-# actually reads, because a workflow only runs from there. Edit this one and
-# copy it over:
+# Actions tab -> "Desktop — macOS installer" -> Run workflow. It never runs by
+# itself: not on a push, not on a schedule, only when somebody starts it.
 #
-#   cp desktop/ci/build-macos.yml .github/workflows/desktop-macos.yml
-#
-# Keeping it here means the desktop project carries its own build definition
-# rather than depending on a file in a directory it does not own.
+# The copy at desktop/ci/build-macos.yml is the source. This is the one GitHub
+# reads; a workflow only runs from .github/workflows/.
 #
 # WHAT IT PRODUCES: two .dmg files — one for Intel Macs, one for Apple Silicon —
 # downloadable from the run's Artifacts section for seven days. Unsigned, as

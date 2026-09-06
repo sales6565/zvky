@@ -11,6 +11,10 @@ directories:
   output: dist
   buildResources: build
 
+# Runs once per packaged application, before the .dmg or the installer is made.
+# See the file: without it the Apple Silicon build does not start at all.
+afterPack: scripts/adhoc-sign.js
+
 # What goes inside the app. This wrapper has no web assets of its own — it
 # points a window at the studio's hosted application — so this is the main
 # process, the preload, and nothing else. node_modules is included by
@@ -59,9 +63,15 @@ mac:
       arch: [x64, arm64]
   icon: build/icon.png
   category: public.app-category.productivity
-  # Unsigned, as agreed. Gatekeeper will refuse a double-click the first time;
-  # the README says to right-click -> Open instead, which is the supported way
-  # to run an unsigned app rather than a workaround.
+  # No certificate, as agreed — Gatekeeper will refuse a double-click the first
+  # time, and the README says to right-click -> Open instead, which is the
+  # supported way to run an unsigned app rather than a workaround.
+  #
+  # This setting makes electron-builder skip its signing step ENTIRELY, which is
+  # not the same as "unsigned but runnable": macOS on Apple Silicon will not
+  # launch a binary with no signature at all. scripts/adhoc-sign.js applies the
+  # free ad-hoc signature afterwards, which is what makes the arm64 build work.
+  # Do not remove one without the other.
   identity: null
   # Hardened runtime off: it is only meaningful alongside signing and
   # notarisation, and switching it on unsigned produces an app that will not
