@@ -1,4 +1,4 @@
-# ZVKY FORGE 1.0.0
+# ZVKY FORGE 1.0.1
 
 The studio pipeline in a native window, for Windows and Mac. It opens the same
 ZVKY FORGE you use in a browser, with the same login and the same data — and
@@ -24,10 +24,31 @@ section below says exactly what you will see and what to click.
 > branch once everyone has installed** — it has no history and shares no commits
 > with the code, so deleting it is what puts the space back.
 
+## What changed in 1.0.1 — install this one
+
+**1.0.0's "Check for Updates" button was broken.** It reported
+`ENOENT ... resources\app-update.yml` and could not be fixed from inside the
+app: that build shipped without an update address, and the file it needed in
+order to fetch a fix was the file it was missing.
+
+**1.0.1 fixes it, and it is the last time a reinstall is needed for this.**
+Uninstall 1.0.0 first, then install this. From here on:
+
+- If no update address is set, the button says so plainly and offers to take
+  you to **File → Update Source**, rather than showing an error.
+- Whatever you put there is remembered, and updates work from that copy onwards
+  — **no further reinstall**.
+
+If a future build is made with the address already baked in, nobody has to set
+anything; this is the way back when it is not.
+
 ## Windows
 
-**[ZVKY-FORGE-Setup-1.0.0.exe](ZVKY-FORGE-Setup-1.0.0.exe)** — 78 MB. Click it,
+**[ZVKY-FORGE-Setup-1.0.1.exe](ZVKY-FORGE-Setup-1.0.1.exe)** — 75 MB. Click it,
 then **Download**, then run it.
+
+Uninstall ZVKY FORGE 1.0.0 first (Settings → Apps → ZVKY FORGE → Uninstall).
+Your studio address is kept, so you will not have to enter it again.
 
 You will see a blue screen: *"Windows protected your PC — unrecognised
 publisher."* That is expected. Click **More info**, then **Run anyway**.
@@ -38,8 +59,16 @@ administrator password.
 To check the download arrived whole:
 
 ```
-certutil -hashfile "ZVKY-FORGE-Setup-1.0.0.exe" SHA256
+certutil -hashfile "ZVKY-FORGE-Setup-1.0.1.exe" SHA256
 ```
+
+sha256 `16937e25a699c4858e97a21c2141d1522aba9ddd97d6fafbcbabee0fe41da982`
+
+### The previous version
+
+**[ZVKY-FORGE-Setup-1.0.0.exe](ZVKY-FORGE-Setup-1.0.0.exe)** — kept only so a
+machine already running it can be matched against a checksum. It has the update
+bug above; do not install it.
 
 sha256 `c5adf7542f3551b376cfecbf80ac8777c9ea5f90489fe8fb0c6169105082ae49`
 
@@ -59,6 +88,9 @@ way to run an unsigned app, not a trick, and it is needed once.
 
 Take the **arm64** file for any Mac bought since late 2020, and the other for
 an Intel Mac. Unsure which you have? Apple menu → About This Mac.
+
+These are still 1.0.0 and carry the same update bug as the Windows 1.0.0 above.
+A 1.0.1 Mac build needs a run of the macOS workflow; ask and it will be built.
 
 ### ZVKY-FORGE-1.0.0-arm64.dmg
 
