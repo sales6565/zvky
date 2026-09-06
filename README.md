@@ -59,22 +59,12 @@ an Intel Mac. Unsure which you have? Apple menu → About This Mac.
 
 ### ZVKY-FORGE-1.0.0-arm64.dmg
 
-**[ZVKY-FORGE-1.0.0-arm64.dmg](ZVKY-FORGE-1.0.0-arm64.dmg)** — 99 MB. Click it, then **Download**.
+**[ZVKY-FORGE-1.0.0-arm64.dmg](ZVKY-FORGE-1.0.0-arm64.dmg)** — 91 MB. Click it, then **Download**.
 
-sha256 `194ed3f7133df7d0358d50a742455a25b6ab0d9bd5705f28f7770034f593e304`
+sha256 `c806cbef65ac374795edddb9070877c6f096a689cb7043851042d3b861885f1f`
 
 ### ZVKY-FORGE-1.0.0.dmg
 
-105 MB — too large for GitHub to hold in one piece, so it is in
-2 parts. Download all of them into one folder:
+**[ZVKY-FORGE-1.0.0.dmg](ZVKY-FORGE-1.0.0.dmg)** — 96 MB. Click it, then **Download**.
 
-- [ZVKY-FORGE-1.0.0.dmg.part0](ZVKY-FORGE-1.0.0.dmg.part0)
-- [ZVKY-FORGE-1.0.0.dmg.part1](ZVKY-FORGE-1.0.0.dmg.part1)
-
-Then rejoin them:
-
-```
-cat ZVKY-FORGE-1.0.0.dmg.part* > "ZVKY FORGE-1.0.0.dmg"
-```
-
-sha256 `26c98311808b5d1af20d085e3b0ab73279d834d881b9f095b876f9008f606f6f`
+sha256 `c66bdd33f61623c14783aef4ce87e8d6bcced37c392c55d95174e554f559c42b`
