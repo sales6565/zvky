@@ -57,6 +57,14 @@ nsis:
   deleteAppDataOnUninstall: false
 
 # --- macOS -------------------------------------------------------------------
+# English only. Electron ships around forty translations of ITS OWN menus and
+# dialogs — this application has none of its own, and the studio works in
+# English — so they are several megabytes nobody reads. Worth removing for the
+# same reason as the compression above: it decides whether the disk image can
+# be handed over as one file.
+electronLanguages:
+  - en-US
+
 mac:
   target:
     - target: dmg
@@ -95,11 +103,13 @@ dmg:
   # exactly this reason. This keeps that shape.
   title: ZVKY FORGE ${version}${arch}
   icon: build/icon.png
-  # LZFSE rather than the default zlib. The disk image lands around 15% smaller
-  # for the same contents, which is the difference between a file GitHub will
-  # host and one it refuses at its 100 MB limit. Readable on macOS 10.11 and
-  # later, which is older than anything this application supports.
-  format: ULFO
+  # bzip2 rather than the default zlib. The disk image lands meaningfully
+  # smaller for the same contents, and size here is not vanity: an image over
+  # 100 MiB cannot be hosted as one file, and has to be handed out in parts
+  # that somebody rejoins by hand. Slower to build and a moment slower to
+  # mount; both are paid once, by one person, rather than by everybody who
+  # downloads it.
+  format: UDBZ
   # The two-icon layout everybody recognises: the app on the left, a shortcut
   # to Applications on the right, and you drag one onto the other.
   contents:
