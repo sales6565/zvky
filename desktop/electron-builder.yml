@@ -85,6 +85,11 @@ mac:
 dmg:
   title: ZVKY FORGE
   icon: build/icon.png
+  # LZFSE rather than the default zlib. The disk image lands around 15% smaller
+  # for the same contents, which is the difference between a file GitHub will
+  # host and one it refuses at its 100 MB limit. Readable on macOS 10.11 and
+  # later, which is older than anything this application supports.
+  format: ULFO
   # The two-icon layout everybody recognises: the app on the left, a shortcut
   # to Applications on the right, and you drag one onto the other.
   contents:

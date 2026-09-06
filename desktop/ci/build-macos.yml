@@ -11,15 +11,24 @@
 # Keeping it here means the desktop project carries its own build definition
 # rather than depending on a file in a directory it does not own.
 #
-# WHAT IT PRODUCES: two .dmg files — one for Intel Macs, one for Apple Silicon —
-# downloadable from the run's Artifacts section for seven days. Unsigned, as
-# agreed: the first person to open one right-clicks and chooses Open. See
-# desktop/README.md.
+# WHAT IT PRODUCES: two .dmg files — one for Intel Macs, one for Apple Silicon.
+# They go two places: the run's own Artifacts, which expire in seven days, and
+# the download branch, which is a page somebody can be sent a link to.
+#
+# They are ad-hoc signed on the runner, which is what lets the Apple Silicon
+# build start at all; there is still no certificate, so the first open is
+# right-click -> Open. See desktop/README.md.
 #
 # WHAT IT COSTS: macOS runners bill at ten times the Linux rate on GitHub's
 # paid plans, and this takes a few minutes. Run it when you cut a version, not
 # on every commit — which is why it is dispatch-only.
 name: Desktop — macOS installer
+
+env:
+  # Where finished installers are published for people to download. A
+  # parentless branch: delete it once everyone has installed, and the space it
+  # holds comes back.
+  DOWNLOAD_BRANCH: claude/desktop-installer-v1.0.0
 
 on:
   workflow_dispatch:
@@ -58,6 +67,10 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npm run build:mac
 
+      - name: What was built
+        working-directory: desktop
+        run: ls -l dist
+
       - uses: actions/upload-artifact@v4
         with:
           name: zvky-forge-macos
@@ -70,3 +83,52 @@ jobs:
             desktop/dist/latest-mac.yml
           retention-days: 7
           if-no-files-found: error
+
+  # Puts the disk images on the download branch, beside the Windows installer,
+  # so somebody can be sent a link to a page rather than told to unpack a build
+  # artifact that expires in a week.
+  #
+  # On Linux: it only moves files, and macOS minutes are ten times the price.
+  publish:
+    needs: dmg
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # Two checkouts, because they are two unrelated things: the code, for the
+      # script that does the work, and the download page it writes to.
+      - uses: actions/checkout@v4
+        with:
+          path: code
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DOWNLOAD_BRANCH }}
+          path: page
+          # One commit is all the history a download page needs, and a full
+          # clone would fetch every installer ever published to it.
+          fetch-depth: 1
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: zvky-forge-macos
+          path: incoming
+
+      - name: Place the files and write the page
+        run: node code/desktop/ci/publish-page.js incoming page mac
+
+      - name: Commit
+        working-directory: page
+        run: |
+          set -eu
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add -A
+          # A rebuild of an unchanged commit should be a no-op, not an empty
+          # commit that makes the page look freshly updated.
+          if git diff --cached --quiet; then
+            echo 'nothing changed'
+            exit 0
+          fi
+          git commit -m 'ZVKY FORGE — Mac disk images, built and signed on macOS'
+          git push origin HEAD:${{ env.DOWNLOAD_BRANCH }}
