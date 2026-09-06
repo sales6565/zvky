@@ -1,0 +1,104 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>ZVKY FORGE</title>
+<!--
+  The first-run screen: which studio does this window open?
+
+  It exists because the alternative is worse. A wrapper with the address baked
+  in has to be rebuilt and redistributed the day the studio changes domain, and
+  a wrapper shipped with a GUESSED address is a program that quietly connects
+  somewhere nobody chose. So it asks, once, and remembers.
+
+  This is also reachable afterwards from File -> Studio Address, because a typo
+  on the first run should not mean reinstalling.
+-->
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; display: grid; place-items: center;
+    background: #14100f; color: #efe7e5;
+    font: 14px/1.55 -apple-system, "Segoe UI", system-ui, sans-serif;
+    -webkit-user-select: none; user-select: none;
+  }
+  .card { width: 460px; padding: 0 28px; text-align: left; }
+  .mark {
+    width: 54px; height: 54px; border-radius: 12px; margin-bottom: 22px;
+    background: linear-gradient(160deg, #7f1416, #5c0e10);
+    display: grid; place-items: center;
+    font: 700 30px/1 Georgia, "Times New Roman", serif; color: #fff;
+  }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 6px; letter-spacing: .2px; }
+  p.sub { margin: 0 0 22px; color: #a4938f; font-size: 13px; }
+  label { display: block; font-size: 12px; color: #a4938f; margin-bottom: 6px; }
+  input {
+    width: 100%; padding: 11px 12px; font: inherit;
+    color: #fff; background: #1e1817; border: 1px solid #3a2e2c; border-radius: 6px;
+    -webkit-user-select: text; user-select: text;
+  }
+  input:focus { outline: none; border-color: #7f1416; box-shadow: 0 0 0 3px rgba(127,20,22,.25); }
+  .hint { font-size: 12px; color: #7d6d6a; margin: 8px 0 0; }
+  .err { font-size: 12px; color: #ff8f8f; margin: 8px 0 0; min-height: 16px; }
+  .row { display: flex; gap: 10px; margin-top: 18px; }
+  button {
+    font: 600 13px/1 inherit; padding: 11px 18px; border-radius: 6px; border: 0;
+    background: #7f1416; color: #fff; cursor: pointer;
+  }
+  button:hover { background: #96181b; }
+  button.ghost { background: transparent; color: #a4938f; border: 1px solid #3a2e2c; }
+  button.ghost:hover { color: #efe7e5; }
+  .foot { margin-top: 26px; font-size: 11px; color: #6b5c59; }
+</style>
+
+<div class="card">
+  <div class="mark">Z</div>
+  <h1>Open your studio</h1>
+  <p class="sub">This app is a window onto ZVKY FORGE. Enter the address you use in your browser.</p>
+
+  <label for="addr">Studio address</label>
+  <input id="addr" type="text" placeholder="studio.example.com" autocomplete="off" spellcheck="false">
+  <p class="hint">Your IT or Super Admin has this. It is the same address as the website — nothing else changes.</p>
+  <p class="err" id="err"></p>
+
+  <div class="row">
+    <button id="go">Open</button>
+    <button class="ghost" id="cancel" hidden>Cancel</button>
+  </div>
+
+  <p class="foot" id="foot"></p>
+</div>
+
+<script>
+  const addr = document.getElementById('addr');
+  const err = document.getElementById('err');
+  const go = document.getElementById('go');
+  const cancel = document.getElementById('cancel');
+
+  // Pre-filled when this screen is reopened from the menu to change the address.
+  window.zvky.getState().then((s) => {
+    if (s.appUrl) {
+      addr.value = s.appUrl;
+      cancel.hidden = false;
+    }
+    document.getElementById('foot').textContent = 'ZVKY FORGE ' + s.version;
+    addr.focus();
+    addr.select();
+  });
+
+  async function submit() {
+    err.textContent = '';
+    go.disabled = true;
+    const res = await window.zvky.setAppUrl(addr.value);
+    if (!res.ok) {
+      // Left on the screen with the text intact, rather than cleared.
+      err.textContent = res.error;
+      go.disabled = false;
+      addr.focus();
+    }
+    // On success the main process navigates this window; nothing to do here.
+  }
+
+  go.addEventListener('click', submit);
+  addr.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+  cancel.addEventListener('click', () => window.zvky.retry());
+</script>

@@ -1,0 +1,116 @@
+# How the installers are made.
+#
+# Kept in its own file rather than inside package.json so that the build
+# configuration reads as a document — there is a lot of it, and most of it is
+# a decision rather than a setting.
+appId: com.zvky.forge
+productName: ZVKY FORGE
+copyright: © Zvky Design Studio
+
+directories:
+  output: dist
+  buildResources: build
+
+# What goes inside the app. This wrapper has no web assets of its own — it
+# points a window at the studio's hosted application — so this is the main
+# process, the preload, and nothing else. node_modules is included by
+# electron-builder automatically for anything in "dependencies".
+files:
+  - src/**/*
+  - renderer/**/*
+  - package.json
+
+# --- Windows -----------------------------------------------------------------
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.png
+  # UNSIGNED, as agreed. Windows SmartScreen will show a one-time
+  # "unrecognised publisher" warning; see desktop/README.md, which tells the
+  # person installing it exactly what they will see and what to click.
+  # To sign later, set CSC_LINK and CSC_KEY_PASSWORD in the build environment
+  # and nothing else here has to change.
+  signAndEditExecutable: true
+
+nsis:
+  # Per-user, so nobody needs an administrator to install it. This is the one
+  # setting that decides whether a studio can roll this out without IT.
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: ZVKY FORGE
+  # The studio's own red behind the installer's sidebar, and their mark on its
+  # header. electron-builder derives the .ico from build/icon.png, so there is
+  # one source image rather than three that drift.
+  installerSidebar: build/installer-sidebar.bmp
+  uninstallerSidebar: build/installer-sidebar.bmp
+  # Keep a person's settings — which studio address they are pointed at — when
+  # they uninstall. Reinstalling should not mean setting it up again, and an
+  # uninstall that erases a preference is one people notice only afterwards.
+  deleteAppDataOnUninstall: false
+
+# --- macOS -------------------------------------------------------------------
+mac:
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  icon: build/icon.png
+  category: public.app-category.productivity
+  # Unsigned, as agreed. Gatekeeper will refuse a double-click the first time;
+  # the README says to right-click -> Open instead, which is the supported way
+  # to run an unsigned app rather than a workaround.
+  identity: null
+  # Hardened runtime off: it is only meaningful alongside signing and
+  # notarisation, and switching it on unsigned produces an app that will not
+  # launch at all rather than one that warns.
+  hardenedRuntime: false
+  # This app opens a website in a window. It needs the network and nothing
+  # else — no camera, no microphone, no files, no address book.
+  extendInfo:
+    NSHumanReadableCopyright: © Zvky Design Studio
+
+dmg:
+  title: ZVKY FORGE
+  icon: build/icon.png
+  # The two-icon layout everybody recognises: the app on the left, a shortcut
+  # to Applications on the right, and you drag one onto the other.
+  contents:
+    - x: 140
+      y: 200
+      type: file
+    - x: 400
+      y: 200
+      type: link
+      path: /Applications
+  window:
+    width: 540
+    height: 380
+
+# --- Where updates come from -------------------------------------------------
+# Deliberately NOT here.
+#
+# The update feed is a plain folder on the studio's own hosting: electron-updater
+# reads latest.yml (and latest-mac.yml) from a URL and downloads the installer
+# beside it. No new infrastructure, no third-party service, nothing that can stop
+# working because an account lapsed.
+#
+# It is not in this file because electron-builder refuses to build at all when a
+# ${env.X} macro names an undefined variable — so a `publish` block written that
+# way makes the update address a REQUIREMENT for producing an installer, which
+# is the wrong way round. An installer that works and cannot self-update beats
+# one that will not build.
+#
+# So scripts/build.js passes it in when it is set, and says plainly what it is
+# doing when it is not:
+#
+#   ZVKY_UPDATE_FEED=https://your-domain.com/desktop/ npm run build:win
+#
+# It is also a different setting from the address of the web application itself
+# (src/config.js): one is where the installers are, the other is where the studio
+# is, and a studio that moves one need not move the other.
+
+# No update feed unless the build supplies one — see scripts/build.js.
+publish: null

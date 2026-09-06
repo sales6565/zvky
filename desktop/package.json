@@ -1,0 +1,27 @@
+{
+  "name": "zvky-forge-desktop",
+  "productName": "ZVKY FORGE",
+  "version": "1.0.0",
+  "description": "The ZVKY FORGE pipeline, in a native window.",
+  "private": true,
+  "main": "src/main.js",
+  "author": "Zvky Design Studio",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "icon": "node scripts/make-icon.js",
+    "build:win": "node scripts/build.js --win",
+    "build:mac": "node scripts/build.js --mac",
+    "build:all": "node scripts/build.js --win --mac",
+    "check": "node scripts/check.js",
+    "smoke": "xvfb-run -a electron --no-sandbox scripts/smoke.js"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "js-yaml": "^4.1.0"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  }
+}

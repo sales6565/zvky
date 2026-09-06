@@ -1,0 +1,124 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>ZVKY FORGE</title>
+<!--
+  Shown when the window could not load the studio.
+
+  Chromium's own error page is accurate and useless to the person reading it —
+  it names a code and offers to check the cable. This one turns the codes that
+  actually occur into the sentence that tells somebody what to do, and keeps the
+  code visible for whoever they end up asking.
+
+  Note what it does NOT claim. It cannot tell a blocked network from a stopped
+  server, so it does not guess between them; it says which is more likely for
+  the code it was given and leaves it there. An error screen that confidently
+  names the wrong cause sends people to fix the wrong thing.
+-->
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; display: grid; place-items: center;
+    background: #14100f; color: #efe7e5;
+    font: 14px/1.55 -apple-system, "Segoe UI", system-ui, sans-serif;
+    -webkit-user-select: none; user-select: none;
+  }
+  .card { width: 480px; padding: 0 28px; }
+  .mark {
+    width: 46px; height: 46px; border-radius: 11px; margin-bottom: 20px;
+    background: linear-gradient(160deg, #7f1416, #5c0e10);
+    display: grid; place-items: center;
+    font: 700 26px/1 Georgia, "Times New Roman", serif; color: #fff;
+  }
+  h1 { font-size: 19px; font-weight: 600; margin: 0 0 8px; }
+  p { margin: 0 0 14px; color: #a4938f; font-size: 13px; }
+  ul { margin: 0 0 16px; padding-left: 18px; color: #a4938f; font-size: 13px; }
+  li { margin-bottom: 4px; }
+  .row { display: flex; gap: 10px; margin-top: 20px; }
+  button {
+    font: 600 13px/1 inherit; padding: 11px 18px; border-radius: 6px; border: 0;
+    background: #7f1416; color: #fff; cursor: pointer;
+  }
+  button:hover { background: #96181b; }
+  button.ghost { background: transparent; color: #a4938f; border: 1px solid #3a2e2c; }
+  button.ghost:hover { color: #efe7e5; }
+  .detail {
+    margin-top: 24px; padding-top: 14px; border-top: 1px solid #2a2220;
+    font: 11px/1.5 ui-monospace, Menlo, Consolas, monospace; color: #6b5c59;
+    word-break: break-all; -webkit-user-select: text; user-select: text;
+  }
+</style>
+
+<div class="card">
+  <div class="mark">Z</div>
+  <h1 id="title">Could not reach your studio</h1>
+  <p id="lede"></p>
+  <ul id="checks"></ul>
+
+  <div class="row">
+    <button id="retry">Try Again</button>
+    <button class="ghost" id="change">Change Address</button>
+  </div>
+
+  <p class="detail" id="detail"></p>
+</div>
+
+<script>
+  const q = new URLSearchParams(location.search);
+  const code = Number(q.get('code') || 0);
+  const description = q.get('description') || '';
+  const failed = q.get('url') || '';
+
+  /* The codes that happen in practice, and what each one actually means to the
+     person in front of it. Anything else falls through to the general case
+     rather than being described wrongly. */
+  const CASES = {
+    '-105': {                     // ERR_NAME_NOT_RESOLVED
+      lede: 'The address could not be found. That is usually a typo in the studio address, or a machine with no working internet connection.',
+      checks: ['Check the address below for a typo.', 'Open the same address in a browser — if it fails there too, it is not this app.'],
+    },
+    '-106': {                     // ERR_INTERNET_DISCONNECTED
+      lede: 'This computer is not connected to a network.',
+      checks: ['Reconnect to Wi-Fi or plug in the cable, then press Try Again.'],
+    },
+    '-102': {                     // ERR_CONNECTION_REFUSED
+      lede: 'The address was found, but nothing answered. The studio server may be restarting or stopped.',
+      checks: ['Wait a moment and press Try Again.', 'If a colleague can open it in a browser right now, tell whoever runs the server.'],
+    },
+    '-7': {                       // ERR_TIMED_OUT
+      lede: 'The studio did not answer in time. This is what a blocked connection looks like as often as a slow one.',
+      checks: ['If your studio restricts access to certain networks, connect to that network or its VPN first.', 'Otherwise wait a moment and press Try Again.'],
+    },
+    '-118': {                     // ERR_CONNECTION_TIMED_OUT
+      lede: 'The studio did not answer in time. This is what a blocked connection looks like as often as a slow one.',
+      checks: ['If your studio restricts access to certain networks, connect to that network or its VPN first.', 'Otherwise wait a moment and press Try Again.'],
+    },
+    '-501': {                     // ERR_INSECURE_RESPONSE
+      lede: 'The connection was refused because the studio’s security certificate could not be trusted.',
+      checks: ['Open the same address in a browser — it will say what is wrong with the certificate.', 'Do not work around this; tell whoever runs the server.'],
+    },
+  };
+
+  const fallback = {
+    lede: 'The studio could not be opened. The details below are what the connection reported.',
+    checks: ['Press Try Again.', 'Open the same address in a browser — if it works there, note the code below and pass it on.'],
+  };
+
+  const c = CASES[String(code)] || fallback;
+  document.getElementById('lede').textContent = c.lede;
+  const list = document.getElementById('checks');
+  c.checks.forEach((text) => {
+    const li = document.createElement('li');
+    li.textContent = text;
+    list.appendChild(li);
+  });
+
+  document.getElementById('detail').textContent =
+    [failed, description ? description + ' (' + code + ')' : 'Error ' + code].filter(Boolean).join('\n');
+
+  document.getElementById('retry').addEventListener('click', () => window.zvky.retry());
+  /* Both local screens sit in the same folder and share this preload, so the
+     first-run screen is reachable by navigating to it. It reads the saved
+     address back and offers to correct it. */
+  document.getElementById('change').addEventListener('click', () => { location.href = 'setup.html'; });
+</script>

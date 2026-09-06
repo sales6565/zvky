@@ -1,0 +1,74 @@
+# Building the Mac installer, on a Mac you do not own.
+#
+# WHY THIS FILE IS HERE AND NOT IN .github/workflows/
+#
+# A workflow only runs from .github/workflows/ at the top of the repository,
+# which is the web application's own directory — and the standing instruction
+# for this wrapper is that it does not touch anything there. So it sits here as
+# a file to copy, not one that quietly took effect:
+#
+#   cp desktop/ci/build-macos.yml .github/workflows/desktop-macos.yml
+#
+# It builds nothing unless you start it by hand (workflow_dispatch), and it
+# touches nothing outside desktop/. It does not deploy, does not publish, and
+# does not run on a push.
+#
+# WHAT IT PRODUCES: two .dmg files — one for Intel Macs, one for Apple Silicon —
+# downloadable from the run's Artifacts section for seven days. Unsigned, as
+# agreed: the first person to open one right-clicks and chooses Open. See
+# desktop/README.md.
+#
+# WHAT IT COSTS: macOS runners bill at ten times the Linux rate on GitHub's
+# paid plans, and this takes a few minutes. Run it when you cut a version, not
+# on every commit — which is why it is dispatch-only.
+name: Desktop — macOS installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      update_feed:
+        description: 'Update feed URL (e.g. https://your-domain.com/desktop/). Leave blank to build without self-update.'
+        required: false
+        default: ''
+
+jobs:
+  dmg:
+    # macos-14 is Apple Silicon. It cross-builds the Intel .dmg as well, which
+    # an Intel runner cannot do in reverse.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install
+        working-directory: desktop
+        run: npm ci
+
+      - name: Check
+        working-directory: desktop
+        run: npm run check
+
+      - name: Build the disk images
+        working-directory: desktop
+        env:
+          ZVKY_UPDATE_FEED: ${{ inputs.update_feed }}
+          # Belt and braces: with no certificate in the environment,
+          # electron-builder can still decide to try signing. This says not to.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run build:mac
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zvky-forge-macos
+          # The .dmg files and, when a feed was given, the latest-mac.yml that
+          # tells an installed copy a newer one exists. Upload all three to your
+          # hosting together or the update check will find a version it cannot
+          # download.
+          path: |
+            desktop/dist/*.dmg
+            desktop/dist/latest-mac.yml
+          retention-days: 7
+          if-no-files-found: error
