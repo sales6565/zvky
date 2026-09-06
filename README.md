@@ -88,6 +88,9 @@ opens outwards.
 Enabling *Manage IP Allowlist* for any role asks for confirmation with the
 lockout warning, carried on the permission itself.
 
+*Manage IP Blocklist* is Super Admin only and stays off for every other
+designation unless a Super Admin switches it on.
+
 Every change is written to `role_permission_audit` — who, which role, which
 permission, enabled or disabled, when — readable at `GET /api/permissions/audit`.
 
@@ -745,6 +748,56 @@ Setting a project clears the other two tables, so a designation change *moves*
 the membership rather than leaving a stale row that the permission checks would
 still honour. Changing only the role moves it automatically.
 
+## Project milestones
+
+A project has one start and end date, but the work inside it has stages that run
+on their own dates — art finishing weeks before animation starts, say. The
+**Milestones** column on the Projects list under a client shows those stages
+stacked one per line for each project:
+
+```
+Art: 12 Jan 2026 – 06 Feb 2026
+Animation: 09 Feb 2026 – 20 Mar 2026
+```
+
+Milestones are added on the Add and Edit Project forms, a row at a time: pick a
+type, give it a start and an end. Nothing else about a project changed — the
+column is additive, and a project with no milestones reads as it always did.
+
+### The types come from one list
+
+*Art* and *Animation* are not special. They are rows in the `milestone_types`
+reference list, managed under **Settings → Milestone Types** like every other
+value list, with the same rules: renaming one leaves the projects holding it
+untouched, a type in use cannot be deleted, and retiring one deactivates it so
+it disappears from the dropdown without disturbing the milestones already on it.
+
+Milestones are **selective**, not compulsory: a project takes the stages it
+actually has. Each type can appear at most once per project, so the stacked
+lines never repeat a stage, and a project is capped at 20 of them.
+
+### What is refused, and what is only a warning
+
+A milestone whose end falls before its start is **refused** — it is not a
+schedule, it is a typo. So is a duplicate type, an unknown or retired one, and a
+milestone on a project that has no dates of its own to judge it against.
+
+A milestone falling outside the project's own start and end dates is a
+**warning**, not a refusal. Stages genuinely do run past a project window while
+the dates are being renegotiated, and a hard refusal there would mean the
+schedule could not record what is actually happening.
+
+### Two permissions
+
+| Permission | Covers |
+| --- | --- |
+| *Set Project Milestones* (`project.milestones`) | Adding, changing and removing milestones on a project. |
+| *Manage Milestone Types* (`settings.milestone_types`) | The list of stages in Settings. |
+
+They are separate on purpose: deciding which stages the studio plans in is a
+different decision from planning one project with them. The API refuses a save
+that touches milestones without the first, whatever the form sent.
+
 ## Restricting access by IP address
 
 The whole application can be limited to a set of addresses. The check runs on
@@ -757,6 +810,10 @@ Entries are single addresses (`106.51.81.61`) or CIDR ranges
 (`106.51.81.0/24`, `2001:db8::/32`), and take effect on the next request — no
 restart. Every change is recorded with who made it and from where, under
 *Change history* on the same screen.
+
+There are two lists, and they are not symmetrical. The allowlist says who may
+come in; the **blocklist** says who may not, and is checked first — see
+[Blocking specific addresses](#blocking-specific-addresses).
 
 ### It does not block anything until you say so
 
@@ -859,6 +916,78 @@ you confirm it. The browser asks first; the API refuses a `DELETE` without
 `?confirm=yes` regardless, so a script or a stale tab gets the same protection.
 The message distinguishes the two cases — whether another entry still covers
 you, or whether this is the one thing keeping you in.
+
+### Blocking specific addresses
+
+The allowlist answers "who may reach this app". The blocklist answers the other
+question — "who may not" — and a Super Admin manages it under **Settings →
+Blocked IP Addresses**, below the allowlist on the same screen. Entries are
+single addresses or CIDR ranges, take effect on the next request, and every
+block and unblock is written to the **Activity Log** under *Settings*, naming
+the address, the reason and who did it.
+
+Three of its rules are deliberately **not** the allowlist's. Each is stated on
+the screen itself, because somebody who has read the allowlist panel will
+otherwise carry the wrong assumption across:
+
+- **A block beats the allowlist.** It is checked first, so an address on both
+  lists is refused. Carving one machine out of an allowed range is what the
+  feature is for, and the screen says so when you block an address the allowlist
+  covers.
+- **A block applies in monitor mode.** Monitor mode exists because an
+  *unfinished* allowlist should not lock a studio out. A blocklist entry is not
+  unfinished — somebody named one address and said keep it out. Honouring it
+  only under `enforce` would mean blocking a compromised device on a
+  monitor-mode deployment did nothing at all, while looking exactly like it had
+  worked.
+- **A block never beats the escape hatches.** Loopback,
+  `IP_ALLOWLIST_EMERGENCY` and `IP_ALLOWLIST_BYPASS_TOKEN` are all checked
+  before it, so a mistaken block is always recoverable from the server
+  environment rather than by editing the database. A blocked address that is
+  also an emergency address still gets in, and that ordering is the design.
+
+Blocks are **permanent by default**. Leave *Expires* empty and the entry stands
+until somebody removes it; set a date and time and it lapses on its own. Expiry
+is a comparison made on every request rather than a scheduled job, so nothing
+has to run for a block to end. A lapsed entry stays listed, marked *expired*,
+because somebody looking for why an address was blocked last week needs to find
+it.
+
+Addresses can be added by hand, or with the **Block** button beside any address
+in *What enforcing would do* — on both halves of that table, since the address
+worth blocking is usually one that is currently getting through. A row already
+covered by a block is marked instead of offering the button.
+
+Unblocking deletes the row rather than deactivating it, which is the opposite of
+the allowlist's choice. An allowlist entry is often taken off for a week and put
+back; an unblocked address is a decision that it is fine now, and a switched-off
+block left on the screen invites somebody to switch it back on without knowing
+why it was lifted. The Activity Log holds the history.
+
+#### You cannot block yourself
+
+Blocking an address that covers your own is **refused outright** — a 409 with no
+confirm-and-proceed, which is stricter than the allowlist's equivalent guard.
+The difference is the recovery path. Removing your allowlist entry locks you
+out, but the list is still there and a colleague on another allowed address can
+put it back. Blocking your own address locks you out of the screen that would
+undo it, immediately, and the only way back is an environment variable on the
+server. Blocking a *range* that happens to include you is refused for the same
+reason and is the likelier of the two mistakes.
+
+There is no legitimate use for it either: an administrator who wants to stop
+using an address takes it off the allowlist instead.
+
+#### Its own permission
+
+*Manage IP Blocklist* (`settings.ip_blocklist`) is **Super Admin only by
+default** and is not implied by *Manage Access* or by the allowlist permission —
+allowing an address and barring one are different powers. The API refuses every
+route without it, signed in or not.
+
+If its table cannot be read, **nothing is blocked** — the same failure direction
+as the allowlist, for the same reason, and announced just as loudly, with a
+**Repair now** button on the panel.
 
 ### When its storage breaks
 

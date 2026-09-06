@@ -1,6 +1,7 @@
 const { asyncRouter } = require('../async-router');
 const { authenticate, requirePermission } = require('../middleware/auth');
 const allowlist = require('../ip-allowlist');
+const blocklist = require('../ip-blocklist');
 const ipMatch = require('../ip-match');
 const gate = require('../middleware/ip-allowlist');
 const observations = require('../ip-observations');
@@ -176,6 +177,12 @@ router.get('/observed', async (req, res) => {
     // Whether an entry on the list already covers it — so an address that was
     // refused earlier but has since been allowed does not read as a problem.
     coveredNow: Boolean(allowlist.findMatch(entry.address)),
+    /* Display only, and additive: nothing in this file's decisions reads it.
+       It exists so the Block button beside a row is not offered for an address
+       that is already blocked — including by a RANGE, which the browser has no
+       way to work out for itself. Every allowlist judgement above and below is
+       unchanged. */
+    blockedNow: Boolean(blocklist.findMatch(entry.address)),
   });
 
   res.json({

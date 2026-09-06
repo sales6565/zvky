@@ -2,6 +2,7 @@ const { v4: uuid } = require('uuid');
 const { roleKeys, roleDef } = require('./roles');
 const referenceData = require('./reference-data');
 const ipAllowlist = require('./ip-allowlist');
+const ipBlocklist = require('./ip-blocklist');
 const { applyTableOptions } = require('./db-collation');
 const reporting = require('./reporting');
 const catalog = require('./permission-catalog');
@@ -685,6 +686,29 @@ async function ensureIpAllowlist(db, log) {
     log('    Fix: give the database user CREATE privileges and restart, or apply the two');
     log('    CREATE TABLE statements in sql/schema.sql by hand, then use the Repair button');
     log('    on Settings -> Allowed IP Addresses.');
+    log('');
+  }
+  return result;
+}
+
+/* The blocklist's table, created alongside the allowlist's rather than folded
+ * into it: two lists, two permissions, two meanings.
+ *
+ * A failure here is reported the same way and for the same reason — a studio
+ * that believes an address is barred when it is not is worse off than one that
+ * knows the feature is broken. */
+async function ensureIpBlocklist(db, log) {
+  const result = await ipBlocklist.install(db);
+  if (!result.ok) {
+    log('');
+    log('*** IP BLOCKLIST STORAGE IS UNAVAILABLE ***');
+    log(`    ${result.state === 'missing-tables'
+      ? 'The ip_blocklist table does not exist and could not be created.'
+      : 'The ip_blocklist table could not be read.'}`);
+    log(`    ${result.code || 'error'}: ${result.detail}`);
+    log('    Blocked addresses are NOT being refused. The allowlist is unaffected.');
+    log('    Fix: give the database user CREATE privileges and restart, or apply the');
+    log('    CREATE TABLE statement in sql/schema.sql by hand.');
     log('');
   }
   return result;
@@ -2385,6 +2409,9 @@ const STEPS = [
   // After the catalogue top-up, so every role has a row to correct.
   ['review gate departments', ensureReviewGateDefaults],
   ['IP allowlist', ensureIpAllowlist],
+  // After it, and independent of it: the blocklist is checked by the same gate
+  // but neither list's storage depends on the other's.
+  ['IP blocklist', ensureIpBlocklist],
   ['asset category', ensureAssetCategory],
   ['profile photos', ensureProfilePhotos],
   ['quick tour', ensureTourSeen],

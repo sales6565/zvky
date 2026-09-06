@@ -579,6 +579,13 @@ tr.past-round{opacity:0.62;}
 /* The storage-fault banner. Louder than the rest on purpose: it means the app
    is not restricting access while looking as though it is. */
 .ip-banner.fault{background:rgba(255,90,54,.12);border-color:rgba(255,90,54,.45);color:#ff9b80;}
+/* The blocklist's own tone. Deliberately not the brand colour and not the
+   allowlist's green: a bar here means somebody is being refused, and it has
+   to read as that at a glance from across the same screen. */
+.ip-banner.blocked{background:rgba(255,90,54,.09);border-color:rgba(255,90,54,.30);color:#ff9b80;}
+.ip-expiry{font-size:10.5px;font-family:'IBM Plex Mono';color:var(--ink-muted);}
+.ip-expiry.past{color:var(--ink-faint);}
+.ip-yours{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;padding:2px 7px;border-radius:20px;font-family:'IBM Plex Mono';background:rgba(255,90,54,.16);color:#ff9b80;margin-left:8px;}
 /* The rollout panel: who the gate has seen, and who enforcing would turn away. */
 .ip-obs{margin-top:16px;padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);}
 .ip-obs h4{margin:0 0 3px;font-family:'Space Grotesk';font-size:13px;}
@@ -2002,6 +2009,7 @@ const SETTINGS_SECTIONS = [
   { permission:'settings.milestone_types', label:'Milestone Types', note:'The stages a project can be planned in — Art, Animation, and whatever the studio adds.' },
   { permission:'settings.roles',        label:'Roles',            note:'The studio\'s designations and what each one can do.' },
   { permission:'settings.ip_allowlist', label:'IP Allowlist',     note:'Which addresses may reach this application at all.' },
+  { permission:'settings.ip_blocklist', label:'IP Blocklist',     note:'Addresses barred outright, whatever else allows them.' },
   /* The two read-only records. They were missing from this list, which is a
      bug rather than an omission: canOpenSettings() below is what gates the
      Settings TAB, so a designation granted the Activity Log and nothing else
@@ -7872,6 +7880,7 @@ async function renderSettings(){
     ${can('settings.branding') ? '<div id="brandingSection"></div>' : ''}
     ${can('settings.working_hours') ? '<div id="scheduleSection"></div>' : ''}
     ${can('settings.ip_allowlist') ? '<div id="ipAllowlistSection"></div>' : ''}
+    ${can('settings.ip_blocklist') ? '<div id="ipBlocklistSection"></div>' : ''}
     ${can('settings.permissions') ? '<div id="rolePermissionsSection"></div>' : ''}
     ${can('settings.activity_log') ? '<div id="activityLogSection"></div>' : ''}
     ${can('settings.chat_activity') ? '<div id="chatActivitySection"></div>' : ''}
@@ -7893,6 +7902,11 @@ async function renderSettings(){
      permission — it is not implied by holding the rest of this screen. The API
      refuses it regardless; hiding it keeps the screen honest about the offer. */
   if(can('settings.ip_allowlist')) await renderIpAllowlist();
+  /* Its own permission again, and a narrower one: blocking is Super Admin only
+     by default. Drawn below the allowlist, which is the reverse of the order the
+     gate checks them in — the panel says so in its own note rather than relying
+     on the layout to imply it. */
+  if(can('settings.ip_blocklist')) await renderIpBlocklist();
 }
 
 function renderRefSection(sec){
@@ -8293,7 +8307,15 @@ async function renderIpObserved(){
           <td class="ref-key">${escapeHTML(new Date(e.lastSeen).toLocaleString())}</td>
           <td class="ref-key" style="opacity:.75;">${escapeHTML((e.paths||[]).join(', '))}</td>
           <td class="ref-actions">${(kind==='refused' && !e.coveredNow)
-            ? `<button class="btn btn-ghost btn-sm ip-add-seen" data-ip="${escapeHTML(e.address)}">Allow this</button>` : ''}</td>
+            ? `<button class="btn btn-ghost btn-sm ip-add-seen" data-ip="${escapeHTML(e.address)}">Allow this</button>` : ''}${
+            /* Offered on BOTH halves of this table, and the lower half is the
+               point: the address you want to block is usually one that is
+               getting through, not one already being turned away. Never on your
+               own row — the server refuses it outright, so offering the button
+               would only be a way of finding that out. */
+            (can('settings.ip_blocklist') && !e.isYou && !e.blockedNow)
+            ? `<button class="btn btn-ghost btn-sm ip-block-seen" data-ip="${escapeHTML(e.address)}" style="color:var(--brand-accent);">Block</button>` : ''}${
+            e.blockedNow ? '<span class="ip-yours">blocked</span>' : ''}</td>
         </tr>`).join('')}</tbody>
     </table>` : `<div class="ref-key">None recorded.</div>`;
 
@@ -8318,6 +8340,9 @@ async function renderIpObserved(){
       <div class="ip-obs-scope">${escapeHTML(d.scope)} Recording since ${escapeHTML(new Date(d.since).toLocaleString())}.${d.truncated?` Only the ${d.limit} most recent addresses are kept.`:''}</div>
     </div>`;
 
+  el.querySelectorAll('.ip-block-seen').forEach(btn=>btn.addEventListener('click', ()=>
+    ipbBlockObserved(btn.dataset.ip, btn)));
+
   el.querySelectorAll('.ip-add-seen').forEach(btn=>btn.addEventListener('click', async ()=>{
     const address = btn.dataset.ip;
     if(!confirm(`Add ${address} to the allowlist?`)) return;
@@ -8328,6 +8353,222 @@ async function renderIpObserved(){
       await renderIpAllowlist();
     }catch(err){ ipError(err.message); btn.disabled = false; }
   }));
+}
+
+/* ---------- settings: addresses barred outright ---------- */
+/* The other half of the gate, and the half that reads backwards if it is not
+   explained: the allowlist says who may come in, this says who may not, and
+   this one is checked FIRST. An address on both lists is refused.
+   
+   Three things about it are unlike the allowlist above, and each is on the
+   screen rather than in the docs, because somebody reading one panel will
+   otherwise carry the wrong assumption to the other:
+   
+     it applies in monitor mode    Monitor mode is an unfinished allowlist —
+                                   a list nobody has checked yet, which is why
+                                   it does not refuse anyone. A block is the
+                                   opposite: a decision about one named
+                                   address. It takes effect immediately.
+   
+     it never beats the hatches    Loopback, IP_ALLOWLIST_EMERGENCY and the
+                                   bypass token are checked before this, so a
+                                   mistake here is always recoverable from the
+                                   server's environment.
+   
+     you cannot block yourself     Not a confirmation — a refusal. See the note
+                                   on POST in src/routes/ip-blocklist.js. */
+
+let ipbCache = { entries: [], yourAddress: null };
+
+async function renderIpBlocklist(){
+  const el = document.getElementById('ipBlocklistSection');
+  if(!el) return;
+  let data;
+  try{ data = await api('/ip-blocklist'); }
+  catch(err){
+    el.innerHTML = `<div class="ref-section"><div class="ref-head"><h3>Blocked IP Addresses</h3></div>
+      <div class="ref-err">${escapeHTML(err.message)}</div></div>`;
+    return;
+  }
+  ipbCache = data;
+  const entries = data.entries || [];
+  const yourAddress = data.yourAddress;
+
+  /* Same treatment the allowlist gives an unreadable table, for the opposite
+     reason: there, an empty list looks like "no restrictions" when it is really
+     "cannot tell". Here, an empty list looks like "nobody is blocked" when the
+     truth may be "everybody who should be blocked is getting in". */
+  if(data.storage && data.storage.ok === false){
+    el.innerHTML = `
+      <div class="ref-section" data-section="ip-blocklist">
+        <div class="ref-head"><h3>Blocked IP Addresses</h3></div>
+        <div class="ip-banner fault">
+          <h4>This feature is not working, and nothing is being blocked</h4>
+          <p>${escapeHTML(data.storage.summary||'')}</p>
+          <p>${escapeHTML(data.storage.cause||'')}</p>
+          <p><code>${escapeHTML((data.storage.code?data.storage.code+': ':'')+(data.storage.detail||''))}</code></p>
+          <p>${escapeHTML(data.storage.fix||'')}</p>
+        </div>
+        ${data.storage.repairable?'<button class="btn btn-brand" id="ipbRepairBtn">Repair now</button>':''}
+        <div class="ref-err" id="err-ip-blocklist"></div>
+      </div>`;
+    const repair = document.getElementById('ipbRepairBtn');
+    if(repair) repair.addEventListener('click', async ()=>{
+      repair.disabled = true; repair.textContent = 'Repairing…';
+      ipbError('');
+      try{
+        await api('/ip-blocklist/repair', { method:'POST' });
+        showToast('Repaired — the blocklist is working again.');
+        await renderIpBlocklist();
+      }catch(err){
+        ipbError(err.message);
+        repair.disabled = false; repair.textContent = 'Repair now';
+      }
+    });
+    return;
+  }
+
+  const live = entries.filter(e=>e.isActive && !e.expired);
+  const gate = data.gate || {};
+  /* The sentence that stops somebody adding an entry and believing it did
+     something when it did not, or — the likelier mistake — adding one in
+     monitor mode and believing it did NOT. */
+  const banner = gate.blocksApply
+    ? `<div class="ip-banner blocked">${escapeHTML(gate.note||'')} ${live.length
+        ? `<strong>${live.length}</strong> address${live.length===1?'':'es'} refused.`
+        : 'Nothing is blocked at the moment.'}</div>`
+    : `<div class="ip-banner open">${escapeHTML(gate.note||'')} Entries added here are stored, but no address is being refused until the gate is switched back on.</div>`;
+
+  const expiryCell = (e)=>{
+    if(!e.expiresAt) return '<span class="ip-expiry">never — permanent</span>';
+    const when = new Date(e.expiresAt);
+    return e.expired
+      ? `<span class="ip-expiry past">expired ${escapeHTML(when.toLocaleString())}</span>`
+      : `<span class="ip-expiry">until ${escapeHTML(when.toLocaleString())}</span>`;
+  };
+
+  const rows = entries.map(e=>`
+    <tr class="${(e.isActive && !e.expired)?'':'inactive'}">
+      <td>
+        <strong class="ref-key" style="font-size:12.5px;color:var(--ink);">${escapeHTML(e.address)}</strong>
+        ${e.coversYou?'<span class="ip-yours">covers you</span>':''}
+        ${e.expired?'<span class="ref-pill" style="margin-left:8px;">expired</span>':''}
+      </td>
+      <td>${escapeHTML(e.reason||e.label||'')}</td>
+      <td>${expiryCell(e)}</td>
+      <td class="ref-key">${escapeHTML(e.createdBy||'system')}</td>
+      <td class="ref-actions">
+        <button class="btn btn-ghost btn-sm ipb-remove" data-id="${escapeHTML(e.id)}" style="color:var(--brand-accent);">Unblock</button>
+      </td>
+    </tr>`).join('');
+
+  el.innerHTML = `
+    <div class="ref-section" data-section="ip-blocklist">
+      <div class="ref-head"><h3>Blocked IP Addresses</h3>
+        <span class="ref-key">${live.length} in force${entries.length!==live.length?` · ${entries.length-live.length} lapsed`:''}</span>
+      </div>
+      <div class="ref-note">Addresses refused outright. Checked <em>before</em> the allowlist above, so an address on
+        both lists is refused — and unlike the allowlist, a block applies in monitor mode too. It does not override the
+        server's emergency address or bypass token, so a mistake here is always recoverable.</div>
+      ${banner}
+      <div class="ip-you">You are connecting from <b>${escapeHTML(yourAddress||'an address the server could not read')}</b> — you cannot block an address that covers it.</div>
+      <table class="ref-table">
+        <thead><tr><th>Address or range</th><th>Reason</th><th>Expires</th><th>Blocked by</th><th></th></tr></thead>
+        <tbody>${rows||'<tr><td colspan="5" class="ref-key">Nothing blocked.</td></tr>'}</tbody>
+      </table>
+      <div class="ref-add">
+        <div><label>Address or range</label><input type="text" id="new-ipb-address" placeholder="106.51.81.61 or 106.51.81.0/24" style="width:230px;"></div>
+        <div><label>Reason</label><input type="text" id="new-ipb-reason" placeholder="e.g. repeated sign-in attempts" style="width:230px;"></div>
+        <div><label>Expires (optional)</label><input type="datetime-local" id="new-ipb-expires" style="width:200px;"></div>
+        <button class="btn btn-brand" id="ipbCreateBtn">Block</button>
+      </div>
+      <div class="ref-note" style="margin-top:2px;">Leave the expiry empty for a permanent block. Every block and unblock
+        is recorded in the Activity Log, under Settings.</div>
+      <div class="ref-err" id="err-ip-blocklist"></div>
+    </div>`;
+  wireIpBlocklist();
+}
+
+function ipbError(message){
+  const el = document.getElementById('err-ip-blocklist');
+  if(el) el.textContent = message || '';
+}
+
+/* An empty datetime-local means permanent; anything else is sent as an absolute
+   instant, because the browser's value is local time and the server is not. */
+function ipbExpiry(value){
+  const raw = String(value||'').trim();
+  if(!raw) return null;
+  const at = new Date(raw);
+  return Number.isFinite(at.getTime()) ? at.toISOString() : raw;
+}
+
+function wireIpBlocklist(){
+  document.getElementById('ipbCreateBtn').addEventListener('click', async (ev)=>{
+    const address = document.getElementById('new-ipb-address').value.trim();
+    const reason = document.getElementById('new-ipb-reason').value.trim();
+    const expiresAt = ipbExpiry(document.getElementById('new-ipb-expires').value);
+    ipbError('');
+    if(!address){ ipbError('Enter an IP address or CIDR range.'); return; }
+    ev.target.disabled = true;
+    try{
+      const result = await api('/ip-blocklist', { method:'POST', body:{ address, reason, expiresAt } });
+      document.getElementById('new-ipb-address').value = '';
+      document.getElementById('new-ipb-reason').value = '';
+      document.getElementById('new-ipb-expires').value = '';
+      await renderIpBlocklist();
+      /* The observed table marks the rows a block now covers and drops its own
+         Block button from them, so it is out of date the moment this succeeds —
+         including for addresses this entry covers only as part of a RANGE,
+         which is the case somebody would otherwise have to reload to see. */
+      await renderIpObserved();
+      /* Live immediately, same as the allowlist — and the server's note, when
+         there is one, is the fact that the address was also on the allowlist. */
+      showToast(result.note || `${address} blocked — it is refused straight away.`);
+    }catch(err){ ipbError(err.message); }
+    finally{ ev.target.disabled = false; }
+  });
+
+  document.querySelectorAll('.ipb-remove').forEach(btn=>btn.addEventListener('click', async ()=>{
+    const entry = (ipbCache.entries||[]).find(e=>e.id===btn.dataset.id);
+    if(!entry) return;
+    /* One confirmation, and it says what letting them back in means. Unblocking
+       cannot lock anybody out, so it does not get the allowlist's second gate. */
+    if(!confirm(`Unblock ${entry.address}?\n\nIt will be able to reach the app again, subject to the allowlist.`)) return;
+    ipbError('');
+    try{
+      await api('/ip-blocklist/'+encodeURIComponent(entry.id), { method:'DELETE' });
+      await renderIpBlocklist();
+      // The observed table marks blocked rows, so it is now out of date. It
+      // returns immediately if that panel is not on the screen.
+      await renderIpObserved();
+      showToast(`${entry.address} unblocked.`);
+    }catch(err){ ipbError(err.message); }
+  }));
+}
+
+/* Block an address straight off the observed table.
+ *
+ * Shared by both halves of that table, because the address worth blocking is
+ * usually one that IS getting through, not one already being refused. Asks for
+ * a reason rather than writing a generic one: an entry nobody can explain in
+ * six months is an entry nobody dares remove. */
+async function ipbBlockObserved(address, btn){
+  const reason = prompt(`Block ${address}?\n\nIt will be refused immediately, and permanently until somebody unblocks it.\n\nReason (optional):`, '');
+  if(reason===null) return;
+  if(btn) btn.disabled = true;
+  try{
+    const result = await api('/ip-blocklist', { method:'POST', body:{ address, reason, label:'Blocked from the observed list' } });
+    showToast(result.note || `${address} blocked.`);
+    await renderIpBlocklist();
+    await renderIpObserved();
+  }catch(err){
+    /* The self-lockout refusal lands here, and it is long. A toast would clip
+       it, so it goes in the panel's error line where it can be read. */
+    ipbError(err.message);
+    showToast(err.message.slice(0,90));
+    if(btn) btn.disabled = false;
+  }
 }
 
 /* ---------- settings: role permissions ---------- */

@@ -62,6 +62,7 @@ const REQUIRED = [
   { table: 'asset_assignments', column: null,           step: 'assignment history' },
   { table: 'asset_assignments', column: 'ended_status', step: 'assignment history' },
   { table: 'ip_allowlist',     column: null,            step: 'IP allowlist' },
+  { table: 'ip_blocklist',     column: null,            step: 'IP blocklist' },
   { table: 'categories',       column: null,            step: 'reference tables' },
   { table: 'project_categories', column: null,          step: 'reference tables' },
   { table: 'projects',         column: 'category',      step: 'project fields' },

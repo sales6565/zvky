@@ -739,6 +739,28 @@ const GROUPS = [
         // than being remembered by whoever wrote the screen.
         danger: 'A wrong entry here locks everyone out of the application, and the way back is an environment variable on the server.',
       },
+      {
+        /* Addresses refused whatever the allowlist says.
+         *
+         * SUPER ADMIN ONLY, unlike the allowlist beside it, which travels with
+         * manageAccess. Two reasons. Blocking is instant and one-sided: an
+         * allowlist mistake is noticed because somebody cannot get in and says
+         * so, while a block is noticed by exactly one person, who is now unable
+         * to say anything. And it is the tool somebody would reach for to cut
+         * off a colleague — which is a decision for whoever runs the studio,
+         * not for everyone trusted with the network list.
+         *
+         * impliedBy managePermissions is the front door: only the designation
+         * that hands out permissions has it, and the Super Admin picks up new
+         * permissions without anybody switching them on. */
+        key: 'settings.ip_blocklist',
+        label: 'Manage IP Blocklist',
+        impliedBy: has('managePermissions'),
+        describe: 'Bar specific addresses outright. A blocked address is refused even when the allowlist '
+          + 'would admit it, and even while the allowlist is only monitoring.',
+        danger: 'A block takes effect immediately and the person blocked cannot tell you. Blocking your own '
+          + 'address is refused; blocking the range you sit in is not, and would lock out everyone on it.',
+      },
       { key: 'settings.audit_logs',   label: 'View Audit Logs',      impliedBy: has('manageSettings'), pending: PENDING },
       {
         key: 'settings.activity_log',

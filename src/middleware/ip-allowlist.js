@@ -28,6 +28,7 @@
 
 const ipMatch = require('../ip-match');
 const allowlist = require('../ip-allowlist');
+const blocklist = require('../ip-blocklist');
 const observations = require('../ip-observations');
 
 // Paths the gate never blocks.
@@ -104,16 +105,26 @@ function clientIP(req) {
 function deny(req, res, ip, reason = 'not-allowed') {
   const wantsHtml = String(req.headers.accept || '').includes('text/html');
   const unavailable = reason === 'unavailable';
+  const blockedHere = reason === 'blocked';
   const headline = unavailable ? 'Access temporarily unavailable' : 'Access denied';
+  /* A blocked address is told it is blocked, and nothing more. Not which rule,
+     not who added it, not when it lifts: whoever is on the other end of a block
+     is the one person who should not be helped to work around it. "Not on the
+     list" would be worse than useless here — it would send somebody to ask for
+     an allowlist entry that will not help them. */
   const explain = unavailable
     ? 'This application cannot currently check whether your address is permitted, and is configured to refuse rather than allow while that is true. An administrator has been shown the reason in the server log.'
-    : 'This application only accepts connections from approved networks, and this one is not on the list.';
+    : (blockedHere
+      ? 'This address has been blocked from reaching this application. If you believe that is a mistake, contact whoever administers it.'
+      : 'This application only accepts connections from approved networks, and this one is not on the list.');
   res.status(403);
   if (!wantsHtml) {
     return res.json({
       error: unavailable
         ? 'Access denied: the address allowlist cannot be read, and this server is configured to refuse traffic while that is true.'
-        : 'Access denied: this address is not permitted to reach this application.',
+        : (blockedHere
+          ? 'Access denied: this address has been blocked from reaching this application.'
+          : 'Access denied: this address is not permitted to reach this application.'),
       yourAddress: ip,
       reason,
     });
@@ -242,6 +253,39 @@ function middleware(req, res, next) {
     console.warn(`[ip-allowlist] EMERGENCY ADDRESS USED: ${ip} matched ${emergency} -> ${req.method} ${req.path}`);
     req.ipAllowlist = { decision: 'emergency', rule: emergency };
     return next();
+  }
+
+  /* THE BLOCKLIST. Deliberately here and nowhere else in this function.
+   *
+   * AFTER the four things above — loopback, the bypass token, the emergency
+   * addresses, and the whole gate being switched off. Those are the ways back
+   * in when something is wrong, and a blocklist that outranked them would make
+   * a mistaken block unrecoverable without editing the database by hand. So a
+   * blocked address that is also an emergency address still gets in, and that
+   * is the correct order rather than an oversight.
+   *
+   * BEFORE the allowlist below, which is the entire point: an address on both
+   * lists is refused. Carving one machine out of an allowed range is what this
+   * feature is for.
+   *
+   * AND IT REFUSES IN MONITOR MODE. This is the one place the blocklist does
+   * not follow the allowlist's rules, so it is worth being explicit: monitor
+   * mode exists because an unfinished allowlist should not lock a studio out.
+   * A blocklist entry is not unfinished — somebody named one address and said
+   * keep it out. Honouring that only under enforce would mean blocking a
+   * compromised device on a monitor-mode deployment does nothing at all, while
+   * looking exactly like it worked.
+   *
+   * An unreadable blocklist blocks nobody. Same reasoning as the allowlist's
+   * storage fault: refusing people on the strength of a list nothing can read
+   * is worse than the thing it would be preventing. It is announced loudly by
+   * src/ip-blocklist.js rather than passing silently. */
+  const blocked = blocklist.findMatch(ip);
+  if (blocked) {
+    noteDenial(ip, `${req.method} ${req.path}`, { verb: 'BLOCKED' });
+    note(req, ip, 'blocked', blocked.address);
+    req.ipAllowlist = { decision: 'blocked', rule: blocked.address };
+    return deny(req, res, ip, 'blocked');
   }
 
   // The list cannot be read: the tables are missing, or the database is not

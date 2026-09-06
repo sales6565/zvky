@@ -52,6 +52,9 @@ const MODULE_OF = [
   [/^\/api\/timesheets/, 'timesheet'],
   [/^\/api\/permissions/, 'permissions'],
   [/^\/api\/ip-allowlist/, 'settings'],
+  // Blocking and unblocking an address belongs with the other Settings actions
+  // in the log, not in a module of its own that the filter would not offer.
+  [/^\/api\/ip-blocklist/, 'settings'],
   [/^\/api\/reference/, 'settings'],
   [/^\/api\/branding/, 'settings'],
   [/^\/api\/auth/, 'auth'],
