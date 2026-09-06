@@ -99,17 +99,14 @@ way to run an unsigned app, not a trick, and it is needed once.
 Take the **arm64** file for any Mac bought since late 2020, and the other for
 an Intel Mac. Unsure which you have? Apple menu → About This Mac.
 
-**These are still 1.0.0**, with the broken update button and no automatic
-updating. A 1.0.2 Mac build takes one run of the macOS workflow — ask for it.
+### ZVKY-FORGE-1.0.2-arm64.dmg
 
-### ZVKY-FORGE-1.0.0-arm64.dmg
+**[ZVKY-FORGE-1.0.2-arm64.dmg](ZVKY-FORGE-1.0.2-arm64.dmg)** — 91 MB. Click it, then **Download**.
 
-**[ZVKY-FORGE-1.0.0-arm64.dmg](ZVKY-FORGE-1.0.0-arm64.dmg)** — 91 MB. Click it, then **Download**.
+sha256 `aabd30dd699aa0ff16009272f750701bcd4db37ecf0013bb015f96c959067808`
 
-sha256 `c806cbef65ac374795edddb9070877c6f096a689cb7043851042d3b861885f1f`
+### ZVKY-FORGE-1.0.2.dmg
 
-### ZVKY-FORGE-1.0.0.dmg
+**[ZVKY-FORGE-1.0.2.dmg](ZVKY-FORGE-1.0.2.dmg)** — 96 MB. Click it, then **Download**.
 
-**[ZVKY-FORGE-1.0.0.dmg](ZVKY-FORGE-1.0.0.dmg)** — 96 MB. Click it, then **Download**.
-
-sha256 `c66bdd33f61623c14783aef4ce87e8d6bcced37c392c55d95174e554f559c42b`
+sha256 `b57e4f3553153e513d64eceb2f295617d266cfb729f8a55cecfcfc1b19c83559`
