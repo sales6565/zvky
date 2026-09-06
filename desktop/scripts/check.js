@@ -124,6 +124,46 @@ group('Updates: checked quietly, installed on a click', () => {
     && !/paint[\s\S]{0,200}install-update/.test(preload));
   ok('a manual check answers every outcome',
     (updates.match(/showMessageBox/g) || []).length >= 4);
+
+  /* THE BUG THIS SECTION EXISTS FOR, from here down.
+   *
+   * A build made without an update address has no app-update.yml in its
+   * resources, and electron-updater's first call then throws a bare
+   * "ENOENT ... app-update.yml". A studio pressed Check for Updates and got
+   * that. Three things had to change, and each is asserted rather than trusted:
+   * the file's absence is detected BEFORE the call that would throw; a feed
+   * held in settings is applied at runtime so such a build is not stuck for
+   * ever; and the raw error, if it ever surfaces, is translated. */
+  ok('the missing feed file is detected before it can throw',
+    /function hasPackagedFeed/.test(updates) && /app-update\.yml/.test(updates),
+    'without this the button reports a raw ENOENT');
+  ok('every path that talks to the updater applies a feed first',
+    (updates.match(/applyFeed\(\)/g) || []).length >= 3,
+    'the launch check, the manual check and the download');
+  ok('a feed can be set at runtime, not only baked in at build time',
+    /setFeedURL\(/.test(updates) && /config\.updateFeed\(\)/.test(updates),
+    'a build with no baked feed could otherwise never update its way out');
+  /* setFeedURL alone fixes the CHECK and leaves the DOWNLOAD broken:
+     getOrCreateDownloadHelper reads updaterCacheDirName off the config file
+     unconditionally, and loadUpdateConfig is a bare readFile. A config file has
+     to exist for the download to survive, so one is written. */
+  ok('and a config file is written, so the DOWNLOAD survives too',
+    /writeRuntimeConfig/.test(updates) && /updaterCacheDirName/.test(updates),
+    'setFeedURL alone would fix the button and still throw on Update Now');
+  ok('the private field it needs is guarded, not assumed',
+    /'_appUpdateConfigPath' in autoUpdater/.test(updates));
+  ok('and the packaged case is left exactly as it was',
+    /if \(!hasPackagedFeed\(\)\) \{/.test(updates));
+  ok('and the raw ENOENT is translated if it ever surfaces',
+    /ENOENT/.test(updates) && /NO_FEED/.test(updates));
+  ok('the update address is a separate setting from the studio address',
+    /updateFeed/.test(config) && /setUpdateFeed/.test(config)
+    && !/appUrl:\s*normaliseFeed/.test(config));
+  ok('a feed address carries the trailing slash electron-updater joins onto',
+    /\$\{base\}\//.test(config),
+    'without it latest.yml resolves against the parent folder and 404s');
+  ok('there is a way to set it from the menu',
+    /promptForFeed/.test(read('src/main.js')) && exists('renderer/feed.html'));
   /* The feed is passed at build time and is OPTIONAL. Written into
      electron-builder.yml as a ${env.X} macro instead, an unset variable stops
      the build entirely — so an installer could not be produced until update

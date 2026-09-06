@@ -176,6 +176,7 @@ function buildMenu() {
         { role: 'about' },
         { type: 'separator' },
         { label: 'Check for Updates…', click: () => updates.checkManually(win) },
+        { label: 'Update Source…', click: () => updates.promptForFeed(win) },
         { label: 'Studio Address…', click: () => promptForAddress() },
         { type: 'separator' },
         { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' },
@@ -186,6 +187,7 @@ function buildMenu() {
       label: 'File',
       submenu: isMac ? [{ role: 'close' }] : [
         { label: 'Check for Updates…', click: () => updates.checkManually(win) },
+        { label: 'Update Source…', click: () => updates.promptForFeed(win) },
         { label: 'Studio Address…', click: () => promptForAddress() },
         { type: 'separator' },
         { role: 'quit' },
@@ -247,6 +249,17 @@ ipcMain.handle('zvky:retry', () => {
   const url = config.appUrl();
   if (win && url) win.loadURL(url);
   return { ok: Boolean(url) };
+});
+ipcMain.handle('zvky:get-feed', () => ({
+  feed: config.updateFeed(),
+  saved: config.read().updateFeed || null,
+  packaged: updates.hasPackagedFeed(),
+}));
+ipcMain.handle('zvky:set-feed', (_event, raw) => config.setUpdateFeed(raw));
+ipcMain.handle('zvky:close-window', (event) => {
+  const w = BrowserWindow.fromWebContents(event.sender);
+  // Only ever the window that asked, never the main one.
+  if (w && w !== win) w.close();
 });
 ipcMain.handle('zvky:check-updates', () => updates.checkManually(win));
 ipcMain.handle('zvky:install-update', () => updates.downloadAndInstall(win));

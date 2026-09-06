@@ -1,0 +1,93 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Update Source</title>
+<!--
+  Where this copy looks for new versions.
+
+  It exists because of a real failure: electron-builder writes the file holding
+  this address into the package only when one was supplied at BUILD time, and a
+  build made without one throws "ENOENT ... app-update.yml" the moment somebody
+  presses Check for Updates. Such a copy can never update its way out of that —
+  the thing it needs in order to fetch a fix is the thing it is missing.
+
+  Setting the address here fixes that copy in place, with no reinstall.
+-->
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 22px 24px; background: #14100f; color: #efe7e5;
+    font: 13px/1.55 -apple-system, "Segoe UI", system-ui, sans-serif;
+    -webkit-user-select: none; user-select: none;
+  }
+  h1 { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  p.sub { margin: 0 0 16px; color: #a4938f; font-size: 12px; }
+  label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: #a4938f; margin-bottom: 5px; }
+  input {
+    width: 100%; padding: 10px 11px; font: inherit;
+    color: #fff; background: #1e1817; border: 1px solid #3a2e2c; border-radius: 6px;
+    -webkit-user-select: text; user-select: text;
+  }
+  input:focus { outline: none; border-color: #7f1416; box-shadow: 0 0 0 3px rgba(127,20,22,.25); }
+  .hint { font-size: 11.5px; color: #7d6d6a; margin: 8px 0 0; line-height: 1.5; }
+  .state { font-size: 11.5px; color: #a4938f; margin: 10px 0 0; }
+  .state b { color: #efe7e5; font-weight: 600; }
+  .err { font-size: 11.5px; color: #ff8f8f; margin: 8px 0 0; min-height: 15px; }
+  .row { display: flex; gap: 9px; margin-top: 16px; }
+  button {
+    font: 600 12.5px/1 inherit; padding: 10px 16px; border-radius: 6px; border: 0;
+    background: #7f1416; color: #fff; cursor: pointer;
+  }
+  button:hover { background: #96181b; }
+  button.ghost { background: transparent; color: #a4938f; border: 1px solid #3a2e2c; }
+  button.ghost:hover { color: #efe7e5; }
+  .spacer { flex: 1; }
+</style>
+
+<h1>Update Source</h1>
+<p class="sub">The folder on your hosting where the installers and <span class="mono">latest.yml</span> are kept.</p>
+
+<label for="feed">Update address</label>
+<input id="feed" type="text" placeholder="https://your-domain.com/desktop/" autocomplete="off" spellcheck="false">
+<p class="hint">Whoever publishes new versions has this. It is <em>not</em> the studio address — that is set separately, under Studio Address.</p>
+<p class="state" id="state"></p>
+<p class="err" id="err"></p>
+
+<div class="row">
+  <button id="save">Save</button>
+  <button class="ghost" id="clear">Clear</button>
+  <div class="spacer"></div>
+  <button class="ghost" id="cancel">Cancel</button>
+</div>
+
+<script>
+  const q = new URLSearchParams(location.search);
+  const feedEl = document.getElementById('feed');
+  const err = document.getElementById('err');
+  const state = document.getElementById('state');
+
+  feedEl.value = q.get('current') || '';
+  feedEl.focus();
+  feedEl.select();
+
+  window.zvky.getFeed().then((s) => {
+    /* Says which of the three it is, because they need different actions: none
+       at all, one somebody typed here, or one baked into the build. */
+    if (s.saved) state.innerHTML = 'Currently using an address <b>set on this computer</b>.';
+    else if (s.packaged) state.innerHTML = 'Currently using the address <b>built into this copy</b>.';
+    else state.innerHTML = 'No address is set, so <b>there is nowhere to check</b> for updates yet.';
+  }).catch(() => {});
+
+  async function save(value) {
+    err.textContent = '';
+    const res = await window.zvky.setFeed(value);
+    if (!res.ok) { err.textContent = res.error; feedEl.focus(); return; }
+    window.zvky.closeWindow();
+  }
+
+  document.getElementById('save').addEventListener('click', () => save(feedEl.value));
+  feedEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(feedEl.value); });
+  // Clearing goes back to whatever the build has baked in, if anything.
+  document.getElementById('clear').addEventListener('click', () => save(''));
+  document.getElementById('cancel').addEventListener('click', () => window.zvky.closeWindow());
+</script>

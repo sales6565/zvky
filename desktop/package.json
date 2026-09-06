@@ -1,7 +1,7 @@
 {
   "name": "zvky-forge-desktop",
   "productName": "ZVKY FORGE",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "The ZVKY FORGE pipeline, in a native window.",
   "private": true,
   "main": "src/main.js",
@@ -13,7 +13,7 @@
     "build:win": "node scripts/build.js --win",
     "build:mac": "node scripts/build.js --mac",
     "build:all": "node scripts/build.js --win --mac",
-    "check": "node scripts/check.js",
+    "check": "node scripts/check.js && node scripts/feed-check.js",
     "smoke": "xvfb-run -a electron --no-sandbox scripts/smoke.js"
   },
   "devDependencies": {

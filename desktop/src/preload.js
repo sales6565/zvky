@@ -43,6 +43,11 @@ if (isLocalScreen) {
     retry: () => ipcRenderer.invoke('zvky:retry'),
     checkUpdates: () => ipcRenderer.invoke('zvky:check-updates'),
     installUpdate: () => ipcRenderer.invoke('zvky:install-update'),
+    // Where updates are fetched from — a setting, so a build with no baked-in
+    // address is not stuck without one for ever.
+    getFeed: () => ipcRenderer.invoke('zvky:get-feed'),
+    setFeed: (url) => ipcRenderer.invoke('zvky:set-feed', url),
+    closeWindow: () => ipcRenderer.invoke('zvky:close-window'),
   });
 }
 

@@ -70,16 +70,66 @@ const appOrigin = () => {
   try { return url ? new URL(url).origin : null; } catch { return null; }
 };
 
+/* Where updates are fetched from.
+ *
+ * A SETTING, not only a baked-in build constant, and that is a fix rather than
+ * a preference. electron-builder writes app-update.yml into the package only
+ * when a publish URL was given at BUILD time; a build made without one has no
+ * file, and electron-updater then fails with a bare
+ * "ENOENT ... resources\app-update.yml" the moment somebody presses Check for
+ * Updates. Worse, such a build can never update its way out of that: the thing
+ * it would need in order to fetch a fix is the thing it is missing.
+ *
+ * Reading the feed at runtime breaks that trap. A build with no baked feed can
+ * be pointed at one by the person running it — or by an environment variable on
+ * a test machine — and updates start working without reinstalling anything.
+ * When it IS baked in, this returns null and electron-updater uses the packaged
+ * file exactly as before; nothing about that path changes.
+ *
+ * Deliberately a DIFFERENT setting from appUrl above. One is where the studio
+ * is, the other is where the installers are, and a studio that moves one need
+ * not move the other.
+ */
+const BUILT_IN_FEED = process.env.ZVKY_UPDATE_FEED_DEFAULT || '';
+
+/* Same shape as normalise(), plus the trailing slash electron-updater wants: it
+   joins "latest.yml" onto this string, so a feed without one resolves against
+   the parent directory and quietly 404s. Added here rather than left to
+   whoever typed the address. */
+function normaliseFeed(raw) {
+  const base = normalise(raw);
+  return base ? `${base}/` : null;
+}
+
+const updateFeed = () =>
+  normaliseFeed(process.env.ZVKY_UPDATE_FEED) ||
+  normaliseFeed(read().updateFeed) ||
+  normaliseFeed(BUILT_IN_FEED);
+
 module.exports = {
   appUrl,
   appOrigin,
   normalise,
   read,
   write,
+  updateFeed,
   setAppUrl: (raw) => {
     const url = normalise(raw);
     if (!url) return null;
     write({ appUrl: url });
     return url;
+  },
+  setUpdateFeed: (raw) => {
+    /* An empty value CLEARS it, rather than being refused. That is how somebody
+       goes back to whatever the build has baked in, and there has to be a way
+       back from a typo that is not editing a JSON file by hand. */
+    if (raw === null || String(raw || '').trim() === '') {
+      write({ updateFeed: null });
+      return { ok: true, url: null };
+    }
+    const url = normaliseFeed(raw);
+    if (!url) return { ok: false, error: 'That does not look like a web address.' };
+    write({ updateFeed: url });
+    return { ok: true, url };
   },
 };

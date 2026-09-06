@@ -94,6 +94,21 @@ installs on its own.**
   again before restarting, because that is the step that closes what you are
   looking at.
 
+### If Check for Updates says there is nowhere to check
+
+A copy built without an update address has no `app-update.yml` inside it, and
+older builds reported that as a raw
+`ENOENT ... resources\app-update.yml`, which reads like a broken application
+rather than an unconfigured one.
+
+**Such a copy is no longer stuck.** Open **File → Update Source**, put in the
+folder on your hosting where the installers live, and updates work from that
+copy onwards — no reinstall. The address is kept per computer, alongside the
+studio address, and is a separate setting from it.
+
+An address baked in at build time is still used when there is one, and is what
+most people should get; this is the way back when there is not.
+
 ### Publishing an update
 
 1. Raise `version` in `desktop/package.json`.
@@ -113,9 +128,13 @@ nobody is told there is an update; `latest.yml` without the installer beside it
 means everybody is told about a version they cannot download. Upload them
 together.
 
-The feed address is **baked into the installer at build time**. A copy built
-without `ZVKY_UPDATE_FEED` works perfectly but will report that no update
-information was published — so set it before the first build you hand out.
+The feed address is **baked into the installer at build time** when
+`ZVKY_UPDATE_FEED` is set, and that is the version to hand out: nobody has to
+configure anything.
+
+A copy built without it still works, and can now be pointed at a feed from
+**File → Update Source** — but that is one more thing for each person to do, so
+prefer baking it in.
 
 It is deliberately a different setting from the studio address: one is where the
 installers live, the other is where the studio is.
