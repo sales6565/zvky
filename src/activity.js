@@ -55,6 +55,8 @@ const MODULE_OF = [
   // Blocking and unblocking an address belongs with the other Settings actions
   // in the log, not in a module of its own that the filter would not offer.
   [/^\/api\/ip-blocklist/, 'settings'],
+  // Saving the mail server, and sending a test through it.
+  [/^\/api\/email-config/, 'settings'],
   [/^\/api\/reference/, 'settings'],
   [/^\/api\/branding/, 'settings'],
   [/^\/api\/auth/, 'auth'],

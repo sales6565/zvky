@@ -193,6 +193,29 @@ async function assignmentChanged(db, { assetId, from, to, actorId }) {
   if (from === to) return;
   await raise(db, { recipientId: to, actorId, kind: KINDS.assigned, assetId, otherUserId: actorId });
   await raise(db, { recipientId: from, actorId, kind: KINDS.unassigned, assetId, otherUserId: to });
+
+  /* And the email, which is a SEPARATE CHANNEL rather than a second copy of the
+     rows above. Nothing about the two raise() calls changed: the bell, the
+     desktop notification and Pending Actions behave exactly as they did.
+     
+     Here because this is the choke point — every route that changes who holds
+     an asset reaches it through assignments.open() — so all four of them send
+     mail without four hooks, and the fifth is covered when somebody adds it.
+     
+     Only the incoming half. Being told "this is no longer yours" is worth a
+     line in the bell and is not worth an email; the person it LEFT has nothing
+     to do about it, and mail nobody needs to act on is how a studio learns to
+     ignore mail that they do.
+     
+     Queued, not sent: it returns immediately, and the message goes out on a
+     short timer after this transaction has committed. That is what makes a bulk
+     assign one email instead of forty, and it is why a mail server being down
+     cannot roll back an assignment. */
+  try {
+    require('./email-notifications').queueAssignment({ recipientId: to, actorId, assetId });
+  } catch (err) {
+    console.warn(`[email] could not queue the assignment notice for ${assetId}: ${err.message}`);
+  }
 }
 
 /* COALESCE, because a row points at one or the other: an asset notification

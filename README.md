@@ -91,6 +91,9 @@ lockout warning, carried on the permission itself.
 *Manage IP Blocklist* is Super Admin only and stays off for every other
 designation unless a Super Admin switches it on.
 
+*Manage Email Configuration* is Super Admin only for the same reason — the
+screen behind it holds a live password for another system.
+
 Every change is written to `role_permission_audit` — who, which role, which
 permission, enabled or disabled, when — readable at `GET /api/permissions/audit`.
 
@@ -485,6 +488,12 @@ Edit `.env` and set:
   cPanel/Passenger, so the login rate limit sees real client addresses)
 - `LOGIN_RATE_MAX` — sign-in attempts allowed per address per window. A whole
   office shares one public IP, so this counts the studio together
+- `EMAIL_ENCRYPTION_KEY` — a long random string, used to encrypt the SMTP
+  password in the database. Falls back to `JWT_SECRET`, but set it separately:
+  rotating `JWT_SECRET` would otherwise make the stored mail password
+  unreadable. See [Email notifications](#email-notifications)
+- `EMAIL_BATCH_MS` — optional; how long assignment emails wait so a bulk assign
+  becomes one message rather than forty. Default 1500
 - `IP_ALLOWLIST_*` — optional; restricts the app to specific addresses. Read
   [Restricting access by IP address](#restricting-access-by-ip-address) before
   enabling it, and deploy in monitor mode first
@@ -797,6 +806,113 @@ schedule could not record what is actually happening.
 They are separate on purpose: deciding which stages the studio plans in is a
 different decision from planning one project with them. The API refuses a save
 that touches milestones without the first, whatever the form sent.
+
+## Email notifications
+
+Two events send email, alongside — never instead of — the notification bell and
+Pending Actions, which are untouched by this feature:
+
+| When | Who is written to | What it says |
+| --- | --- | --- |
+| A task is assigned or reassigned | The person it is now assigned to | The task, who assigned it, the project, and the due date if there is one. |
+| A task is submitted | Whoever assigned it, and the submitter's team lead | The task, who submitted it, and when. |
+
+Nobody is told about their own action: assigning something to yourself sends
+nothing, and neither does submitting work you assigned to yourself. The person a
+task moves *away* from gets a bell entry and no email — it is not something they
+have to act on, and mail nobody needs to act on is how a studio learns to ignore
+mail it does.
+
+### Assignment email is raised from one place
+
+Four routes change who holds a task — creating one with somebody on it, editing
+the assignee, bulk assigning, and the hand-over out of review — and all four go
+through `assignments.open()`. The email hangs off that choke point, so the fifth
+route somebody adds next year is covered without them remembering, exactly as
+the bell already is.
+
+Submission email is raised from the submit route instead, and deliberately does
+**not** add a notification kind. Adding one would have put a new row in
+everybody's bell, and the bell was to be left alone.
+
+### A bulk assign is one email
+
+Assignment emails wait a moment (`EMAIL_BATCH_MS`, default 1500) so that
+assigning forty tasks to one person produces one message listing all forty
+rather than forty messages. A single assignment still reads as a single
+assignment, not as a digest of one.
+
+### Nothing about email can fail the thing that caused it
+
+A task must be assignable when the mail server is down. Every send is queued and
+happens after the response has gone; every path swallows its own errors; and the
+failure is recorded on the Settings screen rather than thrown. The worst case is
+an email that does not arrive, which is a much smaller problem than a
+reassignment that refuses to happen.
+
+### Configuring it
+
+**Settings → Email Configuration**, behind *Manage Email Configuration*
+(`settings.email_config`) — **Super Admin only by default**, the same front door
+as the two IP lists and for a related reason: this screen holds a live password
+for another system, and whoever holds it can change where the studio's
+notifications appear to come from. It is deliberately *not* implied by
+*Manage Settings*.
+
+The form takes the mail server, port, encryption (STARTTLS, SSL/TLS or None),
+username, password, and the From name and address, plus a master on/off switch.
+**Send Test Email** sends a real message using the values **currently on the
+form**, saved or not — so a server can be proved before it is committed, which
+is the difference between finding out now and finding out in a month.
+
+A failure says what to do about it rather than reporting an error code. On
+shared hosting the likeliest cause by a distance is that outbound SMTP is
+blocked at the host, not that anything on the form is wrong, so the message says
+so and points at `scripts/check-outbound.js`, which tells the two apart.
+
+### The password
+
+It is the only reversibly-stored secret in this database — every other one is a
+bcrypt hash — because a mail server wants the actual characters on every send.
+So it gets more care rather than less:
+
+- **Encrypted at rest** with AES-256-GCM, a random IV per save, under a key from
+  `EMAIL_ENCRYPTION_KEY` (falling back to `JWT_SECRET`). Authenticated, so a
+  tampered value fails to decrypt rather than being handed to a mail server.
+- **Never returned.** No route selects it, and it is dropped at the cache
+  boundary rather than deleted per response — a field that never enters the
+  cache cannot leak from one. The screen shows a fixed-length mask, which is
+  deliberately not the real length.
+- **Never logged.** The Activity Log records `password: set`, and the value
+  appears in no summary, no diff and no response.
+- **Leaving the box empty means "keep it"**, not "clear it". Otherwise every
+  unrelated edit would silently stop all mail.
+
+Set `EMAIL_ENCRYPTION_KEY` rather than relying on the `JWT_SECRET` fallback.
+Rotating `JWT_SECRET` is something you *should* do, and if it is also the mail
+key that rotation silently makes the stored password unreadable. A fingerprint
+of the key is stored beside the ciphertext, so this case produces "enter the
+password again" on the screen instead of mail quietly not arriving.
+
+What this does **not** protect against is somebody who can read both the
+database and the environment on the same host. It protects against the realistic
+case — a database dump, a stray backup, a support person given read access to a
+table.
+
+### Turning it off for yourself
+
+**Profile → Email notifications** switches both emails off for one person. It
+needs no permission and cannot be taken away: somebody who could be denied the
+ability to stop mail arriving would have no way to stop it except a spam filter,
+which would swallow the mail that mattered too.
+
+The column is an opt-*out*, defaulting to off — so everybody receives email when
+the feature arrives. An opt-in default would deliver nothing at all until each
+person went and found the switch, which is indistinguishable from email being
+broken.
+
+The switch stops **email only**. The bell, desktop notifications and Pending
+Actions carry on exactly as before.
 
 ## Restricting access by IP address
 

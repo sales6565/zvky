@@ -761,6 +761,24 @@ const GROUPS = [
         danger: 'A block takes effect immediately and the person blocked cannot tell you. Blocking your own '
           + 'address is refused; blocking the range you sit in is not, and would lock out everyone on it.',
       },
+      {
+        key: 'settings.email_config',
+        label: 'Manage Email Configuration',
+        /* The mail server the studio sends from, and the credentials for it.
+           Super Admin only by default, the same front door as the two IP lists
+           and for the same kind of reason: this screen holds somebody else's
+           live password, and a role that could edit it could point every
+           notification the studio sends at a server of their choosing.
+           
+           Deliberately NOT implied by manageSettings, which would have handed it
+           to the seven designations that manage priorities and categories. */
+        impliedBy: has('managePermissions'),
+        describe: 'The mail server task-notification emails are sent through, the account they '
+          + 'authenticate with, and the address they come from.',
+        danger: 'This screen holds a live password for another system. It is stored encrypted and is '
+          + 'never shown again once saved, but whoever holds this permission can replace it, and can '
+          + 'change where the studio\'s notifications appear to come from.',
+      },
       { key: 'settings.audit_logs',   label: 'View Audit Logs',      impliedBy: has('manageSettings'), pending: PENDING },
       {
         key: 'settings.activity_log',

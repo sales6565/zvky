@@ -113,6 +113,53 @@ router.post('/tour-seen', authenticate, async (req, res) => {
   res.json({ tourSeenAt: rows[0] ? rows[0].tourSeenAt : null });
 });
 
+/* GET and POST /api/auth/email-preference — "do I want the emails?"
+ *
+ * Under /api/auth alongside tour-seen and the password change, for the same
+ * reason all three are: they act only on the caller's own account, so there is
+ * no id to authorise and no question of who may do it to whom.
+ *
+ * NO PERMISSION CHECK, deliberately, and it is the second endpoint in the
+ * application without one. Whether somebody wants email in their own inbox is
+ * not an authority the studio grants — a person who could be denied the ability
+ * to stop mail arriving would have no way to stop it except a spam filter,
+ * which would also swallow the mail that mattered.
+ *
+ * The column is an OPT-OUT rather than an opt-in: 0 means "send me these", and
+ * the migration defaults everyone to 0. An opt-in default would deliver nothing
+ * at all until each person went and found the switch, which is indistinguishable
+ * from email being broken.
+ */
+router.get('/email-preference', authenticate, async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      'SELECT email_opt_out AS optOut FROM users WHERE id = $1', [req.user.id]);
+    return res.json({ emailNotifications: !(rows[0] && rows[0].optOut) });
+  } catch (err) {
+    /* No column yet — a deployment mid-upgrade. Reported as "on", which is what
+       the column's own default says, rather than as an error on a screen whose
+       only job is to show a switch. */
+    if (err.code === 'ER_BAD_FIELD_ERROR') return res.json({ emailNotifications: true, unavailable: true });
+    throw err;
+  }
+});
+
+router.post('/email-preference', authenticate, async (req, res) => {
+  const wanted = Boolean(req.body && req.body.emailNotifications);
+  try {
+    await db.query('UPDATE users SET email_opt_out = $1 WHERE id = $2', [wanted ? 0 : 1, req.user.id]);
+  } catch (err) {
+    if (err.code === 'ER_BAD_FIELD_ERROR') {
+      return res.status(503).json({
+        error: 'This server has not finished setting up email notifications yet. Nothing is being sent, '
+          + 'so there is nothing to switch off.',
+      });
+    }
+    throw err;
+  }
+  return res.json({ emailNotifications: wanted });
+});
+
 // The password rules, so the browser shows the same checklist the API enforces.
 router.get('/password-policy', (req, res) => {
   res.json(passwordPolicy.describe());

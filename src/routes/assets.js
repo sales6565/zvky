@@ -33,6 +33,7 @@ const {
 const { assignableRoles, roleDef } = require('../roles');
 const lifecycle = require('../lifecycle');
 const workLog = require('../work-log');
+const emailNotifications = require('../email-notifications');
 const assetSchedule = require('../asset-schedule');
 const assignments = require('../assignments');
 const assetImport = require('../asset-import');
@@ -1338,6 +1339,23 @@ router.post('/:id/submit', upload.single('file'), async (req, res) => {
   // Every round is kept: the submission table is append-only, so a re-submission
   // after changes adds a version rather than replacing the one that was rejected.
   const withDetails = await applyTransition(req, res, asset, verdict, { note: description, versionId });
+
+  /* Tell whoever is waiting for it, by email.
+   *
+   * NOT a notification. There is deliberately no new kind in
+   * src/notifications.js for this and no new row in anybody's bell: the brief
+   * was an additive email channel, and adding a bell entry would have changed
+   * a screen that was to be left alone. Anyone who turns email off sees exactly
+   * the application they saw before this was written.
+   *
+   * Not awaited. The artist's submission is finished the moment the transition
+   * is written, and it must not wait on — or be undone by — a mail server. The
+   * function swallows its own failures; this .catch is the belt to that
+   * braces. */
+  emailNotifications.taskSubmitted(db, {
+    assetId: req.params.id, actorId: req.user.id, at: new Date(),
+  }).catch(() => {});
+
   res.status(201).json({ asset: withDetails });
 });
 

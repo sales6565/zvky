@@ -584,6 +584,19 @@ tr.past-round{opacity:0.62;}
    to read as that at a glance from across the same screen. */
 .ip-banner.blocked{background:rgba(255,90,54,.09);border-color:rgba(255,90,54,.30);color:#ff9b80;}
 .ip-expiry{font-size:10.5px;font-family:'IBM Plex Mono';color:var(--ink-muted);}
+.em-master{display:flex;align-items:center;gap:9px;font-size:13px;margin:0 0 14px;cursor:pointer;}
+.pf-toggle{display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:2px 0;}
+.pf-toggle input{width:15px;height:15px;margin-top:2px;flex:none;}
+.pf-toggle-lead{display:block;font-size:13px;color:var(--ink);}
+.pf-toggle-note{display:block;font-size:11px;color:var(--ink-muted);line-height:1.5;margin-top:3px;}
+.em-master input{width:15px;height:15px;}
+.em-grid{align-items:flex-start;}
+.em-hint{font-size:10.5px;color:var(--ink-faint);margin-top:4px;max-width:210px;line-height:1.45;}
+.em-result{font-size:12px;line-height:1.5;padding:10px 13px;border-radius:9px;margin-top:12px;}
+.em-result.pending{background:var(--surface-2);border:1px solid var(--border);color:var(--ink-muted);}
+.em-result.ok{background:rgba(64,200,140,.10);border:1px solid rgba(64,200,140,.30);color:#7fdcb0;}
+.em-result.bad{background:rgba(255,90,54,.10);border:1px solid rgba(255,90,54,.32);color:#ff9b80;}
+.em-result div{margin-top:5px;}
 .ip-expiry.past{color:var(--ink-faint);}
 .ip-yours{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;padding:2px 7px;border-radius:20px;font-family:'IBM Plex Mono';background:rgba(255,90,54,.16);color:#ff9b80;margin-left:8px;}
 /* The rollout panel: who the gate has seen, and who enforcing would turn away. */
@@ -1319,6 +1332,24 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
     </div>
     <div class="field-err" id="pf_photo_err"></div>
 
+    <!-- Your own inbox, your own decision.
+         Deliberately not behind a permission: somebody who could be denied the
+         ability to stop email arriving would have no way to stop it except a
+         spam filter, which would swallow the mail that mattered too. Saved on
+         the click rather than on a Save button, because a preference nobody
+         confirms is one people assume did not take. -->
+    <div class="field-lbl" style="margin-top:20px;">Email notifications</div>
+    <label class="pf-toggle" id="pf_email_row">
+      <input type="checkbox" id="pf_email">
+      <span>
+        <span class="pf-toggle-lead">Email me about my tasks</span>
+        <span class="pf-toggle-note">When a task is assigned to me, and when a task I assigned is
+          submitted. Switching this off stops both — the notification bell and Pending Actions are
+          unaffected either way.</span>
+      </span>
+    </label>
+    <div class="field-err" id="pf_email_err"></div>
+
     <div class="field-lbl" style="margin-top:20px;">Change password</div>
 
     <label>Current password</label>
@@ -2010,6 +2041,7 @@ const SETTINGS_SECTIONS = [
   { permission:'settings.roles',        label:'Roles',            note:'The studio\'s designations and what each one can do.' },
   { permission:'settings.ip_allowlist', label:'IP Allowlist',     note:'Which addresses may reach this application at all.' },
   { permission:'settings.ip_blocklist', label:'IP Blocklist',     note:'Addresses barred outright, whatever else allows them.' },
+  { permission:'settings.email_config', label:'Email Configuration', note:'The mail server task notifications are sent through.' },
   /* The two read-only records. They were missing from this list, which is a
      bug rather than an omission: canOpenSettings() below is what gates the
      Settings TAB, so a designation granted the Activity Log and nothing else
@@ -7881,6 +7913,7 @@ async function renderSettings(){
     ${can('settings.working_hours') ? '<div id="scheduleSection"></div>' : ''}
     ${can('settings.ip_allowlist') ? '<div id="ipAllowlistSection"></div>' : ''}
     ${can('settings.ip_blocklist') ? '<div id="ipBlocklistSection"></div>' : ''}
+    ${can('settings.email_config') ? '<div id="emailConfigSection"></div>' : ''}
     ${can('settings.permissions') ? '<div id="rolePermissionsSection"></div>' : ''}
     ${can('settings.activity_log') ? '<div id="activityLogSection"></div>' : ''}
     ${can('settings.chat_activity') ? '<div id="chatActivitySection"></div>' : ''}
@@ -7907,6 +7940,9 @@ async function renderSettings(){
      gate checks them in — the panel says so in its own note rather than relying
      on the layout to imply it. */
   if(can('settings.ip_blocklist')) await renderIpBlocklist();
+  /* Super Admin only by default, like the two IP lists above it and for a
+     related reason: this screen holds a live password for another system. */
+  if(can('settings.email_config')) await renderEmailConfig();
 }
 
 function renderRefSection(sec){
@@ -8569,6 +8605,175 @@ async function ipbBlockObserved(address, btn){
     showToast(err.message.slice(0,90));
     if(btn) btn.disabled = false;
   }
+}
+
+/* ---------- settings: where the studio's email goes out from ---------- */
+/* Two things make this screen unlike every other Settings section, and both are
+   about the password field:
+
+     it is write-only     The stored password is never sent to the browser. The
+                          box shows a placeholder of bullets, and an empty box
+                          means "leave what is saved alone" rather than "clear
+                          it" — otherwise every unrelated edit would silently
+                          break sending.
+
+     it can be tested     Send Test Email posts whatever is on the form, so a
+                          setting can be proved before it is committed. Getting
+                          this wrong and saving anyway is how a studio ends up
+                          believing notifications are on for a month. */
+
+let EMAIL_CFG = null;
+
+async function renderEmailConfig(){
+  const el = document.getElementById('emailConfigSection');
+  if(!el) return;
+  let data;
+  try{ data = await api('/email-config'); }
+  catch(err){
+    el.innerHTML = `<div class="ref-section"><div class="ref-head"><h3>Email Configuration</h3></div>
+      <div class="ref-err">${escapeHTML(err.message)}</div></div>`;
+    return;
+  }
+  EMAIL_CFG = data;
+  const c = data.config;
+  const st = data.state || {};
+
+  /* The banner says which of five states this is in, because they need five
+     different actions and a filled-in form looks identical in all of them. */
+  const tone = st.ok ? 'live' : (st.key==='off' || st.key==='unconfigured' ? 'open' : 'fault');
+  const banner = `<div class="ip-banner ${tone}">${escapeHTML(st.message||'')}</div>`;
+
+  const opts = (data.encryptions||[]).map(e=>
+    `<option value="${escapeHTML(e.key)}"${c.encryption===e.key?' selected':''}>${escapeHTML(e.label)} (usually port ${e.port})</option>`).join('');
+
+  el.innerHTML = `
+    <div class="ref-section" data-section="email-config">
+      <div class="ref-head"><h3>Email Configuration</h3>
+        <span class="ref-key">${c.enabled ? 'on' : 'off'}</span>
+      </div>
+      <div class="ref-note">The mail server task notifications are sent through. Two emails use it:
+        one to whoever a task is assigned to, and one to whoever assigned it when the task is submitted.
+        Anybody can switch their own off under Profile — this is the studio-wide setting.</div>
+      ${banner}
+      ${data.lastError ? `<div class="ip-banner fault"><h4>The last send failed</h4>
+        <p>${escapeHTML(data.lastError)}</p></div>` : ''}
+
+      <label class="em-master"><input type="checkbox" id="em_enabled"${c.enabled?' checked':''}>
+        <span>Send task notification emails</span></label>
+
+      <div class="ref-add em-grid">
+        <div><label>Mail server</label>
+          <input type="text" id="em_host" placeholder="smtp.example.com" value="${escapeHTML(c.host||'')}" style="width:230px;"></div>
+        <div><label>Port</label>
+          <input type="number" id="em_port" class="narrow" min="1" max="65535" value="${c.port||587}"></div>
+        <div><label>Encryption</label>
+          <select id="em_encryption" style="width:210px;">${opts}</select></div>
+      </div>
+      <div class="ref-add em-grid">
+        <div><label>Username</label>
+          <input type="text" id="em_username" autocomplete="off" placeholder="leave empty if the relay needs none" value="${escapeHTML(c.username||'')}" style="width:230px;"></div>
+        <div><label>Password</label>
+          <input type="password" id="em_password" autocomplete="new-password"
+            placeholder="${c.hasPassword ? escapeHTML(c.passwordMask) : 'not set'}" style="width:210px;">
+          <div class="em-hint">${c.hasPassword
+            ? 'Saved. Leave this empty to keep it — it is never shown again.'
+            : 'Not set.'}</div></div>
+      </div>
+      <div class="ref-add em-grid">
+        <div><label>From name</label>
+          <input type="text" id="em_fromName" placeholder="ZVKY FORGE" value="${escapeHTML(c.fromName||'')}" style="width:230px;"></div>
+        <div><label>From address</label>
+          <input type="text" id="em_fromAddress" placeholder="noreply@zvkydesign.com" value="${escapeHTML(c.fromAddress||'')}" style="width:240px;"></div>
+      </div>
+
+      <div class="ref-add">
+        <button class="btn btn-brand" id="em_save">Save</button>
+        <div><label>Send a test to</label>
+          <input type="text" id="em_testTo" placeholder="${escapeHTML((state.currentUser&&state.currentUser.email)||'you@example.com')}" style="width:240px;"></div>
+        <button class="btn btn-ghost" id="em_test">Send Test Email</button>
+      </div>
+      <div class="ref-note" style="margin-top:2px;">The test uses the values on this form, saved or not,
+        so a server can be proved before it is committed. If the password box is empty the saved one is used.</div>
+      <div class="ref-err" id="err-email-config"></div>
+      <div id="em_result"></div>
+      ${data.updatedAt ? `<div class="ref-key" style="margin-top:10px;opacity:.7;">Last changed
+        ${escapeHTML(new Date(data.updatedAt).toLocaleString())}${data.updatedBy?` by ${escapeHTML(data.updatedBy)}`:''}.
+        Every change is in the Activity Log — the password never is.</div>` : ''}
+    </div>`;
+  wireEmailConfig();
+}
+
+function emailError(message){
+  const el = document.getElementById('err-email-config');
+  if(el) el.textContent = message || '';
+  if(message){ const r = document.getElementById('em_result'); if(r) r.innerHTML = ''; }
+}
+
+/* What is on the form right now. The password is included ONLY when somebody
+   has typed one, so an untouched box means "keep the stored one" all the way
+   through to the server rather than being turned into an empty string here. */
+function emailFormValues(){
+  const typed = document.getElementById('em_password').value;
+  const body = {
+    enabled: document.getElementById('em_enabled').checked,
+    host: document.getElementById('em_host').value.trim(),
+    port: Number(document.getElementById('em_port').value) || 587,
+    encryption: document.getElementById('em_encryption').value,
+    username: document.getElementById('em_username').value.trim(),
+    fromName: document.getElementById('em_fromName').value.trim(),
+    fromAddress: document.getElementById('em_fromAddress').value.trim(),
+  };
+  if(typed) body.password = typed;
+  return body;
+}
+
+function wireEmailConfig(){
+  /* Changing the encryption moves the port to the usual one for it — but only
+     when the port is still the usual one for the OLD choice. Somebody who has
+     typed a non-standard port meant it, and having it overwritten because they
+     then changed a dropdown is the kind of helpfulness that loses work. */
+  const enc = document.getElementById('em_encryption');
+  enc.addEventListener('change', ()=>{
+    const list = (EMAIL_CFG && EMAIL_CFG.encryptions) || [];
+    const portEl = document.getElementById('em_port');
+    const standard = list.map(e=>String(e.port));
+    if(standard.includes(String(portEl.value))){
+      const now = list.find(e=>e.key===enc.value);
+      if(now) portEl.value = now.port;
+    }
+  });
+
+  document.getElementById('em_save').addEventListener('click', async (ev)=>{
+    emailError('');
+    ev.target.disabled = true;
+    try{
+      await api('/email-config', { method:'PUT', body: emailFormValues() });
+      await renderEmailConfig();
+      showToast('Email configuration saved.');
+    }catch(err){ emailError(err.message); }
+    finally{ ev.target.disabled = false; }
+  });
+
+  document.getElementById('em_test').addEventListener('click', async (ev)=>{
+    emailError('');
+    const to = document.getElementById('em_testTo').value.trim()
+      || (state.currentUser && state.currentUser.email) || '';
+    const result = document.getElementById('em_result');
+    ev.target.disabled = true;
+    result.innerHTML = `<div class="em-result pending">Sending…</div>`;
+    try{
+      const r = await api('/email-config/test', { method:'POST', body: { ...emailFormValues(), to } });
+      result.innerHTML = `<div class="em-result ok"><strong>Sent to ${escapeHTML(r.sentTo)}.</strong>
+        The mail server accepted it. If it does not arrive, check the spam folder — that is a delivery
+        question rather than a settings one.</div>`;
+    }catch(err){
+      /* The server's sentence, not a generic failure: it names the likely cause,
+         and on shared hosting that is usually a blocked outbound port rather
+         than anything wrong on this form. */
+      result.innerHTML = `<div class="em-result bad"><strong>It did not send.</strong>
+        <div>${escapeHTML(err.message)}</div></div>`;
+    }finally{ ev.target.disabled = false; }
+  });
 }
 
 /* ---------- settings: role permissions ---------- */
@@ -9342,7 +9547,49 @@ async function openProfileModal(){
   photoError('');
   closePhotoPreview();
   renderProfilePhoto();
+  loadEmailPreference();
   profileModalWrap.classList.add('show');
+}
+
+/* The email switch, read when the modal opens and saved the moment it moves.
+ *
+ * Read rather than taken from the signed-in user object: that object is built
+ * at sign-in and would go stale the moment somebody changed this in another
+ * tab, and a preference that shows the wrong state is worse than one that
+ * takes an extra request to show the right one. */
+async function loadEmailPreference(){
+  const box = document.getElementById('pf_email');
+  const err = document.getElementById('pf_email_err');
+  const row = document.getElementById('pf_email_row');
+  if(!box) return;
+  err.textContent = '';
+  box.disabled = true;
+  try{
+    const r = await api('/auth/email-preference');
+    box.checked = Boolean(r.emailNotifications);
+    /* A server that has not finished the migration says so rather than
+       offering a switch that would silently do nothing. */
+    if(r.unavailable){ row.classList.add('is-unavailable');
+      err.textContent = 'This server has not set up email notifications yet, so nothing is being sent.'; }
+    else box.disabled = false;
+  }catch(e){ err.textContent = e.message; }
+}
+
+if(document.getElementById('pf_email')){
+  document.getElementById('pf_email').addEventListener('change', async (ev)=>{
+    const box = ev.target;
+    const err = document.getElementById('pf_email_err');
+    const wanted = box.checked;
+    err.textContent = '';
+    box.disabled = true;
+    try{
+      await api('/auth/email-preference', { method:'POST', body:{ emailNotifications: wanted } });
+      showToast(wanted ? 'Task emails are on.' : 'Task emails are off — the bell still works.');
+    }catch(e){
+      box.checked = !wanted;   // put it back; the preference did not change
+      err.textContent = e.message;
+    }finally{ box.disabled = false; }
+  });
 }
 
 /* ---------- profile photo ----------

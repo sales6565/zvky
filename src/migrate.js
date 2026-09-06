@@ -3,6 +3,7 @@ const { roleKeys, roleDef } = require('./roles');
 const referenceData = require('./reference-data');
 const ipAllowlist = require('./ip-allowlist');
 const ipBlocklist = require('./ip-blocklist');
+const emailConfig = require('./email-config');
 const { applyTableOptions } = require('./db-collation');
 const reporting = require('./reporting');
 const catalog = require('./permission-catalog');
@@ -1784,6 +1785,45 @@ async function ensureTourSeen(db, log) {
   log('Schema: added users.tour_seen_at — everyone gets the Quick Tour once.');
 }
 
+/* Where the studio's email goes out from, and who does not want any.
+ *
+ * Two changes rather than one, kept together because they are one feature: a
+ * table for the SMTP settings, and a column on users for the personal opt-out.
+ *
+ * DEFAULT 0 on the opt-out — everybody is opted IN when the feature arrives.
+ * That is the deliberate choice of the two: an opt-out column defaulting to 1
+ * would quietly deliver nothing at all until every person in the studio went
+ * and found the switch, which looks exactly like email being broken. Somebody
+ * who does not want the mail turns it off in Profile in one click.
+ *
+ * Neither step can fail the startup. Email is an additive channel beside the
+ * bell and Pending Actions; a deployment whose database user cannot add a
+ * column should lose the email, not the application. */
+async function ensureEmailConfig(db, log) {
+  try {
+    await emailConfig.ensureTables(db);
+    await emailConfig.load(db);
+  } catch (err) {
+    log(`Schema: email_config could not be created (${err.code || 'error'}: ${err.message}).`);
+    log('        Email notifications are switched off until it exists; nothing else is affected.');
+    return;
+  }
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users'
+        AND COLUMN_NAME = 'email_opt_out'`
+  );
+  if (rows.length) return;
+  try {
+    await db.query(
+      'ALTER TABLE users ADD COLUMN email_opt_out TINYINT(1) NOT NULL DEFAULT 0');
+    log('Schema: added users.email_opt_out — everyone receives email until they turn it off.');
+  } catch (err) {
+    log(`Schema: users.email_opt_out could not be added (${err.code || 'error'}). `
+      + 'Email notifications stay off rather than ignoring somebody\'s opt-out.');
+  }
+}
+
 async function ensureProfilePhotos(db, log) {
   const { rows } = await db.query(
     `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
@@ -2412,6 +2452,7 @@ const STEPS = [
   // After it, and independent of it: the blocklist is checked by the same gate
   // but neither list's storage depends on the other's.
   ['IP blocklist', ensureIpBlocklist],
+  ['email configuration', ensureEmailConfig],
   ['asset category', ensureAssetCategory],
   ['profile photos', ensureProfilePhotos],
   ['quick tour', ensureTourSeen],
