@@ -1,6 +1,8 @@
 const { asyncRouter } = require('../async-router');
 const { authenticate, requirePermission } = require('../middleware/auth');
 const adminDashboard = require('../admin-dashboard');
+const teamCapacity = require('../team-capacity');
+const { holds } = require('../permissions');
 const db = require('../db');
 
 // See src/async-router.js: keeps a failed query from killing the process.
@@ -30,8 +32,28 @@ router.use(requirePermission('report.admin_dashboard'));
  */
 router.get('/', async (req, res) => {
   const data = await adminDashboard.build(db, req.user);
+
+  /* TEAM CAPACITY IS GATED TWICE, and the second gate is the one that matters.
+   *
+   * The block shows exactly what report.idle already gates: standard working
+   * hours against hours actually tracked, aggregated. A studio that withheld
+   * the Idle Report from a designation and then granted them this dashboard
+   * would have handed over the same numbers by another door.
+   *
+   * So the key is ABSENT from the payload rather than present and empty. An
+   * empty capacity block tells somebody the studio has no capacity, which is a
+   * different untruth from telling them nothing; and a zeroed one would still
+   * disclose the headcount. The browser hides the panel on the key's absence.
+   */
+  const capacity = holds(req.user, 'report.idle')
+    ? await teamCapacity.build(req.user, {
+      buildIdleReport: require('./idle').buildIdleReport,
+    })
+    : null;
+
   res.json({
     ...data,
+    ...(capacity ? { capacity } : {}),
     /* Said back, so the screen can be honest about whose numbers these are.
        "12 active" means something different to an Admin than to a Super Admin,
        and a panel that does not say which is inviting a misreading. */

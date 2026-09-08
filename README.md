@@ -808,13 +808,67 @@ is a link. That is not decoration: this application has no studio-wide list of
 assets — the board and the Assets List are both scoped to one project — so a row
 saying "6 assets waiting on review" with nothing to click would be a dead end.
 
+### Team Capacity
+
+A right-hand panel: **Available**, **Consumed** and **Idle** hours across the
+people the studio gives work to, with a utilisation percentage and the headcount
+the figures cover, in three period views — **Daily**, **Monthly**, **Annually**.
+
+**It is not a second calculation.** Every figure comes from `buildIdleReport()`
+in `src/routes/idle.js` — the same function the Idle Report tab, its spreadsheet
+and its PDF are drawn from — called once per period with an explicit range.
+`src/team-capacity.js` does no arithmetic on hours at all. Two implementations
+of one calculation agree until somebody changes one of them, and the
+disagreement then surfaces as a studio-wide capacity figure that is quietly
+wrong; this way the two screens match **by construction**, and the test asserting
+it is checking the wiring rather than the maths.
+
+**Consumed is coverage, not a sum.** Time Spent is wall-clock between Accept and
+Start and Submit for Review. Spans overlap when somebody holds three assets open
+through one afternoon, and they run across nights and weekends — summing them
+credits one person with 208 hours in a 40-hour week. The union-of-intervals in
+`src/idle.js` is what makes the number mean anything. Two tests pin it: two
+assets open across one afternoon count once, and a span from Friday evening to
+Monday morning contributes 16 hours, not 66.
+
+**Consumed + Idle = Available, exactly**, because coverage is capped at one
+standard day per working day — nobody can be engaged for longer than they were
+available. Asserted for all three periods.
+
+**All three periods are period-to-date.** "Available hours this year" for a year
+three-quarters elapsed blends capacity already spent with capacity not yet
+reached: it reads as enormous idleness every January and none at all every
+December. Monthly runs from the 1st to today, Annually from 1 January to today,
+and the panel says so.
+
+**Who is counted** comes from the Idle Report too: designations whose tier
+carries the `assignable` capability — the ones given work. Not a list of role
+names, which would go stale the first time somebody adds a designation in
+Settings. Administrators are not assignable and are not counted, which is why
+the headcount is shown beside the hours.
+
+The `idle.caveats()` text travels with the numbers, in a disclosure under the
+panel. An annual available-hours figure silently assumes nobody took a day off
+all year, and leave, public holidays and sickness are recorded nowhere in this
+app — the panel says that rather than leaving somebody to discover it.
+
+#### It needs View Idle Report as well
+
+The block shows exactly what `report.idle` gates. A studio that withheld the
+Idle Report from a designation and then granted them the Admin Dashboard would
+have handed over the same numbers by another door — so the payload carries the
+`capacity` key **only** when the caller holds both permissions, and the panel is
+absent rather than empty otherwise. An empty capacity block asserts the studio
+has no capacity, and a zeroed one would still disclose the headcount.
+
 ### At narrower widths
 
 Three breakpoints, and the panels rearrange rather than shrink:
 
 | Width | Stat cards | Panels | Pipeline |
 | --- | --- | --- | --- |
-| Above 900px | four across | side by side | label beside the bar |
+| Above 1200px | four across | three across, with Team Capacity | label beside the bar |
+| 900–1200px | four across | two across, capacity on its own row | label beside the bar |
 | 560–900px | two across | stacked | label beside the bar |
 | Below 560px | one per row | stacked | label **above** its bar, full-width track |
 

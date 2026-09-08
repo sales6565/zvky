@@ -606,8 +606,22 @@ tr.past-round{opacity:0.62;}
   font-family:'IBM Plex Mono';}
 .ad-card-value{font-size:33px;line-height:1.15;margin:5px 0 2px;font-weight:600;}
 .ad-card-note{font-size:11.5px;color:var(--ink-faint);line-height:1.45;}
+/* Two columns, or three when Team Capacity is present. :has() lets the grid
+   respond to the panel being there rather than needing a class toggled in JS —
+   and where it is unsupported the fallback is the two-column rule below, which
+   simply wraps the third panel onto its own row. That degrades to a longer
+   page, not a broken one. */
 .ad-grid{display:grid;grid-template-columns:1.55fr 1fr;gap:14px;margin-bottom:14px;}
-@media (max-width:900px){ .ad-grid{grid-template-columns:1fr;} }
+.ad-grid:has(.ad-capacity){grid-template-columns:1.35fr 1fr 1fr;}
+@media (max-width:900px){
+  .ad-grid, .ad-grid:has(.ad-capacity){grid-template-columns:1fr;}
+}
+@media (min-width:901px) and (max-width:1200px){
+  /* Three panels in 1000px gives each about 320px, which is too narrow for ten
+     pipeline bars. Capacity drops to the second row, full width. */
+  .ad-grid:has(.ad-capacity){grid-template-columns:1.55fr 1fr;}
+  .ad-grid:has(.ad-capacity) #capacitySlot{grid-column:1 / -1;}
+}
 .ad-panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px 18px;}
 .ad-panel-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:14px;}
 .ad-panel-head h2{font-family:'Space Grotesk';font-size:14px;margin:0;font-weight:600;}
@@ -656,6 +670,38 @@ tr.past-round{opacity:0.62;}
 .ad-chip .mono{color:var(--ink);margin-left:4px;}
 .ad-chip-more{font-size:11px;color:var(--ink-faint);align-self:center;}
 .ad-note{font-size:10.5px;color:var(--ink-faint);margin-top:12px;line-height:1.5;}
+/* Team Capacity. Borrows the panel chrome above; the only new pieces are the
+   period switch, the three figures and the utilisation bar. */
+.cap-periods{display:flex;gap:4px;background:var(--surface-2);border:1px solid var(--border);
+  border-radius:9px;padding:3px;margin-bottom:9px;}
+.cap-period{flex:1;background:none;border:0;color:var(--ink-muted);font-family:'Inter',sans-serif;
+  font-size:11.5px;padding:5px 6px;border-radius:6px;cursor:pointer;}
+.cap-period:hover{color:var(--ink);}
+.cap-period.is-on{background:var(--surface-3);color:var(--ink);}
+.cap-period:focus-visible{outline:2px solid var(--brand-accent);outline-offset:1px;}
+.cap-range{font-size:10.5px;color:var(--ink-faint);font-family:'IBM Plex Mono';margin-bottom:13px;}
+.cap-figures{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px;}
+.cap-fig-label{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--ink-muted);
+  font-family:'IBM Plex Mono';}
+.cap-fig-value{font-size:21px;font-weight:600;margin-top:3px;line-height:1.15;}
+/* Consumed and idle carry the two colours the rest of the app already uses for
+   work in flight and work not happening. Available stays neutral: it is the
+   denominator, not a state. */
+.cap-consumed{color:var(--approved);}
+.cap-idle{color:var(--prog);}
+.cap-bar{height:8px;background:var(--surface-2);border-radius:4px;overflow:hidden;margin-bottom:7px;}
+.cap-bar-fill{height:100%;background:var(--approved);border-radius:4px;transition:width .25s ease;}
+.cap-util{font-size:11px;color:var(--ink-muted);line-height:1.5;}
+.cap-util strong{color:var(--ink);font-family:'IBM Plex Mono';}
+.cap-caveats{margin-top:13px;}
+.cap-caveats summary{cursor:pointer;font-size:11px;color:var(--ink-muted);font-family:'IBM Plex Mono';}
+.cap-caveats ul{margin:9px 0 10px;padding-left:17px;}
+.cap-caveats li{font-size:10.5px;color:var(--ink-faint);line-height:1.55;margin-bottom:5px;}
+@media (max-width:560px){
+  .cap-figures{grid-template-columns:1fr;gap:7px;}
+  .cap-fig{display:flex;align-items:baseline;justify-content:space-between;gap:10px;}
+  .cap-fig-value{font-size:18px;margin-top:0;}
+}
 /* Phone width. The label column is a fixed 132px so the bars all start at the
    same x — which is what makes ten of them readable as one shape — but at 390px
    that leaves the track about 110px, and a bar chart squeezed to a third of the
@@ -8829,6 +8875,10 @@ async function renderAdminDashboard(){
           </div>
           ${renderCalendar(d.calendar)}
         </section>
+
+        <!-- Right-hand column. Absent entirely without View Idle Report — the
+             server omits the key, so there is no slot and the grid closes up. -->
+        <div id="capacitySlot">${renderCapacity(d.capacity)}</div>
       </div>
 
       <section class="ad-panel">
@@ -8841,6 +8891,7 @@ async function renderAdminDashboard(){
     </div>`;
 
   wireAdminDashboard();
+  wireCapacity();
 }
 
 /* One stat card. The number is the point, so it is the largest thing on it and
@@ -8936,6 +8987,114 @@ function wireAdminDashboard(){
       setTab('projects');
     }
   }));
+}
+
+/* ---------- the Team Capacity panel ----------
+ *
+ * Available, consumed and idle hours across the people the studio gives work
+ * to, over three periods. Read-only, like the rest of this screen.
+ *
+ * Every figure comes from the Idle Report's own builder — see
+ * src/team-capacity.js — so the two screens cannot drift apart. This file only
+ * chooses which period is on show and draws it.
+ *
+ * The panel is ABSENT, not empty, for somebody without View Idle Report: the
+ * server omits the key entirely, and rendering zeroes instead would tell them
+ * the studio has no capacity, which is a different untruth from telling them
+ * nothing.
+ */
+
+let CAPACITY_PERIOD = 'day';
+
+function renderCapacity(capacity){
+  if(!capacity || !capacity.periods || !capacity.periods.length) return '';
+  const shown = capacity.periods.find(p=>p.id===CAPACITY_PERIOD) || capacity.periods[0];
+  const hours = (n)=> Number(n||0).toLocaleString(undefined,{maximumFractionDigits:1});
+
+  /* The bar is consumed against available, which is the one comparison the
+     panel exists for. Idle is the remainder rather than a second bar: they sum
+     to available by construction, and drawing both invites somebody to add
+     them up and wonder why it is not a third number. */
+  const pct = shown.utilisationPercent;
+  const width = pct === null ? 0 : Math.max(0, Math.min(100, pct));
+
+  return `
+    <section class="ad-panel ad-capacity">
+      <div class="ad-panel-head">
+        <h2>Team Capacity</h2>
+        <span class="ref-key">${shown.headcount} ${shown.headcount===1?'person':'people'}</span>
+      </div>
+
+      <div class="cap-periods" role="tablist">
+        ${capacity.periods.map(p=>`
+          <button class="cap-period${p.id===shown.id?' is-on':''}" role="tab"
+            aria-selected="${p.id===shown.id}" data-period="${escapeHTML(p.id)}">${escapeHTML(p.label)}</button>`).join('')}
+      </div>
+      <div class="cap-range">${escapeHTML(shown.describe)} — ${escapeHTML(capRange(shown))}</div>
+
+      ${shown.headcount === 0 ? `<div class="ad-empty">Nobody in view holds a designation the studio
+        gives work to, so there is no capacity to report.</div>` : `
+        <div class="cap-figures">
+          <div class="cap-fig">
+            <div class="cap-fig-label">Available</div>
+            <div class="cap-fig-value display">${hours(shown.availableHours)}</div>
+          </div>
+          <div class="cap-fig">
+            <div class="cap-fig-label">Consumed</div>
+            <div class="cap-fig-value display cap-consumed">${hours(shown.consumedHours)}</div>
+          </div>
+          <div class="cap-fig">
+            <div class="cap-fig-label">Idle</div>
+            <div class="cap-fig-value display cap-idle">${hours(shown.idleHours)}</div>
+          </div>
+        </div>
+
+        <div class="cap-bar" title="${pct===null?'':escapeHTML(String(pct))}% utilised">
+          <div class="cap-bar-fill" style="width:${width}%;"></div>
+        </div>
+        <div class="cap-util">
+          ${pct===null ? 'No working hours in this period.'
+            : `<strong>${pct}%</strong> utilised · ${shown.workingDays}
+               working day${shown.workingDays===1?'':'s'} × ${capacity.schedule.hoursPerDay}h
+               × ${shown.headcount}`}
+        </div>`}
+
+      <details class="cap-caveats">
+        <summary>What these hours do and do not account for</summary>
+        <ul>${(capacity.caveats||[]).map(c=>`<li>${escapeHTML(c)}</li>`).join('')}</ul>
+        <button class="btn btn-ghost btn-sm" id="capToIdle">Open the Idle Report</button>
+      </details>
+    </section>`;
+}
+
+/* "1–8 Sep" rather than two ISO dates: the panel already says which period this
+   is, and the range is here to confirm it, not to be read as data. */
+function capRange(period){
+  const from = new Date(period.from + 'T00:00:00');
+  const to = new Date(period.to + 'T00:00:00');
+  const opts = { day:'numeric', month:'short' };
+  if(period.from === period.to) return to.toLocaleDateString('en-GB', opts);
+  return `${from.toLocaleDateString('en-GB', opts)} – ${to.toLocaleDateString('en-GB', opts)}`;
+}
+
+function wireCapacity(){
+  document.querySelectorAll('#adminDashView .cap-period').forEach(b=>b.addEventListener('click', ()=>{
+    CAPACITY_PERIOD = b.dataset.period;
+    /* Repainted from the payload already in hand rather than refetched: all
+       three periods came down together, so switching is instant and cannot
+       show one period's headcount beside another's hours. */
+    paintCapacity();
+  }));
+  const toIdle = document.getElementById('capToIdle');
+  if(toIdle) toIdle.addEventListener('click', ()=>setTab('reports'));
+}
+
+/* Redraw just this panel, leaving the rest of the dashboard alone. */
+function paintCapacity(){
+  const slot = document.getElementById('capacitySlot');
+  if(!slot || !ADMIN_DASH) return;
+  slot.innerHTML = renderCapacity(ADMIN_DASH.capacity);
+  wireCapacity();
 }
 
 /* ---------- settings: where the studio's email goes out from ---------- */
