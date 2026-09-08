@@ -367,3 +367,98 @@ test('the Admin Dashboard', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     });
   });
 });
+
+/* The phone layout, asserted against the CASCADE rather than against a string.
+ *
+ * This exists because of a bug I wrote and shipped for about ten minutes: the
+ * @media block was inserted BEFORE the rules it overrides, so every declaration
+ * in it that shared a selector with an earlier rule silently lost on source
+ * order. The screen looked almost right, which is the worst outcome — the
+ * calendar rows were centred instead of left-aligned and nothing else moved.
+ *
+ * Searching for "@media (max-width:560px)" would have passed on the broken
+ * version. What matters is which declaration WINS, so this resolves it the way
+ * a browser does: last matching rule of equal specificity takes it.
+ */
+const fs = require('node:fs');
+const path = require('node:path');
+
+test('the phone breakpoint actually wins over the rules it overrides', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const css = (html.match(/<style>[\s\S]*?<\/style>/g) || []).join('\n')
+    .replace(/<\/?style>/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  /* Every rule in source order, with the media query it sits inside.
+   *
+   * A BRACE SCANNER, not a regex. The first version of this used a lazy
+   * `@media ... \{([\s\S]*?)\n\}` and quietly swallowed everything up to the
+   * next newline-brace whenever a media query was written on one line — which
+   * this stylesheet does — taking the rules after it with it. A parser that
+   * loses rules makes a guard that passes when it should fail, which is worse
+   * than not having one. */
+  const found = [];
+  (function scan(text, media) {
+    let i = 0;
+    while (i < text.length) {
+      const open = text.indexOf('{', i);
+      if (open === -1) break;
+      const head = text.slice(i, open).trim();
+
+      // Walk to the matching close brace, counting depth.
+      let depth = 1;
+      let j = open + 1;
+      while (j < text.length && depth > 0) {
+        if (text[j] === '{') depth += 1;
+        else if (text[j] === '}') depth -= 1;
+        j += 1;
+      }
+      const body = text.slice(open + 1, j - 1);
+
+      if (head.startsWith('@')) {
+        const width = /max-width:\s*(\d+)px/.exec(head);
+        // Only max-width media queries matter here; anything else is skipped
+        // rather than guessed at.
+        if (width) scan(body, Number(width[1]));
+      } else if (head) {
+        for (const selector of head.split(',').map((x) => x.trim()).filter(Boolean)) {
+          found.push({ selector, body, media });
+        }
+      }
+      i = j;
+    }
+  }(css, null));
+  assert.ok(found.some((r) => r.selector === '.ad-cards'),
+    'the parser should find the dashboard rules at all — if it does not, every '
+    + 'assertion below is vacuous');
+
+  /* The winning value of one property for one selector at a given width: the
+     last rule that matches and applies at that width. */
+  const winner = (selector, property, width) => {
+    let value = null;
+    for (const rule of found) {
+      if (rule.selector !== selector) continue;
+      if (rule.media !== null && width > rule.media) continue;
+      const hit = new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*([^;]+)`).exec(rule.body);
+      if (hit) value = hit[1].trim();
+    }
+    return value;
+  };
+
+  // Wide: the desktop shape.
+  assert.strictEqual(winner('.ad-cards', 'grid-template-columns', 1440), 'repeat(4,1fr)');
+  assert.strictEqual(winner('.ad-cal-row', 'align-items', 1440), 'center');
+  assert.strictEqual(winner('.ad-cal-row', 'flex-direction', 1440), null, 'a row by default');
+
+  // Phone: every one of these lost to source order in the broken version.
+  assert.strictEqual(winner('.ad-cards', 'grid-template-columns', 390), '1fr',
+    'stat cards go one-up on a phone');
+  assert.strictEqual(winner('.ad-cal-row', 'flex-direction', 390), 'column');
+  assert.strictEqual(winner('.ad-cal-row', 'align-items', 390), 'flex-start',
+    'the calendar stacks LEFT-ALIGNED — centred was the bug this test exists for');
+  assert.strictEqual(winner('.ad-bar-row', 'grid-template-columns', 390), '1fr 34px',
+    'the pipeline label moves above its bar so the track gets the full width');
+
+  // Tablet: the panels stack, the cards do not yet go one-up.
+  assert.strictEqual(winner('.ad-grid', 'grid-template-columns', 768), '1fr');
+  assert.strictEqual(winner('.ad-cards', 'grid-template-columns', 768), 'repeat(2,1fr)');
+});

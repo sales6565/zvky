@@ -620,6 +620,7 @@ tr.past-round{opacity:0.62;}
 .ad-bar-track{height:9px;background:var(--surface-2);border-radius:5px;overflow:hidden;}
 .ad-bar-fill{height:100%;border-radius:5px;transition:width .25s ease;}
 .ad-bar-count{font-size:12px;text-align:right;color:var(--ink);}
+
 /* The calendar. */
 .ad-cal{display:flex;flex-direction:column;}
 .ad-cal-row{display:flex;align-items:center;justify-content:space-between;gap:12px;
@@ -655,6 +656,25 @@ tr.past-round{opacity:0.62;}
 .ad-chip .mono{color:var(--ink);margin-left:4px;}
 .ad-chip-more{font-size:11px;color:var(--ink-faint);align-self:center;}
 .ad-note{font-size:10.5px;color:var(--ink-faint);margin-top:12px;line-height:1.5;}
+/* Phone width. The label column is a fixed 132px so the bars all start at the
+   same x — which is what makes ten of them readable as one shape — but at 390px
+   that leaves the track about 110px, and a bar chart squeezed to a third of the
+   row stops carrying its comparison. Below 560px the label goes ABOVE its bar
+   and the track takes the full width. The stat cards go one-up at the same
+   point: two 33px numbers side by side in 390px is a column of digits rather
+   than a figure. */
+@media (max-width:560px){
+  .ad-cards{grid-template-columns:1fr;}
+  .ad-bar-row{grid-template-columns:1fr 34px;grid-template-areas:'label label' 'track count';gap:3px 9px;}
+  .ad-bar-label{grid-area:label;}
+  .ad-bar-track{grid-area:track;}
+  .ad-bar-count{grid-area:count;}
+  .ad-bars{gap:11px;}
+  .ad-head h1{font-size:23px;}
+  /* The calendar row stops being a two-column split and stacks, so a long date
+     and "5 deliveries due" are not fighting over one line. */
+  .ad-cal-row{flex-direction:column;align-items:flex-start;gap:3px;}
+}
 .em-master{display:flex;align-items:center;gap:9px;font-size:13px;margin:0 0 14px;cursor:pointer;}
 .pf-toggle{display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:2px 0;}
 .pf-toggle input{width:15px;height:15px;margin-top:2px;flex:none;}

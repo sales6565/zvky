@@ -808,6 +808,29 @@ is a link. That is not decoration: this application has no studio-wide list of
 assets — the board and the Assets List are both scoped to one project — so a row
 saying "6 assets waiting on review" with nothing to click would be a dead end.
 
+### At narrower widths
+
+Three breakpoints, and the panels rearrange rather than shrink:
+
+| Width | Stat cards | Panels | Pipeline |
+| --- | --- | --- | --- |
+| Above 900px | four across | side by side | label beside the bar |
+| 560–900px | two across | stacked | label beside the bar |
+| Below 560px | one per row | stacked | label **above** its bar, full-width track |
+
+The pipeline's label column is a fixed 132px so all ten bars start at the same
+x — which is what makes them readable as one shape — but on a phone that leaves
+the track about 110px, and a bar chart squeezed to a third of the row stops
+carrying its comparison. Below 560px the label moves above.
+
+`tests/admin-dashboard.test.js` asserts these by resolving the CSS cascade the
+way a browser does, not by searching for the media query. The distinction is the
+whole point of that test: the first version of this stylesheet had the @media
+block sitting *before* the rules it overrides, so every declaration sharing a
+selector with an earlier rule silently lost on source order — the screen looked
+almost right, with the calendar rows centred instead of left-aligned. A test
+that grepped for the breakpoint would have passed on the broken version.
+
 ### Who sees it, and how much
 
 *View Admin Dashboard* (`report.admin_dashboard`) is **on by default for Super
