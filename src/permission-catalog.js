@@ -499,6 +499,33 @@ const GROUPS = [
         impliedBy: fullAccess,
         describe: 'Idle Report: standard working hours against hours actually tracked, per person.',
       },
+      {
+        key: 'report.admin_dashboard',
+        label: 'View Admin Dashboard',
+        /* The studio in one screen: how many projects are running, what is late,
+           what is due this week, what is waiting on somebody.
+           
+           In the Reports group rather than under Settings, because it is the
+           same kind of thing the other two are — reading the studio's numbers,
+           not changing how it works. It carries no ability to act: every row is
+           a link into the screen that already owns that work.
+           
+           ON BY DEFAULT for manageUsers, which is Super Admin, Admin, Leadership
+           and Full Access. The brief said Admin and Super Admin; the other two
+           are the tiers that already outrank Admin — full access to every
+           project in the studio — and withholding an overview from them while
+           granting it to Admin would be incoherent. Everyone else is off until
+           a Super Admin says otherwise.
+           
+           NOT its own visibility model. What the screen counts is scoped by the
+           role's existing projectScope, so an Admin (projectScope 'owned') sees
+           their own projects and a Super Admin sees the studio. Holding this
+           permission opens the tab; it does not widen anybody's reach. */
+        impliedBy: has('manageUsers'),
+        describe: 'The Admin Dashboard tab: active, on-track, at-risk and delivered projects, the '
+          + 'production pipeline, what is due next, and what needs attention. Read-only, and scoped '
+          + 'to the projects this role can already see.',
+      },
     ],
   },
   {

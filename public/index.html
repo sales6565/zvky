@@ -584,6 +584,77 @@ tr.past-round{opacity:0.62;}
    to read as that at a glance from across the same screen. */
 .ip-banner.blocked{background:rgba(255,90,54,.09);border-color:rgba(255,90,54,.30);color:#ff9b80;}
 .ip-expiry{font-size:10.5px;font-family:'IBM Plex Mono';color:var(--ink-muted);}
+/* ---- the Admin Dashboard ------------------------------------------------
+   Built from the same tokens as everything else: --surface for a panel,
+   --border for its edge, the workflow colours for the pipeline bars, and the
+   three severity tones below. Nothing here introduces a new palette. */
+.ad-wrap{max-width:1180px;padding:4px 0 40px;}
+.ad-head{margin-bottom:22px;}
+.ad-head h1{font-size:27px;margin:0 0 5px;letter-spacing:-.3px;font-weight:600;}
+.ad-sub{font-size:13px;color:var(--ink-muted);}
+.ad-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px;}
+@media (max-width:900px){ .ad-cards{grid-template-columns:repeat(2,1fr);} }
+.ad-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:15px 17px;
+  border-top:2px solid var(--border);}
+/* The one place the four cards differ: a top rule in the colour of the thing
+   being counted, so the row can be read without reading it. */
+.ad-active{border-top-color:var(--artist-blue);}
+.ad-ontrack{border-top-color:var(--approved);}
+.ad-atrisk{border-top-color:var(--prog);}
+.ad-delivered{border-top-color:var(--final);}
+.ad-card-label{font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink-muted);
+  font-family:'IBM Plex Mono';}
+.ad-card-value{font-size:33px;line-height:1.15;margin:5px 0 2px;font-weight:600;}
+.ad-card-note{font-size:11.5px;color:var(--ink-faint);line-height:1.45;}
+.ad-grid{display:grid;grid-template-columns:1.55fr 1fr;gap:14px;margin-bottom:14px;}
+@media (max-width:900px){ .ad-grid{grid-template-columns:1fr;} }
+.ad-panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px 18px;}
+.ad-panel-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:14px;}
+.ad-panel-head h2{font-family:'Space Grotesk';font-size:14px;margin:0;font-weight:600;}
+.ad-empty{font-size:12.5px;color:var(--ink-faint);padding:6px 0 2px;line-height:1.5;}
+/* The pipeline. One row per stage, bars scaled to the busiest stage. */
+.ad-bars{display:flex;flex-direction:column;gap:7px;}
+.ad-bar-row{display:grid;grid-template-columns:132px 1fr 34px;align-items:center;gap:11px;}
+.ad-bar-row.is-empty{opacity:.42;}
+.ad-bar-label{font-size:11.5px;color:var(--ink-muted);}
+.ad-bar-track{height:9px;background:var(--surface-2);border-radius:5px;overflow:hidden;}
+.ad-bar-fill{height:100%;border-radius:5px;transition:width .25s ease;}
+.ad-bar-count{font-size:12px;text-align:right;color:var(--ink);}
+/* The calendar. */
+.ad-cal{display:flex;flex-direction:column;}
+.ad-cal-row{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:9px 0;border-bottom:1px solid var(--border);}
+.ad-cal-row:last-child{border-bottom:0;}
+.ad-cal-day{font-size:12.5px;color:var(--ink);}
+.ad-cal-away{font-size:10.5px;color:var(--ink-faint);font-family:'IBM Plex Mono';margin-top:2px;}
+.ad-cal-count{font-size:12px;color:var(--ink-muted);}
+.ad-cal-count .mono{color:var(--ink);font-size:14px;margin-right:3px;}
+.ad-cal-more{font-size:11px;color:var(--ink-faint);padding-top:9px;}
+/* Attention Required. Three severities, and they are the app's own colours
+   rather than a new traffic-light set: --brand-accent is what this application
+   already uses for the destructive and the urgent, --prog for work in flight,
+   --client for anything out with the client. */
+.ad-flags{display:flex;flex-direction:column;gap:2px;}
+.ad-flag{display:flex;gap:11px;padding:11px 0;border-bottom:1px solid var(--border);}
+.ad-flag:last-of-type{border-bottom:0;}
+.ad-dot{width:8px;height:8px;border-radius:50%;flex:none;margin-top:6px;background:var(--ink-muted);}
+.ad-sev-overdue .ad-dot{background:var(--brand-accent);}
+.ad-sev-at-risk .ad-dot{background:var(--prog);}
+.ad-sev-client .ad-dot{background:var(--client);}
+.ad-flag-body{flex:1;min-width:0;}
+.ad-flag-lead{font-size:13px;color:var(--ink);}
+.ad-flag-n{font-size:15px;margin-right:4px;}
+.ad-sev-overdue .ad-flag-n{color:var(--brand-accent);}
+.ad-sev-at-risk .ad-flag-n{color:var(--prog);}
+.ad-sev-client .ad-flag-n{color:var(--client);}
+.ad-flag-detail{font-size:11.5px;color:var(--ink-faint);margin-top:2px;line-height:1.45;}
+.ad-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+.ad-chip{background:var(--surface-2);border:1px solid var(--border);color:var(--ink-muted);
+  font-size:11px;padding:3px 9px;border-radius:20px;cursor:pointer;font-family:'Inter',sans-serif;}
+.ad-chip:hover{border-color:var(--brand-accent);color:var(--ink);}
+.ad-chip .mono{color:var(--ink);margin-left:4px;}
+.ad-chip-more{font-size:11px;color:var(--ink-faint);align-self:center;}
+.ad-note{font-size:10.5px;color:var(--ink-faint);margin-top:12px;line-height:1.5;}
 .em-master{display:flex;align-items:center;gap:9px;font-size:13px;margin:0 0 14px;cursor:pointer;}
 .pf-toggle{display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:2px 0;}
 .pf-toggle input{width:15px;height:15px;margin-top:2px;flex:none;}
@@ -988,6 +1059,12 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
       <!-- The label is "Dashboard"; the internal key stays "board", which is app
            state rather than a URL. There is no router on this page, so no link,
            bookmark or redirect says "board" to a user anywhere. -->
+      <!-- The studio-wide overview. First, because it is the one screen that
+           answers "what is going on" without picking a project first — and
+           deliberately named "Admin Dashboard" rather than "Dashboard", which
+           is taken by the per-project board beside it. Two screens, two
+           questions; naming both the same would make the pair unreadable. -->
+      <button data-tab="admin" id="adminDashTabBtn" style="display:none;">Admin Dashboard</button>
       <button data-tab="board" class="active">Dashboard</button>
       <!-- Right after Dashboard: it is the other thing somebody checks on
            arriving, and its count is the reason to check it. -->
@@ -1016,6 +1093,7 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
     <input type="file" id="bulkUserInput" accept=".csv,.xls,.xlsx" style="display:none;">
     <button class="btn btn-brand" id="newAssetBtn" style="display:none;">+ New Asset</button>
   </div>
+  <div id="adminDashView" style="display:none;"></div>
   <div id="boardView"></div>
   <div id="pendingView" style="display:none;"></div>
   <div id="projectsView" style="display:none;"></div>
@@ -1752,6 +1830,11 @@ const UI_GATES = {
   usersTabBtn:           () => canAnyIn('user'),
   settingsTabBtn:        () => canOpenSettings(),
   reportsTabBtn:         () => can('report.view','report.idle'),
+  /* Its own grant, like the two report tabs beside it. What the screen COUNTS
+     is still scoped by the role's projectScope, so holding this opens the tab
+     without widening anybody's reach — an Admin sees their own projects and a
+     Super Admin sees the studio. */
+  adminDashTabBtn:       () => can('report.admin_dashboard'),
   projectsTabBtn:        () => can('client.view'),
   /* Its own grant, so the tab can be given or withheld independently of the
      workflow behind it. What the tab LISTS is still whatever this role may act
@@ -1801,6 +1884,24 @@ const TOUR_STEPS = [
     body: 'A quick walk through the tabs you can see. Everyone sees a different set, '
         + 'because the tour follows the permissions your designation actually holds — '
         + 'so this is your app, not a general tour.',
+  },
+  /* Ahead of the per-project board, matching the tab order — and the step says
+     outright which of the two Dashboards this is, because that is the one thing
+     somebody seeing both for the first time needs told.
+     
+     The comment sits OUTSIDE the object: tests/quick-tour.test.js reads these
+     steps out of the source with a regex expecting `id:` on the line after the
+     brace, and a comment in between makes the step invisible to the guard that
+     checks every gated tab has one. */
+  {
+    id: 'admin',
+    target: '#adminDashTabBtn',
+    gate: 'adminDashTabBtn',
+    title: 'Admin Dashboard',
+    body: 'The studio at a glance, without picking a project first: what is running, what is '
+        + 'late, what is due next, and what is waiting on somebody. Read-only — every figure '
+        + 'is a link into the tab that owns that work. The Dashboard beside it is the board '
+        + 'for one project; this one is all of them.',
   },
   {
     id: 'board',
@@ -2918,6 +3019,7 @@ function setTab(tab){
   const showBoardControls = tab==='board'||tab==='list';
   document.getElementById('search').style.display = showBoardControls ? '' : 'none';
   document.getElementById('filterType').style.display = showBoardControls ? '' : 'none';
+  document.getElementById('adminDashView').style.display = tab==='admin' ? '' : 'none';
   document.getElementById('boardView').style.display = tab==='board' ? '' : 'none';
   document.getElementById('pendingView').style.display = tab==='pending' ? '' : 'none';
   document.getElementById('projectsView').style.display = tab==='projects' ? '' : 'none';
@@ -5233,7 +5335,7 @@ async function renderUsers(sections = userSections()){
   });
 }
 async function render(){
-  const viewIds = { board:'boardView', list:'listView', team:'teamView',
+  const viewIds = { admin:'adminDashView', board:'boardView', list:'listView', team:'teamView',
     users:'usersView', projects:'projectsView', reports:'reportsView', settings:'settingsView' };
   try{
   /* If the role gained or lost something since this page loaded, the tabs and
@@ -5254,7 +5356,8 @@ async function render(){
   ['newAssetBtn','bulkImportBtn','downloadSampleBtn'].forEach(id=>applyGate(id, onABoard));
   refreshPendingCount();
   refreshTimesheetCount();
-  if(state.view==='timesheet') await renderTimesheet();
+  if(state.view==='admin') await renderAdminDashboard();
+  else if(state.view==='timesheet') await renderTimesheet();
   else if(state.view==='pending') await renderPending();
   else if(state.view==='board') renderBoard();
   else if(state.view==='list') renderList();
@@ -8605,6 +8708,214 @@ async function ipbBlockObserved(address, btn){
     showToast(err.message.slice(0,90));
     if(btn) btn.disabled = false;
   }
+}
+
+/* ---------- the Admin Dashboard ----------
+ *
+ * The studio in one screen: what is running, what is late, what is due next,
+ * and what is waiting on somebody.
+ *
+ * READ-ONLY, and deliberately so. There is not one control on this screen that
+ * changes anything — every figure is a link into the tab that already owns that
+ * work. A dashboard that can act is a second place the studio's rules have to
+ * be enforced, and this one is a window rather than a second door.
+ *
+ * It is NOT the existing Dashboard tab, which is the per-project board, and it
+ * does not touch it. Two screens, two questions: that one asks "what is on this
+ * project", this one asks "what is going on across all of them".
+ */
+
+let ADMIN_DASH = null;
+
+/* Morning to noon, afternoon to five, evening after that — and the small hours
+   read as evening rather than morning, which is what somebody still working at
+   2am would expect to be told. */
+function greeting(at = new Date()){
+  const h = at.getHours();
+  if(h >= 17 || h < 5) return 'Good evening';
+  return h < 12 ? 'Good morning' : 'Good afternoon';
+}
+
+/* A date as a person reads it, with the near ones named.
+   "Thu 11 Sep" tells you less than "Tomorrow" when it IS tomorrow. */
+function calendarDay(iso){
+  const at = new Date(iso + 'T00:00:00');
+  const now = new Date();
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const days = Math.round((at - midnight) / 86400000);
+  if(days === 0) return 'Today';
+  if(days === 1) return 'Tomorrow';
+  return at.toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short' });
+}
+function daysAway(iso){
+  const at = new Date(iso + 'T00:00:00');
+  const now = new Date();
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const days = Math.round((at - midnight) / 86400000);
+  return days <= 1 ? '' : `in ${days} days`;
+}
+
+async function renderAdminDashboard(){
+  const el = document.getElementById('adminDashView');
+  if(!el) return;
+  let d;
+  try{ d = await api('/admin-dashboard'); }
+  catch(err){
+    el.innerHTML = `<div class="ad-wrap"><div class="ref-err">${escapeHTML(err.message)}</div></div>`;
+    return;
+  }
+  ADMIN_DASH = d;
+  const c = d.counts;
+  const who = (d.viewer && d.viewer.name) || (state.currentUser && state.currentUser.name) || '';
+  const firstName = String(who).trim().split(/\s+/)[0] || who;
+
+  /* Whose numbers these are. An Admin sees the projects they created and a
+     Super Admin sees the studio — the same projectScope rule the rest of the
+     app runs on — so the subtitle says which, rather than letting somebody
+     read "12 active" as a studio total when it is not. */
+  const scoped = caps().projectScope === 'all'
+    ? 'Studio production overview.'
+    : `Production overview across the ${d.scope.projects} project${d.scope.projects===1?'':'s'} you can see.`;
+
+  el.innerHTML = `
+    <div class="ad-wrap">
+      <div class="ad-head">
+        <h1 class="display">${escapeHTML(greeting())}, ${escapeHTML(firstName)}</h1>
+        <div class="ad-sub">${escapeHTML(scoped)}</div>
+      </div>
+
+      ${d.unavailable ? `<div class="ip-banner fault"><p>${escapeHTML(d.unavailable)}</p></div>` : ''}
+
+      <div class="ad-cards">
+        ${statCard('Active', c.active, 'projects in progress', 'active')}
+        ${statCard('On Track', c.onTrack, 'meeting their timeline', 'ontrack')}
+        ${statCard('At Risk', c.atRisk, c.overdue ? `${c.overdue} already overdue` : 'due soon, unfinished', 'atrisk')}
+        ${statCard('Delivered', c.delivered, 'closed with the client', 'delivered')}
+      </div>
+
+      <div class="ad-grid">
+        <section class="ad-panel ad-pipeline">
+          <div class="ad-panel-head">
+            <h2>Production Pipeline</h2>
+            <span class="ref-key">${pipelineTotal(d.pipeline)} in flight</span>
+          </div>
+          ${renderPipeline(d.pipeline)}
+        </section>
+
+        <section class="ad-panel">
+          <div class="ad-panel-head">
+            <h2>Delivery Calendar</h2>
+            <span class="ref-key">next ${d.calendar.length || 0}</span>
+          </div>
+          ${renderCalendar(d.calendar)}
+        </section>
+      </div>
+
+      <section class="ad-panel">
+        <div class="ad-panel-head">
+          <h2>Attention Required</h2>
+          <span class="ref-key">${d.attention.length ? `${d.attention.length} to look at` : 'nothing flagged'}</span>
+        </div>
+        ${renderAttention(d.attention, d.thresholds)}
+      </section>
+    </div>`;
+
+  wireAdminDashboard();
+}
+
+/* One stat card. The number is the point, so it is the largest thing on it and
+   everything else is a label for it. */
+function statCard(label, value, note, tone){
+  return `<div class="ad-card ad-${tone}">
+    <div class="ad-card-label">${escapeHTML(label)}</div>
+    <div class="ad-card-value display">${Number(value)||0}</div>
+    <div class="ad-card-note">${escapeHTML(note)}</div>
+  </div>`;
+}
+
+const pipelineTotal = (stages)=>stages.reduce((n,s)=>n+s.count,0);
+
+/* The pipeline, as one bar per stage.
+ *
+ * Every stage is drawn including the empty ones, and the bars are scaled to the
+ * BIGGEST stage rather than to the total. Scaling to the total makes every bar
+ * a sliver as soon as the studio has ten stages, which is exactly what this app
+ * has; scaling to the largest makes the shape of the queue readable, which is
+ * the only thing anybody looks at this panel for. */
+function renderPipeline(stages){
+  const total = pipelineTotal(stages);
+  if(!total) return `<div class="ad-empty">No work in the pipeline.</div>`;
+  const peak = Math.max(...stages.map(s=>s.count), 1);
+  return `<div class="ad-bars">${stages.map(s=>`
+    <div class="ad-bar-row${s.count?'':' is-empty'}">
+      <div class="ad-bar-label">${escapeHTML(s.label)}</div>
+      <div class="ad-bar-track">
+        <div class="ad-bar-fill" style="width:${s.count?Math.max(2,(s.count/peak)*100):0}%;background:${s.color};"></div>
+      </div>
+      <div class="ad-bar-count mono">${s.count}</div>
+    </div>`).join('')}</div>`;
+}
+
+function renderCalendar(dates){
+  if(!dates || !dates.length) return `<div class="ad-empty">Nothing due in the next 60 days.</div>`;
+  return `<div class="ad-cal">${dates.map(d=>`
+    <div class="ad-cal-row">
+      <div class="ad-cal-when">
+        <div class="ad-cal-day">${escapeHTML(calendarDay(d.date))}</div>
+        <div class="ad-cal-away">${escapeHTML(daysAway(d.date))}</div>
+      </div>
+      <div class="ad-cal-count"><span class="mono">${d.count}</span>
+        ${d.count===1?'delivery':'deliveries'} due</div>
+    </div>`).join('')}
+    ${dates.more ? `<div class="ad-cal-more">More beyond these.</div>` : ''}</div>`;
+}
+
+/* The flagged list. Each row is a severity, a count, and somewhere to go.
+ *
+ * The project chips are what make it actionable: this application has no
+ * studio-wide list of assets — the board and the Assets List are both scoped to
+ * one project — so a row saying "6 assets waiting on review" with nothing to
+ * click would be a dead end. Naming the projects, heaviest first, ends every
+ * row somewhere real. */
+function renderAttention(rows, thresholds){
+  if(!rows || !rows.length){
+    return `<div class="ad-empty">Nothing needs attention. Every project is on track and
+      nothing is waiting on a decision.</div>`;
+  }
+  return `<div class="ad-flags">${rows.map(r=>`
+    <div class="ad-flag ad-sev-${escapeHTML(r.severity)}">
+      <span class="ad-dot" aria-hidden="true"></span>
+      <div class="ad-flag-body">
+        <div class="ad-flag-lead"><span class="mono ad-flag-n">${r.count}</span> ${escapeHTML(r.label)}</div>
+        <div class="ad-flag-detail">${escapeHTML(r.detail)}</div>
+        ${(r.projects||[]).length ? `<div class="ad-chips">${r.projects.slice(0,6).map(p=>`
+          <button class="ad-chip" data-project="${escapeHTML(p.id)}">${escapeHTML(p.name)}${
+            p.count ? ` <span class="mono">${p.count}</span>` : ''}</button>`).join('')}${
+          r.projects.length>6 ? `<span class="ad-chip-more">+${r.projects.length-6} more</span>` : ''}</div>` : ''}
+      </div>
+    </div>`).join('')}
+    <div class="ad-note">At risk means unfinished work due inside
+      ${Number(thresholds && thresholds.atRiskDays) || 7} days. Overdue means already past a due date.</div>
+  </div>`;
+}
+
+function wireAdminDashboard(){
+  /* Opening a project is the same mechanism the Projects tab and the header
+     dropdown use, rather than a second way of doing it. */
+  document.querySelectorAll('#adminDashView .ad-chip').forEach(b=>b.addEventListener('click', ()=>{
+    const sel = document.getElementById('projectSelect');
+    if(sel && [...sel.options].some(o=>o.value===b.dataset.project)){
+      sel.value = b.dataset.project;
+      state.currentProjectId = b.dataset.project;
+      applyGate('editProjectBtn');
+      setTab('board');
+    }else{
+      /* The project is not in this person's picker — archived, or outside their
+         scope since the page loaded. Send them to Projects rather than to a
+         board that would render somebody else's work or nothing at all. */
+      setTab('projects');
+    }
+  }));
 }
 
 /* ---------- settings: where the studio's email goes out from ---------- */

@@ -757,6 +757,74 @@ Setting a project clears the other two tables, so a designation change *moves*
 the membership rather than leaving a stale row that the permission checks would
 still honour. Changing only the role moves it automatically.
 
+## The Admin Dashboard
+
+A second tab called **Admin Dashboard**, beside the per-project **Dashboard**.
+Two screens, two questions: that one asks what is on *this* project, this one
+asks what is going on across all of them, without picking a project first.
+
+It is **read-only**. There is not one control on it that changes anything —
+every figure is a link into the tab that already owns that work. The API behind
+it has a single verb.
+
+### What the four cards mean
+
+`projects` carries no status column — only `is_active`, `archived_at`,
+`closed_at`, `start_date` and `end_date` — so all four are **derived**, and
+nothing in this application had a notion of "late" before this screen. The
+thresholds below are therefore new, and stated on the screen itself:
+
+| Card | Derivation |
+| --- | --- |
+| **Active** | Not archived, not closed. |
+| **On Track** | Active, and neither of the two below. |
+| **At Risk** | Active with unfinished work due inside **7 days**, *plus* the overdue ones — "flagged behind or at risk" is one question. |
+| **Delivered** | Closed with the client (the studio's own *Mark Client Closed*). |
+| *Overdue* | Not a card. Active and past its end date, or holding unfinished work already past its due date. Shown in Attention Required. |
+
+**Active always equals On Track plus At Risk**, because every project lands in
+exactly one bucket. That arithmetic is asserted in the tests — two cards that
+disagree would give no way to tell which one was lying.
+
+A **delivered** asset stops counting as late, which is what lets the studio get
+back to zero. `AT_RISK_DAYS` is one constant in `src/admin-dashboard.js`.
+
+### The panels
+
+- **Production Pipeline** — one bar per stage of the real asset workflow (Not
+  Assigned through Delivered), counted over *open* projects only. A closed
+  project's assets are all delivered, and including them would make the last bar
+  dwarf every other one for the rest of the studio's life. Every stage is drawn
+  including the empty ones, so the panel does not change shape as work moves.
+- **Delivery Calendar** — the next five dates something is due, grouped by day.
+  Two assets due Thursday is one row saying two, because the question is how
+  heavy Thursday is.
+- **Attention Required** — overdue projects (brand accent), at-risk projects and
+  work waiting on review (amber), work out with the client (teal). These are the
+  app's existing status colours, not a new traffic-light set.
+
+Every Attention row **names the projects it is about**, heaviest first, and each
+is a link. That is not decoration: this application has no studio-wide list of
+assets — the board and the Assets List are both scoped to one project — so a row
+saying "6 assets waiting on review" with nothing to click would be a dead end.
+
+### Who sees it, and how much
+
+*View Admin Dashboard* (`report.admin_dashboard`) is **on by default for Super
+Admin, Admin, Leadership and Full Access**. The brief asked for Admin and Super
+Admin; the other two are the tiers that already outrank Admin — full access to
+every project — and withholding an overview from Leadership while granting it to
+Admin would be incoherent. Everyone else is off until a Super Admin says
+otherwise, in Settings → Role Permissions.
+
+**Holding the permission opens the tab. It does not widen anybody's reach.**
+What the screen counts is scoped by the role's existing `projectScope`, the same
+rule the rest of the app runs on. That matters because the **Admin tier is
+`projectScope: 'owned'`** — it sees the projects it created, not the studio — so
+a studio-wide total shown to an Admin would be full of projects they could not
+open. A Super Admin sees the whole studio; an Admin sees their own; the subtitle
+says which. Nobody is shown a number they cannot click into.
+
 ## Project milestones
 
 A project has one start and end date, but the work inside it has stages that run
