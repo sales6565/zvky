@@ -537,6 +537,28 @@ npm run dev         # auto-restart on change (needs the dev dependency: npm inst
 The API is served at `http://localhost:4000/api/*`, and the bundled frontend
 (`public/index.html`) at `http://localhost:4000/`.
 
+### After a deploy, restart the application
+
+`public/index.html` is a static file, so a browser refresh picks up new frontend
+code **immediately**. The API is the running Node process, and on cPanel or
+Passenger it keeps serving the old code until it is restarted. Upload files
+without restarting and you get a browser running new code against an old server.
+
+That combination used to fail confusingly rather than loudly, and it is worth
+knowing why. Any GET that matches no API route falls through to the catch-all
+that serves `index.html` — **with status 200**. So a new screen calling an
+endpoint the old server does not have got a successful response whose body was a
+web page, and the page read it as an empty result: lists rendered **empty**,
+looking like a working screen with no data, while the matching POST — which the
+catch-all does not answer — failed with a bare `HTTP 404`. A new feature
+therefore looked broken rather than undeployed.
+
+The page now detects this: a 2xx whose body is not JSON is reported as *"the
+server answered with a web page instead of data … the Node application was not
+restarted"*. **If you see that message anywhere in the app, restart the
+application and reload — nothing is wrong with the data.** In cPanel that is
+Setup Node.js App → Restart, or touching `tmp/restart.txt`.
+
 ## API surface
 
 | Method | Path | Who |

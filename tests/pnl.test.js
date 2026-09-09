@@ -168,6 +168,47 @@ test('both P&L permissions are Super Admin only, and neither implies the other',
   assert.ok(!baseline.has('pnl.view') && !baseline.has('pnl.manage'));
 });
 
+/* The bug that made this feature look broken on a real deployment.
+ *
+ * This app serves its own page, and any GET that matches no API route falls
+ * through to the catch-all that returns index.html WITH STATUS 200. The page's
+ * api() helper used to read that with `res.json().catch(()=>({}))`, so a call to
+ * an endpoint the running backend does not have resolved successfully as an
+ * empty object.
+ *
+ * What that produced was a screen that lied rather than one that failed. Deploy
+ * the new files without restarting the Node process — the ordinary case on
+ * cPanel, where static files update instantly and the app server does not — and
+ * Settings drew a Rate Cards table with no rows in it and an enabled Add
+ * button, because `{}.rateCards || []` is a perfectly good empty list. Pressing
+ * Add then hit the POST, which the catch-all does NOT answer, and produced a
+ * bare "Request failed (HTTP 404)".
+ *
+ * Guarded at the source, because api() is browser code with no server to call
+ * it here. The property is: a 2xx whose body is not JSON must not be silently
+ * turned into data.
+ */
+test('api() refuses to read a non-JSON 200 as data', () => {
+  const page = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const start = page.indexOf('async function api(path, options={})');
+  assert.ok(start > -1, 'the api() helper is still where this guard expects it');
+  const body = page.slice(start, page.indexOf('\nfunction showToast', start));
+
+  /* Comment text is stripped first: the fix's own comment quotes the broken
+     line to explain it, and a guard fooled by prose about a bug is no guard. */
+  const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!/const\s+data\s*=\s*await\s+res\.json\(\)/.test(code),
+    'reading the body straight as JSON is the bug — a non-JSON 200 became {}');
+  assert.match(code, /res\.ok\s*&&\s*notJson/,
+    'a 2xx carrying something that is not JSON has to be caught explicitly');
+  assert.match(body, /not been restarted/,   // in the message, so body not code
+    'and the message has to name the cause, because the fix is a restart');
+  /* An empty body stays benign: telling somebody their server is stale because
+     a response had no content would be its own false alarm. */
+  assert.match(code, /if\(raw\)\{/, 'an empty body is still read as {}');
+});
+
 // --- against a live server ------------------------------------------------------
 
 test('Profit & Loss end to end', { skip: cfg ? false : SKIP_REASON }, async (t) => {

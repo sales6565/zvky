@@ -2789,7 +2789,42 @@ async function api(path, options={}){
     headers,
     body: multipart ? options.body : (options.body ? JSON.stringify(options.body) : undefined),
   });
-  const data = await res.json().catch(()=>({}));
+  /* WHY THIS IS NOT `res.json().catch(()=>({}))` ANY MORE.
+   *
+   * This app serves its own page from the same origin, and any GET that does
+   * not match an API route falls through to the catch-all that returns
+   * index.html — with status 200. So a request to an endpoint the running
+   * backend does not have came back OK, with a body of HTML, and the old line
+   * quietly turned that into `{}`.
+   *
+   * The result was a screen that lied. A freshly deployed page calling a
+   * feature whose backend had not been restarted got `{}` from every GET, so
+   * its list rendered EMPTY and looked like a working screen with no data in
+   * it, while the matching POST — which the catch-all does not answer — failed
+   * with a bare "Request failed (HTTP 404)". "Add something" then appeared to
+   * do nothing for no stated reason.
+   *
+   * So a 2xx carrying something that is not JSON is now an error that says what
+   * actually happened. An empty body is still `{}`: that is a legitimate
+   * "nothing to say", and telling somebody their server is stale because a
+   * response had no content would be its own false alarm. */
+  const raw = await res.text();
+  let data = {};
+  let notJson = false;
+  if(raw){
+    try{ data = JSON.parse(raw); }
+    catch{ notJson = true; }
+  }
+  if(res.ok && notJson){
+    const err = new Error('The server answered this request with a web page instead of data, '
+      + 'which means it has no such endpoint. The most likely cause is that the site files were '
+      + 'updated but the Node application was not restarted, so the browser is running new code '
+      + 'against an old server. Restart the application and reload this page.');
+    err.status = res.status;
+    err.request = `${(options.method||'GET').toUpperCase()} /api${path}`;
+    err.staleBackend = true;
+    throw err;
+  }
   // A 401 from signing in means the credentials were wrong, not that a session
   // ran out — report what the server actually said. Treating the two the same
   // showed "Session expired" to someone who had simply mistyped their password.
@@ -10141,9 +10176,14 @@ function wireRateCards(){
     rateCardError('');
     btn.disabled = true;
     try{
-      const { rateCard } = await api('/pnl/rate-cards/' + id, { method:'PATCH', body:{ ratePerHour: value } });
-      RATE_CARDS = RATE_CARDS.map(c=>c.id===id ? rateCard : c);
-      paintRateCards();
+      await api('/pnl/rate-cards/' + id, { method:'PATCH', body:{ ratePerHour: value } });
+      /* RE-READ rather than patch the row from the response. This is a price
+         list, and the table has to show what the server holds, not what this
+         browser believes it sent — a locally spliced row is a second source of
+         truth for a number every margin is computed from. It also means a
+         response that is not the shape expected cannot leave a mangled row on
+         screen. */
+      await renderRateCards();
     }catch(err){ rateCardError(err.message); btn.disabled = false; }
   }));
 
@@ -10156,8 +10196,7 @@ function wireRateCards(){
     btn.disabled = true;
     try{
       const res = await api('/pnl/rate-cards/' + id, { method:'DELETE' });
-      RATE_CARDS = RATE_CARDS.filter(c=>c.id!==id);
-      paintRateCards();
+      await renderRateCards();
       /* Painted AFTER the repaint, or it would be wiped by it. The note is the
          only place the studio is told that removing a price did not remove the
          cost it produced. */
@@ -10170,14 +10209,21 @@ function wireRateCards(){
     rateCardError('');
     add.disabled = true;
     try{
-      const { rateCard } = await api('/pnl/rate-cards', { method:'POST', body:{
+      await api('/pnl/rate-cards', { method:'POST', body:{
         role: document.getElementById('rc_role').value,
         level: document.getElementById('rc_level').value,
         ratePerHour: document.getElementById('rc_rate').value,
       } });
-      RATE_CARDS = [...RATE_CARDS, rateCard].sort((a,b)=>
-        a.role.localeCompare(b.role) || a.level.localeCompare(b.level));
-      paintRateCards();
+      // Re-read, for the reason given on the save handler above.
+      await renderRateCards();
+      /* Emptied on success only. Leaving the values sitting there invites a
+         second press that can only ever be refused as a duplicate, which reads
+         as the button being broken rather than as the row already existing. On
+         a FAILURE they are deliberately kept, so a rejected entry can be
+         corrected rather than retyped. */
+      ['rc_role','rc_level'].forEach(id=>{ const f = document.getElementById(id); if(f) f.value = ''; });
+      const rate = document.getElementById('rc_rate');
+      if(rate) rate.value = '0';
     }catch(err){ rateCardError(err.message); add.disabled = false; }
   });
 }
