@@ -4,6 +4,7 @@ const referenceData = require('./reference-data');
 const ipAllowlist = require('./ip-allowlist');
 const ipBlocklist = require('./ip-blocklist');
 const emailConfig = require('./email-config');
+const pnl = require('./pnl');
 const { applyTableOptions } = require('./db-collation');
 const reporting = require('./reporting');
 const catalog = require('./permission-catalog');
@@ -1824,6 +1825,36 @@ async function ensureEmailConfig(db, log) {
   }
 }
 
+/* The P&L tables, and the rate card the studio starts with.
+ *
+ * The first money in this application: no rates, billing or costs existed
+ * before, so nothing here migrates anything — it creates five tables and eight
+ * unrated rate card rows.
+ *
+ * The seed rates are ZERO on purpose. An invented rate is a number somebody
+ * might not notice was invented, and an invented rate in a profit figure is
+ * worse than a blank one.
+ *
+ * Cannot fail the startup: a deployment whose database user cannot create these
+ * loses the P&L screens, not the application. */
+async function ensurePnl(db, log) {
+  try {
+    await pnl.ensureTables(db);
+  } catch (err) {
+    log(`Schema: the P&L tables could not be created (${err.code || 'error'}: ${err.message}).`);
+    log('        Profit & Loss is unavailable until they exist; nothing else is affected.');
+    return;
+  }
+  try {
+    const seeded = await pnl.seed(db);
+    if (seeded) {
+      log(`Schema: seeded ${seeded} rate card rows, all at zero — set the rates in Settings.`);
+    }
+  } catch (err) {
+    log(`Schema: the rate card could not be seeded (${err.code || 'error'}). Add the rows by hand in Settings.`);
+  }
+}
+
 async function ensureProfilePhotos(db, log) {
   const { rows } = await db.query(
     `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
@@ -2453,6 +2484,7 @@ const STEPS = [
   // but neither list's storage depends on the other's.
   ['IP blocklist', ensureIpBlocklist],
   ['email configuration', ensureEmailConfig],
+  ['profit and loss', ensurePnl],
   ['asset category', ensureAssetCategory],
   ['profile photos', ensureProfilePhotos],
   ['quick tour', ensureTourSeen],

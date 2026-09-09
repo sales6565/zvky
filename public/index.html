@@ -745,6 +745,111 @@ tr.past-round{opacity:0.62;}
 .ip-obs .verdict.wait{background:rgba(255,176,32,.10);border:1px solid rgba(255,176,32,.32);color:#ffcc70;}
 .ip-obs-scope{font-size:10.5px;color:var(--ink-faint);margin-top:10px;line-height:1.5;}
 .ip-add-seen{white-space:nowrap;}
+/* ---- Profit & Loss ------------------------------------------------------
+   Deliberately NOT reusing the brand red for a figure. #7f1416 is the studio's
+   own colour and appears on buttons and the header; a number painted in it
+   would read as branding rather than as a loss. Profit and loss get green and
+   the workflow's own red-orange, which are already what "good" and "wrong"
+   mean everywhere else in this application. */
+.pnl-head{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap;margin-bottom:14px;}
+.pnl-title{margin:0 0 4px;font-family:'Space Grotesk';font-size:20px;}
+.pnl-sub{font-size:12px;color:var(--ink-muted);line-height:1.55;max-width:720px;}
+.pnl-ro{font-size:11.5px;color:#ffcc70;background:rgba(255,176,32,.10);border:1px solid rgba(255,176,32,.30);
+  border-radius:8px;padding:8px 12px;line-height:1.45;max-width:300px;}
+.pnl-filters{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:18px;padding:12px 14px;
+  background:var(--surface-2);border-radius:10px;}
+.pnl-filters label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.6px;
+  color:var(--ink-muted);font-family:'IBM Plex Mono';margin-bottom:4px;}
+.pnl-filters select,.pnl-filters input{margin:0;}
+.pnl-filters select{min-width:180px;}
+.pnl-filter-note{flex:1 1 100%;font-size:11px;color:var(--ink-faint);line-height:1.5;margin-top:2px;}
+.pnl-cards{display:grid;grid-template-columns:repeat(5,1fr);gap:13px;margin-bottom:18px;}
+.pnl-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:15px 17px;
+  border-top:2px solid var(--border);}
+.pnl-rev{border-top-color:var(--artist-blue);}
+.pnl-lab{border-top-color:var(--prog);}
+.pnl-oth{border-top-color:var(--review);}
+.pnl-gp{border-top-color:var(--approved);}
+.pnl-mg{border-top-color:var(--final);}
+.pnl-card .ad-card-value{font-size:26px;}
+/* A negative figure is coloured, a positive one is not. Colouring both would
+   make the page a traffic light and stop the losses standing out. */
+.pnl-card .ad-card-value.neg,.pnl-table td.num.neg,.pnl-bar-foot.neg,.pnl-detail-figs b.neg{color:#ff9b80;}
+.pnl-nil{color:var(--ink-faint);}
+.pnl-panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:18px;}
+.pnl-panel h3{margin:0 0 4px;font-family:'Space Grotesk';font-size:14px;}
+.pnl-panel-note{font-size:11.5px;color:var(--ink-faint);line-height:1.5;margin-bottom:12px;}
+.pnl-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start;}
+.pnl-table{width:100%;}
+/* A wide table scrolls INSIDE ITS OWN BOX, never by taking the page with it.
+   Without this, a seven-column money table at phone width pushed the whole
+   application sideways — every other screen included — and the horizontal
+   scrollbar it produced was on <html>, so there was no way to read the header
+   and the table at the same time. */
+.pnl-scroll{overflow-x:auto;}
+.pnl-table th.num,.pnl-table td.num{text-align:right;white-space:nowrap;}
+.pnl-table tfoot td{padding:8px 10px;border-top:1px solid var(--border);font-weight:600;font-size:12.5px;}
+.pnl-table tr.unused td{opacity:.42;}
+.pnl-table input{margin:0;}
+.pnl-table input.narrow{width:88px;}
+.pnl-projects tbody tr{cursor:default;}
+.pnl-projects tbody tr.open{background:var(--surface-2);}
+.pnl-code{font-family:'IBM Plex Mono';font-size:10.5px;color:var(--ink-faint);}
+.pnl-off{margin-left:8px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;font-family:'IBM Plex Mono';
+  color:#ffcc70;background:rgba(255,176,32,.12);border:1px solid rgba(255,176,32,.28);border-radius:5px;padding:1px 6px;}
+.pnl-empty,.pnl-empty-cell{font-size:12px;color:var(--ink-faint);line-height:1.55;padding:10px 0;}
+.pnl-empty-cell{text-align:center;font-style:italic;}
+/* Revenue vs cost: one shared scale, set by the larger of the two. */
+.pnl-bar-row{display:flex;align-items:center;gap:12px;margin-bottom:7px;}
+.pnl-bar-lbl{width:74px;font-size:11.5px;color:var(--ink-muted);flex:none;}
+.pnl-bar-track{flex:1;height:20px;background:var(--surface-2);border-radius:5px;overflow:hidden;}
+.pnl-bar{height:100%;border-radius:5px;}
+.pnl-bar.rev{background:var(--artist-blue);}
+.pnl-bar.cost{background:var(--prog);}
+.pnl-bar-val{width:120px;text-align:right;font-family:'IBM Plex Mono';font-size:12px;flex:none;}
+.pnl-bar-note{font-size:10.5px;color:var(--ink-faint);margin:0 0 9px 86px;}
+.pnl-bar-foot{margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:13px;font-weight:600;}
+.pnl-trend{display:flex;gap:8px;align-items:flex-end;overflow-x:auto;padding-top:6px;}
+.pnl-trend-col{flex:1 0 54px;text-align:center;}
+.pnl-trend-val{font-size:11px;font-family:'IBM Plex Mono';margin-bottom:5px;}
+.pnl-trend-val.neg{color:#ff9b80;}
+.pnl-trend-val.nil{color:var(--ink-faint);}
+.pnl-trend-bar-wrap{height:110px;display:flex;align-items:flex-end;justify-content:center;
+  background:var(--surface-2);border-radius:5px;}
+.pnl-trend-bar{width:60%;border-radius:5px 5px 0 0;background:var(--approved);min-height:2px;}
+.pnl-trend-bar.neg{background:#ff5a36;}
+.pnl-trend-bar.nil{background:var(--border);}
+.pnl-trend-month{font-size:10px;color:var(--ink-faint);margin-top:6px;font-family:'IBM Plex Mono';}
+.pnl-detail{border-color:var(--brand-accent);}
+.pnl-detail-head{display:flex;justify-content:space-between;align-items:baseline;gap:16px;flex-wrap:wrap;margin-bottom:10px;}
+.pnl-detail-head h3{font-size:16px;}
+.pnl-detail-figs{display:flex;gap:16px;flex-wrap:wrap;font-size:11.5px;color:var(--ink-muted);}
+.pnl-detail-figs b{color:var(--ink);font-family:'IBM Plex Mono';}
+.pnl-sub-h{margin:20px 0 4px;font-family:'Space Grotesk';font-size:13px;}
+@media (max-width:1200px){ .pnl-cards{grid-template-columns:repeat(3,1fr);} }
+@media (max-width:900px){
+  .pnl-cards{grid-template-columns:repeat(2,1fr);}
+  .pnl-grid{grid-template-columns:1fr;}
+}
+@media (max-width:620px){
+  .pnl-cards{grid-template-columns:1fr;}
+  .pnl-filters select{min-width:0;width:100%;}
+  .pnl-filters > div{flex:1 1 100%;}
+  .pnl-bar-lbl{width:58px;}
+  .pnl-bar-val{width:92px;}
+}
+/* Rate Cards: the price list behind Profit & Loss. */
+.rc-table td{vertical-align:middle;}
+.rc-table .rc-rate{white-space:nowrap;}
+.rc-rate-input{width:110px;margin:0;}
+.rc-per{font-size:11px;color:var(--ink-faint);margin-left:5px;font-family:'IBM Plex Mono';}
+/* An unpriced row says so. A 0 that reads as a price is the one mistake on
+   this screen that quietly inflates every margin computed from it. */
+.rc-flag{margin-left:9px;font-size:10px;text-transform:uppercase;letter-spacing:.6px;font-family:'IBM Plex Mono';
+  color:#ffcc70;background:rgba(255,176,32,.12);border:1px solid rgba(255,176,32,.30);border-radius:5px;padding:2px 6px;}
+.rc-actions{white-space:nowrap;text-align:right;}
+.rc-actions .btn{margin-left:6px;}
+.rc-empty{color:var(--ink-faint);font-style:italic;}
 /* User Permissions: a checklist per person, grouped by area. */
 .pm-pick{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap;}
 .pm-pick input[type=text]{width:240px;}
@@ -1146,6 +1251,12 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
            work. Its count is weeks waiting on this person to approve. -->
       <button data-tab="timesheet" id="timesheetTabBtn" style="display:none;">Time Sheet <span class="tab-count" id="timesheetCount" hidden></span></button>
       <button data-tab="reports" id="reportsTabBtn" style="display:none;">Reports</button>
+      <!-- Its own tab rather than a section under Reports: what it discloses is
+           different in kind from anything there — what the studio earns and
+           what its people cost — and it is gated on its own permission, so
+           burying it inside a tab gated on report.view would have made one
+           permission depend on another. -->
+      <button data-tab="pnl" id="pnlTabBtn" style="display:none;">Profit &amp; Loss</button>
       <button data-tab="users" id="usersTabBtn" style="display:none;">Users</button>
       <button data-tab="settings" id="settingsTabBtn" style="display:none;">Settings</button>
     </div>
@@ -1160,6 +1271,7 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
     <button class="btn btn-brand" id="newAssetBtn" style="display:none;">+ New Asset</button>
   </div>
   <div id="adminDashView" style="display:none;"></div>
+  <div id="pnlView" style="display:none;"></div>
   <div id="boardView"></div>
   <div id="pendingView" style="display:none;"></div>
   <div id="projectsView" style="display:none;"></div>
@@ -1901,6 +2013,13 @@ const UI_GATES = {
      without widening anybody's reach — an Admin sees their own projects and a
      Super Admin sees the studio. */
   adminDashTabBtn:       () => can('report.admin_dashboard'),
+  /* EITHER permission opens the tab. Somebody who may edit the rates has to be
+     able to see what they produce, so pnl.manage reaches the report too; the
+     screen then decides per control whether it is editable. Gating the tab on
+     pnl.view alone would have made the manage permission useless on its own,
+     and gating it on both would have made them one permission wearing two
+     names. */
+  pnlTabBtn:             () => can('pnl.view','pnl.manage'),
   projectsTabBtn:        () => can('client.view'),
   /* Its own grant, so the tab can be given or withheld independently of the
      workflow behind it. What the tab LISTS is still whatever this role may act
@@ -2030,6 +2149,23 @@ const TOUR_STEPS = [
     title: 'Reports',
     body: 'Throughput and idle time across the studio, with Excel and PDF downloads. '
         + 'The numbers come from the clock the app kept between Accept and Submit.',
+  },
+  /* Ahead of Users, matching the tab order. The step says outright what the
+     screen discloses, because somebody granted it should know before they open
+     it that they are looking at what the studio earns and what its people cost.
+
+     The comment sits OUTSIDE the object: tests/quick-tour.test.js reads these
+     steps out of the source with a regex expecting `id:` on the line after the
+     brace, and a comment in between makes the step invisible to the guard that
+     checks every gated tab has one. */
+  {
+    id: 'pnl',
+    target: '#pnlTabBtn',
+    gate: 'pnlTabBtn',
+    title: 'Profit & Loss',
+    body: 'What each project earned and what it cost: revenue invoiced, labour priced off the '
+        + 'rate card, other costs, gross profit and margin — per project, and rolled up per '
+        + 'client. Open a project to enter its team, hours, billing and costs.',
   },
   {
     id: 'users',
@@ -2209,6 +2345,12 @@ const SETTINGS_SECTIONS = [
   { permission:'settings.ip_allowlist', label:'IP Allowlist',     note:'Which addresses may reach this application at all.' },
   { permission:'settings.ip_blocklist', label:'IP Blocklist',     note:'Addresses barred outright, whatever else allows them.' },
   { permission:'settings.email_config', label:'Email Configuration', note:'The mail server task notifications are sent through.' },
+  /* Not a settings.* key. The rate card is the price list the Profit & Loss
+     report is costed against, so it belongs to whoever manages the money rather
+     than to whoever manages the application — and it is listed here so that a
+     designation granted pnl.manage and nothing else can still reach the Settings
+     tab to use it. */
+  { permission:'pnl.manage',            label:'Rate Cards',       note:'What each role and level costs per hour, for Profit & Loss.' },
   /* The two read-only records. They were missing from this list, which is a
      bug rather than an omission: canOpenSettings() below is what gates the
      Settings TAB, so a designation granted the Activity Log and nothing else
@@ -3086,6 +3228,7 @@ function setTab(tab){
   document.getElementById('search').style.display = showBoardControls ? '' : 'none';
   document.getElementById('filterType').style.display = showBoardControls ? '' : 'none';
   document.getElementById('adminDashView').style.display = tab==='admin' ? '' : 'none';
+  document.getElementById('pnlView').style.display = tab==='pnl' ? '' : 'none';
   document.getElementById('boardView').style.display = tab==='board' ? '' : 'none';
   document.getElementById('pendingView').style.display = tab==='pending' ? '' : 'none';
   document.getElementById('projectsView').style.display = tab==='projects' ? '' : 'none';
@@ -5402,7 +5545,8 @@ async function renderUsers(sections = userSections()){
 }
 async function render(){
   const viewIds = { admin:'adminDashView', board:'boardView', list:'listView', team:'teamView',
-    users:'usersView', projects:'projectsView', reports:'reportsView', settings:'settingsView' };
+    users:'usersView', projects:'projectsView', reports:'reportsView', settings:'settingsView',
+    pnl:'pnlView' };
   try{
   /* If the role gained or lost something since this page loaded, the tabs and
      toolbar buttons have to be re-decided too — they are applied once at boot
@@ -5428,6 +5572,7 @@ async function render(){
   else if(state.view==='board') renderBoard();
   else if(state.view==='list') renderList();
   else if(state.view==='reports') await renderReportsTab();
+  else if(state.view==='pnl') await renderPnl();
   else if(state.view==='team') await renderTeam();
   else if(state.view==='users') await renderUsersTab();
   else if(state.view==='projects') await renderProjects();
@@ -8083,6 +8228,7 @@ async function renderSettings(){
     ${can('settings.ip_allowlist') ? '<div id="ipAllowlistSection"></div>' : ''}
     ${can('settings.ip_blocklist') ? '<div id="ipBlocklistSection"></div>' : ''}
     ${can('settings.email_config') ? '<div id="emailConfigSection"></div>' : ''}
+    ${can('pnl.manage') ? '<div id="rateCardsSection"></div>' : ''}
     ${can('settings.permissions') ? '<div id="rolePermissionsSection"></div>' : ''}
     ${can('settings.activity_log') ? '<div id="activityLogSection"></div>' : ''}
     ${can('settings.chat_activity') ? '<div id="chatActivitySection"></div>' : ''}
@@ -8112,6 +8258,12 @@ async function renderSettings(){
   /* Super Admin only by default, like the two IP lists above it and for a
      related reason: this screen holds a live password for another system. */
   if(can('settings.email_config')) await renderEmailConfig();
+  /* pnl.manage, not a settings.* permission — see the SETTINGS_SECTIONS entry.
+     This section is the rate card EDITOR, so it follows the editing permission.
+     A pnl.view holder can already see the rates on the report's breakdown, and
+     the API lets them read the card; what they cannot do is change it, so what
+     they are not shown is the form rather than the numbers. */
+  if(can('pnl.manage')) await renderRateCards();
 }
 
 function renderRefSection(sec){
@@ -9270,6 +9422,765 @@ function wireEmailConfig(){
 /* A role's permissions apply to everyone holding it. There are no per-user
    grants: change the role, and every user with that role changes on their next
    request — the set is read per request, so nobody signs out and in again. */
+
+
+
+/* ---------------------------------------------------------------------------
+   Profit & Loss.
+
+   The first money in this application. Nothing here existed before — no rates,
+   no billing, no costs, no currency — so a few things are said on the screen
+   that a screen would not normally have to say:
+
+   * WHAT REVENUE MEANS. Invoiced to date, not contract value. A contract worth
+     a million that has billed nothing has earned nothing, and showing the
+     contract as revenue would print a fat margin on work nobody has paid for.
+     Both are shown, because the gap between them is worth seeing.
+
+   * NO CURRENCY. The application has never stored one, and inventing a symbol
+     here would assert something nobody has configured. Figures are grouped and
+     given to two places, and the screen says once that they are in whatever the
+     studio invoices in.
+
+   * A MISSING MARGIN IS NOT A ZERO MARGIN. Nothing invoiced means there is no
+     percentage to print, so the cell says so instead of "0%", which would read
+     as "broke even".
+
+   * THE TREND STARTS EMPTY. Monthly snapshots begin when the feature is
+     installed; there is no back-history to draw and the panel says so rather
+     than filling the gap with a flat line.
+
+   TWO PERMISSIONS, ONE SCREEN. pnl.view opens it read-only; pnl.manage adds the
+   editors. The server enforces both — every control here is a convenience over
+   an API that refuses the same thing.
+   --------------------------------------------------------------------------- */
+const PNL = {
+  report: null,
+  /* The pickers are built from the FIRST, unfiltered load and kept. Rebuilding
+     them from a filtered response would collapse the client list to the one
+     client just chosen, and there would be no way back to the others. */
+  options: null,
+  filters: { clientId:'', projectId:'', from:'', to:'' },
+  openProject: null,
+  detail: null,
+  people: null,   // for the assignment name picker; null until tried
+};
+
+const pnlMoney = (n) => (Number(n)||0).toLocaleString(undefined, { minimumFractionDigits:2, maximumFractionDigits:2 });
+const pnlHours = (n) => (Number(n)||0).toLocaleString(undefined, { maximumFractionDigits:2 });
+/* Null is the honest answer when nothing has been invoiced — see the note
+   above. Rendered as an em dash with a title that says why. */
+const pnlPct = (v) => v===null || v===undefined
+  ? '<span class="pnl-nil" title="Nothing invoiced yet, so there is no margin to compute.">—</span>'
+  : `${v}%`;
+const pnlSign = (n) => (Number(n)||0) < 0 ? 'neg' : 'pos';
+
+async function renderPnl(){
+  const el = document.getElementById('pnlView');
+  if(!el) return;
+  if(!can('pnl.view','pnl.manage')){ el.innerHTML = ''; return; }
+
+  const q = new URLSearchParams();
+  if(PNL.filters.clientId) q.set('clientId', PNL.filters.clientId);
+  if(PNL.filters.projectId) q.set('projectId', PNL.filters.projectId);
+  if(PNL.filters.from) q.set('from', PNL.filters.from);
+  if(PNL.filters.to) q.set('to', PNL.filters.to);
+
+  let data;
+  try{ data = await api('/pnl/report' + (q.toString() ? '?'+q.toString() : '')); }
+  catch(err){
+    el.innerHTML = `<div class="empty">Profit &amp; Loss could not load.<br>
+      <span style="font-size:12px;color:var(--ink-faint);">${escapeHTML(err.message)}</span></div>`;
+    return;
+  }
+  PNL.report = data;
+  /* Kept from the unfiltered load only. */
+  if(!PNL.options && !PNL.filters.clientId && !PNL.filters.projectId){
+    PNL.options = {
+      clients: (data.byClient||[]).filter(c=>c.clientId).map(c=>({ id:c.clientId, name:c.name })),
+      projects: (data.projects||[]).map(p=>({ id:p.projectId, name:p.name, code:p.code, clientId:p.clientId })),
+    };
+  }
+  paintPnl();
+}
+
+function paintPnl(){
+  const el = document.getElementById('pnlView');
+  if(!el || !PNL.report) return;
+  const d = PNL.report;
+  const r = d.rollup;
+  const opts = PNL.options || { clients:[], projects:[] };
+  /* Projects narrow to the chosen client, so the two pickers cannot be set to a
+     contradiction that returns nothing. */
+  const projectOpts = PNL.filters.clientId
+    ? opts.projects.filter(p=>p.clientId===PNL.filters.clientId)
+    : opts.projects;
+
+  el.innerHTML = `
+    <div class="pnl-head">
+      <div>
+        <h2 class="pnl-title">Profit &amp; Loss</h2>
+        <div class="pnl-sub">${d.scope.projects} of ${d.scope.ofVisible} project${d.scope.ofVisible===1?'':'s'} you can see.
+          Revenue is what has been <strong>invoiced to date</strong>, not the contract value.
+          Figures are in whatever currency the studio invoices in — nothing here converts between currencies.</div>
+      </div>
+      ${d.canManage ? '' : '<div class="pnl-ro">Read-only — you can view these figures but not change what they are computed from.</div>'}
+    </div>
+
+    <div class="pnl-filters">
+      <div><label>Client</label>
+        <select id="pnl_client">
+          <option value="">All clients</option>
+          ${opts.clients.map(c=>`<option value="${escapeHTML(c.id)}"${PNL.filters.clientId===c.id?' selected':''}>${escapeHTML(c.name)}</option>`).join('')}
+        </select></div>
+      <div><label>Project</label>
+        <select id="pnl_project">
+          <option value="">All projects</option>
+          ${projectOpts.map(p=>`<option value="${escapeHTML(p.id)}"${PNL.filters.projectId===p.id?' selected':''}>${escapeHTML(p.name)}${p.code?` (${escapeHTML(p.code)})`:''}</option>`).join('')}
+        </select></div>
+      <div><label>Trend from</label><input type="month" id="pnl_from" value="${escapeHTML(PNL.filters.from||'')}"></div>
+      <div><label>Trend to</label><input type="month" id="pnl_to" value="${escapeHTML(PNL.filters.to||'')}"></div>
+      <button class="btn btn-ghost btn-sm" id="pnl_clear">Clear</button>
+      <div class="pnl-filter-note">The dates filter the <strong>margin trend</strong> only. The cards and tables
+        are current position, not a period — invoiced to date and cost to date are running totals, and slicing
+        them by month would print a figure that is not what any of them mean.</div>
+    </div>
+
+    <div class="pnl-cards">
+      <div class="pnl-card pnl-rev"><div class="ad-card-label">Revenue</div>
+        <div class="ad-card-value">${pnlMoney(r.revenue)}</div>
+        <div class="ad-card-note">Invoiced to date.${r.contractValue ? ` Contract value ${pnlMoney(r.contractValue)}.` : ''}</div></div>
+      <div class="pnl-card pnl-lab"><div class="ad-card-label">Labour Cost</div>
+        <div class="ad-card-value">${pnlMoney(r.labourCost)}</div>
+        <div class="ad-card-note">${pnlHours(r.hoursTotal)} hours across the team, priced off the rate card.</div></div>
+      <div class="pnl-card pnl-oth"><div class="ad-card-label">Other Costs</div>
+        <div class="ad-card-value">${pnlMoney(r.otherCosts)}</div>
+        <div class="ad-card-note">Contractors, licensing, outsourcing — itemised per project.</div></div>
+      <div class="pnl-card pnl-gp"><div class="ad-card-label">Gross Profit</div>
+        <div class="ad-card-value ${pnlSign(r.grossProfit)}">${pnlMoney(r.grossProfit)}</div>
+        <div class="ad-card-note">Revenue &minus; labour &minus; other costs.</div></div>
+      <div class="pnl-card pnl-mg"><div class="ad-card-label">Margin</div>
+        <div class="ad-card-value ${r.marginPercent===null?'':pnlSign(r.marginPercent)}">${pnlPct(r.marginPercent)}</div>
+        <div class="ad-card-note">${r.marginPercent===null
+          ? 'Nothing invoiced yet, so there is no margin to compute.'
+          : 'Gross profit as a share of revenue.'}</div></div>
+    </div>
+
+    ${pnlCompareHTML(r)}
+
+    <div class="pnl-grid">
+      ${pnlByRoleHTML(d.byRoleLevel)}
+      ${pnlTrendHTML(d.trend)}
+    </div>
+
+    ${pnlClientsHTML(d.byClient)}
+    ${pnlProjectsHTML(d.projects)}
+    <div id="pnl_detail"></div>`;
+
+  wirePnl();
+  if(PNL.openProject) renderPnlDetail(PNL.openProject);
+}
+
+/* Revenue against cost, as two bars on one scale.
+ *
+ * One scale is the whole point of the comparison: bars normalised
+ * independently would make a project that spent twice what it earned look like
+ * a healthy one. The larger of the two sets the width and the other is drawn
+ * in proportion to it. */
+function pnlCompareHTML(r){
+  const max = Math.max(r.revenue, r.totalCost, 1);
+  const bar = (label, value, cls, note) => `
+    <div class="pnl-bar-row">
+      <div class="pnl-bar-lbl">${label}</div>
+      <div class="pnl-bar-track"><div class="pnl-bar ${cls}" style="width:${Math.max(0,(value/max)*100)}%"></div></div>
+      <div class="pnl-bar-val">${pnlMoney(value)}</div>
+    </div>${note ? `<div class="pnl-bar-note">${note}</div>` : ''}`;
+  return `
+    <div class="pnl-panel">
+      <h3>Revenue vs Cost</h3>
+      <div class="pnl-panel-note">Both bars share one scale, so the shorter one is genuinely shorter.</div>
+      ${bar('Revenue', r.revenue, 'rev')}
+      ${bar('Cost', r.totalCost, 'cost', `Labour ${pnlMoney(r.labourCost)} + other ${pnlMoney(r.otherCosts)}.`)}
+      <div class="pnl-bar-foot ${pnlSign(r.grossProfit)}">${r.grossProfit < 0 ? 'Loss' : 'Gross profit'}
+        ${pnlMoney(Math.abs(r.grossProfit))}${r.marginPercent===null?'':` — margin ${r.marginPercent}%`}</div>
+    </div>`;
+}
+
+/* Every rate-card row, used or not.
+ *
+ * A table listing only what was used cannot answer "did we put any seniors on
+ * this at all", and its shape would change from project to project so two could
+ * not be read side by side. Rows no longer on the rate card are appended and
+ * marked, because their cost is real and has to add up to the labour total. */
+function pnlByRoleHTML(rows){
+  const used = rows.filter(r=>r.hours);
+  const total = rows.reduce((t,r)=>t+r.cost, 0);
+  return `
+    <div class="pnl-panel">
+      <h3>Labour Cost by Role &amp; Level</h3>
+      <div class="pnl-panel-note">Every rate-card row, including the ones nobody was booked at —
+        so the table can say what was <em>not</em> used, and two projects can be compared line for line.</div>
+      <div class="pnl-scroll"><table class="ref-table pnl-table">
+        <thead><tr><th>Role</th><th>Level</th><th class="num">Rate</th><th class="num">Hours</th><th class="num">Cost</th></tr></thead>
+        <tbody>
+          ${rows.map(r=>`<tr class="${r.hours?'':'unused'}">
+            <td>${escapeHTML(r.role)}</td>
+            <td>${escapeHTML(r.level)}${r.onRateCard?'':'<span class="pnl-off">off the rate card</span>'}</td>
+            <td class="num">${pnlMoney(r.ratePerHour)}</td>
+            <td class="num">${r.hours?pnlHours(r.hours):'—'}</td>
+            <td class="num">${r.hours?pnlMoney(r.cost):'—'}</td></tr>`).join('')}
+        </tbody>
+        <tfoot><tr><td colspan="3">Total</td><td class="num">${pnlHours(rows.reduce((t,r)=>t+r.hours,0))}</td>
+          <td class="num">${pnlMoney(total)}</td></tr></tfoot>
+      </table></div>
+      ${used.length ? '' : '<div class="pnl-empty">Nobody has been assigned to these projects yet, so there is no labour cost.</div>'}
+    </div>`;
+}
+
+/* Gross margin by month, from the stored snapshots.
+ *
+ * Empty until the feature has been running for a month, and the panel says so
+ * rather than drawing a line through today's figure and calling it history. */
+function pnlTrendHTML(t){
+  if(!t || t.empty){
+    return `<div class="pnl-panel">
+      <h3>Margin Trend</h3>
+      <div class="pnl-empty">No monthly snapshots yet.
+        ${t && t.unavailable ? 'The snapshot table could not be read.' :
+          'A snapshot is written whenever a project’s team, billing or costs change, so the first points appear as soon as figures are entered — and the curve fills out month by month from there. There is no back-history to draw, and drawing one would be an invention.'}</div>
+    </div>`;
+  }
+  const values = t.months.map(m=>m.marginPercent).filter(v=>v!==null);
+  const top = Math.max(100, ...values.map(v=>Math.abs(v)));
+  return `
+    <div class="pnl-panel">
+      <h3>Margin Trend</h3>
+      <div class="pnl-panel-note">${escapeHTML(t.note||'')}</div>
+      <div class="pnl-trend">
+        ${t.months.map(m=>{
+          const v = m.marginPercent;
+          const h = v===null ? 0 : Math.min(100, Math.max(2, (Math.abs(v)/top)*100));
+          return `<div class="pnl-trend-col" title="${escapeHTML(m.month)} — revenue ${pnlMoney(m.revenue)}, cost ${pnlMoney(m.cost)}">
+            <div class="pnl-trend-val ${v===null?'nil':pnlSign(v)}">${v===null?'—':v+'%'}</div>
+            <div class="pnl-trend-bar-wrap"><div class="pnl-trend-bar ${v===null?'nil':pnlSign(v)}" style="height:${h}%"></div></div>
+            <div class="pnl-trend-month">${escapeHTML(m.month)}</div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+}
+
+function pnlClientsHTML(clients){
+  if(!clients || !clients.length) return '';
+  return `
+    <div class="pnl-panel">
+      <h3>By Client</h3>
+      <div class="pnl-panel-note">The same figures rolled up across each client's projects. Margin is recomputed
+        from the summed revenue and profit, never averaged across projects — an average would weight a small
+        project the same as a large one.</div>
+      <div class="pnl-scroll"><table class="ref-table pnl-table">
+        <thead><tr><th>Client</th><th class="num">Projects</th><th class="num">Revenue</th>
+          <th class="num">Labour</th><th class="num">Other</th><th class="num">Gross Profit</th><th class="num">Margin</th></tr></thead>
+        <tbody>${clients.map(c=>`<tr>
+          <td><strong>${escapeHTML(c.name)}</strong></td>
+          <td class="num">${c.rollup.projects}</td>
+          <td class="num">${pnlMoney(c.rollup.revenue)}</td>
+          <td class="num">${pnlMoney(c.rollup.labourCost)}</td>
+          <td class="num">${pnlMoney(c.rollup.otherCosts)}</td>
+          <td class="num ${pnlSign(c.rollup.grossProfit)}">${pnlMoney(c.rollup.grossProfit)}</td>
+          <td class="num">${pnlPct(c.rollup.marginPercent)}</td></tr>`).join('')}</tbody>
+      </table></div>
+    </div>`;
+}
+
+function pnlProjectsHTML(projects){
+  if(!projects || !projects.length){
+    return '<div class="pnl-panel"><h3>Projects</h3><div class="pnl-empty">No projects match this filter.</div></div>';
+  }
+  return `
+    <div class="pnl-panel">
+      <h3>Projects</h3>
+      <div class="pnl-panel-note">Open one to see and ${PNL.report.canManage ? 'edit' : 'read'} its team, hours, billing and costs.</div>
+      <div class="pnl-scroll"><table class="ref-table pnl-table pnl-projects">
+        <thead><tr><th>Project</th><th class="num">Revenue</th><th class="num">Contract</th>
+          <th class="num">Labour</th><th class="num">Other</th><th class="num">Gross Profit</th>
+          <th class="num">Margin</th><th></th></tr></thead>
+        <tbody>${projects.map(p=>`<tr data-project="${escapeHTML(p.projectId)}"${PNL.openProject===p.projectId?' class="open"':''}>
+          <td><strong>${escapeHTML(p.name)}</strong>${p.code?` <span class="pnl-code">${escapeHTML(p.code)}</span>`:''}
+            ${p.billing.configured?'':'<span class="pnl-off">billing not set up</span>'}</td>
+          <td class="num">${pnlMoney(p.totals.revenue)}</td>
+          <td class="num">${pnlMoney(p.totals.contractValue)}</td>
+          <td class="num">${pnlMoney(p.totals.labourCost)}</td>
+          <td class="num">${pnlMoney(p.totals.otherCosts)}</td>
+          <td class="num ${pnlSign(p.totals.grossProfit)}">${pnlMoney(p.totals.grossProfit)}</td>
+          <td class="num">${pnlPct(p.totals.marginPercent)}</td>
+          <td class="num"><button class="btn btn-ghost btn-sm pnl-open">${PNL.openProject===p.projectId?'Close':'Open'}</button></td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+    </div>`;
+}
+
+function wirePnl(){
+  const onFilter = () => {
+    PNL.filters.clientId = document.getElementById('pnl_client').value;
+    PNL.filters.projectId = document.getElementById('pnl_project').value;
+    PNL.filters.from = document.getElementById('pnl_from').value;
+    PNL.filters.to = document.getElementById('pnl_to').value;
+    /* A project chosen under a different client is a contradiction, so choosing
+       a client drops it rather than returning an empty report nobody asked for. */
+    if(PNL.filters.clientId && PNL.filters.projectId){
+      const p = (PNL.options.projects||[]).find(x=>x.id===PNL.filters.projectId);
+      if(p && p.clientId !== PNL.filters.clientId) PNL.filters.projectId = '';
+    }
+    PNL.openProject = null;
+    renderPnl();
+  };
+  ['pnl_client','pnl_project','pnl_from','pnl_to'].forEach(id=>{
+    const e = document.getElementById(id);
+    if(e) e.addEventListener('change', onFilter);
+  });
+  const clear = document.getElementById('pnl_clear');
+  if(clear) clear.addEventListener('click', ()=>{
+    PNL.filters = { clientId:'', projectId:'', from:'', to:'' };
+    PNL.openProject = null;
+    renderPnl();
+  });
+  document.querySelectorAll('#pnlView .pnl-open').forEach(b=>b.addEventListener('click', ()=>{
+    const id = b.closest('tr').dataset.project;
+    PNL.openProject = PNL.openProject === id ? null : id;
+    paintPnl();
+    if(PNL.openProject){
+      const el = document.getElementById('pnl_detail');
+      if(el) el.scrollIntoView({ behavior:'smooth', block:'start' });
+    }
+  }));
+}
+
+/* ---------------------------------------------------------------------------
+   One project: its team, its billing, its other costs.
+
+   The editors sit HERE rather than on the Projects tab, for two reasons. The
+   figures they produce are on this screen, so a typed hour and the margin it
+   moves are a scroll apart; and the Projects tab is gated on client.view, which
+   would have put a money form behind a permission that is not about money.
+
+   Read-only when the caller holds pnl.view without pnl.manage — the same rows,
+   without the inputs. Not the rows hidden: somebody who may read the margin may
+   read what produced it, and hiding the inputs' contents would leave a total
+   with no visible parts.
+   --------------------------------------------------------------------------- */
+async function renderPnlDetail(projectId){
+  const el = document.getElementById('pnl_detail');
+  if(!el) return;
+  el.innerHTML = '<div class="pnl-panel"><div class="pnl-empty">Loading…</div></div>';
+  let d;
+  try{ d = await api('/pnl/projects/' + projectId); }
+  catch(err){
+    el.innerHTML = `<div class="pnl-panel"><div class="ref-err">${escapeHTML(err.message)}</div></div>`;
+    return;
+  }
+  PNL.detail = d;
+  /* Tried once per screen. A pnl.manage holder need not hold user.view, so the
+     picker is an enhancement and its absence is not an error — the name field
+     stays free text either way, which is also what lets a contractor who has no
+     account be costed. */
+  if(PNL.people === null && d.canManage){
+    PNL.people = await api('/users?limit=500').then(r=>r.users||[]).catch(()=>[]);
+  }
+  paintPnlDetail();
+}
+
+function paintPnlDetail(){
+  const el = document.getElementById('pnl_detail');
+  const d = PNL.detail;
+  if(!el || !d) return;
+  const row = (PNL.report.projects||[]).find(p=>p.projectId===d.projectId) || {};
+  const t = d.totals;
+  const cards = (PNL.report.rateCards)||[];
+  const rw = d.canManage;
+
+  el.innerHTML = `
+    <div class="pnl-panel pnl-detail">
+      <div class="pnl-detail-head">
+        <h3>${escapeHTML(row.name || 'Project')}${row.code?` <span class="pnl-code">${escapeHTML(row.code)}</span>`:''}</h3>
+        <div class="pnl-detail-figs">
+          <span>Revenue <b>${pnlMoney(t.revenue)}</b></span>
+          <span>Labour <b>${pnlMoney(t.labourCost)}</b></span>
+          <span>Other <b>${pnlMoney(t.otherCosts)}</b></span>
+          <span>Gross profit <b class="${pnlSign(t.grossProfit)}">${pnlMoney(t.grossProfit)}</b></span>
+          <span>Margin <b>${pnlPct(t.marginPercent)}</b></span>
+        </div>
+      </div>
+      <div class="ref-err" id="err-pnl-detail"></div>
+      <div id="pnl_warn"></div>
+
+      <h4 class="pnl-sub-h">Client Billing</h4>
+      <div class="pnl-panel-note">Invoiced to date is what the report treats as revenue. The contract value is
+        recorded beside it and is <em>not</em> revenue — a signed contract that has billed nothing has earned nothing.</div>
+      ${rw ? `
+      <div class="ref-add">
+        <div><label>Contract value</label><input type="number" step="0.01" min="0" id="pb_contract" value="${d.billing.contractValue}"></div>
+        <div><label>Billing type</label><select id="pb_type">
+          <option value="">Not set</option>
+          ${(d.billingTypes||[]).map(b=>`<option value="${escapeHTML(b.id)}"${d.billing.billingType===b.id?' selected':''}>${escapeHTML(b.label)}</option>`).join('')}
+        </select></div>
+        <div><label>Invoiced to date</label><input type="number" step="0.01" min="0" id="pb_invoiced" value="${d.billing.invoicedToDate}"></div>
+        <button class="btn btn-brand" id="pb_save">Save Billing</button>
+      </div>` : `
+      <div class="pnl-scroll"><table class="ref-table pnl-table"><tbody>
+        <tr><td>Contract value</td><td class="num">${pnlMoney(d.billing.contractValue)}</td></tr>
+        <tr><td>Billing type</td><td class="num">${escapeHTML((d.billingTypes.find(b=>b.id===d.billing.billingType)||{}).label || 'Not set')}</td></tr>
+        <tr><td>Invoiced to date</td><td class="num">${pnlMoney(d.billing.invoicedToDate)}</td></tr>
+      </tbody></table></div>`}
+
+      <h4 class="pnl-sub-h">Project Team</h4>
+      <div class="pnl-panel-note">Hours are entered by hand here, per the approved design — they are
+        <strong>not</strong> pulled from the timesheets or the tracked work sessions, so the two can differ.
+        Each row keeps the rate it was costed at, so re-pricing the rate card later does not rewrite this project.</div>
+      <div class="pnl-scroll"><table class="ref-table pnl-table pnl-team">
+        <thead><tr><th>Person</th><th>Role</th><th>Level</th><th class="num">Rate</th>
+          <th class="num">Hours</th><th class="num">Cost</th>${rw?'<th></th>':''}</tr></thead>
+        <tbody>
+          ${d.assignments.length ? d.assignments.map(a=>`
+            <tr data-assignment="${escapeHTML(a.id)}">
+              <td>${rw?`<input type="text" class="ta-name" value="${escapeHTML(a.personName||'')}" placeholder="name">`:escapeHTML(a.personName||'—')}</td>
+              <td>${escapeHTML(a.role)}</td>
+              <td>${escapeHTML(a.level)}</td>
+              <td class="num">${rw?`<input type="number" step="0.01" min="0" class="ta-rate narrow" value="${a.ratePerHour}">`:pnlMoney(a.ratePerHour)}</td>
+              <td class="num">${rw?`<input type="number" step="0.25" min="0" class="ta-hours narrow" value="${a.hours}">`:pnlHours(a.hours)}</td>
+              <td class="num ta-cost">${pnlMoney(a.cost)}</td>
+              ${rw?`<td class="num"><button class="btn btn-ghost btn-sm ta-save">Save</button>
+                <button class="btn btn-ghost btn-sm ta-del">Remove</button></td>`:''}
+            </tr>`).join('')
+            : `<tr><td colspan="${rw?7:6}" class="pnl-empty-cell">Nobody is costed to this project yet.</td></tr>`}
+        </tbody>
+        <tfoot><tr><td colspan="4">Total</td><td class="num">${pnlHours(t.hoursTotal)}</td>
+          <td class="num">${pnlMoney(t.labourCost)}</td>${rw?'<td></td>':''}</tr></tfoot>
+      </table></div>
+      ${rw ? `
+      <div class="ref-add">
+        <div><label>Person</label><input type="text" id="ta_name" list="pnl_people" placeholder="name (or a contractor)" style="width:190px;">
+          <datalist id="pnl_people">${(PNL.people||[]).map(u=>`<option value="${escapeHTML(u.name)}"></option>`).join('')}</datalist></div>
+        <div><label>Rate card row</label><select id="ta_card" style="width:250px;">
+          <option value="">Choose a role and level…</option>
+          ${cards.map(c=>`<option value="${escapeHTML(c.id)}" data-role="${escapeHTML(c.role)}" data-level="${escapeHTML(c.level)}" data-rate="${c.ratePerHour}">${escapeHTML(c.role)} — ${escapeHTML(c.level)} (${pnlMoney(c.ratePerHour)}/h)</option>`).join('')}
+        </select></div>
+        <div><label>Rate</label><input type="number" step="0.01" min="0" id="ta_rate" class="narrow" value="0"></div>
+        <div><label>Hours</label><input type="number" step="0.25" min="0" id="ta_hours" class="narrow" value="0"></div>
+        <button class="btn btn-brand" id="ta_add">Add to Team</button>
+      </div>
+      <div class="ref-note" style="margin-top:2px;">The rate fills in from the card and can then be overridden
+        for this project — the override is stored on the row, so it does not change the card or any other project.</div>` : ''}
+
+      <h4 class="pnl-sub-h">Other Costs</h4>
+      <div class="pnl-panel-note">Contractors, licensing, outsourcing. Each needs a label: an unexplained
+        amount is not a record anybody can act on six months later.</div>
+      <div class="pnl-scroll"><table class="ref-table pnl-table pnl-costs">
+        <thead><tr><th>Item</th><th class="num">Amount</th>${rw?'<th></th>':''}</tr></thead>
+        <tbody>
+          ${d.otherCosts.length ? d.otherCosts.map(c=>`
+            <tr data-cost="${escapeHTML(c.id)}">
+              <td>${rw?`<input type="text" class="oc-label" value="${escapeHTML(c.label)}" style="width:280px;">`:escapeHTML(c.label)}</td>
+              <td class="num">${rw?`<input type="number" step="0.01" min="0" class="oc-amount narrow" value="${c.amount}">`:pnlMoney(c.amount)}</td>
+              ${rw?`<td class="num"><button class="btn btn-ghost btn-sm oc-save">Save</button>
+                <button class="btn btn-ghost btn-sm oc-del">Remove</button></td>`:''}
+            </tr>`).join('')
+            : `<tr><td colspan="${rw?3:2}" class="pnl-empty-cell">No other costs on this project.</td></tr>`}
+        </tbody>
+        <tfoot><tr><td>Total</td><td class="num">${pnlMoney(t.otherCosts)}</td>${rw?'<td></td>':''}</tr></tfoot>
+      </table></div>
+      ${rw ? `
+      <div class="ref-add">
+        <div><label>Item</label><input type="text" id="oc_label" placeholder="Outsourced rigging" style="width:280px;"></div>
+        <div><label>Amount</label><input type="number" step="0.01" min="0" id="oc_amount" class="narrow" value="0"></div>
+        <button class="btn btn-brand" id="oc_add">Add Cost</button>
+      </div>` : ''}
+      <div class="ref-note" style="margin-top:10px;">Every change on this panel is recorded in the Activity Log
+        with its old and new value, because these figures are what the studio's reported profit is computed from.</div>
+    </div>`;
+
+  wirePnlDetail();
+}
+
+function pnlDetailError(message){
+  const el = document.getElementById('err-pnl-detail');
+  if(el) el.textContent = message || '';
+  if(message){ const w = document.getElementById('pnl_warn'); if(w) w.innerHTML = ''; }
+}
+function pnlWarn(list){
+  const w = document.getElementById('pnl_warn');
+  if(w) w.innerHTML = (list||[]).map(m=>`<div class="ip-banner open">${escapeHTML(m)}</div>`).join('');
+}
+
+/* After any write: the project panel AND the totals above it.
+ *
+ * Both, always. Saving an hour and seeing the row's cost move while the summary
+ * cards still showed the old margin would be a screen disagreeing with itself
+ * about money, which is the one thing this feature cannot afford to do. The
+ * report is re-fetched rather than patched locally for the same reason —
+ * the server is the only thing that knows what the rollup now is. */
+async function pnlRefresh(warnings){
+  const openId = PNL.openProject;
+  await renderPnl();
+  if(openId){ PNL.openProject = openId; await renderPnlDetail(openId); }
+  if(warnings && warnings.length) pnlWarn(warnings);
+}
+
+function wirePnlDetail(){
+  const el = document.getElementById('pnl_detail');
+  if(!el || !PNL.detail || !PNL.detail.canManage) return;
+  const pid = PNL.detail.projectId;
+
+  const save = document.getElementById('pb_save');
+  if(save) save.addEventListener('click', async ()=>{
+    pnlDetailError(''); save.disabled = true;
+    try{
+      const res = await api(`/pnl/projects/${pid}/billing`, { method:'PUT', body:{
+        contractValue: document.getElementById('pb_contract').value,
+        billingType: document.getElementById('pb_type').value,
+        invoicedToDate: document.getElementById('pb_invoiced').value,
+      } });
+      await pnlRefresh(res.warnings);
+    }catch(err){ pnlDetailError(err.message); save.disabled = false; }
+  });
+
+  /* Picking a card fills the rate in; typing over it afterwards is the
+     per-project override the brief asks for. The role and level come from the
+     card because they are what the breakdown groups by — free-typing them would
+     produce a row that appears under "off the rate card" for no reason. */
+  const card = document.getElementById('ta_card');
+  if(card) card.addEventListener('change', ()=>{
+    const opt = card.selectedOptions[0];
+    if(opt && opt.dataset.rate !== undefined) document.getElementById('ta_rate').value = opt.dataset.rate;
+  });
+
+  const add = document.getElementById('ta_add');
+  if(add) add.addEventListener('click', async ()=>{
+    pnlDetailError('');
+    const opt = card && card.selectedOptions[0];
+    if(!opt || !opt.value){ pnlDetailError('Choose a rate card row — the breakdown groups by role and level.'); return; }
+    add.disabled = true;
+    try{
+      await api(`/pnl/projects/${pid}/assignments`, { method:'POST', body:{
+        rateCardId: opt.value,
+        role: opt.dataset.role,
+        level: opt.dataset.level,
+        personName: document.getElementById('ta_name').value,
+        ratePerHour: document.getElementById('ta_rate').value,
+        hours: document.getElementById('ta_hours').value,
+      } });
+      await pnlRefresh();
+    }catch(err){ pnlDetailError(err.message); add.disabled = false; }
+  });
+
+  el.querySelectorAll('.ta-save').forEach(b=>b.addEventListener('click', async ()=>{
+    const tr = b.closest('tr');
+    pnlDetailError(''); b.disabled = true;
+    try{
+      await api(`/pnl/projects/${pid}/assignments/${tr.dataset.assignment}`, { method:'PATCH', body:{
+        personName: tr.querySelector('.ta-name').value,
+        ratePerHour: tr.querySelector('.ta-rate').value,
+        hours: tr.querySelector('.ta-hours').value,
+      } });
+      await pnlRefresh();
+    }catch(err){ pnlDetailError(err.message); b.disabled = false; }
+  }));
+
+  el.querySelectorAll('.ta-del').forEach(b=>b.addEventListener('click', async ()=>{
+    const tr = b.closest('tr');
+    if(!confirm('Remove this person from the project team?\n\nTheir hours and cost come out of this project’s labour total.')) return;
+    pnlDetailError(''); b.disabled = true;
+    try{
+      await api(`/pnl/projects/${pid}/assignments/${tr.dataset.assignment}`, { method:'DELETE' });
+      await pnlRefresh();
+    }catch(err){ pnlDetailError(err.message); b.disabled = false; }
+  }));
+
+  const addCost = document.getElementById('oc_add');
+  if(addCost) addCost.addEventListener('click', async ()=>{
+    pnlDetailError(''); addCost.disabled = true;
+    try{
+      await api(`/pnl/projects/${pid}/other-costs`, { method:'POST', body:{
+        label: document.getElementById('oc_label').value,
+        amount: document.getElementById('oc_amount').value,
+      } });
+      await pnlRefresh();
+    }catch(err){ pnlDetailError(err.message); addCost.disabled = false; }
+  });
+
+  el.querySelectorAll('.oc-save').forEach(b=>b.addEventListener('click', async ()=>{
+    const tr = b.closest('tr');
+    pnlDetailError(''); b.disabled = true;
+    try{
+      await api(`/pnl/projects/${pid}/other-costs/${tr.dataset.cost}`, { method:'PATCH', body:{
+        label: tr.querySelector('.oc-label').value,
+        amount: tr.querySelector('.oc-amount').value,
+      } });
+      await pnlRefresh();
+    }catch(err){ pnlDetailError(err.message); b.disabled = false; }
+  }));
+
+  el.querySelectorAll('.oc-del').forEach(b=>b.addEventListener('click', async ()=>{
+    const tr = b.closest('tr');
+    if(!confirm('Remove this cost from the project?')) return;
+    pnlDetailError(''); b.disabled = true;
+    try{
+      await api(`/pnl/projects/${pid}/other-costs/${tr.dataset.cost}`, { method:'DELETE' });
+      await pnlRefresh();
+    }catch(err){ pnlDetailError(err.message); b.disabled = false; }
+  }));
+}
+
+/* ---------------------------------------------------------------------------
+   Rate Cards — Settings.
+
+   The studio's price list: what one hour of a role at a level costs. The
+   Profit & Loss report's labour figures are computed from these, which makes
+   this the one screen where a typo changes what the studio believes it earns.
+   Three things follow from that, and all three are visible on the page:
+
+   1. AN UNPRICED ROW IS SHOWN AS UNPRICED, not as zero. Every row seeds at 0
+      deliberately — a seeded number is a number somebody might not notice was
+      invented — so the table calls a 0 out rather than letting it read as a
+      priced row that happens to be free.
+
+   2. EDITING A RATE DOES NOT REPRICE PAST WORK. Each project assignment keeps
+      its own copy of the rate it was costed at, so changing a card here moves
+      what NEW assignments start from and nothing else. Said on the screen,
+      because the opposite is the reasonable assumption.
+
+   3. DELETING A ROW DOES NOT DELETE THE COST. The assignments priced from it
+      keep their rate and still appear in the breakdown. The API returns a note
+      saying how many, and it is shown.
+   --------------------------------------------------------------------------- */
+let RATE_CARDS = [];
+
+async function renderRateCards(){
+  const el = document.getElementById('rateCardsSection');
+  if(!el) return;
+  let data;
+  try{ data = await api('/pnl/rate-cards'); }
+  catch(err){
+    el.innerHTML = `<div class="ref-section"><div class="ref-head"><h3>Rate Cards</h3></div>
+      <div class="ref-err">${escapeHTML(err.message)}</div></div>`;
+    return;
+  }
+  RATE_CARDS = data.rateCards || [];
+  paintRateCards();
+}
+
+function paintRateCards(){
+  const el = document.getElementById('rateCardsSection');
+  if(!el) return;
+  const unpriced = RATE_CARDS.filter(c=>!c.ratePerHour).length;
+
+  const rows = RATE_CARDS.map(c=>`
+    <tr data-card="${escapeHTML(c.id)}">
+      <td><strong>${escapeHTML(c.role)}</strong></td>
+      <td>${escapeHTML(c.level)}</td>
+      <td class="rc-rate">
+        <input type="number" step="0.01" min="0" class="rc-rate-input" value="${c.ratePerHour}"
+          aria-label="Rate per hour for ${escapeHTML(c.role)} ${escapeHTML(c.level)}">
+        <span class="rc-per">/hour</span>
+        ${c.ratePerHour ? '' : '<span class="rc-flag">not priced</span>'}
+      </td>
+      <td class="rc-actions">
+        <button class="btn btn-ghost btn-sm rc-save">Save</button>
+        <button class="btn btn-ghost btn-sm rc-del" title="Remove this row from the price list">Remove</button>
+      </td>
+    </tr>`).join('');
+
+  el.innerHTML = `
+    <div class="ref-section" data-section="rate-cards">
+      <div class="ref-head"><h3>Rate Cards</h3>
+        <span class="ref-key">${RATE_CARDS.length} row${RATE_CARDS.length===1?'':'s'}</span>
+      </div>
+      <div class="ref-note">What an hour of each role and level costs. The Profit &amp; Loss report
+        computes labour cost from these. Changing a rate here changes what <em>new</em> project
+        assignments start from — work already costed keeps the rate it was costed at, so a P&amp;L
+        from last quarter does not move when this quarter's prices do.</div>
+      ${unpriced ? `<div class="ip-banner open">${unpriced} row${unpriced===1?' is':'s are'} still at zero.
+        A rate of nothing costs nothing, so any project staffed at ${unpriced===1?'that level':'those levels'}
+        will show more profit than it made.</div>` : ''}
+      <div class="ref-err" id="err-rate-cards"></div>
+      <div id="rc_note"></div>
+      <table class="ref-table rc-table">
+        <thead><tr><th>Role</th><th>Level</th><th>Rate</th><th></th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="4" class="rc-empty">No rates yet. Add the first one below.</td></tr>'}</tbody>
+      </table>
+      <div class="ref-add">
+        <div><label>Role</label><input type="text" id="rc_role" placeholder="Artist" style="width:180px;"></div>
+        <div><label>Level</label><input type="text" id="rc_level" placeholder="Senior Artist" style="width:200px;"></div>
+        <div><label>Rate per hour</label><input type="number" step="0.01" min="0" id="rc_rate" class="narrow" value="0"></div>
+        <button class="btn btn-brand" id="rc_add">Add Rate</button>
+      </div>
+      <div class="ref-note" style="margin-top:2px;">Roles and levels are free text on purpose: the rate
+        card is the studio's own ladder, not the designation list. Every change here is in the Activity Log.</div>
+    </div>`;
+  wireRateCards();
+}
+
+function rateCardError(message){
+  const el = document.getElementById('err-rate-cards');
+  if(el) el.textContent = message || '';
+  if(message){ const n = document.getElementById('rc_note'); if(n) n.innerHTML = ''; }
+}
+function rateCardNote(html){
+  const n = document.getElementById('rc_note');
+  if(n) n.innerHTML = html ? `<div class="ip-banner open">${html}</div>` : '';
+}
+
+function wireRateCards(){
+  const el = document.getElementById('rateCardsSection');
+  if(!el) return;
+
+  el.querySelectorAll('.rc-save').forEach(btn=>btn.addEventListener('click', async ()=>{
+    const tr = btn.closest('tr');
+    const id = tr.dataset.card;
+    const value = tr.querySelector('.rc-rate-input').value;
+    rateCardError('');
+    btn.disabled = true;
+    try{
+      const { rateCard } = await api('/pnl/rate-cards/' + id, { method:'PATCH', body:{ ratePerHour: value } });
+      RATE_CARDS = RATE_CARDS.map(c=>c.id===id ? rateCard : c);
+      paintRateCards();
+    }catch(err){ rateCardError(err.message); btn.disabled = false; }
+  }));
+
+  el.querySelectorAll('.rc-del').forEach(btn=>btn.addEventListener('click', async ()=>{
+    const tr = btn.closest('tr');
+    const id = tr.dataset.card;
+    const label = tr.children[0].textContent.trim() + ' — ' + tr.children[1].textContent.trim();
+    if(!confirm(`Remove ${label} from the price list?\n\nProjects already costed at this rate keep it — this only stops it being offered for new assignments.`)) return;
+    rateCardError('');
+    btn.disabled = true;
+    try{
+      const res = await api('/pnl/rate-cards/' + id, { method:'DELETE' });
+      RATE_CARDS = RATE_CARDS.filter(c=>c.id!==id);
+      paintRateCards();
+      /* Painted AFTER the repaint, or it would be wiped by it. The note is the
+         only place the studio is told that removing a price did not remove the
+         cost it produced. */
+      if(res.note) rateCardNote(escapeHTML(res.note));
+    }catch(err){ rateCardError(err.message); btn.disabled = false; }
+  }));
+
+  const add = document.getElementById('rc_add');
+  if(add) add.addEventListener('click', async ()=>{
+    rateCardError('');
+    add.disabled = true;
+    try{
+      const { rateCard } = await api('/pnl/rate-cards', { method:'POST', body:{
+        role: document.getElementById('rc_role').value,
+        level: document.getElementById('rc_level').value,
+        ratePerHour: document.getElementById('rc_rate').value,
+      } });
+      RATE_CARDS = [...RATE_CARDS, rateCard].sort((a,b)=>
+        a.role.localeCompare(b.role) || a.level.localeCompare(b.level));
+      paintRateCards();
+    }catch(err){ rateCardError(err.message); add.disabled = false; }
+  });
+}
 
 let rpCatalog = null;
 let rpRole = null;

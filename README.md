@@ -577,6 +577,13 @@ The API is served at `http://localhost:4000/api/*`, and the bundled frontend
 | PATCH | `/api/users/:id` | change someone's designation or reporting line, same scoping as above |
 | DELETE | `/api/users/:id` | super_admin (anyone but another super admin), admin (only users they added) |
 | GET | `/api/team` | any designation that runs a team — their reports' progress |
+| GET | `/api/pnl/rate-cards` | `pnl.view` or `pnl.manage` — the studio's price list |
+| POST, PATCH, DELETE | `/api/pnl/rate-cards[/:id]` | `pnl.manage` alone |
+| GET | `/api/pnl/projects/:id` | `pnl.view` or `pnl.manage` — one project's figures, scoped like every other project read (404 outside scope) |
+| POST, PATCH, DELETE | `/api/pnl/projects/:id/assignments[/:assignmentId]` | `pnl.manage` alone |
+| PUT | `/api/pnl/projects/:id/billing` | `pnl.manage` alone — contract value, billing type, invoiced to date |
+| POST, PATCH, DELETE | `/api/pnl/projects/:id/other-costs[/:costId]` | `pnl.manage` alone |
+| GET | `/api/pnl/report` | `pnl.view` or `pnl.manage` — summary, breakdown, trend and client rollup, filterable by `clientId`, `projectId`, `from`, `to` |
 
 Every route re-checks permissions against the database on each request — a
 role change or removal takes effect on the user's very next request, not just
@@ -901,6 +908,163 @@ rule the rest of the app runs on. That matters because the **Admin tier is
 a studio-wide total shown to an Admin would be full of projects they could not
 open. A Super Admin sees the whole studio; an Admin sees their own; the subtitle
 says which. Nobody is shown a number they cannot click into.
+
+## Profit & Loss
+
+The first money in this application. Nothing here existed before — no rates, no
+billing, no costs, and **no currency**: figures are plain numbers in whatever the
+studio invoices in, and nothing converts between currencies. Its own tab,
+**Profit & Loss**, and its own Settings section, **Rate Cards**. No existing
+dashboard, report or permission changed.
+
+### What the numbers mean
+
+None of these are self-evident, so they are stated once here and again on the
+screen.
+
+| Figure | Definition |
+| --- | --- |
+| **Revenue** | **Invoiced to date.** Not the contract value. |
+| **Contract value** | Recorded and shown beside revenue, because the gap between them is worth seeing. It is not revenue. |
+| **Labour cost** | Rate x hours, summed across the project's team assignments. |
+| **Other costs** | Ad hoc line items — contractors, licensing, outsourcing — each with a label and an amount. |
+| **Gross profit** | Revenue &minus; labour &minus; other costs. |
+| **Margin** | Gross profit / revenue, as a percentage. |
+
+Two of those are load-bearing enough to say plainly:
+
+**A contract worth a million that has billed nothing has earned nothing.**
+Treating the contract as revenue would print a healthy margin on work nobody has
+paid for, which is the single most expensive way this screen could lie.
+
+**A margin on no revenue is blank, not 0%.** "Broke even" and "has not invoiced
+yet" are different facts, and only one of them would be true. The screen shows a
+dash and says why.
+
+### Rate cards
+
+**Settings → Rate Cards** is the studio's price list: role, level, rate per hour.
+The eight combinations the brief named are seeded on first run — Artist and
+Animator, at Junior / Mid / Senior / Team Lead — **all at zero**, and the screen
+flags every unpriced row. A seeded rate is a number somebody might not notice was
+invented, and an invented rate in a P&L is worse than a blank one.
+
+Roles and levels here are free text and are **deliberately not tied to the
+designation catalogue**. The studio's designations are levelled trainee /
+associate / (base) / senior; this ladder is levelled Junior / Mid / Senior / Team
+Lead. Mapping one onto the other would either lose a level or invent a
+correspondence nobody asked for, so an assignment picks a rate card row
+explicitly rather than inheriting one from whoever it is for. Rows can be renamed,
+re-rated, added and deleted.
+
+**Editing a rate does not reprice past work, and deleting a row does not delete
+the cost it produced.** Every assignment carries its own copy of the rate it was
+costed at. Re-pricing the card next April changes what new assignments start
+from and nothing else; a P&L that changed retrospectively would not be a record
+of anything. An assignment whose role and level is no longer on the card is
+appended to the breakdown and marked *off the rate card*, because its cost is
+real and has to add up to the labour total above it.
+
+### A project's team, billing and costs
+
+Open a project from the table on the P&L tab. Three editors, all on that panel:
+
+* **Client billing** — contract value, billing type (Fixed / Milestone / Time &
+  Material), invoiced to date.
+* **Project team** — pick a rate card row, name the person, enter hours. The rate
+  fills in from the card and can then be **overridden for this project**; the
+  override is stored on the row, so it does not touch the card or any other
+  project. Cost per person is rate x hours, with a running total.
+* **Other costs** — a label and an amount. The label is required: an unexplained
+  amount is not a record anybody can act on six months later.
+
+They live on the P&L tab rather than on the Projects tab for two reasons: the
+figures they produce are a scroll away, and the Projects tab is gated on
+`client.view`, which would have put a money form behind a permission that is not
+about money.
+
+**Hours are entered by hand.** They are *not* pulled from the timesheets or the
+tracked work sessions, per the approved design — which means the two can differ,
+and nothing reconciles them. The app already tracks hours (`work_sessions`, and
+the coverage maths behind the Idle Report), so a later integration could feed
+this figure or show both side by side. Until then a manual hour is what the P&L
+is costed on, and the panel says so.
+
+Invoicing **more** than the contract value is a **warning, not a refusal** — it is
+usually a scope change nobody has updated the contract for. A **negative** rate,
+hour or amount is refused outright: a typed minus sign silently becoming extra
+profit is the wrong way to be wrong about money.
+
+### The report
+
+Filterable by client and project. The date range filters the **margin trend
+only** — the cards and tables are current position, not a period, because
+invoiced-to-date and cost-to-date are running totals and slicing them by month
+would print a figure that is not what any of them mean.
+
+* **Five summary cards** — revenue, labour, other costs, gross profit, margin.
+* **Revenue vs cost** — two bars on **one shared scale**, so the shorter one is
+  genuinely shorter. Bars normalised independently would make a project that
+  spent twice what it earned look healthy.
+* **Labour cost by role and level** — **every rate card row**, including the ones
+  nobody was booked at, at zero. A table listing only what was used cannot answer
+  "did we put any seniors on this at all", and its shape would change from
+  project to project so two could not be compared line for line.
+* **Margin trend** — see below.
+* **By client** — the same metrics rolled up across each client's projects.
+
+The client rollup is **summed from the per-project figures**, so a client total
+can never disagree with the projects listed beneath it, and its **margin is
+recomputed from the summed revenue and profit rather than averaged**. An average
+of percentages weights a small project the same as a large one, which is how a
+rollup ends up flattering a loss.
+
+### The margin trend starts empty, on purpose
+
+Everything else in this schema holds one *current* value per thing: hours to
+date, invoiced to date. A single current number cannot produce a curve, and a
+trend computed from one would be today's margin drawn backwards across twelve
+months and presented as history — a straight line that looks like data and is a
+fabrication.
+
+So the position is written down as it changes: **one snapshot row per project per
+month**, rewritten within the month rather than appended, so a busy afternoon of
+edits is one point rather than six. The trend reports what was actually true.
+It necessarily begins when the feature is installed, there is no back-history to
+synthesise, and the panel says so rather than filling the gap.
+
+### Two permissions
+
+| Permission | Covers | Default |
+| --- | --- | --- |
+| *View Profit & Loss Reports* (`pnl.view`) | The report: summary, breakdowns, trend, client rollup. Read-only. | Super Admin only |
+| *Manage P&L Rate Cards & Billing* (`pnl.manage`) | Rate cards, team assignments and hours, client billing, other costs. | Super Admin only |
+
+Both are togglable per role in **Settings → Role Permissions**, under their own
+**Profit & Loss** group, so a Finance or Producer designation can be granted
+either without a code change. Super Admin receives both automatically.
+
+**Neither implies the other.** Reading a margin and deciding what it is are
+different authorities: somebody who can change a rate card can change every
+historical project's cost basis, and somebody who can change invoiced-to-date can
+change what the studio believes it has earned. Holding `pnl.manage` does open the
+report — you cannot sensibly edit figures you cannot see — but `pnl.view` alone
+gets the same screen with no inputs and no buttons on it, and no Rate Cards
+section in Settings.
+
+**Holding either does not widen anybody's reach.** The report is scoped by the
+role's existing `projectScope`, exactly like every other piece of project data. A
+project outside that scope answers **404**, not 403, so the endpoint does not
+confirm that an id exists.
+
+### Everything is in the Activity Log
+
+Rate cards, assignments, hours, billing and cost line items all write to the
+Activity Log under a **`pnl`** module of its own — not lumped in with Settings,
+so somebody auditing a margin can filter to the money trail without wading
+through every branding tweak. Each entry carries **old value to new value**, and
+the one that matters most is invoiced-to-date, because that figure *is* the
+revenue the studio reports.
 
 ## Project milestones
 

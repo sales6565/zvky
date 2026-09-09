@@ -687,6 +687,50 @@ const GROUPS = [
     ],
   },
   {
+    /* Money. Its own group rather than a corner of Reports, because these two
+     * permissions answer a different question from the rest of the catalogue:
+     * not "what may this person do to the work" but "may this person see what
+     * the work costs and what it earns".
+     *
+     * SPLIT IN TWO, deliberately. Knowing a project is profitable is a
+     * different disclosure from knowing what each level is paid, and a studio
+     * will want a producer who can read a margin without being handed the rate
+     * card. One permission would have forced those together. */
+    key: 'pnl',
+    label: 'Profit & Loss',
+    permissions: [
+      {
+        key: 'pnl.view',
+        label: 'View Profit & Loss Reports',
+        /* Super Admin only by default — the same front door as the two IP
+           lists, and the idiom this codebase uses for "nobody else until
+           somebody says so". Grantable to a Finance or Producer designation in
+           Settings without a code change, which is the point of it being a
+           permission rather than a tier check. */
+        impliedBy: has('managePermissions'),
+        describe: 'The Profit & Loss report: revenue, labour and other costs, gross profit, margin, '
+          + 'the breakdown by role and level, and the client rollup. Read-only.',
+        danger: 'This discloses what the studio earns and what its people cost. Grant it to a '
+          + 'designation only when everybody holding that designation should see both.',
+      },
+      {
+        key: 'pnl.manage',
+        label: 'Manage P&L Rate Cards & Billing',
+        /* Editing, and deliberately NOT implied by pnl.view. Reading a margin
+           and setting the rates that produce it are different authorities:
+           somebody who can change a rate card can change every historical
+           project's cost basis, and somebody who can change invoiced-to-date
+           can change what the studio believes it has earned. */
+        impliedBy: has('managePermissions'),
+        describe: 'Edit the rate cards, the team assignments and hours on a project, the client '
+          + 'billing figures, and the ad hoc cost line items.',
+        danger: 'These figures are what the Profit & Loss report is computed from. A wrong rate or '
+          + 'a wrong invoiced amount changes the studio\'s reported profit, and every change is '
+          + 'recorded in the Activity Log for that reason.',
+      },
+    ],
+  },
+  {
     key: 'settings',
     label: 'Settings / Admin',
     permissions: [

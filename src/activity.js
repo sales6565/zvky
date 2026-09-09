@@ -57,6 +57,11 @@ const MODULE_OF = [
   [/^\/api\/ip-blocklist/, 'settings'],
   // Saving the mail server, and sending a test through it.
   [/^\/api\/email-config/, 'settings'],
+  // Rate cards, project team costing, billing and other costs. Its own module
+  // rather than 'settings': these rows are the money trail, and somebody
+  // auditing a margin should be able to filter to them without wading through
+  // every branding tweak and mail-server save.
+  [/^\/api\/pnl/, 'pnl'],
   [/^\/api\/reference/, 'settings'],
   [/^\/api\/branding/, 'settings'],
   [/^\/api\/auth/, 'auth'],
