@@ -277,11 +277,61 @@ listed explicitly (`ASSIGNEE_STATUSES`) and CD Feedbacks is not one of them.
 
 ### Submissions
 
-A submission is a **link** (required) and a **description** (optional). Links may
-point inside the building: `http://nas/shots/ep01` and `http://192.168.1.20:8080/v3`
-are as valid as a public URL — refusing a host without a dot in it would reject
-the most common case in a studio. `javascript:` and `data:` are refused, since a
-reviewer clicks these. See [`src/submission-link.js`](src/submission-link.js).
+A submission is a **link** (required) and a **description** (optional), and
+"link" is meant broadly: work does not always live behind a URL. Five shapes are
+accepted, and which one it turns out to be decides how it is drawn.
+
+| Shape | Example | Drawn as |
+| --- | --- | --- |
+| Web | `https://drive.example.com/shot-01`, `http://nas/shots/ep01` | **A hyperlink** — opens as it always has |
+| Other schemes | `ftp://`, `ftps://`, `sftp://`, `smb://`, `file://` | A reference with a Copy button |
+| Network path (UNC) | `\\fileserver\assets\project1`, or `//fileserver/assets/project1` | A reference with a Copy button |
+| Windows folder | `C:\Projects\ProjectX`, `D:\Studio\Assets` | A reference with a Copy button |
+| Unix / macOS folder | `/mnt/shared/assets`, `/Volumes/Studio/Assets` | A reference with a Copy button |
+
+Links may point **inside the building**: `http://nas/shots/ep01` and
+`http://192.168.1.20:8080/v3` are as valid as a public URL, because refusing a
+host without a dot in it would reject the most common case in a studio — and
+refusing `\\fileserver\assets\ep01` would reject the second most common.
+
+**A path is a reference, not something this application can open.** This is the
+caveat worth reading twice. The app runs on a server and is used through a
+browser: it cannot read, fetch, preview or thumbnail a UNC path or a folder on
+somebody's machine, and neither can a viewer who has no access to that server.
+Those links are a **pointer a colleague acts on by hand**, in Explorer or Finder,
+from a machine that can reach the location. Nothing about accepting them gives
+the application access to anything.
+
+That is why only `http` and `https` are drawn as hyperlinks. Everything else is
+shown as plain monospaced text, labelled *Network path* or *Folder path*, with a
+**Copy** button — because a hyperlink that silently does nothing for most of the
+people who click it is worse than text that never claimed it would.
+
+**Stored exactly as typed.** Nothing is normalised in either direction: a path is
+not turned into a `file://` URL, and a URL is no longer rewritten through
+`new URL().toString()` either. There is no normal form for `\\fileserver\assets`
+that is still a path somebody can paste into Explorer, and a link that comes back
+subtly different from the one that was pasted is a link somebody has to check
+twice.
+
+**Nonsense is still refused.** Empty input, bare text (`shot-01.psd`), a relative
+path (`assets/ep01`, `./local`), structure with no destination (`/`, `\\`), a
+drive-relative path (`C:Projects`), a line break in the middle, and
+`javascript:` / `data:` URLs — a reviewer clicks these — all produce a clear
+error naming what a link may look like. See
+[`src/submission-link.js`](src/submission-link.js).
+
+The same rule governs the asset's **Requirement / Reference Link**, the **Project
+Link** column of the asset bulk import, and the **project review** link, so "that
+is not a valid link" means one thing in this application.
+
+**One link field deliberately did not change: the asset thumbnail.** That URL is
+put into an `<img src>` and fetched by the browser, so it stays **http/https
+only** — a UNC path or a local folder cannot be fetched from a web page at all,
+and accepting one there would store something guaranteed to render as a broken
+image. A submission link is a reference a human acts on; a thumbnail is a
+resource the page loads. `tests/asset-workflow.test.js` fails if the two are ever
+merged.
 
 Every round is kept. A resubmission after changes **adds** a version; nothing is
 overwritten, so the third attempt does not erase what the first one linked to.

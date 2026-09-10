@@ -840,6 +840,18 @@ tr.past-round{opacity:0.62;}
 .pnl-trend-month{font-size:10px;color:var(--ink-faint);margin-top:6px;font-family:'IBM Plex Mono';}
 /* The two P&L tabs, and the budget dimension the Fixed one adds. */
 .pnl-tabs{margin-bottom:14px;}
+/* A link that cannot be clicked, drawn so it does not look like one that can.
+   Monospace for the path, because a backslash in a proportional face at 13px is
+   very hard to tell from a forward slash and these get retyped by hand. */
+.link-ref{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;max-width:100%;}
+.link-ref-kind{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-faint);
+  border:1px solid var(--border);border-radius:3px;padding:1px 5px;white-space:nowrap;}
+.link-ref-path{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;
+  word-break:break-all;color:var(--ink);background:var(--surface-sunk,rgba(127,127,127,.10));
+  border-radius:3px;padding:1px 5px;}
+.link-copy{font-size:11px;padding:2px 8px;border:1px solid var(--border);border-radius:3px;
+  background:transparent;color:var(--ink-muted);cursor:pointer;white-space:nowrap;}
+.link-copy:hover{color:var(--ink);border-color:var(--ink-faint);}
 .pnl-cards-6{grid-template-columns:repeat(6,1fr);}
 .pnl-bud{border-top-color:var(--review);}
 .pnl-over{border-top-color:#ff5a36;}
@@ -1480,7 +1492,7 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
     </div>
     <label>Client</label><select id="pr_client"></select>
     <label>Project/Game</label><select id="pr_project" disabled></select>
-    <label>Link</label><input type="text" id="pr_link" placeholder="https://drive.example.com/nightgarden-cut-03">
+    <label>Link</label><input type="text" id="pr_link" placeholder="https://drive.example.com/cut-03 or \\fileserver\reviews\cut-03">
     <label>Description <span class="count-note">(optional)</span></label>
     <textarea id="pr_desc" rows="3" placeholder="Anything the reviewer should know…"></textarea>
     <div class="ref-err" id="pr_err"></div>
@@ -2830,6 +2842,97 @@ function avatarFellBack(img){
 }
 function escapeHTML(s){ const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
 
+/* Drawing a submitted link, which is not always a link you can click.
+ *
+ * A submission may point at a web address, a network share (\\fileserver\assets)
+ * or a folder on somebody's machine (D:\Studio\Assets). Only the first can be
+ * opened from this page. The others are REFERENCES: a colleague who has access
+ * to that server opens them in Explorer or Finder, and this application — which
+ * runs on a server, in a browser tab, over the web — cannot read, fetch,
+ * preview or thumbnail any of them, and neither can a viewer without access to
+ * that machine.
+ *
+ * Drawing those as <a href> would hand every viewer a link that silently does
+ * nothing, which is worse than plain text because it looks like it should work.
+ * So they are drawn as text with a Copy button, and http/https keeps behaving
+ * exactly as it always has.
+ *
+ * The test is deliberately narrower than the server's validator rather than a
+ * copy of it: anything that does not parse as a URL with an http or https
+ * scheme is text. A UNC path does not parse at all, "C:\Projects" parses with
+ * the scheme "c:", and "/mnt/shared" does not parse without a base — so every
+ * path shape fails this on its own, and the two rules cannot drift into
+ * disagreeing about the one case that matters. tests/asset-workflow.test.js
+ * checks this function against the server's on every shape either accepts. */
+function isWebLink(raw){
+  const text = String(raw||'').trim();
+  if(!text) return false;
+  try{
+    const u = new URL(text);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  }catch{ return false; }
+}
+
+/* What kind of pointer this is, for the label beside a non-clickable one.
+   Cosmetic only — isWebLink above is what decides clickable from not. */
+function linkKindLabel(raw){
+  const text = String(raw||'').trim();
+  if(/^[\\/]{2}/.test(text)) return 'Network path';
+  if(/^[A-Za-z]:[\\/]/.test(text)) return 'Folder path';
+  if(/^\//.test(text)) return 'Folder path';
+  return 'Reference';
+}
+
+/* One renderer for every place a stored link is shown, so the asset panel, the
+   version history and the project-review queue cannot disagree about whether
+   the same link is clickable. */
+function renderLink(raw, opts){
+  const text = String(raw||'').trim();
+  if(!text) return '';
+  const style = (opts && opts.style) || '';
+  if(isWebLink(text)){
+    return `<a href="${escapeHTML(text)}" target="_blank" rel="noopener noreferrer" style="${style}">${escapeHTML(text)}</a>`;
+  }
+  return `<span class="link-ref" title="Only reachable from a machine with access to this location">`
+    + `<span class="link-ref-kind">${escapeHTML(linkKindLabel(text))}</span>`
+    + `<code class="link-ref-path">${escapeHTML(text)}</code>`
+    + `<button type="button" class="link-copy" data-copy="${escapeHTML(text)}" title="Copy this path">Copy</button>`
+    + `</span>`;
+}
+
+/* Copy, delegated from the document so it works in every panel that draws a
+   link without each of them wiring up a handler. The clipboard API needs a
+   secure context (https, or localhost); the textarea fallback is there because
+   a studio running this over plain http on the LAN is exactly the deployment
+   that pastes UNC paths in the first place. */
+document.addEventListener('click', async (e)=>{
+  const btn = e.target.closest && e.target.closest('.link-copy');
+  if(!btn) return;
+  e.preventDefault();
+  const text = btn.dataset.copy || '';
+  let done = false;
+  try{
+    if(navigator.clipboard && window.isSecureContext){
+      await navigator.clipboard.writeText(text);
+      done = true;
+    }
+  }catch{ /* fall through to the textarea */ }
+  if(!done){
+    try{
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly','');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      done = document.execCommand('copy');
+      ta.remove();
+    }catch{ done = false; }
+  }
+  showToast(done ? 'Path copied.' : 'Could not copy — select the path and copy it by hand.');
+});
+
 /* Which assets are ticked in the Assets List, by asset id.
    
    By ASSET, not by row: the list draws one row per stretch of work, so an asset
@@ -3547,7 +3650,7 @@ async function renderPending(){
   const head = (r)=>`<strong>${escapeHTML(r.projectName || 'A project')}</strong>
       <span style="color:var(--ink-faint);">· ${escapeHTML(r.clientName || '')}</span>
       <div class="pr-meta">${who(r)}</div>
-      <div style="margin-top:4px;"><a href="${escapeHTML(r.link)}" target="_blank" rel="noopener noreferrer">${escapeHTML(r.link)}</a></div>
+      <div style="margin-top:4px;">${renderLink(r.link)}</div>
       ${r.description ? `<div class="pr-meta" style="margin-top:4px;color:var(--ink-muted);">${escapeHTML(r.description)}</div>` : ''}`;
 
   /* Three kinds of group, and the third is a record rather than a queue:
@@ -6478,10 +6581,10 @@ async function openDrawer(id){
       The brief, spec or reference this is made from — not the finished work. Submissions go in the Submissions section below.
     </div>
     ${editable
-      ? `<input type="text" id="d_refLink" value="${escapeHTML(a.reference_link||'')}" placeholder="https://drive.example.com/brief (optional)">
+      ? `<input type="text" id="d_refLink" value="${escapeHTML(a.reference_link||'')}" placeholder="Web address, \\fileserver\briefs\ep01 or D:\\Briefs\\ep01 (optional)">
          <div class="ref-err" id="d_refErr"></div>`
       : (a.reference_link
-          ? `<div style="font-size:13px;padding:6px 0;"><a href="${escapeHTML(a.reference_link)}" target="_blank" rel="noopener noreferrer" style="color:var(--brand-accent);word-break:break-all;">${escapeHTML(a.reference_link)}</a></div>`
+          ? `<div style="font-size:13px;padding:6px 0;">${renderLink(a.reference_link, {style:'color:var(--brand-accent);word-break:break-all;'})}</div>`
           : `<div style="font-size:12px;color:var(--ink-faint);padding:6px 0;">None given.</div>`)}
 
     <div class="row2">
@@ -6539,7 +6642,7 @@ async function openDrawer(id){
 
     ${canSubmit ? `
       <div class="field-lbl">${a.status.endsWith('_changes_requested') ? 'Resubmit for review' : 'Submit for review'}</div>
-      <input type="text" id="submitLink" placeholder="https://drive.example.com/shot-01 or http://nas/shots/ep01">
+      <input type="text" id="submitLink" placeholder="https://drive.example.com/shot-01, \\fileserver\assets\ep01 or /mnt/shared/assets">
       <div style="font-size:10.5px;color:var(--ink-faint);margin-top:4px;">Link to the work. Internal and local server links are fine.</div>
       <textarea id="submitDescription" rows="2" placeholder="Anything the reviewer should know (optional)…" style="margin-top:8px;"></textarea>
       <div class="ref-err" id="submitErr"></div>
@@ -6650,7 +6753,7 @@ async function openDrawer(id){
     <div id="d_versions">${(a.versions&&a.versions.length) ? a.versions.map(v=>`
       <div class="note" style="border-left-color:${v.stage==='tl'?'var(--review)':'#9b7ef0'};">
         <span class="who">v${v.version_number} · ${avatarHTML({ id:v.uploaded_by, name:v.uploaded_by_name, photoAt:v.uploaded_by_photo_at }, { size:16, title:false })} ${escapeHTML(v.uploaded_by_name||'Someone')} · ${v.stage==='tl'?'Team Lead review':'Creative Director review'}</span> <span class="when">${fmtDate(v.created_at)}</span>
-        ${v.link?`<p><a href="${escapeHTML(v.link)}" target="_blank" rel="noopener noreferrer" style="color:var(--brand-accent);word-break:break-all;">${escapeHTML(v.link)}</a></p>`:''}
+        ${v.link?`<p>${renderLink(v.link, {style:'color:var(--brand-accent);word-break:break-all;'})}</p>`:''}
         ${v.description?`<p>${escapeHTML(v.description)}</p>`:''}
         ${v.file_name?`<p>${escapeHTML(v.file_name)} ${v.file_size?'· '+fmtBytes(v.file_size):''} — <a href="#" class="downloadVersionLink" data-vid="${v.id}" style="color:var(--brand-accent);">download</a></p>`:''}
       </div>`).join('') : '<div style="font-size:12px;color:var(--ink-faint);">Nothing submitted yet.</div>'}</div>
@@ -7236,7 +7339,7 @@ function openRound(assetId, roundId){
       <div class="note" style="border-left-color:${v.stage==='tl'?'var(--review)':'#9b7ef0'};">
         <span class="who">v${v.versionNumber} · ${v.stage==='tl'?'Team Lead review':'Creative Director review'}</span>
         <span class="when">${fmtDate(v.at)}</span>
-        ${v.link?`<p><a href="${escapeHTML(v.link)}" target="_blank" rel="noopener noreferrer" style="color:var(--brand-accent);word-break:break-all;">${escapeHTML(v.link)}</a></p>`:''}
+        ${v.link?`<p>${renderLink(v.link, {style:'color:var(--brand-accent);word-break:break-all;'})}</p>`:''}
         ${v.description?`<p>${escapeHTML(v.description)}</p>`:''}
       </div>`).join('') : '<div style="font-size:12px;color:var(--ink-faint);">Nothing was submitted in this round.</div>'}
 

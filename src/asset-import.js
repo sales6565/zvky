@@ -305,8 +305,10 @@ const COLUMNS = [
     header: 'Project Link',
     accepts: ['project_link', 'reference_link', 'requirement_link', 'link', 'brief_link'],
     required: false,
-    describe: 'Link to the brief or reference — optional; shown as Requirement / Reference Link',
-    example: ['https://drive.example.com/brief/waterfall', '', 'https://drive.example.com/brief/ridge'],
+    describe: 'Link to the brief or reference — optional; a web address, a network path '
+      + '(\\\\fileserver\\briefs\\ep01) or a folder path (D:\\Briefs or /mnt/briefs). '
+      + 'Shown as Requirement / Reference Link',
+    example: ['https://drive.example.com/brief/waterfall', '', '\\\\fileserver\\briefs\\ridge'],
     parse(raw) {
       const verdict = submissionLink.validate(raw, { optional: true });
       if (!verdict.ok) return { warning: `${verdict.error} No link was set.` };

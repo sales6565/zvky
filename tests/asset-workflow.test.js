@@ -550,21 +550,172 @@ test('a submission link may point inside the building', () => {
     'https://review.example.com/a?v=2#note',
     'smb://fileserver/projects/hero.psd',
     'file:///mnt/renders/hero.exr',
+    'ftp://files.example.com/pub/ep01',
   ]) {
     assert.strictEqual(submissionLink.validate(link).ok, true, `${link} should be accepted`);
   }
 });
 
-test('anything that is not a link is refused, with an example', () => {
-  for (const bad of ['', '   ', 'not a url', 'drive.example.com/shot', '/just/a/path', 'shot-01.psd']) {
+/* Work does not always live behind a URL.
+ *
+ * This used to refuse anything new URL() would not parse, which refused every
+ * network share and every folder path — the two places a studio's work actually
+ * sits. "/just/a/path" was asserted REFUSED by the test above this one until
+ * this feature; it is accepted now, deliberately, and the assertion moved here
+ * rather than being deleted quietly. */
+test('a network share or a folder path is a link too', () => {
+  const cases = [
+    // UNC, in both notations.
+    ['\\\\fileserver\\assets\\project1', 'unc'],
+    ['\\\\fileserver\\assets', 'unc'],
+    ['\\\\fileserver', 'unc'],
+    ['\\\\192.168.1.20\\renders\\ep01', 'unc'],
+    ['//fileserver/assets/project1', 'unc'],
+    // A path with spaces in it, which is most of them.
+    ['\\\\fileserver\\assets\\Project X\\shot 01', 'unc'],
+    // Windows, both separators.
+    ['C:\\Projects\\ProjectX', 'windows'],
+    ['D:\\Studio\\Assets\\ProjectX', 'windows'],
+    ['C:/Projects/ProjectX', 'windows'],
+    // POSIX.
+    ['/mnt/shared/assets', 'posix'],
+    ['/home/user/assets', 'posix'],
+    ['/Volumes/Studio/Assets', 'posix'],
+  ];
+  for (const [link, kind] of cases) {
+    const verdict = submissionLink.validate(link);
+    assert.strictEqual(verdict.ok, true, `${link} should be accepted`);
+    assert.strictEqual(verdict.kind, kind, `${link} should be a ${kind}`);
+    /* NONE of them is clickable. The server cannot fetch them and most viewers
+       cannot open them; drawn as <a href> they would be a link that silently
+       does nothing. */
+    assert.strictEqual(verdict.clickable, false, `${link} must not be drawn as a hyperlink`);
+  }
+});
+
+test('a link is stored exactly as it was typed', () => {
+  /* There is no normal form for \\fileserver\assets that is still a path
+     somebody can paste into Explorer, so nothing is normalised — including the
+     URLs, which used to come back as new URL(text).toString(). A link that
+     changes between typing it and reading it back is a link somebody has to
+     check twice. */
+  for (const raw of [
+    '\\\\fileserver\\assets\\Project X',
+    'C:\\Projects\\ProjectX',
+    '/mnt/shared/assets',
+    'HTTP://NAS/Shots/EP01',
+    'https://drive.example.com/a b',
+    'https://drive.example.com/shot-01',
+  ]) {
+    assert.strictEqual(submissionLink.validate(raw).link, raw, `${raw} came back changed`);
+  }
+  // Surrounding whitespace is the one thing trimmed — it is never meant.
+  assert.strictEqual(submissionLink.validate('  /mnt/shared/assets  ').link, '/mnt/shared/assets');
+});
+
+test('nonsense is still refused, and told what a link looks like', () => {
+  for (const bad of [
+    '', '   ',
+    'not a url', 'just some random text',
+    'drive.example.com/shot', 'shot-01.psd',
+    // Relative paths point at nothing without knowing where you started.
+    'relative/path/file.psd', './local', '../up',
+    // Structure without a destination.
+    '/', '//', '\\\\', '\\single',
+    // A drive-relative path is meaningless to anybody but the machine that typed it.
+    'C:Projects',
+  ]) {
     const verdict = submissionLink.validate(bad);
     assert.strictEqual(verdict.ok, false, `"${bad}" should be refused`);
-    assert.ok(verdict.error);
+    assert.ok(verdict.error, `"${bad}" should say why`);
   }
   // A link is opened by whoever reviews it, so a script URL is not a link.
   assert.strictEqual(submissionLink.validate('javascript:alert(1)').ok, false);
   assert.strictEqual(submissionLink.validate('data:text/html,<script>alert(1)</script>').ok, false);
-  assert.match(submissionLink.validate('not a url').error, /https:\/\/|http:\/\//, 'the message shows what one looks like');
+  // A spreadsheet cell that brought its neighbour along.
+  assert.strictEqual(submissionLink.validate('https://x.example.com/a\nhttps://x.example.com/b').ok, false);
+
+  assert.match(submissionLink.validate('not a url').error, /https:\/\/|http:\/\//,
+    'the message shows what one looks like');
+  assert.match(submissionLink.validate('not a url').error, /path/i,
+    'and says a path is allowed too, now that it is');
+});
+
+test('only http and https are ever drawn as a hyperlink', () => {
+  for (const web of ['http://nas/shots', 'https://drive.example.com/x']) {
+    assert.strictEqual(submissionLink.validate(web).clickable, true);
+    assert.strictEqual(submissionLink.isWebLink(web), true);
+  }
+  /* ftp, smb and file parse as URLs and are accepted — but a browser will not
+     usefully follow any of them from a page, so they are references like the
+     paths are. */
+  for (const notWeb of ['ftp://files.example.com/x', 'smb://fileserver/a', 'file:///mnt/x',
+    '\\\\fileserver\\assets', 'C:\\Projects', '/mnt/shared']) {
+    assert.strictEqual(submissionLink.validate(notWeb).clickable, false, notWeb);
+    assert.strictEqual(submissionLink.isWebLink(notWeb), false, notWeb);
+  }
+  // isWebLink is asked about stored rows, so it must be safe on junk too.
+  for (const junk of ['', '   ', 'javascript:alert(1)', 'not a url', null, undefined]) {
+    assert.strictEqual(submissionLink.isWebLink(junk), false, String(junk));
+  }
+});
+
+/* THE PAGE MAKES THE SAME DECISION AS THE SERVER.
+ *
+ * The browser decides whether to draw <a href> or plain text, and it does that
+ * with its own isWebLink() — the server is not asked, because the link is
+ * already stored by then. Two implementations of one rule drift, and the
+ * direction that costs something is the page deciding a path is clickable.
+ *
+ * So the page's copy is extracted and run against the server's on every shape
+ * either of them accepts. It is deliberately the NARROWER rule — parse, and
+ * check the scheme — which is why it can be this short and still agree. */
+test('the page and the server agree on what is clickable', () => {
+  const page = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const start = page.indexOf('function isWebLink(raw){');
+  assert.ok(start > -1, 'the page still has an isWebLink() to check');
+  const end = page.indexOf('\nfunction linkKindLabel', start);
+  assert.ok(end > start, 'and it is still followed by linkKindLabel');
+
+  // eslint-disable-next-line no-new-func
+  const pageIsWebLink = new Function(`${page.slice(start, end)}\nreturn isWebLink;`)();
+
+  const everything = [
+    'https://drive.example.com/shot-01', 'http://nas/shots/ep01',
+    'http://192.168.1.20:8080/renders/v3', 'HTTP://NAS/Shots',
+    'ftp://files.example.com/x', 'ftps://f/x', 'sftp://nas/s',
+    'smb://fileserver/a', 'file:///mnt/x',
+    '\\\\fileserver\\assets\\project1', '\\\\fileserver', '//fileserver/assets',
+    'C:\\Projects\\ProjectX', 'C:/Projects', 'D:\\Studio\\Assets',
+    '/mnt/shared/assets', '/home/user/assets',
+    '', '   ', 'not a url', 'javascript:alert(1)', 'C:Projects', '/', '\\single',
+  ];
+  for (const link of everything) {
+    assert.strictEqual(pageIsWebLink(link), submissionLink.isWebLink(link),
+      `the page and the server disagree about ${JSON.stringify(link)}`);
+  }
+});
+
+/* The one link field that did NOT get relaxed, and why.
+ *
+ * A thumbnail URL is put into an <img src> and fetched by the browser. A UNC
+ * path or a local folder cannot be fetched from a web page at all, so accepting
+ * one there would store something guaranteed to render as a broken image. The
+ * submission link is a reference a human acts on; a thumbnail is a resource the
+ * page loads. Different jobs, different rules, and this test exists so a later
+ * "make the link fields consistent" tidy-up cannot quietly merge them. */
+test('the thumbnail link stays http-only', () => {
+  const thumbs = require('../src/asset-thumbnail');
+  assert.strictEqual(thumbs.validateUrl('https://cdn.example.com/a.png').ok, true);
+  assert.strictEqual(thumbs.validateUrl('http://nas/a.png').ok, true);
+  for (const notFetchable of [
+    '\\\\fileserver\\assets\\a.png', 'C:\\Projects\\a.png', '/mnt/shared/a.png',
+    'file:///mnt/shared/a.png', 'smb://fileserver/a.png', 'ftp://f/a.png',
+  ]) {
+    assert.strictEqual(thumbs.validateUrl(notFetchable).ok, false,
+      `${notFetchable} cannot be loaded into an <img> and must stay refused`);
+  }
 });
 
 // --- the pipeline, against a live server --------------------------------------
@@ -1048,6 +1199,65 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     // A local link is fine, and the description really is optional.
     const ok = await act(id, 'submit', 'artist', { link: 'http://nas/shots/x' });
     assert.strictEqual(ok.status, 201);
+  });
+
+  /* Testing steps 1-4 of the brief, against a real server and a real database:
+     a UNC path and a folder path go in, come back byte-for-byte, and nonsense
+     is still refused. The round trip is the point — a backslash survives JSON,
+     survives mysql2's escaping, and comes back out of a VARCHAR unchanged only
+     if nothing along the way decided to be helpful about it. */
+  await t.test('a network share and a folder path survive the round trip', async () => {
+    const paths = [
+      '\\\\fileserver\\assets\\project1',
+      'D:\\Studio\\Assets\\ProjectX',
+      '/mnt/shared/assets',
+      '\\\\fileserver\\assets\\Project X\\shot 01',   // spaces, which most have
+    ];
+    for (const link of paths) {
+      const id = await newAsset(`Path ${paths.indexOf(link)}`);
+      await act(id, 'start', 'artist');
+      const res = await act(id, 'submit', 'artist', { link });
+      assert.strictEqual(res.status, 201, `${link} should be accepted: ${JSON.stringify(res.body)}`);
+
+      const [row] = await sql(cfg,
+        `SELECT link FROM asset_versions WHERE asset_id = '${id}' ORDER BY version_number DESC LIMIT 1`);
+      assert.strictEqual(row.link, link, `${link} came back from the database changed`);
+    }
+  });
+
+  await t.test('an http submission still behaves exactly as it did', async () => {
+    const id = await newAsset('Still http');
+    await act(id, 'start', 'artist');
+    const res = await act(id, 'submit', 'artist', { link: 'https://drive.example.com/shot-01' });
+    assert.strictEqual(res.status, 201);
+    const [row] = await sql(cfg, `SELECT link FROM asset_versions WHERE asset_id = '${id}'`);
+    assert.strictEqual(row.link, 'https://drive.example.com/shot-01');
+    assert.strictEqual(await statusOf(id), 'pending_tl_review');
+  });
+
+  await t.test('the brief link takes a path too, and clearing it still works', async () => {
+    /* The Requirement / Reference Link is validated by the same module, so the
+       relaxation reaches it. It is optional, which is the one thing that
+       differs, and an empty string still means "remove this". */
+    const id = await newAsset('Brief on a share');
+    const set = await call(`/assets/${id}`, { token: token.admin, method: 'PATCH',
+      body: { referenceLink: '\\\\fileserver\\briefs\\ep01' } });
+    assert.strictEqual(set.status, 200, JSON.stringify(set.body));
+    let [row] = await sql(cfg, `SELECT reference_link FROM assets WHERE id = '${id}'`);
+    assert.strictEqual(row.reference_link, '\\\\fileserver\\briefs\\ep01');
+
+    const bad = await call(`/assets/${id}`, { token: token.admin, method: 'PATCH',
+      body: { referenceLink: 'just some random text' } });
+    assert.strictEqual(bad.status, 400);
+    assert.strictEqual(bad.body.field, 'referenceLink');
+    [row] = await sql(cfg, `SELECT reference_link FROM assets WHERE id = '${id}'`);
+    assert.strictEqual(row.reference_link, '\\\\fileserver\\briefs\\ep01', 'the refusal changed nothing');
+
+    const cleared = await call(`/assets/${id}`, { token: token.admin, method: 'PATCH',
+      body: { referenceLink: '' } });
+    assert.strictEqual(cleared.status, 200);
+    [row] = await sql(cfg, `SELECT reference_link FROM assets WHERE id = '${id}'`);
+    assert.strictEqual(row.reference_link, null);
   });
 
   await t.test('the history is in the order things happened', async () => {
