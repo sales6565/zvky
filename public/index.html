@@ -8173,16 +8173,41 @@ function renderReportingField(user, managerOptions){
 
   const sel = document.getElementById('eu_reportsTo');
   const options = (managerOptions && managerOptions.options) || [];
+
+  /* EVERY OTHER ACCOUNT IS LISTED. Reporting To records who somebody reports to
+     and nothing in the app's access rules reads it, so the list is not narrowed
+     by role, designation or who leads whom — only the person themselves is
+     left out.
+
+     Two kinds of row are MARKED rather than removed:
+       (Inactive)      a deactivated account. Still offered, because dropping it
+                       would mean editing somebody whose recorded manager has
+                       since been deactivated found no matching option, fell
+                       back to "not set", and silently cleared a reporting line
+                       nobody touched on the next save.
+       (would loop)    choosing them would make the hierarchy circular, and the
+                       API still refuses it. Shown, so nobody picks an option
+                       that can only come back rejected. */
   sel.innerHTML = '<option value="">— Not set —</option>' + options
-    .map(o=>`<option value="${o.id}"${o.id===user.reportsToId?' selected':''}>${escapeHTML(o.name)} — ${escapeHTML(o.roleLabel)}</option>`)
+    .map(o=>{
+      const marks = [];
+      if(o.isActive === false) marks.push('Inactive');
+      if(o.wouldLoop) marks.push('would loop');
+      return `<option value="${o.id}"${o.id===user.reportsToId?' selected':''}>`
+        + `${escapeHTML(o.name)} — ${escapeHTML(o.roleLabel)}${marks.length?` (${marks.join(', ')})`:''}</option>`;
+    })
     .join('');
 
+  const inactive = options.filter(o=>o.isActive === false).length;
+  const looping = options.filter(o=>o.wouldLoop).length;
   /* Optional by decision, so say so rather than letting an empty dropdown read
-     as an unfinished form. Anyone already beneath this person is missing from
-     the list on purpose. */
+     as an unfinished form. */
   document.getElementById('eu_reportsHint').textContent = options.length
-    ? 'Optional. Anyone who reports to this person, directly or further down, is not listed — that would be a loop.'
-    : 'Nobody can be their manager yet: every other account already reports to them.';
+    ? 'Optional, and for the record only — nothing in the app decides access from it. '
+      + 'Everybody except this person is listed.'
+      + (inactive ? ` ${inactive} deactivated ${inactive===1?'account is':'accounts are'} included, marked.` : '')
+      + (looping ? ` ${looping} would make the reporting line circular and will be refused.` : '')
+    : 'There is nobody else to choose from yet.';
 }
 
 document.getElementById('eu_role').addEventListener('change', async ()=>{

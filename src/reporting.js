@@ -130,14 +130,36 @@ async function validateManager(db, user, candidateId) {
   return { ok: true, managerId: candidateId, manager: candidate };
 }
 
-// Everyone this person could report to: not themselves, and nobody already
-// beneath them. Used to build the dropdown, so the form does not offer a choice
-// the API would then refuse.
+/* Everyone this person could be recorded as reporting to.
+ *
+ * WHAT CHANGED, AND WHY IT IS NOT A FILTER ANY MORE. This used to return only
+ * the people a save would accept — everybody except the user and everybody
+ * already beneath them. The studio's decision is that Reporting To is an
+ * informational field, so the list is now EVERY OTHER ACCOUNT: no filtering by
+ * role, by designation, by tier or by who leads whom.
+ *
+ * Two facts travel with each row instead of being used to remove it:
+ *
+ *   isActive    A deactivated account is still offered, marked. Dropping them
+ *               would be worse than it sounds: editing somebody whose recorded
+ *               manager has since been deactivated would find no matching
+ *               option, the select would fall back to "not set", and saving any
+ *               other field would silently CLEAR a reporting line nobody
+ *               touched. Keeping them is what makes the form non-destructive.
+ *
+ *   wouldLoop   Picking them would make the hierarchy eat its own tail, and
+ *               validateManager still refuses it. The row is returned so the
+ *               form can say so up front rather than letting somebody choose an
+ *               option that can only be rejected.
+ *
+ * The self row is the one genuine exclusion, and it is the one the studio asked
+ * for: nobody reports to themselves.
+ */
 async function eligibleManagers(db, user) {
   if (isTopOfHierarchy(user.role)) return [];
 
   const { rows } = await db.query(
-    'SELECT id, `name`, email, `role`, reports_to_id FROM users ORDER BY `name`'
+    'SELECT id, `name`, email, `role`, reports_to_id, is_active FROM users ORDER BY `name`'
   );
 
   // Everyone below this user, found by walking down rather than up: repeatedly
@@ -156,7 +178,16 @@ async function eligibleManagers(db, user) {
     }
   }
 
-  return rows.filter((row) => !below.has(row.id));
+  /* Everybody but the person themselves, each carrying whether they are still
+     active and whether choosing them would close a loop. Nothing is removed
+     for being the wrong role, the wrong tier, or somebody's junior. */
+  return rows
+    .filter((row) => row.id !== user.id)
+    .map((row) => ({
+      ...row,
+      isActive: row.is_active !== 0,
+      wouldLoop: below.has(row.id),
+    }));
 }
 
 module.exports = { isTopOfHierarchy, chainAbove, validateManager, eligibleManagers, TOP_TIER, MAX_DEPTH };

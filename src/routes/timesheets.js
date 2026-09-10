@@ -91,9 +91,12 @@ async function mayRead(viewer, targetId) {
 // Everybody whose sheet this person may read, for the picker and the queue.
 async function readableUserIds(viewer) {
   if (holds(viewer, 'timesheet.all')) {
-    // Everybody. This application deactivates ROLES rather than people, so
-    // there is no is_active on a user to filter by — and somebody who has left
-    // still has the weeks they filled in, which is the point of keeping them.
+    /* Everybody, deactivated accounts included. There IS an is_active on a
+       user now — see src/user-deactivation.js — and this deliberately does not
+       filter by it: somebody who has left still has the weeks they filled in,
+       and a timesheet report that quietly dropped them would stop adding up.
+       (This comment used to say no such column existed, which stopped being
+       true when deactivation was added.) */
     const { rows } = await db.query('SELECT id FROM users');
     return rows.map((r) => r.id);
   }

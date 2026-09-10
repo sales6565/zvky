@@ -179,17 +179,39 @@ test('editing a user\'s project and reporting line', { skip: cfg ? false : SKIP_
     assert.deepStrictEqual(res.body.chain, ['Sam Iyer', 'Priya Menon', 'Rohit Nair']);
   });
 
-  await t.test('the dropdown never offers a choice the API would refuse', async () => {
+  await t.test('the dropdown offers everybody but the person themselves', async () => {
+    /* THIS TEST USED TO ASSERT THE OPPOSITE, and the change is deliberate.
+     *
+     * It read "the dropdown never offers a choice the API would refuse", and
+     * the list was narrowed to candidates a save would accept. The studio's
+     * decision is that Reporting To is an informational field, so the list is
+     * now every other account — not filtered by role, designation, or who
+     * reports to whom.
+     *
+     * What replaces the old guarantee is a FLAG rather than an omission: a row
+     * that would close a reporting loop still comes back, carrying wouldLoop so
+     * the form can say so before somebody picks it. The API still refuses the
+     * save, which is what keeps the hierarchy from eating its own tail.
+     */
     const res = await call(`/users/${people.lead}/manager-options`, { token });
     const ids = res.body.options.map((o) => o.id);
-    assert.ok(!ids.includes(people.lead), 'not themselves');
-    assert.ok(!ids.includes(people.artist), 'not somebody who reports to them');
-    assert.ok(ids.includes(people.ceo), 'but the CEO is a perfectly good manager');
+    assert.ok(!ids.includes(people.lead), 'not themselves — the one real exclusion');
+    assert.ok(ids.includes(people.ceo), 'the CEO is a perfectly good manager');
+    assert.ok(ids.includes(people.artist),
+      'and so is somebody who reports to them — offered, and flagged as circular');
 
-    // Every remaining option really is acceptable.
-    for (const id of ids) {
-      const attempt = await patch(people.lead, { reportsToId: id });
-      assert.strictEqual(attempt.status, 200, `option ${id} was offered but refused`);
+    const circular = res.body.options.find((o) => o.id === people.artist);
+    assert.strictEqual(circular.wouldLoop, true);
+
+    // The flag has to be true: the save is still refused.
+    const refused = await patch(people.lead, { reportsToId: people.artist });
+    assert.strictEqual(refused.status, 400);
+    assert.match(refused.body.error, /loop/i);
+
+    // And everything NOT flagged really is acceptable.
+    for (const o of res.body.options.filter((x) => !x.wouldLoop)) {
+      const attempt = await patch(people.lead, { reportsToId: o.id });
+      assert.strictEqual(attempt.status, 200, `option ${o.id} was offered unflagged but refused`);
     }
     await patch(people.lead, { reportsToId: people.vp });
   });

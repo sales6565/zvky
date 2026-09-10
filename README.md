@@ -807,6 +807,49 @@ an account holds that the table does not know about is carried across under an
 *Unsorted* group with no pipeline access, rather than leaving that account unable
 to sign in. All of it is idempotent.
 
+## "Reporting To" — what it is, and what still reads it
+
+Reporting To on the Edit User screen records who somebody reports to. The
+studio's decision is that it is **informational**: no approval routing,
+notifications, permission inheritance, task escalation or access control should
+depend on it.
+
+**The dropdown lists every other account.** Not filtered by role, designation,
+tier or who leads whom. The only account left out is the person being edited —
+nobody reports to themselves, and the API refuses it too.
+
+Two kinds of row are **marked rather than removed**:
+
+| Marker | Meaning |
+| --- | --- |
+| `(Inactive)` | A deactivated account, still offered. Dropping them would be worse than it sounds: editing somebody whose recorded manager has since been deactivated would find no matching option, fall back to *not set*, and **silently clear a reporting line nobody touched** on the next save. Keeping them is what makes the form non-destructive. |
+| `(would loop)` | Choosing them would make the hierarchy circular. Still listed, because the studio asked for every account; still refused on save, because a cycle is not a hierarchy. Marked so nobody picks an option that can only come back rejected. |
+
+One account type still gets no dropdown at all: a designation at the top of the
+hierarchy does not report to anyone, and promoting somebody into one clears
+their line. That rule predates this change and is untouched.
+
+### Two places DO read it today — flagged, not changed
+
+The intent above is not yet true of the code, and these are left working exactly
+as they are rather than quietly rewired:
+
+| Where | What it does |
+| --- | --- |
+| `src/routes/timesheets.js` — `mayRead` and `readableUserIds` | **Access control.** "Your team" is resolved as `reports_to_id = you OR team_lead_id = you`, so setting this field decides whose timesheet a holder of *View Team Timesheets* may open, and who appears in their picker and approval queue. Demonstrated: the same request returns **403 before** the line is set and **200 after**. |
+| `src/permissions.js` — `isTeamLeadOfAsset` | **A review-gate fallback.** When an assignee has *no* lead recorded at all — neither `reports_to_id` nor `team_lead_id` — any lead who can see the work may act as the TL review gate, so that submitted work does not get stuck with nobody able to approve it. Setting Reporting To removes that fallback for that person. |
+
+Both are pinned by a test that documents the contradiction on purpose, so making
+the field genuinely informational later is a deliberate act that fails the test
+and forces the decision, rather than a behaviour that drifts unnoticed.
+
+**What does not read it**, checked in the same audit: project and asset
+visibility, the Dashboard and Assets List, notification recipients, task
+assignment defaults, the Admin Dashboard, Team Capacity, the Idle Report, and
+the *My Team* tab and the ordinary TL review gate — those two use
+**`team_lead_id`**, which is a different field set elsewhere. Changing Reporting
+To raised no notification and moved no project or asset access in testing.
+
 ## Deactivating an account
 
 Somebody leaves. Deleting them destroys the record of what they did; leaving

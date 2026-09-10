@@ -1023,9 +1023,12 @@ router.get('/:id', requirePermission('user.view'), async (req, res) => {
 
 // GET /api/users/:id/manager-options — who this person could report to.
 //
-// Excludes themselves and everyone already beneath them, so the dropdown cannot
-// offer a choice the API would refuse. The API checks it again regardless: this
-// is a convenience, not the rule.
+// EVERY OTHER ACCOUNT, marked rather than filtered. Reporting To is an
+// informational field, so the list is not narrowed by role, designation or who
+// leads whom; the only account left out is the person themselves. Deactivated
+// accounts and choices that would close a reporting loop come back flagged so
+// the form can say so. The API still checks on save: this is a convenience,
+// not the rule.
 router.get('/:id/manager-options', requirePermission('user.view'), async (req, res) => {
   const { rows } = await db.query('SELECT id, `name`, `role` FROM users WHERE id = $1', [req.params.id]);
   if (!rows.length) return res.status(404).json({ error: 'User not found' });
@@ -1048,6 +1051,11 @@ router.get('/:id/manager-options', requirePermission('user.view'), async (req, r
       email: o.email,
       role: o.role,
       roleLabel: (roleDef(o.role) || {}).label || o.role,
+      /* Carried so the form can MARK these rather than hide them — see the note
+         on eligibleManagers in src/reporting.js for why hiding a deactivated
+         manager would silently clear a reporting line nobody touched. */
+      isActive: o.isActive !== false,
+      wouldLoop: Boolean(o.wouldLoop),
     })),
   });
 });

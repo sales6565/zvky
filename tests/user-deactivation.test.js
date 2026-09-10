@@ -355,11 +355,81 @@ test('deactivation, reporting lines and breaks end to end', { skip: cfg ? false 
     assert.notStrictEqual(row.reports_to_id, people.junior.id);
   });
 
-  await t.test('the manager picker never offers the person themselves', async () => {
+  await t.test('the manager picker offers every other account, marked not filtered', async () => {
+    /* Reporting To is an informational field, so the list is not narrowed by
+       role, designation, tier or who leads whom. The only exclusion is the
+       person themselves. */
     const res = await as('root', `/users/${people.junior.id}/manager-options`);
     assert.strictEqual(res.status, 200);
+
+    const everyone = await sql(cfg, 'SELECT id FROM users');
+    assert.strictEqual(res.body.options.length, everyone.length - 1,
+      'every account except the one being edited');
     assert.ok(!res.body.options.some((o) => o.id === people.junior.id),
-      'offering it would invite a refusal the form could have prevented');
+      'never themselves — nobody reports to themselves');
+
+    /* Deactivated accounts are INCLUDED and flagged. Dropping them would mean
+       editing somebody whose recorded manager has since been deactivated found
+       no matching option, fell back to "not set", and silently cleared a
+       reporting line nobody touched. */
+    const dead = res.body.options.find((o) => o.id === people.lead.id);
+    assert.ok(dead, 'the deactivated lead is still offered');
+    assert.strictEqual(dead.isActive, false, 'and is marked, so the form can say so');
+    assert.ok(res.body.options.every((o) => typeof o.wouldLoop === 'boolean'),
+      'and every row says whether choosing it would close a loop');
+  });
+
+  await t.test('a loop-forming choice is offered, flagged, and still refused on save', async () => {
+    /* Shown rather than hidden — the studio asked for every account — but the
+       API guard stays, so the row carries the warning the form prints. */
+    await as('root', `/users/${people.second.id}`, { method: 'PATCH',
+      body: { reportsToId: people.junior.id } });
+
+    const opts = (await as('root', `/users/${people.junior.id}/manager-options`)).body.options;
+    const looping = opts.find((o) => o.id === people.second.id);
+    assert.ok(looping, 'still listed');
+    assert.strictEqual(looping.wouldLoop, true, 'and flagged as circular');
+
+    const res = await as('root', `/users/${people.junior.id}`, { method: 'PATCH',
+      body: { reportsToId: people.second.id } });
+    assert.strictEqual(res.status, 400);
+    assert.match(res.body.error, /loop/i);
+  });
+
+  await t.test('WHAT REPORTING TO CURRENTLY AFFECTS — timesheet visibility', async () => {
+    /* THIS TEST DOCUMENTS A CONTRADICTION, ON PURPOSE.
+     *
+     * The studio's stated intent is that Reporting To is informational and that
+     * no access control depends on it. That is NOT true today: src/routes/
+     * timesheets.js resolves "your team" as `reports_to_id = you OR
+     * team_lead_id = you`, so setting this field decides whose timesheet a
+     * holder of timesheet.team may open.
+     *
+     * Left working as it is, and pinned here rather than changed, so that
+     * making the field genuinely informational later is a deliberate act that
+     * fails this test and forces the decision — instead of a behaviour that
+     * drifts unnoticed.
+     */
+    const worker = await makeUser('Tam Timesheet', 'tam@zvky.test', 'game_artist');
+    const boss = await makeUser('Ted Boss', 'ted@zvky.test', 'team_lead');
+    token.boss = (await login('ted@zvky.test')).body.token;
+    assert.ok((await as('boss', '/auth/me')).body.user.permissions.includes('timesheet.team'),
+      'the fixture only means anything if this lead holds timesheet.team');
+
+    const week = '2026-03-02';
+    const read = async () => (await as('boss', `/timesheets/week?userId=${worker.id}&on=${week}`)).status;
+
+    assert.strictEqual(await read(), 403, 'no reporting line: refused');
+    await as('root', `/users/${worker.id}`, { method: 'PATCH', body: { reportsToId: boss.id } });
+    assert.strictEqual(await read(), 200, 'reporting line set: the same request now succeeds');
+
+    /* And what it does NOT reach, which is the larger part of the claim: the
+       project and asset rules do not consult it. */
+    const before = (await as('boss', '/projects')).body.projects.length;
+    await as('root', `/users/${worker.id}`, { method: 'PATCH', body: { reportsToId: null } });
+    assert.strictEqual((await as('boss', '/projects')).body.projects.length, before,
+      'project visibility is unmoved by the reporting line');
+    assert.strictEqual(await read(), 403, 'and clearing it takes the timesheet access away again');
   });
 
   // --- the breaks, against the live schedule ------------------------------------
