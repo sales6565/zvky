@@ -52,6 +52,23 @@ router.post('/login', async (req, res) => {
     const match = await bcrypt.compare(password, user.password_hash);
     if (!match) return res.status(401).json({ error: 'Invalid email or password' });
 
+    /* Checked AFTER the password, on purpose. Refusing a deactivated account
+       before verifying the password would turn this endpoint into a way to ask
+       "is this address still an employee here?" without knowing the password —
+       the vagueness of the message above exists precisely to stop that. Anyone
+       reaching this line has proved the credentials, so telling them the
+       account is switched off discloses nothing they did not already have.
+
+       And it is said plainly rather than as "invalid email or password":
+       somebody whose account was suspended needs to know to ask an
+       administrator, not to keep retyping a password that is in fact correct. */
+    if (user.is_active === 0) {
+      return res.status(403).json({
+        error: 'This account has been deactivated. Ask an administrator to reactivate it.',
+        deactivated: true,
+      });
+    }
+
     const token = signToken(user.id, user.password_changed_at);
     delete user.password_hash;
     user.capabilities = capabilitiesFor(user.role);

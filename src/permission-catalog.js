@@ -61,6 +61,27 @@ const GROUPS = [
       { key: 'user.change_project',   label: 'Change Project',       impliedBy: has('manageUsers') },
       { key: 'user.change_reporting', label: 'Change Reporting To',  impliedBy: has('manageUsers') },
       {
+        key: 'user.deactivate',
+        label: 'Deactivate Users',
+        /* managePermissions, so it arrives switched on for the Super Admin and
+           nobody else, and is handed out from Settings after that. The same
+           predicate, and the same reasoning, as user.reset_password beside it:
+           this ends somebody's access to the application, and a studio should
+           decide on purpose who may do that rather than have it arrive with a
+           designation.
+
+           NOT implied by user.delete. Removing an account and suspending one
+           are different decisions with different consequences — deletion is
+           refused while a user still holds work, deactivation is precisely the
+           tool for somebody who does. */
+        impliedBy: has('managePermissions'),
+        describe: 'Deactivating an account so it can no longer sign in, and reactivating it later. '
+          + 'Work still waiting on that person is returned to Not Assigned; everything they '
+          + 'finished stays attributed to them.',
+        danger: 'A deactivated person is signed out everywhere immediately, including sessions '
+          + 'already open. Nothing they did is deleted.',
+      },
+      {
         key: 'user.reset_password',
         label: 'Reset User Password',
         /* managePermissions, not manageUsers: the studio asked for this to

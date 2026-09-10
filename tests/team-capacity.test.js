@@ -126,14 +126,19 @@ test('team capacity', { skip: cfg ? false : SKIP_REASON }, async (t) => {
      *
      * Ana holds Asset One from 13:00 to 17:00 and Asset Two from 14:00 to 18:00
      * on the same Monday. Wall clock across the two spans is 4 + 4 = 8 hours.
-     * The union is 13:00 to 18:00 — FIVE hours — and five is the answer,
-     * because at no point was she in two places.
+     * The union is 13:00 to 18:00 — five hours — because at no point was she in
+     * two places. That is what this test is here to prove, and 8 would mean it
+     * had stopped being true.
+     *
+     * From that five, the studio's configured lunch break (13:00-14:00, the
+     * default) comes off: an hour with a timer running through lunch is not an
+     * hour worked. So FOUR is the answer.
      *
      * Bo does nothing at all, so his 8 available hours are 8 idle.
      *
      *   available  2 people x 1 working day x 8h = 16.0
-     *   consumed   Ana 5.0 + Bo 0 = 5.0
-     *   idle       16.0 - 5.0 = 11.0
+     *   consumed   Ana (5.0 union - 1.0 lunch) + Bo 0 = 4.0
+     *   idle       16.0 - 4.0 = 12.0
      */
     await sql(cfg, 'DELETE FROM work_sessions');
     await session(people.ana, asset.one.id, `${MONDAY} 13:00:00`, `${MONDAY} 17:00:00`);
@@ -142,11 +147,12 @@ test('team capacity', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     const report = (await as('root', `/idle/report?from=${MONDAY}&to=${MONDAY}`)).body;
     assert.strictEqual(report.totals.people, 2, 'the two artists, and not Root');
     assert.strictEqual(report.totals.expectedHours, 16, '2 people x 1 day x 8h');
-    assert.strictEqual(report.totals.engagedHours, 5, 'the UNION of 13-17 and 14-18, not their sum');
-    assert.strictEqual(report.totals.idleHours, 11);
+    assert.strictEqual(report.totals.engagedHours, 4,
+      'the UNION of 13-17 and 14-18 (5h), less the 13:00-14:00 lunch — never their 8h sum');
+    assert.strictEqual(report.totals.idleHours, 12);
 
     const ana = report.rows.find((r) => r.email === 'ana@zvky.test');
-    assert.strictEqual(ana.engagedHours, 5, 'and per person too');
+    assert.strictEqual(ana.engagedHours, 4, 'and per person too');
   });
 
   await t.test('a span across a weekend contributes only its working hours', async () => {

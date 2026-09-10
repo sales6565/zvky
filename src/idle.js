@@ -175,7 +175,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * Rest days are counted rather than measured. See the note at the top of this
  * file: an open span tells you work was on somebody's desk across a Saturday,
  * and nothing whatever about whether they touched it. */
-function coverage(spans, { from, to, workingDays = [1, 2, 3, 4, 5], hoursPerDay = 8 }) {
+function coverage(spans, { from, to, workingDays = [1, 2, 3, 4, 5], hoursPerDay = 8, breaks = [] }) {
   const merged = mergeSpans(spans);
   const start = atUTC(from);
   const end = atUTC(to);
@@ -184,6 +184,34 @@ function coverage(spans, { from, to, workingDays = [1, 2, 3, 4, 5], hoursPerDay 
   }
   const wanted = new Set(workingDays);
   const capMs = Math.max(0, hoursPerDay) * HOUR * 1000;
+
+  /* THE BREAK WINDOWS, and what they are and are not.
+   *
+   * A span is a stretch during which work sat on somebody's desk — it is not a
+   * claim that they were at it. Leave the timer running through lunch and the
+   * hour is counted as engaged, which overstates what was worked and understates
+   * idle time in the same breath. The studio's configured breaks are therefore
+   * subtracted from the OVERLAP, per day.
+   *
+   * Only where a span actually covers the break. Subtracting a flat hour a day
+   * would take time off somebody who was not working then anyway, and could push
+   * a short day negative.
+   *
+   * These are wall-clock minutes past midnight with no timezone in them (see
+   * src/work-schedule.js), and they are applied against the same UTC day
+   * boundaries this function already uses for everything else. That is a real
+   * assumption and it is stated rather than hidden: if the day framing is wrong
+   * for a deployment, every figure this function produces is already wrong the
+   * same way, and introducing a second, different frame here would make the two
+   * halves disagree instead of being consistently offset.
+   *
+   * expectedHours is deliberately NOT touched by any of this. That figure is
+   * hoursPerDay — what the studio DECLARES a full day to be, eight hours out of
+   * a 09:30-19:00 window that already has lunch in it. Subtracting breaks from
+   * it as well would count them twice and quietly raise everybody's idle time.
+   */
+  const windows = (breaks || [])
+    .filter((w) => w && Number.isFinite(w.start) && Number.isFinite(w.end) && w.end > w.start);
 
   let workingDayMs = 0;
   let restDaysCovered = 0;
@@ -196,6 +224,21 @@ function coverage(spans, { from, to, workingDays = [1, 2, 3, 4, 5], hoursPerDay 
       if (a >= dayEnd) break;                 // merged is sorted, so nothing later overlaps
       inDay += Math.min(b, dayEnd) - Math.max(a, dayStart);
     }
+
+    /* Off comes any part of a break the spans actually cover. The windows do
+       not overlap each other — src/work-schedule.js refuses that — so no minute
+       is subtracted twice. */
+    for (const w of windows) {
+      const bStart = dayStart + w.start * 60 * 1000;
+      const bEnd = dayStart + w.end * 60 * 1000;
+      for (const [a, b] of merged) {
+        if (b <= bStart) continue;
+        if (a >= bEnd) break;
+        inDay -= Math.min(b, bEnd) - Math.max(a, bStart);
+      }
+    }
+    if (inDay < 0) inDay = 0;   // belt and braces; the subtraction is bounded above
+
     if (wanted.has(isoDay(cursor))) workingDayMs += Math.min(inDay, capMs);
     else if (inDay > 0) restDaysCovered += 1;
   }
@@ -210,10 +253,12 @@ function coverage(spans, { from, to, workingDays = [1, 2, 3, 4, 5], hoursPerDay 
  * number: a person who worked a full day entirely on another project is not
  * idle, and reporting them as 100% idle on this one would be a confident wrong
  * answer. */
-function forUser({ spans = [], from, to, workingDays = [1, 2, 3, 4, 5], hoursPerDay = 8 }) {
+function forUser({ spans = [], from, to, workingDays = [1, 2, 3, 4, 5], hoursPerDay = 8, breaks = [] }) {
   const days = workingDaysBetween(from, to, workingDays);
+  /* Not adjusted for breaks — see the long note in coverage() for why doing so
+     would count them twice. */
   const expectedHours = round(days * hoursPerDay);
-  const covered = coverage(spans, { from, to, workingDays, hoursPerDay });
+  const covered = coverage(spans, { from, to, workingDays, hoursPerDay, breaks });
 
   /* Engaged is what counts against the working day. A rest day is counted, not
      measured — see the note at the top of this file. */

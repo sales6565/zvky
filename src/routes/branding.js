@@ -81,11 +81,23 @@ router.get('/schedule', async (req, res) => {
   res.json({ schedule: workSchedule.current() });
 });
 
+/* "Lunch 13:00–14:00, Morning break 11:00–11:15" — or "none". One line for the
+   audit entry, so a reader can see at a glance what the studio's unpaid time
+   was before and after. */
+const describeBreaks = (sched) => ((sched.breaks || []).length
+  ? sched.breaks.map((b) => `${b.label} ${b.startLabel}–${b.endLabel}`).join(', ')
+  : 'none');
+
 router.put('/schedule', requirePermission('settings.working_hours'), async (req, res) => {
-  const { hoursPerDay, workingDays, dayStart, dayEnd, lunchStart, lunchEnd } = req.body || {};
+  const {
+    hoursPerDay, workingDays, dayStart, dayEnd, lunchStart, lunchEnd,
+    morningStart, morningEnd, eveningStart, eveningEnd,
+  } = req.body || {};
   const before = workSchedule.current();
-  const result = await workSchedule.save(db,
-    { hoursPerDay, workingDays, dayStart, dayEnd, lunchStart, lunchEnd });
+  const result = await workSchedule.save(db, {
+    hoursPerDay, workingDays, dayStart, dayEnd, lunchStart, lunchEnd,
+    morningStart, morningEnd, eveningStart, eveningEnd,
+  });
   if (!result.ok) return res.status(result.status).json({ errors: result.errors, error: result.errors[0].message });
   const s = result.schedule;
   req.activity({
@@ -93,12 +105,15 @@ router.put('/schedule', requirePermission('settings.working_hours'), async (req,
     entityLabel: 'Working Hours',
     summary: `Set the working day to ${s.dayStartLabel}–${s.dayEndLabel} ${s.timezone}, `
       + `${s.hoursPerDay}h, ${s.workingDayNames.join('/')}`,
+    /* Every break, not lunch alone: all three now come off everybody's tracked
+       hours, so a change to any of them changes what the studio's reports say
+       people worked — which is exactly the kind of change this log exists for. */
     changes: activity.diff(
       { day: `${before.dayStartLabel}–${before.dayEndLabel}`,
-        lunch: before.hasLunch ? `${before.lunchStartLabel}–${before.lunchEndLabel}` : 'none',
+        breaks: describeBreaks(before),
         hoursPerDay: before.hoursPerDay, workingDays: before.workingDayNames.join(', ') },
       { day: `${s.dayStartLabel}–${s.dayEndLabel}`,
-        lunch: s.hasLunch ? `${s.lunchStartLabel}–${s.lunchEndLabel}` : 'none',
+        breaks: describeBreaks(s),
         hoursPerDay: s.hoursPerDay, workingDays: s.workingDayNames.join(', ') }
     ),
   });

@@ -224,15 +224,19 @@ test('the working day window has to be one somebody can fill in', () => {
     return r.errors[0].message;
   };
 
+  /* All three break pairs come back, the unset ones as null. The window is one
+     value, so a caller saving part of it is not left guessing what became of
+     the rest. */
+  const NO_EXTRA = { morningStart: null, morningEnd: null, eveningStart: null, eveningEnd: null };
   assert.deepStrictEqual(win({}).value,
-    { dayStart: 570, dayEnd: 1140, lunchStart: 780, lunchEnd: 840 },
+    { dayStart: 570, dayEnd: 1140, lunchStart: 780, lunchEnd: 840, ...NO_EXTRA },
     'clocks become minutes past midnight, which is what the entries store');
 
   // No fixed lunch break is an answer, not an omission.
   assert.deepStrictEqual(win({ dayStart: '09:00', dayEnd: '18:00', lunchStart: '', lunchEnd: '' }).value,
-    { dayStart: 540, dayEnd: 1080, lunchStart: null, lunchEnd: null });
+    { dayStart: 540, dayEnd: 1080, lunchStart: null, lunchEnd: null, ...NO_EXTRA });
   // Half of one is not.
-  assert.match(bad({ lunchEnd: '' }, 'lunchEnd'), /both empty for no fixed break/);
+  assert.match(bad({ lunchEnd: '' }, 'lunchEnd'), /both empty for no such break/);
 
   assert.match(bad({ dayStart: '19:00', dayEnd: '09:30' }, 'dayEnd'), /end after it starts/);
   assert.match(bad({ lunchStart: '14:00', lunchEnd: '13:00' }, 'lunchEnd'), /end after it starts/);
@@ -359,9 +363,20 @@ test('idle, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
     /* A week I can check by hand: Mon 2026-03-02 to Fri 2026-03-06, an 8-hour
        day, so 40 hours expected each.
-         ana  6h + 6h  = 12h -> 28h idle, 70%
-         bo   8h x 5   = 40h ->  0h idle,  0%
-         cy   nothing  =  0h -> 40h idle, 100% */
+
+       THE CONFIGURED LUNCH BREAK COMES OFF TRACKED TIME. The default schedule
+       has lunch at 13:00-14:00, and every span below starts at 09:00 and runs
+       past 14:00, so each day loses exactly one hour to it. That is what the
+       break windows are for: a timer left running through lunch is not an hour
+       worked. expectedHours is untouched — it is what the studio DECLARES a day
+       to be, and taking breaks off that as well would count them twice.
+
+         ana  2 days of 09:00-15:00, 6h each less 1h lunch -> 5 + 5 = 10h
+              idle 40 - 10 = 30h; 30/40 = 75%; 30/5 days = 6.0 a day
+         bo   5 days of 09:00-17:00, 8h each less 1h lunch -> 7 x 5 = 35h
+              idle 40 - 35 =  5h;  5/40 = 12.5%
+         cy   nothing                                      ->         0h
+              idle 40; 100% */
     const plan = {
       ana: [['2026-03-02', 6], ['2026-03-03', 6]],
       bo: [['2026-03-02', 8], ['2026-03-03', 8], ['2026-03-04', 8], ['2026-03-05', 8], ['2026-03-06', 8]],
@@ -399,14 +414,14 @@ test('idle, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(d.expectedHours, 40);
 
     const by = Object.fromEntries(d.rows.map((r) => [r.name, r]));
-    assert.strictEqual(by['Ana Lee'].engagedHours, 12);
-    assert.strictEqual(by['Ana Lee'].idleHours, 28);
-    assert.strictEqual(by['Ana Lee'].idlePercent, 70);
-    assert.strictEqual(by['Ana Lee'].idlePerDay, 5.6);
+    assert.strictEqual(by['Ana Lee'].engagedHours, 10);
+    assert.strictEqual(by['Ana Lee'].idleHours, 30);
+    assert.strictEqual(by['Ana Lee'].idlePercent, 75);
+    assert.strictEqual(by['Ana Lee'].idlePerDay, 6);
 
-    assert.strictEqual(by['Bo Chen'].engagedHours, 40);
-    assert.strictEqual(by['Bo Chen'].idleHours, 0);
-    assert.strictEqual(by['Bo Chen'].idlePercent, 0);
+    assert.strictEqual(by['Bo Chen'].engagedHours, 35);
+    assert.strictEqual(by['Bo Chen'].idleHours, 5);
+    assert.strictEqual(by['Bo Chen'].idlePercent, 12.5);
 
     // The person with nothing at all is exactly who a capacity report is for.
     assert.strictEqual(by['Cy Dean'].engagedHours, 0);
@@ -422,9 +437,10 @@ test('idle, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(monday.workingDays, 1);
     assert.strictEqual(monday.expectedHours, 8);
     const ana = monday.rows.find((r) => r.name === 'Ana Lee');
-    assert.strictEqual(ana.engagedHours, 6);
-    assert.strictEqual(ana.idleHours, 2);
-    assert.strictEqual(ana.idlePercent, 25);
+    /* 09:00-15:00 is six hours, one of which was lunch. */
+    assert.strictEqual(ana.engagedHours, 5);
+    assert.strictEqual(ana.idleHours, 3);
+    assert.strictEqual(ana.idlePercent, 37.5);
 
     const saturday = (await as('root', '/idle/report?period=day&on=2026-03-07')).body;
     assert.strictEqual(saturday.workingDays, 0);

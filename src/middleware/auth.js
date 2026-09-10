@@ -50,6 +50,23 @@ async function authenticate(req, res, next) {
       return res.status(401).json({ error: 'Your password was changed. Please sign in again.' });
     }
     delete user.password_changed_at;
+
+    /* Deactivation has to end sessions that are ALREADY OPEN, not just stop new
+       sign-ins. Checking only at /auth/login would leave a suspended account
+       fully usable for as long as somebody's tab stayed open — and the window
+       somebody is deactivated to close is exactly that one. The token stays
+       cryptographically valid; the account behind it no longer is.
+
+       401 rather than 403, so the browser treats it the way it treats any dead
+       session: clear the token and return to the sign-in screen. A 403 would
+       leave them sitting on a screen whose every request fails. */
+    if (user.is_active === 0) {
+      return res.status(401).json({
+        error: 'This account has been deactivated. Ask an administrator to reactivate it.',
+        deactivated: true,
+      });
+    }
+
     if (!roleDef(user.role)) {
       // Either the designation really was removed, or this process is holding a
       // catalogue older than the account. The second is ordinary: the role may

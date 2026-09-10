@@ -195,6 +195,9 @@ async function buildIdleReport(req) {
       to: period.to,
       workingDays: schedule.workingDays,
       hoursPerDay: schedule.hoursPerDay,
+      /* The configured lunch and break windows, so time a timer ran through a
+         break does not count as engaged. */
+      breaks: schedule.breaks || [],
     });
     return {
       id: u.id, name: u.name, email: u.email,

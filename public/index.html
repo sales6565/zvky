@@ -448,6 +448,24 @@ tr.past-round{opacity:0.62;}
 .ref-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:4px;}
 .ref-head h3{font-family:'Space Grotesk';font-size:15px;margin:0;}
 .ref-note{font-size:11.5px;color:var(--ink-faint);margin-bottom:10px;}
+/* The Settings accordion. Placed after .ref-section and .ref-head above, so
+   the display rule cannot lose a source-order tie to what it overrides. */
+.ref-section.acc{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:10px;
+  background:var(--surface);}
+.ref-section.acc > .ref-head{cursor:pointer;margin-bottom:0;user-select:none;align-items:center;}
+.ref-section.acc > .ref-head:hover h3{color:var(--brand-accent);}
+.ref-section.acc > .ref-head:focus-visible{outline:2px solid var(--brand-accent);outline-offset:3px;border-radius:6px;}
+/* Everything but the heading is hidden while closed. The sections all have the
+   same shape — a .ref-head first, then their content as siblings — so this one
+   rule collapses all fifteen without any of them knowing about it. */
+.ref-section.acc:not(.acc-open) > *:not(.ref-head){display:none !important;}
+.ref-section.acc.acc-open > .ref-head{margin-bottom:10px;}
+.acc-chevron{margin-left:auto;flex:none;width:9px;height:9px;border-right:2px solid var(--ink-muted);
+  border-bottom:2px solid var(--ink-muted);transform:rotate(-45deg);transition:transform .15s ease;}
+.ref-section.acc.acc-open .acc-chevron{transform:rotate(45deg);}
+.set-index-item.sii-open{cursor:pointer;text-align:left;font-family:inherit;}
+.set-index-item.sii-open:hover{border-color:var(--brand-accent);}
+.set-index-tools{display:flex;gap:8px;margin-top:10px;}
 .ref-table{width:100%;border-collapse:collapse;font-size:12.5px;}
 .ref-table th{text-align:left;padding:7px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink-muted);font-family:'IBM Plex Mono';border-bottom:1px solid var(--border);}
 .ref-table td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:middle;}
@@ -838,6 +856,32 @@ tr.past-round{opacity:0.62;}
   .pnl-bar-lbl{width:58px;}
   .pnl-bar-val{width:92px;}
 }
+/* Deactivated accounts: a badge, a filter, and the confirmation dialog. */
+.u-status-filter{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-left:auto;}
+.u-status{background:var(--surface-2);border:0;border-right:1px solid var(--border);color:var(--ink-muted);
+  padding:8px 12px;font-size:12px;cursor:pointer;font-family:inherit;}
+.u-status:last-child{border-right:0;}
+.u-status.on{background:var(--brand);color:#fff;}
+.u-status-n{opacity:.65;font-family:'IBM Plex Mono';font-size:10.5px;margin-left:3px;}
+/* Dimmed, not hidden: the row is still readable, because somebody looking at
+   the inactive list is looking for a person, not for an absence. */
+.u-inactive td{opacity:.6;}
+.u-inactive td .u-badge-inactive{opacity:1;}
+.u-badge-inactive{margin-left:8px;font-size:10px;text-transform:uppercase;letter-spacing:.6px;
+  font-family:'IBM Plex Mono';color:#ff9b80;background:rgba(255,90,54,.12);
+  border:1px solid rgba(255,90,54,.32);border-radius:5px;padding:2px 6px;white-space:nowrap;}
+.dz-chip{display:inline-block;background:var(--surface-3,var(--surface-2));border:1px solid var(--border);
+  border-radius:6px;padding:2px 8px;margin:0 5px 5px 0;font-size:11.5px;color:var(--ink);}
+.dz-block{margin:12px 0;border:1px solid var(--border);border-radius:10px;padding:11px 13px;background:var(--surface-2);}
+.dz-h{font-size:12.5px;font-weight:600;color:var(--ink);}
+.dz-note{font-size:11px;color:var(--ink-faint);margin:3px 0 8px;line-height:1.5;}
+/* Capped and scrollable: somebody with forty open tasks still gets a dialog
+   that fits on the screen, with its buttons reachable. */
+.dz-list{max-height:190px;overflow-y:auto;}
+.dz-row{display:grid;grid-template-columns:88px 1fr auto;gap:9px;align-items:center;
+  padding:4px 0;border-top:1px solid var(--border);font-size:11.5px;}
+.dz-row:first-child{border-top:0;}
+.dz-status{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--ink-faint);font-family:'IBM Plex Mono';}
 /* Rate Cards: the price list behind Profit & Loss. */
 .rc-table td{vertical-align:middle;}
 .rc-table .rc-rate{white-space:nowrap;}
@@ -1640,6 +1684,24 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
   </div>
 </div>
 
+<!-- Deactivating an account. Deliberately a "look before you leap" dialog
+     rather than a confirm(): what happens depends on what the person is
+     currently holding, and the two things somebody needs to know before
+     pressing it — which unfinished work is about to change hands, and who is
+     left reporting to a switched-off account — cannot be written into a static
+     sentence. Both are fetched and listed. -->
+<div class="modal-wrap" id="deactivateWrap">
+  <div class="modal" style="width:540px;">
+    <h2 id="dz_title">Deactivate account</h2>
+    <div id="dz_body" style="font-size:12.5px;color:var(--ink-muted);line-height:1.6;"></div>
+    <div class="ref-err" id="dz_err"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="dz_cancel">Cancel</button>
+      <button class="btn btn-brand" id="dz_confirm">Deactivate</button>
+    </div>
+  </div>
+</div>
+
 <!-- What an administrator hands over after a reset. Shown once and never
      retrievable: the value is not stored anywhere readable, so closing this
      without copying it means resetting again. -->
@@ -2333,32 +2395,42 @@ function applyGate(id, also){
    settings.audit_logs is deliberately absent: the catalogue lists it, but no
    section has been built for it yet, and granting it alone should not open an
    empty page. */
+/* `heading` is the <h3> the section actually draws, which is NOT always the
+   label used here — "IP Allowlist" in this index is headed "Allowed IP
+   Addresses" on the page. The accordion matches the two by this field rather
+   than by text, so a heading can be reworded without silently detaching its
+   index entry from the section it is supposed to open. */
 const SETTINGS_SECTIONS = [
-  { permission:'settings.permissions',  label:'Role Permissions', note:'What each role may do, across all six permission groups.' },
-  { permission:'settings.asset_types',  label:'Scope of Work',    note:'The Scope of Work dropdown and the code prefix each asset gets.' },
-  { permission:'settings.branding',     label:'Branding',         note:'The name, tagline and logo shown in the header and on the sign-in screen.' },
-  { permission:'settings.priorities',   label:'Priorities',       note:'The Priority dropdown.' },
-  { permission:'settings.categories',   label:'Asset Categories', note:'The Category dropdown on an asset. Starts empty — add the studio\'s own list.' },
-  { permission:'settings.project_categories', label:'Project Categories', note:'The Category dropdown on a project. A separate list from the asset one.' },
-  { permission:'settings.milestone_types', label:'Milestone Types', note:'The stages a project can be planned in — Art, Animation, and whatever the studio adds.' },
-  { permission:'settings.roles',        label:'Roles',            note:'The studio\'s designations and what each one can do.' },
-  { permission:'settings.ip_allowlist', label:'IP Allowlist',     note:'Which addresses may reach this application at all.' },
-  { permission:'settings.ip_blocklist', label:'IP Blocklist',     note:'Addresses barred outright, whatever else allows them.' },
-  { permission:'settings.email_config', label:'Email Configuration', note:'The mail server task notifications are sent through.' },
+  { permission:'settings.permissions',  label:'Role Permissions', heading:'Role Permissions', note:'What each role may do, across all six permission groups.' },
+  { permission:'settings.asset_types',  label:'Scope of Work',    heading:'Scope of Work',    note:'The Scope of Work dropdown and the code prefix each asset gets.' },
+  { permission:'settings.branding',     label:'Branding',         heading:'Branding',         note:'The name, tagline and logo shown in the header and on the sign-in screen.' },
+  /* Was missing from this list entirely, which is a bug rather than an
+     omission: canOpenSettings() is built from it, so a designation granted
+     Working Hours and nothing else held a permission whose screen it could not
+     reach — the Settings tab was not there to open. */
+  { permission:'settings.working_hours', label:'Working Hours',   heading:'Working Hours',    note:'The working day, and the lunch and break windows excluded from tracked hours.' },
+  { permission:'settings.priorities',   label:'Priorities',       heading:'Priorities',       note:'The Priority dropdown.' },
+  { permission:'settings.categories',   label:'Asset Categories', heading:'Asset Categories', note:'The Category dropdown on an asset. Starts empty — add the studio\'s own list.' },
+  { permission:'settings.project_categories', label:'Project Categories', heading:'Project Categories', note:'The Category dropdown on a project. A separate list from the asset one.' },
+  { permission:'settings.milestone_types', label:'Milestone Types', heading:'Milestone Types', note:'The stages a project can be planned in — Art, Animation, and whatever the studio adds.' },
+  { permission:'settings.roles',        label:'Roles',            heading:'Roles',            note:'The studio\'s designations and what each one can do.' },
+  { permission:'settings.ip_allowlist', label:'IP Allowlist',     heading:'Allowed IP Addresses', note:'Which addresses may reach this application at all.' },
+  { permission:'settings.ip_blocklist', label:'IP Blocklist',     heading:'Blocked IP Addresses', note:'Addresses barred outright, whatever else allows them.' },
+  { permission:'settings.email_config', label:'Email Configuration', heading:'Email Configuration', note:'The mail server task notifications are sent through.' },
   /* Not a settings.* key. The rate card is the price list the Profit & Loss
      report is costed against, so it belongs to whoever manages the money rather
      than to whoever manages the application — and it is listed here so that a
      designation granted pnl.manage and nothing else can still reach the Settings
      tab to use it. */
-  { permission:'pnl.manage',            label:'Rate Cards',       note:'What each role and level costs per hour, for Profit & Loss.' },
+  { permission:'pnl.manage',            label:'Rate Cards',       heading:'Rate Cards', note:'What each role and level costs per hour, for Profit & Loss.' },
   /* The two read-only records. They were missing from this list, which is a
      bug rather than an omission: canOpenSettings() below is what gates the
      Settings TAB, so a designation granted the Activity Log and nothing else
      held a permission it could not reach — the tab was not there to open. The
      same would have been true of Chat Activity the moment somebody granted it
      to a role that runs nothing else. */
-  { permission:'settings.activity_log', label:'Activity Log',     note:'Every action anybody has taken, across the whole application.' },
-  { permission:'settings.chat_activity', label:'Chat Activity',   note:'Every chat message in the studio. Reading it is itself recorded.' },
+  { permission:'settings.activity_log', label:'Activity Log',     heading:'Activity Log', note:'Every action anybody has taken, across the whole application.' },
+  { permission:'settings.chat_activity', label:'Chat Activity',   heading:'Chat Activity', note:'Every chat message in the studio. Reading it is itself recorded.' },
 ];
 /* Settings opens for anyone holding at least one of them, and shows only the
    sections they hold. */
@@ -5356,7 +5428,11 @@ const userSections = () => [
   { id:'idle', label:'Idle Now',   allowed:can('user.idle_view') },
 ].filter(s=>s.allowed);
 
-const usersState = { section:'list' };
+/* `status` is which slice of the roster the list is showing: active (the
+   default — who works here), inactive, or all. Held here rather than in the URL
+   because there is no router on this page; it survives a re-render and resets
+   on a reload, which is the right lifetime for a filter nobody bookmarks. */
+const usersState = { section:'list', status:'active' };
 
 function userSectionTabs(sections){
   if(sections.length < 2) return '';
@@ -5512,7 +5588,12 @@ async function renderUsers(sections = userSections()){
   const el = document.getElementById('usersView');
   const u = state.currentUser;
   if(!canAnyIn('user')){ el.innerHTML=''; return; }
-  const { users, total } = await api(`/users?search=${encodeURIComponent(state.search)}&limit=${state.usersRenderLimit}&offset=0`);
+  /* Active by default — the roster is who works here. The other two views are
+     one click away and the counts say what each holds, so the list never
+     silently hides anybody. */
+  const status = usersState.status || 'active';
+  const { users, total, counts } = await api(
+    `/users?search=${encodeURIComponent(state.search)}&limit=${state.usersRenderLimit}&offset=0&status=${status}`);
   el.innerHTML = `
     ${userSectionTabs(sections)}
     <div style="display:flex;gap:10px;margin-bottom:12px;align-items:center;">
@@ -5520,6 +5601,10 @@ async function renderUsers(sections = userSections()){
       ${can('user.add') ? `<button class="btn btn-brand" id="addUserBtn">+ Add User</button>` : ''}
       ${can('user.bulk_upload') ? `<button class="btn btn-ghost" id="bulkUserBtn">Bulk Upload Users</button>
       <button class="btn btn-ghost" id="downloadUserSampleBtn" title="Download a CSV with the user columns and example rows">Sample format</button>` : ''}
+      <div class="u-status-filter" role="group" aria-label="Which accounts to list">
+        ${[['active', 'Active', counts.active], ['inactive', 'Inactive', counts.inactive], ['all', 'All', counts.active + counts.inactive]]
+          .map(([key, label, n]) => `<button class="u-status${status===key?' on':''}" data-status="${key}">${label} <span class="u-status-n">${n}</span></button>`).join('')}
+      </div>
     </div>
     <table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Project</th><th>Reporting To</th><th></th></tr></thead><tbody>
       ${users.map(x=>{
@@ -5536,12 +5621,17 @@ async function renderUsers(sections = userSections()){
            password. The server refuses it either way; the button is left off so
            nobody is offered an action that will be turned down. */
         const canReset = can('user.reset_password') && mayAdminister && x.id!==u.id;
+        /* Same three guards the API applies, so nobody is offered a button that
+           would come back 403: not yourself (you would sign yourself out), not
+           an account that runs the studio (demote it first), and only with the
+           permission. */
+        const canDeactivate = can('user.deactivate') && mayAdminister && x.id!==u.id && !targetRunsStudio;
         /* Top of the hierarchy is stated, not left blank: an empty cell reads as
            "nobody has filled this in yet", which invites someone to fill it in. */
         const reporting = x.topOfHierarchy
           ? '<span class="ud-top">Top of hierarchy</span>'
           : (x.reportsToName ? escapeHTML(x.reportsToName) : '<span class="ud-none">Not set</span>');
-        return `<tr><td><span class="who-line">${avatarHTML({ id:x.id, name:x.name, photoAt:x.photoUpdatedAt }, { size:24, title:false })}<button class="u-link userDetailBtn" data-id="${x.id}">${escapeHTML(x.name)}</button></span></td>
+        return `<tr class="${x.isActive===false?'u-inactive':''}"><td><span class="who-line">${avatarHTML({ id:x.id, name:x.name, photoAt:x.photoUpdatedAt }, { size:24, title:false })}<button class="u-link userDetailBtn" data-id="${x.id}">${escapeHTML(x.name)}</button>${x.isActive===false?`<span class="u-badge-inactive" title="Cannot sign in${x.deactivatedBy?`. Deactivated by ${escapeHTML(x.deactivatedBy)}`:''}${x.deactivatedAt?` on ${escapeHTML(new Date(x.deactivatedAt).toLocaleDateString())}`:''}">Inactive</span>`:''}</span></td>
           <td class="mono" style="font-size:11.5px;">${escapeHTML(x.email)}</td>
           <td><span class="role-badge" title="${escapeHTML(r.group||'')}" style="background:${r.color}22;color:${r.color}">${escapeHTML(r.label)}</span></td>
           <td>${x.projectName ? escapeHTML(x.projectName) : '<span class="ud-none">None</span>'}</td>
@@ -5549,11 +5639,15 @@ async function renderUsers(sections = userSections()){
           <td style="text-align:right;white-space:nowrap;">
             ${canEditRow ? `<button class="btn btn-ghost btn-sm editUserBtn" data-id="${x.id}">Edit</button>` : ''}
             ${canReset ? `<button class="btn btn-ghost btn-sm resetPwBtn" data-id="${x.id}" data-name="${escapeHTML(x.name)}">Reset password</button>` : ''}
+            ${canDeactivate ? (x.isActive===false
+              ? `<button class="btn btn-ghost btn-sm reactivateBtn" data-id="${x.id}" data-name="${escapeHTML(x.name)}">Reactivate</button>`
+              : `<button class="btn btn-ghost btn-sm deactivateBtn" data-id="${x.id}" data-name="${escapeHTML(x.name)}">Deactivate</button>`) : ''}
             ${canDelete ? `<button class="btn btn-ghost btn-sm delUserBtn" data-id="${x.id}" data-name="${escapeHTML(x.name)}">Remove</button>` : ''}</td></tr>`;
       }).join('')}
     </tbody></table>
     ${total>users.length ? `<div style="text-align:center;margin-top:12px;"><button class="btn btn-ghost" id="loadMoreUsers">Show more (${total-users.length} remaining)</button></div>` : ''}
-    <div style="margin-top:10px;font-size:12px;color:var(--ink-faint);">${users.length} of ${total} users visible to you</div>
+    <div style="margin-top:10px;font-size:12px;color:var(--ink-faint);">${users.length} of ${total} ${status==='inactive'?'deactivated ':status==='active'?'active ':''}users visible to you${
+      status==='active' && counts.inactive ? ` — ${counts.inactive} deactivated ${counts.inactive===1?'account is':'accounts are'} not shown.` : ''}</div>
   `;
   wireUserSections(el);
   document.getElementById('userSearch').value = state.search;
@@ -5569,6 +5663,20 @@ async function renderUsers(sections = userSections()){
   el.querySelectorAll('.userDetailBtn').forEach(btn=>btn.addEventListener('click', ()=>openUserDetail(btn.dataset.id)));
   el.querySelectorAll('.resetPwBtn').forEach(btn=>{
     btn.addEventListener('click', ()=>openResetPassword(btn.dataset.id, btn.dataset.name));
+  });
+  el.querySelectorAll('.u-status').forEach(btn=>btn.addEventListener('click', ()=>{
+    usersState.status = btn.dataset.status;
+    renderUsersTab();
+  }));
+  el.querySelectorAll('.deactivateBtn').forEach(btn=>{
+    btn.addEventListener('click', ()=>openDeactivateUser(btn.dataset.id, btn.dataset.name));
+  });
+  el.querySelectorAll('.reactivateBtn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!confirm(`Reactivate ${btn.dataset.name}?\n\nThey will be able to sign in again. Work that was unassigned when they were deactivated is NOT given back — somebody else may be doing it now.`)) return;
+      try{ await api('/users/'+btn.dataset.id+'/reactivate', { method:'POST' }); renderUsersTab(); showToast(`${btn.dataset.name} can sign in again.`); }
+      catch(err){ showToast(err.message); }
+    });
   });
   el.querySelectorAll('.delUserBtn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
@@ -5647,7 +5755,11 @@ function settingsIndexHTML(){
     <div class="set-index">
       <div class="set-index-lbl">On this page</div>
       <div class="set-index-grid">
-        ${held.map(s=>`<div class="set-index-item"><span class="sii-name">${escapeHTML(s.label)}</span><span class="sii-note">${escapeHTML(s.note)}</span></div>`).join('')}
+        ${held.map(s=>`<button class="set-index-item sii-open" data-heading="${escapeHTML(s.heading||s.label)}"><span class="sii-name">${escapeHTML(s.label)}</span><span class="sii-note">${escapeHTML(s.note)}</span></button>`).join('')}
+      </div>
+      <div class="set-index-tools">
+        <button class="btn btn-ghost btn-sm" id="settingsExpandAll">Expand all</button>
+        <button class="btn btn-ghost btn-sm" id="settingsCollapseAll">Collapse all</button>
       </div>
       ${elsewhere.length ? `
         <div class="set-index-lbl" style="margin-top:14px;">Managed on their own tabs</div>
@@ -8299,6 +8411,160 @@ async function renderSettings(){
      the API lets them read the card; what they cannot do is change it, so what
      they are not shown is the form rather than the numbers. */
   if(can('pnl.manage')) await renderRateCards();
+
+  /* Last, so every section exists to be collapsed — including the ones above
+     that are awaited. The observer set up here keeps the state applied for the
+     ones that later repaint themselves. */
+  wireSettingsAccordion();
+}
+
+
+/* ---------------------------------------------------------------------------
+   Settings as an accordion.
+
+   The page had grown to about ten thousand pixels of continuous scroll, and the
+   "On this page" list at the top named the sections without going to them —
+   which made it a table of contents you could not use.
+
+   WHY THIS IS A PASS OVER THE DOM RATHER THAN A REWRITE OF FIFTEEN SECTIONS.
+   Every section already has the same shape: a .ref-section whose first child is
+   a .ref-head containing its <h3>. Nothing nests. So collapsing is a property
+   that can be applied uniformly from outside, and none of the fifteen render
+   functions has to know it is inside an accordion — which is what keeps this
+   additive. Rewriting each one would have touched every Settings feature in the
+   app to change how tall the page is.
+
+   WHY A MutationObserver. Several sections repaint themselves independently of
+   renderSettings: the rate card after a save, the IP lists after an add, the
+   activity log after a filter. Each of those replaces its container's innerHTML
+   and would throw away any wrapper or class put on the section — so the state
+   lives in SETTINGS_OPEN, keyed by heading, and is re-applied whenever the
+   subtree changes. Hooking every repaint call site instead would work until
+   somebody adds the sixteenth section and forgets.
+
+   COLLAPSED BY DEFAULT, with one exception: if a studio holds exactly one
+   Settings section, collapsing it means the entire page is a single closed
+   heading, which reads as broken rather than tidy. One section opens itself.
+   --------------------------------------------------------------------------- */
+const SETTINGS_OPEN = new Set();
+let settingsAccordionObserver = null;
+
+/* The heading text is the key. It is what the section draws, what
+   SETTINGS_SECTIONS.heading names, and what the index buttons carry — so all
+   three agree without an id having to be threaded through fifteen render
+   functions. */
+function settingsSectionKey(section){
+  const h = section.querySelector(':scope > .ref-head h3');
+  return h ? h.textContent.trim() : null;
+}
+
+function applySettingsAccordion(){
+  const view = document.getElementById('settingsView');
+  if(!view) return;
+  const sections = [...view.querySelectorAll('.ref-section')];
+  if(!sections.length) return;
+
+  /* The one-section studio: nothing to navigate between, so leave it open. */
+  if(sections.length === 1){
+    const only = settingsSectionKey(sections[0]);
+    if(only) SETTINGS_OPEN.add(only);
+  }
+
+  for(const section of sections){
+    const key = settingsSectionKey(section);
+    if(!key) continue;
+    const head = section.querySelector(':scope > .ref-head');
+    if(!head) continue;
+
+    section.classList.add('acc');
+    section.classList.toggle('acc-open', SETTINGS_OPEN.has(key));
+    section.dataset.accKey = key;
+
+    /* Wired once per element. The observer runs on every repaint, and adding a
+       listener each time would fire the handler twice, then four times. */
+    if(!head.dataset.accWired){
+      head.dataset.accWired = '1';
+      head.setAttribute('role', 'button');
+      head.setAttribute('tabindex', '0');
+      const toggle = () => toggleSettingsSection(key);
+      head.addEventListener('click', (e)=>{
+        /* A heading can hold its own controls — the Activity Log's export
+           buttons sit in one. Clicking those must not also collapse the section
+           out from under the click. */
+        if(e.target.closest('button, a, input, select')) return;
+        toggle();
+      });
+      head.addEventListener('keydown', (e)=>{
+        if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); toggle(); }
+      });
+    }
+    if(!head.querySelector('.acc-chevron')){
+      const chev = document.createElement('span');
+      chev.className = 'acc-chevron';
+      chev.setAttribute('aria-hidden', 'true');
+      head.appendChild(chev);
+    }
+    head.setAttribute('aria-expanded', SETTINGS_OPEN.has(key) ? 'true' : 'false');
+  }
+}
+
+function toggleSettingsSection(key, force){
+  const open = force === undefined ? !SETTINGS_OPEN.has(key) : force;
+  if(open) SETTINGS_OPEN.add(key); else SETTINGS_OPEN.delete(key);
+  applySettingsAccordion();
+  return open;
+}
+
+/* Open the named section and go to it. Used by the index buttons. */
+function openSettingsSection(key){
+  toggleSettingsSection(key, true);
+  const section = [...document.querySelectorAll('#settingsView .ref-section')]
+    .find(s=>settingsSectionKey(s) === key);
+  if(section) section.scrollIntoView({ behavior:'smooth', block:'start' });
+  return Boolean(section);
+}
+
+function wireSettingsAccordion(){
+  const view = document.getElementById('settingsView');
+  if(!view) return;
+
+  view.querySelectorAll('.sii-open').forEach(btn=>{
+    if(btn.dataset.accWired) return;
+    btn.dataset.accWired = '1';
+    btn.addEventListener('click', ()=>openSettingsSection(btn.dataset.heading));
+  });
+  const all = (open) => {
+    [...view.querySelectorAll('#settingsView .ref-section, .ref-section')].forEach(s=>{
+      const key = settingsSectionKey(s);
+      if(!key) return;
+      if(open) SETTINGS_OPEN.add(key); else SETTINGS_OPEN.delete(key);
+    });
+    applySettingsAccordion();
+  };
+  const ex = document.getElementById('settingsExpandAll');
+  const co = document.getElementById('settingsCollapseAll');
+  if(ex && !ex.dataset.accWired){ ex.dataset.accWired='1'; ex.addEventListener('click', ()=>all(true)); }
+  if(co && !co.dataset.accWired){ co.dataset.accWired='1'; co.addEventListener('click', ()=>all(false)); }
+
+  /* One observer for the life of the page. Sections that repaint themselves get
+     their collapsed state and their chevron put back without every repaint site
+     having to remember to ask. */
+  if(!settingsAccordionObserver){
+    settingsAccordionObserver = new MutationObserver(()=>{
+      /* Guarded: applySettingsAccordion mutates the subtree it is watching
+         (adding the chevron), so an unguarded observer would call itself
+         forever. */
+      if(settingsAccordionObserver.busy) return;
+      settingsAccordionObserver.busy = true;
+      queueMicrotask(()=>{
+        applySettingsAccordion();
+        wireSettingsAccordion();
+        settingsAccordionObserver.busy = false;
+      });
+    });
+    settingsAccordionObserver.observe(view, { childList:true, subtree:true });
+  }
+  applySettingsAccordion();
 }
 
 function renderRefSection(sec){
@@ -10267,10 +10533,11 @@ async function renderSchedule(){
   el.innerHTML = `
     <div class="ref-section">
       <div class="ref-head"><h3>Working Hours</h3></div>
-      <div class="ref-note">The studio's day. Two things read it: the Idle Report measures tracked time
-        against the hours and days, and the Time Sheet only accepts entries inside the window below,
-        with the lunch break taken off whatever overlaps it. Public holidays and leave are not recorded
-        anywhere, so time away still reads as idle time.</div>
+      <div class="ref-note">The studio's day, and the breaks that come out of it. The Idle Report
+        measures tracked time against the hours and days below, and subtracts any part of a break a
+        timer was left running through — so an hour spent at lunch with an asset still open no longer
+        counts as an hour worked. Public holidays and leave are not recorded anywhere, so time away
+        still reads as idle time.</div>
       <div class="ref-add">
         <div>
           <label>Hours in a working day</label>
@@ -10283,17 +10550,37 @@ async function renderSchedule(){
           </div>
         </div>
       </div>
-      ${/* Day starts / Day ends / Lunch from / Lunch until were here.
+      ${/* The clock times came back, and it is worth saying why they went away.
            
-           They set the window a timesheet line had to fall inside and the hour
-           subtracted from one. A line is a number of hours now, so nothing
-           reads any of the four — and four inputs that save a value nothing
-           consults is worse than no inputs at all: somebody would set the
-           studio's hours and believe they had changed something.
+           They were removed when a timesheet line became a number of hours,
+           because at that point nothing read them — and an input that saves a
+           value nothing consults is worse than no input at all: somebody would
+           set the studio's hours and believe they had changed something.
            
-           The values are still in the database and still returned by the API,
-           so a studio that goes back to clock times gets its window back
-           rather than its defaults. */''}
+           They have a consumer again. The Idle Report now subtracts the break
+           windows from tracked time (see coverage() in src/idle.js), so these
+           are load-bearing rather than decorative. The day window is here too
+           because a break has to sit inside it, and there is no way to set one
+           sensibly without being able to see the other. */''}
+      <div class="ref-add">
+        <div><label>Day starts</label><input type="time" id="sch_dayStart" class="narrow" value="${escapeHTML(SCHEDULE.dayStartLabel||'')}"></div>
+        <div><label>Day ends</label><input type="time" id="sch_dayEnd" class="narrow" value="${escapeHTML(SCHEDULE.dayEndLabel||'')}"></div>
+      </div>
+      <div class="ref-note" style="margin-top:8px;margin-bottom:4px;"><strong>Breaks.</strong>
+        Time inside these windows does not count towards anybody's worked hours. Leave a pair empty
+        for no such break — a blank is a real answer, not an unfinished form.</div>
+      <div class="ref-add">
+        <div><label>Morning break from</label><input type="time" id="sch_morningStart" class="narrow" value="${escapeHTML(SCHEDULE.morningStartLabel||'')}"></div>
+        <div><label>until</label><input type="time" id="sch_morningEnd" class="narrow" value="${escapeHTML(SCHEDULE.morningEndLabel||'')}"></div>
+      </div>
+      <div class="ref-add">
+        <div><label>Lunch from</label><input type="time" id="sch_lunchStart" class="narrow" value="${escapeHTML(SCHEDULE.lunchStartLabel||'')}"></div>
+        <div><label>until</label><input type="time" id="sch_lunchEnd" class="narrow" value="${escapeHTML(SCHEDULE.lunchEndLabel||'')}"></div>
+      </div>
+      <div class="ref-add">
+        <div><label>Evening break from</label><input type="time" id="sch_eveningStart" class="narrow" value="${escapeHTML(SCHEDULE.eveningStartLabel||'')}"></div>
+        <div><label>until</label><input type="time" id="sch_eveningEnd" class="narrow" value="${escapeHTML(SCHEDULE.eveningEndLabel||'')}"></div>
+      </div>
       <div class="ref-add" style="margin-top:2px;">
         <button class="btn btn-brand" id="sch_save">Save</button>
       </div>
@@ -10304,8 +10591,12 @@ async function renderSchedule(){
         The Idle report measures against that day; the Time Sheet separately flags anything over
         <strong>${SCHEDULE.maxHours}h</strong> — flags it, not refuses it. The two are deliberately
         different numbers: a studio can expect eight hours and only want a second look above ten.
-        <br>A timesheet line is a number of hours, so there is no start or end time to check against a
-        working window any more.</div>
+        <br>${SCHEDULE.breaks && SCHEDULE.breaks.length
+          ? `Breaks configured: ${SCHEDULE.breaks.map(b=>`<strong>${escapeHTML(b.label)} ${escapeHTML(b.startLabel)}–${escapeHTML(b.endLabel)}</strong>`).join(', ')}
+             — ${(SCHEDULE.breakMinutes/60).toFixed(2).replace(/\.?0+$/,'')}h a day that does not count as worked.`
+          : 'No breaks are configured, so nothing is subtracted from tracked time.'}
+        <br>A timesheet line is a number of hours typed by hand, so it is not checked against these
+        times; they apply to the Idle Report's tracked hours.</div>
     </div>`;
 
   document.getElementById('sch_save').onclick = async ()=>{
@@ -10315,8 +10606,18 @@ async function renderSchedule(){
     try{
       /* Only the two the studio can still set. The endpoint leaves a field it
          is not sent alone, so the stored window survives untouched. */
+      /* An empty time input sends null, which is what "no such break" means to
+         the API — and is why a blank pair clears a break rather than being
+         quietly ignored as "unchanged". */
+      const clock = (id) => { const v = document.getElementById(id).value; return v === '' ? null : v; };
       const res = await api('/branding/schedule', { method:'PUT',
-        body:{ hoursPerDay: Number(document.getElementById('sch_hours').value), workingDays } });
+        body:{
+          hoursPerDay: Number(document.getElementById('sch_hours').value), workingDays,
+          dayStart: clock('sch_dayStart'), dayEnd: clock('sch_dayEnd'),
+          morningStart: clock('sch_morningStart'), morningEnd: clock('sch_morningEnd'),
+          lunchStart: clock('sch_lunchStart'), lunchEnd: clock('sch_lunchEnd'),
+          eveningStart: clock('sch_eveningStart'), eveningEnd: clock('sch_eveningEnd'),
+        } });
       SCHEDULE = res.schedule;
       idleState.data = null;   // the report's expected hours just changed
       /* And so has the window the Time Sheet draws its form from, which is
@@ -10889,6 +11190,111 @@ const resetPwWrap = document.getElementById('resetPwWrap');
 let resetPwTarget = null;
 
 function closeResetPw(){ resetPwWrap.classList.remove('show'); resetPwTarget = null; }
+
+
+/* ---------------------------------------------------------------------------
+   Deactivating somebody.
+
+   A confirm() would not do here. What deactivation actually does depends on
+   what the person is holding at that moment, and the two facts somebody needs
+   before pressing it are both specific to them:
+
+     what moves    Their unfinished work goes back to Not Assigned. Named, not
+                   counted — whoever is about to reassign a dozen tasks is
+                   entitled to see which ones before agreeing to it.
+
+     who is left   Anybody reporting to them keeps pointing at a switched-off
+                   account. This screen REPORTS that and does not fix it:
+                   choosing somebody's new manager is a decision about their
+                   team, and picking one automatically would quietly restructure
+                   the studio. The names are listed so a human can go and do it.
+
+   The dialog also says what is KEPT — finished work stays attributed to them,
+   nothing is deleted — because "3 tasks will be unassigned" on its own reads as
+   though the rest were being thrown away.
+   --------------------------------------------------------------------------- */
+let deactivateTarget = null;
+
+async function openDeactivateUser(id, name){
+  deactivateTarget = { id, name };
+  const wrap = document.getElementById('deactivateWrap');
+  document.getElementById('dz_title').textContent = `Deactivate ${name}`;
+  document.getElementById('dz_err').textContent = '';
+  document.getElementById('dz_body').innerHTML = '<p>Checking what this would affect…</p>';
+  const confirmBtn = document.getElementById('dz_confirm');
+  confirmBtn.disabled = true;
+  wrap.classList.add('show');
+
+  let impact;
+  try{ impact = await api('/users/' + id + '/deactivation-impact'); }
+  catch(err){
+    document.getElementById('dz_body').innerHTML = '';
+    document.getElementById('dz_err').textContent = err.message;
+    return;
+  }
+  /* Somebody may have pressed Deactivate on a second person while this was in
+     flight. Without this the slower answer would paint over the newer dialog
+     and the button would act on the wrong account. */
+  if(!deactivateTarget || deactivateTarget.id !== id) return;
+
+  const open = impact.openAssets || [];
+  const reports = impact.directReports || [];
+
+  document.getElementById('dz_body').innerHTML = `
+    <p><strong>${escapeHTML(name)}</strong> will no longer be able to sign in, and any session they
+      already have open ends on their next action. <strong>Nothing is deleted</strong> — their
+      timesheets, activity history and finished work all stay exactly as they are.</p>
+
+    ${reports.length ? `<div class="ip-banner open" style="margin:12px 0;">
+      <strong>${reports.length} ${reports.length===1?'user reports':'users report'} to this person.</strong>
+      Reassign ${reports.length===1?'their':'the'} reporting manager before or after deactivating —
+      ${reports.length===1?'they':'they'} will otherwise point at a deactivated account.
+      <div style="margin-top:6px;">${reports.map(r=>`<span class="dz-chip">${escapeHTML(r.name)}</span>`).join('')}</div>
+    </div>` : ''}
+
+    ${open.length ? `<div class="dz-block">
+      <div class="dz-h">${open.length} unfinished ${open.length===1?'task moves':'tasks move'} to Not Assigned</div>
+      <div class="dz-note">So ${open.length===1?'it shows':'they show'} up for reassignment instead of sitting on an account nobody is using.</div>
+      <div class="dz-list">${open.map(a=>`<div class="dz-row"><span class="mono">${escapeHTML(a.code||'—')}</span>
+        <span>${escapeHTML(a.name)}</span>
+        <span class="dz-status">${escapeHTML(a.statusLabel)}</span></div>`).join('')}</div>
+    </div>` : '<p><em>No unfinished tasks are assigned to them, so nothing needs reassigning.</em></p>'}
+
+    ${impact.keptAssets ? `<p style="margin-top:10px;">${impact.keptAssets}
+      finished or in-review ${impact.keptAssets===1?'task stays':'tasks stay'} attributed to them, as the record of who did the work.</p>` : ''}
+
+    <p style="margin-top:10px;">You can reactivate the account at any time from the Users list.</p>`;
+
+  confirmBtn.disabled = false;
+}
+
+document.getElementById('dz_cancel').addEventListener('click', ()=>{
+  deactivateTarget = null;
+  document.getElementById('deactivateWrap').classList.remove('show');
+});
+document.getElementById('deactivateWrap').addEventListener('click', e=>{
+  if(e.target.id === 'deactivateWrap'){
+    deactivateTarget = null;
+    e.target.classList.remove('show');
+  }
+});
+document.getElementById('dz_confirm').addEventListener('click', async (ev)=>{
+  if(!deactivateTarget) return;
+  const { id, name } = deactivateTarget;
+  ev.target.disabled = true;
+  document.getElementById('dz_err').textContent = '';
+  try{
+    const res = await api('/users/' + id + '/deactivate', { method:'POST' });
+    deactivateTarget = null;
+    document.getElementById('deactivateWrap').classList.remove('show');
+    const moved = (res.openAssets || []).length;
+    showToast(`${name} deactivated${moved ? ` — ${moved} task${moved===1?'':'s'} returned to Not Assigned` : ''}.`);
+    await renderUsersTab();
+  }catch(err){
+    document.getElementById('dz_err').textContent = err.message;
+    ev.target.disabled = false;
+  }
+});
 
 function openResetPassword(id, name){
   resetPwTarget = { id, name };

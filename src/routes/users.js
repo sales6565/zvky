@@ -21,6 +21,7 @@ const avatar = require('../avatar');
 const { visibleProjects, hasFullAccess, mayAdministerUser, holds } = require('../permissions');
 const rolePermissions = require('../role-permissions');
 const notifications = require('../notifications');
+const deactivation = require('../user-deactivation');
 
 // The cost used everywhere passwords are hashed in this codebase.
 const BCRYPT_ROUNDS = 10;
@@ -187,10 +188,23 @@ function assignableRolesFor(user) {
 // GET /api/users?search=&limit=&offset=&role=
 // A studio-wide manager sees everyone; an admin sees only users they added.
 router.get('/', requirePermission('user.view'), async (req, res) => {
-  const { search = '', limit = 60, offset = 0, role } = req.query;
+  const { search = '', limit = 60, offset = 0, role, status } = req.query;
   const params = [];
   let sql = 'SELECT id, name, email, role, manager_id, team_lead_id, reports_to_id, created_at, '
+    + 'is_active, deactivated_at, deactivated_by, '
     + 'avatar_updated_at AS `photoUpdatedAt` FROM users WHERE 1=1';
+
+  /* Active by DEFAULT, and that default is a decision rather than a
+     convenience. The Users list is the studio's roster — who works here — and
+     somebody who has left should not sit in it looking like a colleague. They
+     are one filter away, never deleted, and the filter says how many there are
+     so nobody has to guess whether the list is hiding anything.
+
+     'all' and 'inactive' are the other two; anything else falls through to
+     active rather than being refused, because a stale bookmark should show the
+     roster rather than an error. */
+  if (status === 'inactive') sql += ' AND is_active = 0';
+  else if (status !== 'all') sql += ' AND is_active = 1';
 
   // No row filter. "User View" means the studio's people, for whoever a Super
   // Admin has trusted with it — this used to narrow to `manager_id = you`,
@@ -238,6 +252,12 @@ router.get('/', requirePermission('user.view'), async (req, res) => {
       return {
         ...row,
         topOfHierarchy: top,
+        /* Boolean, not the raw 0/1 MySQL hands back: `0` is falsy in JavaScript
+           but truthy once it has been through JSON into a template, and a badge
+           driven by the raw column would have read "Active" for everybody. */
+        isActive: row.is_active !== 0,
+        deactivatedAt: row.deactivated_at || null,
+        deactivatedBy: row.deactivated_by || null,
         // Leadership has no reporting line at all, rather than an empty one.
         reportsToId: top ? null : row.reports_to_id || null,
         reportsToName: top ? null : (row.reports_to_id ? managers.get(row.reports_to_id) || null : null),
@@ -246,6 +266,15 @@ router.get('/', requirePermission('user.view'), async (req, res) => {
       };
     }),
     total: Number(countRows[0].n),
+    /* Both totals, always, whichever filter is on. A list that can hide people
+       has to say how many it is hiding, or "we have 12 staff" quietly becomes
+       wrong the first time somebody leaves. */
+    counts: await (async () => {
+      const { rows: c } = await db.query(
+        'SELECT SUM(is_active = 1) AS active, SUM(is_active = 0) AS inactive FROM users');
+      return { active: Number(c[0].active) || 0, inactive: Number(c[0].inactive) || 0 };
+    })(),
+    status: status === 'inactive' ? 'inactive' : (status === 'all' ? 'all' : 'active'),
   });
 });
 
@@ -494,6 +523,105 @@ router.patch('/:id', requirePermission('user.edit'), async (req, res) => {
 });
 
 // DELETE /api/users/:id
+
+/* ---------- deactivation ----------------------------------------------------
+ *
+ * Its own permission, and its own guards. Deactivating somebody is neither
+ * editing them nor removing them: it ends their access while keeping every
+ * record of what they did, which is the thing a studio actually needs when
+ * somebody leaves. See src/user-deactivation.js for what moves and what stays.
+ */
+
+/* Look before you leap. Returns what deactivating this person WOULD do,
+ * changing nothing, so the confirmation can name the work about to move and the
+ * people about to be left reporting to a switched-off account. */
+router.get('/:id/deactivation-impact', requirePermission('user.deactivate'), async (req, res) => {
+  const { rows } = await db.query(`SELECT ${userFields()} FROM users WHERE id = $1`, [req.params.id]);
+  const target = rows[0];
+  if (!target) return res.status(404).json({ error: 'User not found' });
+  if (!mayAdministerUser(req.user, target)) {
+    return res.status(403).json({ error: 'You do not have permission to do that' });
+  }
+  const impact = await deactivation.impact(db, target.id);
+  return res.json({
+    user: { id: target.id, name: target.name, email: target.email, role: target.role,
+      isActive: target.is_active !== 0 },
+    ...impact,
+  });
+});
+
+router.post('/:id/deactivate', requirePermission('user.deactivate'), async (req, res) => {
+  const { rows } = await db.query(`SELECT ${userFields()} FROM users WHERE id = $1`, [req.params.id]);
+  const target = rows[0];
+  if (!target) return res.status(404).json({ error: 'User not found' });
+
+  /* THE LOCKOUT GUARD. Deactivating yourself ends your own session on the next
+     request, and if you were the last person who could turn accounts back on,
+     nobody can undo it from inside the application. Refused outright rather
+     than confirmed: there is no legitimate reason to suspend your own account
+     from the screen you administer other people from. */
+  if (target.id === req.user.id) {
+    return res.status(403).json({
+      error: 'You cannot deactivate your own account — you would be signed out with no way back in.',
+    });
+  }
+  /* The same rule as removal: an account with full studio access can undo
+     anything done here, so switching one off is a deliberate act that goes
+     through a demotion first. Without this, one full-access account could lock
+     out another and the studio would have no way back. */
+  if (hasFullAccess(target)) {
+    return res.status(403).json({
+      error: 'Accounts with full studio access cannot be deactivated here. Change the designation first.',
+    });
+  }
+  if (!mayAdministerUser(req.user, target)) {
+    return res.status(403).json({ error: 'You do not have permission to do that' });
+  }
+  if (target.is_active === 0) {
+    return res.status(409).json({ error: `${target.name} is already deactivated.` });
+  }
+
+  const done = await deactivation.deactivate(db, target.id, req.user.email);
+
+  /* What ACTUALLY happened, not what was predicted — the two can differ if
+     somebody picked work up between the confirmation and the button. */
+  req.activity({
+    module: 'users', action: 'user.deactivate', entityType: 'user',
+    entityId: target.id, entityLabel: target.name,
+    summary: `Deactivated ${target.name} <${target.email}>`
+      + (done.openAssets.length
+        ? `; ${done.openAssets.length} unfinished task${done.openAssets.length === 1 ? '' : 's'} returned to Not Assigned`
+        : '; no unfinished tasks to reassign')
+      + (done.directReports.length
+        ? `; ${done.directReports.length} ${done.directReports.length === 1 ? 'person' : 'people'} still report to them`
+        : ''),
+    changes: { account: { from: 'Active', to: 'Inactive' } },
+  });
+
+  return res.json({ ok: true, ...done });
+});
+
+router.post('/:id/reactivate', requirePermission('user.deactivate'), async (req, res) => {
+  const { rows } = await db.query(`SELECT ${userFields()} FROM users WHERE id = $1`, [req.params.id]);
+  const target = rows[0];
+  if (!target) return res.status(404).json({ error: 'User not found' });
+  if (!mayAdministerUser(req.user, target)) {
+    return res.status(403).json({ error: 'You do not have permission to do that' });
+  }
+  if (target.is_active !== 0) {
+    return res.status(409).json({ error: `${target.name} is already active.` });
+  }
+
+  await deactivation.reactivate(db, target.id);
+  req.activity({
+    module: 'users', action: 'user.reactivate', entityType: 'user',
+    entityId: target.id, entityLabel: target.name,
+    summary: `Reactivated ${target.name} <${target.email}>. Work unassigned at the time was not given back.`,
+    changes: { account: { from: 'Inactive', to: 'Active' } },
+  });
+  return res.json({ ok: true });
+});
+
 router.delete('/:id', requirePermission('user.delete'), async (req, res) => {
   const { rows } = await db.query(`SELECT ${userFields()} FROM users WHERE id = $1`, [req.params.id]);
   const target = rows[0];

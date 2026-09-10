@@ -537,6 +537,54 @@ npm run dev         # auto-restart on change (needs the dev dependency: npm inst
 The API is served at `http://localhost:4000/api/*`, and the bundled frontend
 (`public/index.html`) at `http://localhost:4000/`.
 
+### Working hours, and the three break windows
+
+**Settings → Working Hours** holds the studio's day: hours in a working day,
+which days those are, when the day starts and ends, and three break windows —
+**Morning break**, **Lunch** and **Evening break**. Each is a start and an end,
+and each may be left empty, which means "no such break" rather than an
+unfinished form.
+
+Lunch was already stored; the other two are new, and all three now do something
+they did not do before.
+
+**Break time does not count as worked time.** A span is a stretch during which
+work sat on somebody's desk — it is not a claim they were at it. Leave a timer
+running through lunch and, before this change, that hour counted as engaged:
+overstating what was worked and understating idle time in the same breath. The
+Idle Report and Team Capacity now subtract any part of a break that a tracked
+span actually covers.
+
+Only where the span covers it. Subtracting a flat hour a day would take time off
+somebody who was not working then anyway.
+
+**It comes off tracked hours and never off expected hours.** `hoursPerDay` is
+what the studio *declares* a full day to be — eight hours out of a 09:30–19:00
+window that already has lunch in it. Taking the breaks off that as well would
+count them twice and quietly raise everybody's idle time.
+
+Worked through: a timer running 09:30–18:30 is nine hours. With no breaks
+configured it reads as eight, the standard day's cap. With a 15-minute morning
+break, an hour of lunch and a 15-minute evening break inside it, 90 minutes come
+off and it reads **7.5 engaged, 0.5 idle**.
+
+> **This changes what your existing reports say.** Anybody whose tracked spans
+> ran through lunch will show fewer engaged hours and more idle hours than they
+> did before. That is the point of the feature, but it is a real shift in the
+> numbers rather than a new column, so expect the Idle Report to read
+> differently the first time you open it.
+
+What is refused: a break that ends before it starts, half of one, a break
+outside the working day, **two breaks that overlap** (the same minute would come
+off twice), and a set of breaks so long the day can no longer hold the hours the
+Time Sheet accepts. Every change is in the Activity Log with the full before and
+after — *"Lunch 13:00–14:00" → "Morning break 11:00–11:15, Lunch 13:00–14:00"*.
+
+**These are studio-wide.** There is no per-user or per-team schedule anywhere in
+this application — `work_schedule` is a single row — so there was no override
+mechanism to extend. A timesheet line is a number of hours typed by hand and is
+not checked against these times; they apply to tracked hours.
+
 ### After a deploy, restart the application
 
 `public/index.html` is a static file, so a browser refresh picks up new frontend
@@ -594,11 +642,14 @@ Setup Node.js App → Restart, or touching `tmp/restart.txt`.
 | POST | `/api/assets/:id/tasks` | whoever can edit that asset |
 | PATCH | `/api/assets/tasks/:id` | whoever can edit the parent asset |
 | POST | `/api/assets/:id/notes` | whoever can view that asset |
-| GET | `/api/users` | super_admin (all), admin (users they added) |
+| GET | `/api/users` | super_admin (all), admin (users they added). `status=active` (default), `inactive` or `all` |
 | POST | `/api/users` | super_admin (any designation), admin (anything that neither manages users nor sees the whole studio) |
 | PATCH | `/api/users/:id` | change someone's designation or reporting line, same scoping as above |
 | DELETE | `/api/users/:id` | super_admin (anyone but another super admin), admin (only users they added) |
 | GET | `/api/team` | any designation that runs a team — their reports' progress |
+| GET | `/api/users/:id/deactivation-impact` | `user.deactivate` — what deactivating would move, changing nothing |
+| POST | `/api/users/:id/deactivate` | `user.deactivate` — never yourself, never a full-access account |
+| POST | `/api/users/:id/reactivate` | `user.deactivate` — restores the account, not the work |
 | GET | `/api/pnl/rate-cards` | `pnl.view` or `pnl.manage` — the studio's price list |
 | POST, PATCH, DELETE | `/api/pnl/rate-cards[/:id]` | `pnl.manage` alone |
 | GET | `/api/pnl/projects/:id` | `pnl.view` or `pnl.manage` — one project's figures, scoped like every other project read (404 outside scope) |
@@ -610,6 +661,41 @@ Setup Node.js App → Restart, or touching `tmp/restart.txt`.
 Every route re-checks permissions against the database on each request — a
 role change or removal takes effect on the user's very next request, not just
 after their token expires.
+
+## Settings is an accordion
+
+The page had grown to roughly ten thousand pixels of continuous scroll, and the
+**On this page** list at the top named the sections without going to them —
+a table of contents you could not use.
+
+Every section is now collapsible and **collapsed by default**, which takes the
+page from about 10,700px to about 1,200px. Each entry in *On this page* is the
+trigger for its section: clicking it expands that section and scrolls to it.
+**Expand all** and **Collapse all** sit under the list. A section can also be
+opened by clicking its own heading.
+
+Two implementation notes worth knowing if you touch this:
+
+* It is a **pass over the DOM, not a rewrite of fifteen sections**. Every
+  section already had the same shape — a `.ref-section` whose first child is a
+  `.ref-head` containing its `<h3>` — so collapsing is applied uniformly from
+  outside and none of the fifteen render functions knows it is inside an
+  accordion.
+* A `MutationObserver` re-applies the state, because several sections repaint
+  themselves independently (the rate card after a save, the IP lists after an
+  add, the activity log after a filter) and each replaces its own container's
+  contents. Hooking every repaint site instead would work until somebody adds
+  the sixteenth section and forgets.
+
+`SETTINGS_SECTIONS` gained a `heading` field, because an index label is not
+always the section's heading — *IP Allowlist* in the list is headed *Allowed IP
+Addresses* on the page. Matching on that field rather than on text means a
+heading can be reworded without silently detaching its index entry.
+
+**Working Hours was missing from that list entirely** — a bug rather than an
+omission, since `canOpenSettings()` is built from it: a designation granted
+Working Hours and nothing else held a permission whose screen it could not
+reach, because the Settings tab was not there to open. It is in the list now.
 
 ## Settings: the value lists behind the dropdowns
 
@@ -720,6 +806,76 @@ ends with a count of what did not apply. Any role
 an account holds that the table does not know about is carried across under an
 *Unsorted* group with no pipeline access, rather than leaving that account unable
 to sign in. All of it is idempotent.
+
+## Deactivating an account
+
+Somebody leaves. Deleting them destroys the record of what they did; leaving
+them active leaves their work sitting on a desk nobody is at. **Deactivate** is
+the third thing: the account stops working, everything it did stays.
+
+**Nothing is deleted.** Not a timesheet line, not a work session, not an
+activity log entry, not a delivered asset. The only rows deactivation touches
+are the ones whose *meaning* changes when somebody stops coming in.
+
+| What | What happens |
+| --- | --- |
+| Signing in | Refused, with a message saying the account is deactivated — not "wrong password", so they know to ask an administrator rather than keep retyping. |
+| A session already open | Ends on their next request. Checking only at sign-in would leave a suspended account usable for as long as a tab stayed open, which is the window somebody is deactivated to close. |
+| Unfinished work assigned to them | Returned to **Not Assigned**, so it shows up for reassignment. Covers *assigned*, *in progress* and both *changes requested* states — the ones where the studio is waiting on that person. |
+| Finished work | **Stays attributed to them.** Delivered, approved, with a reviewer or with the client is a record of who did it; reassigning it would rewrite that record. |
+| People who report to them | **Reported, not changed.** See below. |
+
+### Direct reports are named, not rehomed
+
+The confirmation lists everybody whose Reporting To points at this person —
+*"2 users report to this person. Reassign the reporting manager before or after
+deactivating"* — and then does nothing about it.
+
+That is deliberate. Choosing somebody's new manager is a decision about their
+team, and this screen has no basis on which to make it. Silently moving them to
+the deactivated person's own manager would look tidy and would quietly
+restructure the studio.
+
+### The confirmation says what will happen before it happens
+
+It is a dialog rather than a yes/no prompt because what deactivation does
+depends on what the person is holding at that moment. It fetches and lists the
+unfinished tasks about to change hands — by code and status, not just a count —
+alongside what is being kept. "3 tasks will be unassigned" on its own reads as
+though the rest were being thrown away.
+
+### Reactivating does not give the work back
+
+The account comes back; the work does not. Those tasks were unassigned and
+somebody else may be doing them by now, and taking live work off them would be
+worse than leaving it. The studio reassigns what it wants to reassign.
+
+### The Users list
+
+Active accounts by default — the roster is who works here. **Active / Inactive /
+All** switches the view, each carrying its count, and the footer says how many
+deactivated accounts are not shown, so "we have 12 staff" cannot quietly go
+wrong the first time somebody leaves. A deactivated row is dimmed and carries an
+**Inactive** badge whose tooltip names who deactivated it and when.
+
+### The permission, and two things it will not let you do
+
+*Deactivate Users* (`user.deactivate`) is **on by default for Super Admin only**
+and grantable to any designation in Settings → Role Permissions. Without it the
+Deactivate and Reactivate actions are not rendered at all, and all three
+endpoints refuse.
+
+Two refusals are built in whatever the permission says:
+
+* **You cannot deactivate yourself.** You would be signed out on the next
+  request, and if you were the last person who could turn accounts back on,
+  nobody could undo it from inside the application.
+* **You cannot deactivate an account with full studio access.** Change the
+  designation first — the same rule that already governs removal, and what stops
+  one full-access account locking out another.
+
+Deactivation and reactivation are both in the Activity Log, with how many tasks
+moved and how many people were left reporting to the account.
 
 ## The reporting hierarchy, and a user's project
 

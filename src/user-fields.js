@@ -20,6 +20,12 @@
 const USER_COLUMNS = [
   'id', 'name', 'email', 'role',
   'manager_id', 'team_lead_id', 'reports_to_id',
+  /* Whether the account may be used at all. Read on EVERY authenticated
+     request, not only at sign-in: deactivating somebody who is already signed
+     in has to end that session too, or the account stays usable for as long as
+     their tab is open — which is precisely the window somebody is deactivated
+     to close. */
+  'is_active', 'deactivated_at',
   'password_changed_at', 'created_at',
   'avatar_updated_at AS `photoUpdatedAt`',
   // NULL until somebody finishes or skips the Quick Tour, which is what

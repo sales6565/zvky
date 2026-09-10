@@ -1837,6 +1837,61 @@ async function ensureEmailConfig(db, log) {
  *
  * Cannot fail the startup: a deployment whose database user cannot create these
  * loses the P&L screens, not the application. */
+async function ensureUserActive(db, log) {
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users'
+        AND COLUMN_NAME IN ('is_active', 'deactivated_at', 'deactivated_by')`
+  );
+  const have = new Set(rows.map((r) => r.COLUMN_NAME));
+  /* DEFAULT 1, and that default is the whole safety of this migration. Every
+     account that already exists is active, so adding the column cannot lock
+     anybody out of a running deployment — which is the failure mode a column
+     like this has if it defaults the other way. */
+  const add = [
+    ['is_active', 'TINYINT(1) NOT NULL DEFAULT 1'],
+    ['deactivated_at', 'DATETIME NULL'],
+    // Who turned the account off, by email, so the Users list can say. Not a
+    // foreign key: the person who deactivated somebody may themselves be
+    // deactivated or removed later, and losing the record of who did it would
+    // be worse than holding a string.
+    ['deactivated_by', 'VARCHAR(191) NULL'],
+  ].filter(([name]) => !have.has(name));
+  if (!add.length) return;
+  for (const [name, type] of add) {
+    await db.query(`ALTER TABLE users ADD COLUMN \`${name}\` ${type}`);
+  }
+  if (!have.has('is_active')) {
+    await db.query('ALTER TABLE users ADD KEY idx_users_active (is_active)');
+  }
+  log(`Schema: added users.${add.map(([n]) => n).join(', users.')} — every existing account stays active.`);
+}
+
+async function ensureBreakWindows(db, log) {
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'work_schedule'
+        AND COLUMN_NAME IN ('morning_start_min','morning_end_min','evening_start_min','evening_end_min')`
+  );
+  const have = new Set(rows.map((r) => r.COLUMN_NAME));
+  /* NULL, not a default time. The lunch columns arrived with 13:00-14:00
+     because that was the studio's actual break; nobody has told us when their
+     morning and evening breaks are, and inventing two is how a deployment ends
+     up quietly subtracting an hour a day nobody asked for. Null means "no such
+     break", and the maths skips it. */
+  const add = [
+    ['morning_start_min', 'SMALLINT NULL'],
+    ['morning_end_min', 'SMALLINT NULL'],
+    ['evening_start_min', 'SMALLINT NULL'],
+    ['evening_end_min', 'SMALLINT NULL'],
+  ].filter(([name]) => !have.has(name));
+  if (!add.length) return;
+  for (const [name, type] of add) {
+    await db.query(`ALTER TABLE work_schedule ADD COLUMN \`${name}\` ${type}`);
+  }
+  log('Schema: work_schedule can hold a morning and an evening break. Both start unset.');
+}
+
 async function ensurePnl(db, log) {
   try {
     await pnl.ensureTables(db);
@@ -2485,12 +2540,18 @@ const STEPS = [
   ['IP blocklist', ensureIpBlocklist],
   ['email configuration', ensureEmailConfig],
   ['profit and loss', ensurePnl],
+  // After users exists; before anything that reads an account's active flag.
+  ['user active flag', ensureUserActive],
   ['asset category', ensureAssetCategory],
   ['profile photos', ensureProfilePhotos],
   ['quick tour', ensureTourSeen],
   ['activity log', ensureActivityLog],
   ['asset thumbnails', ensureAssetThumbnails],
   ['working hours', ensureWorkSchedule],
+  /* After the table exists, and BEFORE the mirror below reads it — the mirror
+     caches the row in memory, so a column added after it had loaded would be
+     invisible until the next restart. */
+  ['break windows', ensureBreakWindows],
   // Its mirror, once the table exists and holds its one row.
   ['working hours mirror', (db) => workSchedule.load(db)],
   // After users and assets, whose keys it points at.
