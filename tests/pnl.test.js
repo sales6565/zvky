@@ -144,6 +144,198 @@ test('over-invoicing warns but saves', () => {
   assert.match(res.warnings[0], /more than the contract value/);
 });
 
+// --- the two tabs, worked out by hand -----------------------------------------
+//
+// The Fixed tab and the Actual tab read the SAME hours worked and compare them
+// against two different baselines: the plan, and the invoice. A project can be
+// comfortable on one and alarming on the other, and the tests below are the
+// arithmetic that makes that true rather than a matter of opinion.
+
+/* One fixture, deliberately carrying three DIFFERENT hour totals — planned 320,
+   worked 300, billed 260 — because a fixture where two of them coincide cannot
+   tell a code path that reads the wrong one from a code path that reads the
+   right one. */
+const TWO_TABS = {
+  billing: { contractValue: 40000, invoicedToDate: 26000, billingType: 'fixed' },
+  assignments: [
+    // Mid: planned 100h at 50 = 5,000. Worked 120h = 6,000. Billed all 120.
+    { role: 'Artist', level: 'Mid Level Artist', ratePerHour: 50,
+      assignedHours: 100, hours: 120, billedHours: 120,
+      budgetedCost: 5000, cost: 6000, hoursDelta: 0 },
+    // Senior: planned 220h at 80 = 17,600. Worked 180h = 14,400. Billed 140.
+    { role: 'Artist', level: 'Senior Artist', ratePerHour: 80,
+      assignedHours: 220, hours: 180, billedHours: 140,
+      budgetedCost: 17600, cost: 14400, hoursDelta: 40 },
+  ],
+  otherCosts: [{ amount: 2000 }],
+};
+
+test('Fixed and Actual read the same hours against two different baselines', () => {
+  const totals = pnl.compute(TWO_TABS);
+
+  /* The three hour figures stay three figures. */
+  assert.strictEqual(totals.assignedHoursTotal, 320, 'planned');
+  assert.strictEqual(totals.hoursTotal, 300, 'worked');
+  assert.strictEqual(totals.billedHoursTotal, 260, 'invoiced');
+  assert.strictEqual(totals.hoursDelta, 40, 'worked but never billed');
+
+  /* Fixed: the agreed fee against what the work cost.
+       budget  5,000 + 17,600 = 22,600
+       actual  6,000 + 14,400 = 20,400   -> 2,200 UNDER
+       profit  40,000 - 20,400 - 2,000 = 17,600
+       margin  17,600 / 40,000 = 44.0% */
+  assert.strictEqual(totals.budgetedCost, 22600);
+  assert.strictEqual(totals.actualCost, 20400);
+  assert.strictEqual(totals.budgetVariance, -2200);
+  assert.strictEqual(totals.overBudget, false, 'under the plan is not over budget');
+  assert.strictEqual(totals.fixedProfit, 17600);
+  assert.strictEqual(totals.fixedMarginPercent, 44);
+
+  /* Actual: what has been invoiced against the same cost.
+       revenue 26,000
+       profit  26,000 - 20,400 - 2,000 = 3,600
+       margin  3,600 / 26,000 = 13.8% */
+  assert.strictEqual(totals.revenue, 26000);
+  assert.strictEqual(totals.grossProfit, 3600);
+  assert.strictEqual(totals.marginPercent, 13.8);
+
+  /* THE WHOLE REASON THERE ARE TWO TABS. Same project, same hours, same costs:
+     44.0% on the fee it was sold for, 13.8% on what has actually been invoiced.
+     A single blended number would hide the 40 absorbed hours that separate
+     them. */
+  assert.notStrictEqual(totals.fixedMarginPercent, totals.marginPercent);
+});
+
+test('other costs are subtracted on BOTH tabs', () => {
+  /* A DELIBERATE DEPARTURE from the literal "Fixed Contract Value - Actual
+     Cost", recorded as a test so it is a decision and not a drift. Money spent
+     outsourcing is gone whichever tab you are reading; leaving it out of the
+     Fixed figure would make the same project's profit differ between the tabs
+     for a reason that has nothing to do with what the tabs compare. */
+  const withCost = pnl.compute(TWO_TABS);
+  const without = pnl.compute({ ...TWO_TABS, otherCosts: [] });
+
+  assert.strictEqual(without.fixedProfit - withCost.fixedProfit, 2000,
+    'the 2,000 comes off the Fixed profit too');
+  assert.strictEqual(without.grossProfit - withCost.grossProfit, 2000,
+    'and off the Actual profit by exactly the same amount');
+
+  /* But NOT out of the budget comparison: nobody planned an outsourcing spend
+     per role, so counting it there would flag a project as over its labour
+     budget for a cost the labour budget never claimed to cover. */
+  assert.strictEqual(withCost.budgetVariance, without.budgetVariance);
+  assert.strictEqual(withCost.overBudget, without.overBudget);
+});
+
+test('a project with no plan is unplanned, not under budget', () => {
+  /* Every project that predates the assigned-hours field has 0 planned. Read
+     naively that is "0 budgeted, 6,000 spent" — an over-budget flag on the
+     whole back catalogue on the morning the feature ships. */
+  const unplanned = pnl.compute({
+    billing: { contractValue: 10000, invoicedToDate: 10000 },
+    assignments: [{ assignedHours: 0, hours: 120, billedHours: 120,
+      budgetedCost: 0, cost: 6000, hoursDelta: 0 }],
+    otherCosts: [],
+  });
+  assert.strictEqual(unplanned.budgeted, false, 'there is no plan to be over');
+  assert.strictEqual(unplanned.overBudget, false, 'so it is not flagged');
+  assert.strictEqual(unplanned.budgetedCost, 0);
+
+  /* And the flag still works where a plan does exist: 100h planned at 50 is
+     5,000, and 6,000 spent is over it. */
+  const planned = pnl.compute({
+    billing: { contractValue: 10000, invoicedToDate: 10000 },
+    assignments: [{ assignedHours: 100, hours: 120, billedHours: 120,
+      budgetedCost: 5000, cost: 6000, hoursDelta: 0 }],
+    otherCosts: [],
+  });
+  assert.strictEqual(planned.budgeted, true);
+  assert.strictEqual(planned.overBudget, true);
+  assert.strictEqual(planned.budgetVariance, 1000);
+});
+
+test('the per-role table carries both comparisons and still adds up', () => {
+  const cards = [
+    { role: 'Artist', level: 'Mid Level Artist', ratePerHour: 50 },
+    { role: 'Artist', level: 'Senior Artist', ratePerHour: 80 },
+    { role: 'Animator', level: 'Senior Animator', ratePerHour: 65 },
+  ];
+  const rows = pnl.labourByRoleLevel(cards, TWO_TABS.assignments);
+  const totals = pnl.compute(TWO_TABS);
+
+  const mid = rows.find((r) => r.level === 'Mid Level Artist');
+  const senior = rows.find((r) => r.level === 'Senior Artist');
+  const unused = rows.find((r) => r.level === 'Senior Animator');
+
+  // Mid overran its plan; Senior came in under it. Two rows, two directions.
+  assert.strictEqual(mid.variance, 1000);
+  assert.strictEqual(mid.overBudget, true);
+  assert.strictEqual(mid.hoursDelta, 0, 'everything the mid worked was billed');
+  assert.strictEqual(senior.variance, -3200);
+  assert.strictEqual(senior.overBudget, false);
+  assert.strictEqual(senior.hoursDelta, 40, 'the absorbed hours are the senior');
+
+  // An unused level is listed at zero and is NOT flagged as anything.
+  assert.strictEqual(unused.budgetedCost, 0);
+  assert.strictEqual(unused.overBudget, false);
+
+  /* The property worth having: each column of the table adds up to the card
+     above it, on both tabs. Drop a row from either and one of these fails. */
+  const sum = (f) => rows.reduce((t, r) => t + r[f], 0);
+  assert.strictEqual(sum('budgetedCost'), totals.budgetedCost);
+  assert.strictEqual(sum('cost'), totals.actualCost);
+  assert.strictEqual(sum('variance'), totals.budgetVariance);
+  assert.strictEqual(sum('assignedHours'), totals.assignedHoursTotal);
+  assert.strictEqual(sum('hours'), totals.hoursTotal);
+  assert.strictEqual(sum('billedHours'), totals.billedHoursTotal);
+  assert.strictEqual(sum('hoursDelta'), totals.hoursDelta);
+});
+
+test('the rollup counts over-budget projects rather than flagging itself', () => {
+  /* Three projects: one over its plan, one under, one with no plan at all. */
+  const rolled = pnl.rollup([
+    { totals: { revenue: 10000, contractValue: 20000, labourCost: 9000, otherCosts: 0,
+      hoursTotal: 100, budgetedCost: 8000, budgetVariance: 1000, overBudget: true,
+      budgeted: true, fixedProfit: 11000, assignedHoursTotal: 80, billedHoursTotal: 100,
+      hoursDelta: 0 } },
+    { totals: { revenue: 5000, contractValue: 10000, labourCost: 4000, otherCosts: 0,
+      hoursTotal: 50, budgetedCost: 6000, budgetVariance: -2000, overBudget: false,
+      budgeted: true, fixedProfit: 6000, assignedHoursTotal: 60, billedHoursTotal: 40,
+      hoursDelta: 10 } },
+    { totals: { revenue: 1000, contractValue: 0, labourCost: 500, otherCosts: 0,
+      hoursTotal: 10, budgetedCost: 0, budgetVariance: 500, overBudget: false,
+      budgeted: false, fixedProfit: -500, assignedHoursTotal: 0, billedHoursTotal: 10,
+      hoursDelta: 0 } },
+  ]);
+
+  /* A COUNT, NOT A FLAG. "This client is over budget" is not true of a client
+     with one overrun and two healthy projects, and a boolean there would either
+     condemn the whole book or hide the one that needs attention. */
+  assert.strictEqual(rolled.overBudgetProjects, 1);
+  assert.strictEqual(rolled.budgetedProjects, 2, 'the unplanned one is not counted');
+  assert.strictEqual(rolled.overBudget, undefined, 'the rollup has no such flag');
+
+  // Fixed: contract 30,000, budget 14,000, actual 13,500, profit 16,500 -> 55.0%
+  assert.strictEqual(rolled.contractTotal, 30000);
+  assert.strictEqual(rolled.budgetedCost, 14000);
+  assert.strictEqual(rolled.actualCost, 13500);
+  assert.strictEqual(rolled.budgetVariance, -500);
+  assert.strictEqual(rolled.fixedProfit, 16500);
+  assert.strictEqual(rolled.fixedMarginPercent, 55);
+
+  // Actual: revenue 16,000, cost 13,500, profit 2,500 -> 15.6%
+  assert.strictEqual(rolled.revenue, 16000);
+  assert.strictEqual(rolled.grossProfit, 2500);
+  assert.strictEqual(rolled.marginPercent, 15.6);
+
+  /* The hours reconcile across the rollup exactly as they do on one project:
+     worked 160, billed 150, so 10 hours went unbilled somewhere in the book. */
+  assert.strictEqual(rolled.assignedHoursTotal, 140);
+  assert.strictEqual(rolled.hoursTotal, 160);
+  assert.strictEqual(rolled.billedHoursTotal, 150);
+  assert.strictEqual(rolled.hoursDelta, rolled.hoursTotal - rolled.billedHoursTotal);
+});
+
 // --- the two permissions -------------------------------------------------------
 
 test('both P&L permissions are Super Admin only, and neither implies the other', () => {
@@ -411,6 +603,102 @@ test('Profit & Loss end to end', { skip: cfg ? false : SKIP_REASON }, async (t) 
     const billing = res.body.entries.find((e) => e.action === 'pnl.billing_changed');
     assert.match(billing.summary, /invoiced to date/i,
       'because invoiced-to-date IS the revenue the studio reports');
+  });
+
+  await t.test('the three hour fields move the two tabs independently', async () => {
+    /* Alpha is still Jo 200h at 25 and Sam 40h at 60 — labour 7,400, other
+       1,500, contract 100,000, invoiced 20,000. Nobody has recorded a plan or
+       an invoice against a role yet, so:
+         Fixed   100,000 - 7,400 - 1,500 = 91,100 -> 91.1%
+         Actual   20,000 - 7,400 - 1,500 = 11,100 -> 55.5% */
+    const idOf = async (name) => {
+      const res = await as('root', `/pnl/projects/${project.alpha.id}`);
+      return res.body.assignments.find((a) => a.personName === name).id;
+    };
+    const totals = async () => (await as('root', `/pnl/projects/${project.alpha.id}`)).body.totals;
+    const joId = await idOf('Jo');
+    const samId = await idOf('Sam');
+
+    const start = await totals();
+    assert.strictEqual(start.budgeted, false, 'no plan recorded yet');
+    assert.strictEqual(start.overBudget, false, 'and so nothing to be over');
+    assert.strictEqual(start.fixedProfit, 91100);
+    assert.strictEqual(start.fixedMarginPercent, 91.1);
+    assert.strictEqual(start.grossProfit, 11100);
+    assert.strictEqual(start.marginPercent, 55.5);
+
+    /* Record a plan and what was invoiced.
+         planned  Jo 250 at 25 = 6,250, Sam 50 at 60 = 3,000 -> 9,250
+         worked   7,400, so 1,850 UNDER the plan
+         billed   Jo 200 of 200, Sam 30 of 40 -> 10 hours absorbed */
+    await as('root', `/pnl/projects/${project.alpha.id}/assignments/${joId}`,
+      { method: 'PATCH', body: { assignedHours: 250, billedHours: 200 } });
+    await as('root', `/pnl/projects/${project.alpha.id}/assignments/${samId}`,
+      { method: 'PATCH', body: { assignedHours: 50, billedHours: 30 } });
+
+    const planned = await totals();
+    assert.strictEqual(planned.budgetedCost, 9250);
+    assert.strictEqual(planned.actualCost, 7400);
+    assert.strictEqual(planned.budgetVariance, -1850);
+    assert.strictEqual(planned.budgeted, true);
+    assert.strictEqual(planned.overBudget, false);
+    assert.strictEqual(planned.assignedHoursTotal, 300);
+    assert.strictEqual(planned.hoursTotal, 240);
+    assert.strictEqual(planned.billedHoursTotal, 230);
+    assert.strictEqual(planned.hoursDelta, 10);
+    // Recording a plan and an invoice changed no money on either tab.
+    assert.strictEqual(planned.fixedProfit, 91100);
+    assert.strictEqual(planned.grossProfit, 11100);
+
+    /* CHANGE ONLY THE BILLED HOURS. That is an Actual-tab fact: it moves the
+       hours reconciliation and nothing else. It must not touch the budget, and
+       it must not touch revenue either — revenue is what has been INVOICED in
+       money, not hours re-labelled as money. */
+    await as('root', `/pnl/projects/${project.alpha.id}/assignments/${joId}`,
+      { method: 'PATCH', body: { billedHours: 150 } });
+    const rebilled = await totals();
+    assert.strictEqual(rebilled.billedHoursTotal, 180);
+    assert.strictEqual(rebilled.hoursDelta, 60, '50 more hours absorbed');
+    assert.strictEqual(rebilled.budgetedCost, planned.budgetedCost, 'the plan did not move');
+    assert.strictEqual(rebilled.budgetVariance, planned.budgetVariance);
+    assert.strictEqual(rebilled.fixedProfit, planned.fixedProfit);
+    assert.strictEqual(rebilled.revenue, 20000, 'still what was invoiced in money');
+    assert.strictEqual(rebilled.grossProfit, 11100);
+    assert.strictEqual(rebilled.assignedHoursTotal, 300);
+    assert.strictEqual(rebilled.hoursTotal, 240, 'and nobody worked any less');
+
+    /* CHANGE ONLY THE PLAN. A Fixed-tab fact. Cutting Sam's plan from 50 to 10
+       takes the budget to 6,250 + 600 = 6,850 against 7,400 spent, which flips
+       the project over budget — while the Actual tab reads exactly as before. */
+    await as('root', `/pnl/projects/${project.alpha.id}/assignments/${samId}`,
+      { method: 'PATCH', body: { assignedHours: 10 } });
+    const replanned = await totals();
+    assert.strictEqual(replanned.budgetedCost, 6850);
+    assert.strictEqual(replanned.budgetVariance, 550);
+    assert.strictEqual(replanned.overBudget, true, 'the flag follows the plan');
+    assert.strictEqual(replanned.assignedHoursTotal, 260);
+    assert.strictEqual(replanned.revenue, 20000);
+    assert.strictEqual(replanned.grossProfit, 11100, 'the Actual tab did not move');
+    assert.strictEqual(replanned.marginPercent, 55.5);
+    assert.strictEqual(replanned.billedHoursTotal, 180);
+    assert.strictEqual(replanned.hoursDelta, 60);
+
+    /* And the per-role table agrees with the cards above it on both tabs. */
+    const rows = (await as('root', `/pnl/projects/${project.alpha.id}`)).body.byRoleLevel;
+    const sum = (f) => rows.reduce((t, r) => t + r[f], 0);
+    assert.strictEqual(sum('budgetedCost'), replanned.budgetedCost);
+    assert.strictEqual(sum('cost'), replanned.actualCost);
+    assert.strictEqual(sum('billedHours'), replanned.billedHoursTotal);
+    assert.strictEqual(sum('hoursDelta'), replanned.hoursDelta);
+
+    // Left as it started, so the subtests after this one read what they expect.
+    await as('root', `/pnl/projects/${project.alpha.id}/assignments/${joId}`,
+      { method: 'PATCH', body: { assignedHours: 0, billedHours: 0 } });
+    await as('root', `/pnl/projects/${project.alpha.id}/assignments/${samId}`,
+      { method: 'PATCH', body: { assignedHours: 0, billedHours: 0 } });
+    const restored = await totals();
+    assert.strictEqual(restored.labourCost, 7400, 'no hour worked was ever touched');
+    assert.strictEqual(restored.budgeted, false);
   });
 
   await t.test('a project outside the caller\'s reach is 404, not 403', async () => {

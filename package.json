@@ -14,6 +14,7 @@
     "seed": "node src/seed/seed.js",
     "package": "bash scripts/build-godaddy-zip.sh",
     "sample:data": "node scripts/sample-data.js",
+    "pnl:demo": "node scripts/pnl-demo-data.js",
     "outbound:check": "node scripts/check-outbound.js"
   },
   "dependencies": {

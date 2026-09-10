@@ -139,7 +139,23 @@ async function ensureTables(db) {
     \`role\`      VARCHAR(80)   NOT NULL,
     level         VARCHAR(80)   NOT NULL,
     rate_per_hour DECIMAL(10,2) NOT NULL DEFAULT 0,
+    /* THREE DIFFERENT HOURS, and they are three because they answer three
+       different questions. Conflating any two of them is what makes a P&L
+       agree with itself and disagree with reality.
+
+         assigned_hours  what was PLANNED for this person's role when the
+                         project was priced. The Fixed P&L's budget.
+         hours           what was actually WORKED. The cost, on both tabs.
+         billed_hours    what was actually INVOICED to the client for that
+                         role. May be less than worked (absorbed) or more
+                         (a rounded-up block).
+
+       All three default to 0, so an assignment written before these columns
+       existed reads as "planned nothing, billed nothing" rather than throwing
+       — and 0 is honest there: nobody recorded a plan. */
+    assigned_hours DECIMAL(10,2) NOT NULL DEFAULT 0,
     \`hours\`     DECIMAL(10,2) NOT NULL DEFAULT 0,
+    billed_hours  DECIMAL(10,2) NOT NULL DEFAULT 0,
     created_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     KEY idx_pta_project (project_id)
@@ -230,10 +246,23 @@ const shapeAssignment = (r) => ({
   role: r.role,
   level: r.level,
   ratePerHour: money(r.rate_per_hour),
+  /* `hours` stays the WORKED hours under its original name. Renaming it to
+     actualHours would have been tidier and would have broken every caller that
+     already reads it, for no gain — the two new fields are named for what they
+     are and this one keeps the meaning it always had. */
   hours: hours(r.hours),
+  assignedHours: hours(r.assigned_hours),
+  billedHours: hours(r.billed_hours),
   // Computed, never stored: a stored total is a second copy of a product that
-  // can fall out of step with its own factors.
+  // can fall out of step with its own factors. Same rate for all three, because
+  // it is the same person doing the same work — what differs is the hours.
   cost: money(money(r.rate_per_hour) * hours(r.hours)),
+  budgetedCost: money(money(r.rate_per_hour) * hours(r.assigned_hours)),
+  /* Worked minus billed. Positive means hours were worked and not invoiced —
+     absorbed. Negative means more was invoiced than worked. Both are worth
+     seeing and neither is automatically wrong, so it is reported as a signed
+     number rather than flagged. */
+  hoursDelta: hours(hours(r.hours) - hours(r.billed_hours)),
 });
 
 async function assignments(db, projectId) {
@@ -283,9 +312,18 @@ function compute({ billing: bill, assignments: team = [], otherCosts: others = [
   const otherCost = money(others.reduce((t, c) => t + c.amount, 0));
   const grossProfit = money(revenue - labourCost - otherCost);
 
+  /* THE BUDGET DIMENSION. Costed at the same rates as the work actually done,
+     so a variance is a difference in HOURS and never an artefact of re-pricing
+     a rate card between the plan and the work. */
+  const budgetedCost = money(team.reduce((t, a) => t + a.budgetedCost, 0));
+  const budgetVariance = money(labourCost - budgetedCost);
+
+  const contractValue = money(bill ? bill.contractValue : 0);
+  const otherCostTotal = otherCost;
+
   return {
     revenue,
-    contractValue: money(bill ? bill.contractValue : 0),
+    contractValue,
     billingType: bill ? bill.billingType : null,
     labourCost,
     otherCosts: otherCost,
@@ -294,6 +332,40 @@ function compute({ billing: bill, assignments: team = [], otherCosts: others = [
     marginPercent: percent(grossProfit, revenue),
     hoursTotal: hours(team.reduce((t, a) => t + a.hours, 0)),
     people: team.length,
+
+    // --- the Fixed view: planned against actual, priced at the agreed fee ----
+    budgetedCost,
+    /* Named actualCost as well as labourCost. They are the same number; the
+       Fixed tab talks about "budgeted vs actual" and reading `labourCost` there
+       would make somebody check whether it was the same thing. */
+    actualCost: labourCost,
+    budgetVariance,
+    /* Over budget is about LABOUR against the labour plan. Other costs are not
+       in the budget figure — nobody planned them per role — so including them
+       here would flag a project as over budget for a cost the budget never
+       claimed to cover. */
+    overBudget: budgetedCost > 0 && labourCost > budgetedCost,
+    /* A project with no plan recorded is NOT under budget, it is unplanned.
+       Saying "0 budgeted, 5,000 spent, 5,000 over" about a project nobody
+       budgeted would put a red flag on every project that predates the field. */
+    budgeted: budgetedCost > 0,
+    /* Revenue on the Fixed tab is the AGREED FEE, not what has been invoiced so
+       far: a fixed-bid project earns its price by delivering, and judging it on
+       part-way invoicing would call every mid-flight project a loss.
+
+       Other costs ARE subtracted here, which is a deliberate departure from the
+       brief's literal "Fixed Contract Value − Actual Cost". Money spent on
+       outsourcing is gone whichever tab you are looking at, and leaving it out
+       would make the same project's profit differ between the two tabs for a
+       reason that has nothing to do with what the tabs are comparing. */
+    fixedProfit: money(contractValue - labourCost - otherCostTotal),
+    fixedMarginPercent: percent(money(contractValue - labourCost - otherCostTotal), contractValue),
+
+    // --- the Actual view: what was billed against what it cost ---------------
+    billedHoursTotal: hours(team.reduce((t, a) => t + a.billedHours, 0)),
+    assignedHoursTotal: hours(team.reduce((t, a) => t + a.assignedHours, 0)),
+    /* Worked minus billed, across the team. Positive means work was absorbed. */
+    hoursDelta: hours(team.reduce((t, a) => t + a.hoursDelta, 0)),
   };
 }
 
@@ -309,27 +381,41 @@ function compute({ billing: bill, assignments: team = [], otherCosts: others = [
  * and has to appear somewhere or the breakdown will not add up to the labour
  * total above it. */
 function labourByRoleLevel(cards, team) {
-  const key = (role, level) => `${role} ${level}`;
+  /* The separator is an explicit \u0000 escape, not a raw NUL byte. It was a raw
+     one until now, which made grep and diff treat this whole file as binary and
+     hid the separator from anybody reading it. The runtime key is unchanged: a
+     NUL cannot appear in a role or level, so two different pairs can never
+     collide into one bucket. */
+  const key = (role, level) => `${role}\u0000${level}`;
   const buckets = new Map();
+  const blank = (role, level, ratePerHour, onRateCard) => ({
+    role, level, ratePerHour, onRateCard,
+    assignedHours: 0, hours: 0, billedHours: 0,
+    budgetedCost: 0, cost: 0,
+  });
   for (const card of cards) {
-    buckets.set(key(card.role, card.level), {
-      role: card.role, level: card.level, ratePerHour: card.ratePerHour,
-      hours: 0, cost: 0, onRateCard: true,
-    });
+    buckets.set(key(card.role, card.level), blank(card.role, card.level, card.ratePerHour, true));
   }
   for (const a of team) {
     const k = key(a.role, a.level);
-    if (!buckets.has(k)) {
-      buckets.set(k, {
-        role: a.role, level: a.level, ratePerHour: a.ratePerHour,
-        hours: 0, cost: 0, onRateCard: false,
-      });
-    }
+    if (!buckets.has(k)) buckets.set(k, blank(a.role, a.level, a.ratePerHour, false));
     const bucket = buckets.get(k);
+    bucket.assignedHours = hours(bucket.assignedHours + a.assignedHours);
     bucket.hours = hours(bucket.hours + a.hours);
+    bucket.billedHours = hours(bucket.billedHours + a.billedHours);
+    bucket.budgetedCost = money(bucket.budgetedCost + a.budgetedCost);
     bucket.cost = money(bucket.cost + a.cost);
   }
-  return [...buckets.values()];
+  /* The two derived columns each tab shows, worked out once here so the Fixed
+     table and the Actual table cannot disagree about the same row. */
+  return [...buckets.values()].map((b) => ({
+    ...b,
+    variance: money(b.cost - b.budgetedCost),
+    /* Per row, the same rule as the project total: no plan means unplanned, not
+       under budget. */
+    overBudget: b.budgetedCost > 0 && b.cost > b.budgetedCost,
+    hoursDelta: hours(b.hours - b.billedHours),
+  }));
 }
 
 /* Everything one project's P&L screen needs. */
@@ -372,6 +458,29 @@ function rollup(perProject) {
     grossProfit,
     marginPercent: percent(grossProfit, revenue),
     hoursTotal: hours(perProject.reduce((t, p) => t + p.totals.hoursTotal, 0)),
+
+    /* The Fixed view's rollup. Contract value rather than invoiced, and its
+       margin recomputed from the summed figures rather than averaged — same
+       reasoning as the margin above it. */
+    contractTotal: money(perProject.reduce((t, p) => t + p.totals.contractValue, 0)),
+    budgetedCost: money(perProject.reduce((t, p) => t + p.totals.budgetedCost, 0)),
+    actualCost: labourCost,
+    budgetVariance: money(perProject.reduce((t, p) => t + p.totals.budgetVariance, 0)),
+    fixedProfit: money(perProject.reduce((t, p) => t + p.totals.fixedProfit, 0)),
+    fixedMarginPercent: percent(
+      money(perProject.reduce((t, p) => t + p.totals.fixedProfit, 0)),
+      money(perProject.reduce((t, p) => t + p.totals.contractValue, 0))
+    ),
+    /* How many of these projects are over their labour budget — a count, not a
+       flag, because a rollup covering ten projects of which two are over is not
+       "over budget", it is "two over budget". */
+    overBudgetProjects: perProject.filter((p) => p.totals.overBudget).length,
+    budgetedProjects: perProject.filter((p) => p.totals.budgeted).length,
+
+    // The Actual view's rollup.
+    assignedHoursTotal: hours(perProject.reduce((t, p) => t + p.totals.assignedHoursTotal, 0)),
+    billedHoursTotal: hours(perProject.reduce((t, p) => t + p.totals.billedHoursTotal, 0)),
+    hoursDelta: hours(perProject.reduce((t, p) => t + p.totals.hoursDelta, 0)),
   };
 }
 
@@ -418,7 +527,10 @@ function validateRateCard({ role, level, ratePerHour }, { existing = [], id = nu
   return { errors, values: { role: roleText, level: levelText, ratePerHour: money(ratePerHour) } };
 }
 
-function validateAssignment({ role, level, ratePerHour, hours: hrs, personName }) {
+function validateAssignment({
+  role, level, ratePerHour, hours: hrs, personName,
+  assignedHours, billedHours,
+}) {
   const errors = [];
   const roleText = String(role ?? '').trim();
   const levelText = String(level ?? '').trim();
@@ -433,11 +545,24 @@ function validateAssignment({ role, level, ratePerHour, hours: hrs, personName }
   const badHours = amountError(hrs, { field: 'hours', label: 'The hours', max: MAX_RATE });
   if (badHours) errors.push(badHours);
 
+  /* Both default to 0 rather than being required. A row can legitimately have
+     no plan (added mid-project) and no billing yet (not invoiced), and forcing
+     a number would mean typing a zero to say "nothing", which is the same
+     answer with more friction. */
+  const badAssigned = amountError(assignedHours === undefined || assignedHours === null || assignedHours === '' ? 0 : assignedHours,
+    { field: 'assignedHours', label: 'The assigned hours', max: MAX_RATE });
+  if (badAssigned) errors.push(badAssigned);
+  const badBilled = amountError(billedHours === undefined || billedHours === null || billedHours === '' ? 0 : billedHours,
+    { field: 'billedHours', label: 'The billed hours', max: MAX_RATE });
+  if (badBilled) errors.push(badBilled);
+
   return {
     errors,
     values: {
       role: roleText, level: levelText,
       ratePerHour: money(ratePerHour), hours: hours(hrs),
+      assignedHours: hours(assignedHours || 0),
+      billedHours: hours(billedHours || 0),
       personName: String(personName ?? '').trim() || null,
     },
   };

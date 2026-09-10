@@ -184,18 +184,25 @@ router.post('/projects/:id/assignments', mayWrite, async (req, res) => {
   const id = uuid();
   await db.query(
     `INSERT INTO project_team_assignments
-       (id, project_id, user_id, person_name, rate_card_id, \`role\`, level, rate_per_hour, \`hours\`)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+       (id, project_id, user_id, person_name, rate_card_id, \`role\`, level, rate_per_hour,
+        assigned_hours, \`hours\`, billed_hours)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
     [id, req.params.id, req.body.userId || null, values.personName,
-      req.body.rateCardId || null, values.role, values.level, values.ratePerHour, values.hours]
+      req.body.rateCardId || null, values.role, values.level, values.ratePerHour,
+      values.assignedHours, values.hours, values.billedHours]
   );
   const cost = pnl.money(values.ratePerHour * values.hours);
   req.activity({
     module: 'pnl', action: 'pnl.assignment_added', entityType: 'project', entityId: req.params.id,
     entityLabel: values.personName || `${values.role} — ${values.level}`,
     summary: `Added ${values.personName || values.level} to the project team: `
-      + `${values.hours}h at ${values.ratePerHour}/hour = ${cost}`,
-    changes: { cost: { from: null, to: String(cost) } },
+      + `${values.hours}h worked at ${values.ratePerHour}/hour = ${cost}`
+      + ` (planned ${values.assignedHours}h, billed ${values.billedHours}h)`,
+    changes: {
+      cost: { from: null, to: String(cost) },
+      assignedHours: { from: null, to: String(values.assignedHours) },
+      billedHours: { from: null, to: String(values.billedHours) },
+    },
   });
   await snapshots.capture(db, req.params.id);
   return res.status(201).json({ assignment: { id, projectId: req.params.id, ...values, cost } });
@@ -212,6 +219,11 @@ router.patch('/projects/:id/assignments/:assignmentId', mayWrite, async (req, re
     level: req.body.level === undefined ? before.level : req.body.level,
     ratePerHour: req.body.ratePerHour === undefined ? before.ratePerHour : req.body.ratePerHour,
     hours: req.body.hours === undefined ? before.hours : req.body.hours,
+    /* Field by field, so a caller changing only the billed hours does not wipe
+       the plan — the three are edited independently on the screen and often
+       one at a time. */
+    assignedHours: req.body.assignedHours === undefined ? before.assignedHours : req.body.assignedHours,
+    billedHours: req.body.billedHours === undefined ? before.billedHours : req.body.billedHours,
     personName: req.body.personName === undefined ? before.personName : req.body.personName,
   };
   const { errors, values } = pnl.validateAssignment(merged);
@@ -219,15 +231,23 @@ router.patch('/projects/:id/assignments/:assignmentId', mayWrite, async (req, re
 
   await db.query(
     `UPDATE project_team_assignments
-        SET person_name = $1, \`role\` = $2, level = $3, rate_per_hour = $4, \`hours\` = $5
-      WHERE id = $6 AND project_id = $7`,
+        SET person_name = $1, \`role\` = $2, level = $3, rate_per_hour = $4, \`hours\` = $5,
+            assigned_hours = $6, billed_hours = $7
+      WHERE id = $8 AND project_id = $9`,
     [values.personName, values.role, values.level, values.ratePerHour, values.hours,
+      values.assignedHours, values.billedHours,
       req.params.assignmentId, req.params.id]
   );
 
   const cost = pnl.money(values.ratePerHour * values.hours);
   const changes = {};
   if (before.hours !== values.hours) changes.hours = { from: String(before.hours), to: String(values.hours) };
+  if (before.assignedHours !== values.assignedHours) {
+    changes.assignedHours = { from: String(before.assignedHours), to: String(values.assignedHours) };
+  }
+  if (before.billedHours !== values.billedHours) {
+    changes.billedHours = { from: String(before.billedHours), to: String(values.billedHours) };
+  }
   if (before.ratePerHour !== values.ratePerHour) {
     changes.rate = { from: String(before.ratePerHour), to: String(values.ratePerHour) };
   }
@@ -237,7 +257,8 @@ router.patch('/projects/:id/assignments/:assignmentId', mayWrite, async (req, re
     module: 'pnl', action: 'pnl.assignment_changed', entityType: 'project', entityId: req.params.id,
     entityLabel: values.personName || `${values.role} — ${values.level}`,
     summary: `Changed ${values.personName || values.level} on the project team — now `
-      + `${values.hours}h at ${values.ratePerHour}/hour = ${cost}`,
+      + `${values.hours}h worked at ${values.ratePerHour}/hour = ${cost}`
+      + ` (planned ${values.assignedHours}h, billed ${values.billedHours}h)`,
     changes: Object.keys(changes).length ? changes : null,
   });
   await snapshots.capture(db, req.params.id);

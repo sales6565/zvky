@@ -1135,8 +1135,32 @@ says which. Nobody is shown a number they cannot click into.
 The first money in this application. Nothing here existed before — no rates, no
 billing, no costs, and **no currency**: figures are plain numbers in whatever the
 studio invoices in, and nothing converts between currencies. Its own tab,
-**Profit & Loss**, and its own Settings section, **Rate Cards**. No existing
-dashboard, report or permission changed.
+**Profit & Loss**, carrying **two sub-tabs — Fixed P&L and Actual P&L** — and its
+own Settings section, **Rate Cards**. No existing dashboard, report or permission
+changed.
+
+### Why there are two tabs
+
+They ask two different questions about the same project, and a single blended
+number answers neither:
+
+| | Compares | Revenue is |
+| --- | --- | --- |
+| **Fixed P&L** | Assigned / budgeted hours against actual hours worked | The **fixed contract value** — what the project was sold for |
+| **Actual P&L** | Actual hours worked against hours billed to the client | **Invoiced to date** — what has actually been billed |
+
+A project can be comfortable on one and alarming on the other, and which one it
+is tells you what went wrong. The demo data ships a project of each shape (see
+*Demonstration data* below): **Nightgarden** overran its plan by 235 hours, which
+on a fixed fee comes straight out of the margin — the Fixed tab flags it and the
+Actual tab reads unremarkably. **Tidewater** did the opposite: it came in inside
+its plan, so the Fixed tab shows nothing wrong, but 135 of the hours worked were
+never invoiced. It reads **50.5% on Fixed and 15.5% on Actual**, and that gap is
+the entire argument for having two tabs.
+
+Both tabs share the same Client / Project / Period filters and the same
+client-level rollup, so switching between them changes the comparison and not the
+scope of what you are looking at.
 
 ### What the numbers mean
 
@@ -1145,22 +1169,43 @@ screen.
 
 | Figure | Definition |
 | --- | --- |
-| **Revenue** | **Invoiced to date.** Not the contract value. |
-| **Contract value** | Recorded and shown beside revenue, because the gap between them is worth seeing. It is not revenue. |
-| **Labour cost** | Rate x hours, summed across the project's team assignments. |
+| **Revenue** (Actual tab) | **Invoiced to date.** Not the contract value. |
+| **Contract value** (Fixed tab) | What the project was sold for. On the Fixed tab this *is* the revenue line; on the Actual tab it is shown beside revenue, because the gap between them is worth seeing. |
+| **Assigned / budgeted hours** | What was **planned** for each person's role when the project was priced. |
+| **Actual hours worked** | What was **worked**. The cost basis on both tabs. |
+| **Hours billed to client** | What was **invoiced** for that role. May be fewer than worked (absorbed) or more (a rounded-up block). |
+| **Budgeted cost** | Assigned hours x rate, summed. Costed at the **same rates as the work actually done**, so a variance is a difference in hours and never an artefact of re-pricing a rate card between the plan and the work. |
+| **Actual cost** / **Labour cost** | Actual hours x rate, summed. The same number under two names, because the Fixed tab talks about "budgeted vs actual". |
+| **Budget variance** | Actual cost &minus; budgeted cost. Positive is an overrun. |
 | **Other costs** | Ad hoc line items — contractors, licensing, outsourcing — each with a label and an amount. |
-| **Gross profit** | Revenue &minus; labour &minus; other costs. |
-| **Margin** | Gross profit / revenue, as a percentage. |
+| **Fixed profit / margin** | Contract value &minus; actual cost &minus; other costs, over contract value. |
+| **Gross profit / margin** | Revenue &minus; actual cost &minus; other costs, over revenue. |
+| **Unbilled hours** | Actual hours worked &minus; hours billed. Work the studio absorbed. |
 
-Two of those are load-bearing enough to say plainly:
+Four of those are load-bearing enough to say plainly:
 
-**A contract worth a million that has billed nothing has earned nothing.**
-Treating the contract as revenue would print a healthy margin on work nobody has
-paid for, which is the single most expensive way this screen could lie.
+**A contract worth a million that has billed nothing has earned nothing.** On the
+Actual tab, treating the contract as revenue would print a healthy margin on work
+nobody has paid for, which is the single most expensive way this screen could lie.
 
 **A margin on no revenue is blank, not 0%.** "Broke even" and "has not invoiced
 yet" are different facts, and only one of them would be true. The screen shows a
 dash and says why.
+
+**Other costs are subtracted on both tabs.** That is a deliberate departure from
+a literal *contract value &minus; actual cost*: money spent outsourcing is gone
+whichever tab you are reading, and leaving it out of the Fixed figure would make
+the same project's profit differ between the tabs for a reason that has nothing
+to do with what the tabs compare. They are kept **out** of the budget comparison,
+though — nobody planned an outsourcing spend per role, so counting it there would
+flag a project as over its *labour* budget for a cost that budget never claimed
+to cover.
+
+**A project with no plan recorded is unplanned, not under budget.** Every project
+that predates the assigned-hours field has zero planned. Read naively that is
+"0 budgeted, 6,000 spent, 6,000 over" — a red flag on the entire back catalogue
+on the morning the feature ships. The over-budget flag only ever appears where a
+plan actually exists, and an unplanned project says so.
 
 ### Rate cards
 
@@ -1192,10 +1237,22 @@ Open a project from the table on the P&L tab. Three editors, all on that panel:
 
 * **Client billing** — contract value, billing type (Fixed / Milestone / Time &
   Material), invoiced to date.
-* **Project team** — pick a rate card row, name the person, enter hours. The rate
-  fills in from the card and can then be **overridden for this project**; the
-  override is stored on the row, so it does not touch the card or any other
-  project. Cost per person is rate x hours, with a running total.
+* **Project team** — pick a rate card row, name the person, and enter **three
+  hours figures**: *assigned / budgeted*, *actual worked*, and *billed to
+  client*. The rate fills in from the card and can then be **overridden for this
+  project**; the override is stored on the row, so it does not touch the card or
+  any other project. Each row shows its budgeted cost, its actual cost and the
+  variance between them, with running totals.
+
+  The three are edited **independently** — the API merges field by field, so
+  changing only the billed hours does not wipe the plan. Changing the billed
+  hours moves the Actual tab's hours reconciliation and nothing else; changing
+  the plan moves the Fixed tab's budget and nothing else. Neither touches
+  revenue, which is a figure in money and not hours re-labelled as money.
+
+  All three default to **0**, so an assignment written before these columns
+  existed reads as "planned nothing, billed nothing" rather than throwing — and
+  zero is honest there, because nobody recorded a plan.
 * **Other costs** — a label and an amount. The label is required: an unexplained
   amount is not a record anybody can act on six months later.
 
@@ -1204,9 +1261,10 @@ figures they produce are a scroll away, and the Projects tab is gated on
 `client.view`, which would have put a money form behind a permission that is not
 about money.
 
-**Hours are entered by hand.** They are *not* pulled from the timesheets or the
-tracked work sessions, per the approved design — which means the two can differ,
-and nothing reconciles them. The app already tracks hours (`work_sessions`, and
+**All three hours figures are entered by hand.** *Actual hours worked* in
+particular is *not* pulled from the timesheets or the tracked work sessions, per
+the approved design — which means the P&L's idea of hours worked and the app's
+own tracked hours can drift apart, and nothing reconciles them. The app already tracks hours (`work_sessions`, and
 the coverage maths behind the Idle Report), so a later integration could feed
 this figure or show both side by side. Until then a manual hour is what the P&L
 is costed on, and the panel says so.
@@ -1223,14 +1281,26 @@ only** — the cards and tables are current position, not a period, because
 invoiced-to-date and cost-to-date are running totals and slicing them by month
 would print a figure that is not what any of them mean.
 
-* **Five summary cards** — revenue, labour, other costs, gross profit, margin.
+* **Five summary cards**, which are the one thing that differs between the tabs:
+
+  | Fixed P&L | Actual P&L |
+  | --- | --- |
+  | Contract value | Revenue (invoiced) |
+  | Budgeted cost | Labour cost |
+  | Actual cost | Other costs |
+  | Budget variance | Gross profit |
+  | Fixed profit / margin | Margin |
+
 * **Revenue vs cost** — two bars on **one shared scale**, so the shorter one is
   genuinely shorter. Bars normalised independently would make a project that
   spent twice what it earned look healthy.
 * **Labour cost by role and level** — **every rate card row**, including the ones
   nobody was booked at, at zero. A table listing only what was used cannot answer
   "did we put any seniors on this at all", and its shape would change from
-  project to project so two could not be compared line for line.
+  project to project so two could not be compared line for line. It carries
+  **both comparisons on every row** — budgeted against actual, and worked against
+  billed — worked out once so the two tabs cannot disagree about the same row,
+  and **every column adds up to the card above it**.
 * **Margin trend** — see below.
 * **By client** — the same metrics rolled up across each client's projects.
 
@@ -1239,6 +1309,36 @@ can never disagree with the projects listed beneath it, and its **margin is
 recomputed from the summed revenue and profit rather than averaged**. An average
 of percentages weights a small project the same as a large one, which is how a
 rollup ends up flattering a loss.
+
+Over budget is reported at the rollup as **a count, not a flag**: a client with
+one overrun and two healthy projects is not "over budget", it is "one project
+over budget". A boolean there would either condemn the whole book or hide the one
+that needs attention.
+
+### Demonstration data
+
+`npm run pnl:demo` creates three clients and three projects with enough figures
+for both tabs to mean something on first look; `npm run pnl:demo -- --remove`
+takes them away again. It is **a script you run deliberately, not a seed that
+runs itself** — it writes clients and projects, which are real records in a real
+studio's database, and anything that creates those on boot will eventually create
+them on the production instance on the morning somebody restarts the app for an
+unrelated reason.
+
+It is idempotent on the client name, tags what it created on the **client's
+notes**, and `--remove` finds demo data by that tag — so nothing is deleted that
+the script did not create, and a real client that happens to share a name is
+never touched. It prices only the rate card rows that are still at zero, so a
+studio that has set its own rates does not have them overwritten.
+
+The three projects are deliberately different shapes, because two tabs that show
+the same story on every row demonstrate nothing:
+
+| Project | Shape | Fixed tab | Actual tab |
+| --- | --- | --- | --- |
+| **Orbit Rally** | Healthy — under the plan, fully billed | Good | Good |
+| **Nightgarden** | 235h over the plan on the expensive roles | **Over budget** | Unremarkable |
+| **Tidewater** | Inside the plan, 135h never invoiced | Fine, 50.5% | **15.5%**, absorbed hours shown |
 
 ### The margin trend starts empty, on purpose
 
@@ -1258,8 +1358,20 @@ synthesise, and the panel says so rather than filling the gap.
 
 | Permission | Covers | Default |
 | --- | --- | --- |
-| *View Profit & Loss Reports* (`pnl.view`) | The report: summary, breakdowns, trend, client rollup. Read-only. | Super Admin only |
-| *Manage P&L Rate Cards & Billing* (`pnl.manage`) | Rate cards, team assignments and hours, client billing, other costs. | Super Admin only |
+| *View Profit & Loss Reports* (`pnl.view`) | **Both tabs** — summary, breakdowns, trend, client rollup. Read-only. | Super Admin only |
+| *Manage P&L Rate Cards & Billing* (`pnl.manage`) | Rate cards, team assignments and all three hours figures, client billing, other costs. | Super Admin only |
+
+**The two tabs share these two permissions rather than getting one each.** Every
+other permission in this app grants a *capability* — view a report, change a
+setting, assign a task — and none of them splits a single screen's sub-tabs into
+separate grants. Fixed and Actual are two views of one dataset produced by one
+set of inputs: anybody who can edit the assigned hours can already edit the
+billed hours on the same row, so `pnl.manage.fixed` and `pnl.manage.actual` would
+be two names for the same authority. Splitting the *read* would be coherent but
+buys little — a studio that trusts somebody with what a project cost is not
+usually withholding what it was sold for — and it would put two more rows in a
+catalogue of 73 for a distinction nobody asked for. **No new permission was added
+for this feature.**
 
 Both are togglable per role in **Settings → Role Permissions**, under their own
 **Profit & Loss** group, so a Finance or Producer designation can be granted

@@ -70,6 +70,8 @@ const REQUIRED = [
   { table: 'project_billing',  column: null,            step: 'profit and loss' },
   { table: 'project_other_costs', column: null,         step: 'profit and loss' },
   { table: 'pnl_snapshots',    column: null,            step: 'profit and loss' },
+  { table: 'project_team_assignments', column: 'assigned_hours', step: 'profit and loss hours' },
+  { table: 'project_team_assignments', column: 'billed_hours',   step: 'profit and loss hours' },
   { table: 'users',            column: 'is_active',      step: 'user active flag' },
   { table: 'users',            column: 'deactivated_at', step: 'user active flag' },
   { table: 'work_schedule',    column: 'morning_start_min', step: 'break windows' },

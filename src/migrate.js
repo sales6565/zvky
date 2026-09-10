@@ -1837,6 +1837,32 @@ async function ensureEmailConfig(db, log) {
  *
  * Cannot fail the startup: a deployment whose database user cannot create these
  * loses the P&L screens, not the application. */
+async function ensurePnlHourColumns(db, log) {
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'project_team_assignments'
+        AND COLUMN_NAME IN ('assigned_hours', 'billed_hours')`
+  ).catch(() => ({ rows: null }));
+  /* The table itself may not exist yet on a database where ensurePnl failed —
+     it catches its own errors so the rest of the app still boots. Nothing to
+     add to a table that is not there. */
+  if (!rows) return;
+  const have = new Set(rows.map((r) => r.COLUMN_NAME));
+  const add = [
+    ['assigned_hours', 'DECIMAL(10,2) NOT NULL DEFAULT 0'],
+    ['billed_hours', 'DECIMAL(10,2) NOT NULL DEFAULT 0'],
+  ].filter(([name]) => !have.has(name));
+  if (!add.length) return;
+  for (const [name, type] of add) {
+    await db.query(`ALTER TABLE project_team_assignments ADD COLUMN \`${name}\` ${type}`);
+  }
+  /* DEFAULT 0 and nothing back-filled. An assignment made before this migration
+     has no recorded plan and no recorded billing, and inventing one — copying
+     the worked hours across, say — would manufacture a budget that was never
+     agreed and a variance of exactly zero on every historical project. */
+  log(`Schema: added project_team_assignments.${add.map(([n]) => n).join(', .')} — both start at zero.`);
+}
+
 async function ensureUserActive(db, log) {
   const { rows } = await db.query(
     `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
@@ -2540,6 +2566,8 @@ const STEPS = [
   ['IP blocklist', ensureIpBlocklist],
   ['email configuration', ensureEmailConfig],
   ['profit and loss', ensurePnl],
+  // Straight after the tables it alters.
+  ['profit and loss hours', ensurePnlHourColumns],
   // After users exists; before anything that reads an account's active flag.
   ['user active flag', ensureUserActive],
   ['asset category', ensureAssetCategory],
