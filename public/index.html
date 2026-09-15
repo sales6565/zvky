@@ -850,6 +850,7 @@ tr.past-round{opacity:0.62;}
   border:1px solid #e0a458;border-radius:3px;padding:0 4px;margin-left:6px;}
 .rr-table input{width:120px;margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
 .rr-unpriced td{opacity:.62;}
+.rr-actions{display:flex;gap:6px;}
 /* A link that cannot be clicked, drawn so it does not look like one that can.
    Monospace for the path, because a backslash in a proportional face at 13px is
    very hard to tell from a forward slash and these get retyped by hand. */
@@ -10943,26 +10944,57 @@ async function renderRoleRates(){
         <td class="num">${rw
           ? `<input type="text" class="rr-rate" inputmode="decimal" value="${r.priced?escapeHTML(String(r.ratePerHour)):''}" placeholder="unpriced">`
           : (r.priced ? pnlMoney(r.ratePerHour) : '<span class="pnl-unpriced">unpriced</span>')}</td>
-        <td>${rw ? '<button class="btn btn-ghost btn-sm rr-save">Save</button>' : ''}</td>
+        <td class="rr-actions">${rw ? '<button class="btn btn-ghost btn-sm rr-save">Save</button>' : ''}${
+          rw && r.priced ? '<button class="btn btn-ghost btn-sm rr-clear" title="Mark this designation unpriced">Clear</button>' : ''}</td>
       </tr>`).join('')}</tbody>
     </table></div>
     <div class="ref-err" id="rr_err"></div>
   </div>`;
 
   if(!rw) return;
-  el.querySelectorAll('.rr-save').forEach(btn=>btn.addEventListener('click', async ()=>{
-    const tr = btn.closest('tr');
-    const roleKey = tr.dataset.role;
-    const raw = tr.querySelector('.rr-rate').value.trim();
+
+  /* Save and Clear are two actions, not one box with two meanings.
+     Emptying the box and pressing Save used to delete the rate and say "Rate
+     saved." — a wipe dressed as a write. Save now refuses a blank box and
+     points at Clear, which is the deliberate way to mark a designation
+     unpriced. */
+  const send = async (btn, roleKey, body, done)=>{
     const err = document.getElementById('rr_err');
-    err.textContent = '';
+    if(err) err.textContent = '';
     btn.disabled = true;
     try{
-      await api('/pnl/role-rates/'+encodeURIComponent(roleKey), { method:'PUT',
-        body:{ ratePerHour: raw === '' ? null : raw } });
-      showToast(raw === '' ? 'Rate cleared.' : 'Rate saved.');
+      await api('/pnl/role-rates/'+encodeURIComponent(roleKey), { method:'PUT', body });
+      showToast(done);
       await renderRoleRates();
-    }catch(e){ err.textContent = e.message; btn.disabled = false; }
+    }catch(e){ if(err) err.textContent = e.message; btn.disabled = false; }
+  };
+
+  el.querySelectorAll('.rr-save').forEach(btn=>btn.addEventListener('click', ()=>{
+    const tr = btn.closest('tr');
+    const raw = tr.querySelector('.rr-rate').value.trim();
+    const err = document.getElementById('rr_err');
+    if(raw === ''){
+      /* Refused here as well as on the server, so the message arrives without a
+         round trip. The server refuses it too — this is a convenience, not the
+         rule. */
+      if(err) err.textContent = 'Enter a rate, or use Clear to mark this designation unpriced.';
+      tr.querySelector('.rr-rate').focus();
+      return;
+    }
+    send(btn, tr.dataset.role, { ratePerHour: raw }, 'Rate saved.');
+  }));
+
+  el.querySelectorAll('.rr-clear').forEach(btn=>btn.addEventListener('click', ()=>{
+    const tr = btn.closest('tr');
+    send(btn, tr.dataset.role, { ratePerHour: null }, 'Rate cleared — this designation is now unpriced.');
+  }));
+
+  /* Enter saves the row it was pressed in. */
+  el.querySelectorAll('.rr-rate').forEach(inp=>inp.addEventListener('keydown', (e)=>{
+    if(e.key !== 'Enter') return;
+    e.preventDefault();
+    const btn = inp.closest('tr').querySelector('.rr-save');
+    if(btn) btn.click();
   }));
 }
 

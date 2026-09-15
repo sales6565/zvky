@@ -876,6 +876,113 @@ test('Profit & Loss end to end', { skip: cfg ? false : SKIP_REASON }, async (t) 
     assert.strictEqual((await as('root', `/pnl/projects/${project.alpha.id}`)).body.totals.grossProfit, 11100);
   });
 
+  await t.test('Role Rates: a rate saves, persists, and is refused when it is not a rate', async () => {
+    /* The brief's testing steps 1 and 3, against a real server. */
+    const list = (await as('root', '/pnl/role-rates')).body;
+    assert.strictEqual(list.canManage, true, 'the caller may edit');
+    const row = list.roleRates.find((r) => r.roleKey === 'game_artist');
+    assert.ok(row, 'game_artist is listed');
+    assert.strictEqual(row.priced, false, 'and starts unpriced, not at zero');
+
+    const saved = await as('root', '/pnl/role-rates/game_artist',
+      { method: 'PUT', body: { ratePerHour: 450 } });
+    assert.strictEqual(saved.status, 200, JSON.stringify(saved.body));
+    assert.strictEqual(saved.body.ratePerHour, 450);
+
+    // Read back through a fresh request — the stored value, not the echo.
+    const after = (await as('root', '/pnl/role-rates')).body.roleRates
+      .find((r) => r.roleKey === 'game_artist');
+    assert.strictEqual(after.ratePerHour, 450);
+    assert.strictEqual(after.priced, true);
+    const [dbRow] = await sql(cfg, "SELECT rate_per_hour FROM role_rates WHERE role_key = 'game_artist'");
+    assert.strictEqual(Number(dbRow.rate_per_hour), 450, 'and it is actually in the table');
+
+    /* Rejected, each with its own message. A BLANK rate is refused rather than
+       treated as a clear: emptying the box and pressing Save used to delete the
+       rate and report "Rate saved." — a wipe dressed up as a write. */
+    for (const [body, pattern] of [
+      [{ ratePerHour: 'abc' }, /must be a number/i],
+      [{ ratePerHour: -50 }, /cannot be negative/i],
+      [{ ratePerHour: '' }, /use Clear/i],
+      [{ ratePerHour: '   ' }, /use Clear/i],
+      [{ ratePerHour: 1e12 }, /too large/i],
+    ]) {
+      const res = await as('root', '/pnl/role-rates/game_artist', { method: 'PUT', body });
+      assert.strictEqual(res.status, 400, `${JSON.stringify(body)} should be refused`);
+      assert.match(res.body.error, pattern);
+      assert.strictEqual(res.body.field, 'ratePerHour');
+    }
+    // And none of the refusals touched the stored rate.
+    assert.strictEqual((await as('root', '/pnl/role-rates')).body.roleRates
+      .find((r) => r.roleKey === 'game_artist').ratePerHour, 450, 'a refusal changed nothing');
+
+    // Zero is a real rate and is kept as one; null is the deliberate unprice.
+    await as('root', '/pnl/role-rates/game_artist', { method: 'PUT', body: { ratePerHour: 0 } });
+    const zero = (await as('root', '/pnl/role-rates')).body.roleRates.find((r) => r.roleKey === 'game_artist');
+    assert.strictEqual(zero.ratePerHour, 0);
+    assert.strictEqual(zero.priced, true, 'zero is priced at nothing, which is not unpriced');
+
+    await as('root', '/pnl/role-rates/game_artist', { method: 'PUT', body: { ratePerHour: null } });
+    const cleared = (await as('root', '/pnl/role-rates')).body.roleRates.find((r) => r.roleKey === 'game_artist');
+    assert.strictEqual(cleared.ratePerHour, null);
+    assert.strictEqual(cleared.priced, false);
+
+    // An unknown designation is 404, not a silently created row.
+    const bogus = await as('root', '/pnl/role-rates/not_a_designation',
+      { method: 'PUT', body: { ratePerHour: 10 } });
+    assert.strictEqual(bogus.status, 404);
+  });
+
+  await t.test('Role Rates and Rate Cards are two separate stores, and neither writes the other', async () => {
+    /* The brief asks this directly. They are different tables answering
+       different questions — Rate Cards prices a typed-in team assignment by
+       free-text role/level, Role Rates prices a LOGGED HOUR by the designation
+       the person holds — and a fix to one must not reach through to the other. */
+    const cardsBefore = (await as('root', '/pnl/rate-cards')).body.rateCards
+      .map((c) => `${c.role}/${c.level}=${c.ratePerHour}`).sort();
+
+    await as('root', '/pnl/role-rates/team_lead', { method: 'PUT', body: { ratePerHour: 1234 } });
+
+    const cardsAfter = (await as('root', '/pnl/rate-cards')).body.rateCards
+      .map((c) => `${c.role}/${c.level}=${c.ratePerHour}`).sort();
+    assert.deepStrictEqual(cardsAfter, cardsBefore, 'writing a role rate left every rate card alone');
+
+    // And the reverse: re-pricing a rate card leaves the role rate alone.
+    await as('root', `/pnl/rate-cards/${card.senior.id}`, { method: 'PATCH', body: { ratePerHour: 77 } });
+    const rate = (await as('root', '/pnl/role-rates')).body.roleRates.find((r) => r.roleKey === 'team_lead');
+    assert.strictEqual(rate.ratePerHour, 1234, 'the role rate is untouched by a rate card edit');
+
+    /* Different tables, and the names do not even overlap: no designation key
+       is a rate card level, so one could not be mistaken for the other. */
+    const levels = new Set((await as('root', '/pnl/rate-cards')).body.rateCards.map((c) => c.level));
+    const keys = (await as('root', '/pnl/role-rates')).body.roleRates.map((r) => r.roleKey);
+    assert.ok(keys.every((k) => !levels.has(k)), 'the two vocabularies are disjoint');
+
+    const tables = await sql(cfg,
+      "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE()"
+      + " AND TABLE_NAME IN ('role_rates','rate_cards')");
+    assert.strictEqual(tables.length, 2, 'they are two tables, not one wearing two names');
+
+    await as('root', `/pnl/rate-cards/${card.senior.id}`, { method: 'PATCH', body: { ratePerHour: 60 } });
+    await as('root', '/pnl/role-rates/team_lead', { method: 'PUT', body: { ratePerHour: null } });
+  });
+
+  await t.test('Role Rates cannot be edited without pnl.manage', async () => {
+    /* Testing step 2. The viewer role holds the two tab permissions and not
+       manage, which is exactly the account the section must stay read-only for. */
+    const read = await as('viewer', '/pnl/role-rates');
+    assert.strictEqual(read.status, 200, 'a tab holder may READ the rates');
+    assert.strictEqual(read.body.canManage, false, 'and is told they may not edit');
+
+    const write = await as('viewer', '/pnl/role-rates/game_artist',
+      { method: 'PUT', body: { ratePerHour: 999 } });
+    assert.strictEqual(write.status, 403);
+    assert.match(write.body.error, /not change/i);
+
+    const [rows] = [await sql(cfg, "SELECT * FROM role_rates WHERE role_key = 'game_artist'")];
+    assert.strictEqual(rows.length, 0, 'and nothing was written');
+  });
+
   await t.test('holding neither permission is refused, and told so accurately', async () => {
     /* The refusal must not claim a read access the caller does not have — the
        write routes do not run the read gate first, so a single "you can view

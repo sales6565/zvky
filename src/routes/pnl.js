@@ -262,10 +262,23 @@ router.put('/role-rates/:roleKey', mayWrite, async (req, res) => {
   if (!role) return res.status(404).json({ error: 'That designation does not exist.' });
 
   const raw = req.body ? req.body.ratePerHour : undefined;
-  /* Clearing a rate is not the same as setting it to zero: an empty value means
-     "this designation is not priced", which the read side reports as unpriced
-     hours rather than as free labour. */
-  const clearing = raw === null || raw === '' || raw === undefined;
+
+  /* CLEARING IS EXPLICIT, and only an explicit null does it.
+   *
+   * An empty string used to clear the rate as well, which made an emptied box
+   * and a press of Save delete a rate and report "Rate saved." — a wipe that
+   * looked like a write. Blank is now REFUSED and the caller is told where the
+   * deliberate way to unprice a designation is.
+   *
+   * Clearing is still not the same as setting zero: unpriced means the hours
+   * are reported as uncosted, where zero means they genuinely cost nothing. */
+  if (raw === '' || (typeof raw === 'string' && raw.trim() === '')) {
+    return res.status(400).json({
+      error: 'Enter a rate, or use Clear to mark this designation unpriced.',
+      field: 'ratePerHour',
+    });
+  }
+  const clearing = raw === null || raw === undefined;
   let value = null;
   if (!clearing) {
     const n = Number(raw);

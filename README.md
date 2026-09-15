@@ -1248,6 +1248,12 @@ in; Role Rates prices the hours people actually logged. Merging them would mean
 inventing a mapping from `game_artist` to "Mid Level Artist" that nobody asked
 for. Both remain; neither replaced the other.
 
+**Clearing a rate is a separate action from saving one.** Each row has Save and
+Clear. Emptying the box and pressing Save is **refused** — it used to delete the
+rate and report "Rate saved.", a wipe dressed up as a write. Clear is the
+deliberate way to mark a designation unpriced, and zero is a real rate meaning
+"this costs nothing", which is not the same thing.
+
 **An unpriced designation is not free.** A role with no rate contributes its
 hours and no cost, and those hours are **reported separately** — on the card, in
 the breakdown, and in the client rollup. Costing them at zero would understate
