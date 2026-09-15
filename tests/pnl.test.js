@@ -338,26 +338,38 @@ test('the rollup counts over-budget projects rather than flagging itself', () =>
 
 // --- the two permissions -------------------------------------------------------
 
-test('both P&L permissions are Super Admin only, and neither implies the other', () => {
-  const view = catalogue.BY_KEY.get('pnl.view');
+test('the three P&L permissions are Super Admin only, and none implies another', () => {
+  /* pnl.view was SPLIT into one permission per tab. The two tabs disclose
+     different things — what a project was invoiced and cost, against what it
+     was sold for and planned to cost — and a studio will want to grant one
+     without the other. */
+  const actual = catalogue.BY_KEY.get('pnl.actual');
+  const fixed = catalogue.BY_KEY.get('pnl.fixed');
   const manage = catalogue.BY_KEY.get('pnl.manage');
-  assert.ok(view && manage, 'both are in the catalogue');
-  assert.strictEqual(view.label, 'View Profit & Loss Reports');
+  assert.ok(actual && fixed && manage, 'all three are in the catalogue');
+  assert.strictEqual(actual.label, 'Access Actual P&L');
+  assert.strictEqual(fixed.label, 'Access Fixed P&L');
   assert.strictEqual(manage.label, 'Manage P&L Rate Cards & Billing');
+
+  /* The old single key is gone, not merely unused. Left in the catalogue it
+     would keep appearing in Settings as a grantable permission that no longer
+     gates anything, which is worse than absent. */
+  assert.strictEqual(catalogue.BY_KEY.get('pnl.view'), undefined,
+    'pnl.view was replaced by the two tab permissions');
 
   const tiers = require('../src/role-tiers');
   const TIERS = tiers.TIERS || tiers;
-  for (const key of ['pnl.view', 'pnl.manage']) {
+  for (const key of ['pnl.actual', 'pnl.fixed', 'pnl.manage']) {
     const on = Object.entries(TIERS)
       .filter(([, v]) => catalogue.baselineFor((v && v.capabilities) || {}).has(key))
       .map(([k]) => k).sort();
     assert.deepStrictEqual(on, ['super_admin'], `${key} defaults to Super Admin alone`);
   }
 
-  /* Neither is expressed in terms of the other, so a studio can grant a
-     producer the report without handing them the rate card. */
+  /* None is expressed in terms of another, so all eight combinations of the
+     three are grantable. */
   const baseline = catalogue.baselineFor({});
-  assert.ok(!baseline.has('pnl.view') && !baseline.has('pnl.manage'));
+  assert.ok(!baseline.has('pnl.actual') && !baseline.has('pnl.fixed') && !baseline.has('pnl.manage'));
 });
 
 /* The bug that made this feature look broken on a real deployment.
@@ -410,6 +422,7 @@ test('Profit & Loss end to end', { skip: cfg ? false : SKIP_REASON }, async (t) 
   const token = {};
   const project = {};
   const card = {};
+  const rootUser = {};
 
   const call = (path, options) => api(server.base, path, options);
   const as = (who, path, options = {}) => call(path, { ...options, token: token[who] });
@@ -431,6 +444,13 @@ test('Profit & Loss end to end', { skip: cfg ? false : SKIP_REASON }, async (t) 
     const cards = (await as('root', '/pnl/rate-cards')).body.rateCards;
     card.junior = cards.find((c) => c.level === 'Junior Level Artist');
     card.senior = cards.find((c) => c.level === 'Senior Artist');
+
+    /* Read from the database rather than from a payload: the tests below write
+       work_sessions rows by hand and need the real id and designation the
+       costing will join on. */
+    const [me] = await sql(cfg, "SELECT id, `role` FROM users WHERE email = 'root@zvky.test'");
+    rootUser.id = me.id;
+    rootUser.role = me.role;
   });
 
   t.after(() => stopServer(server));
@@ -701,6 +721,121 @@ test('Profit & Loss end to end', { skip: cfg ? false : SKIP_REASON }, async (t) 
     assert.strictEqual(restored.budgeted, false);
   });
 
+  /* Testing steps 1-3 and 5-6 of the brief, against a real server. */
+  await t.test('Total Consumed Hours moves when a task is DELIVERED, and not before', async () => {
+    /* THE STEP THAT MATTERS MOST. Hours logged against a task in progress must
+       not reach the Fixed tab; the same hours must appear the moment that task
+       is delivered. Nothing increments on delivery — the figure is derived from
+       the asset's current state — so this is also the test that the derivation
+       is actually filtering. */
+    const before = (await as('root', `/pnl/projects/${project.alpha.id}`)).body.hours;
+
+    /* Assets are created under their project — there is no POST /api/assets,
+       and asking for one gets the SPA catch-all's index.html with a 200 on it. */
+    const made = await as('root', `/assets/project/${project.alpha.id}`, { method: 'POST',
+      body: { name: 'Hours probe', type: 'character', manHours: 12 } });
+    assert.strictEqual(made.status, 201, JSON.stringify(made.body));
+    const asset = made.body.asset;
+
+    /* Six hours, written straight in: this test is about which hours COUNT, not
+       about the clock that produces them, and driving a real timer for six
+       hours is not a test. */
+    await sql(cfg, `INSERT INTO work_sessions (id, asset_id, user_id, round, started_at, ended_at, seconds)
+                    VALUES (UUID(), '${asset.id}', '${rootUser.id}', 1, NOW(), NOW(), 21600)`);
+
+    const mid = (await as('root', `/pnl/projects/${project.alpha.id}`)).body.hours;
+    assert.strictEqual(mid.consumedHours, before.consumedHours + 6,
+      'consumed hours count the work whatever state it is in');
+    assert.strictEqual(mid.deliveredHours, before.deliveredHours,
+      'but delivered hours have NOT moved — the task is not delivered');
+    assert.strictEqual(mid.bidHours, before.bidHours + 12,
+      'and the bid hours picked up the new asset\'s Man Hours');
+
+    await sql(cfg, `UPDATE assets SET status = 'delivered' WHERE id = '${asset.id}'`);
+
+    const after = (await as('root', `/pnl/projects/${project.alpha.id}`)).body.hours;
+    assert.strictEqual(after.deliveredHours, before.deliveredHours + 6,
+      'delivering the task moved its hours into the delivered total');
+    assert.strictEqual(after.consumedHours, mid.consumedHours,
+      'and consumed hours did not double-count it');
+    assert.strictEqual(after.undeliveredHours, mid.undeliveredHours - 6);
+  });
+
+  await t.test('Total Hours is the project\'s bid hours, not anything typed into P&L', async () => {
+    /* Step 4. The Fixed tab's Total Hours is SUM(assets.man_hours) — the same
+       figure the Projects tab calls Total Bid Hours. Nothing in P&L settings
+       can move it, which is what this asserts: an assignment carrying planned
+       hours is written, and the bid figure does not budge. */
+    const before = (await as('root', `/pnl/projects/${project.alpha.id}`)).body.hours.bidHours;
+    const rows = await sql(cfg,
+      `SELECT COALESCE(SUM(man_hours),0) AS h FROM assets WHERE project_id = '${project.alpha.id}'`);
+    assert.strictEqual(before, Number(rows[0].h), 'it IS the assets\' Man Hours, summed');
+
+    const noise = (await as('root', `/pnl/projects/${project.alpha.id}/assignments`, { method: 'POST',
+      body: { role: 'Artist', level: 'Senior Artist', personName: 'Noise',
+        ratePerHour: 60, hours: 99, assignedHours: 999, billedHours: 99 } })).body.assignment;
+    const after = (await as('root', `/pnl/projects/${project.alpha.id}`)).body.hours.bidHours;
+    assert.strictEqual(after, before, '999 planned hours in P&L did not touch the bid hours');
+
+    /* Taken away again. It was only ever noise to prove the bid figure ignores
+       it, and leaving a 99-hour assignment on Alpha would move the labour cost
+       the subtests after this one still check by hand. */
+    await as('root', `/pnl/projects/${project.alpha.id}/assignments/${noise.id}`, { method: 'DELETE' });
+  });
+
+  await t.test('the entered Total Cost drives profit and margin, and is not computed', async () => {
+    // Step 5. Revenue on alpha is 20,000 invoiced.
+    const set = await as('root', `/pnl/projects/${project.alpha.id}/total-cost`,
+      { method: 'PUT', body: { totalCost: 14000 } });
+    assert.strictEqual(set.status, 200, JSON.stringify(set.body));
+    assert.strictEqual(set.body.billing.totalCost, 14000);
+
+    const one = (await as('root', `/pnl/projects/${project.alpha.id}`)).body;
+    assert.strictEqual(one.billing.totalCost, 14000);
+    // 20,000 - 14,000 = 6,000 profit, 30% margin. Worked out by hand.
+    assert.strictEqual(one.totals.revenue, 20000);
+
+    // Changing it changes the answer, which is the whole point of it being manual.
+    await as('root', `/pnl/projects/${project.alpha.id}/total-cost`,
+      { method: 'PUT', body: { totalCost: 18000 } });
+    assert.strictEqual((await as('root', `/pnl/projects/${project.alpha.id}`)).body.billing.totalCost, 18000);
+
+    // Clearing is not zero: it goes back to "nobody has said".
+    await as('root', `/pnl/projects/${project.alpha.id}/total-cost`,
+      { method: 'PUT', body: { totalCost: null } });
+    assert.strictEqual((await as('root', `/pnl/projects/${project.alpha.id}`)).body.billing.totalCost, null);
+
+    // And a typed minus sign is refused rather than booked as profit.
+    const neg = await as('root', `/pnl/projects/${project.alpha.id}/total-cost`,
+      { method: 'PUT', body: { totalCost: -500 } });
+    assert.strictEqual(neg.status, 400);
+  });
+
+  await t.test('a role rate prices logged hours, and an unset one is reported unpriced', async () => {
+    const list = (await as('root', '/pnl/role-rates')).body.roleRates;
+    assert.ok(list.length > 10, 'every designation is listed, priced or not');
+    assert.ok(list.every((r) => r.ratePerHour === null || typeof r.ratePerHour === 'number'));
+    assert.ok(list.some((r) => !r.priced), 'and the unpriced ones are listed too, to be priced');
+
+    /* root is a super_admin and logged the six hours above. Price that
+       designation at 400/hour and the delivered cost is 6 x 400 = 2,400. */
+    const roleKey = rootUser.role;
+    const set = await as('root', `/pnl/role-rates/${roleKey}`,
+      { method: 'PUT', body: { ratePerHour: 400 } });
+    assert.strictEqual(set.status, 200, JSON.stringify(set.body));
+
+    const h = (await as('root', `/pnl/projects/${project.alpha.id}`)).body.hours;
+    assert.strictEqual(h.actualUnpricedHours, 0, 'the hours can now all be priced');
+    assert.strictEqual(h.actualCost, h.deliveredHours * 400, 'hours x the role rate');
+
+    // Clearing the rate makes those hours unpriced again — NOT free.
+    await as('root', `/pnl/role-rates/${roleKey}`, { method: 'PUT', body: { ratePerHour: null } });
+    const after = (await as('root', `/pnl/projects/${project.alpha.id}`)).body.hours;
+    assert.strictEqual(after.actualCost, 0, 'nothing can be priced');
+    assert.strictEqual(after.actualUnpricedHours, after.deliveredHours,
+      'and every delivered hour is declared unpriced rather than counted as costing nothing');
+  });
+
   await t.test('a project outside the caller\'s reach is 404, not 403', async () => {
     /* 403 would confirm the id exists. Scoped exactly like every other piece of
        project data — holding pnl.view does not widen anybody's reach. */
@@ -716,7 +851,7 @@ test('Profit & Loss end to end', { skip: cfg ? false : SKIP_REASON }, async (t) 
     const keys = current.filter((p) => p.enabled).map((p) => p.key);
 
     await as('root', `/permissions/roles/${roleKey}`, { method: 'PUT',
-      body: { permissions: [...keys.filter((k) => !k.startsWith('pnl.')), 'pnl.view'] } });
+      body: { permissions: [...keys.filter((k) => !k.startsWith('pnl.')), 'pnl.actual', 'pnl.fixed'] } });
 
     const made = await as('root', '/users', { method: 'POST',
       body: { name: 'Vee Viewer', email: 'viewer@zvky.test', password: PASSWORD, role: roleKey } });
@@ -768,7 +903,7 @@ test('Profit & Loss end to end', { skip: cfg ? false : SKIP_REASON }, async (t) 
     const tiers = require('../src/role-tiers');
     const TIERS = tiers.TIERS || tiers;
     const superAdmin = catalogue.baselineFor(TIERS.super_admin.capabilities);
-    assert.ok(superAdmin.has('pnl.view') && superAdmin.has('pnl.manage'),
+    assert.ok(superAdmin.has('pnl.actual') && superAdmin.has('pnl.fixed') && superAdmin.has('pnl.manage'),
       'Super Admin receives new permissions without anybody toggling them');
 
     /* The five tables are new ones; none of them replaces or extends an

@@ -1863,6 +1863,41 @@ async function ensurePnlHourColumns(db, log) {
   log(`Schema: added project_team_assignments.${add.map(([n]) => n).join(', .')} — both start at zero.`);
 }
 
+/* The Actual tab's manually entered Total Cost, and the per-role hourly rates.
+ *
+ * NULLABLE, and nothing back-filled. A project that predates this column has no
+ * entered cost, and the read side says "not entered yet" rather than reporting
+ * a cost of zero and a margin of 100% on every historical project — which is
+ * what a DEFAULT 0 would have produced on the morning this shipped.
+ *
+ * role_rates is created rather than migrated: no per-role rate existed before.
+ * It is created EMPTY. A role with no row is unpriced, not free, and seeding
+ * every designation at zero would have made "unpriced" and "costs nothing"
+ * indistinguishable at exactly the moment the difference matters.
+ *
+ * Cannot fail the startup, for the same reason ensurePnl cannot: a deployment
+ * whose database user cannot do this loses the P&L screens, not the app. */
+async function ensurePnlCostColumns(db, log) {
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'project_billing'
+        AND COLUMN_NAME = 'total_cost'`
+  ).catch(() => ({ rows: null }));
+  if (rows && !rows.length) {
+    await db.query('ALTER TABLE project_billing ADD COLUMN total_cost DECIMAL(14,2) NULL');
+    log('Schema: added project_billing.total_cost — NULL until somebody enters one.');
+  }
+
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS role_rates (
+    role_key      VARCHAR(80)   NOT NULL PRIMARY KEY,
+    rate_per_hour DECIMAL(10,2) NOT NULL DEFAULT 0,
+    updated_by    VARCHAR(191)  NULL,
+    updated_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  )`)).catch((err) => {
+    console.warn(`[migrate] role_rates unavailable (${err.code}) — Fixed P&L cost will report as unpriced.`);
+  });
+}
+
 async function ensureUserActive(db, log) {
   const { rows } = await db.query(
     `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
@@ -2568,6 +2603,7 @@ const STEPS = [
   ['profit and loss', ensurePnl],
   // Straight after the tables it alters.
   ['profit and loss hours', ensurePnlHourColumns],
+  ['profit and loss cost basis', ensurePnlCostColumns],
   // After users exists; before anything that reads an account's active flag.
   ['user active flag', ensureUserActive],
   ['asset category', ensureAssetCategory],

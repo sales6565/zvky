@@ -3,6 +3,8 @@ const { authenticate } = require('../middleware/auth');
 const { v4: uuid } = require('uuid');
 const pnl = require('../pnl');
 const snapshots = require('../pnl-snapshots');
+const pnlHours = require('../pnl-hours');
+const roles = require('../roles');
 const { holds, visibleProjects, canAccessProject } = require('../permissions');
 const db = require('../db');
 
@@ -11,37 +13,67 @@ const router = asyncRouter();
 
 router.use(authenticate);
 
-/* TWO PERMISSIONS, AND THE SPLIT IS LOAD-BEARING.
+/* THREE PERMISSIONS, AND EVERY SPLIT IS LOAD-BEARING.
  *
- *   pnl.view    read the report — revenue, costs, margin, the breakdown.
- *   pnl.manage  edit the rate cards, assignments, hours, billing and costs.
+ *   pnl.actual  the Actual P&L tab: invoiced revenue, the entered Total Cost,
+ *               hours consumed, profit, margin, cost per hour. Also the
+ *               authority to ENTER that Total Cost — the figure and the tab are
+ *               one grant because the tab exists to maintain it.
+ *   pnl.fixed   the Fixed P&L tab: contract value, bid hours against delivered
+ *               hours, budgeted against actual cost, the role breakdown.
+ *   pnl.manage  the underlying data both tabs read: role rates, the rate cards,
+ *               team assignments, client billing, ad hoc costs.
  *
- * Neither implies the other. Somebody who manages the figures needs to read
- * them back, so a manager can read; but a reader can write nothing at all, and
- * every write route below is behind manage alone. That is the difference
- * between "may see the margin" and "may decide what the margin is".
+ * NONE OF THEM IMPLIES ANOTHER. A user may hold either tab, both, or neither,
+ * and holding neither means the Profit & Loss tab does not appear at all.
+ * pnl.manage on its own opens neither tab: somebody trusted to set the rate
+ * card is not thereby shown every project's margin.
  */
-const mayRead = (req, res, next) => (
-  holds(req.user, 'pnl.view') || holds(req.user, 'pnl.manage')
+const maySeeActual = (req, res, next) => (
+  holds(req.user, 'pnl.actual')
+    ? next()
+    : res.status(403).json({ error: 'You do not have permission to access Actual P&L.' })
+);
+
+const maySeeFixed = (req, res, next) => (
+  holds(req.user, 'pnl.fixed')
+    ? next()
+    : res.status(403).json({ error: 'You do not have permission to access Fixed P&L.' })
+);
+
+/* For the routes that serve BOTH tabs — the project list, the filters, the
+   figures a screen needs before it knows which tab is showing. Either tab is
+   enough; the payload itself is trimmed per tab by the caller. */
+const maySeeEither = (req, res, next) => (
+  holds(req.user, 'pnl.actual') || holds(req.user, 'pnl.fixed')
     ? next()
     : res.status(403).json({ error: 'You do not have permission to view Profit & Loss.' })
 );
 
-/* The refusal says which of the two situations this is.
+/* The refusal says which of the situations this is.
  *
  * A single message reading "you can view but not change" was a lie to anybody
- * holding NEITHER permission — these write routes do not run mayRead first, so
- * it was told to them too, and it asserted an access they did not have. Two
- * sentences, because "you have the wrong one of two permissions" and "you have
- * none of them" need different things done about them. */
+ * holding NEITHER permission — these write routes do not run a read gate first,
+ * so it was told to them too, and it asserted an access they did not have. Two
+ * sentences, because "you have the wrong permission" and "you have none of
+ * them" need different things done about them. */
 const mayWrite = (req, res, next) => {
   if (holds(req.user, 'pnl.manage')) return next();
   return res.status(403).json({
-    error: holds(req.user, 'pnl.view')
+    error: holds(req.user, 'pnl.actual') || holds(req.user, 'pnl.fixed')
       ? 'You can view Profit & Loss but not change the figures it is computed from.'
       : 'You do not have permission to change Profit & Loss figures.',
   });
 };
+
+/* Entering the Actual tab's Total Cost is pnl.actual, NOT pnl.manage.
+ *
+ * Deliberate, and the one place the two authorities are not separated. That
+ * figure is not shared underlying data like a rate card is — it belongs to the
+ * Actual tab, it is the only thing on that tab anybody types, and the brief for
+ * this feature put the tab and the figure in one grant. Somebody given the
+ * Actual tab is being asked to keep it accurate. */
+const mayEnterTotalCost = maySeeActual;
 
 /* A project the caller may actually reach.
  *
@@ -60,7 +92,9 @@ async function reachable(req, res, projectId) {
 
 // --- rate cards ---------------------------------------------------------------
 
-router.get('/rate-cards', mayRead, async (req, res) => {
+router.get('/rate-cards', (req, res, next) => (
+  holds(req.user, 'pnl.manage') ? next() : maySeeEither(req, res, next)
+), async (req, res) => {
   res.json({ rateCards: await pnl.rateCards(db), billingTypes: pnl.BILLING_TYPES });
 });
 
@@ -155,16 +189,176 @@ router.delete('/rate-cards/:id', mayWrite, async (req, res) => {
 
 // --- one project's figures ----------------------------------------------------
 
-router.get('/projects/:id', mayRead, async (req, res) => {
+router.get('/projects/:id', maySeeEither, async (req, res) => {
   if (!await reachable(req, res, req.params.id)) return undefined;
-  const data = await pnl.forProject(db, req.params.id);
+  const [data, worked] = await Promise.all([
+    pnl.forProject(db, req.params.id),
+    hoursFor(req.params.id),
+  ]);
   return res.json({
     ...data,
+    hours: worked,
     billingTypes: pnl.BILLING_TYPES,
     // What this caller may do here, so the screen does not offer a control the
     // API would refuse.
     canManage: holds(req.user, 'pnl.manage'),
+    canSeeActual: holds(req.user, 'pnl.actual'),
+    canSeeFixed: holds(req.user, 'pnl.fixed'),
   });
+});
+
+/* activeRoles() answers from a cache once it is warm, so it returns a plain
+   ARRAY then and a promise before that. Promise.resolve flattens both, and the
+   try/catch covers the synchronous throw the promise form would have rejected
+   with. Getting this wrong is what made every P&L route 500 the first time. */
+async function designations() {
+  try {
+    return await Promise.resolve(roles.activeRoles());
+  } catch {
+    return [];
+  }
+}
+
+/* Hours and their cost for one project, with designations labelled.
+ *
+ * The label lookup is resolved here rather than in pnl-hours because the role
+ * catalogue is async and cached, and a domain module that has to be awaited to
+ * name a thing is harder to test than one that is handed a naming function. */
+async function hoursFor(projectId, rates) {
+  const list = await designations();
+  const labels = new Map(list.map((r) => [r.key, r.label || r.name || r.key]));
+  return pnlHours.forProject(db, projectId, {
+    rates,
+    roleLabel: (key) => labels.get(key) || key,
+  });
+}
+
+// --- per-role hourly rates ----------------------------------------------------
+
+/* The rate table, every designation listed — including the ones nobody has
+   priced, at null rather than at zero. A Settings screen that showed only the
+   priced ones could not be used to price the rest. */
+router.get('/role-rates', (req, res, next) => (
+  holds(req.user, 'pnl.manage') ? next() : maySeeEither(req, res, next)
+), async (req, res) => {
+  const [list, rates] = await Promise.all([
+    designations(),
+    pnlHours.roleRates(db),
+  ]);
+  return res.json({
+    roleRates: list.map((r) => ({
+      roleKey: r.key,
+      label: r.label || r.name || r.key,
+      ratePerHour: rates.has(r.key) ? rates.get(r.key) : null,
+      priced: rates.has(r.key),
+    })),
+    canManage: holds(req.user, 'pnl.manage'),
+  });
+});
+
+router.put('/role-rates/:roleKey', mayWrite, async (req, res) => {
+  const list = await designations();
+  const role = list.find((r) => r.key === req.params.roleKey);
+  if (!role) return res.status(404).json({ error: 'That designation does not exist.' });
+
+  const raw = req.body ? req.body.ratePerHour : undefined;
+  /* Clearing a rate is not the same as setting it to zero: an empty value means
+     "this designation is not priced", which the read side reports as unpriced
+     hours rather than as free labour. */
+  const clearing = raw === null || raw === '' || raw === undefined;
+  let value = null;
+  if (!clearing) {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) {
+      return res.status(400).json({ error: 'The rate must be a number.', field: 'ratePerHour' });
+    }
+    if (n < 0) {
+      return res.status(400).json({ error: 'A rate cannot be negative.', field: 'ratePerHour' });
+    }
+    if (n > 99999999.99) {
+      return res.status(400).json({ error: 'That rate is too large.', field: 'ratePerHour' });
+    }
+    value = pnl.money(n);
+  }
+
+  const before = await pnlHours.roleRates(db);
+  const had = before.has(req.params.roleKey) ? before.get(req.params.roleKey) : null;
+
+  if (clearing) {
+    await db.query('DELETE FROM role_rates WHERE role_key = $1', [req.params.roleKey]);
+  } else {
+    await db.query(
+      `INSERT INTO role_rates (role_key, rate_per_hour, updated_by) VALUES ($1,$2,$3)
+       ON DUPLICATE KEY UPDATE rate_per_hour = VALUES(rate_per_hour), updated_by = VALUES(updated_by)`,
+      [req.params.roleKey, value, req.user.email]
+    );
+  }
+
+  req.activity({
+    module: 'pnl', action: 'pnl.role_rate_changed', entityType: 'role',
+    entityId: req.params.roleKey, entityLabel: role.label || role.name || role.key,
+    summary: clearing
+      ? `Cleared the hourly rate for ${role.label || role.key} (was ${had === null ? 'unpriced' : had})`
+      : `Set the hourly rate for ${role.label || role.key} to ${value}`,
+    changes: { ratePerHour: { from: had === null ? null : String(had), to: clearing ? null : String(value) } },
+  });
+
+  return res.json({ ok: true, roleKey: req.params.roleKey, ratePerHour: value, priced: !clearing });
+});
+
+// --- the Actual tab's entered Total Cost --------------------------------------
+
+/* Behind pnl.actual, NOT pnl.manage — see the note beside mayEnterTotalCost. */
+router.put('/projects/:id/total-cost', mayEnterTotalCost, async (req, res) => {
+  if (!await reachable(req, res, req.params.id)) return undefined;
+  const before = await pnl.billing(db, req.params.id);
+
+  const raw = req.body ? req.body.totalCost : undefined;
+  const clearing = raw === null || raw === '' || raw === undefined;
+  let value = null;
+  if (!clearing) {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) {
+      return res.status(400).json({ error: 'The total cost must be a number.', field: 'totalCost' });
+    }
+    if (n < 0) {
+      /* A negative cost is almost always a typed minus sign, and silently
+         turning it into extra profit is the wrong way to be wrong about
+         money. Same rule as every other amount in this module. */
+      return res.status(400).json({ error: 'A total cost cannot be negative.', field: 'totalCost' });
+    }
+    if (n > 99999999999.99) {
+      return res.status(400).json({ error: 'That total cost is too large.', field: 'totalCost' });
+    }
+    value = pnl.money(n);
+  }
+
+  /* The billing row may not exist yet — entering a cost before anybody has set
+     a contract value is perfectly ordinary, and refusing it would make the tab
+     unusable until somebody else did their half. */
+  await db.query(
+    `INSERT INTO project_billing (project_id, total_cost, updated_by) VALUES ($1,$2,$3)
+     ON DUPLICATE KEY UPDATE total_cost = VALUES(total_cost), updated_by = VALUES(updated_by)`,
+    [req.params.id, value, req.user.email]
+  );
+
+  req.activity({
+    module: 'pnl', action: 'pnl.total_cost_changed', entityType: 'project',
+    entityId: req.params.id,
+    summary: clearing
+      ? `Cleared the entered Total Cost (was ${before.totalCost === null ? 'not entered' : before.totalCost})`
+      : `Set the Total Cost to ${value}`,
+    changes: {
+      totalCost: {
+        from: before.totalCost === null ? null : String(before.totalCost),
+        to: clearing ? null : String(value),
+      },
+    },
+  });
+
+  await snapshots.capture(db, req.params.id);
+  const billing = await pnl.billing(db, req.params.id);
+  return res.json({ ok: true, billing });
 });
 
 // --- team assignments ---------------------------------------------------------
@@ -405,18 +599,28 @@ router.delete('/projects/:id/other-costs/:costId', mayWrite, async (req, res) =>
  * beneath it — see rollup() in src/pnl.js for why the margin is recomputed from
  * the sums rather than averaged.
  */
-router.get('/report', mayRead, async (req, res) => {
+router.get('/report', maySeeEither, async (req, res) => {
   const visible = await visibleProjects(req.user);
   let chosen = visible;
   if (req.query.clientId) chosen = chosen.filter((p) => p.client_id === req.query.clientId);
   if (req.query.projectId) chosen = chosen.filter((p) => p.id === req.query.projectId);
 
   const cards = await pnl.rateCards(db);
+  /* The rate table is read ONCE and handed to every project, rather than each
+     project fetching it again. With a hundred projects that is one query
+     instead of a hundred, and — more importantly — every project on the screen
+     is priced against the same rates, so a rate edited while the report is
+     being built cannot leave two projects costed differently. */
+  const rates = await pnlHours.roleRates(db);
   const perProject = [];
   for (const project of chosen) {
-    const figures = await pnl.forProject(db, project.id, { cards });
+    const [figures, worked] = await Promise.all([
+      pnl.forProject(db, project.id, { cards }),
+      hoursFor(project.id, rates),
+    ]);
     perProject.push({
       ...figures,
+      hours: worked,
       name: project.name,
       code: project.code,
       clientId: project.client_id,
@@ -473,7 +677,7 @@ router.get('/report', mayRead, async (req, res) => {
   return res.json({
     projects: perProject.map((p) => ({
       projectId: p.projectId, name: p.name, code: p.code, clientId: p.clientId,
-      totals: p.totals, billing: p.billing,
+      totals: p.totals, billing: p.billing, hours: p.hours,
     })),
     rollup: pnl.rollup(perProject),
     byClient,
@@ -489,7 +693,39 @@ router.get('/report', mayRead, async (req, res) => {
       to: req.query.to || null,
     },
     scope: { projects: chosen.length, ofVisible: visible.length },
+    /* The rolled-up hours figures, summed across the selected projects the same
+       way the money is — from the per-project numbers, so a total can never
+       disagree with the rows listed under it.
+
+       unpricedHours is carried all the way up on purpose. A rollup that
+       silently dropped it would report a confident cost for a set of projects
+       whose people are not all priced, which is the one thing this screen must
+       not do. */
+    hoursRollup: {
+      bidHours: pnlHours.round2(perProject.reduce((t, p) => t + p.hours.bidHours, 0)),
+      consumedHours: pnlHours.round2(perProject.reduce((t, p) => t + p.hours.consumedHours, 0)),
+      deliveredHours: pnlHours.round2(perProject.reduce((t, p) => t + p.hours.deliveredHours, 0)),
+      actualCost: pnl.money(perProject.reduce((t, p) => t + p.hours.actualCost, 0)),
+      /* Summed from each project's OWN budgeted cost, not recomputed from the
+         summed hours at a global blended rate: a studio-wide blend would price
+         one project's bid hours at another project's mix of people. A project
+         with nothing delivered has no rate basis and contributes null, which is
+         carried as "some of this is unpriced" rather than as zero. */
+      budgetedCost: pnl.money(perProject.reduce(
+        (t, p) => t + (p.hours.budgetedCost === null ? 0 : p.hours.budgetedCost), 0)),
+      projectsWithBudget: perProject.filter((p) => p.hours.budgetedCost !== null).length,
+      unpricedHours: pnlHours.round2(perProject.reduce((t, p) => t + p.hours.actualUnpricedHours, 0)),
+      /* Entered costs only add up across the projects that have one. How many
+         did is reported beside it, so "₹2,00,000 across 3 of 7 projects" cannot
+         be misread as the cost of all seven. */
+      enteredTotalCost: pnl.money(perProject.reduce(
+        (t, p) => t + (p.billing.totalCost === null ? 0 : p.billing.totalCost), 0)),
+      projectsWithTotalCost: perProject.filter((p) => p.billing.totalCost !== null).length,
+      projects: perProject.length,
+    },
     canManage: holds(req.user, 'pnl.manage'),
+    canSeeActual: holds(req.user, 'pnl.actual'),
+    canSeeFixed: holds(req.user, 'pnl.fixed'),
   });
 });
 

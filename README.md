@@ -700,13 +700,16 @@ Setup Node.js App → Restart, or touching `tmp/restart.txt`.
 | GET | `/api/users/:id/deactivation-impact` | `user.deactivate` — what deactivating would move, changing nothing |
 | POST | `/api/users/:id/deactivate` | `user.deactivate` — never yourself, never a full-access account |
 | POST | `/api/users/:id/reactivate` | `user.deactivate` — restores the account, not the work |
-| GET | `/api/pnl/rate-cards` | `pnl.view` or `pnl.manage` — the studio's price list |
+| GET | `/api/pnl/rate-cards` | either tab permission, or `pnl.manage` — the studio's price list |
+| GET | `/api/pnl/role-rates` | either tab permission, or `pnl.manage` — every designation's hourly rate in ₹, unpriced ones included |
+| PUT | `/api/pnl/role-rates/:roleKey` | `pnl.manage` — set a designation's rate, or clear it to mark it unpriced |
 | POST, PATCH, DELETE | `/api/pnl/rate-cards[/:id]` | `pnl.manage` alone |
-| GET | `/api/pnl/projects/:id` | `pnl.view` or `pnl.manage` — one project's figures, scoped like every other project read (404 outside scope) |
+| GET | `/api/pnl/projects/:id` | either tab permission — one project's figures and hours, scoped like every other project read (404 outside scope) |
+| PUT | `/api/pnl/projects/:id/total-cost` | `pnl.actual` — the Actual tab's entered Total Cost; `null` clears it |
 | POST, PATCH, DELETE | `/api/pnl/projects/:id/assignments[/:assignmentId]` | `pnl.manage` alone |
 | PUT | `/api/pnl/projects/:id/billing` | `pnl.manage` alone — contract value, billing type, invoiced to date |
 | POST, PATCH, DELETE | `/api/pnl/projects/:id/other-costs[/:costId]` | `pnl.manage` alone |
-| GET | `/api/pnl/report` | `pnl.view` or `pnl.manage` — summary, breakdown, trend and client rollup, filterable by `clientId`, `projectId`, `from`, `to` |
+| GET | `/api/pnl/report` | either tab permission — summary, breakdown, hours rollup, trend and client rollup, filterable by `clientId`, `projectId`, `from`, `to` |
 
 Every route re-checks permissions against the database on each request — a
 role change or removal takes effect on the user's very next request, not just
@@ -1182,272 +1185,104 @@ says which. Nobody is shown a number they cannot click into.
 
 ## Profit & Loss
 
-The first money in this application. Nothing here existed before — no rates, no
-billing, no costs, and **no currency**: figures are plain numbers in whatever the
-studio invoices in, and nothing converts between currencies. Its own tab,
-**Profit & Loss**, carrying **two sub-tabs — Fixed P&L and Actual P&L** — and its
-own Settings section, **Rate Cards**. No existing dashboard, report or permission
-changed.
+The first money in this application. Its own tab, **Profit & Loss**, carrying two
+sub-tabs — **Fixed P&L** and **Actual P&L** — and two Settings sections,
+**Rate Cards** and **Role Rates**. All figures are in **₹ INR**. No existing
+dashboard, task workflow or unrelated permission changed.
 
-### Why there are two tabs
+### Where every figure comes from
 
-They ask two different questions about the same project, and a single blended
-number answers neither:
+The two tabs are costed from **different sources on purpose**, because they
+answer different questions. Nothing on either is typed twice.
 
-| | Compares | Revenue is |
+| Figure | Tab | Source |
 | --- | --- | --- |
-| **Fixed P&L** | Assigned / budgeted hours against actual hours worked | The **fixed contract value** — what the project was sold for |
-| **Actual P&L** | Actual hours worked against hours billed to the client | **Invoiced to date** — what has actually been billed |
+| **Revenue** | Actual | Invoiced to date, from Client Billing |
+| **Total Cost** | Actual | **Entered by hand**, in ₹, per project |
+| **Total Hours Consumed** | Actual | Every work session on the project, **whatever state** the task is in |
+| **Profit / Margin** | Actual | Revenue − Total Cost, over revenue |
+| **Cost / Hour** | Actual | Total Cost ÷ hours consumed |
+| **Fixed Contract Value** | Fixed | Contract value, from Client Billing |
+| **Total Hours** | Fixed | The project's **Total Bid Hours** — every asset's Man Hours estimate, summed |
+| **Total Consumed Hours** | Fixed | Work sessions on tasks that have reached **Delivered** only |
+| **Actual Cost** | Fixed | Those delivered hours × each person's **role rate** |
+| **Budgeted Cost** | Fixed | Bid hours at the same blended rate the delivered work ran at |
+| **Profit / Margin** | Fixed | Contract value − actual cost − other costs, over contract value |
 
-A project can be comfortable on one and alarming on the other, and which one it
-is tells you what went wrong. The demo data ships a project of each shape (see
-*Demonstration data* below): **Nightgarden** overran its plan by 235 hours, which
-on a fixed fee comes straight out of the margin — the Fixed tab flags it and the
-Actual tab reads unremarkably. **Tidewater** did the opposite: it came in inside
-its plan, so the Fixed tab shows nothing wrong, but 135 of the hours worked were
-never invoiced. It reads **50.5% on Fixed and 15.5% on Actual**, and that gap is
-the entire argument for having two tabs.
+**Total Hours is not a field anybody types.** There is no total-hours box on the
+New Project form; the project's budgeted hours are the sum of its assets' Man
+Hours, which is exactly what the Projects tab has always shown as *Total Bid
+Hours*. One number, one definition, two screens — and nothing entered in P&L can
+move it.
 
-Both tabs share the same Client / Project / Period filters and the same
-client-level rollup, so switching between them changes the comparison and not the
-scope of what you are looking at.
+**Total Cost is the one figure that is typed**, and deliberately so: a project's
+real cost includes salaries, software and studio time this application has no
+idea about. A figure somebody takes responsibility for is worth more than a
+precise-looking sum of the parts the app happens to know. It is **NULL until
+entered**, and the screen shows a dash — "this project cost nothing" and "nobody
+has said what this project cost" are different facts and only one is ever true.
 
-### What the numbers mean
+### Delivered is a filter, not a tally
 
-None of these are self-evident, so they are stated once here and again on the
-screen.
+A task's hours reach Fixed P&L's *Total Consumed Hours* the moment it reaches
+**Delivered**, and not before. Hours on work in progress are counted on the
+Actual tab (which counts everything) and not on the Fixed one.
 
-| Figure | Definition |
-| --- | --- |
-| **Revenue** (Actual tab) | **Invoiced to date.** Not the contract value. |
-| **Contract value** (Fixed tab) | What the project was sold for. On the Fixed tab this *is* the revenue line; on the Actual tab it is shown beside revenue, because the gap between them is worth seeing. |
-| **Assigned / budgeted hours** | What was **planned** for each person's role when the project was priced. |
-| **Actual hours worked** | What was **worked**. The cost basis on both tabs. |
-| **Hours billed to client** | What was **invoiced** for that role. May be fewer than worked (absorbed) or more (a rounded-up block). |
-| **Budgeted cost** | Assigned hours x rate, summed. Costed at the **same rates as the work actually done**, so a variance is a difference in hours and never an artefact of re-pricing a rate card between the plan and the work. |
-| **Actual cost** / **Labour cost** | Actual hours x rate, summed. The same number under two names, because the Fixed tab talks about "budgeted vs actual". |
-| **Budget variance** | Actual cost &minus; budgeted cost. Positive is an overrun. |
-| **Other costs** | Ad hoc line items — contractors, licensing, outsourcing — each with a label and an amount. |
-| **Fixed profit / margin** | Contract value &minus; actual cost &minus; other costs, over contract value. |
-| **Gross profit / margin** | Revenue &minus; actual cost &minus; other costs, over revenue. |
-| **Unbilled hours** | Actual hours worked &minus; hours billed. Work the studio absorbed. |
+Nothing increments when a task is delivered. The figure is **derived from each
+asset's current state on every read**, so it is right after a delivery, right
+after an override moves an asset back out of Delivered, and right when a work
+session is added to something already delivered. A stored counter would have to
+be correct at every one of those moments and would be wrong the first time one
+was missed. "Updates automatically" is satisfied by never being stale.
 
-Four of those are load-bearing enough to say plainly:
+### Role Rates — what prices an hour
 
-**A contract worth a million that has billed nothing has earned nothing.** On the
-Actual tab, treating the contract as revenue would print a healthy margin on work
-nobody has paid for, which is the single most expensive way this screen could lie.
+**Settings → Role Rates** gives every designation an hourly rate in ₹. That is
+what Fixed P&L costs delivered work at: a work session records a **user**, a user
+holds a **designation**, so a designation is the only thing an automatically
+recorded hour can be priced against.
 
-**A margin on no revenue is blank, not 0%.** "Broke even" and "has not invoiced
-yet" are different facts, and only one of them would be true. The screen shows a
-dash and says why.
+This is **not** the Rate Cards section beside it. Rate Cards is the studio's
+free-text price list (Artist / Senior Artist) for team assignments somebody types
+in; Role Rates prices the hours people actually logged. Merging them would mean
+inventing a mapping from `game_artist` to "Mid Level Artist" that nobody asked
+for. Both remain; neither replaced the other.
 
-**Other costs are subtracted on both tabs.** That is a deliberate departure from
-a literal *contract value &minus; actual cost*: money spent outsourcing is gone
-whichever tab you are reading, and leaving it out of the Fixed figure would make
-the same project's profit differ between the tabs for a reason that has nothing
-to do with what the tabs compare. They are kept **out** of the budget comparison,
-though — nobody planned an outsourcing spend per role, so counting it there would
-flag a project as over its *labour* budget for a cost that budget never claimed
-to cover.
+**An unpriced designation is not free.** A role with no rate contributes its
+hours and no cost, and those hours are **reported separately** — on the card, in
+the breakdown, and in the client rollup. Costing them at zero would understate
+what a project cost, which is the direction of error that makes a loss look like
+a profit. The Fixed tab shows a banner naming the unpriced hours and where to set
+the missing rates.
 
-**A project with no plan recorded is unplanned, not under budget.** Every project
-that predates the assigned-hours field has zero planned. Read naively that is
-"0 budgeted, 6,000 spent, 6,000 over" — a red flag on the entire back catalogue
-on the morning the feature ships. The over-budget flag only ever appears where a
-plan actually exists, and an unplanned project says so.
-
-### Rate cards
-
-**Settings → Rate Cards** is the studio's price list: role, level, rate per hour.
-The eight combinations the brief named are seeded on first run — Artist and
-Animator, at Junior / Mid / Senior / Team Lead — **all at zero**, and the screen
-flags every unpriced row. A seeded rate is a number somebody might not notice was
-invented, and an invented rate in a P&L is worse than a blank one.
-
-Roles and levels here are free text and are **deliberately not tied to the
-designation catalogue**. The studio's designations are levelled trainee /
-associate / (base) / senior; this ladder is levelled Junior / Mid / Senior / Team
-Lead. Mapping one onto the other would either lose a level or invent a
-correspondence nobody asked for, so an assignment picks a rate card row
-explicitly rather than inheriting one from whoever it is for. Rows can be renamed,
-re-rated, added and deleted.
-
-**Editing a rate does not reprice past work, and deleting a row does not delete
-the cost it produced.** Every assignment carries its own copy of the rate it was
-costed at. Re-pricing the card next April changes what new assignments start
-from and nothing else; a P&L that changed retrospectively would not be a record
-of anything. An assignment whose role and level is no longer on the card is
-appended to the breakdown and marked *off the rate card*, because its cost is
-real and has to add up to the labour total above it.
-
-### A project's team, billing and costs
-
-Open a project from the table on the P&L tab. Three editors, all on that panel:
-
-* **Client billing** — contract value, billing type (Fixed / Milestone / Time &
-  Material), invoiced to date.
-* **Project team** — pick a rate card row, name the person, and enter **three
-  hours figures**: *assigned / budgeted*, *actual worked*, and *billed to
-  client*. The rate fills in from the card and can then be **overridden for this
-  project**; the override is stored on the row, so it does not touch the card or
-  any other project. Each row shows its budgeted cost, its actual cost and the
-  variance between them, with running totals.
-
-  The three are edited **independently** — the API merges field by field, so
-  changing only the billed hours does not wipe the plan. Changing the billed
-  hours moves the Actual tab's hours reconciliation and nothing else; changing
-  the plan moves the Fixed tab's budget and nothing else. Neither touches
-  revenue, which is a figure in money and not hours re-labelled as money.
-
-  All three default to **0**, so an assignment written before these columns
-  existed reads as "planned nothing, billed nothing" rather than throwing — and
-  zero is honest there, because nobody recorded a plan.
-* **Other costs** — a label and an amount. The label is required: an unexplained
-  amount is not a record anybody can act on six months later.
-
-They live on the P&L tab rather than on the Projects tab for two reasons: the
-figures they produce are a scroll away, and the Projects tab is gated on
-`client.view`, which would have put a money form behind a permission that is not
-about money.
-
-**All three hours figures are entered by hand.** *Actual hours worked* in
-particular is *not* pulled from the timesheets or the tracked work sessions, per
-the approved design — which means the P&L's idea of hours worked and the app's
-own tracked hours can drift apart, and nothing reconciles them. The app already tracks hours (`work_sessions`, and
-the coverage maths behind the Idle Report), so a later integration could feed
-this figure or show both side by side. Until then a manual hour is what the P&L
-is costed on, and the panel says so.
-
-Invoicing **more** than the contract value is a **warning, not a refusal** — it is
-usually a scope change nobody has updated the contract for. A **negative** rate,
-hour or amount is refused outright: a typed minus sign silently becoming extra
-profit is the wrong way to be wrong about money.
-
-### The report
-
-Filterable by client and project. The date range filters the **margin trend
-only** — the cards and tables are current position, not a period, because
-invoiced-to-date and cost-to-date are running totals and slicing them by month
-would print a figure that is not what any of them mean.
-
-* **Five summary cards**, which are the one thing that differs between the tabs:
-
-  | Fixed P&L | Actual P&L |
-  | --- | --- |
-  | Contract value | Revenue (invoiced) |
-  | Budgeted cost | Labour cost |
-  | Actual cost | Other costs |
-  | Budget variance | Gross profit |
-  | Fixed profit / margin | Margin |
-
-* **Revenue vs cost** — two bars on **one shared scale**, so the shorter one is
-  genuinely shorter. Bars normalised independently would make a project that
-  spent twice what it earned look healthy.
-* **Labour cost by role and level** — **every rate card row**, including the ones
-  nobody was booked at, at zero. A table listing only what was used cannot answer
-  "did we put any seniors on this at all", and its shape would change from
-  project to project so two could not be compared line for line. It carries
-  **both comparisons on every row** — budgeted against actual, and worked against
-  billed — worked out once so the two tabs cannot disagree about the same row,
-  and **every column adds up to the card above it**.
-* **Margin trend** — see below.
-* **By client** — the same metrics rolled up across each client's projects.
-
-The client rollup is **summed from the per-project figures**, so a client total
-can never disagree with the projects listed beneath it, and its **margin is
-recomputed from the summed revenue and profit rather than averaged**. An average
-of percentages weights a small project the same as a large one, which is how a
-rollup ends up flattering a loss.
-
-Over budget is reported at the rollup as **a count, not a flag**: a client with
-one overrun and two healthy projects is not "over budget", it is "one project
-over budget". A boolean there would either condemn the whole book or hide the one
-that needs attention.
-
-### Demonstration data
-
-`npm run pnl:demo` creates three clients and three projects with enough figures
-for both tabs to mean something on first look; `npm run pnl:demo -- --remove`
-takes them away again. It is **a script you run deliberately, not a seed that
-runs itself** — it writes clients and projects, which are real records in a real
-studio's database, and anything that creates those on boot will eventually create
-them on the production instance on the morning somebody restarts the app for an
-unrelated reason.
-
-It is idempotent on the client name, tags what it created on the **client's
-notes**, and `--remove` finds demo data by that tag — so nothing is deleted that
-the script did not create, and a real client that happens to share a name is
-never touched. It prices only the rate card rows that are still at zero, so a
-studio that has set its own rates does not have them overwritten.
-
-The three projects are deliberately different shapes, because two tabs that show
-the same story on every row demonstrate nothing:
-
-| Project | Shape | Fixed tab | Actual tab |
-| --- | --- | --- | --- |
-| **Orbit Rally** | Healthy — under the plan, fully billed | Good | Good |
-| **Nightgarden** | 235h over the plan on the expensive roles | **Over budget** | Unremarkable |
-| **Tidewater** | Inside the plan, 135h never invoiced | Fine, 50.5% | **15.5%**, absorbed hours shown |
-
-### The margin trend starts empty, on purpose
-
-Everything else in this schema holds one *current* value per thing: hours to
-date, invoiced to date. A single current number cannot produce a curve, and a
-trend computed from one would be today's margin drawn backwards across twelve
-months and presented as history — a straight line that looks like data and is a
-fabrication.
-
-So the position is written down as it changes: **one snapshot row per project per
-month**, rewritten within the month rather than appended, so a busy afternoon of
-edits is one point rather than six. The trend reports what was actually true.
-It necessarily begins when the feature is installed, there is no back-history to
-synthesise, and the panel says so rather than filling the gap.
-
-### Two permissions
+### Three permissions, one per thing
 
 | Permission | Covers | Default |
 | --- | --- | --- |
-| *View Profit & Loss Reports* (`pnl.view`) | **Both tabs** — summary, breakdowns, trend, client rollup. Read-only. | Super Admin only |
-| *Manage P&L Rate Cards & Billing* (`pnl.manage`) | Rate cards, team assignments and all three hours figures, client billing, other costs. | Super Admin only |
+| *Access Actual P&L* (`pnl.actual`) | The Actual tab, **and** entering/editing its Total Cost | Super Admin only |
+| *Access Fixed P&L* (`pnl.fixed`) | The Fixed tab | Super Admin only |
+| *Manage P&L Rate Cards & Billing* (`pnl.manage`) | Role rates, rate cards, team assignments, client billing, other costs | Super Admin only |
 
-**The two tabs share these two permissions rather than getting one each.** Every
-other permission in this app grants a *capability* — view a report, change a
-setting, assign a task — and none of them splits a single screen's sub-tabs into
-separate grants. Fixed and Actual are two views of one dataset produced by one
-set of inputs: anybody who can edit the assigned hours can already edit the
-billed hours on the same row, so `pnl.manage.fixed` and `pnl.manage.actual` would
-be two names for the same authority. Splitting the *read* would be coherent but
-buys little — a studio that trusts somebody with what a project cost is not
-usually withholding what it was sold for — and it would put two more rows in a
-catalogue of 73 for a distinction nobody asked for. **No new permission was added
-for this feature.**
+`pnl.view` was **replaced** by the first two — it is gone from the catalogue
+rather than left as a grant that no longer gates anything.
 
-Both are togglable per role in **Settings → Role Permissions**, under their own
-**Profit & Loss** group, so a Finance or Producer designation can be granted
-either without a code change. Super Admin receives both automatically.
+**None implies another**, so all eight combinations are grantable. Somebody with
+only *Access Actual P&L* does not see the Fixed tab at all, and the reverse;
+holding neither means the **Profit & Loss nav entry does not appear**. The screen
+opens on whichever tab the viewer actually holds, so a single-permission user
+never lands on a blank page.
 
-**Neither implies the other.** Reading a margin and deciding what it is are
-different authorities: somebody who can change a rate card can change every
-historical project's cost basis, and somebody who can change invoiced-to-date can
-change what the studio believes it has earned. Holding `pnl.manage` does open the
-report — you cannot sensibly edit figures you cannot see — but `pnl.view` alone
-gets the same screen with no inputs and no buttons on it, and no Rate Cards
-section in Settings.
-
-**Holding either does not widen anybody's reach.** The report is scoped by the
-role's existing `projectScope`, exactly like every other piece of project data. A
-project outside that scope answers **404**, not 403, so the endpoint does not
-confirm that an id exists.
+`pnl.manage` on its own opens **neither** tab: setting the price list and reading
+what it produces are different authorities. The one place they are joined is the
+Actual tab's Total Cost — that figure is behind `pnl.actual`, not `pnl.manage`,
+because it is the only thing on that tab anybody types and whoever is given the
+tab is being asked to keep it right.
 
 ### Everything is in the Activity Log
 
-Rate cards, assignments, hours, billing and cost line items all write to the
-Activity Log under a **`pnl`** module of its own — not lumped in with Settings,
-so somebody auditing a margin can filter to the money trail without wading
-through every branding tweak. Each entry carries **old value to new value**, and
-the one that matters most is invoiced-to-date, because that figure *is* the
-revenue the studio reports.
+Role rates, the entered Total Cost, rate cards, assignments, billing and cost
+line items all write to the Activity Log under a **`pnl`** module of its own,
+each entry carrying old value to new.
 
 ## Project milestones
 

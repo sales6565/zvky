@@ -38,7 +38,7 @@
 const { v4: uuid } = require('uuid');
 
 const TABLES = [
-  'rate_cards', 'project_team_assignments', 'project_billing',
+  'rate_cards', 'role_rates', 'project_team_assignments', 'project_billing',
   'project_other_costs', 'pnl_snapshots',
 ];
 
@@ -120,6 +120,35 @@ async function ensureTables(db) {
     UNIQUE KEY uniq_rate_card (\`role\`, level)
   )`);
 
+  /* PER-ROLE HOURLY RATES, keyed on the designation catalogue.
+   *
+   * This is what prices a LOGGED HOUR, and it exists because nothing else
+   * could. A work_sessions row records a user and a number of seconds; a user
+   * has a designation; so a designation is the only thing an automatically
+   * recorded hour can be priced against without somebody hand-matching every
+   * person to a row every time.
+   *
+   * WHY THIS IS NOT THE rate_cards TABLE ABOVE. That one is free text — the
+   * studio's price list of Artist/Senior Artist pairs — and it prices a PLANNED
+   * team assignment somebody types in. This one is keyed on the role a user
+   * actually holds, and prices the hours they actually logged. They are two
+   * different questions and merging them would mean either inventing a mapping
+   * from "game_artist" to "Mid Level Artist" that nobody asked for, or making
+   * the free-text list unable to price anything automatic.
+   *
+   * Rates are in the same plain currency as every other figure in this module;
+   * the screens label it INR.
+   *
+   * A role with no row is NOT zero — it is UNPRICED, and the difference matters
+   * enough that the read side reports the hours it could not price rather than
+   * costing them at nothing and quietly understating what a project cost. */
+  await db.query(`CREATE TABLE IF NOT EXISTS role_rates (
+    role_key      VARCHAR(80)   NOT NULL PRIMARY KEY,
+    rate_per_hour DECIMAL(10,2) NOT NULL DEFAULT 0,
+    updated_by    VARCHAR(191)  NULL,
+    updated_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  )`);
+
   /* An assignment carries its OWN rate, copied from the card when it is made.
    *
    * That copy is the point. A rate card is the studio's current price list; an
@@ -167,6 +196,14 @@ async function ensureTables(db) {
     contract_value   DECIMAL(14,2) NOT NULL DEFAULT 0,
     billing_type     VARCHAR(24)   NULL,
     invoiced_to_date DECIMAL(14,2) NOT NULL DEFAULT 0,
+    /* THE ACTUAL TAB'S TOTAL COST. Typed in, not computed: the studio's real
+       cost of a project includes things this application has no idea about —
+       salaries, software, a suite booked for a week — and a figure somebody
+       takes responsibility for is worth more than a precise-looking sum of the
+       parts the app happens to know.
+       NULL means "nobody has entered one yet", which is a different fact from
+       zero and is displayed differently. */
+    total_cost       DECIMAL(14,2) NULL,
     updated_by       VARCHAR(191)  NULL,
     updated_at       DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
   )`);
@@ -285,6 +322,11 @@ async function billing(db, projectId) {
     contractValue: row ? money(row.contract_value) : 0,
     billingType: row ? (row.billing_type || null) : null,
     invoicedToDate: row ? money(row.invoiced_to_date) : 0,
+    /* NULL, not 0, when nobody has entered one. "This project cost nothing" and
+       "nobody has said what this project cost" are different facts, and only
+       one of them is ever true. The screen shows a dash for the second. */
+    totalCost: row && row.total_cost !== null && row.total_cost !== undefined
+      ? money(row.total_cost) : null,
     updatedBy: row ? row.updated_by : null,
     updatedAt: row ? row.updated_at : null,
     // Whether anything has been entered at all, so the screen can say "not set

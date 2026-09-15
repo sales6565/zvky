@@ -840,6 +840,16 @@ tr.past-round{opacity:0.62;}
 .pnl-trend-month{font-size:10px;color:var(--ink-faint);margin-top:6px;font-family:'IBM Plex Mono';}
 /* The two P&L tabs, and the budget dimension the Fixed one adds. */
 .pnl-tabs{margin-bottom:14px;}
+.pnl-costbox{margin-bottom:16px;}
+.pnl-costnote{font-size:11.5px;color:var(--ink-faint);line-height:1.5;margin-bottom:8px;}
+.pnl-costrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.pnl-costcur{font-size:15px;color:var(--ink-muted);}
+.pnl-costrow input{width:180px;margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
+.pnl-costlive{font-size:12px;color:var(--ink-muted);}
+.pnl-unpriced{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:#e0a458;
+  border:1px solid #e0a458;border-radius:3px;padding:0 4px;margin-left:6px;}
+.rr-table input{width:120px;margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
+.rr-unpriced td{opacity:.62;}
 /* A link that cannot be clicked, drawn so it does not look like one that can.
    Monospace for the path, because a backslash in a proportional face at 13px is
    very hard to tell from a forward slash and these get retyped by hand. */
@@ -2104,13 +2114,13 @@ const UI_GATES = {
      without widening anybody's reach — an Admin sees their own projects and a
      Super Admin sees the studio. */
   adminDashTabBtn:       () => can('report.admin_dashboard'),
-  /* EITHER permission opens the tab. Somebody who may edit the rates has to be
-     able to see what they produce, so pnl.manage reaches the report too; the
-     screen then decides per control whether it is editable. Gating the tab on
-     pnl.view alone would have made the manage permission useless on its own,
-     and gating it on both would have made them one permission wearing two
-     names. */
-  pnlTabBtn:             () => can('pnl.view','pnl.manage'),
+  /* EITHER TAB opens the Profit & Loss nav entry, and the screen then shows
+     only the sub-tabs the viewer actually holds. Holding neither means the nav
+     entry does not appear at all.
+     pnl.manage is deliberately NOT here: setting the rate card is a different
+     authority from reading what the rates produce, and somebody trusted with
+     the price list is not thereby shown every project's margin. */
+  pnlTabBtn:             () => can('pnl.actual','pnl.fixed'),
   projectsTabBtn:        () => can('client.view'),
   /* Its own grant, so the tab can be given or withheld independently of the
      workflow behind it. What the tab LISTS is still whatever this role may act
@@ -2452,6 +2462,7 @@ const SETTINGS_SECTIONS = [
      designation granted pnl.manage and nothing else can still reach the Settings
      tab to use it. */
   { permission:'pnl.manage',            label:'Rate Cards',       heading:'Rate Cards', note:'What each role and level costs per hour, for Profit & Loss.' },
+  { permission:'pnl.manage',            label:'Role Rates',       heading:'Role Rates', note:'What an hour of each designation costs, in INR. This is what prices logged hours on Fixed P&L.' },
   /* The two read-only records. They were missing from this list, which is a
      bug rather than an omission: canOpenSettings() below is what gates the
      Settings TAB, so a designation granted the Activity Log and nothing else
@@ -8521,6 +8532,7 @@ async function renderSettings(){
     ${can('settings.ip_blocklist') ? '<div id="ipBlocklistSection"></div>' : ''}
     ${can('settings.email_config') ? '<div id="emailConfigSection"></div>' : ''}
     ${can('pnl.manage') ? '<div id="rateCardsSection"></div>' : ''}
+    ${can('pnl.manage') ? '<div id="roleRatesSection"></div>' : ''}
     ${can('settings.permissions') ? '<div id="rolePermissionsSection"></div>' : ''}
     ${can('settings.activity_log') ? '<div id="activityLogSection"></div>' : ''}
     ${can('settings.chat_activity') ? '<div id="chatActivitySection"></div>' : ''}
@@ -8556,6 +8568,7 @@ async function renderSettings(){
      the API lets them read the card; what they cannot do is change it, so what
      they are not shown is the form rather than the numbers. */
   if(can('pnl.manage')) await renderRateCards();
+  if(can('pnl.manage')) await renderRoleRates();
 
   /* Last, so every section exists to be collapsed — including the ones above
      that are awaited. The observer set up here keeps the state applied for the
@@ -9929,7 +9942,14 @@ const pnlSign = (n) => (Number(n)||0) < 0 ? 'neg' : 'pos';
 async function renderPnl(){
   const el = document.getElementById('pnlView');
   if(!el) return;
-  if(!can('pnl.view','pnl.manage')){ el.innerHTML = ''; return; }
+  if(!can('pnl.actual','pnl.fixed')){ el.innerHTML = ''; return; }
+
+  /* OPEN ON A TAB THE VIEWER ACTUALLY HOLDS. The default is Fixed, so somebody
+     with only Actual would otherwise land on a blank screen and conclude the
+     feature is broken. Corrected before the fetch, not after, so the first
+     paint is already right. */
+  if(PNL.view === 'fixed' && !can('pnl.fixed')) PNL.view = 'actual';
+  if(PNL.view === 'actual' && !can('pnl.actual')) PNL.view = 'fixed';
 
   const q = new URLSearchParams();
   if(PNL.filters.clientId) q.set('clientId', PNL.filters.clientId);
@@ -9980,14 +10000,14 @@ function paintPnl(){
           ${fixed
             ? 'Revenue here is the <strong>agreed fixed fee</strong>, and cost is what the work actually took — the question is whether the project is still profitable at the price that was quoted.'
             : 'Revenue here is what has been <strong>invoiced to date</strong>, and cost is what the work actually took — the question is what the studio really made on what it really billed.'}
-          Figures are in whatever currency the studio invoices in — nothing here converts between currencies.</div>
+          All figures are in <strong>₹ INR</strong>.</div>
       </div>
       ${d.canManage ? '' : '<div class="pnl-ro">Read-only — you can view these figures but not change what they are computed from.</div>'}
     </div>
 
     <div class="sub-tabs pnl-tabs">
-      <button class="sub-tab${fixed?' active':''}" data-pnlview="fixed">Fixed P&amp;L</button>
-      <button class="sub-tab${fixed?'':' active'}" data-pnlview="actual">Actual P&amp;L</button>
+      ${can('pnl.fixed') ? `<button class="sub-tab${fixed?' active':''}" data-pnlview="fixed">Fixed P&amp;L</button>` : ''}
+      ${can('pnl.actual') ? `<button class="sub-tab${fixed?'':' active'}" data-pnlview="actual">Actual P&amp;L</button>` : ''}
     </div>
 
     <div class="pnl-filters">
@@ -10009,13 +10029,15 @@ function paintPnl(){
         : 'The dates filter the <strong>margin trend</strong> only. The cards and tables are current position, not a period — invoiced to date and cost to date are running totals, and slicing them by month would print a figure that is not what any of them mean.'}</div>
     </div>
 
-    ${fixed ? pnlFixedCardsHTML(r) : pnlActualCardsHTML(r)}
+    ${fixed ? pnlFixedCardsHTML(r, d.hoursRollup) : pnlActualCardsHTML(r, d.hoursRollup)}
 
-    ${fixed ? pnlBudgetCompareHTML(r) : pnlCompareHTML(r)}
+    ${fixed ? '' : pnlTotalCostEditorHTML(d)}
+
+    ${fixed ? '' : pnlCompareHTML(r)}
 
     <div class="pnl-grid">
-      ${pnlByRoleHTML(d.byRoleLevel, fixed)}
-      ${fixed ? pnlBudgetNoteHTML(r) : pnlTrendHTML(d.trend)}
+      ${fixed ? pnlByRoleRateHTML(d) : pnlByRoleHTML(d.byRoleLevel, fixed)}
+      ${fixed ? '' : pnlTrendHTML(d.trend)}
     </div>
 
     ${pnlClientsHTML(d.byClient, fixed)}
@@ -10047,70 +10069,184 @@ function paintPnl(){
  * value it does not have reads as infinite margin. Hence two tabs rather than
  * one screen with a toggle nobody would find.
  */
-function pnlFixedCardsHTML(r){
-  const over = r.budgetVariance > 0;
+/* THE RUPEE. Every money figure on these two tabs is INR and says so — the
+   screens used to be currency-neutral, and a cost somebody types in is a lot
+   easier to type wrong when nothing on screen says which currency it wants. */
+const pnlINR = (n) => '₹' + pnlMoney(n);
+/* Not entered is not zero, and the two must not look alike. */
+const pnlNil = (why) => `<span class="pnl-nil" title="${escapeHTML(why)}">—</span>`;
+
+function pnlFixedCardsHTML(r, h){
+  /* Over budget compares what the delivered work COST against what the bid
+     hours would have cost at the same blended rate. Both sides priced the same
+     way, so the variance is a difference in HOURS and never an artefact of the
+     rate basis differing between the two halves. */
+  const budget = (h.budgetedCost === null || h.budgetedCost === undefined) ? null : h.budgetedCost;
+  /* null AND undefined. It was undefined here once — the figure was missing
+     from the payload — and `actualCost - undefined` is NaN, which this card
+     rendered as a confident "₹0.00" variance. A missing number must read as
+     missing. */
+  const unplanned = budget === null || !h.projectsWithBudget;
+  const variance = unplanned ? null : Math.round((h.actualCost - budget) * 100) / 100;
+  const over = variance !== null && variance > 0;
+  const profit = Math.round((r.contractTotal - h.actualCost - r.otherCosts) * 100) / 100;
+  const margin = r.contractTotal ? Math.round((profit / r.contractTotal) * 1000) / 10 : null;
   return `
     <div class="pnl-cards pnl-cards-6">
       <div class="pnl-card pnl-rev"><div class="ad-card-label">Fixed Contract Value</div>
-        <div class="ad-card-value">${pnlMoney(r.contractTotal)}</div>
+        <div class="ad-card-value">${pnlINR(r.contractTotal)}</div>
         <div class="ad-card-note">The agreed fee. Revenue on this tab, whatever has been invoiced so far.</div></div>
-      <div class="pnl-card pnl-bud"><div class="ad-card-label">Budgeted Cost</div>
-        <div class="ad-card-value">${pnlMoney(r.budgetedCost)}</div>
-        <div class="ad-card-note">${pnlHours(r.assignedHoursTotal)} planned hours at the rate card.</div></div>
-      <div class="pnl-card pnl-lab"><div class="ad-card-label">Actual Cost</div>
-        <div class="ad-card-value">${pnlMoney(r.actualCost)}</div>
-        <div class="ad-card-note">${pnlHours(r.hoursTotal)} hours actually worked, at the same rates.</div></div>
-      <div class="pnl-card ${over?'pnl-over':'pnl-under'}"><div class="ad-card-label">Budget Variance</div>
-        <div class="ad-card-value ${over?'neg':''}">${over?'+':''}${pnlMoney(r.budgetVariance)}</div>
-        <div class="ad-card-note">${over
-          ? `Over the plan.${r.overBudgetProjects ? ` ${r.overBudgetProjects} project${r.overBudgetProjects===1?' is':'s are'} over budget.` : ''}`
-          : (r.budgetedCost ? 'Under the plan — the work cost less than was allowed for.' : 'No budget recorded, so there is nothing to vary from.')}</div></div>
+      <div class="pnl-card pnl-bud"><div class="ad-card-label">Total Hours</div>
+        <div class="ad-card-value">${pnlHours(h.bidHours)}h</div>
+        <div class="ad-card-note">The project&rsquo;s Total Bid Hours &mdash; every asset&rsquo;s Man Hours estimate, the same figure the Projects tab shows.</div></div>
+      <div class="pnl-card pnl-lab"><div class="ad-card-label">Total Consumed Hours</div>
+        <div class="ad-card-value">${pnlHours(h.deliveredHours)}h</div>
+        <div class="ad-card-note">Logged against tasks that have reached <strong>Delivered</strong>.
+          ${h.undeliveredHours > 0 ? `${pnlHours(h.undeliveredHours)}h more is logged on work not yet delivered and does not count here yet.` : 'Nothing is logged against undelivered work.'}</div></div>
+      <div class="pnl-card ${over?'pnl-over':'pnl-under'}"><div class="ad-card-label">Budgeted vs Actual Cost</div>
+        <div class="ad-card-value ${over?'neg':''}">${unplanned ? pnlNil('No delivered hours yet, so there is no rate basis to cost the bid at.') : `${over?'+':''}${pnlINR(variance)}`}</div>
+        <div class="ad-card-note">${unplanned
+          ? 'Nothing delivered yet, so there is no blended rate to price the bid hours at.'
+          : `Budget ${pnlINR(budget)} against actual ${pnlINR(h.actualCost)}. ${over ? 'Over the plan.' : 'Under the plan.'}`}</div></div>
       <div class="pnl-card pnl-gp"><div class="ad-card-label">Profit</div>
-        <div class="ad-card-value ${pnlSign(r.fixedProfit)}">${pnlMoney(r.fixedProfit)}</div>
-        <div class="ad-card-note">Fixed fee &minus; actual cost &minus; other costs (${pnlMoney(r.otherCosts)}).</div></div>
+        <div class="ad-card-value ${pnlSign(profit)}">${pnlINR(profit)}</div>
+        <div class="ad-card-note">Fixed fee &minus; actual cost &minus; other costs (${pnlINR(r.otherCosts)}).</div></div>
       <div class="pnl-card pnl-mg"><div class="ad-card-label">Margin</div>
-        <div class="ad-card-value ${r.fixedMarginPercent===null?'':pnlSign(r.fixedMarginPercent)}">${pnlPct(r.fixedMarginPercent)}</div>
-        <div class="ad-card-note">${r.fixedMarginPercent===null
+        <div class="ad-card-value ${margin===null?'':pnlSign(margin)}">${pnlPct(margin)}</div>
+        <div class="ad-card-note">${margin===null
           ? 'No contract value recorded, so there is no margin to compute.'
           : 'Profit as a share of the agreed fee.'}</div></div>
     </div>
-    ${r.budgetedProjects < r.projects ? `<div class="ip-banner open" style="margin-bottom:16px;">
-      ${r.projects - r.budgetedProjects} of ${r.projects} project${r.projects===1?'':'s'} ${r.projects - r.budgetedProjects===1?'has':'have'} no
-      planned hours recorded, so ${r.projects - r.budgetedProjects===1?'it is':'they are'} counted as unplanned rather than under budget.
-      Budgeted Cost and Variance above cover only the ${r.budgetedProjects} that ${r.budgetedProjects===1?'does':'do'}.</div>` : ''}`;
+    ${h.unpricedHours > 0 ? `<div class="ip-banner open" style="margin-bottom:16px;">
+      <strong>${pnlHours(h.unpricedHours)}h of delivered work is unpriced.</strong>
+      Those hours were logged by people whose designation has no hourly rate, so they are
+      <em>not</em> in the Actual Cost above &mdash; the cost shown is lower than the real one.
+      Set the missing rates in <strong>Settings &rarr; Role Rates</strong>.
+    </div>` : ''}`;
 }
 
-function pnlActualCardsHTML(r){
-  const unbilled = r.hoursDelta;
-  return `
-    <div class="pnl-cards">
-      <div class="pnl-card pnl-rev"><div class="ad-card-label">Revenue</div>
-        <div class="ad-card-value">${pnlMoney(r.revenue)}</div>
-        <div class="ad-card-note">Invoiced to date${r.contractTotal ? ` of ${pnlMoney(r.contractTotal)} contracted` : ''}.</div></div>
-      <div class="pnl-card pnl-lab"><div class="ad-card-label">Actual Labour Cost</div>
-        <div class="ad-card-value">${pnlMoney(r.labourCost)}</div>
-        <div class="ad-card-note">${pnlHours(r.hoursTotal)} hours worked; ${pnlHours(r.billedHoursTotal)} billed to the client.</div></div>
-      <div class="pnl-card pnl-oth"><div class="ad-card-label">Other Costs</div>
-        <div class="ad-card-value">${pnlMoney(r.otherCosts)}</div>
-        <div class="ad-card-note">Contractors, licensing, outsourcing — itemised per project.</div></div>
-      <div class="pnl-card pnl-gp"><div class="ad-card-label">Gross Profit</div>
-        <div class="ad-card-value ${pnlSign(r.grossProfit)}">${pnlMoney(r.grossProfit)}</div>
-        <div class="ad-card-note">Revenue &minus; labour &minus; other costs.</div></div>
-      <div class="pnl-card pnl-mg"><div class="ad-card-label">Margin</div>
-        <div class="ad-card-value ${r.marginPercent===null?'':pnlSign(r.marginPercent)}">${pnlPct(r.marginPercent)}</div>
-        <div class="ad-card-note">${r.marginPercent===null
-          ? 'Nothing invoiced yet, so there is no margin to compute.'
-          : 'Gross profit as a share of revenue.'}</div></div>
+/* Entering the Total Cost, for ONE project at a time.
+ *
+ * Deliberately only when a single project is chosen in the filter. The figure
+ * belongs to a project; an input above a total covering nine of them would have
+ * to either write the same number to all nine or silently pick one, and both
+ * are worse than asking which project first.
+ *
+ * The permission is pnl.actual, not pnl.manage — this is the one figure the
+ * Actual tab exists to maintain, so whoever is given the tab is being asked to
+ * keep it right. See the note beside mayEnterTotalCost in the route. */
+/* The Fixed tab's cost breakdown: what each DESIGNATION cost on delivered work.
+ *
+ * Built from the hours people actually logged, priced at that person's role
+ * rate. Rows are summed across every selected project, so it adds up to the
+ * Actual Cost card above it — and an unpriced row is shown with its hours and
+ * no cost rather than being dropped, because those hours are real and somebody
+ * needs to see that they are missing from the total. */
+function pnlByRoleRateHTML(d){
+  const rows = new Map();
+  for(const p of d.projects){
+    for(const b of (p.hours.byRole || [])){
+      const key = b.roleKey || '(none)';
+      if(!rows.has(key)) rows.set(key, { ...b, hours:0, cost:0, people:new Set() });
+      const row = rows.get(key);
+      row.hours = Math.round((row.hours + b.hours)*100)/100;
+      row.cost  = Math.round((row.cost  + b.cost )*100)/100;
+      for(const n of (b.people||[])) row.people.add(n);
+    }
+  }
+  const list = [...rows.values()].sort((a,b)=> b.hours - a.hours);
+  const totalHours = Math.round(list.reduce((t,r)=>t+r.hours,0)*100)/100;
+  const totalCost  = Math.round(list.reduce((t,r)=>t+r.cost ,0)*100)/100;
+
+  return `<div class="pnl-panel">
+    <h3>Cost by Role &mdash; delivered work</h3>
+    <div class="pnl-costnote">Hours logged by each designation on tasks that have reached
+      <strong>Delivered</strong>, priced at that designation&rsquo;s rate from
+      <strong>Settings &rarr; Role Rates</strong>.</div>
+    ${list.length ? `<div class="pnl-scroll"><table class="ref-table pnl-table">
+      <thead><tr><th>Designation</th><th class="num">Rate (₹/h)</th><th class="num">Hours</th><th class="num">Cost (₹)</th><th>People</th></tr></thead>
+      <tbody>${list.map(r=>`<tr class="${r.priced?'':'unused'}">
+        <td>${escapeHTML(r.roleLabel || r.roleKey || 'No designation')}
+          ${r.priced ? '' : '<span class="pnl-unpriced">unpriced</span>'}</td>
+        <td class="num">${r.priced ? pnlMoney(r.ratePerHour) : '—'}</td>
+        <td class="num">${pnlHours(r.hours)}</td>
+        <td class="num">${r.priced ? pnlMoney(r.cost) : '—'}</td>
+        <td style="font-size:11.5px;color:var(--ink-faint);">${escapeHTML([...r.people].join(', '))}</td>
+      </tr>`).join('')}</tbody>
+      <tfoot><tr><td>Total</td><td class="num"></td><td class="num">${pnlHours(totalHours)}</td>
+        <td class="num">${pnlMoney(totalCost)}</td><td></td></tr></tfoot>
+    </table></div>` : '<div class="pnl-costnote">No delivered work yet, so nothing has been costed.</div>'}
+  </div>`;
+}
+
+function pnlTotalCostEditorHTML(d){
+  const only = d.projects.length === 1 ? d.projects[0] : null;
+  if(!only){
+    return `<div class="pnl-panel pnl-costbox">
+      <h3>Total Cost (₹)</h3>
+      <div class="pnl-costnote">Choose a single project above to enter or edit its Total Cost.
+        ${d.hoursRollup.projectsWithTotalCost} of ${d.hoursRollup.projects} selected
+        project${d.hoursRollup.projects===1?' has':'s have'} one entered.</div>
+    </div>`;
+  }
+  const entered = only.billing.totalCost;
+  const hrs = only.hours.consumedHours;
+  return `<div class="pnl-panel pnl-costbox">
+    <h3>Total Cost (₹) — ${escapeHTML(only.name)}</h3>
+    <div class="pnl-costnote">Entered by hand. This is <strong>not</strong> computed from the rate card or
+      from hours worked — a project&rsquo;s real cost includes things this application has no idea about.</div>
+    <div class="pnl-costrow">
+      <span class="pnl-costcur">₹</span>
+      <input type="text" id="pnl_totalCost" value="${entered===null?'':escapeHTML(String(entered))}"
+        placeholder="not entered" inputmode="decimal" ${can('pnl.actual')?'':'disabled'}>
+      ${can('pnl.actual') ? '<button class="btn btn-brand btn-sm" id="pnl_saveTotalCost">Save</button>' : ''}
+      ${can('pnl.actual') && entered!==null ? '<button class="btn btn-ghost btn-sm" id="pnl_clearTotalCost">Clear</button>' : ''}
+      <span class="pnl-costlive" id="pnl_costLive">${entered===null ? '' :
+        `Profit ${pnlINR(Math.round((only.totals.revenue - entered)*100)/100)}
+         · Margin ${only.totals.revenue ? (Math.round(((only.totals.revenue-entered)/only.totals.revenue)*1000)/10)+'%' : '—'}
+         · ${hrs ? pnlINR(Math.round((entered/hrs)*100)/100)+'/hour' : 'no hours recorded'}`}</span>
     </div>
-    ${unbilled ? `<div class="ip-banner open" style="margin-bottom:16px;">
-      ${unbilled > 0
-        ? `<strong>${pnlHours(unbilled)} hours were worked and not billed.</strong> That is time the studio absorbed — it is in the cost above and not in the revenue.`
-        : `<strong>${pnlHours(Math.abs(unbilled))} more hours were billed than worked.</strong> Worth checking: either the billing is ahead of the recorded hours, or the hours are behind.`}</div>` : ''}`;
+    <div class="ref-err" id="pnl_costErr"></div>
+    ${can('pnl.actual') ? '' : '<div class="pnl-costnote">You do not have permission to change this figure.</div>'}
+  </div>`;
 }
 
-/* Budgeted against actual, on one scale — the Fixed tab's answer to the
-   Revenue-vs-Cost bars on the Actual tab. Same rule: one shared scale, or the
-   shorter bar stops meaning anything. */
+function pnlActualCardsHTML(r, h){
+  /* Revenue stays invoiced-to-date. Cost is the ENTERED figure, not anything
+     this application computed: see the schema note on project_billing. */
+  const entered = h.enteredTotalCost;
+  const some = h.projectsWithTotalCost;
+  const none = some === 0;
+  const profit = none ? null : Math.round((r.revenue - entered) * 100) / 100;
+  const margin = (none || !r.revenue) ? null : Math.round((profit / r.revenue) * 1000) / 10;
+  const perHour = (none || !h.consumedHours) ? null : Math.round((entered / h.consumedHours) * 100) / 100;
+  return `
+    <div class="pnl-cards pnl-cards-6">
+      <div class="pnl-card pnl-rev"><div class="ad-card-label">Revenue</div>
+        <div class="ad-card-value">${pnlINR(r.revenue)}</div>
+        <div class="ad-card-note">Invoiced to date, from Client Billing. Not the contract value (${pnlINR(r.contractValue)}).</div></div>
+      <div class="pnl-card pnl-lab"><div class="ad-card-label">Total Cost</div>
+        <div class="ad-card-value">${none ? pnlNil('Nobody has entered a Total Cost for these projects yet.') : pnlINR(entered)}</div>
+        <div class="ad-card-note">${none
+          ? 'Entered by hand, in INR. Nothing entered yet.'
+          : `Entered by hand, in INR${some < h.projects ? `, on ${some} of ${h.projects} projects` : ''}.`}</div></div>
+      <div class="pnl-card pnl-bud"><div class="ad-card-label">Total Hours Consumed</div>
+        <div class="ad-card-value">${pnlHours(h.consumedHours)}h</div>
+        <div class="ad-card-note">Every hour recorded against this project&rsquo;s tasks, whatever state they are in.</div></div>
+      <div class="pnl-card pnl-gp"><div class="ad-card-label">Profit</div>
+        <div class="ad-card-value ${profit===null?'':pnlSign(profit)}">${profit===null ? pnlNil('No Total Cost entered, so there is no profit to compute.') : pnlINR(profit)}</div>
+        <div class="ad-card-note">Revenue &minus; Total Cost.</div></div>
+      <div class="pnl-card pnl-mg"><div class="ad-card-label">Margin</div>
+        <div class="ad-card-value ${margin===null?'':pnlSign(margin)}">${pnlPct(margin)}</div>
+        <div class="ad-card-note">${margin===null
+          ? (none ? 'No Total Cost entered yet.' : 'Nothing invoiced yet, so there is no margin to compute.')
+          : 'Profit as a share of what has been invoiced.'}</div></div>
+      <div class="pnl-card pnl-cph"><div class="ad-card-label">Cost / Hour</div>
+        <div class="ad-card-value">${perHour===null ? pnlNil('Needs both a Total Cost and some recorded hours.') : pnlINR(perHour)}</div>
+        <div class="ad-card-note">Total Cost &divide; hours consumed. For reference &mdash; what an hour on this work actually cost.</div></div>
+    </div>`;
+}
+
 function pnlBudgetCompareHTML(r){
   const max = Math.max(r.budgetedCost, r.actualCost, r.contractTotal, 1);
   const bar = (label, value, cls, note) => `
@@ -10389,6 +10525,48 @@ function wirePnl(){
     PNL.openProject = null;
     renderPnl();
   });
+  /* The Total Cost box: save, clear, and a live recalculation as you type.
+   *
+   * The live figures are computed in the browser from the number in the box,
+   * so Profit and Margin move on every keystroke rather than only after a
+   * round trip. The SAVE still goes to the server, and the server's answer is
+   * what the page repaints from — the live line is a preview, never the record.
+   */
+  const costBox = document.getElementById('pnl_totalCost');
+  if(costBox){
+    const only = (PNL.report && PNL.report.projects.length === 1) ? PNL.report.projects[0] : null;
+    const live = document.getElementById('pnl_costLive');
+    const recompute = ()=>{
+      if(!only || !live) return;
+      const raw = costBox.value.trim();
+      if(raw === ''){ live.textContent = ''; return; }
+      const n = Number(raw);
+      if(!Number.isFinite(n) || n < 0){ live.textContent = 'not a valid amount'; return; }
+      const rev = only.totals.revenue;
+      const profit = Math.round((rev - n)*100)/100;
+      const margin = rev ? Math.round((profit/rev)*1000)/10 : null;
+      const hrs = only.hours.consumedHours;
+      live.innerHTML = `Profit ${pnlINR(profit)} · Margin ${margin===null?'—':margin+'%'}`
+        + ` · ${hrs ? pnlINR(Math.round((n/hrs)*100)/100)+'/hour' : 'no hours recorded'}`;
+    };
+    costBox.addEventListener('input', recompute);
+
+    const saveCost = async (value)=>{
+      const err = document.getElementById('pnl_costErr');
+      if(err) err.textContent = '';
+      try{
+        await api(`/pnl/projects/${only.projectId}/total-cost`, { method:'PUT', body:{ totalCost: value } });
+        showToast(value === null ? 'Total Cost cleared.' : 'Total Cost saved.');
+        renderPnl();
+      }catch(e){ if(err) err.textContent = e.message; }
+    };
+    const saveBtn = document.getElementById('pnl_saveTotalCost');
+    if(saveBtn) saveBtn.onclick = ()=> saveCost(costBox.value.trim() === '' ? null : costBox.value.trim());
+    const clearBtn = document.getElementById('pnl_clearTotalCost');
+    if(clearBtn) clearBtn.onclick = ()=> saveCost(null);
+    costBox.addEventListener('keydown', (e)=>{ if(e.key === 'Enter' && saveBtn) saveBtn.click(); });
+  }
+
   /* A tab switch is a REPAINT, not a reload. Both tabs read the same payload —
      the server sends every figure both of them need — so re-fetching would be a
      round trip to draw the same numbers a different way, and would blank the
@@ -10719,6 +10897,74 @@ function wirePnlDetail(){
       saying how many, and it is shown.
    --------------------------------------------------------------------------- */
 let RATE_CARDS = [];
+
+/* Role Rates — Settings.
+ *
+ * WHAT THIS PRICES, and why it is not the Rate Cards section above it. A work
+ * session records a user; a user holds a designation; so a designation is the
+ * only thing an automatically recorded hour can be priced against. Rate Cards
+ * is the studio's free-text price list for team assignments somebody types in;
+ * this is what an hour of each DESIGNATION actually costs. Two lists, two jobs,
+ * and merging them would mean inventing a mapping from "game_artist" to
+ * "Mid Level Artist" that nobody asked for.
+ *
+ * Every designation is listed, including the unpriced ones — a screen showing
+ * only the priced rows could not be used to price the rest. An empty box means
+ * UNPRICED, which is not zero: hours from an unpriced designation are reported
+ * separately on Fixed P&L rather than counted as free labour. */
+async function renderRoleRates(){
+  const el = document.getElementById('roleRatesSection');
+  if(!el) return;
+  let data;
+  try{ data = await api('/pnl/role-rates'); }
+  catch(err){
+    el.innerHTML = `<div class="ref-section"><div class="ref-head"><h3>Role Rates</h3></div>
+      <div class="empty">Could not load the role rates.<br>
+      <span style="font-size:12px;color:var(--ink-faint);">${escapeHTML(err.message)}</span></div></div>`;
+    return;
+  }
+  const rows = data.roleRates || [];
+  const unpriced = rows.filter(r=>!r.priced).length;
+  const rw = data.canManage;
+
+  el.innerHTML = `<div class="ref-section">
+    <div class="ref-head"><h3>Role Rates</h3></div>
+    <div class="pnl-costnote" style="margin-bottom:10px;">
+      What one hour of each designation costs, in <strong>₹ INR</strong>. Fixed P&amp;L prices the hours
+      people actually logged on delivered work at these rates.
+      Leave a box empty to mark a designation <strong>unpriced</strong> — that is not the same as zero:
+      unpriced hours are reported separately rather than counted as costing nothing.
+      ${unpriced ? `<br><strong>${unpriced} of ${rows.length} designations have no rate yet.</strong>` : ''}
+    </div>
+    <div class="pnl-scroll"><table class="ref-table rr-table">
+      <thead><tr><th>Designation</th><th class="num">Rate (₹ per hour)</th><th></th></tr></thead>
+      <tbody>${rows.map(r=>`<tr class="${r.priced?'':'rr-unpriced'}" data-role="${escapeHTML(r.roleKey)}">
+        <td>${escapeHTML(r.label)}</td>
+        <td class="num">${rw
+          ? `<input type="text" class="rr-rate" inputmode="decimal" value="${r.priced?escapeHTML(String(r.ratePerHour)):''}" placeholder="unpriced">`
+          : (r.priced ? pnlMoney(r.ratePerHour) : '<span class="pnl-unpriced">unpriced</span>')}</td>
+        <td>${rw ? '<button class="btn btn-ghost btn-sm rr-save">Save</button>' : ''}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>
+    <div class="ref-err" id="rr_err"></div>
+  </div>`;
+
+  if(!rw) return;
+  el.querySelectorAll('.rr-save').forEach(btn=>btn.addEventListener('click', async ()=>{
+    const tr = btn.closest('tr');
+    const roleKey = tr.dataset.role;
+    const raw = tr.querySelector('.rr-rate').value.trim();
+    const err = document.getElementById('rr_err');
+    err.textContent = '';
+    btn.disabled = true;
+    try{
+      await api('/pnl/role-rates/'+encodeURIComponent(roleKey), { method:'PUT',
+        body:{ ratePerHour: raw === '' ? null : raw } });
+      showToast(raw === '' ? 'Rate cleared.' : 'Rate saved.');
+      await renderRoleRates();
+    }catch(e){ err.textContent = e.message; btn.disabled = false; }
+  }));
+}
 
 async function renderRateCards(){
   const el = document.getElementById('rateCardsSection');

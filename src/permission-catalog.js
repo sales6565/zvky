@@ -721,18 +721,39 @@ const GROUPS = [
     label: 'Profit & Loss',
     permissions: [
       {
-        key: 'pnl.view',
-        label: 'View Profit & Loss Reports',
+        /* ONE PERMISSION PER TAB, and they do not imply each other.
+         *
+         * The two tabs answer different questions and disclose different
+         * things. Actual P&L shows what the studio actually spent and billed
+         * on a project; Fixed P&L shows what it was sold for against what the
+         * plan said it would cost. A studio may well want a delivery producer
+         * to see whether work is running over its budgeted hours without also
+         * handing them the invoiced revenue, or the reverse for somebody in
+         * finance. A single "view P&L" grant forced those together.
+         *
+         * Holding neither means the Profit & Loss tab does not appear at all. */
+        key: 'pnl.actual',
+        label: 'Access Actual P&L',
         /* Super Admin only by default — the same front door as the two IP
            lists, and the idiom this codebase uses for "nobody else until
            somebody says so". Grantable to a Finance or Producer designation in
            Settings without a code change, which is the point of it being a
            permission rather than a tier check. */
         impliedBy: has('managePermissions'),
-        describe: 'The Profit & Loss report: revenue, labour and other costs, gross profit, margin, '
-          + 'the breakdown by role and level, and the client rollup. Read-only.',
-        danger: 'This discloses what the studio earns and what its people cost. Grant it to a '
-          + 'designation only when everybody holding that designation should see both.',
+        describe: 'The Actual P&L tab: invoiced revenue, the manually entered Total Cost, the hours '
+          + 'consumed on the project, profit, margin and cost per hour. This permission also allows '
+          + 'entering and editing that Total Cost figure.',
+        danger: 'This discloses what the studio has invoiced and what a project actually cost it, '
+          + 'and it allows that cost figure to be changed.',
+      },
+      {
+        key: 'pnl.fixed',
+        label: 'Access Fixed P&L',
+        impliedBy: has('managePermissions'),
+        describe: 'The Fixed P&L tab: the contract value, the project\'s budgeted hours against the '
+          + 'hours consumed by delivered work, budgeted against actual cost from the role rates, '
+          + 'the variance, and the cost breakdown by role.',
+        danger: 'This discloses the contract value of a project and what its people cost per hour.',
       },
       {
         key: 'pnl.manage',
