@@ -1898,22 +1898,43 @@ async function ensurePnlCostColumns(db, log) {
   });
 }
 
-/* The Level on a user — a two-rung ladder recorded beside the designation.
+/* The SECOND reporting line.
  *
- * NULLABLE, and nothing back-filled. Every account that predates this column
- * has no level, which is the truth: nobody has said which rung they are on, and
- * guessing one from their designation would write a fact the studio never
- * stated. "Not set" is a real state the screen offers back.
+ * Reporting To was split into two independent fields — Level 1 Reporting and
+ * Level 2 Reporting — and this adds the column the second one lives in.
  *
- * See src/user-level.js for why this drives nothing. */
-async function ensureUserLevel(db, log) {
+ * NOTHING IS MIGRATED, AND THAT IS THE POINT. Level 1 Reporting IS
+ * reports_to_id: the same column, relabelled on screen. So every value a studio
+ * has already recorded is already exactly where Level 1 expects to find it,
+ * there is no copy that could half-fail, and the four places that read
+ * reports_to_id — the review-gate fallback in permissions.js, the deactivation
+ * impact list, the chain walk in reporting.js and the bulk user import — go on
+ * reading the same column with the same meaning. A rename-and-copy would have
+ * risked all four to achieve nothing.
+ *
+ * Level 2 starts NULL on every account, which is what "blank until somebody
+ * sets it" means.
+ *
+ * Nullable with ON DELETE SET NULL, mirroring the first line: deleting an
+ * account should clear the pointers to it rather than refuse. */
+async function ensureSecondReportingLine(db, log) {
   const { rows } = await db.query(
-    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'level'`
+    `SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users'
+        AND COLUMN_NAME = 'reports_to_l2_id'`
   ).catch(() => ({ rows: null }));
   if (!rows || rows.length) return;
-  await db.query('ALTER TABLE users ADD COLUMN `level` VARCHAR(16) NULL');
-  log('Schema: added users.level — NULL on every existing account until somebody sets one.');
+
+  await db.query('ALTER TABLE users ADD COLUMN reports_to_l2_id CHAR(36) NULL AFTER reports_to_id');
+  await db.query('ALTER TABLE users ADD KEY idx_users_reports_to_l2 (reports_to_l2_id)');
+  try {
+    await db.query(
+      'ALTER TABLE users ADD CONSTRAINT fk_users_reports_to_l2 FOREIGN KEY (reports_to_l2_id) REFERENCES users(id) ON DELETE SET NULL'
+    );
+  } catch (err) {
+    log(`Schema: reports_to_l2_id added, but its foreign key was refused — ${err.sqlMessage || err.message}`);
+  }
+  log('Schema: added users.reports_to_l2_id — Level 2 Reporting, blank on every existing account.');
 }
 
 async function ensureUserActive(db, log) {
@@ -2624,7 +2645,7 @@ const STEPS = [
   ['profit and loss cost basis', ensurePnlCostColumns],
   // After users exists; before anything that reads an account's active flag.
   ['user active flag', ensureUserActive],
-  ['user level', ensureUserLevel],
+  ['second reporting line', ensureSecondReportingLine],
   ['asset category', ensureAssetCategory],
   ['profile photos', ensureProfilePhotos],
   ['quick tour', ensureTourSeen],

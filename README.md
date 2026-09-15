@@ -860,52 +860,39 @@ an account holds that the table does not know about is carried across under an
 *Unsorted* group with no pipeline access, rather than leaving that account unable
 to sign in. All of it is idempotent.
 
-## "Level" — a rung on the ladder, and nothing else
+## "Level 1 Reporting" and "Level 2 Reporting" — and what still reads them
 
-The Edit User screen has a **Level** field with exactly two options:
+Edit User has **two independent person selectors**. Both list every account
+except the person themselves, both are optional, and both are informational.
 
-* **Level 1 - Team Lead**
-* **Level 2 - Manager**
+**Level 1 Reporting IS the original Reporting To field, relabelled.** Same
+column, `users.reports_to_id` — so every value a studio had already recorded is
+exactly where Level 1 expects it, nothing was copied, and nothing could be
+half-copied. The places that read that column (listed below) go on reading it
+unchanged. A rename-and-copy would have risked all of them to achieve nothing.
 
-…plus **— Not set —**, which is where every account starts.
+**Level 2 Reporting is a new column**, `users.reports_to_l2_id`, blank on every
+existing account until somebody sets one. **Nothing reads it.**
 
-**Both options are always offered, to every user, whatever their designation.**
-They are literal `<option>` elements in the page, built by nothing and filtered
-by nothing, so there is no condition under which one of them can go missing.
-`tests/user-level.test.js` fails if a template expression ever appears inside
-that `<select>` — the moment the list is computed rather than stated, "always
-present" stops being something a test can promise.
+The two are independent in both directions: either can point at a different
+person, either can be blank, and changing one never moves the other. Two rules
+Level 1 has that Level 2 deliberately does not:
 
-**Not set is a real state and is not the bottom rung.** Every account that
-predates the field has no level, and nothing was back-filled: being a Team Lead
-in the designation catalogue does not make somebody Level 1, and guessing would
-have written a fact the studio never stated. "Not set" is offered back, so a
-level can be taken off again.
+| Rule | Level 1 | Level 2 | Why |
+| --- | --- | --- | --- |
+| Cannot be yourself | yes | yes | Nonsense either way |
+| Must be a real account | yes | yes | Same |
+| No reporting loop | **yes** | no | Nothing walks the Level 2 column, so there is no traversal for a loop to hang on |
+| Top of the hierarchy has none | **yes** | no | That rule is about the real chain; the second line is an independent note, and a Managing Director may perfectly well have one |
 
-### It drives nothing
+Promotion to the top clears Level 1 — it is a fact about the chain — and
+deliberately **leaves Level 2 alone**, so a promotion never deletes a note
+nobody asked to delete.
 
-Level is **informational**, exactly like Reporting To's display half. It does
-not route an approval, escalate anything, feed a permission check, widen
-anybody's reach, or appear in any report's logic. It is recorded and shown.
+Both are shown wherever the single field used to be: the Users list has two
+columns, and the user detail view two rows.
 
-Unlike Reporting To — which turned out to have two real readers, documented in
-the section above — Level has **none**, and a test keeps it that way: a guard in
-`tests/user-level.test.js` walks every file under `src/` and fails if anything
-outside `src/user-level.js`, `src/routes/users.js` and the migration reads the
-column. If a later feature should route by Level, that is a deliberate decision,
-and this is where it will first refuse to be made quietly.
-
-### Permission
-
-Level rides with **`user.edit`**, alongside name and email — not a key of its
-own. A note on the org chart is not an authority, and a separate permission
-would imply it gated something it does not. Anybody trusted to correct
-somebody's name is trusted to record which rung they are on.
-
-An unrecognised value is refused by the API with a message naming the two valid
-ones, so the column can only ever hold `level_1`, `level_2` or NULL.
-
-## "Reporting To" — what it is, and what still reads it
+## What still reads Level 1 Reporting
 
 Reporting To on the Edit User screen records who somebody reports to. The
 studio's decision is that it is **informational**: no approval routing,

@@ -1,6 +1,5 @@
 const { asyncRouter } = require('../async-router');
 const reporting = require('../reporting');
-const userLevel = require('../user-level');
 const userProject = require('../user-project');
 
 // See src/async-router.js: keeps a failed query from killing the process.
@@ -191,7 +190,7 @@ function assignableRolesFor(user) {
 router.get('/', requirePermission('user.view'), async (req, res) => {
   const { search = '', limit = 60, offset = 0, role, status } = req.query;
   const params = [];
-  let sql = 'SELECT id, name, email, role, manager_id, team_lead_id, reports_to_id, `level`, created_at, '
+  let sql = 'SELECT id, name, email, role, manager_id, team_lead_id, reports_to_id, reports_to_l2_id, created_at, '
     + 'is_active, deactivated_at, deactivated_by, '
     + 'avatar_updated_at AS `photoUpdatedAt` FROM users WHERE 1=1';
 
@@ -238,7 +237,13 @@ router.get('/', requirePermission('user.view'), async (req, res) => {
   // Resolve each row's manager name and project for the list, in two queries
   // rather than per row.
   const ids = rows.map((r) => r.id);
-  const managerIds = [...new Set(rows.map((r) => r.reports_to_id).filter(Boolean))];
+  /* BOTH lines resolved in the one query. Two queries would be two round trips
+     for the same lookup, and the second line's manager is very often already in
+     the first line's set. */
+  const managerIds = [...new Set([
+    ...rows.map((r) => r.reports_to_id),
+    ...rows.map((r) => r.reports_to_l2_id),
+  ].filter(Boolean))];
   const projects = await userProject.projectsForUsers(db, ids);
   const managers = new Map();
   if (managerIds.length) {
@@ -260,13 +265,16 @@ router.get('/', requirePermission('user.view'), async (req, res) => {
         deactivatedAt: row.deactivated_at || null,
         deactivatedBy: row.deactivated_by || null,
         // Leadership has no reporting line at all, rather than an empty one.
+        /* LEVEL 1. The same column, the same rule: leadership has no reporting
+           line at all, rather than an empty one. */
         reportsToId: top ? null : row.reports_to_id || null,
-    level: row.level || null,
-    levelLabel: userLevel.label(row.level),
-        /* Recorded and displayed, nothing more — see src/user-level.js. */
-        level: row.level || null,
-        levelLabel: userLevel.label(row.level),
         reportsToName: top ? null : (row.reports_to_id ? managers.get(row.reports_to_id) || null : null),
+        /* LEVEL 2, and NOT suppressed for leadership. The first line is the
+           real chain, which a Managing Director sits at the top of; the second
+           is an independent note, and somebody at the top can perfectly well
+           have a dotted line recorded beside them. */
+        reportsToL2Id: row.reports_to_l2_id || null,
+        reportsToL2Name: row.reports_to_l2_id ? managers.get(row.reports_to_l2_id) || null : null,
         projectId: project ? project.id : null,
         projectName: project ? project.name : null,
       };
@@ -349,17 +357,23 @@ router.post('/', requirePermission('user.add'), async (req, res) => {
    src/user-fields.js: `users` carries the profile photo as a MEDIUMBLOB now,
    and this row is sent to the browser. */
 const USER_COLUMNS =
-  'u.id, u.`name`, u.email, u.`role`, u.manager_id, u.team_lead_id, u.reports_to_id, u.`level`, u.created_at, '
+  'u.id, u.`name`, u.email, u.`role`, u.manager_id, u.team_lead_id, u.reports_to_id, u.reports_to_l2_id, u.created_at, '
   + 'u.avatar_updated_at AS `photoUpdatedAt`';
 
 async function describeUser(row) {
   const project = await userProject.currentProject(db, row.id);
   const top = reporting.isTopOfHierarchy(row.role);
-  let manager = null;
-  if (!top && row.reports_to_id) {
-    const { rows } = await db.query('SELECT id, `name`, email, `role` FROM users WHERE id = $1', [row.reports_to_id]);
-    if (rows.length) manager = { id: rows[0].id, name: rows[0].name, email: rows[0].email, role: rows[0].role };
-  }
+  const person = async (id) => {
+    if (!id) return null;
+    const { rows } = await db.query('SELECT id, `name`, email, `role` FROM users WHERE id = $1', [id]);
+    return rows.length
+      ? { id: rows[0].id, name: rows[0].name, email: rows[0].email, role: rows[0].role }
+      : null;
+  };
+  const manager = top ? null : await person(row.reports_to_id);
+  /* Level 2 is resolved whatever the designation — see the note on the list
+     payload: the top of the chain can still have a second line recorded. */
+  const managerL2 = await person(row.reports_to_l2_id);
   return {
     ...row,
     capabilities: capabilitiesFor(row.role),
@@ -369,6 +383,8 @@ async function describeUser(row) {
     topOfHierarchy: top,
     reportsTo: manager,
     reportsToId: top ? null : row.reports_to_id || null,
+    reportsToL2: managerL2,
+    reportsToL2Id: row.reports_to_l2_id || null,
     project: project ? { id: project.id, name: project.name, code: project.code } : null,
     projectId: project ? project.id : null,
   };
@@ -383,7 +399,7 @@ router.patch('/:id', requirePermission('user.edit'), async (req, res) => {
     return res.status(403).json({ error: 'Accounts with full studio access cannot be changed here' });
   }
 
-  const { name, email, role, teamLeadId, reportsToId, projectId, level } = req.body || {};
+  const { name, email, role, teamLeadId, reportsToId, reportsToL2Id, projectId } = req.body || {};
 
   // Editing a user and changing their role, project or reporting line are
   // separate permissions: somebody may be trusted to correct a name without
@@ -392,15 +408,29 @@ router.patch('/:id', requirePermission('user.edit'), async (req, res) => {
     ['role', 'user.change_role', role !== undefined],
     ['projectId', 'user.change_project', projectId !== undefined],
     ['reportsToId', 'user.change_reporting', reportsToId !== undefined],
-    /* Level rides with user.edit rather than getting a permission of its own.
-       It is a note on the org chart, not an authority: anybody trusted to
-       correct somebody's name is trusted to record which rung they are on, and
-       a fourth key here would suggest it gated something it does not. */
+    /* The same permission as the first line. They are two halves of one fact
+       about the org chart, and a studio that trusts somebody to record one
+       trusts them to record the other. */
+    ['reportsToL2Id', 'user.change_reporting', reportsToL2Id !== undefined],
   ]) {
     if (present && !can(req, key)) {
       return res.status(403).json({ error: `You do not have permission to change ${field}.`, field });
     }
   }
+  /* PLACEHOLDERS ARE NUMBERED FROM `values`, NOT FROM `fields`.
+   *
+   * Two of the pushes below add a field with NO value — `team_lead_id = NULL`
+   * when a designation stops being assignable, and `reports_to_id = NULL` when
+   * somebody is promoted to the top. Numbering from fields.length assumed the
+   * two arrays stayed the same length, so one valueless field shifted every
+   * later placeholder by one and each following column was written with the
+   * NEXT column's value.
+   *
+   * This was reachable before the second reporting line existed — saving a
+   * non-assignable designation and a reporting line in one edit wrote the wrong
+   * manager id — and adding a second column after the NULL pushes made it
+   * happen on an ordinary save. values.length is the only correct basis: $n
+   * addresses values[n-1] and nothing else. */
   const fields = [];
   const values = [];
 
@@ -419,7 +449,7 @@ router.patch('/:id', requirePermission('user.edit'), async (req, res) => {
     if (name.trim().length > 255) {
       return res.status(400).json({ error: 'Name is too long (255 characters at most)', field: 'name' });
     }
-    fields.push(`name = $${fields.length + 1}`);
+    fields.push(`name = $${values.length + 1}`);
     values.push(name.trim());
   }
   if (email !== undefined) {
@@ -431,19 +461,8 @@ router.patch('/:id', requirePermission('user.edit'), async (req, res) => {
       [email.trim(), req.params.id]
     );
     if (clash.length) return res.status(409).json({ error: 'That email is already in use', field: 'email' });
-    fields.push(`email = $${fields.length + 1}`);
+    fields.push(`email = $${values.length + 1}`);
     values.push(email.trim());
-  }
-
-  /* Level. Written here beside name and email because it belongs with them —
-     a recorded fact about the person, not a change to what they may do. An
-     unrecognised value is refused rather than stored, so the column can only
-     ever hold one of the two keys or NULL. */
-  if (level !== undefined) {
-    const verdict = userLevel.validate(level);
-    if (!verdict.ok) return res.status(400).json({ error: verdict.error, field: 'level' });
-    fields.push(`\`level\` = $${fields.length + 1}`);
-    values.push(verdict.value);
   }
 
   // The role after this edit, which is what every rule below is judged against
@@ -455,7 +474,7 @@ router.patch('/:id', requirePermission('user.edit'), async (req, res) => {
     if (!assignableRolesFor(req.user).includes(role)) {
       return res.status(403).json({ error: `You cannot assign the ${roleDef(role).label} role` });
     }
-    fields.push(`role = $${fields.length + 1}`);
+    fields.push(`role = $${values.length + 1}`);
     values.push(role);
     // A designation that isn't assigned work has no reporting lead.
     if (!roleDef(role).assignable) {
@@ -463,7 +482,7 @@ router.patch('/:id', requirePermission('user.edit'), async (req, res) => {
     }
   }
   if (teamLeadId !== undefined && (role === undefined || roleDef(role).assignable)) {
-    fields.push(`team_lead_id = $${fields.length + 1}`);
+    fields.push(`team_lead_id = $${values.length + 1}`);
     values.push(teamLeadId || null);
   }
 
@@ -486,7 +505,24 @@ router.patch('/:id', requirePermission('user.edit'), async (req, res) => {
     if (!verdict.ok) {
       return res.status(verdict.status).json({ error: verdict.error, field: verdict.field, chain: verdict.chain });
     }
-    fields.push(`reports_to_id = $${fields.length + 1}`);
+    fields.push(`reports_to_id = $${values.length + 1}`);
+    values.push(verdict.managerId);
+  }
+
+  /* LEVEL 2, INDEPENDENT OF LEVEL 1 IN BOTH DIRECTIONS.
+   *
+   * Outside the movingToTop branch above on purpose: promoting somebody to the
+   * top of the hierarchy clears their real reporting line, and that is a fact
+   * about the chain. The second line is a note beside it — a dotted line to a
+   * function head — and clearing it as a side effect of a promotion would
+   * delete something nobody asked to delete. It is only ever changed by being
+   * sent. */
+  if (reportsToL2Id !== undefined) {
+    const verdict = await reporting.validateSecondLevel(db, target, reportsToL2Id || null);
+    if (!verdict.ok) {
+      return res.status(verdict.status).json({ error: verdict.error, field: verdict.field });
+    }
+    fields.push(`reports_to_l2_id = $${values.length + 1}`);
     values.push(verdict.managerId);
   }
 

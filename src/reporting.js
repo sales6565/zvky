@@ -155,6 +155,48 @@ async function validateManager(db, user, candidateId) {
  * The self row is the one genuine exclusion, and it is the one the studio asked
  * for: nobody reports to themselves.
  */
+/* Level 2 Reporting: the second line, and a deliberately shorter rule set.
+ *
+ * WHAT IT SHARES WITH LEVEL 1: it must be somebody who exists, and it must not
+ * be the person themselves. Those are the two rules the studio asked for, and
+ * they are the two that would be nonsense to break.
+ *
+ * WHAT IT DELIBERATELY DOES NOT SHARE, and why each one is absent rather than
+ * forgotten:
+ *
+ *   no loop check        validateManager walks reports_to_id to stop the org
+ *                        chart eating its own tail. NOTHING walks the Level 2
+ *                        column — not this module, not the review gate, not
+ *                        the deactivation list — so there is no traversal for a
+ *                        loop to hang. Refusing A→B because B→A would be
+ *                        refusing a shape that cannot hurt anybody.
+ *
+ *   no top-of-hierarchy  A Managing Director does not report to anyone on the
+ *   refusal              real chain, which is why Level 1 refuses one. Level 2
+ *                        is a second, independent note — a dotted line to a
+ *                        function head, say — and the studio asked for it to
+ *                        list everybody. Refusing it for some designations
+ *                        would be a rule nobody asked for.
+ *
+ * If either of those should apply later, that is a decision to take on purpose.
+ */
+async function validateSecondLevel(db, user, candidateId) {
+  if (candidateId === null || candidateId === undefined || candidateId === '') {
+    return { ok: true, managerId: null };
+  }
+  if (candidateId === user.id) {
+    return {
+      ok: false, status: 400, field: 'reportsToL2Id',
+      error: 'Someone cannot report to themselves.',
+    };
+  }
+  const { rows } = await db.query('SELECT id, `name`, `role` FROM users WHERE id = $1', [candidateId]);
+  if (!rows.length) {
+    return { ok: false, status: 400, field: 'reportsToL2Id', error: 'That person does not exist.' };
+  }
+  return { ok: true, managerId: candidateId, manager: rows[0] };
+}
+
 async function eligibleManagers(db, user) {
   if (isTopOfHierarchy(user.role)) return [];
 
@@ -190,4 +232,7 @@ async function eligibleManagers(db, user) {
     }));
 }
 
-module.exports = { isTopOfHierarchy, chainAbove, validateManager, eligibleManagers, TOP_TIER, MAX_DEPTH };
+module.exports = {
+  isTopOfHierarchy, chainAbove, validateManager, validateSecondLevel,
+  eligibleManagers, TOP_TIER, MAX_DEPTH,
+};

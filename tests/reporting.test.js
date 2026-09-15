@@ -264,6 +264,179 @@ test('editing a user\'s project and reporting line', { skip: cfg ? false : SKIP_
     assert.strictEqual(ceo.reportsToName, null, 'shown as top of hierarchy, not as an empty manager');
   });
 
+  /* ---- Level 2 Reporting -------------------------------------------------
+   *
+   * Reporting To was split into two INDEPENDENT fields. Level 1 IS the old
+   * reports_to_id column, relabelled — so every value a studio had recorded is
+   * already where Level 1 expects it, and the four places that read that column
+   * go on reading it unchanged. Level 2 is a new column nothing reads.
+   */
+
+  await t.test('Level 1 is the old column, so existing data is already there', async () => {
+    /* The brief's testing step 2, stated as the thing that makes it true: the
+       value set through the old single field IS the Level 1 value, because it
+       is the same column. Nothing was copied, so nothing could be half-copied. */
+    await patch(people.artist, { reportsToId: people.lead });
+    const [row] = await sql(cfg, `SELECT reports_to_id, reports_to_l2_id FROM users WHERE id = '${people.artist}'`);
+    assert.strictEqual(row.reports_to_id, people.lead, 'Level 1 reads the original column');
+    assert.strictEqual(row.reports_to_l2_id, null, 'and Level 2 starts blank');
+
+    const shown = await detail(people.artist);
+    assert.strictEqual(shown.reportsToId, people.lead);
+    assert.strictEqual(shown.reportsToL2Id, null);
+  });
+
+  await t.test('both lines save independently and can point at different people', async () => {
+    // Testing step 3.
+    const res = await patch(people.artist, { reportsToId: people.lead, reportsToL2Id: people.artist2 });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+
+    const user = await detail(people.artist);
+    assert.strictEqual(user.reportsToId, people.lead);
+    assert.strictEqual(user.reportsToL2Id, people.artist2);
+    assert.strictEqual(user.reportsTo.id, people.lead, 'and both resolve to a person');
+    assert.strictEqual(user.reportsToL2.id, people.artist2);
+
+    /* Changing one leaves the other exactly where it was — the property the
+       word "independent" is doing all the work for. */
+    await patch(people.artist, { reportsToL2Id: people.lead });
+    let after = await detail(people.artist);
+    assert.strictEqual(after.reportsToId, people.lead, 'Level 1 untouched');
+    assert.strictEqual(after.reportsToL2Id, people.lead, 'Level 2 moved');
+
+    await patch(people.artist, { reportsToId: people.artist2 });
+    after = await detail(people.artist);
+    assert.strictEqual(after.reportsToId, people.artist2, 'Level 1 moved');
+    assert.strictEqual(after.reportsToL2Id, people.lead, 'Level 2 untouched');
+
+    // Either can be cleared on its own.
+    await patch(people.artist, { reportsToL2Id: null });
+    after = await detail(people.artist);
+    assert.strictEqual(after.reportsToL2Id, null);
+    assert.strictEqual(after.reportsToId, people.artist2, 'clearing one did not clear the other');
+  });
+
+  await t.test('nobody can be their own Level 2 either', async () => {
+    // Testing step 4, for the second field.
+    const res = await patch(people.artist, { reportsToL2Id: people.artist });
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(res.body.field, 'reportsToL2Id');
+    assert.match(res.body.error, /cannot report to themselves/i);
+
+    const missing = await patch(people.artist, { reportsToL2Id: '00000000-0000-0000-0000-000000000000' });
+    assert.strictEqual(missing.status, 400);
+    assert.match(missing.body.error, /does not exist/i);
+  });
+
+  await t.test('Level 2 takes a shape Level 1 refuses, because nothing walks it', async () => {
+    /* A and B pointing at each other on the second line is not a loop, because
+       no code path follows the column. Level 1 still refuses the same shape —
+       asserted here so the two rules cannot quietly converge. */
+    await patch(people.artist, { reportsToId: people.lead });
+
+    const l1 = await patch(people.lead, { reportsToId: people.artist });
+    assert.strictEqual(l1.status, 400, 'Level 1 still refuses a loop');
+    assert.match(l1.body.error, /loop/i);
+
+    const l2a = await patch(people.artist, { reportsToL2Id: people.lead });
+    const l2b = await patch(people.lead, { reportsToL2Id: people.artist });
+    assert.strictEqual(l2a.status, 200);
+    assert.strictEqual(l2b.status, 200, 'Level 2 accepts it — no traversal, no loop');
+  });
+
+  await t.test('the top of the hierarchy has no Level 1 but may have a Level 2', async () => {
+    const ceo = (await call('/users', { token, method: 'POST',
+      body: { name: 'Top Person', email: 'top-l2@zvky.test', password: PASSWORD,
+        role: 'managing_director_ceo' } })).body.user.id;
+
+    const refused = await patch(ceo, { reportsToId: people.lead });
+    assert.strictEqual(refused.status, 400, 'no first line for the top of the chain');
+
+    const ok = await patch(ceo, { reportsToL2Id: people.lead });
+    assert.strictEqual(ok.status, 200, 'but a second line is an independent note');
+    const user = await detail(ceo);
+    assert.strictEqual(user.reportsToId, null);
+    assert.strictEqual(user.reportsToL2Id, people.lead);
+  });
+
+  await t.test('promoting somebody to the top clears Level 1 and leaves Level 2 alone', async () => {
+    const who = (await call('/users', { token, method: 'POST',
+      body: { name: 'Promote Me', email: 'promote-l2@zvky.test', password: PASSWORD,
+        role: 'game_artist' } })).body.user.id;
+    await patch(who, { reportsToId: people.lead, reportsToL2Id: people.artist2 });
+
+    const res = await patch(who, { role: 'managing_director_ceo' });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+
+    const [row] = await sql(cfg, `SELECT reports_to_id, reports_to_l2_id FROM users WHERE id = '${who}'`);
+    assert.strictEqual(row.reports_to_id, null, 'the real chain was cleared by the promotion');
+    assert.strictEqual(row.reports_to_l2_id, people.artist2,
+      'the second line is a separate note and was not deleted as a side effect');
+  });
+
+  await t.test('the list carries both lines, still without a query per row', async () => {
+    // Testing step 6, and the performance property the single-line version had.
+    await patch(people.artist, { reportsToId: people.lead, reportsToL2Id: people.artist2 });
+    const list = (await call('/users?limit=100', { token })).body.users;
+    const row = list.find((u) => u.id === people.artist);
+    assert.strictEqual(row.reportsToName, 'Priya Menon');
+    assert.strictEqual(row.reportsToL2Name, 'Dev Kumar');
+    // Somebody with neither reads as neither, not as an empty string.
+    const bare = list.find((u) => u.reportsToId === null && u.reportsToL2Id === null);
+    assert.ok(bare, 'somebody has neither line');
+    assert.strictEqual(bare.reportsToL2Name, null);
+  });
+
+  await t.test('setting either line needs user.change_reporting', async () => {
+    /* A plain contributor account, signing in as itself. */
+    const plainToken = (await call('/auth/login', { method: 'POST',
+      body: { email: 'art@zvky.test', password: PASSWORD } })).body.token;
+    for (const body of [{ reportsToId: people.lead }, { reportsToL2Id: people.lead }]) {
+      const res = await call(`/users/${people.artist2}`, { token: plainToken, method: 'PATCH', body });
+      assert.ok(res.status === 403 || res.status === 404,
+        `${JSON.stringify(body)} should be refused, got ${res.status}`);
+    }
+  });
+
+  await t.test('a valueless SET does not shift the columns after it', async () => {
+    /* THE BUG THIS EXISTS FOR, found by driving the real screen.
+     *
+     * The UPDATE is built as two parallel arrays, and two branches push a field
+     * with NO value: `team_lead_id = NULL` when a designation stops being
+     * assignable, and `reports_to_id = NULL` on promotion to the top. The
+     * placeholders were numbered from fields.length, so one valueless field
+     * shifted every later placeholder by one and each following column was
+     * written with the NEXT column's value.
+     *
+     * The Edit User form sends role, both reporting lines and the rest together,
+     * so this is an ordinary save, not a corner. Setting a NON-ASSIGNABLE
+     * designation is what triggers the valueless push. */
+    const who = (await call('/users', { token, method: 'POST',
+      body: { name: 'Shift Probe', email: 'shift@zvky.test', password: PASSWORD,
+        role: 'game_artist' } })).body.user.id;
+
+    const res = await patch(who, {
+      name: 'Shift Probe',
+      email: 'shift@zvky.test',
+      role: 'art_director',            // not assignable -> team_lead_id = NULL
+      reportsToId: people.lead,
+      reportsToL2Id: people.artist2,
+    });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+
+    const [row] = await sql(cfg,
+      `SELECT \`name\`, email, \`role\`, team_lead_id, reports_to_id, reports_to_l2_id
+         FROM users WHERE id = '${who}'`);
+    assert.strictEqual(row.name, 'Shift Probe', 'the name is the name');
+    assert.strictEqual(row.email, 'shift@zvky.test', 'the email is the email');
+    assert.strictEqual(row.role, 'art_director');
+    assert.strictEqual(row.team_lead_id, null, 'cleared, as the branch intends');
+    assert.strictEqual(row.reports_to_id, people.lead,
+      'Level 1 holds the Level 1 value — not the one meant for Level 2');
+    assert.strictEqual(row.reports_to_l2_id, people.artist2,
+      'and Level 2 holds its own');
+  });
+
   await t.test('a user id in the path never shadows the import routes', async () => {
     // '/:id' is registered after the literal paths for exactly this reason.
     const template = await call('/users/import-template.csv', { token });

@@ -1794,19 +1794,14 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
       <label>Email</label><input type="text" id="eu_email" placeholder="name@zvky.studio">
     </div>
     <div id="eu_roleWrap"><label>Role</label><select id="eu_role"></select></div>
-    <div id="eu_levelWrap">
-      <label>Level</label>
-      <select id="eu_level">
-        <option value="">— Not set —</option>
-        <option value="level_1">Level 1 - Team Lead</option>
-        <option value="level_2">Level 2 - Manager</option>
-      </select>
-      <div class="eu-hint">Where this person sits on the two-rung ladder. Recorded and shown &mdash; it does not change what they can do.</div>
-    </div>
     <div id="eu_projectWrap"><label>Project/Game</label><select id="eu_project"></select></div>
     <div id="eu_reportingWrap">
-      <label>Reporting To</label><select id="eu_reportsTo"></select>
+      <label>Level 1 Reporting</label><select id="eu_reportsTo"></select>
       <div class="eu-hint" id="eu_reportsHint"></div>
+    </div>
+    <div id="eu_reportingL2Wrap">
+      <label>Level 2 Reporting</label><select id="eu_reportsToL2"></select>
+      <div class="eu-hint" id="eu_reportsL2Hint"></div>
     </div>
     <div id="eu_topNotice" class="eu-top" style="display:none;"></div>
     <div class="ref-err" id="eu_err"></div>
@@ -5747,7 +5742,7 @@ async function renderUsers(sections = userSections()){
           .map(([key, label, n]) => `<button class="u-status${status===key?' on':''}" data-status="${key}">${label} <span class="u-status-n">${n}</span></button>`).join('')}
       </div>
     </div>
-    <table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Project</th><th>Reporting To</th><th></th></tr></thead><tbody>
+    <table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Project</th><th>Level 1 Reporting</th><th>Level 2 Reporting</th><th></th></tr></thead><tbody>
       ${users.map(x=>{
         const r=roleInfo(x.role);
         /* The same guard the API applies (mayAdministerUser in
@@ -5772,11 +5767,16 @@ async function renderUsers(sections = userSections()){
         const reporting = x.topOfHierarchy
           ? '<span class="ud-top">Top of hierarchy</span>'
           : (x.reportsToName ? escapeHTML(x.reportsToName) : '<span class="ud-none">Not set</span>');
+        /* The second line is NOT suppressed for the top of the hierarchy: that
+           rule is about the real chain, and this is an independent note. */
+        const reportingL2 = x.reportsToL2Name
+          ? escapeHTML(x.reportsToL2Name) : '<span class="ud-none">Not set</span>';
         return `<tr class="${x.isActive===false?'u-inactive':''}"><td><span class="who-line">${avatarHTML({ id:x.id, name:x.name, photoAt:x.photoUpdatedAt }, { size:24, title:false })}<button class="u-link userDetailBtn" data-id="${x.id}">${escapeHTML(x.name)}</button>${x.isActive===false?`<span class="u-badge-inactive" title="Cannot sign in${x.deactivatedBy?`. Deactivated by ${escapeHTML(x.deactivatedBy)}`:''}${x.deactivatedAt?` on ${escapeHTML(new Date(x.deactivatedAt).toLocaleDateString())}`:''}">Inactive</span>`:''}</span></td>
           <td class="mono" style="font-size:11.5px;">${escapeHTML(x.email)}</td>
           <td><span class="role-badge" title="${escapeHTML(r.group||'')}" style="background:${r.color}22;color:${r.color}">${escapeHTML(r.label)}</span></td>
           <td>${x.projectName ? escapeHTML(x.projectName) : '<span class="ud-none">None</span>'}</td>
           <td>${reporting}</td>
+          <td>${reportingL2}</td>
           <td style="text-align:right;white-space:nowrap;">
             ${canEditRow ? `<button class="btn btn-ghost btn-sm editUserBtn" data-id="${x.id}">Edit</button>` : ''}
             ${canReset ? `<button class="btn btn-ghost btn-sm resetPwBtn" data-id="${x.id}" data-name="${escapeHTML(x.name)}">Reset password</button>` : ''}
@@ -8263,14 +8263,6 @@ async function openEditUser(id){
   euPhotoError('');
   renderEditUserPhoto();
   show('eu_roleWrap',    can('user.change_role'));
-  /* Shown to whoever may edit the account. There is no user.change_level: see
-     the note in src/user-level.js for why a note on the org chart does not get
-     an authority of its own. */
-  show('eu_levelWrap',   can('user.edit'));
-  /* The SAVED value, selected. The two options are always both present — they
-     are literal <option> elements in the markup, filtered by nothing — so the
-     only thing that varies between one user and the next is which is chosen. */
-  document.getElementById('eu_level').value = user.level || '';
   show('eu_projectWrap', can('user.change_project'));
 
   /* Role: only what this administrator is allowed to assign, matching Add User. */
@@ -8312,8 +8304,12 @@ function renderReportingField(user, managerOptions){
   if(isTop){
     wrap.style.display = 'none';
     notice.style.display = '';
-    notice.textContent = `${info.label} sits at the top of the hierarchy, so there is no Reporting To.` +
+    notice.textContent = `${info.label} sits at the top of the hierarchy, so there is no Level 1 Reporting.` +
       (user.reportsTo ? ` Saving will clear the current line to ${user.reportsTo.name}.` : '');
+    /* Level 2 is still offered. The first line is the real chain, which this
+       designation sits at the top of; the second is an independent note, and
+       somebody at the top can perfectly well have one recorded. */
+    renderSecondReportingField(user, managerOptions);
     return;
   }
 
@@ -8357,6 +8353,41 @@ function renderReportingField(user, managerOptions){
       + (inactive ? ` ${inactive} deactivated ${inactive===1?'account is':'accounts are'} included, marked.` : '')
       + (looping ? ` ${looping} would make the reporting line circular and will be refused.` : '')
     : 'There is nobody else to choose from yet.';
+
+  renderSecondReportingField(user, managerOptions);
+}
+
+/* LEVEL 2 REPORTING — the second line, drawn from the same list of people and
+   sharing none of the first line's chain rules.
+ *
+ * It offers EVERY OTHER ACCOUNT, exactly as Level 1 does, minus the "(would
+ * loop)" marking: nothing in the app walks the Level 2 column, so there is no
+ * traversal for a loop to hang and the API does not refuse one. Marking a row
+ * that will in fact be accepted would be a warning about nothing.
+ *
+ * Deactivated accounts are still listed and marked, for the same reason Level 1
+ * lists them: dropping one would mean editing somebody whose recorded second
+ * line has since been deactivated finds no matching option, falls back to "not
+ * set", and silently clears a line nobody touched. */
+function renderSecondReportingField(user, managerOptions){
+  const wrap = document.getElementById('eu_reportingL2Wrap');
+  if(!can('user.change_reporting')){ wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+
+  const sel = document.getElementById('eu_reportsToL2');
+  const options = (managerOptions && managerOptions.options) || [];
+  sel.innerHTML = '<option value="">— Not set —</option>' + options
+    .map(o=>{
+      const mark = o.isActive === false ? ' (Inactive)' : '';
+      return `<option value="${o.id}"${o.id===user.reportsToL2Id?' selected':''}>`
+        + `${escapeHTML(o.name)} — ${escapeHTML(o.roleLabel)}${mark}</option>`;
+    })
+    .join('');
+
+  document.getElementById('eu_reportsL2Hint').textContent = options.length
+    ? 'Optional and independent of Level 1 — it may be a different person, or left blank. '
+      + 'For the record only; nothing in the app decides access from it.'
+    : 'There is nobody else to choose from yet.';
 }
 
 document.getElementById('eu_role').addEventListener('change', async ()=>{
@@ -8396,11 +8427,11 @@ document.getElementById('saveEditUser').addEventListener('click', async (ev)=>{
     body.reportsToId = document.getElementById('eu_reportsTo').value || null;
   }
 
-  /* Level rides with user.edit, like name and email. Sent every time the field
-     is on screen — including as an empty string, which is how "Not set" is
-     chosen and how a level is taken off somebody. */
-  if(can('user.edit')){
-    body.level = document.getElementById('eu_level').value || null;
+  /* Level 2 is sent whatever the designation, including for the top of the
+     hierarchy — the clearing rule above is about the real chain and this is an
+     independent note. Sent as null when blank, which is how it is cleared. */
+  if(can('user.change_reporting')){
+    body.reportsToL2Id = document.getElementById('eu_reportsToL2').value || null;
   }
 
   ev.target.disabled = true;
@@ -8426,11 +8457,14 @@ async function openUserDetail(id){
     row('Email', `<span class="mono" style="font-size:12px;">${escapeHTML(user.email)}</span>`) +
     row('Role', `<span class="role-badge" style="background:${r.color}22;color:${r.color}">${escapeHTML(r.label)}</span>`) +
     row('Project', user.project ? escapeHTML(user.project.name) : '<span class="ud-none">None</span>') +
-    row('Reporting To', user.topOfHierarchy
+    row('Level 1 Reporting', user.topOfHierarchy
       ? '<span class="ud-top">Top of hierarchy</span>'
       : (user.reportsTo
           ? `${escapeHTML(user.reportsTo.name)} <span class="ref-key">— ${escapeHTML(roleInfo(user.reportsTo.role).label)}</span>`
-          : '<span class="ud-none">Not set</span>'));
+          : '<span class="ud-none">Not set</span>')) +
+    row('Level 2 Reporting', user.reportsToL2
+      ? `${escapeHTML(user.reportsToL2.name)} <span class="ref-key">— ${escapeHTML(roleInfo(user.reportsToL2.role).label)}</span>`
+      : '<span class="ud-none">Not set</span>');
 
   document.getElementById('editFromDetail').onclick = ()=>openEditUser(user.id);
   userDetailWrap.classList.add('show');
