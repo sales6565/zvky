@@ -1,5 +1,6 @@
 const { asyncRouter } = require('../async-router');
 const reporting = require('../reporting');
+const userLevel = require('../user-level');
 const userProject = require('../user-project');
 
 // See src/async-router.js: keeps a failed query from killing the process.
@@ -190,7 +191,7 @@ function assignableRolesFor(user) {
 router.get('/', requirePermission('user.view'), async (req, res) => {
   const { search = '', limit = 60, offset = 0, role, status } = req.query;
   const params = [];
-  let sql = 'SELECT id, name, email, role, manager_id, team_lead_id, reports_to_id, created_at, '
+  let sql = 'SELECT id, name, email, role, manager_id, team_lead_id, reports_to_id, `level`, created_at, '
     + 'is_active, deactivated_at, deactivated_by, '
     + 'avatar_updated_at AS `photoUpdatedAt` FROM users WHERE 1=1';
 
@@ -260,6 +261,11 @@ router.get('/', requirePermission('user.view'), async (req, res) => {
         deactivatedBy: row.deactivated_by || null,
         // Leadership has no reporting line at all, rather than an empty one.
         reportsToId: top ? null : row.reports_to_id || null,
+    level: row.level || null,
+    levelLabel: userLevel.label(row.level),
+        /* Recorded and displayed, nothing more — see src/user-level.js. */
+        level: row.level || null,
+        levelLabel: userLevel.label(row.level),
         reportsToName: top ? null : (row.reports_to_id ? managers.get(row.reports_to_id) || null : null),
         projectId: project ? project.id : null,
         projectName: project ? project.name : null,
@@ -343,7 +349,7 @@ router.post('/', requirePermission('user.add'), async (req, res) => {
    src/user-fields.js: `users` carries the profile photo as a MEDIUMBLOB now,
    and this row is sent to the browser. */
 const USER_COLUMNS =
-  'u.id, u.`name`, u.email, u.`role`, u.manager_id, u.team_lead_id, u.reports_to_id, u.created_at, '
+  'u.id, u.`name`, u.email, u.`role`, u.manager_id, u.team_lead_id, u.reports_to_id, u.`level`, u.created_at, '
   + 'u.avatar_updated_at AS `photoUpdatedAt`';
 
 async function describeUser(row) {
@@ -377,7 +383,7 @@ router.patch('/:id', requirePermission('user.edit'), async (req, res) => {
     return res.status(403).json({ error: 'Accounts with full studio access cannot be changed here' });
   }
 
-  const { name, email, role, teamLeadId, reportsToId, projectId } = req.body || {};
+  const { name, email, role, teamLeadId, reportsToId, projectId, level } = req.body || {};
 
   // Editing a user and changing their role, project or reporting line are
   // separate permissions: somebody may be trusted to correct a name without
@@ -386,6 +392,10 @@ router.patch('/:id', requirePermission('user.edit'), async (req, res) => {
     ['role', 'user.change_role', role !== undefined],
     ['projectId', 'user.change_project', projectId !== undefined],
     ['reportsToId', 'user.change_reporting', reportsToId !== undefined],
+    /* Level rides with user.edit rather than getting a permission of its own.
+       It is a note on the org chart, not an authority: anybody trusted to
+       correct somebody's name is trusted to record which rung they are on, and
+       a fourth key here would suggest it gated something it does not. */
   ]) {
     if (present && !can(req, key)) {
       return res.status(403).json({ error: `You do not have permission to change ${field}.`, field });
@@ -423,6 +433,17 @@ router.patch('/:id', requirePermission('user.edit'), async (req, res) => {
     if (clash.length) return res.status(409).json({ error: 'That email is already in use', field: 'email' });
     fields.push(`email = $${fields.length + 1}`);
     values.push(email.trim());
+  }
+
+  /* Level. Written here beside name and email because it belongs with them —
+     a recorded fact about the person, not a change to what they may do. An
+     unrecognised value is refused rather than stored, so the column can only
+     ever hold one of the two keys or NULL. */
+  if (level !== undefined) {
+    const verdict = userLevel.validate(level);
+    if (!verdict.ok) return res.status(400).json({ error: verdict.error, field: 'level' });
+    fields.push(`\`level\` = $${fields.length + 1}`);
+    values.push(verdict.value);
   }
 
   // The role after this edit, which is what every rule below is judged against

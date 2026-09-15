@@ -860,6 +860,51 @@ an account holds that the table does not know about is carried across under an
 *Unsorted* group with no pipeline access, rather than leaving that account unable
 to sign in. All of it is idempotent.
 
+## "Level" — a rung on the ladder, and nothing else
+
+The Edit User screen has a **Level** field with exactly two options:
+
+* **Level 1 - Team Lead**
+* **Level 2 - Manager**
+
+…plus **— Not set —**, which is where every account starts.
+
+**Both options are always offered, to every user, whatever their designation.**
+They are literal `<option>` elements in the page, built by nothing and filtered
+by nothing, so there is no condition under which one of them can go missing.
+`tests/user-level.test.js` fails if a template expression ever appears inside
+that `<select>` — the moment the list is computed rather than stated, "always
+present" stops being something a test can promise.
+
+**Not set is a real state and is not the bottom rung.** Every account that
+predates the field has no level, and nothing was back-filled: being a Team Lead
+in the designation catalogue does not make somebody Level 1, and guessing would
+have written a fact the studio never stated. "Not set" is offered back, so a
+level can be taken off again.
+
+### It drives nothing
+
+Level is **informational**, exactly like Reporting To's display half. It does
+not route an approval, escalate anything, feed a permission check, widen
+anybody's reach, or appear in any report's logic. It is recorded and shown.
+
+Unlike Reporting To — which turned out to have two real readers, documented in
+the section above — Level has **none**, and a test keeps it that way: a guard in
+`tests/user-level.test.js` walks every file under `src/` and fails if anything
+outside `src/user-level.js`, `src/routes/users.js` and the migration reads the
+column. If a later feature should route by Level, that is a deliberate decision,
+and this is where it will first refuse to be made quietly.
+
+### Permission
+
+Level rides with **`user.edit`**, alongside name and email — not a key of its
+own. A note on the org chart is not an authority, and a separate permission
+would imply it gated something it does not. Anybody trusted to correct
+somebody's name is trusted to record which rung they are on.
+
+An unrecognised value is refused by the API with a message naming the two valid
+ones, so the column can only ever hold `level_1`, `level_2` or NULL.
+
 ## "Reporting To" — what it is, and what still reads it
 
 Reporting To on the Edit User screen records who somebody reports to. The

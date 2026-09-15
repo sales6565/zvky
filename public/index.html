@@ -1794,6 +1794,15 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
       <label>Email</label><input type="text" id="eu_email" placeholder="name@zvky.studio">
     </div>
     <div id="eu_roleWrap"><label>Role</label><select id="eu_role"></select></div>
+    <div id="eu_levelWrap">
+      <label>Level</label>
+      <select id="eu_level">
+        <option value="">— Not set —</option>
+        <option value="level_1">Level 1 - Team Lead</option>
+        <option value="level_2">Level 2 - Manager</option>
+      </select>
+      <div class="eu-hint">Where this person sits on the two-rung ladder. Recorded and shown &mdash; it does not change what they can do.</div>
+    </div>
     <div id="eu_projectWrap"><label>Project/Game</label><select id="eu_project"></select></div>
     <div id="eu_reportingWrap">
       <label>Reporting To</label><select id="eu_reportsTo"></select>
@@ -8254,6 +8263,14 @@ async function openEditUser(id){
   euPhotoError('');
   renderEditUserPhoto();
   show('eu_roleWrap',    can('user.change_role'));
+  /* Shown to whoever may edit the account. There is no user.change_level: see
+     the note in src/user-level.js for why a note on the org chart does not get
+     an authority of its own. */
+  show('eu_levelWrap',   can('user.edit'));
+  /* The SAVED value, selected. The two options are always both present — they
+     are literal <option> elements in the markup, filtered by nothing — so the
+     only thing that varies between one user and the next is which is chosen. */
+  document.getElementById('eu_level').value = user.level || '';
   show('eu_projectWrap', can('user.change_project'));
 
   /* Role: only what this administrator is allowed to assign, matching Add User. */
@@ -8377,6 +8394,13 @@ document.getElementById('saveEditUser').addEventListener('click', async (ev)=>{
      refuses it, and the clearing is its job rather than the form's. */
   if(can('user.change_reporting') && !TOP_TIER_ROLES.has(role)){
     body.reportsToId = document.getElementById('eu_reportsTo').value || null;
+  }
+
+  /* Level rides with user.edit, like name and email. Sent every time the field
+     is on screen — including as an empty string, which is how "Not set" is
+     chosen and how a level is taken off somebody. */
+  if(can('user.edit')){
+    body.level = document.getElementById('eu_level').value || null;
   }
 
   ev.target.disabled = true;

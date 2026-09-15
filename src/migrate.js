@@ -1898,6 +1898,24 @@ async function ensurePnlCostColumns(db, log) {
   });
 }
 
+/* The Level on a user — a two-rung ladder recorded beside the designation.
+ *
+ * NULLABLE, and nothing back-filled. Every account that predates this column
+ * has no level, which is the truth: nobody has said which rung they are on, and
+ * guessing one from their designation would write a fact the studio never
+ * stated. "Not set" is a real state the screen offers back.
+ *
+ * See src/user-level.js for why this drives nothing. */
+async function ensureUserLevel(db, log) {
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'level'`
+  ).catch(() => ({ rows: null }));
+  if (!rows || rows.length) return;
+  await db.query('ALTER TABLE users ADD COLUMN `level` VARCHAR(16) NULL');
+  log('Schema: added users.level — NULL on every existing account until somebody sets one.');
+}
+
 async function ensureUserActive(db, log) {
   const { rows } = await db.query(
     `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
@@ -2606,6 +2624,7 @@ const STEPS = [
   ['profit and loss cost basis', ensurePnlCostColumns],
   // After users exists; before anything that reads an account's active flag.
   ['user active flag', ensureUserActive],
+  ['user level', ensureUserLevel],
   ['asset category', ensureAssetCategory],
   ['profile photos', ensureProfilePhotos],
   ['quick tour', ensureTourSeen],
