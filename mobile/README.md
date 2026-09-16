@@ -40,8 +40,51 @@ download from the browser:
 | **Android** | Actions → **Mobile — Android APK** → *Run workflow*. A few minutes later the APK is under **Artifacts** on that run. Works with no setup whatsoever — see the note on debug vs release signing in §4 and in the workflow's own header. |
 | **iOS** | Actions → **Mobile — iOS IPA (Ad Hoc)** → *Run workflow*. This one needs five Apple secrets set on the repository first, because Apple will not sign an app without the studio's certificate. §5 and §6 are how to get them. |
 
-The workflows are `.github/workflows/mobile-android.yml` and
-`mobile-ios.yml`, and each carries its own instructions at the top.
+The workflows are in `.github/workflows/` — `mobile-android.yml`,
+`mobile-ios.yml` and `mobile-ios-unsigned.yml` — and each carries its own
+instructions at the top.
+
+### Just your own iPhone?
+
+The Ad Hoc route above answers "get the app to the studio". For one person on
+one phone it is the wrong tool, and the $99 is a poor reason to go without.
+There are three routes and they are genuinely different:
+
+| | Free Apple ID | Ad Hoc ($99/yr) | App Store |
+|---|---|---|---|
+| Cost | nothing | $99/year | $99/year |
+| Devices | your own | up to 100 | anyone |
+| Lasts | **7 days** | 1 year | indefinitely |
+| Push notifications | **no** | yes | yes |
+| Needs a Mac | no | no (CI does it) | no |
+| Review by Apple | no | no | yes |
+
+**The free route, start to finish:**
+
+1. Actions → **Mobile — iOS IPA (unsigned, for your own phone)** → *Run
+   workflow*. Download the artifact and unzip it. No Apple account is involved
+   in this step and the workflow needs no secrets.
+2. Install **[Sideloadly](https://sideloadly.io)** (Windows or Mac) or
+   **[AltStore](https://altstore.io)** on a computer.
+3. Plug the iPhone in, drag `zvky-unsigned.ipa` in, sign in with your ordinary
+   Apple ID. It signs the app for your device and installs it.
+4. On the phone: **Settings → General → VPN & Device Management → your Apple
+   ID → Trust**.
+
+**The seven days are real.** On the eighth day the app stops opening until you
+plug in and re-sign it. AltStore can do that refresh over wifi on its own if
+you leave its helper running; with Sideloadly it is a manual repeat. This is
+Apple's limit on free provisioning — nothing in this repository can move it,
+and the paid membership is what lifts it to a year.
+
+**Push will not work on a free-signed build**, because the entitlement needs a
+paid team. Everything else does: the whole application, the camera, the offline
+screen, pull to refresh.
+
+The signing is deliberately left to your own machine rather than done in CI. A
+free Apple ID cannot sign from CI at all, and doing it there would mean handing
+a workflow your Apple password — so the build stops one step short and your
+credentials stay where they belong.
 
 Everything below is the manual route, and the reference for what the automated
 one is doing.
