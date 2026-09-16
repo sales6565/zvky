@@ -1,0 +1,154 @@
+# An unsigned .ipa, for putting the app on your OWN iPhone with a free Apple ID.
+#
+# WHO THIS IS FOR. One person, their own phone, no Apple Developer Program
+# membership and no Mac. If you want the app on the whole studio's phones, use
+# "Mobile — iOS IPA (Ad Hoc)" instead: that needs the $99/year membership, and
+# it is the only route that lasts a year and carries push notifications.
+#
+# WHAT IT PRODUCES: zvky-unsigned.ipa — a complete, working app with NO
+# signature on it. It cannot be installed by tapping a link, and it is not
+# meant to be. You sign it yourself, on your own computer, with your own free
+# Apple ID, using Sideloadly or AltStore. Apple allows exactly this: a free
+# Apple ID can provision apps for devices you own.
+#
+# HOW IT GETS ONTO THE PHONE
+#
+#   1. Download the artifact from this run and unzip it.
+#   2. Install Sideloadly (sideloadly.io — Windows or Mac) or AltStore.
+#   3. Plug the iPhone in, drag the .ipa into Sideloadly, enter your Apple ID.
+#   4. On the phone: Settings -> General -> VPN & Device Management -> your
+#      Apple ID -> Trust.
+#
+# THE ONE CATCH, AND IT IS NOT A SMALL ONE
+#
+#   A free Apple ID signs an app for SEVEN DAYS. On the eighth day the app
+#   stops opening until you plug the phone in and re-sign it. AltStore can do
+#   that refresh over wifi by itself if you leave its helper running on the
+#   computer; Sideloadly is a manual repeat. Nothing here can change that —
+#   it is Apple's limit on free provisioning, and the $99 membership is what
+#   lifts it to a year.
+#
+#   PUSH NOTIFICATIONS WILL NOT WORK on a free-signed build. The push
+#   entitlement needs a paid team. Everything else — the whole application,
+#   the camera, offline, pull to refresh — works normally.
+#
+# WHY THE SIGNING IS LEFT OUT RATHER THAN DONE HERE. Signing with your Apple
+# ID would mean handing this workflow your Apple password, and a free Apple ID
+# cannot be used from CI anyway. Building unsigned and letting your own machine
+# sign it keeps your credentials on your machine, which is where they belong.
+#
+# WHAT IT COSTS: a macOS runner, billed at ten times the Linux rate on paid
+# plans, for a few minutes. Dispatch-only for that reason.
+name: Mobile — iOS IPA (unsigned, for your own phone)
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: 'The address the app loads. Leave blank to use the one in mobile/capacitor.config.json.'
+        required: false
+        default: ''
+
+jobs:
+  unsigned:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install the Capacitor packages
+        working-directory: mobile
+        run: npm ci
+
+      - name: Point the app at a different address
+        if: inputs.server_url != ''
+        working-directory: mobile
+        env:
+          URL: ${{ inputs.server_url }}
+        run: |
+          set -eu
+          node -e '
+            const fs = require("fs");
+            const p = "capacitor.config.json";
+            const c = JSON.parse(fs.readFileSync(p, "utf8"));
+            c.server.url = process.env.URL;
+            fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
+            console.log("server.url =", c.server.url);
+          '
+
+      - name: Generate the iOS project
+        working-directory: mobile
+        run: |
+          set -eu
+          npx cap add ios
+          npx cap sync ios
+
+      - name: Icons and splash screen
+        working-directory: mobile
+        run: |
+          set -eu
+          npx capacitor-assets generate --ios \
+            --iconBackgroundColor '#12121a' \
+            --splashBackgroundColor '#12121a' || echo 'Icon generation skipped.'
+
+      # The whole trick is on these three settings. Without them xcodebuild
+      # refuses to archive at all: it looks for a team and a certificate,
+      # finds neither on a runner with no Apple account attached, and stops.
+      # Turning code signing off entirely is legitimate here precisely because
+      # something else signs it afterwards.
+      - name: Archive, without signing
+        working-directory: mobile/ios/App
+        run: |
+          set -eu
+          xcodebuild -workspace App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            archive
+
+      # An .ipa is a zip with one rule: the app bundle sits inside a top-level
+      # folder called exactly "Payload". xcodebuild -exportArchive would do
+      # this, but it insists on signing — so the archive is unpacked by hand,
+      # which is all that step does anyway.
+      - name: Wrap the app as an .ipa
+        run: |
+          set -eu
+          APP="$RUNNER_TEMP/App.xcarchive/Products/Applications/App.app"
+          [ -d "$APP" ] || { echo "No App.app in the archive — the build produced nothing to wrap." >&2; exit 1; }
+
+          mkdir -p "$RUNNER_TEMP/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/Payload/"
+          cd "$RUNNER_TEMP"
+          # -y keeps symlinks as symlinks. Following them would inflate the
+          # bundle and can break a framework that relies on them.
+          zip -qry "$GITHUB_WORKSPACE/zvky-unsigned.ipa" Payload
+
+      - name: What was built
+        run: |
+          set -eu
+          ls -lh zvky-unsigned.ipa
+          echo "sha256: $(shasum -a 256 zvky-unsigned.ipa | cut -d' ' -f1)"
+          echo
+          echo 'This .ipa has NO signature. Tapping a link to it will not install it —'
+          echo 'that is expected. Sign it on your own computer with Sideloadly or'
+          echo 'AltStore using your free Apple ID, then trust the profile on the phone:'
+          echo '  Settings -> General -> VPN & Device Management -> your Apple ID -> Trust'
+          echo
+          echo 'A free Apple ID signature lasts SEVEN DAYS. After that the app stops'
+          echo 'opening until you re-sign it. AltStore can refresh it over wifi.'
+          echo 'Push notifications need a paid team and will not work on this build.'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zvky-ios-unsigned
+          path: zvky-unsigned.ipa
+          retention-days: 30
+          if-no-files-found: error
