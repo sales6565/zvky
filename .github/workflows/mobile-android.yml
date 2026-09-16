@@ -58,6 +58,12 @@ on:
 jobs:
   apk:
     runs-on: ubuntu-latest
+    # Hoisted to the job, because neither half of this can be done at the step.
+    # A step's `if` cannot read `secrets` (GitHub rejects the workflow outright),
+    # and it is evaluated before that step's own `env` block exists — so the
+    # secret has to arrive as job-level env, which `if` can then read.
+    env:
+      GOOGLE_SERVICES: ${{ secrets.GOOGLE_SERVICES_JSON }}
     steps:
       - uses: actions/checkout@v4
 
@@ -117,10 +123,8 @@ jobs:
             --splashBackgroundColor '#12121a' || echo 'Icon generation skipped.'
 
       - name: Firebase configuration, if there is one
-        if: ${{ secrets.GOOGLE_SERVICES_JSON != '' }}
+        if: env.GOOGLE_SERVICES != ''
         working-directory: mobile
-        env:
-          GOOGLE_SERVICES: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
           set -eu
           printf '%s' "$GOOGLE_SERVICES" > android/app/google-services.json
