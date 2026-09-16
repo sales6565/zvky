@@ -1,0 +1,181 @@
+# Building the Android app, on a machine that can reach Google.
+#
+# HOW TO RUN IT
+#
+# Actions tab -> "Mobile — Android APK" -> Run workflow. It never runs by
+# itself: only when somebody starts it. When it finishes, the APK is under
+# Artifacts at the bottom of the run's page — download it, and that zip holds
+# zvky.apk.
+#
+# WHY THIS EXISTS RATHER THAN A LOCAL BUILD. Every piece of the Android
+# toolchain — the SDK, the platform, the build-tools and the Android Gradle
+# Plugin — is served from dl.google.com. A machine that cannot reach that host
+# cannot build an Android app at all, whatever else is installed on it.
+# GitHub's ubuntu runners ship the SDK preinstalled, so this is the shortest
+# path from "no Android Studio" to "an APK on a phone".
+#
+# SIGNING, AND WHY IT MATTERS MORE THAN IT LOOKS
+#
+# Android identifies an app by the key it was signed with. An update must be
+# signed with the SAME key as the install it replaces — forever. So:
+#
+#   With the ANDROID_KEYSTORE_BASE64 secret set, this builds a RELEASE APK
+#   signed with the studio's own key. That is the one to hand out.
+#
+#   Without it, this builds a DEBUG APK. It installs and runs exactly the same,
+#   and it is the right thing for trying the app out today. But it is signed
+#   with Android's universal debug key, which every debug build on earth shares
+#   — so it is not for general distribution, and the eventual release build
+#   CANNOT update it. Everyone on a debug build has to uninstall first.
+#
+# Setting up the release key is in mobile/README.md §4. In short:
+#   keytool -genkeypair -v -keystore zvky-release.jks -alias zvky \
+#     -keyalg RSA -keysize 4096 -validity 10000
+#   base64 -w0 zvky-release.jks      # paste into the secret
+# Then back the .jks up somewhere that is not this repository. If it is lost
+# there is no recovery: every phone in the studio has to uninstall and start
+# again.
+#
+# PUSH NOTIFICATIONS need mobile/android/app/google-services.json, which is a
+# Firebase file and is not in this repository. Set it as the
+# GOOGLE_SERVICES_JSON secret and this workflow drops it in. Without it the
+# build still succeeds — Capacitor's template skips the plugin and logs that
+# push will not work — so an APK you can install is never blocked on it.
+name: Mobile — Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: 'The address the app loads. Leave blank to use the one in mobile/capacitor.config.json.'
+        required: false
+        default: ''
+      version:
+        description: 'Version name shown on the install page, e.g. 1.0.0'
+        required: false
+        default: '1.0.0'
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # JDK 17. The Android Gradle Plugin 8.2 wants 17 or newer, and 17 is the
+      # version it is actually tested against — a newer JDK is where the
+      # "Unsupported class file major version" failures come from.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install the Capacitor packages
+        working-directory: mobile
+        run: npm ci
+
+      # Where the app points. The config is committed with the studio's domain
+      # in it; this input is for building against a staging address without
+      # editing the file.
+      - name: Point the app at a different address
+        if: inputs.server_url != ''
+        working-directory: mobile
+        run: |
+          set -eu
+          node -e '
+            const fs = require("fs");
+            const p = "capacitor.config.json";
+            const c = JSON.parse(fs.readFileSync(p, "utf8"));
+            c.server.url = process.env.URL;
+            fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
+            console.log("server.url =", c.server.url);
+          '
+        env:
+          URL: ${{ inputs.server_url }}
+
+      # android/ is generated, not committed — it is large, nobody edits it,
+      # and "npx cap sync" regenerates it from the config. See .gitignore.
+      - name: Generate the Android project
+        working-directory: mobile
+        run: |
+          set -eu
+          npx cap add android
+          npx cap sync android
+
+      - name: Icons and splash screen
+        working-directory: mobile
+        run: |
+          set -eu
+          # The two source images are committed; this fans them out into the
+          # twenty-odd sizes Android asks for. Not fatal if it fails — the app
+          # would just wear Capacitor's default icon.
+          npx capacitor-assets generate --android \
+            --iconBackgroundColor '#12121a' \
+            --splashBackgroundColor '#12121a' || echo 'Icon generation skipped.'
+
+      - name: Firebase configuration, if there is one
+        if: ${{ secrets.GOOGLE_SERVICES_JSON != '' }}
+        working-directory: mobile
+        env:
+          GOOGLE_SERVICES: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          set -eu
+          printf '%s' "$GOOGLE_SERVICES" > android/app/google-services.json
+          echo 'google-services.json written — push notifications are enabled in this build.'
+
+      # One step, two outcomes, so the decision is visible in the log rather
+      # than buried in an if: on three separate steps.
+      - name: Build
+        id: build
+        working-directory: mobile
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -eu
+          cd android
+          if [ -n "${KEYSTORE_B64:-}" ]; then
+            echo '==> Release build, signed with the studio key.'
+            echo "$KEYSTORE_B64" | base64 -d > release.jks
+            ./gradlew assembleRelease --no-daemon \
+              -Pandroid.injected.signing.store.file="$PWD/release.jks" \
+              -Pandroid.injected.signing.store.password="$KEYSTORE_PASS" \
+              -Pandroid.injected.signing.key.alias="${KEY_ALIAS:-zvky}" \
+              -Pandroid.injected.signing.key.password="${KEY_PASS:-$KEYSTORE_PASS}"
+            # Removed straight away. The runner is thrown away afterwards, but
+            # a signing key should not sit on disk a moment longer than the one
+            # command that needs it.
+            rm -f release.jks
+            cp app/build/outputs/apk/release/app-release.apk ../../zvky.apk
+            echo 'kind=release' >> "$GITHUB_OUTPUT"
+          else
+            echo '==> No ANDROID_KEYSTORE_BASE64 secret. Building a DEBUG apk.'
+            echo '    It installs and runs, but it is signed with the shared'
+            echo '    Android debug key — fine for trying the app out, not for'
+            echo '    handing round, and a later release build cannot update it.'
+            ./gradlew assembleDebug --no-daemon
+            cp app/build/outputs/apk/debug/app-debug.apk ../../zvky.apk
+            echo 'kind=debug' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: What was built
+        run: |
+          set -eu
+          ls -l zvky.apk
+          echo "sha256: $(sha256sum zvky.apk | cut -d' ' -f1)"
+          echo
+          echo "This is a ${{ steps.build.outputs.kind }} build."
+          echo 'Upload it to dist-mobile/zvky.apk on the server, then send the'
+          echo 'team the link from Settings -> Mobile Apps.'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zvky-android-${{ steps.build.outputs.kind }}-${{ inputs.version }}
+          path: zvky.apk
+          retention-days: 30
+          if-no-files-found: error

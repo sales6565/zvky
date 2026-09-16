@@ -29,6 +29,25 @@ retry, and comes back the moment the connection does.
 
 ---
 
+## The shortest path to an installed app
+
+**You do not need Android Studio, and for Android you do not need anything at
+all.** Both builds run on GitHub's own machines and come back as a file you
+download from the browser:
+
+| | |
+|---|---|
+| **Android** | Actions → **Mobile — Android APK** → *Run workflow*. A few minutes later the APK is under **Artifacts** on that run. Works with no setup whatsoever — see the note on debug vs release signing in §4 and in the workflow's own header. |
+| **iOS** | Actions → **Mobile — iOS IPA (Ad Hoc)** → *Run workflow*. This one needs five Apple secrets set on the repository first, because Apple will not sign an app without the studio's certificate. §5 and §6 are how to get them. |
+
+The workflows are `.github/workflows/mobile-android.yml` and
+`mobile-ios.yml`, and each carries its own instructions at the top.
+
+Everything below is the manual route, and the reference for what the automated
+one is doing.
+
+---
+
 ## Contents
 
 1. [What is in this folder](#1-what-is-in-this-folder)
@@ -100,8 +119,13 @@ and the desktop layout was re-checked at 1600px afterwards and is unchanged.
 
 ## 2. First-time setup
 
-You need **Node 20+**. For Android you also need **Android Studio**; for iOS you
-need **a Mac with Xcode** — there is no way around either.
+This is the **local** route. If you only want the finished app, the workflows
+above build both without any of it.
+
+You need **Node 20+**. For Android you also need **Android Studio**, which
+brings the SDK; for iOS, **a Mac with Xcode**. Neither can be worked around
+locally — every part of the Android toolchain is served from `dl.google.com`,
+and Apple will not sign an app anywhere but macOS.
 
 ```bash
 cd mobile
@@ -206,6 +230,12 @@ keytool -genkeypair -v -keystore zvky-release.jks -alias zvky \
 
 ### Building
 
+> Or skip all of this: Actions → **Mobile — Android APK** builds it on a
+> GitHub runner and hands you the APK. Set `ANDROID_KEYSTORE_BASE64`,
+> `ANDROID_KEYSTORE_PASSWORD` and `ANDROID_KEY_ALIAS` as repository secrets and
+> it signs with the key below; leave them unset and you get a debug build you
+> can install today.
+
 ```bash
 export ZVKY_KEYSTORE=/secure/path/zvky-release.jks
 export ZVKY_KEYSTORE_PASS='…'
@@ -269,6 +299,11 @@ Xcode → Window → Devices and Simulators.)
    certificate → **tick every device** → download the `.mobileprovision`.
 
 ### Exporting the .ipa
+
+> Or let a runner do it: Actions → **Mobile — iOS IPA (Ad Hoc)**, once the five
+> Apple secrets are set. It archives, exports and writes the manifest, and both
+> files come back as artifacts. The portal work above still has to happen first —
+> no workflow can create an Apple certificate for you.
 
 ```bash
 cd mobile

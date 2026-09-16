@@ -1,0 +1,246 @@
+# Building the iOS app, on a Mac you do not own.
+#
+# READ THIS BEFORE RUNNING IT. This workflow removes the need for a Mac. It
+# does NOT remove the need for an Apple Developer Program membership, and
+# nothing can:
+#
+#   - Apple will not sign an app without a paid membership ($99/year).
+#   - An Ad Hoc build runs ONLY on devices whose UDIDs are named inside the
+#     provisioning profile. A phone that is not in the profile gets "Unable to
+#     Install" and no explanation.
+#   - The provisioning profile expires one year after it is created, and when
+#     it does the app stops launching on every device at once.
+#
+# So this is the build step automated, not the Apple relationship. Getting the
+# certificate, the profile and the UDIDs is mobile/README.md §5 and §6, and it
+# has to happen first — once, by a person, in Apple's portal.
+#
+# THE FIVE SECRETS IT NEEDS
+#
+#   IOS_CERTIFICATE_P12         the Apple Distribution certificate and its
+#                               private key, exported from Keychain Access as
+#                               .p12, then: base64 -i cert.p12 | pbcopy
+#   IOS_CERTIFICATE_PASSWORD    the password set during that export
+#   IOS_PROVISIONING_PROFILE    the Ad Hoc .mobileprovision, base64 the same way
+#   IOS_TEAM_ID                 ten characters, top right of the developer portal
+#   IOS_PROFILE_NAME            the profile's name, exactly as the portal shows it
+#
+# The certificate is the studio's identity. Treat these as you would a
+# password: they live in the repository's Actions secrets and nowhere else.
+#
+# WHAT COMES OUT: zvky.ipa and manifest.plist, under Artifacts. Upload BOTH to
+# dist-mobile/ on the server — iOS installs from the manifest, not from the
+# .ipa, and an .ipa without one cannot be installed at all.
+#
+# WHAT IT COSTS: macOS runners bill at ten times the Linux rate and an archive
+# takes several minutes. Run it when you cut a version.
+name: Mobile — iOS IPA (Ad Hoc)
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: 'The address the app loads. Leave blank to use the one in mobile/capacitor.config.json.'
+        required: false
+        default: ''
+      version:
+        description: 'Version, which must match what the manifest advertises, e.g. 1.0.0'
+        required: true
+        default: '1.0.0'
+      install_base:
+        description: 'The https directory the files will be served from, e.g. https://zvkydesign.com/m/YOUR_TOKEN'
+        required: true
+
+jobs:
+  ipa:
+    runs-on: macos-14
+    steps:
+      # Fail here, loudly, rather than twenty minutes later inside xcodebuild
+      # with a signing error that names none of this.
+      - name: Check the Apple secrets are present
+        env:
+          CERT: ${{ secrets.IOS_CERTIFICATE_P12 }}
+          PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
+          TEAM: ${{ secrets.IOS_TEAM_ID }}
+        run: |
+          set -eu
+          missing=''
+          [ -n "${CERT:-}" ]    || missing="$missing IOS_CERTIFICATE_P12"
+          [ -n "${PROFILE:-}" ] || missing="$missing IOS_PROVISIONING_PROFILE"
+          [ -n "${TEAM:-}" ]    || missing="$missing IOS_TEAM_ID"
+          if [ -n "$missing" ]; then
+            echo "Missing repository secrets:$missing" >&2
+            echo >&2
+            echo 'These come from the Apple Developer portal and cannot be generated here.' >&2
+            echo 'mobile/README.md §5 walks through getting each one.' >&2
+            exit 1
+          fi
+          echo 'All present.'
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install the Capacitor packages
+        working-directory: mobile
+        run: npm ci
+
+      - name: Point the app at a different address
+        if: inputs.server_url != ''
+        working-directory: mobile
+        env:
+          URL: ${{ inputs.server_url }}
+        run: |
+          set -eu
+          node -e '
+            const fs = require("fs");
+            const p = "capacitor.config.json";
+            const c = JSON.parse(fs.readFileSync(p, "utf8"));
+            c.server.url = process.env.URL;
+            fs.writeFileSync(p, JSON.stringify(c, null, 2) + "\n");
+            console.log("server.url =", c.server.url);
+          '
+
+      - name: Generate the iOS project
+        working-directory: mobile
+        run: |
+          set -eu
+          npx cap add ios
+          npx cap sync ios
+
+      - name: Icons and splash screen
+        working-directory: mobile
+        run: |
+          set -eu
+          npx capacitor-assets generate --ios \
+            --iconBackgroundColor '#12121a' \
+            --splashBackgroundColor '#12121a' || echo 'Icon generation skipped.'
+
+      # A keychain of its own, unlocked for this run only. Importing into the
+      # runner's login keychain works too, but a dedicated one cannot outlive
+      # the job or collide with anything else on the machine.
+      - name: Install the certificate and the profile
+        env:
+          CERT: ${{ secrets.IOS_CERTIFICATE_P12 }}
+          CERT_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
+        run: |
+          set -eu
+          KEYCHAIN="$RUNNER_TEMP/build.keychain"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+
+          echo "$CERT" | base64 -d > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "${CERT_PASSWORD:-}" -T /usr/bin/codesign -T /usr/bin/security
+          # Without this, codesign stops to ask for permission to use the key —
+          # and on a runner there is nobody to answer, so the build hangs until
+          # it times out.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          echo "$PROFILE" | base64 -d \
+            > "$HOME/Library/MobileDevice/Provisioning Profiles/adhoc.mobileprovision"
+
+          echo 'Signing identities now available:'
+          security find-identity -v -p codesigning "$KEYCHAIN"
+
+      - name: Set the version
+        working-directory: mobile/ios/App
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          # Both matter: MARKETING_VERSION is what the manifest must agree with,
+          # and CURRENT_PROJECT_VERSION has to climb or a phone will refuse the
+          # install as a downgrade.
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" App/Info.plist 2>/dev/null \
+            || echo 'Info.plist uses build settings for the version; relying on the project default.'
+          xcrun agvtool new-version -all "${GITHUB_RUN_NUMBER}" || true
+
+      - name: Archive
+        working-directory: mobile/ios/App
+        env:
+          TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+        run: |
+          set -eu
+          xcodebuild -workspace App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -destination 'generic/platform=iOS' \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_STYLE=Manual \
+            PROVISIONING_PROFILE_SPECIFIER="${{ secrets.IOS_PROFILE_NAME }}" \
+            archive
+
+      - name: Export the .ipa
+        env:
+          TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+        run: |
+          set -eu
+          # "ad-hoc" is the method that produces a build for named devices.
+          # "development" would need a development profile, and "app-store"
+          # produces something that can only be uploaded, not installed.
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>ad-hoc</string>
+            <key>teamID</key><string>${TEAM_ID}</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>compileBitcode</key><false/>
+            <key>stripSwiftSymbols</key><true/>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>com.zvky.forge</key><string>${{ secrets.IOS_PROFILE_NAME }}</string>
+            </dict>
+          </dict>
+          </plist>
+          PLIST
+
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export"
+
+          ls -l "$RUNNER_TEMP/export"
+          cp "$RUNNER_TEMP/export/App.ipa" zvky.ipa
+
+      - name: Write the install manifest
+        working-directory: mobile
+        run: |
+          set -eu
+          node scripts/make-ios-manifest.js \
+            --base '${{ inputs.install_base }}' \
+            --version '${{ inputs.version }}' \
+            --out ../manifest.plist
+
+      - name: What was built
+        run: |
+          set -eu
+          ls -l zvky.ipa manifest.plist
+          echo "sha256: $(shasum -a 256 zvky.ipa | cut -d' ' -f1)"
+          echo
+          echo 'Upload BOTH files to dist-mobile/ on the server. iOS installs'
+          echo 'from the manifest, not the .ipa — an .ipa on its own cannot be'
+          echo 'installed. Then send the link from Settings -> Mobile Apps, and'
+          echo 'tell people to open it in Safari.'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zvky-ios-${{ inputs.version }}
+          path: |
+            zvky.ipa
+            manifest.plist
+          retention-days: 30
+          if-no-files-found: error
