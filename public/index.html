@@ -296,6 +296,54 @@ body.chat-open #app{padding-left:calc(var(--chat-w, 380px) + 24px);}
 @media (max-width: 900px){
   body.chat-open #app{padding-left:24px;}
 }
+
+/* THE TAB BAR ON A PHONE.
+ *
+ * `.tabs` is overflow:hidden with flex-wrap:nowrap, which is right on a desktop
+ * — it clips the rounded corners and nothing ever overflows. On a 390px screen
+ * eleven tabs need 733px, so seven of them were simply GONE: not squeezed, not
+ * wrapped, unreachable. Found at phone width inside the native shell, where the
+ * whole application is that width and there is no wider window to fall back to.
+ *
+ * Scrolled rather than wrapped. Wrapping would push the content down by two
+ * rows on every screen and reflow as tabs appear and disappear with
+ * permissions; a swipeable strip is the idiom every mobile app already uses,
+ * and the active tab is scrolled into view below so it is never the hidden one.
+ *
+ * The scrollbar is hidden because a horizontal one on a touch screen is a
+ * 15px band of nothing; the strip still scrolls. */
+@media (max-width: 860px){
+  .tabs{overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;
+    scrollbar-width:none;scroll-snap-type:x proximity;}
+  .tabs::-webkit-scrollbar{display:none;}
+  .tabs button{flex:0 0 auto;white-space:nowrap;scroll-snap-align:start;padding:10px 14px;}
+  /* margin-left:auto inside a scroller pins the element to the far end of the
+     scrollable width rather than the visible edge, which put a full screen of
+     emptiness between the last tab and the search box. */
+  .tabs .spacer{margin-left:0;}
+}
+
+/* The scroller wrapWideTables() puts around every table. Always on, not only
+   on a phone: a table wider than its column should scroll inside that column
+   on a desktop too, and on a wide screen there is nothing to scroll. */
+.table-scroll{overflow-x:auto;overflow-y:visible;max-width:100%;}
+
+/* Two more things that only break at phone width, both found at 390px inside
+   the native shell. */
+@media (max-width: 860px){
+  /* A toolbar of buttons and filters with the default nowrap pushed the page
+     to 999px on the Users tab. Wrapping is the whole fix; nothing about it is
+     wrong on a desktop, where it never wraps because it fits. */
+  #usersView > div{flex-wrap:wrap;}
+
+  /* A GRID ITEM WILL NOT SHRINK BELOW ITS CONTENT. .pnl-panel measured 414px
+     inside a 342px cell, because a grid item's min-width defaults to auto —
+     the widest unbreakable thing inside it sets a floor. min-width:0 lifts
+     that floor and lets the panel take the column's width, which is what the
+     .pnl-scroll inside it was always expecting. */
+  .pnl-grid > *{min-width:0;}
+  .pnl-panel{min-width:0;max-width:100%;}
+}
 @media (prefers-reduced-motion: reduce){
   .chat-panel,.chat-btn,#app{transition:none;}
 }
@@ -863,6 +911,20 @@ tr.past-round{opacity:0.62;}
 .link-copy{font-size:11px;padding:2px 8px;border:1px solid var(--border);border-radius:3px;
   background:transparent;color:var(--ink-muted);cursor:pointer;white-space:nowrap;}
 .link-copy:hover{color:var(--ink);border-color:var(--ink-faint);}
+/* Settings -> Mobile Apps. */
+.md-warn{border:1px solid #ff5a36;border-radius:4px;padding:10px 12px;margin-bottom:12px;
+  font-size:12.5px;line-height:1.5;color:var(--ink);background:rgba(255,90,54,.08);}
+.md-warn div + div{margin-top:8px;}
+.md-link{border:1px solid var(--border);border-radius:4px;padding:12px;}
+.md-link label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;
+  color:var(--ink-muted);margin-bottom:6px;}
+.md-link-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.md-link-row code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;
+  word-break:break-all;flex:1 1 260px;}
+.md-note{font-size:12px;color:var(--ink-muted);margin:8px 0 0;}
+.md-hash code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;
+  color:var(--ink-muted);}
+.md-missing td{color:var(--ink-muted);font-style:italic;}
 .pnl-cards-6{grid-template-columns:repeat(6,1fr);}
 .pnl-bud{border-top-color:var(--review);}
 .pnl-over{border-top-color:#ff5a36;}
@@ -1690,6 +1752,17 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
     </label>
     <div class="field-err" id="pf_email_err"></div>
 
+    <label class="pf-toggle" id="pf_push_row">
+      <input type="checkbox" id="pf_push">
+      <span>
+        <span class="pf-toggle-lead">Notify me on my phone</span>
+        <span class="pf-toggle-note">Push notifications in the mobile app — the same events the bell
+          shows, plus chat. Only reaches phones you have signed in on and allowed notifications for.
+          Independent of the email switch above.</span>
+      </span>
+    </label>
+    <div class="field-err" id="pf_push_err"></div>
+
     <div class="field-lbl" style="margin-top:20px;">Change password</div>
 
     <label>Current password</label>
@@ -2476,6 +2549,10 @@ const SETTINGS_SECTIONS = [
      to a role that runs nothing else. */
   { permission:'settings.activity_log', label:'Activity Log',     heading:'Activity Log', note:'Every action anybody has taken, across the whole application.' },
   { permission:'settings.chat_activity', label:'Chat Activity',   heading:'Chat Activity', note:'Every chat message in the studio. Reading it is itself recorded.' },
+  /* The iOS and Android builds. Not a settings.* key, and not a P&L one — it
+     is its own permission because the section shows the install link, and that
+     link is what lets a phone download the builds without signing in. */
+  { permission:'mobile.distribute', label:'Mobile Apps',      heading:'Mobile Apps', note:'The internal iOS and Android builds, and the install link to send the team.' },
 ];
 /* Settings opens for anyone holding at least one of them, and shows only the
    sections they hold. */
@@ -2946,7 +3023,7 @@ document.addEventListener('click', async (e)=>{
       ta.remove();
     }catch{ done = false; }
   }
-  showToast(done ? 'Path copied.' : 'Could not copy — select the path and copy it by hand.');
+  showToast(done ? (btn.dataset.copyLabel || 'Path copied.') : 'Could not copy — select it and copy it by hand.');
 });
 
 /* Which assets are ticked in the Assets List, by asset id.
@@ -3118,6 +3195,10 @@ async function attemptLogin(){
     const { token, user } = await api('/auth/login', { method:'POST', body:{ email, password } });
     state.token = token; state.currentUser = user;
     localStorage.setItem('zvky_token', token);
+    /* The mobile shells register for push HERE rather than at load: a device
+       token is stored against a user, so there is nobody to store one against
+       until somebody has signed in. Inert in a browser — nothing listens. */
+    try{ window.dispatchEvent(new Event('zvky:signed-in')); }catch{ /* older engines */ }
     /* A fresh sign-in starts with chat collapsed, however the last person to
        use this tab left it. Cleared HERE rather than in showApp(), which also
        runs on a page refresh with a stored token — where the preference is
@@ -3467,6 +3548,16 @@ function renderContextPickers(){
 function setTab(tab){
   state.view = tab;
   document.querySelectorAll('#mainTabs button').forEach(b=>b.classList.toggle('active', b.dataset.tab===tab));
+  /* Keep the chosen tab visible. On a narrow screen the strip scrolls (see the
+     max-width:860px rule), so a tab reached any way other than by tapping it —
+     the mobile app's back button, a deep link, a permission change redrawing
+     the bar — could otherwise leave the highlight off screen, which reads as
+     nothing having happened. No-op on a desktop, where nothing scrolls. */
+  const chosen = document.querySelector(`#mainTabs button[data-tab="${tab}"]`);
+  if(chosen && chosen.scrollIntoView){
+    try{ chosen.scrollIntoView({ inline:'nearest', block:'nearest', behavior:'smooth' }); }
+    catch{ /* older browsers take no options; the highlight is still correct */ }
+  }
   const showBoardControls = tab==='board'||tab==='list';
   document.getElementById('search').style.display = showBoardControls ? '' : 'none';
   document.getElementById('filterType').style.display = showBoardControls ? '' : 'none';
@@ -5861,6 +5952,7 @@ async function render(){
   else if(state.view==='users') await renderUsersTab();
   else if(state.view==='projects') await renderProjects();
   else if(state.view==='settings') await renderSettings();
+  wrapWideTables();
   }catch(err){
     /* setTab fires render() without awaiting it, so a throw in here used to be
        an unhandled rejection and a tab that simply stayed empty. The tab now
@@ -5871,6 +5963,39 @@ async function render(){
       <span style="font-size:12px;color:var(--ink-faint);">${escapeHTML(err.request ? err.request + ' — ' : '')}${escapeHTML(err.message)}</span><br>
       <button class="btn btn-ghost btn-sm" style="margin-top:10px;" onclick="render()">Retry</button></div>`;
   }
+}
+
+/* Give every table its own horizontal scroller.
+ *
+ * WHY THIS IS A PASS RATHER THAN A WRAPPER PER TABLE. There are about thirty
+ * tables across this page, written at a dozen render sites, and a studio table
+ * is wide by nature — the Assets List is 1088px and the Users list 975px. On a
+ * desktop that is fine. At 390px, a bare table stretches the DOCUMENT, so the
+ * header, the tab strip and every button slide off to the left while somebody
+ * reads a column — the page is not wide, it has been *made* wide by one
+ * element. Found inside the native shell, where there is no wider window.
+ *
+ * Wrapping each one by hand would fix today's tables and miss tomorrow's, so
+ * this runs after every render and wraps whatever is there. The wrapper is the
+ * only way to do it: display:block on the table itself would scroll, but it
+ * breaks the anonymous table boxes apart and the header stops lining up with
+ * the body.
+ *
+ * Idempotent, and it leaves alone anything already inside a scroller — the P&L
+ * tables have their own .pnl-scroll and must not be double-wrapped. */
+function wrapWideTables(){
+  document.querySelectorAll('#app table').forEach(t=>{
+    const parent = t.parentElement;
+    if(!parent || parent.classList.contains('table-scroll')) return;
+    /* Already handled by whoever drew it. Checked on the computed style rather
+       than a class name, so any scroller counts. */
+    const ov = getComputedStyle(parent).overflowX;
+    if(ov === 'auto' || ov === 'scroll') return;
+    const box = document.createElement('div');
+    box.className = 'table-scroll';
+    parent.insertBefore(box, t);
+    box.appendChild(t);
+  });
 }
 
 /* What this page holds, and what deliberately lives elsewhere.
@@ -8595,6 +8720,7 @@ async function renderSettings(){
     ${can('settings.permissions') ? '<div id="rolePermissionsSection"></div>' : ''}
     ${can('settings.activity_log') ? '<div id="activityLogSection"></div>' : ''}
     ${can('settings.chat_activity') ? '<div id="chatActivitySection"></div>' : ''}
+    ${can('mobile.distribute') ? '<div id="mobileDistSection"></div>' : ''}
   `;
   el.querySelectorAll('.sii-link').forEach(b=>b.addEventListener('click', ()=>setTab(b.dataset.tab)));
   wireSettings();
@@ -8628,6 +8754,7 @@ async function renderSettings(){
      they are not shown is the form rather than the numbers. */
   if(can('pnl.manage')) await renderRateCards();
   if(can('pnl.manage')) await renderRoleRates();
+  if(can('mobile.distribute')) await renderMobileDist();
 
   /* Last, so every section exists to be collapsed — including the ones above
      that are awaited. The observer set up here keeps the state applied for the
@@ -11056,6 +11183,78 @@ async function renderRoleRates(){
   }));
 }
 
+/* The mobile builds, and the link that hands them out.
+ *
+ * READ-ONLY. There is nothing to press here except Copy, and that is the whole
+ * design: the builds are produced by a Mac and an Android toolchain and
+ * uploaded to the server, not made from a web page. What this section exists
+ * to answer is "is it on the server, and what do I send people?".
+ *
+ * Behind mobile.distribute because the response holds the TOKEN. Everything
+ * else here is a file size and a date; the token is the credential. */
+async function renderMobileDist(){
+  const el = document.getElementById('mobileDistSection');
+  if(!el) return;
+  let d;
+  try{ d = await api('/mobile/builds'); }
+  catch(err){
+    el.innerHTML = `<div class="ref-section"><div class="ref-head"><h3>Mobile Apps</h3></div>
+      <div class="ref-err">${escapeHTML(err.message)}</div></div>`;
+    return;
+  }
+
+  const copyBtn = (text, label) =>
+    `<button type="button" class="link-copy" data-copy="${escapeHTML(text)}" data-copy-label="${escapeHTML(label)}">Copy</button>`;
+
+  const build = (b, what) => b
+    ? `<tr><td>${escapeHTML(what)}</td>
+         <td>${escapeHTML(b.size)}</td>
+         <td>${escapeHTML(fmtDate(b.updatedAt))}</td>
+         <td class="md-hash"><code>${escapeHTML((b.sha256 || '').slice(0,16))}${b.sha256 ? '…' : '—'}</code></td></tr>`
+    : `<tr class="md-missing"><td>${escapeHTML(what)}</td><td colspan="3">Not on the server yet.</td></tr>`;
+
+  el.innerHTML = `<div class="ref-section">
+    <div class="ref-head"><h3>Mobile Apps</h3></div>
+
+    ${d.warnings.length ? `<div class="md-warn">${d.warnings.map(w=>`<div>${escapeHTML(w)}</div>`).join('')}</div>` : ''}
+
+    <div class="pnl-costnote" style="margin-bottom:12px;">
+      The internal iOS and Android builds. Both are shells around this same application, so a web
+      change reaches every phone without anybody reinstalling anything.
+      <br><br>
+      <strong>The install link below is the only thing guarding the downloads.</strong> It cannot be a
+      sign-in: iOS fetches an app from a system service that has none of the browser's session, so an
+      address behind the login would simply fail. Treat the link like a password and send it inside the
+      studio. If it ever gets out, set <code>MOBILE_DIST_TOKEN</code> in the server environment to a new
+      random string and restart — the old link stops working immediately.
+    </div>
+
+    <div class="md-link">
+      <label>Install page — send this to the team</label>
+      <div class="md-link-row">
+        <code>${escapeHTML(d.installPage)}</code>
+        ${copyBtn(d.installPage, 'Install link copied.')}
+      </div>
+      <p class="md-note">Open it on the phone itself. iPhone users must open it in <strong>Safari</strong>.</p>
+    </div>
+
+    <table class="ref-table" style="margin-top:14px;">
+      <thead><tr><th>Build</th><th>Size</th><th>Uploaded</th><th>SHA-256</th></tr></thead>
+      <tbody>
+        ${build(d.android, 'Android (.apk)')}
+        ${build(d.ios, 'iOS (.ipa)')}
+        ${build(d.manifest, 'iOS install manifest')}
+      </tbody>
+    </table>
+
+    <p class="md-note" style="margin-top:12px;">
+      Uploads go to <code>${escapeHTML(d.directory)}</code> on the server, under exactly those filenames.
+      The full runbook — signing keys, provisioning, adding a new employee's iPhone, and the annual iOS
+      rebuild — is in <code>mobile/README.md</code>.
+    </p>
+  </div>`;
+}
+
 async function renderRateCards(){
   const el = document.getElementById('rateCardsSection');
   if(!el) return;
@@ -12101,6 +12300,7 @@ async function openProfileModal(){
   closePhotoPreview();
   renderProfilePhoto();
   loadEmailPreference();
+  loadPushPreference();
   profileModalWrap.classList.add('show');
 }
 
@@ -12126,6 +12326,53 @@ async function loadEmailPreference(){
       err.textContent = 'This server has not set up email notifications yet, so nothing is being sent.'; }
     else box.disabled = false;
   }catch(e){ err.textContent = e.message; }
+}
+
+/* The phone switch, beside the email one and read the same way.
+ *
+ * Says something DIFFERENT in three situations rather than showing one switch
+ * that might do nothing: the deployment has no push keys, the person has no
+ * phone registered yet, or it is simply on or off. A toggle that looks live
+ * and silently sends nothing is the thing worth avoiding here. */
+async function loadPushPreference(){
+  const box = document.getElementById('pf_push');
+  const err = document.getElementById('pf_push_err');
+  const row = document.getElementById('pf_push_row');
+  if(!box) return;
+  err.textContent = '';
+  box.disabled = true;
+  try{
+    const r = await api('/auth/push-preference');
+    box.checked = Boolean(r.pushNotifications);
+    if(r.unavailable || !r.configured){
+      row.classList.add('is-unavailable');
+      err.textContent = 'This server has no push notification keys set up, so nothing is being sent to phones yet.';
+      return;
+    }
+    row.classList.remove('is-unavailable');
+    box.disabled = false;
+    if(!r.devices){
+      err.textContent = 'No phone is registered against your account yet. Install the mobile app, sign in, '
+        + 'and allow notifications when it asks.';
+    }
+  }catch(e){ err.textContent = e.message; }
+}
+
+if(document.getElementById('pf_push')){
+  document.getElementById('pf_push').addEventListener('change', async (ev)=>{
+    const box = ev.target;
+    const err = document.getElementById('pf_push_err');
+    const wanted = box.checked;
+    err.textContent = '';
+    box.disabled = true;
+    try{
+      await api('/auth/push-preference', { method:'POST', body:{ pushNotifications: wanted } });
+      showToast(wanted ? 'Phone notifications are on.' : 'Phone notifications are off — the bell and email are unaffected.');
+    }catch(e){
+      box.checked = !wanted;
+      err.textContent = e.message;
+    }finally{ box.disabled = false; }
+  });
 }
 
 if(document.getElementById('pf_email')){
@@ -13768,5 +14015,9 @@ document.getElementById('pf_confirm').addEventListener('keydown', e=>{ if(e.key=
 
 boot();
 </script>
+<!-- The mobile shells' native half. Inert in a browser: everything in it
+     is behind a check for the Capacitor bridge. Served rather than bundled
+     so the native behaviour updates with a web deploy — see the file. -->
+<script src="/native-bridge.js" defer></script>
 </body>
 </html>

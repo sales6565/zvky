@@ -1937,6 +1937,33 @@ async function ensureSecondReportingLine(db, log) {
   log('Schema: added users.reports_to_l2_id — Level 2 Reporting, blank on every existing account.');
 }
 
+/* Push devices, and the opt-out that governs them.
+ *
+ * push_opt_out mirrors email_opt_out and DEFAULTS TO 0 — opted IN. That is the
+ * right default here and would be the wrong one for email: a push only reaches
+ * a phone somebody deliberately installed the app on and granted permission to,
+ * so two consents already stand in front of it. The toggle is in Profile beside
+ * the email one for anybody who wants a third.
+ *
+ * Cannot fail the startup: a deployment that cannot create this loses mobile
+ * push, not the application. */
+async function ensurePushDevices(db, log) {
+  const push = require('./push-notifications');
+  await push.ensureTables(db).catch((err) => {
+    console.warn(`[migrate] ${push.TABLE} unavailable (${err.code}) — mobile push is off.`);
+  });
+
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'push_opt_out'`
+  ).catch(() => ({ rows: null }));
+  if (rows && !rows.length) {
+    await db.query('ALTER TABLE users ADD COLUMN push_opt_out TINYINT(1) NOT NULL DEFAULT 0')
+      .catch((err) => log(`Schema: push_opt_out could not be added — ${err.sqlMessage || err.message}`));
+    log('Schema: added users.push_opt_out — everybody opted in, as installing the app already implies.');
+  }
+}
+
 async function ensureUserActive(db, log) {
   const { rows } = await db.query(
     `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
@@ -2646,6 +2673,7 @@ const STEPS = [
   // After users exists; before anything that reads an account's active flag.
   ['user active flag', ensureUserActive],
   ['second reporting line', ensureSecondReportingLine],
+  ['mobile push devices', ensurePushDevices],
   ['asset category', ensureAssetCategory],
   ['profile photos', ensureProfilePhotos],
   ['quick tour', ensureTourSeen],

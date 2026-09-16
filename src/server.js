@@ -27,6 +27,8 @@ const activityRoutes = require('./routes/activity');
 const { activityLogger } = require('./middleware/activity');
 const idleRoutes = require('./routes/idle');
 const notificationRoutes = require('./routes/notifications');
+const pushRoutes = require('./routes/push');
+const mobileDistRoutes = require('./routes/mobile-dist');
 const chatRoutes = require('./routes/chat');
 const chatActivityRoutes = require('./routes/chat-activity');
 const chatFiles = require('./chat-files');
@@ -105,6 +107,8 @@ app.use('/api/permissions', permissionRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/idle', idleRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/push', pushRoutes);
+app.use('/api/mobile', mobileDistRoutes.api);
 app.use('/api/chat', chatRoutes);
 /* Its own mount, NOT a path under /api/chat. The chat router applies chat.use
    and membership to everything below it; hanging oversight off it would put a
@@ -185,6 +189,19 @@ app.get('/api/health/errors', require('./middleware/auth').authenticate, (req, r
       : 'No database faults since this process started.',
   });
 });
+
+/* The internal app downloads, at /m/<token>/.
+ *
+ * AHEAD OF THE STATIC DIRECTORY AND THE SPA CATCH-ALL, deliberately. The
+ * catch-all answers every unmatched GET with index.html and a 200 — so a
+ * distribution route mounted after it would not 404 when it was wrong, it
+ * would hand iOS's installer daemon a page of HTML with a success status and
+ * the install would fail with a message that names neither.
+ *
+ * Unauthenticated, gated on an unguessable token. Why it cannot be a sign-in,
+ * and what that does and does not expose, is set out at the top of
+ * src/mobile-dist.js. */
+app.use('/m', mobileDistRoutes.publicRouter);
 
 // Serve the bundled frontend
 app.use(express.static(path.join(__dirname, '..', 'public')));

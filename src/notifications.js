@@ -112,6 +112,48 @@ function describe(row) {
 /* Raise one. `recipientId` of null, or a recipient who is also the actor, is
  * dropped: telling somebody they assigned something to themselves is noise, and
  * it is the common case when a lead picks up their own work. */
+/* The same event, sent to whatever phones this person has registered.
+ *
+ * Hung off raise() — the choke point every bell notification already passes
+ * through — so a kind added later is pushed without anybody remembering to wire
+ * it up. The same reasoning that put the assignment emails here.
+ *
+ * FIRE AND FORGET. Nothing above waits for a phone company: the notification
+ * row is already written, and a push that fails must not fail the action that
+ * raised it. Errors are swallowed for that reason, not by oversight. */
+function pushFor(db, { notificationId, recipientId, actorId, kind, assetId, projectId }) {
+  let push;
+  try { push = require('./push-notifications'); } catch { return; }
+  if (!push.status().configured) return;
+
+  Promise.resolve()
+    .then(async () => {
+      /* The sentence the bell would show, rebuilt from the same describe() so
+         the phone and the app never disagree about what happened. */
+      /* THE BELL'S OWN QUERY, not a second one written to look like it.
+         SELECT is the constant every other read in this file uses, so the
+         sentence on the phone is built from the same row the panel builds it
+         from and the two cannot drift apart. It is declared below this
+         function; JavaScript hoists the const's binding, and this runs inside a
+         promise long after the module has finished loading. */
+      const { rows } = await db.query(
+        `${SELECT} WHERE n.id = $1`, [notificationId]
+      );
+      const row = rows[0];
+      /* describe() returns the ONE SENTENCE the bell shows — a string, not a
+         title/body pair. It becomes the push body, under a fixed title, so the
+         phone shows exactly the words the app does. */
+      const sentence = row ? describe(row) : null;
+      await push.pushTo(db, recipientId, {
+        title: 'Zvky',
+        body: sentence || 'Something needs your attention.',
+        tag: kind,
+        data: { kind, assetId: assetId || '', projectId: projectId || '', actorId: actorId || '' },
+      });
+    })
+    .catch(() => { /* see the note above: a push never fails the action */ });
+}
+
 async function raise(db, { recipientId, actorId, kind, assetId, projectId, otherUserId }) {
   if (!recipientId || recipientId === actorId) return null;
   const id = uuid();
@@ -121,6 +163,7 @@ async function raise(db, { recipientId, actorId, kind, assetId, projectId, other
        VALUES ($1,$2,$3,$4,$5,$6,$7)`,
       [id, recipientId, actorId || null, kind, assetId || null, projectId || null, otherUserId || null]
     );
+    pushFor(db, { notificationId: id, recipientId, actorId, kind, assetId, projectId });
     return id;
   } catch (err) {
     /* A deployment whose migration has not added project_id still notifies —

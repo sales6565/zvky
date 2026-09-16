@@ -547,6 +547,18 @@ Edit `.env` and set:
 - `IP_ALLOWLIST_*` — optional; restricts the app to specific addresses. Read
   [Restricting access by IP address](#restricting-access-by-ip-address) before
   enabling it, and deploy in monitor mode first
+- `APNS_*` and `FCM_*` — optional; the push notification keys. Without them push
+  is off and nothing else changes. `mobile/README.md` §3 has where each value
+  comes from
+- `MOBILE_DIST_BASE` — the public `https://` origin, exactly as the team reaches
+  it. Required once the iOS app is being handed out: the install manifest names
+  the `.ipa` by absolute URL and is fetched by a system daemon, so a guessed
+  origin fails silently
+- `MOBILE_DIST_TOKEN` — optional; fixes the unguessable path the builds are
+  served from. Set it to rotate the install link, or to keep it identical across
+  two servers. Generated and persisted to `dist-mobile/.dist-token` otherwise
+- `MOBILE_DIST_DIR` — optional; where the built `.apk`, `.ipa` and manifest live.
+  Defaults to `dist-mobile/` beside the application
 
 ## 5. Install and seed
 
@@ -1478,6 +1490,71 @@ broken.
 
 The switch stops **email only**. The bell, desktop notifications and Pending
 Actions carry on exactly as before.
+
+## The mobile apps
+
+There are native iOS and Android apps for the studio's own team — **not on the
+App Store or Google Play**, installed from a link on this server. They live in
+`mobile/`, and `mobile/README.md` is the full runbook: signing keys,
+provisioning, adding a new employee's phone, hosting the builds, and the annual
+iOS rebuild.
+
+Both are **shells**: a native app whose screen is a web view pointed at this
+application. A change deployed to the website is on every phone the next time
+somebody opens the app — no rebuild, no redistribution, nobody stuck on an old
+version. The trade is that the app needs the network to show anything, which it
+handles with a proper offline screen rather than a blank one.
+
+What the shell adds that a browser cannot: push notifications on the lock screen
+with the app closed, a camera button beside every file picker, session
+persistence across the system evicting the web view's storage, Android's back
+button, safe areas around the notch, and pull-to-refresh.
+
+### Push notifications
+
+Push hangs off `notifications.raise()` — the same single funnel the bell already
+uses — so every notification the bell shows reaches the phone, built from the
+same sentence. Chat is the one addition: it deliberately raises no bell
+notification, so `src/routes/chat.js` pushes separately, and **never sends the
+message body** — only "*Ana* sent you a message."
+
+`src/push-notifications.js` talks to APNs and FCM **directly, over plain HTTPS
+with a signed JWT, and adds no dependencies**. Both services are reachable that
+way with what Node already has, and every dependency added is a thing that can
+fail to install on a host nobody can SSH into.
+
+It is silent until configured. A deployment with no keys works exactly as it did
+— `status()` reports that, the app checks it before prompting anybody for
+permission, and Settings and Profile both say so rather than showing a switch
+that does nothing.
+
+Each person has their own **"Notify me on my phone"** switch in Profile, beside
+the email one and independent of it: somebody who wants a buzz for a new task
+very often does not want an email about it too, and the reverse is just as
+common. Like the email switch it needs no permission — whether your own phone
+buzzes is not an authority the studio grants.
+
+### Handing the builds out
+
+**Settings → Mobile Apps** (permission `mobile.distribute`, Super Admin only)
+shows what is on the server and the install link to send the team. Uploads go to
+`dist-mobile/`.
+
+The download paths are **not behind the sign-in**, and cannot be. Tapping an
+`itms-services://` link hands the manifest URL to a *system daemon*, which
+fetches the manifest and the `.ipa` itself with none of the browser's session —
+an authenticated path gets a login page instead of a plist and the install fails
+with a message naming neither. So the path carries an unguessable token
+instead: 24 random bytes over HTTPS, compared in constant time.
+
+Stated plainly: **anybody with the link can download the builds.** The builds
+are shells — no studio data, no credentials, and everything inside them is still
+behind the same sign-in as the website — so a stranger with the link gets an app
+showing them a login screen. Keep it inside the studio anyway; `MOBILE_DIST_TOKEN`
+rotates it.
+
+`mobile.distribute` gates that screen because **the response contains the
+token**. Everything else on it is a file size and a date.
 
 ## Restricting access by IP address
 

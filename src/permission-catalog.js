@@ -892,6 +892,32 @@ const GROUPS = [
           + 'never shown again once saved, but whoever holds this permission can replace it, and can '
           + 'change where the studio\'s notifications appear to come from.',
       },
+      {
+        /* The iOS and Android builds, and the link that hands them out.
+         *
+         * SUPER ADMIN ONLY by default, and for one specific reason rather than
+         * a general sense that builds are administrative: the screen behind
+         * this permission SHOWS THE DISTRIBUTION TOKEN. That token is the
+         * whole of the access control on the download URLs — it cannot be a
+         * sign-in, because iOS fetches an .ipa from a system daemon that has
+         * no session — so whoever can read it can hand the builds to anybody.
+         *
+         * managePermissions, the same front door as the two IP lists: the
+         * Super Admin has it without anybody switching it on, and it is handed
+         * to an IT or studio-ops designation from Settings when the studio
+         * decides to, without a code change.
+         *
+         * Nothing else in the app is gated on this. Not holding it means the
+         * section does not appear; it does not stop anybody USING the apps,
+         * which is an ordinary sign-in like the website. */
+        key: 'mobile.distribute',
+        label: 'Manage Mobile App Distribution',
+        impliedBy: has('managePermissions'),
+        describe: 'The Mobile Apps section in Settings: which builds are on the server, the internal '
+          + 'install link to send the team, and what is misconfigured about the setup.',
+        danger: 'This screen shows the install link, and that link is what lets a phone download the '
+          + 'builds without signing in. Treat it as a password: anyone who has it can install the apps.',
+      },
       { key: 'settings.audit_logs',   label: 'View Audit Logs',      impliedBy: has('manageSettings'), pending: PENDING },
       {
         key: 'settings.activity_log',

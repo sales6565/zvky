@@ -177,6 +177,64 @@ router.post('/email-preference', authenticate, async (req, res) => {
   return res.json({ emailNotifications: wanted });
 });
 
+/* The same switch for the phone.
+ *
+ * SEPARATE FROM THE EMAIL ONE, on purpose. They are two places a notification
+ * can arrive and two different nuisances: somebody who wants the phone to buzz
+ * for a new task very often does not want an email about it as well, and the
+ * reverse is just as common. One preference would have forced them to choose
+ * between all of it and none of it.
+ *
+ * No permission check, for exactly the reason the email pair above has none.
+ *
+ * ALSO AN OPT-OUT, and here it takes an argument the email one does not need:
+ * arriving on somebody's phone already took two consents they gave
+ * deliberately — installing the app, and granting iOS or Android the
+ * notification permission. Defaulting that to off would mean a person who did
+ * both still got nothing, which reads as a broken app rather than as a
+ * respected preference. Switching this off leaves the device registered and
+ * simply sends nothing; nothing has to be uninstalled.
+ */
+router.get('/push-preference', authenticate, async (req, res) => {
+  const push = require('../push-notifications');
+  const configured = push.status().configured;
+  try {
+    const { rows } = await db.query(
+      'SELECT push_opt_out AS optOut FROM users WHERE id = $1', [req.user.id]);
+    const { rows: devices } = await db.query(
+      'SELECT COUNT(*) AS n FROM push_devices WHERE user_id = $1', [req.user.id]);
+    return res.json({
+      pushNotifications: !(rows[0] && rows[0].optOut),
+      /* What the screen needs to say something true rather than show a switch
+         that does nothing: a studio with no keys sends no push at all, and a
+         person with no phone registered has nowhere for it to go. */
+      configured,
+      devices: Number(devices[0].n),
+    });
+  } catch (err) {
+    if (err.code === 'ER_BAD_FIELD_ERROR' || err.code === 'ER_NO_SUCH_TABLE') {
+      return res.json({ pushNotifications: true, configured: false, devices: 0, unavailable: true });
+    }
+    throw err;
+  }
+});
+
+router.post('/push-preference', authenticate, async (req, res) => {
+  const wanted = Boolean(req.body && req.body.pushNotifications);
+  try {
+    await db.query('UPDATE users SET push_opt_out = $1 WHERE id = $2', [wanted ? 0 : 1, req.user.id]);
+  } catch (err) {
+    if (err.code === 'ER_BAD_FIELD_ERROR') {
+      return res.status(503).json({
+        error: 'This server has not finished setting up push notifications yet. Nothing is being sent, '
+          + 'so there is nothing to switch off.',
+      });
+    }
+    throw err;
+  }
+  return res.json({ pushNotifications: wanted });
+});
+
 // The password rules, so the browser shows the same checklist the API enforces.
 router.get('/password-policy', (req, res) => {
   res.json(passwordPolicy.describe());

@@ -1,0 +1,24 @@
+<!doctype html>
+<!-- The SOURCE OF THE APP ICON AND SPLASH, rendered rather than drawn.
+     `npm run icons` in mobile/ feeds resources/icon.png and resources/splash.png
+     to @capacitor/assets, which produces every size iOS and Android ask for.
+     Those two PNGs are produced FROM THIS FILE by scripts/make-resources.js, so
+     the brand mark has one definition and a change to it cannot leave the icon
+     and the splash disagreeing. Replace this with the studio's real logo when
+     there is one — the script does not care what is inside the <body>. -->
+<html><head><meta charset="utf-8"><style>
+  html,body{margin:0;padding:0;width:100%;height:100%;}
+  body{background:#12121a;display:flex;align-items:center;justify-content:center;}
+  /* FULL BLEED for the icon. iOS and Android apply their own mask — a rounded
+     square inset on a dark field would be rounded again and end up a small mark
+     floating in a large box. The splash overrides this below. */
+  .mark{width:100%;height:100%;border-radius:0;background:#7f1416;
+        display:flex;align-items:center;justify-content:center;
+        box-shadow:0 0 0 1px rgba(255,255,255,.06) inset;}
+  .mark span{color:#fff;font-family:Georgia,'Times New Roman',serif;font-weight:700;
+             font-size:62vmin;line-height:1;letter-spacing:-.04em;
+             transform:translateY(-2%);}
+  body.splash .mark{width:26%;height:26%;border-radius:20%;}
+  body.splash .mark span{font-size:22vmin;}
+</style></head>
+<body><div class="mark"><span>Z</span></div></body></html>

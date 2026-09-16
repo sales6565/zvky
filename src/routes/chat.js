@@ -272,10 +272,51 @@ router.post('/:id/messages', files.upload.array('files', 5), async (req, res) =>
   const message = await chat.messageById(db, messageId);
   await chat.markRead(db, req.params.id, req.user.id, message.seq);
 
+  /* PUSHED TO PHONES, and only to phones.
+   *
+   * Chat deliberately raises no bell notification — the panel's own poll is
+   * the in-app signal, and a chat message is not a task waiting on anybody. A
+   * push is the same signal for somebody whose phone is in their pocket, so it
+   * is sent here rather than by pretending a chat message is a notification
+   * row.
+   *
+   * Fire and forget, for the same reason the assignment push is: a message is
+   * already stored and the sender is owed their 201 whatever a phone company
+   * is doing. */
+  pushChat(req.params.id, req.user, message).catch(() => { /* never fails a send */ });
+
   // Deliberately not logged. See the header of this file.
   req.activitySkip();
   res.status(201).json({ message });
 });
+
+/* One push per other member of the conversation.
+ *
+ * WHAT IT SAYS AND WHAT IT DOES NOT. "Ana sent you a message" and the
+ * conversation id — never the message body. A chat body on a lock screen is the
+ * one place this application could leak a private conversation to whoever is
+ * standing nearby, and the app is two taps away for anybody who wants to read
+ * it. */
+async function pushChat(conversationId, sender, message) {
+  const push = require('../push-notifications');
+  if (!push.status().configured) return;
+  /* membersOf, not members: the real function takes a LIST of conversation ids
+     and returns rows carrying `id` for the person. Guessing at `members()` was
+     wrong and would have thrown into the catch above, sending nothing and
+     saying nothing. */
+  const members = await chat.membersOf(db, [conversationId]).catch(() => []);
+  const who = sender.name || sender.email || 'Somebody';
+  for (const member of members) {
+    const id = member.id;
+    if (!id || id === sender.id) continue;
+    await push.pushTo(db, id, {
+      title: 'Zvky',
+      body: `${who} sent you a message.`,
+      tag: `chat:${conversationId}`,
+      data: { kind: 'chat', conversationId, messageId: message.id || '' },
+    }).catch(() => { /* one member's dead phone must not stop the rest */ });
+  }
+}
 
 // POST /api/chat/:id/read { seq }
 router.post('/:id/read', async (req, res) => {
