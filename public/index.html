@@ -7403,6 +7403,12 @@ const HISTORY_ACTIONS = {
   client_sent:        { label: 'Sent to the client',  color: 'var(--client)' },
   client_approved:    { label: 'Client approved — delivered', color: 'var(--final)' },
   client_changes:     { label: 'Client asked for changes', color: '#e8402c' },
+  /* Not workflow transitions — PATCH /assets/:id writes these two itself — but
+     they land in the same history and were showing as the bare ids "reassign"
+     and "unassign" beside properly worded lines. The check above is one-way
+     (every workflow action must be here), so extra entries are welcome. */
+  reassign:           { label: 'Reassigned',        color: '#ffd23d' },
+  unassign:           { label: 'Unassigned',        color: 'var(--not)' },
 };
 
 async function loadAssetHistory(id){

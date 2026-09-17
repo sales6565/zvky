@@ -454,6 +454,18 @@ router.patch('/:id', async (req, res) => {
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
   if (await projectClosedResponse(res, asset.project_id)) return undefined;
 
+  /* ONE VALUE FOR "NOBODY", SETTLED BEFORE ANYTHING READS IT.
+   *
+   * A <select> whose blank option is chosen sends '', not null. Both mean the
+   * same thing here — the asset is on nobody's desk — and every line below
+   * this one is written against null. Left as it arrived, '' was carried
+   * straight into the UPDATE and MySQL refused it against the assignee foreign
+   * key: a 500, on the ordinary act of clearing an assignee. The drawer
+   * happened to send `|| null` and so never met it; the reassign form, the
+   * desktop wrapper and anything else posting to this route were one blank
+   * option away from it. Normalised once, at the door. */
+  if (req.body && req.body.assigneeId === '') req.body.assigneeId = null;
+
   // Two permissions, two questions. Changing who an asset is assigned to is
   // asset.assign; changing the record itself — its priority, its brief, its
   // deadline — is asset.edit. This gate used to demand asset.edit for both, so
@@ -621,8 +633,10 @@ router.patch('/:id', async (req, res) => {
     //
     //   from Not Assigned   'assign'          -> Assigned
     //   from a review queue 'reassign_review' -> Assigned, a fresh round
+    //   assignee cleared    (see backToPool)  -> Not Assigned, from the free stages
     //   anything else       the status stays; only the routing and the trail move
     const assigneeChanged = req.body.assigneeId !== undefined && req.body.assigneeId !== asset.assignee_id;
+    const unassigning = assigneeChanged && !req.body.assigneeId;
     const transitionFor = (status) => {
       if (status === 'not_started') return 'assign';
       if (['pending_tl_review', 'pending_cd_review'].includes(status)) return 'reassign_review';
@@ -680,8 +694,44 @@ router.patch('/:id', async (req, res) => {
         );
       }
     } else if (assigneeChanged) {
-      // Still note who it moved to, so the trail does not lose a reassignment
-      // made mid-review.
+      /* TAKING THE WORK BACK OFF SOMEBODY.
+       *
+       * Clearing the name was the whole of what this did, and the card then
+       * sat in Assigned with nobody on it. On a board that groups by status
+       * that is indistinguishable from nothing having happened — which is
+       * exactly how it was reported: "selecting Unassigned does nothing".
+       *
+       * Assignment moves an asset INTO Assigned (the 'assign' transition
+       * above). Withdrawing it has to move it back out, or the two halves of
+       * one dropdown do not undo each other.
+       *
+       * FROM WHERE. Only the stages where nothing has been handed in —
+       * workflow.FREE_STATUSES, the same set the board lets a card be dragged
+       * between, and the same set this route already treats as a free move
+       * when a status is edited directly. An asset in a review queue has a
+       * submission sitting in it: dropping that to Not Assigned to change who
+       * holds it would throw away the reviewer's queue position and orphan the
+       * round. There the status stays and only the name and the routing move,
+       * which is the behaviour that was already correct.
+       *
+       * NOT WHEN THE REQUEST SETS A STATUS ITSELF. { assigneeId: null,
+       * status: 'in_progress' } is somebody saying both things in one breath;
+       * their status wins rather than being silently overwritten a line later.
+       *
+       * The open work session is already closed, with reason 'unassigned', by
+       * the workLog.close above — so there is no separate clock to stop here. */
+      const backToPool = unassigning
+        && req.body.status === undefined
+        && workflow.FREE_STATUSES.includes(asset.status)
+        && asset.status !== 'not_started';
+      const landedOn = backToPool ? 'not_started' : asset.status;
+      if (backToPool) {
+        await conn.query('UPDATE assets SET `status` = $1 WHERE id = $2', [landedOn, req.params.id]);
+      }
+
+      /* The routing, which is whose desk it is on rather than what stage it is
+         at. Guarded on IS NOT NULL so an asset parked in a review QUEUE — no
+         desk by definition — is not given one by a change of assignee. */
       await conn.query('UPDATE assets SET routed_to_id = $1 WHERE id = $2 AND routed_to_id IS NOT NULL',
         [req.body.assigneeId || null, req.params.id]);
 
@@ -690,11 +740,19 @@ router.patch('/:id', async (req, res) => {
       // when — the one question the history exists to answer.
       const from = await nameOfUser(conn, asset.assignee_id);
       const to = await nameOfUser(conn, req.body.assigneeId);
+      /* Two actions, because they are two different events to somebody reading
+         the trail. "Reassigned from Priya to nobody" is a sentence nobody
+         writes; being taken off a task is its own thing and is named as one. */
+      const note = unassigning
+        ? (backToPool
+          ? `Unassigned from ${from}; back to ${workflow.label('not_started')}.`
+          : `Unassigned from ${from}. Left in ${workflow.label(asset.status)}.`)
+        : `Reassigned from ${from} to ${to}`;
       await conn.query(
         `INSERT INTO asset_events (id, asset_id, action, from_status, to_status, actor_id, actor_email, note, routed_to_id)
-         VALUES ($1,$2,'reassign',$3,$4,$5,$6,$7,$8)`,
-        [uuid(), asset.id, asset.status, asset.status, req.user.id, req.user.email,
-         `Reassigned from ${from} to ${to}`, req.body.assigneeId || null]
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [uuid(), asset.id, unassigning ? 'unassign' : 'reassign', asset.status, landedOn,
+         req.user.id, req.user.email, note, req.body.assigneeId || null]
       );
     }
 
@@ -1106,7 +1164,13 @@ const BULK_ASSIGN_MAX = 200;
 const BULK_ASSIGNABLE = ['not_started'];
 
 router.post('/bulk/assign', requirePermission('asset.bulk_assign'), async (req, res) => {
-  const { assetIds, assigneeId, startDate, due } = req.body || {};
+  const { assetIds, startDate, due } = req.body || {};
+  /* '' from a blank <select> option means nobody, exactly as it does on PATCH,
+     and is normalised here for the same reason: so that one value stands for
+     "unassigned" everywhere below. Without it '' fell through to the existence
+     check and was refused as "that person is not in this studio", which is a
+     confusing thing to be told about a blank. */
+  const assigneeId = (req.body && req.body.assigneeId) === '' ? null : (req.body || {}).assigneeId;
   if (!Array.isArray(assetIds) || !assetIds.length) {
     return res.status(400).json({ error: 'Choose at least one asset first.', field: 'assetIds' });
   }

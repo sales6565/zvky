@@ -50,7 +50,9 @@ const TRANSITIONS = [
   ['Client approved', 'Awaiting Client Feedback', 'Delivered', 'Record Client Approval'],
   ['Client asked for changes', 'Awaiting Client Feedback', 'TL Feedbacks', 'Record Client Changes'],
   ['Deliver', 'Approved for Client', 'Delivered', 'Deliver'],
-  ['Reassign', 'Any stage before delivery', 'Assigned', 'Asset Assign'],
+  ['Hand over', 'TL Review / CD Review / TL Feedbacks / CD Feedbacks', 'Assigned — the new person starts their own round', 'Asset Assign'],
+  ['Change the assignee', 'Not Assigned / Assigned / In Progress', 'Assigned', 'Asset Assign'],
+  ['Unassign (pick Unassigned in the Assignee list)', 'Assigned / In Progress', 'Not Assigned', 'Asset Assign'],
 ];
 
 module.exports = [
@@ -178,7 +180,7 @@ module.exports = [
 
   h2('3.3 What is on a card'),
   bullets([
-    'The preview image, if one has been set (chapter 6.2). Without one, the card shows the scope-of-work icon.',
+    'The preview image, if one has been set (chapter 6.3). Without one, the card shows the scope-of-work icon.',
     'The asset code and the estimate in hours — CHR-002 / 24h.',
     'The asset name.',
     'The scope of work, the task count, and the initials of whoever holds it.',
@@ -386,7 +388,21 @@ module.exports = [
     'Notes, submissions and history, further down.',
   ]),
 
-  h2('6.2 The preview image'),
+  h2('6.2 Who is holding it'),
+  p('The Assignee list in the panel is the ordinary way work changes hands, and it does three things depending on '
+    + 'what is picked. Choosing somebody on a Not Assigned asset assigns it, and the asset moves to Assigned. '
+    + 'Choosing somebody else on an asset already under way hands it over: the outgoing person’s round is closed '
+    + 'with their hours intact, and the new person starts a fresh one.'),
+  p('Choosing Unassigned takes the work back off whoever holds it. The asset returns to Not Assigned — it goes '
+    + 'back in the pool, and the card moves to the Not Assigned column — and any clock running on it stops. Two '
+    + 'exceptions, both deliberate. Work that has already been submitted keeps its place in the review queue: '
+    + 'unassigning an asset sitting in TL Review or CD Review clears the name but leaves the stage alone, so a '
+    + 'reviewer does not lose a round somebody handed in. And the Bulk Assign panel has no Unassigned option: it '
+    + 'only acts on Not Assigned assets, which have nobody on them to remove.'),
+  p('Every one of these is recorded in the asset’s history, naming who made the change, who it came off and who '
+    + 'it went to.'),
+
+  h2('6.3 The preview image'),
   p('An asset can carry a preview image, shown both on its card and at the top of this panel. There are two ways to '
     + 'set one, and an asset holds one or the other, never both.'),
   h3('Uploading a file'),
@@ -409,11 +425,11 @@ module.exports = [
   roles('The person an asset is assigned to can always change its preview image, even if their designation does not '
     + 'otherwise let them edit assets. Anyone else needs Asset Edit.', ['asset_workers']),
 
-  h2('6.3 Tasks and notes'),
+  h2('6.4 Tasks and notes'),
   p('Tasks are a checklist on the asset — the 0/3 on the card. Notes are a running conversation, kept with the asset '
     + 'rather than in anybody’s inbox.'),
 
-  h2('6.4 History'),
+  h2('6.5 History'),
   p('Every stage change the asset has been through, with who made it, when, and what they wrote. This is the asset’s '
     + 'own record and is separate from the studio-wide Activity Log in chapter 13.7.'),
 
