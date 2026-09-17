@@ -365,8 +365,11 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
 
     const options = (await as('pat', `/assets/${asset.id}/reassign-options`)).body;
     assert.ok(options.awaitingRework);
-    assert.deepStrictEqual(options.options.map((o) => o.name), ['bo'],
-      'the picker offers assignable people on the project, minus whoever holds it');
+    /* bo AND lee. A Lead / Supervisor is assigned work as well as handing it
+       out, so a lead on the project is offered like anybody else. Sorted, so
+       this does not depend on the query's ordering. */
+    assert.deepStrictEqual(options.options.map((o) => o.name).sort(), ['bo', 'lee'],
+      'the picker offers everyone assigned work on the project, minus whoever holds it');
 
     const done = await as('pat', `/assets/${asset.id}/reassign`, {
       method: 'POST', body: { assigneeId: people.bo, note: 'ana is out this week' },
@@ -430,9 +433,17 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     assert.strictEqual((await reassign({})).status, 400, 'somebody has to be named');
     assert.strictEqual((await reassign({ assigneeId: people.ana })).status, 400,
       'and it has to be a change');
-    const lead = await reassign({ assigneeId: people.lee });
-    assert.strictEqual(lead.status, 400, 'a designation that is not assigned work is refused');
-    assert.match(lead.body.error, /not assigned work/i);
+    /* pat, a Producer. This used to name lee, a Team Lead — which stopped
+       being a designation that is not assigned work the day leads became
+       assignable. The invariant is unchanged and still worth testing; it just
+       needs somebody who is actually excluded to test it with. */
+    const ineligible = await reassign({ assigneeId: people.pat });
+    assert.strictEqual(ineligible.status, 400, 'a designation that is not assigned work is refused');
+    assert.match(ineligible.body.error, /not assigned work/i);
+    /* The matching success case — that a lead IS accepted — lives in
+       tests/assignable-roles.test.js. It does not belong here: a reassign that
+       works moves the asset, and every assertion below this line depends on it
+       not having moved. */
     assert.strictEqual((await reassign({ assigneeId: 'no-such-user' })).status, 400);
     assert.strictEqual(await statusOf(asset.id), 'tl_changes_requested', 'and nothing moved');
   });

@@ -30,7 +30,7 @@ const {
   REWORK_STATUSES,
   holds,
 } = require('../permissions');
-const { assignableRoles, roleDef } = require('../roles');
+const { assignableRoles, roleDef, isContributor } = require('../roles');
 const lifecycle = require('../lifecycle');
 const workLog = require('../work-log');
 const emailNotifications = require('../email-notifications');
@@ -290,9 +290,11 @@ router.get('/project/:projectId', async (req, res) => {
    * here canAccessProject is true. Reading canViewAsset against that:
    *
    *   projectScope 'all'  everything                        -> no filter
-   *   assignable          asset.assignee_id === user.id     -> filter, below
-   *   leadsTeam           a report's work OR anything in a
-   *                       project they can access           -> no filter
+   *   assignable, and
+   *   leads no team       asset.assignee_id === user.id     -> filter, below
+   *   leadsTeam           their own assignments, a report's
+   *                       work, OR anything in a project
+   *                       they can access                   -> no filter
    *   anyone else         anything in a project they can
    *                       access                            -> no filter
    *
@@ -310,7 +312,11 @@ router.get('/project/:projectId', async (req, res) => {
    * every asset in it answered 200 to a direct read. Only the board was empty,
    * and nothing on screen suggested where the work had gone. */
   const def = roleDef(req.user.role);
-  if (def.assignable) {
+  /* `&& !def.leadsTeam` is load-bearing. A lead is assignable too now, and
+     without it this narrowed a lead's board to their own assignments — the
+     empty-board bug above, back again by a different route, and the reason
+     this pair of rules is called out as having to agree. */
+  if (isContributor(def)) {
     // A contributor only ever sees their own work — canViewAsset says the same,
     // so this is the one narrowing that belongs here.
     sql += ' AND a.assignee_id = $2';
@@ -464,6 +470,31 @@ router.patch('/:id', async (req, res) => {
   }
   if (wantsAssign && !(await mayAssign(req.user, asset))) {
     return res.status(403).json({ error: 'You do not have permission to assign this asset.', field: 'assigneeId' });
+  }
+  /* WHO may receive it, not just who may hand it over.
+   *
+   * PRE-EXISTING, and found while making leads assignable rather than caused
+   * by it: the dedicated reassign route below validates the recipient's
+   * designation and this one never did. So the dropdown hid every
+   * non-assignable designation and a direct PATCH put the work on them anyway
+   * — a Producer, an Admin, anybody with an id. The two routes do the same
+   * thing and now refuse the same way, with the same sentence.
+   *
+   * Unassigning (null) stays allowed: that is not giving the work to anybody. */
+  if (wantsAssign && req.body.assigneeId) {
+    const { rows: recipient } = await db.query(
+      'SELECT id, `name`, `role` FROM users WHERE id = $1', [req.body.assigneeId]
+    );
+    if (!recipient.length) {
+      return res.status(400).json({ error: 'That person no longer exists.', field: 'assigneeId' });
+    }
+    const recipientDef = roleDef(recipient[0].role);
+    if (!recipientDef || !recipientDef.assignable) {
+      return res.status(400).json({
+        error: `${recipient[0].name} holds a designation that is not assigned work.`,
+        field: 'assigneeId',
+      });
+    }
   }
   // A request that changes nothing either way still has to be somebody's to make.
   if (!wantsEdit && !wantsAssign && !mayEdit) {
@@ -1136,9 +1167,24 @@ router.post('/bulk/assign', requirePermission('asset.bulk_assign'), async (req, 
    * from another team, and reinstating it here would make the bulk route
    * stricter than the single one for no reason anybody asked for. */
   if (setsAssignee && assigneeId !== null) {
-    const { rows: people } = await db.query('SELECT id FROM users WHERE id = $1', [assigneeId]);
+    const { rows: people } = await db.query(
+      'SELECT id, `name`, `role` FROM users WHERE id = $1', [assigneeId]
+    );
     if (!people.length) {
       return res.status(400).json({ error: 'That person is not in this studio.', field: 'assigneeId' });
+    }
+    /* And that their designation is one that is assigned work — the same
+       question the single route and the reassign route both ask, and for the
+       same reason: the dropdown never offers a designation that is not, so a
+       request naming one did not come from the form. A request-level refusal
+       rather than a per-row one, because it is wrong for every asset in the
+       list at once. */
+    const recipientDef = roleDef(people[0].role);
+    if (!recipientDef || !recipientDef.assignable) {
+      return res.status(400).json({
+        error: `${people[0].name} holds a designation that is not assigned work.`,
+        field: 'assigneeId',
+      });
     }
   }
 

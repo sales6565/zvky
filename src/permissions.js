@@ -1,5 +1,5 @@
 const db = require('./db');
-const { roleDef, assignableRoles, leadRoles } = require('./roles');
+const { roleDef, assignableRoles, leadRoles, isContributor } = require('./roles');
 
 // Access rules, expressed against the capabilities in src/roles.js rather than
 // against particular job titles. A new designation gets the right access purely
@@ -118,11 +118,22 @@ async function canViewAsset(user, asset) {
   const def = roleDef(user.role);
   if (!def) return false;
   if (def.projectScope === 'all') return true;
-  if (def.assignable) return asset.assignee_id === user.id;
+  /* ASSIGNED TO YOU: visible, whatever else the designation does.
+   *
+   * Checked before the team branch, and it has to be. A lead is now both
+   * `assignable` and `leadsTeam`, and the old order returned out of the
+   * assignable branch first — so the moment leads became assignable a lead
+   * would have seen only their own assignments and lost their team's work and
+   * their review queue entirely. Taking the two in this order gives a
+   * designation that is both the UNION of the two rules rather than whichever
+   * test happens to run first. */
+  if (def.assignable && asset.assignee_id === user.id) return true;
   if (def.leadsTeam) {
     if (await isReport(user, asset.assignee_id)) return true;
     return canAccessProject(user, asset.project_id);
   }
+  /* A contributor: their own work and nothing else, exactly as before. */
+  if (isContributor(def)) return false;
   // Admin and coordinator: must have access to the parent project.
   return canAccessProject(user, asset.project_id);
 }
@@ -304,6 +315,19 @@ function isAssignedArtist(user, asset) {
 // Is this user the lead or supervisor of the contributor this asset is assigned to?
 async function isTeamLeadOfAsset(user, asset) {
   if (!holds(user, 'review.tl') || !asset.assignee_id) return false;
+  /* NOBODY REVIEWS THEIR OWN WORK, whatever their designation.
+   *
+   * A no-op until leads became assignable — a lead could not be an assignee,
+   * so this was never true — and load-bearing the moment they did. A lead has
+   * no team_lead_id of their own, so an asset assigned to them reaches the
+   * "no lead recorded, any lead who can see it is the gate" fallback below,
+   * and the lead who submitted it can see it. They would have been able to
+   * approve their own submission through the first review gate.
+   *
+   * This is the guard that makes `assignable` and `leadsTeam` safe to hold at
+   * once; tests/roles.test.js used to forbid the combination outright and now
+   * points here instead. */
+  if (asset.assignee_id === user.id) return false;
   const def = roleDef(user.role);
   // Someone granted TL review actions without leading a team reviews the work
   // they can already see, rather than nobody's.

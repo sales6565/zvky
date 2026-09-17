@@ -56,6 +56,29 @@ function assignableRoles() {
   return entries().filter((r) => r.assignable).map((r) => r.key);
 }
 
+/* Assigned work, and leading nobody — a contributor.
+ *
+ * `assignable` used to answer two different questions because only one tier
+ * had it: "can this designation be handed work" and "does this designation
+ * report to a lead". Those came apart the moment leads became assignable, and
+ * conflating them is what makes that one-line change dangerous:
+ *
+ *   handed work        assignable            contributors AND leads
+ *   reports to a lead  isContributor         contributors only
+ *   sees only own work isContributor         contributors only
+ *
+ * The middle one is src/routes/users.js, where a lead must NOT acquire a
+ * reporting line just because it can now be given a task. The last is
+ * canViewAsset and the per-project list, where treating a lead as a
+ * contributor would take away their team's board.
+ *
+ * On the catalogue as it stood before leads were made assignable this is
+ * exactly the old `assignable`, so every caller that switched to it kept its
+ * behaviour to the letter. */
+function isContributor(def) {
+  return Boolean(def && def.assignable && !def.leadsTeam);
+}
+
 // Roles that run a team: wherever the code used to say role = 'team_lead'.
 function leadRoles() {
   return entries().filter((r) => r.leadsTeam).map((r) => r.key);
@@ -148,6 +171,7 @@ module.exports = {
   activeRoles,
   roleKeys,
   assignableRoles,
+  isContributor,
   leadRoles,
   supervisionRoles,
   SUPERVISION_GROUPS,

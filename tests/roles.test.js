@@ -82,9 +82,21 @@ test('capabilities stay internally consistent', () => {
     assert.ok(['all', 'owned', 'assigned', 'team', 'own_work'].includes(def.projectScope), `${key}: bad projectScope`);
     assert.ok([null, 'tl', 'cd'].includes(def.reviewStage), `${key}: bad reviewStage`);
     assert.ok([null, 'any', 'owned'].includes(def.deleteAsset), `${key}: bad deleteAsset`);
-    // Work is assigned to contributors; leads review it. Being both would put
-    // someone on both sides of their own review.
-    assert.ok(!(def.assignable && def.leadsTeam), `${key} is both assignable and a lead`);
+    /* A designation MAY be both assigned work and a lead — the Lead /
+       Supervisor tier is, so that a lead can pick up a task rather than only
+       hand them out.
+       
+       This used to be forbidden outright, on the reasoning that being both
+       would put somebody on both sides of their own review. That risk is real
+       and is now answered where it actually arises rather than by banning the
+       combination: isTeamLeadOfAsset in src/permissions.js refuses anyone as
+       the reviewer of an asset assigned to themselves. What the catalogue must
+       still guarantee is the rule below — holding the TL gate means leading a
+       team — which is what makes that reviewer resolvable at all. */
+    if (def.assignable && def.leadsTeam) {
+      assert.ok(def.reviewStage !== 'cd',
+        `${key} is assigned work and holds the CD gate — the self-review guard covers TL only`);
+    }
     // A lead reviews the work of reports, so it needs a team to hold the gate.
     if (def.reviewStage === 'tl') assert.ok(def.leadsTeam, `${key} holds the TL gate but leads nobody`);
   }

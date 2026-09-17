@@ -19,7 +19,7 @@ change with nothing else to update.
 | | Admin | Creates projects and staffs them; sees only their own projects and the users they added |
 | | Production Coordinator | Works across the projects they're attached to; can deliver approved assets |
 | Creative Direction | Art Director | Sees the whole studio and holds the final review gate. Cannot edit assets directly — direction goes through the review action so it's recorded as feedback |
-| Supervision | Art Supervisor, Associate Animation Supervisor, Senior Team Lead, Team Lead, Associate Team Lead | Run a team, hold the first review gate, create and edit assets |
+| Supervision | Art Supervisor, Associate Animation Supervisor, Senior Team Lead, Team Lead, Associate Team Lead, Associate Art Director, Technical Manager | Run a team, hold the first review gate, create and edit assets — **and can be assigned work themselves** |
 | Art | Senior Game Artist, Senior Motion Graphics Artist, Game Artist, Associate Game Artist, Trainee Game Artist | Assigned work, submit it for review |
 | Animation | Senior Game Animator, Game Animator, Associate Game Animator, Trainee Game Animator | Assigned work, submit it for review |
 | Design | Senior UI/UX Designer, Game Designer, Associate Game Designer, Consultant - Lead Game Designer, Associate - UI/UX Designer | Assigned work, submit it for review |
@@ -28,6 +28,35 @@ change with nothing else to update.
 | Engineering | Senior/Technical Artist, Associate Technical Artist, Senior/Unity Developer, Associate Unity Developer, Game Developer, Associate Game Developer, Test Engineer, Associate Test Engineer, Trainee - Test Engineer | Assigned work, submit it for review |
 | Game Math | Game Mathematician, Associate Game Mathematician, Associate Math Analyst | Assigned work, submit it for review |
 | Business & Operations | Senior Business Development Executive, Senior Operations Financial Analyst, Account Manager - Marketing, MIS Analyst, Junior Accountant | Directory only — no access to the asset pipeline |
+
+### Who can be given a task
+
+The Assignee dropdown — on Add Asset, on the reassign panel and on bulk assign,
+all three of which read the one endpoint `GET /api/projects/:id/artists` —
+offers every designation carrying the `assignable` capability. That is two
+tiers: **Contributor** and **Lead / Supervisor**.
+
+Leads were missing from it until recently, and the cause is worth recording
+because the flag reads as simpler than it is: `assignable` was set on the
+contributor tier and nowhere else, so nothing excluded leads — the capability
+was just never given to them.
+
+Three rules hold that together, and all three are tested:
+
+- **A lead being assignable does not make them a contributor.** Two places read
+  the flag as "sees only their own work" — `canViewAsset` and the per-project
+  asset list. Both ask `isContributor()`, which is `assignable && !leadsTeam`,
+  so a lead keeps their team's board and their review queue.
+- **Nobody reviews their own work.** A lead has no reporting lead of their own,
+  so an asset assigned to them reaches the "no lead recorded, any lead who can
+  see it is the gate" fallback. `isTeamLeadOfAsset` refuses anyone as the
+  reviewer of an asset assigned to themselves.
+- **A reporting line is still a contributor's.** Making a lead assignable does
+  not give them a `team_lead_id`; the user routes ask `isContributor()` too.
+
+Designations that are **not** assigned work — Administration, Production,
+Creative Direction, Leadership and Business & Operations — are refused by all
+three assign routes, not merely hidden from the dropdown.
 | People & Culture | People & Culture Partner, Assistant Manager - HR Generalist, Talent Acquisition Specialist | Directory only — no access to the asset pipeline |
 
 Seniority (Trainee → Associate → Senior) is recorded and displayed but does not

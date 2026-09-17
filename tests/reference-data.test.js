@@ -25,7 +25,9 @@ test('every seeded role holds exactly the permissions its tier grants', () => {
     admin: { manageUsers: true, manageSettings: false, projectScope: 'owned', deleteAsset: 'owned' },
     coordinator: { projectScope: 'assigned', createAsset: true, deliver: true, manageUsers: false },
     art_director: { projectScope: 'all', reviewStage: 'cd', editAsset: false, deliver: true },
-    team_lead: { projectScope: 'team', reviewStage: 'tl', leadsTeam: true, assignable: false },
+    // assignable: leads are handed work as well as handing it out. Pinned true
+    // so the flag cannot be dropped again — that is the bug this table caught.
+    team_lead: { projectScope: 'team', reviewStage: 'tl', leadsTeam: true, assignable: true },
     game_artist: { projectScope: 'own_work', assignable: true, editAsset: true, manageUsers: false },
     junior_accountant: { projectScope: 'own_work', assignable: false, editAsset: false, manageUsers: false },
     // Leadership was widened to full access; it is pinned here at its new

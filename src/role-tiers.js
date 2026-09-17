@@ -95,13 +95,31 @@ const TIERS = {
   },
   lead: {
     label: 'Lead / Supervisor',
-    describe: 'Runs a team, holds the first review gate, creates and edits assets.',
+    describe: 'Runs a team, holds the first review gate, creates and edits assets, '
+      + 'and can be assigned work themselves.',
     capabilities: {
       projectScope: 'team',
       reviewStage: 'tl',
       leadsTeam: true,
       createAsset: true,
       editAsset: true,
+      /* A lead can be handed work, not only hand it out.
+       *
+       * This was the whole of the bug: `assignable` was set on the contributor
+       * tier and nowhere else, so every Assignee dropdown — which is one
+       * endpoint, GET /projects/:id/artists, filtering on assignableRoles() —
+       * silently had no leads in it. Nothing excluded them; the flag was just
+       * never set here.
+       *
+       * IT IS NOT A ONE-LINE CHANGE, because two other places read this flag
+       * as "sees only their own work" and would have narrowed a lead's view to
+       * their own assignments, taking away their team's board and their review
+       * queue. Both now ask for `assignable && !leadsTeam`:
+       *   src/permissions.js  canViewAsset
+       *   src/routes/assets.js  the per-project list
+       * Those two must agree with each other — the list query's own comment
+       * says so — so a future tier that is both must be checked against both. */
+      assignable: true,
     },
   },
   production: {

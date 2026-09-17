@@ -573,9 +573,22 @@ router.get('/:id/artists', async (req, res) => {
     [req.params.id]
   );
 
+  /* `OR u.id IN ($2)` — the project's own leads, not only the people under
+     them.
+     
+     Without it this half of the fix does nothing. The narrow list is keyed on
+     team_lead_id, and a lead's own team_lead_id is almost always NULL: until
+     leads became assignable the users routes forced it to NULL for any
+     designation that was not assigned work. So a lead would have passed the
+     role filter and still matched no row. Anyone staffing a project without
+     asset.assign_any — which includes a lead staffing their own — would have
+     seen the same list as before and reported the bug unfixed.
+     
+     $2 twice rather than a $3: src/db.js repeats a parameter referenced more
+     than once, so both placeholders get the same id list. */
   const sql = leads.length
     ? `SELECT u.id, u.name, u.role FROM users u
-       WHERE u.role IN ($1) AND u.team_lead_id IN ($2)
+       WHERE u.role IN ($1) AND (u.team_lead_id IN ($2) OR u.id IN ($2))
        ORDER BY u.name`
     : `SELECT u.id, u.name, u.role FROM users u
        WHERE u.role IN ($1) ORDER BY u.name`;

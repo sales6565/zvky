@@ -8,7 +8,7 @@ const bcrypt = require('bcryptjs');
 const { v4: uuid } = require('uuid');
 const db = require('../db');
 const { authenticate, requireCapability, requirePermission, can } = require('../middleware/auth');
-const { roleKeys, activeRoles, isRole, roleDef, capabilitiesFor } = require('../roles');
+const { roleKeys, activeRoles, isRole, roleDef, capabilitiesFor, isContributor } = require('../roles');
 const activity = require('../activity');
 const passwordPolicy = require('../password-policy');
 const fs = require('node:fs');
@@ -315,8 +315,10 @@ router.post('/', requirePermission('user.add'), async (req, res) => {
   const hash = await bcrypt.hash(password || DEFAULT_PASSWORD, 10);
   const id = uuid();
 
-  // Only contributors report to a lead; a lead or coordinator does not.
-  const leadId = def.assignable ? teamLeadId || null : null;
+  /* Only contributors report to a lead; a lead or coordinator does not.
+     isContributor, not `assignable` — a lead is assigned work now, and must
+     not pick up a reporting line as a side effect of that. */
+  const leadId = isContributor(def) ? teamLeadId || null : null;
 
   await db.query(
     `INSERT INTO users (id, name, email, password_hash, role, manager_id, team_lead_id)
@@ -476,12 +478,12 @@ router.patch('/:id', requirePermission('user.edit'), async (req, res) => {
     }
     fields.push(`role = $${values.length + 1}`);
     values.push(role);
-    // A designation that isn't assigned work has no reporting lead.
-    if (!roleDef(role).assignable) {
+    // A designation that does not report to a lead has no reporting lead.
+    if (!isContributor(roleDef(role))) {
       fields.push('team_lead_id = NULL');
     }
   }
-  if (teamLeadId !== undefined && (role === undefined || roleDef(role).assignable)) {
+  if (teamLeadId !== undefined && (role === undefined || isContributor(roleDef(role)))) {
     fields.push(`team_lead_id = $${values.length + 1}`);
     values.push(teamLeadId || null);
   }
@@ -964,7 +966,7 @@ router.post('/bulk', requirePermission('user.bulk_upload'), uploadImport.single(
             row: rowNumber, column: 'reports_to_email', value: values.reports_to_email,
             message: `${lead.email} does not run a team, so nobody can report to them`,
           });
-        } else if (!def.assignable) {
+        } else if (!isContributor(def)) {
           rowErrors.push({
             row: rowNumber, column: 'reports_to_email', value: values.reports_to_email,
             message: `a ${def.label} is not assigned work, so it has no reporting line — leave this blank`,

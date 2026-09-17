@@ -179,8 +179,10 @@ test('handing work on reaches outside the project', { skip: cfg ? false : SKIP_R
     const picker = await as('root', `/assets/${asset.id}/reassign-options`);
     assert.strictEqual(picker.status, 200);
     const offered = picker.body.options;
-    // Four artists in the studio, minus the one already holding it.
-    assert.strictEqual(offered.length, 3, 'every artist but the current holder');
+    /* Four artists and one lead in the studio, minus the one already holding
+       it. The lead counts: a Lead / Supervisor is assigned work too, so the
+       picker offers them. */
+    assert.strictEqual(offered.length, 4, 'everyone assigned work but the current holder');
     assert.ok(offered.some((o) => o.id === people.ankita), 'Ankita, on no project, is offered');
     assert.ok(offered.some((o) => o.id === people.elsewhere), 'and so is somebody on another project');
     assert.ok(!offered.some((o) => o.id === people.ana), 'the person already holding it is not');
