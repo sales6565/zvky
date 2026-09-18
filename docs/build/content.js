@@ -532,6 +532,22 @@ module.exports = [
   shot('05-asset-tl-feedback', 'An asset returned with the lead’s notes, seen by the artist who holds it.'),
   p('The asset comes back to you with the note attached. Press Accept and Start again to reopen it — which counts '
     + 'as your one active task — and Submit for Review when the changes are done. It goes back to the same gate.'),
+  p('The reviewer who sent it back has a second option, and it is on this screen rather than a separate one: '
+    + 'Assign to someone else. Rework does not always belong with the person who did the first round — they may be '
+    + 'on something else, out, or simply the wrong fit for the note — and without this the only way to move it was '
+    + 'to wait for a round nobody was going to do. Picking a name takes the asset out of TL Feedbacks and back to '
+    + 'Assigned under the new person, who starts their own round from the beginning; the note and the whole history '
+    + 'travel with it. Both people are told: the one picking it up gets the ordinary assignment notification, and '
+    + 'the one it left is told it has moved, so nobody is waiting on work that is no longer theirs.'),
+  p('The list offered is the studio\u2019s ordinary eligible-assignee list, so a team lead appears in it and can be '
+    + 'handed the rework like anyone else. Whoever is holding the asset right now is not in the list, and the screen '
+    + 'says why rather than leaving you hunting for a name: the work is already with them, and this control is for '
+    + 'moving it to somebody else.'),
+  roles('Who sees this control is the TL review permission, not a designation \u2014 the same permission that lets '
+    + 'somebody review at this gate at all, plus Asset Assign. Take First Review Gate away from a role in Settings '
+    + '\u2192 Permissions and the control goes with it for everyone holding that role; grant it and the control '
+    + 'appears. Out of the box that is the team lead and production.',
+    ['tl_gate']),
 
   h2('7.10 The Creative Director gate'),
   shot('07-cd-review-panel', 'An asset at CD Review.'),

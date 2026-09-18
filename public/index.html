@@ -6985,6 +6985,12 @@ async function openDrawer(id){
           Approving it or sending it back is the reviewer's call at this stage, not yours — this is the
           one action on it that is.
         </div>` : ''}
+      ${handingBackRework && a.assignee_name ? `
+        <div style="font-size:11px;color:var(--ink-faint);margin-bottom:6px;">
+          ${escapeHTML(a.assignee_name)} is not in the list because the work is already with them — the
+          feedback is on their desk and they can pick it up from here. This is for moving it to
+          <em>somebody else</em>.
+        </div>` : ''}
       <select id="reassignTo"><option value="">Loading…</option></select>
       <input type="text" id="reassignNote" placeholder="Why the handover (optional)…" style="margin-top:6px;">
       <button class="btn btn-ghost" id="reassignBtn" style="width:100%;margin-top:8px;">Hand over</button>
