@@ -29,6 +29,16 @@ const { v4: uuid } = require('uuid');
 const KINDS = {
   assigned: 'assigned',            // it is yours now
   unassigned: 'unassigned',        // it is no longer yours
+  /* Work has been handed in, told to the people who are now waiting on it:
+     whoever assigned it, and the submitter's team lead.
+
+     THE OPPOSITE DIRECTION FROM `assigned`, and that is the point of it being
+     its own kind. `assigned` travels down — somebody has given you work.
+     This travels back up — the work you gave out has come back, and there is
+     a review queue with your name on it. Sharing a sentence between the two
+     would have told a lead "you have been assigned FX-001" about an asset
+     they are supposed to be reviewing, not doing. */
+  submitted: 'submitted',
   // A whole project submitted for the Creative Director to look at. Not an
   // asset moving anywhere — see src/routes/project-reviews.js.
   project_review: 'project_review',
@@ -99,6 +109,17 @@ function describe(row) {
   }
   const code = row.asset_code || 'An asset';
   const name = row.asset_name ? ` — ${row.asset_name}` : '';
+  if (row.kind === KINDS.submitted) {
+    /* The project is named here and not in the two above it, and the
+       difference is who is reading. Work assigned TO you arrives in a list of
+       your own tasks; you know where it is from. A submission arrives at
+       somebody who hands work out across several projects and is about to
+       decide what to look at next, and "which job is this" is the first thing
+       they ask. */
+    const where = row.project_name ? ` in ${row.project_name}` : '';
+    const who = row.other_name || 'Somebody';
+    return `${who} submitted ${code}${name}${where} for review.`;
+  }
   if (row.kind === KINDS.unassigned) {
     return row.other_name
       ? `${code}${name} has moved to ${row.other_name}.`
@@ -261,6 +282,42 @@ async function assignmentChanged(db, { assetId, from, to, actorId }) {
   }
 }
 
+/* Work has been handed in, told to the people it is now waiting on.
+ *
+ * WHO. assignments.submissionAudience() — whoever assigned it and the
+ * submitter's team lead — asked for rather than restated, because the
+ * submission EMAIL asks the same function the same question. One definition of
+ * "who cares about this", so the two channels cannot come to different answers
+ * about the same submission.
+ *
+ * WHEN. Only from POST /assets/:id/submit, which is the only place the
+ * 'submit' transition is evaluated. Accepting and starting a task raises
+ * nothing: it is the same person picking up work they were already given, and
+ * the people told here are the ones who now have something to DO.
+ *
+ * NOT TWICE FOR ONE PERSON. The audience is a Set, so a lead who also assigned
+ * the work is one recipient and not two. And not twice for one submission: a
+ * second submit on an asset already in a review queue is refused by the
+ * workflow before this is reached, so a double-click cannot produce a second
+ * round of notices. A genuine RE-submission after changes were requested is a
+ * different event — a new round, waiting on them again — and does notify.
+ *
+ * Returns how many were raised, which is what the tests count. */
+async function taskSubmitted(db, { assetId, actorId, recipientIds }) {
+  let raised = 0;
+  for (const recipientId of recipientIds || []) {
+    /* otherUserId is the SUBMITTER, not the recipient: describe() names them
+       off that join, and "Ana Artist submitted FX-001" is the whole point of
+       the sentence. raise() drops a recipient who is also the actor, which is
+       the second guard on a lead submitting their own work. */
+    const id = await raise(db, {
+      recipientId, actorId, kind: KINDS.submitted, assetId, otherUserId: actorId,
+    });
+    if (id) raised += 1;
+  }
+  return raised;
+}
+
 /* COALESCE, because a row points at one or the other: an asset notification
    carries the project through the asset, a project one carries it directly. */
 const SELECT = `SELECT n.id, n.seq, n.kind, n.asset_id AS assetId, n.read_at AS readAt, n.created_at AS createdAt,
@@ -271,7 +328,13 @@ const SELECT = `SELECT n.id, n.seq, n.kind, n.asset_id AS assetId, n.read_at AS 
        o.avatar_updated_at AS otherPhotoUpdatedAt
   FROM notifications n
   LEFT JOIN assets a ON a.id = n.asset_id
-  LEFT JOIN projects p ON p.id = n.project_id
+  /* On the SAME expression the line above selects, and it did not used to be.
+     The join read n.project_id alone, which an asset notification never sets —
+     it carries its project through the asset — so every assignment row came
+     back with projectId filled in and projectName null. Nothing rendered it,
+     so nothing looked broken; the submission sentence names the project, which
+     is what turned a dormant gap into a visible one. */
+  LEFT JOIN projects p ON p.id = COALESCE(a.project_id, n.project_id)
   LEFT JOIN users o ON o.id = n.other_user_id`;
 
 const shape = (row) => ({
@@ -387,6 +450,6 @@ module.exports = {
   passwordReset,
   projectReviewRequested,
   projectReviewAnswered,
-  KINDS, describe, raise, assignmentChanged,
+  KINDS, describe, raise, assignmentChanged, taskSubmitted,
   listFor, unreadCount, since, highWater, markRead, markAllRead,
 };

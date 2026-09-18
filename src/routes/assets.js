@@ -34,6 +34,7 @@ const { assignableRoles, roleDef, isContributor } = require('../roles');
 const lifecycle = require('../lifecycle');
 const workLog = require('../work-log');
 const emailNotifications = require('../email-notifications');
+const notifications = require('../notifications');
 const assetSchedule = require('../asset-schedule');
 const assignments = require('../assignments');
 const assetImport = require('../asset-import');
@@ -1450,20 +1451,47 @@ router.post('/:id/submit', upload.single('file'), async (req, res) => {
   // after changes adds a version rather than replacing the one that was rejected.
   const withDetails = await applyTransition(req, res, asset, verdict, { note: description, versionId });
 
-  /* Tell whoever is waiting for it, by email.
+  /* Tell whoever is now waiting on it. Two channels, one audience.
    *
-   * NOT a notification. There is deliberately no new kind in
-   * src/notifications.js for this and no new row in anybody's bell: the brief
-   * was an additive email channel, and adding a bell entry would have changed
-   * a screen that was to be left alone. Anyone who turns email off sees exactly
-   * the application they saw before this was written.
+   * WHO. assignments.submissionAudience() answers it once for both: whoever
+   * assigned the work, and the submitter's team lead — the reviewer of the
+   * round that has just landed. Asked here, and handed to both, so the bell
+   * and the mail cannot disagree about who was told.
    *
-   * Not awaited. The artist's submission is finished the moment the transition
-   * is written, and it must not wait on — or be undone by — a mail server. The
-   * function swallows its own failures; this .catch is the belt to that
-   * braces. */
+   * THE BELL WAS ONCE DELIBERATELY LEFT OUT of this. That was right for the
+   * brief it was written under — "an additive email channel, and the screens
+   * are not to change" — and the comment that used to sit here said so. The
+   * studio has since asked for the desktop notification as well, because an
+   * email nobody has open is not how somebody learns there is work waiting for
+   * them in the next ten minutes. So it is raised now, in the same shape as
+   * every other notification: a row, which the bell reads, which the poll
+   * turns into a desktop pop-up, and which push sends to a phone.
+   *
+   * ONLY HERE. This is the only place the 'submit' transition is evaluated, so
+   * this is the only place the event exists. Accepting and starting a task
+   * raises nothing — it is the same person picking up work they already had.
+   *
+   * AWAITED, unlike the email, and the difference is the failure each can
+   * have. The notification is one local INSERT, and awaiting it is what makes
+   * it there when the artist's screen — or the reviewer's, one poll later —
+   * asks. The email is a conversation with somebody else's mail server and
+   * must not be on this request's critical path. Neither can fail the
+   * submission: the transition is already written and committed above, so both
+   * are wrapped, and the worst either can do is go unsent. */
+  const audience = await assignments.submissionAudience(db, {
+    assetId: req.params.id, actorId: req.user.id,
+  }).catch(() => []);
+
+  try {
+    await notifications.taskSubmitted(db, {
+      assetId: req.params.id, actorId: req.user.id, recipientIds: audience,
+    });
+  } catch (err) {
+    console.warn(`[notifications] could not tell anybody about the submission on ${asset.code}: ${err.message}`);
+  }
+
   emailNotifications.taskSubmitted(db, {
-    assetId: req.params.id, actorId: req.user.id, at: new Date(),
+    assetId: req.params.id, actorId: req.user.id, at: new Date(), recipientIds: audience,
   }).catch(() => {});
 
   res.status(201).json({ asset: withDetails });

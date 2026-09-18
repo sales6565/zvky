@@ -137,6 +137,55 @@ async function notify(db, { assetId, from, to, actorId }) {
   }
 }
 
+/* Who is waiting to hear that a piece of work has been handed in.
+ *
+ * Whoever assigned it, and the submitter's team lead — the answer chosen for
+ * this studio. Deduplicated, and the submitter is dropped from their own list:
+ * a lead who submits their own work does not need telling that they did.
+ *
+ * assigned_by_id comes off the OPEN episode rather than the newest, because a
+ * reassigned task belongs to whoever assigned it LAST, not to whoever started
+ * the chain. It falls back to the asset's creator for rows written before
+ * episodes existed.
+ *
+ * IT LIVES HERE because two channels ask the same question — the submission
+ * email and the submission notification — and they must not answer it
+ * differently. It was written inside src/email-notifications.js when email was
+ * the only one; a copy in src/notifications.js would have been a second
+ * definition of "who cares about this", free to drift the day somebody changed
+ * one. This module already owns assigned_by_id and the episode it hangs off,
+ * which is most of the answer.
+ *
+ * Never throws: a deployment without asset_assignments falls back to telling
+ * the creator, which is worth more than telling nobody, and a failure past
+ * that returns an empty list rather than failing the submission that asked. */
+async function submissionAudience(db, { assetId, actorId }) {
+  const ids = new Set();
+  try {
+    const { rows } = await db.query(
+      `SELECT ass.assigned_by_id AS assignedBy, a.created_by AS createdBy, u.team_lead_id AS teamLead
+         FROM assets a
+         LEFT JOIN asset_assignments ass
+                ON ass.asset_id = a.id AND ass.ended_at IS NULL
+         LEFT JOIN users u ON u.id = $2
+        WHERE a.id = $1`, [assetId, actorId]);
+    const row = rows[0];
+    if (!row) return [];
+    if (row.assignedBy) ids.add(row.assignedBy);
+    else if (row.createdBy) ids.add(row.createdBy);
+    if (row.teamLead) ids.add(row.teamLead);
+  } catch (err) {
+    try {
+      const { rows } = await db.query('SELECT created_by AS createdBy FROM assets WHERE id = $1', [assetId]);
+      if (rows[0] && rows[0].createdBy) ids.add(rows[0].createdBy);
+    } catch { return []; }
+  }
+  /* The submitter is never in their own audience, and a Set is what makes the
+     assigner-who-is-also-your-lead one recipient rather than two. */
+  ids.delete(actorId);
+  return [...ids];
+}
+
 // Every episode on a set of assets, oldest first, with the time spent in each
 // and what was submitted during it.
 //
@@ -254,4 +303,4 @@ async function listFor(db, assetIds) {
   return byAsset;
 }
 
-module.exports = { open, close, current, listFor, available };
+module.exports = { open, close, current, listFor, available, submissionAudience };

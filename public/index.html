@@ -12840,7 +12840,8 @@ function renderNotifList(){
   const list = document.getElementById('notifList');
   if(!list) return;
   if(!notifState.items.length){
-    list.innerHTML = '<div class="notif-empty">Nothing yet. You will be told here when work is assigned to you.</div>';
+    list.innerHTML = '<div class="notif-empty">Nothing yet. You will be told here when work is assigned to you, '
+      + 'and when work you handed out is submitted for review.</div>';
     return;
   }
   list.innerHTML = notifState.items.map(n=>`
@@ -12957,9 +12958,7 @@ async function pollNotifications(){
          the person who is not. Same collapsing rule — one for the burst. */
       const latest = res.fresh[res.fresh.length - 1];
       desktopNotify({
-        title: res.fresh.length > 1
-          ? `${res.fresh.length} updates`
-          : (latest.kind === 'unassigned' ? 'Work reassigned' : 'Assigned to you'),
+        title: res.fresh.length > 1 ? `${res.fresh.length} updates` : notifTitle(latest),
         body: latest.message,
         tag: 'zvky-work',
         onOpen: ()=>openNotification({ id:latest.id, asset:latest.assetId, project:latest.projectId }),
@@ -12967,6 +12966,28 @@ async function pollNotifications(){
     }
   }catch(err){ /* a blip must not stop the polling */ }
 }
+
+/* The heading over a notification, in the desktop pop-up and in the in-app
+   toast. The two used to carry a copy each of `kind === 'unassigned' ? … : 'Assigned
+   to you'` — a binary, on a list of eight kinds. Everything that was not an
+   unassignment was titled "Assigned to you", so a submission landing in a
+   lead's corner would have announced itself as work they had been given rather
+   than work they had to review. The sentence underneath comes from
+   describe() in src/notifications.js; this is only the line above it, and an
+   unlisted kind falls back to something true of all of them rather than to
+   something true of one. */
+const NOTIF_TITLES = {
+  assigned:    'Assigned to you',
+  unassigned:  'Work reassigned',
+  submitted:   'Submitted for review',
+  project_review: 'Project review requested',
+  project_review_answered: 'Your submission was answered',
+  project_review_feedback: 'Project feedback',
+  project_review_changes:  'Changes requested',
+  project_review_approved: 'Project approved',
+  password_reset: 'Your password was reset',
+};
+const notifTitle = (n) => (n && NOTIF_TITLES[n.kind]) || 'Something needs your attention';
 
 let notifToastTimer = null;
 function showNotifToast(n, alsoCount = 1){
@@ -12976,7 +12997,7 @@ function showNotifToast(n, alsoCount = 1){
   const el = document.createElement('div');
   el.className = 'notif-toast';
   el.innerHTML = `
-    <div class="t-title">${n.kind === 'unassigned' ? 'Work reassigned' : 'Assigned to you'}</div>
+    <div class="t-title">${escapeHTML(notifTitle(n))}</div>
     <div class="t-msg">${escapeHTML(n.message)}</div>
     <div class="t-hint">${alsoCount > 1 ? `and ${alsoCount-1} more — ` : ''}click to open</div>`;
   el.onclick = ()=>{ el.remove(); openNotification({ id:n.id, asset:n.assetId, project:n.projectId }); };

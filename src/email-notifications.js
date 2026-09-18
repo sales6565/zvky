@@ -370,50 +370,32 @@ function submittedMessage({ task: t, completedBy, at }) {
 
 /* Who hears that a task is done.
  *
- * Whoever assigned it, and the submitter's team lead — the answer chosen for
- * this studio. Deduplicated, and the submitter is dropped from their own list:
- * a team lead who submits their own work does not need an email telling them
- * they did.
+ * Whoever assigned it, and the submitter's team lead. The rule USED TO BE
+ * spelled out here, when email was the only channel that asked. The bell asks
+ * the same question now, and two copies of "who cares about this" is one copy
+ * too many — the day somebody adds the reviewer, or drops the creator
+ * fallback, only one of them would have got it. So the definition moved to
+ * src/assignments.js, which already owns assigned_by_id and the episode it
+ * hangs off, and both channels read it from there.
  *
- * assigned_by_id comes off the OPEN episode rather than the newest, because a
- * reassigned task belongs to whoever assigned it last, not to whoever started
- * the chain. It falls back to the asset's creator for rows written before
- * episodes existed. */
-async function submissionRecipients(db, { assetId, actorId }) {
-  const ids = new Set();
-  try {
-    const { rows } = await db.query(
-      `SELECT ass.assigned_by_id AS assignedBy, a.created_by AS createdBy, u.team_lead_id AS teamLead
-         FROM assets a
-         LEFT JOIN asset_assignments ass
-                ON ass.asset_id = a.id AND ass.ended_at IS NULL
-         LEFT JOIN users u ON u.id = $2
-        WHERE a.id = $1`, [assetId, actorId]);
-    const row = rows[0];
-    if (!row) return [];
-    if (row.assignedBy) ids.add(row.assignedBy);
-    else if (row.createdBy) ids.add(row.createdBy);
-    if (row.teamLead) ids.add(row.teamLead);
-  } catch (err) {
-    /* A deployment without asset_assignments still tells the creator, which is
-       worth more than telling nobody. */
-    try {
-      const { rows } = await db.query('SELECT created_by AS createdBy FROM assets WHERE id = $1', [assetId]);
-      if (rows[0] && rows[0].createdBy) ids.add(rows[0].createdBy);
-    } catch { return []; }
-  }
-  ids.delete(actorId);
-  return [...ids];
-}
+ * Kept as a named export because that is what this module's API is; it is the
+ * same list, not a second opinion about it. */
+const submissionRecipients = (db, opts) => require('./assignments').submissionAudience(db, opts);
 
 /* Raise the completion email. Never throws, never awaited by the route. */
-async function taskSubmitted(db, { assetId, actorId, at }) {
+async function taskSubmitted(db, { assetId, actorId, at, recipientIds }) {
   try {
     if (!emailConfig.isUsable()) return;
     const t = await task(db, assetId);
     if (!t) return;
     const completedBy = await personName(db, actorId);
-    const ids = await submissionRecipients(db, { assetId, actorId });
+    /* The caller may have worked the audience out already — the submit route
+       does, because the bell needs the same list a moment earlier. Taking it
+       saves a query and, more to the point, guarantees the two channels tell
+       the SAME people about one submission rather than asking twice and
+       getting two answers if anything moved in between. Asked here when
+       nobody hands one over, so this function still stands on its own. */
+    const ids = recipientIds || await submissionRecipients(db, { assetId, actorId });
     for (const id of ids) {
       const to = await recipient(db, id);
       if (!to) continue;                    // no address, or opted out

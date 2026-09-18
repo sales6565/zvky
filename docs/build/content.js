@@ -815,16 +815,43 @@ module.exports = [
   shot('14-notifications', 'The notification panel, opened from the bell.'),
   bullets([
     'The bell carries the number of unread notifications.',
-    'You are notified when work is assigned to you, when a review comes back, and when feedback on your project submission lands.',
     'Mark all as read clears the count.',
+    'Clicking one opens the asset or the project it is about, switching the pickers if it is somewhere you are not currently looking.',
     'The same events also appear on your DESKTOP, outside the browser \u2014 see below.',
   ]),
+  p('What raises one:'),
+  table(['Event', 'Who is told', 'What it says'], [
+    ['Work is assigned to you', 'The new assignee',
+     '\u201cPriya Nair assigned you FX-001 \u2014 Dragon Head.\u201d'],
+    ['Work is taken off you', 'The outgoing assignee',
+     'Who it moved to, or that it is no longer assigned to anybody.'],
+    ['Work you handed out is submitted', 'Whoever assigned it, and the submitter\u2019s team lead',
+     '\u201cAna Artist submitted FX-001 \u2014 Dragon Head in Reef Riches for review.\u201d'],
+    ['A project is submitted for review', 'Everybody holding View Project Review Queue', 'Who submitted which project.'],
+    ['Your project submission is answered', 'The person who submitted it', 'That the answer is ready to read and close.'],
+    ['An administrator resets your password', 'The account holder only', 'Who did it. Never the password itself.'],
+  ]),
+  note('Who hears about a submission, and why those two',
+    'Whoever ASSIGNED the work \u2014 they handed it out and are waiting on it \u2014 and the '
+    + 'submitter\u2019s TEAM LEAD, who is the first review gate. If one person is both, they are '
+    + 'told once, not twice. The person who pressed Submit is never told about their own '
+    + 'submission, however many of those roles they hold.\n\n'
+    + 'It fires on SUBMIT and on nothing before it. Accept and Start raises nothing: that is '
+    + 'somebody picking up work they had already been given, and nobody else is waiting on it. A '
+    + 'resubmission after a lead has asked for changes is a new round and does raise a new one.'),
 
   h2('12.2 Desktop notifications'),
-  p('Assignments and chat messages raise a notification on your desktop as well as in the app, so '
-    + 'you are told while working in something else. A bar at the top of the screen asks for '
-    + 'permission the first time you sign in; press Turn on notifications and answer your '
-    + 'browser\u2019s own prompt.'),
+  p('Everything in the table above, and every chat message, raises a notification on your DESKTOP '
+    + 'as well as in the app, so you are told while working in something else. Each one carries a '
+    + 'heading that says what kind of event it is \u2014 Assigned to you, Submitted for review, '
+    + 'Work reassigned \u2014 and the same sentence the bell shows underneath it. A bar at the '
+    + 'top of the screen asks for permission the first time you sign in; press Turn on '
+    + 'notifications and answer your browser\u2019s own prompt.'),
+  p('They arrive on their own, without reloading the page: the app checks for new ones every half '
+    + 'minute and raises whatever has appeared since it last looked. Several at once \u2014 a '
+    + 'batch of forty assets assigned in one action \u2014 raise ONE pop-up saying how many, '
+    + 'rather than forty boxes up the side of the screen. The bell carries the count and the panel '
+    + 'carries the rest.'),
   note('What "on" and "off" mean here, exactly',
     'There is no switch inside Zvky Forge to turn desktop notifications off. The only control is '
     + 'the browser\u2019s, and that is not a choice the studio made \u2014 it is how the web '

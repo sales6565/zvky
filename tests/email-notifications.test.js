@@ -611,11 +611,21 @@ test('email notifications', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
   // --- step 6: nothing else moved --------------------------------------------
 
-  await t.test('the notification bell produces exactly what it did before', async () => {
-    /* THE "DO NOT TOUCH" REQUIREMENT, as an assertion rather than an intention.
-       The same two actions are performed with email off and again with it on,
-       and the rows they leave in the bell are counted both times. Email adding
-       a notification kind, or dropping one, shows up here. */
+  await t.test('turning email on changes nothing about the bell', async () => {
+    /* THE "EMAIL IS A SECOND CHANNEL" REQUIREMENT, as an assertion rather than
+       an intention. The same two actions are performed with email off and
+       again with it on, and the rows they leave in the bell are counted both
+       times. Email adding a notification kind, or dropping one, shows up here.
+
+       WHAT CHANGED, AND WHAT DID NOT. This used to pin the submission at ZERO
+       bell entries, because the brief that added email said the screens were
+       not to change. The studio has since asked for a desktop notification on
+       submission as well, so a submission now raises one for the assigner and
+       one for the submitter's team lead — see tests/submission-notification.js.
+       The count below moved with it. What this test is actually for did not
+       move at all: the numbers must be the SAME with email on and with it off,
+       whatever they are. That assertion is untouched, and it is the one that
+       would catch email growing a bell entry of its own. */
     const countFor = async (who) => (await as(who, '/notifications')).body.notifications.length;
 
     const setEnabled = (enabled) => as('root', '/email-config', { method: 'PUT', body: {
@@ -645,8 +655,8 @@ test('email notifications', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.deepStrictEqual(withEmail, withoutEmail,
       'switching email on must not change how many notifications an action raises');
     assert.strictEqual(withoutEmail.ana, 1, 'an assignment is still one bell entry for the assignee');
-    assert.strictEqual(withoutEmail.root, 0,
-      'and a submission still raises NO bell entry — email did not add a kind');
+    assert.strictEqual(withoutEmail.root, 1,
+      'and a submission raises exactly one for the person who assigned it — not two, and not none');
     assert.ok(inbox.messages.length > 0, 'while the email half did happen');
   });
 
