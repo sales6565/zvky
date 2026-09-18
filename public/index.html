@@ -362,7 +362,7 @@ body.chat-open #app{padding-left:calc(var(--chat-w, 380px) + 24px);}
 .chat-back:hover{background:var(--surface-2);color:var(--ink);}
 .chat-sub{font-size:10.5px;color:var(--ink-faint);font-family:'IBM Plex Mono';}
 .chat-body{flex:1;min-height:0;overflow-y:auto;}
-.chat-foot{flex:0 0 auto;border-top:1px solid var(--border);padding:9px 12px;}
+.chat-foot{flex:0 0 auto;border-top:1px solid var(--border);padding:9px 12px;position:relative;}
 
 /* the conversation list */
 .chat-conv{display:flex;gap:10px;align-items:center;width:100%;text-align:left;
@@ -442,6 +442,43 @@ body.chat-open #app{padding-left:calc(var(--chat-w, 380px) + 24px);}
 
 /* the composer */
 .chat-compose{display:flex;gap:7px;align-items:flex-end;}
+/* The box and the layer that paints behind it. Both are laid out by the same
+   rules so the characters land in the same places; only the textarea is
+   interactive, and only the layer is coloured. */
+.chat-inputwrap{flex:1;position:relative;display:flex;}
+.chat-mirror,.chat-compose textarea{
+  min-height:34px;max-height:110px;padding:7px 9px;border:1px solid var(--border);
+  border-radius:8px;font-family:'Inter';font-size:12.5px;line-height:1.45;
+  white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word;}
+.chat-mirror{position:absolute;inset:0;overflow:hidden;pointer-events:none;
+  color:transparent;background:var(--surface-2);}
+/* The text itself is drawn by the textarea, on top and transparent-backed, so
+   the caret and the selection are the browser's own. The layer supplies only
+   the highlight behind the @names. */
+.chat-compose textarea{position:relative;background:transparent;}
+/* A flat fallback first, then the mixed one for browsers that have
+   color-mix — an unsupported declaration is dropped and the line above it
+   stands, so nothing is left unhighlighted on an older browser. */
+.chat-mention{background:rgba(127,20,22,.26);color:var(--brand-accent);
+  border-radius:3px;font-weight:600;padding:0 1px;}
+.chat-mention{background:color-mix(in srgb, var(--brand-accent) 22%, transparent);}
+/* In a sent message it is text rather than a layer, so it carries its own
+   colour. `me` is a mention OF THE READER — the one line in a busy group they
+   most need to find. */
+.chat-bubble .chat-mention{background:rgba(127,20,22,.22);}
+.chat-bubble .chat-mention{background:color-mix(in srgb, var(--brand-accent) 18%, transparent);}
+.chat-bubble .chat-mention.me{background:rgba(127,20,22,.44);color:var(--ink);}
+.chat-bubble .chat-mention.me{background:color-mix(in srgb, var(--brand-accent) 38%, transparent);}
+/* The picker. Above the composer and over the thread, so opening it does not
+   shove the conversation up the screen. */
+.chat-mentions{position:absolute;left:10px;right:10px;bottom:100%;margin-bottom:6px;z-index:6;
+  background:var(--surface-2);border:1px solid var(--border);border-radius:10px;
+  box-shadow:0 10px 26px rgba(0,0,0,.42);overflow:hidden;max-height:210px;overflow-y:auto;}
+.chat-mention-row{display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+  background:none;border:0;cursor:pointer;padding:6px 10px;font:inherit;color:var(--ink);}
+.chat-mention-row .who{font-size:12.5px;font-weight:600;}
+.chat-mention-row .chat-sub{font-size:10.5px;margin-left:auto;}
+.chat-mention-row:hover,.chat-mention-row.active{background:var(--surface-3);}
 .chat-compose textarea{flex:1;min-height:34px;max-height:110px;resize:none;padding:7px 9px;
   font:inherit;font-size:12.5px;background:var(--surface-2);color:var(--ink);
   border:1px solid var(--border);border-radius:9px;}
@@ -12878,7 +12915,8 @@ function renderNotifList(){
   }
   list.innerHTML = notifState.items.map(n=>`
     <button class="notif-item${n.read?'':' unread'}" data-id="${escapeHTML(n.id)}"
-            data-asset="${escapeHTML(n.assetId||'')}" data-project="${escapeHTML(n.projectId||'')}">
+            data-asset="${escapeHTML(n.assetId||'')}" data-project="${escapeHTML(n.projectId||'')}"
+            data-conversation="${escapeHTML(n.conversationId||'')}">
       ${avatarHTML({ id:n.otherUserId, name:n.otherName, photoAt:n.otherPhotoUpdatedAt }, { size:26, title:false })}
       <span class="body">
         <span class="msg">${escapeHTML(n.message)}</span>
@@ -12894,9 +12932,20 @@ function renderNotifList(){
  * The asset may live in a project the header is not currently pointing at, so
  * the context is switched first — otherwise the drawer would open against a
  * board that does not contain it, or not open at all. */
-async function openNotification({ id, asset, project }){
+async function openNotification({ id, asset, project, conversation }){
   closeNotifPanel();
   if(id) await markNotificationsRead([id]);
+  /* A mention points at a conversation rather than at an asset. Opening the
+     chat panel on it is the whole of what somebody wants from that
+     notification — they were told they were named, and the next thing they do
+     is go and read it. */
+  if(conversation){
+    try{
+      await openChatPanel({ resetView:false });
+      await openChatConversation(conversation);
+    }catch(err){ showToast('That conversation is no longer available.'); }
+    return;
+  }
   if(!asset) return;
   try{
     /* The asset may be in a project the header is not pointing at. Move the
@@ -12993,7 +13042,8 @@ async function pollNotifications(){
         title: res.fresh.length > 1 ? `${res.fresh.length} updates` : notifTitle(latest),
         body: latest.message,
         tag: 'zvky-work',
-        onOpen: ()=>openNotification({ id:latest.id, asset:latest.assetId, project:latest.projectId }),
+        onOpen: ()=>openNotification({ id:latest.id, asset:latest.assetId, project:latest.projectId,
+                                      conversation:latest.conversationId }),
       });
     }
   }catch(err){ /* a blip must not stop the polling */ }
@@ -13012,6 +13062,7 @@ const NOTIF_TITLES = {
   assigned:    'Assigned to you',
   unassigned:  'Work reassigned',
   submitted:   'Submitted for review',
+  mention:     'You were mentioned',
   project_review: 'Project review requested',
   project_review_answered: 'Your submission was answered',
   project_review_feedback: 'Project feedback',
@@ -13032,7 +13083,8 @@ function showNotifToast(n, alsoCount = 1){
     <div class="t-title">${escapeHTML(notifTitle(n))}</div>
     <div class="t-msg">${escapeHTML(n.message)}</div>
     <div class="t-hint">${alsoCount > 1 ? `and ${alsoCount-1} more — ` : ''}click to open</div>`;
-  el.onclick = ()=>{ el.remove(); openNotification({ id:n.id, asset:n.assetId, project:n.projectId }); };
+  el.onclick = ()=>{ el.remove(); openNotification({ id:n.id, asset:n.assetId, project:n.projectId,
+                                                     conversation:n.conversationId }); };
   document.body.appendChild(el);
   requestAnimationFrame(()=>el.classList.add('show'));
   notifToastTimer = setTimeout(()=>{
@@ -13141,6 +13193,16 @@ const chatState = {
      chatClearFiles — because a session spent pasting screenshots would
      otherwise hold every one of them in memory until the tab closed. */
   previews:new Map(),
+  /* The mention picker, while it is open. `at` is where the "@" sits in the
+     textarea, which is what an insertion has to replace; `query` is whatever
+     has been typed after it; `active` is the highlighted row, so the keyboard
+     and the mouse agree about which person Enter would choose. */
+  mention:{ open:false, at:-1, query:'', active:0, matches:[] },
+  /* The people tagged so far, in the order they were chosen: { id, name }.
+     The textarea holds the readable form ("@Priya Nair") and this holds what
+     it means, which is how the body is turned into tokens on send and how the
+     highlight behind the box knows which @names are real. */
+  picked:[],
 };
 
 function stopChat(){
@@ -13379,7 +13441,7 @@ function renderChatThread(head, body, foot){
       ${face}
       <div class="chat-bubble">
         ${(!mine && isGroup) ? `<div class="from">${escapeHTML(m.senderName || 'Removed user')}</div>` : ''}
-        ${m.body ? escapeHTML(m.body).replace(/\n/g,'<br>') : ''}
+        ${m.body ? chatBodyHTML(m.body) : ''}
         ${chatAttachmentsHTML(m)}
         <div class="when">${escapeHTML(chatWhen(m.createdAt))}</div>
       </div>
@@ -13415,9 +13477,13 @@ function renderChatThread(head, body, foot){
       }).join('')}</div>`
     : '';
   foot.innerHTML = `${picked}
+    <div class="chat-mentions" id="chatMentions" role="listbox" aria-label="People you can tag" hidden></div>
     <div class="chat-compose">
       <button class="chat-clip" id="chatClip" title="Attach a file" aria-label="Attach a file">&#128206;</button>
-      <textarea id="chatInput" rows="1" placeholder="Write a message…"></textarea>
+      <div class="chat-inputwrap">
+        <div class="chat-mirror" id="chatInputMirror" aria-hidden="true"></div>
+        <textarea id="chatInput" rows="1" placeholder="Write a message…"></textarea>
+      </div>
       <button class="btn btn-sm" id="chatSend">Send</button>
     </div>
     <input type="file" id="chatFile" multiple accept="${escapeHTML(chatFileAccept())}" style="display:none;">
@@ -13433,6 +13499,11 @@ function renderChatThread(head, body, foot){
     box.value = draft;
     if(hadFocus){ box.focus(); box.setSelectionRange(draft.length, draft.length); }
   }
+  /* The layer is rebuilt with the footer, so it has to be repainted from
+     whatever went back into the box — otherwise attaching a file would leave
+     the highlights behind on the old markup. */
+  chatMentionHighlight();
+  chatMentionPaint();
 
   // Fetch the pictures, which cannot be done through a plain src — see chatState.blobs.
   body.querySelectorAll('[data-attach]').forEach(loadChatAttachment);
@@ -13499,6 +13570,226 @@ function chatDownloadButton(a){
   const label = escapeHTML(`Download ${a.fileName}`);
   return `<button type="button" class="chat-dl" data-download="${id}" data-name="${name}"
     title="${label}" aria-label="${label}">&#11123;</button>`;
+}
+
+/* ---- @mentions ---------------------------------------------------------------
+
+   WHAT THE BOX HOLDS AND WHAT IS SENT ARE NOT THE SAME STRING. The textarea
+   holds the readable form — "@Priya Nair, can you look at this" — because a
+   uuid in the middle of a sentence is not something anybody can type around.
+   chatState.picked remembers what each @name means, and chatMentionEncode()
+   turns the two into the stored form on send:
+
+       @[Priya Nair](3f2a1b4c-…) can you look at this
+
+   The id is what the server reads. See src/chat-mentions.js for why the name
+   travelling beside it is decoration and never evidence.
+
+   WHY NOT A CONTENTEDITABLE. A rich composer would hold the tokens as elements
+   and render them directly — and would take the paste handler, the Enter-to-
+   send, the draft-across-redraw and the attachment row with it. A textarea with
+   a highlight layer behind it keeps all of that untouched, which is the whole
+   of the sixth requirement. */
+
+/* The people this conversation can tag: its own members, never the studio.
+ *
+ * chatState.conversation.members is what the server sent for THIS conversation
+ * — a group's members, or the two people in a one-to-one. So "only show
+ * members of that specific group" is not a filter applied here; it is the only
+ * list this code has. Yourself is dropped: tagging yourself buzzes nobody, so
+ * offering it would be offering a thing that does nothing. */
+function chatMentionCandidates(){
+  const me = (state.currentUser || {}).id;
+  return ((chatState.conversation || {}).members || []).filter(m => m && m.id && m.id !== me);
+}
+
+/* The "@" that the caret is currently inside, or -1.
+ *
+ * Walks back from the caret to the nearest "@", stopping at whitespace — so
+ * "@pri" is a query and "look at @priya's note and" is not, once the space
+ * after the name is typed. The @ must start a word, which is what stops an
+ * email address opening the picker on its way past. */
+function chatMentionAnchor(value, caret){
+  for(let i = caret - 1; i >= 0; i--){
+    const ch = value[i];
+    if(ch === '@'){
+      const before = i === 0 ? '' : value[i-1];
+      if(before === '' || /\s/.test(before)) return i;
+      return -1;
+    }
+    if(/\s/.test(ch)) return -1;
+  }
+  return -1;
+}
+
+/* Who matches what has been typed so far. A blank query lists everybody, which
+   is what makes a bare "@" useful in a two-person conversation. */
+function chatMentionMatches(query){
+  const q = String(query || '').trim().toLowerCase();
+  const all = chatMentionCandidates();
+  if(!q) return all.slice(0, 8);
+  return all.filter(m => String(m.name || '').toLowerCase().includes(q)).slice(0, 8);
+}
+
+/* Look at the box and decide whether the picker belongs open. */
+function chatMentionSync(){
+  const box = document.getElementById('chatInput');
+  if(!box) return chatMentionClose();
+  const at = chatMentionAnchor(box.value, box.selectionStart);
+  if(at < 0) return chatMentionClose();
+  const query = box.value.slice(at + 1, box.selectionStart);
+  /* A space ends it. "@Priya Nair" is one name and the picker has to survive
+     the space in the middle of it — but only while something still matches, or
+     a whole sentence after an @ would keep it open. */
+  const matches = chatMentionMatches(query);
+  if(!matches.length) return chatMentionClose();
+  chatState.mention = { open:true, at, query, active: 0, matches };
+  chatMentionPaint();
+}
+
+function chatMentionClose(){
+  if(!chatState.mention.open){ chatMentionPaint(); return; }
+  chatState.mention = { open:false, at:-1, query:'', active:0, matches:[] };
+  chatMentionPaint();
+}
+
+function chatMentionMove(step){
+  const m = chatState.mention;
+  if(!m.open || !m.matches.length) return;
+  m.active = (m.active + step + m.matches.length) % m.matches.length;
+  chatMentionPaint();
+}
+
+/* Put the chosen person into the box, in the readable form.
+ *
+ * The "@query" being typed over is replaced, a space is added after so the
+ * next word is not glued to the name, and the caret lands after that space —
+ * which is also what closes the picker, since the anchor walk stops at
+ * whitespace. */
+function chatMentionChoose(index){
+  const m = chatState.mention;
+  const person = m.matches[typeof index === 'number' ? index : m.active];
+  const box = document.getElementById('chatInput');
+  if(!person || !box || m.at < 0) return;
+
+  /* A name with a ] in it would break the token grammar on the way out, so it
+     is flattened here rather than producing a message that parses as text. */
+  const name = String(person.name || '').replace(/[\[\]()\n]/g, ' ').replace(/\s+/g, ' ').trim();
+  const before = box.value.slice(0, m.at);
+  const after = box.value.slice(box.selectionStart);
+  box.value = `${before}@${name} ${after}`;
+  const caret = (before + '@' + name + ' ').length;
+  box.focus();
+  box.setSelectionRange(caret, caret);
+
+  /* Remembered in the order chosen. Two people with the same display name each
+     get their own entry, and chatMentionEncode() consumes them in order — so
+     "@Alex and @Alex" reaches the right two Alexes rather than the first one
+     twice. */
+  chatState.picked = [...chatState.picked, { id: person.id, name }];
+  chatMentionClose();
+  chatMentionHighlight();
+}
+
+/* The readable text, turned into what is actually sent.
+ *
+ * Each remembered pick claims the FIRST occurrence of its @name that no
+ * earlier pick has claimed. A pick whose text has since been deleted or typed
+ * over claims nothing and quietly falls out — which is the behaviour somebody
+ * expects when they backspace over a mention: it stops being one. */
+function chatMentionEncode(text, picked){
+  let out = String(text == null ? '' : text);
+  const taken = [];
+  for(const pick of (picked || [])){
+    const needle = '@' + pick.name;
+    let from = 0;
+    for(;;){
+      const at = out.indexOf(needle, from);
+      if(at < 0) break;
+      /* Not inside a token already written by an earlier pick, and a whole
+         word — "@Ana" must not match the start of "@Anastasia". */
+      const after = out[at + needle.length];
+      const claimed = taken.some(r => at >= r[0] && at < r[1]);
+      if(!claimed && (after === undefined || !/[\w'-]/.test(after))){
+        const token = `@[${pick.name}](${pick.id})`;
+        out = out.slice(0, at) + token + out.slice(at + needle.length);
+        taken.push([at, at + token.length]);
+        break;
+      }
+      from = at + 1;
+    }
+  }
+  return out;
+}
+
+/* The highlight layer behind the textarea.
+ *
+ * The textarea is transparent-texted and sits on top of a div holding the same
+ * string with the @names wrapped in a <mark>. Same font, same padding, same
+ * width, same wrapping — so the two line up character for character — and the
+ * layer is scrolled to match. This is why the composer keeps a plain textarea
+ * and everything built on it keeps working. */
+function chatMentionHighlight(){
+  const box = document.getElementById('chatInput');
+  const layer = document.getElementById('chatInputMirror');
+  if(!box || !layer) return;
+  const names = chatState.picked.map(p => p.name).filter(Boolean);
+  let html = escapeHTML(box.value);
+  if(names.length){
+    /* Longest first, so "@Ana Rao" is not half-matched by "@Ana". */
+    for(const name of [...new Set(names)].sort((a,b)=>b.length-a.length)){
+      const needle = escapeHTML('@' + name);
+      html = html.split(needle).join(`<mark class="chat-mention">${needle}</mark>`);
+    }
+  }
+  /* The trailing newline a textarea keeps but a div collapses, and the layer
+     would end a line short without it. */
+  layer.innerHTML = html.replace(/\n/g, '<br>') + '<br>';
+  layer.scrollTop = box.scrollTop;
+}
+
+/* The picker itself. Rendered into a container that lives above the composer
+   so it can overlay the thread rather than push it about. */
+function chatMentionPaint(){
+  const host = document.getElementById('chatMentions');
+  if(!host) return;
+  const m = chatState.mention;
+  if(!m.open || !m.matches.length){ host.hidden = true; host.innerHTML = ''; return; }
+  host.hidden = false;
+  host.innerHTML = m.matches.map((person, i)=>`
+    <button type="button" class="chat-mention-row${i === m.active ? ' active' : ''}"
+            data-mention="${i}" role="option" aria-selected="${i === m.active}">
+      ${avatarHTML({ id:person.id, name:person.name, photoAt:person.photoUpdatedAt }, { size:22, title:false })}
+      <span class="who">${escapeHTML(person.name || '')}</span>
+      <span class="chat-sub">${escapeHTML(roleInfo(person.role).label || '')}</span>
+    </button>`).join('');
+}
+
+/* A sent message's body, as HTML.
+ *
+ * THE ID DECIDES WHO IS NAMED, never the text beside it. Each token is
+ * resolved against the conversation's member list and rendered with THAT
+ * person's current name — so a group member renamed since the message still
+ * reads correctly, and a hand-written @[Ananya Rao](somebody-else's-id) shows
+ * whoever the id really is. A token whose id is in nobody's membership is not
+ * a mention at all and is shown as ordinary text. */
+function chatBodyHTML(body){
+  const members = new Map(((chatState.conversation || {}).members || []).map(m => [String(m.id).toLowerCase(), m]));
+  const me = (state.currentUser || {}).id;
+  /* Escaped FIRST, then the tokens are found in the escaped string. The token
+     grammar uses [ ] ( ) and a uuid, none of which escapeHTML touches, so the
+     pattern still matches — and nothing inside the name can have become
+     markup by the time it is wrapped. */
+  const safe = escapeHTML(String(body == null ? '' : body));
+  const withMentions = safe.replace(
+    /@\[([^\]\n]{1,120})\]\(([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\)/gi,
+    (whole, claimed, id)=>{
+      const person = members.get(String(id).toLowerCase());
+      if(!person) return '@' + claimed;          // not in this room: plain text
+      const mine = me && String(person.id) === String(me);
+      return `<mark class="chat-mention${mine ? ' me' : ''}">@${escapeHTML(person.name || '')}</mark>`;
+    });
+  return withMentions.replace(/\n/g, '<br>');
 }
 
 function chatSize(bytes){
@@ -13844,6 +14135,8 @@ function renderChatManage(head, body, foot){
 async function openChatConversation(id){
   chatState.view = 'thread';
   chatClearFiles();
+  chatState.picked = [];
+  chatMentionClose();
   await loadChatThread(id);
   scheduleChatPoll();
 }
@@ -13853,7 +14146,10 @@ async function sendChatMessage(){
   const text = input ? input.value.trim() : '';
   if(!text && !chatState.files.length) return;
   const form = new FormData();
-  form.set('body', text);
+  /* The readable @names become tokens here, at the last possible moment. Up to
+     this line the box has held what a person typed; from here the server has
+     what it can act on. */
+  form.set('body', chatMentionEncode(text, chatState.picked));
   chatState.files.forEach(f=>form.append('files', f, f.name));
   const sendBtn = document.getElementById('chatSend');
   if(sendBtn) sendBtn.disabled = true;
@@ -13862,6 +14158,18 @@ async function sendChatMessage(){
       { method:'POST', body:form });
     chatState.messages = [...chatState.messages, res.message];
     chatClearFiles();
+    chatState.picked = [];
+    chatMentionClose();
+    /* The box is emptied HERE, before the redraw.
+     *
+     * renderChatThread() carries a half-written message across a rebuild —
+     * which is what lets somebody attach a file mid-sentence — and it reads
+     * the box to do it. So a message that had been sent but not cleared was
+     * faithfully put back, and clicking Send left the text sitting there as
+     * if nothing had happened. The Enter path cleared the box itself,
+     * afterwards, which is why only the button showed it. One place now, and
+     * it is the place that knows the send succeeded. */
+    if(input) input.value = '';
     if(res.message.seq > (chatState.cursor||0)) chatState.cursor = res.message.seq;
     renderChat();
     chatScrollToEnd();
@@ -14014,6 +14322,11 @@ document.addEventListener('click', async e=>{
   if(e.target.closest('#chatSend')){ await sendChatMessage(); return; }
   if(e.target.closest('#chatClip')){ const f = document.getElementById('chatFile'); if(f) f.click(); return; }
 
+  /* Before the other chat targets, because a suggestion row lives inside the
+     panel and carries an avatar — which is itself clickable elsewhere. */
+  const pick = e.target.closest('[data-mention]');
+  if(pick){ chatMentionChoose(Number(pick.dataset.mention)); return; }
+
   const drop = e.target.closest('[data-drop]');
   if(drop){ chatDropFile(Number(drop.dataset.drop)); return; }
 
@@ -14111,6 +14424,30 @@ document.addEventListener('change', e=>{
    first line: no image on the clipboard, nothing happens, the browser pastes
    as it always did. preventDefault() is called only where there is genuinely
    nothing left for the browser to do. */
+/* Every way the box can change: typing, clicking elsewhere in it, arrowing
+   about. The picker's answer depends on where the caret is, not only on what
+   was typed, so a bare `input` listener would leave it open after the caret
+   had moved out of the @word. */
+document.addEventListener('input', e=>{
+  if(!e.target || e.target.id !== 'chatInput') return;
+  chatMentionSync();
+  chatMentionHighlight();
+});
+document.addEventListener('click', e=>{
+  if(e.target && e.target.id === 'chatInput') chatMentionSync();
+});
+document.addEventListener('keyup', e=>{
+  if(!e.target || e.target.id !== 'chatInput') return;
+  if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)) chatMentionSync();
+});
+/* The layer scrolls with the box, or a long message's highlights slide off
+   the words they belong to. */
+document.addEventListener('scroll', e=>{
+  if(!e.target || e.target.id !== 'chatInput') return;
+  const layer = document.getElementById('chatInputMirror');
+  if(layer) layer.scrollTop = e.target.scrollTop;
+}, true);
+
 document.addEventListener('paste', e=>{
   if(!e.target || e.target.id !== 'chatInput') return;
   const images = chatPastedImages(e.clipboardData);
@@ -14128,15 +14465,32 @@ document.addEventListener('paste', e=>{
      and a stray "image.png" typed into their message on top of it is noise. */
   const text = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
   if(!text || !took) e.preventDefault();
+  /* After the browser has done its half, if it did one. */
+  setTimeout(()=>{ chatMentionSync(); chatMentionHighlight(); }, 0);
 });
 
 // Enter sends; Shift+Enter is a new line, the way every chat box behaves.
 document.addEventListener('keydown', async e=>{
+  /* THE PICKER GETS FIRST REFUSAL, and only while it is open. Enter on a
+     highlighted suggestion chooses it rather than sending the message — which
+     is what every chat application does, and what stops "@pri<Enter>" posting
+     a message to nobody. Everything below is untouched the moment it is
+     closed, which it is for all but a second or two of any message. */
+  if(e.target && e.target.id === 'chatInput' && chatState.mention.open){
+    if(e.key === 'ArrowDown'){ e.preventDefault(); chatMentionMove(1); return; }
+    if(e.key === 'ArrowUp'){ e.preventDefault(); chatMentionMove(-1); return; }
+    if(e.key === 'Enter' || e.key === 'Tab'){ e.preventDefault(); chatMentionChoose(); return; }
+    /* Escape shuts the picker and NOTHING ELSE. Without this it would fall
+       through to the branch that closes the whole chat panel, so dismissing a
+       dropdown would throw away the message being written. */
+    if(e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); chatMentionClose(); return; }
+  }
   if(e.target && e.target.id === 'chatInput' && e.key === 'Enter' && !e.shiftKey){
     e.preventDefault();
     await sendChatMessage();
     const box = document.getElementById('chatInput');
     if(box){ box.value = ''; box.focus(); }
+    chatMentionHighlight();
     return;
   }
   /* Escape closes chat only when the focus is inside it. Escape is also how a

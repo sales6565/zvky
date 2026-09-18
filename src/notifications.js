@@ -39,6 +39,29 @@ const KINDS = {
      would have told a lead "you have been assigned FX-001" about an asset
      they are supposed to be reviewing, not doing. */
   submitted: 'submitted',
+  /* Somebody tagged you in a chat message.
+   *
+     RAISED HERE RATHER THAN ON CHAT'S OWN CHANNEL, and that is the decision
+     worth recording. A chat message deliberately raises no notification row —
+     the panel's own poll is its signal, and an ordinary message is not
+     something waiting on anybody. Being NAMED is different: it is addressed to
+     one person and it is asking them for something, which is what every other
+     kind in this list has in common.
+     
+     It also makes the promise the studio asked for structural rather than
+     remembered. Mentions are meant to reach you whatever you have done to
+     quieten a conversation; because they travel on a different channel from
+     chat's push, anything that ever silences a conversation would be silencing
+     the other one. There is no such control today — nothing in this
+     application mutes a chat or a group — so this is a property held in
+     reserve rather than one in use, and a test pins it so it cannot be lost
+     by accident.
+     
+     NO MESSAGE TEXT, like chat's own push and for the same reason: a chat body
+     on a lock screen is where this application could show a private
+     conversation to whoever is standing nearby. Who tagged you and where is
+     enough to decide whether to go and look. */
+  mention: 'mention',
   // A whole project submitted for the Creative Director to look at. Not an
   // asset moving anywhere — see src/routes/project-reviews.js.
   project_review: 'project_review',
@@ -101,6 +124,15 @@ function describe(row) {
     const project = row.project_name || 'A project';
     const who = row.other_name ? `${row.other_name} approved` : 'Approved';
     return `${who} ${project} for the client.`;
+  }
+  if (row.kind === KINDS.mention) {
+    const who = row.other_name || 'Somebody';
+    /* A group says its name. A one-to-one has no name of its own — its title
+       is "whoever the other person is", which from the recipient's side is the
+       person already named at the front of this sentence, so repeating it
+       would read as "Priya mentioned you in Priya". */
+    const where = row.conversation_title ? ` in ${row.conversation_title}` : '';
+    return `${who} mentioned you${where}.`;
   }
   if (row.kind === KINDS.password_reset) {
     const who = row.other_name || 'An administrator';
@@ -175,20 +207,22 @@ function pushFor(db, { notificationId, recipientId, actorId, kind, assetId, proj
     .catch(() => { /* see the note above: a push never fails the action */ });
 }
 
-async function raise(db, { recipientId, actorId, kind, assetId, projectId, otherUserId }) {
+async function raise(db, { recipientId, actorId, kind, assetId, projectId, otherUserId, conversationId }) {
   if (!recipientId || recipientId === actorId) return null;
   const id = uuid();
   try {
     await db.query(
-      `INSERT INTO notifications (id, recipient_id, actor_id, kind, asset_id, project_id, other_user_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [id, recipientId, actorId || null, kind, assetId || null, projectId || null, otherUserId || null]
+      `INSERT INTO notifications (id, recipient_id, actor_id, kind, asset_id, project_id, other_user_id, conversation_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [id, recipientId, actorId || null, kind, assetId || null, projectId || null,
+        otherUserId || null, conversationId || null]
     );
     pushFor(db, { notificationId: id, recipientId, actorId, kind, assetId, projectId });
     return id;
   } catch (err) {
-    /* A deployment whose migration has not added project_id still notifies —
-       without the link back to the project, which is worth more than silence. */
+    /* A deployment whose migration has not added project_id or conversation_id
+       still notifies — without the link back, which is worth more than
+       silence. */
     if (err.code === 'ER_BAD_FIELD_ERROR') {
       try {
         await db.query(
@@ -318,12 +352,38 @@ async function taskSubmitted(db, { assetId, actorId, recipientIds }) {
   return raised;
 }
 
+/* Somebody was tagged in a chat message.
+ *
+ * WHO. Only people the caller has already established are in the conversation
+ * — chatMentions.recipients() does that filtering and drops the sender, and it
+ * is asked BEFORE this, so this function tells whoever it is given and does
+ * not have a second opinion about membership.
+ *
+ * ONE PER PERSON, not one per @. Tagging Ana three times in one sentence is
+ * emphasis, not three things to tell her; idsIn() has already made the list
+ * unique.
+ *
+ * `actorId` is also `otherUserId`, which is what lets describe() name the
+ * sender off the same join every other kind uses — and what makes raise() drop
+ * a mention of the person doing the mentioning, if one ever reached here. */
+async function chatMention(db, { conversationId, actorId, recipientIds }) {
+  let raised = 0;
+  for (const recipientId of recipientIds || []) {
+    const id = await raise(db, {
+      recipientId, actorId, kind: KINDS.mention, conversationId, otherUserId: actorId,
+    });
+    if (id) raised += 1;
+  }
+  return raised;
+}
+
 /* COALESCE, because a row points at one or the other: an asset notification
    carries the project through the asset, a project one carries it directly. */
 const SELECT = `SELECT n.id, n.seq, n.kind, n.asset_id AS assetId, n.read_at AS readAt, n.created_at AS createdAt,
        a.\`code\` AS asset_code, a.\`name\` AS asset_name,
        COALESCE(a.project_id, n.project_id) AS projectId,
        p.\`name\` AS project_name,
+       c.title AS conversation_title, n.conversation_id AS conversationId,
        o.\`name\` AS other_name, o.id AS otherUserId,
        o.avatar_updated_at AS otherPhotoUpdatedAt
   FROM notifications n
@@ -335,6 +395,10 @@ const SELECT = `SELECT n.id, n.seq, n.kind, n.asset_id AS assetId, n.read_at AS 
      so nothing looked broken; the submission sentence names the project, which
      is what turned a dormant gap into a visible one. */
   LEFT JOIN projects p ON p.id = COALESCE(a.project_id, n.project_id)
+  /* A LEFT JOIN and no foreign key behind it, deliberately: chat arrived after
+     notifications and a deployment can be part-migrated. A dangling id here
+     costs the sentence its "in <group>" clause and nothing else. */
+  LEFT JOIN chat_conversations c ON c.id = n.conversation_id
   LEFT JOIN users o ON o.id = n.other_user_id`;
 
 const shape = (row) => ({
@@ -346,6 +410,8 @@ const shape = (row) => ({
   assetCode: row.asset_code || null,
   projectId: row.projectId || null,
   projectName: row.project_name || null,
+  conversationId: row.conversationId || null,
+  conversationTitle: row.conversation_title || null,
   otherUserId: row.otherUserId || null,
   otherName: row.other_name || null,
   otherPhotoUpdatedAt: row.otherPhotoUpdatedAt || null,
@@ -450,6 +516,6 @@ module.exports = {
   passwordReset,
   projectReviewRequested,
   projectReviewAnswered,
-  KINDS, describe, raise, assignmentChanged, taskSubmitted,
+  KINDS, describe, raise, assignmentChanged, taskSubmitted, chatMention,
   listFor, unreadCount, since, highWater, markRead, markAllRead,
 };

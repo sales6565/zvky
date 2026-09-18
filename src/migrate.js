@@ -371,6 +371,30 @@ async function ensureProjectReviews(db, log) {
       .catch(() => {});
     log('Schema: added notifications.project_id.');
   }
+
+  /* Which conversation a mention happened in.
+   *
+   * A third "what is this about" column beside asset_id and project_id, and for
+   * the same reason both of those exist: the sentence in the bell is BUILT ON
+   * READ from ids, never stored, so a group renamed after somebody was tagged
+   * in it says the new name. Nothing else would.
+   *
+   * No foreign key. The other two have one; this deliberately does not, because
+   * chat lives behind a table that a deployment may not have — the chat feature
+   * arrived later than notifications and ensureChat() runs after this. A
+   * constraint would turn "no chat tables yet" into a failed migration. The
+   * join that reads it is a LEFT JOIN and copes with a dangling id by saying
+   * "a conversation", which is the same thing the asset join does. */
+  const { rows: convo } = await db.query(
+    `SELECT COLUMN_NAME AS n FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'notifications' AND COLUMN_NAME = 'conversation_id'`
+  );
+  if (!convo.length) {
+    await db.query('ALTER TABLE notifications ADD COLUMN conversation_id CHAR(36) NULL AFTER project_id');
+    await db.query('ALTER TABLE notifications ADD KEY idx_notifications_conversation (conversation_id)')
+      .catch(() => {});
+    log('Schema: added notifications.conversation_id.');
+  }
 }
 
 // Bulk actions, added after the event log already existed: the batch record
@@ -1616,6 +1640,7 @@ async function ensureNotifications(db, log) {
       kind          VARCHAR(32) NOT NULL,
       asset_id      CHAR(36)    NULL,
       other_user_id CHAR(36)    NULL,
+      conversation_id CHAR(36)  NULL,
       read_at       DATETIME    NULL,
       created_at    DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
       KEY idx_notifications_inbox (recipient_id, created_at),

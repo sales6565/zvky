@@ -6,6 +6,8 @@ const db = require('../db');
 const { authenticate, requirePermission, can } = require('../middleware/auth');
 const chat = require('../chat');
 const files = require('../chat-files');
+const mentions = require('../chat-mentions');
+const notifications = require('../notifications');
 
 /* Chat, and the one decision in it that is a policy rather than a design.
  *
@@ -161,7 +163,15 @@ router.get('/:id/messages', async (req, res) => {
         ? ((members.find((m) => String(m.id) !== String(req.user.id)) || {}).name || 'Removed user')
         : seat.title,
       isOwner: seat.isOwner,
-      members: seat.kind === chat.KINDS.group ? members.map(({ conversationId, ...m }) => m) : [],
+      /* EVERY conversation now names its members, where this used to send them
+         for a group and an empty list for a one-to-one.
+         
+         The mention dropdown is the reason: it offers the people in THIS
+         conversation and nobody else, so a one-to-one with no member list
+         could offer nobody. Nothing is disclosed by it that the reader did not
+         already have — the other person's name is the title of the
+         conversation they are looking at. */
+      members: members.map(({ conversationId, ...m }) => m),
       memberCount: members.length,
       maxMembers: chat.MAX_GROUP_MEMBERS,
     },
@@ -284,6 +294,40 @@ router.post('/:id/messages', files.upload.array('files', 5), async (req, res) =>
    * already stored and the sender is owed their 201 whatever a phone company
    * is doing. */
   pushChat(req.params.id, req.user, message).catch(() => { /* never fails a send */ });
+
+  /* AND THE PEOPLE NAMED IN IT, on a different channel from the one above.
+   *
+   * An ordinary message reaches you through chat's own poll and chat's own
+   * push. Being TAGGED raises a notification row as well — the bell, the
+   * desktop pop-up and the phone, through the same path an assignment takes.
+   * That is what makes a mention louder than a message rather than the same
+   * thing said twice, and it is deliberately not hung off pushChat(): the
+   * studio asked that a mention reach somebody whatever they have done to
+   * quieten a conversation, and two separate channels is how that survives a
+   * mute being added later. (There is no mute in this application today.)
+   *
+   * WHO GETS ONE is settled before anything is raised: the ids in the body,
+   * intersected with the people actually in this conversation, minus the
+   * sender. A token naming somebody who is not a member is dropped in
+   * silence — it did not come from the dropdown, which only ever offers
+   * members, and telling a stranger they were talked about would be worse
+   * than telling nobody.
+   *
+   * Awaited, unlike the push: it is one local INSERT per person, and awaiting
+   * it is what makes the row there when their next poll asks. Wrapped, because
+   * the message is already stored and a notification that could not be written
+   * must not turn a sent message into an error. */
+  try {
+    const members = await chat.membersOf(db, req.params.id).catch(() => []);
+    const mentioned = mentions.recipients({ body, members, senderId: req.user.id });
+    if (mentioned.length) {
+      await notifications.chatMention(db, {
+        conversationId: req.params.id, actorId: req.user.id, recipientIds: mentioned,
+      });
+    }
+  } catch (err) {
+    console.warn(`[chat] could not raise the mentions on ${messageId}: ${err.message}`);
+  }
 
   // Deliberately not logged. See the header of this file.
   req.activitySkip();

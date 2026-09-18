@@ -137,7 +137,7 @@ module.exports = [
     'Your name and designation — what the studio has you down as. If it is wrong, that is a Users change (chapter 11).',
     'The bell — notifications, with a count of the unread ones (chapter 12.1).',
     'The question mark — reopens the Quick Tour.',
-    'Profile — your photo and your password (chapter 12.8).',
+    'Profile — your photo and your password (chapter 12.9).',
   ]),
 
   h2('2.4 The tabs'),
@@ -829,6 +829,7 @@ module.exports = [
      '\u201cAna Artist submitted FX-001 \u2014 Dragon Head in Reef Riches for review.\u201d'],
     ['A project is submitted for review', 'Everybody holding View Project Review Queue', 'Who submitted which project.'],
     ['Your project submission is answered', 'The person who submitted it', 'That the answer is ready to read and close.'],
+    ['You are tagged in a chat message', 'Each person named, once', '\u201cPriya Nair mentioned you in Neon Drift.\u201d Never what was said \u2014 see 12.6.'],
     ['An administrator resets your password', 'The account holder only', 'Who did it. Never the password itself.'],
   ]),
   note('Who hears about a submission, and why those two',
@@ -945,7 +946,31 @@ module.exports = [
     + 'submissions and reference links live.'),
   p('Text messages do not expire. A conversation\u2019s history stays until the conversation itself is gone.'),
 
-  h2('12.6 Designations nobody may write to unasked'),
+  h2('12.6 Tagging somebody \u2014 @mentions'),
+  p('Type @ in the message box and a list of people opens. Keep typing to narrow it \u2014 \u201c@pri\u201d '
+    + 'finds Priya Nair \u2014 then press Enter, or Tab, or click the one you want. The name goes into the '
+    + 'message highlighted, and stays highlighted once it is sent.'),
+  bullets([
+    'The list offers the people in THAT conversation and nobody else. In a group, its members; in a '
+      + 'one-to-one, the other person. Somebody who is not in the room cannot be tagged from it.',
+    'Tag as many people as you like in one message. Each of them is told once, however many times their '
+      + 'name appears in it.',
+    'You are not offered to yourself, because tagging yourself would notify nobody.',
+    'Delete the name again before sending and it stops being a tag \u2014 nothing is sent to anybody.',
+  ]),
+  note('A tag is louder than a message, on purpose',
+    'An ordinary message shows up in the chat panel and on your phone. Being TAGGED also raises a '
+    + 'notification in the bell and on your desktop, headed \u201cYou were mentioned\u201d \u2014 the same '
+    + 'channel an assignment uses, and a different one from chat\u2019s own. Clicking it opens the '
+    + 'conversation.\n\n'
+    + 'It says who tagged you and which conversation, and never what was said. That is the same rule the '
+    + 'rest of chat follows: a message on a lock screen is the one place this application could show a '
+    + 'private conversation to whoever is standing nearby. The app is two taps away.\n\n'
+    + 'There is no way to mute a conversation in Zvky Forge, so nothing can currently stop a tag \u2014 or '
+    + 'any other chat notification \u2014 reaching you. If muting is ever added, a tag is built to come '
+    + 'through it.'),
+
+  h2('12.7 Designations nobody may write to unasked'),
   p('A designation can be shielded: nobody starts a conversation with it, or adds it to a group, unless they '
     + 'hold Message a Shielded Designation. Out of the box that shields Managing Director & CEO and Vice '
     + 'President \u2014 Global Operations & Business Development, and only the Super Admin can reach them.'),
@@ -962,7 +987,7 @@ module.exports = [
     + 'these two reachable again, changes a checkbox \u2014 there is no list of job titles buried in the '
     + 'application to keep in step with the studio\u2019s own.'),
 
-  h2('12.7 Who can read a conversation'),
+  h2('12.8 Who can read a conversation'),
   p('This chapter said, until the studio decided otherwise, that nobody could ever read a conversation '
     + 'they were not in. That is no longer true, and the paragraph saying it has been replaced rather '
     + 'than left standing. What follows is what is true now.'),
@@ -985,7 +1010,7 @@ module.exports = [
     + 'application cannot do it for you, and the permission carries a warning saying so to whoever grants '
     + 'it.'),
 
-  h2('12.8 Your profile'),
+  h2('12.9 Your profile'),
   shot('14-profile', 'The Profile panel: your photo, and your password.'),
   h3('Your photo'),
   steps([

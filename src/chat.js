@@ -22,6 +22,7 @@
 const { v4: uuid } = require('uuid');
 const files = require('./chat-files');
 const rolePermissions = require('./role-permissions');
+const mentions = require('./chat-mentions');
 
 /* Thirty people in a group, the owner included.
  *
@@ -527,7 +528,11 @@ async function listFor(db, userId) {
 /* One line for the conversation list. An attachment with no words is still
    worth a line, or a photo sent on its own would look like an empty thread. */
 function previewOf(row) {
-  const body = String(row.body || '').replace(/\s+/g, ' ').trim();
+  /* Mentions come out as plain @names here. The preview is one line of text
+     under a conversation in the list, with no renderer behind it and no member
+     list to resolve ids against — left alone it would read
+     "@[Priya Nair](3f2a1b4c-…) can you look at this". */
+  const body = mentions.toPlainText(String(row.body || '')).replace(/\s+/g, ' ').trim();
   if (body) return body.slice(0, 140);
   const n = Number(row.attachmentCount) || 0;
   if (n === 1) return 'Sent a file';
