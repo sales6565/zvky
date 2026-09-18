@@ -909,8 +909,21 @@ module.exports = [
     + 'manage it. When the last person leaves, the group is closed.'),
 
   h2('12.5 Files in chat'),
-  p('The paperclip attaches a file. Six formats are carried — .png, .jpg, .svg, .webp, .mov and .mp4 — up to '
+  p('The paperclip attaches a file. Six formats are carried \u2014 .png, .jpg, .svg, .webp, .mov and .mp4 \u2014 up to '
     + '30MB each. Anything else is refused with a message naming what was wrong.'),
+  h3('Pasting a screenshot'),
+  p('A picture on the clipboard can go straight into the message box: click into it and press Ctrl+V '
+    + '(Cmd+V on a Mac). The image is attached the same way the paperclip attaches one \u2014 a thumbnail '
+    + 'appears above the box with a \u00d7 to take it back off, and it sends as an ordinary attachment. It '
+    + 'works in a one-to-one conversation and in a group, and the picture can go on its own or alongside '
+    + 'something typed.'),
+  bullets([
+    'Pasting ordinary text is unchanged \u2014 it goes into the box as text, as it always did.',
+    'Copying words and a picture together attaches the picture and types the words.',
+    'The same six formats and the same 30MB ceiling apply, with the same refusal. A screenshot copied as a '
+      + 'GIF is turned away exactly as a .gif chosen through the paperclip would be.',
+    'Up to five files on one message, however they were added.',
+  ]),
   note('Chat files are deleted after twelve hours',
     'A screenshot pasted in to ask “is this the right blue” has done its job by the end of the day, and chat '
     + 'is not the studio\u2019s archive. Twelve hours after it is sent \u2014 a working day and the evening after '

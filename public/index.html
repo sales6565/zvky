@@ -425,6 +425,13 @@ body.chat-open #app{padding-left:calc(var(--chat-w, 380px) + 24px);}
 .chat-clip:hover{color:var(--brand-accent);border-color:var(--brand-accent);}
 .chat-picked{font-size:10.5px;color:var(--ink-muted);margin-bottom:6px;display:flex;
   flex-wrap:wrap;gap:6px;align-items:center;}
+.chat-picked > span{display:inline-flex;align-items:center;gap:5px;}
+/* The thumbnail of a picture waiting to be sent. Small enough that four of
+   them still leave room for the message box, and object-fit:cover so a tall
+   screenshot and a wide one are the same shape in the row. */
+.chat-thumb{width:34px;height:34px;object-fit:cover;border-radius:4px;
+  border:1px solid var(--border);display:block;background:var(--surface-2);}
+.chat-picked-size{color:var(--ink-faint);}
 .chat-picked .drop{cursor:pointer;color:var(--ink-faint);}
 .chat-picked .drop:hover{color:var(--brand-accent);}
 .chat-hint{font-size:10px;color:var(--ink-faint);margin-top:6px;line-height:1.5;}
@@ -13098,11 +13105,25 @@ const chatState = {
      turned into a blob — which means they have to be revoked, or a long
      session leaks a copy of every picture anybody sent. */
   blobs:new Map(),
+  /* Object URLs for the pictures waiting in the composer, keyed by the File
+     itself. Separate from `blobs` above, which holds SENT attachments fetched
+     from the server: these are local files that have not gone anywhere yet and
+     need no fetch, only a URL to point an <img> at.
+
+     Keyed by the File object rather than by name, because two screenshots
+     pasted a second apart are both called the same thing and are not the same
+     picture. Revoked when the file leaves the composer — see chatDropFile and
+     chatClearFiles — because a session spent pasting screenshots would
+     otherwise hold every one of them in memory until the tab closed. */
+  previews:new Map(),
 };
 
 function stopChat(){
   if(chatState.timer){ clearTimeout(chatState.timer); chatState.timer = null; }
   releaseChatBlobs();
+  // Anything left in the composer goes too, or signing out holds on to the
+  // screenshot somebody never got round to sending.
+  chatClearFiles();
 }
 function releaseChatBlobs(){
   chatState.blobs.forEach(url=>URL.revokeObjectURL(url));
@@ -13344,9 +13365,29 @@ function renderChatThread(head, body, foot){
     <div class="chat-msgs">${rows || '<div class="chat-empty">No messages yet. Say something.</div>'}</div>`;
 
   foot.hidden = false;
+  /* Whatever was already typed, carried across the redraw.
+   *
+   * foot.innerHTML below replaces the textarea with a fresh one, and a fresh
+   * textarea is an empty one. So attaching a file used to silently wipe a
+   * half-written message — which is its own bug, and it is load-bearing for
+   * pasting a picture INTO a sentence: the paste redraws, and without this the
+   * sentence it was pasted into would be gone. */
+  const draft = (document.getElementById('chatInput') || {}).value || '';
+  const hadFocus = document.activeElement && document.activeElement.id === 'chatInput';
+
   const picked = chatState.files.length
-    ? `<div class="chat-picked">${chatState.files.map((f,i)=>
-        `<span>&#128206; ${escapeHTML(f.name)} <span class="drop" data-drop="${i}" title="Remove">&times;</span></span>`).join('')}</div>`
+    ? `<div class="chat-picked">${chatState.files.map((f,i)=>{
+        /* A thumbnail where there is a picture to show, the paperclip where
+           there is not. The same row for both ways a file arrives: a pasted
+           screenshot and a chosen one are the same thing by the time they get
+           here, and showing them differently would be saying otherwise. */
+        const thumb = chatPreviewURL(f);
+        const face = thumb
+          ? `<img src="${escapeHTML(thumb)}" alt="" class="chat-thumb">`
+          : '<span aria-hidden="true">&#128206;</span>';
+        return `<span>${face} ${escapeHTML(f.name)} <span class="chat-picked-size">${escapeHTML(chatSize(f.size))}</span>`
+          + ` <span class="drop" data-drop="${i}" title="Remove">&times;</span></span>`;
+      }).join('')}</div>`
     : '';
   foot.innerHTML = `${picked}
     <div class="chat-compose">
@@ -13356,7 +13397,17 @@ function renderChatThread(head, body, foot){
     </div>
     <input type="file" id="chatFile" multiple accept="${escapeHTML(chatFileAccept())}" style="display:none;">
     <div class="chat-hint">${escapeHTML(chatState.limits.allowed)} &middot; up to ${Math.round(chatState.limits.maxBytes/1048576)}MB
+      &middot; paste a screenshot straight into the box
       &middot; files are deleted ${chatState.limits.hours} hours after they are sent</div>`;
+
+  /* And the half-written message goes back in, with the caret after it rather
+     than at the start — somebody who attaches a file mid-sentence carries on
+     typing, and a caret sent back to position zero is its own small insult. */
+  const box = document.getElementById('chatInput');
+  if(box && draft){
+    box.value = draft;
+    if(hadFocus){ box.focus(); box.setSelectionRange(draft.length, draft.length); }
+  }
 
   // Fetch the pictures, which cannot be done through a plain src — see chatState.blobs.
   body.querySelectorAll('[data-attach]').forEach(loadChatAttachment);
@@ -13398,6 +13449,173 @@ function chatSize(bytes){
 
 function chatFileAccept(){
   return String(chatState.limits.allowed || '').split(',').map(s=>s.trim()).filter(Boolean).join(',');
+}
+
+/* ---- what the composer will accept, asked in ONE place ----------------------
+
+   Two ways in now — the paperclip and a paste — and they must not be able to
+   disagree about what chat carries. Both call chatFileRefusal(), which mirrors
+   src/chat-files.js: the same extension list, read from the limits the server
+   sent rather than repeated here, and the same size ceiling.
+
+   The server is still the authority. This is the fast no, so that a 30MB file
+   is refused before it is uploaded rather than after. */
+
+const CHAT_MAX_FILES = 5;
+
+function chatAllowedExtensions(){
+  return String(chatState.limits.allowed || '')
+    .split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);
+}
+
+function chatExtensionOf(name){
+  const at = String(name || '').lastIndexOf('.');
+  return at > -1 ? String(name).slice(at).toLowerCase() : '';
+}
+
+/* null when the file is fine, otherwise the sentence to show.
+ *
+ * The wording is the server's, deliberately: somebody who hits the limit by
+ * paste and somebody who hits it through the dialog should not be reading two
+ * different explanations of one rule. */
+function chatFileRefusal(file){
+  if(!file) return 'That is not a file.';
+  const allowed = chatAllowedExtensions();
+  const ext = chatExtensionOf(file.name);
+  if(allowed.length && !allowed.includes(ext)){
+    return `“${file.name}” is a ${ext || 'file with no extension'}, which chat does not carry. `
+      + `Allowed: ${chatState.limits.allowed}.`;
+  }
+  const max = chatState.limits.maxBytes || Infinity;
+  if(file.size > max) return `${file.name} is larger than ${Math.round(max/1048576)}MB.`;
+  return null;
+}
+
+/* Put files in the composer, refusing what cannot go, and say why.
+ *
+ * Shared by the paperclip and the paste so the cap, the validation and the
+ * redraw happen once each however the file arrived. Returns how many were
+ * taken, which is what tells a paste whether it has anything to preventDefault
+ * for. */
+function chatAddFiles(files){
+  const room = CHAT_MAX_FILES - chatState.files.length;
+  if(room <= 0){
+    showToast(`${CHAT_MAX_FILES} files at a time is the most one message carries.`);
+    return 0;
+  }
+  const taken = [];
+  for(const file of files){
+    if(taken.length >= room) break;
+    const refusal = chatFileRefusal(file);
+    if(refusal){ showToast(refusal); continue; }
+    taken.push(file);
+  }
+  if(!taken.length) return 0;
+  chatState.files = [...chatState.files, ...taken];
+  renderChat();
+  return taken.length;
+}
+
+/* Take one file out, and let go of its preview. */
+function chatDropFile(index){
+  const [gone] = chatState.files.splice(index, 1);
+  chatReleasePreview(gone);
+  renderChat();
+}
+
+function chatClearFiles(){
+  chatState.files.forEach(chatReleasePreview);
+  chatState.files = [];
+}
+
+function chatReleasePreview(file){
+  const url = chatState.previews.get(file);
+  if(!url) return;
+  URL.revokeObjectURL(url);
+  chatState.previews.delete(file);
+}
+
+/* The thumbnail for a file waiting to be sent, or '' for one that has no
+   picture to show. Made once per file and remembered: renderChat() runs on
+   every keystroke that changes the list, and a new object URL each time would
+   be a new copy of the image each time. */
+function chatPreviewURL(file){
+  const kind = chatKindOfName(file.name);
+  if(kind !== 'image' || chatExtensionOf(file.name) === '.svg') return '';
+  let url = chatState.previews.get(file);
+  if(!url){
+    url = URL.createObjectURL(file);
+    chatState.previews.set(file, url);
+  }
+  return url;
+}
+
+/* Which of the allowed formats this is, by extension — the same question
+   kindOf() answers on the server, asked here so the composer can show a
+   picture as a picture before it has been anywhere near the server. */
+function chatKindOfName(name){
+  const ext = chatExtensionOf(name);
+  if(ext === '.mov' || ext === '.mp4') return 'video';
+  if(chatAllowedExtensions().includes(ext)) return 'image';
+  return 'file';
+}
+
+/* ---- pasting a picture straight into the box --------------------------------
+
+   A screenshot on the clipboard arrives as a FILE on the paste event, not as
+   text: the same shape the file dialog hands over, so it joins the same list
+   and is sent by the same code. Nothing about the paperclip changes.
+
+   WHAT COMES BACK. The files worth attaching, already named. A clipboard file
+   often has no useful name of its own — Chrome says "image.png", Firefox and
+   several apps say nothing at all — so the name is rebuilt from the type,
+   which is also what gives it an extension for chatFileRefusal() to judge. A
+   type chat does not carry (a GIF, a TIFF) is left in the list with its real
+   extension so the refusal names what it actually was. */
+const CHAT_PASTE_EXTENSIONS = {
+  'image/png':'.png', 'image/jpeg':'.jpg', 'image/jpg':'.jpg',
+  'image/webp':'.webp', 'image/svg+xml':'.svg',
+};
+
+function chatPastedImages(clipboard){
+  if(!clipboard) return [];
+  const out = [];
+  const items = clipboard.items ? [...clipboard.items] : [];
+  for(const item of items){
+    if(item.kind !== 'file') continue;
+    if(!String(item.type || '').startsWith('image/')) continue;
+    const file = item.getAsFile();
+    if(!file) continue;
+    out.push(chatNamePastedImage(file));
+  }
+  return out;
+}
+
+/* A clipboard image, given a name it can be judged and displayed by.
+ *
+ * A File's name is read-only, so a renamed one is a new File over the same
+ * bytes. The stamp makes two screenshots pasted a minute apart tell each other
+ * apart in the thread, which "image.png" twice does not. */
+function chatNamePastedImage(file){
+  const type = String(file.type || '').toLowerCase();
+  /* THE TYPE DECIDES, NOT THE NAME, and the order of these two matters more
+     than it looks. A clipboard file is called "image.png" by Chrome whatever
+     it actually holds — copy a GIF out of a page and the name says .png while
+     the type says image/gif. Reading the name first therefore renamed a GIF
+     into a PNG and walked it straight past the format check, which is the one
+     thing this function exists to feed. The name is a hint from the browser;
+     the type is what the clipboard asserts about the bytes. */
+  const ext = CHAT_PASTE_EXTENSIONS[type]
+    /* An image type chat does not carry keeps its real subtype as the
+       extension, so the refusal can say "is a .gif" rather than naming a
+       format it never had. */
+    || (type.startsWith('image/') ? `.${type.slice('image/'.length).replace(/[^a-z0-9]/g, '')}` : '')
+    || chatExtensionOf(file.name);
+  const d = new Date();
+  const two = (n) => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}${two(d.getMonth()+1)}${two(d.getDate())}`
+    + `-${two(d.getHours())}${two(d.getMinutes())}${two(d.getSeconds())}`;
+  return new File([file], `pasted-${stamp}${ext}`, { type: file.type || 'application/octet-stream' });
 }
 
 /* An <img src> cannot carry an Authorization header, and this application
@@ -13540,7 +13758,7 @@ function renderChatManage(head, body, foot){
 
 async function openChatConversation(id){
   chatState.view = 'thread';
-  chatState.files = [];
+  chatClearFiles();
   await loadChatThread(id);
   scheduleChatPoll();
 }
@@ -13558,7 +13776,7 @@ async function sendChatMessage(){
     const res = await api(`/chat/${encodeURIComponent(chatState.conversationId)}/messages`,
       { method:'POST', body:form });
     chatState.messages = [...chatState.messages, res.message];
-    chatState.files = [];
+    chatClearFiles();
     if(res.message.seq > (chatState.cursor||0)) chatState.cursor = res.message.seq;
     renderChat();
     chatScrollToEnd();
@@ -13712,7 +13930,7 @@ document.addEventListener('click', async e=>{
   if(e.target.closest('#chatClip')){ const f = document.getElementById('chatFile'); if(f) f.click(); return; }
 
   const drop = e.target.closest('[data-drop]');
-  if(drop){ chatState.files.splice(Number(drop.dataset.drop), 1); renderChat(); return; }
+  if(drop){ chatDropFile(Number(drop.dataset.drop)); return; }
 
   const person = e.target.closest('[data-person]');
   if(person){ await chatOpenWith(person.dataset.person); return; }
@@ -13788,16 +14006,43 @@ document.addEventListener('input', e=>{
 
 document.addEventListener('change', e=>{
   if(e.target.id !== 'chatFile') return;
-  const max = chatState.limits.maxBytes || Infinity;
-  const chosen = [...e.target.files];
-  /* Refused here as well as at the server. The server is the authority — see
-     the size test — but a 30MB upload that travels the whole way to be told no
-     is a slow way to learn it. */
-  const tooBig = chosen.filter(f=>f.size > max);
-  if(tooBig.length) showToast(`${tooBig[0].name} is larger than ${Math.round(max/1048576)}MB.`);
-  chatState.files = [...chatState.files, ...chosen.filter(f=>f.size <= max)].slice(0, 5);
+  /* Through chatAddFiles() rather than checking the size here, so the dialog
+     and a paste are held to one rule. The size check that used to live here is
+     inside chatFileRefusal(), alongside the extension check that did not — the
+     `accept` attribute filters the dialog but does not bind it, so choosing
+     "All files" and picking a .zip used to travel all the way to the server to
+     be refused. Nothing that was accepted before is refused now. */
+  chatAddFiles([...e.target.files]);
   e.target.value = '';
-  renderChat();
+});
+
+/* ---- pasting into the message box -------------------------------------------
+
+   The composer is one component for both kinds of conversation — direct and
+   group are the same renderChatThread() and the same #chatInput — so this is
+   written once and works in both.
+
+   THE DEFAULT IS UNTOUCHED. An ordinary text paste never reaches past the
+   first line: no image on the clipboard, nothing happens, the browser pastes
+   as it always did. preventDefault() is called only where there is genuinely
+   nothing left for the browser to do. */
+document.addEventListener('paste', e=>{
+  if(!e.target || e.target.id !== 'chatInput') return;
+  const images = chatPastedImages(e.clipboardData);
+  if(!images.length) return;                       // plain text: not ours
+
+  const took = chatAddFiles(images);
+
+  /* Text AND an image on the clipboard — copying a chunk of a document, say —
+     is both things at once. The picture is attached and the words are left to
+     paste themselves, which is what somebody who copied both meant.
+
+     With no text to paste, the default would put nothing in the box (or the
+     markup of the image, in some browsers), so it is stopped. Also stopped
+     when every image was refused: the person has a reason on screen already,
+     and a stray "image.png" typed into their message on top of it is noise. */
+  const text = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
+  if(!text || !took) e.preventDefault();
 });
 
 // Enter sends; Shift+Enter is a new line, the way every chat box behaves.
