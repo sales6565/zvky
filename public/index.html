@@ -407,6 +407,31 @@ body.chat-open #app{padding-left:calc(var(--chat-w, 380px) + 24px);}
 .chat-att{margin-top:6px;display:flex;flex-direction:column;gap:5px;}
 .chat-att img,.chat-att video{max-width:100%;max-height:190px;border-radius:8px;display:block;
   background:var(--surface-3);}
+/* A picture and its download button. align-self keeps the wrapper the width of
+   the picture rather than of the bubble, so the button sits on the corner of
+   the image and not out in the space beside a narrow one. */
+.chat-media{position:relative;align-self:flex-start;max-width:100%;}
+.chat-dl{position:absolute;top:6px;right:6px;width:26px;height:26px;padding:0;
+  display:flex;align-items:center;justify-content:center;font-size:13px;line-height:1;
+  border:0;border-radius:6px;cursor:pointer;
+  /* Its own dark chip rather than a surface colour: it sits on top of somebody
+     else's photograph, which may be any colour at all, so it carries its own
+     contrast instead of hoping the picture provides it. */
+  background:rgba(18,18,26,.72);color:#fff;
+  opacity:0;transition:opacity .12s ease, background .12s ease;}
+.chat-media:hover .chat-dl{opacity:1;}
+.chat-dl:hover{background:rgba(18,18,26,.92);}
+/* Reachable without a mouse: the button shows whenever it is focused, so
+   tabbing through a thread does not tab onto something invisible. */
+.chat-dl:focus-visible{opacity:1;outline:2px solid var(--brand-accent);outline-offset:1px;}
+/* Where there is no hover there is no hover reveal. A phone would otherwise
+   have a control it can never see. */
+@media (hover: none){ .chat-dl{opacity:1;} }
+/* On a file row it is not an overlay — it sits in the row, always visible,
+   because there is no picture for it to be getting in the way of. */
+.chat-file .chat-dl{position:static;opacity:1;margin-left:auto;width:24px;height:24px;
+  background:transparent;color:var(--brand-accent);}
+.chat-file .chat-dl:hover{background:var(--surface-2);}
 .chat-file{display:flex;align-items:center;gap:7px;font-size:11.5px;background:var(--surface-3);
   border-radius:8px;padding:6px 9px;color:var(--ink-muted);}
 .chat-file a{color:var(--brand-accent);text-decoration:none;cursor:pointer;}
@@ -13425,19 +13450,55 @@ function chatAttachmentsHTML(m){
     }
     const id = escapeHTML(a.id);
     const name = escapeHTML(a.fileName);
+    const dl = chatDownloadButton(a);
     /* downloadOnly is the server saying this format can carry a script, so it
        must never become a page on this origin. Shown as a row with a download,
        not rendered. */
     if(a.downloadOnly || a.kind === 'file'){
       return `<div class="chat-file"><span>&#128206;</span>
         <a data-download="${id}" data-name="${name}">${name}</a>
-        <span class="chat-sub">${chatSize(a.byteSize)}</span></div>`;
+        <span class="chat-sub">${chatSize(a.byteSize)}</span>${dl}</div>`;
     }
+    /* The picture and its download control are SIBLINGS inside a wrapper, not
+       nested one in the other, and that is what keeps the two actions apart.
+       A click on the button is not a click on the media: anything hung off
+       [data-attach] later — an expand-to-full-screen, say — will not see it,
+       because closest('[data-attach]') from the button finds nothing. */
     if(a.kind === 'video'){
-      return `<video data-attach="${id}" data-kind="video" controls preload="none" title="${name}"></video>`;
+      return `<div class="chat-media">
+        <video data-attach="${id}" data-kind="video" controls preload="none" title="${name}"></video>${dl}</div>`;
     }
-    return `<img data-attach="${id}" data-kind="image" alt="${name}" title="${name}">`;
+    return `<div class="chat-media">
+      <img data-attach="${id}" data-kind="image" alt="${name}" title="${name}">${dl}</div>`;
   }).join('')}</div>`;
+}
+
+/* The download control, for anything still downloadable.
+ *
+ * ONE FUNCTION FOR EVERY KIND. A picture, a video and a plain file row all get
+ * the same button with the same data on it, so "can I save this" has one
+ * answer in the thread rather than three that can drift. The only attachment
+ * that does not get one is an expired one, which has nothing behind it to
+ * fetch — the server stops serving it and offers no url, so a button there
+ * would be a button that reports a failure.
+ *
+ * IT IS A BUTTON, not a link with an href. The bytes are behind an
+ * Authorization header, which an <a href> cannot carry — the same reason the
+ * pictures are fetched and handed to the element as blobs. So the click goes
+ * through downloadChatAttachment(), which fetches properly and then saves.
+ *
+ * SENDER AND RECIPIENT ALIKE. Nothing here asks who is looking: the row is
+ * built from the attachment, and the server's membership check is what decides
+ * who may fetch it. Whoever can see the message can save what is in it. */
+function chatDownloadButton(a){
+  if(!a || a.expired || !a.url) return '';
+  const id = escapeHTML(a.id);
+  const name = escapeHTML(a.fileName);
+  /* The label names the file, because on a bubble with three pictures in it
+     "Download" three times tells a screen reader nothing about which. */
+  const label = escapeHTML(`Download ${a.fileName}`);
+  return `<button type="button" class="chat-dl" data-download="${id}" data-name="${name}"
+    title="${label}" aria-label="${label}">&#11123;</button>`;
 }
 
 function chatSize(bytes){
@@ -13646,19 +13707,43 @@ async function loadChatAttachment(el){
   }
 }
 
+/* Save an attachment to the machine.
+ *
+ * ALWAYS THE ORIGINAL. There is one stored file per attachment and one route
+ * that serves it — the very same URL loadChatAttachment() displays from. Chat
+ * makes no thumbnail and no second, smaller copy, so "download the full
+ * quality version" is not a separate thing to arrange here: the picture on
+ * screen is the whole file, drawn small by CSS, and this saves those bytes.
+ *
+ * A BUTTON AND A FETCH, not an <a href>, because the route wants an
+ * Authorization header and an anchor cannot send one. The anchor below is made
+ * afterwards, pointed at bytes already in hand, purely to get the browser's
+ * save behaviour and the right filename. */
 async function downloadChatAttachment(id, name){
   try{
-    const res = await fetch(`${API_BASE}/chat/attachments/${encodeURIComponent(id)}`,
-      { headers:{ Authorization:'Bearer ' + state.token } });
-    if(!res.ok){
-      const said = await res.json().catch(()=>({}));
-      throw new Error(said.error || 'That file is no longer available.');
+    /* The picture in the thread was fetched to be shown, and it is the same
+       file byte for byte. Reusing it saves downloading a 30MB video twice to
+       put one copy on screen and one on disk. Only ever a HIT when the entry
+       is live: the map is cleared and its URLs revoked in the same breath
+       (releaseChatBlobs), so a URL that is still in the map still works. */
+    let url = chatState.blobs.get(id);
+    let temporary = false;
+    if(!url){
+      const res = await fetch(`${API_BASE}/chat/attachments/${encodeURIComponent(id)}`,
+        { headers:{ Authorization:'Bearer ' + state.token } });
+      if(!res.ok){
+        const said = await res.json().catch(()=>({}));
+        throw new Error(said.error || 'That file is no longer available.');
+      }
+      url = URL.createObjectURL(await res.blob());
+      temporary = true;
     }
-    const url = URL.createObjectURL(await res.blob());
     const a = document.createElement('a');
     a.href = url; a.download = name || 'file';
     document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(()=>URL.revokeObjectURL(url), 30000);
+    /* Only the one made here. Revoking a cached URL would blank the picture
+       it is still being displayed from. */
+    if(temporary) setTimeout(()=>URL.revokeObjectURL(url), 30000);
   }catch(err){ showToast(err.message); }
 }
 

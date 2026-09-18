@@ -911,6 +911,19 @@ module.exports = [
   h2('12.5 Files in chat'),
   p('The paperclip attaches a file. Six formats are carried \u2014 .png, .jpg, .svg, .webp, .mov and .mp4 \u2014 up to '
     + '30MB each. Anything else is refused with a message naming what was wrong.'),
+  h3('Saving one'),
+  p('Every attachment in a conversation carries a download button, and it saves the file exactly as it was '
+    + 'sent \u2014 pictures are shrunk on screen to fit the panel, never in the file itself. On a picture or '
+    + 'a video the button sits in the top corner and appears when the pointer is over it; on a phone, and on '
+    + 'a row for a file that is not shown inline, it is simply there. The filename is still a link, as it '
+    + 'always was.'),
+  bullets([
+    'Anybody who can see the message can save what is in it \u2014 the person who sent it and everybody who '
+      + 'received it, in a one-to-one conversation and in a group alike.',
+    'The file keeps its own name. A screenshot pasted in is saved as pasted-20260418-143210.png rather than '
+      + 'as whatever the browser would have called it.',
+    'An expired attachment has no button: there is nothing left on the server to fetch.',
+  ]),
   h3('Pasting a screenshot'),
   p('A picture on the clipboard can go straight into the message box: click into it and press Ctrl+V '
     + '(Cmd+V on a Mac). The image is attached the same way the paperclip attaches one \u2014 a thumbnail '
