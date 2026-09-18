@@ -403,6 +403,41 @@ body.chat-open #app{padding-left:calc(var(--chat-w, 380px) + 24px);}
 .chat-more:hover{color:var(--brand-accent);}
 .chat-empty{padding:26px 16px;text-align:center;color:var(--ink-muted);font-size:12.5px;line-height:1.6;}
 
+/* sent / delivered / read */
+.chat-msg .when{display:flex;align-items:center;gap:4px;}
+.chat-status{background:none;border:0;padding:0;font:inherit;color:inherit;line-height:1;
+  display:inline-flex;align-items:center;}
+button.chat-status{cursor:pointer;}
+button.chat-status:hover .chat-tick{filter:brightness(1.35);}
+button.chat-status:focus-visible{outline:2px solid var(--brand-accent);outline-offset:2px;border-radius:3px;}
+/* The two ticks are drawn as two characters with the second pulled back over
+   the first, which is what gives WhatsApp's overlapping pair without an icon
+   font or an inline SVG on every message. */
+.chat-tick{letter-spacing:-3px;padding-right:3px;font-size:11px;color:var(--ink-faint);}
+.chat-tick.delivered{color:var(--ink-muted);}
+/* Blue, and deliberately not the brand red: this is the one mark in the
+   application whose colour IS its meaning, and everybody already reads blue
+   ticks as "they have seen it". A red pair would be read as an error. */
+.chat-tick.read{color:#3aa3ff;}
+/* Screen-reader text for the plain mark in a one-to-one, which has no button
+   to carry an aria-label. */
+.sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+  clip:rect(0 0 0 0);white-space:nowrap;border:0;}
+
+/* who has read it */
+.chat-info{position:absolute;inset:0;z-index:8;background:var(--surface-1);
+  display:flex;flex-direction:column;}
+.ci-head{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:11px 12px;
+  border-bottom:1px solid var(--border);}
+.ci-body{flex:1;overflow-y:auto;padding:6px 0;}
+.ci-sum{padding:8px 14px 12px;font-size:12px;color:var(--ink-muted);}
+.ci-row{display:flex;align-items:center;gap:9px;padding:7px 14px;}
+.ci-who{font-size:12.5px;font-weight:600;}
+.ci-when{margin-left:auto;font-size:11px;text-align:right;}
+.ci-read{color:#3aa3ff;}
+.ci-del{color:var(--ink-muted);}
+.ci-wait{color:var(--ink-faint);font-style:italic;}
+
 /* attachments */
 .chat-att{margin-top:6px;display:flex;flex-direction:column;gap:5px;}
 .chat-att img,.chat-att video{max-width:100%;max-height:190px;border-radius:8px;display:block;
@@ -13203,6 +13238,13 @@ const chatState = {
      it means, which is how the body is turned into tokens on send and how the
      highlight behind the box knows which @names are real. */
   picked:[],
+  /* The tick beside each of my own messages, by message id, as the server last
+     reported it: { status, delivered, read, audience }. Kept beside the
+     messages rather than on them because a status arrives on its own schedule
+     — the message does not change when somebody reads it. */
+  statuses:new Map(),
+  /* The open "message info" panel, or null. */
+  info:null,
 };
 
 function stopChat(){
@@ -13246,6 +13288,11 @@ async function loadChatThread(id, { keepScroll = false } = {}){
   chatState.conversationId = id;
   chatState.messages = res.messages;
   chatState.conversation = res.conversation;
+  /* The server sends a tick with each of my own messages in the page it just
+     returned. Taken here so the thread paints correct ticks on the first
+     frame, rather than showing one tick on everything and correcting itself a
+     poll later. */
+  for(const m of (res.messages || [])) if(m.status) chatState.statuses.set(m.id, m.status);
   chatState.hasMore = res.hasMore;
   renderChat();
   if(!keepScroll) chatScrollToEnd();
@@ -13271,6 +13318,13 @@ async function loadChatOlder(){
 async function markChatRead(){
   const last = chatState.messages[chatState.messages.length - 1];
   if(!last) return;
+  /* READ MEANS SOMEBODY LOOKED AT IT, which is stricter than "the app is
+     running". A tab behind another window goes on polling — and goes on being
+     DELIVERED to, which is the point of the two being separate — but nobody is
+     reading it, so nothing here is claimed on their behalf. The thread also has
+     to be the one on screen. */
+  if(document.hidden) return;
+  if(!chatState.open || chatState.view !== 'thread') return;
   try{
     const res = await api(`/chat/${encodeURIComponent(chatState.conversationId)}/read`,
       { method:'POST', body:{ seq:last.seq } });
@@ -13294,6 +13348,12 @@ async function pollChat(){
     chatState.cursor = res.cursor;
     chatState.unread = res.unread;
     paintChatBadge();
+    /* The ticks on my own messages, on the same tick of the same timer. This
+       is what moves a sender's screen from one check to two to blue without
+       them touching anything — and it runs whether or not anything new
+       arrived, because somebody READING an old message changes nothing about
+       the message and so brings nothing back in `fresh`. */
+    refreshChatStatuses().catch(()=>{});
     if(!res.fresh || !res.fresh.length) return;
 
     /* Anything in the conversation on screen is appended; anything else only
@@ -13443,7 +13503,7 @@ function renderChatThread(head, body, foot){
         ${(!mine && isGroup) ? `<div class="from">${escapeHTML(m.senderName || 'Removed user')}</div>` : ''}
         ${m.body ? chatBodyHTML(m.body) : ''}
         ${chatAttachmentsHTML(m)}
-        <div class="when">${escapeHTML(chatWhen(m.createdAt))}</div>
+        <div class="when">${escapeHTML(chatWhen(m.createdAt))}<span data-tick="${escapeHTML(m.id)}">${chatTickHTML(m)}</span></div>
       </div>
     </div>`;
   }).join('');
@@ -13792,6 +13852,146 @@ function chatBodyHTML(body){
   return withMentions.replace(/\n/g, '<br>');
 }
 
+/* ---- sent, delivered, read ---------------------------------------------------
+
+   THE CONVENTION IS WHATSAPP'S, because that is what the studio asked for and
+   what everybody already reads without being told:
+
+       one tick          on the server. It left here.
+       two ticks, grey   every recipient's client has it.
+       two ticks, blue   every recipient has looked at it.
+
+   In a one-to-one "every recipient" is one person. In a group it is an AND
+   across the members, which is why a group can sit on grey for a day while one
+   person is on leave — and why there is a breakdown to open, so the sender is
+   not left guessing which of six people it is waiting on.
+
+   ONLY ON YOUR OWN MESSAGES. A tick on somebody else's message would be
+   telling you about your own reading, which you already know. */
+function chatTickHTML(message){
+  const mine = message.senderId === (state.currentUser||{}).id;
+  if(!mine || message.kind === 'system') return '';
+  const mark = chatState.statuses.get(message.id) || { status:'sent', audience:0 };
+  const label = chatTickLabel(mark);
+  /* A button, not a glyph: it opens the breakdown, and a keyboard has to be
+     able to reach it. In a one-to-one there is nothing to break down — one
+     recipient, and the tick already says everything the panel would — so it
+     stays a plain mark there. */
+  const group = (chatState.conversation || {}).kind === 'group';
+  const body = `<span class="chat-tick ${escapeHTML(mark.status)}" aria-hidden="true">${
+    mark.status === 'sent' ? '&#10003;' : '&#10003;&#10003;'}</span>`;
+  if(!group) return `<span class="chat-status" title="${escapeHTML(label)}">${body}<span class="sr">${escapeHTML(label)}</span></span>`;
+  return `<button type="button" class="chat-status" data-info="${escapeHTML(message.id)}"
+    title="${escapeHTML(label)} — tap for details" aria-label="${escapeHTML(label)}. Show who has read it">${body}</button>`;
+}
+
+function chatTickLabel(mark){
+  if(!mark || mark.status === 'sent') return 'Sent';
+  if(mark.status === 'read') return 'Read by everyone';
+  if(mark.audience > 1) return `Delivered to all ${mark.audience}${mark.read ? ` — read by ${mark.read}` : ''}`;
+  return 'Delivered';
+}
+
+/* Refresh the ticks on the open conversation.
+ *
+ * Hung off the chat poll that was already running, so a sender's screen moves
+ * from one tick to two to blue on the same cadence everything else in the
+ * panel does — no refresh, and no second timer to stop when the session ends.
+ *
+ * Only while a thread is open and only for the caller's own messages. A closed
+ * panel has no ticks on screen to be wrong. */
+async function refreshChatStatuses(){
+  if(!chatState.open || chatState.view !== 'thread' || !chatState.conversationId) return;
+  const mine = chatState.messages.filter(m=>m.senderId === (state.currentUser||{}).id);
+  if(!mine.length) return;
+  /* From the oldest of my own messages on screen. The server caps it; this
+     stops a long scroll-back asking about the whole history. */
+  const from = Math.max(0, Number(mine[0].seq) - 1);
+  try{
+    const res = await api(`/chat/${encodeURIComponent(chatState.conversationId)}/status?since=${from}`);
+    let changed = false;
+    for(const [id, mark] of Object.entries(res.statuses || {})){
+      const had = chatState.statuses.get(id);
+      if(!had || had.status !== mark.status || had.read !== mark.read || had.delivered !== mark.delivered){
+        chatState.statuses.set(id, mark);
+        changed = true;
+      }
+    }
+    /* Repaint only the marks, not the thread. Re-rendering would scroll the
+       conversation and drop a half-written message; the ticks are the only
+       thing that moved. */
+    if(changed) repaintChatTicks();
+  }catch(err){ /* the ticks simply stay as they were */ }
+}
+
+function repaintChatTicks(){
+  document.querySelectorAll('#chatBody [data-tick]').forEach(el=>{
+    const m = chatState.messages.find(x=>x.id === el.dataset.tick);
+    if(m) el.innerHTML = chatTickHTML(m);
+  });
+}
+
+/* ---- message info -----------------------------------------------------------
+
+   WHO HAS HAD IT, AND WHEN. A group's tick is an AND across its members, so a
+   message can sit on grey for a day and the sender cannot tell which of six
+   people it is waiting on. This is that answer: every current member, with
+   their own two stamps or the absence of them.
+
+   CURRENT members, which is the whole of the "somebody left" rule — see
+   src/chat-status.js. Somebody who has left the group is not on this list and
+   is not holding the tick back.
+
+   Only ever opened on your own message; the route refuses anybody else's. */
+async function openChatMessageInfo(messageId){
+  try{
+    const res = await api(`/chat/${encodeURIComponent(chatState.conversationId)}/messages/${encodeURIComponent(messageId)}/info`);
+    chatState.info = res;
+    renderChatMessageInfo();
+  }catch(err){ showToast(err.message); }
+}
+
+function closeChatMessageInfo(){
+  chatState.info = null;
+  const el = document.getElementById('chatInfo');
+  if(el) el.remove();
+}
+
+function renderChatMessageInfo(){
+  const panel = document.getElementById('chatPanel');
+  const info = chatState.info;
+  if(!panel || !info) return;
+  closeChatMessageInfo();
+  const when = (at)=> at ? chatWhen(at) : null;
+  const rows = (info.people || []).map(p=>`
+    <div class="ci-row">
+      ${avatarHTML({ id:p.id, name:p.name, photoAt:p.photoUpdatedAt }, { size:26, title:false })}
+      <div class="ci-who">${escapeHTML(p.name || 'Removed user')}</div>
+      <div class="ci-when">
+        ${p.readAt
+          ? `<span class="ci-read">Read ${escapeHTML(when(p.readAt))}</span>`
+          : (p.deliveredAt
+            ? `<span class="ci-del">Delivered ${escapeHTML(when(p.deliveredAt))}</span>`
+            : '<span class="ci-wait">Not delivered yet</span>')}
+      </div>
+    </div>`).join('');
+  const mark = info.status || {};
+  const el = document.createElement('div');
+  el.id = 'chatInfo';
+  el.className = 'chat-info';
+  el.innerHTML = `
+    <div class="ci-head">
+      <button class="chat-back" id="ciBack" title="Back">&#8592;</button>
+      <strong>Message info</strong>
+    </div>
+    <div class="ci-body">
+      <div class="ci-sum">${escapeHTML(chatTickLabel(mark))}
+        <span class="chat-sub">&middot; sent ${escapeHTML(when(info.sentAt) || '')}</span></div>
+      ${rows || '<div class="chat-empty">There is nobody else in this conversation.</div>'}
+    </div>`;
+  panel.appendChild(el);
+}
+
 function chatSize(bytes){
   const n = Number(bytes) || 0;
   if(n < 1024) return `${n} B`;
@@ -14137,6 +14337,8 @@ async function openChatConversation(id){
   chatClearFiles();
   chatState.picked = [];
   chatMentionClose();
+  closeChatMessageInfo();
+  chatState.statuses.clear();
   await loadChatThread(id);
   scheduleChatPoll();
 }
@@ -14324,6 +14526,10 @@ document.addEventListener('click', async e=>{
 
   /* Before the other chat targets, because a suggestion row lives inside the
      panel and carries an avatar — which is itself clickable elsewhere. */
+  if(e.target.closest('#ciBack')){ closeChatMessageInfo(); return; }
+  const wants = e.target.closest('[data-info]');
+  if(wants){ await openChatMessageInfo(wants.dataset.info); return; }
+
   const pick = e.target.closest('[data-mention]');
   if(pick){ chatMentionChoose(Number(pick.dataset.mention)); return; }
 

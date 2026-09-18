@@ -7,6 +7,7 @@ const { authenticate, requirePermission, can } = require('../middleware/auth');
 const chat = require('../chat');
 const files = require('../chat-files');
 const mentions = require('../chat-mentions');
+const status = require('../chat-status');
 const notifications = require('../notifications');
 
 /* Chat, and the one decision in it that is a policy rather than a design.
@@ -142,7 +143,31 @@ router.get('/poll', async (req, res) => {
   const cursor = fresh.length
     ? fresh[fresh.length - 1].seq
     : await chat.highWater(db, req.user.id);
+
+  /* DELIVERED, and this is the moment it becomes true.
+   *
+   * There is no socket here — chat is a poll — so "the message reached their
+   * client" is precisely "a request of theirs returned it", and this is that
+   * request. Somebody who was offline when a message was sent is marked
+   * delivered by their own first poll on coming back, with nothing asked of
+   * the sender, which is the second edge case in the brief.
+   *
+   * Grouped by conversation because the watermark is per conversation, and
+   * marked to the HIGHEST seq handed over in each — one statement per
+   * conversation rather than one per message.
+   *
+   * After the response is decided and never in front of it. A status write
+   * that failed, or was slow, must not cost anybody their messages. */
+  const highest = new Map();
+  for (const m of fresh) {
+    const at = Number(m.seq) || 0;
+    if (at > (highest.get(m.conversationId) || 0)) highest.set(m.conversationId, at);
+  }
   res.json({ unread, fresh, cursor });
+  for (const [conversationId, throughSeq] of highest) {
+    status.markDelivered(db, { conversationId, userId: req.user.id, throughSeq })
+      .catch(() => { /* a tick, never a message */ });
+  }
 });
 
 // GET /api/chat/:id/messages?before=<seq>
@@ -154,6 +179,21 @@ router.get('/:id/messages', async (req, res) => {
     limit: req.query.limit,
   });
   const members = await chat.membersOf(db, req.params.id);
+
+  /* The ticks on my own messages in this page, and delivery for everybody
+     else's. Opening a conversation is the other way a message reaches a
+     client — somebody who never polled, because they had the tab shut, is
+     handed everything here. */
+  const mineHere = page.messages.filter((m) => String(m.senderId) === String(req.user.id));
+  const marks = await status.forMessages(db, {
+    conversationId: req.params.id, messageIds: mineHere.map((m) => m.id),
+  });
+  for (const m of page.messages) {
+    const mark = marks.get(m.id);
+    if (mark) m.status = mark;
+  }
+  const deliveredTo = page.messages.reduce((top, m) => Math.max(top, Number(m.seq) || 0), 0);
+
   res.json({
     ...page,
     conversation: {
@@ -175,6 +215,71 @@ router.get('/:id/messages', async (req, res) => {
       memberCount: members.length,
       maxMembers: chat.MAX_GROUP_MEMBERS,
     },
+  });
+
+  // Same rule as the poll: after the answer, and it cannot fail the read.
+  status.markDelivered(db, { conversationId: req.params.id, userId: req.user.id, throughSeq: deliveredTo })
+    .catch(() => {});
+});
+
+/* GET /api/chat/:id/status?since=<seq> — the ticks, refreshed.
+ *
+ * WHAT MAKES THEM MOVE WITHOUT A REFRESH. The panel already polls; when a
+ * conversation is open it asks this as well, and repaints whatever has changed.
+ * Only the caller's OWN messages have a tick, so only those are counted — a
+ * reader has no use for the status of somebody else's message, and asking for
+ * it would be asking who has read what in a conversation.
+ *
+ * `since` bounds it to the recent end of the thread. A conversation four
+ * thousand messages long is not four thousand ticks to recompute every fifteen
+ * seconds; the ones anybody is looking at are the last few. */
+router.get('/:id/status', async (req, res) => {
+  const seat = await mine(req, res);
+  if (!seat) return;
+  const since = Number(req.query.since);
+  const { rows } = await db.query(
+    `SELECT id FROM chat_messages
+      WHERE conversation_id = $1 AND sender_id = $2 AND kind = 'text'
+        ${Number.isFinite(since) ? 'AND seq > $3' : ''}
+      ORDER BY seq DESC LIMIT 60`,
+    Number.isFinite(since) ? [req.params.id, req.user.id, since] : [req.params.id, req.user.id]
+  );
+  const marks = await status.forMessages(db, {
+    conversationId: req.params.id, messageIds: rows.map((r) => r.id),
+  });
+  req.activitySkip();
+  res.json({ statuses: Object.fromEntries(marks) });
+});
+
+/* GET /api/chat/:id/messages/:messageId/info — who has had it, and when.
+ *
+ * FOR THE SENDER ONLY. "Who has read this" is a question about other people,
+ * and the one person entitled to ask it is the one waiting on the answer. A
+ * member reading somebody else's message has no business knowing which of
+ * their colleagues has opened the thread. */
+router.get('/:id/messages/:messageId/info', async (req, res) => {
+  const seat = await mine(req, res);
+  if (!seat) return;
+  const { rows } = await db.query(
+    'SELECT id, sender_id AS senderId, created_at AS createdAt FROM chat_messages WHERE id = $1 AND conversation_id = $2',
+    [req.params.messageId, req.params.id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'No such message.' });
+  if (String(rows[0].senderId) !== String(req.user.id)) {
+    return res.status(403).json({ error: 'Only the person who sent a message can see who has read it.' });
+  }
+  const people = await status.detailFor(db, {
+    conversationId: req.params.id, messageId: req.params.messageId, senderId: req.user.id,
+  });
+  const marks = await status.forMessages(db, {
+    conversationId: req.params.id, messageIds: [req.params.messageId],
+  });
+  req.activitySkip();
+  res.json({
+    messageId: req.params.messageId,
+    sentAt: rows[0].createdAt,
+    status: marks.get(req.params.messageId) || { status: 'sent', delivered: 0, read: 0, audience: 0 },
+    people,
   });
 });
 
@@ -366,9 +471,25 @@ async function pushChat(conversationId, sender, message) {
 router.post('/:id/read', async (req, res) => {
   const seat = await mine(req, res);
   if (!seat) return;
+  /* Where they had got to BEFORE this call, read before chat.markRead moves
+     it — after that the old value is gone, and the per-message stamps would
+     have no gap to fill. */
+  const from = Number(seat.lastReadSeq) || 0;
   const marked = await chat.markRead(db, req.params.id, req.user.id, (req.body || {}).seq);
   req.activitySkip();
   res.json({ marked, unread: await chat.unreadTotal(db, req.user.id) });
+
+  /* READ, per message, for the stretch they have just caught up on.
+   *
+   * The page only calls this from a conversation that is open and visible —
+   * see the guard on markChatRead() — which is what makes this mean "they
+   * looked at it" rather than "their tab is running somewhere". Read implies
+   * delivered, so the same rows get both stamps if the delivery had not
+   * already been written. */
+  status.markRead(db, {
+    conversationId: req.params.id, userId: req.user.id,
+    fromSeq: from, throughSeq: (req.body || {}).seq,
+  }).catch(() => {});
 });
 
 // --------------------------------------------------------------- attachments

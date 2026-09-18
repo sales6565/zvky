@@ -137,7 +137,7 @@ module.exports = [
     'Your name and designation — what the studio has you down as. If it is wrong, that is a Users change (chapter 11).',
     'The bell — notifications, with a count of the unread ones (chapter 12.1).',
     'The question mark — reopens the Quick Tour.',
-    'Profile — your photo and your password (chapter 12.9).',
+    'Profile — your photo and your password (chapter 12.10).',
   ]),
 
   h2('2.4 The tabs'),
@@ -829,7 +829,7 @@ module.exports = [
      '\u201cAna Artist submitted FX-001 \u2014 Dragon Head in Reef Riches for review.\u201d'],
     ['A project is submitted for review', 'Everybody holding View Project Review Queue', 'Who submitted which project.'],
     ['Your project submission is answered', 'The person who submitted it', 'That the answer is ready to read and close.'],
-    ['You are tagged in a chat message', 'Each person named, once', '\u201cPriya Nair mentioned you in Neon Drift.\u201d Never what was said \u2014 see 12.6.'],
+    ['You are tagged in a chat message', 'Each person named, once', '\u201cPriya Nair mentioned you in Neon Drift.\u201d Never what was said \u2014 see 12.7.'],
     ['An administrator resets your password', 'The account holder only', 'Who did it. Never the password itself.'],
   ]),
   note('Who hears about a submission, and why those two',
@@ -946,7 +946,35 @@ module.exports = [
     + 'submissions and reference links live.'),
   p('Text messages do not expire. A conversation\u2019s history stays until the conversation itself is gone.'),
 
-  h2('12.6 Tagging somebody \u2014 @mentions'),
+  h2('12.6 Sent, delivered, read'),
+  p('Every message you send carries a mark beside its time, and it means what the same marks mean '
+    + 'everywhere else:'),
+  table(['Mark', 'What it means', 'When it changes'], [
+    ['One check', 'Sent. It is on the server and cannot now be lost.', 'The moment the message goes.'],
+    ['Two checks, grey', 'Delivered. It has reached everybody\u2019s Zvky Forge.',
+     'When their app next looks \u2014 they do not have to do anything, and neither do you.'],
+    ['Two checks, blue', 'Read. Everybody has opened the conversation and seen it.',
+     'When the last of them looks at the thread.'],
+  ]),
+  bullets([
+    'The marks move on your screen by themselves. You never have to reload to watch a message go from '
+      + 'one check to two to blue.',
+    'In a GROUP both double marks mean everybody: grey once the last person\u2019s app has it, blue once '
+      + 'the last person has read it. One person on leave keeps a message grey, which is the point.',
+    'In a group, tap the marks to see WHO \u2014 every member, with when it reached them and when they '
+      + 'read it, or that it has not reached them yet. Only the person who sent a message can open that.',
+    'Somebody who leaves a group stops holding a message back. The \u201ceverybody\u201d is recalculated '
+      + 'from whoever is in the group now.',
+    'A message sent to somebody who is not signed in stays on one check until they are, then goes to two '
+      + 'on its own.',
+  ]),
+  note('Read means somebody looked, not that the app was running',
+    'Zvky Forge sitting behind another window goes on receiving \u2014 messages still arrive and still go '
+    + 'to two grey checks. Blue needs the conversation to be open and on screen. So the two marks answer '
+    + 'two different questions: \u201chas it got there\u201d and \u201chas anybody looked at it\u201d, '
+    + 'which is exactly the difference somebody waiting on an answer cares about.'),
+
+  h2('12.7 Tagging somebody \u2014 @mentions'),
   p('Type @ in the message box and a list of people opens. Keep typing to narrow it \u2014 \u201c@pri\u201d '
     + 'finds Priya Nair \u2014 then press Enter, or Tab, or click the one you want. The name goes into the '
     + 'message highlighted, and stays highlighted once it is sent.'),
@@ -970,7 +998,7 @@ module.exports = [
     + 'any other chat notification \u2014 reaching you. If muting is ever added, a tag is built to come '
     + 'through it.'),
 
-  h2('12.7 Designations nobody may write to unasked'),
+  h2('12.8 Designations nobody may write to unasked'),
   p('A designation can be shielded: nobody starts a conversation with it, or adds it to a group, unless they '
     + 'hold Message a Shielded Designation. Out of the box that shields Managing Director & CEO and Vice '
     + 'President \u2014 Global Operations & Business Development, and only the Super Admin can reach them.'),
@@ -987,7 +1015,7 @@ module.exports = [
     + 'these two reachable again, changes a checkbox \u2014 there is no list of job titles buried in the '
     + 'application to keep in step with the studio\u2019s own.'),
 
-  h2('12.8 Who can read a conversation'),
+  h2('12.9 Who can read a conversation'),
   p('This chapter said, until the studio decided otherwise, that nobody could ever read a conversation '
     + 'they were not in. That is no longer true, and the paragraph saying it has been replaced rather '
     + 'than left standing. What follows is what is true now.'),
@@ -1010,7 +1038,7 @@ module.exports = [
     + 'application cannot do it for you, and the permission carries a warning saying so to whoever grants '
     + 'it.'),
 
-  h2('12.9 Your profile'),
+  h2('12.10 Your profile'),
   shot('14-profile', 'The Profile panel: your photo, and your password.'),
   h3('Your photo'),
   steps([

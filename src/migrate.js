@@ -2454,6 +2454,11 @@ async function ensureChat(db, log) {
       is_owner        TINYINT(1) NOT NULL DEFAULT 0,
       joined_at       DATETIME   NOT NULL DEFAULT CURRENT_TIMESTAMP,
       last_read_seq   BIGINT     NOT NULL DEFAULT 0,
+      /* How far this person's CLIENT has been handed, which is not how far
+         they have looked at. The pair is what the two grey ticks and the two
+         blue ones are counted from, and what bounds the per-message rows in
+         chat_message_status to the gap since last time. */
+      last_delivered_seq BIGINT  NOT NULL DEFAULT 0,
       PRIMARY KEY (conversation_id, user_id),
       KEY idx_chat_members_user (user_id)
     )`));
@@ -2468,6 +2473,37 @@ async function ensureChat(db, log) {
       created_at      DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
       KEY idx_chat_messages_conv (conversation_id, seq)
     )`));
+
+  /* Who has been handed which message, and who has looked at it.
+   *
+   * ONE ROW PER PERSON PER MESSAGE. A group's ticks are an AND across its
+   * members — grey once everybody's client has it, blue once everybody has
+   * looked — and the message-info list is these rows read out one at a time.
+   * A single status column on the message could answer neither.
+   *
+   * Rows are only ever added to: a stamp, once set, is never cleared, because
+   * neither "it reached them" nor "they read it" can stop being true. Nothing
+   * records SENT — a message that exists was sent, and one that does not has
+   * no tick to draw.
+   *
+   * CASCADE from the message, so deleting a conversation takes its statuses
+   * with it, and from the user, so a deleted account leaves none behind. The
+   * aggregate is counted through a join to chat_members anyway, which is what
+   * stops somebody who LEFT a group holding its ticks grey for ever. */
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS chat_message_status (
+      message_id   CHAR(36) NOT NULL,
+      user_id      CHAR(36) NOT NULL,
+      delivered_at DATETIME NULL,
+      read_at      DATETIME NULL,
+      PRIMARY KEY (message_id, user_id),
+      KEY idx_chat_status_user (user_id)
+    )`));
+  for (const sql of [
+    'ALTER TABLE chat_message_status ADD CONSTRAINT fk_chat_status_message '
+      + 'FOREIGN KEY (message_id) REFERENCES chat_messages(id) ON DELETE CASCADE',
+    'ALTER TABLE chat_message_status ADD CONSTRAINT fk_chat_status_user '
+      + 'FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE',
+  ]) await db.query(sql).catch(() => {});
 
   await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS chat_attachments (
       id          CHAR(36)     NOT NULL PRIMARY KEY,
@@ -2496,6 +2532,29 @@ async function ensureChat(db, log) {
     + 'FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE SET NULL');
   await fk('ALTER TABLE chat_attachments ADD CONSTRAINT fk_chat_attach_message '
     + 'FOREIGN KEY (message_id) REFERENCES chat_messages(id) ON DELETE CASCADE');
+
+  /* The delivery watermark, for a deployment whose chat_members already exists
+   * — CREATE TABLE IF NOT EXISTS leaves an existing table exactly as it found
+   * it, so the column in the definition above only reaches a fresh database.
+   *
+   * Nothing is backfilled. Starting every member at 0 means the first poll
+   * after this deploy records a delivery for everything they had not been
+   * caught up to, which is the truth as far as anybody can now establish it:
+   * there is no record of what reached whose browser before this table
+   * existed. The alternative — assuming everything already read was also
+   * delivered — would invent stamps, and a "delivered 14:32" that nothing ever
+   * observed is worse than a tick that catches up a moment late. */
+  const { rows: mark } = await db.query(
+    `SELECT COLUMN_NAME AS n FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'chat_members'
+        AND COLUMN_NAME = 'last_delivered_seq'`
+  );
+  if (!mark.length) {
+    await db.query('ALTER TABLE chat_members ADD COLUMN last_delivered_seq BIGINT NOT NULL DEFAULT 0 '
+      + 'AFTER last_read_seq');
+    log('Schema: added chat_members.last_delivered_seq.');
+  }
+
   log('Schema: chat tables ready.');
 }
 
