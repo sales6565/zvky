@@ -740,36 +740,45 @@ const GROUPS = [
            Settings without a code change, which is the point of it being a
            permission rather than a tier check. */
         impliedBy: has('managePermissions'),
-        describe: 'The Actual P&L tab: the project\'s Total Value, the cost of the hours actually '
-          + 'logged on it priced at each person\'s designation rate, the breakdown by designation, '
-          + 'profit, margin and cost per hour. This permission also allows entering and editing that '
-          + 'Total Value figure, which is the only thing on the tab anybody types in.',
+        describe: 'The Actual P&L tab: the project\'s Total Project Value, the cost of the hours '
+          + 'recorded against its delivered work priced at each person\'s Rate Card rate, the '
+          + 'breakdown by role and level, profit and margin. This permission also allows entering '
+          + 'and editing that Total Project Value, which is the only figure in the whole Profit & '
+          + 'Loss feature that anybody types in.',
         danger: 'This discloses what a project was sold for and what its people cost per hour, and it '
-          + 'allows the contract value used for that tab\'s profit and margin to be changed.',
+          + 'allows the value the tab\'s profit and margin are computed from to be changed.',
       },
       {
         key: 'pnl.fixed',
         label: 'Access Fixed P&L',
         impliedBy: has('managePermissions'),
-        describe: 'The Fixed P&L tab: the contract value, the project\'s budgeted hours against the '
-          + 'hours consumed by delivered work, budgeted against actual cost from the role rates, '
-          + 'the variance, and the cost breakdown by role.',
-        danger: 'This discloses the contract value of a project and what its people cost per hour.',
+        describe: 'The Fixed P&L tab: the project\'s budgeted hours against the hours recorded on its '
+          + 'delivered work, both costed from the Rate Card, the variance between them in rupees and '
+          + 'per cent, and the breakdown by role and level. Nothing on that tab is entered by hand, '
+          + 'so this is a view-only grant.',
+        danger: 'This discloses what a project was estimated at and what its people cost per hour.',
       },
       {
         key: 'pnl.manage',
-        label: 'Manage P&L Rate Cards & Billing',
+        /* Renamed. It covered the rate cards, the project team assignments, the
+           client billing figures and the ad hoc cost lines; the last three are
+           gone from the product, so the name now describes what is left rather
+           than three things somebody would go looking for. The key is
+           unchanged, so no deployment loses the grants it has already made. */
+        label: 'Manage Rate Card',
         /* Editing, and deliberately NOT implied by pnl.view. Reading a margin
            and setting the rates that produce it are different authorities:
            somebody who can change a rate card can change every historical
            project's cost basis, and somebody who can change invoiced-to-date
            can change what the studio believes it has earned. */
         impliedBy: has('managePermissions'),
-        describe: 'Edit the rate cards, the team assignments and hours on a project, the client '
-          + 'billing figures, and the ad hoc cost line items.',
-        danger: 'These figures are what the Profit & Loss report is computed from. A wrong rate or '
-          + 'a wrong invoiced amount changes the studio\'s reported profit, and every change is '
-          + 'recorded in the Activity Log for that reason.',
+        describe: 'Edit the Rate Card in Settings \u2014 what an hour of each role and level costs. '
+          + 'This is the only editable data the Profit & Loss feature has, apart from each project\'s '
+          + 'Total Project Value, which belongs to Access Actual P&L.',
+        danger: 'The Rate Card is what BOTH tabs are costed from, for every project at once and for '
+          + 'work already done as well as work still to come. A wrong rate changes the studio\'s '
+          + 'reported profit everywhere, and every change is recorded in the Activity Log for that '
+          + 'reason.',
       },
     ],
   },

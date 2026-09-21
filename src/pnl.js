@@ -1,85 +1,60 @@
 // Profit and loss, per project and per client.
 //
-// THE FIRST MONEY IN THIS APPLICATION. Nothing here existed before: no rates,
-// no billing, no costs, no currency. That is worth knowing because it means
-// there is no house style to follow and no existing figure to reconcile
-// against — every number below is defined here and nowhere else, which is
-// exactly why it is defined once.
+// TWO TABS, ONE SET OF HOURS. Both read the same figure — the hours logged
+// against tasks that have reached Delivered — and differ only in what they
+// compare its cost against:
 //
-// ONE PLACE COMPUTES, EVERY SCREEN READS. The report, the client rollup and
-// the monthly snapshot all call the same functions. Two implementations of
-// "gross profit" agree until somebody edits one of them, and a P&L where the
-// summary card and the rollup disagree is worse than no P&L at all — somebody
-// would have to work out which of them to believe.
+//   Fixed P&L    against the ESTIMATE. What the project was budgeted at, in
+//                hours, costed at the same rates. Nothing is entered by hand;
+//                there is no contract value, no billing and no revenue on this
+//                tab at all. It answers "did the work cost more or less than we
+//                said it would".
+//
+//   Actual P&L   against the PRICE. What the project was sold for, which is the
+//                one figure in the whole feature somebody types in. It answers
+//                "what are we making on this".
+//
+// WHAT THIS USED TO BE. Eight manual inputs across the two tabs: a free-text
+// rate card, a per-project team list with hours typed against each person, a
+// contract value, a billing type, an invoiced-to-date figure, a typed Total
+// Cost and a set of ad hoc cost lines. Every one of them was either a number
+// the application already knew or a number nobody kept up to date, and a stale
+// figure in a P&L is worse than a missing one because it looks authoritative.
+// They are gone. What is left is one price list in Settings, one typed figure
+// per project, and arithmetic.
+//
+// ONE PLACE COMPUTES, EVERY SCREEN READS. The report, the client rollup and the
+// per-project panel all call the same functions. Two implementations of
+// "variance" agree until somebody edits one of them.
 //
 // WHAT THE NUMBERS MEAN, stated because none of them are self-evident:
 //
-//   Revenue      Invoiced to date. NOT the contract value. A contract worth a
-//                million that has billed nothing has earned nothing, and
-//                treating the contract as revenue would show a fat margin on
-//                work nobody has paid for. Contract value is recorded beside
-//                it and shown, because the gap between the two is itself worth
-//                seeing, but it is not revenue.
-//
-//   Labour cost  The sum of rate x hours across the project's team
-//                assignments. Hours are entered by hand, per the brief — see
-//                the note on that in the assignment section below.
-//
-//   Other costs  Ad hoc line items: contractors, licensing, outsourcing.
-//                Itemised rather than a single number so that a cost can be
-//                explained six months later.
-//
-//   Gross profit Revenue - labour - other.
-//   Margin       Gross profit / revenue, as a percentage. Null when revenue is
-//                zero: a project that has invoiced nothing has no margin, and
-//                printing 0% or -100% would both be assertions this cannot
-//                support.
+//   Budgeted hours  Every asset's Man Hours estimate, added up. The same
+//                   figure the Projects tab calls Total Bid Hours.
+//   Recorded hours  Work sessions on assets that reached Delivered. Already
+//                   clamped to the studio's working window in IST — see
+//                   src/working-time.js — so evenings and weekends are out of
+//                   it by construction.
+//   Cost            Hours × the Rate Card rate of the designation that logged
+//                   them, or, for the budget, of the designation the asset is
+//                   assigned to. One rate table, one method, both sides.
+//   Variance        Budgeted cost − actual cost. POSITIVE is a saving,
+//                   NEGATIVE is an overrun. That direction is the studio's, and
+//                   it is the opposite of the convention this file used before.
+//   Total Value     What the project was sold for. Manual, Actual tab only.
+//   Profit          Total Value − actual cost.
+//   Margin          Profit ÷ Total Value, as a percentage. Null when no Total
+//                   Value has been entered: a project nobody has priced has no
+//                   margin, and printing 0% or −100% would both be assertions
+//                   this cannot support.
 
-const { v4: uuid } = require('uuid');
-
-const TABLES = [
-  'rate_cards', 'role_rates', 'project_team_assignments', 'project_billing',
-  'project_other_costs', 'pnl_snapshots',
-];
-
-/* How a project is billed.
+/* The tables this feature needs to work, checked by /api/health.
  *
- * Nothing in this application had a billing type before, so this list is new
- * rather than reused — there was no enum to borrow. Kept as a small table here
- * rather than a database ENUM, which MySQL makes painful to extend. */
-const BILLING_TYPES = [
-  { id: 'fixed', label: 'Fixed' },
-  { id: 'milestone', label: 'Milestone' },
-  { id: 'time_and_material', label: 'Time & Material' },
-];
-const BILLING_IDS = BILLING_TYPES.map((b) => b.id);
-
-/* The rate card the studio starts with.
- *
- * These are the eight combinations the brief named, and they are SEEDED rather
- * than hardcoded — every one can be renamed, re-rated or deleted, and more can
- * be added, because a studio's ladder is its own business.
- *
- * Deliberately NOT tied to the designation catalogue. The studio's designations
- * are levelled trainee / associate / (base) / senior; the brief's rate card is
- * levelled Junior / Mid / Senior / Team Lead. Those are two different
- * vocabularies, and mapping one onto the other would either lose a level or
- * invent a correspondence nobody asked for. An assignment therefore picks a
- * rate card row explicitly rather than inheriting one from whoever it is for.
- *
- * The rate is 0 on purpose. A seeded number would be a number somebody might
- * not notice was invented, and an invented rate in a P&L is worse than a blank
- * one — the screen shows unrated rows as needing attention. */
-const SEED_RATE_CARDS = [
-  { role: 'Artist', level: 'Junior Level Artist' },
-  { role: 'Artist', level: 'Mid Level Artist' },
-  { role: 'Artist', level: 'Senior Artist' },
-  { role: 'Artist', level: 'Art Team Lead' },
-  { role: 'Animator', level: 'Junior Level Animator' },
-  { role: 'Animator', level: 'Mid Level Animator' },
-  { role: 'Animator', level: 'Senior Animator' },
-  { role: 'Animator', level: 'Animation Team Lead' },
-];
+ * Four fewer than there were. rate_cards, project_team_assignments,
+ * project_other_costs and pnl_snapshots backed the manual inputs and the margin
+ * trend that have been removed; they are not created on a new deployment and
+ * not required on an old one, where the rows are simply left where they are. */
+const TABLES = ['role_rates', 'project_billing'];
 
 // --- money ------------------------------------------------------------------
 
@@ -109,32 +84,20 @@ function percent(part, whole) {
 // --- schema -----------------------------------------------------------------
 
 async function ensureTables(db) {
-  await db.query(`CREATE TABLE IF NOT EXISTS rate_cards (
-    id            CHAR(36)      NOT NULL PRIMARY KEY,
-    \`role\`      VARCHAR(80)   NOT NULL,
-    level         VARCHAR(80)   NOT NULL,
-    rate_per_hour DECIMAL(10,2) NOT NULL DEFAULT 0,
-    is_active     TINYINT(1)    NOT NULL DEFAULT 1,
-    created_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uniq_rate_card (\`role\`, level)
-  )`);
-
-  /* PER-ROLE HOURLY RATES, keyed on the designation catalogue.
+  /* THE RATE CARD. One price list, keyed on the designation catalogue.
    *
-   * This is what prices a LOGGED HOUR, and it exists because nothing else
-   * could. A work_sessions row records a user and a number of seconds; a user
-   * has a designation; so a designation is the only thing an automatically
-   * recorded hour can be priced against without somebody hand-matching every
-   * person to a row every time.
+   * It is keyed that way because nothing else can work. A work_sessions row
+   * records a user and a number of seconds; a user holds a designation; so a
+   * designation is the only thing a recorded hour can be priced against
+   * without somebody hand-matching every person to a row every time. The same
+   * key prices an ESTIMATE, through the designation of whoever the asset is
+   * assigned to, which is what makes budgeted-against-actual possible per role.
    *
-   * WHY THIS IS NOT THE rate_cards TABLE ABOVE. That one is free text — the
-   * studio's price list of Artist/Senior Artist pairs — and it prices a PLANNED
-   * team assignment somebody types in. This one is keyed on the role a user
-   * actually holds, and prices the hours they actually logged. They are two
-   * different questions and merging them would mean either inventing a mapping
-   * from "game_artist" to "Mid Level Artist" that nobody asked for, or making
-   * the free-text list unable to price anything automatic.
+   * IT IS ROLE AND LEVEL, because the studio's designations already are:
+   * Senior Game Artist, Game Artist, Associate Game Artist, Trainee Game
+   * Artist. There was a second, free-text rate_cards table of Artist/Senior
+   * Artist pairs; it priced the manual team assignment and nothing else, so
+   * when that went it had no reader. One list now, and it is this one.
    *
    * Rates are in the same plain currency as every other figure in this module;
    * the screens label it INR.
@@ -149,216 +112,46 @@ async function ensureTables(db) {
     updated_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
   )`);
 
-  /* An assignment carries its OWN rate, copied from the card when it is made.
+  /* ONE FIELD ON THIS ROW THAT ANYBODY WRITES.
    *
-   * That copy is the point. A rate card is the studio's current price list; an
-   * assignment is what this project is being costed at. Re-pricing the card
-   * next April must not silently rewrite the cost of work done last year, which
-   * is exactly what a join to the live rate would do — and a P&L that changes
-   * retrospectively is not a record of anything.
+   * contract_value, billing_type, invoiced_to_date and total_cost are created
+   * for compatibility with a deployment that already has them — dropping a
+   * column deletes figures somebody entered and stood behind, and that is a
+   * migration nobody can undo — but nothing reads or writes them any more. The
+   * Fixed tab has no revenue side at all now, and the Actual tab's cost is
+   * computed rather than typed.
    *
-   * rate_card_id is kept so the row can say which card it came from, and is
-   * nullable so deleting a card does not delete the history that used it. */
-  await db.query(`CREATE TABLE IF NOT EXISTS project_team_assignments (
-    id            CHAR(36)      NOT NULL PRIMARY KEY,
-    project_id    CHAR(36)      NOT NULL,
-    user_id       CHAR(36)      NULL,
-    person_name   VARCHAR(160)  NULL,
-    rate_card_id  CHAR(36)      NULL,
-    \`role\`      VARCHAR(80)   NOT NULL,
-    level         VARCHAR(80)   NOT NULL,
-    rate_per_hour DECIMAL(10,2) NOT NULL DEFAULT 0,
-    /* THREE DIFFERENT HOURS, and they are three because they answer three
-       different questions. Conflating any two of them is what makes a P&L
-       agree with itself and disagree with reality.
-
-         assigned_hours  what was PLANNED for this person's role when the
-                         project was priced. The Fixed P&L's budget.
-         hours           what was actually WORKED. The cost, on both tabs.
-         billed_hours    what was actually INVOICED to the client for that
-                         role. May be less than worked (absorbed) or more
-                         (a rounded-up block).
-
-       All three default to 0, so an assignment written before these columns
-       existed reads as "planned nothing, billed nothing" rather than throwing
-       — and 0 is honest there: nobody recorded a plan. */
-    assigned_hours DECIMAL(10,2) NOT NULL DEFAULT 0,
-    \`hours\`     DECIMAL(10,2) NOT NULL DEFAULT 0,
-    billed_hours  DECIMAL(10,2) NOT NULL DEFAULT 0,
-    created_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    KEY idx_pta_project (project_id)
-  )`);
-
-  // One row per project. contract_value is recorded but is NOT revenue.
+   * total_value is what is left: the Actual tab's Total Project Value. NULL
+   * means nobody has entered one, which is a different fact from zero. */
   await db.query(`CREATE TABLE IF NOT EXISTS project_billing (
     project_id       CHAR(36)      NOT NULL PRIMARY KEY,
     contract_value   DECIMAL(14,2) NOT NULL DEFAULT 0,
     billing_type     VARCHAR(24)   NULL,
     invoiced_to_date DECIMAL(14,2) NOT NULL DEFAULT 0,
-    /* THE ACTUAL TAB'S TOTAL COST. Typed in, not computed: the studio's real
-       cost of a project includes things this application has no idea about —
-       salaries, software, a suite booked for a week — and a figure somebody
-       takes responsibility for is worth more than a precise-looking sum of the
-       parts the app happens to know.
-       NULL means "nobody has entered one yet", which is a different fact from
-       zero and is displayed differently. */
     total_cost       DECIMAL(14,2) NULL,
-    /* THE ACTUAL TAB'S REVENUE. The total contract value of the project, typed
-       in once, and the only manual figure that tab has left.
-       
-       NOT contract_value above it, though they will usually hold the same
-       number. contract_value is Client Billing's, edited under pnl.manage and
-       read by the Fixed tab; this one is edited under pnl.actual by whoever was
-       given the Actual tab. Sharing a column would mean handing anybody with
-       the Actual tab the ability to move the Fixed tab's revenue, which is the
-       one thing the two permissions exist to keep apart. A studio that wants
-       them equal types the same number twice, on purpose, in two places that
-       answer to two different people.
-
-       NULL means nobody has entered one, which is a different fact from zero
-       and is displayed differently. */
     total_value      DECIMAL(14,2) NULL,
     updated_by       VARCHAR(191)  NULL,
     updated_at       DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
   )`);
-
-  await db.query(`CREATE TABLE IF NOT EXISTS project_other_costs (
-    id         CHAR(36)      NOT NULL PRIMARY KEY,
-    project_id CHAR(36)      NOT NULL,
-    label      VARCHAR(160)  NOT NULL,
-    amount     DECIMAL(14,2) NOT NULL DEFAULT 0,
-    created_at DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    KEY idx_poc_project (project_id)
-  )`);
-
-  /* THE MARGIN TREND'S ONLY SOURCE OF HISTORY.
-   *
-   * The rest of this schema holds one current value per thing: hours worked to
-   * date, invoiced to date. A single current number cannot produce a curve, so
-   * a trend computed from it would be a straight line drawn through today's
-   * figure and presented as the past — a fabrication.
-   *
-   * So the state is written down as it changes, keyed by month. The trend then
-   * reports what was actually true at the end of each month. It necessarily
-   * starts empty and fills up from here; the screen says so rather than
-   * inventing the months before this table existed. */
-  await db.query(`CREATE TABLE IF NOT EXISTS pnl_snapshots (
-    id          CHAR(36)      NOT NULL PRIMARY KEY,
-    project_id  CHAR(36)      NOT NULL,
-    month       CHAR(7)       NOT NULL,
-    revenue     DECIMAL(14,2) NOT NULL DEFAULT 0,
-    labour_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
-    other_costs DECIMAL(14,2) NOT NULL DEFAULT 0,
-    captured_at DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uniq_snapshot (project_id, month),
-    KEY idx_snapshot_month (month)
-  )`);
-}
-
-/* The eight starting rows, inserted only when the table is empty.
- *
- * Empty rather than per-row, so a studio that deletes a level it does not use
- * does not have it put back on the next restart. */
-async function seed(db) {
-  const { rows } = await db.query('SELECT COUNT(*) AS n FROM rate_cards');
-  if (Number(rows[0].n) > 0) return 0;
-  for (const card of SEED_RATE_CARDS) {
-    await db.query(
-      'INSERT INTO rate_cards (id, `role`, level, rate_per_hour) VALUES ($1,$2,$3,0)',
-      [uuid(), card.role, card.level]
-    );
-  }
-  return SEED_RATE_CARDS.length;
 }
 
 // --- reading ----------------------------------------------------------------
 
-const shapeCard = (r) => ({
-  id: r.id, role: r.role, level: r.level,
-  ratePerHour: money(r.rate_per_hour),
-  isActive: Boolean(r.is_active),
-});
-
-async function rateCards(db, { includeInactive = true } = {}) {
-  const { rows } = await db.query(
-    `SELECT * FROM rate_cards ${includeInactive ? '' : 'WHERE is_active = 1'}
-      ORDER BY \`role\`, level`
-  );
-  return rows.map(shapeCard);
-}
-
-const shapeAssignment = (r) => ({
-  id: r.id,
-  projectId: r.project_id,
-  userId: r.user_id || null,
-  personName: r.person_name || r.user_name || '',
-  rateCardId: r.rate_card_id || null,
-  role: r.role,
-  level: r.level,
-  ratePerHour: money(r.rate_per_hour),
-  /* `hours` stays the WORKED hours under its original name. Renaming it to
-     actualHours would have been tidier and would have broken every caller that
-     already reads it, for no gain — the two new fields are named for what they
-     are and this one keeps the meaning it always had. */
-  hours: hours(r.hours),
-  assignedHours: hours(r.assigned_hours),
-  billedHours: hours(r.billed_hours),
-  // Computed, never stored: a stored total is a second copy of a product that
-  // can fall out of step with its own factors. Same rate for all three, because
-  // it is the same person doing the same work — what differs is the hours.
-  cost: money(money(r.rate_per_hour) * hours(r.hours)),
-  budgetedCost: money(money(r.rate_per_hour) * hours(r.assigned_hours)),
-  /* Worked minus billed. Positive means hours were worked and not invoiced —
-     absorbed. Negative means more was invoiced than worked. Both are worth
-     seeing and neither is automatically wrong, so it is reported as a signed
-     number rather than flagged. */
-  hoursDelta: hours(hours(r.hours) - hours(r.billed_hours)),
-});
-
-async function assignments(db, projectId) {
-  const { rows } = await db.query(
-    `SELECT a.*, u.\`name\` AS user_name
-       FROM project_team_assignments a
-       LEFT JOIN users u ON u.id = a.user_id
-      WHERE a.project_id = $1
-      ORDER BY a.\`role\`, a.level, a.created_at`,
-    [projectId]
-  );
-  return rows.map(shapeAssignment);
-}
-
 async function billing(db, projectId) {
   const { rows } = await db.query('SELECT * FROM project_billing WHERE project_id = $1', [projectId]);
   const row = rows[0];
+  /* NULL, not 0, when nobody has entered a Total Project Value. "This project
+     is worth nothing" and "nobody has said what this project is worth" are
+     different facts, and only one of them is ever true. The screen shows a dash
+     for the second. */
   return {
     projectId,
-    contractValue: row ? money(row.contract_value) : 0,
-    billingType: row ? (row.billing_type || null) : null,
-    invoicedToDate: row ? money(row.invoiced_to_date) : 0,
-    /* NULL, not 0, when nobody has entered one. "This project cost nothing" and
-       "nobody has said what this project cost" are different facts, and only
-       one of them is ever true. The screen shows a dash for the second. */
-    totalCost: row && row.total_cost !== null && row.total_cost !== undefined
-      ? money(row.total_cost) : null,
-    /* The Actual tab's Total Value, on the same null-means-unentered rule and
-       for the same reason. A project nobody has priced has no margin; a project
-       priced at zero has a margin of minus everything. */
     totalValue: row && row.total_value !== null && row.total_value !== undefined
       ? money(row.total_value) : null,
     updatedBy: row ? row.updated_by : null,
     updatedAt: row ? row.updated_at : null,
-    // Whether anything has been entered at all, so the screen can say "not set
-    // up" rather than showing a confident set of zeroes.
-    configured: Boolean(row),
+    configured: Boolean(row && row.total_value !== null && row.total_value !== undefined),
   };
-}
-
-async function otherCosts(db, projectId) {
-  const { rows } = await db.query(
-    'SELECT * FROM project_other_costs WHERE project_id = $1 ORDER BY created_at', [projectId]);
-  return rows.map((r) => ({ id: r.id, projectId: r.project_id, label: r.label, amount: money(r.amount) }));
 }
 
 // --- the numbers ------------------------------------------------------------
@@ -366,183 +159,64 @@ async function otherCosts(db, projectId) {
 /* One project's P&L, from parts already fetched.
  *
  * Takes the rows rather than the database so the same function serves the
- * report, the rollup and the snapshot without three round trips — and so it can
- * be tested against hand-written inputs with no server at all. */
-function compute({ billing: bill, assignments: team = [], otherCosts: others = [], hours: worked = null }) {
-  const revenue = money(bill ? bill.invoicedToDate : 0);
-  const labourCost = money(team.reduce((t, a) => t + a.cost, 0));
-  const otherCost = money(others.reduce((t, c) => t + c.amount, 0));
-  const grossProfit = money(revenue - labourCost - otherCost);
+ * report, the rollup and the per-project panel without three round trips — and
+ * so it can be tested against hand-written inputs with no server at all.
+ *
+ * `worked` is what src/pnl-hours.js returned: the budgeted hours and the
+ * recorded hours, both already costed against the Rate Card. Everything below
+ * is arithmetic on those and on the one typed figure. */
+function compute({ billing: bill, hours: worked = null }) {
+  const budgetedHours = worked ? hours(worked.budgetedHours) : 0;
+  const budgetedCost = worked ? money(worked.budgetedCost) : 0;
+  const recordedHours = worked ? hours(worked.recordedHours) : 0;
+  const recordedCost = worked ? money(worked.recordedCost) : 0;
 
-  /* THE BUDGET DIMENSION. Costed at the same rates as the work actually done,
-     so a variance is a difference in HOURS and never an artefact of re-pricing
-     a rate card between the plan and the work. */
-  const budgetedCost = money(team.reduce((t, a) => t + a.budgetedCost, 0));
-  const budgetVariance = money(labourCost - budgetedCost);
-
-  const contractValue = money(bill ? bill.contractValue : 0);
-  const otherCostTotal = otherCost;
-
-  /* THE ACTUAL TAB'S TWO NUMBERS.
-   *
-   * One typed in, one computed, and nothing else. `worked` is the recorded
-   * hours and their cost from src/pnl-hours.js; it is optional so that the
-   * snapshot writer and any caller that only wants the Fixed figures need not
-   * fetch it. Absent means "no recorded hours were supplied", which costs
-   * nothing rather than guessing. */
+  /* NOT ENTERED IS NOT ZERO — see the note in billing(). */
   const totalValue = bill && bill.totalValue !== null && bill.totalValue !== undefined
     ? money(bill.totalValue) : null;
-  const recordedCost = worked ? money(worked.consumedCost) : 0;
-  const recordedHours = worked ? hours(worked.consumedHours) : 0;
 
   return {
-    revenue,
-    contractValue,
-    billingType: bill ? bill.billingType : null,
-    labourCost,
-    otherCosts: otherCost,
-    totalCost: money(labourCost + otherCost),
-    grossProfit,
-    marginPercent: percent(grossProfit, revenue),
-    hoursTotal: hours(team.reduce((t, a) => t + a.hours, 0)),
-    people: team.length,
-
-    // --- the Fixed view: planned against actual, priced at the agreed fee ----
+    // --- the Fixed tab: the estimate against what it took --------------------
+    budgetedHours,
     budgetedCost,
-    /* Named actualCost as well as labourCost. They are the same number; the
-       Fixed tab talks about "budgeted vs actual" and reading `labourCost` there
-       would make somebody check whether it was the same thing. */
-    actualCost: labourCost,
-    budgetVariance,
-    /* Over budget is about LABOUR against the labour plan. Other costs are not
-       in the budget figure — nobody planned them per role — so including them
-       here would flag a project as over budget for a cost the budget never
-       claimed to cover. */
-    overBudget: budgetedCost > 0 && labourCost > budgetedCost,
-    /* A project with no plan recorded is NOT under budget, it is unplanned.
-       Saying "0 budgeted, 5,000 spent, 5,000 over" about a project nobody
-       budgeted would put a red flag on every project that predates the field. */
-    budgeted: budgetedCost > 0,
-    /* Revenue on the Fixed tab is the AGREED FEE, not what has been invoiced so
-       far: a fixed-bid project earns its price by delivering, and judging it on
-       part-way invoicing would call every mid-flight project a loss.
-
-       Other costs ARE subtracted here, which is a deliberate departure from the
-       brief's literal "Fixed Contract Value − Actual Cost". Money spent on
-       outsourcing is gone whichever tab you are looking at, and leaving it out
-       would make the same project's profit differ between the two tabs for a
-       reason that has nothing to do with what the tabs are comparing. */
-    fixedProfit: money(contractValue - labourCost - otherCostTotal),
-    fixedMarginPercent: percent(money(contractValue - labourCost - otherCostTotal), contractValue),
-
-    // --- the Actual view: the contract value against what the work cost -------
-    /* WHAT THIS TAB USED TO BE, AND WHY IT CHANGED. Revenue was invoiced-to-
-     * date and cost was a figure somebody typed in, sitting beside a manually
-     * maintained team list, a billing type and a set of ad hoc cost lines. Five
-     * things to keep up to date, and four of them were already knowable: the
-     * application records who worked on what and for how long, and Settings
-     * records what an hour of each designation costs.
-     *
-     * So the tab now asks for one number — the contract value — and computes
-     * the other side from what actually happened. The manual inputs are gone,
-     * not hidden: what is not entered cannot be stale.
-     *
-     * NULL, NOT ZERO, when nobody has entered a Total Value. A project nobody
-     * has priced has no profit and no margin; printing a loss equal to its
-     * costs would be an assertion this cannot support, and it is the direction
-     * of error that makes a healthy project look like a disaster. */
-    totalValue,
-    /* Σ (hours each person logged on this project × their designation's rate).
-     * Every asset, every state — work in progress has cost the studio its
-     * hours whether or not the client has received it. */
-    recordedCost,
     recordedHours,
-    /* Hours from somebody whose designation has no rate. Never folded in at
-       zero: the cost above is then LOWER than the truth, and the screen has to
-       be able to say so. */
-    unpricedHours: worked ? hours(worked.consumedUnpricedHours) : 0,
+    recordedCost,
+    /* Budgeted minus actual: POSITIVE is a saving, NEGATIVE an overrun. */
+    variance: money(budgetedCost - recordedCost),
+    variancePercent: budgetedCost > 0
+      ? percent(money(budgetedCost - recordedCost), budgetedCost) : null,
+    /* A project nobody estimated is UNPLANNED, not under budget. Every project
+       that predates the Man Hours field would otherwise carry a red flag that
+       means nothing. */
+    budgeted: budgetedHours > 0,
+    overBudget: budgetedCost > 0 && recordedCost > budgetedCost,
+    /* Hours nobody could price, on either side. Reported, never folded in at
+       zero: the costs above are then LOWER than the truth, and the screen has
+       to be able to say so. */
+    unpricedHours: worked
+      ? hours(worked.recordedUnpricedHours + worked.budgetedUnpricedHours) : 0,
+    recordedUnpricedHours: worked ? hours(worked.recordedUnpricedHours) : 0,
+    budgetedUnpricedHours: worked ? hours(worked.budgetedUnpricedHours) : 0,
+
+    // --- the Actual tab: the price against what it took ----------------------
+    totalValue,
     actualProfit: totalValue === null ? null : money(totalValue - recordedCost),
     actualMarginPercent: totalValue === null ? null
       : percent(money(totalValue - recordedCost), totalValue),
-    /* What an hour on this project actually cost, blended. Derived rather than
-       entered, so it cannot disagree with the two figures above it. */
+    /* What an hour on this project actually cost, blended. Derived, so it
+       cannot disagree with the two figures it comes from. */
     costPerHour: recordedHours > 0 ? money(recordedCost / recordedHours) : null,
-
-    /* Still computed, still on the FIXED tab. The Actual tab no longer shows
-       either, because the team list they come from is no longer maintained for
-       it — but the Fixed tab's budget is built from that list and these are how
-       it reports it. */
-    billedHoursTotal: hours(team.reduce((t, a) => t + a.billedHours, 0)),
-    assignedHoursTotal: hours(team.reduce((t, a) => t + a.assignedHours, 0)),
-    /* Worked minus billed, across the team. Positive means work was absorbed. */
-    hoursDelta: hours(team.reduce((t, a) => t + a.hoursDelta, 0)),
   };
 }
 
-/* Labour by role and level, over EVERY rate card row.
- *
- * Every row including the unused ones, at zero. A table that lists only what
- * was used cannot answer "did we put any seniors on this at all", which is
- * most of what a producer looks at this table for — and its shape would change
- * from project to project, so two projects could not be compared side by side.
- *
- * Assignments whose role/level no longer matches any card — because the card
- * was renamed or deleted — are appended rather than dropped. Their cost is real
- * and has to appear somewhere or the breakdown will not add up to the labour
- * total above it. */
-function labourByRoleLevel(cards, team) {
-  /* The separator is an explicit \u0000 escape, not a raw NUL byte. It was a raw
-     one until now, which made grep and diff treat this whole file as binary and
-     hid the separator from anybody reading it. The runtime key is unchanged: a
-     NUL cannot appear in a role or level, so two different pairs can never
-     collide into one bucket. */
-  const key = (role, level) => `${role}\u0000${level}`;
-  const buckets = new Map();
-  const blank = (role, level, ratePerHour, onRateCard) => ({
-    role, level, ratePerHour, onRateCard,
-    assignedHours: 0, hours: 0, billedHours: 0,
-    budgetedCost: 0, cost: 0,
-  });
-  for (const card of cards) {
-    buckets.set(key(card.role, card.level), blank(card.role, card.level, card.ratePerHour, true));
-  }
-  for (const a of team) {
-    const k = key(a.role, a.level);
-    if (!buckets.has(k)) buckets.set(k, blank(a.role, a.level, a.ratePerHour, false));
-    const bucket = buckets.get(k);
-    bucket.assignedHours = hours(bucket.assignedHours + a.assignedHours);
-    bucket.hours = hours(bucket.hours + a.hours);
-    bucket.billedHours = hours(bucket.billedHours + a.billedHours);
-    bucket.budgetedCost = money(bucket.budgetedCost + a.budgetedCost);
-    bucket.cost = money(bucket.cost + a.cost);
-  }
-  /* The two derived columns each tab shows, worked out once here so the Fixed
-     table and the Actual table cannot disagree about the same row. */
-  return [...buckets.values()].map((b) => ({
-    ...b,
-    variance: money(b.cost - b.budgetedCost),
-    /* Per row, the same rule as the project total: no plan means unplanned, not
-       under budget. */
-    overBudget: b.budgetedCost > 0 && b.cost > b.budgetedCost,
-    hoursDelta: hours(b.hours - b.billedHours),
-  }));
-}
-
 /* Everything one project's P&L screen needs. */
-async function forProject(db, projectId, { cards = null, hours: worked = null } = {}) {
-  const [bill, team, others] = await Promise.all([
-    billing(db, projectId),
-    assignments(db, projectId),
-    otherCosts(db, projectId),
-  ]);
-  const rateCardRows = cards || await rateCards(db);
+async function forProject(db, projectId, { hours: worked = null } = {}) {
+  const bill = await billing(db, projectId);
   return {
     projectId,
     billing: bill,
-    assignments: team,
-    otherCosts: others,
-    totals: compute({ billing: bill, assignments: team, otherCosts: others, hours: worked }),
-    byRoleLevel: labourByRoleLevel(rateCardRows, team),
+    totals: compute({ billing: bill, hours: worked }),
+    byRole: worked ? worked.byRole : [],
   };
 }
 
@@ -550,213 +224,50 @@ async function forProject(db, projectId, { cards = null, hours: worked = null } 
  *
  * Summed from the per-project figures rather than recomputed from a wider
  * query, so a client total can never disagree with the projects listed under
- * it. Margin is recomputed from the summed revenue and profit rather than
- * averaged — an average of percentages weights a £500 project the same as a
- * £500,000 one, which is how a rollup ends up flattering a loss. */
+ * it. Percentages are recomputed from the summed figures rather than averaged —
+ * an average of percentages weights a 50,000 project the same as a 50,00,000
+ * one, which is how a rollup ends up flattering a loss. */
 function rollup(perProject) {
-  const revenue = money(perProject.reduce((t, p) => t + p.totals.revenue, 0));
-  const labourCost = money(perProject.reduce((t, p) => t + p.totals.labourCost, 0));
-  const otherCost = money(perProject.reduce((t, p) => t + p.totals.otherCosts, 0));
-  const grossProfit = money(revenue - labourCost - otherCost);
+  const sum = (pick) => perProject.reduce((t, p) => t + pick(p.totals), 0);
+  const budgetedCost = money(sum((t) => t.budgetedCost));
+  const recordedCost = money(sum((t) => t.recordedCost));
+  /* Total Value only adds up across the projects that HAVE one, and how many
+     did is reported beside it — "₹20,00,000 across 3 of 7 projects" cannot then
+     be misread as the value of all seven. A project with no Total Value
+     contributes nothing rather than a zero that would drag the margin down as
+     if it had been sold for nothing. */
+  const totalValue = money(sum((t) => (t.totalValue === null ? 0 : t.totalValue)));
+  const actualProfit = money(sum((t) => (t.actualProfit === null ? 0 : t.actualProfit)));
+  const recordedHours = hours(sum((t) => t.recordedHours));
+
   return {
     projects: perProject.length,
-    revenue,
-    contractValue: money(perProject.reduce((t, p) => t + p.totals.contractValue, 0)),
-    labourCost,
-    otherCosts: otherCost,
-    totalCost: money(labourCost + otherCost),
-    grossProfit,
-    marginPercent: percent(grossProfit, revenue),
-    hoursTotal: hours(perProject.reduce((t, p) => t + p.totals.hoursTotal, 0)),
 
-    /* The Fixed view's rollup. Contract value rather than invoiced, and its
-       margin recomputed from the summed figures rather than averaged — same
-       reasoning as the margin above it. */
-    contractTotal: money(perProject.reduce((t, p) => t + p.totals.contractValue, 0)),
-    budgetedCost: money(perProject.reduce((t, p) => t + p.totals.budgetedCost, 0)),
-    actualCost: labourCost,
-    budgetVariance: money(perProject.reduce((t, p) => t + p.totals.budgetVariance, 0)),
-    fixedProfit: money(perProject.reduce((t, p) => t + p.totals.fixedProfit, 0)),
-    fixedMarginPercent: percent(
-      money(perProject.reduce((t, p) => t + p.totals.fixedProfit, 0)),
-      money(perProject.reduce((t, p) => t + p.totals.contractValue, 0))
-    ),
-    /* How many of these projects are over their labour budget — a count, not a
-       flag, because a rollup covering ten projects of which two are over is not
-       "over budget", it is "two over budget". */
+    // Fixed
+    budgetedHours: hours(sum((t) => t.budgetedHours)),
+    budgetedCost,
+    recordedHours,
+    recordedCost,
+    variance: money(budgetedCost - recordedCost),
+    variancePercent: budgetedCost > 0 ? percent(money(budgetedCost - recordedCost), budgetedCost) : null,
+    /* A COUNT, not a flag: a rollup over ten projects of which two are over is
+       not "over budget", it is "two over budget". */
     overBudgetProjects: perProject.filter((p) => p.totals.overBudget).length,
     budgetedProjects: perProject.filter((p) => p.totals.budgeted).length,
+    unpricedHours: hours(sum((t) => t.unpricedHours)),
 
-    /* THE ACTUAL VIEW'S ROLLUP.
-     *
-     * Total Value only adds up across the projects that HAVE one, and how many
-     * did is reported beside it — "₹20,00,000 across 3 of 7 projects" cannot
-     * then be misread as the value of all seven. A project with no Total Value
-     * contributes nothing to the total and is counted as unpriced, rather than
-     * contributing a zero that would drag the margin down as if it had been
-     * sold for nothing.
-     *
-     * Margin is recomputed from the summed value and the summed profit rather
-     * than averaged, for the same reason as the margin above it: an average of
-     * percentages weights a ₹50,000 project the same as a ₹50,00,000 one. */
-    totalValue: money(perProject.reduce(
-      (t, p) => t + (p.totals.totalValue === null ? 0 : p.totals.totalValue), 0)),
+    // Actual
+    totalValue,
     projectsWithTotalValue: perProject.filter((p) => p.totals.totalValue !== null).length,
-    recordedCost: money(perProject.reduce((t, p) => t + p.totals.recordedCost, 0)),
-    recordedHours: hours(perProject.reduce((t, p) => t + p.totals.recordedHours, 0)),
-    unpricedHours: hours(perProject.reduce((t, p) => t + p.totals.unpricedHours, 0)),
-    actualProfit: money(perProject.reduce(
-      (t, p) => t + (p.totals.actualProfit === null ? 0 : p.totals.actualProfit), 0)),
-    actualMarginPercent: percent(
-      money(perProject.reduce((t, p) => t + (p.totals.actualProfit === null ? 0 : p.totals.actualProfit), 0)),
-      money(perProject.reduce((t, p) => t + (p.totals.totalValue === null ? 0 : p.totals.totalValue), 0))
-    ),
-    costPerHour: (() => {
-      const h = hours(perProject.reduce((t, p) => t + p.totals.recordedHours, 0));
-      const c = money(perProject.reduce((t, p) => t + p.totals.recordedCost, 0));
-      return h > 0 ? money(c / h) : null;
-    })(),
-
-    // The Fixed view's planned-hours figures.
-    assignedHoursTotal: hours(perProject.reduce((t, p) => t + p.totals.assignedHoursTotal, 0)),
-    billedHoursTotal: hours(perProject.reduce((t, p) => t + p.totals.billedHoursTotal, 0)),
-    hoursDelta: hours(perProject.reduce((t, p) => t + p.totals.hoursDelta, 0)),
+    actualProfit,
+    actualMarginPercent: percent(actualProfit, totalValue),
+    costPerHour: recordedHours > 0 ? money(recordedCost / recordedHours) : null,
   };
-}
-
-// --- validation -------------------------------------------------------------
-
-const MAX_MONEY = 99999999999.99;   // what DECIMAL(14,2) holds
-const MAX_RATE = 99999999.99;       // DECIMAL(10,2)
-
-function amountError(value, { field, label, max = MAX_MONEY }) {
-  if (value === undefined || value === null || String(value).trim() === '') {
-    return { field, message: `${label} is required.` };
-  }
-  const n = Number(value);
-  if (!Number.isFinite(n)) return { field, message: `${label} must be a number.` };
-  /* Negative is refused rather than accepted as a credit. A negative cost is
-     almost always a typed minus sign, and silently turning it into extra profit
-     is the wrong way to be wrong about money. */
-  if (n < 0) return { field, message: `${label} cannot be negative.` };
-  if (n > max) return { field, message: `${label} is larger than this field can hold.` };
-  return null;
-}
-
-function validateRateCard({ role, level, ratePerHour }, { existing = [], id = null } = {}) {
-  const errors = [];
-  const roleText = String(role ?? '').trim();
-  const levelText = String(level ?? '').trim();
-
-  if (!roleText) errors.push({ field: 'role', message: 'A role is required.' });
-  else if (roleText.length > 80) errors.push({ field: 'role', message: 'The role must be 80 characters or fewer.' });
-  if (!levelText) errors.push({ field: 'level', message: 'A level is required.' });
-  else if (levelText.length > 80) errors.push({ field: 'level', message: 'The level must be 80 characters or fewer.' });
-
-  const bad = amountError(ratePerHour, { field: 'ratePerHour', label: 'The rate', max: MAX_RATE });
-  if (bad) errors.push(bad);
-
-  if (roleText && levelText) {
-    const clash = existing.find((c) => c.id !== id
-      && c.role.toLowerCase() === roleText.toLowerCase()
-      && c.level.toLowerCase() === levelText.toLowerCase());
-    if (clash) {
-      errors.push({ field: 'level', message: `${roleText} — ${levelText} is already on the rate card.` });
-    }
-  }
-  return { errors, values: { role: roleText, level: levelText, ratePerHour: money(ratePerHour) } };
-}
-
-function validateAssignment({
-  role, level, ratePerHour, hours: hrs, personName,
-  assignedHours, billedHours,
-}) {
-  const errors = [];
-  const roleText = String(role ?? '').trim();
-  const levelText = String(level ?? '').trim();
-  if (!roleText) errors.push({ field: 'role', message: 'A role is required.' });
-  if (!levelText) errors.push({ field: 'level', message: 'A level is required.' });
-  if (String(personName ?? '').length > 160) {
-    errors.push({ field: 'personName', message: 'The name must be 160 characters or fewer.' });
-  }
-
-  const badRate = amountError(ratePerHour, { field: 'ratePerHour', label: 'The rate', max: MAX_RATE });
-  if (badRate) errors.push(badRate);
-  const badHours = amountError(hrs, { field: 'hours', label: 'The hours', max: MAX_RATE });
-  if (badHours) errors.push(badHours);
-
-  /* Both default to 0 rather than being required. A row can legitimately have
-     no plan (added mid-project) and no billing yet (not invoiced), and forcing
-     a number would mean typing a zero to say "nothing", which is the same
-     answer with more friction. */
-  const badAssigned = amountError(assignedHours === undefined || assignedHours === null || assignedHours === '' ? 0 : assignedHours,
-    { field: 'assignedHours', label: 'The assigned hours', max: MAX_RATE });
-  if (badAssigned) errors.push(badAssigned);
-  const badBilled = amountError(billedHours === undefined || billedHours === null || billedHours === '' ? 0 : billedHours,
-    { field: 'billedHours', label: 'The billed hours', max: MAX_RATE });
-  if (badBilled) errors.push(badBilled);
-
-  return {
-    errors,
-    values: {
-      role: roleText, level: levelText,
-      ratePerHour: money(ratePerHour), hours: hours(hrs),
-      assignedHours: hours(assignedHours || 0),
-      billedHours: hours(billedHours || 0),
-      personName: String(personName ?? '').trim() || null,
-    },
-  };
-}
-
-function validateBilling({ contractValue, billingType, invoicedToDate }) {
-  const errors = [];
-  const bad = (v, field, label) => {
-    const e = amountError(v, { field, label });
-    if (e) errors.push(e);
-  };
-  bad(contractValue, 'contractValue', 'The contract value');
-  bad(invoicedToDate, 'invoicedToDate', 'The invoiced amount');
-
-  const type = billingType === undefined || billingType === null || billingType === ''
-    ? null : String(billingType).trim();
-  if (type && !BILLING_IDS.includes(type)) {
-    errors.push({ field: 'billingType', message: `Choose ${BILLING_TYPES.map((b) => b.label).join(', ')}.` });
-  }
-
-  /* Invoicing more than the contract is WARNED about, not refused. It is
-     usually a scope change nobody has updated the contract value for, which is
-     an ordinary thing to happen and not something to block a save over. */
-  const warnings = [];
-  if (!errors.length && Number(invoicedToDate) > Number(contractValue) && Number(contractValue) > 0) {
-    warnings.push(`Invoiced (${money(invoicedToDate)}) is more than the contract value `
-      + `(${money(contractValue)}). Saved — check whether the contract value needs updating.`);
-  }
-
-  return {
-    errors, warnings,
-    values: {
-      contractValue: money(contractValue),
-      billingType: type,
-      invoicedToDate: money(invoicedToDate),
-    },
-  };
-}
-
-function validateOtherCost({ label, amount }) {
-  const errors = [];
-  const text = String(label ?? '').trim();
-  if (!text) errors.push({ field: 'label', message: 'A label is required — an unexplained cost is not a record.' });
-  else if (text.length > 160) errors.push({ field: 'label', message: 'The label must be 160 characters or fewer.' });
-  const bad = amountError(amount, { field: 'amount', label: 'The amount' });
-  if (bad) errors.push(bad);
-  return { errors, values: { label: text, amount: money(amount) } };
 }
 
 module.exports = {
-  TABLES, BILLING_TYPES, BILLING_IDS, SEED_RATE_CARDS,
-  ensureTables, seed,
-  rateCards, assignments, billing, otherCosts, forProject,
-  compute, labourByRoleLevel, rollup,
-  validateRateCard, validateAssignment, validateBilling, validateOtherCost,
-  money, hours, percent, shapeCard, shapeAssignment,
+  TABLES,
+  ensureTables,
+  billing, forProject, compute, rollup,
+  money, hours, percent,
 };

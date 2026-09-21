@@ -65,13 +65,15 @@ const REQUIRED = [
   { table: 'ip_blocklist',     column: null,            step: 'IP blocklist' },
   { table: 'email_config',     column: null,            step: 'email configuration' },
   { table: 'users',            column: 'email_opt_out',  step: 'email configuration' },
-  { table: 'rate_cards',       column: null,            step: 'profit and loss' },
-  { table: 'project_team_assignments', column: null,    step: 'profit and loss' },
+  /* FOUR OF THESE WENT WHEN THE MANUAL P&L INPUTS DID. rate_cards,
+     project_team_assignments, project_other_costs and pnl_snapshots backed the
+     free-text price list, the typed team hours, the ad hoc cost lines and the
+     margin trend, none of which the feature has any more. A deployment that
+     still has those tables keeps them and its data; what changed is that
+     /api/health no longer calls a deployment unhealthy for not having them. */
+  { table: 'role_rates',       column: null,            step: 'profit and loss' },
   { table: 'project_billing',  column: null,            step: 'profit and loss' },
-  { table: 'project_other_costs', column: null,         step: 'profit and loss' },
-  { table: 'pnl_snapshots',    column: null,            step: 'profit and loss' },
-  { table: 'project_team_assignments', column: 'assigned_hours', step: 'profit and loss hours' },
-  { table: 'project_team_assignments', column: 'billed_hours',   step: 'profit and loss hours' },
+  { table: 'project_billing',  column: 'total_value',   step: 'profit and loss' },
   { table: 'users',            column: 'is_active',      step: 'user active flag' },
   { table: 'users',            column: 'deactivated_at', step: 'user active flag' },
   { table: 'work_schedule',    column: 'morning_start_min', step: 'break windows' },

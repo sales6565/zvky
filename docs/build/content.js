@@ -772,51 +772,59 @@ module.exports = [
     + 'add. The Idle report and Idle Now are separately granted.', ['leadership']),
 
   h2('10.5 Profit & Loss'),
-  p('Two tabs, the same projects, two different questions. They are separately granted, so a producer can be given '
-    + 'one without the other, and holding neither hides the screen entirely.'),
+  p('Two tabs, the same projects, the same hours, two different questions. They are separately granted, so a '
+    + 'producer can be given one without the other, and holding neither hides the screen entirely.'),
   bullets([
-    'Fixed P&L asks whether a project is still profitable at the price it was quoted. Revenue is the agreed fee from Client Billing; cost is what the DELIVERED work took, against what the plan said it would.',
-    'Actual P&L asks what the studio is making on a project as it stands. Revenue is the project’s Total Value; cost is every hour logged on it so far, whoever logged it.',
+    'Fixed P&L asks whether the work cost more or less than it was estimated at. Nothing on it is entered by hand \u2014 there is no contract value, no billing and no revenue figure on that tab at all.',
+    'Actual P&L asks what the studio is making on a project. It has one field: the Total Project Value.',
   ]),
 
-  h3('What the Actual tab asks you for'),
-  p('One number: <strong>Total Value</strong>, the total contract value of the project. Everything else on the tab '
-    + 'is read from what the application already knows, and there is nothing else to keep up to date.'),
+  h3('The two figures both tabs are built on'),
   bullets([
-    'Total Hours Spent — every work session recorded against this project’s tasks, whatever state they are in.',
-    'Cost — each person’s logged hours multiplied by their designation’s hourly rate, added up across everybody who worked on it. A Senior Game Artist on 40 hours at ₹2,000 and a Trainee Game Animator on 25 at ₹800 costs ₹1,00,000.',
-    'Profit — Total Value minus Cost.',
-    'Margin — profit as a share of Total Value.',
+    'Total Hours (Budgeted) — every asset’s Man Hours estimate, added up. The same number the Projects tab calls Total Bid Hours.',
+    'Total Hours Recorded — hours logged against tasks that have reached Delivered. It rises as tasks are delivered and never needs touching. Working hours only, in IST (7.3a), so evenings and weekends are not in it.',
   ]),
-  p('The rates come from <strong>Settings → Role Rates</strong>, which prices an hour of each designation. That is '
-    + 'the list to edit if a cost looks wrong; the Rate Cards section beside it is a different list, and it prices '
-    + 'the Fixed tab’s planned team rather than anybody’s logged hours.'),
-  p('BECAUSE NOTHING IS COPIED, a correction spreads. Fix a designation’s rate and every project costed against it '
-    + 'is re-costed the moment the screen is next opened — there is no stored figure to go back and repair. That is '
-    + 'the opposite of the Fixed tab’s team rows, which deliberately keep the rate they were costed at so that '
-    + 're-pricing the card next April does not rewrite last year’s project.'),
-  p('AN UNPRICED DESIGNATION IS NOT A FREE ONE. Hours logged by somebody whose designation has no rate are counted '
-    + 'in the hours and left out of the cost, and the tab says so in as many words — the real cost is higher than '
-    + 'the figure shown, and the profit and margin are better than the truth. Costing those hours at nothing would '
-    + 'be wrong in the direction that makes a loss look like a profit.'),
-  p('A PROJECT WITH NO TOTAL VALUE has no profit and no margin, and shows a dash rather than a number. That is a '
-    + 'different statement from a project worth nothing, and the two must not look alike.'),
+  p('BOTH TABS READ THE SECOND ONE, and it is genuinely one figure rather than two that happen to agree. Deliver a '
+    + 'task and the recorded hours move on Fixed P&L and Actual P&L together, by the same amount.'),
 
-  h3('What is no longer on the Actual tab'),
-  p('Billing Type, Invoiced to Date, the Project Team list and Other Costs have gone from this tab. Four of them '
-    + 'were figures somebody had to keep in step with the truth by hand while the application already recorded the '
-    + 'truth, and a manual number that nobody updates is worse than no number: it looks authoritative. All four are '
-    + 'still on the <strong>Fixed</strong> tab, which genuinely uses them — its budget is built from the team list, '
-    + 'and its revenue is the agreed fee from Client Billing.'),
-  p('The Total Value on the Actual tab and the Contract Value under Client Billing are separate fields, and on '
-    + 'purpose: they are edited under separate permissions, by people who may not be the same person. A studio that '
-    + 'wants them equal enters the same figure in both.'),
-  p('The margin trend on the Actual tab is drawn from monthly snapshots, written when somebody saves on this '
-    + 'screen. It moves when the Total Value is edited rather than continuously as hours are logged, so a month in '
-    + 'which nobody touched the screen carries the position at the last save.'),
-  roles('Access Actual P&L governs the tab and the Total Value field together — whoever is given the tab is being '
-    + 'asked to keep its one number right. Access Fixed P&L is separate, and editing the rate cards, the team list '
-    + 'and Client Billing is a third permission again. All three are Super Admin only out of the box.',
+  h3('How everything is costed'),
+  p('From the <strong>Rate Card</strong> in Settings, which says what one hour of each role and level costs. Hours '
+    + 'are costed at the rate of the person who logged them; the estimate on an asset is costed at the rate of the '
+    + 'person it is assigned to. Same list, same method, both sides \u2014 which is what makes the difference '
+    + 'between them a difference in <em>hours</em> rather than an artefact of the two halves being priced '
+    + 'differently.'),
+  bullets([
+    'A correction spreads. Nothing is copied onto a row, so fixing a rate re-costs every project it applies to, for work already done as well as work still to come.',
+    'An unpriced designation is not a free one. Its hours are counted and its cost is not, and the screen says so in as many words — the real figures are higher, and both the variance and the margin look better than the truth.',
+  ]),
+
+  h3('Fixed P&L'),
+  p('Total Hours (Budgeted), Total Hours Recorded, Budgeted Cost, Actual Cost and the Variance between them, in '
+    + 'rupees and per cent, with a table breaking both sides down by role and level.'),
+  p('THE SIGN OF THE VARIANCE IS THE POINT. It is budgeted cost minus actual, so a <strong>positive</strong> figure '
+    + 'is money the studio did not have to spend \u2014 a saving \u2014 and a <strong>negative</strong> one is an '
+    + 'overrun. The percentage is against the budget: \u201cwe came in 39% under what we planned\u201d is a '
+    + 'statement about the plan. A project nobody estimated is <em>unplanned</em> rather than under budget, and says '
+    + 'so rather than showing a confident zero.'),
+
+  h3('Actual P&L'),
+  p('Total Project Value, Total Hours Recorded, Cost, Profit and Margin, with the same breakdown table. Profit is '
+    + 'the value less the cost; margin is the profit as a share of the value.'),
+  p('The Total Project Value is the only figure in the whole feature that anybody types. A project with none '
+    + 'entered has no profit and no margin and shows a dash \u2014 a different statement from a project worth '
+    + 'nothing, and the two must not look alike.'),
+
+  h3('What is no longer here'),
+  p('Billing Type, Invoiced to Date, Other Costs, the manual Project Team list, the typed Total Cost, the manually '
+    + 'entered Fixed Contract Value and the second free-text rate list have all been removed. Every one of them was '
+    + 'either a number the application already recorded or a number nobody kept up to date, and a stale figure in a '
+    + 'P&L is worse than a missing one because it looks authoritative. The margin trend went with them: it was drawn '
+    + 'from a snapshot written whenever somebody saved on the screen, and with nothing left to save it would have '
+    + 'frozen while still looking live.'),
+  p('Their data has not been deleted. The columns and rows are still in the database; nothing reads them.'),
+  roles('Access Fixed P&L is a view-only grant \u2014 there is nothing on that tab to change. Access Actual P&L '
+    + 'covers the tab and its Total Project Value together. Manage Rate Card is the third, and it is the one with '
+    + 'reach: the Rate Card costs every project at once. All three are Super Admin only out of the box.',
     ['super_only']),
 
   pagebreak(),

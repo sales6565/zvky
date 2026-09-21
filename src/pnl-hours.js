@@ -1,27 +1,22 @@
-// What a project actually consumed, and what that cost.
+// What a project was estimated at, what it actually took, and what both cost.
 //
-// THIS MODULE REPLACED A SET OF TYPED-IN NUMBERS WITH RECORDED ONES. The two
-// P&L tabs used to be costed from hours somebody entered by hand against a
-// planned team list. They are now costed from what the application already
-// knows: the Man Hours estimate on each asset, the work sessions people
-// actually logged, and a per-role hourly rate set once in Settings.
+// ONE FIGURE, READ BY BOTH TABS. `recordedHours` is the hours logged against
+// tasks that have reached DELIVERED, and it is the only "actual hours" number
+// in the Profit & Loss feature. The Fixed tab compares it against the estimate;
+// the Actual tab compares its cost against what the project was sold for. They
+// cannot disagree about how much work was done, because there is one number and
+// they both read it.
 //
-// THREE HOUR FIGURES, and they are three because they answer three questions:
+// TWO HOUR FIGURES, and they are two because they answer two questions:
 //
-//   bidHours        SUM(assets.man_hours) over the project. What it was
+//   budgetedHours   SUM(assets.man_hours) over the project. What it was
 //                   estimated at. The same number, computed the same way, that
 //                   the Projects tab has always called Total Bid Hours — not a
-//                   second budget that could disagree with the first.
+//                   second budget that could disagree with the first, and not a
+//                   figure anybody types into the P&L screen.
 //
-//   consumedHours   Every work session on every asset in the project, whatever
-//                   state the asset is in. What the studio has spent on it so
-//                   far. The same definition the Projects tab calls Spent Time
-//                   and the Efficiency report calls totalSeconds.
-//
-//   deliveredHours  Work sessions on assets that have reached DELIVERED only.
-//                   Hours that turned into something the client got. This is
-//                   the one that moves when a task is delivered and not before,
-//                   and it is what the Fixed tab costs.
+//   recordedHours   Work sessions on assets that have reached DELIVERED. Hours
+//                   that turned into something the client got.
 //
 // WHY DELIVERED IS COMPUTED, NOT ACCUMULATED. Nothing increments a running
 // total when an asset is delivered. The figure is derived from the asset's
@@ -29,16 +24,25 @@
 // an asset is moved back out of Delivered by an override, and after a work
 // session is added to an asset that was already delivered. A stored counter
 // would have to be right at every one of those moments and would be wrong the
-// first time one of them was missed. "Updates automatically as tasks are
-// delivered" is satisfied by never being stale rather than by being poked.
+// first time one of them was missed. "Accumulated automatically as tasks
+// complete" is satisfied by never being stale rather than by being poked.
+//
+// THE HOURS ARE ALREADY WORKING HOURS. work_sessions.seconds is the part of a
+// session that fell inside the studio's configured working window, in IST —
+// see src/working-time.js. Nothing here re-applies that rule, and nothing here
+// may undo it: everything below sums the column, so evenings, weekends and
+// breaks are out of these figures by construction.
 //
 // PRICING, and the honesty problem at the centre of it. A work session records
-// a USER. A user holds a DESIGNATION. role_rates prices a designation per hour.
-// So an hour costs whatever that person's designation costs. A designation with
-// no rate row is UNPRICED — NOT free — and every function here reports the
-// hours it could not price separately rather than folding them in at zero.
-// Costing an unpriced hour at nothing understates what a project cost, which is
-// the direction of error that makes a studio think a loss was a profit.
+// a USER. A user holds a DESIGNATION. The Rate Card prices a designation per
+// hour. So an hour costs whatever that person's designation costs, and an
+// ESTIMATE costs whatever the designation of the person it is assigned to
+// costs — which is what makes a budgeted-against-actual comparison per role
+// possible at all. A designation with no rate row is UNPRICED — NOT free — and
+// every function here reports the hours it could not price separately rather
+// than folding them in at zero. Costing an unpriced hour at nothing understates
+// what a project cost, which is the direction of error that makes a studio
+// think a loss was a profit.
 
 const workflow = require('./asset-workflow');
 
@@ -102,6 +106,43 @@ async function hoursByUser(db, projectId, { deliveredOnly = false } = {}) {
   })).filter((r) => r.hours > 0);
 }
 
+/* The ESTIMATE, split by the designation it is assigned to.
+ *
+ * Each asset carries a Man Hours estimate and an assignee; the assignee holds a
+ * designation; the Rate Card prices a designation. So an estimate can be costed
+ * exactly the way a logged hour is, and the Fixed tab's budgeted-against-actual
+ * comparison can be made per role rather than only as one project-wide number.
+ *
+ * Shaped identically to hoursByUser above so that priceHours can cost either
+ * without knowing which it was handed. That symmetry is the point: the budget
+ * and the actual are priced by the same function against the same rate table,
+ * so a variance between them is a difference in HOURS and never an artefact of
+ * the two sides being priced differently.
+ *
+ * AN ASSET WITH NOBODY ON IT still has an estimate, and that estimate is part
+ * of the budget. It lands in the no-designation bucket, where it is counted and
+ * not priced — which reads on screen as "these hours are budgeted and we cannot
+ * say what they should cost", rather than vanishing from a total that then does
+ * not add up to the project's own Total Bid Hours. */
+async function budgetByUser(db, projectId) {
+  const { rows } = await db.query(
+    `SELECT a.assignee_id AS user_id, u.\`name\` AS user_name, u.\`role\` AS role_key,
+            COALESCE(SUM(a.man_hours), 0) AS hours
+       FROM assets a
+       LEFT JOIN users u ON u.id = a.assignee_id
+      WHERE a.project_id = $1
+      GROUP BY a.assignee_id, u.\`name\`, u.\`role\``,
+    [projectId]
+  ).catch(() => ({ rows: [] }));
+
+  return rows.map((r) => ({
+    userId: r.user_id,
+    userName: r.user_name || null,
+    roleKey: r.role_key || null,
+    hours: round2(r.hours),
+  })).filter((r) => r.hours > 0);
+}
+
 /* Total hours consumed on the project, every asset, every state. The Actual
    tab's headline hours figure. */
 async function consumedHours(db, projectId) {
@@ -161,69 +202,116 @@ function priceHours(people, rates, roleLabel = (k) => k) {
   };
 }
 
-/* Everything both tabs need about hours and their cost, for one project. */
+/* Everything both tabs need about hours and their cost, for one project.
+ *
+ * ONE ROUND OF QUERIES, ONE SET OF NUMBERS. Both tabs are served from this, so
+ * the Fixed tab's "actual" and the Actual tab's "recorded" are not two figures
+ * that happen to agree — they are the same figure, read twice.
+ *
+ * THE ROLE BREAKDOWN IS THE UNION of the two sides. A designation that was
+ * budgeted for and never logged an hour has to appear, or the table cannot
+ * answer "what did we plan for that nobody did"; a designation that logged
+ * hours nobody budgeted for has to appear, or the table will not add up to the
+ * actual cost printed above it. So the rows are merged rather than taken from
+ * either side.
+ */
 async function forProject(db, projectId, { rates = null, roleLabel = (k) => k } = {}) {
   const priceList = rates || await roleRates(db);
-  const [bid, consumed, allPeople, deliveredPeople] = await Promise.all([
-    bidHours(db, projectId),
-    consumedHours(db, projectId),
-    hoursByUser(db, projectId),
+  const [budgetPeople, recordedPeople] = await Promise.all([
+    budgetByUser(db, projectId),
     hoursByUser(db, projectId, { deliveredOnly: true }),
   ]);
 
-  const delivered = priceHours(deliveredPeople, priceList, roleLabel);
-  const all = priceHours(allPeople, priceList, roleLabel);
+  const budget = priceHours(budgetPeople, priceList, roleLabel);
+  const recorded = priceHours(recordedPeople, priceList, roleLabel);
 
-  /* The BUDGET, priced the same way the actual is: the project's estimated
-     hours at the blended rate the delivered work actually ran at. Costing the
-     bid at a different rate basis than the actual would make the variance a
-     mixture of an hours difference and a rate difference, which is precisely
-     the thing a variance is supposed to isolate. A project with no delivered
-     hours yet has no blended rate, so its budget is unpriced rather than
-     guessed. */
-  const blendedRate = delivered.pricedHours > 0
-    ? round2(delivered.cost / delivered.pricedHours) : null;
+  const budgetedHours = round2(budgetPeople.reduce((t, p) => t + p.hours, 0));
+  const recordedHours = round2(recordedPeople.reduce((t, p) => t + p.hours, 0));
+
+  /* VARIANCE, AND ITS SIGN. Budgeted minus actual, so POSITIVE is money the
+     studio did not have to spend — a saving — and NEGATIVE is an overrun. That
+     is the direction the studio asked for, and it is the opposite of the
+     convention the old Fixed tab used (actual minus budget, where positive was
+     bad). Stated here, once, so no screen has to decide it.
+
+     The percentage is against the BUDGET, not against the actual: "we came in
+     20% under what we planned" is a statement about the plan. Null when there
+     is no budget to be under, because a percentage of nothing is not a number
+     and printing 0% would say the project came in exactly on a plan that does
+     not exist. */
+  const variance = round2(budget.cost - recorded.cost);
+  const variancePercent = budget.cost > 0
+    ? Math.round((variance / budget.cost) * 1000) / 10 : null;
 
   return {
-    bidHours: bid,
-    consumedHours: consumed,
-    /* THE ACTUAL TAB'S COST, and the breakdown behind it.
-     *
-     * Every hour logged against the project's assets, whatever state they are
-     * in, priced at the logger's designation rate. `consumedCost` was already
-     * here as a reference figure beside a cost somebody typed in; the Actual
-     * tab is now costed FROM it, so the per-designation rows that produce it
-     * have to travel with it. Without them the tab could show a total with no
-     * way to see what it is made of, which for a money figure is the same as
-     * not showing it.
-     *
-     * Deliberately NOT the delivered-only set below. The Fixed tab asks "what
-     * did the work the client has actually received cost us?"; the Actual tab
-     * asks "what has this project cost us so far?" — and work in progress has
-     * cost the studio its hours whether or not anybody has received it yet. */
-    consumedByRole: all.byRole,
-    deliveredHours: round2(deliveredPeople.reduce((t, p) => t + p.hours, 0)),
-    /* Hours consumed on work that has NOT been delivered. Stated rather than
-       left to be subtracted, because it is the number somebody asks for the
-       moment the other two differ. */
-    undeliveredHours: round2(consumed - deliveredPeople.reduce((t, p) => t + p.hours, 0)),
-    actualCost: delivered.cost,
-    actualUnpricedHours: delivered.unpricedHours,
-    byRole: delivered.byRole,
-    blendedRate,
-    budgetedCost: blendedRate === null ? null : round2(bid * blendedRate),
-    /* Cost of everything logged, delivered or not. Not shown as a headline —
-       it is here so the Actual tab can say what the app's own records imply,
-       beside the figure somebody typed in. */
-    consumedCost: all.cost,
-    consumedUnpricedHours: all.unpricedHours,
-    /* Hours that WERE priced, so a caller can say "₹X across Yh" without
-       having to subtract the unpriced ones itself and get it subtly wrong. */
-    consumedPricedHours: all.pricedHours,
+    // --- the shared figure both tabs read ------------------------------------
+    recordedHours,
+    recordedCost: recorded.cost,
+    recordedUnpricedHours: recorded.unpricedHours,
+
+    // --- the Fixed tab's other half ------------------------------------------
+    budgetedHours,
+    budgetedCost: budget.cost,
+    budgetedUnpricedHours: budget.unpricedHours,
+    variance,
+    variancePercent,
+    /* Whether there is a plan at all. A project nobody estimated is UNPLANNED,
+       not under budget — "0 budgeted, 5,000 spent, 5,000 over" on every project
+       that predates the Man Hours field would be a red flag with no meaning. */
+    budgeted: budgetedHours > 0,
+
+    // --- the breakdown both tabs show ----------------------------------------
+    byRole: mergeRoles(budget.byRole, recorded.byRole),
   };
 }
 
+/* The budget rows and the actual rows, zipped into one table.
+ *
+ * Keyed on the designation, so each appears once with both sides against it.
+ * A row present on one side only is kept with zeroes on the other, because
+ * "budgeted 40 hours, did none" and "did 40 hours nobody budgeted for" are
+ * exactly the two things this table exists to show. */
+function mergeRoles(budgetRows, recordedRows) {
+  const rows = new Map();
+  const bucket = (r) => {
+    const key = r.roleKey || '(none)';
+    if (!rows.has(key)) {
+      rows.set(key, {
+        roleKey: r.roleKey,
+        roleLabel: r.roleLabel,
+        ratePerHour: r.ratePerHour,
+        priced: r.priced,
+        budgetedHours: 0, budgetedCost: 0,
+        recordedHours: 0, recordedCost: 0,
+        people: new Set(),
+      });
+    }
+    return rows.get(key);
+  };
+  for (const r of budgetRows) {
+    const b = bucket(r);
+    b.budgetedHours = round2(b.budgetedHours + r.hours);
+    b.budgetedCost = round2(b.budgetedCost + r.cost);
+  }
+  for (const r of recordedRows) {
+    const b = bucket(r);
+    b.recordedHours = round2(b.recordedHours + r.hours);
+    b.recordedCost = round2(b.recordedCost + r.cost);
+    for (const n of (r.people || [])) b.people.add(n);
+  }
+  return [...rows.values()]
+    .map((r) => ({
+      ...r,
+      people: [...r.people].sort(),
+      variance: round2(r.budgetedCost - r.recordedCost),
+      hoursVariance: round2(r.budgetedHours - r.recordedHours),
+    }))
+    /* Biggest commitment first, budget or actual — a role with a large budget
+       and no hours yet is as interesting as one that has burned through. */
+    .sort((a, b) => Math.max(b.budgetedHours, b.recordedHours) - Math.max(a.budgetedHours, a.recordedHours));
+}
+
 module.exports = {
-  DELIVERED, roleRates, bidHours, consumedHours, hoursByUser, priceHours,
-  forProject, toHours, round2,
+  DELIVERED, roleRates, bidHours, consumedHours, hoursByUser, budgetByUser,
+  priceHours, mergeRoles, forProject, toHours, round2,
 };

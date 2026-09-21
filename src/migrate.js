@@ -1850,43 +1850,17 @@ async function ensureEmailConfig(db, log) {
   }
 }
 
-/* The P&L tables, and the rate card the studio starts with.
+/* THE TEAM-ASSIGNMENT HOUR COLUMNS ARE GONE, and so is the table they were on.
  *
- * The first money in this application: no rates, billing or costs existed
- * before, so nothing here migrates anything — it creates five tables and eight
- * unrated rate card rows.
+ * This step added assigned_hours and billed_hours to project_team_assignments —
+ * the manual team list the P&L feature no longer has. The table is no longer
+ * created on a new deployment, so the ALTER had nothing to alter and reported
+ * itself as a failed schema repair on every fresh install: /api/health said the
+ * server was unhealthy because a migration for a removed feature could not
+ * find a removed table.
  *
- * The seed rates are ZERO on purpose. An invented rate is a number somebody
- * might not notice was invented, and an invented rate in a profit figure is
- * worse than a blank one.
- *
- * Cannot fail the startup: a deployment whose database user cannot create these
- * loses the P&L screens, not the application. */
-async function ensurePnlHourColumns(db, log) {
-  const { rows } = await db.query(
-    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'project_team_assignments'
-        AND COLUMN_NAME IN ('assigned_hours', 'billed_hours')`
-  ).catch(() => ({ rows: null }));
-  /* The table itself may not exist yet on a database where ensurePnl failed —
-     it catches its own errors so the rest of the app still boots. Nothing to
-     add to a table that is not there. */
-  if (!rows) return;
-  const have = new Set(rows.map((r) => r.COLUMN_NAME));
-  const add = [
-    ['assigned_hours', 'DECIMAL(10,2) NOT NULL DEFAULT 0'],
-    ['billed_hours', 'DECIMAL(10,2) NOT NULL DEFAULT 0'],
-  ].filter(([name]) => !have.has(name));
-  if (!add.length) return;
-  for (const [name, type] of add) {
-    await db.query(`ALTER TABLE project_team_assignments ADD COLUMN \`${name}\` ${type}`);
-  }
-  /* DEFAULT 0 and nothing back-filled. An assignment made before this migration
-     has no recorded plan and no recorded billing, and inventing one — copying
-     the worked hours across, say — would manufacture a budget that was never
-     agreed and a variance of exactly zero on every historical project. */
-  log(`Schema: added project_team_assignments.${add.map(([n]) => n).join(', .')} — both start at zero.`);
-}
+ * Removed rather than made conditional. A deployment that already has the table
+ * keeps it and its columns; there is simply nothing left that wants them. */
 
 /* The Actual tab's manually entered Total Cost, and the per-role hourly rates.
  *
@@ -2068,14 +2042,15 @@ async function ensurePnl(db, log) {
     log('        Profit & Loss is unavailable until they exist; nothing else is affected.');
     return;
   }
-  try {
-    const seeded = await pnl.seed(db);
-    if (seeded) {
-      log(`Schema: seeded ${seeded} rate card rows, all at zero — set the rates in Settings.`);
-    }
-  } catch (err) {
-    log(`Schema: the rate card could not be seeded (${err.code || 'error'}). Add the rows by hand in Settings.`);
-  }
+  /* NOTHING IS SEEDED. The rate card is keyed on the designation catalogue and
+     starts empty on purpose: a designation with no row is UNPRICED, and seeding
+     every one of them at zero would make "unpriced" and "costs nothing"
+     indistinguishable at exactly the moment the difference matters. The screens
+     list every designation with a blank rate, so the list is fillable without
+     being pre-filled.
+
+     The eight free-text rate_cards rows that used to be seeded here are gone
+     with the table's last reader — see src/pnl.js. */
 }
 
 async function ensureProfilePhotos(db, log) {
@@ -2768,7 +2743,6 @@ const STEPS = [
   ['email configuration', ensureEmailConfig],
   ['profit and loss', ensurePnl],
   // Straight after the tables it alters.
-  ['profit and loss hours', ensurePnlHourColumns],
   ['profit and loss cost basis', ensurePnlCostColumns],
   // After users exists; before anything that reads an account's active flag.
   ['user active flag', ensureUserActive],
