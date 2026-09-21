@@ -1043,13 +1043,30 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(own.status, 403, 'nobody reviews their own submission');
     assert.match(own.body.error, /team lead/i);
 
-    // The Creative Director CAN act here now, and that is a consequence of the
-    // studio's own decision rather than an accident: review.tl belongs to every
-    // role in Supervision, Creative Direction and Production, and Creative
-    // Direction is where the CD sits. It widens who may clear the first gate —
-    // it does not let anyone skip it.
+    /* The Creative Director holds review.tl through their department — every
+       role in Supervision, Creative Direction and Production does — and that is
+       no longer enough on its own.
+       
+       The first gate belongs to the PROJECT'S TEAM. This project has one: the
+       lead was put on it at setup and sits in project_team_leads. The CD was
+       attached to the same project as an ordinary member, which is where the
+       Edit User form's Project field files a Creative Direction designation, and
+       ordinary membership is not one of the three qualifying lists. So the
+       permission is held, the project is visible, and the gate is still shut. */
+    const outsider = await act(id, 'review', 'cd', { decision: 'approved' });
+    assert.strictEqual(outsider.status, 403,
+      'holding review.tl is not standing on this project');
+
+    /* Named under the project's Supervision and Creative Direction, the same
+       person is in. Nothing about them changed but the list they are on — which
+       is the whole of the rule. */
+    const named = await call(`/projects/${projectId}`, {
+      token: token.admin, method: 'PATCH', body: { supervisionIds: [people.cd] },
+    });
+    assert.strictEqual(named.status, 200, JSON.stringify(named.body));
+
     const director = await act(id, 'review', 'cd', { decision: 'approved' });
-    assert.strictEqual(director.status, 200, 'the CD holds review.tl through their department');
+    assert.strictEqual(director.status, 200, 'on the project team, the CD may clear the first gate');
     assert.strictEqual(await statusOf(id), 'tl_approved', 'and it lands in TL Approved like any other approval');
     // Then on to their own gate, by the same route anybody else would take.
     assert.strictEqual((await act(id, 'send-to-cd', 'cd')).status, 200);

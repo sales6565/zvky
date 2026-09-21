@@ -60,8 +60,11 @@ test('the page offers the control on the same four stages the server allows', ()
 test('the control is gated on reviewing at that stage, not on seeing the board', () => {
   const fn = PAGE.match(/function mayHandOverInReview\(a\)\{([\s\S]*?)\n\}/);
   assert.ok(fn);
-  assert.match(fn[1], /a\.status === 'tl_changes_requested'\) return can\('review\.tl'\)/,
-    'TL Feedbacks asks for the TL review permission');
+  assert.match(fn[1], /a\.status === 'tl_changes_requested'\) return mayActAtTlGate\(a\)/,
+    'TL Feedbacks asks whether this person stands at the TL gate on this asset');
+  const gate = PAGE.slice(PAGE.indexOf('function mayActAtTlGate(a){'));
+  assert.match(gate.slice(0, gate.indexOf('\n}')), /can\('review\.tl'\)/,
+    'which is the TL review permission, plus the project team answer');
   assert.match(fn[1], /if\(!can\('asset\.assign'\)\) return false;/,
     'and for the permission to assign at all');
 });

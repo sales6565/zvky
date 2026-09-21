@@ -57,6 +57,36 @@ async function forRole(db, roleKey) {
 // beside it is how two lists drift apart.
 const TL_REVIEW_GROUPS = ['Supervision', 'Creative Direction', 'Production'];
 
+/* And anyone the project form can put on a project's team.
+ *
+ * The first review gate now belongs to the project's team rather than to the
+ * artist's own lead, so the people who can be NAMED on that team are exactly
+ * the people who should start with the permission it asks for. The three
+ * checklists on the project form are:
+ *
+ *   Team leads                             leadsTeam
+ *   Production coordinators                projectScope 'assigned'
+ *   Supervision and Creative Direction     the two groups above
+ *
+ * Read off capabilities rather than role keys, so this cannot disagree with the
+ * queries that actually populate those checklists — they ask the same two
+ * questions of the same catalogue.
+ *
+ * Two of the three already had review.tl by another route — leadsTeam implies
+ * it in the tier baseline, and the two groups are named in TL_REVIEW_GROUPS
+ * below — so in practice this decides exactly one role, and it is not an edge
+ * case: the studio's "Production Coordinator" is filed under Administration,
+ * not under Production, and its tier reviews at no stage. It fills the
+ * coordinators list, the project team rule says it may act at the gate, and
+ * without this it would arrive with the permission that gate asks for switched
+ * off. The other two are stated anyway, because the reason they hold is this
+ * one and reading it off a coincidence is how the answer drifts. */
+function fillsAProjectTeamList(def, caps) {
+  if (caps.leadsTeam) return true;
+  if (caps.projectScope === 'assigned') return true;
+  return ['Supervision', 'Creative Direction'].includes(def.group);
+}
+
 // Whose queue the project review submissions are, to begin with.
 const PROJECT_REVIEW_ROLE = 'creative_art_director';
 
@@ -81,6 +111,11 @@ function defaultsFor(roleKey) {
   if (!def) return new Set();
   const caps = capabilitiesForTier(def.tier) || {};
   const baseline = catalog.baselineFor(caps);
+  /* Anyone the project form can put on a project's team starts able to act at
+     the gate that team now owns. review.tl ALONE — deliberately not the lead's
+     notes or their team's timesheets, which are the three groups' business
+     below and not a consequence of being nameable on a project. */
+  if (fillsAProjectTeamList(def, caps)) baseline.add('review.tl');
   if (TL_REVIEW_GROUPS.includes(def.group)) {
     baseline.add('review.tl');
     /* And the lead's own notes on an asset. The same three departments, because

@@ -17,7 +17,9 @@ const {
   canDeleteAsset,
   canCreateAsset,
   isAssignedArtist,
-  isTeamLeadOfAsset,
+  canActAtTlGate,
+  reviewTeamProjects,
+  projectsWithReviewTeam,
   canReviewAsCD,
   canOverrideReview,
   canMarkDelivered,
@@ -158,6 +160,39 @@ async function attachTasksAndNotes(assets, viewer) {
     [ids]
   )).rows);
 
+  /* Whether this viewer may act at the first review gate, per asset.
+   *
+   * Sent so the browser can show the TL Review, TL Feedbacks and TL Approved
+   * controls to the people the server would actually let use them. Without it
+   * the page gates on the review.tl permission alone, which under the project
+   * team rule is no longer the whole question: a lead who can SEE a project
+   * because one of their reports has work in it, but who is not on that
+   * project's team, would be offered three buttons that every one of them
+   * answers 403.
+   *
+   * Two queries for the whole board rather than one per card, which is why it
+   * is batched here instead of asked inside canActAtTlGate.
+   *
+   * It answers the project half of the gate and the self-review guard, not the
+   * unstaffed-project fallback — on a project with nobody on its team this is
+   * true and the server decides, exactly as it did before any of this. So the
+   * flag can hide a control the server would refuse; it cannot hide one the
+   * server would allow. */
+  const projectIds = assets.map((a) => a.project_id);
+  const [onTeam, staffed] = await Promise.all([
+    enrich('project review team', () => reviewTeamProjects(viewer && viewer.id, projectIds))
+      .then((v) => (v instanceof Set ? v : new Set())),
+    enrich('project staffing', () => projectsWithReviewTeam(projectIds))
+      .then((v) => (v instanceof Set ? v : new Set())),
+  ]);
+  const mayReviewTl = (a) => {
+    if (!holds(viewer, 'review.tl')) return false;
+    if (a.assignee_id && viewer && a.assignee_id === viewer.id) return false;
+    if (hasFullAccess(viewer)) return true;
+    if (!staffed.has(a.project_id)) return true;
+    return onTeam.has(a.project_id);
+  };
+
   const timeSpent = await workLog.totalsFor(db, ids);
   // Who has held each asset, in order, with the time and submissions from each
   // stretch. The Assets List draws one row per entry here; the dashboard
@@ -166,6 +201,7 @@ async function attachTasksAndNotes(assets, viewer) {
     .then((m) => (m instanceof Map ? m : new Map()));
   return assets.map((a) => ({
     ...a,
+    can_review_tl: mayReviewTl(a),
     time_spent_seconds: (timeSpent.get(a.id) || {}).seconds || 0,
     // What the person holding it now has put in, as distinct from the asset's
     // lifetime above. The panel shows this one; showing the lifetime to a new
@@ -302,7 +338,7 @@ router.get('/project/:projectId', async (req, res) => {
    * THE leadsTeam FILTER IS GONE, and it was the bug. It read
    * "assignee_id IN (their direct reports)", which was right when a lead's
    * reach was their reports and nothing else. That stopped being true when the
-   * review gate was broadened — isTeamLeadOfAsset now covers work whose author
+   * review gate was broadened — canActAtTlGate now covers work whose author
    * reports to nobody, work handed across teams, and any lead granted review.tl
    * — and canViewAsset was widened to match. This query was not, so it was the
    * last place still enforcing the old model.
@@ -922,7 +958,7 @@ async function contextFor(req, asset) {
   return {
     user: req.user,
     asset,
-    isTeamLead: await isTeamLeadOfAsset(req.user, asset),
+    isTeamLead: await canActAtTlGate(req.user, asset),
     canOverride: canOverrideReview(req.user),
     canEdit: await canEditAsset(req.user, asset),
     // Separate from canEdit on purpose: assigning is its own permission, and
@@ -2155,7 +2191,7 @@ router.post('/:id/reassign', async (req, res) => {
   // than being told which statuses are reassignable — which is not their
   // concern, and which the narrower checks below would otherwise leak.
   const couldEver = await mayAssign(req.user, asset)
-    || await isTeamLeadOfAsset(req.user, asset)
+    || await canActAtTlGate(req.user, asset)
     || (canReviewAsCD(req.user) && await canViewAsset(req.user, asset));
   if (!couldEver) {
     return res.status(403).json({ error: 'You do not have permission to hand this asset to somebody else.' });

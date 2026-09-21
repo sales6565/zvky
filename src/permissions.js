@@ -58,20 +58,28 @@ async function visibleProjects(user) {
   }
 
   if (def.projectScope === 'team') {
-    // Either they're named as a lead on the project, named under its
-    // supervision and creative direction, or one of their reports has an asset
-    // in it. Supervisors who run a discipline rather than a project used to be
-    // reachable only through the last of those; being named on the project now
-    // counts on its own, so putting somebody in that section is not a change
-    // that leaves them unable to see what they were put on.
+    // Either they're named on the project in one of its three membership lists
+    // — leads, production coordinators, supervision and creative direction — or
+    // one of their reports has an asset in it. Supervisors who run a discipline
+    // rather than a project used to be reachable only through the last of
+    // those; being named on the project now counts on its own, so putting
+    // somebody in that section is not a change that leaves them unable to see
+    // what they were put on.
+    //
+    // The coordinators list is joined here for the same reason it is joined in
+    // the 'assigned' scope above: the three lists are one idea — who is on this
+    // project's team — and a scope that reads two of them makes membership mean
+    // different things depending on the reader's tier.
     const { rows } = await db.query(
       `SELECT DISTINCT p.* FROM projects p
        LEFT JOIN project_team_leads ptl ON ptl.project_id = p.id AND ptl.user_id = $1
+       LEFT JOIN project_coordinators pc ON pc.project_id = p.id AND pc.user_id = $1
        LEFT JOIN project_supervision ps ON ps.project_id = p.id AND ps.user_id = $1
        LEFT JOIN assets a ON a.project_id = p.id
        LEFT JOIN users  r ON r.id = a.assignee_id AND r.team_lead_id = $1
        WHERE p.is_active = 1
-         AND (ptl.user_id IS NOT NULL OR ps.user_id IS NOT NULL OR r.id IS NOT NULL OR p.owner_id = $1)
+         AND (ptl.user_id IS NOT NULL OR pc.user_id IS NOT NULL OR ps.user_id IS NOT NULL
+              OR r.id IS NOT NULL OR p.owner_id = $1)
        ORDER BY p.created_at`,
       [user.id]
     );
@@ -262,11 +270,11 @@ async function canHandOverInReview(user, asset) {
   switch (asset.status) {
     case 'pending_tl_review':
     case 'tl_changes_requested':
-      return isTeamLeadOfAsset(user, asset);
+      return canActAtTlGate(user, asset);
     case 'pending_cd_review':
       return asCD();
     case 'cd_changes_requested':
-      return (await asCD()) || await isTeamLeadOfAsset(user, asset);
+      return (await asCD()) || await canActAtTlGate(user, asset);
     default:
       return false;
   }
@@ -292,7 +300,7 @@ async function canHandOverInReview(user, asset) {
 async function canManageTasks(user, asset) {
   if (!user || !asset) return false;
   if (ownsAsset(user, asset)) return true;                       // creator or full access
-  if (await isTeamLeadOfAsset(user, asset)) return true;         // the first review gate
+  if (await canActAtTlGate(user, asset)) return true;         // the first review gate
   if (holds(user, 'review.cd') && await canViewAsset(user, asset)) return true;
   return false;
 }
@@ -306,44 +314,163 @@ function isAwaitingRework(asset) {
   return Boolean(asset) && REWORK_STATUSES.includes(asset.status);
 }
 
+/* WHO MAY ACT AT THE FIRST REVIEW GATE — the project's team, not the artist's.
+ *
+ * The three tables below are the project's membership lists, and between them
+ * they carry the four categories the studio names:
+ *
+ *   project_team_leads     Team Lead
+ *   project_coordinators   Production Coordinator
+ *   project_supervision    Supervision AND Creative Direction (one list, because
+ *                          that is the section the project form already has)
+ *
+ * Being on any of them, in any of those categories, is what qualifies somebody
+ * to act on work sitting at TL Review, TL Feedbacks or TL Approved — every
+ * asset in the project, whoever happens to be holding it.
+ *
+ * This REPLACES the old question, which was about the artist rather than the
+ * project: "is this person the assignee's own team lead", read off
+ * users.team_lead_id. That made the gate a property of the reporting line, so
+ * an asset's reviewer changed depending on which artist picked the work up, and
+ * a lead staffed on a project could not approve work by somebody who reported
+ * elsewhere. Nothing here reads team_lead_id any more.
+ *
+ * Deliberately NOT keyed on the qualifying person's role, only on which list
+ * they are in. The lists are already role-filtered where they are written — the
+ * project form offers leads, coordinators and supervision separately, and
+ * checkSupervision() in src/routes/projects.js refuses anyone outside those
+ * designations — so asking again here would be a second copy of that rule, free
+ * to drift from the first.
+ */
+const PROJECT_TEAM_TABLES = ['project_team_leads', 'project_coordinators', 'project_supervision'];
+
+// Which of these projects this user is on the team of. One query for the lot,
+// because the board asks this for every asset on screen.
+async function reviewTeamProjects(userId, projectIds) {
+  const ids = [...new Set((projectIds || []).filter(Boolean))];
+  if (!userId || !ids.length) return new Set();
+  const sql = PROJECT_TEAM_TABLES
+    .map((t) => `SELECT project_id FROM ${t} WHERE user_id = $1 AND project_id IN ($2)`)
+    .join(' UNION ');
+  const { rows } = await db.query(sql, [userId, ids]);
+  return new Set(rows.map((r) => r.project_id));
+}
+
+async function onProjectReviewTeam(user, projectId) {
+  if (!user || !projectId) return false;
+  return (await reviewTeamProjects(user.id, [projectId])).has(projectId);
+}
+
+/* Whether a project has been staffed at all.
+ *
+ * The rule above is "the project's team decides" — which says nothing about a
+ * project that has no team. Applying it there would leave every asset in such a
+ * project stuck at TL Review with nobody able to move it, which is a worse
+ * answer than the one it replaces and would hit every project created before
+ * this existed.
+ *
+ * So the lists govern once there is somebody on them, and a project with none
+ * keeps the behaviour it had. Same shape as GET /projects/:id/artists, which
+ * narrows its picker to the project's leads only when the project has leads.
+ */
+async function projectsWithReviewTeam(projectIds) {
+  const ids = [...new Set((projectIds || []).filter(Boolean))];
+  if (!ids.length) return new Set();
+  const sql = PROJECT_TEAM_TABLES
+    .map((t) => `SELECT project_id FROM ${t} WHERE project_id IN ($1)`)
+    .join(' UNION ');
+  const { rows } = await db.query(sql, [ids]);
+  return new Set(rows.map((r) => r.project_id));
+}
+
+async function projectHasReviewTeam(projectId) {
+  if (!projectId) return false;
+  return (await projectsWithReviewTeam([projectId])).has(projectId);
+}
+
+// Did this person hand in the work that is now waiting to be reviewed?
+//
+// The self-review guard's second half. Submitting is assignee-only — the state
+// machine says so in as many words — so on today's rules this can only be true
+// when the assignee check above is true as well, and it costs nothing. It is
+// here because the broadened gate makes the case reachable the moment those two
+// come apart: submit, be handed the asset to somebody else, then approve the
+// version you uploaded yourself. Whoever loosens submitting will not think to
+// come back and add this.
+async function submittedCurrentVersion(user, asset) {
+  if (!user || !asset) return false;
+  const { rows } = await db.query(
+    `SELECT uploaded_by FROM asset_versions
+      WHERE asset_id = $1 ORDER BY version_number DESC LIMIT 1`,
+    [asset.id]
+  );
+  return Boolean(rows.length && rows[0].uploaded_by && rows[0].uploaded_by === user.id);
+}
+
 // Is this user a contributor the asset is actually assigned to?
 function isAssignedArtist(user, asset) {
   const def = roleDef(user.role);
   return Boolean(def && def.assignable && asset.assignee_id === user.id);
 }
 
-// Is this user the lead or supervisor of the contributor this asset is assigned to?
-async function isTeamLeadOfAsset(user, asset) {
-  if (!holds(user, 'review.tl') || !asset.assignee_id) return false;
-  /* NOBODY REVIEWS THEIR OWN WORK, whatever their designation.
-   *
-   * A no-op until leads became assignable — a lead could not be an assignee,
-   * so this was never true — and load-bearing the moment they did. A lead has
-   * no team_lead_id of their own, so an asset assigned to them reaches the
-   * "no lead recorded, any lead who can see it is the gate" fallback below,
-   * and the lead who submitted it can see it. They would have been able to
-   * approve their own submission through the first review gate.
-   *
-   * This is the guard that makes `assignable` and `leadsTeam` safe to hold at
-   * once; tests/roles.test.js used to forbid the combination outright and now
-   * points here instead. */
-  if (asset.assignee_id === user.id) return false;
-  const def = roleDef(user.role);
-  // Someone granted TL review actions without leading a team reviews the work
-  // they can already see, rather than nobody's.
-  if (!def || !def.leadsTeam) return canViewAsset(user, asset);
-  if (await isReport(user, asset.assignee_id)) return true;
+/* May this user act at the first review gate on this asset?
+ *
+ * Three questions, in this order, and the order is the whole rule:
+ *
+ *   1. do they hold review.tl                  the Settings switch
+ *   2. is it their own work                    the self-review guard
+ *   3. are they on this project's team         who the gate belongs to
+ *
+ * (1) stays where it was. Broadening WHO reaches the gate is not a reason to
+ * stop asking whether a Super Admin has turned the gate off for their
+ * designation, and every qualifying designation gets review.tl by default —
+ * src/role-permissions.js grants it to exactly the roles the project form
+ * offers for these three lists.
+ *
+ * (2) is unconditional and comes before anything that could grant access, so
+ * no route below can talk its way past it. It matters more now than it did:
+ * a lead can be handed work, and a lead is also the sort of person who is on
+ * the project's team, so the two halves meet in one account far more often
+ * under this rule than under the old one.
+ *
+ * (3) is the change. See PROJECT_TEAM_TABLES above.
+ */
+async function canActAtTlGate(user, asset) {
+  if (!holds(user, 'review.tl') || !asset) return false;
 
-  // The assignee reports to nobody, so nobody is "their lead" and the first
-  // review gate has no one behind it. That used to be unreachable in practice;
-  // handing work on made it reachable, because the picker offers everybody
-  // assignable on the project and some of them have no lead recorded. An asset
-  // submitted by such a person sat in TL Review with no team lead able to
-  // approve it and no message saying why — the review flow simply stopped.
-  //
-  // So: when there is no lead to be the gate, any lead who can see the work is.
-  // This does not loosen the normal case, where the assignee's own lead is
-  // found above and this line is never reached.
+  /* NOBODY REVIEWS THEIR OWN WORK, whatever their designation and whoever they
+   * are on the project.
+   *
+   * A no-op until leads became assignable — a lead could not be an assignee, so
+   * this was never true — and load-bearing the moment they did. It is what
+   * makes `assignable` and `leadsTeam` safe to hold at once; tests/roles.test.js
+   * used to forbid the combination outright and now points here instead. */
+  if (asset.assignee_id && asset.assignee_id === user.id) return false;
+  if (await submittedCurrentVersion(user, asset)) return false;
+
+  /* Full access reaches every gate in the studio, staffed or not. Without this
+     a Super Admin could be locked out of a project nobody put them on — and
+     unblocking work that has stalled is most of what the tier is for. */
+  if (hasFullAccess(user)) return true;
+
+  /* The project has a team: that team is the gate, and nobody else is. A lead
+     who is this artist's personal lead but is NOT on this project gets nothing
+     from that fact — which is the point of the change. */
+  if (await projectHasReviewTeam(asset.project_id)) {
+    return onProjectReviewTeam(user, asset.project_id);
+  }
+
+  /* No team named on the project. Falls back to what this did before, so
+     projects staffed the old way — every project that predates this — carry on
+     working rather than jamming at the first gate.
+     
+     Two steps, as before: the assignee's own lead, and failing that any lead
+     who can see the work. The second exists because an assignee who reports to
+     nobody left the gate with no one behind it, and the review flow simply
+     stopped with nothing on screen saying why. */
+  const def = roleDef(user.role);
+  if (!def || !def.leadsTeam) return canViewAsset(user, asset);
+  if (asset.assignee_id && await isReport(user, asset.assignee_id)) return true;
   const { rows } = await db.query(
     'SELECT reports_to_id, team_lead_id FROM users WHERE id = $1', [asset.assignee_id]
   );
@@ -462,7 +589,11 @@ module.exports = {
   canCreateProject,
   canManageUsers,
   isAssignedArtist,
-  isTeamLeadOfAsset,
+  canActAtTlGate,
+  onProjectReviewTeam,
+  reviewTeamProjects,
+  projectHasReviewTeam,
+  projectsWithReviewTeam,
   canReviewAsCD,
   canOverrideReview,
   canMarkDelivered,

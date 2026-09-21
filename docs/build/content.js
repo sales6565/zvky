@@ -25,9 +25,9 @@ const STATES = [
   ['Not Assigned', 'The asset exists and nobody is holding it.', 'Whoever creates it, or a bulk upload with the Assignee Email column left blank.'],
   ['Assigned', 'It is on somebody’s desk, not yet accepted.', 'Anyone who may assign work.'],
   ['In Progress', 'The assignee has pressed Accept and Start. Time Spent runs from here, and pauses while the task is on hold.', 'The assignee, and nobody else.'],
-  ['TL Review', 'Submitted, waiting on the first review gate.', 'The assignee, on Submit for Review.'],
-  ['TL Feedbacks', 'The team lead asked for changes. Back with the assignee.', 'The reviewer at the first gate.'],
-  ['TL Approved', 'The team lead has passed the work. Waiting on them to say where it goes next.', 'The reviewer at the first gate, on approval.'],
+  ['TL Review', 'Submitted, waiting on the first review gate — the project’s team, see 7.8b.', 'The assignee, on Submit for Review.'],
+  ['TL Feedbacks', 'A reviewer asked for changes. Back with the assignee.', 'Anyone on the project team who may review at the first gate.'],
+  ['TL Approved', 'The work has passed the first gate. Waiting on a decision about where it goes next.', 'Anyone on the project team who may review at the first gate, on approval.'],
   ['CD Review', 'Past the first gate and sent on, waiting on the Creative Director.', 'The reviewer, from TL Approved.'],
   ['CD Feedbacks', 'The Creative Director asked for changes. Sits with the team lead until relayed.', 'The Creative Director.'],
   ['Approved for Client', 'Cleared internally. Ready to leave the studio.', 'The Creative Director, or a lead who may skip the second gate.'],
@@ -239,6 +239,12 @@ module.exports = [
     'Save.',
   ]),
   shot('03-project-new-form', 'The new-project form.'),
+  note('These three lists are who may review this project\u2019s work',
+    'The people named here are not only a record of who is involved. Anyone on any of the three lists can act on '
+    + 'every asset in this project at TL Review, TL Feedbacks and TL Approved \u2014 whoever did the work, and '
+    + 'whoever that person reports to. Leaving all three empty is allowed and falls back to the older behaviour, '
+    + 'where an artist\u2019s own lead reviews their work. All three stay editable from Edit Project afterwards. '
+    + 'See 7.8b for the whole rule.'),
   note('A project\u2019s dates describe it, they do not police it',
     'Start Date and End Date on a project are plain information. Nothing warns, blocks or moves when an end date '
     + 'passes with work outstanding, and a project whose dates are long past still takes new assets and still lets '
@@ -542,6 +548,11 @@ module.exports = [
 
   h2('7.8 The first review gate'),
   shot('06-tl-review-panel', 'An asset at TL Review, seen by the team lead.'),
+  p('WHO STANDS AT THIS GATE: the PROJECT\u2019S team. Anyone named on the project in one of four '
+    + 'categories \u2014 <strong>Team Lead</strong>, <strong>Production Coordinator</strong>, '
+    + '<strong>Supervision</strong> or <strong>Creative Direction</strong> \u2014 can act on every asset in that '
+    + 'project sitting at TL Review, TL Feedbacks or TL Approved. It does not matter which artist did the work, '
+    + 'and it does not matter who that artist reports to. See 7.8b.'),
   steps([
     'Open the asset from your queue.',
     'Look at what was submitted.',
@@ -568,6 +579,43 @@ module.exports = [
   roles('The ordinary route on sits with the first review gate. Send to Client is its own permission and is Super '
     + 'Admin only out of the box.', ['tl_gate']),
 
+  h2('7.8b Who may act at these three stages'),
+  p('The first gate belongs to the project, not to the reporting line. Put somebody on a project\u2019s team and '
+    + 'they can review its work; take them off and they cannot. Nothing about who reports to whom comes into it.'),
+  p('The four categories are the three lists on the project form, which is where they are set:'),
+  bullets([
+    '<strong>Team leads on this project</strong> \u2014 Team Lead and the other lead designations.',
+    '<strong>Production coordinators on this project</strong> \u2014 Production Coordinator and the rest of Production.',
+    '<strong>Supervision and Creative Direction</strong> \u2014 one section holding both, up to two people. '
+      + 'An Art Supervisor and an Art Director, typically.',
+  ]),
+  p('They are set when the project is created and stay editable afterwards from Edit Project. A change takes '
+    + 'effect immediately \u2014 there is nothing to re-save on the assets themselves.'),
+  p('WHAT THIS REPLACED, AND WHY. The gate used to ask a question about the ARTIST: who is this person\u2019s team '
+    + 'lead, and is that you? Two things went wrong with that often enough to be worth naming. A lead staffed on a '
+    + 'project could not clear work done by somebody who reported elsewhere \u2014 the asset simply sat there with '
+    + 'nothing on screen explaining why. And a Production Coordinator running the project, or a Supervisor '
+    + 'answerable for its look, is nobody\u2019s \u201creports to\u201d, so neither could act however plainly they '
+    + 'were on the project.'),
+  p('EVERYBODY QUALIFYING CAN ACT \u2014 this is not one gatekeeper. If a project has a lead, a coordinator, a '
+    + 'supervisor and a director on it, all four see the work and any of them can move it. Whoever gets there '
+    + 'first moves it, exactly as two leads would have raced before.'),
+  p('NOBODY REVIEWS THEIR OWN WORK, and being on the project team does not change that. A lead who is on the '
+    + 'project and is also the person who submitted the asset gets no review controls on it \u2014 a colleague on '
+    + 'the same team clears it instead. This matters more than it used to, because leads can be handed work and are '
+    + 'exactly the people likely to be on the team.'),
+  p('A PROJECT WITH NOBODY ON ITS TEAM keeps the older behaviour: the artist\u2019s own lead reviews their work, '
+    + 'and failing that any lead who can see it. Projects created before this change therefore carry on working '
+    + 'rather than stalling at the first gate. Name one person on the project and the rule above takes over.'),
+  p('THE PERMISSION IS STILL THE SWITCH. Being on a project team does not hand anybody First Review Gate '
+    + '\u2014 it decides WHERE somebody who holds it may use it. Every designation the project form can name starts '
+    + 'with the permission, and a Super Admin takes it away in Settings \u2192 Role Permissions like any other.'),
+  p('One thing the categories do not level out: handing rework to somebody else also needs <strong>Asset '
+    + 'Assign</strong>, and Creative Direction does not hold that by default. A director on the project can Request '
+    + 'Changes and approve, and will not see Hand over until that permission is granted. That is unchanged by any '
+    + 'of this, and it is one toggle in Settings.'),
+  roles('Any project-team member in the four categories, holding First Review Gate.', ['tl_gate']),
+
   h2('7.9 TL Feedbacks'),
   shot('05-asset-tl-feedback', 'An asset returned with the lead’s notes, seen by the artist who holds it.'),
   p('The asset comes back to you with the note attached. Press Accept and Start again to reopen it — which counts '
@@ -586,10 +634,10 @@ module.exports = [
   p('The picker offers the studio\u2019s ordinary eligible-assignee list, so a team lead appears in it and can be '
     + 'handed the rework like anyone else. Whoever is holding the asset is not in that list, because the button '
     + 'above it is how you send it back to them.'),
-  roles('Who sees this control is the TL review permission, not a designation \u2014 the same permission that lets '
-    + 'somebody review at this gate at all, plus Asset Assign. Take First Review Gate away from a role in Settings '
-    + '\u2192 Permissions and the control goes with it for everyone holding that role; grant it and the control '
-    + 'appears. Out of the box that is the team lead and production.',
+  roles('Who sees this control is the TL review permission plus Asset Assign, and being on this project\u2019s '
+    + 'team in one of the four categories \u2014 never a designation by name. Take First Review Gate away from a '
+    + 'role in Settings \u2192 Permissions and the control goes with it for everyone holding that role; take the '
+    + 'person off the project team and it goes for them on that project alone. See 7.8b.',
     ['tl_gate']),
 
   h2('7.10 The Creative Director gate'),
@@ -598,9 +646,12 @@ module.exports = [
     + 'Approval moves it to Approved for Client. Feedback moves it to CD Feedbacks, which sits with the team lead.'),
 
   h2('7.11 CD Feedbacks and the relay'),
-  p('CD Feedbacks does not go straight back to the artist. It stops with the team lead, who reads the Creative '
+  p('CD Feedbacks does not go straight back to the artist. It stops with a lead, who reads the Creative '
     + 'Director’s notes, adds their own reading of them if needed, and relays them on. Until they do, the artist '
     + 'cannot start the rework — and the application says so plainly rather than leaving the button silently dead.'),
+  p('Who may relay is the same question as who may review at the first gate, and gets the same answer: the '
+    + 'project’s team, in the four categories described in 7.8b. It is one idea — who is standing at this '
+    + 'project’s lead gate — and giving it two answers is how the two would drift apart.'),
 
   h2('7.12 Leaving the studio'),
   p('From Approved for Client there are two routes, and a studio uses whichever matches how it works with that client.'),

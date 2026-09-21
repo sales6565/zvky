@@ -37,8 +37,20 @@ test('no feature is gated on a role NAME anywhere', () => {
 
   // And the section this was reported about, specifically.
   const page = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
-  assert.match(page, /const canTlReview = can\('review\.tl'\)/,
-    'the TL review controls must be gated on the review.tl permission');
+  /* Checked through the helper rather than at the assignment, for the reason
+     spelled out for the handover below: the gate has two halves now — the
+     permission, and whether this person is on the project's team — and pinning
+     the literal opening line made adding the second look like a regression.
+     What matters is that the PERMISSION is still asked and that no role name
+     ever is, which is what these three lines say. */
+  assert.match(page, /const canTlReview = mayActAtTlGate\(a\)/,
+    'the TL review controls must go through the TL gate helper');
+  const tlGate = page.slice(page.indexOf('function mayActAtTlGate(a){'));
+  const tlBody = tlGate.slice(0, tlGate.indexOf('\n}'));
+  assert.match(tlBody, /can\('review\.tl'\)/,
+    'and that helper must be gated on the review.tl permission');
+  assert.ok(!/\.role\s*(===?|!==?)\s*['"]/.test(tlBody),
+    'and never on a role by name');
   assert.match(page, /const canCdReview = can\('review\.cd'\)/);
   /* And so must the handover, so it cannot grow the same bug later. Checked by
      what the function ASKS rather than by its first line: it now has two ways

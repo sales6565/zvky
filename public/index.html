@@ -2545,6 +2545,27 @@ function mayAssignAsset(a){ return (can('asset.assign') && ownsAsset(a)) || can(
    as well as the person who added it. Mirrors canHandOverInReview on the server
    — which stays the authority. This only decides whether to offer the control,
    and offering one the API would refuse is the failure worth avoiding here. */
+/* MAY THIS PERSON STAND AT THE FIRST REVIEW GATE ON THIS ASSET?
+ *
+ * Two halves. The permission is the studio's switch, set per designation in
+ * Settings > Role Permissions. `can_review_tl` is the project's answer: the
+ * server works out, per asset, whether this viewer is on that project's team
+ * in one of the four qualifying categories — Team Lead, Production
+ * Coordinator, Supervision, Creative Direction — and whether the work is their
+ * own. canActAtTlGate in src/permissions.js is the authority; this only stops
+ * offering a control that would be refused.
+ *
+ * Both are asked, not one. The permission alone stopped being the whole
+ * question when the gate became a property of the project rather than of the
+ * artist's reporting line: a lead can see a project because one of their
+ * reports has work in it and still have no standing on it.
+ *
+ * `!== false` rather than a plain read, so an asset that reached the page by
+ * some route that did not decorate it keeps the behaviour it had and lets the
+ * server decide, instead of silently losing its review controls. */
+function mayActAtTlGate(a){
+  return can('review.tl') && a.can_review_tl !== false;
+}
 function mayHandOverInReview(a){
   // Handing work on is assigning it, so the broad permission reaches here too.
   if(can('asset.assign_any')) return true;
@@ -2552,9 +2573,9 @@ function mayHandOverInReview(a){
   if(ownsAsset(a)) return true;
   /* Beyond the creator, whoever is holding it at that stage. Mirrors the switch
      in canHandOverInReview on the server, which stays the authority. */
-  if(a.status === 'pending_tl_review' || a.status === 'tl_changes_requested') return can('review.tl');
+  if(a.status === 'pending_tl_review' || a.status === 'tl_changes_requested') return mayActAtTlGate(a);
   if(a.status === 'pending_cd_review') return can('review.cd');
-  if(a.status === 'cd_changes_requested') return can('review.cd') || can('review.tl');
+  if(a.status === 'cd_changes_requested') return can('review.cd') || mayActAtTlGate(a);
   return false;
 }
 /* One checklist row. Rendered from a function rather than inline, because the
@@ -6766,7 +6787,7 @@ async function openDrawer(id){
      src/permissions.js; the API decides, this only stops offering a control
      that would be refused. */
   const manageTasks = ownsAsset(a)
-    || (can('review.tl') && a.assignee_id)
+    || (mayActAtTlGate(a) && a.assignee_id)
     || can('review.cd');
   /* Say so, rather than leaving an artist to discover their checkboxes have
      stopped responding and assume the page is broken. */
@@ -6789,13 +6810,13 @@ async function openDrawer(id){
      Progress and stays there — there is nothing to pause and nothing to
      resume. */
   const mustStartFirst = canSubmit && a.status === 'assigned';
-  const canTlReview = can('review.tl') && a.status==='pending_tl_review';
+  const canTlReview = mayActAtTlGate(a) && a.status==='pending_tl_review';
   /* TL APPROVED: past the first gate, and the lead chooses the route on.
      
      The same permission that lets somebody answer at TL Review lets them send
      the approved work along the ordinary pipeline — mirrors tl_to_cd's actor
      in src/asset-workflow.js, which is the authority. */
-  const canRouteApproved = can('review.tl') && a.status==='tl_approved';
+  const canRouteApproved = mayActAtTlGate(a) && a.status==='tl_approved';
   /* Skipping the Creative Director. Needs review.tl to be standing at this gate
      at all, AND review.tl_send_client to walk around the next one — mirrors
      tlClientSender in src/asset-workflow.js, which is the authority.
@@ -6814,7 +6835,7 @@ async function openDrawer(id){
   const canApproveForClient = canCdReview && can('review.approve_client');
   /* The relay: the lead passes the CD's notes on, and only before it has been
      passed on. */
-  const canRelay = can('review.tl') && a.status==='cd_changes_requested' && !a.routed_to_id && a.assignee_id;
+  const canRelay = mayActAtTlGate(a) && a.status==='cd_changes_requested' && !a.routed_to_id && a.assignee_id;
   const canDeliver = can('review.deliver') && a.status==='approved_for_client';
   /* The client's round. Three permissions, three buttons, each mirroring its
      actor in src/asset-workflow.js — the API decides, this only stops offering

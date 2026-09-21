@@ -153,7 +153,11 @@ test('the TL Approved panel draws the two routes, each behind its own permission
 
   /* The gates themselves, read off the page: the ordinary route on needs the
      review permission and the stage; skipping the CD needs the extra one. */
-  assert.match(PAGE, /const canRouteApproved = can\('review\.tl'\) && a\.status==='tl_approved';/);
+  assert.match(PAGE, /const canRouteApproved = mayActAtTlGate\(a\) && a\.status==='tl_approved';/);
+  /* And the helper is the permission plus the project's answer — see
+     canActAtTlGate in src/permissions.js, which is the authority. */
+  const gate = PAGE.slice(PAGE.indexOf('function mayActAtTlGate(a){'));
+  assert.match(gate.slice(0, gate.indexOf('\n}')), /can\('review\.tl'\) && a\.can_review_tl !== false/);
   assert.match(PAGE, /const canSendToClient = canRouteApproved && can\('review\.tl_send_client'\);/);
 });
 
