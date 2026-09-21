@@ -32,6 +32,7 @@ const mobileDistRoutes = require('./routes/mobile-dist');
 const chatRoutes = require('./routes/chat');
 const chatActivityRoutes = require('./routes/chat-activity');
 const chatFiles = require('./chat-files');
+const workLog = require('./work-log');
 const branding = require('./branding');
 const ipGate = require('./middleware/ip-allowlist');
 
@@ -378,6 +379,10 @@ async function start() {
        files that expired while it was down, and no timer ever fired for those.
        Safe on more than one worker — see the sweep in src/chat-files.js. */
     chatFiles.schedule(db);
+    /* And put down any timer the studio closed around. First pass now, for the
+       same reason as the line above: a process restarted overnight comes back
+       holding sessions that ran past seven while nothing was listening. */
+    workLog.scheduleAutoPause(db);
   } catch (err) {
     // Start anyway: a server that is up can report through /api/health why the
     // database is unreachable, where one that exited says nothing at all.

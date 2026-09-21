@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { config, resetSchema, startServer, stopServer, api, sql, systemClientId, SKIP_REASON } = require('./helpers');
+const { config, resetSchema, startServer, stopServer, api, sql, systemClientId, SKIP_REASON, openStudio } = require('./helpers');
 
 const cfg = config('timetrack');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -44,6 +44,13 @@ test('assigned, accepted, stamped', { skip: cfg ? false : SKIP_REASON }, async (
       method: 'POST', body: { email, password: PASSWORD },
     })).body.token;
     token.root = await login('root@zvky.test');
+    /* Hold the studio open for this suite.
+     *
+     * Recorded time is now the part of a session inside the studio's working
+     * window, so a suite that starts a timer and expects a number would assert
+     * something different at nine at night than at eleven in the morning. This
+     * pins that one input; see openStudio in tests/helpers.js. */
+    await openStudio(server.base, token.root);
     const clientId = await systemClientId(server.base, token.root);
     projectId = (await as('root', '/projects', {
       method: 'POST', body: { clientId, name: 'Timed Work' },

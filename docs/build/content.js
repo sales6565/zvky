@@ -453,9 +453,28 @@ module.exports = [
     'Press Accept and Start.',
   ]),
   shot('13-accept-and-start', 'An asset assigned to you, before you accept it. Time Spent reads 0s and has not begun.'),
-  p('The asset moves to In Progress and the clock starts. Nothing ticks on screen: Time Spent is the gap between '
-    + 'this moment and the moment you submit, less any stretch you put on hold (7.6).'),
+  p('The asset moves to In Progress and the clock starts. Nothing ticks on screen: Time Spent is the part of the '
+    + 'span between this moment and the moment you submit that falls inside the studio\u2019s working hours, less '
+    + 'any stretch you put on hold (7.6).'),
   shot('13-work-in-progress', 'The same asset once started. The panel now shows when you started, and Time Spent is running.'),
+
+  h2('7.3a Only the hours the studio is open'),
+  p('The clock counts working time, not wall-clock time. Start an asset at ten to seven on a Friday and submit it on '
+    + 'Monday morning and it has cost about two hours, not sixty-three. What counts is set in Settings \u2192 '
+    + 'Working Hours \u2014 by default Monday to Friday, 09:30 to 19:00, with the configured breaks taken out \u2014 '
+    + 'and it is the same setting the Idle report and the Time Sheet already read.'),
+  bullets([
+    'It is IST, always. The studio’s window is a wall clock in one office, so neither the server’s timezone nor your laptop’s changes what is recorded. Somebody working from another country has their hours measured against the studio’s day, not their own.',
+    'Starting outside working hours is allowed. The click is never refused — you are taking the work on, and being made to wait until morning would only mean recording a start time that was not true. The timer simply begins paused and accrues nothing.',
+    'A timer running when the day ends is put down at that moment. Not when anybody noticed, and not when the server got round to it: the cutoff is exact, so an evening left running costs the asset nothing.',
+    'You resume it yourself. Nothing starts counting again on your behalf when the studio reopens, because an asset left open overnight would otherwise be charged for a morning you were not at your desk. The panel says it is paused, when working hours resume, and gives you the Resume button; a notification says the same thing in case you had gone home.',
+    'Breaks are subtracted, they do not pause anything. Lunch comes out of the total without stopping the clock or asking you to press anything at two o’clock — only the end of the day and a non-working day do that.',
+    'Public holidays are not recorded anywhere. A day the studio is shut for a festival still counts as a working day unless somebody changes the working days in Settings for that week.',
+  ]),
+  p('WHERE THIS SHOWS UP. It is corrected at the source \u2014 one column, work_sessions.seconds \u2014 so every '
+    + 'figure built on it moves together: Time Spent on the card and in the Assets List, the Efficiency report, the '
+    + 'hours the Time Sheet suggests when you add a line, and the Fixed and Actual hours in the P&L. There is no '
+    + 'screen where the old number survives, and none that needed its own fix.'),
 
   h2('7.4 Not before the start date'),
   p('An asset carrying a Start Date cannot be accepted before that day. The button is disabled until then and says '
@@ -496,7 +515,7 @@ module.exports = [
     'You may hold as many tasks as you like. Each one keeps its badge, so none of them can be quietly forgotten.',
     'Hand a held task to somebody else and the hold does not follow it. Their Time Spent starts at nothing, and your hours stay on the asset.',
   ]),
-  p('WHAT THIS COSTS, AND WHY IT IS WORTH SAYING. Time Spent is now elapsed time less whatever was declared as a '
+  p('WHAT THIS COSTS, AND WHY IT IS WORTH SAYING. Time Spent is working-hours time less whatever was declared as a '
     + 'hold, which means its accuracy depends on people pressing the button \u2014 exactly as the Time Sheet\u2019s '
     + 'does. Two assets showing the same hours can mean different things, so the Efficiency report says how many of '
     + 'the assets it covers had time held back. Note also that the Idle report and the Efficiency report move in '
@@ -1085,13 +1104,22 @@ module.exports = [
   h2('13.2 Working hours and lunch'),
   shot('12-settings-working-hours', 'The working-hours control.'),
   steps([
+    'Tick the days the studio works. Monday to Friday out of the box.',
     'Set the start and end of the working day.',
-    'Set the start and end of the lunch break, or clear both if the studio does not have a fixed one.',
+    'Set the start and end of each break, or clear both ends of one the studio does not have.',
     'Save.',
   ]),
-  p('This one setting drives three things: what the Time Sheet will accept, how much of a line counts as work, and '
-    + 'what the Idle report treats as working time. The form refuses a window that cannot hold the 8-hour daily '
-    + 'maximum, a lunch outside the day, half a lunch, or a day that ends before it starts, and says why in each case.'),
+  p('This one setting drives four things: what the timer records, what the Time Sheet will accept, how much of a '
+    + 'line counts as work, and what the Idle report treats as working time. The form refuses a window that cannot '
+    + 'hold the 8-hour daily maximum, a break outside the day, half a break, two breaks that overlap, or a day that '
+    + 'ends before it starts, and says why in each case.'),
+  p('THE TIMER IS THE NEWEST OF THE FOUR, and the one worth knowing about before changing anything here. Time Spent '
+    + 'on every asset is the part of its start-to-submit span that falls inside the days and hours on this screen '
+    + '(7.3a). A change here is NOT retroactive: each stretch of work is measured against the window in force at the '
+    + 'moment it ends, and that figure is then stored, so widening or narrowing the day changes what is recorded '
+    + 'from now on and leaves finished work exactly as it was. That is deliberate \u2014 a setting that silently '
+    + 'rewrote last quarter\u2019s hours would rewrite last quarter\u2019s P&L with them. The times are read as '
+    + 'IST wherever the server and the reader happen to be.'),
   roles('Changing the working day is a studio-wide decision, so it sits with leadership rather than with the people who fill in time sheets.', ['leadership']),
 
   h2('13.3 Branding'),

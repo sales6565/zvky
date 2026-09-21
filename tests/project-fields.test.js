@@ -21,7 +21,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const catalogue = require('../src/permission-catalog');
 const referenceData = require('../src/reference-data');
-const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON, systemClientId } = require('./helpers');
+const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON, systemClientId, openStudio } = require('./helpers');
 
 const cfg = config('projFields');
 const wait = (seconds) => new Promise((r) => setTimeout(r, seconds * 1000));
@@ -79,6 +79,13 @@ test('project fields', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     const login = async (email) => (await call('/auth/login', { method: 'POST',
       body: { email, password: PASSWORD } })).body.token;
     token.root = await login('root@zvky.test');
+    /* Hold the studio open for this suite.
+     *
+     * Recorded time is now the part of a session inside the studio's working
+     * window, so a suite that starts a timer and expects a number would assert
+     * something different at nine at night than at eleven in the morning. This
+     * pins that one input; see openStudio in tests/helpers.js. */
+    await openStudio(server.base, token.root);
     clientId = await systemClientId(server.base, token.root);
     const seed = (await makeProject({ name: 'Seed' })).body.project.id;
     people.ana = (await as('root', '/users', { method: 'POST', body: {

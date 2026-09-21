@@ -30,6 +30,8 @@
 // sum for exactly that reason.
 
 const { v4: uuid } = require('uuid');
+const workingTime = require('./working-time');
+const workSchedule = require('./work-schedule');
 
 /* Why a session ended. Absent on every row written before this change, which is
  * what tells the reports where the meaning of `seconds` switches from active
@@ -40,7 +42,37 @@ const REASONS = {
   unassigned: 'unassigned',   // taken off everybody
   moved: 'moved',             // the asset was put in a status nobody works in
   held: 'held',               // put down on purpose, to be picked up again
+  off_hours: 'off_hours',     // the studio shut with this still running
 };
+
+/* The two reasons that are a PAUSE rather than a hand-in.
+ *
+ * 'held' is somebody putting the work down; 'off_hours' is the studio closing
+ * around them. They differ in who decided and in what the screen says, and in
+ * nothing else: both leave the round open, both free the one-active-task slot,
+ * both are picked up again with Resume, and neither is a submission. So every
+ * predicate that used to ask `= 'held'` asks this list instead, and the two
+ * cannot drift apart — a new pause reason is one entry here rather than a grep
+ * for the word 'held' across three files.
+ */
+const PAUSE_REASONS = [REASONS.held, REASONS.off_hours];
+const PAUSED_SQL = `IN (${PAUSE_REASONS.map((r) => `'${r}'`).join(', ')})`;
+
+/* When the studio is open, read fresh on every call.
+ *
+ * work-schedule keeps one row mirrored in memory, so this is a property read
+ * rather than a query — but it is read at the moment it is needed rather than
+ * captured once, because a Super Admin can change the window in Settings while
+ * the server is up and a timer started before that change must be measured
+ * against the window in force when it is closed, not when this module loaded.
+ *
+ * Before the schedule has been loaded — a very early request, or a deployment
+ * whose work_schedule table could not be created — this hands back the
+ * defaults, which are the studio's real answer: Monday to Friday, half past
+ * nine to seven, with lunch. So the worst case is the right window rather than
+ * no window, and no window would mean counting the weekend again.
+ */
+const schedule = () => workSchedule.trackingWindow();
 
 /* HOLD, AND WHY IT NEEDS NO NEW TABLE.
  *
@@ -152,9 +184,45 @@ async function openForUser(db, userId, exceptAssetId = null) {
   return rows[0] || null;
 }
 
+/* HOW A STORED STAMP BECOMES AN INSTANT, WITHOUT TRUSTING ANY TIMEZONE.
+ *
+ * started_at is a DATETIME: a wall clock with no zone in it. Reading it as an
+ * instant means knowing which zone the database wrote it in, and the driver
+ * instead parses it in whatever zone the Node process happens to be in. On one
+ * machine those agree; the studio asked for time that is right regardless.
+ *
+ * So no stamp is ever converted. Every query that needs one asks the database
+ * how long ago it was — TIMESTAMPDIFF against its own NOW(), in its own clock,
+ * a plain number of seconds — and the caller anchors that to Date.now(). The
+ * only thing this assumes is that the two machines agree on what time it is
+ * now, which is a far weaker assumption than agreeing on a timezone, and one
+ * every other part of the application already makes.
+ */
+const AGE = (col = 'started_at') => `TIMESTAMPDIFF(SECOND, ${col}, NOW())`;
+const instantFromAge = (ageSeconds, now) => now - (Number(ageSeconds) || 0) * 1000;
+
+/* What a still-running session has accrued so far.
+ *
+ * THE FIGURE ON SCREEN HAS TO BE THE FIGURE THAT GETS STORED. A closed session
+ * holds the working seconds close() worked out; an open one has no stored
+ * figure at all, and the old expression — COALESCE(seconds, TIMESTAMPDIFF(…))
+ * — filled that gap with the raw span. Leaving it would have meant a task
+ * started at half past twelve reading two hours at half past two on the panel
+ * and one hour the moment it was submitted, with nothing on screen to say why
+ * an hour had gone. So the live figure is intersected with the window too, by
+ * the same function, and the number does not move when the session closes.
+ *
+ * Takes the age from the database rather than a stamp, for the reason given
+ * above AGE. Null — no open session in this group — is nothing to add.
+ */
+function liveSeconds(ageSeconds, now = Date.now()) {
+  if (ageSeconds === null || ageSeconds === undefined) return 0;
+  return workingTime.workingSecondsBetween(instantFromAge(ageSeconds, now), now, schedule());
+}
+
 async function openSession(db, assetId) {
   const { rows } = await db.query(
-    'SELECT * FROM work_sessions WHERE asset_id = $1 AND ended_at IS NULL LIMIT 1',
+    `SELECT *, ${AGE()} AS age_seconds FROM work_sessions WHERE asset_id = $1 AND ended_at IS NULL LIMIT 1`,
     [assetId]
   ).catch((err) => {
     if (!unavailable(err)) throw err;
@@ -200,7 +268,89 @@ async function start(db, assetId, userId, assignmentId) {
       [id, assetId, userId, round]
     );
   }
+  /* STARTED WITH THE STUDIO SHUT.
+   *
+   * The click is never refused — somebody sitting down at nine in the evening
+   * is taking the work on, and blocking that would only teach them to start it
+   * the next morning and mis-state when they began. What is refused is the
+   * time: the session is opened and immediately put down again with the reason
+   * that explains it, so it accrues nothing and needs Resume to carry on.
+   *
+   * That is the same state a timer gets into by running past seven, reached by
+   * the same route and shown by the same label. Two ways in, one state — which
+   * is what keeps "it started outside hours" and "it ran past the end of the
+   * day" from needing two explanations on screen and two rules in here. */
+  if (!workingTime.isOpen(Date.now(), schedule())) {
+    await close(db, assetId, REASONS.off_hours);
+    return { ok: true, sessionId: id, round, pausedOffHours: true, opensAt: nextOpening() };
+  }
   return { ok: true, sessionId: id, round };
+}
+
+/* When the studio next opens, as an ISO instant — what a screen says next to a
+   paused timer. Null only if the schedule has no working days at all, which
+   Settings will not save but a hand-edited database could hold. */
+function nextOpening(from = Date.now()) {
+  const at = workingTime.opensAt(from, schedule());
+  return at === null ? null : new Date(at).toISOString();
+}
+
+/* PUT DOWN EVERY TIMER THE STUDIO CLOSED AROUND.
+ *
+ * Walks the open sessions and closes any whose working window has ended, at
+ * the instant it ended rather than the instant this ran. That distinction is
+ * the whole design: the sweep is a label, not a measurement. Run it at seven
+ * o'clock sharp or at midnight and the recorded figure is identical, because
+ * close() intersects the span with the window either way — so a missed tick, a
+ * restart, or a server asleep for an hour cannot cost anybody a correct number.
+ * What being late costs is only how long the panel goes on saying "in progress"
+ * after it stopped counting.
+ *
+ * Returns what it paused, so the caller can tell those people. It tells nobody
+ * itself: this module records time and does not know about notifications, and
+ * keeping it that way is what lets the whole of it be tested without them.
+ */
+async function pauseOverdue(db) {
+  const now = Date.now();
+  const window = schedule();
+  const { rows } = await db.query(
+    `SELECT w.id, w.asset_id AS assetId, w.user_id AS userId, w.round,
+            ${AGE('w.started_at')} AS age_seconds,
+            a.\`code\`, a.\`name\`
+       FROM work_sessions w
+       JOIN assets a ON a.id = w.asset_id
+      WHERE w.ended_at IS NULL`
+  ).catch((err) => {
+    if (!unavailable(err)) throw err;
+    return { rows: [] };
+  });
+
+  const paused = [];
+  for (const row of rows) {
+    const startedAt = instantFromAge(row.age_seconds, now);
+    /* Null means the session began outside the window and there is nothing for
+       it to have run until — so it is put down at its own start and accrues
+       nothing. That is the row start() could not close itself: a server that
+       was down when somebody's session was open, or a row from before this
+       rule existed. */
+    const closesAt = workingTime.closesAt(startedAt, window);
+    const at = closesAt === null ? startedAt : closesAt;
+    if (closesAt !== null && now < closesAt) continue;   // still inside its day
+
+    const done = await close(db, row.assetId, REASONS.off_hours, null, { at });
+    if (!done.wasOpen) continue;                          // somebody closed it first
+    paused.push({
+      assetId: row.assetId,
+      userId: row.userId,
+      code: row.code,
+      name: row.name,
+      round: Number(row.round) || null,
+      at: new Date(at).toISOString(),
+      seconds: done.seconds,
+      startedOutsideHours: closesAt === null,
+    });
+  }
+  return paused;
 }
 
 /* Stamp the end, and record what ended it.
@@ -211,22 +361,47 @@ async function start(db, assetId, userId, assignmentId) {
  * that raw query used to throw, so the artist could not submit at all with
  * "a database error" as the only explanation.
  *
- * `seconds` is the elapsed wall-clock span. It is stored rather than derived on
- * read so a later edit to either stamp cannot silently rewrite history, and so
- * the reports can sum one column instead of subtracting dates in SQL. */
-async function close(db, assetId, reason, note = null) {
+ * WHAT `seconds` MEANS NOW, AND WHY IT CHANGED. It was the raw wall-clock span
+ * between the two stamps: TIMESTAMPDIFF, straight from the database. That made
+ * every evening, every weekend and every lunch hour part of what an asset cost.
+ * It is now the part of that span the studio was actually open — the span
+ * intersected with the configured working days, working hours and breaks, in
+ * IST. See src/working-time.js for the arithmetic and why it lives apart.
+ *
+ * THIS IS THE SOURCE, AND THAT IS THE POINT. work_sessions.seconds is the one
+ * column behind Time Spent, the Efficiency report, the Time Sheet's suggested
+ * hours and the Fixed and Actual P&L. Correcting it here corrects all of them
+ * at once; correcting them one by one would have been five chances to write the
+ * same rule five slightly different ways.
+ *
+ * `at` closes the session at a moment that has already passed rather than now.
+ * Only the auto-pause sweep passes it, and it is what makes the seven o'clock
+ * cutoff exact no matter when the sweep gets round to it — see pauseOverdue().
+ *
+ * Stored rather than derived on read, as before, so a later edit to either
+ * stamp cannot silently rewrite history and the reports can sum one column.
+ */
+async function close(db, assetId, reason, note = null, { at = null } = {}) {
   const running = await openSession(db, assetId);
   if (!running) return { ok: true, wasOpen: false };
   const why = REASONS[reason] || null;
   const text = typeof note === 'string' && note.trim() ? note.trim().slice(0, 255) : null;
 
-  /* Three shapes of the same UPDATE, tried widest first.
-   *
-   * A deployment that has not run one of the column migrations still closes the
-   * session; it just cannot say why, or cannot keep the note. Losing the stamp
-   * for want of a column would be far worse than losing either — the stamp is
-   * what Time Spent is made of, and what the one-active-task rule reads. */
-  const STAMP = 'ended_at = NOW(), seconds = TIMESTAMPDIFF(SECOND, started_at, NOW())';
+  const now = Date.now();
+  const startedAt = instantFromAge(running.age_seconds, now);
+  /* Never in the future, and never before the session began. A clock nudged
+     backwards between the start and this call would otherwise write a negative
+     span; the intersection would return zero anyway, but the ended_at stamp
+     would read as before the started_at one and no report expects that. */
+  const endedAt = Math.min(now, Math.max(startedAt, at === null ? now : Number(at)));
+  const seconds = workingTime.workingSecondsBetween(startedAt, endedAt, schedule());
+
+  /* The end stamp as an offset from the database's own NOW(), for the same
+     reason the age above is read that way: it lands in the database's clock
+     without this process having to know what that clock is. Zero is the
+     ordinary case and MySQL folds `NOW() - INTERVAL 0 SECOND` away. */
+  const back = Math.max(0, Math.round((now - endedAt) / 1000));
+  const STAMP = `ended_at = NOW() - INTERVAL ${back} SECOND, seconds = ${Number(seconds) || 0}`;
   const attempts = [
     [`${STAMP}, ended_reason = $1, hold_note = $2`, [why, text, running.id], '$3'],
     [`${STAMP}, ended_reason = $1`, [why, running.id], '$2'],
@@ -243,7 +418,7 @@ async function close(db, assetId, reason, note = null) {
       if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
     }
   }
-  return { ok: true, wasOpen: true, round: running.round, reason: why, note: text };
+  return { ok: true, wasOpen: true, round: running.round, reason: why, note: text, seconds };
 }
 
 /* Put the open stretch down, keeping the round.
@@ -271,8 +446,29 @@ async function hold(db, assetId, note = null) {
 async function heldFor(db, assetId, userId) {
   if (!userId) return null;
   const { rows } = await selectHeld(db, 'w.asset_id = $1 AND w.user_id = $2', [assetId, userId]);
-  const row = rows[0];
-  return row ? { since: row.ended_at, note: row.hold_note || null, round: Number(row.round) || null } : null;
+  return rows[0] ? describePause(rows[0]) : null;
+}
+
+/* A paused row, as a screen needs it.
+ *
+ * `byStudio` is the whole reason the reason travels: the two pauses need
+ * different words. "You put this down" and "the studio closed around this" are
+ * not the same message, and a person who did not touch the button needs telling
+ * which one happened and when work can resume. A row written before the reason
+ * column existed reads as a hold, which is what every such row was.
+ */
+function describePause(row) {
+  const byStudio = row.ended_reason === REASONS.off_hours;
+  return {
+    since: row.ended_at,
+    note: row.hold_note || null,
+    round: Number(row.round) || null,
+    reason: row.ended_reason || REASONS.held,
+    byStudio,
+    // Only worth saying for the automatic one — somebody who chose to stop
+    // knows perfectly well when they can start again.
+    opensAt: byStudio ? nextOpening() : null,
+  };
 }
 
 /* "This row is the newest stretch of this person's work on this asset, and it
@@ -291,7 +487,7 @@ async function heldFor(db, assetId, userId) {
  * what separates them. The one case left indistinguishable — hold, resume and
  * submit inside a single second — describes a round with no work in it.
  */
-const HELD_ROW = `w.ended_reason = 'held' AND NOT EXISTS (
+const HELD_ROW = `w.ended_reason ${PAUSED_SQL} AND NOT EXISTS (
       SELECT 1 FROM work_sessions n
        WHERE n.asset_id = w.asset_id AND n.user_id = w.user_id
          AND (n.ended_at IS NULL
@@ -311,7 +507,7 @@ const HELD_ROW = `w.ended_reason = 'held' AND NOT EXISTS (
  * excluding those would erase the very history that column was added to keep.
  */
 const submitStamp = (prefix = '') =>
-  `CASE WHEN ${prefix}ended_reason = 'held' THEN NULL ELSE ${prefix}ended_at END`;
+  `CASE WHEN ${prefix}ended_reason ${PAUSED_SQL} THEN NULL ELSE ${prefix}ended_at END`;
 
 /* Ask with the hold-aware stamp, and fall back to the plain one.
  *
@@ -346,7 +542,7 @@ async function askStamped(db, build, params, ifUnavailable) {
  * recorded, so nothing is held — which is the honest answer, not a guess. */
 async function selectHeld(db, where, params) {
   const ask = (noteColumn) => db.query(
-    `SELECT w.asset_id, w.ended_at, ${noteColumn} AS hold_note, w.round
+    `SELECT w.asset_id, w.ended_at, ${noteColumn} AS hold_note, w.round, w.ended_reason
        FROM work_sessions w WHERE ${where} AND ${HELD_ROW}`,
     params
   );
@@ -448,9 +644,10 @@ async function dayTotalFor(db, { assetId, userId, day, offsetMinutes = 330 }) {
 async function recordedFor(db, { assetId, userId }) {
   if (!assetId || !userId) return { seconds: 0, sessions: 0, open: false };
   const { rows } = await db.query(
-    `SELECT COALESCE(SUM(COALESCE(seconds, TIMESTAMPDIFF(SECOND, started_at, NOW()))), 0) AS seconds,
+    `SELECT COALESCE(SUM(COALESCE(seconds, 0)), 0) AS seconds,
             COUNT(*) AS sessions,
-            SUM(ended_at IS NULL) AS still_open
+            SUM(ended_at IS NULL) AS still_open,
+            MIN(CASE WHEN ended_at IS NULL THEN ${AGE()} END) AS open_age
        FROM work_sessions
       WHERE asset_id = $1 AND user_id = $2`,
     [assetId, userId]
@@ -459,10 +656,10 @@ async function recordedFor(db, { assetId, userId }) {
        in by hand anyway; refusing to draw the form because time recording is
        unavailable would take the timesheet down with it. */
     if (!unavailable(err)) throw err;
-    return { rows: [{ seconds: 0, sessions: 0, still_open: 0 }] };
+    return { rows: [{ seconds: 0, sessions: 0, still_open: 0, open_age: null }] };
   });
   return {
-    seconds: Number(rows[0].seconds) || 0,
+    seconds: (Number(rows[0].seconds) || 0) + liveSeconds(rows[0].open_age),
     sessions: Number(rows[0].sessions) || 0,
     open: Number(rows[0].still_open) > 0,
   };
@@ -508,15 +705,16 @@ async function cutover(db) {
 async function summary(db, assetId, assignmentId, assigneeId) {
   const { rows } = await askStamped(db, (stamp) =>
     `SELECT round,
-            SUM(COALESCE(seconds, TIMESTAMPDIFF(SECOND, started_at, NOW()))) AS seconds,
+            SUM(COALESCE(seconds, 0)) AS seconds,
             MIN(started_at) AS started_at,
             MAX(${stamp()}) AS ended_at,
-            SUM(ended_at IS NULL) AS still_open
+            SUM(ended_at IS NULL) AS still_open,
+            MIN(CASE WHEN ended_at IS NULL THEN ${AGE()} END) AS open_age
        FROM work_sessions WHERE asset_id = $1 GROUP BY round ORDER BY round`,
   [assetId], { rows: [] });
   const rounds = rows.map((r) => ({
     round: Number(r.round),
-    seconds: Number(r.seconds) || 0,
+    seconds: (Number(r.seconds) || 0) + liveSeconds(r.open_age),
     startedAt: r.started_at || null,
     // An open round has no submit stamp yet. Reporting MAX(ended_at) there
     // would hand back the end of some earlier closed row in the same round,
@@ -554,13 +752,15 @@ async function summary(db, assetId, assignmentId, assigneeId) {
     : (assigneeId ? { sql: 'user_id = $1', value: assigneeId } : null);
   if (scope) {
     const { rows: mine } = await askStamped(db, (stamp) =>
-      `SELECT SUM(COALESCE(seconds, TIMESTAMPDIFF(SECOND, started_at, NOW()))) AS seconds,
+      `SELECT SUM(COALESCE(seconds, 0)) AS seconds,
               MIN(started_at) AS started_at,
               MAX(${stamp()}) AS ended_at,
-              SUM(ended_at IS NULL) AS still_open
+              SUM(ended_at IS NULL) AS still_open,
+              MIN(CASE WHEN ended_at IS NULL THEN ${AGE()} END) AS open_age
          FROM work_sessions WHERE asset_id = $2 AND ${scope.sql}`,
-    [scope.value, assetId], { rows: [{ seconds: null, started_at: null, ended_at: null, still_open: 0 }] });
-    currentSeconds = Number(mine[0].seconds) || 0;
+    [scope.value, assetId],
+    { rows: [{ seconds: null, started_at: null, ended_at: null, still_open: 0, open_age: null }] });
+    currentSeconds = (Number(mine[0].seconds) || 0) + liveSeconds(mine[0].open_age);
     currentStamps = {
       startedAt: mine[0].started_at || null,
       submittedAt: Number(mine[0].still_open) > 0 ? null : (mine[0].ended_at || null),
@@ -595,14 +795,16 @@ async function totalsFor(db, assetIds) {
   if (!assetIds.length) return new Map();
   const { rows } = await askStamped(db, (stamp) =>
     `SELECT w.asset_id,
-            SUM(COALESCE(w.seconds, TIMESTAMPDIFF(SECOND, w.started_at, NOW()))) AS seconds,
+            SUM(COALESCE(w.seconds, 0)) AS seconds,
             SUM(w.ended_at IS NULL) AS still_open,
             MIN(CASE WHEN w.user_id = a.assignee_id THEN w.started_at END) AS started_at,
             MAX(CASE WHEN w.user_id = a.assignee_id THEN ${stamp('w.')} END) AS ended_at,
             COUNT(DISTINCT CASE WHEN w.user_id = a.assignee_id THEN w.round END) AS rounds,
-            SUM(CASE WHEN w.user_id = a.assignee_id
-                     THEN COALESCE(w.seconds, TIMESTAMPDIFF(SECOND, w.started_at, NOW()))
-                     ELSE 0 END) AS current_seconds
+            SUM(CASE WHEN w.user_id = a.assignee_id THEN COALESCE(w.seconds, 0) ELSE 0 END)
+              AS current_seconds,
+            MIN(CASE WHEN w.ended_at IS NULL THEN ${AGE('w.started_at')} END) AS open_age,
+            MIN(CASE WHEN w.ended_at IS NULL AND w.user_id = a.assignee_id
+                     THEN ${AGE('w.started_at')} END) AS current_open_age
        FROM work_sessions w
        JOIN assets a ON a.id = w.asset_id
       WHERE w.asset_id IN ($1) GROUP BY w.asset_id`,
@@ -620,11 +822,11 @@ async function totalsFor(db, assetIds) {
     'w.asset_id IN ($1) AND w.user_id = (SELECT assignee_id FROM assets WHERE id = w.asset_id)',
     [assetIds]
   );
-  const heldBy = new Map(heldRows.map((r) => [r.asset_id, { since: r.ended_at, note: r.hold_note || null }]));
+  const heldBy = new Map(heldRows.map((r) => [r.asset_id, describePause(r)]));
 
   return new Map(rows.map((r) => [r.asset_id, {
-    seconds: Number(r.seconds) || 0,
-    currentSeconds: Number(r.current_seconds) || 0,
+    seconds: (Number(r.seconds) || 0) + liveSeconds(r.open_age),
+    currentSeconds: (Number(r.current_seconds) || 0) + liveSeconds(r.current_open_age),
     open: Number(r.still_open) > 0,
     startedAt: r.started_at || null,
     submittedAt: Number(r.still_open) > 0 ? null : (r.ended_at || null),
@@ -633,8 +835,58 @@ async function totalsFor(db, assetIds) {
   }]));
 }
 
+/* Run the sweep, tell the people it affected, and keep doing it.
+ *
+ * THE INTERVAL IS ABOUT THE SCREEN, NOT THE NUMBER. Every minute, because the
+ * studio asked for the pause to land at seven o'clock and a person watching
+ * their own task should not see "in progress" for long after it stopped
+ * counting. It is emphatically not how the cutoff is measured — pauseOverdue
+ * closes at the boundary instant whatever time it is called, so this could run
+ * hourly and every recorded figure would be identical. That is what makes a
+ * restart, a missed tick or a sleeping server harmless.
+ *
+ * SAFE ON MORE THAN ONE WORKER, by the same argument the chat sweep uses:
+ * close() updates `WHERE id = ? AND ended_at IS NULL`, so of two processes
+ * racing the same session one updates a row and the other updates nothing and
+ * reports wasOpen false. Nobody is told twice.
+ *
+ * The first pass runs immediately rather than in a minute's time: a process
+ * that was restarted comes back holding sessions the studio closed around
+ * while it was down, and no timer ever fired for those.
+ */
+function scheduleAutoPause(db, log = console.log) {
+  const minutes = Number(process.env.WORK_HOURS_SWEEP_MINUTES ?? 1);
+  const notifications = require('./notifications');
+
+  const run = async () => {
+    const paused = await pauseOverdue(db);
+    for (const row of paused) {
+      /* No actor: the clock did this, not a person. raise() drops a recipient
+         who is also the actor, so passing null is also what makes sure this
+         reaches somebody who paused their own work by starting it late. */
+      await notifications.raise(db, {
+        recipientId: row.userId,
+        actorId: null,
+        kind: notifications.KINDS.work_paused,
+        assetId: row.assetId,
+      }).catch(() => {});
+    }
+    if (paused.length) {
+      log(`[hours] paused ${paused.length} timer(s) outside working hours.`);
+    }
+  };
+
+  const tick = () => run().catch((err) => log(`[hours] sweep failed: ${err.sqlMessage || err.message}`));
+  tick();
+  if (!Number.isFinite(minutes) || minutes <= 0) return null;
+  const timer = setInterval(tick, minutes * 60 * 1000);
+  if (timer.unref) timer.unref();
+  return timer;
+}
+
 module.exports = {
-  REASONS, WORK_CONTINUES, start, close, closeIfWorkStopped, hold, heldFor, summary, totalsFor,
+  REASONS, PAUSE_REASONS, WORK_CONTINUES, start, close, closeIfWorkStopped, hold, heldFor,
+  summary, totalsFor, pauseOverdue, scheduleAutoPause, nextOpening,
   openSession, openForUser, currentRound, available, cutover, dayTotalFor, recordedFor,
   // Exported so every reader of a submit stamp uses the same expression. There
   // are three, and the third was found by a test rather than by reading.

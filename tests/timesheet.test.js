@@ -4,7 +4,7 @@ const sheets = require('../src/timesheets');
 const catalog = require('../src/permission-catalog');
 const rolePermissions = require('../src/role-permissions');
 const { ROLES } = require('../src/reference-defaults');
-const { config, resetSchema, startServer, stopServer, api, sql, pdfText, SKIP_REASON } = require('./helpers');
+const { config, resetSchema, startServer, stopServer, api, sql, pdfText, SKIP_REASON, openStudio } = require('./helpers');
 
 const cfg = config('timesheet');
 
@@ -250,6 +250,13 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     const login = async (email) => (await call('/auth/login', {
       method: 'POST', body: { email, password: PASSWORD } })).body.token;
     token.root = await login('root@zvky.test');
+    /* Hold the studio open for this suite.
+     *
+     * Recorded time is now the part of a session inside the studio's working
+     * window, so a suite that starts a timer and expects a number would assert
+     * something different at nine at night than at eleven in the morning. This
+     * pins that one input; see openStudio in tests/helpers.js. */
+    await openStudio(server.base, token.root);
 
     clientId = (await as('root', '/clients')).body.clients[0].id;
     projectId = (await as('root', '/projects', { method: 'POST',
@@ -948,6 +955,14 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     const before = (await week('ana')).workingDay.maxHours;
     assert.strictEqual(before, 8);
 
+    /* The window as it stands, read rather than assumed. This suite holds the
+       studio open so its timers run (see openStudio in the before hook), so
+       the stored clock is that window and not the 09:30 default — and the
+       claim below is "a partial save leaves it alone", which is about it not
+       CHANGING rather than about what it happens to be. */
+    const windowBefore = await sql(cfg,
+      'SELECT day_start_min, day_end_min, lunch_start_min FROM work_schedule LIMIT 1');
+
     const short = await as('root', '/branding/schedule', {
       method: 'PUT', body: { hoursPerDay: 4, workingDays: [1, 2, 3, 4, 5] } });
     assert.strictEqual(short.status, 200, JSON.stringify(short.body));
@@ -961,9 +976,14 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
        mention it. The four inputs have gone from the form, and the stored
        window has to survive that rather than being blanked by every save —
        a studio that goes back to clock times should get its own back. */
-    const stored = await sql(cfg, 'SELECT day_start_min, lunch_start_min FROM work_schedule LIMIT 1');
-    assert.strictEqual(Number(stored[0].day_start_min), 570, '09:30 is still on the row');
-    assert.strictEqual(Number(stored[0].lunch_start_min), 780);
+    const stored = await sql(cfg,
+      'SELECT day_start_min, day_end_min, lunch_start_min FROM work_schedule LIMIT 1');
+    assert.strictEqual(Number(stored[0].day_start_min), Number(windowBefore[0].day_start_min),
+      'the start of the day is still on the row');
+    assert.strictEqual(Number(stored[0].day_end_min), Number(windowBefore[0].day_end_min),
+      'and the end of it');
+    assert.strictEqual(stored[0].lunch_start_min, windowBefore[0].lunch_start_min,
+      'and lunch, whether it was set or not');
 
     // Put it back for the rest of the suite.
     assert.strictEqual((await as('root', '/branding/schedule', {

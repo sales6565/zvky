@@ -23,7 +23,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const catalogue = require('../src/permission-catalog');
 const schedule = require('../src/asset-schedule');
-const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON, systemClientId } = require('./helpers');
+const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON, systemClientId, openStudio } = require('./helpers');
 
 const cfg = config('bulkAssign');
 
@@ -104,6 +104,13 @@ test('bulk assign and schedule', { skip: cfg ? false : SKIP_REASON }, async (t) 
     const login = async (email) => (await call('/auth/login', { method: 'POST',
       body: { email, password: PASSWORD } })).body.token;
     token.root = await login('root@zvky.test');
+    /* Hold the studio open for this suite.
+     *
+     * Recorded time is now the part of a session inside the studio's working
+     * window, so a suite that starts a timer and expects a number would assert
+     * something different at nine at night than at eleven in the morning. This
+     * pins that one input; see openStudio in tests/helpers.js. */
+    await openStudio(server.base, token.root);
     const client = await systemClientId(server.base, token.root);
     projectId = (await as('root', '/projects', { method: 'POST',
       body: { clientId: client, name: 'Planning' } })).body.project.id;

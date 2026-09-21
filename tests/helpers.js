@@ -213,6 +213,52 @@ function pdfText(buffer) {
   return { pages: pages.length, text: pages.join('\n'), byPage: pages };
 }
 
+/* Hold the studio open, so a suite about something else is not also a suite
+ * about what time it is.
+ *
+ * Recorded time is now the part of a session that falls inside the studio's
+ * working window (src/working-time.js), which makes every test that starts a
+ * timer and expects a number depend on the clock it runs under. Run the suite
+ * at eight in the evening, or on a Saturday, and twenty-three of them failed —
+ * correctly, which is the problem: a red suite that means "it is late" teaches
+ * people to ignore a red suite.
+ *
+ * So a suite that needs the clock to run says so, once, in its before hook.
+ * This sets the real setting through the real endpoint rather than stubbing the
+ * module, so the suite still exercises the path production uses; it just pins
+ * the one input that would otherwise be the wall clock.
+ *
+ * Suites ABOUT the window do not call this. They set the window they mean to
+ * test, which is the same endpoint doing the same thing.
+ */
+async function openStudio(base, token) {
+  const r = await api(base, '/branding/schedule', {
+    method: 'PUT',
+    token,
+    body: {
+      hoursPerDay: 8,
+      workingDays: [1, 2, 3, 4, 5, 6, 7],
+      dayStart: 0,
+      /* 1440, not '23:59'. A window ending a minute before midnight leaves a
+         one-minute hole every night, and a session running across it loses
+         that minute — which is a real hole, just a small one, and small holes
+         in a clock are the ones that take longest to find. The setting accepts
+         a plain minute count, and 1440 is midnight at the far end. */
+      dayEnd: 24 * 60,
+      // Every break cleared: a suite measuring a two-hour session must not lose
+      // an hour of it to a lunch it never asked for.
+      lunchStart: '', lunchEnd: '',
+      morningStart: '', morningEnd: '',
+      eveningStart: '', eveningEnd: '',
+    },
+  });
+  if (r.status >= 400) {
+    throw new Error(`could not open the studio for this suite: ${r.status} ${JSON.stringify(r.body)}`);
+  }
+  return r.body.schedule;
+}
+
 module.exports = {
-  config, resetSchema, startServer, stopServer, api, raw, sql, systemClientId, pdfText, SKIP_REASON,
+  config, resetSchema, startServer, stopServer, api, raw, sql, systemClientId, pdfText,
+  openStudio, SKIP_REASON,
 };

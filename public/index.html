@@ -4692,7 +4692,7 @@ function cardHTML(a){
     <div class="code">${a.code}${metaBits.length? ' · '+metaBits.join(' · ') : ''}</div><div class="name">${escapeHTML(a.name)}</div>
     <div class="meta"><span class="type-tag">${t.label}</span>
       <div style="display:flex;align-items:center;gap:6px;">
-        ${a.held ? `<span class="badge hold-badge" title="On hold since ${escapeHTML(fmtDate(a.held.since))}${a.held.note ? ` — ${escapeHTML(a.held.note)}` : ''}">On hold</span>` : ''}
+        ${a.held ? `<span class="badge hold-badge" title="${escapeHTML(pauseWords(a.held).title)} since ${escapeHTML(fmtDate(a.held.since))}${a.held.note ? ` — ${escapeHTML(a.held.note)}` : ''}">${escapeHTML(pauseWords(a.held).short)}</span>` : ''}
         <span class="mono" style="font-size:10px;color:var(--ink-faint);">${doneTasks}/${a.tasks.length}</span>
         ${avatarHTML({ id:a.assignee_id, name:a.assignee_name, photoAt:a.assignee_photo_at })}</div>
     </div></div>`;
@@ -5020,7 +5020,7 @@ function renderList(){
            stage that says it has not. Live rows only — a finished round cannot
            be on hold, whatever it ended with. -->
       <td><span class="status-pill" style="background:${s.color}22;color:${s.color}"><span class="d" style="background:${s.color}"></span>${s.label}</span>${
-        (!past && a.held) ? ` <span class="badge hold-badge" title="On hold since ${escapeHTML(fmtDate(a.held.since))}${a.held.note ? ` — ${escapeHTML(a.held.note)}` : ''}">On hold</span>` : ''}</td>
+        (!past && a.held) ? ` <span class="badge hold-badge" title="${escapeHTML(pauseWords(a.held).title)} since ${escapeHTML(fmtDate(a.held.since))}${a.held.note ? ` — ${escapeHTML(a.held.note)}` : ''}">${escapeHTML(pauseWords(a.held).short)}</span>` : ''}</td>
       <td>${who ? `<span class="who-line">${avatarHTML({ id: ep ? ep.userId : a.assignee_id, name: who, photoAt: ep ? ep.userPhotoAt : a.assignee_photo_at }, { size:20, title:false })}<span>${escapeHTML(who)}</span></span>` : '—'}</td>
       <td>${ep ? (past ? `<span class="round-tag">handed on</span>` : `<span class="round-tag round-tag-live">current</span>`) : ''}</td>
       <td style="text-transform:capitalize;">${a.priority}</td><td class="mono">${past?'':`${doneTasks}/${a.tasks.length}`}</td>
@@ -6611,6 +6611,48 @@ function fmtBytes(n){ if(!n) return ''; const kb=n/1024; return kb<1024 ? kb.toF
  * stampLine is the one-line version for a table cell; stampDetail is the
  * two-line version for the panel. Both say "not started" and "in progress"
  * plainly rather than printing an em dash and leaving it ambiguous. */
+/* What to call a pause, in one place.
+ *
+ * Two kinds reach the screen and they need different words. `held` is somebody
+ * choosing to put the work down. `byStudio` is the working-hours rule closing
+ * the timer at the end of the day — nobody pressed anything, so a panel saying
+ * "on hold" would be telling them they did something they did not do, and the
+ * first thing they would look for is who. Three displays render this (the card
+ * badge, the list row and the panel), so the wording lives here and they cannot
+ * drift into three different explanations of the same row. */
+/* A studio-hours moment, in the studio's own clock.
+ *
+ * Everything else on this screen is formatted in the reader's local time, which
+ * is right for "when did this happen" — a stamp is an instant and everybody
+ * should see it in the clock on their wall. This line is different: it is a
+ * statement about when the STUDIO opens, and the studio is in India. Rendered
+ * locally it told somebody in London that working hours resume at four in the
+ * morning, which is true and useless. So this one says 09:30 IST, and says IST,
+ * and is the only formatter here that pins a timezone. */
+function fmtIST(iso){
+  if(!iso) return '';
+  const d = new Date(iso);
+  if(Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-GB', {
+    timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  }) + ' IST';
+}
+
+function pauseWords(held){
+  if(!held) return null;
+  if(held.byStudio) return {
+    short: 'Outside working hours',
+    lower: 'paused — outside hours',
+    title: 'Paused',
+    why: 'The working day ended, so the clock stopped. Time outside working hours is not recorded.',
+    opens: held.opensAt ? `Working hours resume ${fmtIST(held.opensAt)}.` : '',
+  };
+  return {
+    short: 'On hold', lower: 'on hold', title: 'On hold',
+    why: 'Time from then until it is resumed is left out of Time Spent.', opens: '',
+  };
+}
+
 function stampLine(startedAt, submittedAt, rounds, held){
   if(!startedAt) return '';
   const many = Number(rounds) > 1 ? `${rounds} rounds · ` : '';
@@ -6619,7 +6661,8 @@ function stampLine(startedAt, submittedAt, rounds, held){
      without being handed in — after which it told a lead that work was under
      way on something nobody was touching. */
   const now = submittedAt ? fmtDate(submittedAt)
-    : (held ? '<span class="worklog-held">on hold</span>' : '<span class="worklog-open">in progress</span>');
+    : (held ? `<span class="worklog-held">${escapeHTML(pauseWords(held).lower)}</span>`
+            : '<span class="worklog-open">in progress</span>');
   return `<div class="worklog-stamps">${many}${fmtDate(startedAt)} → ${now}</div>`;
 }
 function stampDetail(startedAt, submittedAt, rounds, held){
@@ -6638,7 +6681,8 @@ function stampDetail(startedAt, submittedAt, rounds, held){
      saying it is on hold makes the reader decide which to believe. */
   const state = submittedAt ? `Submitted ${fmtDate(submittedAt)}`
     : (held
-      ? `<span class="worklog-held">On hold</span> — the count above has stopped, and starts again on Resume`
+      ? `<span class="worklog-held">${escapeHTML(pauseWords(held).title)}</span> — the count above has `
+        + `stopped, and starts again on Resume`
       : `<span class="worklog-open">In progress</span> — elapsed so far, from the start above`);
   return `<div class="worklog-stamps">Started ${fmtDate(startedAt)}</div>` +
     `<div class="worklog-stamps">${state}</div>` + many;
@@ -6808,8 +6852,9 @@ async function openDrawer(id){
           title="Stop the clock on this task and free yourself to start another">Hold</button>` : ''}
         ${canResume ? `<button class="btn btn-brand" id="d_resumeBtn">Resume</button>` : ''}
         ${held ? `<div class="start-blocked held-note">
-          <strong>On hold</strong> since ${escapeHTML(fmtDate(held.since))}${held.note ? ` — ${escapeHTML(held.note)}` : ''}.
-          Time from then until it is resumed is left out of Time Spent.
+          <strong>${escapeHTML(pauseWords(held).title)}</strong> since ${escapeHTML(fmtDate(held.since))}${held.note ? ` — ${escapeHTML(held.note)}` : ''}.
+          ${escapeHTML(pauseWords(held).why)}
+          ${pauseWords(held).opens ? `<br>${escapeHTML(pauseWords(held).opens)} Press Resume when you pick it up again.` : ''}
         </div>` : ''}
         ${startBlocked ? (blocked ? `
           <button class="btn btn-brand" id="d_startBtn" disabled
@@ -11548,10 +11593,13 @@ async function renderSchedule(){
   el.innerHTML = `
     <div class="ref-section">
       <div class="ref-head"><h3>Working Hours</h3></div>
-      <div class="ref-note">The studio's day, and the breaks that come out of it. The Idle Report
-        measures tracked time against the hours and days below, and subtracts any part of a break a
-        timer was left running through — so an hour spent at lunch with an asset still open no longer
-        counts as an hour worked. Public holidays and leave are not recorded anywhere, so time away
+      <div class="ref-note">The studio's day, and the breaks that come out of it — in IST, whatever
+        timezone a server or a laptop is set to. <strong>This window decides what the timer records.</strong>
+        Time Spent is the part of a task's start-to-submit span that falls inside the days and hours
+        below, with the breaks taken out, so evenings and weekends are no longer charged to an asset.
+        A timer still running when the day ends is put down at that moment and waits for Resume.
+        The Idle Report and both P&amp;L tabs read the same recorded time, so a change here changes
+        all of them together. Public holidays and leave are not recorded anywhere, so time away
         still reads as idle time.</div>
       <div class="ref-add">
         <div>
@@ -13110,6 +13158,7 @@ const NOTIF_TITLES = {
   project_review_changes:  'Changes requested',
   project_review_approved: 'Project approved',
   password_reset: 'Your password was reset',
+  work_paused: 'Timer paused — outside working hours',
 };
 const notifTitle = (n) => (n && NOTIF_TITLES[n.kind]) || 'Something needs your attention';
 

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON, systemClientId } = require('./helpers');
+const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON, systemClientId, openStudio } = require('./helpers');
 const workflow = require('../src/asset-workflow');
 const submissionLink = require('../src/submission-link');
 
@@ -755,6 +755,13 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       method: 'POST', body: { email, password: PASSWORD },
     })).body.token;
     token.admin = await login('admin@zvky.test');
+    /* Hold the studio open for this suite.
+     *
+     * Recorded time is now the part of a session inside the studio's working
+     * window, so a suite that starts a timer and expects a number would assert
+     * something different at nine at night than at eleven in the morning. This
+     * pins that one input; see openStudio in tests/helpers.js. */
+    await openStudio(server.base, token.admin);
 
     const clientId = await systemClientId(server.base, token.admin);
     projectId = (await call('/projects', { token: token.admin, method: 'POST', body: { clientId, name: 'Skyfall' } })).body.project.id;

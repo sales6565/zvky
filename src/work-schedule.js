@@ -210,6 +210,29 @@ function timesheetWindow() {
   };
 }
 
+/* The shape src/working-time.js intersects a work session against.
+ *
+ * The same translation timesheetWindow() does, for the other reader — and it
+ * exists for the same reason: one place where "the setting" becomes "the rule",
+ * so the Time Sheet and the timer cannot end up disagreeing about when the
+ * studio is open.
+ *
+ * WORKING DAYS ARE IN THIS ONE AND NOT THE OTHER, and that is not an oversight.
+ * A timesheet line is filed against a day somebody names, so which days the
+ * studio works is the filer's business; a timer runs through the night and the
+ * weekend whether anybody meant it to, so the tracker has to know which of the
+ * days it crossed count. Same setting, read by both, asked differently.
+ */
+function trackingWindow() {
+  return {
+    workingDays: [...cache.workingDays],
+    dayStart: cache.dayStart,
+    dayEnd: cache.dayEnd,
+    breaks: breakWindows(),
+    timezone: TIMEZONE_LABEL,
+  };
+}
+
 function isLoaded() { return loaded; }
 
 /* What a day may be.
@@ -395,7 +418,7 @@ async function save(db, input = {}) {
 module.exports = {
   DEFAULTS, DAY_NAMES, TIMESHEET_MAX_HOURS, TIMEZONE_LABEL, BREAKS,
   breakWindows, breakMinutes,
-  load, current, isLoaded, save,
+  load, current, isLoaded, save, trackingWindow,
   cleanHours, cleanDays, cleanWindow, parseDays, parseClock, clockLabel,
   timesheetWindow,
 };

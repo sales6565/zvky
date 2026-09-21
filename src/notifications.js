@@ -88,6 +88,15 @@ const KINDS = {
      as the bell keeps it. The value goes to the person who did the reset, in
      that response, once. */
   password_reset: 'password_reset',
+  /* The studio closed with this person's timer still running, so it was put
+     down for them at the cutoff.
+     
+     Raised FOR the assignee and by nobody: there is no actor, because no
+     person did this — the clock did. That is exactly why it needs saying. A
+     hold is something you remember doing; a timer stopped at seven by a rule
+     is something you find out about the next morning, and finding out by
+     noticing an hour is missing is the outcome this exists to prevent. */
+  work_paused: 'work_paused',
 };
 
 const unavailable = (err) => err && (err.code === 'ER_NO_SUCH_TABLE' || /doesn't exist/i.test(err.message || ''));
@@ -151,6 +160,10 @@ function describe(row) {
     const where = row.project_name ? ` in ${row.project_name}` : '';
     const who = row.other_name || 'Somebody';
     return `${who} submitted ${code}${name}${where} for review.`;
+  }
+  if (row.kind === KINDS.work_paused) {
+    return `${code}${name} was paused at the end of the working day. `
+      + 'Time outside working hours is not recorded — resume it when you next pick it up.';
   }
   if (row.kind === KINDS.unassigned) {
     return row.other_name
