@@ -10346,7 +10346,7 @@ function paintPnl(){
         <div class="pnl-sub">${d.scope.projects} of ${d.scope.ofVisible} project${d.scope.ofVisible===1?'':'s'} you can see.
           ${fixed
             ? 'Revenue here is the <strong>agreed fixed fee</strong>, and cost is what the work actually took — the question is whether the project is still profitable at the price that was quoted.'
-            : 'Revenue here is what has been <strong>invoiced to date</strong>, and cost is what the work actually took — the question is what the studio really made on what it really billed.'}
+            : 'Revenue here is the project&rsquo;s <strong>Total Value</strong>, the one figure this tab asks for, and cost is worked out from the hours people have actually logged at their designation&rsquo;s rate — the question is what the studio is really making on this project.'}
           All figures are in <strong>₹ INR</strong>.</div>
       </div>
       ${d.canManage ? '' : '<div class="pnl-ro">Read-only — you can view these figures but not change what they are computed from.</div>'}
@@ -10373,17 +10373,17 @@ function paintPnl(){
       <button class="btn btn-ghost btn-sm" id="pnl_clear">Clear</button>
       <div class="pnl-filter-note">${fixed
         ? 'The client and project filters apply to both tabs. The two date fields drive the <strong>margin trend</strong> on the Actual tab and do nothing here — a fixed-bid budget is a single agreed figure, not a monthly series.'
-        : 'The dates filter the <strong>margin trend</strong> only. The cards and tables are current position, not a period — invoiced to date and cost to date are running totals, and slicing them by month would print a figure that is not what any of them mean.'}</div>
+        : 'The dates filter the <strong>margin trend</strong> only. The cards and tables are current position, not a period — the contract value and the cost to date are running totals, and slicing them by month would print a figure that is not what any of them mean.'}</div>
     </div>
 
     ${fixed ? pnlFixedCardsHTML(r, d.hoursRollup) : pnlActualCardsHTML(r, d.hoursRollup)}
 
-    ${fixed ? '' : pnlTotalCostEditorHTML(d)}
+    ${fixed ? '' : pnlTotalValueEditorHTML(d)}
 
-    ${fixed ? '' : pnlCompareHTML(r)}
+    ${fixed ? '' : pnlActualCompareHTML(r)}
 
     <div class="pnl-grid">
-      ${fixed ? pnlByRoleRateHTML(d) : pnlByRoleHTML(d.byRoleLevel, fixed)}
+      ${fixed ? pnlByRoleRateHTML(d) : pnlConsumedByRoleHTML(d.consumedByRole)}
       ${fixed ? '' : pnlTrendHTML(d.trend)}
     </div>
 
@@ -10526,72 +10526,153 @@ function pnlByRoleRateHTML(d){
   </div>`;
 }
 
-function pnlTotalCostEditorHTML(d){
+function pnlTotalValueEditorHTML(d){
   const only = d.projects.length === 1 ? d.projects[0] : null;
   if(!only){
     return `<div class="pnl-panel pnl-costbox">
-      <h3>Total Cost (₹)</h3>
-      <div class="pnl-costnote">Choose a single project above to enter or edit its Total Cost.
-        ${d.hoursRollup.projectsWithTotalCost} of ${d.hoursRollup.projects} selected
+      <h3>Total Value (₹)</h3>
+      <div class="pnl-costnote">Choose a single project above to enter or edit its Total Value.
+        ${d.hoursRollup.projectsWithTotalValue} of ${d.hoursRollup.projects} selected
         project${d.hoursRollup.projects===1?' has':'s have'} one entered.</div>
     </div>`;
   }
-  const entered = only.billing.totalCost;
-  const hrs = only.hours.consumedHours;
+  const entered = only.billing.totalValue;
+  const cost = only.totals.recordedCost;
+  const hrs  = only.totals.recordedHours;
   return `<div class="pnl-panel pnl-costbox">
-    <h3>Total Cost (₹) — ${escapeHTML(only.name)}</h3>
-    <div class="pnl-costnote">Entered by hand. This is <strong>not</strong> computed from the rate card or
-      from hours worked — a project&rsquo;s real cost includes things this application has no idea about.</div>
+    <h3>Total Value (₹) — ${escapeHTML(only.name)}</h3>
+    <div class="pnl-costnote">The total contract value of this project, and the <strong>only</strong> figure
+      this tab asks anybody for. The cost beside it is worked out from the hours people have actually
+      logged on this project&rsquo;s tasks, priced at each person&rsquo;s designation rate from
+      <strong>Settings &rarr; Role Rates</strong> &mdash; there is nothing to keep up to date by hand.</div>
     <div class="pnl-costrow">
       <span class="pnl-costcur">₹</span>
-      <input type="text" id="pnl_totalCost" value="${entered===null?'':escapeHTML(String(entered))}"
+      <input type="text" id="pnl_totalValue" value="${entered===null?'':escapeHTML(String(entered))}"
         placeholder="not entered" inputmode="decimal" ${can('pnl.actual')?'':'disabled'}>
-      ${can('pnl.actual') ? '<button class="btn btn-brand btn-sm" id="pnl_saveTotalCost">Save</button>' : ''}
-      ${can('pnl.actual') && entered!==null ? '<button class="btn btn-ghost btn-sm" id="pnl_clearTotalCost">Clear</button>' : ''}
-      <span class="pnl-costlive" id="pnl_costLive">${entered===null ? '' :
-        `Profit ${pnlINR(Math.round((only.totals.revenue - entered)*100)/100)}
-         · Margin ${only.totals.revenue ? (Math.round(((only.totals.revenue-entered)/only.totals.revenue)*1000)/10)+'%' : '—'}
-         · ${hrs ? pnlINR(Math.round((entered/hrs)*100)/100)+'/hour' : 'no hours recorded'}`}</span>
+      ${can('pnl.actual') ? '<button class="btn btn-brand btn-sm" id="pnl_saveTotalValue">Save</button>' : ''}
+      ${can('pnl.actual') && entered!==null ? '<button class="btn btn-ghost btn-sm" id="pnl_clearTotalValue">Clear</button>' : ''}
+      <span class="pnl-costlive" id="pnl_valueLive">${entered===null ? '' :
+        `Cost ${pnlINR(cost)} · Profit ${pnlINR(Math.round((entered - cost)*100)/100)}
+         · Margin ${entered ? (Math.round(((entered-cost)/entered)*1000)/10)+'%' : '—'}
+         · ${hrs ? pnlHours(hrs)+'h logged' : 'no hours logged yet'}`}</span>
     </div>
-    <div class="ref-err" id="pnl_costErr"></div>
+    <div class="ref-err" id="pnl_valueErr"></div>
     ${can('pnl.actual') ? '' : '<div class="pnl-costnote">You do not have permission to change this figure.</div>'}
   </div>`;
 }
 
 function pnlActualCardsHTML(r, h){
-  /* Revenue stays invoiced-to-date. Cost is the ENTERED figure, not anything
-     this application computed: see the schema note on project_billing. */
-  const entered = h.enteredTotalCost;
-  const some = h.projectsWithTotalCost;
-  const none = some === 0;
-  const profit = none ? null : Math.round((r.revenue - entered) * 100) / 100;
-  const margin = (none || !r.revenue) ? null : Math.round((profit / r.revenue) * 1000) / 10;
-  const perHour = (none || !h.consumedHours) ? null : Math.round((entered / h.consumedHours) * 100) / 100;
+  /* WHAT THIS TAB IS NOW. Revenue is the Total Value somebody entered; cost is
+   * the hours people actually logged, priced at their designation's rate. There
+   * is no manually entered cost, no team list, no billing type and no ad hoc
+   * cost lines behind any of it — which is why every figure here moves on its
+   * own as work is done.
+   *
+   * NOT ENTERED IS NOT ZERO. A project nobody has priced has no profit and no
+   * margin, and printing a loss equal to its costs would be an assertion this
+   * cannot support. The dash and its tooltip say which. */
+  const none = r.projectsWithTotalValue === 0;
+  const value = r.totalValue;
+  const cost = r.recordedCost;
+  const profit = none ? null : r.actualProfit;
+  const margin = none ? null : r.actualMarginPercent;
+  const perHour = r.costPerHour;
   return `
     <div class="pnl-cards pnl-cards-6">
-      <div class="pnl-card pnl-rev"><div class="ad-card-label">Revenue</div>
-        <div class="ad-card-value">${pnlINR(r.revenue)}</div>
-        <div class="ad-card-note">Invoiced to date, from Client Billing. Not the contract value (${pnlINR(r.contractValue)}).</div></div>
-      <div class="pnl-card pnl-lab"><div class="ad-card-label">Total Cost</div>
-        <div class="ad-card-value">${none ? pnlNil('Nobody has entered a Total Cost for these projects yet.') : pnlINR(entered)}</div>
+      <div class="pnl-card pnl-rev"><div class="ad-card-label">Total Value</div>
+        <div class="ad-card-value">${none ? pnlNil('Nobody has entered a Total Value for these projects yet.') : pnlINR(value)}</div>
         <div class="ad-card-note">${none
-          ? 'Entered by hand, in INR. Nothing entered yet.'
-          : `Entered by hand, in INR${some < h.projects ? `, on ${some} of ${h.projects} projects` : ''}.`}</div></div>
-      <div class="pnl-card pnl-bud"><div class="ad-card-label">Total Hours Consumed</div>
-        <div class="ad-card-value">${pnlHours(h.consumedHours)}h</div>
+          ? 'The contract value, entered below. Nothing entered yet.'
+          : `The contract value${r.projectsWithTotalValue < h.projects ? `, on ${r.projectsWithTotalValue} of ${h.projects} projects` : ''}. Revenue on this tab.`}</div></div>
+      <div class="pnl-card pnl-lab"><div class="ad-card-label">Cost</div>
+        <div class="ad-card-value">${pnlINR(cost)}</div>
+        <div class="ad-card-note">Every logged hour priced at that person&rsquo;s designation rate. Nothing here is typed in.</div></div>
+      <div class="pnl-card pnl-bud"><div class="ad-card-label">Total Hours Spent</div>
+        <div class="ad-card-value">${pnlHours(r.recordedHours)}h</div>
         <div class="ad-card-note">Every hour recorded against this project&rsquo;s tasks, whatever state they are in.</div></div>
       <div class="pnl-card pnl-gp"><div class="ad-card-label">Profit</div>
-        <div class="ad-card-value ${profit===null?'':pnlSign(profit)}">${profit===null ? pnlNil('No Total Cost entered, so there is no profit to compute.') : pnlINR(profit)}</div>
-        <div class="ad-card-note">Revenue &minus; Total Cost.</div></div>
+        <div class="ad-card-value ${profit===null?'':pnlSign(profit)}">${profit===null ? pnlNil('No Total Value entered, so there is no profit to compute.') : pnlINR(profit)}</div>
+        <div class="ad-card-note">Total Value &minus; Cost.</div></div>
       <div class="pnl-card pnl-mg"><div class="ad-card-label">Margin</div>
         <div class="ad-card-value ${margin===null?'':pnlSign(margin)}">${pnlPct(margin)}</div>
         <div class="ad-card-note">${margin===null
-          ? (none ? 'No Total Cost entered yet.' : 'Nothing invoiced yet, so there is no margin to compute.')
-          : 'Profit as a share of what has been invoiced.'}</div></div>
+          ? 'No Total Value entered yet, so there is no margin to compute.'
+          : 'Profit as a share of the Total Value.'}</div></div>
       <div class="pnl-card pnl-cph"><div class="ad-card-label">Cost / Hour</div>
-        <div class="ad-card-value">${perHour===null ? pnlNil('Needs both a Total Cost and some recorded hours.') : pnlINR(perHour)}</div>
-        <div class="ad-card-note">Total Cost &divide; hours consumed. For reference &mdash; what an hour on this work actually cost.</div></div>
+        <div class="ad-card-value">${perHour===null ? pnlNil('No hours have been logged on these projects yet.') : pnlINR(perHour)}</div>
+        <div class="ad-card-note">Cost &divide; hours spent. The blended rate this work actually ran at.</div></div>
+    </div>
+    ${r.unpricedHours > 0 ? `<div class="ip-banner open" style="margin-bottom:16px;">
+      <strong>${pnlHours(r.unpricedHours)}h of logged work is unpriced.</strong>
+      Those hours were logged by people whose designation has no hourly rate, so they are
+      <em>not</em> in the Cost above &mdash; the real cost is higher, and the profit and margin
+      are better than the truth. Set the missing rates in <strong>Settings &rarr; Role Rates</strong>.
+    </div>` : ''}`;
+}
+
+/* Revenue against cost on the ACTUAL tab: the contract value against what the
+ * work has cost so far, on one scale.
+ *
+ * One scale is the whole point: bars normalised independently would make a
+ * project that has spent twice what it sold for look like a healthy one. Its
+ * own function rather than the shared pnlCompareHTML below, because the two
+ * tabs no longer compare the same pair of numbers — this one has no "other
+ * costs" half to name, and saying "Labour X + other 0" under every bar would be
+ * describing a feature this tab no longer has. */
+function pnlActualCompareHTML(r){
+  const none = r.projectsWithTotalValue === 0;
+  const max = Math.max(r.totalValue, r.recordedCost, 1);
+  const bar = (label, value, cls, note) => `
+    <div class="pnl-bar-row">
+      <div class="pnl-bar-lbl">${label}</div>
+      <div class="pnl-bar-track"><div class="pnl-bar ${cls}" style="width:${Math.max(0,(value/max)*100)}%"></div></div>
+      <div class="pnl-bar-val">${pnlMoney(value)}</div>
+    </div>${note ? `<div class="pnl-bar-note">${note}</div>` : ''}`;
+  return `
+    <div class="pnl-panel">
+      <h3>Total Value vs Cost</h3>
+      <div class="pnl-panel-note">Both bars share one scale, so the shorter one is genuinely shorter.</div>
+      ${bar('Total Value', r.totalValue, 'rev', none ? 'Nothing entered yet, so this bar is empty rather than zero.' : '')}
+      ${bar('Cost', r.recordedCost, r.recordedCost > r.totalValue ? 'over' : 'cost',
+        `${pnlHours(r.recordedHours)} hours logged, priced by designation.`)}
+      <div class="pnl-bar-foot ${none?'':pnlSign(r.actualProfit)}">${none
+        ? 'No Total Value entered, so there is no profit to show.'
+        : `${r.actualProfit < 0 ? 'Loss' : 'Profit'} ${pnlMoney(Math.abs(r.actualProfit))}${
+            r.actualMarginPercent===null?'':` — margin ${r.actualMarginPercent}%`}`}</div>
     </div>`;
+}
+
+/* The Actual tab's cost breakdown: what each DESIGNATION logged, and what it
+ * cost.
+ *
+ * Folded on the server (foldByRole in src/routes/pnl.js) rather than here, so
+ * this table and the Cost card above it are made from one set of numbers. An
+ * unpriced row keeps its hours and shows no cost rather than being dropped —
+ * those hours are real, and somebody needs to see that they are missing from
+ * the total. */
+function pnlConsumedByRoleHTML(rows){
+  const list = rows || [];
+  const totalHours = Math.round(list.reduce((t,r)=>t+r.hours,0)*100)/100;
+  const totalCost  = Math.round(list.reduce((t,r)=>t+r.cost ,0)*100)/100;
+  return `<div class="pnl-panel">
+    <h3>Cost by Designation</h3>
+    <div class="pnl-costnote">Hours each designation has logged on this project&rsquo;s tasks, priced at that
+      designation&rsquo;s rate from <strong>Settings &rarr; Role Rates</strong>. This is what the Cost
+      figure above is made of.</div>
+    ${list.length ? `<div class="pnl-scroll"><table class="ref-table pnl-table">
+      <thead><tr><th>Designation</th><th class="num">Rate (₹/h)</th><th class="num">Hours</th><th class="num">Cost (₹)</th><th>People</th></tr></thead>
+      <tbody>${list.map(r=>`<tr class="${r.priced?'':'unused'}">
+        <td>${escapeHTML(r.roleLabel || r.roleKey || 'No designation')}
+          ${r.priced ? '' : '<span class="pnl-unpriced">unpriced</span>'}</td>
+        <td class="num">${r.priced ? pnlMoney(r.ratePerHour) : '—'}</td>
+        <td class="num">${pnlHours(r.hours)}</td>
+        <td class="num">${r.priced ? pnlMoney(r.cost) : '—'}</td>
+        <td style="font-size:11.5px;color:var(--ink-faint);">${escapeHTML((r.people||[]).join(', '))}</td>
+      </tr>`).join('')}</tbody>
+      <tfoot><tr><td>Total</td><td class="num"></td><td class="num">${pnlHours(totalHours)}</td>
+        <td class="num">${pnlMoney(totalCost)}</td><td></td></tr></tfoot>
+    </table></div>` : '<div class="pnl-costnote">Nobody has logged any hours on this project yet, so there is nothing to cost.</div>'}
+  </div>`;
 }
 
 function pnlBudgetCompareHTML(r){
@@ -10781,7 +10862,7 @@ function pnlClientsHTML(clients, fixed){
         <thead><tr><th>Client</th><th class="num">Projects</th>
           ${fixed
             ? '<th class="num">Contract</th><th class="num">Budgeted</th><th class="num">Actual</th><th class="num">Variance</th><th class="num">Profit</th><th class="num">Margin</th>'
-            : '<th class="num">Revenue</th><th class="num">Labour</th><th class="num">Other</th><th class="num">Gross Profit</th><th class="num">Margin</th>'}</tr></thead>
+            : '<th class="num">Total Value</th><th class="num">Cost</th><th class="num">Hours</th><th class="num">Profit</th><th class="num">Margin</th>'}</tr></thead>
         <tbody>${clients.map(c=>{
           const k = c.rollup;
           return `<tr>
@@ -10795,11 +10876,11 @@ function pnlClientsHTML(clients, fixed){
                <td class="num ${k.budgetVariance>0?'neg':''}">${k.budgetVariance>0?'+':''}${pnlMoney(k.budgetVariance)}</td>
                <td class="num ${pnlSign(k.fixedProfit)}">${pnlMoney(k.fixedProfit)}</td>
                <td class="num">${pnlPct(k.fixedMarginPercent)}</td>`
-            : `<td class="num">${pnlMoney(k.revenue)}</td>
-               <td class="num">${pnlMoney(k.labourCost)}</td>
-               <td class="num">${pnlMoney(k.otherCosts)}</td>
-               <td class="num ${pnlSign(k.grossProfit)}">${pnlMoney(k.grossProfit)}</td>
-               <td class="num">${pnlPct(k.marginPercent)}</td>`}</tr>`;
+            : `<td class="num">${k.projectsWithTotalValue ? pnlMoney(k.totalValue) : '—'}</td>
+               <td class="num">${pnlMoney(k.recordedCost)}</td>
+               <td class="num">${pnlHours(k.recordedHours)}</td>
+               <td class="num ${k.projectsWithTotalValue?pnlSign(k.actualProfit):''}">${k.projectsWithTotalValue ? pnlMoney(k.actualProfit) : '—'}</td>
+               <td class="num">${pnlPct(k.actualMarginPercent)}</td>`}</tr>`;
         }).join('')}</tbody>
       </table></div>
     </div>`;
@@ -10812,21 +10893,24 @@ function pnlProjectsHTML(projects, fixed){
   return `
     <div class="pnl-panel">
       <h3>Projects</h3>
-      <div class="pnl-panel-note">Open one to see and ${PNL.report.canManage ? 'edit' : 'read'} its team, hours, billing and costs.</div>
+      <div class="pnl-panel-note">${fixed
+        ? `Open one to see and ${PNL.report.canManage ? 'edit' : 'read'} its team, hours, billing and costs.`
+        : 'Open one to see what each designation has logged on it and what that cost.'}</div>
       <div class="pnl-scroll"><table class="ref-table pnl-table pnl-projects">
         <thead><tr><th>Project</th>
           ${fixed
             ? '<th class="num">Contract</th><th class="num">Budgeted</th><th class="num">Actual</th><th class="num">Variance</th><th class="num">Profit</th><th class="num">Margin</th>'
-            : '<th class="num">Revenue</th><th class="num">Contract</th><th class="num">Labour</th><th class="num">Other</th><th class="num">Gross Profit</th><th class="num">Margin</th>'}
+            : '<th class="num">Total Value</th><th class="num">Cost</th><th class="num">Hours</th><th class="num">Cost/h</th><th class="num">Profit</th><th class="num">Margin</th>'}
           <th></th></tr></thead>
         <tbody>${projects.map(p=>{
           const x = p.totals;
           return `<tr data-project="${escapeHTML(p.projectId)}"${PNL.openProject===p.projectId?' class="open"':''}>
           <td><strong>${escapeHTML(p.name)}</strong>${p.code?` <span class="pnl-code">${escapeHTML(p.code)}</span>`:''}
-            ${p.billing.configured?'':'<span class="pnl-off">billing not set up</span>'}
+            ${fixed && !p.billing.configured?'<span class="pnl-off">billing not set up</span>':''}
             ${fixed && x.overBudget?'<span class="pnl-over-flag" title="Actual cost has passed the budget">over budget</span>':''}
             ${fixed && !x.budgeted?'<span class="pnl-off">no plan recorded</span>':''}
-            ${!fixed && x.hoursDelta>0?`<span class="pnl-off" title="Hours worked but not billed">${pnlHours(x.hoursDelta)}h unbilled</span>`:''}</td>
+            ${!fixed && x.totalValue===null?'<span class="pnl-off">no Total Value entered</span>':''}
+            ${!fixed && x.unpricedHours>0?`<span class="pnl-off" title="Logged by somebody whose designation has no rate, so these hours are not in the cost">${pnlHours(x.unpricedHours)}h unpriced</span>`:''}</td>
           ${fixed
             ? `<td class="num">${pnlMoney(x.contractValue)}</td>
                <td class="num">${pnlMoney(x.budgetedCost)}</td>
@@ -10834,12 +10918,12 @@ function pnlProjectsHTML(projects, fixed){
                <td class="num ${x.budgetVariance>0?'neg':''}">${x.budgetVariance>0?'+':''}${pnlMoney(x.budgetVariance)}</td>
                <td class="num ${pnlSign(x.fixedProfit)}">${pnlMoney(x.fixedProfit)}</td>
                <td class="num">${pnlPct(x.fixedMarginPercent)}</td>`
-            : `<td class="num">${pnlMoney(x.revenue)}</td>
-               <td class="num">${pnlMoney(x.contractValue)}</td>
-               <td class="num">${pnlMoney(x.labourCost)}</td>
-               <td class="num">${pnlMoney(x.otherCosts)}</td>
-               <td class="num ${pnlSign(x.grossProfit)}">${pnlMoney(x.grossProfit)}</td>
-               <td class="num">${pnlPct(x.marginPercent)}</td>`}
+            : `<td class="num">${x.totalValue===null ? '—' : pnlMoney(x.totalValue)}</td>
+               <td class="num">${pnlMoney(x.recordedCost)}</td>
+               <td class="num">${pnlHours(x.recordedHours)}</td>
+               <td class="num">${x.costPerHour===null ? '—' : pnlMoney(x.costPerHour)}</td>
+               <td class="num ${x.actualProfit===null?'':pnlSign(x.actualProfit)}">${x.actualProfit===null ? '—' : pnlMoney(x.actualProfit)}</td>
+               <td class="num">${pnlPct(x.actualMarginPercent)}</td>`}
           <td class="num"><button class="btn btn-ghost btn-sm pnl-open">${PNL.openProject===p.projectId?'Close':'Open'}</button></td>
         </tr>`;
         }).join('')}</tbody>
@@ -10879,39 +10963,42 @@ function wirePnl(){
    * round trip. The SAVE still goes to the server, and the server's answer is
    * what the page repaints from — the live line is a preview, never the record.
    */
-  const costBox = document.getElementById('pnl_totalCost');
-  if(costBox){
+  const valueBox = document.getElementById('pnl_totalValue');
+  if(valueBox){
     const only = (PNL.report && PNL.report.projects.length === 1) ? PNL.report.projects[0] : null;
-    const live = document.getElementById('pnl_costLive');
+    const live = document.getElementById('pnl_valueLive');
     const recompute = ()=>{
       if(!only || !live) return;
-      const raw = costBox.value.trim();
+      const raw = valueBox.value.trim();
       if(raw === ''){ live.textContent = ''; return; }
       const n = Number(raw);
       if(!Number.isFinite(n) || n < 0){ live.textContent = 'not a valid amount'; return; }
-      const rev = only.totals.revenue;
-      const profit = Math.round((rev - n)*100)/100;
-      const margin = rev ? Math.round((profit/rev)*1000)/10 : null;
-      const hrs = only.hours.consumedHours;
-      live.innerHTML = `Profit ${pnlINR(profit)} · Margin ${margin===null?'—':margin+'%'}`
-        + ` · ${hrs ? pnlINR(Math.round((n/hrs)*100)/100)+'/hour' : 'no hours recorded'}`;
+      /* The COST side never moves as you type — it is not being edited here,
+         it is what the work has already cost. Only the value and what follows
+         from it change, which is also what makes the preview honest. */
+      const cost = only.totals.recordedCost;
+      const profit = Math.round((n - cost)*100)/100;
+      const margin = n ? Math.round((profit/n)*1000)/10 : null;
+      const hrs = only.totals.recordedHours;
+      live.innerHTML = `Cost ${pnlINR(cost)} · Profit ${pnlINR(profit)} · Margin ${margin===null?'—':margin+'%'}`
+        + ` · ${hrs ? pnlHours(hrs)+'h logged' : 'no hours logged yet'}`;
     };
-    costBox.addEventListener('input', recompute);
+    valueBox.addEventListener('input', recompute);
 
-    const saveCost = async (value)=>{
-      const err = document.getElementById('pnl_costErr');
+    const saveValue = async (value)=>{
+      const err = document.getElementById('pnl_valueErr');
       if(err) err.textContent = '';
       try{
-        await api(`/pnl/projects/${only.projectId}/total-cost`, { method:'PUT', body:{ totalCost: value } });
-        showToast(value === null ? 'Total Cost cleared.' : 'Total Cost saved.');
+        await api(`/pnl/projects/${only.projectId}/total-value`, { method:'PUT', body:{ totalValue: value } });
+        showToast(value === null ? 'Total Value cleared.' : 'Total Value saved.');
         renderPnl();
       }catch(e){ if(err) err.textContent = e.message; }
     };
-    const saveBtn = document.getElementById('pnl_saveTotalCost');
-    if(saveBtn) saveBtn.onclick = ()=> saveCost(costBox.value.trim() === '' ? null : costBox.value.trim());
-    const clearBtn = document.getElementById('pnl_clearTotalCost');
-    if(clearBtn) clearBtn.onclick = ()=> saveCost(null);
-    costBox.addEventListener('keydown', (e)=>{ if(e.key === 'Enter' && saveBtn) saveBtn.click(); });
+    const saveBtn = document.getElementById('pnl_saveTotalValue');
+    if(saveBtn) saveBtn.onclick = ()=> saveValue(valueBox.value.trim() === '' ? null : valueBox.value.trim());
+    const clearBtn = document.getElementById('pnl_clearTotalValue');
+    if(clearBtn) clearBtn.onclick = ()=> saveValue(null);
+    valueBox.addEventListener('keydown', (e)=>{ if(e.key === 'Enter' && saveBtn) saveBtn.click(); });
   }
 
   /* A tab switch is a REPAINT, not a reload. Both tabs read the same payload —
@@ -10976,24 +11063,48 @@ function paintPnlDetail(){
   const t = d.totals;
   const cards = (PNL.report.rateCards)||[];
   const rw = d.canManage;
+  /* WHICH TAB THIS PANEL IS OPEN UNDER, and it decides what is on it.
+   *
+   * The three manual sections below — Client Billing, Project Team and Other
+   * Costs — are the FIXED tab's inputs. The Actual tab no longer reads any of
+   * them: its revenue is the Total Value entered above, and its cost is the
+   * hours people logged priced by designation. Leaving them on screen would
+   * invite somebody to maintain a team list that changes nothing they are
+   * looking at, which is worse than not offering it.
+   *
+   * Hidden per tab rather than removed, because the Fixed tab still needs every
+   * one of them. */
+  const fixed = PNL.view === 'fixed';
 
   el.innerHTML = `
     <div class="pnl-panel pnl-detail">
       <div class="pnl-detail-head">
         <h3>${escapeHTML(row.name || 'Project')}${row.code?` <span class="pnl-code">${escapeHTML(row.code)}</span>`:''}</h3>
         <div class="pnl-detail-figs">
+          ${fixed ? `
           <span>Contract <b>${pnlMoney(t.contractValue)}</b></span>
           <span>Revenue <b>${pnlMoney(t.revenue)}</b></span>
           <span>Budget <b>${pnlMoney(t.budgetedCost)}</b></span>
           <span>Labour <b>${pnlMoney(t.labourCost)}</b></span>
           <span>Other <b>${pnlMoney(t.otherCosts)}</b></span>
           <span>Gross profit <b class="${pnlSign(t.grossProfit)}">${pnlMoney(t.grossProfit)}</b></span>
-          <span>Margin <b>${pnlPct(t.marginPercent)}</b></span>
+          <span>Margin <b>${pnlPct(t.marginPercent)}</b></span>` : `
+          <span>Total Value <b>${t.totalValue===null?'—':pnlMoney(t.totalValue)}</b></span>
+          <span>Cost <b>${pnlMoney(t.recordedCost)}</b></span>
+          <span>Hours <b>${pnlHours(t.recordedHours)}h</b></span>
+          <span>Profit <b class="${t.actualProfit===null?'':pnlSign(t.actualProfit)}">${t.actualProfit===null?'—':pnlMoney(t.actualProfit)}</b></span>
+          <span>Margin <b>${pnlPct(t.actualMarginPercent)}</b></span>`}
         </div>
       </div>
       <div class="ref-err" id="err-pnl-detail"></div>
       <div id="pnl_warn"></div>
 
+      ${!fixed ? `
+      ${pnlConsumedByRoleHTML(d.hours.consumedByRole)}
+      <div class="ref-note" style="margin-top:10px;">Nothing on this tab is entered by hand except the
+        Total Value above. The hours come from this project&rsquo;s own tasks and the rates from
+        <strong>Settings &rarr; Role Rates</strong>, so both move on their own as work is done.</div>
+      ` : `
       <h4 class="pnl-sub-h">Client Billing</h4>
       <div class="pnl-panel-note">Invoiced to date is what the report treats as revenue. The contract value is
         recorded beside it and is <em>not</em> revenue — a signed contract that has billed nothing has earned nothing.</div>
@@ -11083,6 +11194,7 @@ function paintPnlDetail(){
       </div>` : ''}
       <div class="ref-note" style="margin-top:10px;">Every change on this panel is recorded in the Activity Log
         with its old and new value, because these figures are what the studio's reported profit is computed from.</div>
+      `}
     </div>`;
 
   wirePnlDetail();

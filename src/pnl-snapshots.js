@@ -24,6 +24,7 @@
 
 const { v4: uuid } = require('uuid');
 const pnl = require('./pnl');
+const pnlHours = require('./pnl-hours');
 
 const monthOf = (date = new Date()) =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
@@ -31,19 +32,41 @@ const monthOf = (date = new Date()) =>
 /* Write this project's current position into this month's row. */
 async function capture(db, projectId, { now = new Date() } = {}) {
   try {
-    const [bill, team, others] = await Promise.all([
+    const [bill, team, others, worked] = await Promise.all([
       pnl.billing(db, projectId),
       pnl.assignments(db, projectId),
       pnl.otherCosts(db, projectId),
+      pnlHours.forProject(db, projectId),
     ]);
-    const totals = pnl.compute({ billing: bill, assignments: team, otherCosts: others });
+    const totals = pnl.compute({ billing: bill, assignments: team, otherCosts: others, hours: worked });
 
+    /* WHAT THESE THREE COLUMNS NOW HOLD, and why it is not what they are named.
+     *
+     * This table feeds exactly one thing: the margin trend, and the margin
+     * trend is on the ACTUAL tab only — the Fixed tab has no monthly series to
+     * draw, because a fixed fee is agreed once. So the snapshot records the
+     * Actual tab's basis: the project's Total Value against what its logged
+     * hours cost. It used to record invoiced-to-date against the manually
+     * maintained team list, which is the basis that tab no longer uses; a trend
+     * left on the old basis would have drawn a different margin from the card
+     * printed directly above it.
+     *
+     * The columns keep their names rather than being renamed in a migration,
+     * and `other_costs` is written as 0 because the Actual tab has no such
+     * figure any more. Renaming them would rewrite the meaning of every row
+     * already stored, and those rows are the only history this chart has.
+     * Points captured before this change are on the old basis and cannot be
+     * restated — there is nothing to restate them from.
+     *
+     * A project with no Total Value entered records zero revenue, which is what
+     * it has: nobody has said what it is worth. */
     await db.query(
       `INSERT INTO pnl_snapshots (id, project_id, month, revenue, labour_cost, other_costs)
        VALUES ($1,$2,$3,$4,$5,$6)
        ON DUPLICATE KEY UPDATE revenue = VALUES(revenue),
          labour_cost = VALUES(labour_cost), other_costs = VALUES(other_costs)`,
-      [uuid(), projectId, monthOf(now), totals.revenue, totals.labourCost, totals.otherCosts]
+      [uuid(), projectId, monthOf(now),
+       totals.totalValue === null ? 0 : totals.totalValue, totals.recordedCost, 0]
     );
     return true;
   } catch (err) {

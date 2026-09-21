@@ -1913,6 +1913,22 @@ async function ensurePnlCostColumns(db, log) {
     log('Schema: added project_billing.total_cost — NULL until somebody enters one.');
   }
 
+  /* The Actual tab's Total Value. It replaces the entered total_cost above as
+     that tab's one manual figure — the cost is now the recorded hours priced at
+     each designation's rate — and total_cost is deliberately LEFT IN PLACE
+     rather than dropped. Those were figures somebody entered and stood behind;
+     deleting them to tidy a screen is a migration that cannot be undone, and
+     the column costs nothing to keep. */
+  const { rows: valueCol } = await db.query(
+    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'project_billing'
+        AND COLUMN_NAME = 'total_value'`
+  ).catch(() => ({ rows: null }));
+  if (valueCol && !valueCol.length) {
+    await db.query('ALTER TABLE project_billing ADD COLUMN total_value DECIMAL(14,2) NULL');
+    log('Schema: added project_billing.total_value — the Actual P&L tab\'s one manual figure.');
+  }
+
   await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS role_rates (
     role_key      VARCHAR(80)   NOT NULL PRIMARY KEY,
     rate_per_hour DECIMAL(10,2) NOT NULL DEFAULT 0,

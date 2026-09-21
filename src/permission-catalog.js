@@ -740,11 +740,12 @@ const GROUPS = [
            Settings without a code change, which is the point of it being a
            permission rather than a tier check. */
         impliedBy: has('managePermissions'),
-        describe: 'The Actual P&L tab: invoiced revenue, the manually entered Total Cost, the hours '
-          + 'consumed on the project, profit, margin and cost per hour. This permission also allows '
-          + 'entering and editing that Total Cost figure.',
-        danger: 'This discloses what the studio has invoiced and what a project actually cost it, '
-          + 'and it allows that cost figure to be changed.',
+        describe: 'The Actual P&L tab: the project\'s Total Value, the cost of the hours actually '
+          + 'logged on it priced at each person\'s designation rate, the breakdown by designation, '
+          + 'profit, margin and cost per hour. This permission also allows entering and editing that '
+          + 'Total Value figure, which is the only thing on the tab anybody types in.',
+        danger: 'This discloses what a project was sold for and what its people cost per hour, and it '
+          + 'allows the contract value used for that tab\'s profit and margin to be changed.',
       },
       {
         key: 'pnl.fixed',

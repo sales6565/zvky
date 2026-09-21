@@ -204,6 +204,21 @@ async function ensureTables(db) {
        NULL means "nobody has entered one yet", which is a different fact from
        zero and is displayed differently. */
     total_cost       DECIMAL(14,2) NULL,
+    /* THE ACTUAL TAB'S REVENUE. The total contract value of the project, typed
+       in once, and the only manual figure that tab has left.
+       
+       NOT contract_value above it, though they will usually hold the same
+       number. contract_value is Client Billing's, edited under pnl.manage and
+       read by the Fixed tab; this one is edited under pnl.actual by whoever was
+       given the Actual tab. Sharing a column would mean handing anybody with
+       the Actual tab the ability to move the Fixed tab's revenue, which is the
+       one thing the two permissions exist to keep apart. A studio that wants
+       them equal types the same number twice, on purpose, in two places that
+       answer to two different people.
+
+       NULL means nobody has entered one, which is a different fact from zero
+       and is displayed differently. */
+    total_value      DECIMAL(14,2) NULL,
     updated_by       VARCHAR(191)  NULL,
     updated_at       DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
   )`);
@@ -327,6 +342,11 @@ async function billing(db, projectId) {
        one of them is ever true. The screen shows a dash for the second. */
     totalCost: row && row.total_cost !== null && row.total_cost !== undefined
       ? money(row.total_cost) : null,
+    /* The Actual tab's Total Value, on the same null-means-unentered rule and
+       for the same reason. A project nobody has priced has no margin; a project
+       priced at zero has a margin of minus everything. */
+    totalValue: row && row.total_value !== null && row.total_value !== undefined
+      ? money(row.total_value) : null,
     updatedBy: row ? row.updated_by : null,
     updatedAt: row ? row.updated_at : null,
     // Whether anything has been entered at all, so the screen can say "not set
@@ -348,7 +368,7 @@ async function otherCosts(db, projectId) {
  * Takes the rows rather than the database so the same function serves the
  * report, the rollup and the snapshot without three round trips — and so it can
  * be tested against hand-written inputs with no server at all. */
-function compute({ billing: bill, assignments: team = [], otherCosts: others = [] }) {
+function compute({ billing: bill, assignments: team = [], otherCosts: others = [], hours: worked = null }) {
   const revenue = money(bill ? bill.invoicedToDate : 0);
   const labourCost = money(team.reduce((t, a) => t + a.cost, 0));
   const otherCost = money(others.reduce((t, c) => t + c.amount, 0));
@@ -362,6 +382,18 @@ function compute({ billing: bill, assignments: team = [], otherCosts: others = [
 
   const contractValue = money(bill ? bill.contractValue : 0);
   const otherCostTotal = otherCost;
+
+  /* THE ACTUAL TAB'S TWO NUMBERS.
+   *
+   * One typed in, one computed, and nothing else. `worked` is the recorded
+   * hours and their cost from src/pnl-hours.js; it is optional so that the
+   * snapshot writer and any caller that only wants the Fixed figures need not
+   * fetch it. Absent means "no recorded hours were supplied", which costs
+   * nothing rather than guessing. */
+  const totalValue = bill && bill.totalValue !== null && bill.totalValue !== undefined
+    ? money(bill.totalValue) : null;
+  const recordedCost = worked ? money(worked.consumedCost) : 0;
+  const recordedHours = worked ? hours(worked.consumedHours) : 0;
 
   return {
     revenue,
@@ -403,7 +435,43 @@ function compute({ billing: bill, assignments: team = [], otherCosts: others = [
     fixedProfit: money(contractValue - labourCost - otherCostTotal),
     fixedMarginPercent: percent(money(contractValue - labourCost - otherCostTotal), contractValue),
 
-    // --- the Actual view: what was billed against what it cost ---------------
+    // --- the Actual view: the contract value against what the work cost -------
+    /* WHAT THIS TAB USED TO BE, AND WHY IT CHANGED. Revenue was invoiced-to-
+     * date and cost was a figure somebody typed in, sitting beside a manually
+     * maintained team list, a billing type and a set of ad hoc cost lines. Five
+     * things to keep up to date, and four of them were already knowable: the
+     * application records who worked on what and for how long, and Settings
+     * records what an hour of each designation costs.
+     *
+     * So the tab now asks for one number — the contract value — and computes
+     * the other side from what actually happened. The manual inputs are gone,
+     * not hidden: what is not entered cannot be stale.
+     *
+     * NULL, NOT ZERO, when nobody has entered a Total Value. A project nobody
+     * has priced has no profit and no margin; printing a loss equal to its
+     * costs would be an assertion this cannot support, and it is the direction
+     * of error that makes a healthy project look like a disaster. */
+    totalValue,
+    /* Σ (hours each person logged on this project × their designation's rate).
+     * Every asset, every state — work in progress has cost the studio its
+     * hours whether or not the client has received it. */
+    recordedCost,
+    recordedHours,
+    /* Hours from somebody whose designation has no rate. Never folded in at
+       zero: the cost above is then LOWER than the truth, and the screen has to
+       be able to say so. */
+    unpricedHours: worked ? hours(worked.consumedUnpricedHours) : 0,
+    actualProfit: totalValue === null ? null : money(totalValue - recordedCost),
+    actualMarginPercent: totalValue === null ? null
+      : percent(money(totalValue - recordedCost), totalValue),
+    /* What an hour on this project actually cost, blended. Derived rather than
+       entered, so it cannot disagree with the two figures above it. */
+    costPerHour: recordedHours > 0 ? money(recordedCost / recordedHours) : null,
+
+    /* Still computed, still on the FIXED tab. The Actual tab no longer shows
+       either, because the team list they come from is no longer maintained for
+       it — but the Fixed tab's budget is built from that list and these are how
+       it reports it. */
     billedHoursTotal: hours(team.reduce((t, a) => t + a.billedHours, 0)),
     assignedHoursTotal: hours(team.reduce((t, a) => t + a.assignedHours, 0)),
     /* Worked minus billed, across the team. Positive means work was absorbed. */
@@ -461,7 +529,7 @@ function labourByRoleLevel(cards, team) {
 }
 
 /* Everything one project's P&L screen needs. */
-async function forProject(db, projectId, { cards = null } = {}) {
+async function forProject(db, projectId, { cards = null, hours: worked = null } = {}) {
   const [bill, team, others] = await Promise.all([
     billing(db, projectId),
     assignments(db, projectId),
@@ -473,7 +541,7 @@ async function forProject(db, projectId, { cards = null } = {}) {
     billing: bill,
     assignments: team,
     otherCosts: others,
-    totals: compute({ billing: bill, assignments: team, otherCosts: others }),
+    totals: compute({ billing: bill, assignments: team, otherCosts: others, hours: worked }),
     byRoleLevel: labourByRoleLevel(rateCardRows, team),
   };
 }
@@ -519,7 +587,37 @@ function rollup(perProject) {
     overBudgetProjects: perProject.filter((p) => p.totals.overBudget).length,
     budgetedProjects: perProject.filter((p) => p.totals.budgeted).length,
 
-    // The Actual view's rollup.
+    /* THE ACTUAL VIEW'S ROLLUP.
+     *
+     * Total Value only adds up across the projects that HAVE one, and how many
+     * did is reported beside it — "₹20,00,000 across 3 of 7 projects" cannot
+     * then be misread as the value of all seven. A project with no Total Value
+     * contributes nothing to the total and is counted as unpriced, rather than
+     * contributing a zero that would drag the margin down as if it had been
+     * sold for nothing.
+     *
+     * Margin is recomputed from the summed value and the summed profit rather
+     * than averaged, for the same reason as the margin above it: an average of
+     * percentages weights a ₹50,000 project the same as a ₹50,00,000 one. */
+    totalValue: money(perProject.reduce(
+      (t, p) => t + (p.totals.totalValue === null ? 0 : p.totals.totalValue), 0)),
+    projectsWithTotalValue: perProject.filter((p) => p.totals.totalValue !== null).length,
+    recordedCost: money(perProject.reduce((t, p) => t + p.totals.recordedCost, 0)),
+    recordedHours: hours(perProject.reduce((t, p) => t + p.totals.recordedHours, 0)),
+    unpricedHours: hours(perProject.reduce((t, p) => t + p.totals.unpricedHours, 0)),
+    actualProfit: money(perProject.reduce(
+      (t, p) => t + (p.totals.actualProfit === null ? 0 : p.totals.actualProfit), 0)),
+    actualMarginPercent: percent(
+      money(perProject.reduce((t, p) => t + (p.totals.actualProfit === null ? 0 : p.totals.actualProfit), 0)),
+      money(perProject.reduce((t, p) => t + (p.totals.totalValue === null ? 0 : p.totals.totalValue), 0))
+    ),
+    costPerHour: (() => {
+      const h = hours(perProject.reduce((t, p) => t + p.totals.recordedHours, 0));
+      const c = money(perProject.reduce((t, p) => t + p.totals.recordedCost, 0));
+      return h > 0 ? money(c / h) : null;
+    })(),
+
+    // The Fixed view's planned-hours figures.
     assignedHoursTotal: hours(perProject.reduce((t, p) => t + p.totals.assignedHoursTotal, 0)),
     billedHoursTotal: hours(perProject.reduce((t, p) => t + p.totals.billedHoursTotal, 0)),
     hoursDelta: hours(perProject.reduce((t, p) => t + p.totals.hoursDelta, 0)),

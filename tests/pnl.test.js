@@ -600,12 +600,32 @@ test('Profit & Loss end to end', { skip: cfg ? false : SKIP_REASON }, async (t) 
     const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     assert.deepStrictEqual(trend.months.map((m) => m.month), [month],
       'one point per month, rewritten within the month rather than appended');
-    /* Summed across both projects, then the margin recomputed from the sums —
-       the same 53.5% the rollup reports. */
-    assert.strictEqual(trend.months[0].revenue, 20000);
-    assert.strictEqual(trend.months[0].cost, 9300);
-    assert.strictEqual(trend.months[0].marginPercent, 53.5);
+    /* WHAT THE TREND IS NOW MADE OF. It is on the Actual tab and nowhere else,
+       so it records that tab's basis: the project's Total Value against what
+       its logged hours cost. It used to record invoiced-to-date against the
+       manually maintained team list — the basis the tab no longer uses — and a
+       trend drawn on one basis under a card drawn on another is a screen
+       disagreeing with itself about money.
+
+       No Total Value has been entered at this point in the suite, so the
+       revenue side is zero, and that is the honest reading: nobody has said
+       what these projects are worth. Asserted rather than skipped, because
+       "zero because nothing is entered" and "zero because the wiring broke"
+       look identical on a chart. */
+    assert.strictEqual(trend.months[0].revenue, 0,
+      'no Total Value entered yet, so the trend has no revenue to draw');
     assert.match(trend.note, /have no snapshot and are not shown/);
+
+    /* And it MOVES when a Total Value is entered. Without this the assertion
+       above passes just as well on a trend that is permanently zero. */
+    await as('root', `/pnl/projects/${project.alpha.id}/total-value`,
+      { method: 'PUT', body: { totalValue: 60000 } });
+    const after = (await as('root', '/pnl/report')).body.trend;
+    assert.strictEqual(after.months[0].revenue, 60000, 'the entered value reaches the trend');
+    assert.ok(after.months[0].marginPercent !== null, 'and there is a margin to draw');
+    /* Put it back, so the subtests after this one start where they expect. */
+    await as('root', `/pnl/projects/${project.alpha.id}/total-value`,
+      { method: 'PUT', body: { totalValue: null } });
   });
 
   await t.test('every financial change is in the Activity Log, old value to new', async () => {
@@ -783,31 +803,50 @@ test('Profit & Loss end to end', { skip: cfg ? false : SKIP_REASON }, async (t) 
     await as('root', `/pnl/projects/${project.alpha.id}/assignments/${noise.id}`, { method: 'DELETE' });
   });
 
-  await t.test('the entered Total Cost drives profit and margin, and is not computed', async () => {
-    // Step 5. Revenue on alpha is 20,000 invoiced.
-    const set = await as('root', `/pnl/projects/${project.alpha.id}/total-cost`,
-      { method: 'PUT', body: { totalCost: 14000 } });
+  await t.test('the Actual tab asks for a Total Value, and nothing else', async () => {
+    /* WHAT REPLACED WHAT. This subtest used to pin an entered Total Cost. The
+       Actual tab no longer asks for a cost — it works that out from the hours
+       people logged — so the one manual figure is what the project was SOLD
+       for, and this pins that instead. The cost half is checked in
+       tests/pnl-actual.test.js against hand-worked numbers. */
+    const before = (await as('root', `/pnl/projects/${project.alpha.id}`)).body;
+    const set = await as('root', `/pnl/projects/${project.alpha.id}/total-value`,
+      { method: 'PUT', body: { totalValue: 14000 } });
     assert.strictEqual(set.status, 200, JSON.stringify(set.body));
-    assert.strictEqual(set.body.billing.totalCost, 14000);
+    assert.strictEqual(set.body.billing.totalValue, 14000);
 
     const one = (await as('root', `/pnl/projects/${project.alpha.id}`)).body;
-    assert.strictEqual(one.billing.totalCost, 14000);
-    // 20,000 - 14,000 = 6,000 profit, 30% margin. Worked out by hand.
-    assert.strictEqual(one.totals.revenue, 20000);
+    assert.strictEqual(one.billing.totalValue, 14000);
+    assert.strictEqual(one.totals.totalValue, 14000, 'and it reaches the figures');
+
+    /* THE FIXED TAB'S CLIENT BILLING IS A DIFFERENT FIELD. Setting one must not
+       move the other: they are edited on two tabs, under two permissions, by
+       two different people. Read from `before` rather than written as a
+       literal, so this asserts "unchanged" rather than a number that an
+       earlier subtest is free to move. */
+    assert.strictEqual(one.totals.revenue, before.totals.revenue, 'invoiced-to-date is untouched');
+    assert.strictEqual(one.totals.contractValue, before.totals.contractValue,
+      'and so is the contract value');
+    assert.notStrictEqual(one.totals.contractValue, one.totals.totalValue,
+      'the two are genuinely separate fields, not one column read twice');
 
     // Changing it changes the answer, which is the whole point of it being manual.
-    await as('root', `/pnl/projects/${project.alpha.id}/total-cost`,
-      { method: 'PUT', body: { totalCost: 18000 } });
-    assert.strictEqual((await as('root', `/pnl/projects/${project.alpha.id}`)).body.billing.totalCost, 18000);
+    await as('root', `/pnl/projects/${project.alpha.id}/total-value`,
+      { method: 'PUT', body: { totalValue: 18000 } });
+    assert.strictEqual((await as('root', `/pnl/projects/${project.alpha.id}`)).body.billing.totalValue, 18000);
 
     // Clearing is not zero: it goes back to "nobody has said".
-    await as('root', `/pnl/projects/${project.alpha.id}/total-cost`,
-      { method: 'PUT', body: { totalCost: null } });
-    assert.strictEqual((await as('root', `/pnl/projects/${project.alpha.id}`)).body.billing.totalCost, null);
+    await as('root', `/pnl/projects/${project.alpha.id}/total-value`,
+      { method: 'PUT', body: { totalValue: null } });
+    const cleared = (await as('root', `/pnl/projects/${project.alpha.id}`)).body;
+    assert.strictEqual(cleared.billing.totalValue, null);
+    assert.strictEqual(cleared.totals.actualProfit, null,
+      'and a project nobody has priced has no profit, rather than a loss equal to its costs');
+    assert.strictEqual(cleared.totals.actualMarginPercent, null);
 
-    // And a typed minus sign is refused rather than booked as profit.
-    const neg = await as('root', `/pnl/projects/${project.alpha.id}/total-cost`,
-      { method: 'PUT', body: { totalCost: -500 } });
+    // And a typed minus sign is refused rather than booked as a loss.
+    const neg = await as('root', `/pnl/projects/${project.alpha.id}/total-value`,
+      { method: 'PUT', body: { totalValue: -500 } });
     assert.strictEqual(neg.status, 400);
   });
 

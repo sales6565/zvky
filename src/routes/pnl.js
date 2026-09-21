@@ -73,7 +73,7 @@ const mayWrite = (req, res, next) => {
  * Actual tab, it is the only thing on that tab anybody types, and the brief for
  * this feature put the tab and the figure in one grant. Somebody given the
  * Actual tab is being asked to keep it accurate. */
-const mayEnterTotalCost = maySeeActual;
+const mayEnterTotalValue = maySeeActual;
 
 /* A project the caller may actually reach.
  *
@@ -191,10 +191,11 @@ router.delete('/rate-cards/:id', mayWrite, async (req, res) => {
 
 router.get('/projects/:id', maySeeEither, async (req, res) => {
   if (!await reachable(req, res, req.params.id)) return undefined;
-  const [data, worked] = await Promise.all([
-    pnl.forProject(db, req.params.id),
-    hoursFor(req.params.id),
-  ]);
+  /* The hours first, then the figures costed from them — the Actual tab's cost
+     is the recorded hours priced, so compute() is handed them rather than
+     working them out again. Same order, same reason, as the report route. */
+  const worked = await hoursFor(req.params.id);
+  const data = await pnl.forProject(db, req.params.id, { hours: worked });
   return res.json({
     ...data,
     hours: worked,
@@ -224,6 +225,38 @@ async function designations() {
  * The label lookup is resolved here rather than in pnl-hours because the role
  * catalogue is async and cached, and a domain module that has to be awaited to
  * name a thing is harder to test than one that is handed a naming function. */
+/* Per-designation rows from several projects, added into one table.
+ *
+ * Rows are keyed on the designation, so one person's hours on three projects
+ * land on one line. `people` is a Set while folding and a sorted array after,
+ * because the same person appearing on two projects is still one person and a
+ * list that said so twice would be read as two.
+ *
+ * An UNPRICED row keeps its hours and reports no cost, rather than being
+ * dropped: those hours were really worked, and a breakdown that hid them would
+ * quietly disagree with the hours figure on the card above it. */
+function foldByRole(lists) {
+  const rows = new Map();
+  for (const list of lists) {
+    for (const b of list) {
+      const key = b.roleKey || '(none)';
+      if (!rows.has(key)) {
+        rows.set(key, {
+          roleKey: b.roleKey, roleLabel: b.roleLabel, ratePerHour: b.ratePerHour,
+          priced: b.priced, hours: 0, cost: 0, people: new Set(),
+        });
+      }
+      const row = rows.get(key);
+      row.hours = pnlHours.round2(row.hours + b.hours);
+      row.cost = pnl.money(row.cost + b.cost);
+      for (const n of (b.people || [])) row.people.add(n);
+    }
+  }
+  return [...rows.values()]
+    .map((r) => ({ ...r, people: [...r.people].sort() }))
+    .sort((a, b) => b.hours - a.hours);
+}
+
 async function hoursFor(projectId, rates) {
   const list = await designations();
   const labels = new Map(list.map((r) => [r.key, r.label || r.name || r.key]));
@@ -319,51 +352,66 @@ router.put('/role-rates/:roleKey', mayWrite, async (req, res) => {
   return res.json({ ok: true, roleKey: req.params.roleKey, ratePerHour: value, priced: !clearing });
 });
 
-// --- the Actual tab's entered Total Cost --------------------------------------
+// --- the Actual tab's entered Total Value --------------------------------------
 
-/* Behind pnl.actual, NOT pnl.manage — see the note beside mayEnterTotalCost. */
-router.put('/projects/:id/total-cost', mayEnterTotalCost, async (req, res) => {
+/* THE ONE FIGURE THE ACTUAL TAB STILL ASKS A PERSON FOR.
+ *
+ * It replaces the entered Total Cost that used to live here. The cost is no
+ * longer typed: it is the hours people actually logged on the project, priced
+ * at their designation's rate from Settings → Role Rates. What could not be
+ * derived is what the project was SOLD for, so that is what is asked, and
+ * nothing else.
+ *
+ * The old total_cost column is left alone rather than dropped. Figures somebody
+ * entered are a record of what they believed at the time, and a migration that
+ * deletes them to tidy up a screen is a migration that cannot be undone. It is
+ * simply no longer read by this tab.
+ *
+ * Behind pnl.actual, NOT pnl.manage — see the note beside mayEnterTotalValue.
+ * Whoever is given this tab is being asked to keep its one number right. */
+router.put('/projects/:id/total-value', mayEnterTotalValue, async (req, res) => {
   if (!await reachable(req, res, req.params.id)) return undefined;
   const before = await pnl.billing(db, req.params.id);
 
-  const raw = req.body ? req.body.totalCost : undefined;
+  const raw = req.body ? req.body.totalValue : undefined;
   const clearing = raw === null || raw === '' || raw === undefined;
   let value = null;
   if (!clearing) {
     const n = Number(raw);
     if (!Number.isFinite(n)) {
-      return res.status(400).json({ error: 'The total cost must be a number.', field: 'totalCost' });
+      return res.status(400).json({ error: 'The total value must be a number.', field: 'totalValue' });
     }
     if (n < 0) {
-      /* A negative cost is almost always a typed minus sign, and silently
-         turning it into extra profit is the wrong way to be wrong about
+      /* A negative contract value is almost always a typed minus sign, and
+         silently turning it into a loss is the wrong way to be wrong about
          money. Same rule as every other amount in this module. */
-      return res.status(400).json({ error: 'A total cost cannot be negative.', field: 'totalCost' });
+      return res.status(400).json({ error: 'A total value cannot be negative.', field: 'totalValue' });
     }
     if (n > 99999999999.99) {
-      return res.status(400).json({ error: 'That total cost is too large.', field: 'totalCost' });
+      return res.status(400).json({ error: 'That total value is too large.', field: 'totalValue' });
     }
     value = pnl.money(n);
   }
 
-  /* The billing row may not exist yet — entering a cost before anybody has set
-     a contract value is perfectly ordinary, and refusing it would make the tab
+  /* The billing row may not exist yet — entering a value before anybody has
+     touched Client Billing is perfectly ordinary now that the two are edited on
+     different tabs by different people, and refusing it would make this tab
      unusable until somebody else did their half. */
   await db.query(
-    `INSERT INTO project_billing (project_id, total_cost, updated_by) VALUES ($1,$2,$3)
-     ON DUPLICATE KEY UPDATE total_cost = VALUES(total_cost), updated_by = VALUES(updated_by)`,
+    `INSERT INTO project_billing (project_id, total_value, updated_by) VALUES ($1,$2,$3)
+     ON DUPLICATE KEY UPDATE total_value = VALUES(total_value), updated_by = VALUES(updated_by)`,
     [req.params.id, value, req.user.email]
   );
 
   req.activity({
-    module: 'pnl', action: 'pnl.total_cost_changed', entityType: 'project',
+    module: 'pnl', action: 'pnl.total_value_changed', entityType: 'project',
     entityId: req.params.id,
     summary: clearing
-      ? `Cleared the entered Total Cost (was ${before.totalCost === null ? 'not entered' : before.totalCost})`
-      : `Set the Total Cost to ${value}`,
+      ? `Cleared the Actual P&L Total Value (was ${before.totalValue === null ? 'not entered' : before.totalValue})`
+      : `Set the Actual P&L Total Value to ${value}`,
     changes: {
-      totalCost: {
-        from: before.totalCost === null ? null : String(before.totalCost),
+      totalValue: {
+        from: before.totalValue === null ? null : String(before.totalValue),
         to: clearing ? null : String(value),
       },
     },
@@ -627,10 +675,12 @@ router.get('/report', maySeeEither, async (req, res) => {
   const rates = await pnlHours.roleRates(db);
   const perProject = [];
   for (const project of chosen) {
-    const [figures, worked] = await Promise.all([
-      pnl.forProject(db, project.id, { cards }),
-      hoursFor(project.id, rates),
-    ]);
+    /* The hours FIRST, then the figures costed from them. They used to be
+       fetched in parallel because neither needed the other; the Actual tab's
+       cost is now the recorded hours priced, so compute() has to be handed them
+       rather than working them out a second time from a second query. */
+    const worked = await hoursFor(project.id, rates);
+    const figures = await pnl.forProject(db, project.id, { cards, hours: worked });
     perProject.push({
       ...figures,
       hours: worked,
@@ -695,6 +745,13 @@ router.get('/report', maySeeEither, async (req, res) => {
     rollup: pnl.rollup(perProject),
     byClient,
     byRoleLevel,
+    /* THE ACTUAL TAB'S BREAKDOWN: what each DESIGNATION logged across the
+       selected projects, and what that cost. Summed here rather than in the
+       browser so the table and the Cost card above it are made from one set of
+       numbers — the page used to fold the Fixed tab's delivered rows together
+       itself, and two folds of two different sets is how a table stops adding
+       up to the total printed beside it. */
+    consumedByRole: foldByRole(perProject.map((p) => p.hours.consumedByRole || [])),
     trend: await snapshots.trend(db, perProject.map((p) => p.projectId), {
       from: req.query.from, to: req.query.to,
     }),
@@ -728,12 +785,23 @@ router.get('/report', maySeeEither, async (req, res) => {
         (t, p) => t + (p.hours.budgetedCost === null ? 0 : p.hours.budgetedCost), 0)),
       projectsWithBudget: perProject.filter((p) => p.hours.budgetedCost !== null).length,
       unpricedHours: pnlHours.round2(perProject.reduce((t, p) => t + p.hours.actualUnpricedHours, 0)),
-      /* Entered costs only add up across the projects that have one. How many
-         did is reported beside it, so "₹2,00,000 across 3 of 7 projects" cannot
-         be misread as the cost of all seven. */
-      enteredTotalCost: pnl.money(perProject.reduce(
-        (t, p) => t + (p.billing.totalCost === null ? 0 : p.billing.totalCost), 0)),
-      projectsWithTotalCost: perProject.filter((p) => p.billing.totalCost !== null).length,
+      /* THE ACTUAL TAB'S HOURS AND COST. Every hour logged against the
+         project's assets whatever state they are in, and what those hours cost
+         at each person's designation rate — as against the delivered-only
+         figures above, which are the Fixed tab's.
+
+         consumedUnpricedHours is carried up for the same reason
+         unpricedHours is: a rollup that dropped it would report a confident
+         cost for a set of projects whose people are not all priced. */
+      consumedCost: pnl.money(perProject.reduce((t, p) => t + p.hours.consumedCost, 0)),
+      consumedUnpricedHours: pnlHours.round2(perProject.reduce(
+        (t, p) => t + p.hours.consumedUnpricedHours, 0)),
+      /* Total Values only add up across the projects that have one. How many
+         did is reported beside it, so "₹20,00,000 across 3 of 7 projects"
+         cannot be misread as the value of all seven. */
+      totalValue: pnl.money(perProject.reduce(
+        (t, p) => t + (p.billing.totalValue === null ? 0 : p.billing.totalValue), 0)),
+      projectsWithTotalValue: perProject.filter((p) => p.billing.totalValue !== null).length,
       projects: perProject.length,
     },
     canManage: holds(req.user, 'pnl.manage'),

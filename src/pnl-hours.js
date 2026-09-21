@@ -187,6 +187,21 @@ async function forProject(db, projectId, { rates = null, roleLabel = (k) => k } 
   return {
     bidHours: bid,
     consumedHours: consumed,
+    /* THE ACTUAL TAB'S COST, and the breakdown behind it.
+     *
+     * Every hour logged against the project's assets, whatever state they are
+     * in, priced at the logger's designation rate. `consumedCost` was already
+     * here as a reference figure beside a cost somebody typed in; the Actual
+     * tab is now costed FROM it, so the per-designation rows that produce it
+     * have to travel with it. Without them the tab could show a total with no
+     * way to see what it is made of, which for a money figure is the same as
+     * not showing it.
+     *
+     * Deliberately NOT the delivered-only set below. The Fixed tab asks "what
+     * did the work the client has actually received cost us?"; the Actual tab
+     * asks "what has this project cost us so far?" — and work in progress has
+     * cost the studio its hours whether or not anybody has received it yet. */
+    consumedByRole: all.byRole,
     deliveredHours: round2(deliveredPeople.reduce((t, p) => t + p.hours, 0)),
     /* Hours consumed on work that has NOT been delivered. Stated rather than
        left to be subtracted, because it is the number somebody asks for the
@@ -202,6 +217,9 @@ async function forProject(db, projectId, { rates = null, roleLabel = (k) => k } 
        beside the figure somebody typed in. */
     consumedCost: all.cost,
     consumedUnpricedHours: all.unpricedHours,
+    /* Hours that WERE priced, so a caller can say "₹X across Yh" without
+       having to subtract the unpriced ones itself and get it subtly wrong. */
+    consumedPricedHours: all.pricedHours,
   };
 }
 
