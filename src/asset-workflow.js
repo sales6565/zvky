@@ -7,19 +7,32 @@
 // checkable: the states below are the whole of it, and anything not listed
 // cannot happen.
 //
-//   Not Assigned -> Assigned -> In Progress -> TL Review -> Approved for Client -> Delivered
-//                       |            ^             |  \        ^
-//                  (accept starts    |             |   +-> TL Feedbacks -> (assignee reworks)
-//                   the clock)       |             +-> CD Review -> CD Feedbacks -> (TL relays)
-//                                    |             |
-//                                    |             +-> "Send to Client" ---+
-//                                    |                  (skips the CD gate;
-//                                    |                   its own permission)
+//   Not Assigned -> Assigned -> In Progress -> TL Review -> TL Approved -> ...
+//                       |            ^             |              |
+//                  (accept starts    |             |              +-> CD Review -> CD Feedbacks
+//                   the clock)       |             |              |                     |
+//                                    |             |              |          (TL relays)|
+//                                    |             +-> TL Feedbacks <--------------------+
+//                                    |                      |
+//                                    +----------------------+  (assignee reworks)
 //
-// Approved for Client is reachable two ways: the ordinary route through the
-// Creative Director, and a team lead with review.tl_send_client skipping that
-// gate. Same destination, two different actions in the history, so the two are
-// told apart afterwards.
+//                       TL Approved -+-> CD Review -> Approved for Client -> Delivered
+//                                    |                        ^
+//                                    +-> "Send to Client" ----+  (skips the CD gate;
+//                                                                its own permission)
+//
+// TL REVIEW HAS EXACTLY TWO ANSWERS: request changes, or approve. Approving no
+// longer reaches the Creative Director directly — it lands in TL APPROVED, a
+// holding stage where the lead then chooses between the ordinary route through
+// the CD and skipping that gate. The two decisions were previously made in one
+// click at the same moment; separating them means the record says which was
+// approving the work and which was deciding who else needed to see it.
+//
+// Approved for Client is still reachable two ways: the ordinary route through
+// the Creative Director, and a team lead with review.tl_send_client skipping
+// that gate. Same destination, two different actions in the history, so the two
+// are told apart afterwards — what changed is only where the skip is offered
+// from.
 //
 // Assigned and In Progress are separated by the assignee's own act: assignment
 // puts work on their desk, Accept and Start is them picking it up — and it is
@@ -34,13 +47,22 @@
 
 const { roleDef } = require('./roles');
 
-// The ten states, in pipeline order. Labels and colours match the dashboard.
+// The eleven states, in pipeline order. Labels and colours match the dashboard.
 const STATES = [
   { id: 'not_started', label: 'Not Assigned', color: 'var(--not)' },
   { id: 'assigned', label: 'Assigned', color: '#5b8def' },
   { id: 'in_progress', label: 'In Progress', color: 'var(--prog)' },
   { id: 'pending_tl_review', label: 'TL Review', color: 'var(--review)' },
   { id: 'tl_changes_requested', label: 'TL Feedbacks', color: '#e8402c' },
+  /* Past the first gate, waiting on the lead to say where it goes next.
+   *
+   * A MUTED GREEN, and the shade is the point. Approved for Client is the
+   * bright mint --approved; this is the same family a few steps back, so it
+   * reads as "approved, but not the approval that matters to the client" at a
+   * glance on a board. Distinct from the brand red, as every status colour
+   * must be: a stage colour that matched the application's own would make one
+   * stage look like the product rather than like a place work sits. */
+  { id: 'tl_approved', label: 'TL Approved', color: '#4c9a75' },
   { id: 'pending_cd_review', label: 'CD Review', color: '#9b7ef0' },
   { id: 'cd_changes_requested', label: 'CD Feedbacks', color: '#e8402c' },
   { id: 'approved_for_client', label: 'Approved for Client', color: 'var(--approved)' },
@@ -253,12 +275,39 @@ const TRANSITIONS = [
         : 'Resubmitted for team lead review',
   },
   {
+    /* THE FIRST GATE, AND NOW ONLY THE GATE.
+     *
+     * This used to land in CD Review, which made approving the work and
+     * deciding the Creative Director should see it one click. They are two
+     * judgements — "is this good" and "who else needs to look at it" — and a
+     * lead who wanted the first without the second had to reach for a
+     * different button entirely. It now lands in TL Approved, where the second
+     * question is asked on its own. */
     action: 'tl_approve',
     from: ['pending_tl_review'],
+    to: 'tl_approved',
+    who: 'teamLead',
+    routeTo: 'reviewQueue',
+    describe: 'Team lead approved the work',
+  },
+  {
+    /* The ordinary way on from TL Approved.
+     *
+     * Its own action rather than a second `tl_approve`, because the action id
+     * is what asset_events stores and the two answer different questions: one
+     * says the work passed, the other says the Creative Director is being
+     * asked. A history that recorded both as "approved" could not tell them
+     * apart afterwards.
+     *
+     * Same `who` as the approval itself: a lead who may pass work at this gate
+     * may send it on through the ordinary pipeline. Sending it to the CLIENT
+     * is the decision that needs more than that — see below. */
+    action: 'tl_to_cd',
+    from: ['tl_approved'],
     to: 'pending_cd_review',
     who: 'teamLead',
     routeTo: 'reviewQueue',
-    describe: 'Team lead approved, sent to the Creative Director',
+    describe: 'Team lead sent the approved work to the Creative Director',
   },
   {
     /* The Creative Director skipped.
@@ -271,11 +320,23 @@ const TRANSITIONS = [
      * dashboard, the stats bar and the Delivered flow need to know nothing
      * about it.
      *
+     * OFFERED FROM TL APPROVED, not from TL Review. It used to sit beside the
+     * two review buttons, which made the review pop-up a three-way choice
+     * where two of the options were about the work and one was about the
+     * client. Now the lead approves first and chooses the route second, and
+     * this is one of the two ways out of that stage.
+     *
+     * ITS PERMISSION IS UNCHANGED AND IS NOT THE REVIEW ONE.
+     * review.tl_send_client already exists for exactly this: it is the
+     * authority to walk around the CD gate rather than to pass it, it defaults
+     * to the full-access tier alone, and a studio grants it to senior leads
+     * deliberately. Moving the button did not move the authority.
+     *
      * There is no route back into CD Review from here. That is the point of the
      * action: the asset is past the gate, and a studio that wanted it reviewed
      * after all can send it back through the ordinary path by reassigning it. */
     action: 'tl_send_to_client',
-    from: ['pending_tl_review'],
+    from: ['tl_approved'],
     to: 'approved_for_client',
     who: 'tlClientSender',
     routeTo: 'reviewQueue',
@@ -444,7 +505,8 @@ function evaluate(action, ctx, { note } = {}) {
       cd_approve: 'approved by the director',
       tl_request_changes: 'sent back by a team lead',
       cd_request_changes: 'sent back by the director',
-      tl_send_to_client: 'sent straight to the client — that is only possible while it is in TL Review',
+      tl_to_cd: 'sent to the Creative Director — that is only possible once a team lead has approved it',
+      tl_send_to_client: 'sent straight to the client — that is only possible once a team lead has approved it',
       relay: 'passed on to the assignee — the director\'s notes are only relayed once, from CD Feedbacks',
       deliver: 'marked delivered — only work the client has approved can be delivered',
       client_sent: 'sent to the client — only work that has been approved for the client can go out',

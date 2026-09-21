@@ -254,6 +254,7 @@ test('assigned, accepted, stamped', { skip: cfg ? false : SKIP_REASON }, async (
       method: 'POST', body: { link: 'https://example.test/v1', description: 'First' },
     });
     await as('lee', `/assets/${asset.id}/review`, { method: 'POST', body: { decision: 'approved' } });
+    await as('lee', `/assets/${asset.id}/send-to-cd`, { method: 'POST' });
     await as('dana', `/assets/${asset.id}/review`, {
       method: 'POST', body: { decision: 'changes_requested', text: 'Rework the silhouette' },
     });
@@ -275,6 +276,7 @@ test('assigned, accepted, stamped', { skip: cfg ? false : SKIP_REASON }, async (
     });
     for (const [who, action, body] of [
       ['lee', 'review', { decision: 'approved' }],
+      ['lee', 'send-to-cd', {}],
       ['dana', 'review', { decision: 'approved' }],
       ['root', 'deliver', {}],
     ]) {
@@ -767,6 +769,9 @@ test('assigned, accepted, stamped', { skip: cfg ? false : SKIP_REASON }, async (
     });
     assert.strictEqual(approved.status, 200,
       `a lead who can see it must be able to approve it — got ${JSON.stringify(approved.body)}`);
+    assert.strictEqual((await assetRow(asset.id)).status, 'tl_approved');
+    // And on through the gate that was stranded, by the ordinary route.
+    assert.strictEqual((await as('lee', `/assets/${asset.id}/send-to-cd`, { method: 'POST' })).status, 200);
     assert.strictEqual((await assetRow(asset.id)).status, 'pending_cd_review');
   });
 
@@ -1009,6 +1014,7 @@ test('assigned, accepted, stamped', { skip: cfg ? false : SKIP_REASON }, async (
 
     // TL passes it up; the CD sends it back; the lead relays it.
     await as('lee', `/assets/${asset.id}/review`, { method: 'POST', body: { decision: 'approved' } });
+    await as('lee', `/assets/${asset.id}/send-to-cd`, { method: 'POST' });
     await as('dana', `/assets/${asset.id}/review`, {
       method: 'POST', body: { decision: 'changes_requested', text: 'Rework the silhouette' },
     });

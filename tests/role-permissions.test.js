@@ -313,6 +313,8 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual((await as('lee', `/assets/${asset.id}/review`, {
       method: 'POST', body: { decision: 'approved' },
     })).status, 200, 'the TL gate still works');
+    // Sending the approved work on is the lead's too; the CD gate itself is not.
+    assert.strictEqual((await as('lee', `/assets/${asset.id}/send-to-cd`, { method: 'POST' })).status, 200);
     assert.strictEqual((await as('lee', `/assets/${asset.id}/review`, {
       method: 'POST', body: { decision: 'approved' },
     })).status, 403, 'and does not reach the CD gate');
@@ -568,6 +570,7 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     await push('ana', '/start', {});
     assert.strictEqual(await push('ana', '/submit', { link: 'https://example.test/v1' }), 201);
     assert.strictEqual(await push('lee', '/review', { decision: 'approved' }), 200, 'through the TL gate');
+    assert.strictEqual(await push('lee', '/send-to-cd', {}), 200, 'and on to the CD queue');
 
     // The Art Director holds review.cd from their tier and can act.
     await setRole('art_director', (await enabledFor('art_director')).filter((k) => k !== 'review.cd'));
@@ -589,6 +592,7 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     await push('ana', '/start', {});
     assert.strictEqual(await push('ana', '/submit', { link: 'https://example.test/v1' }), 201);
     assert.strictEqual(await push('lee', '/review', { decision: 'approved' }), 200);
+    assert.strictEqual(await push('lee', '/send-to-cd', {}), 200);
 
     // review.cd on, review.approve_client off: they may send it back, not sign it off.
     await setRole('art_director', (await enabledFor('art_director')).filter((k) => k !== 'review.approve_client'));

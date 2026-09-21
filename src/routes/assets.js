@@ -2012,6 +2012,32 @@ router.post('/:id/relay', async (req, res) => {
   res.json({ asset: withDetails });
 });
 
+/* POST /api/assets/:id/send-to-cd — the ordinary way on from TL Approved.
+ *
+ * Its own endpoint rather than a second `decision` on /review, and for the same
+ * reason /send-to-client is: it is not an opinion about the work. The review
+ * route writes a row into `feedback` describing a judgement at a stage; this
+ * records a routing decision taken after that judgement was already made and
+ * written. Folding it into /review would have put a second "approved" row in
+ * the feedback table for one piece of work that was approved once.
+ *
+ * The state machine decides whether it is allowed — the TL standing, and the
+ * asset being in TL Approved — so this route only carries the note.
+ */
+router.post('/:id/send-to-cd', async (req, res) => {
+  const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
+  const asset = rows[0];
+  if (!asset) return res.status(404).json({ error: 'Asset not found' });
+  if (await projectClosedResponse(res, asset.project_id)) return undefined;
+
+  const ctx = await contextFor(req, asset);
+  const verdict = workflow.evaluate('tl_to_cd', ctx, { note: req.body && req.body.text });
+  if (!verdict.ok) return res.status(verdict.status).json({ error: verdict.error, field: verdict.field });
+
+  const withDetails = await applyTransition(req, res, asset, verdict, { note: req.body && req.body.text });
+  res.json({ asset: withDetails });
+});
+
 /* POST /api/assets/:id/send-to-client — the team lead skips the CD gate.
  *
  * Its own endpoint rather than a third `decision` on /review, for the same
@@ -2161,7 +2187,26 @@ router.post('/:id/reassign', async (req, res) => {
 
   const { assigneeId, note } = req.body || {};
   if (!assigneeId) return res.status(400).json({ error: 'Choose who should pick this up.', field: 'assigneeId' });
-  if (assigneeId === asset.assignee_id) {
+  /* HANDING IT BACK TO THE SAME PERSON IS A REAL MOVE HERE, and it was refused.
+   *
+   * Everywhere else, assigning an asset to whoever already holds it is a no-op
+   * worth stopping — nothing would change. From a review stage it changes the
+   * one thing that matters: the asset leaves the queue it is stuck in and goes
+   * back to Assigned as a fresh round, with the episode, the notifications and
+   * the history entry every other hand-over gets.
+   *
+   * That is what the studio's "Reassign to Same User" asks for. The rework
+   * usually belongs with the person who did the first round, and making them
+   * the one name the lead cannot pick meant the quick path was the one the
+   * screen refused.
+   *
+   * The refusal is kept for every other status, where it is still right. This
+   * route only ever runs on a hand-over stage — the guard above sees to that —
+   * so the condition below reads as "and the asset is not in review", which is
+   * unreachable, rather than as a weakening of the rule. It is written out
+   * anyway so that widening HAND_OVER_STATUSES later cannot quietly re-admit a
+   * pointless self-assignment. */
+  if (assigneeId === asset.assignee_id && !HAND_OVER_STATUSES.includes(asset.status)) {
     return res.status(400).json({ error: 'That is already who it is assigned to.', field: 'assigneeId' });
   }
 
@@ -2253,8 +2298,14 @@ router.post('/:id/reassign', async (req, res) => {
       // The reason, where a person reading the trail would look for it, and
       // then what the outgoing round finally recorded — which is the number
       // the handover is answerable for.
-      note: `Reassigned from ${from} to ${next.name} while in ${workflow.label(asset.status)}${trailer}. `
-        + `${from} recorded ${fmtSeconds(handedOverSeconds)} on their round; ${next.name} starts a new one.`,
+      /* "Reassigned from Meera to Meera" is true and unreadable. Handing work
+         back to the person who was already doing it is its own sentence, and
+         the history is read by people rather than parsed. */
+      note: next.id === asset.assignee_id
+        ? `Sent back to ${next.name} from ${workflow.label(asset.status)}${trailer}. `
+          + `Their previous round recorded ${fmtSeconds(handedOverSeconds)}; this is a new one.`
+        : `Reassigned from ${from} to ${next.name} while in ${workflow.label(asset.status)}${trailer}. `
+          + `${from} recorded ${fmtSeconds(handedOverSeconds)} on their round; ${next.name} starts a new one.`,
     });
     await conn.query('COMMIT');
   } catch (err) {
@@ -2265,7 +2316,7 @@ router.post('/:id/reassign', async (req, res) => {
   }
 
   console.log(
-    `${req.user.email} reassigned ${asset.code} from ${from} to ${next.name}`
+    `${req.user.email} ${next.id === asset.assignee_id ? `sent ${asset.code} back to` : `reassigned ${asset.code} from ${from} to`} ${next.name}`
     + ` (${inReview ? `in ${asset.status}, back to assigned` : 'rework'};`
     + ` ${from} recorded ${fmtSeconds(handedOverSeconds)}).`
   );

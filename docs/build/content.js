@@ -27,7 +27,8 @@ const STATES = [
   ['In Progress', 'The assignee has pressed Accept and Start. Time Spent runs from here, and pauses while the task is on hold.', 'The assignee, and nobody else.'],
   ['TL Review', 'Submitted, waiting on the first review gate.', 'The assignee, on Submit for Review.'],
   ['TL Feedbacks', 'The team lead asked for changes. Back with the assignee.', 'The reviewer at the first gate.'],
-  ['CD Review', 'Past the first gate, waiting on the Creative Director.', 'The reviewer at the first gate, on approval.'],
+  ['TL Approved', 'The team lead has passed the work. Waiting on them to say where it goes next.', 'The reviewer at the first gate, on approval.'],
+  ['CD Review', 'Past the first gate and sent on, waiting on the Creative Director.', 'The reviewer, from TL Approved.'],
   ['CD Feedbacks', 'The Creative Director asked for changes. Sits with the team lead until relayed.', 'The Creative Director.'],
   ['Approved for Client', 'Cleared internally. Ready to leave the studio.', 'The Creative Director, or a lead who may skip the second gate.'],
   ['Awaiting Client Feedback', 'It has gone to the client and the studio is waiting.', 'Whoever holds Send to Client Review.'],
@@ -40,9 +41,10 @@ const TRANSITIONS = [
   ['Hold / Resume', 'In Progress / TL Feedbacks / CD Feedbacks', 'No change — the stage stays put', 'The assignee, with Hold / Resume Own Task'],
   ['Submit for Review', 'Not Assigned / In Progress / TL Feedbacks', 'TL Review', 'The assignee'],
   ['Submit for Review (after CD notes)', 'CD Feedbacks', 'CD Review or TL Review', 'The assignee'],
-  ['Approve', 'TL Review', 'CD Review', 'TL Review'],
-  ['Request changes', 'TL Review', 'TL Feedbacks', 'TL Review'],
-  ['Send straight to client', 'TL Review', 'Approved for Client', 'TL Send to Client'],
+  ['TL Approved', 'TL Review', 'TL Approved', 'TL Review'],
+  ['Request Changes', 'TL Review', 'TL Feedbacks', 'TL Review'],
+  ['Approve \u2192 Send to CD Review', 'TL Approved', 'CD Review', 'TL Review'],
+  ['Send to Client', 'TL Approved', 'Approved for Client', 'TL Send to Client'],
   ['Approve for client', 'CD Review', 'Approved for Client', 'CD Review'],
   ['Request changes', 'CD Review', 'CD Feedbacks', 'CD Review'],
   ['Relay the notes', 'CD Feedbacks', 'CD Feedbacks (now with the assignee)', 'TL Review'],
@@ -50,7 +52,8 @@ const TRANSITIONS = [
   ['Client approved', 'Awaiting Client Feedback', 'Delivered', 'Record Client Approval'],
   ['Client asked for changes', 'Awaiting Client Feedback', 'TL Feedbacks', 'Record Client Changes'],
   ['Deliver', 'Approved for Client', 'Delivered', 'Deliver'],
-  ['Hand over', 'TL Review / CD Review / TL Feedbacks / CD Feedbacks', 'Assigned — the new person starts their own round', 'Asset Assign'],
+  ['Hand over (Reassign to Any User)', 'TL Review / CD Review / TL Feedbacks / CD Feedbacks', 'Assigned — the new person starts their own round', 'Asset Assign'],
+  ['Reassign to Same User', 'TL Feedbacks', 'Assigned — the same person, a fresh round', 'Asset Assign'],
   ['Change the assignee', 'Not Assigned / Assigned / In Progress', 'Assigned', 'Asset Assign'],
   ['Unassign (pick Unassigned in the Assignee list)', 'Assigned / In Progress', 'Not Assigned', 'Asset Assign'],
 ];
@@ -439,7 +442,7 @@ module.exports = [
   lead('Ten stages, and a fixed set of moves between them. Nothing moves an asset except one of these moves, and '
     + 'every one of them is recorded.'),
 
-  h2('7.1 The ten stages'),
+  h2('7.1 The eleven stages'),
   table(['Stage', 'What it means', 'Who puts it here'], STATES, [2400, 4560, 2400]),
 
   h2('7.2 Every move'),
@@ -542,26 +545,47 @@ module.exports = [
   steps([
     'Open the asset from your queue.',
     'Look at what was submitted.',
-    'Approve to send it on to the Creative Director, or Request changes with a note saying what needs doing.',
+    'Press <strong>TL Approved</strong> to pass it, or <strong>Request Changes</strong> with a note saying what needs doing.',
   ]),
-  p('A studio that does not use a Creative Director gate can send work straight from here to Approved for Client, '
-    + 'if the reviewer holds TL Send to Client.'),
+  p('TWO BUTTONS, AND THAT IS THE WHOLE GATE. This screen asks one question \u2014 is the work good \u2014 and '
+    + 'nothing else. It used to carry a third button that sent work straight to the client, which meant a lead was '
+    + 'answering \u201cis this good\u201d and \u201cwho else needs to see it\u201d in the same click. Approving now '
+    + 'lands the asset in <strong>TL Approved</strong>, and the second question is asked there on its own (7.8a).'),
+
+  h2('7.8a TL Approved \u2014 where does it go now?'),
+  p('An asset here has passed the first gate and is waiting on the lead to choose its route. Two buttons, and they '
+    + 'are not the same kind of decision:'),
+  bullets([
+    '<strong>Approve → Send to CD Review</strong> — the ordinary pipeline. The Creative Director looks at it next. Whoever may review at the first gate may do this.',
+    '<strong>Send to Client</strong> — skips the Creative Director entirely and lands on Approved for Client, one step from Delivered. This needs <strong>TL Send to Client</strong> on top of the review permission, and a lead without it does not see the button.',
+  ]),
+  p('WHY THE SECOND ONE IS GATED DIFFERENTLY. Passing work through a gate and walking around one are different '
+    + 'authorities. TL Send to Client defaults to the full-access tier alone, so a studio grants it to particular '
+    + 'senior leads deliberately rather than getting it by holding the review permission. Moving the button from '
+    + 'the review pop-up to this screen did not move the authority behind it.'),
+  p('There is no route back into CD Review once Send to Client has been used \u2014 that is the point of it. A '
+    + 'studio that wanted the work reviewed after all sends it back through the ordinary path by reassigning it.'),
+  roles('The ordinary route on sits with the first review gate. Send to Client is its own permission and is Super '
+    + 'Admin only out of the box.', ['tl_gate']),
 
   h2('7.9 TL Feedbacks'),
   shot('05-asset-tl-feedback', 'An asset returned with the lead’s notes, seen by the artist who holds it.'),
   p('The asset comes back to you with the note attached. Press Accept and Start again to reopen it — which counts '
     + 'as your one active task — and Submit for Review when the changes are done. It goes back to the same gate.'),
-  p('The reviewer who sent it back has a second option, and it is on this screen rather than a separate one: '
-    + 'Assign to someone else. Rework does not always belong with the person who did the first round — they may be '
-    + 'on something else, out, or simply the wrong fit for the note — and without this the only way to move it was '
-    + 'to wait for a round nobody was going to do. Picking a name takes the asset out of TL Feedbacks and back to '
-    + 'Assigned under the new person, who starts their own round from the beginning; the note and the whole history '
-    + 'travel with it. Both people are told: the one picking it up gets the ordinary assignment notification, and '
-    + 'the one it left is told it has moved, so nobody is waiting on work that is no longer theirs.'),
-  p('The list offered is the studio\u2019s ordinary eligible-assignee list, so a team lead appears in it and can be '
-    + 'handed the rework like anyone else. Whoever is holding the asset right now is not in the list, and the screen '
-    + 'says why rather than leaving you hunting for a name: the work is already with them, and this control is for '
-    + 'moving it to somebody else.'),
+  p('The reviewer who sent it back has two ways to put the rework back on the board, and both are on this screen:'),
+  bullets([
+    '<strong>Reassign to Same User</strong> — one click, straight back to whoever did the first round. This is the common case, and it used to be the one thing the screen would not do.',
+    '<strong>Reassign to Any User</strong> — the full picker, for when the rework belongs with somebody else. They may be on something else, out, or simply the wrong fit for the note.',
+  ]),
+  p('Both do the same move and go through the same rules: the asset leaves TL Feedbacks and returns to '
+    + '<strong>Assigned</strong> with a fresh round and a clock of its own, the designation is checked the same way, '
+    + 'the history records it the same way, and the person picking it up is told. The earlier round\u2019s hours stay '
+    + 'on the record; the note and the whole history travel with the asset. Where the two differ, only the picker '
+    + 'tells the previous holder that the work has moved \u2014 on the one-click path nobody has lost anything, so '
+    + 'there is nothing to tell them.'),
+  p('The picker offers the studio\u2019s ordinary eligible-assignee list, so a team lead appears in it and can be '
+    + 'handed the rework like anyone else. Whoever is holding the asset is not in that list, because the button '
+    + 'above it is how you send it back to them.'),
   roles('Who sees this control is the TL review permission, not a designation \u2014 the same permission that lets '
     + 'somebody review at this gate at all, plus Asset Assign. Take First Review Gate away from a role in Settings '
     + '\u2192 Permissions and the control goes with it for everyone holding that role; grant it and the control '

@@ -272,7 +272,10 @@ test('costed from the estimate and the work', { skip: cfg ? false : SKIP_REASON 
     return assetId;
   };
   const toDelivered = async (assetId) => {
+    /* Three steps now, not two: TL Approved sits between the gates, and the
+       route on to the Creative Director is its own decision. */
     await as('root', `/assets/${assetId}/review`, { method: 'POST', body: { decision: 'approved' } });
+    await as('root', `/assets/${assetId}/send-to-cd`, { method: 'POST' });
     await as('root', `/assets/${assetId}/review`, { method: 'POST', body: { decision: 'approved' } });
     const d = await as('root', `/assets/${assetId}/deliver`, { method: 'POST' });
     assert.ok(d.status < 400, `deliver: ${d.status} ${JSON.stringify(d.body)}`);

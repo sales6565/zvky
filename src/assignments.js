@@ -110,7 +110,7 @@ async function open(db, { assetId, userId, assignedById, status, reason }) {
        VALUES ($1,$2,$3,$4,$5)`,
       [id, assetId, userId, assignedById || null, status || 'not_started']
     );
-    await notify(db, { assetId, from: previousUserId, to: userId, actorId: assignedById });
+    await notify(db, { assetId, from: previousUserId, to: userId, actorId: assignedById, reason });
     return id;
   } catch (err) {
     if (unavailable(err)) return null;
@@ -129,9 +129,9 @@ async function open(db, { assetId, userId, assignedById, status, reason }) {
  * Deliberately swallowed on failure: somebody being reassigned and not told is
  * a far smaller problem than a reassignment that refuses to happen because a
  * notification could not be written. */
-async function notify(db, { assetId, from, to, actorId }) {
+async function notify(db, { assetId, from, to, actorId, reason }) {
   try {
-    await require('./notifications').assignmentChanged(db, { assetId, from, to, actorId });
+    await require('./notifications').assignmentChanged(db, { assetId, from, to, actorId, reason });
   } catch (err) {
     console.warn(`[notifications] could not record the assignment change on ${assetId}: ${err.message}`);
   }

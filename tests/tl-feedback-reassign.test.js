@@ -189,24 +189,59 @@ test('reassigning out of TL Feedbacks', { skip: cfg ? false : SKIP_REASON }, asy
     assert.deepStrictEqual(kinds(await since('other', c)), ['assigned']);
   });
 
-  await t.test('and sending it back to the person who holds it is refused, in those words', async () => {
-    /* NOT A GAP. In TL Feedbacks the work is already with the original
-       assignee and they can start it from there, so "send it back to them" is
-       a thing that has already happened. The refusal says so rather than
-       performing a move that would only erase the feedback framing. The panel
-       now says the same thing above the picker, so nobody has to find this out
-       by trying. */
+  await t.test('Reassign to Same User sends the rework back as a fresh round', async () => {
+    /* WHAT THIS USED TO ASSERT, AND WHY IT CHANGED. It pinned a refusal:
+       naming the current assignee was a 400, on the reasoning that in TL
+       Feedbacks the work is already with them. True, but it made the ordinary
+       case — rework going back to the person who did the first round — the one
+       thing the screen would not do, and left the asset sitting in a feedback
+       queue rather than back on the board as live work.
+       
+       The studio asked for it as a one-click action, and it is the same move
+       the picker makes for anybody else: out of TL Feedbacks, into Assigned, a
+       new episode, a new clock. */
     const asset = await inTlFeedback();
+    const told = await mark('ana');
+
     const r = await as('lead', `/assets/${asset.id}/reassign`, {
       method: 'POST', body: { assigneeId: id.ana },
     });
-    assert.strictEqual(r.status, 400);
-    assert.match(r.body.error, /already who it is assigned to/);
-    assert.strictEqual((await fetchAsset(asset.id)).status, 'tl_changes_requested',
-      'and it stays where it was');
+    assert.strictEqual(r.status, 200, JSON.stringify(r.body));
 
-    assert.match(PAGE, /is not in the list because the work is already with them/,
-      'the screen explains the absence rather than leaving a lead hunting for a name');
+    const now = await fetchAsset(asset.id);
+    assert.strictEqual(now.status, 'assigned', 'out of the feedback queue and back on the board');
+    assert.strictEqual(now.assignee_id, id.ana, 'with the same person');
+
+    /* ONE NOTIFICATION, NOT TWO CONTRADICTING EACH OTHER. They are being told
+       the work is theirs again; they are emphatically not being told they lost
+       it, because they did not. */
+    const theirs = kinds(await since('ana', told));
+    assert.deepStrictEqual(theirs, ['assigned'],
+      `the same person must not be told both that they gained and lost it: ${theirs}`);
+
+    // The history says what happened, in words a person reads.
+    const h = await as('lead', `/assets/${asset.id}/history`);
+    const last = h.body.events[h.body.events.length - 1];
+    assert.strictEqual(last.action, 'reassign_review', 'the same action as any other hand-over');
+    assert.strictEqual(last.fromStatus, 'tl_changes_requested');
+    assert.strictEqual(last.toStatus, 'assigned');
+    assert.match(last.note, /Sent back to Ana Artist/,
+      'and not "Reassigned from Ana Artist to Ana Artist", which is true and unreadable');
+  });
+
+  await t.test('the quick path is on the screen, beside the full picker', async () => {
+    /* Two controls, both offered on a rework stage: the one-click return to
+       whoever holds it, and the picker for anybody else. The studio asked for
+       both, and the quick one is first because it is the common case. */
+    assert.match(PAGE, /id="reassignSameBtn"/, 'the one-click button exists');
+    assert.match(PAGE, /Reassign to Same User/, 'labelled as the studio asked');
+    assert.match(PAGE, /Reassign to Any User/, 'and the picker is labelled beside it');
+
+    const wired = PAGE.match(/const sameBtn = document\.getElementById\('reassignSameBtn'\);([\s\S]*?)\n    \};/);
+    assert.ok(wired, 'and it is wired');
+    assert.match(wired[1], /\/reassign`/, 'to the same endpoint the picker uses');
+    assert.ok(!/reassign-same|same-user/.test(PAGE),
+      'no second endpoint was invented for it — same validation, same history, same notifications');
   });
 
   /* --- 4: who may do it ---------------------------------------------------- */

@@ -8,26 +8,42 @@ const cfg = config('workflow');
 
 // --- the machine, on its own --------------------------------------------------
 
-test('the ten states match the dashboard, in pipeline order', () => {
+test('the eleven states match the dashboard, in pipeline order', () => {
   assert.deepStrictEqual(workflow.STATES.map((s) => s.id), [
     'not_started', 'assigned', 'in_progress', 'pending_tl_review', 'tl_changes_requested',
+    'tl_approved',
     'pending_cd_review', 'cd_changes_requested', 'approved_for_client',
     'awaiting_client_feedback', 'delivered',
   ]);
   assert.deepStrictEqual(workflow.STATES.map((s) => s.label), [
     'Not Assigned', 'Assigned', 'In Progress', 'TL Review', 'TL Feedbacks',
+    'TL Approved',
     'CD Review', 'CD Feedbacks', 'Approved for Client',
     'Awaiting Client Feedback', 'Delivered',
   ]);
 
-  // The client's step sits between the studio's sign-off and delivery, which is
-  // the whole point of it — and its colour is its own, not the brand's.
   const ids = workflow.STATES.map((s) => s.id);
+
+  /* TL Approved sits BETWEEN TL Feedbacks and CD Review, which is where the
+     studio asked for it and is the order the board draws. Asserted as a
+     position rather than only as part of the list above, because the list is
+     easy to reorder in a hurry and the position is the requirement. */
+  assert.strictEqual(ids.indexOf('tl_approved'), ids.indexOf('tl_changes_requested') + 1);
+  assert.strictEqual(ids.indexOf('pending_cd_review'), ids.indexOf('tl_approved') + 1);
+
+  // The client's step sits between the studio's sign-off and delivery, which is
+  // the whole point of it.
   assert.strictEqual(ids.indexOf('awaiting_client_feedback'), ids.indexOf('approved_for_client') + 1);
   assert.strictEqual(ids.indexOf('delivered'), ids.indexOf('awaiting_client_feedback') + 1);
-  const client = workflow.STATES.find((s) => s.id === 'awaiting_client_feedback');
-  assert.ok(!/7f1416/i.test(client.color) && !/--brand\b/.test(client.color),
-    'a status colour must not be the brand colour');
+
+  /* No status may wear the brand colour. A stage that matched the application's
+     own would read as the product rather than as a place work sits. Checked
+     across every state rather than only the client one, so a new stage cannot
+     be added in the brand red without this failing. */
+  for (const state of workflow.STATES) {
+    assert.ok(!/7f1416/i.test(state.color) && !/--brand\b/.test(state.color),
+      `${state.id} uses the brand colour`);
+  }
 });
 
 /* Nothing may branch on what a status is CALLED.
@@ -833,15 +849,25 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     const relogin = async () => { token.lead = (await call('/auth/login',
       { method: 'POST', body: { email: 'tl@zvky.test', password: PASSWORD } })).body.token; };
 
+    /* IT IS TWO STEPS NOW. Approving lands in TL Approved, and the route onward
+       is chosen from there — so a lead reaches Send to Client by approving
+       first. The permission behind it is unchanged. */
+    const approved = async (name) => {
+      const id = await toReview(name);
+      assert.strictEqual((await act(id, 'review', 'lead', { decision: 'approved' })).status, 200);
+      assert.strictEqual(await statusOf(id), 'tl_approved', 'approving lands in TL Approved');
+      return id;
+    };
+
     // --- without the permission -------------------------------------------
-    const denied = await toReview('No Skip For You');
+    const denied = await approved('No Skip For You');
     const refused = await act(denied, 'send-to-client', 'lead');
     assert.strictEqual(refused.status, 403,
       `TL Review Actions alone must not reach it — got ${JSON.stringify(refused.body)}`);
-    assert.strictEqual(await statusOf(denied), 'pending_tl_review', 'and nothing moved');
+    assert.strictEqual(await statusOf(denied), 'tl_approved', 'and nothing moved');
 
-    // The ordinary two are unaffected: this lead still reviews exactly as before.
-    assert.strictEqual((await act(denied, 'review', 'lead', { decision: 'approved' })).status, 200);
+    // The ordinary route on is unaffected: this lead still sends it to the CD.
+    assert.strictEqual((await act(denied, 'send-to-cd', 'lead')).status, 200);
     assert.strictEqual(await statusOf(denied), 'pending_cd_review');
 
     // --- with the permission ----------------------------------------------
@@ -851,7 +877,7 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(grant.status, 200, JSON.stringify(grant.body));
     await relogin();
 
-    const id = await toReview('Straight To The Client');
+    const id = await approved('Straight To The Client');
     const sent = await act(id, 'send-to-client', 'lead', { text: 'Client signed off on the concept already' });
     assert.strictEqual(sent.status, 200, JSON.stringify(sent.body));
     assert.strictEqual(sent.body.asset.status, 'approved_for_client',
@@ -864,7 +890,7 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     const skip = events[events.length - 1];
     assert.strictEqual(skip.action, 'tl_send_to_client',
       'recorded under its own action, not as an ordinary approval');
-    assert.strictEqual(skip.fromStatus, 'pending_tl_review');
+    assert.strictEqual(skip.fromStatus, 'tl_approved');
     assert.strictEqual(skip.toStatus, 'approved_for_client');
     assert.strictEqual(skip.actor, 'Priya Menon', 'who did it');
     assert.ok(skip.at, 'and when');
@@ -885,15 +911,21 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual((await act(id, 'deliver', 'admin')).status, 200);
     assert.strictEqual(await statusOf(id), 'delivered');
 
-    // --- and it is only reachable from TL Review ---------------------------
-    const inCd = await toReview('Already Past The Lead');
-    await act(inCd, 'review', 'lead', { decision: 'approved' });
+    // --- and it is only reachable from TL Approved -------------------------
+    const inCd = await approved('Already Past The Lead');
+    await act(inCd, 'send-to-cd', 'lead');
     assert.strictEqual(await statusOf(inCd), 'pending_cd_review');
     assert.strictEqual((await act(inCd, 'send-to-client', 'lead')).status, 409,
       'no second bite once it is in the CD queue');
 
+    // Nor from TL Review itself any more — the pop-up there has two buttons,
+    // and this is not one of them.
+    const notYet = await toReview('Not Approved Yet');
+    assert.strictEqual((await act(notYet, 'send-to-client', 'lead')).status, 409,
+      'approving comes first');
+
     // The artist cannot reach it whatever the lead holds.
-    const mine = await toReview('Not The Artists Call');
+    const mine = await approved('Not The Artists Call');
     assert.strictEqual((await act(mine, 'send-to-client', 'artist')).status, 403);
 
     await call('/permissions/roles/team_lead/reset', { token: token.admin, method: 'POST' });
@@ -911,7 +943,13 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       { link: 'http://nas/shots/hero-v1', description: 'First pass.' })).status, 201);
     assert.strictEqual(await statusOf(id), 'pending_tl_review');
 
+    /* TL Review now answers one question, and the route onward is the next
+       one. Approving lands in TL Approved; the Creative Director is asked from
+       there. */
     assert.strictEqual((await act(id, 'review', 'lead', { decision: 'approved' })).status, 200);
+    assert.strictEqual(await statusOf(id), 'tl_approved');
+
+    assert.strictEqual((await act(id, 'send-to-cd', 'lead')).status, 200);
     assert.strictEqual(await statusOf(id), 'pending_cd_review');
 
     assert.strictEqual((await act(id, 'review', 'cd', { decision: 'approved' })).status, 200);
@@ -921,7 +959,7 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(await statusOf(id), 'delivered');
 
     assert.deepStrictEqual((await historyOf(id)).map((e) => e.action),
-      ['assign', 'accept', 'submit', 'tl_approve', 'cd_approve', 'deliver']);
+      ['assign', 'accept', 'submit', 'tl_approve', 'tl_to_cd', 'cd_approve', 'deliver']);
   });
 
   await t.test('a TL-changes round goes back to the assignee and keeps both submissions', async () => {
@@ -957,6 +995,7 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     await act(id, 'start', 'artist');
     await act(id, 'submit', 'artist', { link: 'https://review.example.com/s1' });
     await act(id, 'review', 'lead', { decision: 'approved' });
+    await act(id, 'send-to-cd', 'lead');
 
     const rejected = await act(id, 'review', 'cd',
       { decision: 'changes_requested', text: 'Palette is off-brief.' });
@@ -982,7 +1021,7 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(await statusOf(id), 'pending_tl_review');
 
     assert.deepStrictEqual((await historyOf(id)).map((e) => e.action),
-      ['assign', 'accept', 'submit', 'tl_approve', 'cd_request_changes', 'relay', 'submit']);
+      ['assign', 'accept', 'submit', 'tl_approve', 'tl_to_cd', 'cd_request_changes', 'relay', 'submit']);
   });
 
   await t.test('permission is enforced at every gate, by the API', async () => {
@@ -1011,6 +1050,9 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     // it does not let anyone skip it.
     const director = await act(id, 'review', 'cd', { decision: 'approved' });
     assert.strictEqual(director.status, 200, 'the CD holds review.tl through their department');
+    assert.strictEqual(await statusOf(id), 'tl_approved', 'and it lands in TL Approved like any other approval');
+    // Then on to their own gate, by the same route anybody else would take.
+    assert.strictEqual((await act(id, 'send-to-cd', 'cd')).status, 200);
     assert.strictEqual(await statusOf(id), 'pending_cd_review', 'and it still lands at the CD gate');
 
     // Not the lead, and not the artist, at the CD gate.
@@ -1277,17 +1319,18 @@ test('the review pipeline', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     await act(id, 'start', 'artist');
     await act(id, 'submit', 'artist', { link: 'http://nas/b' });
     await act(id, 'review', 'lead', { decision: 'approved' });
+    await act(id, 'send-to-cd', 'lead');
     await act(id, 'review', 'cd', { decision: 'approved' });
 
     const events = await historyOf(id);
     assert.deepStrictEqual(events.map((e) => e.action),
-      ['assign', 'accept', 'submit', 'tl_request_changes', 'submit', 'tl_approve', 'cd_approve']);
+      ['assign', 'accept', 'submit', 'tl_request_changes', 'submit', 'tl_approve', 'tl_to_cd', 'cd_approve']);
     // Each event says where it came from and where it went. Accepting is in the
     // chain now: work has to be started before it can be handed in, so the step
     // out of Assigned is always recorded.
     assert.deepStrictEqual(events.map((e) => e.toStatus), [
       'assigned', 'in_progress', 'pending_tl_review', 'tl_changes_requested',
-      'pending_tl_review', 'pending_cd_review', 'approved_for_client',
+      'pending_tl_review', 'tl_approved', 'pending_cd_review', 'approved_for_client',
     ]);
     for (let i = 1; i < events.length; i++) {
       assert.strictEqual(events[i].fromStatus, events[i - 1].toStatus, 'the chain has no gaps');
@@ -1428,7 +1471,11 @@ test('Send to Client needs the TL gate AND the permission to skip the CD one', (
     user: { id: 'lead-1', role: 'team_lead' },
     asset: { status, assignee_id: 'artist-1' },
   });
-  const verdict = (extra, status = 'pending_tl_review') =>
+  /* FROM TL APPROVED, NOT FROM TL REVIEW. The button moved when the stage was
+     inserted: the lead approves the work first and chooses the route second.
+     The AUTHORITY did not move — it is still review.tl_send_client on top of
+     standing at the TL gate, which is what the rest of this test pins. */
+  const verdict = (extra, status = 'tl_approved') =>
     workflow.evaluate('tl_send_to_client', { ...at(status), ...extra });
 
   assert.strictEqual(verdict({ isTeamLead: true, canSendToClient: true }).ok, true,
@@ -1442,20 +1489,69 @@ test('Send to Client needs the TL gate AND the permission to skip the CD one', (
   // Full access reaches it, as it reaches every other gate.
   assert.strictEqual(verdict({ isTeamLead: false, canOverride: true, canSendToClient: true }).ok, true);
 
-  // Only from TL Review. Not from the CD queue, not from rework, not after the
-  // fact — there is no second bite once the asset is past this gate.
-  for (const status of ['not_started', 'assigned', 'in_progress', 'tl_changes_requested',
-                        'pending_cd_review', 'cd_changes_requested',
+  // Only from TL Approved. Not from TL Review any more — the pop-up there has
+  // two buttons and neither of them is this one — not from the CD queue, not
+  // from rework, and not after the fact.
+  for (const status of ['not_started', 'assigned', 'in_progress', 'pending_tl_review',
+                        'tl_changes_requested', 'pending_cd_review', 'cd_changes_requested',
                         'approved_for_client', 'delivered']) {
     assert.strictEqual(verdict({ isTeamLead: true, canSendToClient: true }, status).ok, false,
       `Send to Client must not be reachable from ${status}`);
   }
 });
 
+/* The new stage, and the two ways out of it.
+ *
+ * They are NOT the same kind of decision, and the permissions say so: the
+ * ordinary route on needs what the review itself needed, and skipping the
+ * Creative Director needs review.tl_send_client on top. A studio that has not
+ * granted that permission sees one button here, not two. */
+test('TL Approved offers two routes, and only one of them needs the extra permission', () => {
+  const at = (action, extra) => workflow.evaluate(action, {
+    user: { id: 'lead-1', role: 'team_lead' },
+    asset: { status: 'tl_approved', assignee_id: 'artist-1' },
+    ...extra,
+  });
+
+  const onward = at('tl_to_cd', { isTeamLead: true });
+  assert.strictEqual(onward.ok, true, 'the ordinary route needs only the TL gate');
+  assert.strictEqual(onward.to, 'pending_cd_review');
+
+  assert.strictEqual(at('tl_to_cd', { isTeamLead: false }).ok, false,
+    'but it still needs that much');
+  assert.strictEqual(at('tl_to_cd', { isTeamLead: false, canOverride: true }).ok, true,
+    'full access reaches it, as it reaches every gate');
+
+  assert.strictEqual(at('tl_send_to_client', { isTeamLead: true }).ok, false,
+    'the same lead cannot skip the CD without the second permission');
+  assert.strictEqual(at('tl_send_to_client', { isTeamLead: true, canSendToClient: true }).ok, true);
+
+  /* And the two are told apart in the history. They used to be one click; a
+     record that called both "approved" could not answer who decided the
+     Creative Director should see it. */
+  assert.notStrictEqual(onward.action, at('tl_send_to_client',
+    { isTeamLead: true, canSendToClient: true }).action);
+});
+
+test('approving at TL Review lands in TL Approved, not in CD Review', () => {
+  /* The studio's second check, as a unit. The old one-click route from the
+     review pop-up to the Creative Director is gone: there is a stage between
+     them now, and this is the assertion that fails if it is ever short-cut
+     back. */
+  const verdict = workflow.evaluate('tl_approve', {
+    user: { id: 'lead-1', role: 'team_lead' },
+    asset: { status: 'pending_tl_review', assignee_id: 'artist-1' },
+    isTeamLead: true,
+  });
+  assert.strictEqual(verdict.ok, true);
+  assert.strictEqual(verdict.to, 'tl_approved');
+  assert.notStrictEqual(verdict.to, 'pending_cd_review');
+});
+
 test('Send to Client lands where the CD route lands, by a distinguishable action', () => {
   const send = workflow.evaluate('tl_send_to_client', {
     user: { id: 'lead-1', role: 'team_lead' },
-    asset: { status: 'pending_tl_review', assignee_id: 'artist-1' },
+    asset: { status: 'tl_approved', assignee_id: 'artist-1' },
     isTeamLead: true, canSendToClient: true,
   });
   const cd = workflow.evaluate('cd_approve', {
@@ -1582,7 +1678,7 @@ test('every actor explains its own refusal', () => {
 test('Send to Client says which of the two things is wrong', () => {
   const base = {
     user: { id: 'lead-1', role: 'team_lead' },
-    asset: { status: 'pending_tl_review', assignee_id: 'artist-1' },
+    asset: { status: 'tl_approved', assignee_id: 'artist-1' },
   };
 
   // Missing the permission — fixable in Settings, and the message says where.
@@ -1599,13 +1695,18 @@ test('Send to Client says which of the two things is wrong', () => {
   assert.ok(!/permission/i.test(notTheirLead.error),
     'and does not blame permissions, which are not the problem here');
 
-  // Wrong state — a different status code, and it names the state required.
-  for (const status of ['tl_changes_requested', 'pending_cd_review', 'approved_for_client']) {
+  // Wrong state — a different status code, and it says what has to happen
+  // first. pending_tl_review is in this list on purpose: the button is no
+  // longer offered there, and somebody reaching the endpoint from an old tab
+  // has to be told to approve it first rather than that they lack a permission.
+  for (const status of ['pending_tl_review', 'tl_changes_requested', 'pending_cd_review',
+                        'approved_for_client']) {
     const wrongState = workflow.evaluate('tl_send_to_client', {
       ...base, asset: { ...base.asset, status }, isTeamLead: true, canSendToClient: true,
     });
     assert.strictEqual(wrongState.status, 409, `${status} is a state problem, not a permission one`);
-    assert.match(wrongState.error, /TL Review/, 'naming the state it has to be in');
+    assert.match(wrongState.error, /a team lead has approved it/,
+      'naming what has to happen before it is possible');
     assert.ok(!/tl send to client/.test(wrongState.error),
       'and reading as a sentence rather than as the raw action id');
   }

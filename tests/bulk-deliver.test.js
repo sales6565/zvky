@@ -46,6 +46,8 @@ test('bulk delivery', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v1', description: 'v1' } });
     await as('lee', `/assets/${asset.id}/review`, { method: 'POST', body: { decision: 'approved' } });
+    // TL Approved sits between the two gates now; the route on is its own step.
+    await as('lee', `/assets/${asset.id}/send-to-cd`, { method: 'POST' });
     await as('root', `/assets/${asset.id}/review`, { method: 'POST', body: { decision: 'approved' } });
     assert.strictEqual(await statusOf(asset.id), 'approved_for_client', `${name} should be ready to deliver`);
     return asset;
@@ -214,6 +216,8 @@ test('bulk delivery', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     await as('ana', `/assets/${a.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v2', description: 'v2' } });
     await as('lee', `/assets/${a.id}/review`, { method: 'POST', body: { decision: 'approved' } });
+    assert.strictEqual((await bulk('root', [a.id])).body.delivered, 0, 'tl_approved');
+    await as('lee', `/assets/${a.id}/send-to-cd`, { method: 'POST' });
     assert.strictEqual((await bulk('root', [a.id])).body.delivered, 0, 'pending_cd_review');
 
     await as('root', `/assets/${a.id}/review`, { method: 'POST', body: { decision: 'approved' } });

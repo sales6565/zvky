@@ -301,7 +301,11 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     await as('bo', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v2', description: 'Reworked' },
     });
+    /* TL Review approves; the route on to the Creative Director is its own
+       step now, from the TL Approved stage between them. */
     await as('lee', `/assets/${asset.id}/review`, { method: 'POST', body: { decision: 'approved' } });
+    assert.strictEqual(await statusOf(asset.id), 'tl_approved');
+    await as('lee', `/assets/${asset.id}/send-to-cd`, { method: 'POST' });
     assert.strictEqual(await statusOf(asset.id), 'pending_cd_review');
     const fromCd = await reassign({ assigneeId: people.ana });
     assert.strictEqual(fromCd.status, 200, 'the director\'s queue too');
@@ -313,6 +317,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
       method: 'POST', body: { link: 'https://example.test/v3', description: 'Again' },
     });
     await as('lee', `/assets/${asset.id}/review`, { method: 'POST', body: { decision: 'approved' } });
+    await as('lee', `/assets/${asset.id}/send-to-cd`, { method: 'POST' });
     await as('root', `/assets/${asset.id}/review`, { method: 'POST', body: { decision: 'approved' } });
     await as('root', `/assets/${asset.id}/deliver`, { method: 'POST' });
     assert.strictEqual((await reassign({ assigneeId: people.bo })).status, 409,
@@ -431,8 +436,13 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     const reassign = (body) => as('pat', `/assets/${asset.id}/reassign`, { method: 'POST', body });
 
     assert.strictEqual((await reassign({})).status, 400, 'somebody has to be named');
-    assert.strictEqual((await reassign({ assigneeId: people.ana })).status, 400,
-      'and it has to be a change');
+    /* NAMING THE CURRENT ASSIGNEE IS NO LONGER ILLEGAL HERE, and that is the
+       "Reassign to Same User" feature rather than a hole in this one. From a
+       rework stage it is a real move: the asset leaves TL Feedbacks and goes
+       back to the same person as a fresh round. Asserted where it belongs, in
+       tests/tl-feedback-reassign.test.js; not asserted here because a reassign
+       that succeeds MOVES the asset, and every line below this one depends on
+       it not having moved. */
     /* pat, a Producer. This used to name lee, a Team Lead — which stopped
        being a designation that is not assigned work the day leads became
        assignable. The invariant is unchanged and still worth testing; it just
@@ -548,6 +558,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
       method: 'POST', body: { link: 'https://example.test/v1', description: 'First' },
     });
     await as('lee', `/assets/${asset.id}/review`, { method: 'POST', body: { decision: 'approved' } });
+    await as('lee', `/assets/${asset.id}/send-to-cd`, { method: 'POST' });
     await as('root', `/assets/${asset.id}/review`, {
       method: 'POST', body: { decision: 'changes_requested', text: 'Rework the silhouette' },
     });
@@ -584,6 +595,7 @@ test('asset ownership end to end', { skip: cfg ? false : SKIP_REASON }, async (t
       method: 'POST', body: { link: 'https://example.test/v1', description: 'First' },
     });
     await as('lee', `/assets/${asset.id}/review`, { method: 'POST', body: { decision: 'approved' } });
+    await as('lee', `/assets/${asset.id}/send-to-cd`, { method: 'POST' });
     await as('root', `/assets/${asset.id}/review`, {
       method: 'POST', body: { decision: 'changes_requested', text: 'Rework the silhouette' },
     });

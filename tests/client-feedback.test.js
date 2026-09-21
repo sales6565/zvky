@@ -96,6 +96,7 @@ test('the client feedback loop end to end', { skip: cfg ? false : SKIP_REASON },
     await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/v1', description: 'v1' } });
     await as('lee', `/assets/${asset.id}/review`, { method: 'POST', body: { decision: 'approved' } });
+    await as('lee', `/assets/${asset.id}/send-to-cd`, { method: 'POST' });
     await as('root', `/assets/${asset.id}/review`, { method: 'POST', body: { decision: 'approved' } });
     assert.strictEqual(await statusOf(asset.id), 'approved_for_client');
     return asset;
@@ -267,9 +268,11 @@ test('the client feedback loop end to end', { skip: cfg ? false : SKIP_REASON },
   });
 
   await t.test('the TL bypass now feeds the client step, with nothing changed about it', async () => {
-    /* Send to Client from TL Review lands on Approved for Client, exactly as it
-       did before this change — so the client loop applies to work that skipped
-       CD Review without that flow being touched. */
+    /* Send to Client lands on Approved for Client, exactly as it did before
+       this change — so the client loop applies to work that skipped CD Review
+       without that flow being touched. It is offered from TL APPROVED now
+       rather than from TL Review: the lead approves the work first and chooses
+       the route second. Where the button lives moved; where it lands did not. */
     await setPerms('team_lead', [...(await permsOf('team_lead')), 'review.tl_send_client']);
     const res = await as('root', `/assets/project/${projectId}`, {
       method: 'POST', body: { name: 'Bypassed CD', type: 'character', assigneeId: people.ana } });
@@ -277,6 +280,7 @@ test('the client feedback loop end to end', { skip: cfg ? false : SKIP_REASON },
     await as('ana', `/assets/${asset.id}/start`, { method: 'POST' });
     await as('ana', `/assets/${asset.id}/submit`, {
       method: 'POST', body: { link: 'https://example.test/b', description: 'v1' } });
+    await as('lee', `/assets/${asset.id}/review`, { method: 'POST', body: { decision: 'approved' } });
     const skipped = await as('lee', `/assets/${asset.id}/send-to-client`, { method: 'POST' });
     assert.strictEqual(skipped.status, 200, JSON.stringify(skipped.body));
     assert.strictEqual(await statusOf(asset.id), 'approved_for_client',

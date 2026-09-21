@@ -365,11 +365,16 @@ test('efficiency reports', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       await logWork(a.id, 1, 4 * 3600, people.anna);
     }
 
-    // One skips the gate; the other takes the ordinary route.
+    // Both are approved first — TL Approved is where the route is chosen — and
+    // then one skips the gate while the other takes the ordinary route.
+    for (const a of [skipped, viaCd]) {
+      assert.strictEqual((await as('lee', `/assets/${a.id}/review`,
+        { method: 'POST', body: { decision: 'approved' } })).status, 200);
+    }
     assert.strictEqual((await as('lee', `/assets/${skipped.id}/send-to-client`,
       { method: 'POST', body: {} })).status, 200);
-    assert.strictEqual((await as('lee', `/assets/${viaCd.id}/review`,
-      { method: 'POST', body: { decision: 'approved' } })).status, 200);
+    assert.strictEqual((await as('lee', `/assets/${viaCd.id}/send-to-cd`,
+      { method: 'POST' })).status, 200);
 
     // Same status on both — which is exactly why the status cannot be the source.
     const statusOf = async (id) => (await as('root', `/assets/${id}/history`)).body.status;

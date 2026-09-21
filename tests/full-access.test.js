@@ -190,6 +190,10 @@ test('what the six can and cannot reach', { skip: cfg ? false : SKIP_REASON }, a
       assert.strictEqual((await as(role, `/assets/${asset.id}/review`, {
         method: 'POST', body: { decision: 'approved' },
       })).status, 200, `${role} should be able to approve at the TL gate`);
+      // And send it on from TL Approved, which full access reaches like every
+      // other gate.
+      assert.strictEqual((await as(role, `/assets/${asset.id}/send-to-cd`, { method: 'POST' })).status, 200,
+        `${role} should be able to send approved work to the CD`);
       assert.strictEqual((await as(role, `/assets/${asset.id}/review`, {
         method: 'POST', body: { decision: 'approved' },
       })).status, 200, `${role} should be able to approve at the CD gate`);

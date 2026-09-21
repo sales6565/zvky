@@ -1492,6 +1492,11 @@ async function ensureStatusConstraint(db, log) {
 // judge whether an existing one is current.
 const STATUS_VALUES = [
   'not_started', 'assigned', 'in_progress', 'pending_tl_review', 'tl_changes_requested',
+  /* TL Approved: past the first gate, waiting on the lead to choose the route
+     onward. Added to this list means the startup repair notices the existing
+     CHECK constraint no longer admits every status the app can write, drops it
+     and writes a current one — which is the whole reason this list exists. */
+  'tl_approved',
   'pending_cd_review', 'cd_changes_requested', 'approved_for_client',
   'awaiting_client_feedback', 'delivered',
 ];

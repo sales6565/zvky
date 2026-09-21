@@ -300,8 +300,31 @@ async function projectReviewAnswered(db, { projectId, actorId, recipientIds, sub
  * `from` may be null (nothing was assigned before) and `to` may be null (the
  * asset was unassigned entirely). Both are ordinary cases rather than errors,
  * and each side is raised only if there is somebody to tell. */
-async function assignmentChanged(db, { assetId, from, to, actorId }) {
-  if (from === to) return;
+async function assignmentChanged(db, { assetId, from, to, actorId, reason }) {
+  /* HANDED BACK TO THE SAME PERSON, which is a real move and not a no-op.
+   *
+   * "Reassign to Same User" on a review stage puts the rework back on the desk
+   * it was already on, as a fresh round — the asset leaves the queue and
+   * becomes theirs to start again. They should be told; nobody should be told
+   * they lost it, because nobody did.
+   *
+   * So the pair below becomes a single line, rather than one notification
+   * contradicting the other in the same bell. Discriminated on the REASON
+   * rather than on from === to alone: every other path that arrives here with
+   * the same person on both sides is a save that changed nothing, and telling
+   * somebody they have been assigned work they were already doing is the noise
+   * this guard was written to stop. */
+  const HANDED_BACK = ['reassigned_in_review', 'reassigned_rework'];
+  if (from === to) {
+    if (!from || !HANDED_BACK.includes(reason)) return;
+    await raise(db, { recipientId: to, actorId, kind: KINDS.assigned, assetId, otherUserId: actorId });
+    try {
+      require('./email-notifications').queueAssignment({ recipientId: to, actorId, assetId });
+    } catch (err) {
+      console.warn(`[email] could not queue the assignment notice for ${assetId}: ${err.message}`);
+    }
+    return;
+  }
   await raise(db, { recipientId: to, actorId, kind: KINDS.assigned, assetId, otherUserId: actorId });
   await raise(db, { recipientId: from, actorId, kind: KINDS.unassigned, assetId, otherUserId: to });
 

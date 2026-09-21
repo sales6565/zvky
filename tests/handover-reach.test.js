@@ -150,11 +150,13 @@ test('handing work on reaches outside the project', { skip: cfg ? false : SKIP_R
     const cdReview = await newAsset('Stage CD Review', people.ana);
     await submit('ana', cdReview.id, 'v1');
     await as('lee', `/assets/${cdReview.id}/review`, { method: 'POST', body: { decision: 'approved' } });
+    await as('lee', `/assets/${cdReview.id}/send-to-cd`, { method: 'POST' });
     stages.push(['pending_cd_review', cdReview]);
 
     const cdFeedback = await newAsset('Stage CD Feedbacks', people.ana);
     await submit('ana', cdFeedback.id, 'v1');
     await as('lee', `/assets/${cdFeedback.id}/review`, { method: 'POST', body: { decision: 'approved' } });
+    await as('lee', `/assets/${cdFeedback.id}/send-to-cd`, { method: 'POST' });
     await as('root', `/assets/${cdFeedback.id}/review`, {
       method: 'POST', body: { decision: 'changes_requested', text: 'Colour' } });
     stages.push(['cd_changes_requested', cdFeedback]);
@@ -226,9 +228,14 @@ test('handing work on reaches outside the project', { skip: cfg ? false : SKIP_R
     assert.strictEqual((await as('onproject', `/assets/${asset.id}/reassign-options`)).status, 403,
       'and the picker is gated the same way');
 
-    // And the obvious ones.
-    assert.strictEqual((await handTo('root', asset.id, people.ana)).status, 400,
-      'handing it to whoever already holds it');
+    /* NOT "handing it to whoever already holds it" any more: from a review
+       stage that is a real move, and it is the "Reassign to Same User" action
+       the studio asked for — the asset leaves the queue and goes back to the
+       same person as a fresh round. Pinned in
+       tests/tl-feedback-reassign.test.js. What is still refused is naming
+       nobody at all, which is the case below. */
+    assert.strictEqual((await handTo('root', asset.id, null)).status, 400,
+      'naming nobody at all');
     assert.strictEqual((await handTo('root', asset.id, 'no-such-user')).status, 400,
       'and to somebody who does not exist');
   });
