@@ -244,19 +244,38 @@ async function available(db) {
   }
 }
 
-// Stamp the start. Refuses if one is already open — the caller turns that into
-// a 409, and the button that was clicked twice does nothing twice.
-async function start(db, assetId, userId, assignmentId) {
+/* Stamp the start. Refuses if one is already open — the caller turns that into
+ * a 409, and the button that was clicked twice does nothing twice.
+ *
+ * `at` opens the session at a moment that has already passed rather than now,
+ * and is the mirror of the same option on close(). Only the auto-resume sweep
+ * passes it: the studio's answer to "when did this start again" is half past
+ * nine, not whenever the sweep got round to it, so a tick that is a minute late
+ * — or an hour late after a restart — writes the same stamp either way. See
+ * resumeOverdue().
+ *
+ * Written as an offset from the database's own NOW() rather than as a stamp,
+ * for the reason given above AGE: this codebase never converts a DATETIME,
+ * because doing so means trusting two machines to agree about a timezone. An
+ * interval in seconds needs them to agree only about now.
+ */
+async function start(db, assetId, userId, assignmentId, { at = null } = {}) {
   const running = await openSession(db, assetId);
   if (running) return { ok: false, alreadyOpen: true, since: running.started_at };
   const id = uuid();
   const round = await currentRound(db, assetId);
+  /* Never in the future, and never more than a day back: a clock nudged
+     forward, or an `at` computed from a stale schedule, must not write a stamp
+     that reads as work not yet done or as a week of it. */
+  const back = at === null ? 0 : Math.min(Math.max(0, Math.round((Date.now() - at) / 1000)), 86400);
+  const startedAt = back > 0 ? `DATE_SUB(NOW(), INTERVAL ${back} SECOND)` : 'NOW()';
   // Which stretch-with-one-person this belongs to. It is what makes a new
   // assignee's Time Spent start at nothing without anything having to "reset":
   // their episode simply has no sessions in it yet.
   try {
     await db.query(
-      'INSERT INTO work_sessions (id, asset_id, user_id, round, assignment_id) VALUES ($1,$2,$3,$4,$5)',
+      `INSERT INTO work_sessions (id, asset_id, user_id, round, assignment_id, started_at)
+       VALUES ($1,$2,$3,$4,$5,${startedAt})`,
       [id, assetId, userId, round, assignmentId || null]
     );
   } catch (err) {
@@ -264,7 +283,8 @@ async function start(db, assetId, userId, assignmentId) {
     // stamps; it just cannot attribute them to one.
     if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
     await db.query(
-      'INSERT INTO work_sessions (id, asset_id, user_id, round) VALUES ($1,$2,$3,$4)',
+      `INSERT INTO work_sessions (id, asset_id, user_id, round, started_at)
+       VALUES ($1,$2,$3,$4,${startedAt})`,
       [id, assetId, userId, round]
     );
   }
@@ -351,6 +371,116 @@ async function pauseOverdue(db) {
     });
   }
   return paused;
+}
+
+/* PICK UP AGAIN EVERY TIMER THE STUDIO CLOSED AROUND.
+ *
+ * The other half of pauseOverdue, and the studio's decision about what should
+ * happen overnight. A timer put down at seven because the day ended is picked
+ * up again at half past nine the next WORKING morning, on its own, with nobody
+ * pressing anything — provided the work is still there to be done.
+ *
+ * "STILL THERE TO BE DONE" IS ASKED NOW, NOT ASSUMED FROM LAST NIGHT. Four
+ * things can have changed between the two, and each of them means no:
+ *
+ *   it was submitted      the status left the set work continues in, so there
+ *                         is nothing to accrue against. Submitted work that
+ *                         went on counting overnight is the worst outcome here
+ *                         and the one this is most careful about.
+ *   it was reassigned     assignee_id is somebody else now. Their round is
+ *                         theirs; resuming the old one would put two people's
+ *                         hours on one asset.
+ *   it was unassigned     nobody holds it, so nobody's clock should run.
+ *   they started something else   the studio's one-active-task rule. Resuming
+ *                         would be a way around it rather than a use of it —
+ *                         exactly what POST /resume refuses by hand.
+ *
+ * And the project itself has to still be open, for the same reason its assets
+ * cannot be edited when it is not.
+ *
+ * ONLY THE STUDIO'S PAUSE, NEVER A PERSON'S. A deliberate hold is a decision
+ * somebody made and is left exactly where they left it; undoing it overnight
+ * would be the application overruling them. That is the whole reason this
+ * asks for off_hours specifically rather than reusing PAUSE_REASONS, which
+ * every other predicate in this file is right to use.
+ *
+ * THE STAMP IS THE OPENING, NOT THE TICK. The resumed session is back-dated to
+ * when the studio opened, so somebody who signs in at eleven finds the morning
+ * already counted rather than an hour and a half missing — which is what the
+ * studio asked for. It is bounded to the CURRENT window's opening: a server
+ * that was down for three days resumes this morning at half past nine and
+ * credits nothing for the days it was asleep.
+ *
+ * Returns what it resumed, so the caller can tell those people. Like
+ * pauseOverdue it tells nobody itself.
+ */
+async function resumeOverdue(db) {
+  const now = Date.now();
+  const window = schedule();
+  // Shut: nothing to resume into. This is also what makes the sweep a no-op all
+  // evening and all weekend rather than something that has to be scheduled.
+  if (!workingTime.isOpen(now, window)) return [];
+
+  /* Required here rather than at the top of the file, and not for tidiness:
+     src/assignments.js requires THIS module, so a require up there would be a
+     cycle. Same reason scheduleAutoPause reaches for notifications the same
+     way. lifecycle has no requires at all and rides along for locality. */
+  const assignments = require('./assignments');
+  const lifecycle = require('./lifecycle');
+
+  /* When the window we are inside opened — half past nine this morning. The
+     ceiling on how far a late sweep may back-date. */
+  const { day } = workingTime.istPartsOf(now);
+  const openedToday = workingTime.instantAt(day, Number(window.dayStart));
+
+  const { rows } = await db.query(
+    `SELECT w.id, w.asset_id AS assetId, w.user_id AS userId,
+            ${AGE('w.ended_at')} AS paused_age,
+            a.\`code\`, a.\`name\`, a.status, a.assignee_id, a.project_id
+       FROM work_sessions w
+       JOIN assets a ON a.id = w.asset_id
+      WHERE w.ended_reason = '${REASONS.off_hours}' AND ${HELD_ROW}`
+  ).catch((err) => {
+    if (!unavailable(err)) throw err;
+    return { rows: [] };
+  });
+
+  const resumed = [];
+  for (const row of rows) {
+    // Submitted, moved to a status nobody works in, reassigned, or unassigned.
+    if (!worksIn(row.status)) continue;
+    if (!row.assignee_id || row.assignee_id !== row.userId) continue;
+
+    const { rows: project } = await db.query(
+      'SELECT id, `name`, is_active, closed_at FROM projects WHERE id = $1', [row.project_id]
+    );
+    if (lifecycle.projectRefusal(project[0])) continue;
+
+    /* The one-active-task rule, asked the way POST /resume asks it: anything
+       open ANYWHERE, this asset excepted. A person who started something else
+       this morning keeps it, and last night's timer stays down for them to
+       pick up by hand when they are ready. */
+    if (await openForUser(db, row.userId, row.assetId)) continue;
+
+    const pausedAt = instantFromAge(row.paused_age, now);
+    const at = Math.max(openedToday, pausedAt);
+
+    const episode = await assignments.current(db, row.assetId).catch(() => null);
+    const started = await start(db, row.assetId, row.userId, episode && episode.id, { at });
+    /* Somebody started it themselves in the moment between the read and this —
+       their session is the real one and this changed nothing. */
+    if (!started.ok) continue;
+
+    resumed.push({
+      assetId: row.assetId,
+      userId: row.userId,
+      code: row.code,
+      name: row.name,
+      round: started.round,
+      at: new Date(at).toISOString(),
+    });
+  }
+  return resumed;
 }
 
 /* Stamp the end, and record what ended it.
@@ -858,21 +988,35 @@ function scheduleAutoPause(db, log = console.log) {
   const minutes = Number(process.env.WORK_HOURS_SWEEP_MINUTES ?? 1);
   const notifications = require('./notifications');
 
-  const run = async () => {
-    const paused = await pauseOverdue(db);
-    for (const row of paused) {
+  const tell = async (rows, kind) => {
+    for (const row of rows) {
       /* No actor: the clock did this, not a person. raise() drops a recipient
          who is also the actor, so passing null is also what makes sure this
          reaches somebody who paused their own work by starting it late. */
       await notifications.raise(db, {
         recipientId: row.userId,
         actorId: null,
-        kind: notifications.KINDS.work_paused,
+        kind,
         assetId: row.assetId,
       }).catch(() => {});
     }
+  };
+
+  const run = async () => {
+    const paused = await pauseOverdue(db);
+    await tell(paused, notifications.KINDS.work_paused);
     if (paused.length) {
       log(`[hours] paused ${paused.length} timer(s) outside working hours.`);
+    }
+
+    /* And the other direction. Pausing first is not an accident of order: a
+       session the studio has already closed around is not a candidate for
+       resuming, and doing it the other way round could pick one up a
+       millisecond before putting it down again. */
+    const resumed = await resumeOverdue(db);
+    await tell(resumed, notifications.KINDS.work_resumed);
+    if (resumed.length) {
+      log(`[hours] resumed ${resumed.length} timer(s) at the start of the working day.`);
     }
   };
 
@@ -886,7 +1030,7 @@ function scheduleAutoPause(db, log = console.log) {
 
 module.exports = {
   REASONS, PAUSE_REASONS, WORK_CONTINUES, start, close, closeIfWorkStopped, hold, heldFor,
-  summary, totalsFor, pauseOverdue, scheduleAutoPause, nextOpening,
+  summary, totalsFor, pauseOverdue, resumeOverdue, scheduleAutoPause, nextOpening,
   openSession, openForUser, currentRound, available, cutover, dayTotalFor, recordedFor,
   // Exported so every reader of a submit stamp uses the same expression. There
   // are three, and the third was found by a test rather than by reading.

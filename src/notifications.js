@@ -97,6 +97,15 @@ const KINDS = {
      is something you find out about the next morning, and finding out by
      noticing an hour is missing is the outcome this exists to prevent. */
   work_paused: 'work_paused',
+  /* And picked up again the next working morning, for the same person and by
+     the same nobody.
+     
+     Needs saying at least as much as the pause does, and for the opposite
+     reason: a clock that is running again without anybody starting it is time
+     being recorded against somebody who may not be at their desk yet. Telling
+     them is what makes that a decision the studio took rather than something
+     that happened to them. */
+  work_resumed: 'work_resumed',
 };
 
 const unavailable = (err) => err && (err.code === 'ER_NO_SUCH_TABLE' || /doesn't exist/i.test(err.message || ''));
@@ -163,7 +172,12 @@ function describe(row) {
   }
   if (row.kind === KINDS.work_paused) {
     return `${code}${name} was paused at the end of the working day. `
-      + 'Time outside working hours is not recorded — resume it when you next pick it up.';
+      + 'Time outside working hours is not recorded — it starts again on its own '
+      + 'when the studio next opens.';
+  }
+  if (row.kind === KINDS.work_resumed) {
+    return `${code}${name} started counting again at the start of the working day. `
+      + 'Put it on hold if you are not working on it.';
   }
   if (row.kind === KINDS.unassigned) {
     return row.other_name

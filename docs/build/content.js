@@ -507,7 +507,7 @@ module.exports = [
     'It is IST, always. The studio’s window is a wall clock in one office, so neither the server’s timezone nor your laptop’s changes what is recorded. Somebody working from another country has their hours measured against the studio’s day, not their own.',
     'Starting outside working hours is allowed. The click is never refused — you are taking the work on, and being made to wait until morning would only mean recording a start time that was not true. The timer simply begins paused and accrues nothing.',
     'A timer running when the day ends is put down at that moment. Not when anybody noticed, and not when the server got round to it: the cutoff is exact, so an evening left running costs the asset nothing.',
-    'You resume it yourself. Nothing starts counting again on your behalf when the studio reopens, because an asset left open overnight would otherwise be charged for a morning you were not at your desk. The panel says it is paused, when working hours resume, and gives you the Resume button; a notification says the same thing in case you had gone home.',
+    'It starts again on its own the next working morning. At 09:30 the clock picks up where it left off, with nobody pressing anything \u2014 and back-dated to 09:30, so signing in at eleven finds the morning already counted rather than an hour and a half missing. Weekends and any other non-working day are skipped: a timer put down at seven on Friday starts again on Monday. See 7.3b for the four cases where it does not.',
     'Breaks are subtracted, they do not pause anything. Lunch comes out of the total without stopping the clock or asking you to press anything at two o’clock — only the end of the day and a non-working day do that.',
     'Public holidays are not recorded anywhere. A day the studio is shut for a festival still counts as a working day unless somebody changes the working days in Settings for that week.',
   ]),
@@ -515,6 +515,31 @@ module.exports = [
     + 'figure built on it moves together: Time Spent on the card and in the Assets List, the Efficiency report, the '
     + 'hours the Time Sheet suggests when you add a line, and the Fixed and Actual hours in the P&L. There is no '
     + 'screen where the old number survives, and none that needed its own fix.'),
+
+  h2('7.3b When the overnight resume does NOT happen'),
+  p('The clock starting itself is only right while the work is still there to be done, so the application asks '
+    + 'again at half past nine rather than assuming what was true at seven. Four answers mean no, and in each of '
+    + 'them the timer stays down for you to pick up by hand:'),
+  bullets([
+    '<strong>You submitted it.</strong> Work waiting on a reviewer is not work in progress, and nothing accrues against it. This is the case the check exists for.',
+    '<strong>It was reassigned.</strong> Somebody else holds it now. Their clock starts when they press Accept and Start, in a round of their own \u2014 the overnight rule never reaches across an assignment.',
+    '<strong>It was taken off everybody.</strong> Nobody holds it, so nobody\u2019s clock runs.',
+    '<strong>You started something else.</strong> The studio\u2019s one-active-task rule holds here exactly as it does on the Resume button: the task you actually chose this morning keeps running, and last night\u2019s waits.',
+  ]),
+  p('A task you put down YOURSELF is also left alone. Hold and the working-hours pause look similar on screen and '
+    + 'are one column apart in the record, but they are different things: one is a decision you made, and the '
+    + 'application does not undo it overnight. Only the pause the studio applied starts itself again.'),
+  note('The hours are the studio\u2019s day, not your attendance',
+    'This records the working day as configured, not whether you were at your desk for it. A task left open '
+    + 'overnight and forgotten will be counted from 09:30 until somebody submits it, holds it or hands it on. That '
+    + 'is the studio\u2019s decision and it is the point of the feature \u2014 the alternative, which this '
+    + 'replaced, was a clock that stayed down until pressed and quietly lost a morning\u2019s real work.\n\n'
+    + 'The panel says which state a task is in and the bell says when the clock started again, so the way to stop '
+    + 'a figure you do not want is Hold. Breaks still come out either way.'),
+  p('The resume runs on the server, on a schedule, not when somebody opens the page \u2014 so it happens on a '
+    + 'morning when nobody has signed in yet, and a server restarted overnight does it on the way back up. Like '
+    + 'the cutoff, it is stamped at half past nine whatever time it actually ran, so a late tick costs nobody a '
+    + 'correct number.'),
 
   h2('7.4 Not before the start date'),
   p('An asset carrying a Start Date cannot be accepted before that day. The button is disabled until then and says '
@@ -545,7 +570,7 @@ module.exports = [
   steps([
     'With the asset In Progress, press Hold in the Time Spent box.',
     'Say why, in a line, or leave it blank \u2014 the reason is optional.',
-    'Press Resume when you pick it up again.',
+    'Press Resume when you pick it up again. (That is for a hold YOU made. A timer the studio paused at the end of the day starts again by itself the next working morning \u2014 7.3a.)',
   ]),
   bullets([
     'Holding frees you to start something else. It is the one way to have a second task open without finishing the first.',

@@ -7038,12 +7038,17 @@ function fmtIST(iso){
 
 function pauseWords(held){
   if(!held) return null;
+  /* The studio's pause says what will happen next, because something will:
+     this one starts itself again when the studio opens. Saying "press Resume"
+     here would send somebody looking for a button they do not need, and worse,
+     leave them thinking the clock is theirs to start when it is not. */
   if(held.byStudio) return {
     short: 'Outside working hours',
     lower: 'paused — outside hours',
     title: 'Paused',
     why: 'The working day ended, so the clock stopped. Time outside working hours is not recorded.',
-    opens: held.opensAt ? `Working hours resume ${fmtIST(held.opensAt)}.` : '',
+    opens: held.opensAt ? `It starts again on its own at ${fmtIST(held.opensAt)}.` : '',
+    resumesItself: true,
   };
   return {
     short: 'On hold', lower: 'on hold', title: 'On hold',
@@ -7079,8 +7084,14 @@ function stampDetail(startedAt, submittedAt, rounds, held){
      saying it is on hold makes the reader decide which to believe. */
   const state = submittedAt ? `Submitted ${fmtDate(submittedAt)}`
     : (held
+      /* Which pause it is decides how the count starts again, and saying the
+         wrong one here is worse than saying nothing: a person told to press
+         Resume on a clock that restarts itself will either press it and lose
+         nothing, or NOT press it and believe the morning is not being counted
+         when it is. */
       ? `<span class="worklog-held">${escapeHTML(pauseWords(held).title)}</span> — the count above has `
-        + `stopped, and starts again on Resume`
+        + `stopped, and ${pauseWords(held).resumesItself
+            ? 'starts again when the studio next opens' : 'starts again on Resume'}`
       : `<span class="worklog-open">In progress</span> — elapsed so far, from the start above`);
   return `<div class="worklog-stamps">Started ${fmtDate(startedAt)}</div>` +
     `<div class="worklog-stamps">${state}</div>` + many;
@@ -7264,7 +7275,10 @@ async function openDrawer(id){
         ${held ? `<div class="start-blocked held-note">
           <strong>${escapeHTML(pauseWords(held).title)}</strong> since ${escapeHTML(fmtDate(held.since))}${held.note ? ` — ${escapeHTML(held.note)}` : ''}.
           ${escapeHTML(pauseWords(held).why)}
-          ${pauseWords(held).opens ? `<br>${escapeHTML(pauseWords(held).opens)} Press Resume when you pick it up again.` : ''}
+          ${pauseWords(held).opens ? `<br>${escapeHTML(pauseWords(held).opens)} ${
+            pauseWords(held).resumesItself
+              ? 'Put it on hold if you will not be working on it, or press Resume to start sooner.'
+              : 'Press Resume when you pick it up again.'}` : ''}
         </div>` : ''}
         ${startBlocked ? (blocked ? `
           <button class="btn btn-brand" id="d_startBtn" disabled
@@ -13047,6 +13061,7 @@ const NOTIF_TITLES = {
   project_review_approved: 'Project approved',
   password_reset: 'Your password was reset',
   work_paused: 'Timer paused — outside working hours',
+  work_resumed: 'Timer resumed — the working day has started',
 };
 const notifTitle = (n) => (n && NOTIF_TITLES[n.kind]) || 'Something needs your attention';
 

@@ -439,21 +439,31 @@ test('recording against the studio clock', { skip: cfg ? false : SKIP_REASON }, 
       'which is in the future, or it would not be worth saying');
   });
 
-  await t.test('a paused timer is resumed by hand, not silently for them', async () => {
-    /* The studio's chosen default, and the reason for it: a timer that starts
-       itself again when the window opens charges the asset for a morning
-       nobody was at their desk. So the window opening changes nothing until
-       somebody says they have picked it up. */
+  await t.test('a paused timer can still be picked up by hand', async () => {
+    /* THIS USED TO ASSERT THE OPPOSITE, and the change is the studio's, not a
+       correction. The rule was that a paused timer stayed down until somebody
+       pressed Resume, on the reasoning that starting it for them charges the
+       asset for a morning nobody was at their desk. The studio has since chosen
+       the other way: the clock starts again on its own at half past nine the
+       next working day. tests/auto-resume.test.js is that behaviour, with the
+       four cases where it does not.
+       
+       What is left here, and is still worth pinning, is the manual path. It did
+       not go away — it is how somebody picks the work up BEFORE the studio
+       opens — and the one-active-task rule it obeys is checked below.
+       
+       The sweep is off in this suite, which is why the window opening below
+       changes nothing on its own: nothing here is claiming it would in
+       production. That is what the other file is for. */
     await setWindow({ days: [someOtherDay()], from: '09:30', to: '19:00' });
     const asset = await assignedAsset();
     await as('ana', `/assets/${asset}/start`, { method: 'POST' });
     assert.strictEqual((await sessions(asset)).length, 1, 'one row, already closed');
 
-    // The studio opens. Nothing has resumed.
     await setWindow({ days: [1, 2, 3, 4, 5, 6, 7], from: 0, to: 24 * 60 });
     const stillPaused = await workOf(asset, 'ana');
-    assert.ok(stillPaused.held, 'still paused after the window opens — nothing resumed itself');
-    assert.strictEqual((await sessions(asset)).length, 1, 'and no second row appeared on its own');
+    assert.ok(stillPaused.held, 'paused, and it is the sweep that lifts that — not a page load');
+    assert.strictEqual((await sessions(asset)).length, 1);
 
     const resumed = await as('ana', `/assets/${asset}/resume`, { method: 'POST' });
     assert.strictEqual(resumed.status, 200, JSON.stringify(resumed.body));
