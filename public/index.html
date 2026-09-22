@@ -1329,6 +1329,45 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
 .list-filter select{padding:5px 8px;font:inherit;font-size:12px;background:var(--surface-3);
   color:var(--ink);border:1px solid var(--border);border-radius:7px;}
 .list-filter .lf-count{margin-left:auto;font-size:11.5px;color:var(--ink-muted);font-family:'IBM Plex Mono';}
+
+/* The Assets List's column filters: one control per heading of the table under
+   it. Thirteen of them, so they wrap into rows rather than forcing the page
+   sideways, and each carries the column's own name above it — a bar of
+   thirteen unlabelled boxes is a puzzle, not a control. */
+.alf-bar{align-items:flex-end;gap:10px 12px;}
+.alf{display:flex;flex-direction:column;gap:3px;}
+.alf > span{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--ink-faint);
+  white-space:nowrap;}
+.alf input[type="text"],.alf input[type="date"],.alf input[type="number"],.alf select{
+  padding:5px 8px;font:inherit;font-size:12px;background:var(--surface-3);color:var(--ink);
+  border:1px solid var(--border);border-radius:7px;}
+.alf input.alf-text{width:120px;}
+.alf-pair{display:flex;gap:4px;}
+.alf-pair input[type="date"]{width:132px;}
+.alf-pair input.alf-num{width:62px;}
+.alf select{max-width:170px;}
+/* Reset sits with the controls rather than above them, so the thing that
+   undoes a filter is beside the thing that set it. */
+.alf-reset{align-self:flex-end;}
+.alf-bar .lf-label{align-self:flex-end;padding-bottom:6px;}
+.alf-bar .lf-count{align-self:flex-end;padding-bottom:6px;}
+
+/* The one multi-pick, for Status. A button that says what is chosen, and a
+   panel of tick boxes under it. */
+.alf-multi{position:relative;display:inline-block;}
+.alf-multi-btn{padding:5px 8px;font:inherit;font-size:12px;background:var(--surface-3);color:var(--ink);
+  border:1px solid var(--border);border-radius:7px;cursor:pointer;display:flex;align-items:center;
+  gap:6px;min-width:120px;justify-content:space-between;}
+.alf-multi-btn.on{border-color:var(--ink-faint);color:var(--ink);}
+.alf-caret{font-size:9px;color:var(--ink-faint);}
+.alf-menu{position:absolute;top:calc(100% + 4px);left:0;z-index:30;min-width:190px;max-height:260px;
+  overflow:auto;padding:6px;background:var(--surface-2);border:1px solid var(--border);
+  border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.28);display:flex;flex-direction:column;gap:2px;}
+.alf-menu[hidden]{display:none;}
+.alf-menu label{display:flex;align-items:center;gap:7px;padding:4px 6px;font-size:12px;
+  border-radius:6px;cursor:pointer;white-space:nowrap;}
+.alf-menu label:hover{background:var(--surface-3);}
+.alf-menu-empty{padding:6px;font-size:11.5px;color:var(--ink-faint);}
 /* The confirmation list reuses .checklist so the rows line up the way every
    other list of people or assets in a modal does. */
 #bd_list{max-height:220px;}
@@ -2878,6 +2917,225 @@ function listRows(assets){
   return rows;
 }
 
+/* EVERY COLUMN OF ONE ROW OF THE ASSETS LIST, in one place.
+ *
+ * The list's unit is a ROW, not an asset: a handed-on asset contributes one row
+ * per finished round plus one for where it is now, and five of the thirteen
+ * columns show the ROUND'S value rather than the asset's. A finished round
+ * shows the status the person LEFT it at, the person who held it, their hours
+ * and their stamps — not the asset's status today and not whoever holds it now.
+ *
+ * WHICH IS WHY THIS EXISTS. The filter bar and the table cells have to read the
+ * same value for the same column, or a filter disagrees with the screen it is
+ * filtering: pick "TL Review" and get back rows whose Status cell says
+ * something else, because the filter read a.status while the cell read the
+ * round's. Both call this, so there is one answer per column per row and no
+ * second copy to drift.
+ *
+ * Returns ids and raw values, never display text. Labels are for the eye and
+ * change with the reference lists; a filter that matched on them would break
+ * the day somebody renames a scope of work. */
+function rowFacts(row){
+  const a = row.a;
+  const ep = row.ep;
+  const past = Boolean(ep && !ep.active);
+  return {
+    a, ep, past,
+    code: a.code || '',
+    name: a.name || '',
+    category: a.category || '',
+    type: a.type || '',
+    manHours: a.man_hours === null || a.man_hours === undefined || a.man_hours === '' ? null : Number(a.man_hours),
+    startDate: a.start_date || null,
+    dueDate: a.due_date || null,
+    // The round's closing status where there is one, exactly as the cell reads it.
+    status: past ? (ep.endedStatus || ep.statusAtAssignment) : a.status,
+    assigneeId: ep ? (ep.userId || '') : (a.assignee_id || ''),
+    assigneeName: ep ? (ep.userName || '') : (a.assignee_name || ''),
+    // The Round column has three readings, and "no round at all" is one of
+    // them: an asset nobody has been put on shows an empty cell there.
+    round: ep ? (past ? 'handed_on' : 'current') : 'none',
+    priority: a.priority || '',
+    tasksDone: a.tasks ? a.tasks.filter(x=>x.done).length : 0,
+    tasksTotal: a.tasks ? a.tasks.length : 0,
+    seconds: ep ? (ep.seconds || 0) : (a.time_spent_seconds || 0),
+  };
+}
+
+/* How the Tasks cell reads as a state rather than a fraction, so it can be
+   filtered on. The cell shows "3/7"; this is what that means. A finished round
+   shows nothing in that column, and has no checklist state of its own. */
+function taskState(f){
+  if(f.past) return 'past';
+  if(!f.tasksTotal) return 'none';
+  if(f.tasksDone === 0) return 'not_started';
+  if(f.tasksDone >= f.tasksTotal) return 'complete';
+  return 'part';
+}
+
+/* THE ASSETS LIST FILTER BAR: one entry per column of the table above it.
+ *
+ * The table has thirteen headings and this has thirteen entries, in the same
+ * order, and a test fails if the two stop matching. That is the requirement —
+ * a filter for every column — expressed as something that can be checked,
+ * rather than as thirteen controls somebody has to keep counting.
+ *
+ * Each entry says which column it is for, how it is entered, and — the part
+ * that matters — how a row is tested against it. The test always reads
+ * rowFacts(), so it is looking at the value the cell beside it is showing.
+ *
+ *   kind        the control drawn for it
+ *   keys        the state fields it owns, so Reset knows what to empty
+ *   test(f, v)  does this row pass? Only called when the filter is SET
+ *
+ * A filter left empty is not asked, so an empty bar and no bar are the same
+ * list. Everything set is ANDed: narrowing is the only thing a filter does
+ * here, and two of them narrow twice.
+ *
+ * THERE IS NO PROJECT OR CLIENT FILTER, and that is not an omission. The Assets
+ * List is already one project, under one client, both chosen in the header — a
+ * control for either would have exactly one option in it. Neither is a column
+ * of this table for the same reason. The header's pickers are where that
+ * narrowing is done, and they narrow the Board with it.
+ *
+ * Nor is there one for the sub-tabs. Active / Inactive / Archived / History are
+ * the tabs, and they are not stages — a stage is the Status column, which is
+ * why that one filter is a multi-pick: "TL Review and TL Feedbacks and TL
+ * Approved" is a question about one column, asked on whichever tab is open.
+ */
+const AL_ANY = '';          // the empty option every dropdown starts on
+
+function alDateOnly(value){
+  /* Dates arrive from MySQL as either a plain 'YYYY-MM-DD' or a full timestamp,
+     and the filter compares strings. Taking the first ten characters of either
+     makes those two the same thing, which is what lets a date input's own
+     'YYYY-MM-DD' be compared with < and > directly. */
+  if(!value) return '';
+  const text = typeof value === 'string' ? value : new Date(value).toISOString();
+  return text.slice(0, 10);
+}
+function alInRange(day, from, to){
+  if(!day) return false;    // no date at all cannot be inside a range
+  if(from && day < from) return false;
+  if(to && day > to) return false;
+  return true;
+}
+function alNumInRange(n, min, max){
+  if(n === null || n === undefined || Number.isNaN(n)) return false;
+  if(min !== '' && min !== null && n < Number(min)) return false;
+  if(max !== '' && max !== null && n > Number(max)) return false;
+  return true;
+}
+
+const ASSET_LIST_FILTERS = [
+  { col:'Code', kind:'text', keys:['code'], placeholder:'Code',
+    test:(f, v)=>f.code.toLowerCase().includes(v.code.toLowerCase()) },
+
+  { col:'Assets Name', kind:'text', keys:['name'], placeholder:'Asset name',
+    test:(f, v)=>f.name.toLowerCase().includes(v.name.toLowerCase()) },
+
+  { col:'Category', kind:'select', keys:['category'], none:'All categories',
+    options:(rows)=>alPresent(rows, f=>f.category, id=>categoryLabel(id)),
+    test:(f, v)=>f.category === v.category },
+
+  { col:'Scope of Work', kind:'select', keys:['type'], none:'All scopes of work',
+    options:(rows)=>alPresent(rows, f=>f.type, id=>typeOf(id).label),
+    test:(f, v)=>f.type === v.type },
+
+  { col:'Man Hours', kind:'number', keys:['hoursMin','hoursMax'], unit:'h',
+    test:(f, v)=>alNumInRange(f.manHours, v.hoursMin, v.hoursMax) },
+
+  { col:'Start Date', kind:'date', keys:['startFrom','startTo'],
+    test:(f, v)=>alInRange(alDateOnly(f.startDate), v.startFrom, v.startTo) },
+
+  { col:'End Date (Deadline)', kind:'date', keys:['dueFrom','dueTo'],
+    test:(f, v)=>alInRange(alDateOnly(f.dueDate), v.dueFrom, v.dueTo) },
+
+  /* The one multi-pick, and the reason is the question people actually bring to
+     this screen: "show me TL Review and TL Feedbacks and TL Approved". A single
+     dropdown can only answer that one stage at a time, and the sub-tabs above
+     are Active / Inactive / Archived / History — they do not slice by stage at
+     all. Every other column is a single choice because every other column is
+     asked about singly. */
+  { col:'Status', kind:'multi', keys:['statuses'], none:'All stages',
+    options:(rows)=>alPresent(rows, f=>f.status, id=>statusOf(id).label),
+    test:(f, v)=>v.statuses.includes(f.status) },
+
+  { col:'Assignee', kind:'select', keys:['assignee'], none:'Anyone',
+    /* Unassigned is a real answer to "who is on this", not a missing value, so
+       it is an option rather than something the filter cannot reach. */
+    options:(rows)=>{
+      const named = alPresent(rows, f=>f.assigneeId, (id, f)=>f.assigneeName || id);
+      const anyBlank = rows.some(f=>!f.assigneeId);
+      return (anyBlank ? [{ id:'__none__', label:'Nobody' }] : []).concat(named);
+    },
+    test:(f, v)=>v.assignee === '__none__' ? !f.assigneeId : f.assigneeId === v.assignee },
+
+  { col:'Round', kind:'select', keys:['round'], none:'Any round',
+    options:(rows)=>alPresent(rows, f=>f.round, id=>(
+      { current:'Current', handed_on:'Handed on', none:'No round yet' }[id] || id)),
+    test:(f, v)=>f.round === v.round },
+
+  { col:'Priority', kind:'select', keys:['priority'], none:'Any priority',
+    options:(rows)=>alPresent(rows, f=>f.priority, id=>id.charAt(0).toUpperCase()+id.slice(1)),
+    test:(f, v)=>f.priority === v.priority },
+
+  /* The cell reads "3/7". What somebody wants from it is the STATE that
+     fraction describes, so that is what the filter offers. */
+  { col:'Tasks', kind:'select', keys:['tasks'], none:'Any checklist',
+    options:(rows)=>alPresent(rows, f=>taskState(f), id=>(
+      { none:'No checklist', not_started:'Nothing ticked', part:'Part done',
+        complete:'All ticked', past:'Finished round' }[id] || id)),
+    test:(f, v)=>taskState(f) === v.tasks },
+
+  { col:'Time Spent', kind:'number', keys:['spentMin','spentMax'], unit:'h',
+    /* Entered in hours because that is how the studio talks about time; stored
+       and compared in seconds because that is what the column holds. */
+    test:(f, v)=>alNumInRange(f.seconds / 3600, v.spentMin, v.spentMax) },
+];
+
+/* The values actually present in these rows, labelled and sorted.
+ *
+ * Built from the rows on screen rather than from the studio's reference lists,
+ * so a dropdown never offers a choice that would empty the table. Same rule the
+ * Inactive tab's two selects already followed. */
+function alPresent(facts, get, label){
+  const seen = new Map();
+  for(const f of facts){
+    const id = get(f);
+    if(!id && id !== 0) continue;
+    if(!seen.has(id)) seen.set(id, label(id, f));
+  }
+  return [...seen].map(([id, text])=>({ id, label: String(text || id) }))
+    .sort((x, y)=>x.label.localeCompare(y.label));
+}
+
+/* An empty filter set: every key every entry owns, blank. Written from the
+   table above rather than spelled out, so a filter added there is cleared by
+   Reset without anybody remembering to add it here too. */
+function emptyListFilter(){
+  const blank = {};
+  for(const entry of ASSET_LIST_FILTERS){
+    for(const key of entry.keys) blank[key] = entry.kind === 'multi' ? [] : '';
+  }
+  return blank;
+}
+
+/* Is this entry actually set? A filter that is not set is not asked. */
+function alIsSet(entry, v){
+  return entry.keys.some(key=>Array.isArray(v[key]) ? v[key].length > 0 : v[key] !== '');
+}
+function alAnySet(v){ return ASSET_LIST_FILTERS.some(entry=>alIsSet(entry, v)); }
+
+/* AND across everything set. The one place the combining rule lives. */
+function alMatches(f, v){
+  for(const entry of ASSET_LIST_FILTERS){
+    if(!alIsSet(entry, v)) continue;
+    if(!entry.test(f, v)) return false;
+  }
+  return true;
+}
+
 /* Where an ASSET sits, for anything asking about the asset rather than a row:
    its live round. Its finished rounds are in History alongside. */
 function listTabOf(a){ return rowTabOf({ a, ep: episodesOf(a).find(ep=>ep.active) || null }); }
@@ -3161,17 +3419,23 @@ document.addEventListener('click', async (e)=>{
    ones I saw two filters ago". */
 let selectedAssets = new Set();
 let state = { view:'board', search:'', filterType:'', listGroup:'active',
-  /* The Inactive tab's own narrowing, on top of the header's search and scope
-     filter. Tab-local on purpose: it exists to shrink the pile somebody is
-     about to bulk-assign, and a filter set there must not quietly change what
-     the Board shows.
+  /* The Assets List's column filters — one per heading, see
+     ASSET_LIST_FILTERS. On top of the header's search and scope filter, and
+     still NOT folded into filteredAssets(): that pool feeds the Board too, and
+     a choice made to shrink one table must not quietly change what the Board
+     shows.
      
-     Not cleared when the project changes: Category and Scope of Work are
-     studio-wide reference lists, so the same choice means the same thing under
-     any project. What stops a stale filter hiding rows silently is that its
-     bar is always on screen, saying how many of the tab's rows it is showing
-     and offering to clear itself. */
-  inactiveFilter:{ category:'', type:'' },
+     Kept across sub-tabs on purpose, which is what the header's search already
+     does — filter by assignee on Active, switch to History, and it is still
+     their work you are looking at. The tab counts are filtered to match, so
+     they say where the matching rows are rather than promising rows the tab
+     will not show.
+     
+     Not cleared when the project changes either. Most of these are studio-wide
+     reference values that mean the same thing anywhere; the ones that are not
+     — an assignee, a date — simply match nothing, and the bar is always on
+     screen saying so and offering to reset itself. */
+  listFilter: emptyListFilter(),
   currentProjectId:null, currentUser:null, token:null, activeWork:null,
   projects:[], assets:[], usersRenderLimit:60,
   /* The Projects tab: the client list, and which one is open (null = the list). */
@@ -4772,6 +5036,16 @@ function renderBoard(){
     });
   });
 }
+/* Which column's multi-pick menu is open, if any. Outside renderList because
+   the list redraws on every tick and the menu has to survive that. */
+let alOpenMenu = null;
+document.addEventListener('click', ()=>{
+  if(!alOpenMenu) return;
+  const menu = document.getElementById(alOpenMenu + 'menu');
+  if(menu) menu.hidden = true;
+  alOpenMenu = null;
+});
+
 function renderList(){
   const el = document.getElementById('listView');
   if(!state.currentProjectId){ el.innerHTML = `<div class="empty">No projects assigned to you yet.</div>`; return; }
@@ -4793,91 +5067,186 @@ function renderList(){
       ? picked.sort((x,y)=>roundEndedAt(y)-roundEndedAt(x))
       : picked;
   };
-  /* The Inactive tab's own filter, applied to its rows and to nothing else.
-     
-     Deliberately NOT folded into filteredAssets(): that pool feeds the Board,
-     the tab counts and the pruning of the selection, and narrowing it here
-     would make a choice meant to shrink one pile change all three. The tab
-     counts above therefore keep saying how many rows the tab holds, and the
-     bar below says how many of them the filter is showing — two numbers that
-     answer two different questions. */
-  const inactiveNarrow = (rows)=>{
-    const f = state.inactiveFilter;
-    return rows.filter(r=>
-      (!f.category || r.a.category === f.category) &&
-      (!f.type || r.a.type === f.type));
-  };
-  const groupRows = inGroup(state.listGroup);
-  const shownRows = state.listGroup==='inactive' ? inactiveNarrow(groupRows) : groupRows;
+  /* THE COLUMN FILTERS, applied to the rows of whichever tab is open.
+   *
+   * On every tab, not just one. The bar used to be Inactive's alone, with two
+   * controls, because Inactive is where bulk-assign starts and the point was to
+   * shrink that pile before ticking it. It is the same job on every tab —
+   * finding rows in a table with thirteen columns — so it is the same bar
+   * everywhere now, with a control for each of them.
+   *
+   * WITHIN the tab, never instead of it. The tab decides which rows exist;
+   * these decide which of those are shown. Nothing here can put an Archived row
+   * on the Active tab.
+   *
+   * Applied BEFORE the counts, so "Active 3" means three rows are there to be
+   * seen. That is how the header's search has always behaved on this screen and
+   * it is the point of a filter that survives a tab switch: the counts are how
+   * somebody finds which tab their matching rows are on.
+   */
+  const narrow = (rows)=>rows.filter(r=>alMatches(rowFacts(r), state.listFilter));
+  const inShown = (id)=>narrow(inGroup(id));
 
-  /* The counts are of ROWS — one badge unit is one round, which is one line in
-     the list below it. An asset handed on twice counts three times across the
-     tabs: twice in History for the rounds it finished, once in whichever tab
-     its live round belongs to. They sum to the number of rows in scope. */
+  const groupRows = inGroup(state.listGroup);     // everything this tab holds
+  const shownRows = narrow(groupRows);            // what the filters leave of it
+
+  /* The options every dropdown offers are built from the rows of the tab BEFORE
+     its own filters are applied, so choosing one value does not empty the list
+     of the others — pick an assignee and the Priority dropdown still offers
+     every priority present, rather than only the ones that assignee happens to
+     hold. */
+  const optionFacts = groupRows.map(rowFacts);
+
+  /* The counts are of ROWS — one badge unit is one line in the list below it.
+     An asset handed on twice counts three times across the tabs: twice in
+     History for the rounds it finished, once in whichever tab its live round
+     belongs to. They sum to the number of rows in scope.
+     
+     Counted AFTER the column filters, so a tab saying 3 has three rows to show
+     when it is opened. That is how the header's search has always behaved here,
+     and with the filters kept across tabs it is also how somebody finds which
+     tab their matching rows are on. */
   const tabs = `<div class="sub-tabs">${ASSET_LIST_TABS.map(g=>{
-    const n = inGroup(g.id).length;
+    const n = inShown(g.id).length;
     return `<button class="sub-tab${g.id===state.listGroup?' active':''}" data-group="${g.id}">${g.label} <span class="sub-tab-count">${n}</span></button>`;
   }).join('')}</div>`;
 
-  /* --- the Inactive tab's filter bar --------------------------------------
-   *
-   * Only on Inactive, because that is the only tab a bulk action starts from:
-   * Assign & Schedule applies to Not Assigned assets, and the point of the
-   * filter is to shrink that pile before ticking it.
-   *
-   * Always on screen while the tab is open, set or not. A filter that appears
-   * only once it is set is a filter somebody forgets they set, and the row
-   * they then cannot find looks like missing data rather than a narrowing they
-   * chose. The count on the right says exactly what it is doing.
-   *
-   * The options are built from the tab's OWN rows rather than from the whole
-   * reference list, so the dropdown never offers a category that would show
-   * nothing. What it cannot offer is Project or Client: the Assets List is
-   * already one project, under one client, chosen in the header — a control
-   * for either would have a single option in it.
-   */
-  const inactiveBar = ()=>{
-    if(state.listGroup !== 'inactive') return '';
-    const f = state.inactiveFilter;
-    const present = (get)=>[...new Set(groupRows.map(r=>get(r.a)).filter(Boolean))];
-    const cats = present(a=>a.category).map(id=>({ id, label: categoryLabel(id) }))
-      .sort((x,y)=>x.label.localeCompare(y.label));
-    const kinds = present(a=>a.type).map(id=>({ id, label: typeOf(id).label }))
-      .sort((x,y)=>x.label.localeCompare(y.label));
-    /* A value that is set but no longer present keeps its option, or the
-       browser would silently move the select to the first entry and the list
-       would disagree with the control above it. */
-    const opts = (list, selected, none)=>{
+  const filterBar = (()=>{
+    const v = state.listFilter;
+    const on = alAnySet(v);
+    const controls = ASSET_LIST_FILTERS.map((entry, i)=>{
+      const id = 'alf'+i;
+      const label = escapeHTML(entry.col);
+      if(entry.kind === 'text'){
+        return `<label class="alf" data-col="${label}"><span>${label}</span>
+          <input type="text" id="${id}" data-key="${entry.keys[0]}" class="alf-text"
+                 placeholder="${escapeHTML(entry.placeholder||'')}" value="${escapeHTML(v[entry.keys[0]]||'')}"></label>`;
+      }
+      if(entry.kind === 'date'){
+        return `<label class="alf" data-col="${label}"><span>${label}</span>
+          <span class="alf-pair">
+            <input type="date" id="${id}f" data-key="${entry.keys[0]}" value="${escapeHTML(v[entry.keys[0]]||'')}" title="From">
+            <input type="date" id="${id}t" data-key="${entry.keys[1]}" value="${escapeHTML(v[entry.keys[1]]||'')}" title="To">
+          </span></label>`;
+      }
+      if(entry.kind === 'number'){
+        return `<label class="alf" data-col="${label}"><span>${label}</span>
+          <span class="alf-pair">
+            <input type="number" min="0" step="0.25" class="alf-num" id="${id}f" data-key="${entry.keys[0]}"
+                   value="${escapeHTML(v[entry.keys[0]]||'')}" placeholder="min" title="At least">
+            <input type="number" min="0" step="0.25" class="alf-num" id="${id}t" data-key="${entry.keys[1]}"
+                   value="${escapeHTML(v[entry.keys[1]]||'')}" placeholder="max" title="At most">
+          </span></label>`;
+      }
+      if(entry.kind === 'multi'){
+        const list = entry.options(optionFacts);
+        const chosen = v[entry.keys[0]] || [];
+        /* A chosen value no longer present keeps its box, or unticking it would
+           be impossible and the list would disagree with the control. */
+        const orphans = chosen.filter(id2=>!list.some(x=>x.id===id2))
+          .map(id2=>({ id:id2, label:id2 }));
+        const all = orphans.concat(list);
+        const summary = !chosen.length ? escapeHTML(entry.none)
+          : (chosen.length === 1
+              ? escapeHTML((all.find(x=>x.id===chosen[0])||{label:chosen[0]}).label)
+              : chosen.length + ' selected');
+        return `<label class="alf" data-col="${label}"><span>${label}</span>
+          <span class="alf-multi">
+            <button type="button" class="alf-multi-btn${chosen.length?' on':''}" id="${id}"
+                    data-key="${entry.keys[0]}">${summary}<span class="alf-caret">▾</span></button>
+            <span class="alf-menu" id="${id}menu" hidden>${all.length
+              ? all.map(x=>`<label><input type="checkbox" value="${escapeHTML(x.id)}"${
+                  chosen.includes(x.id)?' checked':''}>${escapeHTML(x.label)}</label>`).join('')
+              : '<span class="alf-menu-empty">Nothing here to pick from.</span>'}</span>
+          </span></label>`;
+      }
+      // select
+      const list = entry.options(optionFacts);
+      const selected = v[entry.keys[0]] || '';
+      /* Same rule as the multi-pick above: a value that is set but no longer
+         present keeps its option, or the browser silently moves the select to
+         its first entry and the control stops describing the list. */
       const orphan = selected && !list.some(x=>x.id===selected)
         ? `<option value="${escapeHTML(selected)}" selected>${escapeHTML(selected)}</option>` : '';
-      return `<option value=""${selected?'':' selected'}>${none}</option>` + orphan +
-        list.map(x=>`<option value="${escapeHTML(x.id)}"${x.id===selected?' selected':''}>${escapeHTML(x.label)}</option>`).join('');
-    };
-    const on = Boolean(f.category || f.type);
-    return `<div class="list-filter">
-      <span class="lf-label">Narrow by</span>
-      <select id="lfCategory" title="Category">${opts(cats, f.category, 'All categories')}</select>
-      <select id="lfType" title="Scope of Work">${opts(kinds, f.type, 'All scopes of work')}</select>
-      ${on ? `<button class="btn btn-ghost btn-sm" id="lfClear">Clear</button>` : ''}
+      return `<label class="alf" data-col="${label}"><span>${label}</span>
+        <select id="${id}" data-key="${entry.keys[0]}">
+          <option value=""${selected?'':' selected'}>${escapeHTML(entry.none)}</option>${orphan}${
+          list.map(x=>`<option value="${escapeHTML(x.id)}"${x.id===selected?' selected':''}>${escapeHTML(x.label)}</option>`).join('')
+        }</select></label>`;
+    }).join('');
+
+    return `<div class="list-filter alf-bar">
+      <span class="lf-label">Filter</span>
+      ${controls}
+      <button class="btn btn-ghost btn-sm alf-reset" id="lfReset"${on?'':' disabled'}>Reset filters</button>
       <span class="lf-count">${on
         ? `showing ${shownRows.length} of ${groupRows.length}`
-        : `${groupRows.length} not assigned`}</span>
+        : `${groupRows.length} row${groupRows.length===1?'':'s'}`}</span>
     </div>`;
-  };
-  const filterBar = inactiveBar();
+  })();
 
   const wire = ()=>{
     document.querySelectorAll('#listView .sub-tab').forEach(b=>{
       b.addEventListener('click', ()=>{ state.listGroup = b.dataset.group; renderList(); });
     });
-    const set = (key)=>(e)=>{ state.inactiveFilter[key] = e.target.value; renderList(); };
-    const cat = document.getElementById('lfCategory');
-    const kind = document.getElementById('lfType');
-    const clear = document.getElementById('lfClear');
-    if(cat) cat.addEventListener('change', set('category'));
-    if(kind) kind.addEventListener('change', set('type'));
-    if(clear) clear.addEventListener('click', ()=>{
-      state.inactiveFilter = { category:'', type:'' }; renderList();
+
+    /* Typing redraws the whole list on every keystroke, which is what every
+       other control here does too. It is affordable because none of this
+       touches the network: the rows are already in memory, and the work is one
+       pass of alMatches over them. */
+    const redraw = ()=>renderList();
+    document.querySelectorAll('#listView .alf select, #listView .alf input[type="date"], #listView .alf input[type="number"]')
+      .forEach(node=>node.addEventListener('change', ()=>{
+        state.listFilter[node.dataset.key] = node.value;
+        redraw();
+      }));
+    document.querySelectorAll('#listView .alf input.alf-text').forEach(node=>{
+      node.addEventListener('input', ()=>{
+        state.listFilter[node.dataset.key] = node.value;
+        const at = node.selectionStart;
+        redraw();
+        /* Redrawing replaces the box being typed in, so put the caret back
+           where it was — otherwise the second character of anything typed
+           lands at the front. */
+        const again = document.getElementById(node.id);
+        if(again){ again.focus(); try{ again.setSelectionRange(at, at); }catch{} }
+      });
+    });
+
+    /* The multi-pick menus. One open at a time, closed by a click anywhere else.
+       
+       Ticking a box redraws the whole list like every other control, which
+       would normally take the open menu with it — so which menu was open is
+       remembered outside this function and put back immediately afterwards.
+       That lets somebody tick three stages in one visit and watch the table
+       narrow under each one, instead of the menu shutting on the first tick. */
+    document.querySelectorAll('#listView .alf-multi-btn').forEach(btn=>{
+      const menu = document.getElementById(btn.id + 'menu');
+      if(!menu) return;
+      if(alOpenMenu === btn.id) menu.hidden = false;
+      btn.addEventListener('click', (ev)=>{
+        ev.preventDefault(); ev.stopPropagation();
+        const wasOpen = !menu.hidden;
+        document.querySelectorAll('#listView .alf-menu').forEach(m=>{ m.hidden = true; });
+        menu.hidden = wasOpen;
+        alOpenMenu = wasOpen ? null : btn.id;
+      });
+      menu.addEventListener('click', ev=>ev.stopPropagation());
+      menu.querySelectorAll('input[type="checkbox"]').forEach(box=>{
+        box.addEventListener('change', ()=>{
+          state.listFilter[btn.dataset.key] = [...menu.querySelectorAll('input[type="checkbox"]')]
+            .filter(x=>x.checked).map(x=>x.value);
+          alOpenMenu = btn.id;
+          renderList();
+        });
+      });
+    });
+
+    const reset = document.getElementById('lfReset');
+    if(reset) reset.addEventListener('click', ()=>{
+      state.listFilter = emptyListFilter();
+      alOpenMenu = null;
+      renderList();
     });
   };
 
@@ -4885,11 +5254,12 @@ function renderList(){
     /* Three different nothings, and saying which matters. Nothing in this tab;
        nothing matching the search; or — for a contributor — nothing in the
        project that is theirs, which is not the same as an empty project. */
-    const why = (state.listGroup === 'inactive' && groupRows.length)
-      /* A fourth, added with the filter: the tab has rows and the narrowing is
-         what is hiding them. Saying "no assets match" there would send
-         somebody looking for data that is right in front of them. */
-      ? 'Nothing here matches that filter. Clear it to see the rest.'
+    const why = (alAnySet(state.listFilter) && groupRows.length)
+      /* A fourth: the tab has rows and the column filters are what is hiding
+         them. Saying "no assets match" there would send somebody looking for
+         data that is right in front of them. On any tab now, not just
+         Inactive, because the bar is on any tab now. */
+      ? 'Nothing here matches those filters. Reset them to see the rest.'
       : state.listGroup === 'history'
       /* Its own wording. "No history assets match" would read as a filter
          problem, when the usual answer is that nothing here has changed hands
@@ -4957,17 +5327,17 @@ function renderList(){
   /* Ticked, in THIS tab, and hidden by the tab's own filter.
      
      Counted separately from `elsewhere` because the two are different facts and
-     the bar used to conflate them: after narrowing the Inactive list, an asset
+     the bar used to conflate them: after narrowing the list, an asset
      ticked before the narrowing is still in this tab and still going to be
      assigned — telling somebody it is "on another tab" would send them looking
      for it under Active. The tab filter deliberately does not drop the tick,
      for the same reason changing tab does not: a selection somebody built is
      not the filter's to throw away. */
   const shownIds = new Set(shownRows.map(r=>r.a.id));
-  const hiddenHere = state.listGroup==='inactive'
-    ? new Set(groupRows.filter(r=>selectedAssets.has(r.a.id) && !shownIds.has(r.a.id))
-        .map(r=>r.a.id)).size
-    : 0;
+  /* On any tab now, not only Inactive: the column filters are on every tab, so
+     a tick can be hidden by one on every tab. */
+  const hiddenHere = new Set(groupRows.filter(r=>selectedAssets.has(r.a.id) && !shownIds.has(r.a.id))
+    .map(r=>r.a.id)).size;
   const elsewhere = chosen.length - tickedHere.length - hiddenHere;
 
   /* The bar only exists while something is selected, so the list is unchanged
@@ -5003,19 +5373,25 @@ function renderList(){
     : '';
 
   el.innerHTML = tabs + filterBar + bar + `<table><thead><tr>${headBox}<th>Code</th><th>Assets Name</th><th>Category</th><th>Scope of Work</th><th>Man Hours</th><th>Start Date</th><th>End Date (Deadline)</th><th>Status</th><th>Assignee</th><th>Round</th><th>Priority</th><th>Tasks</th><th>Time Spent</th></tr></thead><tbody>
-    ${rows.map(({a, ep}, rowIndex)=>{
-      const t=typeOf(a.type), doneTasks=a.tasks.filter(x=>x.done).length;
-      /* A finished stretch shows where that person LEFT it — somebody who took
-         work all the way to TL Review should not have their round labelled with
-         the status it started in. The active one shows the asset's status now,
-         because for that person they are the same thing. */
-      const s = statusOf(ep && !ep.active ? (ep.endedStatus || ep.statusAtAssignment) : a.status);
-      const seconds = ep ? ep.seconds : a.time_spent_seconds;
+    ${rows.map((row, rowIndex)=>{
+      const { a, ep } = row;
+      /* Every value this row shows, from the one function the filter bar reads
+         too — so a Status filter set to TL Review cannot return a row whose
+         Status cell says something else. A finished stretch shows where that
+         person LEFT it, who they were and what they put in; the live one shows
+         the asset as it stands. rowFacts() is where that choice is made, once.
+         
+         The three stamps below are not filtered on and stay local: they are a
+         sub-line under Time Spent rather than a column of their own. */
+      const f = rowFacts(row);
+      const t=typeOf(a.type), doneTasks=f.tasksDone;
+      const s = statusOf(f.status);
+      const seconds = f.seconds;
       const startedAt = ep ? ep.startedAt : a.started_at;
       const submittedAt = ep ? ep.submittedAt : a.submitted_at;
       const roundsIn = ep ? ep.rounds : a.work_rounds;
-      const who = ep ? ep.userName : (a.assignee_name || '');
-      const past = ep && !ep.active;
+      const who = f.assigneeName;
+      const past = f.past;
       const box = bulk
         ? `<td class="pick-col">${owns.get(a.id) === rowIndex
             ? `<input type="checkbox" class="pick" data-pick="${a.id}"${selectedAssets.has(a.id)?' checked':''}>`

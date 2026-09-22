@@ -27,29 +27,32 @@ const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON, sys
 
 const cfg = config('bulkAssign');
 
-test('the Inactive tab narrows before ticking, and narrows nothing else', () => {
+test('the list narrows before ticking, and narrows nothing else', () => {
   /* The filter that feeds this action. It lives in the page, so what is pinned
      here is the SHAPE of it — the browser check covers the behaviour.
 
      What matters and is easy to undo by accident: the narrowing is applied to
-     the Inactive tab's rows and NOT inside filteredAssets(). That pool feeds
-     the Board, the tab counts and the pruning of the selection, so folding the
-     filter into it would make a choice meant to shrink one pile silently
-     change all three — including dropping ticks the person had already made. */
+     the tab's ROWS and NOT inside filteredAssets(). That pool feeds the Board
+     and the pruning of the selection, so folding the filter into it would make
+     a choice meant to shrink one table silently change both — including
+     dropping ticks the person had already made.
+
+     The bar used to be the Inactive tab's alone with two controls. It is every
+     tab's now, with one per column; tests/asset-list-filters.test.js covers
+     what it holds. What is pinned HERE is only what bulk assign depends on. */
   const page = require('fs').readFileSync(
     require('path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
 
-  assert.ok(page.includes('inactiveFilter:{ category:\'\', type:\'\' }'),
+  assert.ok(page.includes('listFilter: emptyListFilter()'),
     'the filter has its own state, separate from the header search and scope');
-  assert.ok(/state\.listGroup==='inactive' \? inactiveNarrow\(groupRows\)/.test(page),
-    'and is applied to the Inactive tab\'s rows only');
+  assert.ok(page.includes('const shownRows = narrow(groupRows);'),
+    'and is applied to the open tab\'s rows');
 
   const filtered = page.slice(page.indexOf('function filteredAssets()'));
-  assert.ok(!filtered.slice(0, filtered.indexOf('}')).includes('inactiveFilter'),
+  assert.ok(!filtered.slice(0, filtered.indexOf('}')).includes('listFilter'),
     'filteredAssets stays the pool everything else reads');
 
-  // The two controls, and the honest reason there is no Project or Client one.
-  assert.ok(page.includes('id="lfCategory"') && page.includes('id="lfType"'));
+  // The honest reason there is no Project or Client control.
   assert.ok(page.includes('already one project, under one client'),
     'the code says why Project and Client are not offered');
 

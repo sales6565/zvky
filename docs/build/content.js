@@ -330,12 +330,42 @@ module.exports = [
   p('The same assets as a table, which is easier than the board when there are many. It has four sub-tabs, and an '
     + 'asset appears in exactly one of them.'),
   p('The table carries Start Date and End Date (Deadline) as columns, so a whole project\u2019s schedule can be '
-    + 'read down two columns without opening anything.'),
+    + 'read down two columns without opening anything. Every column has a filter of its own \u2014 see 5.3a.'),
   shot('04-assets-active', 'Active: everything still moving through the pipeline.'),
   shot('04-assets-inactive', 'Inactive: work nobody has picked up \u2014 assets that are Not Assigned, or '
     + 'assigned and not yet accepted. This is where a batch is selected for 5.5.'),
   shot('04-assets-archived', 'Archived: delivered work, kept for the record.'),
   shot('04-assets-history', 'History: every stage change, who made it and when.'),
+
+  h2('5.3a Filtering the list'),
+  p('A bar of filters sits under the sub-tabs, with one control for every column of the table \u2014 thirteen of '
+    + 'them, each named after the heading it narrows. It is the same bar on all four sub-tabs.'),
+  bullets([
+    '<strong>Code</strong> and <strong>Assets Name</strong> \u2014 type a fragment of either. Not case sensitive, and it matches anywhere in the value, not just the start.',
+    '<strong>Category</strong>, <strong>Scope of Work</strong>, <strong>Assignee</strong>, <strong>Round</strong>, <strong>Priority</strong> and <strong>Tasks</strong> \u2014 a dropdown each.',
+    '<strong>Status</strong> \u2014 a tick list rather than a dropdown, so several stages can be asked for at once. TL Review, TL Feedbacks and TL Approved together is the usual reason.',
+    '<strong>Man Hours</strong> and <strong>Time Spent</strong> \u2014 a smallest and a largest, either on its own or both. Time Spent is typed in hours.',
+    '<strong>Start Date</strong> and <strong>End Date (Deadline)</strong> \u2014 a from and a to, either on its own or both. Both ends are included.',
+  ]),
+  p('EVERYTHING SET NARROWS TOGETHER. Choosing a project team member and a priority shows the rows that are both, '
+    + 'not either \u2014 each filter takes away, none of them adds back. A filter left empty is not asked at all, so '
+    + 'a bar with nothing in it shows the same list as no bar.'),
+  p('<strong>Reset filters</strong>, at the end of the bar, clears the lot in one press. It is greyed out while '
+    + 'nothing is set, so it also says at a glance whether anything is being hidden. The count beside it says '
+    + '\u201cshowing 12 of 340\u201d whenever a filter is on, and just the row count when none is.'),
+  note('The filters stay put when you change sub-tab',
+    'Filter by assignee on Active, switch to History, and it is still that person\u2019s work you are looking at. '
+    + 'That is the same thing the search box in the header already does on this screen, and it is what makes the '
+    + 'counts on the sub-tabs useful: with a filter on, each tab\u2019s number is how many MATCHING rows it holds, '
+    + 'so the tabs themselves tell you where the rest of what you are looking for is.\n\n'
+    + 'A filter narrows within the sub-tab and never instead of it. Nothing set here can put an Archived row on the '
+    + 'Active tab \u2014 the tab decides which rows exist, the filters decide which of those are shown.'),
+  p('WHY THERE IS NO PROJECT OR CLIENT FILTER. The Assets List is already one project, under one client, both chosen '
+    + 'in the header \u2014 a control for either would have one option in it. Neither is a column of this table for '
+    + 'the same reason. The header\u2019s pickers are where that choice is made.'),
+  p('A tick made for a bulk action is not lost when a filter hides the row. The selection bar counts those '
+    + 'separately \u2014 \u201c3 hidden by the filter\u201d \u2014 so narrowing, ticking, widening and ticking '
+    + 'again adds up to what it says it does.'),
 
   h2('5.4 Delivering several at once'),
   steps([
@@ -350,6 +380,7 @@ module.exports = [
     + 'Apply \u2014 whatever is filled in is applied to every asset selected.'),
   steps([
     'On the Assets List, open the Inactive sub-tab, where work nobody has picked up sits.',
+    'Narrow the pile with the filter bar if it is a long one \u2014 5.3a. Category and Scope of Work are the usual two.',
     'Tick the assets you want to set up.',
     'Press Assign & Schedule. The button says how many of your selection it will touch.',
     'Fill in any of Assignee, Start Date and End Date (Deadline), and press Apply.',
