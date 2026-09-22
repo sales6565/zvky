@@ -7042,9 +7042,21 @@ function pauseWords(held){
      this one starts itself again when the studio opens. Saying "press Resume"
      here would send somebody looking for a button they do not need, and worse,
      leave them thinking the clock is theirs to start when it is not. */
-  if(held.byStudio) return {
+  /* Two scheduled stops, two sentences. "The working day ended" is the wrong
+     thing to read at ten past eleven, when the studio is open and it is the
+     morning break that stopped the clock — and somebody told the day had ended
+     would go looking for what else had gone wrong. `pausedFor` comes from the
+     server, which knows the schedule; see describePause in src/work-log.js. */
+  if(held.byStudio) return held.pausedFor === 'break' ? {
+    short: 'Break',
+    lower: 'paused \u2014 break',
+    title: 'Paused for a break',
+    why: 'Recording stops for the studio\u2019s breaks. This time is not counted.',
+    opens: held.opensAt ? `It starts again on its own at ${fmtIST(held.opensAt)}.` : '',
+    resumesItself: true,
+  } : {
     short: 'Outside working hours',
-    lower: 'paused — outside hours',
+    lower: 'paused \u2014 outside hours',
     title: 'Paused',
     why: 'The working day ended, so the clock stopped. Time outside working hours is not recorded.',
     opens: held.opensAt ? `It starts again on its own at ${fmtIST(held.opensAt)}.` : '',
@@ -7091,7 +7103,7 @@ function stampDetail(startedAt, submittedAt, rounds, held){
          when it is. */
       ? `<span class="worklog-held">${escapeHTML(pauseWords(held).title)}</span> — the count above has `
         + `stopped, and ${pauseWords(held).resumesItself
-            ? 'starts again when the studio next opens' : 'starts again on Resume'}`
+            ? 'starts again on its own' : 'starts again on Resume'}`
       : `<span class="worklog-open">In progress</span> — elapsed so far, from the start above`);
   return `<div class="worklog-stamps">Started ${fmtDate(startedAt)}</div>` +
     `<div class="worklog-stamps">${state}</div>` + many;
@@ -7156,6 +7168,8 @@ async function openDrawer(id){
      controls for one act, one of them describing work that has already begun.
      So held is a third reason the start button is not offered, and unlike the
      other two it is not a refusal: there is a button here, it just says Resume.
+     Unless the SCHEDULE paused it, in which case there is no button at all —
+     see canResume below.
      
      Only the assignee sees either. A lead reading the panel sees the badge and
      the reason, which is what they need; holding somebody else's work is not
@@ -7163,7 +7177,19 @@ async function openDrawer(id){
   const held = a.held || null;
   const mayHold = mine && can('asset.hold');
   const canHold = mayHold && a.work_open;
-  const canResume = mayHold && Boolean(held) && !a.work_open;
+  /* NO RESUME FOR A PAUSE THE SCHEDULE MADE.
+   *
+   * The recording schedule stops and starts the clock by itself — at each
+   * break, at the end of the day, and again the next working morning — so a
+   * button offering to do it by hand is not a convenience, it is a lie about
+   * who is in charge. Worse in one direction than the other: somebody who does
+   * NOT press it would believe the time is not being counted when it is.
+   *
+   * Hold keeps its Resume, and must: that pause is a decision a person made,
+   * the schedule does not undo it, and without the button there would be no way
+   * back from it. The two are one column apart in the record and are told apart
+   * by `byStudio`, exactly as the wording beside them already is. */
+  const canResume = mayHold && Boolean(held) && !held.byStudio && !a.work_open;
   const canStart = mayStart && !a.work_open && !held && (mine || a.status!=='assigned') && !blocked && !waiting;
   /* Offered and refused, rather than absent: somebody looking for the button
      they used yesterday should find it and be told why it is not available,
@@ -7277,7 +7303,7 @@ async function openDrawer(id){
           ${escapeHTML(pauseWords(held).why)}
           ${pauseWords(held).opens ? `<br>${escapeHTML(pauseWords(held).opens)} ${
             pauseWords(held).resumesItself
-              ? 'Put it on hold if you will not be working on it, or press Resume to start sooner.'
+              ? 'Nothing to press.'
               : 'Press Resume when you pick it up again.'}` : ''}
         </div>` : ''}
         ${startBlocked ? (blocked ? `

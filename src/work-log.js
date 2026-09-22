@@ -266,8 +266,17 @@ async function start(db, assetId, userId, assignmentId, { at = null } = {}) {
   const round = await currentRound(db, assetId);
   /* Never in the future, and never more than a day back: a clock nudged
      forward, or an `at` computed from a stale schedule, must not write a stamp
-     that reads as work not yet done or as a week of it. */
-  const back = at === null ? 0 : Math.min(Math.max(0, Math.round((Date.now() - at) / 1000)), 86400);
+     that reads as work not yet done or as a week of it.
+     
+     FLOOR, NOT ROUND, and it is load-bearing rather than fussy. The resume
+     back-dates to the start of the stretch being recorded — a boundary instant,
+     exactly 09:30 or 11:15 — and a span includes its start but not its end.
+     Rounding up puts the stamp a fraction BEFORE that boundary, which is
+     outside every span, and the pause sweep then closes the session at its own
+     start for nought seconds; the resume opens another one on the next tick,
+     and the pair trade the row back and forth for ever, a dead row a minute.
+     Flooring the offset can only move the stamp later, so it stays inside. */
+  const back = at === null ? 0 : Math.min(Math.max(0, Math.floor((Date.now() - at) / 1000)), 86400);
   const startedAt = back > 0 ? `DATE_SUB(NOW(), INTERVAL ${back} SECOND)` : 'NOW()';
   // Which stretch-with-one-person this belongs to. It is what makes a new
   // assignee's Time Spent start at nothing without anything having to "reset":
@@ -300,7 +309,7 @@ async function start(db, assetId, userId, assignmentId, { at = null } = {}) {
    * the same route and shown by the same label. Two ways in, one state — which
    * is what keeps "it started outside hours" and "it ran past the end of the
    * day" from needing two explanations on screen and two rules in here. */
-  if (!workingTime.isOpen(Date.now(), schedule())) {
+  if (!workingTime.isRecording(Date.now(), schedule())) {
     await close(db, assetId, REASONS.off_hours);
     return { ok: true, sessionId: id, round, pausedOffHours: true, opensAt: nextOpening() };
   }
@@ -311,7 +320,7 @@ async function start(db, assetId, userId, assignmentId, { at = null } = {}) {
    paused timer. Null only if the schedule has no working days at all, which
    Settings will not save but a hand-edited database could hold. */
 function nextOpening(from = Date.now()) {
-  const at = workingTime.opensAt(from, schedule());
+  const at = workingTime.resumesAt(from, schedule());
   return at === null ? null : new Date(at).toISOString();
 }
 
@@ -353,9 +362,9 @@ async function pauseOverdue(db) {
        nothing. That is the row start() could not close itself: a server that
        was down when somebody's session was open, or a row from before this
        rule existed. */
-    const closesAt = workingTime.closesAt(startedAt, window);
-    const at = closesAt === null ? startedAt : closesAt;
-    if (closesAt !== null && now < closesAt) continue;   // still inside its day
+    const stopsAt = workingTime.stopsAt(startedAt, window);
+    const at = stopsAt === null ? startedAt : stopsAt;
+    if (stopsAt !== null && now < stopsAt) continue;     // still inside its stretch
 
     const done = await close(db, row.assetId, REASONS.off_hours, null, { at });
     if (!done.wasOpen) continue;                          // somebody closed it first
@@ -367,7 +376,7 @@ async function pauseOverdue(db) {
       round: Number(row.round) || null,
       at: new Date(at).toISOString(),
       seconds: done.seconds,
-      startedOutsideHours: closesAt === null,
+      startedOutsideHours: stopsAt === null,
     });
   }
   return paused;
@@ -419,7 +428,7 @@ async function resumeOverdue(db) {
   const window = schedule();
   // Shut: nothing to resume into. This is also what makes the sweep a no-op all
   // evening and all weekend rather than something that has to be scheduled.
-  if (!workingTime.isOpen(now, window)) return [];
+  if (!workingTime.isRecording(now, window)) return [];
 
   /* Required here rather than at the top of the file, and not for tidiness:
      src/assignments.js requires THIS module, so a require up there would be a
@@ -428,10 +437,21 @@ async function resumeOverdue(db) {
   const assignments = require('./assignments');
   const lifecycle = require('./lifecycle');
 
-  /* When the window we are inside opened — half past nine this morning. The
-     ceiling on how far a late sweep may back-date. */
-  const { day } = workingTime.istPartsOf(now);
-  const openedToday = workingTime.instantAt(day, Number(window.dayStart));
+  /* When the stretch we are inside began — half past nine this morning,
+     quarter past eleven after the morning break, two o'clock after lunch. The
+     ceiling on how far a late sweep may back-date, and it is per STRETCH
+     rather than per day: a sweep that runs at twenty past four must credit
+     five minutes since the afternoon break ended, not seven hours since the
+     morning. */
+  const openedToday = workingTime.startsAt(now, window);
+  /* Unreachable while isRecording above agrees with startsAt, and they are the
+     same walk over the same spans, so it always will. Kept because the two
+     lines say different things and only together do they say the whole rule:
+     the one above is the cheap early-out that skips the query all evening and
+     all weekend, and this one is what makes the back-dating below safe to do
+     without checking again. Removing either as dead code brings back a resume
+     that can fire inside a break. */
+  if (openedToday === null) return [];
 
   const { rows } = await db.query(
     `SELECT w.id, w.asset_id AS assetId, w.user_id AS userId,
@@ -530,7 +550,14 @@ async function close(db, assetId, reason, note = null, { at = null } = {}) {
      reason the age above is read that way: it lands in the database's clock
      without this process having to know what that clock is. Zero is the
      ordinary case and MySQL folds `NOW() - INTERVAL 0 SECOND` away. */
-  const back = Math.max(0, Math.round((now - endedAt) / 1000));
+  /* FLOOR, NOT ROUND, and for the same reason start() floors: MySQL's NOW()
+     truncates to the second, so an offset rounded UP lands the stamp a second
+     BEFORE the boundary it is meant to be. That reads as "paused at 12:59:59"
+     for a break that begins at 13:00 — the studio asked for exactly 13:00, and
+     a second early is the one direction that looks like a different rule.
+     The recorded figure is unaffected either way: `seconds` above is computed
+     from the instants, not from this stamp. */
+  const back = Math.max(0, Math.floor((now - endedAt) / 1000));
   const STAMP = `ended_at = NOW() - INTERVAL ${back} SECOND, seconds = ${Number(seconds) || 0}`;
   const attempts = [
     [`${STAMP}, ended_reason = $1, hold_note = $2`, [why, text, running.id], '$3'],
@@ -589,16 +616,38 @@ async function heldFor(db, assetId, userId) {
  */
 function describePause(row) {
   const byStudio = row.ended_reason === REASONS.off_hours;
+  // Only worth saying for the automatic one — somebody who chose to stop knows
+  // perfectly well when they can start again.
+  const opensAt = byStudio ? nextOpening() : null;
   return {
     since: row.ended_at,
     note: row.hold_note || null,
     round: Number(row.round) || null,
     reason: row.ended_reason || REASONS.held,
     byStudio,
-    // Only worth saying for the automatic one — somebody who chose to stop
-    // knows perfectly well when they can start again.
-    opensAt: byStudio ? nextOpening() : null,
+    opensAt,
+    /* WHICH scheduled stop this is, because the two need different sentences.
+     *
+     * "The working day ended" is the wrong thing to tell somebody at ten past
+     * eleven — the studio is open, they are at their desk, and it is the
+     * morning break that stopped the clock. The screen said that for every
+     * automatic pause, which was true when the only one was seven o'clock and
+     * became wrong the moment breaks started stopping the clock too.
+     *
+     * Worked out from WHEN it starts again rather than from the stamp: a
+     * resume later the same IST day is a break, and one on another day is the
+     * end of the day or a day the studio does not work. That avoids converting
+     * a stored DATETIME, which this module never does — see the note above
+     * AGE. */
+    pausedFor: byStudio ? (sameDayResume(opensAt) ? 'break' : 'day') : null,
   };
+}
+
+// Does recording pick up again later on the same IST day it stopped?
+function sameDayResume(opensAt) {
+  if (!opensAt) return false;
+  const now = Date.now();
+  return workingTime.istPartsOf(now).day === workingTime.istPartsOf(Date.parse(opensAt)).day;
 }
 
 /* "This row is the newest stretch of this person's work on this asset, and it

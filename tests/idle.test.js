@@ -364,17 +364,22 @@ test('idle, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     /* A week I can check by hand: Mon 2026-03-02 to Fri 2026-03-06, an 8-hour
        day, so 40 hours expected each.
 
-       THE CONFIGURED LUNCH BREAK COMES OFF TRACKED TIME. The default schedule
-       has lunch at 13:00-14:00, and every span below starts at 09:00 and runs
-       past 14:00, so each day loses exactly one hour to it. That is what the
-       break windows are for: a timer left running through lunch is not an hour
-       worked. expectedHours is untouched — it is what the studio DECLARES a day
-       to be, and taking breaks off that as well would count them twice.
+       THE CONFIGURED BREAKS COME OFF TRACKED TIME. The studio's schedule has
+       three — 11:00-11:15, 13:00-14:00 and 16:00-16:15 — and the spans below
+       are placed to cross different numbers of them, so a change to any one of
+       the three moves a different figure here rather than all of them
+       together. That is what the break windows are for: a timer left running
+       through lunch is not an hour worked. expectedHours is untouched — it is
+       what the studio DECLARES a day to be, and taking breaks off that as well
+       would count them twice.
 
-         ana  2 days of 09:00-15:00, 6h each less 1h lunch -> 5 + 5 = 10h
-              idle 40 - 10 = 30h; 30/40 = 75%; 30/5 days = 6.0 a day
-         bo   5 days of 09:00-17:00, 8h each less 1h lunch -> 7 x 5 = 35h
-              idle 40 - 35 =  5h;  5/40 = 12.5%
+         ana  2 days of 09:00-15:00. Crosses the morning break and lunch, not
+              the afternoon one: 6h - 0.25 - 1 = 4.75 each -> 9.5h
+              idle 40 - 9.5 = 30.5h; 30.5/40 = 76.25%; 30.5/5 days = 6.1 a day
+              (the report shows hours and percentages to one decimal place)
+         bo   5 days of 09:00-17:00. Crosses all three:
+              8h - 0.25 - 1 - 0.25 = 6.5 each -> 32.5h
+              idle 40 - 32.5 = 7.5h; 7.5/40 = 18.75%
          cy   nothing                                      ->         0h
               idle 40; 100% */
     const plan = {
@@ -414,14 +419,14 @@ test('idle, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(d.expectedHours, 40);
 
     const by = Object.fromEntries(d.rows.map((r) => [r.name, r]));
-    assert.strictEqual(by['Ana Lee'].engagedHours, 10);
-    assert.strictEqual(by['Ana Lee'].idleHours, 30);
-    assert.strictEqual(by['Ana Lee'].idlePercent, 75);
-    assert.strictEqual(by['Ana Lee'].idlePerDay, 6);
+    assert.strictEqual(by['Ana Lee'].engagedHours, 9.5);
+    assert.strictEqual(by['Ana Lee'].idleHours, 30.5);
+    assert.strictEqual(by['Ana Lee'].idlePercent, 76.3);   // 76.25, to one decimal
+    assert.strictEqual(by['Ana Lee'].idlePerDay, 6.1);
 
-    assert.strictEqual(by['Bo Chen'].engagedHours, 35);
-    assert.strictEqual(by['Bo Chen'].idleHours, 5);
-    assert.strictEqual(by['Bo Chen'].idlePercent, 12.5);
+    assert.strictEqual(by['Bo Chen'].engagedHours, 32.5);
+    assert.strictEqual(by['Bo Chen'].idleHours, 7.5);
+    assert.strictEqual(by['Bo Chen'].idlePercent, 18.8);   // 18.75, to one decimal
 
     // The person with nothing at all is exactly who a capacity report is for.
     assert.strictEqual(by['Cy Dean'].engagedHours, 0);
@@ -437,10 +442,11 @@ test('idle, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(monday.workingDays, 1);
     assert.strictEqual(monday.expectedHours, 8);
     const ana = monday.rows.find((r) => r.name === 'Ana Lee');
-    /* 09:00-15:00 is six hours, one of which was lunch. */
-    assert.strictEqual(ana.engagedHours, 5);
-    assert.strictEqual(ana.idleHours, 3);
-    assert.strictEqual(ana.idlePercent, 37.5);
+    /* 09:00-15:00 is six hours, of which fifteen minutes were the morning
+       break and an hour was lunch. */
+    assert.strictEqual(ana.engagedHours, 4.8);    // 4.75, to one decimal
+    assert.strictEqual(ana.idleHours, 3.2);       // 8 less the 4.8 shown above
+    assert.strictEqual(ana.idlePercent, 40);      // 3.2 of the 8 shown above
 
     const saturday = (await as('root', '/idle/report?period=day&on=2026-03-07')).body;
     assert.strictEqual(saturday.workingDays, 0);

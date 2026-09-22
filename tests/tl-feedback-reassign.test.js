@@ -32,7 +32,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const workflow = require('../src/asset-workflow');
-const { config, resetSchema, startServer, stopServer, api, SKIP_REASON } = require('./helpers');
+const { config, resetSchema, startServer, stopServer, api, openStudio, SKIP_REASON } = require('./helpers');
 
 const cfg = config('tlfeedback');
 const PAGE = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
@@ -118,6 +118,14 @@ test('reassigning out of TL Feedbacks', { skip: cfg ? false : SKIP_REASON }, asy
       body: { token: 'test-bootstrap-token', name: 'Root Admin', email: 'root@zvky.test', password: PASSWORD },
     });
     tok.root = await login('root@zvky.test');
+    /* Hold the studio open for this suite.
+     *
+     * Recording now stops at each break as well as at the end of the day, so a
+     * session this suite starts and expects to still be OPEN would be put down
+     * under it at 11:00, at 13:00, at 16:00 or after 19:00 IST — and the suite
+     * has to pass at any hour. This pins that one input; see openStudio in
+     * tests/helpers.js. */
+    await openStudio(server.base, tok.root);
 
     const make = async (key, name, email, role, teamLeadId) => {
       const r = await as('root', '/users', {

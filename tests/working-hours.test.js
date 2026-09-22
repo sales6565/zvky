@@ -141,32 +141,86 @@ test('a studio that works Saturdays gets its Saturdays', () => {
     'the same two hours, now that the studio says it works them');
 });
 
-test('the boundaries: when the window shuts, and when it opens again', () => {
-  assert.strictEqual(wt.closesAt(ist(`${WED}18:45:00`), STUDIO), ist(`${WED}19:00:00`),
+test('the boundaries: when recording stops, and when it starts again', () => {
+  assert.strictEqual(wt.stopsAt(ist(`${WED}18:45:00`), STUDIO), ist(`${WED}19:00:00`),
     'a timer running at a quarter to seven is put down at seven');
-  assert.strictEqual(wt.closesAt(ist(`${WED}21:00:00`), STUDIO), null,
+  assert.strictEqual(wt.stopsAt(ist(`${WED}21:00:00`), STUDIO), null,
     'and one started at nine has nothing left to run until');
-  assert.strictEqual(wt.closesAt(ist(`${SAT}11:00:00`), STUDIO), null, 'nor one started on a Saturday');
+  assert.strictEqual(wt.stopsAt(ist(`${SAT}11:00:00`), STUDIO), null, 'nor one started on a Saturday');
 
-  assert.strictEqual(wt.opensAt(ist(`${FRI}21:00:00`), STUDIO), ist(`${MON}09:30:00`),
+  assert.strictEqual(wt.resumesAt(ist(`${FRI}21:00:00`), STUDIO), ist(`${MON}09:30:00`),
     'Friday night waits for Monday morning, not Saturday');
-  assert.strictEqual(wt.opensAt(ist(`${WED}08:00:00`), STUDIO), ist(`${WED}09:30:00`),
+  assert.strictEqual(wt.resumesAt(ist(`${WED}08:00:00`), STUDIO), ist(`${WED}09:30:00`),
     'and an early start waits only for the day to begin');
-  assert.strictEqual(wt.opensAt(ist(`${WED}11:00:00`), STUDIO), ist(`${WED}11:00:00`),
-    'already open means now');
-  assert.strictEqual(wt.opensAt(ist(`${WED}13:30:00`), STUDIO), ist(`${WED}13:30:00`),
-    'and lunch is inside the window — a break does not close the studio');
+  assert.strictEqual(wt.resumesAt(ist(`${WED}10:00:00`), STUDIO), ist(`${WED}10:00:00`),
+    'already recording means now');
 });
 
-test('a break does not stop the clock, it is only left out of the total', () => {
-  /* The distinction the studio asked for, stated as a test because the two
-     rules are easy to collapse into one. Lunch is subtracted; it does not send
-     anybody to press Resume at two o'clock. */
-  assert.strictEqual(wt.isOpen(ist(`${WED}13:30:00`), STUDIO), true, 'the studio is open at lunch');
-  assert.strictEqual(wt.closesAt(ist(`${WED}13:30:00`), STUDIO), ist(`${WED}19:00:00`),
-    'and the pause boundary is still the end of the day');
-  assert.strictEqual(wt.workingSecondsBetween(ist(`${WED}13:00:00`), ist(`${WED}14:00:00`), STUDIO), 0,
-    'but the hour itself is worth nothing');
+test('a break STOPS the clock, and starts it again at the far end', () => {
+  /* THIS USED TO ASSERT THE OPPOSITE, and the reversal is the studio's.
+   *
+   * A break was once inside the window: subtracted from the total, but not a
+   * boundary — the clock ran through lunch and the hour was taken off at the
+   * end, so nobody had to press anything at two o'clock. The studio's final
+   * recording schedule says the clock itself stops at eleven, at one and at
+   * four, and starts again at quarter past, at two and at quarter past.
+   *
+   * So "open" and "recording" are now one idea, and the three cases below are
+   * the three questions the application asks about any instant. */
+  const lunch = ist(`${WED}13:30:00`);
+  assert.strictEqual(wt.isRecording(lunch, STUDIO), false, 'nothing is recorded at lunch');
+  assert.strictEqual(wt.stopsAt(lunch, STUDIO), null,
+    'a timer started in the middle of one has nothing to run until');
+  assert.strictEqual(wt.resumesAt(lunch, STUDIO), ist(`${WED}14:00:00`),
+    'and picks up when the break ends, not at the end of the day');
+
+  /* The boundary is the START of the break for anything already running. */
+  assert.strictEqual(wt.stopsAt(ist(`${WED}12:45:00`), STUDIO), ist(`${WED}13:00:00`),
+    'a timer running at a quarter to one is put down at one');
+  assert.strictEqual(wt.startsAt(ist(`${WED}14:30:00`), STUDIO), ist(`${WED}14:00:00`),
+    'and the stretch after it began at two');
+
+  // Exact, to the minute, at each edge.
+  assert.strictEqual(wt.isRecording(ist(`${WED}12:59:59`), STUDIO), true);
+  assert.strictEqual(wt.isRecording(ist(`${WED}13:00:00`), STUDIO), false, 'stops AT one, not after it');
+  assert.strictEqual(wt.isRecording(ist(`${WED}13:59:59`), STUDIO), false);
+  assert.strictEqual(wt.isRecording(ist(`${WED}14:00:00`), STUDIO), true, 'and starts AT two');
+
+  // The hour is still worth nothing, which was always true and still is.
+  assert.strictEqual(wt.workingSecondsBetween(ist(`${WED}13:00:00`), ist(`${WED}14:00:00`), STUDIO), 0);
+});
+
+test('the studio\'s own three breaks, at the minute', () => {
+  /* The schedule as specified: 09:30-19:00 with breaks at 11:00-11:15,
+     13:00-14:00 and 16:00-16:15. Written out rather than read from the
+     defaults, so a change to them fails here loudly. */
+  const SPEC = {
+    workingDays: [1, 2, 3, 4, 5],
+    dayStart: 9 * 60 + 30,
+    dayEnd: 19 * 60,
+    breaks: [
+      { start: 11 * 60, end: 11 * 60 + 15 },
+      { start: 13 * 60, end: 14 * 60 },
+      { start: 16 * 60, end: 16 * 60 + 15 },
+    ],
+  };
+  assert.deepStrictEqual(wt.openSpans(SPEC),
+    [[570, 660], [675, 780], [840, 960], [975, 1140]],
+    'four recordable stretches, with the three breaks cut out');
+  assert.strictEqual(wt.workableMinutesPerDay(SPEC), 480,
+    'and they come to exactly eight hours, which is the day the Time Sheet allows');
+
+  const stops = (t) => wt.stopsAt(ist(`${WED}${t}`), SPEC);
+  const resumes = (t) => wt.resumesAt(ist(`${WED}${t}`), SPEC);
+  assert.strictEqual(stops(`10:45:00`), ist(`${WED}11:00:00`), 'the morning break');
+  assert.strictEqual(resumes(`11:07:00`), ist(`${WED}11:15:00`));
+  assert.strictEqual(stops(`12:45:00`), ist(`${WED}13:00:00`), 'lunch');
+  assert.strictEqual(resumes(`13:30:00`), ist(`${WED}14:00:00`));
+  assert.strictEqual(stops(`15:45:00`), ist(`${WED}16:00:00`), 'the afternoon break');
+  assert.strictEqual(resumes(`16:10:00`), ist(`${WED}16:15:00`));
+  assert.strictEqual(stops(`18:45:00`), ist(`${WED}19:00:00`), 'and the end of the day');
+  assert.strictEqual(wt.resumesAt(ist(`${WED}19:30:00`), SPEC), ist('2026-09-17T09:30:00'),
+    'which waits for the next morning');
 });
 
 test('a corrupt stamp cannot spin the walk forever', () => {
@@ -439,22 +493,22 @@ test('recording against the studio clock', { skip: cfg ? false : SKIP_REASON }, 
       'which is in the future, or it would not be worth saying');
   });
 
-  await t.test('a paused timer can still be picked up by hand', async () => {
-    /* THIS USED TO ASSERT THE OPPOSITE, and the change is the studio's, not a
-       correction. The rule was that a paused timer stayed down until somebody
-       pressed Resume, on the reasoning that starting it for them charges the
-       asset for a morning nobody was at their desk. The studio has since chosen
-       the other way: the clock starts again on its own at half past nine the
-       next working day. tests/auto-resume.test.js is that behaviour, with the
-       four cases where it does not.
+  await t.test('the schedule\'s pause has no manual way back; a hold still does', async () => {
+    /* THIS USED TO ASSERT THAT A PAUSED TIMER WAS RESUMED BY HAND, and the
+       reversal is the studio's, twice over. First the clock began starting
+       itself the next working morning; now the manual path for it is gone
+       altogether, because the schedule handles every stop and start and a
+       button offering to do it by hand is a claim about who is in charge that
+       is not true.
        
-       What is left here, and is still worth pinning, is the manual path. It did
-       not go away — it is how somebody picks the work up BEFORE the studio
-       opens — and the one-active-task rule it obeys is checked below.
+       Both halves are here because they are one decision. The schedule's pause
+       is refused — and refused by the API, not merely hidden, so the rule does
+       not depend on the page. A hold somebody made still resumes, and must: the
+       schedule does not undo it, so the button is the only way back.
        
        The sweep is off in this suite, which is why the window opening below
-       changes nothing on its own: nothing here is claiming it would in
-       production. That is what the other file is for. */
+       changes nothing on its own. tests/auto-resume.test.js is where the
+       automatic side is proved. */
     await setWindow({ days: [someOtherDay()], from: '09:30', to: '19:00' });
     const asset = await assignedAsset();
     await as('ana', `/assets/${asset}/start`, { method: 'POST' });
@@ -463,12 +517,31 @@ test('recording against the studio clock', { skip: cfg ? false : SKIP_REASON }, 
     await setWindow({ days: [1, 2, 3, 4, 5, 6, 7], from: 0, to: 24 * 60 });
     const stillPaused = await workOf(asset, 'ana');
     assert.ok(stillPaused.held, 'paused, and it is the sweep that lifts that — not a page load');
-    assert.strictEqual((await sessions(asset)).length, 1);
+    assert.strictEqual(stillPaused.held.byStudio, true, 'by the schedule, not the person');
 
-    const resumed = await as('ana', `/assets/${asset}/resume`, { method: 'POST' });
+    const refused = await as('ana', `/assets/${asset}/resume`, { method: 'POST' });
+    assert.strictEqual(refused.status, 409, JSON.stringify(refused.body));
+    assert.strictEqual(refused.body.scheduled, true, 'and says why');
+    assert.strictEqual((await sessions(asset)).length, 1, 'nothing was opened');
+
+    /* Now a hold, which the same endpoint still lifts.
+       
+       On a SECOND asset, and that is itself part of the rule: the first one is
+       schedule-paused, and there is no way to get it running again before the
+       schedule does — not Resume, which is refused above, and not Hold either,
+       since there is nothing open to put down. Waiting is the whole design. */
+    const other = await assignedAsset();
+    const began = await as('ana', `/assets/${other}/start`, { method: 'POST' });
+    assert.strictEqual(began.status, 200, JSON.stringify(began.body));
+    const heldNow = await as('ana', `/assets/${other}/hold`, { method: 'POST' });
+    assert.strictEqual(heldNow.status, 200, JSON.stringify(heldNow.body));
+    assert.strictEqual((await workOf(other, 'ana')).held.byStudio, false,
+      'their own hold, not the schedule\'s');
+
+    const resumed = await as('ana', `/assets/${other}/resume`, { method: 'POST' });
     assert.strictEqual(resumed.status, 200, JSON.stringify(resumed.body));
-    const rows = await sessions(asset);
-    assert.strictEqual(rows.length, 2, 'resuming opens a new stretch');
+    const rows = await sessions(other);
+    assert.ok(rows.length >= 2, 'resuming opens a new stretch');
     /* By which row is OPEN rather than by position. Both rows can land in the
        same second, and then ORDER BY started_at, id is the uuid's order, which
        is nobody's order — a test that indexed [1] passed or failed on a coin
@@ -478,7 +551,7 @@ test('recording against the studio clock', { skip: cfg ? false : SKIP_REASON }, 
 
     /* Close it again: the one-active-task rule is shared state, and a session
        left open here refuses the next case's Accept and Start. */
-    await as('ana', `/assets/${asset}/submit`, { method: 'POST', body: { link: 'https://example.com/v5' } });
+    await as('ana', `/assets/${other}/submit`, { method: 'POST', body: { link: 'https://example.com/v5' } });
   });
 
   /* --- the cutoff ------------------------------------------------------------ */

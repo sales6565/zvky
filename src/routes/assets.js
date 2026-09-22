@@ -1916,6 +1916,30 @@ router.post('/:id/resume', requirePermission('asset.hold'), async (req, res) => 
     });
   }
 
+  /* A PAUSE THE RECORDING SCHEDULE MADE IS NOT RESUMED BY HAND.
+   *
+   * The schedule stops the clock at each break and at the end of the day, and
+   * starts it again by itself — at quarter past eleven, at two, at quarter past
+   * four, and at half past nine the next working morning. The panel offers no
+   * button for it, and this is why that is safe to rely on rather than merely
+   * tidy: without this, the endpoint would still take the request and open a
+   * session in the middle of lunch, which the schedule would then close again
+   * on its next pass. Two rules fighting over one row, with the loser's
+   * behaviour depending on which ran last.
+   *
+   * A deliberate hold still resumes here, and must — the schedule does not undo
+   * it, so the button is the only way back from it. */
+  if (held.byStudio) {
+    return res.status(409).json({
+      error: held.opensAt
+        ? 'The recording schedule paused this and starts it again on its own — '
+          + 'there is nothing to press. Put it on hold if you will not be working on it.'
+        : 'The recording schedule paused this and starts it again on its own.',
+      held,
+      scheduled: true,
+    });
+  }
+
   /* Resuming is starting, so it obeys the rule starting obeys.
    *
    * Without this, Hold would be a way around the one-active-task rule rather

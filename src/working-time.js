@@ -157,58 +157,98 @@ function workingSecondsBetween(startMs, endMs, schedule) {
   return Math.round(ms / 1000);
 }
 
-/* Is the studio open at this instant?
- *
- * Open, not working: a break is inside the window, so this is true during
- * lunch. That is deliberate and is the difference between the two rules the
- * studio asked for — a break is subtracted from the total, it does not stop the
- * clock and send somebody to press Resume when they get back from it. Only the
- * end of the day and a non-working day do that.
- */
-function isOpen(ms, schedule) {
-  const { minute, dow } = istPartsOf(ms);
-  return isWorkingDay(dow, schedule)
-    && minute >= Number(schedule.dayStart) && minute < Number(schedule.dayEnd);
+/* The recordable spans of ONE DAY, by day number. Empty on a day the studio
+   does not work, which is what makes every walk below skip weekends without
+   any of them knowing what a weekend is. */
+function spansOn(day, schedule) {
+  return isWorkingDay(dowOf(day), schedule) ? openSpans(schedule) : [];
 }
 
-/* When the window this instant sits in closes — or null if it is already shut.
+/* Is time being recorded at this instant?
  *
- * The auto-pause boundary, and the whole of it. Null is the answer for an
- * instant at nine in the evening or on a Saturday, and callers read that null
- * as "there is nothing to run until", which is what makes a timer started
- * outside hours and a timer that ran past seven end up in the same state by the
- * same route rather than through two rules that could drift apart.
+ * A working day, inside the day, AND NOT INSIDE A BREAK. That last clause is
+ * the studio's final rule and it reverses what this function used to say: a
+ * break was once "open but not working" — subtracted from the total without
+ * stopping the clock, so nobody had to press anything at two o'clock. The
+ * studio now wants the clock itself to stop at eleven, at one and at four, and
+ * start again at quarter past, at two and at quarter past.
+ *
+ * So there is no longer a difference between "open" and "recording", and this
+ * file no longer draws one. Everything asks the same question, which is the
+ * only question the application actually has: is this instant being counted?
  */
-function closesAt(ms, schedule) {
-  const { day, minute, dow } = istPartsOf(ms);
-  if (!isWorkingDay(dow, schedule)) return null;
-  if (minute >= Number(schedule.dayEnd)) return null;
-  return instantAt(day, Number(schedule.dayEnd));
+function isRecording(ms, schedule) {
+  const { day, minute } = istPartsOf(ms);
+  return spansOn(day, schedule).some(([from, to]) => minute >= from && minute < to);
 }
 
-/* When the studio next opens, at or after this instant.
+/* When the recordable span this instant sits in ENDS — or null if it is not in
+ * one.
  *
- * Returns the instant itself when it is already inside the window, so a caller
- * can use it as "from when does this count" without asking isOpen first.
+ * The auto-pause boundary, and the whole of it. It is now the next stop of any
+ * kind: the start of a break as much as the end of the day, so a timer running
+ * at eleven is put down at eleven and one running at seven is put down at
+ * seven, by one rule rather than two.
+ *
+ * Null is the answer for an instant at nine in the evening, on a Saturday, or
+ * in the middle of lunch, and callers read that null as "there is nothing for
+ * this to have run until" — which is what makes a timer started inside a break
+ * and a timer that ran into one end up in the same state by the same route.
+ */
+function stopsAt(ms, schedule) {
+  const { day, minute } = istPartsOf(ms);
+  for (const [from, to] of spansOn(day, schedule)) {
+    if (minute >= from && minute < to) return instantAt(day, to);
+  }
+  return null;
+}
+
+/* And when it STARTED — the other end of the same span.
+ *
+ * What the automatic resume back-dates to. Half past nine on an ordinary
+ * morning, quarter past eleven after the morning break, two o'clock after
+ * lunch: the beginning of the stretch being counted now, whichever stretch
+ * that is. Null when nothing is being recorded.
+ */
+function startsAt(ms, schedule) {
+  const { day, minute } = istPartsOf(ms);
+  for (const [from, to] of spansOn(day, schedule)) {
+    if (minute >= from && minute < to) return instantAt(day, from);
+  }
+  return null;
+}
+
+/* When recording next becomes possible, at or after this instant.
+ *
+ * Returns the instant itself when it is already inside a recordable span, so a
+ * caller can use it as "from when does this count" without asking isRecording
+ * first.
+ *
+ * It now lands on the end of a break as readily as on the start of a day —
+ * paused at one o'clock, this says two — and it still skips every day the
+ * studio does not work, because spansOn hands back nothing for those. A Friday
+ * evening pause therefore answers Monday morning without this function
+ * containing the word weekend.
+ *
  * Scans a bounded number of days rather than looping: a schedule with no
  * working days cannot be saved, but a database edited by hand could hold one,
  * and an unbounded scan would hang the request rather than report the problem.
  */
-function opensAt(ms, schedule) {
-  if (isOpen(ms, schedule)) return ms;
+function resumesAt(ms, schedule) {
   const { day, minute } = istPartsOf(ms);
-  const dayStart = Number(schedule.dayStart);
   for (let i = 0; i <= 14; i += 1) {
     const d = day + i;
-    if (!isWorkingDay(dowOf(d), schedule)) continue;
-    if (i === 0 && minute >= dayStart) continue;  // today, but already past opening
-    return instantAt(d, dayStart);
+    for (const [from, to] of spansOn(d, schedule)) {
+      if (i > 0) return instantAt(d, from);        // the first span of a later day
+      if (minute >= from && minute < to) return ms;  // already inside one
+      if (minute < from) return instantAt(d, from);  // later today
+    }
   }
   return null;
 }
 
 module.exports = {
   IST_OFFSET_MINUTES,
-  istPartsOf, dowOf, instantAt, openSpans, workableMinutesPerDay,
-  workingSecondsBetween, isOpen, closesAt, opensAt,
+  istPartsOf, dowOf, instantAt, openSpans, spansOn, workableMinutesPerDay,
+  workingSecondsBetween, isRecording, stopsAt, startsAt, resumesAt,
 };

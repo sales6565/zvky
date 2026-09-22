@@ -23,17 +23,28 @@ const DEFAULTS = {
      lunchStart/lunchEnd are null when the studio has no fixed break. */
   dayStart: 9 * 60 + 30,   // 09:30
   dayEnd: 19 * 60,         // 19:00
-  lunchStart: 13 * 60,     // 13:00
-  lunchEnd: 14 * 60,       // 14:00
-  /* NULL, not an invented time. Lunch arrived with 13:00-14:00 because that was
-     the studio's actual break; nobody has said when their morning and evening
-     breaks are, and defaulting them would quietly subtract half an hour a day
+  lunchStart: 13 * 60,           // 13:00
+  lunchEnd: 14 * 60,             // 14:00
+  /* THE STUDIO HAS NOW NAMED ALL THREE, so all three are here.
+     
+     These two were deliberately null: lunch arrived with 13:00-14:00 because
+     that was the studio's actual break, nobody had said when the other two
+     were, and inventing them would have quietly subtracted half an hour a day
      from every person's tracked time in a deployment that never asked for it.
-     Null means "no such break" and the maths skips it. */
-  morningStart: null,
-  morningEnd: null,
-  eveningStart: null,
-  eveningEnd: null,
+     The studio has since asked, in as many words, so the reason for the null
+     has gone.
+     
+     The arithmetic is exact and worth checking rather than trusting: 09:30 to
+     19:00 is 570 minutes, less 60 for lunch and 15 for each of these, leaves
+     480 — an eight-hour day, which is the hoursPerDay above and the most the
+     Time Sheet will take in a day. The window Settings will refuse is the one
+     that leaves less than that, so this schedule sits exactly on the line it
+     has to sit on. Widening a break without widening the day is refused, and
+     that is the right refusal. */
+  morningStart: 11 * 60,         // 11:00
+  morningEnd: 11 * 60 + 15,      // 11:15
+  eveningStart: 16 * 60,         // 16:00
+  eveningEnd: 16 * 60 + 15,      // 16:15
 };
 
 /* The three breaks, as one list.

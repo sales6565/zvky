@@ -130,15 +130,17 @@ test('team capacity', { skip: cfg ? false : SKIP_REASON }, async (t) => {
      * two places. That is what this test is here to prove, and 8 would mean it
      * had stopped being true.
      *
-     * From that five, the studio's configured lunch break (13:00-14:00, the
-     * default) comes off: an hour with a timer running through lunch is not an
-     * hour worked. So FOUR is the answer.
+     * From that five, the studio's configured breaks come off: an hour with a
+     * timer running through lunch is not an hour worked, and nor is a quarter
+     * of one through the afternoon break. 13:00-18:00 crosses lunch
+     * (13:00-14:00) and the afternoon break (16:00-16:15), so 5 - 1 - 0.25 =
+     * 3.75, which the report shows to one decimal place as 3.8.
      *
      * Bo does nothing at all, so his 8 available hours are 8 idle.
      *
      *   available  2 people x 1 working day x 8h = 16.0
-     *   consumed   Ana (5.0 union - 1.0 lunch) + Bo 0 = 4.0
-     *   idle       16.0 - 4.0 = 12.0
+     *   consumed   Ana (5.0 union - 1.0 lunch - 0.25 break) + Bo 0 = 3.8
+     *   idle       16.0 - 3.8 = 12.2
      */
     await sql(cfg, 'DELETE FROM work_sessions');
     await session(people.ana, asset.one.id, `${MONDAY} 13:00:00`, `${MONDAY} 17:00:00`);
@@ -147,12 +149,12 @@ test('team capacity', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     const report = (await as('root', `/idle/report?from=${MONDAY}&to=${MONDAY}`)).body;
     assert.strictEqual(report.totals.people, 2, 'the two artists, and not Root');
     assert.strictEqual(report.totals.expectedHours, 16, '2 people x 1 day x 8h');
-    assert.strictEqual(report.totals.engagedHours, 4,
-      'the UNION of 13-17 and 14-18 (5h), less the 13:00-14:00 lunch — never their 8h sum');
-    assert.strictEqual(report.totals.idleHours, 12);
+    assert.strictEqual(report.totals.engagedHours, 3.8,
+      'the UNION of 13-17 and 14-18 (5h), less lunch and the afternoon break — never their 8h sum');
+    assert.strictEqual(report.totals.idleHours, 12.2);
 
     const ana = report.rows.find((r) => r.email === 'ana@zvky.test');
-    assert.strictEqual(ana.engagedHours, 4, 'and per person too');
+    assert.strictEqual(ana.engagedHours, 3.8, 'and per person too');
   });
 
   await t.test('a span across a weekend contributes only its working hours', async () => {
@@ -161,33 +163,37 @@ test('team capacity', { skip: cfg ? false : SKIP_REASON }, async (t) => {
      * Bo starts on Friday at 16:00 and hands in on the following Monday at
      * 10:00. That is 66 hours of wall clock. Of it:
      *
-     *   Friday    16:00-24:00 = 8h, capped at the 8h standard day  -> 8.0
-     *   Sat, Sun  not working days                                 -> 0
-     *   Monday    00:00-10:00 = 10h, capped at 8                   -> 8.0
+     *   Friday    16:00-24:00 = 8h, less the 16:00-16:15 afternoon break,
+     *             so 7.75 — under the 8h standard day, so the cap does not
+     *             bite                                              -> 7.8
+     *   Sat, Sun  not working days                                  -> 0
+     *   Monday    00:00-10:00 = 10h, no break before 11:00, capped at 8
+     *                                                               -> 8.0
      *
-     * so 16 hours across the two working days it touches, not 66.
+     * so 15.8 hours across the two working days it touches, not 66.
      *
      * Measured over Friday alone to keep the arithmetic to one day:
      *   available  2 people x 1 day x 8h = 16.0
-     *   consumed   Bo 8.0 (capped) + Ana 0 = 8.0
-     *   idle       8.0
+     *   consumed   Bo 7.8 + Ana 0 = 7.8
+     *   idle       8.2
      */
     await sql(cfg, 'DELETE FROM work_sessions');
     await session(people.bo, asset.three.id, `${FRIDAY} 16:00:00`, `${NEXT_MONDAY} 10:00:00`);
 
     const friday = (await as('root', `/idle/report?from=${FRIDAY}&to=${FRIDAY}`)).body;
     assert.strictEqual(friday.totals.expectedHours, 16);
-    assert.strictEqual(friday.totals.engagedHours, 8,
-      'a day counts at most one standard day however long the span ran');
-    assert.strictEqual(friday.totals.idleHours, 8);
+    assert.strictEqual(friday.totals.engagedHours, 7.8,
+      'a day counts at most one standard day however long the span ran, '
+      + 'and the afternoon break comes out of what is left');
+    assert.strictEqual(friday.totals.idleHours, 8.2);
 
     /* And across the whole stretch: three days of the range are working days
        (Fri, Mon — Sat and Sun are not), so available is 2 people x 2 days x 8h
-       = 32, and Bo contributed 8 + 8 = 16. */
+       = 32, and Bo contributed 7.75 + 8 = 15.75, shown as 15.8. */
     const across = (await as('root', `/idle/report?from=${FRIDAY}&to=${NEXT_MONDAY}`)).body;
     assert.strictEqual(across.workingDays, 2, 'Friday and Monday; the weekend is not counted');
     assert.strictEqual(across.totals.expectedHours, 32);
-    assert.strictEqual(across.totals.engagedHours, 16, 'not the 66 hours of wall clock');
+    assert.strictEqual(across.totals.engagedHours, 15.8, 'not the 66 hours of wall clock');
   });
 
   await t.test('the panel shows all three periods, and each adds up', async () => {
@@ -221,9 +227,13 @@ test('team capacity', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       assert.strictEqual(period.to, today, `${period.label} runs to today, not past it`);
     }
 
-    // Today's three hours are in all three periods, since all three include today.
+    /* Today's span is 09:00-12:00, which crosses the 11:00-11:15 morning break,
+       so it is worth two and three quarter hours rather than three — and all
+       three periods include today, so all three carry it. */
     for (const period of cap.periods) {
-      assert.ok(period.consumedHours >= 3, `${period.label} includes today's 3 hours`);
+      assert.ok(period.consumedHours >= 2.75,
+        `${period.label} includes today's 09:00-12:00 less the morning break: `
+        + `got ${period.consumedHours}`);
     }
 
     /* And the periods nest: a day is inside the month is inside the year, so

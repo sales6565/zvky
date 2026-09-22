@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { config, resetSchema, startServer, stopServer, api, sql, systemClientId, SKIP_REASON } = require('./helpers');
+const { config, resetSchema, startServer, stopServer, api, sql, systemClientId, openStudio, SKIP_REASON } = require('./helpers');
 const submissionLink = require('../src/submission-link');
 
 const cfg = config('assetpanel');
@@ -58,6 +58,14 @@ test('the asset side panel', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       method: 'POST', body: { email, password: PASSWORD },
     })).body.token;
     token.root = await login('root@zvky.test');
+    /* Hold the studio open for this suite.
+     *
+     * Recording now stops at each break as well as at the end of the day, so a
+     * session this suite starts and expects to still be OPEN would be put down
+     * under it at 11:00, at 13:00, at 16:00 or after 19:00 IST — and the suite
+     * has to pass at any hour. This pins that one input; see openStudio in
+     * tests/helpers.js. */
+    await openStudio(server.base, token.root);
     const clientId = await systemClientId(server.base, token.root);
     projectId = (await as('root', '/projects', {
       method: 'POST', body: { clientId, name: 'Nightgarden' },

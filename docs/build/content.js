@@ -498,19 +498,33 @@ module.exports = [
     + 'any stretch you put on hold (7.6).'),
   shot('13-work-in-progress', 'The same asset once started. The panel now shows when you started, and Time Spent is running.'),
 
-  h2('7.3a Only the hours the studio is open'),
+  h2('7.3a The recording schedule'),
   p('The clock counts working time, not wall-clock time. Start an asset at ten to seven on a Friday and submit it on '
     + 'Monday morning and it has cost about two hours, not sixty-three. What counts is set in Settings \u2192 '
-    + 'Working Hours \u2014 by default Monday to Friday, 09:30 to 19:00, with the configured breaks taken out \u2014 '
-    + 'and it is the same setting the Idle report and the Time Sheet already read.'),
+    + 'Working Hours, and it is the same setting the Idle report and the Time Sheet already read.'),
+  p('THE STUDIO\u2019S SCHEDULE, as shipped:'),
+  table(['', 'IST'], [
+    ['Recording days', 'Monday to Friday. Nothing on Saturday or Sunday, ever.'],
+    ['Recording hours', '09:30 \u2013 19:00'],
+    ['Morning break', '11:00 \u2013 11:15 \u2014 recording stops'],
+    ['Lunch', '13:00 \u2013 14:00 \u2014 recording stops'],
+    ['Afternoon break', '16:00 \u2013 16:15 \u2014 recording stops'],
+    ['A full day', '8 hours, which is exactly what the Time Sheet allows in a day'],
+  ]),
   bullets([
-    'It is IST, always. The studio’s window is a wall clock in one office, so neither the server’s timezone nor your laptop’s changes what is recorded. Somebody working from another country has their hours measured against the studio’s day, not their own.',
-    'Starting outside working hours is allowed. The click is never refused — you are taking the work on, and being made to wait until morning would only mean recording a start time that was not true. The timer simply begins paused and accrues nothing.',
-    'A timer running when the day ends is put down at that moment. Not when anybody noticed, and not when the server got round to it: the cutoff is exact, so an evening left running costs the asset nothing.',
-    'It starts again on its own the next working morning. At 09:30 the clock picks up where it left off, with nobody pressing anything \u2014 and back-dated to 09:30, so signing in at eleven finds the morning already counted rather than an hour and a half missing. Weekends and any other non-working day are skipped: a timer put down at seven on Friday starts again on Monday. See 7.3b for the four cases where it does not.',
-    'Breaks are subtracted, they do not pause anything. Lunch comes out of the total without stopping the clock or asking you to press anything at two o’clock — only the end of the day and a non-working day do that.',
+    'It is IST, always. The studio\u2019s window is a wall clock in one office, so neither the server\u2019s timezone nor your laptop\u2019s changes what is recorded. Somebody working from another country has their hours measured against the studio\u2019s day, not their own.',
+    'A BREAK STOPS THE CLOCK and starts it again at the far end. A timer running at 10:45 is put down at 11:00 and picks up at 11:15; the same at one o\u2019clock and at four. This changed: a break used to be subtracted from the total without stopping anything.',
+    'A timer running when the day ends is put down at 19:00. Not when anybody noticed, and not when the server got round to it: the boundary is exact, so an evening left running costs the asset nothing.',
+    'It starts again on its own the next working morning, at 09:30, with nobody pressing anything \u2014 and back-dated to 09:30, so signing in at eleven finds the morning already counted. Weekends and any other non-working day are skipped: a timer put down at seven on Friday starts again on Monday. See 7.3b for the cases where it does not.',
+    'Starting outside a recording stretch is allowed. The click is never refused \u2014 you are taking the work on, and being made to wait would only mean recording a start time that was not true. The timer begins paused, accrues nothing, and joins the schedule at the next stretch.',
     'Public holidays are not recorded anywhere. A day the studio is shut for a festival still counts as a working day unless somebody changes the working days in Settings for that week.',
   ]),
+  note('There is no Resume button for any of this',
+    'Every stop and start above is the schedule\u2019s, and it makes them on the server whether or not anybody has '
+    + 'the app open. So there is nothing to press: the panel says which stop it is and when recording picks up, and '
+    + 'that is the whole of it.\n\n'
+    + 'Hold keeps its Resume, and that is a different thing \u2014 a pause YOU chose, which the schedule does not '
+    + 'undo, so the button is the only way back from it. The panel tells the two apart in as many words.'),
   p('WHERE THIS SHOWS UP. It is corrected at the source \u2014 one column, work_sessions.seconds \u2014 so every '
     + 'figure built on it moves together: Time Spent on the card and in the Assets List, the Efficiency report, the '
     + 'hours the Time Sheet suggests when you add a line, and the Fixed and Actual hours in the P&L. There is no '
@@ -536,10 +550,11 @@ module.exports = [
     + 'replaced, was a clock that stayed down until pressed and quietly lost a morning\u2019s real work.\n\n'
     + 'The panel says which state a task is in and the bell says when the clock started again, so the way to stop '
     + 'a figure you do not want is Hold. Breaks still come out either way.'),
-  p('The resume runs on the server, on a schedule, not when somebody opens the page \u2014 so it happens on a '
-    + 'morning when nobody has signed in yet, and a server restarted overnight does it on the way back up. Like '
-    + 'the cutoff, it is stamped at half past nine whatever time it actually ran, so a late tick costs nobody a '
-    + 'correct number.'),
+  p('Every stop and start runs on the server, on a schedule, not when somebody opens the page \u2014 so it '
+    + 'happens at eleven o\u2019clock with nobody looking, and a server restarted overnight does the missed '
+    + 'ones on the way back up. Each is stamped at its own boundary whatever time the check actually ran, so '
+    + 'a late tick costs nobody a correct number: open the app at ten and the state already reflects what '
+    + 'should have happened at half past nine.'),
 
   h2('7.4 Not before the start date'),
   p('An asset carrying a Start Date cannot be accepted before that day. The button is disabled until then and says '
@@ -570,7 +585,7 @@ module.exports = [
   steps([
     'With the asset In Progress, press Hold in the Time Spent box.',
     'Say why, in a line, or leave it blank \u2014 the reason is optional.',
-    'Press Resume when you pick it up again. (That is for a hold YOU made. A timer the studio paused at the end of the day starts again by itself the next working morning \u2014 7.3a.)',
+    'Press Resume when you pick it up again. (That is for a hold YOU made, and it is the only Resume left in the app. A pause the recording schedule made \u2014 a break, or the end of the day \u2014 starts again by itself and has no button; see 7.3a.)',
   ]),
   bullets([
     'Holding frees you to start something else. It is the one way to have a second task open without finishing the first.',

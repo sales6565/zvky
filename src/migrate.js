@@ -2021,22 +2021,62 @@ async function ensureBreakWindows(db, log) {
         AND COLUMN_NAME IN ('morning_start_min','morning_end_min','evening_start_min','evening_end_min')`
   );
   const have = new Set(rows.map((r) => r.COLUMN_NAME));
-  /* NULL, not a default time. The lunch columns arrived with 13:00-14:00
-     because that was the studio's actual break; nobody has told us when their
-     morning and evening breaks are, and inventing two is how a deployment ends
-     up quietly subtracting an hour a day nobody asked for. Null means "no such
-     break", and the maths skips it. */
   const add = [
     ['morning_start_min', 'SMALLINT NULL'],
     ['morning_end_min', 'SMALLINT NULL'],
     ['evening_start_min', 'SMALLINT NULL'],
     ['evening_end_min', 'SMALLINT NULL'],
   ].filter(([name]) => !have.has(name));
-  if (!add.length) return;
   for (const [name, type] of add) {
     await db.query(`ALTER TABLE work_schedule ADD COLUMN \`${name}\` ${type}`);
   }
-  log('Schema: work_schedule can hold a morning and an evening break. Both start unset.');
+  if (add.length) log('Schema: work_schedule can hold a morning and an evening break.');
+
+  /* AND THEY ARE NOW SET, ONCE, because the studio has named them: 11:00-11:15
+     and 16:00-16:15, alongside the lunch that was already there.
+     
+     These columns arrived NULL on purpose — inventing two breaks is how a
+     deployment ends up quietly subtracting half an hour a day nobody asked for
+     — and that reason has gone: the studio's final recording schedule names all
+     three. Changing the defaults alone would not do it, because a deployment
+     that already has this row never reads them.
+     
+     ONCE IS THE WHOLE DIFFICULTY. "Fill it in where it is null" looks right and
+     is not: this runs on every boot, so a studio that CLEARED its morning break
+     — which is null, and is the only way to say "we do not take one" — would
+     find it back the next time the process restarted, with no way to make the
+     change stick.
+     
+     So the fact that this has been done is recorded, on the row it is about
+     rather than in a migrations table this schema does not have. Stamped
+     whether or not anything needed filling, because "already had times" and
+     "has been offered them" are the same answer to the only question asked
+     here. A studio that clears a break afterwards keeps it cleared. */
+  const { rows: current } = await db.query(
+    `SELECT morning_start_min AS ms, morning_end_min AS me,
+            evening_start_min AS es, evening_end_min AS ee,
+            breaks_seeded_at AS seeded
+       FROM work_schedule WHERE id = 1`
+  ).catch(async (err) => {
+    if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
+    await db.query('ALTER TABLE work_schedule ADD COLUMN breaks_seeded_at DATETIME NULL');
+    return db.query(
+      `SELECT morning_start_min AS ms, morning_end_min AS me,
+              evening_start_min AS es, evening_end_min AS ee,
+              breaks_seeded_at AS seeded
+         FROM work_schedule WHERE id = 1`
+    );
+  });
+  if (!current.length || current[0].seeded) return;
+  const row = current[0];
+  const sets = ['breaks_seeded_at = NOW()'];
+  if (row.ms === null && row.me === null) sets.push('morning_start_min = 660, morning_end_min = 675');
+  if (row.es === null && row.ee === null) sets.push('evening_start_min = 960, evening_end_min = 975');
+  await db.query(`UPDATE work_schedule SET ${sets.join(', ')} WHERE id = 1`);
+  if (sets.length > 1) {
+    log('Schema: the studio\'s breaks are 11:00-11:15, 13:00-14:00 and 16:00-16:15. '
+      + 'Recording stops and starts at each of them.');
+  }
 }
 
 async function ensurePnl(db, log) {
