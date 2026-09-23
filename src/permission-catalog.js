@@ -855,6 +855,31 @@ const GROUPS = [
           + 'lunch break the Time Sheet accepts entries within.',
       },
       {
+        /* The studio's recording windows, in any number and by name.
+         *
+         * SUPER ADMIN ONLY, and not implied by manageSettings the way Working
+         * Hours beside it is. These rows decide what every timer in the
+         * building records: a window edited here changes Time Spent, the Idle
+         * Report, the Time Sheet's suggestions and both P&L tabs, on every
+         * account at once and retrospectively for anything still running. That
+         * is a wider blast radius than the fixed form it replaces, which could
+         * only move one day's boundaries.
+         *
+         * impliedBy managePermissions is the same front door settings.
+         * ip_blocklist uses: only the designation that hands out permissions
+         * holds it by default, and the Super Admin picks it up without anybody
+         * switching it on. It stays grantable, so "unless explicitly scoped
+         * that way" remains something a Super Admin can decide rather than
+         * something the code has decided for them. */
+        key: 'settings.recording_hours',
+        label: 'Manage Recording Hours',
+        impliedBy: has('managePermissions'),
+        describe: 'The named Recording and Non-Recording windows that decide when the clock runs — '
+          + 'any number of them, each with its own days of the week. This is the schedule itself, not a '
+          + 'report setting: a change here changes what every timer counts.',
+        danger: 'Switching every recording window off stops time tracking for the whole studio.',
+      },
+      {
         key: 'settings.ip_allowlist',
         label: 'Manage IP Allowlist',
         impliedBy: has('manageAccess'),

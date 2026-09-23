@@ -12,6 +12,7 @@ const rolePermissions = require('./role-permissions');
 const defaults = require('./reference-defaults');
 const branding = require('./branding');
 const workSchedule = require('./work-schedule');
+const recordingHours = require('./recording-hours');
 const workLog = require('./work-log');
 const { normalizeCheckClause } = require('./schema-check');
 
@@ -2014,6 +2015,110 @@ async function ensureUserActive(db, log) {
   log(`Schema: added users.${add.map(([n]) => n).join(', users.')} — every existing account stays active.`);
 }
 
+/* The Super Admin's named recording windows, and the seed that makes switching
+ * to them a no-op on the day it happens.
+ *
+ * THE SEED IS THE WHOLE CARE HERE. These rows replace work_schedule's single
+ * window and three breaks as the thing every timer reads, so an upgrade that
+ * created the table empty would stop the clock in the entire studio at the
+ * moment it ran — src/working-time.js honours an empty enabled set as "records
+ * nothing", which is right for an admin who switched the windows off and very
+ * wrong for a deployment that has not been asked anything yet.
+ *
+ * So the table is born holding exactly what the studio already had: one
+ * recording window for the configured day on the configured working days, and
+ * one non-recording window per configured break. Nothing about what is recorded
+ * changes until somebody edits a row. src/recording-hours.js reads an empty
+ * table as "not migrated yet" and leaves the old schedule in force, so even a
+ * failure here is a schedule that still works.
+ *
+ * Seeded ONCE, marked on the work_schedule row, for the same reason the breaks
+ * are: re-seeding on every boot would put back a window an admin deleted.
+ */
+async function ensureRecordingHours(db, log) {
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS recording_hour_configs (
+      id             CHAR(36)     NOT NULL PRIMARY KEY,
+      -- 'recording' | 'non_recording'. A string rather than an ENUM so a third
+      -- list, if the studio ever names one, is a row and not a schema change.
+      type           VARCHAR(16)  NOT NULL,
+      label          VARCHAR(120) NULL,
+      -- Minutes past midnight IST, matching work_schedule and
+      -- timesheet_entries: wall clock times in one office, with no timezone in
+      -- them to convert and none to get wrong.
+      start_min      SMALLINT     NOT NULL,
+      -- On the NEXT day when spans_midnight is set, which is what makes
+      -- 22:00-06:00 storable as one row rather than two.
+      end_min        SMALLINT     NOT NULL,
+      spans_midnight TINYINT(1)   NOT NULL DEFAULT 0,
+      -- ISO weekdays as a sorted CSV, like work_schedule.working_days. Read as
+      -- the days the window STARTS on.
+      days_of_week   VARCHAR(32)  NOT NULL DEFAULT '1,2,3,4,5,6,7',
+      -- So a window can be taken out of force without losing what it said.
+      enabled        TINYINT(1)   NOT NULL DEFAULT 1,
+      sort_order     INT          NOT NULL DEFAULT 0,
+      created_by     CHAR(36)     NULL,
+      created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      KEY idx_rhc_type (type, sort_order)
+    )`));
+
+  const { rows: existing } = await db.query('SELECT COUNT(*) AS n FROM recording_hour_configs');
+  if (Number(existing[0].n) > 0) return;
+
+  /* Seeded once. The marker lives on work_schedule beside breaks_seeded_at and
+     is added on demand the same way, so an older database does not need a
+     separate migration step to carry it. */
+  const { rows: marker } = await db.query(
+    'SELECT recording_hours_seeded_at AS seeded FROM work_schedule WHERE id = 1'
+  ).catch(async (err) => {
+    if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
+    await db.query('ALTER TABLE work_schedule ADD COLUMN recording_hours_seeded_at DATETIME NULL');
+    return db.query('SELECT recording_hours_seeded_at AS seeded FROM work_schedule WHERE id = 1');
+  });
+  if (!marker.length || marker[0].seeded) return;
+
+  const { rows: sched } = await db.query(
+    `SELECT working_days, day_start_min, day_end_min,
+            morning_start_min, morning_end_min, lunch_start_min, lunch_end_min,
+            evening_start_min, evening_end_min
+       FROM work_schedule WHERE id = 1`
+  );
+  const row = sched[0] || {};
+  const days = String(row.working_days || '1,2,3,4,5');
+  const seed = [];
+  const dayStart = row.day_start_min === null || row.day_start_min === undefined ? 570 : Number(row.day_start_min);
+  const dayEnd = row.day_end_min === null || row.day_end_min === undefined ? 1140 : Number(row.day_end_min);
+  if (dayEnd > dayStart) {
+    seed.push(['recording', 'Core hours', dayStart, dayEnd, days]);
+  }
+  /* The breaks keep their names, because the name is what an admin will look
+     for when they come to change one. Every day of the week, not just the
+     working ones: a break only bites inside a recording window anyway, so
+     limiting it would be a second thing to remember when Saturday is added. */
+  const breaks = [
+    ['Morning break', row.morning_start_min, row.morning_end_min],
+    ['Lunch', row.lunch_start_min, row.lunch_end_min],
+    ['Evening break', row.evening_start_min, row.evening_end_min],
+  ];
+  for (const [label, from, to] of breaks) {
+    if (from === null || from === undefined || to === null || to === undefined) continue;
+    if (Number(to) <= Number(from)) continue;
+    seed.push(['non_recording', label, Number(from), Number(to), '1,2,3,4,5,6,7']);
+  }
+
+  let order = 0;
+  for (const [type, label, start, end, dow] of seed) {
+    await db.query(
+      `INSERT INTO recording_hour_configs
+         (id, type, label, start_min, end_min, spans_midnight, days_of_week, enabled, sort_order)
+       VALUES ($1, $2, $3, $4, $5, 0, $6, 1, $7)`,
+      [uuid(), type, label, start, end, dow, order += 1]
+    );
+  }
+  await db.query('UPDATE work_schedule SET recording_hours_seeded_at = NOW() WHERE id = 1');
+  log(`Schema: recording_hour_configs seeded from the existing working hours (${seed.length} windows).`);
+}
+
 async function ensureBreakWindows(db, log) {
   const { rows } = await db.query(
     `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
@@ -2803,7 +2908,15 @@ const STEPS = [
      caches the row in memory, so a column added after it had loaded would be
      invisible until the next restart. */
   ['break windows', ensureBreakWindows],
-  // Its mirror, once the table exists and holds its one row.
+  /* The named windows, seeded from the row the two steps above have just
+     finished settling — so the seed copies the studio's real schedule and not a
+     half-migrated version of it. */
+  ['recording hours', ensureRecordingHours],
+  /* Both mirrors, once the tables exist. The named windows load FIRST: the
+     working-hours mirror publishes them as schedule.entries, so loading it
+     first would cache a schedule with no windows in it until the next
+     restart. */
+  ['recording hours mirror', (db) => recordingHours.load(db)],
   ['working hours mirror', (db) => workSchedule.load(db)],
   // After users and assets, whose keys it points at.
   ['notifications', ensureNotifications],

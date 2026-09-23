@@ -157,9 +157,44 @@ function requirePermission(key) {
   };
 }
 
+/* Super Admin, or somebody a Super Admin has explicitly handed this one key to.
+ *
+ * WHY A SEPARATE GATE rather than requirePermission alone. The settings this
+ * guards decide what every timer in the studio records, so the question being
+ * asked is "does whoever runs this studio want this person changing the clock"
+ * — and the answer has to come from the role the SERVER resolved for the
+ * authenticated session, never from anything the page sent. Hiding the section
+ * in the browser is a courtesy to the reader; this is the lock.
+ *
+ * It is deliberately not requireRole('super_admin'), which would make the
+ * permission ungrantable and quietly contradict the catalogue entry beside it.
+ * The rule is: the TIER passes on its own, and anybody else passes only on an
+ * explicit individual grant of `key`. A designation cannot pick this up by
+ * holding manageSettings, because the catalogue entry is implied by
+ * managePermissions, which only the Super Admin tier carries.
+ *
+ * req.user.role is the key read back out of the database for this session, and
+ * roleDef resolves it against the live designation catalogue — so a role
+ * demoted out of the Super Admin tier loses this on its next request rather
+ * than at its next sign-in.
+ */
+function requireSuperAdmin(key = null) {
+  return (req, res, next) => {
+    const def = req.user && roleDef(req.user.role);
+    const isSuperAdmin = Boolean(def && def.tier === 'super_admin');
+    const granted = Boolean(key && req.permissions && req.permissions.has(key));
+    if (!isSuperAdmin && !granted) {
+      return res.status(403).json({ error: 'Only a Super Admin can change this' });
+    }
+    next();
+  };
+}
+
 // The same question, asked inside a handler that has more to weigh than one key.
 function can(req, key) {
   return Boolean(req.permissions && req.permissions.has(key));
 }
 
-module.exports = { authenticate, requireRole, requireCapability, requirePermission, can };
+module.exports = {
+  authenticate, requireRole, requireCapability, requirePermission, requireSuperAdmin, can,
+};

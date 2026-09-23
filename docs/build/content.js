@@ -525,7 +525,7 @@ module.exports = [
   h2('7.3a The recording schedule'),
   p('The clock counts working time, not wall-clock time. Start an asset at ten to seven on a Friday and submit it on '
     + 'Monday morning and it has cost about two hours, not sixty-three. What counts is set in Settings \u2192 '
-    + 'Working Hours, and it is the same setting the Idle report and the Time Sheet already read.'),
+    + 'Recording Hours (7.3c), and it is the same setting the Idle report and the Time Sheet already read.'),
   p('THE STUDIO\u2019S SCHEDULE, as shipped:'),
   table(['', 'IST'], [
     ['Recording days', 'Monday to Friday. Nothing on Saturday or Sunday, ever.'],
@@ -535,6 +535,10 @@ module.exports = [
     ['Afternoon break', '16:00 \u2013 16:15 \u2014 recording stops'],
     ['A full day', '8 hours, which is exactly what the Time Sheet allows in a day'],
   ]),
+  p('THAT TABLE IS NOW A LIST YOU CAN EDIT, not a fixed form. It is four rows in Settings \u2192 Recording '
+    + 'Hours \u2014 one Recording window and three Non-Recording ones \u2014 and a Super Admin can add, rename, '
+    + 'narrow to particular days, switch off or delete any of them. Everything below is what those four rows '
+    + 'currently say; 7.3c is how to change them, and what changes when you do.'),
   bullets([
     'It is IST, always. The studio\u2019s window is a wall clock in one office, so neither the server\u2019s timezone nor your laptop\u2019s changes what is recorded. Somebody working from another country has their hours measured against the studio\u2019s day, not their own.',
     'A BREAK STOPS THE CLOCK and starts it again at the far end. A timer running at 10:45 is put down at 11:00 and picks up at 11:15; the same at one o\u2019clock and at four. This changed: a break used to be subtracted from the total without stopping anything.',
@@ -591,6 +595,48 @@ module.exports = [
     + 'ones on the way back up. Each is stamped at its own boundary whatever time the check actually ran, so '
     + 'a late tick costs nobody a correct number: open the app at ten and the state already reflects what '
     + 'should have happened at half past nine.'),
+
+  h2('7.3c Setting the recording hours — Super Admin'),
+  p('Settings → Recording Hours is where the schedule above actually lives. It is two lists of named '
+    + 'windows, and there is no limit on either: keep pressing + Add for as many as the studio needs.'),
+  table(['List', 'What it does'], [
+    ['Recording Hours', 'When the clock runs. Two windows that overlap are one stretch of recording, not two.'],
+    ['Non-Recording Hours', 'Cut out of the windows above — breaks, a lunch blackout, an after-hours block. A window in this list always wins over one in the other.'],
+  ]),
+  p('EACH ROW carries a start and an end, an optional label, the days of the week it applies on (all seven '
+    + 'unless you narrow it), a "crosses midnight" box and an enabled switch. Save and delete are per row: one '
+    + 'bad row shows its error under itself and every other row on the page carries on working.'),
+  bullets([
+    'A LABEL IS WORTH SETTING even though it is optional. It is what the Working Hours summary, the audit trail and the overlap warnings call the window, so "Lunch block" reads better than "13:00–14:00" in all three.',
+    'DAYS OF THE WEEK are what make a half day possible: a second Recording window of 10:00–14:00 ticked for Saturday alone gives the studio a short Saturday without touching the weekday one.',
+    'CROSSES MIDNIGHT is for a window like 22:00–06:00. Without it an end before a start is refused, and the message says which box to tick. The days you pick are the days the window STARTS on — a Monday-to-Friday night shift records Saturday morning, because that is Friday night running on, and does not record Monday morning, because Sunday night is not a shift.',
+    'ENABLED takes a window out of force without losing what it said. Use it to try a schedule for a week rather than deleting a row you will want back.',
+    'OVERLAPS WARN, they do not refuse. Two Recording windows that overlap are a perfectly sensible thing to build out of "Core hours" plus "Friday late shift", so the conflicting labels are named and you decide. A window in the other list overlapping one here is not flagged at all — that is what the second list is for.',
+  ]),
+  note('A change here changes what the studio records, from now on',
+    'These rows are the clock, not a description of it. Time Spent on every card and in the Assets List, the '
+    + 'Efficiency and Idle reports, the hours the Time Sheet suggests and the Fixed and Actual figures in both '
+    + 'P&L tabs are all measured against these windows — there is one column behind all of them and this is '
+    + 'what decides its value.\n\n'
+    + 'It is not retroactive. Seconds already recorded keep the window they were recorded under; what changes is '
+    + 'everything measured from the moment you save. A timer running when you close a window is put down at that '
+    + 'moment, and one running when you open one starts counting.\n\n'
+    + 'Switching every Recording window off, or covering them all with Non-Recording ones, stops time tracking '
+    + 'for the whole studio. It is allowed — there has to be a way back from a schedule you want gone — '
+    + 'and the page says so in a warning above the lists rather than letting you find out from a report.'),
+  p('WHO CAN OPEN IT. The Super Admin, and nobody else by default — not the roles that hold every other '
+    + 'Settings section. It can be handed to a designation in Settings → Permissions (Manage Recording '
+    + 'Hours), which is the only way anybody else gets it. The check is made on the server on every request, so '
+    + 'the section being missing from somebody’s Settings page is a courtesy rather than the lock.'),
+  p('EVERY CHANGE IS LOGGED. Adding, editing and deleting a window each write an Activity Log entry naming who '
+    + 'did it, when, and the window before and after — "Lunch 13:00–14:00, every day" against "Lunch '
+    + '12:30–13:30, Mon/Tue/Wed/Thu/Fri". This is the setting that decides how everybody’s tracked '
+    + 'time is read, so what it used to say is part of the record.'),
+  p('WHAT HAPPENED TO WORKING HOURS. That section is still there and still shows the studio’s day, the '
+    + 'days it runs and the breaks that come out of it — worked out from these windows, by the same '
+    + 'function the timer reads, so the two cannot disagree. What moved is where you change them. Hours in a '
+    + 'working day stays on the Working Hours screen: it is what a full day is EXPECTED to be, which the Idle '
+    + 'Report divides by, and it is not a window the clock runs in.'),
 
   h2('7.4 Not before the start date'),
   p('An asset carrying a Start Date cannot be accepted before that day. The button is disabled until then and says '

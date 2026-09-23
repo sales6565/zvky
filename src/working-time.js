@@ -109,9 +109,128 @@ function openSpans(schedule) {
   return spans;
 }
 
-/* How many minutes of a full working day are workable. */
-function workableMinutesPerDay(schedule) {
-  return openSpans(schedule).reduce((total, [a, b]) => total + (b - a), 0);
+/* ---------------------------------------------------------------------------
+ * NAMED WINDOWS, THE SUPER ADMIN'S VERSION OF ALL OF THE ABOVE.
+ *
+ * openSpans answers one shape of question: ONE recording window with a handful
+ * of breaks cut out of it, the same on every working day. That is the studio's
+ * schedule and it was enough while the schedule was a fixed form with four time
+ * pairs on it.
+ *
+ * It is no longer the only shape. A Super Admin can now name any number of
+ * windows in either list — Recording Hours and Non-Recording Hours — each with
+ * its own days of the week, so Saturday can be a half day, a night shift can
+ * run 22:00 to 06:00, and "Lunch block" can apply on weekdays and not at the
+ * weekend. None of that fits a single [dayStart, dayEnd] with a break list.
+ *
+ * So when a schedule carries `entries`, THOSE are the schedule and the four
+ * time pairs are ignored. The arithmetic is the same either way and deliberately
+ * so: a day is a union of recording intervals with the union of non-recording
+ * intervals taken out of it. The old form is exactly the special case of one
+ * recording interval and three cuts, which is why nothing downstream of
+ * spansOn() had to change — isRecording, stopsAt, startsAt, resumesAt and
+ * lastStoppedAt all ask spansOn and none of them knows which form produced the
+ * answer.
+ * ------------------------------------------------------------------------- */
+
+const MINUTES_PER_DAY = 24 * 60;
+
+/* Does this entry apply on this weekday? An empty or absent day list means
+   every day, which is the default the table stores and the API's documented
+   meaning of leaving days_of_week off. */
+function appliesOn(entry, dow) {
+  const days = entry.daysOfWeek;
+  if (!Array.isArray(days) || !days.length) return true;
+  return days.includes(dow);
+}
+
+/* Overlapping intervals flattened into a sorted, disjoint list.
+ *
+ * Two recording windows that overlap are ONE stretch of recording, not two —
+ * which matters because every caller above walks the result expecting the spans
+ * not to touch: two overlapping spans would otherwise let lastStoppedAt hand
+ * back a boundary in the middle of a stretch that is still running. */
+function merge(intervals) {
+  const sorted = intervals
+    .filter(([from, to]) => to > from)
+    .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const out = [];
+  for (const [from, to] of sorted) {
+    const last = out[out.length - 1];
+    if (last && from <= last[1]) last[1] = Math.max(last[1], to);
+    else out.push([from, to]);
+  }
+  return out;
+}
+
+/* `spans` with `cuts` taken out of them. Both are expected disjoint and sorted,
+   which merge() above guarantees for each list separately. */
+function subtract(spans, cuts) {
+  let out = spans;
+  for (const [cutFrom, cutTo] of cuts) {
+    const next = [];
+    for (const [from, to] of out) {
+      if (cutTo <= from || cutFrom >= to) { next.push([from, to]); continue; }
+      if (cutFrom > from) next.push([from, cutFrom]);
+      if (cutTo < to) next.push([cutTo, to]);
+    }
+    out = next;
+  }
+  return out;
+}
+
+/* Every interval of one named list that lands on this day, in minutes past
+ * midnight of THIS day.
+ *
+ * A window that spans midnight contributes to two days: the tail of the day it
+ * starts on, and the head of the day after. Its days_of_week is read as the day
+ * it STARTS on — "Monday 22:00–06:00" is Monday night, running into Tuesday
+ * morning — because that is how a person naming a night shift means it, and the
+ * alternative (the day it ends on) would make a Monday-only night shift record
+ * nothing on Monday.
+ */
+function intervalsFor(entries, day, type) {
+  const dow = dowOf(day);
+  const dowBefore = dowOf(day - 1);
+  const out = [];
+  for (const entry of entries) {
+    if (!entry || entry.type !== type || entry.enabled === false) continue;
+    const start = Number(entry.start);
+    const end = Number(entry.end);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+    if (entry.spansMidnight) {
+      // The evening half, on its own day; and the morning half, on the next.
+      if (start < MINUTES_PER_DAY && appliesOn(entry, dow)) out.push([start, MINUTES_PER_DAY]);
+      if (end > 0 && appliesOn(entry, dowBefore)) out.push([0, end]);
+    } else if (appliesOn(entry, dow)) {
+      out.push([start, end]);
+    }
+  }
+  return merge(out);
+}
+
+/* One day's recordable spans, from the named windows. */
+function spansFromEntries(day, entries) {
+  return subtract(
+    intervalsFor(entries, day, 'recording'),
+    intervalsFor(entries, day, 'non_recording')
+  );
+}
+
+/* How many minutes of a full working day are workable.
+ *
+ * With named windows a day is not one length any more — a studio can record
+ * eight hours on a weekday and four on a Saturday — so this answers for the
+ * LONGEST day the week contains, which is the reading "a full working day" has
+ * always had here. Callers wanting a particular day pass its day number. */
+function workableMinutesPerDay(schedule, day = null) {
+  const total = (spans) => spans.reduce((sum, [a, b]) => sum + (b - a), 0);
+  if (!Array.isArray(schedule.entries)) return total(openSpans(schedule));
+  if (day !== null) return total(spansOn(day, schedule));
+  let most = 0;
+  // Any seven consecutive days are one of each weekday; 0 to 6 will do.
+  for (let d = 0; d < 7; d += 1) most = Math.max(most, total(spansFromEntries(d, schedule.entries)));
+  return most;
 }
 
 /* A sanity bound on the walk below.
@@ -140,15 +259,14 @@ function workingSecondsBetween(startMs, endMs, schedule) {
   const to = Number(endMs);
   if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return 0;
 
-  const spans = openSpans(schedule);
-  if (!spans.length) return 0;
-
+  /* Asked per day rather than once, because with named windows a Saturday and a
+     Tuesday do not have the same spans. For the legacy shape spansOn returns the
+     same list every working day, so this is the same walk it always was. */
   const first = istPartsOf(from).day;
   const last = istPartsOf(to).day;
   let ms = 0;
   for (let day = first; day <= last && day - first <= MAX_DAYS_WALKED; day += 1) {
-    if (!isWorkingDay(dowOf(day), schedule)) continue;
-    for (const [a, b] of spans) {
+    for (const [a, b] of spansOn(day, schedule)) {
       const openFrom = Math.max(from, instantAt(day, a));
       const openTo = Math.min(to, instantAt(day, b));
       if (openTo > openFrom) ms += openTo - openFrom;
@@ -159,8 +277,20 @@ function workingSecondsBetween(startMs, endMs, schedule) {
 
 /* The recordable spans of ONE DAY, by day number. Empty on a day the studio
    does not work, which is what makes every walk below skip weekends without
-   any of them knowing what a weekend is. */
+   any of them knowing what a weekend is.
+ *
+ * THE ONE FUNNEL. isRecording, stopsAt, startsAt, resumesAt, lastStoppedAt and
+ * workingSecondsBetween all ask this and nothing else, which is what let named
+ * windows arrive without any of them changing: the two forms of schedule are
+ * told apart here, once.
+ *
+ * An `entries` array — even an empty one — means the Super Admin's named
+ * windows are in force and the four legacy time pairs are not consulted. Empty
+ * therefore records nothing, which is the honest reading of a studio that has
+ * switched every window off, and the Settings screen says so in as many words
+ * rather than quietly falling back to hours nobody chose. */
 function spansOn(day, schedule) {
+  if (Array.isArray(schedule.entries)) return spansFromEntries(day, schedule.entries);
   return isWorkingDay(dowOf(day), schedule) ? openSpans(schedule) : [];
 }
 
@@ -282,6 +412,7 @@ function resumesAt(ms, schedule) {
 
 module.exports = {
   IST_OFFSET_MINUTES,
-  istPartsOf, dowOf, instantAt, openSpans, spansOn, workableMinutesPerDay,
+  istPartsOf, dowOf, instantAt, openSpans, spansOn, spansFromEntries, workableMinutesPerDay,
+  merge, subtract,
   workingSecondsBetween, isRecording, stopsAt, startsAt, resumesAt, lastStoppedAt,
 };

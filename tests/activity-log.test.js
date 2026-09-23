@@ -71,7 +71,10 @@ test('every state-changing endpoint is behind the recording middleware', () => {
   const mountLine = server.indexOf("app.use('/api', activityLogger)");
   assert.ok(mountLine > 0, 'the recorder should be mounted on /api');
 
-  const routeMounts = [...server.matchAll(/app\.use\('(\/api\/[a-z-]+)', (\w+Routes)\)/g)];
+  /* Nested mount paths count too: /api/admin/settings/recording-hours is as
+     much a router under /api as /api/assets is, and a pattern that stopped at
+     the first path segment would quietly excuse the next one somebody adds. */
+  const routeMounts = [...server.matchAll(/app\.use\('(\/api\/[a-z-]+(?:\/[a-z-]+)*)', (\w+Routes)\)/g)];
   assert.ok(routeMounts.length >= 14, `expected the app's routers, found ${routeMounts.length}`);
   for (const m of routeMounts) {
     assert.ok(server.indexOf(m[0]) > mountLine,

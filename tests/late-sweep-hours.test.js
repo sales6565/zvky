@@ -227,7 +227,20 @@ test('COL-007\'s day, on time and late', { skip: cfg ? false : SKIP_REASON }, as
 
     const rows = await rowsOf(assetId);
     assert.strictEqual(rows.length, 4, 'four stretches, one per span of the day');
-    assert.deepStrictEqual(rows.map((r) => Math.round(r.seconds / 60)), [32, 105, 120, 108]);
+    /* Each stretch within a minute, and the DAY exact.
+     *
+     * The replay cannot stop the clock: between winding the rows back and the
+     * sweep that reads them, the requests themselves take real time, so a
+     * boundary can land a minute either side. What must not move is the total —
+     * a minute lost off one stretch has to turn up on the next, because the
+     * whole claim being tested is that the day comes to the same figure however
+     * the sweep chopped it up. So the parts are checked loosely, their sum
+     * exactly, and a real regression fails the sum. */
+    const got = rows.map((r) => Math.round(r.seconds / 60));
+    [32, 105, 120, 108].forEach((want, i) => {
+      assert.ok(Math.abs(got[i] - want) <= 1, `stretch ${i + 1} is about ${want}m; got ${got[i]}m`);
+    });
+    assert.strictEqual(got.reduce((a, b) => a + b, 0), 365, `the four stretches are 6h 05m; got ${got}`);
     const total = await totalOf(assetId);
     assert.ok(Math.abs(total - 365 * 60) < 120,
       `6h 05m; got ${Math.floor(total / 3600)}h ${Math.round((total % 3600) / 60)}m`);
@@ -245,7 +258,7 @@ test('COL-007\'s day, on time and late', { skip: cfg ? false : SKIP_REASON }, as
 
     await shift(assetId, 32); await setBreaks([[0, -15]]);                        // 11:00
     await sweep();
-    assert.strictEqual(Math.round((await rowsOf(assetId))[0].seconds / 60), 32,
+    assert.ok(Math.abs(Math.round((await rowsOf(assetId))[0].seconds / 60) - 32) <= 1,
       'the first stretch is right, and always was');
 
     // Five hours and twenty minutes with nothing sweeping at all.

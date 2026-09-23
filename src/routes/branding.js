@@ -7,6 +7,7 @@ const { authenticate, requirePermission } = require('../middleware/auth');
 const branding = require('../branding');
 const workSchedule = require('../work-schedule');
 const activity = require('../activity');
+const recordingHours = require('../recording-hours');
 
 /* The logo arrives in memory, not on disk. It is one small image on its way
  * into a table, so writing it to a temp file first would only create something
@@ -94,12 +95,47 @@ router.put('/schedule', requirePermission('settings.working_hours'), async (req,
     morningStart, morningEnd, eveningStart, eveningEnd,
   } = req.body || {};
   const before = workSchedule.current();
-  const result = await workSchedule.save(db, {
-    hoursPerDay, workingDays, dayStart, dayEnd, lunchStart, lunchEnd,
-    morningStart, morningEnd, eveningStart, eveningEnd,
-  });
+  /* WINDOWS WIN. Once the studio has named its recording windows, they are the
+     schedule — Settings → Recording Hours owns when the clock runs, and this
+     screen shows what those windows come to. So the window fields are ignored
+     here rather than stored: accepting them would let a second screen write a
+     day nothing reads, which is the disagreement the move to named windows
+     exists to end. hoursPerDay is untouched by any of that. It is what a full
+     day is EXPECTED to be, which the Idle Report divides by, and it is not a
+     window. */
+  /* WINDOWS WIN, BUT THIS STILL WORKS WHILE IT CAN SAY WHAT IT MEANS.
+   *
+   * Settings → Recording Hours owns when the clock runs. This endpoint is what
+   * every existing caller uses, though — the Settings screen before this
+   * release, the test suite, anything a studio wired up itself — so it keeps
+   * working by WRITING THROUGH to the windows rather than to a second table
+   * nothing reads. One source of truth, two doors into it.
+   *
+   * It stops being a door the moment the windows outgrow the four time pairs it
+   * can hold: a second recording window, a night shift, a blackout on some days
+   * and not others. Accepting the write then would throw all of that away
+   * without saying so, which is worse than refusing it — so the window fields
+   * are ignored and only hoursPerDay is taken. The screen says the same thing
+   * in words, and the section it points at is where the change belongs.
+   *
+   * hoursPerDay is untouched by any of this. It is what a full day is EXPECTED
+   * to be, which the Idle Report divides by, and it is not a window. */
+  const canWriteThrough = !Array.isArray(before.entries) || recordingHours.isSimpleShape();
+  const result = await workSchedule.save(db, canWriteThrough
+    ? {
+      hoursPerDay, workingDays, dayStart, dayEnd, lunchStart, lunchEnd,
+      morningStart, morningEnd, eveningStart, eveningEnd,
+    }
+    : { hoursPerDay });
   if (!result.ok) return res.status(result.status).json({ errors: result.errors, error: result.errors[0].message });
-  const s = result.schedule;
+  /* The windows follow the row that was just validated and saved, so the two
+     cannot drift. Done after save() rather than instead of it: save() is where
+     the studio's rules about a legal window live — the eight loggable hours, a
+     break inside the day — and those still apply to anything written here. */
+  if (canWriteThrough && Array.isArray(before.entries)) {
+    await recordingHours.syncFromLegacy(db, workSchedule.rawWindow(), req.user.id);
+  }
+  const s = workSchedule.current();
   req.activity({
     module: 'settings', action: 'settings.working_hours', entityType: 'setting',
     entityLabel: 'Working Hours',

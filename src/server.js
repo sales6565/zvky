@@ -23,6 +23,7 @@ const pnlRoutes = require('./routes/pnl');
 const permissionRoutes = require('./routes/permissions');
 const reportRoutes = require('./routes/reports');
 const brandingRoutes = require('./routes/branding');
+const recordingHoursRoutes = require('./routes/recording-hours');
 const activityRoutes = require('./routes/activity');
 const { activityLogger } = require('./middleware/activity');
 const idleRoutes = require('./routes/idle');
@@ -117,6 +118,7 @@ app.use('/api/chat', chatRoutes);
    somebody may send their own. Separate mount, separate permission. */
 app.use('/api/chat-activity', chatActivityRoutes);
 app.use('/api/branding', brandingRoutes);
+app.use('/api/admin/settings/recording-hours', recordingHoursRoutes);
 app.use('/api/activity', activityRoutes);
 
 // Health check. Deliberately reports the database too: a deployment whose

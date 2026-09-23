@@ -627,6 +627,61 @@ tr.past-round{opacity:0.62;}
 .ref-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:4px;}
 .ref-head h3{font-family:'Space Grotesk';font-size:15px;margin:0;}
 .ref-note{font-size:11.5px;color:var(--ink-faint);margin-bottom:10px;}
+/* --- Recording Hours: repeatable named windows, Super Admin only ---------
+   Laid out as a grid rather than a table because a row wraps on a narrow
+   screen and a table cell will not. The row is the unit throughout: its
+   errors sit under it, and its Save touches nothing else. */
+.rh-badge{font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;font-weight:700;
+  padding:2px 7px;border-radius:999px;background:var(--brand-soft,rgba(127,20,22,.1));
+  color:var(--brand-accent);border:1px solid var(--border);white-space:nowrap;}
+.rh-list{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:14px;
+  background:var(--surface);}
+.rh-head{display:flex;align-items:center;gap:8px;margin-bottom:2px;}
+.rh-head h4{font-family:'Space Grotesk';font-size:13px;margin:0;}
+.rh-count{font-size:10.5px;color:var(--ink-faint);border:1px solid var(--border);
+  border-radius:999px;padding:0 7px;line-height:16px;}
+.rh-row{border:1px solid var(--border);border-radius:8px;padding:9px 10px;margin-bottom:8px;
+  background:var(--bg);}
+.rh-row.rh-off{opacity:.62;}
+.rh-grid{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:flex-end;}
+.rh-f{display:flex;flex-direction:column;gap:3px;}
+.rh-f > label{font-size:10.5px;color:var(--ink-faint);}
+.rh-f.rh-wide{flex:1 1 170px;min-width:150px;}
+.rh-opt{opacity:.7;font-style:italic;}
+.rh-dayset{display:flex;gap:2px;flex-wrap:wrap;}
+.rh-day{display:flex;align-items:center;gap:0;cursor:pointer;}
+.rh-day input{position:absolute;opacity:0;width:0;height:0;}
+.rh-day span{display:inline-block;font-size:10.5px;padding:4px 6px;border:1px solid var(--border);
+  border-radius:5px;color:var(--ink-faint);user-select:none;min-width:30px;text-align:center;}
+.rh-day input:checked + span{background:var(--brand-accent);border-color:var(--brand-accent);color:#fff;}
+.rh-day input:focus-visible + span{outline:2px solid var(--brand-accent);outline-offset:2px;}
+.rh-toggles{gap:4px;}
+.rh-check{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ink-muted);cursor:pointer;white-space:nowrap;}
+.rh-check input{width:auto;margin:0;padding:0;background:none;border:0;flex:none;}
+.rh-act{flex-direction:row;align-items:center;gap:6px;}
+/* The one thing a validation error changes about a field, so a row reads as
+   wrong at a glance without the message having to be found first. */
+.rh-bad,input.rh-bad{border-color:#d9534f !important;}
+.rh-errs{margin-top:7px;display:flex;flex-direction:column;gap:3px;}
+.rh-err{font-size:11px;color:#d9534f;}
+.rh-meta{margin-top:6px;font-size:10px;color:var(--ink-faint);}
+.rh-empty{font-size:11.5px;color:var(--ink-faint);padding:6px 0 10px;}
+/* The Working Hours window, once Recording Hours decides it: a summary to read,
+   not a form to fill. Time inputs were wrong for this even disabled — a day
+   ending at midnight is 24:00, which <input type=time> refuses, so the field
+   went blank on exactly the schedule that most needed explaining. */
+.rh-sum{display:flex;flex-wrap:wrap;gap:6px 22px;margin:0 0 10px;}
+.rh-sum > div{display:flex;flex-direction:column;gap:1px;}
+.rh-sum span{font-size:10.5px;color:var(--ink-faint);}
+.rh-sum strong{font-size:12.5px;font-weight:600;}
+.rh-warn{border:1px solid #e0a800;background:rgba(224,168,0,.08);border-radius:8px;
+  padding:8px 10px;margin-bottom:12px;font-size:11.5px;color:var(--ink);}
+.rh-warn > div{margin-bottom:2px;}
+.rh-warn-note{color:var(--ink-faint);font-size:10.5px;margin-top:4px;}
+@media (max-width:640px){
+  .rh-f.rh-wide{flex-basis:100%;}
+  .rh-act{width:100%;justify-content:flex-end;}
+}
 /* The Settings accordion. Placed after .ref-section and .ref-head above, so
    the display rule cannot lose a source-order tie to what it overrides. */
 .ref-section.acc{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:10px;
@@ -2718,6 +2773,10 @@ const SETTINGS_SECTIONS = [
      Working Hours and nothing else held a permission whose screen it could not
      reach — the Settings tab was not there to open. */
   { permission:'settings.working_hours', label:'Working Hours',   heading:'Working Hours',    note:'The working day, and the lunch and break windows excluded from tracked hours.' },
+  /* Super Admin only, by way of a permission implied by managePermissions —
+     see the catalogue entry. Listed here like any other section so that a
+     designation explicitly granted it can reach the Settings tab at all. */
+  { permission:'settings.recording_hours', label:'Recording Hours', heading:'Recording Hours', note:'The named windows the clock runs in, and the ones it stops for. Any number of each.' },
   { permission:'settings.priorities',   label:'Priorities',       heading:'Priorities',       note:'The Priority dropdown.' },
   { permission:'settings.categories',   label:'Asset Categories', heading:'Asset Categories', note:'The Category dropdown on an asset. Starts empty — add the studio\'s own list.' },
   { permission:'settings.project_categories', label:'Project Categories', heading:'Project Categories', note:'The Category dropdown on a project. A separate list from the asset one.' },
@@ -9553,6 +9612,7 @@ async function renderSettings(){
     </div>` : ''}
     ${lists.map(sec=>renderRefSection(sec)).join('')}
     ${can('settings.branding') ? '<div id="brandingSection"></div>' : ''}
+    ${can('settings.recording_hours') ? '<div id="recordingHoursSection"></div>' : ''}
     ${can('settings.working_hours') ? '<div id="scheduleSection"></div>' : ''}
     ${can('settings.ip_allowlist') ? '<div id="ipAllowlistSection"></div>' : ''}
     ${can('settings.ip_blocklist') ? '<div id="ipBlocklistSection"></div>' : ''}
@@ -9566,6 +9626,7 @@ async function renderSettings(){
   el.querySelectorAll('.sii-link').forEach(b=>b.addEventListener('click', ()=>setTab(b.dataset.tab)));
   wireSettings();
   if(can('settings.branding')) renderBranding();
+  if(can('settings.recording_hours')) renderRecordingHours();
   if(can('settings.working_hours')) renderSchedule();
   if(can('settings.permissions')) await renderRolePermissions();
   if(can('settings.activity_log')) renderActivityLog();
@@ -11676,6 +11737,24 @@ async function renderSchedule(){
     catch(err){ el.innerHTML = `<div class="ref-section"><div class="ref-err">${escapeHTML(err.message)}</div></div>`; return; }
   }
   const days = [[1,'Mon'],[2,'Tue'],[3,'Wed'],[4,'Thu'],[5,'Fri'],[6,'Sat'],[7,'Sun']];
+
+  /* WINDOWS IN FORCE, so the time inputs below are a summary rather than a
+     form.
+     
+     They are still here, still showing the studio's real hours, and still
+     right — SCHEDULE.dayStart/dayEnd/breaks are derived from the named windows
+     on the server, by the same function the timer reads, so this section
+     cannot print hours the clock is not keeping. What has gone is the ability
+     to EDIT them here, because two screens writing one schedule is how a
+     studio ends up with a day that disagrees with itself.
+     
+     Hours in a working day stays editable in either case: it is what the Idle
+     Report divides by — the day a person is EXPECTED to fill — and not a
+     window at all. */
+  const windows = Array.isArray(SCHEDULE.entries);
+  // The working-days checklist stays on screen either way — ticked to match the
+  // windows, and not clickable while they are what decides.
+  const ro = windows ? ' disabled' : '';
   el.innerHTML = `
     <div class="ref-section">
       <div class="ref-head"><h3>Working Hours</h3></div>
@@ -11683,10 +11762,20 @@ async function renderSchedule(){
         timezone a server or a laptop is set to. <strong>This window decides what the timer records.</strong>
         Time Spent is the part of a task's start-to-submit span that falls inside the days and hours
         below, with the breaks taken out, so evenings and weekends are no longer charged to an asset.
-        A timer still running when the day ends is put down at that moment and waits for Resume.
+        A timer still running when the day ends is put down at that moment and started again on its
+        own when the studio next opens.
         The Idle Report and both P&amp;L tabs read the same recorded time, so a change here changes
         all of them together. Public holidays and leave are not recorded anywhere, so time away
         still reads as idle time.</div>
+      ${windows ? `<div class="rh-warn" style="border-color:var(--border);background:var(--surface);">
+        <div><strong>These hours are set in Recording Hours.</strong> The studio's clock is now a list of
+        named windows, which can say things this form cannot — a half day on Saturday, a shift that
+        crosses midnight, a fourth break. The times below are what those windows currently come to,
+        shown here so this section still answers "what are the studio's hours"; edit them in
+        <strong>Settings → Recording Hours</strong>.</div>
+        <div class="rh-warn-note">Hours in a working day stays here: it is what the Idle Report
+        measures against, not a window the clock runs in.</div>
+      </div>` : ''}
       <div class="ref-add">
         <div>
           <label>Hours in a working day</label>
@@ -11695,7 +11784,7 @@ async function renderSchedule(){
         <div>
           <label>Working days</label>
           <div class="checklist" style="max-height:none;">
-            ${days.map(([n,label])=>`<label><input type="checkbox" value="${n}"${SCHEDULE.workingDays.includes(n)?' checked':''}>${label}</label>`).join('')}
+            ${days.map(([n,label])=>`<label><input type="checkbox" value="${n}"${ro}${SCHEDULE.workingDays.includes(n)?' checked':''}>${label}</label>`).join('')}
           </div>
         </div>
       </div>
@@ -11711,14 +11800,23 @@ async function renderSchedule(){
            are load-bearing rather than decorative. The day window is here too
            because a break has to sit inside it, and there is no way to set one
            sensibly without being able to see the other. */''}
-      <div class="ref-add">
+      ${windows ? `<div class="rh-sum">
+        <div><span>Recording runs</span><strong>${escapeHTML(SCHEDULE.dayStartLabel||'—')} to ${escapeHTML(SCHEDULE.dayEndLabel||'—')}</strong></div>
+        <div><span>On</span><strong>${SCHEDULE.workingDayNames.length ? escapeHTML(SCHEDULE.workingDayNames.join(', ')) : 'no day — nothing is being recorded'}</strong></div>
+      </div>` : `<div class="ref-add">
         <div><label>Day starts</label><input type="time" id="sch_dayStart" class="narrow" value="${escapeHTML(SCHEDULE.dayStartLabel||'')}"></div>
         <div><label>Day ends</label><input type="time" id="sch_dayEnd" class="narrow" value="${escapeHTML(SCHEDULE.dayEndLabel||'')}"></div>
-      </div>
+      </div>`}
       <div class="ref-note" style="margin-top:8px;margin-bottom:4px;"><strong>Breaks.</strong>
-        Time inside these windows does not count towards anybody's worked hours. Leave a pair empty
-        for no such break — a blank is a real answer, not an unfinished form.</div>
-      <div class="ref-add">
+        Time inside these windows does not count towards anybody's worked hours.
+        ${windows
+          ? 'These are the gaps the named windows leave in the longest day of the week — a shorter day does not thereby gain a break. Add, move or remove one in Recording Hours.'
+          : 'Leave a pair empty for no such break — a blank is a real answer, not an unfinished form.'}</div>
+      ${windows ? `<div class="rh-sum">
+        ${(SCHEDULE.breaks||[]).length
+          ? SCHEDULE.breaks.map(b=>`<div><span>Not recorded</span><strong>${escapeHTML(b.startLabel)} – ${escapeHTML(b.endLabel)}</strong></div>`).join('')
+          : '<div><span>Not recorded</span><strong>nothing is cut out of the day</strong></div>'}
+      </div>` : `<div class="ref-add">
         <div><label>Morning break from</label><input type="time" id="sch_morningStart" class="narrow" value="${escapeHTML(SCHEDULE.morningStartLabel||'')}"></div>
         <div><label>until</label><input type="time" id="sch_morningEnd" class="narrow" value="${escapeHTML(SCHEDULE.morningEndLabel||'')}"></div>
       </div>
@@ -11729,7 +11827,7 @@ async function renderSchedule(){
       <div class="ref-add">
         <div><label>Evening break from</label><input type="time" id="sch_eveningStart" class="narrow" value="${escapeHTML(SCHEDULE.eveningStartLabel||'')}"></div>
         <div><label>until</label><input type="time" id="sch_eveningEnd" class="narrow" value="${escapeHTML(SCHEDULE.eveningEndLabel||'')}"></div>
-      </div>
+      </div>`}
       <div class="ref-add" style="margin-top:2px;">
         <button class="btn btn-brand" id="sch_save">Save</button>
       </div>
@@ -11759,14 +11857,20 @@ async function renderSchedule(){
          the API — and is why a blank pair clears a break rather than being
          quietly ignored as "unchanged". */
       const clock = (id) => { const v = document.getElementById(id).value; return v === '' ? null : v; };
+      /* With named windows in force the fields above are a summary of them, so
+         only the expectation is sent. Posting the derived times back would
+         overwrite the stored legacy pair with a shadow of the windows — which
+         nothing reads, but which somebody would later find and believe. */
       const res = await api('/branding/schedule', { method:'PUT',
-        body:{
-          hoursPerDay: Number(document.getElementById('sch_hours').value), workingDays,
-          dayStart: clock('sch_dayStart'), dayEnd: clock('sch_dayEnd'),
-          morningStart: clock('sch_morningStart'), morningEnd: clock('sch_morningEnd'),
-          lunchStart: clock('sch_lunchStart'), lunchEnd: clock('sch_lunchEnd'),
-          eveningStart: clock('sch_eveningStart'), eveningEnd: clock('sch_eveningEnd'),
-        } });
+        body: windows
+          ? { hoursPerDay: Number(document.getElementById('sch_hours').value) }
+          : {
+            hoursPerDay: Number(document.getElementById('sch_hours').value), workingDays,
+            dayStart: clock('sch_dayStart'), dayEnd: clock('sch_dayEnd'),
+            morningStart: clock('sch_morningStart'), morningEnd: clock('sch_morningEnd'),
+            lunchStart: clock('sch_lunchStart'), lunchEnd: clock('sch_lunchEnd'),
+            eveningStart: clock('sch_eveningStart'), eveningEnd: clock('sch_eveningEnd'),
+          } });
       SCHEDULE = res.schedule;
       idleState.data = null;   // the report's expected hours just changed
       /* And so has the window the Time Sheet draws its form from, which is
@@ -11780,6 +11884,214 @@ async function renderSchedule(){
   };
 }
 
+
+
+/* ---------- Recording Hours (Super Admin) ----------
+
+   The studio's clock, as any number of named windows in two lists. This is the
+   schedule itself and not a description of one: a row saved here changes what
+   every timer in the building records, which is why the section says so at the
+   top rather than leaving somebody to find out.
+
+   DRAFT ROWS LIVE IN THE BROWSER, saved rows live in the database, and the two
+   are deliberately told apart by nothing more than a missing id. "+ Add" pushes
+   a row with id null; Save posts it and it comes back with one. That is what
+   lets a half-filled row sit on screen with its own error under it while every
+   other row on the page carries on working — which is the spec's "inline
+   validation errors per row rather than a single blocking alert", and is the
+   whole reason the rows are not one big form with one Save.
+
+   NOTHING HERE IS THE LOCK. Every endpoint is behind requireSuperAdmin on the
+   server, which reads the designation resolved for the session. This section
+   not rendering is a courtesy to everybody else's Settings page. */
+/* `typed` is what is currently in the boxes for any row somebody has touched,
+   keyed the same way as `errors`. It exists because a row that fails validation
+   is REDRAWN with its error under it — and redrawing from the saved data would
+   throw away what the person had just typed, leaving them an error message
+   about values no longer on screen. */
+let rhState = { data:null, draft:[], errors:{}, typed:{}, busy:false };
+
+const RH_DAYS = [[1,'Mon'],[2,'Tue'],[3,'Wed'],[4,'Thu'],[5,'Fri'],[6,'Sat'],[7,'Sun']];
+const rhTypeLabel = (t)=> t==='recording' ? 'Recording Hours' : 'Non-Recording Hours';
+
+function rhRowHTML(row, type, idx){
+  /* A draft's key is its position in rhState.draft, not its position in the
+     list it is drawn in — two drafts in the same list would otherwise share a
+     key, and an error on one would appear under both. */
+  const key = row.id || `new:${idx}`;
+  const errs = rhState.errors[key] || [];
+  // What was typed wins over what was stored, so a refused row keeps its edits.
+  const t = rhState.typed[key];
+  if(t) row = { ...row, startLabel:t.startTime, endLabel:t.endTime, label:t.label,
+    daysOfWeek:t.daysOfWeek, spansMidnight:t.spansMidnight, enabled:t.enabled };
+  const errFor = (f)=>{ const e = errs.find(x=>x.field===f); return e ? e.message : ''; };
+  const days = Array.isArray(row.daysOfWeek) ? row.daysOfWeek : [1,2,3,4,5,6,7];
+  const bad = (f)=> errFor(f) ? ' rh-bad' : '';
+  return `
+    <div class="rh-row${row.enabled===false?' rh-off':''}" data-key="${escapeHTML(key)}" data-id="${escapeHTML(row.id||'')}" data-type="${type}">
+      <div class="rh-grid">
+        <div class="rh-f">
+          <label>From</label>
+          <input type="time" class="narrow${bad('startTime')}" data-f="start" value="${escapeHTML(row.startLabel||'')}">
+        </div>
+        <div class="rh-f">
+          <label>To</label>
+          <input type="time" class="narrow${bad('endTime')}" data-f="end" value="${escapeHTML(row.endLabel||'')}">
+        </div>
+        <div class="rh-f rh-wide">
+          <label>Label <span class="rh-opt">optional</span></label>
+          <input type="text" class="${bad('label').trim()}" data-f="label" maxlength="120"
+                 placeholder="${type==='recording'?'Core hours':'Lunch block'}" value="${escapeHTML(row.label||'')}">
+        </div>
+        <div class="rh-f rh-days">
+          <label>Days <span class="rh-opt">all seven unless narrowed</span></label>
+          <div class="rh-dayset${bad('daysOfWeek')}">
+            ${RH_DAYS.map(([n,l])=>`<label class="rh-day"><input type="checkbox" data-f="day" value="${n}"${days.includes(n)?' checked':''}><span>${l}</span></label>`).join('')}
+          </div>
+        </div>
+        <div class="rh-f rh-toggles">
+          <label class="rh-check"><input type="checkbox" data-f="spansMidnight"${row.spansMidnight?' checked':''}> crosses midnight</label>
+          <label class="rh-check"><input type="checkbox" data-f="enabled"${row.enabled===false?'':' checked'}> enabled</label>
+        </div>
+        <div class="rh-f rh-act">
+          <button class="btn btn-sm rh-save" title="Save this window">${row.id?'Save':'Add'}</button>
+          <button class="icon-btn rh-del" title="${row.id?'Delete this window':'Discard this row'}" aria-label="Delete">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+          </button>
+        </div>
+      </div>
+      ${errs.length ? `<div class="rh-errs">${errs.map(e=>`<div class="rh-err">${escapeHTML(e.message)}</div>`).join('')}</div>` : ''}
+      ${row.id && row.createdByName ? `<div class="rh-meta">Added by ${escapeHTML(row.createdByName)}${row.updatedAt?` · last changed ${escapeHTML(String(row.updatedAt).replace('T',' ').slice(0,16))}`:''}</div>` : ''}
+    </div>`;
+}
+
+function rhListHTML(type){
+  const saved = (type==='recording' ? rhState.data.recording : rhState.data.nonRecording) || [];
+  const drafts = rhState.draft.filter(d=>d.type===type);
+  const rows = saved.map((r,i)=>rhRowHTML(r,type,i))
+    .concat(drafts.map((r)=>rhRowHTML(r, type, rhState.draft.indexOf(r))));
+  const heading = type==='recording' ? 'Recording Hours' : 'Non-Recording Hours';
+  const note = type==='recording'
+    ? 'When the clock runs. Overlapping windows are one stretch of recording, not two.'
+    : 'Cut out of the windows above. A blackout that covers a recording window wins — that is what this list is for.';
+  return `
+    <div class="rh-list" data-type="${type}">
+      <div class="rh-head"><h4>${heading}</h4><span class="rh-count">${saved.length + drafts.length}</span></div>
+      <div class="ref-note" style="margin:0 0 8px;">${note}</div>
+      ${rows.length ? rows.join('') : `<div class="rh-empty">No ${heading.toLowerCase()} set.</div>`}
+      <button class="btn btn-sm rh-add" data-type="${type}">+ Add ${type==='recording'?'Recording Hour':'Non-Recording Hour'}</button>
+    </div>`;
+}
+
+async function renderRecordingHours(){
+  const el = document.getElementById('recordingHoursSection');
+  if(!el) return;
+  if(!rhState.data){
+    try{ rhState.data = await api('/admin/settings/recording-hours'); }
+    catch(err){ el.innerHTML = `<div class="ref-section"><div class="ref-err">${escapeHTML(err.message)}</div></div>`; return; }
+  }
+  const d = rhState.data;
+  const week = (d.week||[]).map(w=>`${RH_DAYS[w.dow-1][1]} ${w.minutes?(w.minutes/60).toFixed(2).replace(/\.?0+$/,'')+'h':'—'}`).join(' · ');
+  const totalWeek = (d.week||[]).reduce((n,w)=>n+w.minutes,0);
+  el.innerHTML = `
+    <div class="ref-section">
+      <div class="ref-head"><h3>Recording Hours</h3><span class="rh-badge">Super Admin</span></div>
+      <div class="ref-note">
+        <strong>These windows are the clock.</strong> Time Spent, the Idle Report, the Time Sheet's
+        suggested hours and both P&amp;L tabs are all measured against them, and a timer running when a
+        window closes is put down at that moment and started again on its own when the next one opens.
+        A change here therefore changes what the studio records from now on — it does not rewrite
+        hours already recorded. All times are IST, whatever timezone a server or a laptop is set to.
+      </div>
+      ${(d.warnings||[]).length ? `<div class="rh-warn">
+        ${d.warnings.map(w=>`<div>⚠ ${escapeHTML(w.message)}</div>`).join('')}
+        <div class="rh-warn-note">Warnings, not refusals — overlapping windows are legal and sometimes intended.</div>
+      </div>` : ''}
+      ${rhListHTML('recording')}
+      ${rhListHTML('non_recording')}
+      <div class="ref-note" id="rh_week">
+        A week comes to <strong>${(totalWeek/60).toFixed(2).replace(/\.?0+$/,'')} hours</strong> of recordable time
+        ${week ? `— ${week}` : ''}.
+      </div>
+    </div>`;
+
+  el.querySelectorAll('.rh-add').forEach(b=>b.onclick = ()=>{
+    rhState.draft.push({ id:null, type:b.dataset.type, startLabel:'', endLabel:'', label:'',
+      daysOfWeek:[1,2,3,4,5,6,7], spansMidnight:false, enabled:true });
+    renderRecordingHours();
+  });
+  el.querySelectorAll('.rh-row').forEach(rowEl=>{
+    const read = ()=>({
+      startTime: rowEl.querySelector('[data-f="start"]').value || '',
+      endTime: rowEl.querySelector('[data-f="end"]').value || '',
+      label: rowEl.querySelector('[data-f="label"]').value,
+      daysOfWeek: [...rowEl.querySelectorAll('[data-f="day"]:checked')].map(i=>Number(i.value)),
+      spansMidnight: rowEl.querySelector('[data-f="spansMidnight"]').checked,
+      enabled: rowEl.querySelector('[data-f="enabled"]').checked,
+      type: rowEl.dataset.type,
+    });
+    rowEl.querySelector('.rh-save').onclick = async ()=>{
+      if(rhState.busy) return;
+      rhState.busy = true;
+      const id = rowEl.dataset.id;
+      const key = rowEl.dataset.key;
+      const body = read();
+      rhState.typed[key] = body;
+      try{
+        const res = id
+          ? await api(`/admin/settings/recording-hours/${id}`, { method:'PUT', body })
+          : await api('/admin/settings/recording-hours', { method:'POST', body });
+        delete rhState.errors[key];
+        delete rhState.typed[key];
+        // The draft became a saved row, so it leaves the draft list by index.
+        if(!id){
+          const at = Number(key.slice(4));
+          if(Number.isInteger(at) && at >= 0) rhState.draft.splice(at, 1);
+          // Draft indices shift when one leaves the list, so the overlays keyed
+          // by index go with it rather than landing on the wrong row.
+          rhState.errors = {}; rhState.typed = {};
+        }
+        rhState.data = res;
+        rhScheduleChanged();
+        showToast(id ? 'Window saved.' : 'Window added.');
+      }catch(e){
+        /* Per row, and only this row. api() surfaces the body on a 422, so the
+           field-level list the endpoint returns is what gets drawn under the
+           inputs it belongs to. */
+        rhState.errors[key] = (e.body && e.body.errors) ? e.body.errors : [{ field:null, message:e.message }];
+      }finally{ rhState.busy = false; renderRecordingHours(); }
+    };
+    rowEl.querySelector('.rh-del').onclick = async ()=>{
+      const id = rowEl.dataset.id;
+      if(!id){
+        const at = Number(rowEl.dataset.key.slice(4));
+        if(Number.isInteger(at) && at >= 0) rhState.draft.splice(at, 1);
+        rhState.errors = {}; rhState.typed = {};
+        return renderRecordingHours();
+      }
+      if(!confirm('Delete this window?\n\nThe clock stops using it immediately. '
+        + 'Hours already recorded are not changed.')) return;
+      try{
+        rhState.data = await api(`/admin/settings/recording-hours/${id}`, { method:'DELETE' });
+        rhScheduleChanged();
+        showToast('Window deleted.');
+      }catch(e){ rhState.errors[rowEl.dataset.key] = [{ field:null, message:e.message }]; }
+      renderRecordingHours();
+    };
+  });
+}
+
+/* Everything downstream of the studio's clock, invalidated together.
+   The Working Hours summary reads the same windows, the Idle report measures
+   against them and the Time Sheet draws its form from them, so all three are
+   dropped rather than left to go stale behind a tab nobody has reopened. */
+function rhScheduleChanged(){
+  SCHEDULE = null;
+  idleState.data = null;
+  tsState.week = null;
+  if(document.getElementById('scheduleSection')) renderSchedule();
+}
 
 /* ---------- Activity Log ----------
 

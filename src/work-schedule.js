@@ -166,14 +166,116 @@ async function load(db) {
 
 const numberOrNull = (v) => (v === null || v === undefined ? null : Number(v));
 
+/* The named windows, if the studio has any.
+ *
+ * REQUIRED LAZILY, and that is not an accident. src/recording-hours.js is the
+ * newer, wider form of this setting and reads nothing from here; requiring it
+ * at the top of this file would make the pair circular the first time anything
+ * in it wanted a clock parser. Asked for at call time, the dependency runs one
+ * way.
+ *
+ * Null means no row has ever been written — a deployment that has not run the
+ * seed — and the legacy dayStart/dayEnd/breaks below stay in force. Once there
+ * are rows, they ARE the schedule: see the note on spansOn in
+ * src/working-time.js. */
+function namedEntries() {
+  try {
+    return require('./recording-hours').entriesForSchedule();
+  } catch (err) {
+    return null;
+  }
+}
+
+/* The named windows, expressed in the old form's vocabulary.
+ *
+ * WHY BOTHER, when working-time.js reads `entries` directly and gets the exact
+ * answer. Because a dozen readers do not: the Idle Report divides by a day
+ * length, the Time Sheet draws a form between two clock times, team capacity
+ * counts working days, and the Settings screen prints "09:30–19:00, Mon–Fri".
+ * Each of those wants one number, and rewriting all of them to reason about an
+ * arbitrary set of windows would be a much larger change than the setting
+ * deserves — and a worse one, because most of those screens genuinely do want
+ * the summary rather than the detail.
+ *
+ * So the windows are reduced to the shape those readers already speak: the
+ * earliest start, the latest end, the days anything records at all, and the
+ * gaps in the longest day as "breaks". It is a SUMMARY and is allowed to lose
+ * detail — a Saturday half day shows up in workingDays but not in dayStart —
+ * and nothing that decides whether a second counts reads it, because
+ * trackingWindow() hands working-time.js the entries themselves alongside.
+ */
+function derivedFromEntries(entries) {
+  const workingTime = require('./working-time');
+  const byDow = new Map();
+  for (let d = 0; d < 7; d += 1) {
+    byDow.set(workingTime.dowOf(d), workingTime.spansFromEntries(d, entries));
+  }
+  const workingDays = [...byDow.entries()]
+    .filter(([, spans]) => spans.length)
+    .map(([dow]) => dow)
+    .sort((a, b) => a - b);
+  if (!workingDays.length) {
+    return { workingDays: [], dayStart: 0, dayEnd: 0, breaks: [] };
+  }
+  const all = [...byDow.values()].flat();
+  const dayStart = Math.min(...all.map(([from]) => from));
+  const dayEnd = Math.max(...all.map(([, to]) => to));
+
+  /* The gaps of the LONGEST day, which is the day the old form described. A
+     studio whose Saturday is shorter does not thereby gain a break on it. */
+  let longest = [];
+  let most = -1;
+  for (const spans of byDow.values()) {
+    const total = spans.reduce((sum, [a, b]) => sum + (b - a), 0);
+    if (total > most) { most = total; longest = spans; }
+  }
+  /* Each gap takes the name of the blackout that made it, so "Lunch" is still
+     called Lunch on every screen that lists the studio's breaks. A gap no
+     single window accounts for — two overlapping blackouts, say — keeps the
+     generic name rather than claiming to be one of them. */
+  const breaks = [];
+  for (let i = 1; i < longest.length; i += 1) {
+    const start = longest[i - 1][1];
+    const end = longest[i][0];
+    const named = entries.filter((e) => e.type === 'non_recording' && e.enabled !== false
+      && !e.spansMidnight && Number(e.start) <= start && Number(e.end) >= end && e.label);
+    breaks.push({
+      label: named.length === 1 ? named[0].label : 'Non-recording',
+      key: `gap${i}`, start, end,
+    });
+  }
+  return { workingDays, dayStart, dayEnd, breaks };
+}
+
+/* Named, so the summary above is computed once per call rather than once per
+   field that wants a piece of it. */
+function shapeOf(entries) {
+  return entries ? derivedFromEntries(entries) : null;
+}
+
 function current() {
+  const entries = namedEntries();
+  const shaped = shapeOf(entries);
   return {
     ...cache,
-    workingDayNames: cache.workingDays.map((d) => DAY_NAMES[d]),
+    /* The one line that makes the named windows the studio's real schedule.
+       Everything that decides whether a second counts — the pause sweep, the
+       automatic resume, Time Spent, the Idle Report, the Time Sheet's window
+       and both P&L tabs — reads this object and hands it to
+       src/working-time.js, which prefers `entries` over the four time pairs
+       whenever it is an array. Left off entirely when there are none, so the
+       old shape is what an unmigrated deployment still gets. */
+    ...(entries ? { entries } : {}),
+    /* The derived summary wins over the stored pairs whenever windows are in
+       force, so no screen can show hours the clock is not keeping. */
+    ...(shaped ? {
+      workingDays: shaped.workingDays, dayStart: shaped.dayStart, dayEnd: shaped.dayEnd,
+    } : {}),
+    workingDayNames: (shaped ? shaped.workingDays : cache.workingDays).map((d) => DAY_NAMES[d]),
     // The same numbers as labels, so no screen and no export formats a clock
     // for itself.
-    dayStartLabel: clockLabel(cache.dayStart),
-    dayEndLabel: clockLabel(cache.dayEnd),
+    dayStartLabel: clockLabel(shaped ? shaped.dayStart : cache.dayStart),
+    dayEndLabel: clockLabel(shaped ? shaped.dayEnd : cache.dayEnd),
     lunchStartLabel: clockLabel(cache.lunchStart),
     lunchEndLabel: clockLabel(cache.lunchEnd),
     hasLunch: cache.lunchStart !== null && cache.lunchEnd !== null,
@@ -184,11 +286,12 @@ function current() {
     /* The set that is actually configured, already labelled and sorted, so the
        Settings screen and the Idle Report read the same list rather than each
        working out which of the three pairs are in use. */
-    breaks: breakWindows().map((w) => ({
+    breaks: (shaped ? shaped.breaks : breakWindows()).map((w) => ({
       ...w, startLabel: clockLabel(w.start), endLabel: clockLabel(w.end),
       minutes: w.end - w.start,
     })),
-    breakMinutes: breakMinutes(),
+    breakMinutes: (shaped ? shaped.breaks : breakWindows())
+      .reduce((total, w) => total + (w.end - w.start), 0),
     maxHours: TIMESHEET_MAX_HOURS,
     /* A label, not a conversion. The times above are minutes past midnight with
        no timezone in them, so this says which clock a reader should picture and
@@ -206,16 +309,18 @@ function current() {
  * database, and so there is exactly one translation between "the setting" and
  * "the rule". */
 function timesheetWindow() {
+  const shaped = shapeOf(namedEntries());
   return {
-    dayStart: cache.dayStart,
-    dayEnd: cache.dayEnd,
+    dayStart: shaped ? shaped.dayStart : cache.dayStart,
+    dayEnd: shaped ? shaped.dayEnd : cache.dayEnd,
     lunchStart: cache.lunchStart,
     lunchEnd: cache.lunchEnd,
     /* All three, for anything computing how much of a day is workable. Lunch
        stays named separately above because src/timesheets.js already reads it
        by name and this is not the change to rewrite that. */
-    breaks: breakWindows(),
-    breakMinutes: breakMinutes(),
+    breaks: shaped ? shaped.breaks : breakWindows(),
+    breakMinutes: (shaped ? shaped.breaks : breakWindows())
+      .reduce((total, w) => total + (w.end - w.start), 0),
     maxHours: TIMESHEET_MAX_HOURS,
     timezone: TIMEZONE_LABEL,
   };
@@ -235,12 +340,37 @@ function timesheetWindow() {
  * days it crossed count. Same setting, read by both, asked differently.
  */
 function trackingWindow() {
+  const entries = namedEntries();
+  const shaped = shapeOf(entries);
+  return {
+    workingDays: [...(shaped ? shaped.workingDays : cache.workingDays)],
+    dayStart: shaped ? shaped.dayStart : cache.dayStart,
+    dayEnd: shaped ? shaped.dayEnd : cache.dayEnd,
+    breaks: shaped ? shaped.breaks : breakWindows(),
+    timezone: TIMEZONE_LABEL,
+    /* THE LINE THE TIMER ITSELF READS. src/work-log.js takes its whole picture
+       of the studio's clock from this object — the pause sweep, the automatic
+       resume and the seconds every session is credited with — so the named
+       windows have to arrive here and not only on current(). Kept in step with
+       it deliberately: two functions publishing the same setting differently is
+       exactly how a screen ends up disagreeing with the clock. */
+    ...(entries ? { entries } : {}),
+  };
+}
+
+/* The stored row, with nothing derived from the named windows.
+ *
+ * Every other reader wants the schedule as it is IN FORCE, which is the named
+ * windows whenever there are any. This one caller wants the opposite: the
+ * legacy endpoint writes the four time pairs and then mirrors them into the
+ * windows, and mirroring the derived shape back would copy the windows onto
+ * themselves and drop the change that was just saved. */
+function rawWindow() {
   return {
     workingDays: [...cache.workingDays],
     dayStart: cache.dayStart,
     dayEnd: cache.dayEnd,
     breaks: breakWindows(),
-    timezone: TIMEZONE_LABEL,
   };
 }
 
@@ -429,7 +559,7 @@ async function save(db, input = {}) {
 module.exports = {
   DEFAULTS, DAY_NAMES, TIMESHEET_MAX_HOURS, TIMEZONE_LABEL, BREAKS,
   breakWindows, breakMinutes,
-  load, current, isLoaded, save, trackingWindow,
+  load, current, isLoaded, save, trackingWindow, rawWindow,
   cleanHours, cleanDays, cleanWindow, parseDays, parseClock, clockLabel,
   timesheetWindow,
 };
