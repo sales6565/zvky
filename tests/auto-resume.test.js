@@ -519,43 +519,48 @@ test('the overnight resume, end to end', { skip: cfg ? false : SKIP_REASON }, as
 
   /* --- 7: breaks still come out -------------------------------------------- */
 
-  await t.test('the resume lands at the END of a break, not before it', async () => {
-    /* THE BREAK RULE CHANGED UNDER THIS TEST, and the new answer is better.
+  await t.test('a late resume covers every stretch it slept through, breaks still out', async () => {
+    /* THIS TEST PINNED A BUG, and it took a real day's figures to see it.
      *
-     * A break used to be inside the window: the clock ran through lunch and the
-     * hour was subtracted at the end, so a resumed stretch could span one and
-     * this test checked the subtraction. The studio's final schedule makes a
-     * break a stop in its own right — the clock stops at one and starts at two
-     * — so a resumed stretch can no longer contain a break at all. It begins at
-     * the far end of the most recent one.
+     * It asserted that a resumed stretch begins at the END of the most recent
+     * break, on the reasoning that a stretch can no longer contain one. True of
+     * the stretch — and it quietly threw away every stretch between the pause
+     * and the sweep that noticed it.
      *
-     * That is what is asserted now: the stretch starts when the break ended,
-     * and so the break needs no subtracting because none of it is in there.
-     * Arranged with a break that started ten minutes after the studio opened
-     * and ran for thirty, so "back-dated to the opening" and "back-dated to the
-     * end of the break" are forty minutes apart and cannot be confused.
+     * Here the studio opened, a break ran from ten to forty minutes later, and
+     * the sweep does not run until long after. The old answer stamped the new
+     * stretch at the end of the break and lost the ten minutes before it. The
+     * arrangement makes the two answers forty minutes apart, so they cannot be
+     * confused for one another.
+     *
+     * What matters is the SECONDS, and they are the same number a sweep ticking
+     * every minute would have produced: everything since the studio opened,
+     * less the thirty minutes of break inside it. The stamp goes to where
+     * recording could first have resumed after the pause — the opening — which
+     * is what makes that arithmetic come out.
      */
     if (tooEarly(30)) return;
     const asset = await pausedOvernight('ana', 30);
 
     const openedAgo = await reopen({ lunch: [10, 40] });
-    const expected = (openedAgo - 40) * 60;    // since the break ended, not since the day began
+    const expected = (openedAgo - 30) * 60;    // since the opening, less the break
     await restart();
 
     const rows = await sessions(asset);
     assert.strictEqual(rows.length, 2, 'it resumed');
     const age = Number(rows[1].age);
-    assert.ok(Math.abs(age - expected) < 240,
-      `the stretch is stamped ${Math.round(age / 60)} minutes ago; the break ended `
-      + `${openedAgo - 40} minutes ago. Back-dating past a break would record the break.`);
+    assert.ok(Math.abs(age - openedAgo * 60) < 240,
+      `the stretch is stamped ${Math.round(age / 60)} minutes ago; the studio opened `
+      + `${openedAgo} minutes ago, which is where recording could first have resumed.`);
 
-    /* The live figure, which is the one on the panel, and it must equal the
-       elapsed time of that stretch exactly — no break inside it to take out. */
+    /* The live figure, which is the one on the panel. The break is inside this
+       stretch and has to be out of the number — that is what close() and
+       liveSeconds both do by intersecting with the window. */
     const live = await workOf(asset, 'ana');
     const resumedSeconds = live.currentSeconds - Number(rows[0].seconds);
     assert.ok(Math.abs(resumedSeconds - expected) < 240,
-      `${openedAgo} minutes since the studio opened, of which 30 were a break and 10 `
-      + `were before it: expected about ${openedAgo - 40}, got ${Math.round(resumedSeconds / 60)}`);
+      `${openedAgo} minutes since the studio opened, 30 of them a break: expected about `
+      + `${openedAgo - 30}, got ${Math.round(resumedSeconds / 60)}`);
 
     // And the stored figure agrees with the one that was on screen.
     await as('ana', `/assets/${asset}/submit`, { method: 'POST', body: { link: 'https://example.com/v7' } });

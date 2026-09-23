@@ -549,6 +549,18 @@ module.exports = [
     + 'that is the whole of it.\n\n'
     + 'Hold keeps its Resume, and that is a different thing \u2014 a pause YOU chose, which the schedule does not '
     + 'undo, so the button is the only way back from it. The panel tells the two apart in as many words.'),
+  note('The figure does not depend on the server having been watching',
+    'The schedule\u2019s stops and starts are a LABEL on the work, not the measurement of it. A stretch\u2019s '
+    + 'seconds are worked out by laying it over the recording window, which takes out every break, evening and '
+    + 'weekend inside it \u2014 so a day comes to the same total whether the server marked each boundary as it '
+    + 'passed or was restarted at eleven and did not look again until the afternoon.\n\n'
+    + 'This had been wrong in both directions at once, and a restart in the middle of a day was enough to show it: '
+    + 'a timer open since 10:28 was put down at 11:00 (the first boundary after it STARTED, rather than the last '
+    + 'one before now) and picked up again at 16:15 (the start of the stretch we were in NOW, rather than the far '
+    + 'end of the break it was actually stopped at). 11:15\u201313:00 and 14:00\u201316:00 belonged to no stretch '
+    + 'at all, and the day read 2h 19m instead of 6h 05m. Both ends now ask the same question and the missing '
+    + 'stretches are recorded.'),
+
   p('WHERE THIS SHOWS UP. It is corrected at the source \u2014 one column, work_sessions.seconds \u2014 so every '
     + 'figure built on it moves together: Time Spent on the card and in the Assets List, the Efficiency report, the '
     + 'hours the Time Sheet suggests when you add a line, and the Fixed and Actual hours in the P&L. There is no '

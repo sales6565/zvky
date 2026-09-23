@@ -218,6 +218,39 @@ function startsAt(ms, schedule) {
   return null;
 }
 
+/* When recording last STOPPED, at or before this instant.
+ *
+ * The mirror of resumesAt, and the boundary an overdue session should be put
+ * down at. stopsAt answers "when does the stretch this instant is in end",
+ * which is the right question for an instant inside a stretch and the wrong one
+ * for a session that has been open across several of them: it hands back the
+ * FIRST boundary after the session began, and everything the session was open
+ * for after that is thrown away.
+ *
+ * That is not a theoretical difference. A sweep that stops running at eleven
+ * and comes back at twenty past four — a restart, a deploy, a process that
+ * died — put the session down at eleven and then opened a new one at quarter
+ * past four, losing the two stretches in between: three hours and forty-five
+ * minutes, gone, with nothing on screen to say so.
+ *
+ * Scans backwards a bounded number of days for the same reason resumesAt scans
+ * forwards: a schedule with no working days cannot be saved but could be edited
+ * into the database by hand, and a hang is a worse answer than a null.
+ */
+function lastStoppedAt(ms, schedule) {
+  const { day, minute } = istPartsOf(ms);
+  for (let i = 0; i <= 14; i += 1) {
+    const d = day - i;
+    const spans = spansOn(d, schedule);
+    for (let k = spans.length - 1; k >= 0; k -= 1) {
+      const [, to] = spans[k];
+      // Today, only a stretch that has already ended; on an earlier day, its last.
+      if (i > 0 || to <= minute) return instantAt(d, to);
+    }
+  }
+  return null;
+}
+
 /* When recording next becomes possible, at or after this instant.
  *
  * Returns the instant itself when it is already inside a recordable span, so a
@@ -250,5 +283,5 @@ function resumesAt(ms, schedule) {
 module.exports = {
   IST_OFFSET_MINUTES,
   istPartsOf, dowOf, instantAt, openSpans, spansOn, workableMinutesPerDay,
-  workingSecondsBetween, isRecording, stopsAt, startsAt, resumesAt,
+  workingSecondsBetween, isRecording, stopsAt, startsAt, resumesAt, lastStoppedAt,
 };

@@ -354,17 +354,44 @@ async function pauseOverdue(db) {
     return { rows: [] };
   });
 
+  /* NOTHING IS OVERDUE WHILE RECORDING IS HAPPENING.
+   *
+   * This asked each session when the stretch it BEGAN in ends, and put it down
+   * there. For a sweep running on time that is the same answer as the one
+   * below — the stretch it began in is the stretch we are leaving. For a sweep
+   * that is late it is badly wrong, and it is the bug this rule replaces.
+   *
+   * A session open since half past ten, with the sweep stopped at eleven by a
+   * restart and back at twenty past four, was put down at ELEVEN — the first
+   * boundary after it began — and a new one opened at quarter past four. The
+   * two stretches in between, three hours and forty-five minutes of them, were
+   * never recorded and nothing on any screen said so. The figure read 2h 20m
+   * for a day that was 6h 05m.
+   *
+   * So the question is asked of NOW rather than of the session. If recording is
+   * happening at this moment, no open session is overdue however many
+   * boundaries it has slept through: its seconds are worked out by intersecting
+   * its span with the window, and that already skips every break and every
+   * evening inside it. It is still running, so it keeps running.
+   */
+  if (workingTime.isRecording(now, window)) return [];
+
+  /* Recording has stopped, so everything open goes down — at the moment it
+     stopped, which is the LAST boundary behind us and not the first one in
+     front of the session's start. Null is a studio that has never recorded at
+     all, or a hand-edited schedule with no working days; the session is then
+     put down at its own start and accrues nothing, which is what it did
+     before. */
+  const stoppedAt = workingTime.lastStoppedAt(now, window);
+
   const paused = [];
   for (const row of rows) {
     const startedAt = instantFromAge(row.age_seconds, now);
-    /* Null means the session began outside the window and there is nothing for
-       it to have run until — so it is put down at its own start and accrues
-       nothing. That is the row start() could not close itself: a server that
-       was down when somebody's session was open, or a row from before this
-       rule existed. */
-    const stopsAt = workingTime.stopsAt(startedAt, window);
-    const at = stopsAt === null ? startedAt : stopsAt;
-    if (stopsAt !== null && now < stopsAt) continue;     // still inside its stretch
+    /* Before the session even began: it started inside a break or after the
+       day ended, so there is nothing for it to have run for. close() clamps to
+       the start either way; this is here so the flag below is honest. */
+    const outside = stoppedAt === null || stoppedAt <= startedAt;
+    const at = outside ? startedAt : stoppedAt;
 
     const done = await close(db, row.assetId, REASONS.off_hours, null, { at });
     if (!done.wasOpen) continue;                          // somebody closed it first
@@ -376,7 +403,7 @@ async function pauseOverdue(db) {
       round: Number(row.round) || null,
       at: new Date(at).toISOString(),
       seconds: done.seconds,
-      startedOutsideHours: stopsAt === null,
+      startedOutsideHours: outside,
     });
   }
   return paused;
@@ -437,21 +464,13 @@ async function resumeOverdue(db) {
   const assignments = require('./assignments');
   const lifecycle = require('./lifecycle');
 
-  /* When the stretch we are inside began — half past nine this morning,
-     quarter past eleven after the morning break, two o'clock after lunch. The
-     ceiling on how far a late sweep may back-date, and it is per STRETCH
-     rather than per day: a sweep that runs at twenty past four must credit
-     five minutes since the afternoon break ended, not seven hours since the
-     morning. */
-  const openedToday = workingTime.startsAt(now, window);
-  /* Unreachable while isRecording above agrees with startsAt, and they are the
-     same walk over the same spans, so it always will. Kept because the two
-     lines say different things and only together do they say the whole rule:
-     the one above is the cheap early-out that skips the query all evening and
-     all weekend, and this one is what makes the back-dating below safe to do
-     without checking again. Removing either as dead code brings back a resume
-     that can fire inside a break. */
-  if (openedToday === null) return [];
+  /* Recording is happening, so there is a stretch to resume into. Asked twice
+     on purpose: isRecording above is the cheap early-out that skips the query
+     all evening and all weekend, and this is what makes the back-dating below
+     safe without checking again. They are the same walk over the same spans,
+     so the second can never fire — and removing either as dead code brings
+     back a resume that fires inside a break. */
+  if (workingTime.startsAt(now, window) === null) return [];
 
   const { rows } = await db.query(
     `SELECT w.id, w.asset_id AS assetId, w.user_id AS userId,
@@ -482,8 +501,34 @@ async function resumeOverdue(db) {
        pick up by hand when they are ready. */
     if (await openForUser(db, row.userId, row.assetId)) continue;
 
+    /* WHERE THE PAUSE LEFT OFF, not where this stretch began.
+     *
+     * This took the start of the stretch we are in NOW, which is the same
+     * answer on an ordinary evening — nothing between seven and half past nine
+     * is recordable, so anchoring at either end of that gap gives the same
+     * seconds — and the wrong one whenever the sweep has been away longer than
+     * one break.
+     *
+     * A session paused at eleven and resumed at twenty past four by a sweep
+     * that restarted in between got a stretch beginning at quarter past four.
+     * The two stretches the schedule had promised to resume it for — quarter
+     * past eleven to one, and two to four — belonged to no session at all, and
+     * three hours and forty-five minutes simply were not there. The day read
+     * 2h 20m instead of 6h 05m.
+     *
+     * The rule this restores is the one the rest of the sweep already obeys:
+     * THE RECORDED FIGURE DOES NOT DEPEND ON WHETHER THE SWEEP WAS RUNNING.
+     * Anchoring where the pause left off gives the same number as a sweep that
+     * ticked every minute, because close() intersects the span with the window
+     * and that skips every break and every evening inside it.
+     *
+     * resumesAt rather than the pause instant itself, so the stamp is honest:
+     * a session put down at eleven says it picked up at quarter past, not at
+     * eleven. The seconds are identical either way — the quarter hour between
+     * them is a break — and the stamp is what somebody reads. */
     const pausedAt = instantFromAge(row.paused_age, now);
-    const at = Math.max(openedToday, pausedAt);
+    const resumeAt = workingTime.resumesAt(pausedAt, window);
+    const at = Math.min(now, resumeAt === null ? now : resumeAt);
 
     const episode = await assignments.current(db, row.assetId).catch(() => null);
     const started = await start(db, row.assetId, row.userId, episode && episode.id, { at });
