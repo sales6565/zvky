@@ -1081,6 +1081,60 @@ async function totalsFor(db, assetIds) {
   }]));
 }
 
+/* THE PER-ROUND BREAKDOWN, for a whole list of assets at once.
+ *
+ * Time Spent on the Assets List is the sum of every round an asset has been
+ * through, and a single number that people cannot take apart is a number they
+ * end up not trusting — particularly here, where a reassignment opens a new
+ * round and the obvious suspicion is that the old one has been lost. So the
+ * parts travel with the total.
+ *
+ * Grouped by work_sessions.round, which is the studio's own idea of a round:
+ * one until the first submission, two for the rework after the first change
+ * request, and so on. NOT by assignment episode, which is a different question
+ * — "who held it" rather than "which cycle of work" — and which splits in
+ * places a person would not expect, such as a hand-over inside one round.
+ * Whoever worked each round travels with it, which is the part an episode was
+ * carrying and is worth keeping.
+ *
+ * The same shape and the same arithmetic as summary()'s `rounds`, including the
+ * live seconds of a round still running, so the panel's breakdown and the
+ * list's cannot disagree about a number they both show.
+ */
+async function roundsFor(db, assetIds) {
+  if (!assetIds.length) return new Map();
+  const { rows } = await db.query(
+    `SELECT w.asset_id, w.round,
+            SUM(COALESCE(w.seconds, 0)) AS seconds,
+            SUM(w.ended_at IS NULL) AS still_open,
+            MIN(CASE WHEN w.ended_at IS NULL THEN ${AGE('w.started_at')} END) AS open_age,
+            GROUP_CONCAT(DISTINCT u.\`name\` ORDER BY u.\`name\` SEPARATOR ', ') AS who
+       FROM work_sessions w
+       LEFT JOIN users u ON u.id = w.user_id
+      WHERE w.asset_id IN ($1)
+      GROUP BY w.asset_id, w.round
+      ORDER BY w.asset_id, w.round`,
+    [assetIds]
+  ).catch((err) => {
+    /* A deployment that cannot record time has no rounds to break down, and
+       the list must still draw. Same tolerance as every other enrichment. */
+    if (!unavailable(err)) throw err;
+    return { rows: [] };
+  });
+
+  const byAsset = new Map();
+  for (const r of rows) {
+    if (!byAsset.has(r.asset_id)) byAsset.set(r.asset_id, []);
+    byAsset.get(r.asset_id).push({
+      round: Number(r.round) || 0,
+      seconds: (Number(r.seconds) || 0) + liveSeconds(r.open_age),
+      open: Number(r.still_open) > 0,
+      who: r.who || null,
+    });
+  }
+  return byAsset;
+}
+
 /* Run the sweep, tell the people it affected, and keep doing it.
  *
  * THE INTERVAL IS ABOUT THE SCREEN, NOT THE NUMBER. Every minute, because the
@@ -1146,7 +1200,7 @@ function scheduleAutoPause(db, log = console.log) {
 
 module.exports = {
   REASONS, PAUSE_REASONS, WORK_CONTINUES, start, close, closeIfWorkStopped, hold, heldFor,
-  summary, totalsFor, pauseOverdue, resumeOverdue, scheduleAutoPause, nextOpening,
+  summary, totalsFor, roundsFor, pauseOverdue, resumeOverdue, scheduleAutoPause, nextOpening,
   openSession, openForUser, currentRound, available, cutover, dayTotalFor, recordedFor,
   // Exported so every reader of a submit stamp uses the same expression. There
   // are three, and the third was found by a test rather than by reading.

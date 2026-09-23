@@ -330,7 +330,8 @@ module.exports = [
   p('The same assets as a table, which is easier than the board when there are many. It has four sub-tabs, and an '
     + 'asset appears in exactly one of them.'),
   p('The table carries Start Date and End Date (Deadline) as columns, so a whole project\u2019s schedule can be '
-    + 'read down two columns without opening anything. Every column has a filter of its own \u2014 see 5.3a.'),
+    + 'read down two columns without opening anything. Every column has a filter of its own (5.3a), and Time Spent '
+    + 'is the whole asset with its rounds behind it (5.3b).'),
   shot('04-assets-active', 'Active: everything still moving through the pipeline.'),
   shot('04-assets-inactive', 'Inactive: work nobody has picked up \u2014 assets that are Not Assigned, or '
     + 'assigned and not yet accepted. This is where a batch is selected for 5.5.'),
@@ -366,6 +367,29 @@ module.exports = [
   p('A tick made for a bulk action is not lost when a filter hides the row. The selection bar counts those '
     + 'separately \u2014 \u201c3 hidden by the filter\u201d \u2014 so narrowing, ticking, widening and ticking '
     + 'again adds up to what it says it does.'),
+
+  h2('5.3b Time Spent, and what it is made of'),
+  p('The <strong>Time Spent</strong> column is the asset\u2019s WHOLE recorded time \u2014 every round of work on '
+    + 'it, summed. An asset that went out for changes, came back and was worked on again shows the first round\u2019s '
+    + 'hours plus the second\u2019s, and a third and a fourth after that. It is worked out from the recorded '
+    + 'stretches each time the list is drawn, so there is no stored total to go stale.'),
+  p('This used to read only the round in front of you, which meant the number went DOWN after a reassignment and '
+    + 'looked as though the earlier work had been lost. It never was \u2014 it was in the database and in the P&L '
+    + 'the whole time \u2014 but the column was answering a narrower question than its heading asks.'),
+  bullets([
+    'Under the figure, <strong>"3 rounds"</strong> opens the breakdown: each round, how long it took, and who worked it, with the total at the bottom. Hovering gives the same thing as plain text, so it can be read without clicking and it survives a screenshot.',
+    'On the <strong>History</strong> tab a row is one finished round rather than an asset, so the figure there is that round\u2019s own time \u2014 with <em>of 2h 35m in total</em> under it, so the whole is never more than a glance away.',
+    'Every round\u2019s figure has already had the recording schedule applied to it (7.3a), so summing them cannot put back an evening, a weekend or a break.',
+    'The asset panel carries the same breakdown, from the same numbers.',
+  ]),
+  note('Where else this figure goes',
+    'Time Spent is one column in the database \u2014 work_sessions.seconds \u2014 and everything that talks about '
+    + 'hours reads it: the Assets List, the asset panel, the Efficiency and Idle reports, the hours the Time Sheet '
+    + 'suggests, and both P&L tabs. They all count every round, so none of them can disagree with this column '
+    + 'about what an asset cost.\n\n'
+    + 'The P&L counts only DELIVERED work, so an asset still in flight contributes nothing there while showing its '
+    + 'hours here. That is the P&L\u2019s own rule and not a disagreement; the two meet the moment the asset is '
+    + 'delivered. A round still running is counted here as it goes and joins the P&L when it is handed in.'),
 
   h2('5.4 Delivering several at once'),
   steps([

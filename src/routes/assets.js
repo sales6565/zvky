@@ -194,6 +194,12 @@ async function attachTasksAndNotes(assets, viewer) {
   };
 
   const timeSpent = await workLog.totalsFor(db, ids);
+  /* And the parts that total is made of. The Assets List shows the sum of every
+     round in its Time Spent column, and a sum nobody can take apart is a sum
+     people stop believing — most of all here, where a reassignment opens a new
+     round and the natural suspicion is that the old one has been dropped. */
+  const rounds = await enrich('the round breakdown', () => workLog.roundsFor(db, ids))
+    .then((m) => (m instanceof Map ? m : new Map()));
   // Who has held each asset, in order, with the time and submissions from each
   // stretch. The Assets List draws one row per entry here; the dashboard
   // ignores it and keeps drawing one card per asset.
@@ -203,6 +209,8 @@ async function attachTasksAndNotes(assets, viewer) {
     ...a,
     can_review_tl: mayReviewTl(a),
     time_spent_seconds: (timeSpent.get(a.id) || {}).seconds || 0,
+    // [{ round, seconds, open, who }], oldest round first.
+    rounds_spent: rounds.get(a.id) || [],
     // What the person holding it now has put in, as distinct from the asset's
     // lifetime above. The panel shows this one; showing the lifetime to a new
     // assignee told them somebody else's hours were theirs, and made the panel

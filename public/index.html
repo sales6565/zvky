@@ -438,6 +438,33 @@ button.chat-status:focus-visible{outline:2px solid var(--brand-accent);outline-o
 .ci-del{color:var(--ink-muted);}
 .ci-wait{color:var(--ink-faint);font-style:italic;}
 
+/* The Time Spent breakdown on the Assets List. Deliberately the same shape as
+   the Message info rows above — a heading, one row per thing, a total — because
+   it answers the same kind of question and two breakdowns that look different
+   are two things to learn. */
+.ts-more{display:block;margin-top:3px;padding:0;border:0;background:none;cursor:pointer;
+  font:inherit;font-size:10.5px;font-family:'IBM Plex Mono';color:var(--ink-faint);
+  text-decoration:underline dotted;text-underline-offset:2px;}
+.ts-more:hover{color:var(--ink);}
+.ts-of{font-size:10.5px;color:var(--ink-faint);font-family:'IBM Plex Mono';margin-top:2px;}
+.ts-pop{position:fixed;z-index:70;min-width:250px;max-height:60vh;overflow-y:auto;padding:2px 0 4px;
+  background:var(--surface-2);border:1px solid var(--border);border-radius:8px;
+  box-shadow:0 8px 24px rgba(0,0,0,.30);text-align:left;cursor:default;}
+.rb-head{display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12px;
+  border-bottom:1px solid var(--border);}
+.rb-head strong{font-weight:600;}
+.rb-close{margin-left:auto;border:0;background:none;color:var(--ink-faint);cursor:pointer;
+  font-size:15px;line-height:1;padding:0 2px;}
+.rb-close:hover{color:var(--ink);}
+.ts-pop .ci-row{padding:6px 12px;font-size:12px;}
+.rb-who{font-size:11px;color:var(--ink-muted);}
+.rb-live{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--approved);}
+.rb-total{border-top:1px solid var(--border);margin-top:2px;padding-top:7px!important;font-weight:600;}
+.rb-empty{padding:10px 12px;font-size:11.5px;color:var(--ink-faint);}
+/* Nothing anchors the panel any more — it is positioned from the button's own
+   rectangle and lives on the body, because a panel inside the table is cropped
+   by it. */
+
 /* attachments */
 .chat-att{margin-top:6px;display:flex;flex-direction:column;gap:5px;}
 .chat-att img,.chat-att video{max-width:100%;max-height:190px;border-radius:8px;display:block;
@@ -2958,7 +2985,25 @@ function rowFacts(row){
     priority: a.priority || '',
     tasksDone: a.tasks ? a.tasks.filter(x=>x.done).length : 0,
     tasksTotal: a.tasks ? a.tasks.length : 0,
-    seconds: ep ? (ep.seconds || 0) : (a.time_spent_seconds || 0),
+    /* TIME SPENT IS THE WHOLE ASSET, not the round in front of you.
+     *
+     * This read `ep.seconds` for every row, and on the live row that is the
+     * CURRENT round — so an asset sent back through TL Feedbacks and reassigned
+     * showed the new round's minutes and appeared to have lost the first
+     * round's hours. Nothing was lost; the column was answering a narrower
+     * question than its heading asks. It now reads the asset's lifetime, which
+     * is what "Time Spent" on an asset means and what the P&L has always
+     * costed.
+     *
+     * A HISTORY row is the exception and not an inconsistency: that row IS one
+     * finished round, the Round column beside it says so, and showing the
+     * asset's total on it would make the History tab a column of identical
+     * numbers. It shows its own round and carries the total beside it. */
+    seconds: past ? (ep.seconds || 0) : (a.time_spent_seconds || 0),
+    // The asset's total, on every row, so the History rows can say "of X".
+    totalSeconds: a.time_spent_seconds || 0,
+    // [{ round, seconds, open, who }] — what the total is made of.
+    roundsSpent: Array.isArray(a.rounds_spent) ? a.rounds_spent : [],
   };
 }
 
@@ -5036,6 +5081,72 @@ function renderBoard(){
     });
   });
 }
+/* THE TIME SPENT CELL, and the breakdown behind it.
+ *
+ * The figure is the asset's whole recorded time — every round, summed — and the
+ * button beside it opens what that sum is made of. The studio asked for both,
+ * and the second is the reason the first is believable: a total that went UP
+ * after a reassignment, with no way to see why, is a number people check by
+ * hand and then stop using.
+ *
+ * On a History row the figure is that round's own, because the row is that
+ * round; the total rides beside it so no row on any tab is more than a glance
+ * from the answer. Written here rather than inline so the two readings sit next
+ * to each other and cannot drift.
+ */
+function timeSpentCell(f){
+  if(!f.seconds && !f.totalSeconds) return '—';
+  const total = fmtDuration(f.totalSeconds);
+  const many = f.roundsSpent.length > 1;
+  /* A plain title too, not only the panel. It is what a hover gives for free,
+     it survives a print and a screenshot, and it is the whole answer for
+     somebody who does not want to click anything. */
+  const hover = many
+    ? f.roundsSpent.map(r=>`Round ${r.round}: ${fmtDuration(r.seconds)}${r.who?` (${r.who})`:''}${r.open?' — still running':''}`)
+        .concat(`Total: ${total}`).join('\n')
+    : `Total: ${total}`;
+  const button = many
+    ? `<button type="button" class="ts-more" data-rounds="${escapeHTML(f.a.id)}"
+        title="${escapeHTML(hover)}">${f.roundsSpent.length} rounds</button>`
+    : '';
+  if(f.past){
+    return `${f.seconds?fmtDuration(f.seconds):'—'}`
+      + `<div class="ts-of" title="${escapeHTML(hover)}">of ${escapeHTML(total)} in total</div>`
+      + button;
+  }
+  return `${f.totalSeconds?total:'—'}${button}`;
+}
+
+/* The breakdown itself: a summary line and one row per round.
+ *
+ * The same shape as the chat's Message info panel — a heading, a summary, then
+ * one row per thing — because it answers the same kind of question and the two
+ * should not be two different ideas of what a breakdown looks like. */
+function roundsBreakdownHTML(a){
+  const rounds = Array.isArray(a.rounds_spent) ? a.rounds_spent : [];
+  const total = Number(a.time_spent_seconds) || 0;
+  const rows = rounds.map(r=>`
+    <div class="ci-row">
+      <span class="ci-who">Round ${r.round}${r.open?' <span class="rb-live">running</span>':''}</span>
+      ${r.who ? `<span class="rb-who">${escapeHTML(r.who)}</span>` : ''}
+      <span class="ci-when mono">${escapeHTML(fmtDuration(r.seconds))}</span>
+    </div>`).join('');
+  return `<div class="rb-head"><strong>${escapeHTML(a.code||'')} · Time Spent</strong>
+      <button type="button" class="rb-close" id="rbClose" title="Close">&times;</button></div>
+    ${rows || '<div class="rb-empty">No time recorded yet.</div>'}
+    <div class="ci-row rb-total"><span class="ci-who">Total</span>
+      <span class="ci-when mono">${escapeHTML(fmtDuration(total))}</span></div>`;
+}
+
+/* Which cell's breakdown is open. Outside renderList for the same reason the
+   filter menus' is: the list redraws and the panel has to survive it. */
+let tsOpenRounds = null;
+document.addEventListener('click', ()=>{
+  if(!tsOpenRounds) return;
+  document.querySelectorAll('.ts-pop').forEach(el=>el.remove());
+  tsOpenRounds = null;
+});
+
 /* Which column's multi-pick menu is open, if any. Outside renderList because
    the list redraws on every tick and the menu has to survive that. */
 let alOpenMenu = null;
@@ -5422,7 +5533,7 @@ function renderList(){
       <td>${who ? `<span class="who-line">${avatarHTML({ id: ep ? ep.userId : a.assignee_id, name: who, photoAt: ep ? ep.userPhotoAt : a.assignee_photo_at }, { size:20, title:false })}<span>${escapeHTML(who)}</span></span>` : '—'}</td>
       <td>${ep ? (past ? `<span class="round-tag">handed on</span>` : `<span class="round-tag round-tag-live">current</span>`) : ''}</td>
       <td style="text-transform:capitalize;">${a.priority}</td><td class="mono">${past?'':`${doneTasks}/${a.tasks.length}`}</td>
-      <td class="mono">${seconds?fmtDuration(seconds):'—'}${stampLine(startedAt, submittedAt, roundsIn, !past && a.held)}</td></tr>`;
+      <td class="mono">${timeSpentCell(f)}${stampLine(startedAt, submittedAt, roundsIn, !past && a.held)}</td></tr>`;
     }).join('')}</tbody></table>`;
   /* Two kinds of row, two things to open. A live round opens the asset panel
      with everything on it; a finished round opens the record of that round,
@@ -5433,6 +5544,42 @@ function renderList(){
     if(row.dataset.round) openRound(row.dataset.id, row.dataset.round);
     else openDrawer(row.dataset.id);
   }));
+
+  /* The Time Spent breakdown. Its click must not also open the asset — the row
+     under it is a link to the panel, and somebody asking how a total adds up is
+     not asking to leave the list. */
+  el.querySelectorAll('.ts-more').forEach(btn=>{
+    btn.addEventListener('click', ev=>{
+      ev.preventDefault(); ev.stopPropagation();
+      const already = tsOpenRounds === btn.dataset.rounds;
+      document.querySelectorAll('.ts-pop').forEach(x=>x.remove());
+      tsOpenRounds = null;
+      if(already) return;
+      const asset = assets.find(x=>x.id === btn.dataset.rounds);
+      if(!asset) return;
+      /* Appended to the BODY and positioned from the button's own rectangle,
+         rather than inside the cell. A panel inside the table is clipped by it
+         — the first version showed a two-pixel sliver under the last row and
+         nothing else — and no amount of z-index escapes an ancestor that
+         crops. Fixed positioning takes it out of the table's world entirely. */
+      const pop = document.createElement('div');
+      pop.className = 'ts-pop';
+      pop.innerHTML = roundsBreakdownHTML(asset);
+      pop.addEventListener('click', e2=>e2.stopPropagation());
+      document.body.appendChild(pop);
+      const box = btn.getBoundingClientRect();
+      /* Below the button where there is room, above it where there is not, and
+         never off the left edge on a narrow screen. */
+      const width = pop.offsetWidth || 250;
+      const height = pop.offsetHeight || 160;
+      const below = box.bottom + 6;
+      pop.style.top = `${below + height < window.innerHeight ? below : Math.max(6, box.top - height - 6)}px`;
+      pop.style.left = `${Math.max(6, Math.min(box.right - width, window.innerWidth - width - 6))}px`;
+      tsOpenRounds = btn.dataset.rounds;
+      const close = pop.querySelector('#rbClose');
+      if(close) close.addEventListener('click', ()=>{ pop.remove(); tsOpenRounds = null; });
+    });
+  });
 
   /* Ticking a box must not also open the asset. The row's own click handler is
      what opens the panel, and a checkbox sits inside the row. */
@@ -7691,12 +7838,23 @@ async function openDrawer(id){
   }
   wireTasks();
 
-  /* The per-round breakdown, when there has been more than one round. */
-  if(document.getElementById('d_rounds') && roundSeconds(a)){
+  /* The per-round breakdown, whenever there has been more than one round.
+   *
+   * It used to be gated on the CURRENT round having time in it, which hid it at
+   * the one moment it is most wanted: an asset just reassigned after TL
+   * Feedbacks has a new round at nothing, and that is exactly when somebody
+   * looks to check the earlier round is still counted. The rounds are what
+   * decide whether there is anything to break down, so they are what it asks.
+   *
+   * The total is on the end, because the breakdown exists to explain a total
+   * and a list of parts with no sum is half an answer. */
+  if(document.getElementById('d_rounds')){
     api(`/assets/${id}/worklog`).then(({ work })=>{
       const el = document.getElementById('d_rounds');
       if(el && work.rounds.length > 1){
-        el.textContent = work.rounds.map(r=>`Round ${r.round}: ${fmtDuration(r.seconds)}`).join(' · ');
+        el.textContent = work.rounds
+          .map(r=>`Round ${r.round}: ${fmtDuration(r.seconds)}`)
+          .concat(`Total: ${fmtDuration(work.totalSeconds)}`).join(' · ');
       }
     }).catch(()=>{});
   }
