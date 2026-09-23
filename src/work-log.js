@@ -503,6 +503,52 @@ async function resumeOverdue(db) {
   return resumed;
 }
 
+/* THE ROUND ENDED WHILE THE CLOCK WAS ALREADY DOWN.
+ *
+ * Nothing open to close is usually nothing to do — and once was not. An artist
+ * still going at seven, or at one o'clock, has their stretch put down by the
+ * schedule; when they then submit, close() finds no open session and the row
+ * keeps saying off_hours. The round is over and the record says it is paused.
+ *
+ * Two things read that row and both believed it. The panel offered no Accept
+ * and Start, because a task that reads as paused has not stopped; and it
+ * offered no Resume either, because the schedule's pauses have no button. An
+ * artist came back from TL Feedbacks to a panel with nothing on it. The submit
+ * stamp went the same way — submitStamp reads a paused row as "not handed in",
+ * so an asset that was plainly submitted had no submitted_at.
+ *
+ * So the reason that actually ended the round is written over the pause. Only
+ * the reason: `ended_at` and `seconds` stay exactly where they were, because
+ * work really did stop at seven and not at the moment Submit was pressed.
+ *
+ * NOT WHEN THE NEW REASON IS ITSELF A PAUSE. A pause replacing a pause is the
+ * sweep doing its job — the studio shutting on a task that was already down at
+ * lunchtime — and overwriting it would say a person put it down when the clock
+ * did.
+ *
+ * Scoped to the CURRENT round, so settling the end of this round cannot reach
+ * back and rewrite a pause inside one that was handed in weeks ago. At submit
+ * time close() runs BEFORE the version row is written, which is what makes the
+ * round being settled the round being submitted.
+ */
+async function settlePaused(db, assetId, reason) {
+  if (!reason || PAUSE_REASONS.includes(reason)) return false;
+  const { result } = await db.query(
+    `UPDATE work_sessions
+        SET ended_reason = $1
+      WHERE asset_id = $2
+        AND ended_reason ${PAUSED_SQL}
+        AND round = (SELECT COUNT(*) + 1 FROM asset_versions WHERE asset_id = $2)`,
+    [reason, assetId]
+  ).catch((err) => {
+    /* A deployment without the reason column has never recorded a pause, so
+       there is nothing to settle and nothing to report. */
+    if (unavailable(err)) return { result: null };
+    throw err;
+  });
+  return Boolean(result && result.affectedRows);
+}
+
 /* Stamp the end, and record what ended it.
  *
  * Idempotent: closing a closed session is not an error, it is nothing. Closing
@@ -533,7 +579,7 @@ async function resumeOverdue(db) {
  */
 async function close(db, assetId, reason, note = null, { at = null } = {}) {
   const running = await openSession(db, assetId);
-  if (!running) return { ok: true, wasOpen: false };
+  if (!running) return { ok: true, wasOpen: false, settled: await settlePaused(db, assetId, reason) };
   const why = REASONS[reason] || null;
   const text = typeof note === 'string' && note.trim() ? note.trim().slice(0, 255) : null;
 
@@ -650,23 +696,44 @@ function sameDayResume(opensAt) {
   return workingTime.istPartsOf(now).day === workingTime.istPartsOf(Date.parse(opensAt)).day;
 }
 
-/* "This row is the newest stretch of this person's work on this asset, and it
- * ended on hold."
+/* "This row is the newest stretch of this person's CURRENT round on this asset,
+ * and it ended paused."
  *
  * Written once and used by both the single-asset question above and the
  * list-wide one in totalsFor, because a panel and a list that disagree about
- * who is held is precisely the bug this shape exists to prevent.
+ * who is paused is precisely the bug this shape exists to prevent.
  *
- * Two clauses, and both are needed. Nothing OPEN, or a resume has already
- * happened and the hold is over. Nothing started LATER, or an older hold inside
- * a round that has since moved on would still read as current.
+ * THE ROUND CLAUSE IS WHAT MAKES A PAUSE EXPIRE, and leaving it out was a real
+ * bug with a nasty shape. A paused stretch means "this work is down and will be
+ * picked up again". Submitting ends the round, so nothing is waiting to be
+ * picked up any more — but the row still says off_hours, and without this it
+ * went on reading as a live pause for ever.
  *
- * The tie-break on ended_at is for the second-granularity of DATETIME: a hold
+ * What that did: an artist who was still going at seven, or at one o'clock, and
+ * who then submitted while the clock was down, came back from TL Feedbacks to a
+ * panel with NO BUTTONS AT ALL. Accept and Start is not offered while a task
+ * reads as paused, and Resume is not offered for a pause the schedule made —
+ * each rule right on its own, and between them an artist who could not touch
+ * their own rework. It was reported as "Reassign to Same User breaks Start",
+ * which is where it is most visible: handing the asset to somebody ELSE moves
+ * the question to a person with no stale row, so that path looked fine.
+ *
+ * The round is the asset's submission count plus one — the same expression
+ * currentRound() uses to stamp a session on the way in — so a stretch from a
+ * round that has been handed in no longer matches, whoever holds the asset now.
+ *
+ * The other two clauses are unchanged and still needed. Nothing OPEN, or a
+ * resume has already happened and the pause is over. Nothing started LATER, or
+ * an older pause inside the same round would still read as current.
+ *
+ * The tie-break on ended_at is for the second-granularity of DATETIME: a pause
  * and a resume in the same second sort equally by start, and the open row is
- * what separates them. The one case left indistinguishable — hold, resume and
+ * what separates them. The one case left indistinguishable — pause, resume and
  * submit inside a single second — describes a round with no work in it.
  */
-const HELD_ROW = `w.ended_reason ${PAUSED_SQL} AND NOT EXISTS (
+const HELD_ROW = `w.ended_reason ${PAUSED_SQL}
+    AND w.round = (SELECT COUNT(*) + 1 FROM asset_versions v WHERE v.asset_id = w.asset_id)
+    AND NOT EXISTS (
       SELECT 1 FROM work_sessions n
        WHERE n.asset_id = w.asset_id AND n.user_id = w.user_id
          AND (n.ended_at IS NULL
