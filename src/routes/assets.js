@@ -8,6 +8,7 @@ const fs = require('fs');
 const { parse } = require('csv-parse/sync');
 const XLSX = require('xlsx');
 const db = require('../db');
+const oversight = require('../project-oversight');
 const { authenticate, requirePermission } = require('../middleware/auth');
 const { upload, uploadImport } = require('../upload');
 const {
@@ -946,6 +947,25 @@ router.post('/:id/notes', async (req, res) => {
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
   if (await projectClosedResponse(res, asset.project_id)) return undefined;
   if (!(await canViewAsset(req.user, asset))) return res.status(403).json({ error: 'No access to this asset' });
+  /* SEEING AN ASSET IS NOT WRITING ON IT.
+   *
+   * This was the one write in the pipeline gated on visibility alone, which was
+   * true enough while everybody who could see an asset was working on it. It
+   * stopped being true when the studio's staff side — MIS, Finance, HR — could
+   * be attached to a project to look at it: they could not create, edit,
+   * delete, assign, start, submit, review or reassign anything, and could leave
+   * a note on somebody else's asset.
+   *
+   * The rule is the one the Staff tier already claimed and nothing enforced: a
+   * designation whose asset pipeline is closed does not write to the pipeline.
+   * Asked of the designation's properties rather than its name, so a role added
+   * on that tier in Settings is covered without anybody remembering to come
+   * back here. */
+  if (!oversight.writesToPipeline(req.user.role)) {
+    return res.status(403).json({
+      error: 'Your designation has view-only access to this project, so you cannot leave notes on its work.',
+    });
+  }
   const { text } = req.body || {};
   if (!text || !text.trim()) return res.status(400).json({ error: 'Note text is required' });
   const id = uuid();

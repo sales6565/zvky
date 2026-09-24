@@ -2044,6 +2044,38 @@ async function ensureUserActive(db, log) {
  * decide: a NULL here on the day of the upgrade would silently take the cap off
  * every group in the studio.
  */
+/* Who put this person on this project, and when.
+ *
+ * project_members held a pair and nothing else, which was enough while the only
+ * way into it was the Project field on somebody's own profile — the Activity
+ * Log records that edit against the user. Attaching staff to projects for
+ * view-only access is a second way in, made from a different screen, and "who
+ * gave Finance sight of this project" is a question somebody will ask of the
+ * PROJECT rather than of the person.
+ *
+ * Nullable, and added rather than backfilled: rows already there were made
+ * before anybody was recording this, and inventing an author for them would put
+ * a name against a decision that person may not have made. The Activity Log
+ * remains the audit trail proper; these two columns are so the screen can show
+ * provenance beside each row without a join through it.
+ */
+async function ensureProjectMemberProvenance(db, log) {
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'project_members'
+        AND COLUMN_NAME IN ('assigned_by','assigned_at')`
+  );
+  if (rows.length === 2) return;
+  const have = new Set(rows.map((r) => r.COLUMN_NAME));
+  if (!have.has('assigned_by')) {
+    await db.query('ALTER TABLE project_members ADD COLUMN assigned_by CHAR(36) NULL');
+  }
+  if (!have.has('assigned_at')) {
+    await db.query('ALTER TABLE project_members ADD COLUMN assigned_at DATETIME NULL');
+  }
+  log('Schema: project_members records who attached somebody and when.');
+}
+
 async function ensureChatSettings(db, log) {
   await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS chat_settings (
       id                TINYINT   NOT NULL PRIMARY KEY,
@@ -2975,6 +3007,8 @@ const STEPS = [
      foreign keys. The mirror loads here rather than lazily because src/chat.js
      reads it on every group create and every member add, and a lazy first read
      would be one on the first of those. */
+  // After the table itself, which ensureProjects creates.
+  ['project member provenance', ensureProjectMemberProvenance],
   ['chat settings', ensureChatSettings],
   ['chat settings mirror', (db) => chatSettings.load(db)],
   // After the tables exist, and reading the window from the module that owns it.

@@ -924,6 +924,23 @@ const GROUPS = [
         danger: 'Switching every recording window off stops time tracking for the whole studio.',
       },
       {
+        /* Giving the studio's staff side sight of a project.
+         *
+         * SUPER ADMIN ONLY. What it hands out is visibility into projects the
+         * holder is not working on — the board, the time logged against it and
+         * the reports built from that. It hands out no ability to change any of
+         * it, because the designations it can be used on cannot be handed work
+         * and do not run a team; but "who may look" is still a decision for
+         * whoever runs the studio rather than for everyone trusted with
+         * Settings. */
+        key: 'settings.mis_access',
+        label: 'Manage MIS Project Access',
+        impliedBy: has('managePermissions'),
+        describe: 'Attach MIS, Finance, HR and the studio’s other non-pipeline designations to '
+          + 'particular projects so they can see them. View only — it grants nothing that changes '
+          + 'an asset, a project or anybody’s work.',
+      },
+      {
         key: 'settings.ip_allowlist',
         label: 'Manage IP Allowlist',
         impliedBy: has('manageAccess'),

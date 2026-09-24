@@ -1126,6 +1126,28 @@ module.exports = [
     + 'with the administration band. My Team is open to anyone who supervises people.',
     ['administration', 'supervisors']),
 
+  h2('11.6 MIS Project Access — Super Admin'),
+  p('The studio’s non-pipeline side — MIS, Finance, HR — sometimes needs to look into a '
+    + 'project without working on it. Settings → MIS Project Access attaches somebody to the '
+    + 'projects they should be able to see: pick the person, tick the projects, Save. Any number of '
+    + 'projects, and it can be changed at any time.'),
+  note('It grants sight, and nothing else',
+    'They get the project’s board, the time logged against it, and the reports built from that. '
+    + 'They cannot create, edit, delete, assign, start, submit, review or reassign anything, and they '
+    + 'cannot leave notes on its work.\n\n'
+    + 'That is not a switch on this screen — it is their designation. The screen only lists '
+    + 'designations whose asset pipeline is closed, which is exactly the set for whom "attached to a '
+    + 'project" can only mean reading it. Somebody who works on projects cannot be attached here at '
+    + 'all; they are put on a project from their own profile, which is a different thing with a '
+    + 'different permission.'),
+  bullets([
+    'ONLY THE PROJECTS PICKED. This is not a switch that opens the whole studio. Attaching somebody to two projects shows them those two; every other project stays as invisible as it was.',
+    'TAKING IT AWAY IS IMMEDIATE. Untick a project and Save, and the next thing they load no longer has it — no waiting for a session to end, and no sign-out needed. It is not retrospective: it stops them seeing the project from that moment, and nothing can un-see what somebody has already read. The Activity Log records what was looked at while the access was in place.',
+    'WHAT THEY STILL NEED FOR REPORTS. Seeing a project is not the same as holding the report permissions. Grant View Reports, View Idle Report or the Time Sheet and P&L permissions in Settings → Permissions, and each one is then scoped to the projects they have been attached to — so one grant does not become studio-wide sight.',
+    'THE SUPER ADMIN ALONE, by default. It can be handed to a designation in Settings → Permissions (Manage MIS Project Access), and the check is made on the server on every request.',
+    'EVERY CHANGE IS RECORDED — who attached whom to what, and when — both on the row itself and in the Activity Log.',
+  ]),
+
   pagebreak(),
   // ============================================================ 12
   h1('12. Notifications, chat and your profile'),

@@ -674,6 +674,23 @@ tr.past-round{opacity:0.62;}
 .rh-sum > div{display:flex;flex-direction:column;gap:1px;}
 .rh-sum span{font-size:10.5px;color:var(--ink-faint);}
 .rh-sum strong{font-size:12.5px;font-weight:600;}
+/* --- MIS Project Access: person-first, projects ticked underneath --------- */
+.mis-person{border:1px solid var(--border);border-radius:9px;margin-bottom:8px;background:var(--surface);}
+.mis-person.mis-open{border-color:var(--brand-accent);}
+.mis-head{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:9px 12px;cursor:pointer;user-select:none;}
+.mis-head:hover strong{color:var(--brand-accent);}
+.mis-role{font-size:10.5px;color:var(--ink-faint);margin-left:8px;}
+.mis-count{font-size:11px;color:var(--ink-faint);white-space:nowrap;}
+.mis-on{padding:0 12px 9px;display:flex;flex-wrap:wrap;gap:4px;}
+.mis-chip{font-size:10.5px;border:1px solid var(--border);border-radius:999px;padding:1px 8px;color:var(--ink-muted);}
+.mis-pick{padding:2px 12px 8px;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:2px 12px;}
+.mis-proj{display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;padding:3px 0;}
+.mis-proj input{width:auto;margin:0;padding:0;background:none;border:0;flex:none;}
+.mis-proj em{color:var(--ink-faint);font-style:normal;font-size:10.5px;}
+.mis-actions{display:flex;align-items:center;gap:8px;padding:2px 12px 11px;}
+.mis-by{font-size:10.5px;color:var(--ink-faint);}
+@media (max-width:640px){ .mis-pick{grid-template-columns:1fr;} }
 .rh-warn{border:1px solid #e0a800;background:rgba(224,168,0,.08);border-radius:8px;
   padding:8px 10px;margin-bottom:12px;font-size:11.5px;color:var(--ink);}
 .rh-warn > div{margin-bottom:2px;}
@@ -2780,6 +2797,9 @@ const SETTINGS_SECTIONS = [
   /* Super Admin only, like Recording Hours above and by the same route: a
      permission implied by managePermissions. */
   { permission:'chat.settings', label:'Chat', heading:'Chat', note:'The largest number of people a chat group may hold, studio-wide \u2014 or no limit at all.' },
+  /* Super Admin only, by a permission implied by managePermissions — the same
+     route as Recording Hours and Chat above. */
+  { permission:'settings.mis_access', label:'MIS Project Access', heading:'MIS Project Access', note:'Which projects the MIS, Finance and HR side may see. View only.' },
   { permission:'settings.priorities',   label:'Priorities',       heading:'Priorities',       note:'The Priority dropdown.' },
   { permission:'settings.categories',   label:'Asset Categories', heading:'Asset Categories', note:'The Category dropdown on an asset. Starts empty — add the studio\'s own list.' },
   { permission:'settings.project_categories', label:'Project Categories', heading:'Project Categories', note:'The Category dropdown on a project. A separate list from the asset one.' },
@@ -9617,6 +9637,7 @@ async function renderSettings(){
     ${can('settings.branding') ? '<div id="brandingSection"></div>' : ''}
     ${can('settings.recording_hours') ? '<div id="recordingHoursSection"></div>' : ''}
     ${can('chat.settings') ? '<div id="chatSettingsSection"></div>' : ''}
+    ${can('settings.mis_access') ? '<div id="misAccessSection"></div>' : ''}
     ${can('settings.working_hours') ? '<div id="scheduleSection"></div>' : ''}
     ${can('settings.ip_allowlist') ? '<div id="ipAllowlistSection"></div>' : ''}
     ${can('settings.ip_blocklist') ? '<div id="ipBlocklistSection"></div>' : ''}
@@ -9632,6 +9653,7 @@ async function renderSettings(){
   if(can('settings.branding')) renderBranding();
   if(can('settings.recording_hours')) renderRecordingHours();
   if(can('chat.settings')) renderChatSettings();
+  if(can('settings.mis_access')) renderMisAccess();
   if(can('settings.working_hours')) renderSchedule();
   if(can('settings.permissions')) await renderRolePermissions();
   if(can('settings.activity_log')) renderActivityLog();
@@ -12181,6 +12203,110 @@ async function renderChatSettings(){
     }catch(e){
       csState.errors = (e.body && e.body.errors) ? e.body.errors : [{ field:null, message:e.message }];
     }finally{ csState.busy = false; renderChatSettings(); }
+  };
+}
+
+
+/* ---------- MIS Project Access (Super Admin) ----------
+
+   Who from the studio's staff side may SEE which projects. Person-first: pick
+   somebody, tick the projects, save — which is how the studio described the
+   job ("add one from that team to the selected projects").
+
+   WHAT IT GRANTS IS SAID ON THE SCREEN, not left to be inferred, because the
+   whole point of the feature is that it grants less than membership normally
+   does. The people listed here hold designations that cannot be handed work
+   and do not run a team, so attaching them opens the board and the reports and
+   refuses everything that changes anything.
+
+   NOTHING HERE IS THE LOCK. Every endpoint is behind requireSuperAdmin on the
+   server. This section not rendering is a courtesy to everybody else's
+   Settings page. */
+let misState = { data:null, open:null, picked:new Set(), busy:false, err:'' };
+
+async function renderMisAccess(){
+  const el = document.getElementById('misAccessSection');
+  if(!el) return;
+  if(!misState.data){
+    try{ misState.data = await api('/admin/mis-assignments'); }
+    catch(err){ el.innerHTML = `<div class="ref-section"><div class="ref-err">${escapeHTML(err.message)}</div></div>`; return; }
+  }
+  const d = misState.data;
+  const projectLabel = (id)=>{ const p = d.projects.find(x=>x.id===id); return p ? p.name : 'a project'; };
+
+  const personRow = (u)=>{
+    const isOpen = misState.open === u.id;
+    const on = u.projects.map(p=>p.projectId);
+    return `
+      <div class="mis-person${isOpen?' mis-open':''}" data-user="${escapeHTML(u.id)}">
+        <div class="mis-head" data-toggle="${escapeHTML(u.id)}">
+          <div>
+            <strong>${escapeHTML(u.name)}</strong>
+            <span class="mis-role">${escapeHTML(u.roleLabel)}</span>
+          </div>
+          <div class="mis-count">${on.length ? `${on.length} project${on.length===1?'':'s'}` : 'no projects'}</div>
+        </div>
+        ${on.length && !isOpen ? `<div class="mis-on">${on.map(id=>`<span class="mis-chip">${escapeHTML(projectLabel(id))}</span>`).join('')}</div>` : ''}
+        ${isOpen ? `
+          <div class="mis-pick">
+            ${d.projects.length ? d.projects.map(p=>`
+              <label class="mis-proj">
+                <input type="checkbox" value="${escapeHTML(p.id)}"${misState.picked.has(p.id)?' checked':''}>
+                <span>${escapeHTML(p.name)}${p.clientName?` <em>${escapeHTML(p.clientName)}</em>`:''}</span>
+              </label>`).join('') : '<div class="rh-empty">There are no open projects.</div>'}
+          </div>
+          ${misState.err ? `<div class="rh-err" style="margin:6px 0;">${escapeHTML(misState.err)}</div>` : ''}
+          <div class="mis-actions">
+            <button class="btn btn-brand btn-sm" data-save="${escapeHTML(u.id)}">Save</button>
+            <button class="btn btn-sm btn-ghost" data-cancel="1">Cancel</button>
+            ${u.projects.length && u.projects[0].assignedByName
+              ? `<span class="mis-by">Last set by ${escapeHTML(u.projects[0].assignedByName)}</span>` : ''}
+          </div>` : ''}
+      </div>`;
+  };
+
+  el.innerHTML = `
+    <div class="ref-section">
+      <div class="ref-head"><h3>MIS Project Access</h3><span class="rh-badge">Super Admin</span></div>
+      <div class="ref-note">
+        Attach somebody from the studio's non-pipeline side — MIS, Finance, HR — to the projects
+        they need to see. <strong>It grants sight and nothing else.</strong> They get the project's
+        board, the time logged against it and the reports built from that; they cannot create, edit,
+        delete, assign, start, submit, review or reassign anything, and cannot leave notes on its work.
+        That is their designation, not a setting here, which is why only designations with the asset
+        pipeline closed are listed.
+      </div>
+      ${d.people.length ? d.people.map(personRow).join('')
+        : '<div class="rh-empty">Nobody in the studio holds one of those designations yet.</div>'}
+    </div>`;
+
+  el.querySelectorAll('[data-toggle]').forEach(h=>h.onclick = ()=>{
+    const uid = h.dataset.toggle;
+    if(misState.open === uid){ misState.open = null; }
+    else {
+      misState.open = uid;
+      const u = d.people.find(x=>x.id===uid);
+      misState.picked = new Set(u.projects.map(p=>p.projectId));
+    }
+    misState.err = '';
+    renderMisAccess();
+  });
+  el.querySelectorAll('.mis-pick input').forEach(cb=>cb.onchange = ()=>{
+    if(cb.checked) misState.picked.add(cb.value); else misState.picked.delete(cb.value);
+  });
+  const cancel = el.querySelector('[data-cancel]');
+  if(cancel) cancel.onclick = ()=>{ misState.open = null; misState.err=''; renderMisAccess(); };
+  const save = el.querySelector('[data-save]');
+  if(save) save.onclick = async ()=>{
+    if(misState.busy) return;
+    misState.busy = true;
+    try{
+      misState.data = await api(`/admin/mis-assignments/${save.dataset.save}`, {
+        method:'PUT', body:{ projectIds:[...misState.picked] } });
+      misState.open = null; misState.err = '';
+      showToast('Project access saved.');
+    }catch(e){ misState.err = e.message; }
+    finally{ misState.busy = false; renderMisAccess(); }
   };
 }
 
