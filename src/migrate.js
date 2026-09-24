@@ -13,6 +13,7 @@ const defaults = require('./reference-defaults');
 const branding = require('./branding');
 const workSchedule = require('./work-schedule');
 const recordingHours = require('./recording-hours');
+const chatSettings = require('./chat-settings');
 const workLog = require('./work-log');
 const { normalizeCheckClause } = require('./schema-check');
 
@@ -2035,6 +2036,30 @@ async function ensureUserActive(db, log) {
  * Seeded ONCE, marked on the work_schedule row, for the same reason the breaks
  * are: re-seeding on every boot would put back a window an admin deleted.
  */
+/* How big a chat group may be, as a row rather than a constant.
+ *
+ * Born holding the thirty the constant held, so the upgrade changes nothing
+ * until a Super Admin edits it. NULL in the column means Unlimited, which is
+ * why the seed writes the number explicitly rather than leaving the default to
+ * decide: a NULL here on the day of the upgrade would silently take the cap off
+ * every group in the studio.
+ */
+async function ensureChatSettings(db, log) {
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS chat_settings (
+      id                TINYINT   NOT NULL PRIMARY KEY,
+      -- NULL is Unlimited, and is a real answer rather than a missing one. The
+      -- absence of the ROW is what "not migrated yet" looks like.
+      max_group_members INT       NULL,
+      updated_by        CHAR(36)  NULL,
+      updated_at        DATETIME  NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )`));
+  const { rows } = await db.query('SELECT id FROM chat_settings WHERE id = 1');
+  if (rows.length) return;
+  await db.query('INSERT INTO chat_settings (id, max_group_members) VALUES (1, $1)',
+    [chatSettings.DEFAULT_MAX_GROUP_MEMBERS]);
+  log(`Schema: chat_settings created (groups hold ${chatSettings.DEFAULT_MAX_GROUP_MEMBERS}, as before).`);
+}
+
 async function ensureRecordingHours(db, log) {
   await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS recording_hour_configs (
       id             CHAR(36)     NOT NULL PRIMARY KEY,
@@ -2946,6 +2971,12 @@ const STEPS = [
   ['timesheet entry flag', ensureTimesheetFlag],
   // After users, whose key every chat table points at.
   ['chat', ensureChat],
+  /* Beside the chat tables, though it depends on none of them — one row, no
+     foreign keys. The mirror loads here rather than lazily because src/chat.js
+     reads it on every group create and every member add, and a lazy first read
+     would be one on the first of those. */
+  ['chat settings', ensureChatSettings],
+  ['chat settings mirror', (db) => chatSettings.load(db)],
   // After the tables exist, and reading the window from the module that owns it.
   ['chat attachment expiry window', ensureChatExpiryWindow],
   // After users and after role_permissions: it touches a column on one and a

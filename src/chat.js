@@ -29,7 +29,20 @@ const mentions = require('./chat-mentions');
  * Including the owner rather than beside them: "a group of thirty" is thirty
  * people who can read it, and a cap that let the creator sit outside it would
  * make the real limit thirty-one for no reason anybody could explain. */
-const MAX_GROUP_MEMBERS = 30;
+/* The group size cap is a SETTING now, not a number in this file.
+ *
+ * It was `const MAX_GROUP_MEMBERS = 30` — enforced in the two places below,
+ * published to the browser in two more, and quoted in a permission's
+ * description. Thirty was a decision somebody made once when the studio was
+ * smaller, and it had no way to change short of a deploy.
+ *
+ * This name is kept, and points at the module's DEFAULT, so that anything still
+ * reading it gets the number the constant always held rather than undefined.
+ * Nothing in this file enforces against it any more: every check below asks
+ * chatSettings, which reads the live row. */
+const chatSettings = require('./chat-settings');
+
+const MAX_GROUP_MEMBERS = chatSettings.DEFAULT_MAX_GROUP_MEMBERS;
 const MAX_BODY = 4000;
 const MAX_TITLE = 120;
 
@@ -256,11 +269,15 @@ async function createGroup(db, { title, ownerId, memberIds = [], ownerName = '' 
   // The owner is always in it, and a list that names them twice is a typo
   // rather than an error worth refusing.
   const wanted = [...new Set([String(ownerId), ...memberIds.map(String).filter(Boolean)])];
-  if (wanted.length > MAX_GROUP_MEMBERS) {
+  /* Asked at request time, every time. The limit is a row somebody can change
+     between one request and the next, and a value the browser was handed when
+     the page loaded is exactly the value not to trust. */
+  if (!chatSettings.roomFor(0, wanted.length)) {
+    const limit = chatSettings.maxGroupMembers();
     return {
       ok: false,
       status: 400,
-      error: `A group holds at most ${MAX_GROUP_MEMBERS} people, counting you. That is ${wanted.length}.`,
+      error: `A group holds at most ${limit} people, counting you. That is ${wanted.length}.`,
       field: 'memberIds',
     };
   }
@@ -332,14 +349,25 @@ async function addMembers(db, conversationId, actor, userIds = []) {
   const fresh = wanted.filter((id) => !inIt.has(id));
   if (!fresh.length) return { ok: true, added: [], alreadyIn: wanted.length };
 
-  if (inIt.size + fresh.length > MAX_GROUP_MEMBERS) {
+  /* A GROUP ALREADY OVER THE CAP IS NOT EMPTIED, it is closed.
+   *
+   * Lowering the limit blocks the next addition and does nothing else — nobody
+   * is removed, no existing group is broken up, and everyone in one stays in
+   * it. That is what this comparison says and it is worth saying out loud: it
+   * asks whether the group would be over the cap AFTER the addition, so a group
+   * of forty under a cap of thirty simply takes no more, and `room` below comes
+   * out as zero rather than as a negative number somebody would have to read as
+   * "remove ten people". */
+  if (!chatSettings.roomFor(inIt.size, fresh.length)) {
+    const limit = chatSettings.maxGroupMembers();
+    const room = chatSettings.remaining(inIt.size);
     return {
       ok: false,
       status: 400,
-      error: `A group holds at most ${MAX_GROUP_MEMBERS} people. This one has ${inIt.size}, `
-        + `so there is room for ${Math.max(0, MAX_GROUP_MEMBERS - inIt.size)} more, not ${fresh.length}.`,
+      error: `A group holds at most ${limit} people. This one has ${inIt.size}, `
+        + `so there is room for ${room} more, not ${fresh.length}.`,
       field: 'userIds',
-      room: Math.max(0, MAX_GROUP_MEMBERS - inIt.size),
+      room,
     };
   }
 

@@ -105,8 +105,29 @@ test('no CHAT permission grants reading other people\'s chat', () => {
      point: a studio hands out "use chat" without handing out "read everybody's
      chat", and that is only true while the two keys live apart. */
   const chatKeys = catalogue.KEYS.filter((k) => k.startsWith('chat.'));
-  assert.deepStrictEqual(chatKeys.sort(),
-    ['chat.group_create', 'chat.message_protected', 'chat.open_inbox', 'chat.use']);
+  assert.deepStrictEqual(chatKeys.sort(), [
+    'chat.group_create',
+    /* Added with the configurable group cap. It widens who may act WITHIN a
+       group — rename it, add and remove members — for somebody who did not
+       create it. It does not widen which groups are visible: membership is
+       still what lets anybody see a conversation at all, and a request for one
+       this person is not in is answered 404 before this key is consulted. So
+       the claim this test makes is unchanged by it. */
+    'chat.group_manage_any',
+    'chat.message_protected',
+    'chat.open_inbox',
+    /* The studio-wide group size cap. One number; it reads nothing. */
+    'chat.settings',
+    'chat.use',
+  ]);
+
+  /* And the claim itself, asserted against every key rather than against the
+     list above — a key added to both places would otherwise pass unexamined. */
+  for (const key of chatKeys) {
+    const p = catalogue.BY_KEY.get(key);
+    assert.ok(!/read (every|all|other)/i.test(p.describe || ''),
+      `${key} describes itself as reading other people's messages`);
+  }
 
   const oversight = catalogue.BY_KEY.get('settings.chat_activity');
   assert.ok(oversight, 'the oversight key exists');

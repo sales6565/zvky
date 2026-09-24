@@ -702,8 +702,52 @@ const GROUPS = [
            as a list of tier names so a role added in Settings lands on the
            right side of it without anybody remembering to come back here. */
         impliedBy: anyOf(has('leadsTeam'), has('deliver'), has('manageUsers')),
-        describe: 'Start a group conversation and manage its members, up to thirty. '
+        /* No longer "up to thirty": the cap is a setting a Super Admin changes
+           in Settings -> Chat, and a description quoting a number would be the
+           last copy of the old constant left in the source. */
+        describe: 'Start a group conversation and manage its members. '
           + 'Everybody can already chat one-to-one without this.',
+      },
+      {
+        /* Acting on a group you did not create.
+         *
+         * WHAT THIS IS LAYERED ON. Adding, removing and renaming are gated on
+         * being the group's OWNER — whoever created it, handed on to the
+         * longest-serving member when they leave. That is a relationship
+         * between a person and one conversation, not a capability of a
+         * designation, and no role can express it: "may remove members" as a
+         * plain role permission would let its holder reach into private
+         * conversations they are not even in.
+         *
+         * So this does not replace the owner rule, it sits on top of it. The
+         * owner keeps their group; this is the way in when there is nobody to
+         * ask — a group whose owner has left the studio, or one that needs
+         * moderating.
+         *
+         * NOBODY BY DEFAULT. impliedBy managePermissions is the Super Admin
+         * alone, and it stays grantable so a studio can give it to whoever
+         * moderates chat. */
+        key: 'chat.group_manage_any',
+        label: 'Manage Any Chat Group',
+        impliedBy: has('managePermissions'),
+        describe: 'Rename a group you are in, and add or remove its members, without having created '
+          + 'it. The person who created a group can already do all of this to their own. This does '
+          + 'NOT open groups you are not in \u2014 being a member is still what lets you see a '
+          + 'conversation at all, and that is a separate permission.',
+      },
+      {
+        /* The size cap itself.
+         *
+         * SUPER ADMIN ONLY, and for the reason the studio gave when they asked
+         * for it: one number that decides how big every group in the studio may
+         * be. It is not a chat permission in the sense the two above are — it
+         * is a settings permission that happens to be about chat, so it sits
+         * with them rather than in Settings where nobody would look for it. */
+        key: 'chat.settings',
+        label: 'Manage Chat Settings',
+        impliedBy: has('managePermissions'),
+        describe: 'The largest number of people a chat group may hold, studio-wide — or no limit '
+          + 'at all. Lowering it never removes anybody from a group that is already larger.',
       },
     ],
   },

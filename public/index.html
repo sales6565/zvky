@@ -2777,6 +2777,9 @@ const SETTINGS_SECTIONS = [
      see the catalogue entry. Listed here like any other section so that a
      designation explicitly granted it can reach the Settings tab at all. */
   { permission:'settings.recording_hours', label:'Recording Hours', heading:'Recording Hours', note:'The named windows the clock runs in, and the ones it stops for. Any number of each.' },
+  /* Super Admin only, like Recording Hours above and by the same route: a
+     permission implied by managePermissions. */
+  { permission:'chat.settings', label:'Chat', heading:'Chat', note:'The largest number of people a chat group may hold, studio-wide \u2014 or no limit at all.' },
   { permission:'settings.priorities',   label:'Priorities',       heading:'Priorities',       note:'The Priority dropdown.' },
   { permission:'settings.categories',   label:'Asset Categories', heading:'Asset Categories', note:'The Category dropdown on an asset. Starts empty — add the studio\'s own list.' },
   { permission:'settings.project_categories', label:'Project Categories', heading:'Project Categories', note:'The Category dropdown on a project. A separate list from the asset one.' },
@@ -9613,6 +9616,7 @@ async function renderSettings(){
     ${lists.map(sec=>renderRefSection(sec)).join('')}
     ${can('settings.branding') ? '<div id="brandingSection"></div>' : ''}
     ${can('settings.recording_hours') ? '<div id="recordingHoursSection"></div>' : ''}
+    ${can('chat.settings') ? '<div id="chatSettingsSection"></div>' : ''}
     ${can('settings.working_hours') ? '<div id="scheduleSection"></div>' : ''}
     ${can('settings.ip_allowlist') ? '<div id="ipAllowlistSection"></div>' : ''}
     ${can('settings.ip_blocklist') ? '<div id="ipBlocklistSection"></div>' : ''}
@@ -9627,6 +9631,7 @@ async function renderSettings(){
   wireSettings();
   if(can('settings.branding')) renderBranding();
   if(can('settings.recording_hours')) renderRecordingHours();
+  if(can('chat.settings')) renderChatSettings();
   if(can('settings.working_hours')) renderSchedule();
   if(can('settings.permissions')) await renderRolePermissions();
   if(can('settings.activity_log')) renderActivityLog();
@@ -12093,6 +12098,92 @@ function rhScheduleChanged(){
   if(document.getElementById('scheduleSection')) renderSchedule();
 }
 
+
+/* ---------- Chat settings (Super Admin) ----------
+
+   One number, and a tick box that takes it away. The number decides how big
+   every chat group in the studio may be; the tick box is Unlimited, which is
+   stored as null rather than as a large number, so nothing downstream has to
+   know a magic value.
+
+   NOTHING HERE IS THE LOCK. Both endpoints are behind requireSuperAdmin on the
+   server, which reads the designation resolved for the session. This section
+   not rendering is a courtesy to everybody else's Settings page. */
+let csState = { data:null, errors:[], busy:false };
+
+async function renderChatSettings(){
+  const el = document.getElementById('chatSettingsSection');
+  if(!el) return;
+  if(!csState.data){
+    try{ csState.data = await api('/admin/settings/chat-group-limit'); }
+    catch(err){ el.innerHTML = `<div class="ref-section"><div class="ref-err">${escapeHTML(err.message)}</div></div>`; return; }
+  }
+  const d = csState.data;
+  const s = d.settings;
+  const errFor = (f)=>{ const e = csState.errors.find(x=>x.field===f); return e ? e.message : ''; };
+  const shown = s.unlimited ? s.defaults.maxGroupMembers : s.maxGroupMembers;
+  el.innerHTML = `
+    <div class="ref-section">
+      <div class="ref-head"><h3>Chat</h3><span class="rh-badge">Super Admin</span></div>
+      <div class="ref-note">How many people one chat group may hold, counting whoever created it.
+        This was fixed at ${s.defaults.maxGroupMembers} and is now yours to set. It is checked on the
+        server every time a group is created and every time somebody is added, so a browser left open
+        on an old value cannot get past it.</div>
+      <div class="ref-add">
+        <div>
+          <label>Max chat group members</label>
+          <input type="number" id="cs_max" class="narrow${errFor('maxGroupMembers')?' rh-bad':''}"
+                 min="1" step="1" value="${escapeHTML(String(shown))}"${s.unlimited?' disabled':''}>
+        </div>
+        <div style="align-self:end;">
+          <label class="rh-check"><input type="checkbox" id="cs_unlimited"${s.unlimited?' checked':''}> Unlimited</label>
+        </div>
+        <div style="align-self:end;">
+          <button class="btn btn-brand" id="cs_save">Save</button>
+        </div>
+      </div>
+      ${csState.errors.length ? `<div class="rh-errs">${csState.errors.map(e=>`<div class="rh-err">${escapeHTML(e.message)}</div>`).join('')}</div>` : ''}
+      <div class="rh-warn" style="border-color:var(--border);background:var(--surface);">
+        <div><strong>Lowering this never removes anybody.</strong> A group that is already larger than
+        the new limit keeps everyone in it — it simply takes no more members until it drops below the
+        cap on its own. Nobody is turned out of a conversation by a change made on this screen.</div>
+        ${d.overCap ? `<div style="margin-top:4px;">${d.overCap} group${d.overCap===1?' is':'s are'}
+          currently above the limit and will not take new members.</div>` : ''}
+      </div>
+      <div class="ref-note" id="cs_now">
+        The studio has <strong>${d.groups}</strong> group${d.groups===1?'':'s'},
+        the largest holding <strong>${d.largest}</strong>.
+        ${s.unlimited
+          ? 'There is no limit set, so a group can be as large as the studio.'
+          : `A group may hold <strong>${s.maxGroupMembers}</strong>.`}
+        ${d.settings.comfortableMax && !s.unlimited && s.maxGroupMembers > d.settings.comfortableMax
+          ? `<br>Above about ${d.settings.comfortableMax} the member list and the add-people dialog
+             become hard to read — there is no database limit, only a practical one.`
+          : `<br>There is no database limit. Above about ${d.settings.comfortableMax} the member list
+             and the add-people dialog become hard to read, which is the only practical ceiling.`}
+        ${s.updatedByName ? `<br>Last changed by ${escapeHTML(s.updatedByName)}.` : ''}
+      </div>
+    </div>`;
+
+  const box = document.getElementById('cs_unlimited');
+  const num = document.getElementById('cs_max');
+  box.onchange = ()=>{ num.disabled = box.checked; };
+  document.getElementById('cs_save').onclick = async ()=>{
+    if(csState.busy) return;
+    csState.busy = true;
+    try{
+      csState.data = await api('/admin/settings/chat-group-limit', { method:'PUT',
+        body: box.checked ? { unlimited:true } : { unlimited:false, maxGroupMembers:Number(num.value) } });
+      csState.errors = [];
+      /* The chat panel publishes this value on every poll, so it corrects
+         itself within a few seconds without anything here reaching into it. */
+      showToast('Chat group limit saved.');
+    }catch(e){
+      csState.errors = (e.body && e.body.errors) ? e.body.errors : [{ field:null, message:e.message }];
+    }finally{ csState.busy = false; renderChatSettings(); }
+  };
+}
+
 /* ---------- Activity Log ----------
 
    Everything anybody did, filterable, paged, and read-only. The page cannot
@@ -13665,7 +13756,14 @@ const chatState = {
   open:false, view:'list', conversations:[], unread:0, cursor:null,
   conversationId:null, messages:[], conversation:null, hasMore:false,
   people:[], pick:new Set(), search:'', files:[], timer:null, loading:false,
-  limits:{ allowed:'', maxBytes:0, hours:8 }, canCreateGroup:false, maxMembers:30,
+  /* null is Unlimited, and is also what this holds before the first poll has
+     answered — the server sends the live value on every poll, and until it has,
+     the page counts nothing rather than counting against a number it invented.
+     This used to be a hard-coded 30, which was the last copy of the old
+     constant outside the server and would have gone on saying thirty to a
+     studio that had set something else. */
+  limits:{ allowed:'', maxBytes:0, hours:8 }, canCreateGroup:false, maxMembers:null,
+  canManageAnyGroup:false,
   /* Blob URLs made for attachments, by attachment id. An <img src> cannot
      carry an Authorization header, so every attachment is fetched with one and
      turned into a blob — which means they have to be revoked, or a long
@@ -13732,7 +13830,11 @@ async function loadChatList(){
   chatState.unread = res.unread;
   chatState.cursor = res.cursor;
   chatState.canCreateGroup = res.canCreateGroup;
-  chatState.maxMembers = res.maxGroupMembers;
+  /* null from the server means Unlimited. `?? null` rather than `|| null`: the
+     two differ for 0, which is not a legal limit but would be read as Unlimited
+     by the looser operator — the wrong way round for a value that gates. */
+  chatState.maxMembers = res.maxGroupMembers ?? null;
+  chatState.canManageAnyGroup = Boolean(res.canManageAnyGroup);
   chatState.limits = res.attachments;
   paintChatBadge();
 }
@@ -13790,6 +13892,16 @@ async function markChatRead(){
 }
 
 /* The poll. Cheap: a count, plus whatever has arrived since the last look. */
+/* "4 of 30 — you are counted", or just "4 picked — you are counted" when the
+   studio has set no limit. One function because the create-group form draws
+   this line twice: once when it renders and once on every tick, and the two
+   had drifted into two copies of the same string concatenation. */
+function chatPickedLabel(total){
+  if(chatState.maxMembers === null) return `${total} picked — you are counted`;
+  return `${total} of ${chatState.maxMembers} — you are counted`
+    + (total > chatState.maxMembers ? ' — too many' : '');
+}
+
 async function pollChat(){
   if(!state.token){ stopChat(); return; }
   /* A hidden tab polls on the slow cadence scheduleChatPoll() already sets for
@@ -14736,7 +14848,7 @@ function renderChatGroupForm(head, body, foot){
   body.innerHTML = `<div class="chat-form">
       <input class="chat-search" id="chatTitle" placeholder="Group name" maxlength="120">
       <input class="chat-search" id="chatSearch" placeholder="Search people…" value="${escapeHTML(chatState.search)}">
-      <div class="chat-sub">${total} of ${chatState.maxMembers} — you are counted${total > chatState.maxMembers ? ' — too many' : ''}</div>
+      <div class="chat-sub">${chatPickedLabel(total)}</div>
     </div>
     ${people.map(p=>`
       <label class="chat-person">
@@ -14753,7 +14865,9 @@ function renderChatManage(head, body, foot){
     <strong>${escapeHTML(conv.title || '')}</strong>`;
   foot.hidden = true;
   const inIt = new Set((conv.members||[]).map(m=>m.id));
-  const room = chatState.maxMembers - (conv.memberCount || 0);
+  const room = chatState.maxMembers === null
+    ? null
+    : Math.max(0, chatState.maxMembers - (conv.memberCount || 0));
   const others = chatPeopleMatching().filter(p=>!inIt.has(p.id));
   body.innerHTML = `
     ${conv.isOwner ? `<div class="chat-form">
@@ -14761,7 +14875,9 @@ function renderChatManage(head, body, foot){
       <button class="btn btn-sm btn-ghost" id="chatRenameGo">Rename group</button>
     </div>` : ''}
     <div class="chat-form"><div class="chat-sub">
-      ${conv.memberCount} of ${chatState.maxMembers} members${room > 0 ? ` — room for ${room} more` : ' — full'}
+      ${chatState.maxMembers === null
+        ? `${conv.memberCount} members`
+        : `${conv.memberCount} of ${chatState.maxMembers} members${room > 0 ? ` — room for ${room} more` : ' — full'}`}
     </div></div>
     ${(conv.members||[]).map(m=>`
       <div class="chat-person">
@@ -15057,8 +15173,7 @@ document.addEventListener('input', e=>{
     else chatState.pick.delete(pick.dataset.pick);
     const count = document.querySelector('#chatBody .chat-form .chat-sub');
     const total = chatState.pick.size + 1;
-    if(count) count.textContent = `${total} of ${chatState.maxMembers} — you are counted`
-      + (total > chatState.maxMembers ? ' — too many' : '');
+    if(count) count.textContent = chatPickedLabel(total);
   }
 });
 

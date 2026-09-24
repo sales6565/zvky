@@ -5,6 +5,7 @@ const router = asyncRouter();
 const db = require('../db');
 const { authenticate, requirePermission, can } = require('../middleware/auth');
 const chat = require('../chat');
+const chatSettings = require('../chat-settings');
 const files = require('../chat-files');
 const mentions = require('../chat-mentions');
 const status = require('../chat-status');
@@ -88,7 +89,17 @@ router.get('/', async (req, res) => {
     unread,
     cursor,
     canCreateGroup: can(req, 'chat.group_create'),
-    maxGroupMembers: chat.MAX_GROUP_MEMBERS,
+    /* The live value, not the constant this used to publish. Null is Unlimited
+       and the page reads it as such — see chatState.maxMembers. This is a
+       COURTESY to the browser so it can count down and grey out a full group;
+       the enforcement is in src/chat.js on every request, because a number the
+       page was handed at load time is exactly the number not to trust. */
+    maxGroupMembers: chatSettings.maxGroupMembers(),
+    /* The override permission, so the page can offer group management on a
+       group this person does not own. Same shape as canCreateGroup: what the
+       server would allow, told to the page so it can stop offering what will
+       be refused. */
+    canManageAnyGroup: can(req, 'chat.group_manage_any'),
     attachments: {
       allowed: files.ADVERTISED,
       maxBytes: files.MAX_BYTES,
@@ -213,7 +224,7 @@ router.get('/:id/messages', async (req, res) => {
          conversation they are looking at. */
       members: members.map(({ conversationId, ...m }) => m),
       memberCount: members.length,
-      maxMembers: chat.MAX_GROUP_MEMBERS,
+      maxMembers: chatSettings.maxGroupMembers(),
     },
   });
 
@@ -525,13 +536,30 @@ router.get('/attachments/:attachmentId', async (req, res) => {
 /* The owner runs the group: renames it, adds people, removes them. Anybody in
    it may leave. That is the whole model, and it is checked here rather than in
    src/chat.js so the domain functions stay callable from a test without a
-   request. */
-function ownerOnly(seat, res) {
+   request.
+ *
+ * AND ONE WAY PAST IT. chat.group_manage_any is the override, held by the
+ * Super Admin and grantable to whoever moderates chat. It is a second answer to
+ * the same question rather than a replacement for the first: the owner still
+ * runs their group, and this is the way in when there is nobody to ask.
+ *
+ * IT DOES NOT REACH PAST MEMBERSHIP. mine() has already answered 404 for a
+ * conversation this person is not in, and that is deliberate: seeing a private
+ * group at all is a different and much larger disclosure than managing one you
+ * are already sitting in, and the catalogue has its own, explicitly dangerous
+ * permission for that. So this widens who may act within a group, not which
+ * groups are visible.
+ *
+ * Checked on the request, from req.permissions, which the server resolved for
+ * this session. The page is told whether it holds this (canManageAnyGroup on
+ * the poll) so it can stop offering what would be refused, and that telling is
+ * a courtesy: this function is the rule. */
+function ownerOnly(req, seat, res) {
   if (seat.kind !== chat.KINDS.group) {
     res.status(400).json({ error: 'That is a one-to-one conversation, not a group.' });
     return false;
   }
-  if (!seat.isOwner) {
+  if (!seat.isOwner && !can(req, 'chat.group_manage_any')) {
     res.status(403).json({ error: 'Only the person who created this group can change who is in it.' });
     return false;
   }
@@ -542,7 +570,7 @@ function ownerOnly(seat, res) {
 router.patch('/:id', async (req, res) => {
   const seat = await mine(req, res);
   if (!seat) return;
-  if (!ownerOnly(seat, res)) return;
+  if (!ownerOnly(req, seat, res)) return;
   const result = await chat.rename(db, req.params.id, req.user, (req.body || {}).title);
   if (!result.ok) return res.status(result.status).json({ error: result.error, field: result.field });
   req.activity({
@@ -561,7 +589,7 @@ router.patch('/:id', async (req, res) => {
 router.post('/:id/members', async (req, res) => {
   const seat = await mine(req, res);
   if (!seat) return;
-  if (!ownerOnly(seat, res)) return;
+  if (!ownerOnly(req, seat, res)) return;
   const { userIds } = req.body || {};
   const wanted = (Array.isArray(userIds) ? userIds : []).map(String).filter(Boolean);
   if (wanted.length && !can(req, 'chat.message_protected')) {
@@ -592,7 +620,7 @@ router.post('/:id/members', async (req, res) => {
 router.delete('/:id/members/:userId', async (req, res) => {
   const seat = await mine(req, res);
   if (!seat) return;
-  if (!ownerOnly(seat, res)) return;
+  if (!ownerOnly(req, seat, res)) return;
   const result = await chat.removeMember(db, req.params.id, req.user, req.params.userId);
   if (!result.ok) return res.status(result.status).json({ error: result.error });
   req.activity({

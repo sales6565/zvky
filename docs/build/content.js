@@ -1220,13 +1220,37 @@ module.exports = [
     'Give the group a name and tick the people to put in it.',
     'Press Create.',
   ]),
-  p('A group holds thirty people, counting the person who made it. The panel shows the count as you tick, and '
-    + 'the thirty-first is refused rather than quietly dropped.'),
+  p('HOW BIG A GROUP MAY BE is a setting, not a fixed number. It was thirty; a Super Admin sets it in '
+    + 'Settings \u2192 Chat, and can take the limit off altogether. Whatever it is, the panel shows the count '
+    + 'as you tick and the one past the limit is refused rather than quietly dropped \u2014 and it is the '
+    + 'server that refuses it, so a browser left open on an old number cannot get past it.'),
   p('The person who created the group owns it. The owner renames it, adds people and removes them, from the '
-    + 'member list behind the “N members” link in the conversation header. Anybody in a group can leave it.'),
+    + 'member list behind the \u201cN members\u201d link in the conversation header. Anybody in a group can leave it.'),
   note('An owner who leaves hands the group on',
     'Ownership moves to whoever has been in the group longest, so a group never ends up with nobody able to '
-    + 'manage it. When the last person leaves, the group is closed.'),
+    + 'manage it. When the last person leaves, the group is closed.\n\n'
+    + 'There is also a permission for the cases that rule does not cover \u2014 Manage Any Chat Group, held by '
+    + 'the Super Admin and grantable to whoever moderates chat. It lets somebody rename a group they are in, '
+    + 'and add or remove its members, without having created it. It does NOT open groups they are not in: '
+    + 'being a member is still what lets anybody see a conversation at all.'),
+
+  h2('12.4a The group size limit \u2014 Super Admin'),
+  p('Settings \u2192 Chat holds one number: the largest a chat group may be, counting whoever created it. '
+    + 'It applies to every group in the studio and is checked on the server on every group creation and '
+    + 'every member added.'),
+  bullets([
+    'UNLIMITED is a tick box, not a large number. Tick it and no group has a cap at all.',
+    'Zero and negatives are refused. Zero is the plausible thing to type when Unlimited was meant, so the message says where that lives rather than only saying no.',
+    'There is no database limit. Above about five hundred the member list and the add-people dialog stop being readable, which is the only practical ceiling \u2014 the screen says so and does not refuse it.',
+    'The Super Admin alone, by default. It can be handed to a designation in Settings \u2192 Permissions (Manage Chat Settings), and the check is made on the server on every request.',
+    'Every change is written to the Activity Log with the old value beside the new one.',
+  ]),
+  note('Lowering the limit never removes anybody',
+    'A group that is already larger than a new, smaller limit keeps every person in it. Nothing is broken '
+    + 'up, nobody is turned out of a conversation, and the group goes on working exactly as it did. What '
+    + 'changes is only that it will take no more members until it drops below the cap on its own.\n\n'
+    + 'The screen says how many groups are currently above the limit, so lowering it is a decision made '
+    + 'with the number in view rather than found out afterwards.'),
 
   h2('12.5 Files in chat'),
   p('The paperclip attaches a file. Six formats are carried \u2014 .png, .jpg, .svg, .webp, .mov and .mp4 \u2014 up to '
