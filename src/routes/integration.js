@@ -19,6 +19,7 @@
 const crypto = require('node:crypto');
 const { asyncRouter } = require('../async-router');
 const idempotency = require('../integration-idempotency');
+const outbox = require('../integration-outbox');
 
 const router = asyncRouter();
 
@@ -136,6 +137,64 @@ router.post('/counter', (req, res) => idempotency.withIdempotency(req, res, asyn
 router.get('/counter', (req, res) => {
   const name = String(req.query.counter || 'probe');
   res.json({ counter: name, count: countOf(name) });
+});
+
+/* GET /api/integration/events?since=<seq> — the pull-based recovery path.
+ *
+ * The rows the outbox worker pushes, asked for instead. A push that never arrived
+ * looks, from the far end, exactly like nothing having happened, so the receiver
+ * needs to be able to come and check; this reads the same table the worker delivers
+ * from, because two sources of truth for what happened is how a replay ends up
+ * disagreeing with the original.
+ *
+ * NO SPECIAL-CASING for it being a read, and none needed. serviceAuth has no method
+ * conditional in it: the signature covers t.METHOD.path.rawBody with GET as the
+ * method and an empty body, the credential is looked up the same way, and the action
+ * is the first path segment either way — so this requires "events" in the client's
+ * allowed_actions by the same rule that makes /ping require "ping". The idempotency
+ * middleware in front of it applies only to POST, PUT and DELETE, which is right:
+ * repeating a read changes nothing, and demanding a key for one would be friction
+ * for no gain. The master spec signs both directions without carving out reads, and
+ * this endpoint is that spec needing no exception.
+ *
+ * THE QUERY STRING IS SIGNED, because the signature covers req.originalUrl rather
+ * than the path alone — so `since` cannot be altered in flight. Worth knowing when
+ * writing the client: sign the URL you actually request, query and all.
+ */
+router.get('/events', async (req, res) => {
+  const db = require('../db');
+  const raw = req.query.since;
+
+  /* Absent means from the beginning. MALFORMED IS A 400, and deliberately not
+     treated as zero: a client whose cursor arrived as "undefined" would otherwise
+     be handed a full replay from the start of time and no indication that anything
+     was wrong, which is a worse outcome than being told. */
+  let since = 0;
+  if (raw !== undefined && raw !== '') {
+    since = Number(raw);
+    if (!Number.isFinite(since) || since < 0) {
+      return res.status(400).json({
+        error: 'since must be a sequence number — the seq of the last event you received, or 0 to start.',
+        field: 'since',
+        received: String(raw),
+      });
+    }
+  }
+
+  const page = await outbox.eventsSince(db, { since, limit: req.query.limit });
+  const highWater = await outbox.highWater(db);
+
+  res.json({
+    ...page,
+    since,
+    /* The newest seq that exists, so a caller can tell "caught up" from "one page
+       behind" without another request. A since past this is not an error: it comes
+       back empty, which is what being up to date looks like. */
+    highWater,
+    // Every status is included — a row we gave up pushing is the one most worth
+    // being able to pull. See src/integration-outbox.js.
+    statusesIncluded: Object.values(outbox.STATUS),
+  });
 });
 
 module.exports = router;

@@ -584,3 +584,234 @@ test('a failing delivery cannot touch the request that caused the row',
     assert.ok(Number(queued[0].n) >= 5, `the rows are queued, not lost: ${queued[0].n}`);
   });
 });
+
+test('GET /events: the pull-based recovery path', { skip: cfg ? false : SKIP_REASON }, async (t) => {
+  /* WHY THIS NEEDS NO SPECIAL-CASING, asserted rather than assumed.
+   *
+   * serviceAuth has no method conditional in it, so a GET is signed, credentialled
+   * and action-checked exactly like a POST. That was already true before this
+   * endpoint existed — the counter probe's GET in
+   * tests/integration-idempotency.test.js goes through the same chain — but it had
+   * never been asserted against a READ THAT MATTERS, and "it should work the same"
+   * is the kind of thing that is true until somebody adds a fast path for reads.
+   *
+   * The action name follows the only convention there is: the first path segment
+   * under /api/integration. /events therefore needs "events" in allowed_actions, by
+   * the same rule that makes /ping need "ping".
+   */
+  let server;
+  const READER = 'events-reader-0123456789ab';   // allowed events
+  const WRITER = 'events-writer-0123456789ab';   // allowed counter only
+
+  const get = async (path, { key = READER, secret = IN_SECRET } = {}) => {
+    const stamp = Math.floor(Date.now() / 1000);
+    const target = `/api${path}`;
+    /* THE QUERY STRING IS PART OF THE SIGNED PATH, because the signature covers
+       originalUrl. Signing the bare path would fail here, which is the point: a
+       `since` altered in flight does not verify. */
+    const v1 = crypto.createHmac('sha256', secret)
+      .update(`${stamp}.GET.${target}.`).digest('hex');
+    const res = await fetch(`${server.base}${path}`, {
+      method: 'GET',
+      headers: { 'X-Integration-Key': key, 'X-Integration-Signature': `t=${stamp}, v1=${v1}` },
+    });
+    return { status: res.status, body: await res.json().catch(() => ({})) };
+  };
+
+  t.before(async () => {
+    await resetSchema(cfg);
+    server = await startServer(cfg, {
+      INTEGRATION_INBOUND_SECRET: IN_SECRET,
+      WORK_HOURS_SWEEP_MINUTES: '0',
+    });
+    const add = (name, key, actions) => sql(cfg,
+      'INSERT INTO integration_clients (id, `name`, key_hash, key_prefix, allowed_actions, is_active) '
+      + 'VALUES (UUID(), ?, ?, ?, ?, 1)',
+      [name, sha256(key), key.slice(0, 8), actions]);
+    await add('Dev and QA', READER, 'counter,events,ping');
+    await add('Write Only Tool', WRITER, 'counter,ping');
+
+    // 125 rows, so a default page of 50 does not reach the end.
+    for (let i = 1; i <= 125; i += 1) {
+      await sql(cfg,
+        'INSERT INTO integration_outbox (id, payload, `status`) VALUES (UUID(), ?, ?)',
+        [JSON.stringify({ n: i }), 'pending']);
+    }
+  });
+
+  t.after(async () => { if (server) await stopServer(server); });
+
+  await t.test('a signed GET gets through, with no exception made for it being a read', async () => {
+    const r = await get('/integration/events?since=0');
+    assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+    assert.ok(Array.isArray(r.body.events));
+  });
+
+  await t.test('an unsigned or wrongly signed read is refused like any other request', async () => {
+    const bare = await fetch(`${server.base}/integration/events?since=0`, {
+      headers: { 'X-Integration-Key': READER },
+    });
+    assert.strictEqual(bare.status, 401, 'a read is not exempt from the signature');
+
+    const wrong = await get('/integration/events?since=0', { secret: 'not-the-secret' });
+    assert.strictEqual(wrong.status, 401);
+
+    /* And the query string really is covered: a signature taken over the bare path
+       does not verify for a request that carries one. */
+    const stamp = Math.floor(Date.now() / 1000);
+    const v1 = crypto.createHmac('sha256', IN_SECRET)
+      .update(`${stamp}.GET./api/integration/events.`).digest('hex');
+    const tampered = await fetch(`${server.base}/integration/events?since=99`, {
+      headers: { 'X-Integration-Key': READER, 'X-Integration-Signature': `t=${stamp}, v1=${v1}` },
+    });
+    assert.strictEqual(tampered.status, 401, 'since cannot be altered in flight');
+  });
+
+  await t.test('a client not granted "events" is refused with 403, not 401', async () => {
+    const r = await get('/integration/events?since=0', { key: WRITER });
+    assert.strictEqual(r.status, 403, JSON.stringify(r.body));
+    assert.strictEqual(r.body.action, 'events', 'and is told which capability it lacks');
+    assert.ok(!r.body.allowed.includes('events'));
+    // 403 not 401: the credential is fine, the permission is not — a different
+    // problem with a different fix, and the caller needs to know which.
+    assert.ok(!/not recognised/.test(JSON.stringify(r.body)));
+  });
+
+  await t.test('a read needs no Idempotency-Key', async () => {
+    // The idempotency middleware covers POST, PUT and DELETE. Repeating a read
+    // changes nothing, so demanding a key would be friction for no gain.
+    const r = await get('/integration/events?since=0');
+    assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  });
+
+  await t.test('pages walk forward on lastSeq until caught up', async () => {
+    const seen = [];
+    let since = 0;
+    let pages = 0;
+
+    for (;;) {
+      const r = await get(`/integration/events?since=${since}`);
+      assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+      pages += 1;
+      assert.strictEqual(r.body.limit, 50, 'the default page, matching the convention elsewhere');
+      assert.strictEqual(r.body.since, since, 'the request is echoed back');
+
+      for (const e of r.body.events) seen.push(e.seq);
+      assert.deepStrictEqual([...r.body.events].map((e) => e.seq).sort((a, b) => a - b),
+        r.body.events.map((e) => e.seq), 'ascending seq, always');
+
+      if (!r.body.hasMore) {
+        assert.ok(r.body.events.length < 50 || r.body.lastSeq === r.body.highWater,
+          'a last page is short, or ends exactly at the high water mark');
+        break;
+      }
+      assert.strictEqual(r.body.events.length, 50, 'hasMore means the page was full');
+      since = r.body.lastSeq;
+      assert.ok(pages < 10, 'this should take three pages, not ten');
+    }
+
+    assert.strictEqual(pages, 3, '125 rows in pages of 50');
+    assert.strictEqual(seen.length, 125, 'every row, exactly once');
+    assert.strictEqual(new Set(seen).size, 125, 'and none of them twice');
+    // Contiguous and ascending across page boundaries, which is where an off-by-one
+    // in the cursor would show up and nowhere else.
+    for (let i = 1; i < seen.length; i += 1) {
+      assert.ok(seen[i] > seen[i - 1], `seq went backwards at index ${i}`);
+    }
+  });
+
+  await t.test('the page size can be asked for, and is capped', async () => {
+    const small = await get('/integration/events?since=0&limit=5');
+    assert.strictEqual(small.body.events.length, 5);
+    assert.strictEqual(small.body.limit, 5);
+    assert.strictEqual(small.body.hasMore, true);
+
+    const greedy = await get('/integration/events?since=0&limit=100000');
+    assert.strictEqual(greedy.body.limit, 200, 'capped at PAGE_MAX rather than honoured');
+    assert.strictEqual(greedy.body.events.length, 125, 'which is more than there are');
+    assert.strictEqual(greedy.body.hasMore, false);
+
+    const silly = await get('/integration/events?since=0&limit=0');
+    assert.strictEqual(silly.body.limit, 50, 'nonsense falls back to the default, not to zero rows');
+  });
+
+  await t.test('a since beyond the end is empty, not an error', async () => {
+    const { body: first } = await get('/integration/events?since=0&limit=1');
+    const high = first.highWater;
+
+    const past = await get(`/integration/events?since=${high + 500}`);
+    assert.strictEqual(past.status, 200, 'being up to date is not a failure');
+    assert.deepStrictEqual(past.body.events, []);
+    assert.strictEqual(past.body.hasMore, false);
+    assert.strictEqual(past.body.lastSeq, high + 500,
+      'and the cursor is handed back, so a caught-up caller can keep asking with it');
+    assert.strictEqual(past.body.highWater, high, 'while still being told how far along the table is');
+
+    // Exactly at the end, which is the boundary a caught-up caller actually sits on.
+    const atEnd = await get(`/integration/events?since=${high}`);
+    assert.deepStrictEqual(atEnd.body.events, []);
+    assert.strictEqual(atEnd.body.hasMore, false);
+  });
+
+  await t.test('a malformed since is refused rather than replayed from zero', async () => {
+    /* Not treated as 0: a client whose cursor arrived as "undefined" would
+       otherwise be handed the whole table back with no indication anything was
+       wrong, which is worse than being told. */
+    for (const bad of ['abc', '-1', 'NaN']) {
+      const r = await get(`/integration/events?since=${bad}`);
+      assert.strictEqual(r.status, 400, `since=${bad}: ${JSON.stringify(r.body)}`);
+      assert.strictEqual(r.body.field, 'since');
+    }
+    // Absent, though, means from the beginning.
+    const none = await get('/integration/events');
+    assert.strictEqual(none.status, 200);
+    assert.strictEqual(none.body.since, 0);
+    assert.ok(none.body.events.length > 0);
+  });
+
+  await t.test('every status is returned, failed rows included', async () => {
+    /* THE ROW WE GAVE UP PUSHING IS THE ONE MOST WORTH PULLING. If a permanently
+       failed delivery also made the data unreachable by replay, the failure would be
+       doubled rather than recovered from. */
+    const ids = {};
+    for (const status of ['sent', 'failed', 'sending', 'pending']) {
+      const id = crypto.randomUUID();
+      ids[status] = id;
+      await sql(cfg,
+        'INSERT INTO integration_outbox (id, payload, `status`, attempts, last_error) VALUES (?, ?, ?, ?, ?)',
+        [id, JSON.stringify({ kind: status }), status, status === 'failed' ? 7 : 1,
+          status === 'failed' ? 'the receiver refused it (400)' : null]);
+    }
+
+    const { body } = await get('/integration/events?since=125&limit=200');
+    const byStatus = new Map(body.events.map((e) => [e.status, e]));
+    for (const status of ['sent', 'failed', 'sending', 'pending']) {
+      assert.ok(byStatus.has(status), `a ${status} row must be returned: ${JSON.stringify(
+        body.events.map((e) => e.status))}`);
+      assert.strictEqual(byStatus.get(status).id, ids[status]);
+    }
+
+    const gaveUp = byStatus.get('failed');
+    assert.deepStrictEqual(gaveUp.payload, { kind: 'failed' }, 'its payload is intact, not withheld');
+    assert.strictEqual(gaveUp.attempts, 7, 'and it says the push was exhausted');
+    assert.match(gaveUp.lastError, /refused it \(400\)/);
+
+    assert.deepStrictEqual([...body.statusesIncluded].sort(),
+      ['failed', 'pending', 'sending', 'sent'], 'stated in the response, not just implied');
+  });
+
+  await t.test('a row whose payload will not parse does not take the page down', async () => {
+    // One bad row must not make every row after it unreachable.
+    const id = crypto.randomUUID();
+    await sql(cfg,
+      'INSERT INTO integration_outbox (id, payload, `status`) VALUES (?, ?, ?)',
+      [id, 'this is not json at all', 'pending']);
+
+    const { status, body } = await get('/integration/events?since=125&limit=200');
+    assert.strictEqual(status, 200);
+    const bad = body.events.find((e) => e.id === id);
+    assert.ok(bad, 'the row is still returned');
+    assert.strictEqual(bad.payload.unparsed, 'this is not json at all',
+      'handed over as the string it is, rather than failing the request');
+  });
+});

@@ -1661,6 +1661,14 @@ module.exports = [
       + 'Keys are remembered for a week and then forgotten. That is longer than any real retry and short enough '
       + 'that the record does not grow forever \u2014 a caller that reuses a key a fortnight later is treated '
       + 'as making a new request, which is worth knowing if anything at your end recycles them.'),
+  note('And if a message never arrives, the other system can come and ask',
+    'Delivery is not the only route. The other system can also ask Forge directly for everything that has '
+      + 'happened since the last thing it saw, a page at a time, and keep asking until it has caught up. That '
+      + 'is what makes a lost message recoverable rather than simply lost \u2014 and it reads the same record '
+      + 'the sending works from, so a replay can never disagree with the original.\n\n'
+      + 'Messages Forge eventually GAVE UP sending are included in that, deliberately. A message that could '
+      + 'not be delivered is the one most worth being able to fetch; if giving up on sending it also put it out '
+      + 'of reach, one failure would become two.'),
   note('A retry that arrives while the first one is still running',
     'The key is claimed before the work starts, so a second copy of a request cannot slip in alongside the '
       + 'first \u2014 it is told, in as many words, that the original is still being processed, and to come back '

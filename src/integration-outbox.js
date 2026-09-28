@@ -219,6 +219,81 @@ async function due(db, c) {
   return rows;
 }
 
+/* THE PULL SIDE: the same rows, asked for rather than pushed.
+ *
+ * A push that never arrived is indistinguishable, from the far end, from nothing
+ * having happened — so the receiver needs a way to ask. This is that way, and it
+ * reads the same table the worker delivers from, because two sources of truth for
+ * "what happened" is how a replay ends up disagreeing with the original.
+ *
+ * EVERY ROW, WHATEVER ITS STATUS. A row we gave up pushing is precisely the one
+ * most worth being able to pull: if a permanently failed delivery also made the
+ * data unreachable by replay, the failure would be doubled rather than recovered
+ * from. Deduplication is the caller's, by the last seq they have seen — which is
+ * their design, and is why status has no bearing on what is returned.
+ *
+ * The page shape is the one src/chat.js already uses for exactly this — a seq
+ * cursor, ascending, with hasMore — rather than a new one. PAGE_MAX matches
+ * activity.js and chat-oversight.js at 200; no more generous than those, because
+ * an outbox payload is MEDIUMTEXT and so a row here can be larger than a chat
+ * message. A caller further behind than one page walks forward with lastSeq.
+ */
+const PAGE_DEFAULT = 50;
+const PAGE_MAX = 200;
+
+// The newest sequence that exists, or 0. Lets a caller see how far behind it is
+// without walking the whole way there first.
+async function highWater(db) {
+  const { rows } = await db.query('SELECT COALESCE(MAX(seq), 0) AS seq FROM integration_outbox');
+  return Number(rows[0].seq) || 0;
+}
+
+const shapeEvent = (row) => {
+  let payload;
+  /* Stored as text and given back as JSON. A row that somehow holds something
+     unparseable is handed over as the string it is rather than failing the whole
+     page — one bad row must not make every row after it unreachable. */
+  try { payload = JSON.parse(row.payload); } catch { payload = { unparsed: String(row.payload) }; }
+  return {
+    seq: Number(row.seq),
+    id: row.id,
+    payload,
+    // What became of OUR attempt to push it. The caller does not need this to
+    // process the event; it is here so a receiver comparing notes can see that a
+    // row it never received was one we failed to deliver rather than one we held.
+    status: row.status,
+    attempts: Number(row.attempts),
+    lastError: row.last_error || null,
+    createdAt: row.created_at,
+  };
+};
+
+async function eventsSince(db, { since = 0, limit = PAGE_DEFAULT } = {}) {
+  const from = Number(since);
+  const n = Math.min(Math.max(Number(limit) || PAGE_DEFAULT, 1), PAGE_MAX);
+
+  const { rows } = await db.query(
+    `SELECT id, seq, payload, \`status\`, attempts, last_error, created_at
+       FROM integration_outbox
+      WHERE seq > $1
+      ORDER BY seq ASC
+      LIMIT ${n}`,
+    [Number.isFinite(from) ? from : 0]
+  );
+
+  const events = rows.map(shapeEvent);
+  return {
+    events,
+    limit: n,
+    /* A full page is the only case where there might be more, so this costs
+       nothing when there is not — the same reasoning chat.js gives for it. */
+    hasMore: rows.length === n,
+    // What to send as `since` next time. The cursor the caller was already on when
+    // the page is empty, so a caught-up caller can keep asking with the same value.
+    lastSeq: events.length ? events[events.length - 1].seq : (Number.isFinite(from) ? from : 0),
+  };
+}
+
 /* Claiming one row, so two workers cannot both deliver it.
  *
  * The WHERE re-checks everything the SELECT matched on, because the SELECT's
@@ -373,5 +448,6 @@ function describeAtStartup(log = console.log) {
 module.exports = {
   STATUS, BACKOFF_SECONDS, OUTBOUND_SECRET_VAR, INBOUND_SECRET_VAR,
   config, ready, secretsCollide, signingPayload, sign, pathOf,
+  PAGE_DEFAULT, PAGE_MAX, highWater, eventsSince, shapeEvent,
   nextState, due, claim, reclaim, settle, deliver, sweep, schedule, describeAtStartup,
 };

@@ -2102,6 +2102,55 @@ would be fewer characters and would not be *this* schedule.
 A worker killed mid-delivery has still used an attempt — counting only completed
 ones would let a row that crashes the process every time be retried forever.
 
+#### Pulling instead: `GET /api/integration/events?since=<seq>`
+
+A push that never arrived looks, from the far end, exactly like nothing having
+happened. So the same rows can be **asked for**, in ascending `seq` order, reading
+the same table the worker delivers from — two sources of truth for what happened is
+how a replay ends up disagreeing with the original.
+
+```
+GET /api/integration/events?since=1024&limit=50
+{
+  "events": [ { "seq": 1025, "id": "…", "payload": {…},
+                "status": "failed", "attempts": 7, "lastError": "…", "createdAt": "…" } ],
+  "since": 1024, "limit": 50, "hasMore": true,
+  "lastSeq": 1074, "highWater": 3312,
+  "statusesIncluded": ["pending", "sending", "sent", "failed"]
+}
+```
+
+Keep calling with `lastSeq` until `hasMore` is false. `highWater` is the newest `seq`
+that exists, so a caller can tell *caught up* from *one page behind* without a second
+request. A `since` past the end is **empty, not an error** — being up to date is not
+a failure — and it hands the cursor back so a caught-up caller can keep polling with
+the same value. A *malformed* `since` is a `400`, deliberately not treated as zero: a
+client whose cursor arrived as `"undefined"` would otherwise be handed the whole table
+with no indication anything was wrong.
+
+Paging follows the shape [`src/chat.js`](src/chat.js) already uses for exactly this —
+a `seq` cursor, ascending, `hasMore: rows.length === limit` — rather than a new one.
+`limit` defaults to 50 and caps at 200, matching `activity.js` and
+`chat-oversight.js`; no more generous than those, because an outbox payload is
+`MEDIUMTEXT` and a row here can be larger than a chat message.
+
+**Every row is returned, whatever its status.** A row we gave up pushing is precisely
+the one most worth being able to pull: if a permanently failed delivery also made the
+data unreachable by replay, the failure would be doubled rather than recovered from.
+Deduplication is the caller's, by the last `seq` they have seen, which is why status
+has no bearing on what comes back.
+
+It needs `events` in the client's `allowed_actions`, by the same rule that makes
+`/ping` need `ping` — the action is the first path segment. **No exception is made
+for it being a read**: `serviceAuth` has no method conditional, so the signature,
+the credential and the action check all apply, with `GET` as the signed method and an
+empty body. The idempotency middleware covers only `POST`, `PUT` and `DELETE`, which
+is right — repeating a read changes nothing.
+
+One thing to get right in the client: **the query string is signed**, because the
+signature covers `originalUrl` rather than the path alone. Sign the URL you actually
+request, `?since=` and all. It also means `since` cannot be altered in flight.
+
 #### Why this worker claims its rows, and the chat sweep does not
 
 This deployment runs **several Node workers against one database** — Passenger and
