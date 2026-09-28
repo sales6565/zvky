@@ -73,13 +73,13 @@ test('the safety net for a handler that forgets the helper', () => {
     return said;
   };
 
-  const mutating = { method: 'POST', originalUrl: '/api/integration/thing?x=1' };
+  const mutating = { method: 'POST', originalUrl: '/api/integration/v1/thing?x=1' };
   assert.match(run({ ...mutating })[0], /without going through withIdempotency/);
-  assert.match(run({ ...mutating })[0], /\/api\/integration\/thing/, 'and names the route');
+  assert.match(run({ ...mutating })[0], /\/api\/integration\/v1\/thing/, 'and names the route');
 
   assert.deepStrictEqual(run({ ...mutating, idempotencyHandled: true }), [],
     'a handler that used it is not nagged');
-  assert.deepStrictEqual(run({ method: 'GET', originalUrl: '/api/integration/thing' }), [],
+  assert.deepStrictEqual(run({ method: 'GET', originalUrl: '/api/integration/v1/thing' }), [],
     'and a read was never the concern');
   assert.deepStrictEqual(run({ ...mutating }, 500), [],
     'nor is a request that already failed — the failure is the story, not this');
@@ -119,7 +119,7 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
   // The counter, read through the API rather than guessed at. A GET, so it needs
   // no key of its own and cannot itself disturb what it is reporting.
   const counter = async (name = 'probe') => {
-    const r = await call(`/integration/counter?counter=${encodeURIComponent(name)}`,
+    const r = await call(`/integration/v1/counter?counter=${encodeURIComponent(name)}`,
       { method: 'GET', body: null, idem: null });
     return r.body.count;
   };
@@ -148,7 +148,7 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
   t.after(async () => { if (server) await stopServer(server); });
 
   await t.test('a mutation with no Idempotency-Key is refused', async () => {
-    const r = await call('/integration/counter', { idem: null });
+    const r = await call('/integration/v1/counter', { idem: null });
     assert.strictEqual(r.status, 400, JSON.stringify(r.body));
     assert.match(r.body.error, /idempotency-key/i);
     assert.strictEqual(r.body.header, 'idempotency-key');
@@ -157,20 +157,20 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
        that tests the middleware rather than the helper: /ping does not open a
        transaction, so a 400 here can have come from nowhere else. This is the
        half that covers a handler somebody forgets to wire up. */
-    const ping = await call('/integration/ping', { idem: null });
+    const ping = await call('/integration/v1/ping', { idem: null });
     assert.strictEqual(ping.status, 400,
       `the blanket check must not depend on the handler: ${JSON.stringify(ping.body)}`);
     assert.strictEqual(ping.body.header, 'idempotency-key');
   });
 
   await t.test('and one whose key is too long for the column it is stored in', async () => {
-    const r = await call('/integration/counter', { idem: 'k'.repeat(192) });
+    const r = await call('/integration/v1/counter', { idem: 'k'.repeat(192) });
     assert.strictEqual(r.status, 400, JSON.stringify(r.body));
     assert.match(r.body.error, /192 characters.*limit is 191/);
   });
 
   await t.test('a GET needs no key at all', async () => {
-    const r = await call('/integration/counter', { method: 'GET', body: null, idem: null });
+    const r = await call('/integration/v1/counter', { method: 'GET', body: null, idem: null });
     assert.strictEqual(r.status, 200, JSON.stringify(r.body));
     assert.strictEqual(typeof r.body.count, 'number');
   });
@@ -180,7 +180,7 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
     const outboxBefore = await outboxCount();
     const idem = crypto.randomUUID();
 
-    const r = await call('/integration/counter', { body: { counter: 'first' }, idem });
+    const r = await call('/integration/v1/counter', { body: { counter: 'first' }, idem });
     assert.strictEqual(r.status, 200, JSON.stringify(r.body));
     assert.strictEqual(r.body.count, before + 1, 'the caller\'s work ran');
     assert.strictEqual(r.replay, null, 'a first call is not a replay');
@@ -188,7 +188,7 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
     const rows = await rowsFor(idem);
     assert.strictEqual(rows.length, 1, 'one idempotency row');
     assert.strictEqual(rows[0].response_status, 200);
-    assert.strictEqual(rows[0].endpoint, 'POST /api/integration/counter');
+    assert.strictEqual(rows[0].endpoint, 'POST /api/integration/v1/counter');
     assert.strictEqual(rows[0].request_hash, sha256(JSON.stringify({ counter: 'first' })),
       'the hash is over the bytes that arrived');
     assert.deepStrictEqual(JSON.parse(rows[0].response_body), { counter: 'first', count: before + 1 });
@@ -199,12 +199,12 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
     const idem = crypto.randomUUID();
     const body = { counter: 'replay' };
 
-    const first = await call('/integration/counter', { body, idem });
+    const first = await call('/integration/v1/counter', { body, idem });
     assert.strictEqual(first.status, 200, JSON.stringify(first.body));
     const after = await counter('replay');
     const outboxAfter = await outboxCount();
 
-    const again = await call('/integration/counter', { body, idem });
+    const again = await call('/integration/v1/counter', { body, idem });
     assert.strictEqual(again.status, 200, JSON.stringify(again.body));
     assert.strictEqual(again.replay, 'true', 'the header that tells the caller this is a replay');
     assert.deepStrictEqual(again.body, first.body, 'the stored response, byte for byte');
@@ -217,11 +217,11 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
 
   await t.test('the same key with a different body is 422, and runs nothing', async () => {
     const idem = crypto.randomUUID();
-    await call('/integration/counter', { body: { counter: 'clash' }, idem });
+    await call('/integration/v1/counter', { body: { counter: 'clash' }, idem });
     const after = await counter('clash');
     const outboxAfter = await outboxCount();
 
-    const r = await call('/integration/counter', { body: { counter: 'clash', extra: 1 }, idem });
+    const r = await call('/integration/v1/counter', { body: { counter: 'clash', extra: 1 }, idem });
     assert.strictEqual(r.status, 422, JSON.stringify(r.body));
     assert.match(r.body.error, /already used for a request with a different body/);
     assert.strictEqual(r.replay, null, 'a refusal is not a replay');
@@ -237,7 +237,7 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
     const before = await counter('rollback');
     const outboxBefore = await outboxCount();
 
-    const failed = await call('/integration/counter', { body: { counter: 'rollback', fail: true }, idem });
+    const failed = await call('/integration/v1/counter', { body: { counter: 'rollback', fail: true }, idem });
     assert.ok(failed.status >= 500, `the failure is reported: ${failed.status}`);
 
     /* fn RAN — the in-memory counter moved, because memory is not in the
@@ -261,7 +261,7 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
 
     // So the same key is free to be used again, which is the whole reason for
     // recording only on success.
-    const retry = await call('/integration/counter', { body: { counter: 'rollback' }, idem });
+    const retry = await call('/integration/v1/counter', { body: { counter: 'rollback' }, idem });
     assert.strictEqual(retry.status, 200, JSON.stringify(retry.body));
     assert.strictEqual(retry.replay, null, 'a retry after a failure is a fresh run, not a replay');
     assert.strictEqual(retry.body.count, before + 2, 'and it ran');
@@ -279,7 +279,7 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
     const idem = crypto.randomUUID();
     const before = await counter('refused');
 
-    const no = await call('/integration/counter', { body: { counter: 'refused', reject: true }, idem });
+    const no = await call('/integration/v1/counter', { body: { counter: 'refused', reject: true }, idem });
     assert.strictEqual(no.status, 409, JSON.stringify(no.body));
     assert.strictEqual(await counter('refused'), before + 1, 'the handler did run and decide');
     const held = await rowsFor(idem);
@@ -287,7 +287,7 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
     assert.strictEqual(held[0].status, 'failed', 'released rather than recorded as an answer');
     assert.strictEqual(held[0].response_status, null, 'the 409 is not something to replay');
 
-    const fixed = await call('/integration/counter', { body: { counter: 'refused' }, idem });
+    const fixed = await call('/integration/v1/counter', { body: { counter: 'refused' }, idem });
     assert.strictEqual(fixed.status, 200,
       `the same key must work after a refusal: ${JSON.stringify(fixed.body)}`);
     assert.strictEqual(fixed.replay, null, 'and it runs rather than replaying the 409');
@@ -304,10 +304,10 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
     const body = { counter: 'scoped' };
     const before = await counter('scoped');
 
-    const mine = await call('/integration/counter', { body, idem: shared });
+    const mine = await call('/integration/v1/counter', { body, idem: shared });
     assert.strictEqual(mine.status, 200, JSON.stringify(mine.body));
 
-    const theirs = await call('/integration/counter', { body, idem: shared, key: OTHER });
+    const theirs = await call('/integration/v1/counter', { body, idem: shared, key: OTHER });
     assert.strictEqual(theirs.status, 200, JSON.stringify(theirs.body));
     assert.strictEqual(theirs.replay, null, 'the other credential is not replaying my response');
     assert.strictEqual(await counter('scoped'), before + 2, 'both ran');
@@ -332,10 +332,10 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
     const body = { counter: 'inflight', hold: 250 };
     const before = await counter('inflight');
 
-    const first = call('/integration/counter', { body, idem });
+    const first = call('/integration/v1/counter', { body, idem });
     await new Promise((done) => { setTimeout(done, 80); });   // comfortably inside it
 
-    const second = await call('/integration/counter', { body, idem });
+    const second = await call('/integration/v1/counter', { body, idem });
     assert.strictEqual(second.status, 409, JSON.stringify(second.body));
     assert.strictEqual(second.body.code, 'idempotency_in_progress',
       'its own code, so a client can tell this from a reused key');
@@ -352,7 +352,7 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
     assert.strictEqual(done.body.count, before + 1, 'and the first request ran exactly once');
 
     // Now that it has finished, the same key returns its real result.
-    const later = await call('/integration/counter', { body, idem });
+    const later = await call('/integration/v1/counter', { body, idem });
     assert.strictEqual(later.status, 200, JSON.stringify(later.body));
     assert.strictEqual(later.replay, 'true');
     assert.deepStrictEqual(later.body, done.body, 'the retry gets the real answer it was promised');
@@ -374,8 +374,8 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
     const outboxBefore = await outboxCount();
 
     const [a, b] = await Promise.all([
-      call('/integration/counter', { body, idem }),
-      call('/integration/counter', { body, idem }),
+      call('/integration/v1/counter', { body, idem }),
+      call('/integration/v1/counter', { body, idem }),
     ]);
 
     assert.strictEqual(await counter('race'), before + 1,
@@ -408,11 +408,11 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
     await sql(cfg,
       'INSERT INTO integration_requests '
       + '(idempotency_key, client_id, endpoint, request_hash, `status`, created_at, updated_at) '
-      + "VALUES (?, ?, 'POST /api/integration/counter', ?, 'pending', "
+      + "VALUES (?, ?, 'POST /api/integration/v1/counter', ?, 'pending', "
       + 'NOW() - INTERVAL 600 SECOND, NOW() - INTERVAL 600 SECOND)',
       [idem, client, sha256(JSON.stringify(body))]);
 
-    const r = await call('/integration/counter', { body, idem });
+    const r = await call('/integration/v1/counter', { body, idem });
     assert.strictEqual(r.status, 200, `the key is reusable once abandoned: ${JSON.stringify(r.body)}`);
     assert.strictEqual(r.replay, null, 'and it really ran rather than replaying a claim');
     assert.strictEqual(await counter('stale'), before + 1);
@@ -436,10 +436,10 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
     await sql(cfg,
       'INSERT INTO integration_requests '
       + '(idempotency_key, client_id, endpoint, request_hash, `status`, updated_at) '
-      + "VALUES (?, ?, 'POST /api/integration/counter', ?, 'pending', NOW() - INTERVAL 30 SECOND)",
+      + "VALUES (?, ?, 'POST /api/integration/v1/counter', ?, 'pending', NOW() - INTERVAL 30 SECOND)",
       [idem, client, sha256(JSON.stringify(body))]);
 
-    const r = await call('/integration/counter', { body, idem });
+    const r = await call('/integration/v1/counter', { body, idem });
     assert.strictEqual(r.status, 409, JSON.stringify(r.body));
     assert.strictEqual(r.body.code, 'idempotency_in_progress');
     assert.strictEqual(r.body.startedSecondsAgo, 30, 'and says how long it has been waiting');
@@ -454,13 +454,13 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
        inventing a new key for work they already have one for. */
     const idem = `recovered-${crypto.randomUUID()}`;
 
-    const failed = await call('/integration/counter',
+    const failed = await call('/integration/v1/counter',
       { body: { counter: 'recovery', fail: true }, idem });
     assert.ok(failed.status >= 500, `${failed.status}`);
     assert.strictEqual((await rowsFor(idem))[0].status, 'failed');
 
     // A DIFFERENT body, same key, immediately.
-    const fixed = await call('/integration/counter', { body: { counter: 'recovery' }, idem });
+    const fixed = await call('/integration/v1/counter', { body: { counter: 'recovery' }, idem });
     assert.strictEqual(fixed.status, 200,
       `a corrected body must be allowed after a failure: ${JSON.stringify(fixed.body)}`);
     assert.strictEqual((await rowsFor(idem))[0].status, 'complete');
@@ -468,7 +468,7 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
     /* And once it HAS answered, the same key with a different body is a conflict
        again — the hash check is not gone, it is conditional on there being an
        answer to conflict with. */
-    const clash = await call('/integration/counter', { body: { counter: 'recovery', x: 1 }, idem });
+    const clash = await call('/integration/v1/counter', { body: { counter: 'recovery', x: 1 }, idem });
     assert.strictEqual(clash.status, 422, JSON.stringify(clash.body));
     assert.strictEqual(clash.body.code, 'idempotency_key_reused');
   });
@@ -503,7 +503,7 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
       await db.query(
         'INSERT INTO integration_requests '
         + '(idempotency_key, client_id, endpoint, request_hash, response_status, response_body) '
-        + "VALUES (?, ?, 'POST /api/integration/counter', ?, 200, ?)",
+        + "VALUES (?, ?, 'POST /api/integration/v1/counter', ?, 200, ?)",
         [old, client, sha256('{}'), JSON.stringify({ was: 'already answered' })]
       );
 

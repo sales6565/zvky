@@ -751,7 +751,7 @@ Setup Node.js App → Restart, or touching `tmp/restart.txt`.
 | PUT | `/api/pnl/projects/:id/billing` | `pnl.manage` alone — contract value, billing type, invoiced to date |
 | POST, PATCH, DELETE | `/api/pnl/projects/:id/other-costs[/:costId]` | `pnl.manage` alone |
 | GET | `/api/pnl/report` | either tab permission — summary, breakdown, hours rollup, trend and client rollup, filterable by `clientId`, `projectId`, `from`, `to` |
-| POST | `/api/integration/*` | not a person at all — a signed request from an active integration credential that lists the action. See [The integration API](#the-integration-api) |
+| GET, POST, PUT | `/api/integration/v1/*` | not a person at all — a signed request from an active integration credential that lists the action. See [The integration API](#the-integration-api) |
 
 Every route re-checks permissions against the database on each request — a
 role change or removal takes effect on the user's very next request, not just
@@ -2102,7 +2102,85 @@ would be fewer characters and would not be *this* schedule.
 A worker killed mid-delivery has still used an attempt — counting only completed
 ones would let a row that crashes the process every time be retried forever.
 
-#### Pulling instead: `GET /api/integration/events?since=<seq>`
+#### The v1 surface
+
+Everything is mounted at **`/api/integration/v1`**, and that prefix is load-bearing
+rather than decorative. The action a credential needs is the first path segment *after
+the mount*, so mounting at `/api/integration` and nesting a `/v1` router would make the
+action `v1` for every call — a capability no credential will ever hold. Mounting at both
+prefixes is worse still: the broader mount matches the narrower path too, so a `/v1`
+request would run the whole chain twice and be refused by the first pass. One mount, at
+the versioned prefix. `ping`, `counter` and `events` moved there with everything else.
+
+| Route | Action it needs |
+|---|---|
+| `GET /projects` | `projects` |
+| `GET /projects/:id/assets?updated_since=` | `projects` |
+| `GET /assets/:id` | `assets` |
+| `GET /files/:id` | `files` |
+| `POST /handoffs/:id/ack` | `handoffs` |
+| `PUT /assets/:id/in-game` | `assets` |
+| `GET /events?since=` | `events` |
+
+Path parameters do not disturb that — checked against a running Express, not assumed.
+**`/projects/:id/assets` needs `projects`, not `assets`**, because the resource family it
+enters is projects: a credential granted only `assets` can fetch one asset by id and
+cannot list a project's. That follows from the rule rather than from a decision, and
+special-casing it would mean the permission a URL requires could no longer be read off
+the URL. If the studio would rather that call needed `assets`, the thing to move is the
+route — to `/assets?project_id=` — not the rule.
+
+`GET /projects` is **unpaginated**, matching the internal `GET /api/projects`: a studio
+has tens of projects, and a second cursor shape for this would be machinery for nothing.
+
+**`updated_since` is a sequence, not a timestamp**, and it has to be: `assets` has no
+`updated_at` column, and inventing one would be a second answer to a question this schema
+already answers. `asset_events` carries every transition with a `seq BIGINT
+AUTO_INCREMENT`, and its own DDL says why that exists instead of a timestamp — `created_at`
+is accurate only to the second, and submit/approve/relay land in the same second
+routinely. So an asset's change marker is `MAX(asset_events.seq)`, which is the same
+cursor kind `/events` uses. One consequence, stated rather than discovered: creating an
+asset writes no `asset_event`, so an untouched asset has marker 0 and appears only on a
+full sync. That is right for this consumer — nothing has happened to it.
+
+`GET /files/:id` takes an `asset_versions` id and reuses the internal
+`/api/assets/versions/:versionId/download` convention, with two deliberate differences:
+it does not call `canViewAsset` (there is no `req.user` to pass it — a credential's
+authority is `allowed_actions`), and it resolves against `UPLOAD_DIR` exported from
+[`src/upload.js`](src/upload.js) rather than rebuilding that path by hand. The stored name
+is never trusted as a path.
+
+##### The two business-level guards
+
+These are **in addition to** the idempotency-key replay, not instead of it. That handles a
+repeated *call*; these handle a repeated *fact*, from a caller with a fresh key that lost
+its own bookkeeping.
+
+**Acking a hand-off.** Same build again → `200` with the record as it stands and
+`alreadyAcked: true`; nothing is written and the note is not overwritten. A **different**
+build → `409` with `code: handoff_build_mismatch`, naming the build that actually took it.
+One drop cannot have landed in two builds, and overwriting the first would destroy the
+only record of which did.
+
+**Reporting in-game state.** The body carries `build_seq`. An older *or equal* sequence
+→ `200 { applied: false }` and nothing changes. Not a `4xx`: the caller did nothing wrong,
+the report simply arrived after a newer one, and a retrying client would treat a `4xx` as
+something to fix.
+
+Two things about that guard are worth knowing, both found by testing rather than reasoning:
+
+- `applied` is decided from a read inside the handler's transaction, **not** from
+  `affectedRows`. The documented reading of `INSERT ... ON DUPLICATE KEY UPDATE` is 1 for
+  an insert, 2 for a change and 0 for a no-op — but on this MariaDB a no-op reports **1**,
+  the same as an insert, so the statement cannot tell a row it created from one the guard
+  held back. A first version of this told a caller its stale report had taken effect.
+- That read is a plain `SELECT`, **not** `SELECT ... FOR UPDATE`. `FOR UPDATE` on a row
+  that does not exist yet gap-locks, so two concurrent first reports deadlocked into a
+  `500`. Without the lock two reports can both decide they apply — which is exactly why
+  the `IF(VALUES(seq) > seq, …)` guard in the statement is the authority on what is
+  *stored*, while the read only decides what is *reported*.
+
+#### Pulling instead: `GET /api/integration/v1/events?since=<seq>`
 
 A push that never arrived looks, from the far end, exactly like nothing having
 happened. So the same rows can be **asked for**, in ascending `seq` order, reading
@@ -2110,7 +2188,7 @@ the same table the worker delivers from — two sources of truth for what happen
 how a replay ends up disagreeing with the original.
 
 ```
-GET /api/integration/events?since=1024&limit=50
+GET /api/integration/v1/events?since=1024&limit=50
 {
   "events": [ { "seq": 1025, "id": "…", "payload": {…},
                 "status": "failed", "attempts": 7, "lastError": "…", "createdAt": "…" } ],

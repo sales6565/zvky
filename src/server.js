@@ -162,7 +162,22 @@ app.use('/api/admin/settings/chat-group-limit', chatSettingsRoutes);
    requirePermission or any of the person-shaped gates. Mounted after
    activityLogger above, so serviceAuth can name the actor on the log entry
    before the route runs. */
-app.use('/api/integration',
+/* THE VERSIONED MOUNT, and the endpoints move rather than being served at both.
+ *
+ * Mounting the same router at /api/integration AND /api/integration/v1 looks harmless
+ * and is not: the broader mount matches the narrower path too, so a /v1 request would
+ * pass through this whole chain twice — serviceAuth would run first with req.path
+ * '/v1/assets/x', derive the action "v1", and refuse it 403 for a capability no
+ * credential will ever hold. The limiter would double-count as well.
+ *
+ * Nesting a /v1 router inside the old mount has the same fault for the same reason.
+ * The only arrangement in which the action name stays readable off the URL is one
+ * mount at the versioned prefix, so req.path is '/assets/x' and the action is "assets".
+ *
+ * So ping, counter and events move to /api/integration/v1 with everything else. They
+ * were never reachable on a deployment: the integration is inert without
+ * INTEGRATION_INBOUND_SECRET, which no environment has set. */
+app.use('/api/integration/v1',
   integrationIpGate.middleware,
   integrationLimiter,
   serviceAuth,

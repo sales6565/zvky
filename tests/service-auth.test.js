@@ -25,8 +25,8 @@ const sha256 = (v) => crypto.createHash('sha256').update(v).digest('hex');
 test('the signature payload and the timing-safe compare, with no server', () => {
   const sa = require('../src/middleware/service-auth');
 
-  assert.strictEqual(sa.signingPayload(123, 'post', '/api/integration/ping', '{"a":1}'),
-    '123.POST./api/integration/ping.{"a":1}', 'the method is upper-cased and the parts joined by dots');
+  assert.strictEqual(sa.signingPayload(123, 'post', '/api/integration/v1/ping', '{"a":1}'),
+    '123.POST./api/integration/v1/ping.{"a":1}', 'the method is upper-cased and the parts joined by dots');
 
   assert.deepStrictEqual(sa.parseSignature('t=1, v1=abc'), { t: '1', v1: 'abc' });
   assert.deepStrictEqual(sa.parseSignature(' t=1 ,  v1=abc '), { t: '1', v1: 'abc' },
@@ -104,7 +104,7 @@ test('the integration front door', { skip: cfg ? false : SKIP_REASON }, async (t
   // --- the signature ---------------------------------------------------------
 
   await t.test('a correctly signed request gets through', async () => {
-    const r = await call('/integration/ping');
+    const r = await call('/integration/v1/ping');
     assert.strictEqual(r.status, 200, JSON.stringify(r.body));
     assert.strictEqual(r.body.client, 'Dev and QA');
     assert.strictEqual(r.body.action, 'ping');
@@ -113,12 +113,12 @@ test('the integration front door', { skip: cfg ? false : SKIP_REASON }, async (t
   });
 
   await t.test('a wrong signature is refused', async () => {
-    const wrong = await call('/integration/ping', { signature: 'f'.repeat(64) });
+    const wrong = await call('/integration/v1/ping', { signature: 'f'.repeat(64) });
     assert.strictEqual(wrong.status, 401, JSON.stringify(wrong.body));
     assert.match(wrong.body.error, /signature does not match/);
 
     // Signed with the right shape and the wrong secret — the realistic failure.
-    const other = await call('/integration/ping', { secret: 'not-the-inbound-secret' });
+    const other = await call('/integration/v1/ping', { secret: 'not-the-inbound-secret' });
     assert.strictEqual(other.status, 401);
 
     /* THE ONE THAT MATTERS MOST: signed correctly, then the body changed. This
@@ -127,8 +127,8 @@ test('the integration front door', { skip: cfg ? false : SKIP_REASON }, async (t
     const stamp = Math.floor(Date.now() / 1000);
     const signedFor = JSON.stringify({ hello: 'world' });
     const v1 = crypto.createHmac('sha256', SECRET)
-      .update(`${stamp}.POST./api/integration/ping.${signedFor}`).digest('hex');
-    const res = await fetch(`${server.base}/integration/ping`, {
+      .update(`${stamp}.POST./api/integration/v1/ping.${signedFor}`).digest('hex');
+    const res = await fetch(`${server.base}/integration/v1/ping`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -141,26 +141,26 @@ test('the integration front door', { skip: cfg ? false : SKIP_REASON }, async (t
   });
 
   await t.test('an expired signature is refused, in both directions', async () => {
-    const old = await call('/integration/ping', { t: Math.floor(Date.now() / 1000) - 301 });
+    const old = await call('/integration/v1/ping', { t: Math.floor(Date.now() / 1000) - 301 });
     assert.strictEqual(old.status, 401, JSON.stringify(old.body));
     assert.match(old.body.error, /out of date/);
 
     /* A timestamp far in the FUTURE is as much a replay as one far in the past,
        and is what a caller with a wrong clock actually sends. */
-    const ahead = await call('/integration/ping', { t: Math.floor(Date.now() / 1000) + 301 });
+    const ahead = await call('/integration/v1/ping', { t: Math.floor(Date.now() / 1000) + 301 });
     assert.strictEqual(ahead.status, 401, JSON.stringify(ahead.body));
 
     // And just inside the window still works.
-    const fresh = await call('/integration/ping', { t: Math.floor(Date.now() / 1000) - 290 });
+    const fresh = await call('/integration/v1/ping', { t: Math.floor(Date.now() / 1000) - 290 });
     assert.strictEqual(fresh.status, 200, JSON.stringify(fresh.body));
   });
 
   await t.test('a missing signature or key is refused', async () => {
-    const noSig = await call('/integration/ping', { omitSignature: true });
+    const noSig = await call('/integration/v1/ping', { omitSignature: true });
     assert.strictEqual(noSig.status, 401);
     assert.match(noSig.body.error, /x-integration-signature/i);
 
-    const noKey = await call('/integration/ping', { omitKey: true });
+    const noKey = await call('/integration/v1/ping', { omitKey: true });
     assert.strictEqual(noKey.status, 401);
     assert.match(noKey.body.error, /x-integration-key/i);
   });
@@ -168,8 +168,8 @@ test('the integration front door', { skip: cfg ? false : SKIP_REASON }, async (t
   // --- the credential --------------------------------------------------------
 
   await t.test('inactive and unknown keys are refused, and are indistinguishable', async () => {
-    const inactive = await call('/integration/ping', { key: KEYS.off });
-    const unknown = await call('/integration/ping', { key: 'no-such-key-at-all-0123456' });
+    const inactive = await call('/integration/v1/ping', { key: KEYS.off });
+    const unknown = await call('/integration/v1/ping', { key: 'no-such-key-at-all-0123456' });
     assert.strictEqual(inactive.status, 401, JSON.stringify(inactive.body));
     assert.strictEqual(unknown.status, 401, JSON.stringify(unknown.body));
     /* THE SAME SENTENCE, on purpose: two different answers would let anybody
@@ -192,7 +192,7 @@ test('the integration front door', { skip: cfg ? false : SKIP_REASON }, async (t
 
   await t.test('last_used_at is stamped on a successful call', async () => {
     await sql(cfg, "UPDATE integration_clients SET last_used_at = NULL WHERE `name` = 'Dev and QA'");
-    assert.strictEqual((await call('/integration/ping')).status, 200);
+    assert.strictEqual((await call('/integration/v1/ping')).status, 200);
     /* The stamp is written without being awaited, so the request can answer
        before it lands. Poll briefly rather than assume either way. */
     let stamped = null;
@@ -211,14 +211,14 @@ test('the integration front door', { skip: cfg ? false : SKIP_REASON }, async (t
     /* Narrow Tool may do "assets" and not "ping". The status matters: 401 says
        "I do not know you", 403 says "I know you and the answer is no", and a
        caller debugging their credential needs to know which. */
-    const r = await call('/integration/ping', { key: KEYS.narrow });
+    const r = await call('/integration/v1/ping', { key: KEYS.narrow });
     assert.strictEqual(r.status, 403, JSON.stringify(r.body));
     assert.match(r.body.error, /not allowed to "ping"/);
     assert.deepStrictEqual(r.body.allowed, ['assets'], 'and it says what the key MAY do');
 
     // The same credential on an action it holds is fine — 404 from the router,
     // which is past every check in service-auth.
-    const allowed = await call('/integration/assets', { key: KEYS.narrow });
+    const allowed = await call('/integration/v1/assets', { key: KEYS.narrow });
     assert.strictEqual(allowed.status, 404,
       `"assets" is allowed, so this should reach the router: ${JSON.stringify(allowed.body)}`);
   });
@@ -226,13 +226,13 @@ test('the integration front door', { skip: cfg ? false : SKIP_REASON }, async (t
   // --- the activity log ------------------------------------------------------
 
   await t.test('a write is attributed to integration:<name>, not to nobody', async () => {
-    assert.strictEqual((await call('/integration/ping')).status, 200);
+    assert.strictEqual((await call('/integration/v1/ping')).status, 200);
 
     let entry = null;
     for (let i = 0; i < 40 && !entry; i += 1) {
       const rows = await sql(cfg,
         `SELECT actor_id, actor_name, actor_role, method, path FROM activity_log
-          WHERE path = '/api/integration/ping' ORDER BY seq DESC LIMIT 1`);
+          WHERE path = '/api/integration/v1/ping' ORDER BY seq DESC LIMIT 1`);
       entry = rows[0] || null;
       if (!entry) await new Promise((r) => setTimeout(r, 50));
     }
@@ -274,7 +274,7 @@ test('the integration front door', { skip: cfg ? false : SKIP_REASON }, async (t
     // The mirror is loaded at startup, so restart to pick the row up.
     await boot({ INTEGRATION_IP_ALLOWLIST_ALLOW_LOOPBACK: 'false' });
 
-    const r = await call('/integration/ping');
+    const r = await call('/integration/v1/ping');
     assert.strictEqual(r.status, 200,
       `monitor mode must not block: ${JSON.stringify(r.body)}`);
     assert.strictEqual(r.body.address.decision, 'would-deny',
@@ -288,7 +288,7 @@ test('the integration front door', { skip: cfg ? false : SKIP_REASON }, async (t
       INTEGRATION_IP_ALLOWLIST_ALLOW_LOOPBACK: 'false',
       INTEGRATION_IP_ALLOWLIST_MODE: 'enforce',
     });
-    const r = await call('/integration/ping');
+    const r = await call('/integration/v1/ping');
     assert.strictEqual(r.status, 403, JSON.stringify(r.body));
     assert.match(r.body.error, /not allowed to reach the integration API/);
 
@@ -300,7 +300,7 @@ test('the integration front door', { skip: cfg ? false : SKIP_REASON }, async (t
       INTEGRATION_IP_ALLOWLIST_ALLOW_LOOPBACK: 'false',
       INTEGRATION_IP_ALLOWLIST_MODE: 'enforce',
     });
-    const ok = await call('/integration/ping');
+    const ok = await call('/integration/v1/ping');
     assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
     assert.strictEqual(ok.body.address.decision, 'allowed');
 
@@ -319,7 +319,7 @@ test('the integration front door', { skip: cfg ? false : SKIP_REASON }, async (t
     await sql(cfg,
       "INSERT INTO ip_allowlist (id, address, label) VALUES (UUID(), '198.51.100.9', 'somewhere else')");
     await boot({ IP_ALLOWLIST_MODE: 'enforce', IP_ALLOWLIST_ALLOW_LOOPBACK: 'false' });
-    const mine = await call('/integration/ping');
+    const mine = await call('/integration/v1/ping');
     assert.strictEqual(mine.status, 200,
       `the studio gate must not block integration traffic: ${JSON.stringify(mine.body)}`);
 
@@ -388,7 +388,7 @@ test('the integration front door', { skip: cfg ? false : SKIP_REASON }, async (t
     await boot({ INTEGRATION_RATE_MAX: '2', INTEGRATION_RATE_WINDOW_MINUTES: '5' });
     const codes = [];
     for (let i = 0; i < 4; i += 1) {
-      const r = await call('/integration/ping', { signature: 'deadbeef' });
+      const r = await call('/integration/v1/ping', { signature: 'deadbeef' });
       codes.push(r.status);
     }
     assert.deepStrictEqual(codes.slice(0, 2), [401, 401],
@@ -400,7 +400,7 @@ test('the integration front door', { skip: cfg ? false : SKIP_REASON }, async (t
 
   await t.test('the secret is required, never assumed absent means open', async () => {
     await boot({ INTEGRATION_INBOUND_SECRET: '' });
-    const r = await call('/integration/ping');
+    const r = await call('/integration/v1/ping');
     assert.strictEqual(r.status, 503, JSON.stringify(r.body));
     assert.match(r.body.error, /not configured/);
     await boot();
@@ -433,7 +433,7 @@ test('the integration address list, across two workers',
   });
 
   const knock = async (server) => {
-    const res = await fetch(`${server.base}/integration/ping`, {
+    const res = await fetch(`${server.base}/integration/v1/ping`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
       body: '{}',

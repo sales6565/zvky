@@ -98,9 +98,13 @@ test('every state-changing endpoint is behind the recording middleware', () => {
      builds one (`warnIfUnused()`). Matching only the bare two-argument form
      would leave exactly the routers with the most in front of them unchecked,
      and matching only bare names would leave out the ones configured at mount
-     time. Comments between the arguments are already gone; see above. */
+     time. Comments between the arguments are already gone; see above.
+     
+     DIGITS IN A SEGMENT, too: /api/integration/v1 is a version, which this could not
+     see while the character class was [a-z-] — so the router with the most middleware
+     in front of it AND a versioned path was invisible twice over. */
   const routeMounts = [...server.matchAll(
-    /app\.use\('(\/api\/[a-z-]+(?:\/[a-z-]+)*)',\s*(?:[\w.]+(?:\([^()]*\))?,\s*)*(\w+Routes)\)/g)];
+    /app\.use\('(\/api\/[a-z0-9-]+(?:\/[a-z0-9-]+)*)',\s*(?:[\w.]+(?:\([^()]*\))?,\s*)*(\w+Routes)\)/g)];
   assert.ok(routeMounts.length >= 14, `expected the app's routers, found ${routeMounts.length}`);
   for (const m of routeMounts) {
     assert.ok(server.indexOf(m[0]) > mountLine,

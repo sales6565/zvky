@@ -468,9 +468,9 @@ test('delivery, retries and the claim', { skip: cfg ? false : SKIP_REASON }, asy
     const raw = JSON.stringify(body);
     const stamp = Math.floor(Date.now() / 1000);
     const v1 = crypto.createHmac('sha256', IN_SECRET)
-      .update(`${stamp}.POST./api/integration/counter.${raw}`).digest('hex');
+      .update(`${stamp}.POST./api/integration/v1/counter.${raw}`).digest('hex');
 
-    const res = await fetch(`${server.base}/integration/counter`, {
+    const res = await fetch(`${server.base}/integration/v1/counter`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -544,9 +544,9 @@ test('a failing delivery cannot touch the request that caused the row',
     const raw = JSON.stringify(body);
     const stamp = Math.floor(Date.now() / 1000);
     const v1 = crypto.createHmac('sha256', IN_SECRET)
-      .update(`${stamp}.POST./api/integration/counter.${raw}`).digest('hex');
+      .update(`${stamp}.POST./api/integration/v1/counter.${raw}`).digest('hex');
     const started = Date.now();
-    const res = await fetch(`${server.base}/integration/counter`, {
+    const res = await fetch(`${server.base}/integration/v1/counter`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -642,33 +642,33 @@ test('GET /events: the pull-based recovery path', { skip: cfg ? false : SKIP_REA
   t.after(async () => { if (server) await stopServer(server); });
 
   await t.test('a signed GET gets through, with no exception made for it being a read', async () => {
-    const r = await get('/integration/events?since=0');
+    const r = await get('/integration/v1/events?since=0');
     assert.strictEqual(r.status, 200, JSON.stringify(r.body));
     assert.ok(Array.isArray(r.body.events));
   });
 
   await t.test('an unsigned or wrongly signed read is refused like any other request', async () => {
-    const bare = await fetch(`${server.base}/integration/events?since=0`, {
+    const bare = await fetch(`${server.base}/integration/v1/events?since=0`, {
       headers: { 'X-Integration-Key': READER },
     });
     assert.strictEqual(bare.status, 401, 'a read is not exempt from the signature');
 
-    const wrong = await get('/integration/events?since=0', { secret: 'not-the-secret' });
+    const wrong = await get('/integration/v1/events?since=0', { secret: 'not-the-secret' });
     assert.strictEqual(wrong.status, 401);
 
     /* And the query string really is covered: a signature taken over the bare path
        does not verify for a request that carries one. */
     const stamp = Math.floor(Date.now() / 1000);
     const v1 = crypto.createHmac('sha256', IN_SECRET)
-      .update(`${stamp}.GET./api/integration/events.`).digest('hex');
-    const tampered = await fetch(`${server.base}/integration/events?since=99`, {
+      .update(`${stamp}.GET./api/integration/v1/events.`).digest('hex');
+    const tampered = await fetch(`${server.base}/integration/v1/events?since=99`, {
       headers: { 'X-Integration-Key': READER, 'X-Integration-Signature': `t=${stamp}, v1=${v1}` },
     });
     assert.strictEqual(tampered.status, 401, 'since cannot be altered in flight');
   });
 
   await t.test('a client not granted "events" is refused with 403, not 401', async () => {
-    const r = await get('/integration/events?since=0', { key: WRITER });
+    const r = await get('/integration/v1/events?since=0', { key: WRITER });
     assert.strictEqual(r.status, 403, JSON.stringify(r.body));
     assert.strictEqual(r.body.action, 'events', 'and is told which capability it lacks');
     assert.ok(!r.body.allowed.includes('events'));
@@ -680,7 +680,7 @@ test('GET /events: the pull-based recovery path', { skip: cfg ? false : SKIP_REA
   await t.test('a read needs no Idempotency-Key', async () => {
     // The idempotency middleware covers POST, PUT and DELETE. Repeating a read
     // changes nothing, so demanding a key would be friction for no gain.
-    const r = await get('/integration/events?since=0');
+    const r = await get('/integration/v1/events?since=0');
     assert.strictEqual(r.status, 200, JSON.stringify(r.body));
   });
 
@@ -690,7 +690,7 @@ test('GET /events: the pull-based recovery path', { skip: cfg ? false : SKIP_REA
     let pages = 0;
 
     for (;;) {
-      const r = await get(`/integration/events?since=${since}`);
+      const r = await get(`/integration/v1/events?since=${since}`);
       assert.strictEqual(r.status, 200, JSON.stringify(r.body));
       pages += 1;
       assert.strictEqual(r.body.limit, 50, 'the default page, matching the convention elsewhere');
@@ -721,25 +721,25 @@ test('GET /events: the pull-based recovery path', { skip: cfg ? false : SKIP_REA
   });
 
   await t.test('the page size can be asked for, and is capped', async () => {
-    const small = await get('/integration/events?since=0&limit=5');
+    const small = await get('/integration/v1/events?since=0&limit=5');
     assert.strictEqual(small.body.events.length, 5);
     assert.strictEqual(small.body.limit, 5);
     assert.strictEqual(small.body.hasMore, true);
 
-    const greedy = await get('/integration/events?since=0&limit=100000');
+    const greedy = await get('/integration/v1/events?since=0&limit=100000');
     assert.strictEqual(greedy.body.limit, 200, 'capped at PAGE_MAX rather than honoured');
     assert.strictEqual(greedy.body.events.length, 125, 'which is more than there are');
     assert.strictEqual(greedy.body.hasMore, false);
 
-    const silly = await get('/integration/events?since=0&limit=0');
+    const silly = await get('/integration/v1/events?since=0&limit=0');
     assert.strictEqual(silly.body.limit, 50, 'nonsense falls back to the default, not to zero rows');
   });
 
   await t.test('a since beyond the end is empty, not an error', async () => {
-    const { body: first } = await get('/integration/events?since=0&limit=1');
+    const { body: first } = await get('/integration/v1/events?since=0&limit=1');
     const high = first.highWater;
 
-    const past = await get(`/integration/events?since=${high + 500}`);
+    const past = await get(`/integration/v1/events?since=${high + 500}`);
     assert.strictEqual(past.status, 200, 'being up to date is not a failure');
     assert.deepStrictEqual(past.body.events, []);
     assert.strictEqual(past.body.hasMore, false);
@@ -748,7 +748,7 @@ test('GET /events: the pull-based recovery path', { skip: cfg ? false : SKIP_REA
     assert.strictEqual(past.body.highWater, high, 'while still being told how far along the table is');
 
     // Exactly at the end, which is the boundary a caught-up caller actually sits on.
-    const atEnd = await get(`/integration/events?since=${high}`);
+    const atEnd = await get(`/integration/v1/events?since=${high}`);
     assert.deepStrictEqual(atEnd.body.events, []);
     assert.strictEqual(atEnd.body.hasMore, false);
   });
@@ -758,12 +758,12 @@ test('GET /events: the pull-based recovery path', { skip: cfg ? false : SKIP_REA
        otherwise be handed the whole table back with no indication anything was
        wrong, which is worse than being told. */
     for (const bad of ['abc', '-1', 'NaN']) {
-      const r = await get(`/integration/events?since=${bad}`);
+      const r = await get(`/integration/v1/events?since=${bad}`);
       assert.strictEqual(r.status, 400, `since=${bad}: ${JSON.stringify(r.body)}`);
       assert.strictEqual(r.body.field, 'since');
     }
     // Absent, though, means from the beginning.
-    const none = await get('/integration/events');
+    const none = await get('/integration/v1/events');
     assert.strictEqual(none.status, 200);
     assert.strictEqual(none.body.since, 0);
     assert.ok(none.body.events.length > 0);
@@ -783,7 +783,7 @@ test('GET /events: the pull-based recovery path', { skip: cfg ? false : SKIP_REA
           status === 'failed' ? 'the receiver refused it (400)' : null]);
     }
 
-    const { body } = await get('/integration/events?since=125&limit=200');
+    const { body } = await get('/integration/v1/events?since=125&limit=200');
     const byStatus = new Map(body.events.map((e) => [e.status, e]));
     for (const status of ['sent', 'failed', 'sending', 'pending']) {
       assert.ok(byStatus.has(status), `a ${status} row must be returned: ${JSON.stringify(
@@ -807,7 +807,7 @@ test('GET /events: the pull-based recovery path', { skip: cfg ? false : SKIP_REA
       'INSERT INTO integration_outbox (id, payload, `status`) VALUES (?, ?, ?)',
       [id, 'this is not json at all', 'pending']);
 
-    const { status, body } = await get('/integration/events?since=125&limit=200');
+    const { status, body } = await get('/integration/v1/events?since=125&limit=200');
     assert.strictEqual(status, 200);
     const bad = body.events.find((e) => e.id === id);
     assert.ok(bad, 'the row is still returned');
