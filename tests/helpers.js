@@ -258,7 +258,138 @@ async function openStudio(base, token) {
   return r.body.schedule;
 }
 
+/* THE STUDIO CLOCK, ANCHORED — and why three suites needed this.
+ *
+ * A suite that tests the pause sweep, the automatic resume or a recorded number
+ * of seconds has to place a window relative to NOW: "the break started ten
+ * minutes ago" is the only way to say it, because the session it measures is
+ * backdated from the database's NOW() and the sweep runs on the real clock.
+ * Neither can be moved, so the windows cannot be fixed dates either.
+ *
+ * What CAN be fixed is how that relative window is turned into two clock times,
+ * and it went wrong in two distinct ways. Which of them bit depended on the
+ * suite, so both are named:
+ *
+ *   THE CLOCK WAS READ MORE THAN ONCE per window. `clock(nowMin() - 10)` and
+ *      `clock(nowMin() + 20)` are two reads. A minute ticking between them moves
+ *      one end and not the other, so a suite that passes all day fails on
+ *      whichever run straddles a minute boundary — a one-in-sixty flake with no
+ *      pattern to it, which is the worst kind to be handed. recording-schedule
+ *      and late-sweep-hours both did this. Every window in one case now comes
+ *      from ONE read, passed in as `anchorMinute`.
+ *
+ *   AND THE RESULT WAS NOT ALWAYS A TIME. Ten minutes before 00:05 is not -5,
+ *      and twenty minutes after 23:50 is not 24:10, but subtracting minutes past
+ *      midnight says exactly that. Each suite failed differently on it.
+ *      recording-schedule formatted the figures without wrapping at all and got
+ *      "-1:-5", which the old Working Hours endpoint refused as a time.
+ *      late-sweep-hours and recording-hours both DID wrap, and got a
+ *      legal-looking 23:55 to 00:10 — two real times, and a window whose end is
+ *      before its start, which the old endpoint cannot express at all and
+ *      Recording Hours refuses unless it is told the window crosses midnight.
+ *
+ *      So wrapping is not the fix on its own, and that is why spansMidnight is
+ *      derived here from the two ends rather than left to each caller to
+ *      remember: forgetting it looks like a passing suite for eighteen hours a
+ *      day.
+ *
+ * So a window is built once, from one anchor, and carries `spansMidnight` when
+ * it wraps — the flag Recording Hours already has for exactly this, which is
+ * why these suites now express their windows through that API rather than
+ * through the four legacy time pairs, which cannot say it at all.
+ *
+ * THE OFFSETS THEMSELVES ARE NOT THE FIX. Each suite still exercises the same
+ * boundary minutes it was written to catch; all that changed is that the two
+ * ends are now computed from the same instant and are legal at every hour.
+ */
+const MINUTES_PER_DAY = 24 * 60;
+// The same fixed offset src/working-time.js uses, and for the same reason: the
+// studio's clock is IST wherever the server is.
+const IST_OFFSET_MINUTES = 5 * 60 + 30;
+
+const wrapMinute = (m) => ((Math.round(m) % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+
+const clockLabel = (m) => {
+  const x = wrapMinute(m);
+  return `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`;
+};
+
+/* Minutes past midnight IST at one instant. Called ONCE per set of windows and
+   the number passed around, never called again inside the arithmetic. */
+const studioMinute = (at = Date.now()) => {
+  const d = new Date(at + IST_OFFSET_MINUTES * 60 * 1000);
+  return d.getUTCHours() * 60 + d.getUTCMinutes();
+};
+
+/* "From `fromAgo` minutes ago to `toAgo` minutes ago", as a Recording Hours row.
+ *
+ * Both offsets count BACKWARDS, so a negative one is in the future: (660, -120)
+ * is a window that opened eleven hours ago and closes in two. That reads oddly
+ * once and then never again, and it keeps every window in a suite in the same
+ * units as the sessions they are measured against, which are all "n minutes
+ * ago" too.
+ *
+ * A span of a whole day or of nothing is thrown rather than stored: both ends
+ * land on the same minute, which Recording Hours correctly refuses as an empty
+ * window, and the error would otherwise arrive as a 422 from a POST several
+ * lines later with nothing saying which offset was impossible. */
+function windowAgo(anchorMinute, fromAgo, toAgo, extra = {}) {
+  const span = fromAgo - toAgo;
+  if (!Number.isFinite(span) || span < 1 || span > MINUTES_PER_DAY - 1) {
+    throw new Error(`a window from ${fromAgo} to ${toAgo} minutes ago spans ${span} minutes, `
+      + `which cannot be stored as one row: give between 1 and ${MINUTES_PER_DAY - 1}.`);
+  }
+  const start = wrapMinute(anchorMinute - fromAgo);
+  const end = wrapMinute(anchorMinute - toAgo);
+  return {
+    startTime: clockLabel(start),
+    endTime: clockLabel(end),
+    // Not "did I mean it to wrap" but "does it": the flag is refused when it is
+    // set on a window that stays inside one day, so it is derived, never passed.
+    spansMidnight: end < start,
+    ...extra,
+  };
+}
+
+const RECORDING_HOURS_ROOT = '/admin/settings/recording-hours';
+
+/* The studio's whole window list, replaced.
+ *
+ * Every existing row goes first, seeded ones included: a suite that adds a
+ * blackout on top of the shipped 09:30–19:00 weekday window is measuring that
+ * window as much as its own, and would answer differently at four in the
+ * afternoon than at four in the morning. What is left is only what the caller
+ * asked for, so the case decides the whole schedule.
+ *
+ * Days default to all seven for the same reason — a suite runs on whatever day
+ * it runs on, and a weekday-only window makes Sunday a different test. */
+async function setRecordingWindows(base, token, entries) {
+  const existing = await api(base, RECORDING_HOURS_ROOT, { token });
+  if (existing.status >= 400) {
+    throw new Error(`could not read the studio's windows: ${existing.status} ${JSON.stringify(existing.body)}`);
+  }
+  for (const entry of [...existing.body.recording, ...existing.body.nonRecording]) {
+    const gone = await api(base, `${RECORDING_HOURS_ROOT}/${entry.id}`, { method: 'DELETE', token });
+    if (gone.status >= 400) {
+      throw new Error(`could not clear window ${entry.id}: ${gone.status} ${JSON.stringify(gone.body)}`);
+    }
+  }
+  const made = [];
+  for (const entry of entries) {
+    const r = await api(base, RECORDING_HOURS_ROOT, {
+      method: 'POST', token, body: { daysOfWeek: [1, 2, 3, 4, 5, 6, 7], ...entry },
+    });
+    if (r.status >= 400) {
+      throw new Error(`could not store ${JSON.stringify(entry)}: ${r.status} ${JSON.stringify(r.body)}`);
+    }
+    made.push(r.body.entry);
+  }
+  return made;
+}
+
 module.exports = {
   config, resetSchema, startServer, stopServer, api, raw, sql, systemClientId, pdfText,
   openStudio, SKIP_REASON,
+  MINUTES_PER_DAY, IST_OFFSET_MINUTES, wrapMinute, clockLabel, studioMinute, windowAgo,
+  RECORDING_HOURS_ROOT, setRecordingWindows,
 };

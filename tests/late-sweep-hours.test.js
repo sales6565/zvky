@@ -50,7 +50,8 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const wt = require('../src/working-time');
-const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON } = require('./helpers');
+const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON,
+  studioMinute, windowAgo, setRecordingWindows } = require('./helpers');
 
 const cfg = config('latesweep');
 
@@ -111,30 +112,53 @@ test('COL-007\'s day, on time and late', { skip: cfg ? false : SKIP_REASON }, as
   const login = async (email) =>
     (await api(server.base, '/auth/login', { method: 'POST', body: { email, password: PASSWORD } })).body.token;
 
-  const nowMin = () => {
-    const d = new Date(Date.now() + 330 * 60 * 1000);
-    return d.getUTCHours() * 60 + d.getUTCMinutes();
-  };
-  const clock = (m) => {
-    const x = ((m % 1440) + 1440) % 1440;
-    return `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`;
-  };
-
   /* The three breaks, given as [startedMinutesAgo, endedMinutesAgo]. A negative
      figure is in the future, which is how a break that has only just begun is
-     expressed. The day itself is left wide so that ONLY the breaks are out. */
+     expressed. The offsets are the boundaries this file exists to test and are
+     UNCHANGED; only how they are expressed to the server has changed.
+
+     WHY THROUGH THE NAMED WINDOWS RATHER THAN /branding/schedule.
+
+     The replay needs each window positioned relative to the real "now", because a sweep's
+     decision is made against the clock and the clock cannot be moved — that is stated at
+     the top of this file and is still true. What that produced, through
+     /branding/schedule, was a window like 23:32 to 00:02 whenever the suite happened to
+     run near midnight, and that endpoint cannot express a window that crosses midnight:
+     the four time pairs have no way to say so, and it refused with "00:02 is before
+     23:32". So this suite was red for about six hours of every day, in a band either side
+     of midnight, for reasons that had nothing to do with what it tests.
+
+     The Recording Hours windows CAN say so — spansMidnight is exactly that flag — and
+     src/work-schedule.js's trackingWindow() hands them to the same working-time module the
+     sweep already reads, so the sweep sees them as the studio's schedule. Nothing about
+     the boundaries moved; they are now expressible at any hour.
+
+     A window sized to the replay rather than the whole day, because parseClock stops at
+     23:59 and a 24-hour window cannot be written down. It does not need to be, but it does
+     need to reach back past the START of the session: COL-007's day is 10:28 to 18:03, a
+     wall span of 455 minutes, and a window reaching back only seven hours left its first
+     half-hour outside — which showed up as exactly the 31 minutes the totals came out
+     short. Eleven hours back and two forward covers the replayed day, the second round in
+     the last subtest, and the shifting each step does, with room to spare. */
+  const RECORDING = { fromAgo: 660, toAgo: -120 };
+
+  /* ONE READ OF THE CLOCK PER SET OF WINDOWS, which is the other half of the fix
+     above: every window in one step is derived from the same `anchor`, so a
+     minute ticking part-way through a step can no longer move one boundary and
+     leave the rest where they were. windowAgo and setRecordingWindows are shared
+     with the two other suites that place windows this way — see tests/helpers.js
+     for why all three needed it. */
   const setBreaks = async (breaks) => {
-    const N = nowMin();
-    const slot = (i) => (breaks[i] ? [clock(N - breaks[i][0]), clock(N - breaks[i][1])] : ['', '']);
-    const [ms, me] = slot(0); const [ls, le] = slot(1); const [es, ee] = slot(2);
-    const r = await as('root', '/branding/schedule', {
-      method: 'PUT',
-      body: {
-        hoursPerDay: 1, workingDays: [1, 2, 3, 4, 5, 6, 7], dayStart: 0, dayEnd: 24 * 60,
-        morningStart: ms, morningEnd: me, lunchStart: ls, lunchEnd: le, eveningStart: es, eveningEnd: ee,
-      },
-    });
-    assert.ok(r.status < 400, `setting the breaks: ${JSON.stringify(r.body)}`);
+    const anchor = studioMinute();
+    // Cleared and rewritten each time, so a step never inherits the step before it.
+    await setRecordingWindows(server.base, tok.root, [
+      { type: 'recording', label: 'the replay window',
+        ...windowAgo(anchor, RECORDING.fromAgo, RECORDING.toAgo) },
+      // Numbered by SLOT, not by position in the list, so "break 3" is the same
+      // break in a step that leaves the first two out as in one that does not.
+      ...breaks.map((b, i) => (b ? { type: 'non_recording', label: `break ${i + 1}`,
+        ...windowAgo(anchor, b[0], b[1]) } : null)).filter(Boolean),
+    ]);
   };
   /* Wind every stretch of this asset further into the past, which is how time
      is made to pass without waiting for it. */

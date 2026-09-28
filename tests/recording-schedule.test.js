@@ -52,7 +52,8 @@ const path = require('node:path');
 
 const wt = require('../src/working-time');
 const workSchedule = require('../src/work-schedule');
-const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON } = require('./helpers');
+const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON,
+  MINUTES_PER_DAY, studioMinute, windowAgo, setRecordingWindows } = require('./helpers');
 
 const cfg = config('recsched');
 const PAGE = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
@@ -201,38 +202,66 @@ test('the schedule, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) 
   const login = async (email) =>
     (await api(server.base, '/auth/login', { method: 'POST', body: { email, password: PASSWORD } })).body.token;
 
-  const nowMin = () => {
-    const d = new Date(Date.now() + 330 * 60 * 1000);
-    return d.getUTCHours() * 60 + d.getUTCMinutes();
-  };
-  const clock = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
   const istDow = () => {
     const d = new Date(Date.now() + 330 * 60 * 1000);
     return d.getUTCDay() === 0 ? 7 : d.getUTCDay();
   };
   const notToday = () => (istDow() % 7) + 1;
 
-  /* The whole day open, with ONE break placed where the case needs it. Minutes
-     are relative to now, so a case can say "the break started ten minutes ago"
-     and mean it at any hour. hoursPerDay is 1 because Settings refuses a window
-     leaving less than the Time Sheet's daily cap, which is a rule about the
-     Time Sheet and not about any of this. */
-  const setWindow = async ({ days = [1, 2, 3, 4, 5, 6, 7], breakFrom = null, breakTo = null,
-    from = 0, to = 24 * 60 } = {}) => {
-    const r = await as('root', '/branding/schedule', {
-      method: 'PUT',
-      body: {
-        hoursPerDay: 1, workingDays: days,
-        dayStart: typeof from === 'number' ? from : from,
-        dayEnd: typeof to === 'number' ? to : to,
-        lunchStart: breakFrom === null ? '' : clock(breakFrom),
-        lunchEnd: breakTo === null ? '' : clock(breakTo),
-        morningStart: '', morningEnd: '', eveningStart: '', eveningEnd: '',
-      },
-    });
-    assert.ok(r.status < 400, `setting the window: ${JSON.stringify(r.body)}`);
+  /* EVERY WINDOW BELOW IS PLACED RELATIVE TO NOW, AND HAS TO BE. The sweep runs
+   * on the real clock and the sessions are backdated from the database's NOW(),
+   * so neither end can be a fixed date — "the break started ten minutes ago" is
+   * the only way to write these cases, and it is what makes them mean the same
+   * thing at any hour.
+   *
+   * WHAT WAS WRONG WAS NOT THE OFFSETS BUT THE ARITHMETIC. This built its
+   * windows by calling the clock once per end and formatting the difference
+   * without wrapping: ten minutes before 00:05 came out as "-1:-5" and twenty
+   * minutes after 23:50 as "24:10", so the PUT was refused and the suite was red
+   * for the hour rather than for the logic. A minute ticking between the two
+   * reads moved one end and not the other, too.
+   *
+   * So: ONE read of the clock per set of windows, both ends derived from it, and
+   * the windows written through Recording Hours rather than the four legacy time
+   * pairs — because a window that runs from 23:50 to 00:10 is a window that
+   * crosses midnight, spansMidnight is exactly the flag for it, and the legacy
+   * pairs have nowhere to put it. The boundary minutes each case exercises are
+   * unchanged; only how they are expressed is.
+   *
+   * Offsets count BACKWARDS throughout, so a negative one is in the future:
+   * (10, -20) is a break that began ten minutes ago with twenty left to run.
+   */
+  const setWindows = (entries) => setRecordingWindows(server.base, tok.root, entries);
+
+  /* All but one minute of the day, rather than midnight to midnight: both ends
+     of a single row cannot land on the same minute (that is an empty window), so
+     one minute has to be left out, and anchoring it puts that minute twelve
+     hours from now — further away than any offset this file uses. */
+  const wideOpen = (anchor) => ({ type: 'recording', label: 'The whole day',
+    ...windowAgo(anchor, MINUTES_PER_DAY / 2, 1 - MINUTES_PER_DAY / 2) });
+
+  const allDay = async () => setWindows([wideOpen(studioMinute())]);
+
+  // The whole day open, with ONE break placed where the case needs it.
+  const onBreak = async (fromAgo, toAgo) => {
+    const anchor = studioMinute();
+    await setWindows([wideOpen(anchor),
+      { type: 'non_recording', label: 'Break', ...windowAgo(anchor, fromAgo, toAgo) }]);
   };
-  const allDay = () => setWindow({});
+
+  // A working day that opened `fromAgo` minutes ago and closed `toAgo` ago.
+  const dayRan = async (fromAgo, toAgo) => {
+    const anchor = studioMinute();
+    await setWindows([{ type: 'recording', label: 'The working day',
+      ...windowAgo(anchor, fromAgo, toAgo) }]);
+  };
+
+  /* A day the studio does not work: recording happens on one weekday, and it is
+     not this one. Fixed hours rather than anchored ones deliberately — this case
+     measures which DAY opens next, not a boundary minute, and a window that does
+     not move is one less thing deciding the answer. */
+  const closedToday = async () => setWindows([{ type: 'recording', label: 'Another day',
+    startTime: '09:30', endTime: '19:00', daysOfWeek: [notToday()] }]);
 
   const sessions = (assetId) => sql(cfg,
     `SELECT id, started_at, ended_at, seconds, ended_reason,
@@ -328,7 +357,7 @@ test('the schedule, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) 
        work, then a break that began ten minutes ago: fifty count, ten do not,
        and the stamp is the break's start rather than the sweep's clock. */
     const asset = await running(60);
-    await setWindow({ breakFrom: nowMin() - 10, breakTo: nowMin() + 20 });
+    await onBreak(10, -20);
     await sweep();
 
     const rows = await sessions(asset);
@@ -348,7 +377,7 @@ test('the schedule, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) 
 
   await t.test('and nothing at all is recorded while the break runs', async () => {
     const asset = await running(30);
-    await setWindow({ breakFrom: nowMin() - 20, breakTo: nowMin() + 20 });
+    await onBreak(20, -20);
     await sweep();
     const before = Number((await sessions(asset))[0].seconds);
     // A second sweep, still inside the break: the figure must not move.
@@ -362,12 +391,12 @@ test('the schedule, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) 
 
   await t.test('the clock starts again when the break ends, with nobody pressing anything', async () => {
     const asset = await running(60);
-    await setWindow({ breakFrom: nowMin() - 30, breakTo: nowMin() + 20 });
+    await onBreak(30, -20);
     await sweep();
     assert.strictEqual((await sessions(asset)).length, 1, 'down for the break');
 
     // The break now ended ten minutes ago.
-    await setWindow({ breakFrom: nowMin() - 40, breakTo: nowMin() - 10 });
+    await onBreak(40, 10);
     await sweep();
 
     const rows = await sessions(asset);
@@ -391,9 +420,9 @@ test('the schedule, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) 
 
     /* The break comes and goes. Nothing about this asset may move: not the
        figure, not the number of stretches, not its stage. */
-    await setWindow({ breakFrom: nowMin() - 10, breakTo: nowMin() + 20 });
+    await onBreak(10, -20);
     await sweep();
-    await setWindow({ breakFrom: nowMin() - 40, breakTo: nowMin() - 10 });
+    await onBreak(40, 10);
     await sweep();
 
     const after = await sessions(asset);
@@ -405,9 +434,13 @@ test('the schedule, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) 
   /* --- 5, 6 and 7: the end of the day, and the next working morning -------- */
 
   await t.test('a timer running past the end of the day is put down AT the end of the day', async () => {
-    if (nowMin() < 3 * 60) return;
     const asset = await running(120);
-    await setWindow({ from: 0, to: clock(nowMin() - 60) });
+    /* Eleven hours of working day, which closed an hour ago. The old shape said
+       "midnight until an hour ago", which is the same window whenever it is more
+       than an hour past midnight and an impossible one when it is not — so this
+       case used to return early, silently, for the first three hours of every
+       day. It no longer needs to. */
+    await dayRan(11 * 60, 60);
     await sweep();
 
     const rows = await sessions(asset);
@@ -427,7 +460,7 @@ test('the schedule, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) 
     /* Today is made a non-working day, which is what a Saturday is: the rule is
        the configured list, not the words Saturday and Sunday. */
     const asset = await running(60);
-    await setWindow({ days: [notToday()] });
+    await closedToday();
     await sweep();
 
     const rows = await sessions(asset);
@@ -452,7 +485,7 @@ test('the schedule, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) 
 
   await t.test('a scheduled pause cannot be resumed by hand, by the API either', async () => {
     const asset = await running(30);
-    await setWindow({ breakFrom: nowMin() - 10, breakTo: nowMin() + 20 });
+    await onBreak(10, -20);
     await sweep();
     assert.strictEqual((await workOf(asset, 'ana')).held.byStudio, true);
 
@@ -477,7 +510,7 @@ test('the schedule, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) 
     await as('ana', `/assets/${asset}/start`, { method: 'POST' });
     await backdateStart(asset, 120);
     // A break that took thirty minutes out of the middle of those two hours.
-    await setWindow({ breakFrom: nowMin() - 90, breakTo: nowMin() - 60 });
+    await onBreak(90, 60);
     await sweep();
     // ... and then the far end of it, so the stretch closes cleanly on submit.
     await as('ana', `/assets/${asset}/submit`, { method: 'POST', body: { link: 'https://example.com/v2' } });

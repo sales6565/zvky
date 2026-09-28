@@ -23,7 +23,8 @@ const assert = require('node:assert');
 
 const wt = require('../src/working-time');
 const rh = require('../src/recording-hours');
-const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON } = require('./helpers');
+const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON,
+  MINUTES_PER_DAY, studioMinute, windowAgo, clockLabel } = require('./helpers');
 
 const cfg = config('rechours');
 
@@ -111,6 +112,71 @@ test('validation, before anything is stored', () => {
   assert.ok(ok.ok);
   assert.deepStrictEqual(ok.value.daysOfWeek, [1, 2, 3, 4, 5, 6, 7], 'days default to all seven');
   assert.strictEqual(ok.value.label, '', 'and a label is optional');
+});
+
+test('a window placed relative to now is legal at every minute of the day', () => {
+  /* THE REASON THIS TEST EXISTS, rather than a suite that happens to be green.
+   *
+   * Three suites place their windows relative to the current clock — the pause
+   * sweep and the automatic resume run on the real one, so their cases cannot be
+   * fixed dates. They were red for several commits for no reason but the hour:
+   * "ten minutes before 00:05" was formatted as -5 minutes past midnight, and
+   * "twenty minutes after 23:50" as 24:10. Neither is a time.
+   *
+   * tests/helpers.js windowAgo() is what all three now build their windows with,
+   * so this walks every minute a run could start on and asserts that what it
+   * produces is a row this module ACCEPTS — against rh.validate, the same
+   * function the endpoint runs, rather than against a second opinion here — and
+   * that the window still covers exactly the offsets the caller asked for.
+   *
+   * 1440 anchors is the whole space. There is nowhere else for it to break. */
+  const offsets = [
+    [10, -20],   // a break that began ten minutes ago and has twenty to run
+    [30, -20],
+    [40, 10],    // one that ended ten minutes ago
+    [90, 60],
+    [660, 60],   // a day that closed an hour ago
+    [660, -120], // the wide window a replay is measured inside
+    [MINUTES_PER_DAY / 2, 1 - MINUTES_PER_DAY / 2], // all but one minute of it
+  ];
+
+  for (let anchor = 0; anchor < MINUTES_PER_DAY; anchor += 1) {
+    for (const [fromAgo, toAgo] of offsets) {
+      const w = windowAgo(anchor, fromAgo, toAgo);
+      const checked = rh.validate({ type: 'recording', ...w });
+      assert.ok(checked.ok,
+        `at ${clockLabel(anchor)}, ${fromAgo}..${toAgo} ago gave ${w.startTime}-${w.endTime} `
+        + `(spansMidnight ${w.spansMidnight}), refused: `
+        + `${checked.errors.map((e) => `${e.field}: ${e.message}`).join('; ')}`);
+
+      /* And it is the window that was ASKED for, not merely a legal one. Both
+         ends are checked against the anchor, so a builder that wrapped one end
+         and not the other — the original bug — fails here even though each end
+         on its own is a real time. */
+      const minutes = (label) => Number(label.slice(0, 2)) * 60 + Number(label.slice(3, 5));
+      const ago = (n) => (((anchor - n) % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+      assert.strictEqual(minutes(w.startTime), ago(fromAgo), 'the start is where it was asked for');
+      assert.strictEqual(minutes(w.endTime), ago(toAgo), 'and so is the end');
+      const span = minutes(w.endTime) - minutes(w.startTime);
+      assert.strictEqual(w.spansMidnight ? span + MINUTES_PER_DAY : span, fromAgo - toAgo,
+        `the window is ${fromAgo - toAgo} minutes long at every hour`);
+    }
+  }
+
+  /* clockLabel wraps on its own account too. windowAgo has already wrapped both
+     ends by the time it calls it, so this is the only thing asserting that —
+     and suites call it directly for a label, where the input has not been
+     through windowAgo at all. */
+  assert.strictEqual(clockLabel(-5), '23:55');
+  assert.strictEqual(clockLabel(MINUTES_PER_DAY + 31), '00:31');
+  assert.strictEqual(clockLabel(MINUTES_PER_DAY), '00:00');
+
+  /* And a span that cannot be one row is refused HERE, where the offsets are,
+     rather than as a 422 from a POST several lines away. A whole day is the case
+     that bites: both ends land on the same minute, which is an empty window. */
+  assert.throws(() => windowAgo(0, MINUTES_PER_DAY / 2, -MINUTES_PER_DAY / 2), /cannot be stored/);
+  assert.throws(() => windowAgo(0, 10, 10), /cannot be stored/);
+  assert.throws(() => windowAgo(0, 10, 20), /cannot be stored/);
 });
 
 test('overlaps warn, and are not refused', () => {
@@ -322,25 +388,33 @@ test('the four endpoints, and who may reach them', { skip: cfg ? false : SKIP_RE
         assert.strictEqual((await as('root', `${ROOT}/${e.id}`, { method: 'DELETE' })).status, 200);
       }
     };
-    const add = async (type, startTime, endTime, label) => {
+    const add = async (entry) => {
       const r = await as('root', ROOT, { method: 'POST',
-        body: { type, label, startTime, endTime, daysOfWeek: [1, 2, 3, 4, 5, 6, 7] } });
-      assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+        body: { daysOfWeek: [1, 2, 3, 4, 5, 6, 7], ...entry } });
+      assert.strictEqual(r.status, 201, `${JSON.stringify(entry)} -> ${JSON.stringify(r.body)}`);
       return r.body.entry.id;
     };
-    // Minutes past midnight IST, right now — so the windows below can be
-    // expressed against a clock that is actually running.
-    const nowMin = () => {
-      const d = new Date(Date.now() + 330 * 60 * 1000);
-      return d.getUTCHours() * 60 + d.getUTCMinutes();
-    };
-    const clock = (m) => {
-      const x = ((m % 1440) + 1440) % 1440;
-      return `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`;
-    };
+    /* THE STUDIO CLOCK, READ ONCE. Both windows below are placed relative to now
+       — they have to be, because the session they measure is backdated from the
+       database's NOW() — but they are now placed relative to the SAME now, and
+       windowAgo says so when an offset wraps past midnight.
+
+       This file's own symptom was the second of those two faults rather than the
+       first: it DID wrap, so "sixty to thirty minutes before 00:30" came out as
+       23:30 to 00:00, which is a real pair of times and a window this very module
+       refuses — correctly — as ending before it starts, because nothing had
+       ticked the box that says it crosses midnight. windowAgo derives that box
+       from the two ends, so it cannot be forgotten. */
+    const anchor = studioMinute();
 
     await wipe();
-    await add('recording', '00:00', '23:59', 'Around the clock');
+    /* Open all but one minute of the day, rather than 00:00–23:59: a window
+       ending a minute before midnight leaves its hole exactly where a suite
+       running near midnight needs to measure. Placed against the anchor, the
+       hole sits twelve hours from now — further from the session below than any
+       offset this file uses. */
+    await add({ type: 'recording', label: 'Around the clock',
+      ...windowAgo(anchor, MINUTES_PER_DAY / 2, 1 - MINUTES_PER_DAY / 2) });
 
     const project = await (async () => {
       const clients = await as('root', '/clients');
@@ -362,8 +436,8 @@ test('the four endpoints, and who may reach them', { skip: cfg ? false : SKIP_RE
     /* A blackout over the middle half hour of that ninety minutes. Added AFTER
        the session started, which is the case that matters: the schedule is
        consulted when the seconds are worked out, not when the timer began. */
-    const N = nowMin();
-    await add('non_recording', clock(N - 60), clock(N - 30), 'Studio blackout');
+    await add({ type: 'non_recording', label: 'Studio blackout',
+      ...windowAgo(anchor, 60, 30) });
 
     assert.strictEqual((await as('artist', `/assets/${assetId}/submit`, {
       method: 'POST', body: { link: 'https://example.com/v1' } })).status, 201);
@@ -424,7 +498,7 @@ test('the four endpoints, and who may reach them', { skip: cfg ? false : SKIP_RE
        existed — the old screen, the test suite, anything a studio wired up
        itself. It keeps working, and keeps ONE source of truth, by writing
        through to these windows rather than to a second table nothing reads.
-       
+
        It stops the moment the windows say something it cannot: a second
        recording window, a night shift, a blackout on some days only. Accepting
        it then would throw all of that away without a word, which is worse than

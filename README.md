@@ -2414,6 +2414,29 @@ explains the fault instead of returning a database error, that Repair recreates
 the tables and enforcement resumes, and that fail-closed keeps the emergency
 door open and is ignored when there is none.
 
+### Suites that place a window relative to now
+
+`tests/recording-schedule.test.js`, `tests/recording-hours.test.js` and
+`tests/late-sweep-hours.test.js` all test code that reads the real clock — the
+pause sweep, the automatic resume, and the seconds a session is credited with —
+so their cases cannot use fixed dates. They say "the break started ten minutes
+ago" instead, and build the window from that.
+
+Doing that by hand made all three red for a band of hours either side of
+midnight, for no reason but when they ran: ten minutes before 00:05 is not
+`-1:-5`, twenty minutes after 23:50 is not `24:10`, and a window from 23:50 to
+00:10 is one the four legacy Working Hours time pairs cannot express at all.
+Reading the clock once per boundary also let a minute tick between two ends of
+the same window.
+
+So `tests/helpers.js` exports `studioMinute()` and `windowAgo()`: the clock is
+read **once** per set of windows and both ends are derived from that one number,
+which wraps past midnight and carries `spansMidnight` when it does. The windows
+go in through Recording Hours, which has that flag. Anything new that places a
+window relative to now should use those rather than subtracting minutes itself —
+`tests/recording-hours.test.js` checks the builder against every one of the 1440
+minutes a run could start on.
+
 ## Packaging for deployment
 
 ```bash
