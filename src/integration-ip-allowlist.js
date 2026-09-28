@@ -77,6 +77,27 @@ async function ensureTables(db) {
   for (const sql of TABLES) await db.query(await applyTableOptions(db, sql));
 }
 
+/* Catching up with a change this process did not make.
+ *
+ * Every worker keeps its own copy of this list, because the gate runs on every
+ * request and cannot wait on a query. Writes refresh the copy belonging to the
+ * worker that handled them — and do nothing for any other worker, which would
+ * otherwise carry a stale list until it was restarted. That means the answer to
+ * "is this address allowed" depends on which worker took the request: a newly
+ * added office is let in intermittently, and, worse, a REVOKED one keeps working.
+ *
+ * The same shape as referenceData.refreshIfChanged, deliberately — this codebase
+ * already had this exact problem with roles and already answered it. The reload is
+ * unconditional and cheap (one indexed read of a table with a handful of rows);
+ * the comparison only decides whether it is worth saying anything.
+ */
+async function refreshIfChanged(db) {
+  const signature = () => cache.map((e) => `${e.id}:${e.address}`).join('|');
+  const before = signature();
+  const ok = await load(db);
+  return { ok, changed: ok && before !== signature() };
+}
+
 function fault(err) {
   const was = storage.state;
   storage = {
@@ -202,6 +223,6 @@ async function audit(db, { action, address, label, actor, detail = null }) {
 }
 
 module.exports = {
-  TABLES, install, load, entries, isEmpty, isLoaded, storageStatus,
+  TABLES, install, load, refreshIfChanged, entries, isEmpty, isLoaded, storageStatus,
   findMatch, listAll, add, remove, setActive,
 };

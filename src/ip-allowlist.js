@@ -103,6 +103,44 @@ async function load(db) {
 // Record a storage failure, and say so the moment it is discovered rather than
 // waiting for the next request to notice. Every path that finds the storage
 // broken comes through here, so this is the one place that has to announce it.
+/* Catching up with a change this process did not make.
+ *
+ * Every worker keeps its own copy of this list, because the gate runs on every
+ * request and cannot wait on a query. Writes refresh the copy belonging to the
+ * worker that handled them — and do nothing for any other worker, which would
+ * otherwise carry a stale list until it was restarted. That means the answer to
+ * "is this address allowed" depends on which worker took the request: a newly
+ * added office is let in intermittently, and, worse, a REVOKED one keeps working.
+ *
+ * The same shape as referenceData.refreshIfChanged, deliberately — this codebase
+ * already had this exact problem with roles and already answered it. The reload is
+ * unconditional and cheap (one indexed read of a table with a handful of rows);
+ * the comparison only decides whether it is worth saying anything.
+ */
+/* How often a worker should catch up, in seconds. 0 or less switches it off.
+ *
+ * Lives here rather than in server.js so that it can be asserted directly. The
+ * default being ON is the whole safety property — a deployment where this fell to
+ * zero would have every worker carrying a stale list again, and every test would
+ * still pass, because tests set the interval explicitly. A mutation turning the
+ * default off survived until this was testable.
+ *
+ * It governs the integration's list too, from the one timer in server.js. Two
+ * lists answering two different questions, but "how quickly must a change to an
+ * address table reach every worker" is the same question for both.
+ */
+function refreshSeconds() {
+  const seconds = Number(process.env.IP_ALLOWLIST_REFRESH_SECONDS ?? 30);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
+}
+
+async function refreshIfChanged(db) {
+  const signature = () => cache.map((e) => `${e.id}:${e.address}`).join('|');
+  const before = signature();
+  const ok = await load(db);
+  return { ok, changed: ok && before !== signature() };
+}
+
 function fault(err) {
   const was = storage.state;
   storage = {
@@ -337,6 +375,8 @@ module.exports = {
   ensureTables,
   install,
   load,
+  refreshIfChanged,
+  refreshSeconds,
   isLoaded,
   storageStatus,
   isConfiguredEmpty,

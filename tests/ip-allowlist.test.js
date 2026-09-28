@@ -991,3 +991,118 @@ test('a monitor-mode rollout can be read, then enforced', { skip: cfg ? false : 
     }
   });
 });
+
+test('how often a worker catches up, and that it does so by default', () => {
+  /* THE DEFAULT BEING ON is the safety property here, and it needs its own
+     assertion: every test below sets the interval explicitly, so a default that
+     fell to zero would leave production with the stale-mirror bug while the whole
+     suite still passed. A mutation doing exactly that survived until this existed. */
+  const allowlist = require('../src/ip-allowlist');
+  const keep = process.env.IP_ALLOWLIST_REFRESH_SECONDS;
+  try {
+    delete process.env.IP_ALLOWLIST_REFRESH_SECONDS;
+    assert.strictEqual(allowlist.refreshSeconds(), 30, 'on by default, without being asked');
+
+    process.env.IP_ALLOWLIST_REFRESH_SECONDS = '5';
+    assert.strictEqual(allowlist.refreshSeconds(), 5);
+
+    // A single-process deployment can switch it off, and only deliberately.
+    process.env.IP_ALLOWLIST_REFRESH_SECONDS = '0';
+    assert.strictEqual(allowlist.refreshSeconds(), 0);
+    process.env.IP_ALLOWLIST_REFRESH_SECONDS = 'nonsense';
+    assert.strictEqual(allowlist.refreshSeconds(), 0, 'and nonsense is off rather than NaN milliseconds');
+  } finally {
+    if (keep === undefined) delete process.env.IP_ALLOWLIST_REFRESH_SECONDS;
+    else process.env.IP_ALLOWLIST_REFRESH_SECONDS = keep;
+  }
+});
+
+test('two workers on one database, and the list they both read',
+  { skip: cfg ? false : SKIP_REASON }, async (t) => {
+  /* THE MIRROR EVERY WORKER KEEPS ITS OWN COPY OF.
+   *
+   * This deployment runs several Node workers against one database — Passenger and
+   * most cPanel setups do, which is what the studio runs on — and each of them
+   * holds the allowlist in memory, because the gate runs on every request and
+   * cannot wait on a query. So each copy has to catch up with a change it did not
+   * make itself, or the answer to "is this address allowed" depends on which
+   * worker took the request.
+   *
+   * The same class of bug the reference-data refresh exists to fix, and this file
+   * had no cross-process test at all until now. The pattern is borrowed from
+   * tests/reference-data.test.js: two real servers on one database, and a change
+   * made outside both of them, which is what a SQL script — or the other worker —
+   * looks like from here.
+   */
+  const OFFICE = '203.0.113.50';
+  const ELSEWHERE = '198.51.100.9';
+  let one;
+  let two;
+
+  // The gate only bites with a non-empty list and loopback not waved through; an
+  // empty list is "not configured" and opens. Both workers are set up to enforce.
+  const boot = () => startServer(cfg, {
+    TRUST_PROXY: '1',
+    IP_ALLOWLIST_MODE: 'enforce',
+    IP_ALLOWLIST_ALLOW_LOOPBACK: 'false',
+    IP_ALLOWLIST_SEED: '',
+    IP_ALLOWLIST_REFRESH_SECONDS: '1',
+  });
+
+  t.before(async () => {
+    await resetSchema(cfg);
+    await sql(cfg, 'DELETE FROM ip_allowlist');
+    await sql(cfg,
+      'INSERT INTO ip_allowlist (id, address, label) VALUES (UUID(), ?, ?)',
+      [ELSEWHERE, 'somewhere that is not the office']);
+    one = await boot();
+    two = await boot();
+  });
+
+  t.after(() => { stopServer(one); stopServer(two); });
+
+  // Both workers, up to a deadline, so this measures convergence rather than a
+  // lucky moment. Returns as soon as both agree.
+  const settle = async (ip, want, ms = 8000) => {
+    const deadline = Date.now() + ms;
+    let last = [];
+    do {
+      last = [await reach(one, ip), await reach(two, ip)];
+      if (last.every((s) => s === want)) return last;
+      await new Promise((done) => { setTimeout(done, 250); });
+    } while (Date.now() < deadline);
+    return last;
+  };
+
+  await t.test('both start out refusing an address the list does not hold', async () => {
+    assert.deepStrictEqual([await reach(one, OFFICE), await reach(two, OFFICE)], [403, 403],
+      'otherwise the rest of this proves nothing');
+  });
+
+  await t.test('an address added outside both of them reaches both of them', async () => {
+    /* Exactly what a SQL script against a running app does — and exactly what the
+       OTHER WORKER's own write looks like from here, which is the case that
+       matters: worker A writing to the table does nothing to worker B's copy. */
+    await sql(cfg,
+      'INSERT INTO ip_allowlist (id, address, label) VALUES (UUID(), ?, ?)',
+      [OFFICE, 'the office']);
+
+    assert.deepStrictEqual(await settle(OFFICE, 200), [200, 200],
+      'both workers must let in an address the table allows, without a restart');
+  });
+
+  await t.test('and revoking it shuts the door on both of them', async () => {
+    /* THE DIRECTION THAT MATTERS MORE. A stale copy that refuses a new address is
+       an annoyance somebody reports. A stale copy that keeps admitting a REVOKED
+       one is the access control silently not being applied — and nobody reports
+       that, because from the outside it looks like it is working. */
+    await sql(cfg, 'DELETE FROM ip_allowlist WHERE address = ?', [OFFICE]);
+
+    assert.deepStrictEqual(await settle(OFFICE, 403), [403, 403],
+      'a revoked address must stop working on every worker, not just the one that revoked it');
+    // And the list is still non-empty, so this is the gate enforcing rather than
+    // an empty list opening it.
+    const left = await sql(cfg, 'SELECT COUNT(*) AS n FROM ip_allowlist');
+    assert.strictEqual(Number(left[0].n), 1, 'ELSEWHERE is still listed, so the gate is still on');
+  });
+});

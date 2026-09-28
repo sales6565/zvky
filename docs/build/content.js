@@ -1546,6 +1546,13 @@ module.exports = [
   shot('12-settings-ip', 'The IP allowlist.'),
   p('Restricts sign-in to named addresses or ranges, written as single addresses or in CIDR notation. Every change '
     + 'is recorded with who made it. There are deliberate escape hatches so a studio cannot lock itself out entirely.'),
+  note('A change can take up to half a minute to apply everywhere',
+    'The studio runs on more than one copy of the application at once, and each copy keeps its own working '
+      + 'list so it can check an address without pausing to look it up. A change you make here reaches the '
+      + 'copy that handled it immediately and the others within about thirty seconds \u2014 so if you add an '
+      + 'address and it does not work on the very first try, wait a moment and try again before assuming it '
+      + 'did not save. The same applies to removing one: allow half a minute before treating the access as '
+      + 'withdrawn.'),
   roles('Super Admin, and nobody else. Sign-in restriction is not something to hand out.', ['super_only']),
 
   h2('13.6 Role permissions'),

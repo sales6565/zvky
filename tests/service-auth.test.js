@@ -406,3 +406,87 @@ test('the integration front door', { skip: cfg ? false : SKIP_REASON }, async (t
     await boot();
   });
 });
+
+test('the integration address list, across two workers',
+  { skip: cfg ? false : SKIP_REASON }, async (t) => {
+  /* The integration's own list has the same mirror-per-worker problem as the
+   * studio's, and has to answer it the same way — see the matching test in
+   * tests/ip-allowlist.test.js. Written separately because the two lists are
+   * deliberately independent everywhere else, and a test that covered both through
+   * one would stop noticing if one of them lost the behaviour.
+   *
+   * NO CREDENTIAL IS NEEDED to see what the gate decided. It runs ahead of
+   * serviceAuth, so a refused address gets 403 from the gate, and an allowed one
+   * gets as far as the credential check and is told 401 for having no signature.
+   * Those two answers are the gate's verdict, read without signing anything.
+   */
+  const ELSEWHERE = '198.51.100.77';
+  let one;
+  let two;
+
+  const boot = () => startServer(cfg, {
+    INTEGRATION_INBOUND_SECRET: SECRET,
+    INTEGRATION_IP_ALLOWLIST_MODE: 'enforce',
+    INTEGRATION_IP_ALLOWLIST_ALLOW_LOOPBACK: 'false',
+    IP_ALLOWLIST_REFRESH_SECONDS: '1',
+    WORK_HOURS_SWEEP_MINUTES: '0',
+  });
+
+  const knock = async (server) => {
+    const res = await fetch(`${server.base}/integration/ping`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
+      body: '{}',
+    });
+    return res.status;   // 403 = the gate refused; 401 = it let us reach the credential check
+  };
+
+  const settle = async (want, ms = 8000) => {
+    const deadline = Date.now() + ms;
+    let last = [];
+    do {
+      last = [await knock(one), await knock(two)];
+      if (last.every((s) => s === want)) return last;
+      await new Promise((done) => { setTimeout(done, 250); });
+    } while (Date.now() < deadline);
+    return last;
+  };
+
+  t.before(async () => {
+    await resetSchema(cfg);
+    one = await boot();       // creates the tables through its migration
+    await sql(cfg, 'DELETE FROM integration_ip_allowlist');
+    await sql(cfg,
+      'INSERT INTO integration_ip_allowlist (id, address, label) VALUES (UUID(), ?, ?)',
+      [ELSEWHERE, 'some other build server']);
+    await stopServer(one);
+    one = await boot();       // both start from the same list
+    two = await boot();
+  });
+
+  t.after(async () => { await stopServer(one); await stopServer(two); });
+
+  await t.test('both refuse an address the list does not hold', async () => {
+    assert.deepStrictEqual([await knock(one), await knock(two)], [403, 403],
+      'enforcing against a list that does not include us');
+  });
+
+  await t.test('an address added elsewhere is honoured by both', async () => {
+    await sql(cfg,
+      'INSERT INTO integration_ip_allowlist (id, address, label) VALUES (UUID(), ?, ?)',
+      ['127.0.0.1', 'the test runner']);
+    assert.deepStrictEqual(await settle(401), [401, 401],
+      'both workers must let the address through to the credential check');
+  });
+
+  await t.test('and revoking it is honoured by both', async () => {
+    /* The direction that matters: a build server whose access was withdrawn must
+       stop getting through on EVERY worker, not just whichever one handled the
+       withdrawal. A stale copy here is the restriction silently not applying. */
+    await sql(cfg, "DELETE FROM integration_ip_allowlist WHERE address = '127.0.0.1'");
+    assert.deepStrictEqual(await settle(403), [403, 403],
+      'a revoked address must stop working everywhere');
+    const left = await sql(cfg, 'SELECT COUNT(*) AS n FROM integration_ip_allowlist');
+    assert.strictEqual(Number(left[0].n), 1, 'the list is still non-empty, so the gate is still on');
+  });
+});

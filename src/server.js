@@ -40,6 +40,7 @@ const workLog = require('./work-log');
 const branding = require('./branding');
 const ipGate = require('./middleware/ip-allowlist');
 const integrationRoutes = require('./routes/integration');
+const studioIpList = require('./ip-allowlist');
 const integrationIpList = require('./integration-ip-allowlist');
 const integrationIpGate = require('./middleware/integration-ip-allowlist');
 const integrationBody = require('./middleware/integration-body');
@@ -420,6 +421,52 @@ function startReferenceRefresh(db) {
   return timer;
 }
 
+/* The two address lists, caught up with whatever another worker changed.
+ *
+ * Both gates read an in-memory mirror, because they run ahead of everything on
+ * every request and cannot wait on a query. A write refreshes the mirror belonging
+ * to the worker that handled it — and no other. This deployment runs several
+ * workers against one database (Passenger and most cPanel setups do), so without
+ * this every other worker carries a stale list until it is restarted: a newly
+ * allowed office gets in only sometimes, depending on who answers, and a REVOKED
+ * address keeps working. The second of those is the access control silently not
+ * being applied, which nobody reports, because from outside it looks fine.
+ *
+ * Exactly the arrangement startReferenceRefresh above uses, and for exactly the
+ * same reason — this codebase already had this bug with roles, and already answered
+ * it. Not a new consistency model, the existing one applied to the list that was
+ * missing it.
+ *
+ * One interval for both lists: they answer different questions, but "how quickly
+ * must a change to an address table reach every worker" is the same question for
+ * each. Set IP_ALLOWLIST_REFRESH_SECONDS=0 to switch it off on a single-process
+ * deployment where nothing else writes to the database.
+ */
+function startAllowlistRefresh(db) {
+  const seconds = studioIpList.refreshSeconds();
+  if (!seconds) return null;
+
+  const timer = setInterval(() => {
+    studioIpList.refreshIfChanged(db)
+      .then((r) => {
+        if (r.changed) console.log('[ip-allowlist] the address list changed elsewhere; reloaded.');
+      })
+      // Never throws upward: this runs on a timer with nothing above it to catch,
+      // and the gate already treats an unreadable list as a reason to open rather
+      // than to fail. load() has recorded why, and /api/health reports it.
+      .catch((err) => console.error(`[ip-allowlist] refresh failed: ${err.sqlMessage || err.message}`));
+
+    integrationIpList.refreshIfChanged(db)
+      .then((r) => {
+        if (r.changed) console.log('[integration-ip] the address list changed elsewhere; reloaded.');
+      })
+      .catch((err) => console.error(`[integration-ip] refresh failed: ${err.sqlMessage || err.message}`));
+  }, seconds * 1000);
+  // Never hold the process open for this.
+  timer.unref();
+  return timer;
+}
+
 const PORT = process.env.PORT || 4000;
 
 // Migrate and load the reference data BEFORE accepting requests.
@@ -442,6 +489,7 @@ async function start() {
     integrationIpGate.describeAtStartup();
     outbox.describeAtStartup();
     startReferenceRefresh(db);
+    startAllowlistRefresh(db);
     /* Chat attachments live twelve hours. The first pass runs now rather than
        in ten minutes' time: a process that was restarted comes back holding
        files that expired while it was down, and no timer ever fired for those.

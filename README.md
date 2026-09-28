@@ -1697,6 +1697,33 @@ than letting you believe the app is locked down when it is not.
 marked unhealthy and restarted, which would turn a bad allowlist into a restart
 loop. It exposes nothing but whether the database answers.
 
+### Every worker keeps its own copy, and catches up
+
+The gate runs ahead of everything, on every request, so it reads the list from
+memory rather than from the database. Passenger and most cPanel setups run
+**several Node workers against one database**, and each worker has its own mirror —
+so a write refreshes the copy belonging to the worker that handled it, and does
+nothing for any of the others.
+
+Left there, that means the answer to *is this address allowed* depends on which
+worker took the request:
+
+- an address you just **added** gets in only sometimes, and
+- an address whose access you just **revoked keeps working** — which is the
+  restriction silently not being applied, and nobody reports that, because from the
+  outside it looks like it is working.
+
+This is the same class of bug the reference-data refresh exists to fix (a role added
+on one worker used to mean `403` on everything from the others), and it is answered
+the same way rather than with a new mechanism: every worker reloads the list every
+`IP_ALLOWLIST_REFRESH_SECONDS` (default 30, `0` to switch off on a single-process
+deployment). The reload is one indexed read of a table with a handful of rows; it is
+logged only when the list actually changed.
+
+The same interval governs the **integration's** separate address list, from the same
+timer. `tests/ip-allowlist.test.js` and `tests/service-auth.test.js` each run two
+real servers against one database and assert both directions — added, and revoked.
+
 ### Removing the entry that lets you in
 
 Removing or deactivating the entry covering your own address is refused unless
@@ -1849,6 +1876,18 @@ Four locks, in this order, each able to refuse on its own:
 |---|---|---|
 | Address | [`src/middleware/integration-ip-allowlist.js`](src/middleware/integration-ip-allowlist.js) | `403` — and only in `enforce` mode; see below |
 | Rate limit | `src/server.js`, the same library as sign-in | `429` |
+
+The rate limit is **counted per worker process**, not across the deployment.
+`express-rate-limit` is used with its default store, which keeps its counters in
+memory and states that keys in one instance cannot affect another — so with several
+Passenger workers the effective ceiling is `INTEGRATION_RATE_MAX` multiplied by the
+number of workers, and which counter a request increments depends on who answers.
+
+This is stated rather than fixed because it is exactly how the two sign-in limiters
+have always behaved here; the integration API is no weaker than the rest. Tightening
+it properly means a shared store — Redis, or a database-backed one — which is an
+infrastructure decision rather than a code change, and it would want doing for all
+three limiters at once. Size `INTEGRATION_RATE_MAX` with the multiplier in mind.
 | Signature | [`src/middleware/service-auth.js`](src/middleware/service-auth.js) | `401`, or `503` if the secret is unset |
 | Credential and action | the same module | `401` unknown or inactive; `403` action not allowed |
 
