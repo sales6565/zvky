@@ -751,6 +751,7 @@ Setup Node.js App → Restart, or touching `tmp/restart.txt`.
 | PUT | `/api/pnl/projects/:id/billing` | `pnl.manage` alone — contract value, billing type, invoiced to date |
 | POST, PATCH, DELETE | `/api/pnl/projects/:id/other-costs[/:costId]` | `pnl.manage` alone |
 | GET | `/api/pnl/report` | either tab permission — summary, breakdown, hours rollup, trend and client rollup, filterable by `clientId`, `projectId`, `from`, `to` |
+| POST | `/api/integration/*` | not a person at all — a signed request from an active integration credential that lists the action. See [The integration API](#the-integration-api) |
 
 Every route re-checks permissions against the database on each request — a
 role change or removal takes effect on the user's very next request, not just
@@ -1826,6 +1827,100 @@ some parsers and decimal to others), hex forms, `/33`, and anything it cannot
 parse with certainty are refused rather than guessed at. An IPv4-mapped IPv6
 address (`::ffff:106.51.81.61`) is treated as the same host as its IPv4 form, so
 one entry covers both spellings.
+
+## The integration API
+
+Another system in the studio can call Forge under `/api/integration` — a Dev & QA
+tool, a build server, a script on somebody's machine. It is a separate door with
+its own locks, and it is the only part of the application no person signs in to.
+
+**The caller is a machine, not an account.** No `req.user`, no `req.permissions`,
+no `authenticate()`, no `requirePermission`. Nothing about it appears in the user
+list or on **Settings → Role Permissions**. Every ownership and `projectScope`
+rule in this codebase is written about a person, and routing a build server
+through them would make each of those checks start answering a question it was
+never written to answer. What a credential may do is written on the credential:
+`integration_clients.allowed_actions`, a CSV checked against the first path
+segment under `/api/integration`.
+
+Four locks, in this order, each able to refuse on its own:
+
+| Lock | Where | Refuses with |
+|---|---|---|
+| Address | [`src/middleware/integration-ip-allowlist.js`](src/middleware/integration-ip-allowlist.js) | `403` — and only in `enforce` mode; see below |
+| Rate limit | `src/server.js`, the same library as sign-in | `429` |
+| Signature | [`src/middleware/service-auth.js`](src/middleware/service-auth.js) | `401`, or `503` if the secret is unset |
+| Credential and action | the same module | `401` unknown or inactive; `403` action not allowed |
+
+### The signature
+
+`X-Integration-Signature: t=<unix seconds>, v1=<hex HMAC-SHA256>` over
+`"t.METHOD.path.rawBody"`, keyed on `INTEGRATION_INBOUND_SECRET`. The HMAC is
+taken over the **exact bytes that arrived**, so the body is read raw by
+[`src/middleware/integration-body.js`](src/middleware/integration-body.js),
+mounted on `/api/integration` ahead of the global `express.json()`. `express.raw()`
+sets `req._body` once it has read the stream and every later body parser returns
+immediately on that flag, which is what keeps every other route's parsing exactly
+as it was — including multipart uploads, which
+`tests/service-auth.test.js` exercises for that reason.
+
+A timestamp more than **300 seconds** from the server clock is refused, in either
+direction: one far in the future is as much a replay as one far in the past. The
+check runs before the HMAC, so an expired request costs nothing to refuse. The
+comparison is `crypto.timingSafeEqual`, via a wrapper that answers a length
+mismatch as an ordinary mismatch rather than throwing — throwing would be both a
+500 and a timing signal.
+
+This secret is **separate from the one Forge signs its outbound calls with**, so
+a leak in one direction is not a leak in both. Unset, every integration request
+answers `503` and does no work: treating "no secret" as "no signature required"
+would turn an unfinished setup into an open door, quietly, and only on the
+deployment where it mattered.
+
+### The credential
+
+Issued as a key, stored only as its SHA-256 hash, so the key exists nowhere in
+the database and cannot be read back out of it — only replaced. An **unknown key
+and a deactivated one answer the same sentence**, deliberately: telling them
+apart would let anybody enumerate which credentials the studio has issued by
+watching which of two messages comes back. A successful call stamps
+`last_used_at`, recorded but never awaited — whether the request worked is not
+contingent on a bookkeeping write.
+
+Every state-changing integration call lands in the Activity Log with the actor
+shown as `integration:<name>`. That actor is passed as an **object**, not a
+string: `src/activity.js` reads `.name`, `.id`, `.email` and `.role` off whatever
+it is given, so a bare string there is not an error — it simply records a NULL
+actor, which is the blank line naming the actor exists to prevent.
+
+### A second address list, and why
+
+`/api/integration` is **exempt from the sign-in gate** ([`DELEGATED_PREFIXES` in
+`src/middleware/ip-allowlist.js`](src/middleware/ip-allowlist.js)) and has its own
+list in `integration_ip_allowlist`, with its own mode and its own escape hatches.
+Two different questions — which offices may sign in, and which machines may call
+the API — and answering both from one list would mean whoever maintains the
+studio's offices silently decided whether a build server could reach Forge.
+
+It is the same architecture as the sign-in list: tables declared in the module,
+an in-memory mirror reloaded on every write, the same four readiness states, and
+switches that live only in the environment. **It ships in `monitor` mode**: it
+writes down what it would have refused and refuses nothing, until somebody
+confirms the address the app actually sees and sets
+`INTEGRATION_IP_ALLOWLIST_MODE=enforce` deliberately. An empty list is treated as
+"not configured" and stays open, as is unreadable storage — there is no
+fail-closed switch here, because the signature and the credential are the locks
+that hold either way, and an address list is not one of them.
+
+### There is no screen for it, yet
+
+Credentials and addresses are set on the server by whoever runs the deployment.
+That is not an omission: a door the application can open for itself is not a
+door. A management screen would need its own permission on **Settings → Role
+Permissions**, and that permission lands with the screen rather than ahead of it
+— a toggle a Super Admin can flip that controls nothing is worse than no toggle.
+
+Settings are in [`.env.example`](.env.example) under *The integration API*.
 
 ## Passwords
 

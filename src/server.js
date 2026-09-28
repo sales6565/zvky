@@ -39,6 +39,11 @@ const chatFiles = require('./chat-files');
 const workLog = require('./work-log');
 const branding = require('./branding');
 const ipGate = require('./middleware/ip-allowlist');
+const integrationRoutes = require('./routes/integration');
+const integrationIpList = require('./integration-ip-allowlist');
+const integrationIpGate = require('./middleware/integration-ip-allowlist');
+const integrationBody = require('./middleware/integration-body');
+const { serviceAuth } = require('./middleware/service-auth');
 
 const app = express();
 
@@ -64,6 +69,20 @@ app.use(cors({ origin: corsOrigins.length ? corsOrigins : '*' }));
 // ways back in when the list is wrong live in the environment — see
 // src/middleware/ip-allowlist.js.
 app.use(ipGate.middleware);
+
+/* THE ONE PLACE ANY OTHER ROUTE'S BODY PARSING COULD HAVE BEEN DISTURBED, and
+   it is not. The integration API verifies an HMAC over the bytes that actually
+   arrived, so it needs them before anything consumes the stream — and
+   express.json() below consumes it. So the raw capture is mounted HERE, scoped
+   to that one path, ahead of the global parser.
+
+   express.raw() sets req._body once it has read the stream, and every
+   body-parser returns immediately when it sees that flag — so the global
+   express.json() on the next line does not run on this path, and every other
+   route's parsing is byte-for-byte what it was. See
+   src/middleware/integration-body.js. */
+app.use('/api/integration', integrationBody.capture, integrationBody.parse);
+
 app.use(express.json());
 
 // Slow down brute-force login attempts. The limit is per client address and
@@ -87,6 +106,18 @@ const passwordChangeLimiter = rateLimit({
   message: { error: 'Too many password change attempts. Try again in a few minutes.' },
 });
 app.use('/api/auth/password', passwordChangeLimiter);
+
+/* The integration API, which until now was the only part of this application
+   with no limit on it at all: the two limiters above cover sign-in and password
+   changes, and nothing else had any. An external caller retrying a failing job
+   in a loop is the ordinary way that becomes a problem, so it is bounded with
+   the same library and the same shape. Keyed per address, like the others. */
+const integrationLimiter = rateLimit({
+  windowMs: Number(process.env.INTEGRATION_RATE_WINDOW_MINUTES || 1) * 60 * 1000,
+  max: Number(process.env.INTEGRATION_RATE_MAX || 120),
+  standardHeaders: true,
+  message: { error: 'Too many integration requests. Slow down and try again shortly.' },
+});
 
 /* Before every route, so the handle exists by the time one runs, and so that
    coverage is a property of this line rather than of sixty-six others. It
@@ -123,6 +154,17 @@ app.use('/api/chat-activity', chatActivityRoutes);
 app.use('/api/branding', brandingRoutes);
 app.use('/api/admin/settings/recording-hours', recordingHoursRoutes);
 app.use('/api/admin/settings/chat-group-limit', chatSettingsRoutes);
+/* The integration API. Its own address gate, its own rate limit, and a machine
+   credential rather than a session — none of it routed through authenticate(),
+   requirePermission or any of the person-shaped gates. Mounted after
+   activityLogger above, so serviceAuth can name the actor on the log entry
+   before the route runs. */
+app.use('/api/integration',
+  integrationIpGate.middleware,
+  integrationLimiter,
+  serviceAuth,
+  integrationRoutes);
+
 app.use('/api/outsource', outsourceRoutes);
 app.use('/api/admin/mis-assignments', misAccessRoutes);
 app.use('/api/admin/projects', misAccessRoutes.byProject);
@@ -382,6 +424,7 @@ async function start() {
     // fails as "Invalid email or password" with no explanation.
     await require('./bootstrap-token').announce(db);
     ipGate.describeAtStartup();
+    integrationIpGate.describeAtStartup();
     startReferenceRefresh(db);
     /* Chat attachments live twelve hours. The first pass runs now rather than
        in ten minutes' time: a process that was restarted comes back holding

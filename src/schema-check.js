@@ -123,6 +123,13 @@ const REQUIRED = [
   { table: 'integration_outbox',   column: null,              step: 'integration tables' },
   { table: 'integration_outbox',   column: 'seq',             step: 'integration tables' },
   { table: 'integration_outbox',   column: 'next_attempt_at', step: 'integration tables' },
+  /* The integration's own address list. Declared in
+     src/integration-ip-allowlist.js and installed by its own step, so a failure
+     there is invisible to the columns-and-tables sweep above unless it is named
+     here. Without these the gate cannot restrict anything and says so at
+     startup, but /api/health should say it too. */
+  { table: 'integration_ip_allowlist',       column: null, step: 'integration ip allowlist' },
+  { table: 'integration_ip_allowlist_audit', column: null, step: 'integration ip allowlist' },
 ];
 
 // Two queries for the whole check, rather than one per column.

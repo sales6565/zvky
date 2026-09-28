@@ -39,6 +39,22 @@ const observations = require('../ip-observations');
 // and whether any account exists — and the alternative is worse.
 const ALWAYS_ALLOWED = ['/api/health'];
 
+/* Path PREFIXES this gate does not govern at all.
+ *
+ * /api/integration has its own address list — see
+ * src/middleware/integration-ip-allowlist.js — with its own table, its own
+ * mode and its own escape hatches. Leaving it under this gate as well would
+ * mean the studio's list, maintained by whoever runs the studio and concerned
+ * with which offices may sign in, silently decided whether a build server could
+ * reach the API. Two questions, two lists, and this one stops here.
+ *
+ * Not a loss of protection: that path is gated on a signed request and a hashed
+ * credential before it reaches any route, which an address list is not. */
+const DELEGATED_PREFIXES = ['/api/integration'];
+
+const isDelegated = (path) =>
+  DELEGATED_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`));
+
 // Addresses the gate never blocks either, which matters more than the path list
 // above: this deployment's health probe is a plain `GET /` from inside the
 // container, not a request to a health path. Blocking it failed the deploy and
@@ -213,7 +229,10 @@ function middleware(req, res, next) {
   const ip = clientIP(req);
   req.clientIp = ip; // the rest of the app reports this back to the caller
 
-  if (ALWAYS_ALLOWED.includes(req.path)) return next();
+  if (ALWAYS_ALLOWED.includes(req.path) || isDelegated(req.path)) {
+    req.ipAllowlist = { decision: 'delegated' };
+    return next();
+  }
 
   // Before anything else, including fail-closed: the deployment's own health
   // probe has to succeed or the platform kills the release. See LOOPBACK above.
@@ -297,7 +316,7 @@ function middleware(req, res, next) {
     if (failClosedIsSafe(settings)) {
       note(req, ip, 'storage-unavailable-closed');
       req.ipAllowlist = { decision: 'storage-unavailable-closed', storage: status };
-      if (ALWAYS_ALLOWED.includes(req.path)) return next();
+      if (ALWAYS_ALLOWED.includes(req.path) || isDelegated(req.path)) return next();
       return deny(req, res, ip, 'unavailable');
     }
     req.ipAllowlist = { decision: 'storage-unavailable', storage: status };

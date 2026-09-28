@@ -73,8 +73,14 @@ test('every state-changing endpoint is behind the recording middleware', () => {
 
   /* Nested mount paths count too: /api/admin/settings/recording-hours is as
      much a router under /api as /api/assets is, and a pattern that stopped at
-     the first path segment would quietly excuse the next one somebody adds. */
-  const routeMounts = [...server.matchAll(/app\.use\('(\/api\/[a-z-]+(?:\/[a-z-]+)*)', (\w+Routes)\)/g)];
+     the first path segment would quietly excuse the next one somebody adds.
+     A mount may also carry middleware ahead of its router — /api/integration
+     has its own address gate, rate limit and credential check in front of it —
+     so any number of plain arguments may sit between the path and the router.
+     Matching only the bare two-argument form would leave exactly the routers
+     with the most in front of them unchecked. */
+  const routeMounts = [...server.matchAll(
+    /app\.use\('(\/api\/[a-z-]+(?:\/[a-z-]+)*)',\s*(?:[\w.]+,\s*)*(\w+Routes)\)/g)];
   assert.ok(routeMounts.length >= 14, `expected the app's routers, found ${routeMounts.length}`);
   for (const m of routeMounts) {
     assert.ok(server.indexOf(m[0]) > mountLine,

@@ -1608,4 +1608,47 @@ module.exports = [
     + 'practice and in some places it is a legal expectation; the application cannot do it for you. The permission '
     + 'carries this warning on the Role Permissions screen so whoever grants it reads it at the moment they do.'),
   roles('The Super Admin alone, until somebody decides otherwise.', ['administration']),
+
+  h2('13.9 The integration API \u2014 how another system reaches Forge'),
+  p('Forge can accept requests from another system in the studio \u2014 a Dev & QA tool, a build server, a script '
+    + 'on somebody\u2019s machine \u2014 under /api/integration. Nothing in the screens above changes; this is a '
+    + 'separate door with its own locks, and it is the only part of the application no person signs in to.'),
+  p('A caller is a MACHINE, not an account. It holds no designation, appears in no user list, and is never granted a '
+    + 'permission on the Role Permissions screen \u2014 every ownership and project-scope rule in Forge is written '
+    + 'about a person, and answering those questions on behalf of a build server is not something the application '
+    + 'should be asked to do. What a credential may do is written on the credential itself.'),
+  bullets([
+    'FOUR LOCKS, in order, and every one of them can refuse on its own: the address it came from, the signature on '
+      + 'the request, the credential it presented, and whether that credential is allowed the action it asked for.',
+    'THE CREDENTIAL. Issued as a key, stored only as a SHA-256 hash \u2014 so the key itself exists nowhere in the '
+      + 'database and cannot be read back out of it, only replaced. Each one carries the list of actions it is '
+      + 'allowed; asking for anything outside that list is refused with 403, which is a different answer from "I do '
+      + 'not know you" on purpose. Deactivating a credential stops it at once.',
+    'THE SIGNATURE. Every request carries X-Integration-Signature with a timestamp and an HMAC-SHA256 over the '
+      + 'timestamp, the method, the path and the exact bytes of the body. A request more than five minutes out of '
+      + 'step with the server clock is refused whichever way it is out, so a captured request cannot be replayed '
+      + 'later. Its secret is separate from the one Forge uses to sign what it sends OUT, so a leak in one '
+      + 'direction is not a leak in both.',
+    'ITS OWN ADDRESS LIST, separate from the sign-in allowlist in 13.5. Two different questions \u2014 which '
+      + 'offices may sign in, and which machines may call the API \u2014 and answering them from one list would '
+      + 'mean whoever maintains the studio\u2019s offices silently decided whether a build server could reach '
+      + 'Forge. It ships in MONITOR mode: it writes down what it would have refused and refuses nothing, until '
+      + 'somebody confirms the real address and turns it on deliberately.',
+    'A RATE LIMIT, the same shape as the one on sign-in. An external caller retrying a failing job in a loop is the '
+      + 'ordinary way this becomes a problem.',
+  ]),
+  note('Every integration action appears in the Activity Log, named',
+    'A call that changes something is recorded like any other change, with the actor shown as '
+      + '"integration:<name of the credential>" rather than as a person or as a blank. The log is the answer to '
+      + '"who did this" and a machine is as answerable as anybody \u2014 which also means a credential that is '
+      + 'later withdrawn leaves a history that can still be read.'),
+  note('If it is not configured, it is shut, not open',
+    'The signing secret lives in the server environment and nowhere else. A deployment where it has not been set '
+      + 'answers every integration request with 503 and does no work, rather than treating "no secret" as "no '
+      + 'signature needed" \u2014 which would turn a setup that was never finished into an open door, quietly, and '
+      + 'only on the deployment where it mattered.'),
+  roles('Nobody, in the sense this column usually means. There is no screen and no permission: credentials and '
+    + 'addresses are set on the server by whoever runs the deployment, deliberately out of reach of anybody signed '
+    + 'in to Forge \u2014 including the Super Admin. A door that the application could open for itself is not a '
+    + 'door.', ['super_only']),
 ];

@@ -14,6 +14,7 @@ const branding = require('./branding');
 const workSchedule = require('./work-schedule');
 const recordingHours = require('./recording-hours');
 const chatSettings = require('./chat-settings');
+const integrationIpAllowlist = require('./integration-ip-allowlist');
 const workLog = require('./work-log');
 const { normalizeCheckClause } = require('./schema-check');
 
@@ -2193,6 +2194,30 @@ async function ensureOutsource(db, log) {
  * which is also why every one of them is safe on a database that has them
  * already.
  */
+/* The integration's own address list.
+ *
+ * Its tables are declared in src/integration-ip-allowlist.js rather than here,
+ * and this step only calls install() — the same arrangement ensureIpAllowlist
+ * uses for the studio's list, and for the same reason: whoever needs the tables
+ * can then create them, which is startup today and a management screen that
+ * finds them missing later.
+ *
+ * A failure here is reported and not thrown, like every step. The consequence
+ * is stated rather than left to be discovered: without the tables the gate
+ * cannot restrict anything, and the integration API is then protected by its
+ * signature and credential alone — which is the lock that matters, but the
+ * studio should know which locks are actually on.
+ */
+async function ensureIntegrationIpAllowlist(db, log) {
+  const result = await integrationIpAllowlist.install(db);
+  if (!result.ok) {
+    log('Schema: the integration IP allowlist storage is unavailable '
+      + `(${result.code || 'error'}: ${result.detail}).`);
+    log('        Integration traffic is NOT being restricted by address. Its signature and');
+    log('        credential checks are unaffected.');
+  }
+}
+
 async function ensureIntegrationTables(db, log) {
   await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS integration_clients (
       id            CHAR(36)     NOT NULL PRIMARY KEY,
@@ -3267,6 +3292,9 @@ const STEPS = [
      else depends on these three and nothing depends on them yet — they are
      storage for a feature deployed separately. */
   ['integration tables', ensureIntegrationTables],
+  /* Straight after the tables above, and owning its own: the module declares
+     them and this only calls install(), exactly as ensureIpAllowlist does. */
+  ['integration ip allowlist', ensureIntegrationIpAllowlist],
   ['chat settings', ensureChatSettings],
   ['chat settings mirror', (db) => chatSettings.load(db)],
   // After the tables exist, and reading the window from the module that owns it.
