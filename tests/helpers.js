@@ -95,8 +95,18 @@ async function startServer(cfg, extraEnv = {}) {
    * race against the clock rather than against anything real.
    *
    * The loop polls every 250ms and returns the moment health answers, so a
-   * longer deadline costs nothing when the machine is quiet. */
-  const deadline = Date.now() + 60000;
+   * longer deadline costs nothing when the machine is quiet.
+   *
+   * RAISED AGAIN, from sixty seconds, and for the same reason it was raised to sixty: the
+   * count in the paragraph above is no longer twenty. Seventy-five files in tests/ start a
+   * server now, still on four cores and one MariaDB, and a full run failed with this error
+   * in tests/mis-project-access.test.js — ten subtests and their parent, all because the
+   * server they share never answered /health in time. It passed on its own immediately
+   * afterwards, which is the signature this comment describes.
+   *
+   * Overridable, so a slower box can raise it without editing this file, and so the number
+   * here is a default rather than a claim about every machine. */
+  const deadline = Date.now() + Number(process.env.TEST_SERVER_BOOT_MS || 150000);
   while (Date.now() < deadline) {
     try {
       const res = await fetch(`${base}/health`);
@@ -107,7 +117,9 @@ async function startServer(cfg, extraEnv = {}) {
     await new Promise((r) => setTimeout(r, 250));
   }
   child.kill();
-  throw new Error(`Server did not start within 60s. Output:\n${output}`);
+  throw new Error('Server did not start within '
+    + `${Math.round(Number(process.env.TEST_SERVER_BOOT_MS || 150000) / 1000)}s. `
+    + `Raise TEST_SERVER_BOOT_MS if this machine is slower than the default assumes.\n${output}`);
 }
 
 function stopServer(server) {

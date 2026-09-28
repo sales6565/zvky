@@ -2870,6 +2870,11 @@ function mayHandOverInReview(a){
   /* Beyond the creator, whoever is holding it at that stage. Mirrors the switch
      in canHandOverInReview on the server, which stays the authority. */
   if(a.status === 'pending_tl_review' || a.status === 'tl_changes_requested') return mayActAtTlGate(a);
+  /* A game bug, for the same reason and by the same answer: the lead standing at the
+     first gate on this asset owns the round, so rerouting it is theirs. HAND_OVER_STATUSES
+     has listed game_feedback since the transition did; this is the half that was missing,
+     so the control was drawn on the stage and then refused by the gate. */
+  if(a.status === 'game_feedback') return mayActAtTlGate(a);
   if(a.status === 'pending_cd_review') return can('review.cd');
   if(a.status === 'cd_changes_requested') return can('review.cd') || mayActAtTlGate(a);
   return false;
@@ -2889,8 +2894,19 @@ function taskProgress(tasks){
   return `${tasks.filter(t=>t.done).length}/${tasks.length} done`;
 }
 
-/* The two states the pipeline parks rework in. */
-const REWORK_STATUSES = ['tl_changes_requested','cd_changes_requested'];
+/* The three states the pipeline parks rework in — the same three as
+   REWORK_STATUSES in src/permissions.js, and a test holds the two lists together.
+ *
+ * game_feedback belongs here for the reason the server's copy says it does: the asset is
+ * back with the studio because the build says it is broken, and the artist works on it
+ * and submits again exactly as they would after a lead's notes.
+ *
+ * ALIGNED ONLY NOW, AND NOT EARLIER, which was a real ordering constraint rather than
+ * caution. What this list gates on screen is the "Reassign to Same User" shortcut, and
+ * that goes through reassign_review — which canHandOverInReview refused on a game bug
+ * until the case above was added. Aligned first, the page would have offered a button
+ * the server answered 403. */
+const REWORK_STATUSES = ['tl_changes_requested','cd_changes_requested','game_feedback'];
 
 /* The project the header is pointing at, from the list the API already sent. */
 function currentProject(){
@@ -7789,9 +7805,16 @@ async function openDrawer(id){
      The button is offered only while nothing is open. There is no Pause and no
      Resume any more: a round is one span from this click to the submission, and
      once it is open the only thing left to do with it is submit. */
+  /* game_feedback is in this list for the same reason it is in STARTABLE on the server:
+     the artist has a fix to work on and a round is a submission, so a submit with no way
+     to run the clock would record a round with no hours in it. It carries the same
+     handed-to-me guard CD Feedbacks does — a bug still in the queue is the lead's to
+     answer, not the artist's to start. */
+  const AWAITS_HANDOVER = ['cd_changes_requested','game_feedback'];
   const mayStart = (a.assignee_id===u.id || fullAccess()) &&
-    ['assigned','in_progress','tl_changes_requested','cd_changes_requested'].includes(a.status) &&
-    !(a.status==='cd_changes_requested' && a.routed_to_id!==u.id && !fullAccess());
+    ['assigned','in_progress','tl_changes_requested','cd_changes_requested',
+      'game_feedback'].includes(a.status) &&
+    !(AWAITS_HANDOVER.includes(a.status) && a.routed_to_id!==u.id && !fullAccess());
   /* Accepting is the assignee's own act, and only theirs.
      
      A full-access reader may open a stretch on work already under way — there is
@@ -7860,8 +7883,14 @@ async function openDrawer(id){
      assignee is not enough on its own — the API refuses it too. */
   const routedToMe = !a.routed_to_id || a.routed_to_id===u.id;
   const waitingOnRelay = a.status==='cd_changes_requested' && a.routed_to_id!==u.id;
+  /* And game_feedback, which the submit transition now accepts. Without it the artist
+     could submit a fix through the API and had no button to do it with — see the new
+     submit entry in src/asset-workflow.js. `routedToMe` above is what keeps it honest:
+     a bug still in the queue with nobody on it is not theirs to answer, and the server
+     refuses it there too because game_feedback is not in ASSIGNEE_STATUSES. */
   const canSubmit = isMyAssetAsArtist && routedToMe && !waitingOnRelay &&
-    ['not_started','assigned','in_progress','tl_changes_requested','cd_changes_requested'].includes(a.status);
+    ['not_started','assigned','in_progress','tl_changes_requested','cd_changes_requested',
+      'game_feedback'].includes(a.status);
   /* The section still shows while the asset is only Assigned — the artist needs
      to see what submitting will ask for — but the button is refused until the
      work has been started, which is one click away in the box above. Mirrors the

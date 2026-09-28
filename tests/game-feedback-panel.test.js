@@ -667,37 +667,17 @@ test('the panel, the pending list and the board, end to end',
     assert.ok((await inColumn('lead')).includes(id),
       'a pass keeps it in the column — the status says a bug is open, routing says whose move it is');
 
-    /* HOW IT LEAVES THE COLUMN, as the state machine stands today — which is not what the
-     * design note beside game_feedback_pass describes, and the difference is recorded here
-     * rather than papered over.
+    /* HOW IT LEAVES THE COLUMN: the artist hands the fix in, like any other round.
      *
-     * That note reads "the artist's next submit is the new round". `submit` has no
-     * transition from game_feedback, so it is not. The only exits the machine defines are
-     * the two answers (both of which are the lead's) and reassign_review, which lands in
-     * Assigned — and reassign_review is gated by canHandOverInReview, whose switch has no
-     * case for game_feedback either, so it reaches only somebody holding asset.assign_any,
-     * the asset's creator, or full access.
-     *
-     * The practical effect: an artist handed a bug to fix has no move of their own. Both
-     * are changes to the state machine and to a permission switch rather than to a screen,
-     * so neither is made here; the suite records what is true so that changing it is a
-     * deliberate act with a failing test to answer. */
-    const cannot = await as('artist', `/assets/${id}/submit`,
+     * This case used to assert the opposite, because it used to be true — submit had no
+     * transition from game_feedback and the lead could not hand the round on either, so
+     * an artist holding a passed-along bug had no move at all. Both are now transitions
+     * the machine defines, and this is the case that went red when they were added. */
+    const fixed = await as('artist', `/assets/${id}/submit`,
       { method: 'POST', body: { link: 'https://example.com/fixed' } });
-    assert.notStrictEqual(cannot.status, 201,
-      'submit is not a move from game_feedback — see the note above');
-    const leadCannot = await as('lead', `/assets/${id}/reassign`,
-      { method: 'POST', body: { assigneeId: ids.artist } });
-    assert.strictEqual(leadCannot.status, 403,
-      'and the lead cannot hand it on either — canHandOverInReview has no game_feedback case');
-    assert.ok((await inColumn('lead')).includes(id), 'so it is still in the column');
-
-    /* Full access can, which is the one route out that exists today. */
-    const handedOn = await as('root', `/assets/${id}/reassign`,
-      { method: 'POST', body: { assigneeId: ids.artist } });
-    assert.strictEqual(handedOn.status, 200, JSON.stringify(handedOn.body));
-    assert.ok(!(await inColumn('lead')).includes(id),
-      'and it leaves the column by the one move out of it that anybody can reach');
-    assert.strictEqual((await statusOf(id)).status, 'assigned', 'landing in Assigned');
+    assert.strictEqual(fixed.status, 201, JSON.stringify(fixed.body));
+    assert.ok(!(await inColumn('lead')).includes(id), 'and it leaves the column');
+    assert.strictEqual((await statusOf(id)).status, 'pending_tl_review',
+      'back at the gate that answered the bug in the first place');
   });
 });

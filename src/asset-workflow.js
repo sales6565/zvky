@@ -311,6 +311,45 @@ const TRANSITIONS = [
         : 'Resubmitted for team lead review',
   },
   {
+    /* THE FIX FOR A GAME BUG, handed in.
+     *
+     * The note on game_feedback_pass below has always said "the artist's next submit is
+     * the new round", and this is what makes that true rather than intended: without it
+     * an artist holding a passed-along bug had no move of their own at all, and the only
+     * ways out of Game Feedback were the lead declining it or a hand-over.
+     *
+     * A SEPARATE ENTRY rather than game_feedback joining the first submit's from-list,
+     * because the sentence in the history is different — "resubmitted for team lead
+     * review" is what happens after a lead's notes, and this is a fix for something the
+     * build reported. The destination is the same and deliberately so: the gate that
+     * answered the bug is the first review gate, so that is where its fix goes back to.
+     *
+     * NOTHING CREATES A ROUND HERE, and nothing should: a round in this application is a
+     * submission, so writing the version row IS the new round, counted by the Efficiency
+     * report with no change to the report. See the note at the top of the game feedback
+     * step in src/migrate.js.
+     *
+     * NO ACCEPT STEP, like the two rework stages: src/routes/assets.js evaluates 'accept'
+     * only from 'assigned' and opens a session without a transition from anywhere else.
+     * The clock was NOT already available here though — STARTABLE in that file gates which
+     * statuses a session may open in, and game_feedback had to be added to it alongside
+     * this transition. The two are one change: a round is a submission, so a fix that could
+     * be handed in but not clocked would be a round the Efficiency report counts with no
+     * hours in it.
+     *
+     * game_feedback is deliberately NOT in ASSIGNEE_STATUSES, and that is what makes
+     * this safe to offer: actors.assignee admits the assignee here only while the asset
+     * is ROUTED to them, which happens when the lead passes the bug on. A bug still
+     * sitting in the queue with nobody on it cannot be answered by the artist
+     * submitting over the top of the decision. */
+    action: 'submit',
+    from: ['game_feedback'],
+    to: 'pending_tl_review',
+    who: 'assignee',
+    routeTo: 'reviewQueue',
+    describe: 'Fix for the game bug submitted for team lead review',
+  },
+  {
     /* THE FIRST GATE, AND NOW ONLY THE GATE.
      *
      * This used to land in CD Review, which made approving the work and

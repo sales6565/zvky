@@ -2406,24 +2406,70 @@ is another entry in it"). Two things about it are easy to get wrong:
 hold it by default — that is the studio's toggle, switched on per designation in
 **Settings → Permissions**, and it is left where it was.
 
-### What an artist cannot do with a bug passed to them
+### A game bug is a rework stage all the way through
 
-Found while testing the panel, recorded because it is a gap in the *transitions* rather
-than in a screen, and not changed here:
+Closed together, because they were one gap wearing three faces: `game_feedback` had been
+added to a list and left out of the gate beside it, so each move existed and nobody could
+make it.
 
-- `submit` has no transition from `game_feedback`, so the design note beside
-  `game_feedback_pass` — "the artist's next submit is the new round" — is an intention the
-  `from` list does not allow.
-- `reassign_review` *does* list `game_feedback`, but `canHandOverInReview` has no case for
-  it, so it reaches only `asset.assign_any`, the asset's creator, or full access. The lead
-  who just passed the bug on cannot hand it to somebody else.
-- `public/index.html`'s own `REWORK_STATUSES` still holds two values where
-  `src/permissions.js` holds three. Aligning it would offer the Reassign-to-same-user
-  shortcut on a `game_feedback` asset, which the point above means the server refuses — so
-  the two want fixing together, not separately.
+**`submit` now has a transition from `game_feedback`**, landing in `pending_tl_review` —
+the gate that answered the bug is where its fix goes back to. It is a separate entry rather
+than `game_feedback` joining the first submit's `from` list, because the sentence in the
+history is different: "resubmitted for team lead review" is what follows a lead's notes,
+and this is a fix for something the build reported. Nothing creates a round; the version
+row **is** the round, so the Efficiency report counts it with no change to the report.
 
-`tests/game-feedback-panel.test.js` asserts all three as they stand, so changing any of
-them is a deliberate act with a failing test to answer.
+`game_feedback` stays out of `ASSIGNEE_STATUSES`, and that is what makes the transition safe
+to offer: `actors.assignee` admits the assignee here only while the asset is **routed** to
+them, which happens when the lead passes the bug on. A bug still in the queue cannot be
+answered by the artist submitting over the top of the decision.
+
+**The clock had to move with it**, which was nearly missed. `STARTABLE` in
+[`src/routes/assets.js`](src/routes/assets.js) gates which statuses a work session may open
+in, and `game_feedback` was not in it — so a first cut of this allowed the fix to be handed
+in and not clocked, which is a round the Efficiency report counts with no hours in it,
+under-reporting exactly the work Game Feedback exists to track. Both now list it, with the
+same handed-to-me guard CD Feedbacks has: a bug in the queue is the lead's to answer, so
+starting work on it is refused until it has been passed on. (There is still no accept step
+at this stage — `/start` evaluates `accept` only from Assigned and opens a session without a
+transition from anywhere else, exactly as rework after a lead's notes has always worked.)
+
+**`canHandOverInReview` gained a `game_feedback` case**, answered by `canActAtTlGate` — the
+same gate that decides who may pass or decline the bug. `reassign_review` had listed the
+stage since it was written and the screen offered it, so the refusal came from the switch's
+`default`, reaching only `asset.assign_any`, the creator, or full access: not the lead who
+had just passed the bug on and would need to reroute it if that artist went on leave. A test
+now holds every stage on that transition's `from` list to having a `case`, so a stage added
+later fails rather than quietly becoming unreachable.
+
+**`public/index.html`'s `REWORK_STATUSES` is aligned to the server's three**, and that had to
+come last. It gates the "Reassign to Same User" shortcut, which goes through the transition the
+missing `case` was refusing — aligned first, the page would have offered a button the API
+answered 403. The suite asserts the ordering as a property: every status in the page's list
+must be one `reassign_review` accepts.
+
+`tests/game-feedback-rework.test.js` covers all of it, including that a second round on the
+same bug adds to the first rather than replacing it, and that the fix goes on through the
+first gate like any other submission.
+
+### Pending Actions and the Team Lead: a default left alone
+
+`pending.view` is not enabled for Team Lead, and it stays that way. It is not an oversight —
+[`src/role-permissions.js`](src/role-permissions.js) grants it to exactly one designation
+and says why:
+
+> And the tab that shows them. Granted here rather than left off so the queue they are given
+> is one they can actually open on day one; **every other designation is given it in
+> Settings.**
+
+with the paragraph above it adding that this is "only the starting position … Everybody else
+is granted it in Settings, **which is where this decision belongs**". So a Super Admin
+switches the tab on per designation, and `tests/game-feedback-panel.test.js` pins the
+default so changing it would be a deliberate act.
+
+Worth knowing when deciding: that rationale was written when Pending Actions held only the
+project review workflow. It now also carries game feedback waiting on a lead, so the
+audience for the tab has widened even though the default has not.
 
 ## Passwords
 

@@ -1728,7 +1728,25 @@ router.delete('/:id/thumbnail', async (req, res) => {
   return res.json({ asset: withDetails });
 });
 
-const STARTABLE = ['assigned', 'in_progress', 'tl_changes_requested', 'cd_changes_requested'];
+/* The statuses a work session may be opened in.
+ *
+ * game_feedback joined these WITH the submit transition and not after it, because the two
+ * are one change: a round in this application is a submission, so allowing the fix to be
+ * handed in while refusing the clock would have produced a round the Efficiency report
+ * counts with no hours in it — under-reporting exactly the work Game Feedback exists to
+ * track. The guard below is what keeps it honest: like CD Feedbacks, a game bug is only
+ * startable once it has been passed to the person holding it. */
+const STARTABLE = ['assigned', 'in_progress', 'tl_changes_requested', 'cd_changes_requested',
+  'game_feedback'];
+
+/* The two stages that sit with somebody else until they are handed over, and the sentence
+   each needs. CD Feedbacks waits on the lead relaying the director's notes; a game bug
+   waits on the lead answering it, because passing it to the artist IS the decision. */
+const AWAITING_HANDOVER = {
+  cd_changes_requested: 'The team lead has not passed the Creative Director\'s notes on yet.',
+  game_feedback: 'The team lead has not passed this game bug on yet — until they do, it is '
+    + 'theirs to answer.',
+};
 
 // POST /api/assets/:id/start — Accept and Start.
 //
@@ -1749,10 +1767,11 @@ router.post('/:id/start', async (req, res) => {
       error: `Work can only be started while it is on somebody's desk — this asset is in ${workflow.label(asset.status)}.`,
     });
   }
-  // CD Feedbacks sits with the lead until relayed; the assignee cannot start
-  // reworking what they have not been handed.
-  if (asset.status === 'cd_changes_requested' && asset.routed_to_id !== req.user.id && !hasFullAccess(req.user)) {
-    return res.status(409).json({ error: 'The team lead has not passed the Creative Director\'s notes on yet.' });
+  // Two stages sit with somebody else until relayed or answered; the assignee cannot
+  // start work they have not been handed.
+  if (AWAITING_HANDOVER[asset.status] && asset.routed_to_id !== req.user.id
+      && !hasFullAccess(req.user)) {
+    return res.status(409).json({ error: AWAITING_HANDOVER[asset.status] });
   }
 
   /* Not before the day it is scheduled to begin.

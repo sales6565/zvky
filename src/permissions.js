@@ -262,14 +262,30 @@ async function canHandOverInReview(user, asset) {
                      their notes — either may put somebody else on the rework
        TL Feedbacks  the lead who sent it back
        CD Review     the director it is waiting on
+       Game Feedback the lead standing at the first gate on it — the one who
+                     passed the bug to the artist, or whoever else holds that
+                     gate on this asset
      
      The rework stages reached only the creator before, so a lead who had just
      sent work back could not then hand that rework to somebody else — the one
-     person with the clearest reason to. */
+     person with the clearest reason to.
+     
+     GAME FEEDBACK WAS MISSING FROM THIS SWITCH while being listed on
+     reassign_review's from-list in src/asset-workflow.js, which is the worst of
+     the two ways round: the transition existed, the screen offered the stage,
+     and the gate refused everybody the default case caught. So the control was
+     reachable only through asset.assign_any, the asset's creator, or full
+     access — and the lead who had just passed a bug to an artist, the one
+     person who would need to reroute it if that artist went on leave, was not
+     any of those. */
   const asCD = async () => canReviewAsCD(user) && await canViewAsset(user, asset);
   switch (asset.status) {
     case 'pending_tl_review':
     case 'tl_changes_requested':
+    /* The same gate, for the same reason it decides who may pass or decline the
+       bug: whoever may stand at the first review gate on THIS asset owns the
+       round, and rerouting it is part of owning it. */
+    case 'game_feedback':
       return canActAtTlGate(user, asset);
     case 'pending_cd_review':
       return asCD();
