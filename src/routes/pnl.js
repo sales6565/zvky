@@ -3,6 +3,7 @@ const { authenticate } = require('../middleware/auth');
 const { v4: uuid } = require('uuid');
 const pnl = require('../pnl');
 const pnlHours = require('../pnl-hours');
+const outsource = require('../outsource');
 const roles = require('../roles');
 const { holds, visibleProjects, canAccessProject } = require('../permissions');
 const db = require('../db');
@@ -111,10 +112,15 @@ router.get('/projects/:id', maySeeEither, async (req, res) => {
      is the recorded hours priced, so compute() is handed them rather than
      working them out again. Same order, same reason, as the report route. */
   const worked = await hoursFor(req.params.id);
-  const data = await pnl.forProject(db, req.params.id, { hours: worked });
+  /* And what the project paid outside the studio, which recorded hours cannot
+     see: a freelancer logs no work session and holds no Rate Card designation.
+     See the note in compute(). */
+  const sent = await outsource.costForProject(db, req.params.id);
+  const data = await pnl.forProject(db, req.params.id, { hours: worked, outsource: sent });
   return res.json({
     ...data,
     hours: worked,
+    outsource: sent,
     // What this caller may do here, so the screen does not offer a control the
     // API would refuse.
     canManage: holds(req.user, 'pnl.manage'),
@@ -382,6 +388,10 @@ router.get('/report', maySeeEither, async (req, res) => {
      is priced against the same rates, so a rate edited while the report is
      being built cannot leave two projects costed differently. */
   const rates = await pnlHours.roleRates(db);
+  /* One query for every project's outsourced cost, rather than one per project
+     inside the loop below — the report runs over every project the studio
+     has. */
+  const sentByProject = await outsource.costFor(db, chosen.map((p) => p.id));
   const perProject = [];
   for (const project of chosen) {
     /* The hours FIRST, then the figures costed from them. They used to be
@@ -389,10 +399,13 @@ router.get('/report', maySeeEither, async (req, res) => {
        cost is now the recorded hours priced, so compute() has to be handed them
        rather than working them out a second time from a second query. */
     const worked = await hoursFor(project.id, rates);
-    const figures = await pnl.forProject(db, project.id, { hours: worked });
+    const sent = sentByProject.get(String(project.id))
+      || { hours: 0, cost: 0, unpricedHours: 0, assignments: 0 };
+    const figures = await pnl.forProject(db, project.id, { hours: worked, outsource: sent });
     perProject.push({
       ...figures,
       hours: worked,
+      outsource: sent,
       name: project.name,
       code: project.code,
       clientId: project.client_id,

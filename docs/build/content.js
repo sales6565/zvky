@@ -1148,6 +1148,42 @@ module.exports = [
     'EVERY CHANGE IS RECORDED — who attached whom to what, and when — both on the row itself and in the Activity Log.',
   ]),
 
+  h2('11.7 Outsource — freelancers and the work given to them'),
+  p('The Outsource tab is the studio’s record of work sent outside it: who the freelancers are, '
+    + 'what each has been given, and what was agreed for it. It opens for Team Leads, Production, '
+    + 'Creative Direction and above, and shows the outsourced work on the projects you can already '
+    + 'see — a lead sees their own projects’, not the studio’s.'),
+  note('The hours here are agreed, not measured',
+    'This is the one part of the application where an hours figure is typed rather than recorded. '
+    + '"Decided man hours" is what the studio and the freelancer settled on. Nothing on this tab '
+    + 'starts a timer, writes a work session, or is touched by the recording schedule, the breaks '
+    + 'or the overnight pause and resume — none of that applies to somebody the studio does not '
+    + 'employ.\n\n'
+    + 'It can be revised. If the scope changes or a revision round adds hours, edit the figure; the '
+    + 'change is written to the Activity Log with what it was before, because that number is what '
+    + 'somebody is paid against.'),
+  bullets([
+    'FREELANCERS ARE RECORDS, NOT ACCOUNTS. A freelancer has no login and no designation — they never sign in, and nothing about them appears in Users. Deactivate one rather than deleting them: an inactive freelancer takes no new work, and the work already recorded against them keeps its meaning.',
+    'AN ASSIGNMENT MAY NAME AN ASSET, OR NOT. Link it to a tracked asset when the work is one, and the asset’s own Man Hours estimate is shown beside the agreed figure — two different numbers about the same work, both visible, neither standing in for the other. Leave it blank for work that never enters the pipeline.',
+    'STATUS follows the work: Assigned, In Progress, Delivered, Revision Requested.',
+    'THE SUMMARY totals the agreed hours per freelancer and splits them by project, which is what an invoice is raised against.',
+  ]),
+  note('What it fixes in the Profit & Loss',
+    'The P&L costs work sessions at the Rate Card rate of the designation that logged them. A '
+    + 'freelancer logs no sessions and holds no designation — so before this tab existed, a '
+    + 'project that outsourced half its work reported half its cost, and a profit to match, with '
+    + 'nothing on either tab able to say so.\n\n'
+    + 'Agreed hours × the freelancer’s rate now reaches both tabs as its own figure, and the '
+    + 'variance and profit are taken from the two costs combined. A freelancer with no rate '
+    + 'recorded contributes hours but no cost and is reported as unpriced, never folded in at zero '
+    + '— a zero there would make the project look cheaper than it was.'),
+  p('PAY RATES ARE A SEPARATE PERMISSION. Manage Outsourcing lets somebody add freelancers, give '
+    + 'them work and set the agreed hours. See Freelancer Pay Rates — the Super Admin by default '
+    + '— is what shows the money: the rate, the cost column and the P&L figures above. Without '
+    + 'it the tab shows the work and the hours and no money at all, and the rate is not merely '
+    + 'hidden on the page, it is not sent to the browser. It is the same split the Profit & Loss '
+    + 'permissions already make between reading a margin and being handed the Rate Card.'),
+
   pagebreak(),
   // ============================================================ 12
   h1('12. Notifications, chat and your profile'),

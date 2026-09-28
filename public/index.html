@@ -627,6 +627,47 @@ tr.past-round{opacity:0.62;}
 .ref-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:4px;}
 .ref-head h3{font-family:'Space Grotesk';font-size:15px;margin:0;}
 .ref-note{font-size:11.5px;color:var(--ink-faint);margin-bottom:10px;}
+/* --- Outsource: freelancers and the work given to them -------------------- */
+.os-wrap{padding:4px 0 24px;}
+.os-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:12px;}
+.os-head h2{font-family:'Space Grotesk';font-size:19px;margin:0 0 4px;}
+.os-note{font-size:11.5px;color:var(--ink-faint);max-width:760px;line-height:1.5;}
+.os-subtabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:14px;}
+.os-subtab{background:none;border:0;border-bottom:2px solid transparent;color:var(--ink-faint);
+  font-size:12.5px;padding:7px 12px;cursor:pointer;display:flex;align-items:center;gap:6px;}
+.os-subtab:hover{color:var(--ink);}
+.os-subtab.active{color:var(--brand-accent);border-bottom-color:var(--brand-accent);font-weight:600;}
+.os-count{font-size:10px;border:1px solid var(--border);border-radius:999px;padding:0 6px;line-height:15px;}
+.os-bar{margin-bottom:10px;}
+.os-table{width:100%;border-collapse:collapse;font-size:12.5px;}
+.os-table th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--ink-faint);font-weight:600;padding:6px 10px;border-bottom:1px solid var(--border);white-space:nowrap;}
+.os-table td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:top;}
+.os-table tfoot td{border-bottom:0;padding-top:10px;}
+.os-table th.num,.os-table td.num{text-align:right;white-space:nowrap;}
+.os-table tr.os-off{opacity:.55;}
+.os-sub{font-size:10.5px;color:var(--ink-faint);margin-top:2px;}
+.os-code{font-family:ui-monospace,monospace;font-size:11px;color:var(--ink-muted);}
+.os-adhoc{color:var(--ink-faint);font-style:italic;}
+.os-pill{display:inline-block;font-size:10.5px;padding:1px 9px;border-radius:999px;white-space:nowrap;
+  color:var(--tone);border:1px solid var(--tone);}
+.os-chip{display:inline-block;font-size:10.5px;border:1px solid var(--border);border-radius:999px;
+  padding:1px 8px;margin:0 4px 3px 0;color:var(--ink-muted);}
+.os-empty{font-size:12px;color:var(--ink-faint);padding:18px 0;}
+.os-form{border:1px solid var(--brand-accent);border-radius:10px;padding:12px 14px;margin-bottom:14px;
+  background:var(--surface);}
+.os-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px 14px;}
+.os-grid > div{display:flex;flex-direction:column;gap:3px;}
+.os-grid label{font-size:10.5px;color:var(--ink-faint);}
+.os-grid .os-wide{grid-column:1 / -1;}
+.os-opt{opacity:.75;font-style:italic;}
+.os-actions{display:flex;align-items:center;gap:8px;margin-top:11px;flex-wrap:wrap;}
+@media (max-width:640px){
+  .os-table thead{display:none;}
+  .os-table td{display:block;border-bottom:0;padding:3px 0;}
+  .os-table tr{display:block;border-bottom:1px solid var(--border);padding:9px 0;}
+  .os-table td.num{text-align:left;}
+}
 /* --- Recording Hours: repeatable named windows, Super Admin only ---------
    Laid out as a grid rather than a table because a row wraps on a narrow
    screen and a table cell will not. The row is the unit throughout: its
@@ -1645,6 +1686,11 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
            burying it inside a tab gated on report.view would have made one
            permission depend on another. -->
       <button data-tab="pnl" id="pnlTabBtn" style="display:none;">Profit &amp; Loss</button>
+      <!-- Work sent outside the studio. Beside Users because it is the other
+           roster the studio keeps — people who do the work without being on
+           the payroll — and because nothing about it belongs under a project
+           board, which only shows work the pipeline is tracking. -->
+      <button data-tab="outsource" id="outsourceTabBtn" style="display:none;">Outsource</button>
       <button data-tab="users" id="usersTabBtn" style="display:none;">Users</button>
       <button data-tab="settings" id="settingsTabBtn" style="display:none;">Settings</button>
     </div>
@@ -1666,6 +1712,7 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
   <div id="listView" style="display:none;"></div>
   <div id="teamView" style="display:none;"></div>
   <div id="timesheetView" style="display:none;"></div>
+  <div id="outsourceView" style="display:none;"></div>
   <div id="usersView" style="display:none;"></div>
   <div id="reportsView" style="display:none;"></div>
   <div id="settingsView" style="display:none;"></div>
@@ -2428,6 +2475,10 @@ function canAnyIn(group){
 const UI_GATES = {
   teamTabBtn:            () => can('user.view_team'),
   usersTabBtn:           () => canAnyIn('user'),
+  /* The view grant alone opens it; managing is a second permission the screen
+     asks about separately, and pay rates a third. What the tab SHOWS is still
+     scoped by the role's projectScope, so opening it widens nobody's reach. */
+  outsourceTabBtn:       () => can('outsource.view'),
   settingsTabBtn:        () => canOpenSettings(),
   reportsTabBtn:         () => can('report.view','report.idle'),
   /* Its own grant, like the two report tabs beside it. What the screen COUNTS
@@ -2580,6 +2631,23 @@ const TOUR_STEPS = [
      steps out of the source with a regex expecting `id:` on the line after the
      brace, and a comment in between makes the step invisible to the guard that
      checks every gated tab has one. */
+  /* Beside Profit & Loss, because the thing worth saying about this tab is what
+     its hours are NOT: every other hours figure in the application is measured
+     off a timer, and these are agreed and typed. Somebody shown the tour and
+     not told that will assume the wrong one.
+
+     The comment sits OUTSIDE the object for the reason given above the P&L
+     step: the guard reads `id:` off the line after the brace. */
+  {
+    id: 'outsource',
+    target: '#outsourceTabBtn',
+    gate: 'outsourceTabBtn',
+    title: 'Outsource',
+    body: 'Freelancers, and the work given to them. The hours here are the figure agreed with the '
+        + 'freelancer, typed by hand — nothing on this tab runs a timer, and the studio\u2019s '
+        + 'recording schedule does not apply to any of it. What is agreed is costed into each '
+        + 'project\u2019s Profit & Loss at the freelancer\u2019s rate.',
+  },
   {
     id: 'pnl',
     target: '#pnlTabBtn',
@@ -4086,6 +4154,7 @@ function setTab(tab){
   document.getElementById('listView').style.display = tab==='list' ? '' : 'none';
   document.getElementById('teamView').style.display = tab==='team' ? '' : 'none';
   document.getElementById('timesheetView').style.display = tab==='timesheet' ? '' : 'none';
+  document.getElementById('outsourceView').style.display = tab==='outsource' ? '' : 'none';
   document.getElementById('usersView').style.display = tab==='users' ? '' : 'none';
   document.getElementById('reportsView').style.display = tab==='reports' ? '' : 'none';
   document.getElementById('settingsView').style.display = tab==='settings' ? '' : 'none';
@@ -6652,7 +6721,7 @@ async function renderUsers(sections = userSections()){
 async function render(){
   const viewIds = { admin:'adminDashView', board:'boardView', list:'listView', team:'teamView',
     users:'usersView', projects:'projectsView', reports:'reportsView', settings:'settingsView',
-    pnl:'pnlView' };
+    pnl:'pnlView', outsource:'outsourceView' };
   try{
   /* If the role gained or lost something since this page loaded, the tabs and
      toolbar buttons have to be re-decided too — they are applied once at boot
@@ -6680,6 +6749,7 @@ async function render(){
   else if(state.view==='reports') await renderReportsTab();
   else if(state.view==='pnl') await renderPnl();
   else if(state.view==='team') await renderTeam();
+  else if(state.view==='outsource') await renderOutsource();
   else if(state.view==='users') await renderUsersTab();
   else if(state.view==='projects') await renderProjects();
   else if(state.view==='settings') await renderSettings();
@@ -12308,6 +12378,379 @@ async function renderMisAccess(){
     }catch(e){ misState.err = e.message; }
     finally{ misState.busy = false; renderMisAccess(); }
   };
+}
+
+
+/* ---------- Outsource ----------
+
+   Freelancers, and the work given to them. Two screens behind one tab:
+   the roster of people, and the table of assignments.
+
+   THE HOURS HERE ARE TYPED, NEVER MEASURED. "Decided man hours" is what the
+   studio agreed with the freelancer, entered once and revised by hand if the
+   scope changes. Nothing on this tab starts a timer, and none of the recording
+   schedule applies to any of it — which is worth the page saying plainly, since
+   every other hours figure in the application IS measured.
+
+   THREE PERMISSIONS decide what this draws: outsource.view opens the tab,
+   outsource.manage shows the editing controls, and outsource.rates decides
+   whether money appears at all. The third is enforced on the server by leaving
+   the field out of the response, so this checks canSeeRates only to avoid
+   drawing a column that would be empty. */
+let osState = { tab:'assignments', data:null, people:null, targets:null,
+  editing:null, form:{}, errors:[], busy:false, assets:{} };
+
+const OS_STATUS_TONE = { assigned:'#6b7a8f', in_progress:'#2f6f9f',
+  delivered:'#2e7d5b', revision_requested:'#b8860b' };
+
+function osMoney(n){
+  if(n === null || n === undefined) return '—';
+  return '₹' + Number(n).toLocaleString('en-IN', { maximumFractionDigits:0 });
+}
+const osHours = (n) => `${Number(n||0).toLocaleString('en-IN', { maximumFractionDigits:2 })}h`;
+
+async function renderOutsource(){
+  const el = document.getElementById('outsourceView');
+  if(!el) return;
+  if(!osState.data){
+    try{
+      const [assignments, people] = await Promise.all([
+        api('/outsource/assignments'), api('/outsource/freelancers') ]);
+      osState.data = assignments;
+      osState.people = people;
+    }catch(err){ el.innerHTML = `<div class="ref-err">${escapeHTML(err.message)}</div>`; return; }
+  }
+  const d = osState.data;
+  const canManage = d.canManage;
+  const canSeeRates = d.canSeeRates;
+
+  const tabBtn = (key, label, count) =>
+    `<button class="os-subtab${osState.tab===key?' active':''}" data-ostab="${key}">${label}
+       <span class="os-count">${count}</span></button>`;
+
+  el.innerHTML = `
+    <div class="os-wrap">
+      <div class="os-head">
+        <div>
+          <h2>Outsource</h2>
+          <div class="os-note">Freelancers and the work given to them. <strong>The hours here are
+            agreed figures, typed by hand — not measured.</strong> No timer, no session and none of
+            the studio’s recording schedule applies to anything on this tab.</div>
+        </div>
+      </div>
+      <div class="os-subtabs">
+        ${tabBtn('assignments','Assigned work', d.assignments.length)}
+        ${tabBtn('people','Freelancers', (osState.people.freelancers||[]).length)}
+        ${tabBtn('summary','Summary', d.summary.length)}
+      </div>
+      <div id="osBody"></div>
+    </div>`;
+
+  el.querySelectorAll('[data-ostab]').forEach(b=>b.onclick = ()=>{
+    osState.tab = b.dataset.ostab; osState.editing = null; osState.errors = []; renderOutsource();
+  });
+
+  const body = document.getElementById('osBody');
+  if(osState.tab === 'assignments') osRenderAssignments(body, canManage, canSeeRates);
+  else if(osState.tab === 'people') osRenderPeople(body, canManage, canSeeRates);
+  else osRenderSummary(body, canSeeRates);
+}
+
+/* ---- assignments ---- */
+
+function osRenderAssignments(body, canManage, canSeeRates){
+  const d = osState.data;
+  const rows = d.assignments;
+  const errFor = (f)=>{ const e = osState.errors.find(x=>x.field===f); return e ? e.message : ''; };
+
+  body.innerHTML = `
+    ${canManage ? `<div class="os-bar">
+      <button class="btn btn-brand btn-sm" id="osNewAssignment">+ Assign work</button>
+    </div>` : ''}
+    ${osState.editing && osState.editing.kind==='assignment' ? osAssignmentFormHTML(errFor) : ''}
+    ${rows.length ? `
+    <table class="os-table">
+      <thead><tr>
+        <th>Freelancer</th><th>Project</th><th>Task / asset</th>
+        <th class="num">Decided hours</th>${canSeeRates?'<th class="num">Cost</th>':''}
+        <th>Status</th><th>Due</th>${canManage?'<th></th>':''}
+      </tr></thead>
+      <tbody>
+        ${rows.map(a=>`
+          <tr>
+            <td><strong>${escapeHTML(a.freelancerName)}</strong>
+              ${a.freelancerDiscipline?`<div class="os-sub">${escapeHTML(a.freelancerDiscipline)}</div>`:''}</td>
+            <td>${escapeHTML(a.projectName)}</td>
+            <td>${a.assetCode
+                  ? `<span class="os-code">${escapeHTML(a.assetCode)}</span> ${escapeHTML(a.assetName||'')}
+                     ${a.assetManHours!==null?`<div class="os-sub">asset estimate ${osHours(a.assetManHours)}</div>`:''}`
+                  : `<span class="os-adhoc">${escapeHTML(a.description||'ad hoc')}</span>`}</td>
+            <td class="num"><strong>${osHours(a.decidedManHours)}</strong></td>
+            ${canSeeRates?`<td class="num">${osMoney(osCostOf(a))}</td>`:''}
+            <td><span class="os-pill" style="--tone:${OS_STATUS_TONE[a.status]||'#6b7a8f'}">${escapeHTML(a.statusLabel)}</span></td>
+            <td>${a.dueDate ? escapeHTML(a.dueDate) : '—'}</td>
+            ${canManage?`<td><button class="btn btn-sm btn-ghost" data-edit="${escapeHTML(a.id)}">Edit</button></td>`:''}
+          </tr>`).join('')}
+      </tbody>
+    </table>` : '<div class="os-empty">No outsourced work on the projects you can see.</div>'}`;
+
+  const add = document.getElementById('osNewAssignment');
+  if(add) add.onclick = async ()=>{
+    await osLoadTargets();
+    osState.editing = { kind:'assignment', id:null };
+    osState.form = { status:'assigned', decidedManHours:'', freelancerId:'', projectId:'', assetId:'' };
+    osState.errors = [];
+    renderOutsource();
+  };
+  body.querySelectorAll('[data-edit]').forEach(b=>b.onclick = async ()=>{
+    await osLoadTargets();
+    const a = rows.find(x=>x.id===b.dataset.edit);
+    osState.editing = { kind:'assignment', id:a.id };
+    osState.form = { freelancerId:a.freelancerId, projectId:a.projectId, assetId:a.assetId||'',
+      description:a.description, decidedManHours:a.decidedManHours, status:a.status,
+      dueDate:a.dueDate||'', notes:a.notes };
+    osState.errors = [];
+    if(a.projectId) await osLoadAssets(a.projectId);
+    renderOutsource();
+  });
+  osWireAssignmentForm();
+}
+
+/* The cost of one assignment, worked out on the page from figures it already
+   has. Shown only to somebody holding outsource.rates — for anybody else the
+   rate is not in the payload at all, so there is nothing here to compute. */
+function osCostOf(a){
+  const f = (osState.people.freelancers||[]).find(x=>x.id===a.freelancerId);
+  if(!f || f.ratePerHour === null || f.ratePerHour === undefined) return null;
+  return a.decidedManHours * f.ratePerHour;
+}
+
+function osAssignmentFormHTML(errFor){
+  const f = osState.form;
+  const people = (osState.people.freelancers||[]).filter(p=>p.active || p.id===f.freelancerId);
+  const projects = (osState.targets && osState.targets.projects) || [];
+  const assets = osState.assets[f.projectId] || [];
+  const bad = (k)=> errFor(k) ? ' rh-bad' : '';
+  return `
+    <div class="os-form">
+      <div class="os-grid">
+        <div><label>Freelancer</label>
+          <select id="osFreelancer" class="${bad('freelancerId').trim()}">
+            <option value="">Choose…</option>
+            ${people.map(p=>`<option value="${escapeHTML(p.id)}"${f.freelancerId===p.id?' selected':''}>${escapeHTML(p.name)}${p.discipline?` — ${escapeHTML(p.discipline)}`:''}</option>`).join('')}
+          </select></div>
+        <div><label>Project</label>
+          <select id="osProject" class="${bad('projectId').trim()}">
+            <option value="">Choose…</option>
+            ${projects.map(p=>`<option value="${escapeHTML(p.id)}"${f.projectId===p.id?' selected':''}>${escapeHTML(p.name)}${p.clientName?` — ${escapeHTML(p.clientName)}`:''}</option>`).join('')}
+          </select></div>
+        <div><label>Asset <span class="os-opt">optional — leave blank for ad hoc work</span></label>
+          <select id="osAsset">
+            <option value="">Not a tracked asset</option>
+            ${assets.map(a=>`<option value="${escapeHTML(a.id)}"${f.assetId===a.id?' selected':''}>${escapeHTML(a.code)} — ${escapeHTML(a.name)}${a.manHours!==null?` (est ${a.manHours}h)`:''}</option>`).join('')}
+          </select></div>
+        <div><label>Decided man hours</label>
+          <input type="number" id="osHours" class="narrow${bad('decidedManHours')}" min="0" step="0.5"
+                 value="${escapeHTML(String(f.decidedManHours ?? ''))}"></div>
+        <div><label>Status</label>
+          <select id="osStatus">
+            ${(osState.data.statuses||[]).map(s=>`<option value="${escapeHTML(s.key)}"${f.status===s.key?' selected':''}>${escapeHTML(s.label)}</option>`).join('')}
+          </select></div>
+        <div><label>Due date <span class="os-opt">optional</span></label>
+          <input type="date" id="osDue" class="narrow${bad('dueDate')}" value="${escapeHTML(f.dueDate||'')}"></div>
+        <div class="os-wide"><label>Description <span class="os-opt">what the work is</span></label>
+          <input type="text" id="osDesc" maxlength="500" value="${escapeHTML(f.description||'')}"></div>
+        <div class="os-wide"><label>Notes <span class="os-opt">optional</span></label>
+          <input type="text" id="osNotes" value="${escapeHTML(f.notes||'')}"></div>
+      </div>
+      ${osState.errors.length?`<div class="rh-errs">${osState.errors.map(e=>`<div class="rh-err">${escapeHTML(e.message)}</div>`).join('')}</div>`:''}
+      <div class="os-actions">
+        <button class="btn btn-brand btn-sm" id="osSaveAssignment">${osState.editing.id?'Save changes':'Assign work'}</button>
+        <button class="btn btn-sm btn-ghost" id="osCancel">Cancel</button>
+        ${osState.editing.id?'<span class="os-opt">Changing the agreed hours is recorded in the Activity Log with the old figure.</span>':''}
+      </div>
+    </div>`;
+}
+
+function osWireAssignmentForm(){
+  const save = document.getElementById('osSaveAssignment');
+  if(!save) return;
+  const read = ()=>({
+    freelancerId: document.getElementById('osFreelancer').value,
+    projectId: document.getElementById('osProject').value,
+    assetId: document.getElementById('osAsset').value,
+    decidedManHours: document.getElementById('osHours').value,
+    status: document.getElementById('osStatus').value,
+    dueDate: document.getElementById('osDue').value,
+    description: document.getElementById('osDesc').value,
+    notes: document.getElementById('osNotes').value,
+  });
+  /* Changing the project reloads its assets: an asset from another project is
+     refused by the server, so offering one would be offering a mistake. */
+  document.getElementById('osProject').onchange = async (e)=>{
+    osState.form = { ...read(), assetId:'' };
+    if(e.target.value) await osLoadAssets(e.target.value);
+    renderOutsource();
+  };
+  document.getElementById('osCancel').onclick = ()=>{
+    osState.editing = null; osState.errors = []; renderOutsource();
+  };
+  save.onclick = async ()=>{
+    if(osState.busy) return;
+    osState.busy = true;
+    const body = read();
+    osState.form = body;
+    try{
+      if(osState.editing.id) await api(`/outsource/assignments/${osState.editing.id}`, { method:'PUT', body });
+      else await api('/outsource/assignments', { method:'POST', body });
+      osState.editing = null; osState.errors = []; osState.data = null;
+      showToast(osState.editing ? 'Assignment saved.' : 'Work assigned.');
+    }catch(e){ osState.errors = (e.body && e.body.errors) ? e.body.errors : [{ field:null, message:e.message }]; }
+    finally{ osState.busy = false; renderOutsource(); }
+  };
+}
+
+async function osLoadTargets(){
+  if(osState.targets) return;
+  try{ osState.targets = await api('/outsource/targets'); }catch{ osState.targets = { projects:[] }; }
+}
+async function osLoadAssets(projectId){
+  if(osState.assets[projectId]) return;
+  try{ osState.assets[projectId] = (await api(`/outsource/projects/${projectId}/assets`)).assets; }
+  catch{ osState.assets[projectId] = []; }
+}
+
+/* ---- freelancers ---- */
+
+function osRenderPeople(body, canManage, canSeeRates){
+  const people = osState.people.freelancers || [];
+  const errFor = (f)=>{ const e = osState.errors.find(x=>x.field===f); return e ? e.message : ''; };
+  body.innerHTML = `
+    ${canManage ? `<div class="os-bar"><button class="btn btn-brand btn-sm" id="osNewPerson">+ Add freelancer</button></div>` : ''}
+    ${osState.editing && osState.editing.kind==='person' ? osPersonFormHTML(errFor, canSeeRates) : ''}
+    ${people.length ? `
+    <table class="os-table">
+      <thead><tr><th>Name</th><th>Discipline</th><th>Contact</th>
+        ${canSeeRates?'<th class="num">Rate / hour</th>':''}<th>Status</th>${canManage?'<th></th>':''}</tr></thead>
+      <tbody>
+        ${people.map(p=>`
+          <tr class="${p.active?'':'os-off'}">
+            <td><strong>${escapeHTML(p.name)}</strong>${p.addedByName?`<div class="os-sub">added by ${escapeHTML(p.addedByName)}</div>`:''}</td>
+            <td>${escapeHTML(p.discipline||'—')}</td>
+            <td>${escapeHTML(p.email||p.phone||'—')}</td>
+            ${canSeeRates?`<td class="num">${osMoney(p.ratePerHour)}</td>`:''}
+            <td><span class="os-pill" style="--tone:${p.active?'#2e7d5b':'#6b7a8f'}">${p.active?'Active':'Inactive'}</span></td>
+            ${canManage?`<td><button class="btn btn-sm btn-ghost" data-person="${escapeHTML(p.id)}">Edit</button></td>`:''}
+          </tr>`).join('')}
+      </tbody>
+    </table>` : '<div class="os-empty">No freelancers on the roster yet.</div>'}`;
+
+  const add = document.getElementById('osNewPerson');
+  if(add) add.onclick = ()=>{
+    osState.editing = { kind:'person', id:null };
+    osState.form = { status:'active' }; osState.errors = []; renderOutsource();
+  };
+  body.querySelectorAll('[data-person]').forEach(b=>b.onclick = ()=>{
+    const p = people.find(x=>x.id===b.dataset.person);
+    osState.editing = { kind:'person', id:p.id };
+    osState.form = { ...p };
+    osState.errors = []; renderOutsource();
+  });
+  osWirePersonForm(canSeeRates);
+}
+
+function osPersonFormHTML(errFor, canSeeRates){
+  const f = osState.form;
+  const bad = (k)=> errFor(k) ? ' rh-bad' : '';
+  return `
+    <div class="os-form">
+      <div class="os-grid">
+        <div><label>Name</label><input type="text" id="osName" class="${bad('name').trim()}" value="${escapeHTML(f.name||'')}"></div>
+        <div><label>Discipline <span class="os-opt">art, animation, rigging…</span></label>
+          <input type="text" id="osDiscipline" value="${escapeHTML(f.discipline||'')}"></div>
+        <div><label>Email <span class="os-opt">optional</span></label>
+          <input type="email" id="osEmail" class="${bad('email').trim()}" value="${escapeHTML(f.email||'')}"></div>
+        <div><label>Phone <span class="os-opt">optional</span></label>
+          <input type="text" id="osPhone" value="${escapeHTML(f.phone||'')}"></div>
+        ${canSeeRates?`<div><label>Rate per hour <span class="os-opt">blank if not recorded</span></label>
+          <input type="number" id="osRate" class="narrow${bad('ratePerHour')}" min="0" step="1"
+                 value="${f.ratePerHour===null||f.ratePerHour===undefined?'':escapeHTML(String(f.ratePerHour))}"></div>`:''}
+        <div><label>Status</label>
+          <select id="osPersonStatus">
+            <option value="active"${f.status==='active'?' selected':''}>Active</option>
+            <option value="inactive"${f.status==='inactive'?' selected':''}>Inactive</option>
+          </select></div>
+        <div class="os-wide"><label>Notes <span class="os-opt">optional</span></label>
+          <input type="text" id="osPersonNotes" value="${escapeHTML(f.notes||'')}"></div>
+      </div>
+      ${osState.errors.length?`<div class="rh-errs">${osState.errors.map(e=>`<div class="rh-err">${escapeHTML(e.message)}</div>`).join('')}</div>`:''}
+      <div class="os-actions">
+        <button class="btn btn-brand btn-sm" id="osSavePerson">${osState.editing.id?'Save changes':'Add freelancer'}</button>
+        <button class="btn btn-sm btn-ghost" id="osCancelPerson">Cancel</button>
+        ${!canSeeRates?'<span class="os-opt">Pay rates are a separate permission, so they are not shown or set here.</span>':''}
+      </div>
+    </div>`;
+}
+
+function osWirePersonForm(canSeeRates){
+  const save = document.getElementById('osSavePerson');
+  if(!save) return;
+  document.getElementById('osCancelPerson').onclick = ()=>{
+    osState.editing = null; osState.errors = []; renderOutsource();
+  };
+  save.onclick = async ()=>{
+    if(osState.busy) return;
+    osState.busy = true;
+    const body = {
+      name: document.getElementById('osName').value,
+      discipline: document.getElementById('osDiscipline').value,
+      email: document.getElementById('osEmail').value,
+      phone: document.getElementById('osPhone').value,
+      status: document.getElementById('osPersonStatus').value,
+      notes: document.getElementById('osPersonNotes').value,
+    };
+    /* Only sent by somebody who may set it. The server refuses the field from
+       anybody else rather than ignoring it, so sending it blindly would turn a
+       save into a 403 for a permission the person never tried to use. */
+    if(canSeeRates){
+      const raw = document.getElementById('osRate').value;
+      body.ratePerHour = raw === '' ? null : raw;
+    }
+    try{
+      if(osState.editing.id) await api(`/outsource/freelancers/${osState.editing.id}`, { method:'PUT', body });
+      else await api('/outsource/freelancers', { method:'POST', body });
+      osState.editing = null; osState.errors = [];
+      osState.people = await api('/outsource/freelancers');
+      osState.data = null;
+      showToast('Freelancer saved.');
+    }catch(e){ osState.errors = (e.body && e.body.errors) ? e.body.errors : [{ field:null, message:e.message }]; }
+    finally{ osState.busy = false; renderOutsource(); }
+  };
+}
+
+/* ---- summary ---- */
+
+function osRenderSummary(body, canSeeRates){
+  const rows = osState.data.summary || [];
+  const total = rows.reduce((n,f)=>n+f.hours, 0);
+  body.innerHTML = rows.length ? `
+    <div class="os-note" style="margin-bottom:10px;">Total decided man hours per freelancer, and how
+      they split across projects. These are the agreed figures, not measured time.</div>
+    <table class="os-table">
+      <thead><tr><th>Freelancer</th><th>Projects</th><th class="num">Assignments</th><th class="num">Decided hours</th></tr></thead>
+      <tbody>
+        ${rows.map(f=>`
+          <tr>
+            <td><strong>${escapeHTML(f.freelancerName)}</strong></td>
+            <td>${f.projects.map(p=>`<span class="os-chip">${escapeHTML(p.projectName)} ${osHours(p.hours)}</span>`).join('')}</td>
+            <td class="num">${f.assignments}</td>
+            <td class="num"><strong>${osHours(f.hours)}</strong></td>
+          </tr>`).join('')}
+      </tbody>
+      <tfoot><tr><td colspan="3" class="num">Total</td><td class="num"><strong>${osHours(total)}</strong></td></tr></tfoot>
+    </table>
+    ${canSeeRates?'<div class="os-note" style="margin-top:10px;">These hours are costed into each project’s Profit &amp; Loss at the freelancer’s rate. A freelancer with no rate recorded contributes hours but no cost, and is reported there as unpriced.</div>':''}`
+    : '<div class="os-empty">Nothing assigned yet.</div>';
 }
 
 /* ---------- Activity Log ----------

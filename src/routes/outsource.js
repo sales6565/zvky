@@ -1,0 +1,242 @@
+/* The Outsource tab: freelancers, and the work given to them.
+ *
+ * THREE PERMISSIONS, AND THE THIRD IS THE INTERESTING ONE. outsource.view
+ * shows the tab, outsource.manage edits it, and outsource.rates decides whether
+ * money is in the answer at all. That last one is enforced by LEAVING THE FIELD
+ * OUT of the response rather than by hiding it on the page: a rate the server
+ * still sends to somebody who may not see it is not hidden, it is one request
+ * away from being read.
+ *
+ * REACH IS THE ROLE'S. Holding outsource.view says what somebody may do; which
+ * projects' assignments they see is their designation's projectScope, the same
+ * rule the rest of the application follows. A lead with the tab sees the
+ * outsourced work on their own projects, not the studio's.
+ *
+ * EVERY CHANGE TO decided_man_hours IS LOGGED with its old value. That number
+ * is what a freelancer is paid against, so a silent edit matters here more than
+ * on most fields — the studio said so and it is the reason the audit entry
+ * below names the figure rather than saying "updated".
+ */
+const { asyncRouter } = require('../async-router');
+
+const router = asyncRouter();
+const db = require('../db');
+const { authenticate, requirePermission, can } = require('../middleware/auth');
+const outsource = require('../outsource');
+const activity = require('../activity');
+const { visibleProjects } = require('../permissions');
+
+router.use(authenticate);
+router.use(requirePermission('outsource.view'));
+
+const mayManage = (req) => can(req, 'outsource.manage');
+const maySeeRates = (req) => can(req, 'outsource.rates');
+
+const refuseUnlessManager = (req, res) => {
+  if (mayManage(req)) return false;
+  res.status(403).json({ error: 'You do not have permission to change outsourced work.' });
+  return true;
+};
+
+/* Money out of the answer for anybody without outsource.rates.
+ *
+ * Deleted from the object rather than blanked: a null would say "this
+ * freelancer has no rate recorded", which is a different and untrue statement
+ * from "you may not see it". */
+const hideRates = (freelancer) => {
+  const { ratePerHour, ...rest } = freelancer;
+  return rest;
+};
+
+const projectIdsFor = async (req) => {
+  /* A studio-wide designation gets everything, and asking the database for a
+     list of every project id to then filter on it would be the same answer with
+     more work. Null means "no narrowing". */
+  const projects = await visibleProjects(req.user);
+  const def = require('../roles').roleDef(req.user.role);
+  if (def && def.projectScope === 'all') return null;
+  return projects.map((p) => String(p.id));
+};
+
+// ------------------------------------------------------------- freelancers
+
+// GET /api/outsource/freelancers
+router.get('/freelancers', async (req, res) => {
+  const people = await outsource.listFreelancers(db);
+  res.json({
+    freelancers: maySeeRates(req) ? people : people.map(hideRates),
+    canManage: mayManage(req),
+    canSeeRates: maySeeRates(req),
+  });
+});
+
+// POST /api/outsource/freelancers
+router.post('/freelancers', async (req, res) => {
+  if (refuseUnlessManager(req, res)) return;
+  const body = { ...(req.body || {}) };
+  /* A rate from somebody who may not see rates is not stored. Refused rather
+     than dropped, because silently ignoring half of what somebody typed is
+     worse than telling them. */
+  if (body.ratePerHour !== undefined && !maySeeRates(req)) {
+    return res.status(403).json({
+      error: 'You do not have permission to set pay rates.', field: 'ratePerHour' });
+  }
+  const result = await outsource.createFreelancer(db, body, req.user.id);
+  if (!result.ok) return res.status(result.status).json({ errors: result.errors, error: result.errors[0].message });
+  req.activity({
+    module: 'settings', action: 'outsource.freelancer_added',
+    entityType: 'freelancer', entityId: result.freelancer.id, entityLabel: result.freelancer.name,
+    summary: `Added the freelancer ${result.freelancer.name}`
+      + (result.freelancer.discipline ? ` (${result.freelancer.discipline})` : ''),
+  });
+  res.status(201).json({ freelancer: maySeeRates(req) ? result.freelancer : hideRates(result.freelancer) });
+});
+
+// PUT /api/outsource/freelancers/:id
+router.put('/freelancers/:id', async (req, res) => {
+  if (refuseUnlessManager(req, res)) return;
+  const body = { ...(req.body || {}) };
+  if (body.ratePerHour !== undefined && !maySeeRates(req)) {
+    return res.status(403).json({
+      error: 'You do not have permission to set pay rates.', field: 'ratePerHour' });
+  }
+  const result = await outsource.updateFreelancer(db, req.params.id, body);
+  if (!result.ok) return res.status(result.status).json({ errors: result.errors, error: result.errors[0].message });
+
+  const before = result.before;
+  const after = result.freelancer;
+  /* Deactivation is called out by name. It is the closest thing this feature
+     has to removing somebody, and "when did we stop using them" is the question
+     the log will be read for. */
+  const deactivated = before.status === 'active' && after.status === 'inactive';
+  const reactivated = before.status === 'inactive' && after.status === 'active';
+  req.activity({
+    module: 'settings',
+    action: deactivated ? 'outsource.freelancer_deactivated' : 'outsource.freelancer_updated',
+    entityType: 'freelancer', entityId: after.id, entityLabel: after.name,
+    summary: deactivated ? `Deactivated the freelancer ${after.name}`
+      : reactivated ? `Made the freelancer ${after.name} active again`
+        : `Updated the freelancer ${after.name}`,
+    changes: activity.diff(
+      { name: before.name, discipline: before.discipline, status: before.status,
+        ...(maySeeRates(req) ? { ratePerHour: before.ratePerHour } : {}) },
+      { name: after.name, discipline: after.discipline, status: after.status,
+        ...(maySeeRates(req) ? { ratePerHour: after.ratePerHour } : {}) }
+    ),
+  });
+  res.json({ freelancer: maySeeRates(req) ? after : hideRates(after) });
+});
+
+// ------------------------------------------------------------- assignments
+
+// GET /api/outsource/assignments
+router.get('/assignments', async (req, res) => {
+  const scope = await projectIdsFor(req);
+  const assignments = await outsource.listAssignments(db, scope);
+  res.json({
+    assignments,
+    summary: outsource.summarise(assignments),
+    statuses: outsource.STATUSES.map((key) => ({ key, label: outsource.STATUS_LABELS[key] })),
+    canManage: mayManage(req),
+    canSeeRates: maySeeRates(req),
+  });
+});
+
+/* Which projects and assets an assignment may name, for the form's dropdowns.
+   Narrowed the same way the list is, so the form cannot offer a project whose
+   assignments the person would not then be shown. */
+router.get('/targets', async (req, res) => {
+  const scope = await projectIdsFor(req);
+  const where = scope === null ? 'WHERE p.is_active = 1' : 'WHERE p.is_active = 1 AND p.id IN ($1)';
+  const params = scope === null ? [] : [scope];
+  if (scope !== null && !scope.length) return res.json({ projects: [] });
+  const { rows } = await db.query(
+    `SELECT p.id, p.\`name\`, c.\`name\` AS client_name
+       FROM projects p LEFT JOIN clients c ON c.id = p.client_id
+      ${where} ORDER BY c.\`name\`, p.\`name\``, params);
+  res.json({ projects: rows.map((p) => ({ id: p.id, name: p.name, clientName: p.client_name || '' })) });
+});
+
+// GET /api/outsource/projects/:projectId/assets — for the optional asset link
+router.get('/projects/:projectId/assets', async (req, res) => {
+  const scope = await projectIdsFor(req);
+  if (scope !== null && !scope.includes(String(req.params.projectId))) {
+    return res.status(403).json({ error: 'No access to that project.' });
+  }
+  const { rows } = await db.query(
+    'SELECT id, `code`, `name`, man_hours FROM assets WHERE project_id = $1 ORDER BY `code`',
+    [req.params.projectId]
+  );
+  res.json({
+    assets: rows.map((a) => ({
+      id: a.id, code: a.code, name: a.name,
+      manHours: a.man_hours === null || a.man_hours === undefined ? null : Number(a.man_hours),
+    })),
+  });
+});
+
+const inScope = async (req, projectId) => {
+  const scope = await projectIdsFor(req);
+  return scope === null || scope.includes(String(projectId));
+};
+
+// POST /api/outsource/assignments
+router.post('/assignments', async (req, res) => {
+  if (refuseUnlessManager(req, res)) return;
+  const body = req.body || {};
+  if (body.projectId && !(await inScope(req, body.projectId))) {
+    return res.status(403).json({ error: 'No access to that project.', field: 'projectId' });
+  }
+  const result = await outsource.createAssignment(db, body, req.user.id);
+  if (!result.ok) return res.status(result.status).json({ errors: result.errors, error: result.errors[0].message });
+  const a = result.assignment;
+  req.activity({
+    module: 'settings', action: 'outsource.assigned',
+    entityType: 'outsource_assignment', entityId: a.id,
+    entityLabel: `${a.freelancerName} — ${a.projectName}`,
+    summary: `Gave ${a.freelancerName} ${a.decidedManHours}h on ${a.projectName}`
+      + (a.assetCode ? ` (${a.assetCode})` : ''),
+    changes: activity.diff({ decidedManHours: null }, { decidedManHours: a.decidedManHours }),
+  });
+  res.status(201).json({ assignment: a });
+});
+
+// PUT /api/outsource/assignments/:id
+router.put('/assignments/:id', async (req, res) => {
+  if (refuseUnlessManager(req, res)) return;
+  const existing = await outsource.getAssignment(db, req.params.id);
+  if (!existing) return res.status(404).json({ error: 'No such assignment.' });
+  if (!(await inScope(req, existing.projectId))) {
+    return res.status(403).json({ error: 'No access to that project.' });
+  }
+  const body = req.body || {};
+  if (body.projectId && !(await inScope(req, body.projectId))) {
+    return res.status(403).json({ error: 'No access to that project.', field: 'projectId' });
+  }
+  const result = await outsource.updateAssignment(db, req.params.id, body);
+  if (!result.ok) return res.status(result.status).json({ errors: result.errors, error: result.errors[0].message });
+
+  const before = result.before;
+  const after = result.assignment;
+  /* THE FIGURE, NAMED. A change to the agreed hours is what somebody is paid
+     against, so the summary says the old number and the new one rather than
+     leaving a reader to open the diff. */
+  const hoursChanged = before.decidedManHours !== after.decidedManHours;
+  req.activity({
+    module: 'settings',
+    action: hoursChanged ? 'outsource.hours_revised' : 'outsource.assignment_updated',
+    entityType: 'outsource_assignment', entityId: after.id,
+    entityLabel: `${after.freelancerName} — ${after.projectName}`,
+    summary: hoursChanged
+      ? `Revised ${after.freelancerName}’s agreed hours on ${after.projectName} `
+        + `from ${before.decidedManHours}h to ${after.decidedManHours}h`
+      : `Updated ${after.freelancerName}’s assignment on ${after.projectName}`,
+    changes: activity.diff(
+      { decidedManHours: before.decidedManHours, status: before.statusLabel, dueDate: before.dueDate },
+      { decidedManHours: after.decidedManHours, status: after.statusLabel, dueDate: after.dueDate }
+    ),
+  });
+  res.json({ assignment: after });
+});
+
+module.exports = router;

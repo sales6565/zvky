@@ -165,11 +165,39 @@ async function billing(db, projectId) {
  * `worked` is what src/pnl-hours.js returned: the budgeted hours and the
  * recorded hours, both already costed against the Rate Card. Everything below
  * is arithmetic on those and on the one typed figure. */
-function compute({ billing: bill, hours: worked = null }) {
+function compute({ billing: bill, hours: worked = null, outsource: sent = null }) {
   const budgetedHours = worked ? hours(worked.budgetedHours) : 0;
   const budgetedCost = worked ? money(worked.budgetedCost) : 0;
   const recordedHours = worked ? hours(worked.recordedHours) : 0;
   const recordedCost = worked ? money(worked.recordedCost) : 0;
+
+  /* WORK SENT OUTSIDE THE STUDIO, which this could not see at all until now.
+   *
+   * Recorded cost is work sessions priced at the Rate Card rate of the
+   * designation that logged them. A freelancer logs no sessions and holds no
+   * designation, so a project that outsourced half its work reported half its
+   * cost — and reported a profit to match. Nothing on either tab said so,
+   * because nothing knew.
+   *
+   * KEPT AS ITS OWN FIGURE rather than added into recordedCost. The two are
+   * different statements — what the studio's own people cost, and what it paid
+   * outside — and a screen that wants either can have it. What they are added
+   * into is combinedCost, and it is that which variance and profit are taken
+   * from below, because those two questions are about what the project cost
+   * altogether. */
+  const outsourcedHours = sent ? hours(sent.hours) : 0;
+  const outsourcedCost = sent ? money(sent.cost) : 0;
+  /* Hours from a freelancer whose rate nobody recorded. Reported, never folded
+     in at zero — the same rule the unpriced recorded hours below already
+     follow, and for the same reason: a zero makes the project look cheaper
+     than it was. */
+  const outsourcedUnpricedHours = sent ? hours(sent.unpricedHours) : 0;
+  /* NOT called totalCost. That name belonged to a hand-typed field this
+     feature deleted, and a test guards against it coming back — rightly: a
+     computed figure wearing the name of a manual one somebody removed is how a
+     reader ends up trusting the wrong thing. This is the two costs combined,
+     and it says so. */
+  const combinedCost = money(recordedCost + outsourcedCost);
 
   /* NOT ENTERED IS NOT ZERO — see the note in billing(). */
   const totalValue = bill && bill.totalValue !== null && bill.totalValue !== undefined
@@ -181,41 +209,57 @@ function compute({ billing: bill, hours: worked = null }) {
     budgetedCost,
     recordedHours,
     recordedCost,
-    /* Budgeted minus actual: POSITIVE is a saving, NEGATIVE an overrun. */
-    variance: money(budgetedCost - recordedCost),
+    /* Everything the project cost: its own people plus anybody it paid outside.
+       Identical to recordedCost on a project that outsourced nothing, which is
+       why adding it changed no existing figure. */
+    outsourcedHours,
+    outsourcedCost,
+    outsourcedUnpricedHours,
+    outsourced: outsourcedHours > 0,
+    combinedCost,
+    /* Budgeted minus actual: POSITIVE is a saving, NEGATIVE an overrun.
+       Against TOTAL cost, because a project that came in under budget only by
+       paying freelancers out of sight of this figure did not come in under
+       budget. */
+    variance: money(budgetedCost - combinedCost),
     variancePercent: budgetedCost > 0
-      ? percent(money(budgetedCost - recordedCost), budgetedCost) : null,
+      ? percent(money(budgetedCost - combinedCost), budgetedCost) : null,
     /* A project nobody estimated is UNPLANNED, not under budget. Every project
        that predates the Man Hours field would otherwise carry a red flag that
        means nothing. */
     budgeted: budgetedHours > 0,
-    overBudget: budgetedCost > 0 && recordedCost > budgetedCost,
+    overBudget: budgetedCost > 0 && combinedCost > budgetedCost,
     /* Hours nobody could price, on either side. Reported, never folded in at
        zero: the costs above are then LOWER than the truth, and the screen has
        to be able to say so. */
-    unpricedHours: worked
-      ? hours(worked.recordedUnpricedHours + worked.budgetedUnpricedHours) : 0,
+    unpricedHours: hours(
+      (worked ? worked.recordedUnpricedHours + worked.budgetedUnpricedHours : 0)
+      + outsourcedUnpricedHours
+    ),
     recordedUnpricedHours: worked ? hours(worked.recordedUnpricedHours) : 0,
     budgetedUnpricedHours: worked ? hours(worked.budgetedUnpricedHours) : 0,
 
     // --- the Actual tab: the price against what it took ----------------------
     totalValue,
-    actualProfit: totalValue === null ? null : money(totalValue - recordedCost),
+    actualProfit: totalValue === null ? null : money(totalValue - combinedCost),
     actualMarginPercent: totalValue === null ? null
-      : percent(money(totalValue - recordedCost), totalValue),
-    /* What an hour on this project actually cost, blended. Derived, so it
-       cannot disagree with the two figures it comes from. */
-    costPerHour: recordedHours > 0 ? money(recordedCost / recordedHours) : null,
+      : percent(money(totalValue - combinedCost), totalValue),
+    /* What an hour on this project actually cost, blended across the studio's
+       own people and anybody it paid outside — which is the only way the
+       figure means anything on a project that outsourced. Derived, so it cannot
+       disagree with the two it comes from. */
+    costPerHour: (recordedHours + outsourcedHours) > 0
+      ? money(combinedCost / (recordedHours + outsourcedHours)) : null,
   };
 }
 
 /* Everything one project's P&L screen needs. */
-async function forProject(db, projectId, { hours: worked = null } = {}) {
+async function forProject(db, projectId, { hours: worked = null, outsource: sent = null } = {}) {
   const bill = await billing(db, projectId);
   return {
     projectId,
     billing: bill,
-    totals: compute({ billing: bill, hours: worked }),
+    totals: compute({ billing: bill, hours: worked, outsource: sent }),
     byRole: worked ? worked.byRole : [],
   };
 }
@@ -231,6 +275,11 @@ function rollup(perProject) {
   const sum = (pick) => perProject.reduce((t, p) => t + pick(p.totals), 0);
   const budgetedCost = money(sum((t) => t.budgetedCost));
   const recordedCost = money(sum((t) => t.recordedCost));
+  /* Summed like everything else here, so a client's total cost cannot disagree
+     with the projects listed under it. */
+  const outsourcedCost = money(sum((t) => t.outsourcedCost || 0));
+  const outsourcedHours = hours(sum((t) => t.outsourcedHours || 0));
+  const combinedCost = money(recordedCost + outsourcedCost);
   /* Total Value only adds up across the projects that HAVE one, and how many
      did is reported beside it — "₹20,00,000 across 3 of 7 projects" cannot then
      be misread as the value of all seven. A project with no Total Value
@@ -248,8 +297,11 @@ function rollup(perProject) {
     budgetedCost,
     recordedHours,
     recordedCost,
-    variance: money(budgetedCost - recordedCost),
-    variancePercent: budgetedCost > 0 ? percent(money(budgetedCost - recordedCost), budgetedCost) : null,
+    outsourcedHours,
+    outsourcedCost,
+    combinedCost,
+    variance: money(budgetedCost - combinedCost),
+    variancePercent: budgetedCost > 0 ? percent(money(budgetedCost - combinedCost), budgetedCost) : null,
     /* A COUNT, not a flag: a rollup over ten projects of which two are over is
        not "over budget", it is "two over budget". */
     overBudgetProjects: perProject.filter((p) => p.totals.overBudget).length,
@@ -261,7 +313,8 @@ function rollup(perProject) {
     projectsWithTotalValue: perProject.filter((p) => p.totals.totalValue !== null).length,
     actualProfit,
     actualMarginPercent: percent(actualProfit, totalValue),
-    costPerHour: recordedHours > 0 ? money(recordedCost / recordedHours) : null,
+    costPerHour: (recordedHours + outsourcedHours) > 0
+      ? money(combinedCost / (recordedHours + outsourcedHours)) : null,
   };
 }
 

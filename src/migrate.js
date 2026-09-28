@@ -2076,6 +2076,83 @@ async function ensureProjectMemberProvenance(db, log) {
   log('Schema: project_members records who attached somebody and when.');
 }
 
+/* Freelancers, and the work given to them.
+ *
+ * TWO TABLES AND NO USER ACCOUNTS. A freelancer is a record the studio keeps,
+ * not somebody who signs in: every row in `users` carries a password and a
+ * designation from the catalogue, and giving a non-employee one of those would
+ * mean inventing this application's first external user class — a sixth
+ * projectScope for "only what is addressed to me", and a pass over every
+ * permission asking what it means for somebody outside the studio. The studio
+ * asked for records, and records are what these are.
+ *
+ * NO TIMER, NO SESSION, NO MEASURED TIME. decided_man_hours is an agreed
+ * figure somebody types, and it is the only hours column here. None of the
+ * recording-schedule machinery — work_sessions, the pause sweep, the automatic
+ * resume — touches any of this, and nothing in these tables is derived from a
+ * clock.
+ */
+async function ensureOutsource(db, log) {
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS freelancers (
+      id            CHAR(36)     NOT NULL PRIMARY KEY,
+      \`name\`        VARCHAR(191) NOT NULL,
+      email         VARCHAR(191) NULL,
+      phone         VARCHAR(64)  NULL,
+      -- Art, animation, rigging and so on. Free text rather than a reference
+      -- list: the studio hires outside its own designations by definition, and
+      -- a dropdown of internal roles would be the wrong list.
+      discipline    VARCHAR(120) NULL,
+      -- What an hour of their time costs. NULL is "not recorded", which is a
+      -- different thing from zero and is why this is nullable: a freelancer
+      -- whose rate nobody has entered must not silently cost the project
+      -- nothing in the P&L.
+      rate_per_hour DECIMAL(10,2) NULL,
+      -- 'active' | 'inactive'. Deactivated rather than deleted, so the
+      -- assignments that name them keep their meaning.
+      status        VARCHAR(16)  NOT NULL DEFAULT 'active',
+      notes         TEXT         NULL,
+      added_by      CHAR(36)     NULL,
+      created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      KEY idx_fl_status (status)
+    )`));
+
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS outsource_assignments (
+      id              CHAR(36)      NOT NULL PRIMARY KEY,
+      freelancer_id   CHAR(36)      NOT NULL,
+      project_id      CHAR(36)      NOT NULL,
+      /* OPTIONAL, and that is the design. Outsourced work is sometimes a
+         tracked asset and sometimes a job that never enters the pipeline;
+         forcing a link would mean inventing placeholder assets for the second
+         kind. Where it IS set, note that the asset carries its own man_hours
+         estimate — the two numbers are shown side by side on the screen rather
+         than one quietly standing for the other. */
+      asset_id        CHAR(36)      NULL,
+      description     VARCHAR(500)  NULL,
+      /* THE ONLY HOURS FIGURE IN THIS FEATURE. Agreed, typed, and revisable by
+         hand; never measured. Every change to it is written to the Activity
+         Log with its old value, because this number is what somebody is paid
+         against. */
+      decided_man_hours DECIMAL(8,2) NOT NULL DEFAULT 0,
+      -- assigned | in_progress | delivered | revision_requested
+      status          VARCHAR(32)   NOT NULL DEFAULT 'assigned',
+      due_date        DATE          NULL,
+      notes           TEXT          NULL,
+      assigned_by     CHAR(36)      NULL,
+      assigned_at     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      KEY idx_oa_freelancer (freelancer_id),
+      KEY idx_oa_project (project_id),
+      KEY idx_oa_asset (asset_id),
+      CONSTRAINT fk_oa_freelancer FOREIGN KEY (freelancer_id) REFERENCES freelancers(id) ON DELETE CASCADE,
+      CONSTRAINT fk_oa_project    FOREIGN KEY (project_id)    REFERENCES projects(id)    ON DELETE CASCADE,
+      /* SET NULL rather than CASCADE: deleting an asset must not delete the
+         record that somebody was paid for work on it. */
+      CONSTRAINT fk_oa_asset      FOREIGN KEY (asset_id)      REFERENCES assets(id)      ON DELETE SET NULL
+    )`));
+  log('Schema: freelancers and outsource_assignments ready.');
+}
+
 async function ensureChatSettings(db, log) {
   await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS chat_settings (
       id                TINYINT   NOT NULL PRIMARY KEY,
@@ -3009,6 +3086,8 @@ const STEPS = [
      would be one on the first of those. */
   // After the table itself, which ensureProjects creates.
   ['project member provenance', ensureProjectMemberProvenance],
+  // After projects and assets, whose keys its assignments point at.
+  ['outsource', ensureOutsource],
   ['chat settings', ensureChatSettings],
   ['chat settings mirror', (db) => chatSettings.load(db)],
   // After the tables exist, and reading the window from the module that owns it.

@@ -827,6 +827,65 @@ const GROUPS = [
     ],
   },
   {
+    /* Work sent outside the studio.
+     *
+     * Its own group rather than a corner of Projects, for the reason the money
+     * group is its own: these three answer a question none of the others ask —
+     * who outside the studio is doing this work, on what terms, and what it
+     * costs. A studio can want a producer who assigns outsourced work without
+     * being shown what each freelancer is paid, and that split is only
+     * expressible if the keys sit apart.
+     */
+    key: 'outsource',
+    label: 'Outsourcing',
+    permissions: [
+      {
+        key: 'outsource.view',
+        label: 'View Outsourcing',
+        /* The same band that authorises outsourced work can see it: Lead,
+           Production, Creative Direction and everything above them. Written as
+           the three capabilities rather than as tier names, so a designation a
+           Super Admin adds lands on the right side of it without anybody
+           coming back here — the same predicate chat.group_create uses.
+
+           REACH IS STILL THE ROLE'S. Holding this shows the tab; which
+           projects' assignments appear in it is the designation's projectScope,
+           exactly as everywhere else. A lead sees their own projects' outsourced
+           work, not the studio's. */
+        impliedBy: anyOf(has('leadsTeam'), has('deliver'), has('manageUsers')),
+        describe: 'See the Outsource tab — the studio’s freelancers and the work given to '
+          + 'them, for the projects you can already see. Read only.',
+      },
+      {
+        key: 'outsource.manage',
+        label: 'Manage Outsourcing',
+        impliedBy: anyOf(has('leadsTeam'), has('deliver'), has('manageUsers')),
+        describe: 'Add and edit freelancer records, give them work, and set or revise the agreed '
+          + 'man hours on an assignment. Every change to that figure is recorded in the Activity '
+          + 'Log with what it was before.',
+      },
+      {
+        key: 'outsource.rates',
+        label: 'See Freelancer Pay Rates',
+        /* SEPARATE, and narrower than managing the work. This is the same split
+           the money group already makes between reading a margin and being
+           handed the Rate Card: what a particular person is paid is a
+           disclosure about that person, and assigning them work does not
+           require it.
+           
+           Without this the rate is not merely hidden on the screen — it is
+           not sent, and an attempt to set one is refused. A field the server
+           still returns to somebody who may not see it is not hidden, it is
+           one request away. */
+        impliedBy: has('managePermissions'),
+        describe: 'See and set what each freelancer is paid per hour, and the cost their work adds '
+          + 'to a project. Without it the Outsource tab shows the work and the agreed hours but no '
+          + 'money at all.',
+        danger: 'This discloses what individual contractors are paid.',
+      },
+    ],
+  },
+  {
     key: 'settings',
     label: 'Settings / Admin',
     permissions: [
