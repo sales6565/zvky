@@ -5,7 +5,7 @@ const router = asyncRouter();
 const { v4: uuid } = require('uuid');
 const db = require('../db');
 const { authenticate, requirePermission } = require('../middleware/auth');
-const { canAccessProject, holds } = require('../permissions');
+const { canAccessProject, holds, canActAtTlGate } = require('../permissions');
 const submissionLink = require('../submission-link');
 const notifications = require('../notifications');
 const rolePermissions = require('../role-permissions');
@@ -82,6 +82,92 @@ router.get('/', requirePermission('project.review_queue'), async (req, res) => {
   }
 });
 
+/* GAME FEEDBACK WAITING ON A LEAD — the second kind of pending item in this tab.
+ *
+ * The comment above the route has always said `groups` is a list because another kind of
+ * pending item is another entry in it. This is that entry, built the same way the others
+ * are: one query, filtered to this person, handed over as a group the page renders. No
+ * second tab, no second badge, no parallel mechanism.
+ *
+ * WHAT "WAITING ON A LEAD" MEANS HERE, and the first version of this had it wrong.
+ *
+ * A bug from the build does NOT route the asset to anybody. Game Feedback is a QUEUE,
+ * exactly like TL Review: src/routes/integration.js sets routed_to_id = NULL when it
+ * raises one, because routes.reviewQueue returns null and canActAtTlGate is a PREDICATE —
+ * it answers whether a given person may act, and cannot resolve a lead. So "routed to me"
+ * would have matched nothing, ever, and this group would have been permanently empty on a
+ * screen that looked like it was working.
+ *
+ * The queue is therefore read the way a queue is read:
+ *
+ *   status = 'game_feedback'    a bug is open on it
+ *   routed_to_id IS NULL        and nobody has taken it yet. Passing it to the artist
+ *                               routes it to them, which is what takes it off this list —
+ *                               the asset stays in Game Feedback, so the status alone
+ *                               would keep listing work already answered.
+ *   canActAtTlGate              and this person may stand at that gate on this asset.
+ *
+ * THE GATE ITSELF, not the board's batched approximation of it. src/routes/assets.js has
+ * a mayReviewTl built from two queries for a board of forty cards, and its own comment
+ * says it answers the project half and skips the submitted-the-current-version guard.
+ * That is the right trade for decorating a list of cards. It is the wrong one for a queue
+ * that tells somebody something is waiting on THEM: this asks the real predicate, once
+ * per asset, and the set it asks over is every asset in the studio with an open game bug
+ * and nobody on it — which is a handful, and transient by construction.
+ */
+async function gameFeedbackAwaiting(user) {
+  /* review.tl first, and it costs nothing: canActAtTlGate tests exactly this permission
+     before anything else, so a role without it cannot produce a single row and there is no
+     reason to read the table to find that out. */
+  if (!holds(user, 'review.tl')) return [];
+  let rows = [];
+  try {
+    ({ rows } = await db.query(
+      /* project_id and assignee_id are selected UNALIASED as well as camelCased, and
+         that is load-bearing rather than untidy: canActAtTlGate below reads
+         asset.assignee_id for the nobody-reviews-their-own-work guard and
+         asset.project_id for the review team, so a row carrying only the page's
+         camelCase names would have passed the gate an asset with no assignee and no
+         project — which answers differently, and more permissively, than the truth. */
+      `SELECT a.id, a.\`code\`, a.\`name\`, a.\`type\`, a.status,
+              a.project_id, a.assignee_id, a.routed_to_id,
+              a.project_id AS projectId, a.assignee_id AS assigneeId,
+              p.\`name\` AS projectName, c.\`name\` AS clientName,
+              u.\`name\` AS assigneeName,
+              f.source, f.bug_ref AS bugRef, f.severity, f.note,
+              f.sender_name AS senderName, f.sender_role AS senderRole,
+              f.round, f.created_at AS raisedAt
+         FROM assets a
+         JOIN projects p ON p.id = a.project_id
+         LEFT JOIN clients c ON c.id = p.client_id
+         LEFT JOIN users u ON u.id = a.assignee_id
+         /* The round being answered: the newest feedback that MOVED the asset, which is
+            the one carrying the restore pair. The same row POST /game-feedback answers,
+            found the same way, so this summary cannot describe a different bug from the
+            one the buttons act on. */
+         LEFT JOIN external_feedback f ON f.id = (
+           SELECT f2.id FROM external_feedback f2
+            WHERE f2.asset_id = a.id AND f2.prev_status IS NOT NULL
+            ORDER BY f2.created_at DESC, f2.round DESC LIMIT 1)
+        WHERE a.status = 'game_feedback' AND a.routed_to_id IS NULL
+        ORDER BY f.created_at DESC`
+    ));
+  } catch (err) {
+    /* The tables arrive in a migration step. A deployment part-way through one shows this
+       tab without this group rather than a 500 — the project review queue in it has
+       nothing to do with game feedback. Same reading as `unavailable` below. */
+    if (!unavailable(err)) throw err;
+    return [];
+  }
+
+  const mine = [];
+  for (const row of rows) {
+    // eslint-disable-next-line no-await-in-loop
+    if (await canActAtTlGate(user, row)) mine.push(row);
+  }
+  return mine;
+}
+
 /* GET /api/project-reviews/pending-actions — what is waiting on YOU.
  *
  * Two questions, deliberately separate:
@@ -112,10 +198,19 @@ router.get('/pending-actions', requirePermission('pending.view'), async (req, re
   const mayRespond = holds(req.user, 'project.review_respond');
   const mayFollowUp = holds(req.user, 'project.review_queue');
   const maySeeOwn = holds(req.user, 'project.review_mine');
+
+  /* ASKED BEFORE THE EARLY RETURN BELOW, and that ordering is the point rather than a
+     detail: game feedback is not part of the project review workflow, so a Team Lead who
+     holds none of its three permissions must still be told a bug from the build is
+     waiting on them. Inside the early return it would have been invisible to exactly the
+     designation it is addressed to. */
+  const gameFeedback = await gameFeedbackAwaiting(req.user);
+
   if (!mayRespond && !mayFollowUp && !maySeeOwn) {
     // Not an error: this is "nothing is waiting on you", which is what somebody
-    // outside this workflow should be told rather than being refused.
-    return res.json({ groups: [], counts: { active: 0, history: 0 }, count: 0 });
+    // outside this workflow should be told rather than being refused — except for
+    // anything above, which is not this workflow's to withhold.
+    return res.json(withGameFeedback([], gameFeedback));
   }
 
   let rows = [];
@@ -123,7 +218,8 @@ router.get('/pending-actions', requirePermission('pending.view'), async (req, re
     ({ rows } = await db.query(`${SELECT} ORDER BY r.created_at DESC`));
   } catch (err) {
     if (!unavailable(err)) throw err;
-    return res.json({ groups: [], counts: { active: 0, history: 0 }, count: 0, unavailable: true });
+    // The project review table being unreadable says nothing about the rest of the tab.
+    return res.json({ ...withGameFeedback([], gameFeedback), unavailable: true });
   }
 
   /* --- Active and History ---------------------------------------------------
@@ -276,17 +372,37 @@ router.get('/pending-actions', requirePermission('pending.view'), async (req, re
     });
   }
 
-  /* The badge counts what is waiting on this person and nothing else: Active
-     only, records excluded. History never contributes — it is by definition
-     the part already done. */
+  res.json(withGameFeedback(groups, gameFeedback));
+});
+
+/* The groups, plus game feedback, plus the counts over all of them.
+ *
+ * One function because the counting rule must be the same however the tab was reached:
+ * three of the four exits from the route above return early, and a badge that counted
+ * only on the fourth would be a tab that lit up for some people and not others.
+ *
+ * ACTIVE ONLY, records excluded — game feedback is active by definition, because
+ * somebody is being asked to answer it. History never contributes; it is the part
+ * already done.
+ */
+function withGameFeedback(groups, gameFeedback) {
+  const all = gameFeedback.length ? [{
+    key: 'game_feedback_lead',
+    label: 'Game feedback waiting on you',
+    note: 'A bug from the build, on an asset you lead. Open it to pass it to the artist or '
+      + 'decline it with a reason.',
+    act: 'open',
+    phase: 'active',
+    items: gameFeedback,
+  }, ...groups] : groups;
   const counts = {
-    active: groups.filter((g) => g.phase === 'active' && g.countable !== false)
+    active: all.filter((g) => g.phase === 'active' && g.countable !== false)
       .reduce((n, g) => n + g.items.length, 0),
-    history: groups.filter((g) => g.phase === 'history')
+    history: all.filter((g) => g.phase === 'history')
       .reduce((n, g) => n + g.items.length, 0),
   };
-  res.json({ groups, counts, count: counts.active });
-});
+  return { groups: all, counts, count: counts.active };
+}
 
 // POST /api/project-reviews — submit one.
 // body: { clientId, projectId, link, description? }

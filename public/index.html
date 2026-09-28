@@ -608,6 +608,18 @@ tr.past-round{opacity:0.62;}
 .note{background:var(--surface-2);border-left:3px solid var(--brand-accent);border-radius:0 8px 8px 0;padding:8px 10px;margin-bottom:8px;}
 .note .who{font-family:'Space Grotesk';font-weight:700;font-size:12px;} .note .when{font-size:10px;color:var(--ink-muted);font-family:'IBM Plex Mono';}
 .note p{margin:4px 0 0;font-size:12.5px;line-height:1.4;}
+/* The build's side of an asset. Built on .note and .status-pill rather than on
+   anything new: a bug from the game reads like the review feedback above it, because
+   it is the same kind of thing — somebody outside this panel saying what is wrong. */
+.ingame-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px;padding:2px 0;}
+.ingame-bits{color:var(--ink-muted);}
+.ingame-out{margin-top:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+/* The open round, marked by weight rather than by another colour: the source's colour
+   is already carrying the left border, and two colour meanings on one row is one too
+   many to read at a glance. */
+.gf-round.gf-open{background:var(--surface-3);}
+.gf-src{font-size:10px;font-family:'IBM Plex Mono';padding:1px 6px;border-radius:20px;margin-right:4px;}
+.gf-meta{font-size:11px;color:var(--ink-muted);font-family:'IBM Plex Mono';margin-top:3px;}
 .modal-wrap{position:fixed;inset:0;background:rgba(10,11,14,.65);display:none;align-items:center;justify-content:center;z-index:50;padding:20px;} .modal-wrap.show{display:flex;}
 .modal{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:22px;width:440px;max-width:100%;max-height:90vh;overflow-y:auto;}
 .modal h2{font-family:'Space Grotesk';margin:0 0 14px;font-size:18px;}
@@ -2433,6 +2445,39 @@ const STATUSES = [
   {id:'awaiting_client_feedback', label:'Awaiting Client Feedback', color:'var(--client)'},
   {id:'delivered', label:'Delivered', color:'var(--final)'},
 ];
+/* WHO RAISED A GAME BUG, and it changes what the row means rather than only what
+ * it says. The four the integration accepts (SOURCES in src/routes/integration.js);
+ * a fifth there is a row's value, so an unknown one is shown as itself rather than
+ * dropped.
+ *
+ * `ref` is what a bug reference means to that source, and whether there is one at all:
+ * QA and the engineers work out of a bug tracker, so a reference is the row's identity
+ * and is worth showing first. Tech Art is inside the studio and refers to a pass, not a
+ * ticket. A client has no tracker of ours at all — drawing "Bug —" against their note
+ * would invent a field they never filled in.
+ *
+ * Colours are the pipeline's own, and none of them is the brand red: a bug from the
+ * build is not a ZVKY colour event. */
+const FEEDBACK_SOURCES = {
+  qa:       { label: 'QA',          color:'#d9822b', ref:'Bug' },
+  dev:      { label: 'Dev',         color:'#5b8def', ref:'Issue' },
+  tech_art: { label: 'Tech Art',    color:'#9b7ef0', ref:'Pass' },
+  client:   { label: 'Client',      color:'var(--client)', ref:null },
+};
+function feedbackSource(key){
+  return FEEDBACK_SOURCES[key] || { label: String(key||'Unknown'), color:'var(--ink-faint)', ref:'Ref' };
+}
+/* How the build describes where an asset stands. Free text from the engine — VARCHAR on
+   purpose, so this maps what is known and shows anything else as it arrived. */
+const ENGINE_STATES = {
+  not_in:  { label:'Not in the build', color:'var(--ink-faint)' },
+  in:      { label:'In the build',     color:'var(--approved)' },
+  broken:  { label:'Broken',           color:'#e8402c' },
+  removed: { label:'Removed',          color:'var(--not)' },
+};
+function engineState(key){
+  return ENGINE_STATES[key] || { label: String(key||'Unreported'), color:'var(--ink-muted)' };
+}
 /* The studio's designations are defined once on the server (src/roles.js) and
    fetched here, so adding a role never means editing this file. */
 let ROLE_LIST = [];
@@ -3010,7 +3055,7 @@ const RESTRICTED_STATUSES = [
    status is added without being placed — otherwise it would simply stop
    appearing anywhere, which is the quietest way to lose work.
    
-   Note there is no "Final" status and never has been: the eleven ids below are
+   Note there is no "Final" status and never has been: the twelve ids below are
    the whole enum. "Final %" on the dashboard is a computed figure — the share
    of a project that has reached Delivered — not a state an asset can be in.
    Archived is Delivered, and only Delivered. */
@@ -4423,6 +4468,9 @@ async function renderPending(){
        things that ask rather than like their record. */
     acknowledge: ' style="border-left-color:var(--review);background:linear-gradient(90deg,#9b7ef014,transparent);border-color:#9b7ef044;"',
     none:  ' style="border-left-color:var(--ink-faint);background:none;border-color:var(--border);"',
+    /* A bug from the build. The Game Feedback status colour, so the banner here and the
+       column on the board are recognisably the same thing. */
+    open:  ' style="border-left-color:#d9822b;background:linear-gradient(90deg,#d9822b14,transparent);border-color:#d9822b44;"',
   };
   /* The feedback box is drawn for a group whose act is 'respond'. That is the
      server's answer to "what may this person do", and it has been right — but
@@ -4440,6 +4488,39 @@ async function renderPending(){
       <h4>${escapeHTML(g.label)} · ${g.items.length}</h4>
       <div class="pr-sub">${escapeHTML(g.note)}</div>
       ${g.items.map(r=>{
+        /* AN ASSET, NOT A SUBMISSION. Every other group in this tab carries a
+           project_review_requests row; this one carries the asset a bug was raised
+           against, so it has its own head and its own single control. Drawn in the same
+           banner and the same .pr-item as the rest — one tab, one shape — and returned
+           early because none of the project-review branches below mean anything for it. */
+        if(g.act==='open'){
+          const src = feedbackSource(r.source);
+          const meta = [];
+          if(src.ref && r.bugRef) meta.push(`${src.ref} ${escapeHTML(r.bugRef)}`);
+          if(r.severity) meta.push(escapeHTML(r.severity));
+          if(r.assigneeName) meta.push(`assigned to ${escapeHTML(r.assigneeName)}`);
+          return `<div class="pr-item">
+            <div class="pr-what">
+              <strong>${escapeHTML(r.name || 'An asset')}</strong>
+              <span style="color:var(--ink-faint);">· ${escapeHTML(r.code || '')}</span>
+              <div class="pr-meta">${escapeHTML(r.projectName || '')}${
+                r.clientName?` · ${escapeHTML(r.clientName)}`:''}${
+                r.raisedAt?` · raised ${fmtDate(r.raisedAt)}`:''}</div>
+              <div style="margin-top:6px;">
+                <span class="status-pill" style="background:${src.color}22;color:${src.color};"><span class="d" style="background:${src.color}"></span>${escapeHTML(src.label)}</span>
+                ${r.senderName?`<span class="pr-meta" style="margin-left:6px;">${escapeHTML(r.senderName)}${
+                  r.senderRole?` (${escapeHTML(r.senderRole)})`:''}</span>`:''}
+                ${meta.length?`<span class="pr-meta" style="margin-left:6px;">· ${meta.join(' · ')}</span>`:''}
+              </div>
+              ${r.note?`<div class="note" style="margin-top:6px;border-left-color:${src.color};"><p>${escapeHTML(r.note)}</p></div>`:''}
+              <div style="margin-top:8px;">
+                <button class="btn btn-ghost btn-sm pr-open-asset" data-id="${escapeHTML(r.id)}"
+                  data-project="${escapeHTML(r.projectId||'')}">Open the asset</button>
+                <span class="pr-meta" style="margin-left:8px;">Pass it to the artist, or decline it with a reason.</span>
+              </div>
+            </div>
+          </div>`;
+        }
         const st = prStatus(r.status);
         return `<div class="pr-item">
           <div class="pr-what">
@@ -4588,6 +4669,13 @@ function wirePendingActions(el, refresh){
       }
     });
   });
+  /* Open the asset a bug was raised against. Reuses openNotification, which already
+     solves the hard half of this: the asset is usually in a project the header is not
+     pointing at, and it moves the client and project context before opening the drawer.
+     A second copy of that would be a second thing to get wrong. */
+  el.querySelectorAll('.pr-open-asset').forEach(b=>b.addEventListener('click', ()=>{
+    openNotification({ asset: b.dataset.id, project: b.dataset.project || null });
+  }));
   el.querySelectorAll('.pr-close').forEach(b=>b.addEventListener('click', async ()=>{
     const err = errFor(b.dataset.id);
     if(err) err.textContent = '';
@@ -7536,6 +7624,134 @@ function stampDetail(startedAt, submittedAt, rounds, held){
 }
 function fmtDate(s){ return s ? new Date(s).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : ''; }
 
+/* ---------- the game feedback block in the asset panel ----------
+ *
+ * Three things the studio reads together, from ONE call to
+ * GET /assets/:id/game-feedback: where the asset sits in the build, every bug raised
+ * against it, and the two answers this viewer may give.
+ *
+ * WHY THE BUTTONS COME FROM THE SERVER AND ARE NOT WORKED OUT HERE.
+ *
+ * Everywhere else in this panel a control is gated locally — mayActAtTlGate(a) reads
+ * the can_review_tl flag the assets list decorates each row with, and that is right for
+ * a board of forty cards. It is an APPROXIMATION though, and its own comment on the
+ * server says so: it answers the project half of the gate and the self-review guard,
+ * skips the submitted-the-current-version check, and answers true on a project with
+ * nobody on its team.
+ *
+ * The standing to answer a bug report is canActAtTlGate, in full. So the endpoint asks
+ * the state machine — availableActions over the same contextFor the POST uses — and this
+ * renders what comes back. Nothing here decides; `res.actions` is the decision. A local
+ * check would be a second copy of the rule, and the copy that drifts is always the one
+ * on the page, because nothing fails when it does: the button simply appears for
+ * somebody the server then refuses.
+ *
+ * So: no can(), no mayActAtTlGate, no status comparison in this function. If it is not
+ * in `actions`, it is not drawn.
+ */
+function inGameLineHTML(g){
+  if(!g) return '';
+  const st = engineState(g.engineStatus);
+  const bits = [];
+  if(g.build) bits.push(`build <strong>${escapeHTML(g.build)}</strong>`);
+  if(g.cpStage) bits.push(escapeHTML(g.cpStage));
+  /* Only when there ARE any. "0 open bugs" on an asset nobody has filed anything
+     against is a reassurance nobody asked for; a number greater than nought is news. */
+  if(g.openBugs > 0) bits.push(`<strong style="color:#e8402c;">${g.openBugs} open bug${g.openBugs===1?'':'s'}</strong>`);
+  return `<div class="field-lbl" style="margin-top:16px;">In game</div>
+    <div class="ingame-line">
+      <span class="status-pill" style="background:${st.color}22;color:${st.color};"><span class="d" style="background:${st.color}"></span>${escapeHTML(st.label)}</span>
+      ${bits.length ? `<span class="ingame-bits">${bits.join(' · ')}</span>` : ''}
+      ${g.at ? `<span class="when">${fmtDate(g.at)}</span>` : ''}
+    </div>
+    ${g.link ? `<div class="ingame-out">${renderLink(g.link, {style:'color:var(--brand-accent);word-break:break-all;'})}
+      <span style="font-size:10.5px;color:var(--ink-faint);">Open in Dev &amp; QA</span></div>` : ''}`;
+}
+
+/* One bug, as it was raised. The fields shown are the ones that source actually
+   supplies — see FEEDBACK_SOURCES — rather than a fixed row with blanks in it. */
+function feedbackRoundHTML(r){
+  const src = feedbackSource(r.source);
+  const meta = [];
+  if(src.ref && r.bugRef) meta.push(`${src.ref} <strong>${escapeHTML(r.bugRef)}</strong>`);
+  if(r.severity) meta.push(escapeHTML(r.severity));
+  if(r.build) meta.push(`build ${escapeHTML(r.build)}`);
+  if(r.cpStage) meta.push(escapeHTML(r.cpStage));
+  /* Who sent it, as free text: they are not users of this application, so there is no
+     row to point at and no avatar to draw. Role only when they gave one. */
+  const who = r.senderName
+    ? `${escapeHTML(r.senderName)}${r.senderRole?` (${escapeHTML(r.senderRole)})`:''}`
+    : src.label;
+  return `<div class="note gf-round${r.open?' gf-open':''}" data-fid="${escapeHTML(r.id)}" style="border-left-color:${src.color};">
+    <span class="who"><span class="gf-src" style="background:${src.color}22;color:${src.color};">${escapeHTML(src.label)}</span>
+      ${who} · round ${r.round}${r.open?' · <strong>open</strong>':''}</span>
+    <span class="when">${fmtDate(r.at)}</span>
+    ${meta.length?`<div class="gf-meta">${meta.join(' · ')}</div>`:''}
+    ${r.note?`<p>${escapeHTML(r.note)}</p>`:''}
+    ${r.link?`<p>${renderLink(r.link, {style:'color:var(--brand-accent);word-break:break-all;'})}</p>`:''}
+  </div>`;
+}
+
+async function renderGameFeedbackBlock(id){
+  const host = document.getElementById('d_gameBlock');
+  if(!host) return;
+  let res;
+  try{ res = await api(`/assets/${id}/game-feedback`); }
+  catch{ return; }                      /* nothing to say beats a broken heading */
+  // Still the asset on screen? A slow answer for one the reader has moved on from must
+  // not be written into the panel now showing another.
+  if(state.openAssetId !== id) return;
+
+  const rounds = res.rounds || [];
+  const actions = res.actions || [];
+  const may = (name)=>actions.some(t=>t.action===name);
+  /* Nothing in the build and nothing raised: no heading at all. */
+  if(!res.inGame && !rounds.length && !actions.length){ host.innerHTML = ''; return; }
+
+  const open = rounds.find(r=>r.open) || null;
+  host.innerHTML = inGameLineHTML(res.inGame)
+    + (rounds.length ? `<div class="field-lbl" style="margin-top:16px;">Game feedback</div>
+        <div id="d_gfRounds">${rounds.map(feedbackRoundHTML).join('')}</div>` : '')
+    /* The two answers, and only when the server said so. Pass carries no note —
+       the bug report IS the brief — while declining requires a reason, which is the
+       workflow's requiresNote and is what Dev & QA are told. */
+    + ((may('game_feedback_pass') || may('game_feedback_decline')) ? `
+      <div class="field-lbl" style="margin-top:16px;">Your answer</div>
+      <div style="font-size:11px;color:var(--ink-faint);margin-bottom:6px;">
+        ${open ? `Answering ${escapeHTML(feedbackSource(open.source).label)}${
+          open.bugRef?` · ${escapeHTML(open.bugRef)}`:''}.` : 'The open bug on this asset.'}
+        <strong>Pass to artist</strong> sends it to whoever the asset is assigned to;
+        <strong>Decline</strong> puts the asset back where the bug found it and tells Dev &amp; QA why.
+      </div>
+      <textarea id="gfReason" rows="2" placeholder="Why this is being declined (required to decline)…"></textarea>
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        ${may('game_feedback_decline')?`<button class="btn btn-ghost" id="gfDeclineBtn" style="flex:1;color:#e8402c;">Decline with reason</button>`:''}
+        ${may('game_feedback_pass')?`<button class="btn btn-brand" id="gfPassBtn" style="flex:1;">Pass to artist</button>`:''}
+      </div>
+      <div class="ref-err" id="gfErr"></div>` : '');
+
+  const err = document.getElementById('gfErr');
+  const answer = async (btn, decision)=>{
+    const reason = (document.getElementById('gfReason')||{}).value || '';
+    if(decision==='decline' && !reason.trim()){
+      err.textContent = 'Say why it is being declined — Dev & QA are told this.';
+      return;
+    }
+    err.textContent = '';
+    btn.disabled = true;
+    try{
+      await api(`/assets/${id}/game-feedback`, { method:'POST',
+        body:{ decision, reason: reason.trim() || undefined } });
+      showToast(decision==='pass' ? 'Passed to the artist.' : 'Declined — Dev & QA will be told.');
+      closeDrawer(); render();
+    }catch(e){ err.textContent = e.message; btn.disabled = false; }
+  };
+  const pass = document.getElementById('gfPassBtn');
+  if(pass) pass.onclick = ()=>answer(pass, 'pass');
+  const decline = document.getElementById('gfDeclineBtn');
+  if(decline) decline.onclick = ()=>answer(decline, 'decline');
+}
+
 async function openDrawer(id){
   const a = state.assets.find(x=>x.id===id);
   if(!a) return;
@@ -8023,6 +8239,19 @@ async function openDrawer(id){
     </div>` : ''}
 
 
+    <!-- WHAT THE BUILD SAYS, and what to do about it. One placeholder, filled by
+         one call to GET /assets/:id/game-feedback — see gameFeedbackBlock() below.
+
+         Drawn here rather than at the top of the panel because it reads in the same
+         order the work happens: the review gates above it, then what came back from
+         the game, then the submissions those answers are about.
+
+         EMPTY FOR MOST ASSETS, and it collapses to nothing rather than to a heading
+         with "none" under it: an asset that has never been in a build has no in-game
+         state to report, and a panel that says so on every asset in the studio is a
+         line everybody learns to skip. -->
+    <div id="d_gameBlock"></div>
+
     <div class="field-lbl">Submissions</div>
     <div id="d_versions">${(a.versions&&a.versions.length) ? a.versions.map(v=>`
       <div class="note" style="border-left-color:${v.stage==='tl'?'var(--review)':'#9b7ef0'};">
@@ -8280,6 +8509,12 @@ async function openDrawer(id){
    *
    * The total is on the end, because the breakdown exists to explain a total
    * and a list of parts with no sum is half an answer. */
+  /* The build's side of this asset, and the answers it allows. Its own call rather
+     than more fields on the assets list: the list is a board of cards and this is one
+     asset's detail, and the ACTIONS in it are a permission answer that must be asked
+     per asset rather than approximated per row. */
+  renderGameFeedbackBlock(id);
+
   if(document.getElementById('d_rounds')){
     api(`/assets/${id}/worklog`).then(({ work })=>{
       const el = document.getElementById('d_rounds');

@@ -2352,6 +2352,79 @@ It introduces no *transition*, so it owes nothing yet to `actors`, `refusal()` o
 owes all three, plus `REWORK_STATUSES` in [`src/permissions.js`](src/permissions.js),
 which is pinned to exactly two values and will fail until updated deliberately.
 
+### The three screens that read it
+
+**The asset panel** carries an **In game** line and a **Game feedback** list, both filled
+by one call to `GET /api/assets/:id/game-feedback`. The line is the single `asset_ingame`
+row — engine state, build, checkpoint, open bug count, and the link out to Dev & QA — and
+it appears only once the build has reported something: an asset that has never been in a
+build gets no heading rather than a heading saying so. Every `external_feedback` row is
+listed, newest first, including the ones taken as notes against work already in flight,
+and the fields shown are the ones that *source* supplies. QA and Dev work out of a bug
+tracker, so the reference is the row's identity; Tech Art refers to a pass; a client has
+no tracker of ours, so drawing "Bug —" against their note would invent a field they never
+filled in.
+
+**Pass to artist** and **Decline with reason** sit under it, and how they are gated is the
+part worth reading. Everywhere else in that panel a control is gated locally, against the
+`can_review_tl` flag the assets list decorates each row with — right for a board of forty
+cards, and deliberately a *conservative approximation* of `canActAtTlGate`: it answers the
+project half of the gate, skips the submitted-the-current-version guard, and answers true
+on a project with nobody on its team. The standing to answer a bug report is that gate in
+full, so the endpoint asks the state machine instead — `availableActions()` over the same
+`contextFor()` the POST uses — and the page renders what comes back. There is no `can()`,
+no `mayActAtTlGate` and no status comparison in `renderGameFeedbackBlock()`, and a test
+fails if one appears: a second copy of the rule on the page fails silently, because
+nothing goes red when a button is offered to somebody the server then refuses.
+
+This is also the first caller `availableActions()` has ever had. It has been in
+[`src/asset-workflow.js`](src/asset-workflow.js) since the machine was written, with "The
+UI renders from this rather than keeping its own copy of the rules" above it.
+
+**The board** needs nothing: the column is whatever `visibleStatuses()` returns, so adding
+`game_feedback` to `STATUSES` was the whole of it. It is not in `RESTRICTED_STATUSES`, so
+every role that can see the board sees the column — the artist about to be handed the bug
+as much as the lead answering it.
+
+**Pending Actions** gained one group, `game_feedback_lead`, which is the extension point
+that route was written for ("`groups` is a list on purpose … another kind of pending item
+is another entry in it"). Two things about it are easy to get wrong:
+
+- A raised bug is **not routed to anybody**. `routed_to_id` is `NULL`, because Game
+  Feedback is a *queue* like TL Review and `canActAtTlGate` is a predicate, not a resolver.
+  So "waiting on me" is `status = 'game_feedback' AND routed_to_id IS NULL` plus the gate,
+  asked per asset — not a routing column, which would have matched nothing ever, on a
+  screen that looked like it worked. Passing to the artist routes the asset and takes it off
+  the list; the status stays `game_feedback`, so a list built on status alone would keep
+  asking for an answer already given.
+- The group is built **before** the early return that answers "nothing is waiting on you"
+  to anybody outside the project review workflow. A Team Lead holds none of
+  `project.review_respond`, `_queue` or `_mine`, so inside that return this group would
+  have been invisible to exactly the designation it addresses.
+
+`pending.view` still decides whether there is a tab at all, and a Team Lead does **not**
+hold it by default — that is the studio's toggle, switched on per designation in
+**Settings → Permissions**, and it is left where it was.
+
+### What an artist cannot do with a bug passed to them
+
+Found while testing the panel, recorded because it is a gap in the *transitions* rather
+than in a screen, and not changed here:
+
+- `submit` has no transition from `game_feedback`, so the design note beside
+  `game_feedback_pass` — "the artist's next submit is the new round" — is an intention the
+  `from` list does not allow.
+- `reassign_review` *does* list `game_feedback`, but `canHandOverInReview` has no case for
+  it, so it reaches only `asset.assign_any`, the asset's creator, or full access. The lead
+  who just passed the bug on cannot hand it to somebody else.
+- `public/index.html`'s own `REWORK_STATUSES` still holds two values where
+  `src/permissions.js` holds three. Aligning it would offer the Reassign-to-same-user
+  shortcut on a `game_feedback` asset, which the point above means the server refuses — so
+  the two want fixing together, not separately.
+
+`tests/game-feedback-panel.test.js` asserts all three as they stand, so changing any of
+them is a deliberate act with a failing test to answer.
+
 ## Passwords
 
 Rules live in [`src/password-policy.js`](src/password-policy.js) and are served

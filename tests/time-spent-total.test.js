@@ -151,13 +151,33 @@ test('summing the rounds', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
   t.after(() => stopServer(server));
 
+  /* THE TOTALS ARE CHECKED TO THE MINUTE, NOT TO THE SECOND, and the difference is a
+   * flake rather than a nicety.
+   *
+   * workRound() starts the timer, winds started_at back by N minutes and submits. The
+   * recorded figure is NOW()-at-submit minus that stamp, so it is exactly N*60 only when
+   * the start and the submit land inside the same second. Under load — the full suite runs
+   * these files in parallel — they sometimes do not, and the assertion failed on
+   * `5401 !== 5400`: a one-second boundary, on a test about whether rounds are summed or
+   * replaced.
+   *
+   * Reproduced on an unmodified tree by running this file beside two others, so it is the
+   * assertion and not the code under it. A minute of slack keeps every case it was written
+   * to catch: the bug was a total showing the CURRENT round instead of the sum, and the
+   * smallest gap any of these has to see is forty-five minutes.
+   */
+  const SLACK_SECONDS = 60;
+  const aboutMinutes = (actual, minutes, label) => assert.ok(
+    Math.abs(Number(actual) - minutes * 60) <= SLACK_SECONDS,
+    `${label}: expected about ${minutes} minutes (${minutes * 60}s), got ${actual}s`);
+
   /* --- 1: two rounds, same user and different user ------------------------- */
 
   await t.test('a second round adds to the first rather than replacing it', async () => {
     const assetId = await newAsset('ana');
     await workRound(assetId, 'ana', 90);
     const afterOne = await onBoard(assetId);
-    assert.strictEqual(afterOne.time_spent_seconds, 90 * 60, 'the first round');
+    aboutMinutes(afterOne.time_spent_seconds, 90, 'the first round');
 
     assert.strictEqual((await sendBack(assetId)).status, 200);
     assert.strictEqual((await reassign(assetId, 'ana')).status, 200, 'Reassign to Same User');
@@ -165,12 +185,12 @@ test('summing the rounds', { skip: cfg ? false : SKIP_REASON }, async (t) => {
        the column must still show the ninety minutes already spent. */
     const between = await onBoard(assetId);
     assert.strictEqual(between.round_seconds, 0, 'the new round is empty');
-    assert.strictEqual(between.time_spent_seconds, 90 * 60,
+    aboutMinutes(between.time_spent_seconds, 90,
       'and the column still shows what the asset has cost — this is the bug');
 
     await workRound(assetId, 'ana', 45);
     const afterTwo = await onBoard(assetId);
-    assert.strictEqual(afterTwo.time_spent_seconds, (90 + 45) * 60, 'both rounds');
+    aboutMinutes(afterTwo.time_spent_seconds, 90 + 45, 'both rounds');
   });
 
   /* --- 5: three or more, and a different person --------------------------- */
@@ -186,7 +206,7 @@ test('summing the rounds', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     await workRound(assetId, 'ben', 20);
 
     const a = await onBoard(assetId);
-    assert.strictEqual(a.time_spent_seconds, (90 + 45 + 20) * 60,
+    aboutMinutes(a.time_spent_seconds, 90 + 45 + 20,
       'ninety, then forty-five, then twenty — not the last one, and not two of them');
     /* Said again as an identity, because the sum above could be right for the
        wrong reason and this cannot: whatever the parts are, they add to the

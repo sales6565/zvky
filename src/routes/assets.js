@@ -2246,6 +2246,114 @@ router.patch('/:id/tech-art', requirePermission('integration.flag_tech_art'), as
   res.json({ asset: { id: asset.id, needsTechArt: wanted }, changed: true });
 });
 
+/* GET /api/assets/:id/game-feedback — what the build says about this asset, and what
+ * this viewer may do about it.
+ *
+ * Three answers in one read, because the panel draws them together and a second round
+ * trip for the buttons would let the two disagree on screen:
+ *
+ *   inGame    the one asset_ingame row: where the asset sits in the build, written by
+ *             PUT /api/integration/v1/assets/:id/in-game and nowhere else.
+ *   rounds    every external_feedback row, newest first. The whole record, not only the
+ *             open one — a bug declined in March is why the asset looks the way it does
+ *             in April, and the panel is where somebody goes to find that out.
+ *   actions   WHAT THE SERVER WOULD ALLOW, and this is the important one.
+ *
+ * ON `actions`, and why it is not a flag the page could have worked out for itself.
+ *
+ * The standing to pass or decline is canActAtTlGate — this asset's resolved lead, or
+ * full access reaching a gate nobody staffed. The page cannot ask that question: it is
+ * four database reads about project teams, reporting lines and who submitted the current
+ * version. What the page HAS is `can_review_tl`, which the assets list decorates each
+ * row with, and that flag is deliberately a conservative approximation — its own comment
+ * says it "can hide a control the server would refuse; it cannot hide one the server
+ * would allow", because it skips the self-submission guard and answers true on an
+ * unstaffed project.
+ *
+ * Good enough to decide whether to draw a button. NOT good enough to be the only thing
+ * deciding, on a pair of buttons whose whole subject is who has standing to answer a bug
+ * report. So this asks the state machine the same way the POST does — availableActions
+ * over contextFor, whose isTeamLead IS canActAtTlGate — and the page renders what comes
+ * back. Two things that must agree now cannot drift, because there is only one of them.
+ *
+ * availableActions has been in src/asset-workflow.js since the machine was written, with
+ * "The UI renders from this rather than keeping its own copy of the rules" above it, and
+ * nothing had ever called it. This is the first caller.
+ */
+router.get('/:id/game-feedback', async (req, res) => {
+  const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
+  const asset = rows[0];
+  if (!asset) return res.status(404).json({ error: 'Asset not found' });
+  // The same gate /history uses: reading this is reading the asset.
+  if (!(await canViewAsset(req.user, asset))) {
+    return res.status(403).json({ error: 'No access to this asset' });
+  }
+
+  /* Both tables read with a catch, like the integration side reads them. They arrive in
+     a migration step, and a deployment part-way through one must show an asset panel
+     rather than a 500 — the rest of this panel has nothing to do with game feedback. */
+  const ingame = await db.query(
+    `SELECT build, cp_stage, engine_status, open_bugs, link, in_game_build_seq, updated_at
+       FROM asset_ingame WHERE asset_id = $1`,
+    [req.params.id]
+  ).catch(() => ({ rows: [] }));
+
+  const feedback = await db.query(
+    `SELECT id, round, source, bug_ref, severity, note, sender_name, sender_role,
+            build, cp_stage, link, prev_status, created_at
+       FROM external_feedback WHERE asset_id = $1
+      ORDER BY created_at DESC, round DESC`,
+    [req.params.id]
+  ).catch(() => ({ rows: [] }));
+
+  /* THE OPEN ROUND is the newest one that MOVED the asset, which is the one carrying the
+     restore pair — exactly the row the POST answers. Everything else was taken as a note
+     against work already in flight and has nothing open about it. */
+  const open = feedback.rows.find((r) => r.prev_status !== null) || null;
+
+  const ctx = await contextFor(req, asset);
+  /* Handed in for the same reason the POST hands it in: decline's target status is
+     `(ctx) => ctx.restoreStatus`, stored per round, and the workflow has no business
+     reading external_feedback. Without it the action would come back describing a move
+     to nowhere. */
+  ctx.restoreStatus = open ? open.prev_status : asset.status;
+  ctx.restoreRoutedTo = open ? open.prev_routed_to_id : null;
+  const actions = workflow.availableActions(ctx)
+    .filter((t) => t.action === 'game_feedback_pass' || t.action === 'game_feedback_decline');
+
+  const g = ingame.rows[0];
+  res.json({
+    assetId: asset.id,
+    status: asset.status,
+    inGame: g ? {
+      build: g.build || null,
+      cpStage: g.cp_stage || null,
+      engineStatus: g.engine_status || null,
+      openBugs: Number(g.open_bugs || 0),
+      link: g.link || null,
+      buildSeq: Number(g.in_game_build_seq || 0),
+      at: g.updated_at,
+    } : null,
+    rounds: feedback.rows.map((r) => ({
+      id: r.id,
+      round: r.round,
+      source: r.source,
+      bugRef: r.bug_ref || null,          // '' is the column's default, and is not a reference
+      severity: r.severity || null,
+      note: r.note || null,
+      senderName: r.sender_name || null,
+      senderRole: r.sender_role || null,
+      build: r.build || null,
+      cpStage: r.cp_stage || null,
+      link: r.link || null,
+      // Whether THIS round is the one an answer would apply to.
+      open: Boolean(open && open.id === r.id),
+      at: r.created_at,
+    })),
+    actions,
+  });
+});
+
 /* POST /api/assets/:id/game-feedback — what the studio does about a game bug.
  *
  * body: { decision: 'pass' | 'decline', reason? }
