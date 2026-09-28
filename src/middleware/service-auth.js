@@ -170,12 +170,28 @@ async function serviceAuth(req, res, next) {
     const presented = req.get(KEY_HEADER);
     if (!presented) return refuse(res, 401, `Missing ${KEY_HEADER}.`);
 
-    /* One indexed read on the hash of what was presented. The key itself is
-       never stored, so this is the only way to find the row — and it is why the
-       hash column is UNIQUE. */
+    /* One indexed read on the hash of what was presented, against EITHER the current key
+       or a previous one still inside its rotation window. The key itself is never stored,
+       so a hash lookup is the only way to find the row.
+       
+       THE OVERLAP EXISTS SO A ROTATION IS NOT AN OUTAGE. A caller cannot be handed a new
+       key and start using it in the same instant the old one dies, so for 24 hours after a
+       rotation both work. The window closes on `prev_key_expires_at > NOW()` — strictly in
+       the future, so at the instant it expires the old key is already dead. Generous in
+       the other direction would keep a withdrawn credential alive a second longer on a
+       boundary nobody can observe.
+       
+       NOW() is the database's clock, deliberately: the expiry was written by the same
+       clock when the key was rotated, so comparing them there cannot disagree with itself
+       the way a comparison against this process's clock could. */
     const { rows } = await db.query(
-      `SELECT id, \`name\`, allowed_actions, is_active
-         FROM integration_clients WHERE key_hash = $1`,
+      `SELECT id, \`name\`, allowed_actions, is_active,
+              (key_hash = $1) AS isCurrentKey
+         FROM integration_clients
+        WHERE key_hash = $1
+           OR (prev_key_hash = $1 AND prev_key_expires_at > NOW())
+        ORDER BY isCurrentKey DESC
+        LIMIT 1`,
       [sha256Hex(presented)]
     );
 
@@ -201,6 +217,10 @@ async function serviceAuth(req, res, next) {
       action,
       allowedActions: allowed,
       signedAt: signature.t,
+      /* Which key got them in. Carried so a caller can be told it is on a key that is
+         about to stop working, and so the log can show a rotation nobody finished — an
+         integration still presenting its previous key on hour 23 is about to break. */
+      usedPreviousKey: !Number(client.isCurrentKey),
     };
 
     /* THE ACTIVITY LOG'S ACTOR, and it has to be an OBJECT.

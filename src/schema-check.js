@@ -149,6 +149,10 @@ const REQUIRED = [
   { table: 'assets',            column: 'needs_tech_art', step: 'assets.needs_tech_art' },
   /* Which authority a gate action was taken on. Missing, the history cannot tell a
      round the project's team turned round from one an administrator pushed through. */
+  /* The rotation overlap. Missing, a key cannot be rotated without an outage — the old
+     one would stop working the instant the new one was issued. */
+  { table: 'integration_clients', column: 'prev_key_hash',       step: 'integration key rotation' },
+  { table: 'integration_clients', column: 'prev_key_expires_at', step: 'integration key rotation' },
   { table: 'asset_events',      column: 'acted_via',      step: 'asset_events.acted_via' },
   { table: 'integration_outbox',   column: null,              step: 'integration tables' },
   { table: 'integration_outbox',   column: 'seq',             step: 'integration tables' },

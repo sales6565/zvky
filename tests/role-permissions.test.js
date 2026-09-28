@@ -75,11 +75,40 @@ test('the catalogue covers the groups that were asked for', () => {
      is different in kind from anything under Reports, and a studio deciding who
      may see it should be making that decision on its own row rather than
      finding it among the throughput reports. */
+  /* Dev & QA Integration is its own group on the same reasoning: who may hand work to
+     another system, and who may see what it reports back, is a decision about a way of
+     working rather than about an administrative screen. Its SCREEN permission is not in
+     it — settings.integrations sits in Settings / Admin, because every key here lives in
+     the group its prefix names and a settings.* key elsewhere would be the first
+     exception. */
   assert.deepStrictEqual(catalog.GROUPS.map((g) => g.label), [
     'User Management', 'Asset Management', 'Review Workflow',
     'Project Management', 'Client Management', 'Reports', 'Time Sheet',
-    'Chat', 'Profit & Loss', 'Outsourcing', 'Settings / Admin',
+    'Chat', 'Profit & Loss', 'Outsourcing', 'Dev & QA Integration', 'Settings / Admin',
   ]);
+
+  // Every key sits in the group its prefix names. Asserted rather than assumed, because
+  // the one deliberate near-miss above is easier to justify than to remember.
+  const PREFIX_GROUP = {
+    user: 'User Management', asset: 'Asset Management', review: 'Review Workflow',
+    project: 'Project Management', client: 'Client Management', report: 'Reports',
+    timesheet: 'Time Sheet', chat: 'Chat', pnl: 'Profit & Loss',
+    outsource: 'Outsourcing', integration: 'Dev & QA Integration', settings: 'Settings / Admin',
+  };
+  for (const p of catalog.ALL) {
+    const expected = PREFIX_GROUP[p.key.split('.')[0]];
+    if (!expected) continue;
+    assert.strictEqual(p.groupLabel, expected,
+      `${p.key} is in "${p.groupLabel}" but its prefix says "${expected}"`);
+  }
+
+  /* Two permissions are not grantable, and both for the same shape of reason: holding
+     them lets you reach something your own designation does not give you.
+     settings.permissions can grant your role anything; settings.integrations can issue an
+     API key, and a key is a machine with no projectScope, so it reads every project and
+     asset in the studio. */
+  assert.deepStrictEqual(catalog.KEYS.filter((k) => !catalog.grantableKeys().includes(k)).sort(),
+    ['settings.integrations', 'settings.permissions']);
   assert.strictEqual(new Set(catalog.KEYS).size, catalog.KEYS.length);
 });
 

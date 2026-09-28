@@ -40,6 +40,7 @@ const workLog = require('./work-log');
 const branding = require('./branding');
 const ipGate = require('./middleware/ip-allowlist');
 const integrationRoutes = require('./routes/integration');
+const integrationAdminRoutes = require('./routes/integration-admin');
 const studioIpList = require('./ip-allowlist');
 const integrationIpList = require('./integration-ip-allowlist');
 const integrationIpGate = require('./middleware/integration-ip-allowlist');
@@ -157,6 +158,10 @@ app.use('/api/chat-activity', chatActivityRoutes);
 app.use('/api/branding', brandingRoutes);
 app.use('/api/admin/settings/recording-hours', recordingHoursRoutes);
 app.use('/api/admin/settings/chat-group-limit', chatSettingsRoutes);
+/* The integration's management screen. Its own mount under /api/admin, and every route
+   in it behind settings.integrations — which is not grantable to anybody but the Super
+   Admin, because issuing a key grants data access no designation limits. */
+app.use('/api/admin/integration', integrationAdminRoutes);
 /* The integration API. Its own address gate, its own rate limit, and a machine
    credential rather than a session — none of it routed through authenticate(),
    requirePermission or any of the person-shaped gates. Mounted after

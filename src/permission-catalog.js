@@ -886,6 +886,73 @@ const GROUPS = [
     ],
   },
   {
+    /* The Dev & QA integration.
+     *
+     * ITS OWN GROUP, not a corner of Settings / Admin, for the same reason Chat and
+     * Outsourcing have theirs: a studio deciding who may hand work to another system, and
+     * who may see what that system reports back, is making a decision about a way of
+     * working rather than about an administrative screen. Putting the operational three
+     * under Settings would have hidden them among the priorities and the branding.
+     *
+     * The screen-level permission is NOT here, though: it is settings.integrations, in
+     * Settings / Admin, because every key in this catalogue sits in the group its prefix
+     * names and a settings.* key in an integration group would be the first exception.
+     *
+     * NOTHING READS THESE THREE YET. The screens they gate do not exist, so they are
+     * storage for a decision a studio can already make — declared now because this
+     * release's own screen needs settings.integrations anyway, and adding the set in one
+     * place is one decision rather than two.
+     */
+    key: 'integration',
+    label: 'Dev & QA Integration',
+    permissions: [
+      {
+        key: 'integration.send_to_dev',
+        label: 'Send Work to Dev & QA',
+        /* The band that already decides work is ready to leave the studio. Handing a
+           partial drop to Dev & QA is the same kind of act as sending to the client: a
+           judgement that this is fit to go, not a step in making it. */
+        impliedBy: anyOf(has('reviewStage'), has('createProject')),
+        describe: 'Put assets into a partial drop or a Tech Art hand-off, and send it.',
+        /* DECLARED PENDING, which is a statement rather than an omission: the screen this
+           gates does not exist yet, and a permission nothing reads is a switch that lies.
+           The guard in tests/role-permissions.test.js fails for any key that is neither
+           read nor declared, which is what keeps this honest — the flag comes off in the
+           same change that adds the screen. */
+        pending: true,
+      },
+      {
+        key: 'integration.flag_tech_art',
+        label: 'Flag for Tech Art',
+        // Wider: an artist knows when their own work needs a Tech Art pass, and saying so
+        // is not a decision about anybody else's work.
+        impliedBy: anyOf(has('assignable'), has('reviewStage')),
+        describe: 'Mark an asset as needing a Tech Art pass before it goes into the build.',
+        /* DECLARED PENDING, which is a statement rather than an omission: the screen this
+           gates does not exist yet, and a permission nothing reads is a switch that lies.
+           The guard in tests/role-permissions.test.js fails for any key that is neither
+           read nor declared, which is what keeps this honest — the flag comes off in the
+           same change that adds the screen. */
+        pending: true,
+      },
+      {
+        key: 'integration.view_ingame',
+        label: 'View In-Game State',
+        /* Read-only, and deliberately wide. Which build an asset is in and how many bugs
+           are open against it is something anybody working on it benefits from seeing, and
+           withholding it would send people to ask somebody who can. */
+        impliedBy: anyOf(has('assignable'), has('reviewStage'), has('viewReports')),
+        describe: 'See which build an asset is in, its CP stage, and the bugs open against it.',
+        /* DECLARED PENDING, which is a statement rather than an omission: the screen this
+           gates does not exist yet, and a permission nothing reads is a switch that lies.
+           The guard in tests/role-permissions.test.js fails for any key that is neither
+           read nor declared, which is what keeps this honest — the flag comes off in the
+           same change that adds the screen. */
+        pending: true,
+      },
+    ],
+  },
+  {
     key: 'settings',
     label: 'Settings / Admin',
     permissions: [
@@ -1119,6 +1186,29 @@ const GROUPS = [
           + 'Every use of this screen is itself recorded in the Activity Log.',
         danger: 'This reads private conversations between colleagues. Staff should be told that '
           + 'chat is logged before it is granted, not after.',
+      },
+      {
+        key: 'settings.integrations',
+        label: 'Manage Dev & QA Integration',
+        /* SUPER ADMIN ONLY, and NOT grantable — the one other permission in this catalogue
+         * that is not is settings.permissions, and the reasoning is the same shape.
+         *
+         * This screen mints API credentials. A credential reads every project and every
+         * asset in the studio, because it is a machine with no projectScope: the
+         * person-shaped scoping that limits what a designation may see does not apply to
+         * it and could not. So whoever holds this can grant THEMSELVES data access their
+         * own designation denies them, by issuing a key and using it — which is a one-way
+         * door in the same way giving your own role every permission is.
+         *
+         * That is the difference from settings.email, which is grantable despite holding a
+         * live password: the mail credentials let you send as the studio, not read it.
+         */
+        impliedBy: has('managePermissions'),
+        grantable: false,
+        danger: 'This screen issues API keys. A key reads every project and asset in the '
+          + 'studio regardless of project scope, because it is a machine and not a person — '
+          + 'so whoever holds this can reach data their own designation does not give them. '
+          + 'It also shows each key once, at creation, and never again.',
       },
       {
         key: 'settings.permissions',

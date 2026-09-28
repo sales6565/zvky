@@ -2440,6 +2440,63 @@ async function ensureGameFeedbackTables(db, log) {
   }
 }
 
+/* integration_clients: the 24-hour rotation overlap.
+ *
+ * A credential with one hash cannot be rotated without an outage. The caller has to be
+ * handed a new key and start using it in the same instant the old one stops working, and
+ * nothing coordinates that — so every rotation would break whatever was mid-flight. The
+ * agreed answer is an overlap: both keys valid for 24 hours.
+ *
+ * TWO COLUMNS, NOT A TABLE, and the choice is about the auth path. Only one previous key
+ * is ever valid, so a related table would hold at most one row per client and cost a join
+ * on EVERY integration request — the one query in this application that runs before
+ * anything else and must stay a single indexed read. email_config keeps its secret and its
+ * key id as columns on one row for the same reason, and this schema has no precedent for a
+ * one-to-at-most-one table.
+ *
+ * prev_key_expires_at is when the old key STOPS working, so the check is strictly
+ * "expires in the future" — at the instant it expires it is already dead. The alternative
+ * leaves a key alive for one extra second on a boundary nobody can observe, which is the
+ * wrong direction to be generous in.
+ */
+async function ensureKeyRotation(db, log) {
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'integration_clients'`
+  ).catch(() => ({ rows: [] }));
+  if (!rows.length) return;                      // no table; its own step reports that
+  const have = new Set(rows.map((r) => String(r.name)));
+
+  if (!have.has('prev_key_hash')) {
+    await db.query('ALTER TABLE integration_clients '
+      + 'ADD COLUMN prev_key_hash CHAR(64) NULL AFTER key_hash');
+    /* Indexed, because it is half of the lookup on every request during an overlap. Not
+       UNIQUE: the same hash can legitimately be a client's current key and its own
+       previous one for the moment between two rotations, and a unique index would refuse
+       the second rotation rather than the mistake. */
+    await db.query('ALTER TABLE integration_clients '
+      + 'ADD KEY idx_integration_clients_prev (prev_key_hash)').catch((err) => {
+      if (!/duplicate|exists/i.test(err.sqlMessage || err.message || '')) throw err;
+    });
+    log('Schema: added integration_clients.prev_key_hash.');
+  }
+
+  if (!have.has('prev_key_expires_at')) {
+    await db.query('ALTER TABLE integration_clients '
+      + 'ADD COLUMN prev_key_expires_at DATETIME NULL AFTER prev_key_hash');
+    log('Schema: added integration_clients.prev_key_expires_at.');
+  }
+
+  // When the current key was issued, so the screen can say how old it is without
+  // guessing from created_at, which is when the CLIENT was made.
+  if (!have.has('key_issued_at')) {
+    await db.query('ALTER TABLE integration_clients '
+      + 'ADD COLUMN key_issued_at DATETIME NULL AFTER prev_key_expires_at');
+    await db.query('UPDATE integration_clients SET key_issued_at = created_at WHERE key_issued_at IS NULL');
+    log('Schema: added integration_clients.key_issued_at.');
+  }
+}
+
 /* asset_events.acted_via — WHICH authority somebody acted on, not just that they could.
  *
  * canActAtTlGate admits two different people at the first gate: somebody on the
@@ -3666,6 +3723,8 @@ const STEPS = [
   // A column on assets, so after anything that rebuilds that table.
   ['assets.needs_tech_art', ensureNeedsTechArt],
   // A column on asset_events, so after anything that repairs that table.
+  // On integration_clients, so after the step that creates it.
+  ['integration key rotation', ensureKeyRotation],
   ['asset_events.acted_via', ensureActedVia],
   ['chat settings', ensureChatSettings],
   ['chat settings mirror', (db) => chatSettings.load(db)],

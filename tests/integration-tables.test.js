@@ -61,6 +61,9 @@ test('/api/health would notice these tables missing', () => {
   const STEPS = new Set([
     'integration tables',
     'integration idempotency reservation',
+    // The rotation overlap: a second hash and its expiry, so a key can be replaced
+    // without an outage.
+    'integration key rotation',
   ]);
   for (const need of schemaCheck.REQUIRED.filter((r) => TABLES.includes(r.table))) {
     assert.ok(STEPS.has(need.step),

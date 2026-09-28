@@ -2888,6 +2888,11 @@ const SETTINGS_SECTIONS = [
   { permission:'settings.ip_allowlist', label:'IP Allowlist',     heading:'Allowed IP Addresses', note:'Which addresses may reach this application at all.' },
   { permission:'settings.ip_blocklist', label:'IP Blocklist',     heading:'Blocked IP Addresses', note:'Addresses barred outright, whatever else allows them.' },
   { permission:'settings.email_config', label:'Email Configuration', heading:'Email Configuration', note:'The mail server task notifications are sent through.' },
+  /* The Dev & QA integration. Super Admin alone and NOT grantable — see the reasoning on
+     settings.integrations in src/permission-catalog.js: a key is a machine with no project
+     scope, so whoever can issue one can reach data their own designation does not give
+     them. The note says the one thing somebody opening this needs to know first. */
+  { permission:'settings.integrations', label:'Dev & QA Integration', heading:'Dev & QA Integration', note:'API keys for the Dev & QA tool, which addresses may use them, and what has been sent. A key is shown once.' },
   /* Not a settings.* key. The rate card is the price list the Profit & Loss
      report is costed against, so it belongs to whoever manages the money rather
      than to whoever manages the application — and it is listed here so that a
@@ -9843,6 +9848,7 @@ async function renderSettings(){
     ${can('settings.ip_allowlist') ? '<div id="ipAllowlistSection"></div>' : ''}
     ${can('settings.ip_blocklist') ? '<div id="ipBlocklistSection"></div>' : ''}
     ${can('settings.email_config') ? '<div id="emailConfigSection"></div>' : ''}
+    ${can('settings.integrations') ? '<div id="integrationSection"></div>' : ''}
     ${can('pnl.manage') ? '<div id="roleRatesSection"></div>' : ''}
     ${can('settings.permissions') ? '<div id="rolePermissionsSection"></div>' : ''}
     ${can('settings.activity_log') ? '<div id="activityLogSection"></div>' : ''}
@@ -9877,6 +9883,9 @@ async function renderSettings(){
   /* Super Admin only by default, like the two IP lists above it and for a
      related reason: this screen holds a live password for another system. */
   if(can('settings.email_config')) await renderEmailConfig();
+  /* Super Admin alone, and the only section whose permission cannot be granted to
+     anybody else — issuing a key reaches data no designation limits. */
+  if(can('settings.integrations')) await renderIntegrationSettings();
   /* pnl.manage, not a settings.* permission — see the SETTINGS_SECTIONS entry.
      This section is the Rate Card EDITOR, so it follows the editing permission.
      Somebody holding a P&L tab can already see the rates in its breakdown; what
@@ -11044,6 +11053,189 @@ function paintCapacity(){
                           believing notifications are on for a month. */
 
 let EMAIL_CFG = null;
+
+/* Settings -> Dev & QA Integration.
+ *
+ * FOUR PANELS in one section: the credentials, the address list, the message log, and
+ * health. One section rather than four because they are one subject — somebody arriving
+ * here is answering "is the integration working, and who can reach it" — and four
+ * accordion rows would make that four places to look.
+ *
+ * THE KEY IS SHOWN ONCE AND THE SCREEN SAYS SO, before it is dismissed rather than after.
+ * Nothing on this screen can show it again, because nothing anywhere can: only its hash is
+ * stored. The same shape as the mail password next door, except that there is not even
+ * ciphertext to decrypt.
+ */
+let intState = { clients:null, addresses:null, messages:null, health:null, fresh:null, busy:'', error:'' };
+
+async function renderIntegrationSettings(){
+  const el = document.getElementById('integrationSection');
+  if(!el) return;
+
+  if(!intState.clients){
+    try{
+      const [clients, addresses, messages, health] = await Promise.all([
+        api('/admin/integration/clients'),
+        api('/admin/integration/addresses'),
+        api('/admin/integration/messages?limit=25'),
+        api('/admin/integration/health'),
+      ]);
+      intState = { ...intState, clients, addresses, messages, health, error:'' };
+    }catch(err){
+      el.innerHTML = `<div class="ref-section"><div class="ref-head"><h3>Dev & QA Integration</h3></div>
+        <div class="ref-err">${escapeHTML(err.message)}</div></div>`;
+      return;
+    }
+  }
+
+  const { clients, addresses, messages, health } = intState;
+  const when = (v)=> v ? new Date(v).toLocaleString('en-IN') : '—';
+
+  /* THE ONE-TIME KEY, at the top where it cannot be scrolled past. Shown only for the
+     credential just created or rotated, and gone from memory the moment it is dismissed. */
+  const freshBlock = intState.fresh ? `
+    <div class="ref-note" style="border-left:3px solid var(--warn,#d9822b);background:rgba(217,130,43,.08)">
+      <strong>Copy this key now — it will not be shown again.</strong>
+      <div style="margin:8px 0 6px">Only a one-way hash of it is stored, so nobody can look it
+        up later, including you. If it is lost, rotate the credential and configure the new one.</div>
+      <code style="display:block;padding:9px 11px;background:var(--panel,#15171d);border-radius:7px;
+        word-break:break-all;user-select:all">${escapeHTML(intState.fresh.key)}</code>
+      <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+        <span class="muted">for <strong>${escapeHTML(intState.fresh.name)}</strong></span>
+        <button class="btn-sm" id="intDismissKey">I have copied it</button>
+      </div>
+    </div>` : '';
+
+  const clientRows = (clients.clients || []).map((c)=>`
+    <tr>
+      <td>${escapeHTML(c.name)}
+        ${c.rotation ? `<div class="muted" style="font-size:12px">previous key works until
+          ${when(c.rotation.previousKeyValidUntil)}</div>` : ''}</td>
+      <td>${c.isActive ? 'Active' : '<span class="muted">Revoked</span>'}</td>
+      <td class="muted" style="font-family:monospace">${escapeHTML(c.keyPrefix || '—')}…</td>
+      <td>${(c.allowedActions||[]).map(a=>`<span class="chip">${escapeHTML(a)}</span>`).join(' ')}</td>
+      <td class="muted">${when(c.lastUsedAt)}</td>
+      <td style="white-space:nowrap">
+        <button class="btn-sm" data-int-rotate="${c.id}">Rotate</button>
+        ${c.isActive
+    ? `<button class="btn-sm danger" data-int-revoke="${c.id}">Revoke</button>`
+    : `<button class="btn-sm" data-int-restore="${c.id}">Restore</button>`}
+      </td>
+    </tr>`).join('') || '<tr><td colspan="6" class="muted">No credentials issued yet.</td></tr>';
+
+  const enf = (addresses.enforcement)||{};
+  const addressRows = (addresses.entries || []).map((e)=>`
+    <tr><td style="font-family:monospace">${escapeHTML(e.address)}</td>
+      <td>${escapeHTML(e.label||'')}</td>
+      <td><button class="btn-sm danger" data-int-addr-del="${e.id}">Remove</button></td></tr>`).join('')
+    || '<tr><td colspan="3" class="muted">No addresses listed, so every address may reach it.</td></tr>';
+
+  const msgRows = (messages.messages || []).map((m)=>`
+    <tr>
+      <td class="muted">${m.seq}</td>
+      <td>${escapeHTML(m.payload && m.payload.event ? m.payload.event : '—')}</td>
+      <td>${escapeHTML(m.status)}${m.attempts ? ` <span class="muted">(${m.attempts})</span>` : ''}</td>
+      <td class="muted">${escapeHTML((m.lastError||'').slice(0,90))}</td>
+      <td class="muted">${when(m.updatedAt)}</td>
+      <td>${m.status === 'failed' || m.status === 'pending'
+    ? `<button class="btn-sm" data-int-resend="${m.id}">Send again</button>` : ''}</td>
+    </tr>`).join('') || '<tr><td colspan="6" class="muted">Nothing has been queued yet.</td></tr>';
+
+  el.innerHTML = `
+  <div class="ref-section">
+    <div class="ref-head"><h3>Dev & QA Integration</h3></div>
+    ${intState.error ? `<div class="ref-err">${escapeHTML(intState.error)}</div>` : ''}
+    ${freshBlock}
+
+    <div class="ref-note">
+      <strong>Connection</strong>
+      <div>Last call received: ${when(health.inbound && health.inbound.at)}
+        ${health.inbound ? `<span class="muted">from ${escapeHTML(health.inbound.client)}</span>` : ''}</div>
+      <div>Last message delivered: ${when(health.outbound && health.outbound.at)}</div>
+      <div class="muted">Sending to ${escapeHTML((health.configured||{}).outboundUrl || 'nowhere — no address configured')},
+        every ${escapeHTML((health.configured||{}).deliveryEvery || '—')}.</div>
+      ${(health.configured||{}).secretsCollide ? `<div class="ref-err" style="margin-top:6px">
+        The inbound and outbound signing secrets are the same value, so nothing is being
+        delivered. Whoever can verify a message could also forge one. Set them to two
+        different values on the server.</div>` : ''}
+      ${!(health.configured||{}).inboundSecret ? `<div class="ref-err" style="margin-top:6px">
+        No inbound signing secret is set on this server, so every incoming call is refused.</div>` : ''}
+      <div class="muted" style="margin-top:6px">The two signing secrets and the address above
+        are set on the server, not here. They are deliberately not editable through a web
+        form.</div>
+    </div>
+
+    <h4 style="margin:18px 0 6px">Credentials</h4>
+    <table class="ref-table"><thead><tr>
+      <th>Name</th><th>State</th><th>Key</th><th>May do</th><th>Last used</th><th></th>
+    </tr></thead><tbody>${clientRows}</tbody></table>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:10px">
+      <label>Name<input id="intNewName" placeholder="Dev & QA tool" maxlength="120"></label>
+      <label>May do<input id="intNewActions" placeholder="projects, assets, files, handoffs, events"></label>
+      <button class="btn-sm primary" id="intCreate">Issue a key</button>
+    </div>
+
+    <h4 style="margin:18px 0 6px">Addresses that may use these keys</h4>
+    <div class="${enf.mode === 'enforce' ? 'ref-note' : 'ref-err'}" style="margin-bottom:8px">
+      ${escapeHTML(enf.explain || '')}
+    </div>
+    <table class="ref-table"><thead><tr><th>Address</th><th>Label</th><th></th></tr></thead>
+      <tbody>${addressRows}</tbody></table>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:10px">
+      <label>Address<input id="intAddrValue" placeholder="203.0.113.4 or 203.0.113.0/24"></label>
+      <label>Label<input id="intAddrLabel" placeholder="the build farm"></label>
+      <button class="btn-sm" id="intAddrAdd">Allow</button>
+    </div>
+
+    <h4 style="margin:18px 0 6px">Messages sent out</h4>
+    <table class="ref-table"><thead><tr>
+      <th>#</th><th>Event</th><th>State</th><th>Last error</th><th>Updated</th><th></th>
+    </tr></thead><tbody>${msgRows}</tbody></table>
+    <div class="muted" style="margin-top:6px">Send again puts a message back in the queue. The
+      delivery worker sends it on its next pass — this screen never delivers anything itself.</div>
+  </div>`;
+
+  const refresh = async ()=>{ intState.clients = null; await renderIntegrationSettings(); };
+  const act = async (fn)=>{
+    intState.error = '';
+    try{ await fn(); }
+    catch(err){ intState.error = err.message; }
+    await refresh();
+  };
+
+  const dismiss = document.getElementById('intDismissKey');
+  if(dismiss) dismiss.onclick = ()=>{ intState.fresh = null; renderIntegrationSettings(); };
+
+  const create = document.getElementById('intCreate');
+  if(create) create.onclick = ()=> act(async ()=>{
+    const name = (document.getElementById('intNewName').value||'').trim();
+    const allowedActions = (document.getElementById('intNewActions').value||'')
+      .split(',').map(x=>x.trim()).filter(Boolean);
+    const r = await api('/admin/integration/clients', { method:'POST', body:{ name, allowedActions } });
+    intState.fresh = { key:r.key, name:r.client.name };
+  });
+
+  el.querySelectorAll('[data-int-rotate]').forEach((b)=>{ b.onclick = ()=> act(async ()=>{
+    const r = await api(`/admin/integration/clients/${b.dataset.intRotate}/rotate`, { method:'POST' });
+    intState.fresh = { key:r.key, name:r.client.name };
+  }); });
+  el.querySelectorAll('[data-int-revoke]').forEach((b)=>{ b.onclick = ()=> act(()=>
+    api(`/admin/integration/clients/${b.dataset.intRevoke}/revoke`, { method:'POST' })); });
+  el.querySelectorAll('[data-int-restore]').forEach((b)=>{ b.onclick = ()=> act(()=>
+    api(`/admin/integration/clients/${b.dataset.intRestore}/restore`, { method:'POST' })); });
+  el.querySelectorAll('[data-int-addr-del]').forEach((b)=>{ b.onclick = ()=> act(()=>
+    api(`/admin/integration/addresses/${b.dataset.intAddrDel}`, { method:'DELETE' })); });
+  el.querySelectorAll('[data-int-resend]').forEach((b)=>{ b.onclick = ()=> act(()=>
+    api(`/admin/integration/messages/${b.dataset.intResend}/resend`, { method:'POST' })); });
+
+  const addAddr = document.getElementById('intAddrAdd');
+  if(addAddr) addAddr.onclick = ()=> act(()=> api('/admin/integration/addresses', {
+    method:'POST',
+    body:{ address:(document.getElementById('intAddrValue').value||'').trim(),
+      label:(document.getElementById('intAddrLabel').value||'').trim() },
+  }));
+}
 
 async function renderEmailConfig(){
   const el = document.getElementById('emailConfigSection');
