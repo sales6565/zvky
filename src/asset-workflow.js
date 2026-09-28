@@ -65,6 +65,18 @@ const STATES = [
   { id: 'tl_approved', label: 'TL Approved', color: '#4c9a75' },
   { id: 'pending_cd_review', label: 'CD Review', color: '#9b7ef0' },
   { id: 'cd_changes_requested', label: 'CD Feedbacks', color: '#e8402c' },
+  /* A bug raised against the asset from the build — QA, Dev, Tech Art or the client
+   * playing it. Work coming back, like the two feedback states above it, which is why
+   * it sits with them rather than after Delivered: the list is grouped by WHAT a
+   * state is, not by when it tends to happen.
+   *
+   * AMBER, and its own shade. The two internal feedback states share #e8402c; this
+   * one is deliberately not that, because "the lead wants changes" and "it is broken
+   * in the game" are different problems for the artist and a board should not make
+   * them look alike. Distinct from the brand red #7f1416, as every status colour must
+   * be — a stage wearing the application's own colour would read as the product
+   * rather than as a place work sits. */
+  { id: 'game_feedback', label: 'Game Feedback', color: '#d9822b' },
   { id: 'approved_for_client', label: 'Approved for Client', color: 'var(--approved)' },
   /* Sent out and waiting on the client's word. Its own colour, and deliberately
      not the brand red: a status colour says where work is, and reusing the

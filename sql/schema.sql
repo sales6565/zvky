@@ -402,9 +402,16 @@ CREATE TABLE IF NOT EXISTS assets (
   -- No CHECK on `type` or priority: both are managed in Settings and validated
   -- against the asset_types / priorities tables. `status` keeps its constraint
   -- because it is a fixed pipeline, not a list anyone edits.
+  /* Must list every value in STATUS_VALUES in src/migrate.js. A fresh database is
+     built from this file; an existing one is repaired by the startup step that reads
+     that list, drops a CHECK which no longer admits all of it and writes a current
+     one. That repair is why this copy could fall behind unnoticed — it had lost
+     'tl_approved', and only a database created from this file was affected. */
   CONSTRAINT chk_assets_status CHECK (`status` IN (
     'not_started','assigned','in_progress','pending_tl_review','tl_changes_requested',
-    'pending_cd_review','cd_changes_requested','approved_for_client','awaiting_client_feedback','delivered'
+    'tl_approved',
+    'pending_cd_review','cd_changes_requested','approved_for_client','awaiting_client_feedback',
+    'delivered','game_feedback'
   ))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

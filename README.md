@@ -2193,6 +2193,87 @@ Permissions**, and that permission lands with the screen rather than ahead of it
 
 Settings are in [`.env.example`](.env.example) under *The integration API*.
 
+## Game Feedback: storage, and what a "round" already means
+
+Storage only so far — four tables, one column and one status. Nothing reads them yet,
+deployed on their own so the schema change and the behaviour that uses it are separate
+releases.
+
+### Rounds were already solved, and not where you would look
+
+**A revision round in this application is a submission.** There is no rounds table and
+no round counter:
+
+- `currentRound()` in [`src/work-log.js`](src/work-log.js) is
+  `COUNT(*) FROM asset_versions + 1`
+- the Efficiency report's `rounds` column is
+  `(SELECT COUNT(*) FROM asset_versions v WHERE v.asset_id = a.id)`
+  ([`src/routes/reports.js`](src/routes/reports.js))
+- `work_sessions.round` stores which submission a stretch of work belongs to
+
+TL and CD feedback do **not** create rounds. Feedback sends the asset back, the artist
+submits again, and *that submission* is the new round. So a fix for a game bug counts
+as its own round by being submitted like any other work — the Efficiency report already
+counts it, with no change to the report.
+
+That is why `handoff_assets.round` and `external_feedback.round` **record** which round
+they concern and never generate one. A second rounds mechanism here would have made the
+Efficiency report wrong for exactly the work this feature exists to track, and wrong
+silently, because the report would keep returning a number.
+`tests/game-feedback-tables.test.js` guards that: an `AUTO_INCREMENT` on either column
+fails it.
+
+### The tables
+
+| Table | What it holds |
+|---|---|
+| `handoffs` | one partial drop or Tech Art pass to Dev & QA — kind, build, CP stage, its own `status` |
+| `handoff_assets` | what is in it: asset + round, the bug refs a fix resolves, and Dev & QA's `status` (`queued` / `received` / `integrated` / `returned`) |
+| `external_feedback` | a bug from outside — source, reference, severity, note, sender, build, CP stage, link, plus `prev_status` and `prev_routed_to_id` |
+| `asset_ingame` | one row per asset: build, CP stage, engine status, open bug count, link, `in_game_build_seq` |
+| `assets.needs_tech_art` | boolean, default false |
+
+Every status column is `VARCHAR` with a default, matching the eight others in this
+schema — not `state`, not an `ENUM`, so a fifth value later is a row's value rather
+than a migration.
+
+**Two guards worth knowing about.** `external_feedback` has
+`UNIQUE (asset_id, round, source, bug_ref)`: a retried call — the normal behaviour of
+every integration that ever times out — must not raise one defect twice and send the
+asset round twice for it. `bug_ref` is `NOT NULL DEFAULT ''` *because of* that key, not
+for tidiness: MySQL permits any number of rows whose unique-key columns are `NULL`, so a
+nullable `bug_ref` would leave feedback without a reference — the commonest kind — with
+no guard at all.
+
+`asset_ingame.in_game_build_seq` is the staleness guard. Reports about a build arrive
+over a network from a system that retries, so they arrive out of order, and a write
+describing build 41 can land after one describing 42. Every write is applied only when
+its sequence is **newer** than what is stored — the same protection
+`integration_outbox.seq` gives ordered replay, which `DATETIME` cannot, two writes in
+one second having no order between them.
+
+### The status vocabulary lives in five places, not three
+
+`game_feedback` (amber `#d9822b`, deliberately not the `#e8402c` the two internal
+feedback states share, and distinct from the brand red) had to be added to:
+
+1. `STATUS_VALUES` in [`src/migrate.js`](src/migrate.js) — drives the CHECK repair on an
+   existing database
+2. the `chk_assets_status` CHECK in [`sql/schema.sql`](sql/schema.sql) — builds a fresh one
+3. `STATES` in [`src/asset-workflow.js`](src/asset-workflow.js) — what the server reasons with
+4. `STATUSES` in `public/index.html` — pinned to match the server's list exactly
+5. `ASSET_LIST_GROUPS` in `public/index.html` — every status must appear in exactly one tab
+
+While doing that: **the CHECK in `sql/schema.sql` had already fallen behind** — it was
+missing `tl_approved`. Only a database built fresh from that file was affected, because
+the startup repair fixes an existing one, which is precisely why it went unnoticed. Both
+lists are now asserted to hold the same set.
+
+It introduces no *transition*, so it owes nothing yet to `actors`, `refusal()` or the
+`PHRASE` map — those are keyed by transition, not status. When the transition is built it
+owes all three, plus `REWORK_STATUSES` in [`src/permissions.js`](src/permissions.js),
+which is pinned to exactly two values and will fail until updated deliberately.
+
 ## Passwords
 
 Rules live in [`src/password-policy.js`](src/password-policy.js) and are served

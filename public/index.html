@@ -2395,6 +2395,7 @@ const STATUSES = [
   {id:'tl_approved', label:'TL Approved', color:'#4c9a75'},
   {id:'pending_cd_review', label:'CD Review', color:'#9b7ef0'},
   {id:'cd_changes_requested', label:'CD Feedbacks', color:'#e8402c'},
+  {id:'game_feedback', label:'Game Feedback', color:'#d9822b'},
   {id:'approved_for_client', label:'Approved for Client', color:'var(--approved)'},
   {id:'awaiting_client_feedback', label:'Awaiting Client Feedback', color:'var(--client)'},
   {id:'delivered', label:'Delivered', color:'var(--final)'},
@@ -2980,7 +2981,10 @@ const ASSET_LIST_GROUPS = [
                                                'tl_changes_requested','tl_approved',
                                                'pending_cd_review',
                                                'cd_changes_requested','approved_for_client',
-                                               'awaiting_client_feedback'] },
+                                               'awaiting_client_feedback',
+                                               /* Work coming back from the build. Active because
+                                                  somebody has something to do about it. */
+                                               'game_feedback'] },
   { id:'inactive', label:'Inactive', statuses:['not_started'] },
   { id:'archived', label:'Archived', statuses:['delivered'] },
 ];

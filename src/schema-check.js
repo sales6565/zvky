@@ -127,6 +127,26 @@ const REQUIRED = [
   // exclusion the mechanism rests on is gone.
   { table: 'integration_requests', column: 'status',         step: 'integration idempotency reservation' },
   { table: 'integration_requests', column: 'updated_at',     step: 'integration idempotency reservation' },
+
+  /* Game Feedback's storage. Declared here or /api/health reports "complete" on a
+     database that has none of it — which is how four tables once went missing. */
+  { table: 'handoffs',          column: null,             step: 'game feedback tables' },
+  { table: 'handoffs',          column: 'status',         step: 'game feedback tables' },
+  { table: 'handoff_assets',    column: null,             step: 'game feedback tables' },
+  // The round a hand-off carries, and Dev & QA's verdict on it. Both read by name.
+  { table: 'handoff_assets',    column: 'round',          step: 'game feedback tables' },
+  { table: 'handoff_assets',    column: 'status',         step: 'game feedback tables' },
+  { table: 'external_feedback', column: null,             step: 'game feedback tables' },
+  { table: 'external_feedback', column: 'round',          step: 'game feedback tables' },
+  /* The decline-restore pair. Missing, declining a game bug cannot put the asset
+     back where it was, because neither value is recoverable afterwards. */
+  { table: 'external_feedback', column: 'prev_status',    step: 'game feedback tables' },
+  { table: 'external_feedback', column: 'prev_routed_to_id', step: 'game feedback tables' },
+  { table: 'asset_ingame',      column: null,             step: 'game feedback tables' },
+  /* The staleness guard. Missing, an out-of-order report about an older build
+     overwrites a newer one and nothing says so. */
+  { table: 'asset_ingame',      column: 'in_game_build_seq', step: 'game feedback tables' },
+  { table: 'assets',            column: 'needs_tech_art', step: 'assets.needs_tech_art' },
   { table: 'integration_outbox',   column: null,              step: 'integration tables' },
   { table: 'integration_outbox',   column: 'seq',             step: 'integration tables' },
   { table: 'integration_outbox',   column: 'next_attempt_at', step: 'integration tables' },

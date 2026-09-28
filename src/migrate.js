@@ -1502,6 +1502,13 @@ const STATUS_VALUES = [
   'tl_approved',
   'pending_cd_review', 'cd_changes_requested', 'approved_for_client',
   'awaiting_client_feedback', 'delivered',
+  /* Game Feedback: a bug raised from the build, sending the asset back. Added here
+     means the startup repair notices the existing CHECK no longer admits every
+     status the app can write, drops it and writes a current one — which is the whole
+     reason this list exists. Three other places carry this vocabulary and all of
+     them have to agree: the CHECK in sql/schema.sql, STATES in
+     src/asset-workflow.js, and STATUSES in public/index.html. */
+  'game_feedback',
 ];
 
 // Every CHECK constraint on `assets` that constrains `status` and does not admit
@@ -2253,6 +2260,201 @@ async function ensureIdempotencyScope(db, log) {
      and every DDL statement here is another thing that can fail on a host with
      its own opinions about ALTER. Noted so the next reader knows it is known. */
   log('Schema: integration_requests is now keyed on (client_id, idempotency_key).');
+}
+
+/* Game Feedback: hand-offs to Dev & QA, what comes back, and where an asset sits
+ * in the build.
+ *
+ * ROUNDS ARE NOT REINVENTED HERE, and that is the most important thing about these
+ * tables. A revision round in this application is a SUBMISSION: work_log's
+ * currentRound() is COUNT(*) FROM asset_versions + 1, the Efficiency report's
+ * `rounds` column is COUNT(*) FROM asset_versions (src/routes/reports.js), and
+ * work_sessions.round stores which submission a stretch of work belongs to. No
+ * table records rounds, and TL and CD feedback do not create them — feedback sends
+ * the asset back, the artist submits again, and THAT submission is the new round.
+ *
+ * So nothing below counts rounds. handoff_assets.round and external_feedback.round
+ * RECORD which round they concern, derived the same way everything else derives it,
+ * so the Efficiency report and these tables cannot disagree. A fix for a game bug
+ * becomes its own round by being submitted like any other piece of work, which means
+ * the report already counts it with no change to the report at all. A second rounds
+ * mechanism here would have made that report wrong for exactly the work this feature
+ * exists to track.
+ *
+ * Every status column is VARCHAR with a default, matching the eight other status
+ * columns in this schema — not `state`, and not an ENUM, so a fifth value later is a
+ * row's value rather than a migration.
+ */
+async function ensureGameFeedbackTables(db, log) {
+  /* A hand-off: one partial drop or Tech Art pass, carrying some number of asset
+     rounds to Dev & QA. */
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS handoffs (
+      id            CHAR(36)     NOT NULL PRIMARY KEY,
+      project_id    CHAR(36)     NOT NULL,
+      -- partial_drop | tech_art. The two things a hand-off can be, and a third
+      -- later is a value rather than a schema change.
+      kind          VARCHAR(24)  NOT NULL DEFAULT 'partial_drop',
+      label         VARCHAR(191) NULL,
+      /* The drop's own progress, as distinct from what Dev & QA say about each asset
+         in it — see handoff_assets.status. A drop can be sent while one asset in it
+         is still being argued about. */
+      \`status\`     VARCHAR(24)  NOT NULL DEFAULT 'queued',
+      build         VARCHAR(64)  NULL,
+      cp_stage      VARCHAR(32)  NULL,
+      note          TEXT         NULL,
+      sent_at       DATETIME     NULL,
+      created_by_id    CHAR(36)     NULL,
+      created_by_email VARCHAR(191) NULL,
+      created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      KEY idx_handoffs_project (project_id, created_at),
+      KEY idx_handoffs_status (\`status\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+
+  /* What is IN a hand-off: an asset at a particular round, the bugs the fix claims
+     to resolve, and Dev & QA's verdict on it. ASSETS, not tasks — pipeline work is
+     an asset everywhere in this codebase. */
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS handoff_assets (
+      id          CHAR(36)     NOT NULL PRIMARY KEY,
+      handoff_id  CHAR(36)     NOT NULL,
+      asset_id    CHAR(36)     NOT NULL,
+      /* WHICH ROUND of the asset this carries — recorded, never invented. Derived
+         from the asset's submission count, the same way work_sessions.round and the
+         Efficiency report's "rounds" column are, so all three agree about what round 3 is. */
+      round       INT          NOT NULL DEFAULT 1,
+      /* The bug references this fix resolves. A column rather than a table: they are
+         identifiers in somebody else's tracker, not entities this application owns,
+         and a join table would imply we could validate them. */
+      bug_refs    VARCHAR(500) NOT NULL DEFAULT '',
+      -- queued | received | integrated | returned. Dev & QA's word on this asset.
+      \`status\`   VARCHAR(24)  NOT NULL DEFAULT 'queued',
+      note        VARCHAR(500) NULL,
+      created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      /* One row per asset round per drop. Sending the same round of the same asset
+         twice in one hand-off is a mistake, not two things to integrate. */
+      UNIQUE KEY uq_handoff_asset_round (handoff_id, asset_id, round),
+      KEY idx_handoff_assets_asset (asset_id),
+      KEY idx_handoff_assets_status (\`status\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+
+  /* What comes back: a bug raised against an asset from outside the studio.
+   *
+   * prev_status and prev_routed_to_id are for declining one. Accepting a game bug
+   * moves the asset and re-routes it; declining has to put both back, and neither
+   * can be recomputed afterwards — the status it came from is gone the moment it
+   * changes, and who it was with is not derivable from anything else. So they are
+   * recorded when the feedback is raised, before anything moves. */
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS external_feedback (
+      id            CHAR(36)     NOT NULL PRIMARY KEY,
+      asset_id      CHAR(36)     NOT NULL,
+      -- The round this was raised AGAINST. Recorded, not counted here — see the
+      -- note at the top of this step.
+      round         INT          NOT NULL DEFAULT 1,
+      -- qa | dev | tech_art | client.
+      source        VARCHAR(24)  NOT NULL,
+      /* NOT NULL with an empty default, and that is load-bearing rather than tidy:
+         it is part of the unique key below, and MySQL permits any number of rows
+         whose unique-key columns are NULL. A nullable column in a unique key is not
+         a guard at all. */
+      bug_ref       VARCHAR(120) NOT NULL DEFAULT '',
+      severity      VARCHAR(24)  NULL,
+      note          TEXT         NULL,
+      -- Who raised it, as they gave it. Free text because they are not users of this
+      -- application and there is no row here to point at.
+      sender_name   VARCHAR(191) NULL,
+      sender_role   VARCHAR(64)  NULL,
+      build         VARCHAR(64)  NULL,
+      cp_stage      VARCHAR(32)  NULL,
+      link          VARCHAR(2048) NULL,
+      -- Where the asset was, and with whom, before this was accepted.
+      prev_status   VARCHAR(32)  NULL,
+      prev_routed_to_id CHAR(36) NULL,
+      created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      /* THE GUARD: the same bug, on the same asset round, from the same source, is
+         one piece of feedback however many times it is sent. Without this a retried
+         call — which is the normal behaviour of every integration that ever times out
+         — would raise the same bug twice and send the asset round twice for one
+         defect. The database refuses it rather than the route remembering to. */
+      UNIQUE KEY uq_external_feedback_once (asset_id, round, source, bug_ref),
+      KEY idx_external_feedback_asset (asset_id, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+
+  /* Where an asset currently sits in the build. ONE ROW PER ASSET — the primary key
+     is the asset, not a surrogate, because "the asset's state in the game" is a
+     single fact that is replaced rather than a history that accumulates. */
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS asset_ingame (
+      asset_id      CHAR(36)     NOT NULL PRIMARY KEY,
+      build         VARCHAR(64)  NULL,
+      cp_stage      VARCHAR(32)  NULL,
+      -- Not in | in | broken | removed, or whatever the engine reports. VARCHAR, so
+      -- the engine's vocabulary can grow without a migration here.
+      engine_status VARCHAR(24)  NULL,
+      open_bugs     INT          NOT NULL DEFAULT 0,
+      link          VARCHAR(2048) NULL,
+      /* THE STALENESS GUARD, and the reason this column exists at all.
+       *
+       * Reports about a build arrive over a network from a system that retries, so
+       * they arrive out of order: a write describing build 41 can land after one
+       * describing build 42 and would otherwise overwrite it with older truth. Every
+       * write carries its build's sequence and is applied only when it is NEWER than
+       * what is stored — the same protection integration_outbox.seq gives ordered
+       * replay, where DATETIME cannot, because two writes in one second have no order
+       * between them.
+       *
+       * 0 means nothing has been reported yet, so the first write of any sequence
+       * wins. */
+      in_game_build_seq BIGINT   NOT NULL DEFAULT 0,
+      created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      KEY idx_asset_ingame_build (build),
+      KEY idx_asset_ingame_bugs (open_bugs)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+
+  log('Schema: handoffs, handoff_assets, external_feedback and asset_ingame ready.');
+
+  /* The foreign keys last, and each one survivable. A referential constraint can be
+     refused for reasons that have nothing to do with these tables — a collation that
+     does not match assets.id, an engine mismatch, a user without REFERENCES — and
+     losing the tables to that would turn the feature off for a reason nobody could
+     see. Exactly how ensureWorkSessions handles the same risk. */
+  for (const [name, statement] of [
+    ['fk_handoff_assets_handoff', 'ALTER TABLE handoff_assets ADD CONSTRAINT fk_handoff_assets_handoff '
+      + 'FOREIGN KEY (handoff_id) REFERENCES handoffs(id) ON DELETE CASCADE'],
+    ['fk_handoff_assets_asset', 'ALTER TABLE handoff_assets ADD CONSTRAINT fk_handoff_assets_asset '
+      + 'FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE'],
+    ['fk_external_feedback_asset', 'ALTER TABLE external_feedback ADD CONSTRAINT fk_external_feedback_asset '
+      + 'FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE'],
+    ['fk_asset_ingame_asset', 'ALTER TABLE asset_ingame ADD CONSTRAINT fk_asset_ingame_asset '
+      + 'FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE'],
+  ]) {
+    try {
+      await db.query(statement);
+    } catch (err) {
+      // Already there is the ordinary case on every run after the first.
+      if (/duplicate|exists|errno: 121/i.test(err.sqlMessage || err.message || '')) continue;
+      log(`Schema: ${name} was refused — ${err.sqlMessage || err.message}`);
+      log('         The tables work; deleting an asset will not clear these rows automatically.');
+    }
+  }
+}
+
+/* assets.needs_tech_art — whether this asset is waiting on a Tech Art pass.
+ *
+ * A column on assets rather than a row somewhere, because it is a property of the
+ * asset that every list needs to filter on, and a join for a boolean is a join every
+ * board would pay for. Guarded by an information_schema read, as every column add in
+ * this file is. */
+async function ensureNeedsTechArt(db, log) {
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'assets' AND COLUMN_NAME = 'needs_tech_art'`
+  ).catch(() => ({ rows: [] }));
+  if (rows.length) return;
+
+  await db.query('ALTER TABLE assets ADD COLUMN needs_tech_art TINYINT(1) NOT NULL DEFAULT 0');
+  log('Schema: added assets.needs_tech_art.');
 }
 
 /* The reservation, which is what makes the idempotency key actually exclusive.
@@ -3434,6 +3636,12 @@ const STEPS = [
   /* Straight after the tables above, and owning its own: the module declares
      them and this only calls install(), exactly as ensureIpAllowlist does. */
   ['integration ip allowlist', ensureIntegrationIpAllowlist],
+  /* Game Feedback's storage. After assets and projects, whose keys these reference,
+     and after users. Nothing reads these yet — they are storage for a feature
+     deployed separately, like the integration tables above. */
+  ['game feedback tables', ensureGameFeedbackTables],
+  // A column on assets, so after anything that rebuilds that table.
+  ['assets.needs_tech_art', ensureNeedsTechArt],
   ['chat settings', ensureChatSettings],
   ['chat settings mirror', (db) => chatSettings.load(db)],
   // After the tables exist, and reading the window from the module that owns it.

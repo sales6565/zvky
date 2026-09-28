@@ -8,21 +8,32 @@ const cfg = config('workflow');
 
 // --- the machine, on its own --------------------------------------------------
 
-test('the eleven states match the dashboard, in pipeline order', () => {
+test('the twelve states match the dashboard, in pipeline order', () => {
   assert.deepStrictEqual(workflow.STATES.map((s) => s.id), [
     'not_started', 'assigned', 'in_progress', 'pending_tl_review', 'tl_changes_requested',
     'tl_approved',
-    'pending_cd_review', 'cd_changes_requested', 'approved_for_client',
+    'pending_cd_review', 'cd_changes_requested',
+    // A bug from the build, sitting with the other two states that mean work is
+    // coming back rather than after Delivered, where it happens to arrive.
+    'game_feedback',
+    'approved_for_client',
     'awaiting_client_feedback', 'delivered',
   ]);
   assert.deepStrictEqual(workflow.STATES.map((s) => s.label), [
     'Not Assigned', 'Assigned', 'In Progress', 'TL Review', 'TL Feedbacks',
     'TL Approved',
-    'CD Review', 'CD Feedbacks', 'Approved for Client',
+    'CD Review', 'CD Feedbacks',
+    'Game Feedback',
+    'Approved for Client',
     'Awaiting Client Feedback', 'Delivered',
   ]);
 
   const ids = workflow.STATES.map((s) => s.id);
+
+  /* Grouped with the feedback states, not appended. Asserted as a position for the
+     same reason tl_approved's is: the list is easy to reorder in a hurry, and where
+     this one sits is what makes a board read correctly. */
+  assert.strictEqual(ids.indexOf('game_feedback'), ids.indexOf('cd_changes_requested') + 1);
 
   /* TL Approved sits BETWEEN TL Feedbacks and CD Review, which is where the
      studio asked for it and is the order the board draws. Asserted as a
