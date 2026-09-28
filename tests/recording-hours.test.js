@@ -225,7 +225,15 @@ test('the four endpoints, and who may reach them', { skip: cfg ? false : SKIP_RE
        Permissions is the only way in. */
     const held = await as('root', '/permissions/roles/admin');
     assert.strictEqual(held.status, 200, JSON.stringify(held.body));
-    const current = (held.body.permissions || []).filter((p) => p.held).map((p) => p.key);
+    /* body.role.permissions, and the flag is `enabled`. This read the wrong
+       shape and got an empty list, so the grant below was silently STRIPPING
+       the admin designation of everything else and the revoke was leaving it
+       with nothing. The assertions still passed, which is exactly why this is
+       worth spelling out. */
+    const perms = held.body.role.permissions;
+    assert.ok(Array.isArray(perms) && perms.length, 'the role reads back its checklist');
+    const current = perms.filter((p) => p.enabled).map((p) => p.key);
+    assert.ok(current.length > 5, 'an admin holds a good deal, which must survive this test');
     assert.ok(!current.includes('settings.recording_hours'),
       'an admin does not hold it by being an admin');
 

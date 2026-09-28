@@ -24,13 +24,24 @@
 
 const crypto = require('crypto');
 
+/* The statuses an assignment may be PUT INTO by hand. 'cancelled' is not among
+   them on purpose: it is not a state somebody types, it is what unassigning
+   does, and it has its own endpoint so that taking work back from a freelancer
+   is a deliberate act with its own permission check and its own audit entry. */
 const STATUSES = ['assigned', 'in_progress', 'delivered', 'revision_requested'];
+const CANCELLED = 'cancelled';
 const STATUS_LABELS = {
   assigned: 'Assigned',
   in_progress: 'In Progress',
   delivered: 'Delivered',
   revision_requested: 'Revision Requested',
+  [CANCELLED]: 'Cancelled',
 };
+/* WHAT "ACTIVE" MEANS, in one place. A cancelled assignment is history: it no
+   longer holds the task against an internal assignee, and it no longer costs
+   the project. Every query below that asks "is this task outsourced" or "what
+   did outsourcing cost" reads this rather than spelling the four out. */
+const isActive = (status) => status !== CANCELLED;
 const FREELANCER_STATUSES = ['active', 'inactive'];
 const NAME_MAX = 191;
 const DISCIPLINE_MAX = 120;
@@ -244,18 +255,22 @@ const assignmentRow = (row) => ({
   assignedBy: row.assigned_by || null,
   assignedByName: row.assigned_by_name || null,
   assignedAt: row.assigned_at || null,
+  cancelled: row.status === CANCELLED,
+  cancelledByName: row.cancelled_by_name || null,
+  cancelledAt: row.cancelled_at || null,
 });
 
 const ASSIGNMENT_SELECT = `
   SELECT a.*, f.\`name\` AS freelancer_name, f.discipline AS freelancer_discipline,
          p.\`name\` AS project_name,
          s.\`name\` AS asset_name, s.\`code\` AS asset_code, s.man_hours AS asset_man_hours,
-         u.\`name\` AS assigned_by_name
+         u.\`name\` AS assigned_by_name, x.\`name\` AS cancelled_by_name
     FROM outsource_assignments a
     JOIN freelancers f ON f.id = a.freelancer_id
     JOIN projects p    ON p.id = a.project_id
     LEFT JOIN assets s ON s.id = a.asset_id
-    LEFT JOIN users u  ON u.id = a.assigned_by`;
+    LEFT JOIN users u  ON u.id = a.assigned_by
+    LEFT JOIN users x  ON x.id = a.cancelled_by`;
 
 /* Assignments, narrowed to the projects this reader may see.
  *
@@ -358,10 +373,14 @@ async function costFor(db, projectIds) {
   const empty = { hours: 0, cost: 0, unpricedHours: 0, assignments: 0 };
   if (!projectIds || !projectIds.length) return new Map();
   const { rows } = await db.query(
+    /* CANCELLED WORK COSTS NOTHING. An assignment taken back from a freelancer
+       is kept for its history, not for its arithmetic — leaving it in would
+       charge the project for work it did not buy, which is the same kind of
+       silent wrongness the P&L gap this feature closed. */
     `SELECT a.project_id, a.decided_man_hours AS h, f.rate_per_hour AS rate
        FROM outsource_assignments a
        JOIN freelancers f ON f.id = a.freelancer_id
-      WHERE a.project_id IN ($1)`, [projectIds]
+      WHERE a.project_id IN ($1) AND a.status <> '${CANCELLED}'`, [projectIds]
   );
   const byProject = new Map();
   for (const row of rows) {
@@ -384,6 +403,100 @@ async function costFor(db, projectIds) {
 async function costForProject(db, projectId) {
   const map = await costFor(db, [projectId]);
   return map.get(String(projectId)) || { hours: 0, cost: 0, unpricedHours: 0, assignments: 0 };
+}
+
+/* ---------------------------------------------------------------------------
+ * MUTUAL EXCLUSIVITY: a task is somebody's inside the studio, or somebody's
+ * outside it, and never both.
+ *
+ * WHY IT IS ASKED IN TWO DIRECTIONS. The two sides are written by different
+ * routes in different files, and each has to refuse the other's state. Putting
+ * both questions here rather than one in each file means the rule is one thing
+ * that can be read, and a third way of assigning added next year has one
+ * function to call rather than a rule to remember.
+ *
+ * AD HOC WORK IS OUT OF SCOPE OF THE RULE, and necessarily so. An outsource
+ * assignment need not name an asset at all — that is the point of the optional
+ * link — and an assignment with no asset conflicts with no task, because there
+ * is no task. Exclusivity is a fact about a TASK, so it applies exactly where
+ * there is one.
+ * ------------------------------------------------------------------------- */
+
+/* The live outsource assignment on this task, or null. Cancelled ones do not
+   count: taking the work back is what makes the task assignable again. */
+async function activeForAsset(db, assetId) {
+  if (!assetId) return null;
+  const { rows } = await db.query(
+    `${ASSIGNMENT_SELECT} WHERE a.asset_id = $1 AND a.status <> $2
+      ORDER BY a.assigned_at DESC LIMIT 1`,
+    [assetId, CANCELLED]
+  );
+  return rows.length ? assignmentRow(rows[0]) : null;
+}
+
+/* The live outsource assignment on each of a page of tasks, keyed by asset id.
+ *
+ * Batched for the board, which draws a card per asset: one query for the page
+ * rather than one per card. The panel reads this to know whether Section 2 is
+ * already committed, and the exclusivity refusals above read the database
+ * again on the write — this is what the screen shows, never what it decides. */
+async function activeByAsset(db, assetIds) {
+  const byAsset = new Map();
+  if (!assetIds || !assetIds.length) return byAsset;
+  const { rows } = await db.query(
+    `${ASSIGNMENT_SELECT} WHERE a.asset_id IN ($1) AND a.status <> $2
+      ORDER BY a.assigned_at ASC`,
+    [assetIds, CANCELLED]
+  );
+  // Last one wins, matching activeForAsset's "most recent" above.
+  for (const row of rows) byAsset.set(String(row.asset_id), assignmentRow(row));
+  return byAsset;
+}
+
+/* Section 1's guard: may this task be given to somebody inside the studio?
+ *
+ * Returns a sentence when it may not, null when it may. A sentence rather than
+ * a boolean because the refusal has to say WHO holds it and how to get it back
+ * — "rejected" on its own leaves a PM staring at a dropdown that will not take. */
+async function internalAssignBlocked(db, assetId) {
+  const held = await activeForAsset(db, assetId);
+  if (!held) return null;
+  return `This task is assigned to ${held.freelancerName}, who is a freelancer. `
+    + 'Unassign them on the Outsource tab, or in the task panel, before giving it to somebody in the studio.';
+}
+
+/* Section 2's guard: may this task be given to a freelancer? */
+async function outsourceBlocked(db, assetId) {
+  if (!assetId) return null;
+  const { rows } = await db.query(
+    `SELECT a.assignee_id, u.\`name\` AS assignee_name, a.\`code\`
+       FROM assets a LEFT JOIN users u ON u.id = a.assignee_id
+      WHERE a.id = $1`, [assetId]
+  );
+  if (!rows.length) return null;              // a missing asset is checkRefs' refusal, not this one
+  if (!rows[0].assignee_id) return null;
+  return `${rows[0].code || 'That task'} is assigned to ${rows[0].assignee_name || 'somebody in the studio'}. `
+    + 'Clear the internal assignee before sending the work outside.';
+}
+
+/* Taking work back from a freelancer.
+ *
+ * CANCELLED, NEVER DELETED. The agreed hours may already have been quoted to
+ * the person doing the work; the record of what was agreed and by whom is the
+ * point of keeping it. What cancelling does is release the task — so the
+ * internal side becomes assignable again — and stop the hours costing the
+ * project. */
+async function cancelAssignment(db, id, userId) {
+  const current = await getAssignment(db, id);
+  if (!current) return { ok: false, status: 404, error: 'No such assignment.' };
+  if (current.status === CANCELLED) {
+    return { ok: false, status: 409, error: 'That assignment was already cancelled.' };
+  }
+  await db.query(
+    'UPDATE outsource_assignments SET status = $1, cancelled_by = $2, cancelled_at = NOW() WHERE id = $3',
+    [CANCELLED, userId || null, id]
+  );
+  return { ok: true, before: current, assignment: await getAssignment(db, id) };
 }
 
 /* Totals for the tab's own summary: per freelancer, and per freelancer within a
@@ -412,8 +525,9 @@ function summarise(assignments) {
 }
 
 module.exports = {
-  STATUSES, STATUS_LABELS, FREELANCER_STATUSES, HOURS_MAX,
+  STATUSES, STATUS_LABELS, FREELANCER_STATUSES, HOURS_MAX, CANCELLED, isActive,
   validateFreelancer, listFreelancers, getFreelancer, createFreelancer, updateFreelancer,
   validateAssignment, listAssignments, getAssignment, createAssignment, updateAssignment,
   costFor, costForProject, summarise,
+  activeForAsset, activeByAsset, internalAssignBlocked, outsourceBlocked, cancelAssignment,
 };

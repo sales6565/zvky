@@ -2140,6 +2140,11 @@ async function ensureOutsource(db, log) {
       notes           TEXT          NULL,
       assigned_by     CHAR(36)      NULL,
       assigned_at     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      /* Who took the work back, and when. A cancelled assignment is kept rather
+         than deleted — the agreed hours may already have been quoted to the
+         freelancer — so who ended it is part of the record. */
+      cancelled_by    CHAR(36)      NULL,
+      cancelled_at    DATETIME      NULL,
       updated_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       KEY idx_oa_freelancer (freelancer_id),
       KEY idx_oa_project (project_id),
@@ -2150,6 +2155,20 @@ async function ensureOutsource(db, log) {
          record that somebody was paid for work on it. */
       CONSTRAINT fk_oa_asset      FOREIGN KEY (asset_id)      REFERENCES assets(id)      ON DELETE SET NULL
     )`));
+  /* Added on demand for a deployment that got the tables before unassigning
+     existed, the same way every other late column here arrives. */
+  const { rows: cols } = await db.query(
+    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'outsource_assignments'
+        AND COLUMN_NAME IN ('cancelled_by','cancelled_at')`
+  );
+  const have = new Set(cols.map((c) => c.COLUMN_NAME));
+  if (!have.has('cancelled_by')) {
+    await db.query('ALTER TABLE outsource_assignments ADD COLUMN cancelled_by CHAR(36) NULL');
+  }
+  if (!have.has('cancelled_at')) {
+    await db.query('ALTER TABLE outsource_assignments ADD COLUMN cancelled_at DATETIME NULL');
+  }
   log('Schema: freelancers and outsource_assignments ready.');
 }
 

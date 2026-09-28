@@ -9,6 +9,7 @@ const { parse } = require('csv-parse/sync');
 const XLSX = require('xlsx');
 const db = require('../db');
 const oversight = require('../project-oversight');
+const oversightOutsource = require('../outsource');
 const { authenticate, requirePermission } = require('../middleware/auth');
 const { upload, uploadImport } = require('../upload');
 const {
@@ -206,9 +207,16 @@ async function attachTasksAndNotes(assets, viewer) {
   // ignores it and keeps drawing one card per asset.
   const episodes = await enrich('assignment history', () => assignments.listFor(db, ids))
     .then((m) => (m instanceof Map ? m : new Map()));
+  /* Whether each task is out with a freelancer, so the panel can show Section 2
+     as committed and grey Section 1 out. What the SERVER decides is read again
+     on the write — see internalAssignBlocked — so this can only ever hide a
+     control the server would refuse, never offer one it would allow. */
+  const outsourced = await enrich('outsourced work', () => oversightOutsource.activeByAsset(db, ids))
+    .then((m) => (m instanceof Map ? m : new Map()));
   return assets.map((a) => ({
     ...a,
     can_review_tl: mayReviewTl(a),
+    outsourced_to: outsourced.get(String(a.id)) || null,
     time_spent_seconds: (timeSpent.get(a.id) || {}).seconds || 0,
     // [{ round, seconds, open, who }], oldest round first.
     rounds_spent: rounds.get(a.id) || [],
@@ -447,6 +455,9 @@ router.post('/project/:projectId', async (req, res) => {
        due, assetSchedule.asISODate(startDate), description, manHours]
     );
   // Created Not Assigned, as the pipeline says. If it was created with somebody
+  /* No exclusivity check here, and that is not an omission: the asset is being
+     created in this request, so nothing can yet be outsourced against it. The
+     collision only becomes possible once it exists. */
   // already on it, the same rule that applies to assigning later applies here:
   // assignment is what starts the work.
   if (assigneeId) {
@@ -554,6 +565,15 @@ router.patch('/:id', async (req, res) => {
       });
     }
   }
+  /* SECTION 1's HALF OF THE EXCLUSIVITY RULE. A task already out with a
+     freelancer is not the studio's to hand to one of its own — refused with a
+     sentence naming who holds it and how to get it back, rather than silently
+     overwriting. The other half lives in src/routes/outsource.js. */
+  if (wantsAssign && req.body.assigneeId) {
+    const blocked = await oversightOutsource.internalAssignBlocked(db, asset.id);
+    if (blocked) return res.status(409).json({ error: blocked, field: 'assigneeId' });
+  }
+
   // A request that changes nothing either way still has to be somebody's to make.
   if (!wantsEdit && !wantsAssign && !mayEdit) {
     return res.status(403).json({ error: 'You cannot edit this asset' });
@@ -1354,6 +1374,14 @@ router.post('/bulk/assign', requirePermission('asset.bulk_assign'), async (req, 
       if (setsAssignee && !(await mayAssign(req.user, asset))) {
         results.push({ ...label, ok: false, error: 'You cannot assign this asset.' });
         continue;
+      }
+      /* Per asset, because a bulk run over twenty tasks may contain one that is
+         out with a freelancer — and that one is refused by name while the other
+         nineteen go through, which is what this route's per-row results are
+         for. Assigning in bulk must not be the way round the rule. */
+      if (setsAssignee && assigneeId) {
+        const blocked = await oversightOutsource.internalAssignBlocked(db, asset.id);
+        if (blocked) { results.push({ ...label, ok: false, error: blocked }); continue; }
       }
       if ((setsStart || setsDue) && !(await canEditAsset(req.user, asset))) {
         results.push({ ...label, ok: false, error: 'You cannot edit this asset.' });
@@ -2224,6 +2252,14 @@ router.post('/:id/reassign', async (req, res) => {
   const asset = rows[0];
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
   if (await projectClosedResponse(res, asset.project_id)) return undefined;
+
+  /* The same half of the exclusivity rule the PATCH route enforces. Handover is
+     a second door into "this task is now this person's", and a rule guarded on
+     one door only is not a rule. */
+  {
+    const blocked = await oversightOutsource.internalAssignBlocked(db, asset.id);
+    if (blocked) return res.status(409).json({ error: blocked, field: 'assigneeId' });
+  }
 
   // All four stages hand over the same way.
   //

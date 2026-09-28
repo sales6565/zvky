@@ -1177,6 +1177,30 @@ module.exports = [
     + 'variance and profit are taken from the two costs combined. A freelancer with no rate '
     + 'recorded contributes hours but no cost and is reported as unpriced, never folded in at zero '
     + '— a zero there would make the project look cheaper than it was.'),
+  h2('11.7a Assigning a task: inside the studio, or outside it'),
+  p('A task belongs to one person or the other, never both. The task panel has two sections — '
+    + '<b>Assignee</b> for somebody in the studio, and <b>Assign to freelancer</b> below it — and '
+    + 'committing either one greys the other out.'),
+  steps([
+    'Open the task and find the two sections under the checklist.',
+    'For internal work: pick the person, then press Assign. Picking a name no longer assigns on the spot — the button is the commitment.',
+    'For outsourced work: pick the freelancer, press Assign to Freelancer, and enter the decided man hours when asked. The assignment is not made until there is a figure.',
+    'To switch type: press Unassign on whichever section is active. Both sections open again and you can pick the other way.',
+  ]),
+  note('The greying out is a courtesy. The rule is on the server',
+    'Every route that can set an assignee — the panel, the Edit form, the handover and the bulk '
+    + 'assign — refuses a task that is out with a freelancer, and says who holds it. The outsource '
+    + 'side refuses a task somebody in the studio is already on. So the rule holds whether the '
+    + 'refusal comes from a greyed-out button or from a browser left open on a stale page.\n\n'
+    + 'Bulk assign refuses PER TASK: run it over twenty and the one that is outsourced is named and '
+    + 'skipped while the other nineteen go through.'),
+  bullets([
+    'UNASSIGNING A FREELANCER DOES NOT DELETE ANYTHING. The assignment is marked cancelled and kept — the agreed hours may already have been quoted to them, so what was agreed and by whom stays on the record. What changes is that the task is the studio’s again and the hours stop costing the project.',
+    'IT TAKES Manage Outsourcing — the same permission that gave the work out. Somebody who can only view the Outsource tab cannot take work back.',
+    'AD HOC OUTSOURCED WORK IS OUTSIDE THIS. An assignment that names no task conflicts with no task, so a project can carry ad hoc outsourced work and still assign every one of its tasks normally.',
+    'EVERY UNASSIGN IS LOGGED, with the figure that was agreed before it was taken back.',
+  ]),
+
   p('PAY RATES ARE A SEPARATE PERMISSION. Manage Outsourcing lets somebody add freelancers, give '
     + 'them work and set the agreed hours. See Freelancer Pay Rates — the Super Admin by default '
     + '— is what shows the money: the rate, the cost column and the P&L figures above. Without '

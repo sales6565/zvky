@@ -627,6 +627,17 @@ tr.past-round{opacity:0.62;}
 .ref-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:4px;}
 .ref-head h3{font-family:'Space Grotesk';font-size:15px;margin:0;}
 .ref-note{font-size:11.5px;color:var(--ink-faint);margin-bottom:10px;}
+/* --- The two assignment sections in the task panel ------------------------
+   Committing either disables the other. The grey is a courtesy: every route
+   that sets an assignee refuses a task out with a freelancer, and the outsource
+   routes refuse one with an internal assignee. */
+.asn-sec{border-left:2px solid var(--border);padding:2px 0 2px 10px;margin-bottom:2px;}
+.asn-sec.asn-off{opacity:.5;pointer-events:none;}
+.asn-row{display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap;}
+.asn-why{font-size:11px;color:var(--ink-faint);padding:6px 0 2px;font-style:italic;}
+.asn-held{font-size:13px;padding:6px 0 2px;}
+.asn-disc{font-size:10.5px;color:var(--ink-faint);margin-left:7px;}
+.asn-meta{font-size:11px;color:var(--ink-faint);margin-top:2px;}
 /* --- Outsource: freelancers and the work given to them -------------------- */
 .os-wrap{padding:4px 0 24px;}
 .os-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:12px;}
@@ -7823,12 +7834,50 @@ async function openDrawer(id){
       <div class="ref-err" id="reassignErr"></div>
     ` : ''}
 
+    ${/* TWO SECTIONS, AND A TASK BELONGS TO ONE OF THEM.
+          Committing either disables the other, here and on the server. The
+          greying is a courtesy — every route that sets an assignee refuses a
+          task already out with a freelancer, and the outsource routes refuse
+          one that has an internal assignee. */''}
     <div class="field-lbl" style="margin-top:16px;">Assignee</div>
-    ${mayAssignAsset(a)
-      ? `<select id="d_assignee"><option value="">Loading…</option></select><div class="ref-err" id="d_assigneeErr"></div>`
-      : `<div style="font-size:13px;padding:8px 0;">${a.assignee_name
-            ? `<span class="who-line">${avatarHTML({ id:a.assignee_id, name:a.assignee_name, photoAt:a.assignee_photo_at }, { size:22, title:false })}<span>${escapeHTML(a.assignee_name)}</span></span>`
-            : 'Unassigned'}</div>`}
+    <div class="asn-sec${a.outsourced_to ? ' asn-off' : ''}">
+      ${mayAssignAsset(a) && !a.outsourced_to
+        ? `<select id="d_assignee"><option value="">Loading…</option></select>
+           <div class="asn-row">
+             <button class="btn btn-sm btn-brand" id="d_assignBtn">Assign</button>
+             ${a.assignee_id ? '<button class="btn btn-sm btn-ghost" id="d_unassignBtn">Unassign</button>' : ''}
+           </div>
+           <div class="ref-err" id="d_assigneeErr"></div>`
+        : `<div style="font-size:13px;padding:8px 0;">${a.assignee_name
+              ? `<span class="who-line">${avatarHTML({ id:a.assignee_id, name:a.assignee_name, photoAt:a.assignee_photo_at }, { size:22, title:false })}<span>${escapeHTML(a.assignee_name)}</span></span>`
+              : 'Unassigned'}</div>`}
+      ${a.outsourced_to ? `<div class="asn-why">Out with a freelancer \u2014 unassign below to give this to somebody in the studio.</div>` : ''}
+    </div>
+
+    ${can('outsource.view') ? `
+    <div class="field-lbl" style="margin-top:14px;">Assign to freelancer</div>
+    <div class="asn-sec${a.assignee_id && !a.outsourced_to ? ' asn-off' : ''}">
+      ${a.outsourced_to ? `
+        <div class="asn-held">
+          <div><strong>${escapeHTML(a.outsourced_to.freelancerName)}</strong>
+            ${a.outsourced_to.freelancerDiscipline?`<span class="asn-disc">${escapeHTML(a.outsourced_to.freelancerDiscipline)}</span>`:''}</div>
+          <div class="asn-meta">${escapeHTML(String(a.outsourced_to.decidedManHours))}h agreed
+            \u00b7 ${escapeHTML(a.outsourced_to.statusLabel)}
+            ${a.outsourced_to.dueDate?` \u00b7 due ${escapeHTML(a.outsourced_to.dueDate)}`:''}</div>
+        </div>
+        ${can('outsource.manage') ? `<div class="asn-row">
+          <button class="btn btn-sm btn-ghost" id="d_osUnassign">Unassign freelancer</button>
+        </div>` : ''}
+        <div class="ref-err" id="d_osErr"></div>`
+      : a.assignee_id ? `<div class="asn-why">Assigned inside the studio \u2014 unassign above to send this out.</div>`
+      : can('outsource.manage') ? `
+        <select id="d_freelancer"><option value="">Loading\u2026</option></select>
+        <div class="asn-row">
+          <button class="btn btn-sm btn-brand" id="d_osAssignBtn">Assign to freelancer</button>
+        </div>
+        <div class="ref-err" id="d_osErr"></div>`
+      : `<div class="asn-why">Nobody outside the studio is on this.</div>`}
+    </div>` : ''}
 
 
     <div class="field-lbl">Submissions</div>
@@ -7911,7 +7960,7 @@ async function openDrawer(id){
      form uses — PATCH with assigneeId — rather than a third path with its own
      rules. Every change it makes is written to the asset's history, so the
      panel and the Reassign block below both leave the same trail. */
-  if(mayAssignAsset(a)){
+  if(mayAssignAsset(a) && !a.outsourced_to){
     const sel = document.getElementById('d_assignee');
     const err = document.getElementById('d_assigneeErr');
     api(`/projects/${a.project_id}/artists`).then(({ artists })=>{
@@ -7924,12 +7973,17 @@ async function openDrawer(id){
       }
     }).catch(e2=>{ sel.innerHTML = '<option value="">Could not load</option>'; err.textContent = e2.message; });
 
-    sel.onchange = async e=>{
+    /* A BUTTON, NOT A CHANGE EVENT.
+       Picking a name used to assign on the spot, so a mis-click on a dropdown
+       moved somebody's work with nothing in between. The pick is now a choice
+       and Assign is the commitment, which is also what lets the panel refuse
+       the click outright when the task is out with a freelancer. */
+    const commit = async (assigneeId)=>{
       err.textContent = '';
       sel.disabled = true;
       try{
-        const { asset } = await api('/assets/'+id, { method:'PATCH', body:{ assigneeId: e.target.value || null } });
-        showToast(asset.assignee_name ? `Reassigned to ${asset.assignee_name}.` : 'Unassigned.');
+        const { asset } = await api('/assets/'+id, { method:'PATCH', body:{ assigneeId: assigneeId || null } });
+        showToast(asset.assignee_name ? `Assigned to ${asset.assignee_name}.` : 'Unassigned.');
       }catch(e2){
         err.textContent = e2.message;
       }finally{
@@ -7943,6 +7997,68 @@ async function openDrawer(id){
         await render();
         openDrawer(id);
       }
+    };
+    const go = document.getElementById('d_assignBtn');
+    if(go) go.onclick = ()=>{
+      if(!sel.value){ err.textContent = 'Pick somebody first, or use Unassign to clear it.'; return; }
+      commit(sel.value);
+    };
+    const clear = document.getElementById('d_unassignBtn');
+    if(clear) clear.onclick = ()=>commit(null);
+  }
+
+  /* ---- Section 2: the freelancer side of the same task ---- */
+  if(can('outsource.manage') && !a.outsourced_to && !a.assignee_id){
+    const fsel = document.getElementById('d_freelancer');
+    const ferr = document.getElementById('d_osErr');
+    if(fsel){
+      api('/outsource/freelancers').then(({ freelancers })=>{
+        const active = (freelancers||[]).filter(f=>f.active);
+        fsel.innerHTML = '<option value="">Choose a freelancer\u2026</option>' +
+          active.map(f=>`<option value="${f.id}">${escapeHTML(f.name)}${f.discipline?` \u2014 ${escapeHTML(f.discipline)}`:''}</option>`).join('');
+        if(!active.length) fsel.innerHTML = '<option value="">Nobody on the roster yet</option>';
+      }).catch(e2=>{ fsel.innerHTML = '<option value="">Could not load</option>'; ferr.textContent = e2.message; });
+
+      const btn = document.getElementById('d_osAssignBtn');
+      if(btn) btn.onclick = async ()=>{
+        ferr.textContent = '';
+        if(!fsel.value){ ferr.textContent = 'Pick a freelancer first.'; return; }
+        /* THE DECIDED MAN HOURS, ASKED ON CONFIRM. It is the whole of what the
+           studio agrees with a freelancer, so it is not a field that can be
+           skipped past — the assignment is not made until there is a number. */
+        const typed = prompt('Decided man hours for this task\n\n'
+          + 'The figure agreed with the freelancer. This is not measured time — '
+          + 'no timer runs on outsourced work.', a.man_hours || '');
+        if(typed === null) return;
+        const hours = Number(typed);
+        if(!Number.isFinite(hours) || hours < 0){
+          ferr.textContent = 'Agreed man hours is a number, and cannot be negative.'; return;
+        }
+        btn.disabled = true;
+        try{
+          await api('/outsource/assignments', { method:'POST', body:{
+            freelancerId: fsel.value, projectId: a.project_id, assetId: a.id,
+            decidedManHours: hours, description: a.name || '' } });
+          showToast('Assigned to the freelancer.');
+          await render(); openDrawer(id);
+        }catch(e2){ ferr.textContent = e2.message; btn.disabled = false; }
+      };
+    }
+  }
+  if(a.outsourced_to && can('outsource.manage')){
+    const un = document.getElementById('d_osUnassign');
+    const ferr = document.getElementById('d_osErr');
+    if(un) un.onclick = async ()=>{
+      if(!confirm(`Unassign ${a.outsourced_to.freelancerName}?\n\n`
+        + `The ${a.outsourced_to.decidedManHours}h agreed with them is kept on the record as `
+        + 'cancelled rather than deleted, and stops costing the project. The task can then be '
+        + 'given to somebody in the studio.')) return;
+      un.disabled = true;
+      try{
+        await api(`/outsource/assignments/${a.outsourced_to.id}/cancel`, { method:'POST' });
+        showToast('Freelancer unassigned.');
+        await render(); openDrawer(id);
+      }catch(e2){ if(ferr) ferr.textContent = e2.message; un.disabled = false; }
     };
   }
 

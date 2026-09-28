@@ -187,6 +187,14 @@ router.post('/assignments', async (req, res) => {
   if (body.projectId && !(await inScope(req, body.projectId))) {
     return res.status(403).json({ error: 'No access to that project.', field: 'projectId' });
   }
+  /* SECTION 2's HALF OF THE EXCLUSIVITY RULE. A task somebody in the studio is
+     already on does not also go outside it. Checked before the write, and with
+     a sentence naming who holds it. The other half is in src/routes/assets.js,
+     on all three of the routes that can set an assignee. */
+  if (body.assetId) {
+    const blocked = await outsource.outsourceBlocked(db, String(body.assetId));
+    if (blocked) return res.status(409).json({ error: blocked, field: 'assetId' });
+  }
   const result = await outsource.createAssignment(db, body, req.user.id);
   if (!result.ok) return res.status(result.status).json({ errors: result.errors, error: result.errors[0].message });
   const a = result.assignment;
@@ -213,6 +221,14 @@ router.put('/assignments/:id', async (req, res) => {
   if (body.projectId && !(await inScope(req, body.projectId))) {
     return res.status(403).json({ error: 'No access to that project.', field: 'projectId' });
   }
+  /* An edit can MOVE an assignment onto a task, so it asks the same question a
+     create does — but only about an asset it is not already on, or re-saving an
+     assignment would refuse itself. */
+  const movingTo = body.assetId === undefined ? existing.assetId : (body.assetId || null);
+  if (movingTo && String(movingTo) !== String(existing.assetId || '')) {
+    const blocked = await outsource.outsourceBlocked(db, String(movingTo));
+    if (blocked) return res.status(409).json({ error: blocked, field: 'assetId' });
+  }
   const result = await outsource.updateAssignment(db, req.params.id, body);
   if (!result.ok) return res.status(result.status).json({ errors: result.errors, error: result.errors[0].message });
 
@@ -237,6 +253,48 @@ router.put('/assignments/:id', async (req, res) => {
     ),
   });
   res.json({ assignment: after });
+});
+
+/* POST /api/outsource/assignments/:id/cancel — take the work back.
+ *
+ * WHO MAY. outsource.manage, which is the same permission that gave the work
+ * out. The studio flagged the alternative — Super Admin only, once hours are
+ * agreed — and this is the narrower reading of the same worry: the number may
+ * already have been quoted to the freelancer, so cancelling is deliberate,
+ * recorded with the figure, and never deletes anything. But a PM who assigned
+ * the wrong type two minutes ago should be able to put it right without
+ * escalating, and the record of what was agreed survives either way. Say the
+ * word and the gate moves.
+ *
+ * WHAT IT DOES. Marks the assignment cancelled. The task becomes assignable
+ * internally again, and the hours stop costing the project — a cancelled
+ * assignment is kept for its history, not for its arithmetic.
+ */
+router.post('/assignments/:id/cancel', async (req, res) => {
+  if (refuseUnlessManager(req, res)) return;
+  const existing = await outsource.getAssignment(db, req.params.id);
+  if (!existing) return res.status(404).json({ error: 'No such assignment.' });
+  if (!(await inScope(req, existing.projectId))) {
+    return res.status(403).json({ error: 'No access to that project.' });
+  }
+  const result = await outsource.cancelAssignment(db, req.params.id, req.user.id);
+  if (!result.ok) return res.status(result.status).json({ error: result.error });
+
+  const a = result.assignment;
+  req.activity({
+    module: 'settings', action: 'outsource.unassigned',
+    entityType: 'outsource_assignment', entityId: a.id,
+    entityLabel: `${a.freelancerName} \u2014 ${a.projectName}`,
+    /* The figure is in the sentence. Somebody reading this later wants to know
+       what was agreed before it was taken back, not merely that it was. */
+    summary: `Took ${a.decidedManHours}h back from ${a.freelancerName} on ${a.projectName}`
+      + (a.assetCode ? ` (${a.assetCode})` : ''),
+    changes: activity.diff(
+      { status: result.before.statusLabel, decidedManHours: result.before.decidedManHours },
+      { status: a.statusLabel, decidedManHours: a.decidedManHours }
+    ),
+  });
+  res.json({ assignment: a });
 });
 
 module.exports = router;
