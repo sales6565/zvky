@@ -20,6 +20,7 @@ const {
   canCreateAsset,
   isAssignedArtist,
   canActAtTlGate,
+  tlGateAuthority,
   reviewTeamProjects,
   projectsWithReviewTeam,
   canReviewAsCD,
@@ -2062,6 +2063,114 @@ router.get('/versions/:versionId/download', async (req, res) => {
   const filePath = path.join(__dirname, '..', '..', 'uploads', version.file_path);
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File missing from storage' });
   res.download(filePath, version.file_name);
+});
+
+/* POST /api/assets/:id/game-feedback — what the studio does about a game bug.
+ *
+ * body: { decision: 'pass' | 'decline', reason? }
+ *
+ * The two moves the review team has once Dev & QA have reported something broken. Both
+ * go through the state machine rather than writing statuses here, so the standing to act
+ * is decided in one place; what this route adds is the bits the machine has no business
+ * knowing — which feedback round is being answered, and the outbox row that tells Dev &
+ * QA what was decided.
+ */
+router.post('/:id/game-feedback', async (req, res) => {
+  const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
+  const asset = rows[0];
+  if (!asset) return res.status(404).json({ error: 'Asset not found' });
+  if (await projectClosedResponse(res, asset.project_id)) return undefined;
+
+  const { decision, reason } = req.body || {};
+  if (!['pass', 'decline'].includes(decision)) {
+    return res.status(400).json({ error: 'decision must be "pass" or "decline"', field: 'decision' });
+  }
+
+  /* The open round being answered: the newest feedback on this asset that moved it —
+     which is the one carrying the restore pair. Anything raised as a note moved nothing
+     and has nothing to restore, so those are not candidates. */
+  const open = await db.query(
+    `SELECT id, round, source, bug_ref, prev_status, prev_routed_to_id
+       FROM external_feedback
+      WHERE asset_id = $1 AND prev_status IS NOT NULL
+      ORDER BY created_at DESC, round DESC LIMIT 1`,
+    [asset.id]
+  );
+  const feedback = open.rows[0] || null;
+
+  const action = decision === 'pass' ? 'game_feedback_pass' : 'game_feedback_decline';
+  const ctx = await contextFor(req, asset);
+  /* What the machine restores to, handed in rather than looked up there: the answer is
+     stored per round, and the workflow has no business reading external_feedback. */
+  ctx.restoreStatus = feedback ? feedback.prev_status : asset.status;
+  ctx.restoreRoutedTo = feedback ? feedback.prev_routed_to_id : null;
+
+  const verdict = workflow.evaluate(action, ctx, { note: reason });
+  if (!verdict.ok) {
+    return res.status(verdict.status).json({ error: verdict.error, field: verdict.field });
+  }
+  if (decision === 'decline' && !feedback) {
+    return res.status(409).json({
+      error: 'There is no open game feedback round on this asset to decline.',
+      field: 'decision',
+    });
+  }
+
+  /* WHICH AUTHORITY they acted on, from the one function that knows — the project's
+     review team, or full access reaching a gate nobody staffed them on. Both legitimate,
+     not the same fact, and the history cannot tell them apart without this. */
+  const actedVia = await tlGateAuthority(req.user, asset);
+
+  const conn = await db.connect();
+  try {
+    await conn.query('BEGIN');
+    await conn.query(
+      'UPDATE assets SET `status` = $1, routed_to_id = $2 WHERE id = $3',
+      [verdict.to, verdict.routedTo, asset.id]
+    );
+    await conn.query(
+      `INSERT INTO asset_events
+         (id, asset_id, action, from_status, to_status, actor_id, actor_email, note, routed_to_id, acted_via)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [uuid(), asset.id, action, asset.status, verdict.to, req.user.id, req.user.email,
+        reason || null, verdict.routedTo, actedVia]
+    );
+
+    if (decision === 'decline') {
+      /* Told to Dev & QA through the outbox, written in THIS transaction — the decision
+         and the intention to tell them commit together or neither does. Delivery is the
+         worker's job afterwards, and nothing about it can reach this request. */
+      await conn.query(
+        'INSERT INTO integration_outbox (id, payload, `status`) VALUES ($1, $2, $3)',
+        [uuid(), JSON.stringify({
+          event: 'feedback.declined',
+          assetId: asset.id,
+          feedbackId: feedback.id,
+          round: feedback.round,
+          source: feedback.source,
+          bugRef: feedback.bug_ref,
+          reason: reason || null,
+          restoredTo: feedback.prev_status,
+          decidedBy: req.user.email,
+          actedVia,
+        }), 'pending']
+      );
+    }
+    await conn.query('COMMIT');
+  } catch (err) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    conn.release();
+  }
+
+  return res.json({
+    asset: { ...asset, status: verdict.to, routed_to_id: verdict.routedTo },
+    decision,
+    actedVia,
+    round: feedback ? feedback.round : null,
+    describe: verdict.describe,
+  });
 });
 
 // POST /api/assets/:id/review — a review decision at whichever gate the asset

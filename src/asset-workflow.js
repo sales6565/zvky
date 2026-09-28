@@ -143,6 +143,18 @@ const actors = {
   },
   // The lead or supervisor of whoever the asset is assigned to.
   teamLead: (ctx) => ctx.isTeamLead || ctx.canOverride,
+  /* The gate on a game bug: whoever may act at the FIRST review gate for this asset.
+   *
+   * The same standing as teamLead, and deliberately the same predicate behind it —
+   * canActAtTlGate, handed in as ctx.isTeamLead by the route. A game bug goes to the
+   * project's team because they are who decides whether a reported defect is this
+   * asset's to fix, and that is the same question the first gate already answers.
+   *
+   * ctx.canOverride carries the full-access reach that canActAtTlGate grants in its own
+   * right; which of the two actually applied is recorded on the event as acted_via, so
+   * the history can tell a round the team turned round from one an administrator pushed
+   * through. */
+  gameFeedbackLead: (ctx) => Boolean(ctx.isTeamLead || ctx.canOverride),
   // The Creative Director gate.
   //
   // Reads the role's permission, not its tier. Reading the tier was the same
@@ -194,6 +206,11 @@ const routes = {
   // Nobody in particular: a review queue, picked up by whoever holds that gate.
   reviewQueue: () => null,
   actor: (ctx) => ctx.user.id,
+  /* Back to whoever held it before a game bug pulled it out. Null is a legitimate
+     answer — an asset in Delivered sits in no queue — so this reads the context rather
+     than falling back to the assignee, which would put work on somebody's desk that
+     was never on it. */
+  restore: (ctx) => (ctx.restoreRoutedTo === undefined ? null : ctx.restoreRoutedTo),
 };
 
 // --- the transition table ----------------------------------------------------
@@ -235,7 +252,14 @@ const TRANSITIONS = [
        the one path that was already built and debugged for review handover:
        back to Assigned, a new episode, their own clock from nothing. */
     from: ['pending_tl_review', 'pending_cd_review',
-           'tl_changes_requested', 'cd_changes_requested'],
+           'tl_changes_requested', 'cd_changes_requested',
+           /* And an open game bug, for the same reason as the two rework stages beside
+              it: the asset is in somebody's hands and may need to be put in somebody
+              else's. A game bug sitting with an artist who is on leave would otherwise
+              be the one kind of rework nobody could hand on, which is precisely the
+              problem this transition exists for. Lands in Assigned like the rest, so the
+              new person starts their own round from nothing. */
+           'game_feedback'],
     to: 'assigned',
     who: 'handOver',
     routeTo: 'assignee',
@@ -391,6 +415,43 @@ const TRANSITIONS = [
     routeTo: 'assignee',
     describe: 'Team lead passed the Creative Director\'s notes to the assignee',
   },
+  /* --- a bug from the build ------------------------------------------------
+   *
+   * ARRIVING IS NOT A TRANSITION HERE, and that is not an omission. A game bug is
+   * raised by Dev & QA through the integration API, where there is no user at all — so
+   * there is nobody for an actor to be, and evaluate() could not be asked. The route
+   * applies that status change itself, under the rules written in src/routes/integration.js.
+   * What IS in this table is what a PERSON then does about it.
+   *
+   * Both moves stay in game_feedback and differ only in where the asset is routed,
+   * exactly as relay does for the Creative Director's notes: the status says a game bug
+   * is open, routed_to_id says whose move it is. A second status for "the artist is
+   * fixing it" would be a state the board would have to explain. */
+  {
+    /* Pass to artist. NO ROUND-CREATION LOGIC, and none is needed: a round in this
+       application is a submission, so the artist's next submit is the new round through
+       asset_versions, and the Efficiency report counts it with no change to the report.
+       See the note at the top of the game feedback step in src/migrate.js. */
+    action: 'game_feedback_pass',
+    from: ['game_feedback'],
+    to: 'game_feedback',
+    who: 'gameFeedbackLead',
+    routeTo: 'assignee',
+    describe: 'Game bug passed to the assignee',
+  },
+  {
+    /* Decline with reason. The asset goes back to where it was before the bug pulled it
+       out, which is why external_feedback records prev_status and prev_routed_to_id at
+       the moment it arrives: neither is recoverable afterwards. Resolved from the
+       context rather than fixed here, because the answer is stored per round. */
+    action: 'game_feedback_decline',
+    from: ['game_feedback'],
+    to: (ctx) => ctx.restoreStatus,
+    who: 'gameFeedbackLead',
+    routeTo: 'restore',
+    requiresNote: true,
+    describe: 'Game bug declined',
+  },
   {
     action: 'deliver',
     from: ['approved_for_client'],
@@ -524,6 +585,8 @@ function evaluate(action, ctx, { note } = {}) {
       client_sent: 'sent to the client — only work that has been approved for the client can go out',
       client_approved: 'closed off as approved by the client — that is only possible while it is waiting on the client',
       client_changes: 'sent back with the client\'s changes — that is only possible while it is waiting on the client',
+      game_feedback_pass: 'passed to the assignee as a game bug — that is only possible while a game bug is open on it',
+      game_feedback_decline: 'declined as a game bug — that is only possible while a game bug is open on it',
     };
     return {
       ok: false,
@@ -582,6 +645,13 @@ function refusal(transition, ctx) {
       return 'Only the assigned artist can submit this asset.';
     case 'teamLead':
       return 'Only this artist\'s team lead can act on it at this stage.';
+    /* Its own case rather than sharing teamLead's, because the reader is in a different
+       situation: the asset was pulled out of Delivered by somebody outside the studio,
+       and "this artist's team lead" does not explain why they are being turned away from
+       an asset they may well have delivered themselves. */
+    case 'gameFeedbackLead':
+      return 'Only this project\'s review team can decide what happens to a game bug — '
+        + 'pass it to the artist, or decline it with a reason.';
     case 'clientApprover':
     case 'creativeDirector':
       return 'Only the Creative Director can act on it at this stage.';

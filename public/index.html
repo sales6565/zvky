@@ -7445,8 +7445,13 @@ async function openDrawer(id){
      way now — back to Assigned, with the incoming person's own clock from
      nothing — so there is one flag rather than two, and the wording below
      changes with the stage rather than the mechanism. */
+  /* Five now. game_feedback joined the server's list for the same reason as the two
+     rework stages: the asset is in somebody's hands and may need to be put in somebody
+     else's, and a game bug sitting with an artist on leave would otherwise be the one
+     kind of rework nobody could hand on. A test holds this to the server's answer. */
   const HAND_OVER_STATUSES = ['pending_tl_review','pending_cd_review',
-                              'tl_changes_requested','cd_changes_requested'];
+                              'tl_changes_requested','cd_changes_requested',
+                              'game_feedback'];
   const canHandOver = HAND_OVER_STATUSES.includes(a.status) && mayHandOverInReview(a);
   const handingBackRework = REWORK_STATUSES.includes(a.status);
   /* Accept and Start. The assignee's own, with full access for oversight —
@@ -8517,6 +8522,12 @@ const HISTORY_ACTIONS = {
      (every workflow action must be here), so extra entries are welcome. */
   reassign:           { label: 'Reassigned',        color: '#ffd23d' },
   unassign:           { label: 'Unassigned',        color: 'var(--not)' },
+  /* A bug from the build. Amber, the Game Feedback status colour, so a line in the
+     history and the stage on the board read as the same thing. */
+  game_feedback_raised:   { label: 'Game bug raised',     color: '#d9822b' },
+  game_feedback_note:     { label: 'Game bug noted',      color: '#d9822b' },
+  game_feedback_pass:     { label: 'Passed to artist',    color: '#d9822b' },
+  game_feedback_decline:  { label: 'Game bug declined',   color: 'var(--not)' },
 };
 
 async function loadAssetHistory(id){

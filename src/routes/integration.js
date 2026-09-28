@@ -24,6 +24,18 @@ const db = require('../db');
 const idempotency = require('../integration-idempotency');
 const outbox = require('../integration-outbox');
 const { UPLOAD_DIR } = require('../upload');
+const lifecycle = require('../lifecycle');
+const workLog = require('../work-log');
+
+// Who a game bug can come from. A list rather than free text: these end up in reports,
+// and four spellings of "QA" would make those reports lie quietly.
+const SOURCES = ['qa', 'dev', 'tech_art', 'client'];
+
+/* IDLE, and the whole rule rests on it: nobody is working on this asset. Delivered or
+   Approved for Client, AND no open round. Both halves are needed — a delivered asset
+   somebody has reopened and started has an open session, and taking it off them to
+   answer a bug report would lose their round. */
+const IDLE_STATUSES = ['delivered', 'approved_for_client'];
 
 const router = asyncRouter();
 
@@ -645,6 +657,208 @@ router.put('/assets/:id/in-game', (req, res) => idempotency.withIdempotency(req,
         openBugs: Number(g.open_bugs) || 0,
         link: g.link,
       },
+    },
+  };
+}));
+
+/* POST /assets/:id/feedback — a bug raised against an asset from outside the studio.
+ *
+ * body: { source, bug_ref?, severity?, note, sender_name?, sender_role?, build?,
+ *         cp_stage?, link? }
+ *
+ * ONE RULE DECIDES EVERYTHING: an asset is pulled into Game Feedback only if it is
+ * IDLE — sitting in Delivered or Approved for Client with no open round. Anything else
+ * takes the feedback as a note against the current round and does not move: work in its
+ * first pass, a fix mid-flight on an earlier round, and an asset already carrying an
+ * open game bug are all the same case, because in all three somebody is already working
+ * and a status change would take the asset off them.
+ *
+ * That single rule replaces what the design treated as two — "already being worked on"
+ * and "already in a game feedback round" — and the collapse is the point: they were
+ * never different, they were both "not idle".
+ *
+ * REFUSALS ARE RETURNED, NOT THROWN, and the distinction is load-bearing. A hold, an
+ * archived asset or a closed project is a PERMANENT business answer: it must replay
+ * identically when the caller retries with the same key, which only happens if it goes
+ * back through withIdempotency as a status rather than as an exception. A transient
+ * failure — the database gone, a deadlock — must still throw, so no idempotency row is
+ * written and the retry runs properly. Getting that backwards either wedges a caller on
+ * a stale error for seven days, or re-runs a refusal forever.
+ */
+router.post('/assets/:id/feedback', (req, res) => idempotency.withIdempotency(req, res, async (trx) => {
+  const body = req.body || {};
+  const source = typeof body.source === 'string' ? body.source.trim().toLowerCase() : '';
+  if (!SOURCES.includes(source)) {
+    return { status: 400, body: { error: `source must be one of: ${SOURCES.join(', ')}.`, field: 'source' } };
+  }
+  const note = typeof body.note === 'string' ? body.note.trim() : '';
+  if (!note) {
+    return { status: 400, body: { error: 'note is required — what is wrong.', field: 'note' } };
+  }
+
+  const { rows } = await trx.query(
+    'SELECT id, project_id, `status`, assignee_id, routed_to_id FROM assets WHERE id = $1',
+    [req.params.id]
+  );
+  const asset = rows[0];
+  if (!asset) return { status: 404, body: { error: 'No such asset.' } };
+
+  /* --- the permanent refusals, all RETURNED ------------------------------- */
+
+  /* ARCHIVED IS THE PROJECT'S PROPERTY, NOT THE ASSET'S, and this is worth stating
+     because the brief asked for three refusals and the schema has two mechanisms.
+     `assets` carries no archived flag at all — archived_at is on clients and projects.
+     (The Assets List's "Archived" TAB is status = delivered, which is the idle state that
+     SHOULD accept a bug, so that is emphatically not what this means.) So archived and
+     closed are one read of the project, and lifecycle.projectRefusal already words both,
+     which keeps that wording in one place; only the code is split, because a caller
+     acting on it needs to know which. */
+  const project = await trx.query(
+    'SELECT id, `name`, is_active, closed_at FROM projects WHERE id = $1', [asset.project_id]
+  );
+  const refusal = lifecycle.projectRefusal(project.rows[0]);
+  if (refusal) {
+    const row = project.rows[0];
+    return {
+      status: 409,
+      body: {
+        error: refusal,
+        code: !row ? 'project_missing' : (!row.is_active ? 'project_archived' : 'project_closed'),
+      },
+    };
+  }
+
+  /* On hold is DERIVED, not stored — there is no on_hold status and no column. The
+     newest session belonging to whoever holds the asset now, ended 'held'. Asking
+     work-log rather than reimplementing that is the difference between one answer and
+     two that disagree. */
+  const held = asset.assignee_id ? await workLog.heldFor(trx, asset.id, asset.assignee_id) : null;
+  if (held) {
+    return {
+      status: 409,
+      body: {
+        error: 'That asset is on hold. Resume it before raising anything against it.',
+        code: 'asset_on_hold',
+      },
+    };
+  }
+
+  /* --- idle, or not ------------------------------------------------------- */
+
+  const open = await workLog.openSession(trx, asset.id);
+  const idle = IDLE_STATUSES.includes(asset.status) && !open;
+
+  // The round this concerns: recorded, never invented. Submissions are rounds.
+  const round = await workLog.currentRound(trx, asset.id);
+
+  const feedbackId = crypto.randomUUID();
+  const insert = () => trx.query(
+    `INSERT INTO external_feedback
+       (id, asset_id, round, source, bug_ref, severity, note, sender_name, sender_role,
+        build, cp_stage, link, prev_status, prev_routed_to_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+    [
+      feedbackId, asset.id, round, source,
+      typeof body.bug_ref === 'string' ? body.bug_ref.trim() : '',
+      typeof body.severity === 'string' ? body.severity.trim() : null,
+      note,
+      typeof body.sender_name === 'string' ? body.sender_name.trim() : null,
+      typeof body.sender_role === 'string' ? body.sender_role.trim() : null,
+      typeof body.build === 'string' ? body.build.trim() : null,
+      typeof body.cp_stage === 'string' ? body.cp_stage.trim() : null,
+      typeof body.link === 'string' ? body.link.trim() : null,
+      /* THE RESTORE PAIR, copied from the asset AS IT IS NOW and only when this round
+         will actually move it. Neither value is recoverable afterwards: the status it
+         came from is gone the moment it changes, and who held it is not derivable from
+         anything else. Left null on a note, because a note moves nothing and there is
+         nothing to restore. */
+      idle ? asset.status : null,
+      idle ? asset.routed_to_id : null,
+    ]
+  );
+
+  try {
+    await insert();
+  } catch (err) {
+    /* THE SECOND GUARD, the unique key on (asset_id, round, source, bug_ref). A retried
+       call with a fresh idempotency key must not raise one defect twice and send the
+       asset round twice for it — see the DDL in src/migrate.js. Returned, not thrown:
+       it is a permanent answer about this request, so it replays. */
+    if (err && err.code === 'ER_DUP_ENTRY') {
+      const existing = await trx.query(
+        `SELECT id, round, prev_status FROM external_feedback
+          WHERE asset_id = $1 AND round = $2 AND source = $3 AND bug_ref = $4`,
+        [asset.id, round, source, typeof body.bug_ref === 'string' ? body.bug_ref.trim() : '']
+      );
+      const was = existing.rows[0];
+      return {
+        status: 200,
+        body: {
+          feedbackId: was ? was.id : null,
+          round,
+          alreadyRaised: true,
+          movedAsset: false,
+          assetStatus: asset.status,
+        },
+      };
+    }
+    /* THROWN, and a mutation returning a 5xx here survives — recorded rather than left
+       looking covered. withIdempotency does not record a status >= 400, so for THIS
+       failure the two are indistinguishable: it is the handler's first write, so there is
+       nothing yet to roll back. The distinction is real where a write precedes the
+       failure — a returned status COMMITS it, a throw takes it back — which the event
+       insert below is tested for. Keeping `throw` is what makes that stay true if a write
+       is ever added above this line. */
+    throw err;
+  }
+
+  if (!idle) {
+    /* A NOTE, and nothing moves. Still an asset_events row, because Dev & QA's
+       incremental sync is driven by asset_events.seq — a bug arriving against work in
+       progress is exactly the change they need on their next poll, and without this row
+       it would land invisibly. */
+    await trx.query(
+      `INSERT INTO asset_events (id, asset_id, action, from_status, to_status, note)
+       VALUES ($1, $2, 'game_feedback_note', $3, $4, $5)`,
+      [crypto.randomUUID(), asset.id, asset.status, asset.status,
+        `${source}: ${note}`.slice(0, 2000)]
+    );
+    return {
+      status: 200,
+      body: {
+        feedbackId,
+        round,
+        movedAsset: false,
+        // Why it did not move, so the caller is not left guessing whether it worked.
+        reason: open ? 'a round is already open on this asset' : `the asset is in ${asset.status}`,
+        assetStatus: asset.status,
+      },
+    };
+  }
+
+  /* IDLE: the asset moves, in this same transaction. Routed to nobody — the first review
+     gate is a QUEUE in this codebase (routes.reviewQueue returns null), and
+     canActAtTlGate is the predicate deciding who may take from it. It answers whether a
+     given person may act; it cannot resolve a lead, and inventing a resolver would be a
+     second answer to a question the queue already answers. */
+  await trx.query(
+    'UPDATE assets SET `status` = $1, routed_to_id = NULL WHERE id = $2',
+    ['game_feedback', asset.id]
+  );
+  await trx.query(
+    `INSERT INTO asset_events (id, asset_id, action, from_status, to_status, note)
+     VALUES ($1, $2, 'game_feedback_raised', $3, 'game_feedback', $4)`,
+    [crypto.randomUUID(), asset.id, asset.status, `${source}: ${note}`.slice(0, 2000)]
+  );
+
+  return {
+    status: 200,
+    body: {
+      feedbackId,
+      round,
+      movedAsset: true,
+      assetStatus: 'game_feedback',
+      restoredTo: { status: asset.status, routedToId: asset.routed_to_id },
     },
   };
 }));

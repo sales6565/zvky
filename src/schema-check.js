@@ -147,6 +147,9 @@ const REQUIRED = [
      overwrites a newer one and nothing says so. */
   { table: 'asset_ingame',      column: 'in_game_build_seq', step: 'game feedback tables' },
   { table: 'assets',            column: 'needs_tech_art', step: 'assets.needs_tech_art' },
+  /* Which authority a gate action was taken on. Missing, the history cannot tell a
+     round the project's team turned round from one an administrator pushed through. */
+  { table: 'asset_events',      column: 'acted_via',      step: 'asset_events.acted_via' },
   { table: 'integration_outbox',   column: null,              step: 'integration tables' },
   { table: 'integration_outbox',   column: 'seq',             step: 'integration tables' },
   { table: 'integration_outbox',   column: 'next_attempt_at', step: 'integration tables' },

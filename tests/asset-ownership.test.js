@@ -8,10 +8,17 @@ const cfg = config('assetown');
 
 // --- the rule, in isolation ----------------------------------------------------
 
-test('the two rework states are the ones the pipeline parks changes in', () => {
-  assert.deepStrictEqual(REWORK_STATUSES, ['tl_changes_requested', 'cd_changes_requested']);
+test('the three rework states are the ones the pipeline parks changes in', () => {
+  /* game_feedback joined these deliberately, not by accident of a status being added:
+     it IS a rework state. The asset is back with the studio because the build says it is
+     broken, and the artist works on it and submits again exactly as they would after a
+     lead's notes — which is also what makes the fix its own round, through
+     asset_versions, with no round-creation logic anywhere. */
+  assert.deepStrictEqual(REWORK_STATUSES,
+    ['tl_changes_requested', 'cd_changes_requested', 'game_feedback']);
   assert.ok(isAwaitingRework({ status: 'tl_changes_requested' }));
   assert.ok(isAwaitingRework({ status: 'cd_changes_requested' }));
+  assert.ok(isAwaitingRework({ status: 'game_feedback' }));
   for (const status of ['not_started', 'in_progress', 'pending_tl_review',
     'pending_cd_review', 'approved_for_client', 'delivered']) {
     assert.ok(!isAwaitingRework({ status }), `${status} is not a rework state`);

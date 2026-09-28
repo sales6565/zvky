@@ -107,34 +107,54 @@ test('game_feedback is in the status vocabulary in every place that carries it',
     'the statuses the app can write and the ones the constraint admits are one set');
 });
 
-test('adding a status introduces no transition, so nothing else is owed yet', () => {
-  /* actors, refusal() and the PHRASE map are keyed by TRANSITION, not by status —
-     checked here rather than assumed, because the brief asked whether adding
-     game_feedback owes them an entry. It does not: no transition exists into or out
-     of it yet, and the whole of tests/asset-workflow.test.js passing is the other
-     half of that answer.
-     
-     When the transition does land it owes all three, plus REWORK_STATUSES in
-     src/permissions.js, which is pinned to exactly two values by
-     tests/asset-ownership.test.js and will fail until it is updated deliberately. */
+test('the transition landed, and everything it owed was paid', () => {
+  /* THIS TEST USED TO ASSERT THE OPPOSITE, and that is the point of it.
+   *
+   * When game_feedback was added as a status with no transition, it owed nothing to
+   * actors, refusal() or the PHRASE map — those are keyed by transition — and this test
+   * recorded that, so the deferral was a stated fact rather than an oversight. The
+   * transition has since been built, so what it records now is that every debt was
+   * actually settled. Five places, not the four that were flagged: HISTORY_ACTIONS in the
+   * page was the one the flagging missed, and the guard in tests/asset-workflow.test.js
+   * found it.
+   */
   const source = read('src/asset-workflow.js');
-  /* actors and PHRASE are module-private; TRANSITIONS is the exported list of the
-     same keys, which is what makes this checkable from outside. */
-  const transitions = Object.keys(workflow.TRANSITIONS || {});
-  assert.ok(transitions.length, 'TRANSITIONS should be keyed by transition name');
-  for (const id of workflow.STATE_IDS) {
-    assert.ok(!transitions.includes(id),
-      `transitions are named for the action, not the status (${id})`);
-  }
-  // And no transition mentions the new status yet, in either direction.
-  const actorsBlock = source.match(/const actors = \{([\s\S]*?)\n\};/);
-  assert.ok(actorsBlock, 'actors should be one named map');
-  assert.ok(!/game_feedback/.test(actorsBlock[1]),
-    'no actor rule refers to it yet, because no transition does');
+  const page = read('public/index.html');
+  const actions = ['game_feedback_pass', 'game_feedback_decline'];
 
+  for (const action of actions) {
+    const t = workflow.TRANSITIONS.find((x) => x.action === action);
+    assert.ok(t, `${action} is in the transition table`);
+    assert.deepStrictEqual(t.from, ['game_feedback'], `${action} starts from the status`);
+  }
+
+  // 1. an actor, shared by both, because both are the same standing.
+  const actorsBlock = source.match(/const actors = \{([\s\S]*?)\n\};/);
+  assert.match(actorsBlock[1], /gameFeedbackLead:/, 'actors has an entry');
+  assert.strictEqual(new Set(actions.map((a) =>
+    workflow.TRANSITIONS.find((x) => x.action === a).who)).size, 1, 'and both use it');
+
+  // 2. its own case in refusal(), not the generic fallback.
+  const refusalBlock = source.slice(source.indexOf('function refusal('));
+  assert.match(refusalBlock, /case 'gameFeedbackLead':/, 'refusal() has a case');
+
+  // 3. both actions in the PHRASE map, or an illegal move reads as a raw id.
+  const phrase = source.match(/const PHRASE = \{([\s\S]*?)\n    \};/);
+  for (const action of actions) {
+    assert.ok(phrase[1].includes(`${action}:`), `PHRASE has ${action}`);
+  }
+
+  // 4. REWORK_STATUSES, which was pinned to exactly two values.
   const { REWORK_STATUSES } = require('../src/permissions');
-  assert.deepStrictEqual(REWORK_STATUSES, ['tl_changes_requested', 'cd_changes_requested'],
-    'still two: game_feedback joins this when its transition is built, not before');
+  assert.ok(REWORK_STATUSES.includes('game_feedback'),
+    'game_feedback is a rework state: the artist works on it and submits again');
+
+  // 5. HISTORY_ACTIONS in the page — the one the list of four missed.
+  const history = page.match(/const HISTORY_ACTIONS = \{([\s\S]*?)\n\};/);
+  for (const action of actions) {
+    assert.ok(history[1].includes(`${action}:`),
+      `${action} would appear in an asset's history as a raw id`);
+  }
 });
 
 test('/api/health would notice these tables missing', () => {

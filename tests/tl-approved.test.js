@@ -123,10 +123,17 @@ test('nothing else in the pipeline was re-routed', () => {
     assert.strictEqual(t.to, to, `${action} no longer lands in ${to}`);
   }
 
-  // And the hand-over stages are the same four. TL Approved is NOT one of them:
-  // nobody is working on it there, so there is nobody to hand it away from.
-  assert.deepStrictEqual([...workflow.transitionFor('reassign_review').from].sort(),
-    ['cd_changes_requested', 'pending_cd_review', 'pending_tl_review', 'tl_changes_requested']);
+  /* And TL Approved is still NOT a hand-over stage: nobody is working on it there, so
+     there is nobody to hand it away from. Asserted as that absence rather than as the
+     whole list, which is what this test is actually about — the list itself grew later,
+     when game_feedback became a rework stage assets can be handed on from, and pinning
+     the full list here would make this file fail for changes it makes no claim about. */
+  const handOver = workflow.transitionFor('reassign_review').from;
+  assert.ok(!handOver.includes('tl_approved'), 'TL Approved is not a hand-over stage');
+  for (const stage of ['cd_changes_requested', 'pending_cd_review',
+    'pending_tl_review', 'tl_changes_requested']) {
+    assert.ok(handOver.includes(stage), `${stage} is still a hand-over stage`);
+  }
 });
 
 // --- the panel ------------------------------------------------------------------

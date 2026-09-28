@@ -2440,6 +2440,29 @@ async function ensureGameFeedbackTables(db, log) {
   }
 }
 
+/* asset_events.acted_via — WHICH authority somebody acted on, not just that they could.
+ *
+ * canActAtTlGate admits two different people at the first gate: somebody on the
+ * project's review team, and anybody with full access, who reaches every gate in the
+ * studio whether they are staffed on the project or not. Both are legitimate; they are
+ * not the same fact. "A Super Admin unblocked this" and "the project's lead reviewed
+ * this" read identically in the history without this column, and the Efficiency report
+ * cannot tell a round the team turned round from one an administrator pushed through.
+ *
+ * NULL on every row written before this existed, and on every transition where the
+ * question does not arise. A value is not invented for history nobody recorded.
+ */
+async function ensureActedVia(db, log) {
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'asset_events' AND COLUMN_NAME = 'acted_via'`
+  ).catch(() => ({ rows: [] }));
+  if (rows.length) return;
+
+  await db.query('ALTER TABLE asset_events ADD COLUMN acted_via VARCHAR(32) NULL');
+  log('Schema: added asset_events.acted_via.');
+}
+
 /* assets.needs_tech_art — whether this asset is waiting on a Tech Art pass.
  *
  * A column on assets rather than a row somewhere, because it is a property of the
@@ -3642,6 +3665,8 @@ const STEPS = [
   ['game feedback tables', ensureGameFeedbackTables],
   // A column on assets, so after anything that rebuilds that table.
   ['assets.needs_tech_art', ensureNeedsTechArt],
+  // A column on asset_events, so after anything that repairs that table.
+  ['asset_events.acted_via', ensureActedVia],
   ['chat settings', ensureChatSettings],
   ['chat settings mirror', (db) => chatSettings.load(db)],
   // After the tables exist, and reading the window from the module that owns it.

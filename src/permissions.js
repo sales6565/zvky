@@ -308,7 +308,12 @@ async function canManageTasks(user, asset) {
 // The two states where an asset is waiting for rework. The creator may hand
 // that rework to somebody else rather than let it go back to whoever submitted
 // it — which is the whole point of the Reassign action.
-const REWORK_STATUSES = ['tl_changes_requested', 'cd_changes_requested'];
+/* Three now, not two. game_feedback joins them because it IS a rework state: the
+   asset is back with the studio because the build says it is broken, and the artist
+   works on it and submits again exactly as they would after a lead's notes. Anything
+   reading this list to mean "waiting for rework" was already right about
+   game_feedback before it existed. */
+const REWORK_STATUSES = ['tl_changes_requested', 'cd_changes_requested', 'game_feedback'];
 
 function isAwaitingRework(asset) {
   return Boolean(asset) && REWORK_STATUSES.includes(asset.status);
@@ -479,6 +484,34 @@ async function canActAtTlGate(user, asset) {
   return canViewAsset(user, asset);
 }
 
+/* WHICH authority got somebody through the first gate — for the history, not for the
+ * decision. canActAtTlGate above answers whether they may act; this answers what on.
+ *
+ * Deliberately next to it and deriving from the same predicates, rather than the caller
+ * re-deciding: two copies of "was this the team or an override" would drift, and the one
+ * in the history would be the one nobody noticed had gone wrong.
+ *
+ * Returns null when they may not act at all, so a caller cannot mistake a refusal for a
+ * route. 'full_access_override' only when full access is the ONLY thing that let them in:
+ * a Super Admin who is also on the project's review team acted as a member of it, and
+ * tagging that as an override would overstate what happened.
+ */
+async function tlGateAuthority(user, asset) {
+  if (!(await canActAtTlGate(user, asset))) return null;
+  if (!hasFullAccess(user)) return 'team_lead';
+  if (await projectHasReviewTeam(asset.project_id)) {
+    // AWAITED. Without it this is a Promise, which is always truthy, so every
+    // full-access action was recorded as the team's — the exact confusion the column
+    // exists to prevent, and invisible except to a test that checks the value.
+    return (await onProjectReviewTeam(user, asset.project_id)) ? 'team_lead' : 'full_access_override';
+  }
+  /* No team named on the project. Full access is then indistinguishable from the
+     fallback path any lead who can see the work would have taken, so it is reported as
+     the override — which is the honest reading: nothing about this project put them
+     there. */
+  return 'full_access_override';
+}
+
 // Full access: the studio-wide tier.
 //
 // The codebase spelled this out as `manageUsers && projectScope === 'all'` in
@@ -590,6 +623,7 @@ module.exports = {
   canManageUsers,
   isAssignedArtist,
   canActAtTlGate,
+  tlGateAuthority,
   onProjectReviewTeam,
   reviewTeamProjects,
   projectHasReviewTeam,
