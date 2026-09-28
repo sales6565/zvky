@@ -2065,6 +2065,187 @@ router.get('/versions/:versionId/download', async (req, res) => {
   res.download(filePath, version.file_name);
 });
 
+/* POST /api/assets/bulk/send-to-dev — a partial drop or a Tech Art hand-off to Dev & QA.
+ *
+ * Under /bulk/ because that is where this application's bulk actions live — /bulk/deliver
+ * and /bulk/assign are the two beside it — and a third one somewhere else would be a third
+ * place to look.
+ *
+ * body: { assetIds: [], kind: 'partial_drop' | 'tech_art', label?, note?, bugRefs?,
+ *         build?, cpStage? }
+ *
+ * ONE TRANSACTION, four kinds of write, and each one exists for a reader that would
+ * otherwise be blind:
+ *
+ *   handoffs + handoff_assets   what was sent, at which round, and what it claims to fix
+ *   asset_events               so Prompt 10's incremental sync sees it. Dev & QA poll
+ *                              MAX(asset_events.seq); a hand-off that wrote no event would
+ *                              be a drop they were never told about
+ *   integration_outbox         the handoff.created message, written HERE rather than
+ *                              delivered here, so the fact and the intention to tell
+ *                              somebody commit together or neither does
+ *
+ * THE ROUND IS RECORDED, NEVER INVENTED — currentRound() is the submission count, the same
+ * definition the Efficiency report uses. Nothing here creates a round.
+ */
+router.post('/bulk/send-to-dev', requirePermission('integration.send_to_dev'), async (req, res) => {
+  const body = req.body || {};
+  const ids = [...new Set((Array.isArray(body.assetIds) ? body.assetIds : [])
+    .map((x) => String(x || '').trim()).filter(Boolean))];
+  if (!ids.length) return res.status(400).json({ error: 'Choose at least one asset.', field: 'assetIds' });
+
+  const KINDS = ['partial_drop', 'tech_art'];
+  const kind = KINDS.includes(String(body.kind || '').trim()) ? String(body.kind).trim() : 'partial_drop';
+
+  /* Bug references as given, normalised and de-duplicated. Identifiers in somebody else's
+     tracker: this cannot validate them and does not pretend to. */
+  const bugRefs = [...new Set((Array.isArray(body.bugRefs)
+    ? body.bugRefs
+    : String(body.bugRefs || '').split(','))
+    .map((x) => String(x || '').trim()).filter(Boolean))];
+
+  const { rows: assets } = await db.query(
+    'SELECT id, project_id, `code`, `name`, `status` FROM assets WHERE id IN ($1)', [ids]
+  );
+  if (!assets.length) return res.status(404).json({ error: 'None of those assets exist.' });
+
+  /* ONE PROJECT PER HAND-OFF. A drop is a thing the receiving end integrates into one
+     build of one game; a mixed-project drop would be a row whose project_id is a guess.
+     Refused rather than split into several, because splitting would mean answering with
+     several hand-off ids for one request and nothing asked for that. */
+  const projects = [...new Set(assets.map((a) => a.project_id))];
+  if (projects.length > 1) {
+    return res.status(400).json({
+      error: 'Those assets are on different projects. Send one project at a time.',
+      field: 'assetIds',
+      projects: projects.length,
+    });
+  }
+  if (await projectClosedResponse(res, projects[0])) return undefined;
+
+  const found = new Set(assets.map((a) => a.id));
+  const missing = ids.filter((id) => !found.has(id));
+
+  const handoffId = uuid();
+  const results = [];
+  const conn = await db.connect();
+  try {
+    await conn.query('BEGIN');
+    await conn.query(
+      `INSERT INTO handoffs (id, project_id, kind, label, \`status\`, build, cp_stage, note,
+                             sent_at, created_by_id, created_by_email)
+       VALUES ($1,$2,$3,$4,'queued',$5,$6,$7,NOW(),$8,$9)`,
+      [handoffId, projects[0], kind,
+        String(body.label || '').trim() || null,
+        String(body.build || '').trim() || null,
+        String(body.cpStage || '').trim() || null,
+        String(body.note || '').trim() || null,
+        req.user.id, req.user.email]
+    );
+
+    for (const asset of assets) {
+      // The round this carries, from the submission count. Recorded, not invented.
+      const round = await workLog.currentRound(conn, asset.id);
+      try {
+        await conn.query(
+          `INSERT INTO handoff_assets (id, handoff_id, asset_id, round, bug_refs, \`status\`)
+           VALUES ($1,$2,$3,$4,$5,'queued')`,
+          [uuid(), handoffId, asset.id, round, bugRefs.join(',')]
+        );
+      } catch (err) {
+        /* The unique key on (handoff_id, asset_id, round) — one asset round per drop. Two
+           of the same id in one request is a mistake, not two things to integrate, and the
+           de-duplication above means this only fires on a genuine collision. */
+        if (err.code !== 'ER_DUP_ENTRY') throw err;
+        results.push({ id: asset.id, code: asset.code, outcome: 'skipped',
+          reason: 'already in this hand-off at the same round' });
+        continue;
+      }
+
+      /* THE EVENT THE SYNC CURSOR READS. Without it a drop is invisible to the very system
+         it was sent to, because Dev & QA poll asset_events.seq and nothing else. */
+      await conn.query(
+        `INSERT INTO asset_events (id, asset_id, action, from_status, to_status, actor_id,
+                                   actor_email, note)
+         VALUES ($1,$2,'sent_to_dev',$3,$3,$4,$5,$6)`,
+        [uuid(), asset.id, asset.status, req.user.id, req.user.email,
+          `${kind === 'tech_art' ? 'Tech Art hand-off' : 'Partial drop'}`
+          + `${bugRefs.length ? ` — fixes ${bugRefs.join(', ')}` : ''}`
+          + `${String(body.note || '').trim() ? `: ${String(body.note).trim()}` : ''}`]
+      );
+      results.push({ id: asset.id, code: asset.code, outcome: 'sent', round });
+    }
+
+    /* AND THE MESSAGE, in this same transaction. This was in the agreed message list and
+       had never been wired — a hand-off the studio believed it had sent and Dev & QA had
+       never heard of. Delivery is the worker's job afterwards and nothing about it can
+       reach this request. */
+    const sent = results.filter((r) => r.outcome === 'sent');
+    if (sent.length) {
+      await conn.query(
+        'INSERT INTO integration_outbox (id, payload, `status`) VALUES ($1, $2, $3)',
+        [uuid(), JSON.stringify({
+          event: 'handoff.created',
+          handoffId,
+          projectId: projects[0],
+          kind,
+          label: String(body.label || '').trim() || null,
+          build: String(body.build || '').trim() || null,
+          cpStage: String(body.cpStage || '').trim() || null,
+          note: String(body.note || '').trim() || null,
+          bugRefs,
+          assets: sent.map((r) => ({ id: r.id, code: r.code, round: r.round })),
+          sentBy: req.user.email,
+        }), 'pending']
+      );
+    }
+    await conn.query('COMMIT');
+  } catch (err) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    conn.release();
+  }
+
+  for (const id of missing) results.push({ id, outcome: 'failed', reason: 'No such asset' });
+
+  /* NOT RECORDED HERE. The activityLogger mounted on /api in src/server.js already records
+     every POST, PUT, PATCH and DELETE that answers under 400 — that is the coverage
+     guarantee, asserted by a test, and this file records nothing by hand precisely because
+     of it. An explicit call would be a second entry for one action, and a second place for
+     the wording to drift from every other route's. */
+  res.status(201).json({ handoffId, kind, bugRefs, results });
+});
+
+/* PATCH /api/assets/:id/tech-art — mark an asset as needing a Tech Art pass, or not.
+ *
+ * A FLAG AND A FILTER, NOT A SEND. Ticking this marks the asset and tells nobody: nothing
+ * reaches Dev & QA until somebody uses Send to Dev, which they may well do after filtering
+ * on this flag. Its own route rather than a field on the general PATCH because it is its
+ * own permission — integration.flag_tech_art is held by artists, who cannot edit an asset
+ * otherwise, and folding it into the edit route would have meant either widening that
+ * route or denying the flag to the people most likely to know it is needed.
+ */
+router.patch('/:id/tech-art', requirePermission('integration.flag_tech_art'), async (req, res) => {
+  const { rows } = await db.query(
+    'SELECT id, project_id, `code`, needs_tech_art FROM assets WHERE id = $1', [req.params.id]
+  );
+  const asset = rows[0];
+  if (!asset) return res.status(404).json({ error: 'Asset not found' });
+  if (await projectClosedResponse(res, asset.project_id)) return undefined;
+
+  const wanted = req.body && req.body.needsTechArt;
+  if (typeof wanted !== 'boolean') {
+    return res.status(400).json({ error: 'needsTechArt must be true or false.', field: 'needsTechArt' });
+  }
+  const was = Boolean(Number(asset.needs_tech_art));
+  if (was === wanted) return res.json({ asset: { id: asset.id, needsTechArt: was }, changed: false });
+
+  await db.query('UPDATE assets SET needs_tech_art = $1 WHERE id = $2', [wanted ? 1 : 0, asset.id]);
+  // Recorded by the activityLogger on /api, like every other change here.
+  res.json({ asset: { id: asset.id, needsTechArt: wanted }, changed: true });
+});
+
 /* POST /api/assets/:id/game-feedback — what the studio does about a game bug.
  *
  * body: { decision: 'pass' | 'decline', reason? }

@@ -92,10 +92,39 @@ async function ensureTables(db) {
  * the comparison only decides whether it is worth saying anything.
  */
 async function refreshIfChanged(db) {
-  const signature = () => cache.map((e) => `${e.id}:${e.address}`).join('|');
-  const before = signature();
-  const ok = await load(db);
-  return { ok, changed: ok && before !== signature() };
+  const signature = (rows) => rows.map((e) => `${e.id}:${e.address}`).join('|');
+  const before = signature(cache);
+
+  /* THE READ IS DONE HERE, NOT THROUGH load(), and the difference is the whole point.
+   *
+   * load() empties the cache when it cannot read the table, which is right for a FIRST
+   * load — acting on a copy nobody can verify is worse than admitting the list cannot be
+   * seen. It is wrong for a poll. This runs every thirty seconds on every worker, and a
+   * momentary fault (a restart, a dropped connection, a lock timeout) would throw away a
+   * mirror that was known-good a second earlier. An emptied cache reads as "storage
+   * unavailable", and the gate opens on that by design — so one hiccup on one poll would
+   * take the studio's address restriction off until the next poll put it back.
+   *
+   * The job of a poll is to notice a CHANGE. Failing to read is not a change, and must
+   * cost nothing: the mirror, the loaded state and the storage state are all left exactly
+   * as they were, and the next poll tries again.
+   */
+  let rows;
+  try {
+    ({ rows } = await db.query(
+      'SELECT * FROM integration_ip_allowlist WHERE is_active = 1 ORDER BY created_at'
+    ));
+  } catch (err) {
+    /* Logged once per run of failures by the caller, not here — this returns the fact and
+       lets startAllowlistRefresh in src/server.js decide how loudly to say it. Nothing
+       about the mirror is touched, deliberately including storage: this poll failed, the
+       list did not go away. */
+    return { ok: false, changed: false, error: err.sqlMessage || err.message };
+  }
+
+  cache = rows.map(shape);
+  storage = { state: 'ready', detail: null, code: null };
+  return { ok: true, changed: before !== signature(cache) };
 }
 
 function fault(err) {

@@ -992,6 +992,81 @@ test('a monitor-mode rollout can be read, then enforced', { skip: cfg ? false : 
   });
 });
 
+test('a failed poll leaves the mirror exactly as it was', async () => {
+  /* THE FAILURE DIRECTION THAT MATTERS, and it is not the obvious one.
+   *
+   * load() empties the cache when it cannot read the table, and that is right for a FIRST
+   * load: acting on a copy nobody can verify is worse than admitting the list cannot be
+   * seen. It is wrong for a periodic refresh. Every worker polls this every thirty seconds,
+   * and a momentary fault — a restart, a dropped connection, a lock timeout — would throw
+   * away a mirror that was known-good a moment ago. An emptied cache reads as
+   * "storage unavailable", and the gate OPENS on that by design. So one hiccup on one poll
+   * would take the studio's address restriction off until the next poll put it back.
+   *
+   * The whole point of polling is to notice a change. Noticing a failure is not noticing a
+   * change, and must cost nothing.
+   */
+  const allowlist = require('../src/ip-allowlist');
+
+  const good = [
+    { id: 'a1', address: '203.0.113.4', label: 'the office', is_active: 1, created_at: new Date() },
+    { id: 'a2', address: '198.51.100.0/24', label: 'the farm', is_active: 1, created_at: new Date() },
+  ];
+  const working = { query: async () => ({ rows: good }) };
+  assert.strictEqual(await allowlist.load(working), true, 'a good load, to have something to lose');
+  assert.strictEqual(allowlist.entries().length, 2);
+  assert.strictEqual(allowlist.storageStatus().ok, true);
+  const before = allowlist.entries();
+
+  // Now the poll fails. Not a missing table — a plain query error, which is what a
+  // restart or a lock timeout looks like from here.
+  const broken = { query: async () => { throw Object.assign(new Error('Lost connection to server'), { code: 'PROTOCOL_CONNECTION_LOST' }); } };
+  const result = await allowlist.refreshIfChanged(broken);
+
+  assert.strictEqual(result.ok, false, 'it reports the failure');
+  assert.strictEqual(result.changed, false, 'and a failure is not a change');
+
+  assert.deepStrictEqual(allowlist.entries(), before,
+    'THE MIRROR IS UNTOUCHED — a failed poll must not throw away a known-good list');
+  assert.strictEqual(allowlist.entries().length, 2);
+  assert.ok(allowlist.findMatch('203.0.113.4'), 'and still answers, so the gate keeps working');
+  assert.strictEqual(allowlist.isLoaded(), true,
+    'and still counts as loaded, or the gate would open on a hiccup');
+  assert.strictEqual(allowlist.storageStatus().ok, true,
+    'the storage state is not soured either: this poll failed, the list did not go away');
+
+  // A later poll that works picks the change up, so nothing is stuck.
+  const changed = [{ id: 'a3', address: '192.0.2.7', label: 'new', is_active: 1, created_at: new Date() }];
+  const after = await allowlist.refreshIfChanged({ query: async () => ({ rows: changed }) });
+  assert.strictEqual(after.ok, true);
+  assert.strictEqual(after.changed, true);
+  assert.deepStrictEqual(allowlist.entries().map((e) => e.address), ['192.0.2.7']);
+
+  /* And the distinction this rests on: a FIRST load that fails still empties, because there
+     is nothing known-good to keep and a stale copy would be acted on. Only the refresh is
+     forgiving. */
+  assert.strictEqual(await allowlist.load(broken), false);
+  assert.deepStrictEqual(allowlist.entries(), [], 'load() still empties on failure');
+  assert.strictEqual(allowlist.isLoaded(), false);
+
+  // Left as it was found, so the suites after this one see a clean module.
+  await allowlist.load(working);
+});
+
+test('the integration list fails its polls the same way', async () => {
+  // Two lists, two tables, one behaviour — asserted separately because they are
+  // deliberately independent everywhere else and one could lose this without the other.
+  const list = require('../src/integration-ip-allowlist');
+  const rows = [{ id: 'b1', address: '203.0.113.50', label: 'build', is_active: 1, created_at: new Date() }];
+  assert.strictEqual(await list.load({ query: async () => ({ rows }) }), true);
+  const before = list.entries();
+
+  const result = await list.refreshIfChanged({ query: async () => { throw new Error('gone'); } });
+  assert.strictEqual(result.ok, false);
+  assert.deepStrictEqual(list.entries(), before, 'untouched');
+  assert.strictEqual(list.isLoaded(), true);
+});
+
 test('how often a worker catches up, and that it does so by default', () => {
   /* THE DEFAULT BEING ON is the safety property here, and it needs its own
      assertion: every test below sets the interval explicitly, so a default that

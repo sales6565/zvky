@@ -1889,6 +1889,39 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
   </div>
 </div>
 
+<!-- Send to Dev & QA. A partial drop or a Tech Art hand-off: which assets, what it
+     claims to fix, and a note for whoever picks it up at the other end. -->
+<div class="modal-wrap" id="sendToDevWrap">
+  <div class="modal" style="width:560px;">
+    <h2 id="sd_title">Send to Dev &amp; QA</h2>
+    <div id="sd_intro" style="font-size:12.5px;color:var(--ink-muted);margin-bottom:10px;"></div>
+    <div id="sd_form">
+      <label>What this is</label>
+      <select id="sd_kind">
+        <option value="partial_drop">Partial drop — art or animation, finished or not</option>
+        <option value="tech_art">Tech Art hand-off</option>
+      </select>
+      <div class="row2">
+        <div><label>Build <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional)</span></label>
+          <input id="sd_build" placeholder="build-1041"></div>
+        <div><label>CP stage <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional)</span></label>
+          <input id="sd_cp" placeholder="CP2"></div>
+      </div>
+      <label>Bug references this fixes <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional, comma separated)</span></label>
+      <input id="sd_bugs" placeholder="QA-1201, QA-1233">
+      <label>Note <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional)</span></label>
+      <textarea id="sd_note" rows="3" placeholder="What changed, and anything they should look at first."></textarea>
+      <label style="margin-top:10px">Going in this drop</label>
+      <div id="sd_list" class="bulk-list"></div>
+      <div id="sd_err" class="form-err"></div>
+    </div>
+    <div id="sd_results"></div>
+    <div class="modal-actions">
+      <button class="btn" id="sd_cancel">Close</button>
+      <button class="btn btn-brand" id="sd_confirm">Send</button>
+    </div>
+  </div>
+</div>
 <div class="modal-wrap" id="bulkAssignWrap">
   <div class="modal" style="width:560px;">
     <h2 id="ba_title">Assign &amp; schedule</h2>
@@ -3415,6 +3448,17 @@ function deliverable(a){ return a.status === 'approved_for_client'; }
 function mayBulkDeliver(){ return can('review.deliver'); }
 function bulkAssignable(a){ return a.status === 'not_started'; }
 function mayBulkAssign(){ return can('asset.bulk_assign'); }
+/* Send to Dev.
+ *
+ * ANY asset can go in a drop, which is why the predicate is true rather than a status list:
+ * a partial drop is a partial drop — half-finished art on its way to be looked at in the
+ * build is the normal case, not the exception, and the whole point of the word "partial".
+ * Delivered work goes in one too, when a fix is being re-sent.
+ *
+ * Gated on integration.send_to_dev, the permission for this and nothing else. The server
+ * decides; this only decides what is offered. */
+function sendableToDev(){ return true; }
+function mayBulkSendToDev(){ return can('integration.send_to_dev'); }
 
 // Every bulk action this account holds, with the rule for what each one reaches.
 // One list, so the tick boxes, the bar and the pruning cannot disagree about
@@ -3423,6 +3467,7 @@ function bulkActions(){
   const out = [];
   if(mayBulkDeliver()) out.push({ key:'deliver', label:'Mark as Delivered', applies: deliverable });
   if(mayBulkAssign()) out.push({ key:'assign', label:'Assign & Schedule', applies: bulkAssignable });
+  if(mayBulkSendToDev()) out.push({ key:'sendToDev', label:'Send to Dev', applies: sendableToDev });
   return out;
 }
 // Is this asset worth offering a box on at all?
@@ -5787,6 +5832,7 @@ function renderList(){
   const openers = {
     deliver: openBulkDeliver,
     assign: openBulkAssign,
+    sendToDev: openSendToDev,
   };
   el.querySelectorAll('[data-bulk]').forEach(btn=>{
     const act = actions.find(x=>x.key===btn.dataset.bulk);
@@ -5907,6 +5953,67 @@ const bulkAssignWrap = document.getElementById('bulkAssignWrap');
 let bulkAssignPending = [];
 
 function closeBulkAssign(){ bulkAssignWrap.classList.remove('show'); }
+
+/* Send to Dev & QA.
+ *
+ * ONE PROJECT AT A TIME, checked here as well as on the server: a drop is integrated into
+ * one build of one game, so a mixed-project selection would produce a hand-off whose
+ * project is a guess. Said before the button is pressed rather than as a refusal after.
+ */
+const sendToDevWrap = document.getElementById('sendToDevWrap');
+let sendToDevPending = [];
+
+function openSendToDev(chosen){
+  sendToDevPending = chosen;
+  const projects = [...new Set(chosen.map(a=>a.project_id))];
+  document.getElementById('sd_title').textContent =
+    `Send ${chosen.length} asset${chosen.length===1?'':'s'} to Dev & QA`;
+  document.getElementById('sd_intro').textContent = projects.length > 1
+    ? 'Those assets are on different projects. A drop goes into one build of one game, so '
+      + 'send one project at a time.'
+    : 'Half-finished work is the normal case for a partial drop. Nothing about this changes '
+      + 'the assets or their stage — it records what was sent and tells Dev & QA.';
+  document.getElementById('sd_list').innerHTML = chosen.map(a=>
+    `<label><span class="mono" style="min-width:74px;">${a.code}</span><span>${escapeHTML(a.name)}</span>`
+    + `${a.needs_tech_art ? '<span class="chip">needs Tech Art</span>' : ''}</label>`).join('');
+  document.getElementById('sd_err').textContent = '';
+  document.getElementById('sd_results').innerHTML = '';
+  document.getElementById('sd_form').style.display = '';
+  document.getElementById('sd_bugs').value = '';
+  document.getElementById('sd_note').value = '';
+  const confirm = document.getElementById('sd_confirm');
+  confirm.style.display = projects.length > 1 ? 'none' : '';
+  confirm.disabled = false;
+  confirm.textContent = 'Send';
+  sendToDevWrap.classList.add('open');
+}
+
+if(sendToDevWrap){
+  document.getElementById('sd_cancel').onclick = ()=> sendToDevWrap.classList.remove('open');
+  document.getElementById('sd_confirm').onclick = async ()=>{
+    const btn = document.getElementById('sd_confirm');
+    btn.disabled = true; btn.textContent = 'Sending…';
+    document.getElementById('sd_err').textContent = '';
+    try{
+      const r = await api('/assets/bulk/send-to-dev', { method:'POST', body:{
+        assetIds: sendToDevPending.map(a=>a.id),
+        kind: document.getElementById('sd_kind').value,
+        build: document.getElementById('sd_build').value,
+        cpStage: document.getElementById('sd_cp').value,
+        bugRefs: document.getElementById('sd_bugs').value,
+        note: document.getElementById('sd_note').value,
+      } });
+      document.getElementById('sd_form').style.display = 'none';
+      document.getElementById('sd_results').innerHTML = bulkResultsHTML(r.results);
+      btn.style.display = 'none';
+      document.getElementById('sd_cancel').textContent = 'Done';
+      await loadAssets();
+    }catch(err){
+      document.getElementById('sd_err').textContent = err.message;
+      btn.disabled = false; btn.textContent = 'Send';
+    }
+  };
+}
 
 function openBulkAssign(chosen){
   bulkAssignPending = chosen;
@@ -7672,6 +7779,28 @@ async function openDrawer(id){
 
     <div class="field-lbl">Priority</div>
     <select id="d_priority" ${editable?'':'disabled'}>${priorityOptions(a.priority)}</select>
+    ${can('integration.flag_tech_art') ? `
+    <!-- Needs Tech Art.
+         
+         A FLAG AND A FILTER, NOT A SEND, and the note under it says so: ticking this marks
+         the asset and tells nobody. Nothing reaches Dev & QA until somebody uses Send to Dev
+         on the Assets List, which they may well do after filtering on this.
+         
+         Its own permission and its own route, so it saves on its own rather than with the
+         rest of the form: integration.flag_tech_art reaches artists, who cannot edit an
+         asset otherwise, and folding it into the form's Save would have meant either
+         widening that or denying the flag to the people most likely to know it is needed.
+         Which is why it is NOT gated on "editable". -->
+    <div class="field-lbl">Tech Art</div>
+    <label style="display:flex;gap:8px;align-items:center;font-size:13px;padding:4px 0;">
+      <input type="checkbox" id="d_techArt" ${a.needs_tech_art ? 'checked' : ''}>
+      <span>Needs a Tech Art pass</span>
+      <span class="muted" id="d_techArtState" style="font-size:12px;"></span>
+    </label>
+    <div style="font-size:11px;color:var(--ink-faint);margin-bottom:5px;">
+      Marks the asset so it can be found and sent. Nothing goes to Dev &amp; QA until somebody
+      uses Send to Dev on the Assets List.
+    </div>` : ''}
     <div class="field-lbl">Description</div><textarea id="d_desc" rows="3" ${editable?'':'disabled'}>${escapeHTML(a.description||'')}</textarea>
     ${can('asset.lead_notes') ? `
     <!-- The lead's own notes, below Description and deliberately not part of
@@ -7935,6 +8064,27 @@ async function openDrawer(id){
       }catch(err){ showToast(err.message); }
     });
   });
+
+  /* The Tech Art flag, wired OUTSIDE the `editable` block on purpose — it is its own
+     permission and its own route, and an artist who may flag an asset usually may not edit
+     it. Saves on the change rather than on the form's Save, because there is nothing else
+     on the form it belongs with. */
+  const techArtBox = document.getElementById('d_techArt');
+  if(techArtBox) techArtBox.onchange = async e=>{
+    const wanted = e.target.checked;
+    const state = document.getElementById('d_techArtState');
+    if(state) state.textContent = 'saving…';
+    try{
+      await api(`/assets/${id}/tech-art`, { method:'PATCH', body:{ needsTechArt: wanted } });
+      a.needs_tech_art = wanted ? 1 : 0;
+      if(state) state.textContent = wanted ? 'flagged' : '';
+    }catch(err){
+      // Put the box back, or the screen would claim something the server refused.
+      e.target.checked = !wanted;
+      if(state) state.textContent = '';
+      showToast(err.message);
+    }
+  };
 
   if(editable){
     document.getElementById('d_priority').onchange = async e=>{ try{ await api('/assets/'+id,{method:'PATCH',body:{priority:e.target.value}}); a.priority=e.target.value; render(); }catch(err){ showToast(err.message); } };

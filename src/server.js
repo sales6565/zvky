@@ -467,18 +467,27 @@ function startAllowlistRefresh(db) {
   if (!seconds) return null;
 
   const timer = setInterval(() => {
+    /* A FAILED POLL IS REPORTED BUT COSTS NOTHING. refreshIfChanged leaves the mirror,
+       the loaded state and the storage state exactly as they were when it cannot read —
+       so a momentary fault does not throw away a known-good list and open the gate, which
+       is what it used to do. It is said out loud anyway: a poll that keeps failing means
+       every worker is drifting from the table, and that is worth seeing in the log even
+       though nothing is broken this minute. */
     studioIpList.refreshIfChanged(db)
       .then((r) => {
         if (r.changed) console.log('[ip-allowlist] the address list changed elsewhere; reloaded.');
+        else if (!r.ok) console.error(`[ip-allowlist] could not refresh: ${r.error}. `
+          + 'The list in memory is unchanged and still in force.');
       })
-      // Never throws upward: this runs on a timer with nothing above it to catch,
-      // and the gate already treats an unreadable list as a reason to open rather
-      // than to fail. load() has recorded why, and /api/health reports it.
+      // Never throws upward either: this runs on a timer with nothing above it to catch,
+      // and an unhandled rejection in a background job takes the process down.
       .catch((err) => console.error(`[ip-allowlist] refresh failed: ${err.sqlMessage || err.message}`));
 
     integrationIpList.refreshIfChanged(db)
       .then((r) => {
         if (r.changed) console.log('[integration-ip] the address list changed elsewhere; reloaded.');
+        else if (!r.ok) console.error(`[integration-ip] could not refresh: ${r.error}. `
+          + 'The list in memory is unchanged and still in force.');
       })
       .catch((err) => console.error(`[integration-ip] refresh failed: ${err.sqlMessage || err.message}`));
   }, seconds * 1000);
