@@ -2172,6 +2172,162 @@ async function ensureOutsource(db, log) {
   log('Schema: freelancers and outsource_assignments ready.');
 }
 
+/* The three tables behind the Dev & QA integration.
+ *
+ * WHAT EACH IS FOR, because the names alone do not say:
+ *
+ *   integration_clients   one row per external tool, holding its credential.
+ *                         The key itself is NEVER stored — only a hash of it,
+ *                         and a short prefix so a person can tell two
+ *                         credentials apart in a list without either being
+ *                         readable.
+ *   integration_requests  the idempotency store. An external caller retrying a
+ *                         request that already succeeded gets the first
+ *                         response back rather than a second side effect.
+ *   integration_outbox    work this application owes the outside world, written
+ *                         in the same transaction as the change that caused it,
+ *                         and delivered afterwards.
+ *
+ * NOTHING READS THESE YET. They are the storage, added on their own so that the
+ * schema change and the behaviour that uses it are separate deployments —
+ * which is also why every one of them is safe on a database that has them
+ * already.
+ */
+async function ensureIntegrationTables(db, log) {
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS integration_clients (
+      id            CHAR(36)     NOT NULL PRIMARY KEY,
+      -- What a person calls it on screen. Every other record in this schema has
+      -- one, and a credential nobody can name is one nobody dares revoke.
+      \`name\`        VARCHAR(191) NOT NULL,
+      /* THE KEY IS NOT HERE, AND MUST NEVER BE.
+       *
+       * A SHA-256 of it, as 64 hex characters. SHA-256 rather than the bcrypt
+       * the password column uses, and the difference is the threat: a password
+       * is short and human-chosen, so it needs a slow hash to survive being
+       * guessed. An API key is long and random, so there is nothing to guess —
+       * what matters instead is that verifying one costs a single indexed read
+       * on every request, which bcrypt could not do.
+       *
+       * UNIQUE, so presenting a key is one lookup rather than a scan of every
+       * credential the studio has issued. */
+      key_hash      CHAR(64)     NOT NULL,
+      /* The first few characters of the key, in clear.
+       *
+       * Not required by anything, and worth the column: without it the
+       * management screen lists credentials that are all indistinguishable, and
+       * revoking the right one becomes guesswork. A prefix identifies a key to
+       * somebody who already has it and reveals nothing to anybody who does
+       * not. */
+      key_prefix    VARCHAR(16)  NULL,
+      /* WHAT THIS CREDENTIAL MAY DO, as a sorted CSV of action keys.
+       *
+       * The same shape work_schedule.working_days and
+       * recording_hour_configs.days_of_week already use for "the list of things
+       * that apply here": read back whole on every request, never queried by
+       * element, and legible in a database client without a parser.
+       *
+       * NOT a normalized table like role_permissions. That one earns its rows
+       * because a permission is granted per designation by a person whose
+       * identity is recorded per row (updated_by_email is what tells a seeded
+       * default from a decision somebody made). Nothing here needs that: the
+       * list belongs to one credential, changes only when the credential does,
+       * and the Activity Log already records who changed it.
+       *
+       * NOT JSON either. This schema has no native JSON column anywhere —
+       * activity_log.changes is TEXT with JSON inside, for a free-shaped blob
+       * rather than a list — so JSON here would be a third pattern rather than
+       * a match for an existing one.
+       *
+       * The one constraint CSV carries: an action key may not contain a comma.
+       * Action keys are identifiers, so this costs nothing, and whatever writes
+       * this column should refuse one that does rather than corrupt the row. */
+      allowed_actions VARCHAR(500) NOT NULL DEFAULT '',
+      -- is_active, not "active": eight tables in this schema already spell it
+      -- this way and none spells it the other.
+      is_active     TINYINT(1)   NOT NULL DEFAULT 1,
+      -- Null until the credential is first presented, which is how a key that
+      -- was issued and never used is told from one in daily service.
+      last_used_at  DATETIME     NULL,
+      -- The pair ip_allowlist keeps, and for the same reason: this is a
+      -- security record, and who created it outlives their account.
+      created_by_id    CHAR(36)     NULL,
+      created_by_email VARCHAR(191) NULL,
+      created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_integration_clients_hash (key_hash),
+      KEY idx_integration_clients_active (is_active)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS integration_requests (
+      /* The caller's own key for this request, and the primary key here.
+       *
+       * 191 because that is this schema's length for anything indexed and
+       * text — utf8mb4 costs four bytes a character, and 191 is what fits an
+       * index on the older row formats some hosts still default to. Every other
+       * indexed VARCHAR in this file is the same width for the same reason.
+       *
+       * ONE NAMESPACE FOR EVERY CLIENT, which is worth knowing rather than
+       * discovering: two credentials that choose the same key collide, and the
+       * second caller is handed the first one's response. Scoping it per client
+       * means a composite primary key (client_id, idempotency_key); that is a
+       * decision about the API rather than about storage, so it is written down
+       * here rather than made here. */
+      idempotency_key VARCHAR(191) NOT NULL PRIMARY KEY,
+      -- Which credential made it. Not part of the key (see above) — kept so a
+      -- replay can be traced to a caller, and so the store can be pruned per
+      -- client when one is revoked.
+      client_id       CHAR(36)     NULL,
+      endpoint        VARCHAR(255) NOT NULL,
+      /* SHA-256 of the request body, as 64 hex characters.
+       *
+       * What makes a replay safe to answer. The same idempotency key arriving
+       * with a DIFFERENT body is not a retry, it is a mistake or an attack, and
+       * the caller has to be told so rather than handed a response to a request
+       * they did not make. Storing the hash rather than the body means that
+       * check costs nothing and the store holds no payloads. */
+      request_hash    CHAR(64)     NOT NULL,
+      response_status SMALLINT     NOT NULL,
+      /* MEDIUMTEXT, not TEXT. TEXT stops at 64KB, and a response truncated at
+         that boundary is a replay that silently differs from the original. */
+      response_body   MEDIUMTEXT   NULL,
+      created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      -- For pruning: this table grows forever otherwise, and old keys are the
+      -- ones nobody will retry.
+      KEY idx_integration_requests_created (created_at),
+      KEY idx_integration_requests_client (client_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS integration_outbox (
+      id              CHAR(36)     NOT NULL PRIMARY KEY,
+      /* THE ORDER THINGS HAPPENED IN, which created_at cannot give.
+       *
+       * DATETIME on MySQL and MariaDB is second-resolution here, so two rows
+       * written in the same second have no order between them — and an outbox
+       * whose whole purpose is ordered replay cannot have ties. This is the
+       * same id + seq pair activity_log uses, for the same reason. */
+      seq             BIGINT       NOT NULL AUTO_INCREMENT UNIQUE,
+      -- What is being sent, serialized. MEDIUMTEXT for the reason above.
+      payload         MEDIUMTEXT   NOT NULL,
+      -- pending | sent | failed. A string rather than an ENUM, matching every
+      -- other status column in this schema: a fourth state is then a row's
+      -- value and not a schema change.
+      \`status\`       VARCHAR(24)  NOT NULL DEFAULT 'pending',
+      attempts        INT          NOT NULL DEFAULT 0,
+      -- When it may next be tried. Null means "now" for a row never attempted.
+      next_attempt_at DATETIME     NULL,
+      -- What went wrong last time, in words. Bounded rather than TEXT: a
+      -- delivery error is a line, and an unbounded column here fills with
+      -- somebody else's stack traces.
+      last_error      VARCHAR(500) NULL,
+      created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      -- The delivery sweep's query: everything pending, in order, that is due.
+      KEY idx_integration_outbox_due (\`status\`, next_attempt_at, seq)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+
+  log('Schema: integration_clients, integration_requests and integration_outbox ready.');
+}
+
 async function ensureChatSettings(db, log) {
   await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS chat_settings (
       id                TINYINT   NOT NULL PRIMARY KEY,
@@ -3107,6 +3263,10 @@ const STEPS = [
   ['project member provenance', ensureProjectMemberProvenance],
   // After projects and assets, whose keys its assignments point at.
   ['outsource', ensureOutsource],
+  /* After users, whose key integration_clients.created_by_id records. Nothing
+     else depends on these three and nothing depends on them yet — they are
+     storage for a feature deployed separately. */
+  ['integration tables', ensureIntegrationTables],
   ['chat settings', ensureChatSettings],
   ['chat settings mirror', (db) => chatSettings.load(db)],
   // After the tables exist, and reading the window from the module that owns it.

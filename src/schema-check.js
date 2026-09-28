@@ -102,6 +102,27 @@ const REQUIRED = [
   { table: 'chat_messages',      column: null,          step: 'chat' },
   { table: 'chat_attachments',   column: null,          step: 'chat' },
   { table: 'chat_attachments',   column: 'expires_at',  step: 'chat' },
+  /* The integration storage. Declared here at the same time the tables were
+     added, rather than the next time somebody noticed — which is the lesson
+     written at the top of this list: a schema the app needs but this list does
+     not know about is a gap the one diagnostic built to name gaps cannot see,
+     and /api/health reports "complete" the whole time.
+
+     The columns named are the ones something will read by name and that an
+     older copy of a table created by CREATE TABLE IF NOT EXISTS would not have.
+     key_hash is the credential lookup; idempotency_key is the whole point of
+     its table; seq is what makes the outbox ordered rather than merely a
+     queue. */
+  { table: 'integration_clients',  column: null,              step: 'integration tables' },
+  { table: 'integration_clients',  column: 'key_hash',        step: 'integration tables' },
+  { table: 'integration_clients',  column: 'allowed_actions', step: 'integration tables' },
+  { table: 'integration_clients',  column: 'last_used_at',    step: 'integration tables' },
+  { table: 'integration_requests', column: null,              step: 'integration tables' },
+  { table: 'integration_requests', column: 'idempotency_key', step: 'integration tables' },
+  { table: 'integration_requests', column: 'request_hash',    step: 'integration tables' },
+  { table: 'integration_outbox',   column: null,              step: 'integration tables' },
+  { table: 'integration_outbox',   column: 'seq',             step: 'integration tables' },
+  { table: 'integration_outbox',   column: 'next_attempt_at', step: 'integration tables' },
 ];
 
 // Two queries for the whole check, rather than one per column.
