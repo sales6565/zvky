@@ -16,7 +16,9 @@
  * req.integration is what those leave behind. There is no req.user and no
  * req.permissions on this path, on purpose — see src/middleware/service-auth.js.
  */
+const crypto = require('node:crypto');
 const { asyncRouter } = require('../async-router');
+const idempotency = require('../integration-idempotency');
 
 const router = asyncRouter();
 
@@ -27,6 +29,15 @@ const router = asyncRouter();
  * this endpoint visible in the Activity Log, which is where somebody checks
  * that an integration's writes are attributed to the integration. */
 router.post('/ping', (req, res) => {
+  /* It still needs an Idempotency-Key, like every other POST here, and that is
+     not an oversight: generating one is the part of a signed-API integration
+     most likely to be left until last, and the endpoint whose whole job is to
+     be pointed at first is the right place to find out it is missing.
+
+     But it changes nothing, so it does not open a transaction — and it says so,
+     or the "changed something without going through withIdempotency" warning
+     would fire on every ping. */
+  idempotency.changesNothing(req);
   res.json({
     ok: true,
     client: req.integration.name,
@@ -38,6 +49,68 @@ router.post('/ping', (req, res) => {
     address: req.integrationIp || null,
     echo: req.body && typeof req.body === 'object' ? req.body : null,
   });
+});
+
+/* POST /api/integration/counter — the idempotency probe.
+ *
+ * There is no real business endpoint on this API yet, and idempotency is not
+ * something to take on trust until there is. What has to be observable is
+ * whether the caller's work RAN, which a response cannot show: a replay and a
+ * fresh execution return the same body, by design. So this counts executions.
+ *
+ * Two things move when the work runs, on purpose:
+ *
+ *   the counter    in memory, per process, so a test can see that fn was
+ *                  entered — or that it was not
+ *   an outbox row  written on the TRANSACTION, so a test can see that a
+ *                  rolled-back attempt left nothing behind
+ *
+ * The second is what proves the atomicity claim rather than just the bookkeeping:
+ * an idempotency row that rolls back while the business write commits would pass
+ * a test that only counted rows in integration_requests.
+ */
+const counters = new Map();
+const countOf = (name) => counters.get(name) || 0;
+
+router.post('/counter', (req, res) => idempotency.withIdempotency(req, res, async (trx) => {
+  const name = String((req.body && req.body.counter) || 'probe');
+  counters.set(name, countOf(name) + 1);
+
+  /* A considered refusal, RETURNED rather than thrown. The difference matters:
+     a thrown error rolls everything back, while a returned 4xx is the handler
+     saying "this is my answer" — and either way it is not recorded, so the
+     caller's corrected request is free to use the same key. Returned before the
+     outbox write so the test for it has nothing to disentangle. */
+  if (req.body && req.body.reject) {
+    return { status: 409, body: { refused: name, count: countOf(name) } };
+  }
+
+  await trx.query(
+    'INSERT INTO integration_outbox (id, payload, `status`) VALUES ($1, $2, $3)',
+    [crypto.randomUUID(), JSON.stringify({ probe: name, at: Date.now() }), 'pending']
+  );
+
+  /* An asked-for failure, AFTER both writes, which is the only ordering that
+     tests what it claims to: failing before them would prove nothing about
+     rollback, because there would be nothing to roll back. */
+  if (req.body && req.body.fail) {
+    const err = new Error('The counter probe was asked to fail after doing its work.');
+    err.status = 500;
+    throw err;
+  }
+
+  return { status: 200, body: { counter: name, count: countOf(name) } };
+}));
+
+/* GET /api/integration/counter — read it back without touching it.
+ *
+ * A GET, so no Idempotency-Key and no transaction: the count has to be readable
+ * after a request that was rolled back, and a reader that needed a key of its
+ * own would be one more thing to get wrong in the test that matters most.
+ */
+router.get('/counter', (req, res) => {
+  const name = String(req.query.counter || 'probe');
+  res.json({ counter: name, count: countOf(name) });
 });
 
 module.exports = router;

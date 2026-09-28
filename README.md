@@ -1912,6 +1912,70 @@ confirms the address the app actually sees and sets
 fail-closed switch here, because the signature and the credential are the locks
 that hold either way, and an address list is not one of them.
 
+### Idempotency
+
+Every `POST`, `PUT` and `DELETE` under `/api/integration` must carry an
+`Idempotency-Key` header. A caller whose request times out cannot know whether
+the work happened, so retrying is the only safe thing it can do — and recognising
+the retry is the only safe thing this end can do.
+
+| The caller sends | It gets |
+|---|---|
+| a new key | the work runs; the response is recorded |
+| the same key, same body | the stored response, with `Idempotent-Replay: true`; **the handler does not run** |
+| the same key, a different body | `422`, logged, and nothing runs — one of the two requests would otherwise be lost |
+| no key at all | `400` |
+| the same key after a failure | the work runs, because a failed attempt records nothing |
+
+**The record commits with the change, or neither does.** If the change committed
+and the record did not, a retry would do the work twice; if the record committed
+and the change did not, a retry would be answered with a success for work that
+never happened. Both are worse than no idempotency at all, because both are
+silent.
+
+A middleware cannot give that. It runs before the handler and again after it,
+while the handler's writes commit in between on a connection the middleware does
+not hold. So the transaction is opened by
+[`src/integration-idempotency.js`](src/integration-idempotency.js) and handed to
+the handler:
+
+```js
+router.post('/thing', (req, res) => idempotency.withIdempotency(req, res, async (trx) => {
+  await trx.query('INSERT INTO …');        // on trx, or it is not in the transaction
+  return { status: 200, body: { … } };
+}));
+```
+
+What the middleware still does is the part that must not be forgettable: refusing
+a keyless mutation, and writing a line to the log when a handler changed something
+without going through the helper at all.
+
+**What is guaranteed, precisely.** Committed effects happen exactly once — the
+primary key on `(client_id, idempotency_key)` enforces that on insert, not the
+lookup in front of it. But `fn` itself runs *at least* once: two duplicate
+requests arriving together both miss the lookup and both enter it, and the loser
+is rolled back and replays the winner's response. So a side effect that is not on
+the connection `fn` was handed — an email, a file, somebody else's API — can
+happen twice, and no rollback takes it back. Those belong in
+`integration_outbox`, written on `trx` and delivered afterwards.
+`tests/integration-idempotency.test.js` asserts both halves of that, including
+the second.
+
+The key is **scoped to the credential that chose it**. Two clients picking the
+same string are two different requests; without the scoping the second would be
+handed the first one's response, which is a cross-tenant leak wearing a cache's
+clothes. The `integration requests` table was created with `idempotency_key`
+alone as its key and its own DDL called the scoping a decision about the API
+rather than about storage — the `integration idempotency scope` migration step is
+that decision.
+
+Keys are forgotten after seven days, by a sweep with the same shape as the chat
+attachment sweep in [`src/chat-files.js`](src/chat-files.js): a pass at startup,
+then a timer, `unref`'d so a stopped server is not held open by it. The startup
+pass is the one that matters — a process restarted after a week down comes back
+holding keys no timer ever fired for. A key reused after the window is treated as
+new, so the window has to outlast any retry a caller will really make.
+
 ### There is no screen for it, yet
 
 Credentials and addresses are set on the server by whoever runs the deployment.

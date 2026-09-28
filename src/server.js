@@ -44,6 +44,7 @@ const integrationIpList = require('./integration-ip-allowlist');
 const integrationIpGate = require('./middleware/integration-ip-allowlist');
 const integrationBody = require('./middleware/integration-body');
 const { serviceAuth } = require('./middleware/service-auth');
+const idempotency = require('./integration-idempotency');
 
 const app = express();
 
@@ -163,6 +164,19 @@ app.use('/api/integration',
   integrationIpGate.middleware,
   integrationLimiter,
   serviceAuth,
+  /* AFTER serviceAuth, because it needs the credential: an idempotency key is
+     scoped to the client that chose it, so there is nothing to scope it to until
+     the credential is known. Mounting it earlier would also mean an
+     unauthenticated caller learned which headers this API wants, which is more
+     than "I do not know you" should give away.
+
+     These two cover the part that must not be forgettable — a mutation with no
+     key is refused, and one that never reached withIdempotency says so in the
+     log. The atomic half is in the handlers, which call withIdempotency
+     themselves; see src/integration-idempotency.js for why it cannot be done
+     from here. */
+  idempotency.requireKey,
+  idempotency.warnIfUnused(),
   integrationRoutes);
 
 app.use('/api/outsource', outsourceRoutes);
@@ -435,6 +449,10 @@ async function start() {
        same reason as the line above: a process restarted overnight comes back
        holding sessions that ran past seven while nothing was listening. */
     workLog.scheduleAutoPause(db);
+    /* And forget integration idempotency keys older than a week. Same reasoning
+       as the two sweeps above: the pass that runs now is the one that clears
+       what expired while this process was not running. */
+    idempotency.schedule(db);
   } catch (err) {
     // Start anyway: a server that is up can report through /api/health why the
     // database is unreachable, where one that exited says nothing at all.

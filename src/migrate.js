@@ -2194,6 +2194,67 @@ async function ensureOutsource(db, log) {
  * which is also why every one of them is safe on a database that has them
  * already.
  */
+/* The idempotency key, scoped to the credential that chose it.
+ *
+ * integration_requests was created with idempotency_key alone as its primary
+ * key, and that DDL says in as many words that scoping it per client is a
+ * decision about the API rather than about storage. The API now exists and the
+ * decision is made: two credentials that happen to pick the same key are two
+ * different requests, and handing the second caller the first one's response
+ * would be a cross-tenant data leak wearing a cache's clothes.
+ *
+ * So the primary key becomes (client_id, idempotency_key). It is the PRIMARY KEY
+ * that enforces this and not the lookup in front of it — two concurrent requests
+ * with the same key both miss that lookup, and what stops the second from
+ * running twice is the unique violation on insert. Widening the key is therefore
+ * the whole mechanism, not a tidy-up.
+ *
+ * IDENTIFIED BY WHAT IT COVERS, not by its name: a PRIMARY KEY is always called
+ * PRIMARY, so the only way to know whether this has run is to read the columns
+ * in it. Two columns means done.
+ */
+async function ensureIdempotencyScope(db, log) {
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME AS name, SEQ_IN_INDEX AS seq
+       FROM information_schema.STATISTICS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'integration_requests'
+        AND INDEX_NAME = 'PRIMARY'
+      ORDER BY SEQ_IN_INDEX`
+  ).catch(() => ({ rows: [] }));
+
+  // No table, or no primary key to read: nothing to do here. The table's own
+  // step creates it, and a database where that failed is already reported.
+  if (!rows.length) return;
+  const columns = rows.map((r) => String(r.name));
+  if (columns.length > 1) return;                       // already scoped
+  if (columns[0] !== 'idempotency_key') return;         // not the key this is about
+
+  /* A row whose client_id is NULL cannot be part of the new key, and MySQL would
+     silently rewrite it to the empty string rather than refuse. Nothing wrote to
+     this table before this step existed, so in practice there are none — but
+     "in practice" is not a guarantee, and quietly altering somebody's stored
+     response is worse than leaving the key as it was. Report and stop. */
+  const orphans = await db.query(
+    'SELECT COUNT(*) AS n FROM integration_requests WHERE client_id IS NULL'
+  ).catch(() => ({ rows: [{ n: 0 }] }));
+  if (Number(orphans.rows[0] && orphans.rows[0].n) > 0) {
+    log(`Schema: integration_requests still holds ${orphans.rows[0].n} row(s) with no client_id, `
+      + 'so the idempotency key cannot be scoped per client yet. Those rows predate the '
+      + 'integration API and can be deleted; the key stays global until they are.');
+    return;
+  }
+
+  await db.query('ALTER TABLE integration_requests MODIFY client_id CHAR(36) NOT NULL');
+  await db.query('ALTER TABLE integration_requests DROP PRIMARY KEY, '
+    + 'ADD PRIMARY KEY (client_id, idempotency_key)');
+  /* idx_integration_requests_client is now a leftmost prefix of the primary key
+     and therefore redundant. Left in place deliberately: dropping it buys a
+     fraction of an insert on a table that takes one write per integration call,
+     and every DDL statement here is another thing that can fail on a host with
+     its own opinions about ALTER. Noted so the next reader knows it is known. */
+  log('Schema: integration_requests is now keyed on (client_id, idempotency_key).');
+}
+
 /* The integration's own address list.
  *
  * Its tables are declared in src/integration-ip-allowlist.js rather than here,
@@ -3292,6 +3353,8 @@ const STEPS = [
      else depends on these three and nothing depends on them yet — they are
      storage for a feature deployed separately. */
   ['integration tables', ensureIntegrationTables],
+  // After the table exists, and before anything writes to it.
+  ['integration idempotency scope', ensureIdempotencyScope],
   /* Straight after the tables above, and owning its own: the module declares
      them and this only calls install(), exactly as ensureIpAllowlist does. */
   ['integration ip allowlist', ensureIntegrationIpAllowlist],

@@ -60,13 +60,17 @@ test('the integration front door', { skip: cfg ? false : SKIP_REASON }, async (t
   const call = async (path, {
     key = KEYS.live, body = { hello: 'world' }, method = 'POST',
     t: stamp = Math.floor(Date.now() / 1000), secret = SECRET, signature = null,
-    omitSignature = false, omitKey = false,
+    omitSignature = false, omitKey = false, idempotencyKey = crypto.randomUUID(),
   } = {}) => {
     const raw = body === null ? '' : JSON.stringify(body);
     const target = `/api${path}`;
     const v1 = signature !== null ? signature : crypto.createHmac('sha256', secret)
       .update(`${stamp}.${method.toUpperCase()}.${target}.${raw}`).digest('hex');
     const headers = { 'Content-Type': 'application/json' };
+    /* Every POST on this API needs one — see src/integration-idempotency.js. A
+       fresh one per call by default, so nothing here is accidentally coupled to
+       a replay. */
+    if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
     if (!omitKey) headers['X-Integration-Key'] = key;
     if (!omitSignature) headers['X-Integration-Signature'] = `t=${stamp}, v1=${v1}`;
     const res = await fetch(`${server.base}${path}`, { method, headers, body: raw || undefined });

@@ -120,6 +120,9 @@ const REQUIRED = [
   { table: 'integration_requests', column: null,              step: 'integration tables' },
   { table: 'integration_requests', column: 'idempotency_key', step: 'integration tables' },
   { table: 'integration_requests', column: 'request_hash',    step: 'integration tables' },
+  // Half of the primary key since 'integration idempotency scope'. Missing, the
+  // key cannot be scoped per client and one caller replays another's response.
+  { table: 'integration_requests', column: 'client_id',      step: 'integration tables' },
   { table: 'integration_outbox',   column: null,              step: 'integration tables' },
   { table: 'integration_outbox',   column: 'seq',             step: 'integration tables' },
   { table: 'integration_outbox',   column: 'next_attempt_at', step: 'integration tables' },

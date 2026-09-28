@@ -67,7 +67,24 @@ test('every state-changing endpoint is behind the recording middleware', () => {
    * router carrying state-changing endpoints is mounted under /api — and that
    * the mount happens BEFORE the routes, or the handle would not exist by the
    * time one runs. Both are read off src/server.js rather than trusted. */
-  const server = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'server.js'), 'utf8');
+
+  /* COMMENTS OUT FIRST, and everything below reads the stripped copy.
+   *
+   * What this reads for is a mount's arguments, and the mounts that most need
+   * reading have explanations written between those arguments — /api/integration
+   * has a paragraph in the middle of its argument list saying why each guard is
+   * in the order it is. A pattern matching across that would need to allow
+   * comments between every pair of tokens, which is a regex pretending to be a
+   * parser and failing silently the first time somebody words one differently.
+   * Removing them once is the same answer for every such case.
+   *
+   * Block comments and whole-line // comments only: a // inside a string on a
+   * line that has code before it (`https://…`) is left exactly where it is. */
+  const server = source
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/^[ \t]*\/\/.*$/gm, '');
+
   const mountLine = server.indexOf("app.use('/api', activityLogger)");
   assert.ok(mountLine > 0, 'the recorder should be mounted on /api');
 
@@ -75,12 +92,15 @@ test('every state-changing endpoint is behind the recording middleware', () => {
      much a router under /api as /api/assets is, and a pattern that stopped at
      the first path segment would quietly excuse the next one somebody adds.
      A mount may also carry middleware ahead of its router — /api/integration
-     has its own address gate, rate limit and credential check in front of it —
-     so any number of plain arguments may sit between the path and the router.
-     Matching only the bare two-argument form would leave exactly the routers
-     with the most in front of them unchecked. */
+     has its own address gate, rate limit, credential check and idempotency
+     guards in front of it — so any number of arguments may sit between the path
+     and the router, each either a name (`serviceAuth`, `a.b`) or a call that
+     builds one (`warnIfUnused()`). Matching only the bare two-argument form
+     would leave exactly the routers with the most in front of them unchecked,
+     and matching only bare names would leave out the ones configured at mount
+     time. Comments between the arguments are already gone; see above. */
   const routeMounts = [...server.matchAll(
-    /app\.use\('(\/api\/[a-z-]+(?:\/[a-z-]+)*)',\s*(?:[\w.]+,\s*)*(\w+Routes)\)/g)];
+    /app\.use\('(\/api\/[a-z-]+(?:\/[a-z-]+)*)',\s*(?:[\w.]+(?:\([^()]*\))?,\s*)*(\w+Routes)\)/g)];
   assert.ok(routeMounts.length >= 14, `expected the app's routers, found ${routeMounts.length}`);
   for (const m of routeMounts) {
     assert.ok(server.indexOf(m[0]) > mountLine,

@@ -1642,6 +1642,18 @@ module.exports = [
       + '"integration:<name of the credential>" rather than as a person or as a blank. The log is the answer to '
       + '"who did this" and a machine is as answerable as anybody \u2014 which also means a credential that is '
       + 'later withdrawn leaves a history that can still be read.'),
+  note('The same request twice does the work once',
+    'Every call here that changes something carries an Idempotency-Key, chosen by the caller. Send the same '
+      + 'key with the same request again \u2014 which is what a caller does when its connection dropped and it '
+      + 'cannot tell whether the work landed \u2014 and Forge hands back the FIRST response without doing '
+      + 'anything a second time. Send the same key with a DIFFERENT request and it is refused, because one of '
+      + 'those two requests would otherwise be quietly lost.\n\n'
+      + 'The record of what happened is written in the same breath as the change itself, so there is no moment '
+      + 'where one exists without the other. An attempt that fails writes nothing at all, which is what lets '
+      + 'the caller simply send it again.\n\n'
+      + 'Keys are remembered for a week and then forgotten. That is longer than any real retry and short enough '
+      + 'that the record does not grow forever \u2014 a caller that reuses a key a fortnight later is treated '
+      + 'as making a new request, which is worth knowing if anything at your end recycles them.'),
   note('If it is not configured, it is shut, not open',
     'The signing secret lives in the server environment and nowhere else. A deployment where it has not been set '
       + 'answers every integration request with 503 and does no work, rather than treating "no secret" as "no '

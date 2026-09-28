@@ -120,12 +120,32 @@ test('the migration creates them, and is safe to run twice',
         'null until first use, which is how an unused key is told from a live one');
     });
 
-    await t.test('the idempotency key is the primary key', async () => {
+    await t.test('the idempotency key is the primary key, scoped to the client', async () => {
+      /* WAS idempotency_key alone, and this test used to assert exactly that.
+         The DDL said in as many words that scoping it per client was a decision
+         about the API rather than about storage; the API now exists and the
+         decision is made, by the 'integration idempotency scope' migration step.
+         Two credentials that happen to choose the same key are two different
+         requests, and handing the second caller the first one's response would
+         be a cross-tenant leak wearing a cache's clothes.
+
+         Order matters as much as membership: client_id first is what makes the
+         key usable for "everything this credential has done" — and it is why the
+         separate index on client_id is redundant rather than load-bearing. */
       const keys = await sql(cfg,
         `SELECT COLUMN_NAME AS c FROM information_schema.KEY_COLUMN_USAGE
           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'integration_requests'
-            AND CONSTRAINT_NAME = 'PRIMARY'`);
-      assert.deepStrictEqual(keys.map((k) => k.c), ['idempotency_key']);
+            AND CONSTRAINT_NAME = 'PRIMARY'
+          ORDER BY ORDINAL_POSITION`);
+      assert.deepStrictEqual(keys.map((k) => k.c), ['client_id', 'idempotency_key']);
+
+      // And client_id cannot be null, or MySQL would quietly rewrite it to the
+      // empty string and every unattributed row would collide with every other.
+      const nullable = await sql(cfg,
+        `SELECT IS_NULLABLE AS n FROM information_schema.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'integration_requests'
+            AND COLUMN_NAME = 'client_id'`);
+      assert.strictEqual(nullable[0].n, 'NO');
 
       const cols = await sql(cfg,
         `SELECT COLUMN_NAME AS c, DATA_TYPE AS d FROM information_schema.COLUMNS
