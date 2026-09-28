@@ -2012,6 +2012,89 @@ pass is the one that matters — a process restarted after a week down comes bac
 holding keys no timer ever fired for. A key reused after the window is treated as
 new, so the window has to outlast any retry a caller will really make.
 
+### The outbox: what Forge sends out
+
+The other direction. A change that Dev & QA needs to know about writes a row in
+`integration_outbox` **inside its own transaction**, so the fact and the intention
+to tell somebody about it commit together or neither does. A worker in
+[`src/integration-outbox.js`](src/integration-outbox.js) delivers it afterwards.
+
+**Nothing about delivery can reach the request that caused the row.** The writer's
+only involvement is an `INSERT`; it does not wait for delivery, learn whether it
+succeeded, or slow down when the receiver is unreachable. There is no code path
+back. `tests/integration-outbox.test.js` asserts that against a socket that
+*accepts connections and never answers* — the shape that would actually hurt, since
+a refused port fails in a millisecond and would prove nothing — and measures that
+requests issued while the worker is stuck in an 8-second delivery still return in
+well under a fifth of that.
+
+The signature is the **same envelope** the inbound side verifies —
+`t=<unix seconds>, v1=<hex HMAC-SHA256 of "t.POST.path.rawBody">` — so the other end
+implements one verifier rather than two. Different key, same shape. Each attempt
+also carries `X-Integration-Delivery` (the row's id, identical on every retry of
+it) and `X-Integration-Attempt`, so the receiver can recognise a retry as one; we
+cannot assume they deduplicate, but we can make it possible.
+
+`INTEGRATION_OUTBOUND_SECRET` **must not equal** `INTEGRATION_INBOUND_SECRET`, and
+Forge refuses to deliver anything at all if they match rather than warning and
+carrying on. One secret for both directions means whoever can verify a message can
+also forge one, which removes the only thing a signature proves — and it would look
+like it was working.
+
+#### The retry schedule
+
+Fixed in code, not configurable, because the other end has been told what to
+expect: **1 min, 5 min, 30 min, 2 h, 6 h, 24 h**, then the row is marked `failed`.
+Seven attempts in all, spanning a little over a day — enough to ride out an
+afternoon's outage with nobody intervening, short enough that a week-long one
+becomes something somebody is told about rather than something quietly hammered.
+
+Written as the delays themselves rather than as a formula: a doubling with jitter
+would be fewer characters and would not be *this* schedule.
+
+| Receiver said | What happens |
+|---|---|
+| 2xx | `sent` |
+| 5xx, or 429 | retried on the schedule |
+| any other 4xx | `failed` at once — retrying cannot fix a malformed payload, and six more copies is noise on their end |
+| nothing, within the deadline | retried; the deadline is explicit because `fetch` has none of its own |
+
+`attempts` is incremented when a row is **claimed**, not when the outcome is known.
+A worker killed mid-delivery has still used an attempt — counting only completed
+ones would let a row that crashes the process every time be retried forever.
+
+#### Why this worker claims its rows, and the chat sweep does not
+
+This deployment runs **several Node workers against one database** — Passenger and
+most cPanel setups do, which is what the studio deploys on, and this README says so
+under [Settings: the value lists behind the dropdowns](#settings-the-value-lists-behind-the-dropdowns). [`src/chat-files.js`](src/chat-files.js) sweeps safely
+under that with no claim at all, but the reason does not carry over: its work is
+deleting a file, and a file another worker already deleted raises `ENOENT`, which is
+the outcome it wanted anyway. **Idempotent work needs no claim.**
+
+Delivering a webhook is not idempotent. Two workers picking up the same due row
+send the same POST twice, to a system whose deduplication is not ours to assume. So
+a row is claimed before it is sent, by the same conditional-`UPDATE` mechanism the
+inbound side uses for idempotency keys: whoever the row matches for first has
+already changed it by the time the other's `WHERE` is evaluated. Same problem, same
+shape, opposite direction.
+
+A claim can outlive its worker, so `sending` rows untouched for
+`INTEGRATION_OUTBOX_CLAIM_SECONDS` (default 120, comfortably more than one
+10-second delivery) are returned to the queue — with `attempts` left alone, since
+that attempt was already counted, and with a fresh backoff rather than an immediate
+retry: a row that took a worker down is exactly the one not to try again at once.
+
+The periodic part follows the chat sweep exactly, which is still the right pattern
+for it: a pass at startup before the first timer, `unref()` so a stopped server is
+not held open, and a missing table treated as nothing to do. The startup pass is the
+one that matters — a restarted process comes back holding rows that came due while
+it was down.
+
+No migration was needed for any of this. `integration_outbox` already had `status`,
+`attempts`, `next_attempt_at` and `last_error`, and its DDL said a fourth state
+would be "a row's value and not a schema change" — `sending` is that fourth state.
+
 ### There is no screen for it, yet
 
 Credentials and addresses are set on the server by whoever runs the deployment.

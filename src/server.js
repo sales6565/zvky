@@ -45,6 +45,7 @@ const integrationIpGate = require('./middleware/integration-ip-allowlist');
 const integrationBody = require('./middleware/integration-body');
 const { serviceAuth } = require('./middleware/service-auth');
 const idempotency = require('./integration-idempotency');
+const outbox = require('./integration-outbox');
 
 const app = express();
 
@@ -439,6 +440,7 @@ async function start() {
     await require('./bootstrap-token').announce(db);
     ipGate.describeAtStartup();
     integrationIpGate.describeAtStartup();
+    outbox.describeAtStartup();
     startReferenceRefresh(db);
     /* Chat attachments live twelve hours. The first pass runs now rather than
        in ten minutes' time: a process that was restarted comes back holding
@@ -453,6 +455,13 @@ async function start() {
        as the two sweeps above: the pass that runs now is the one that clears
        what expired while this process was not running. */
     idempotency.schedule(db);
+    /* And deliver what this application owes the outside world. Inert unless both
+       INTEGRATION_OUTBOUND_URL and INTEGRATION_OUTBOUND_SECRET are set, so a
+       deployment that has not configured an integration runs exactly as before —
+       rows accumulate and nothing is sent. Startup pass first, like the two sweeps
+       above: a restarted process comes back holding rows that came due while it
+       was down. */
+    outbox.schedule(db);
   } catch (err) {
     // Start anyway: a server that is up can report through /api/health why the
     // database is unreachable, where one that exited says nothing at all.

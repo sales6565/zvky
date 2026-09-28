@@ -1668,6 +1668,21 @@ module.exports = [
       + 'answers every integration request with 503 and does no work, rather than treating "no secret" as "no '
       + 'signature needed" \u2014 which would turn a setup that was never finished into an open door, quietly, and '
       + 'only on the deployment where it mattered.'),
+  note('And the other direction: what Forge tells Dev & QA',
+    'When something happens here that the other system needs to know about, the change and a note to send it '
+      + 'are written together, in one movement \u2014 so there is no version of events where the work happened '
+      + 'and nobody was told, or where somebody was told about work that did not happen. The sending itself '
+      + 'happens a moment later, separately.\n\n'
+      + 'THAT SEPARATION IS THE WHOLE POINT. Nothing about sending can reach back into the thing that caused '
+      + 'it: if the other system is down, slow, or accepting messages and never answering, the work in Forge is '
+      + 'unaffected \u2014 not slowed, not failed, not undone. The notes simply wait.\n\n'
+      + 'If a message cannot be delivered it is tried again after a minute, then five minutes, half an hour, '
+      + 'two hours, six hours, and a day \u2014 seven attempts over a little more than twenty-four hours. That '
+      + 'is long enough to cover an afternoon\u2019s outage at the other end with nobody doing anything, and '
+      + 'short enough that a receiver down for a week becomes something a person is told about rather than '
+      + 'something the studio quietly keeps shouting at. A message the other system actively refuses \u2014 as '
+      + 'opposed to failing to answer \u2014 is not retried at all, because sending it six more times would '
+      + 'not make it any more acceptable.'),
   roles('Nobody, in the sense this column usually means. There is no screen and no permission: credentials and '
     + 'addresses are set on the server by whoever runs the deployment, deliberately out of reach of anybody signed '
     + 'in to Forge \u2014 including the Super Admin. A door that the application could open for itself is not a '

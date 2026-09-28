@@ -94,10 +94,26 @@ router.post('/counter', (req, res) => idempotency.withIdempotency(req, res, asyn
     return { status: 409, body: { refused: name, count: countOf(name) } };
   }
 
-  await trx.query(
-    'INSERT INTO integration_outbox (id, payload, `status`) VALUES ($1, $2, $3)',
-    [crypto.randomUUID(), JSON.stringify({ probe: name, at: Date.now() }), 'pending']
-  );
+  /* THE OUTBOX ROW, written on the transaction — which is the whole reason the
+     outbox exists: the change and the intention to tell somebody about it commit
+     together or neither does. Delivery happens later, in src/integration-outbox.js,
+     and nothing about it can reach this request.
+
+     The payload is the caller's if it supplied one, so a test has something real
+     to watch being delivered and retried rather than having to fake a row. `outbox:
+     false` writes none at all, for the case where what is under test is this
+     request's own speed while a delivery is failing elsewhere. */
+  const wants = req.body ? req.body.outbox : undefined;
+  if (wants !== false) {
+    await trx.query(
+      'INSERT INTO integration_outbox (id, payload, `status`) VALUES ($1, $2, $3)',
+      [
+        crypto.randomUUID(),
+        JSON.stringify(wants && typeof wants === 'object' ? wants : { probe: name, at: Date.now() }),
+        'pending',
+      ]
+    );
+  }
 
   /* An asked-for failure, AFTER both writes, which is the only ordering that
      tests what it claims to: failing before them would prove nothing about
