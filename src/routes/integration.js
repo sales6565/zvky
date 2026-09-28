@@ -76,6 +76,15 @@ router.post('/counter', (req, res) => idempotency.withIdempotency(req, res, asyn
   const name = String((req.body && req.body.counter) || 'probe');
   counters.set(name, countOf(name) + 1);
 
+  /* Holds the claim open for a measured moment, so a test can land a second
+     request while the first is genuinely mid-flight rather than hoping the
+     scheduler interleaves them that way. Without this, "a duplicate arriving
+     while the first is still running" is a race the test would sometimes lose and
+     silently pass. Bounded well under the staleness window, or it would be testing
+     takeover instead. */
+  const hold = Math.min(Number((req.body && req.body.hold) || 0), 5000);
+  if (hold > 0) await new Promise((done) => { setTimeout(done, hold); });
+
   /* A considered refusal, RETURNED rather than thrown. The difference matters:
      a thrown error rolls everything back, while a returned 4xx is the handler
      saying "this is my answer" — and either way it is not recorded, so the

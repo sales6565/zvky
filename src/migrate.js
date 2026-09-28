@@ -2255,6 +2255,80 @@ async function ensureIdempotencyScope(db, log) {
   log('Schema: integration_requests is now keyed on (client_id, idempotency_key).');
 }
 
+/* The reservation, which is what makes the idempotency key actually exclusive.
+ *
+ * The first cut of this checked for an existing row, ran the handler, then wrote
+ * the record. Two duplicate requests arriving together both passed that check and
+ * both entered the handler; only their COMMITS were deduplicated, by the primary
+ * key. Anything the handler did that was not on its transaction — an email, a
+ * file, somebody else's API — therefore happened twice.
+ *
+ * So the row is now written BEFORE the handler runs, as a reservation, and the
+ * primary-key violation that a duplicate hits stops it before it enters the
+ * handler at all rather than after. That turns the row into a small state
+ * machine, and it needs somewhere to keep the state:
+ *
+ *   status       pending | complete | failed. VARCHAR and not an ENUM, and named
+ *                `status` rather than `state`, because that is what every other
+ *                status column in this schema is — a fourth state is then a row's
+ *                value rather than a schema change. Sitting beside
+ *                response_status, which is an HTTP code: the row's own status is
+ *                `status`, the response's is `response_status`, which is why that
+ *                one carries a prefix.
+ *   updated_at   when the state last moved, maintained by MySQL. This is what
+ *                makes a reservation abandoned by a crashed process reclaimable:
+ *                a row still pending long after it was touched is not in flight,
+ *                it is wreckage. created_at cannot answer that, because it is
+ *                when the key was FIRST seen and never moves again.
+ *
+ * response_status also has to become nullable. A reservation has no response yet,
+ * and a placeholder number in a column that means "what the caller was told"
+ * would be a lie that reads as data.
+ */
+async function ensureIdempotencyReservation(db, log) {
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'integration_requests'`
+  ).catch(() => ({ rows: [] }));
+  if (!rows.length) return;                       // no table; its own step reports that
+  const have = new Set(rows.map((r) => String(r.name)));
+
+  if (!have.has('status')) {
+    await db.query("ALTER TABLE integration_requests "
+      + "ADD COLUMN `status` VARCHAR(24) NOT NULL DEFAULT 'pending' AFTER request_hash");
+    /* EVERY EXISTING ROW IS ALREADY FINISHED. They were written by the old
+       check-run-record order, which only ever wrote a row for work that had
+       succeeded — so they are complete, and the column's default would otherwise
+       describe them as in flight. A row wrongly marked pending would be read as
+       an abandoned reservation and handed to the next caller to overwrite, which
+       is the one outcome this whole mechanism exists to prevent. */
+    const fixed = await db.query(
+      "UPDATE integration_requests SET `status` = 'complete' WHERE response_status IS NOT NULL"
+    );
+    const n = (fixed.result && fixed.result.affectedRows) || 0;
+    log(`Schema: integration_requests.status added${n ? `, ${n} existing row(s) marked complete` : ''}.`);
+  }
+
+  if (!have.has('updated_at')) {
+    await db.query('ALTER TABLE integration_requests ADD COLUMN updated_at DATETIME NOT NULL '
+      + 'DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER created_at');
+    log('Schema: integration_requests.updated_at added.');
+  }
+
+  /* Nullable, and read from information_schema rather than simply run: an ALTER
+     that changes nothing is still an ALTER, and on a large table on a host with
+     its own opinions about locking that is not free. */
+  const resp = await db.query(
+    `SELECT IS_NULLABLE AS n FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'integration_requests'
+        AND COLUMN_NAME = 'response_status'`
+  ).catch(() => ({ rows: [] }));
+  if (resp.rows.length && String(resp.rows[0].n).toUpperCase() === 'NO') {
+    await db.query('ALTER TABLE integration_requests MODIFY response_status SMALLINT NULL');
+    log('Schema: integration_requests.response_status is nullable, for a reservation with no answer yet.');
+  }
+}
+
 /* The integration's own address list.
  *
  * Its tables are declared in src/integration-ip-allowlist.js rather than here,
@@ -3355,6 +3429,8 @@ const STEPS = [
   ['integration tables', ensureIntegrationTables],
   // After the table exists, and before anything writes to it.
   ['integration idempotency scope', ensureIdempotencyScope],
+  // And after the key is scoped, the state the reservation needs.
+  ['integration idempotency reservation', ensureIdempotencyReservation],
   /* Straight after the tables above, and owning its own: the module declares
      them and this only calls install(), exactly as ensureIpAllowlist does. */
   ['integration ip allowlist', ensureIntegrationIpAllowlist],
@@ -3391,4 +3467,10 @@ async function run(db, log = console.log) {
   return { failed };
 }
 
-module.exports = { run };
+/* STEPS alongside run(), so a test can exercise ONE repair rather than all of
+ * them. Not a second way to migrate — startup still calls run() and nothing else
+ * should — but a migration test that only cares about one step had to run the
+ * whole list to reach it, and the whole list is dozens of DDL statements taking
+ * metadata locks on a server shared with every other suite. That turned one test
+ * into a measurable source of contention for unrelated ones. */
+module.exports = { run, STEPS };

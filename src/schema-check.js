@@ -123,6 +123,10 @@ const REQUIRED = [
   // Half of the primary key since 'integration idempotency scope'. Missing, the
   // key cannot be scoped per client and one caller replays another's response.
   { table: 'integration_requests', column: 'client_id',      step: 'integration tables' },
+  // The reservation's own state. Missing, every claim reads as complete and the
+  // exclusion the mechanism rests on is gone.
+  { table: 'integration_requests', column: 'status',         step: 'integration idempotency reservation' },
+  { table: 'integration_requests', column: 'updated_at',     step: 'integration idempotency reservation' },
   { table: 'integration_outbox',   column: null,              step: 'integration tables' },
   { table: 'integration_outbox',   column: 'seq',             step: 'integration tables' },
   { table: 'integration_outbox',   column: 'next_attempt_at', step: 'integration tables' },

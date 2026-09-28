@@ -39,6 +39,19 @@ test('the pure parts: what is hashed, and what is guarded', () => {
 
   assert.strictEqual(idem.RETENTION_DAYS, 7, 'the window the spec asks for');
   assert.strictEqual(idem.MAX_KEY_LENGTH, 191, 'the width of the column it is stored in');
+
+  /* The claim's states, and the window a claim is believed for. Two minutes is
+     two of the outbox's minimum one-minute retry intervals: the first retry after
+     a crash is still told to wait, the second takes the key over. Shorter than one
+     interval and a healthy request would have its key stolen by its own retry,
+     which is the duplicate execution all of this exists to prevent. */
+  assert.deepStrictEqual(Object.keys(idem.STATUS).sort(), ['complete', 'failed', 'pending']);
+  assert.strictEqual(idem.STALE_SECONDS, 120);
+  assert.ok(idem.STALE_SECONDS > 60, 'longer than one retry interval, or a live claim gets stolen');
+
+  // Two 4xx answers that mean opposite things to a machine: wait, versus you have
+  // a bug. Distinct codes are the only way a client can tell them apart.
+  assert.notStrictEqual(idem.IN_PROGRESS_CODE, idem.REUSED_CODE);
 });
 
 test('the safety net for a handler that forgets the helper', () => {
@@ -98,6 +111,7 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
     return {
       status: res.status,
       replay: res.headers.get('idempotent-replay'),
+      retryAfter: res.headers.get('retry-after'),
       body: await res.json().catch(() => ({})),
     };
   };
@@ -111,7 +125,7 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
   };
 
   const rowsFor = async (idemKey) => (await sql(cfg,
-    'SELECT client_id, endpoint, request_hash, response_status, response_body '
+    'SELECT client_id, endpoint, request_hash, `status`, response_status, response_body '
     + 'FROM integration_requests WHERE idempotency_key = ?', [idemKey]));
 
   const outboxCount = async () => Number((await sql(cfg,
@@ -218,7 +232,7 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
     assert.ok(!JSON.stringify(r.body).includes('count'), 'the first response is not leaked');
   });
 
-  await t.test('a failed attempt leaves nothing behind, and the same key retries cleanly', async () => {
+  await t.test('a failed attempt keeps nothing it could replay, and the same key retries cleanly', async () => {
     const idem = crypto.randomUUID();
     const before = await counter('rollback');
     const outboxBefore = await outboxCount();
@@ -233,7 +247,17 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
     assert.strictEqual(await counter('rollback'), before + 1, 'the work was attempted');
     assert.strictEqual(await outboxCount(), outboxBefore,
       'the business write rolled back — this is the atomicity claim');
-    assert.strictEqual((await rowsFor(idem)).length, 0, 'and no idempotency row was written');
+
+    /* THIS CHANGED when the claim moved ahead of fn, and the change is the point
+       rather than a regression. The claim is committed on its own, so a rollback
+       cannot reach it: there IS a row now, and what matters is that it is marked
+       failed rather than holding an answer. A failed row is takeable immediately,
+       which is what keeps the retry below clean — the observable behaviour the old
+       "no row at all" assertion was really protecting. */
+    const after = await rowsFor(idem);
+    assert.strictEqual(after.length, 1, 'the claim survives its own rollback');
+    assert.strictEqual(after[0].status, 'failed', 'and says so, rather than looking in flight');
+    assert.strictEqual(after[0].response_status, null, 'with nothing to replay');
 
     // So the same key is free to be used again, which is the whole reason for
     // recording only on success.
@@ -241,7 +265,9 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
     assert.strictEqual(retry.status, 200, JSON.stringify(retry.body));
     assert.strictEqual(retry.replay, null, 'a retry after a failure is a fresh run, not a replay');
     assert.strictEqual(retry.body.count, before + 2, 'and it ran');
-    assert.strictEqual((await rowsFor(idem)).length, 1, 'now there is a record');
+    const done = await rowsFor(idem);
+    assert.strictEqual(done.length, 1, 'the same row, taken over rather than a second one');
+    assert.strictEqual(done[0].status, 'complete');
     assert.strictEqual(await outboxCount(), outboxBefore + 1);
   });
 
@@ -256,7 +282,10 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
     const no = await call('/integration/counter', { body: { counter: 'refused', reject: true }, idem });
     assert.strictEqual(no.status, 409, JSON.stringify(no.body));
     assert.strictEqual(await counter('refused'), before + 1, 'the handler did run and decide');
-    assert.strictEqual((await rowsFor(idem)).length, 0, 'and nothing was remembered');
+    const held = await rowsFor(idem);
+    assert.strictEqual(held.length, 1, 'the claim is there, because it was committed before fn ran');
+    assert.strictEqual(held[0].status, 'failed', 'released rather than recorded as an answer');
+    assert.strictEqual(held[0].response_status, null, 'the 409 is not something to replay');
 
     const fixed = await call('/integration/counter', { body: { counter: 'refused' }, idem });
     assert.strictEqual(fixed.status, 200,
@@ -288,24 +317,57 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
     assert.notStrictEqual(rows[0].client_id, rows[1].client_id);
   });
 
-  await t.test('two identical requests at the same instant commit once', async () => {
-    /* THE RACE, and the exact shape of what is guaranteed here — which is worth
-       being precise about rather than comfortable about.
-     *
-     * The lookup cannot prevent this: both requests find nothing and both
-     * proceed. What prevents a double effect is the PRIMARY KEY, on insert, and
-     * that is a guarantee about the TRANSACTION and nothing else. So:
-     *
-     *   committed effects   exactly one — one outbox row, one record
-     *   both responses      the same answer, the winner's
-     *   fn itself           may be ENTERED TWICE
-     *
-     * The counter below proves that last line rather than hiding it. It lives in
-     * memory, memory is not in the transaction, and so it shows two where the
-     * database shows one. Any side effect fn performs that is NOT on the
-     * connection it was handed — an email, a file, a call to somebody else's
-     * API — behaves like that counter. See src/integration-idempotency.js.
-     */
+  await t.test('a duplicate arriving mid-flight is told to wait, and does not run', async () => {
+    /* THE CASE THE OLD ORDER COULD NOT HANDLE, made deterministic rather than
+       raced: the first request holds its claim open, the second lands while it is
+       genuinely in flight. Under check-run-record both entered fn and only their
+       commits were deduplicated. Now the second never reaches fn at all.
+
+       Deterministic on purpose — as a Promise.all race this would sometimes
+       interleave the other way and pass without testing anything. */
+    const idem = crypto.randomUUID();
+    /* Long enough to land the duplicate inside it, short enough that this does not
+       hold an open write transaction across a server shared with every other
+       suite — a longer hold measurably caused failures in unrelated ones. */
+    const body = { counter: 'inflight', hold: 250 };
+    const before = await counter('inflight');
+
+    const first = call('/integration/counter', { body, idem });
+    await new Promise((done) => { setTimeout(done, 80); });   // comfortably inside it
+
+    const second = await call('/integration/counter', { body, idem });
+    assert.strictEqual(second.status, 409, JSON.stringify(second.body));
+    assert.strictEqual(second.body.code, 'idempotency_in_progress',
+      'its own code, so a client can tell this from a reused key');
+    assert.notStrictEqual(second.body.code, 'idempotency_key_reused');
+    assert.strictEqual(second.retryAfter, '2', 'and is told to come straight back');
+    /* One execution in flight, and only one: the held request incremented the
+       counter on its way in, the refused duplicate never got that far. `before`
+       itself would be wrong here — the first request has already run. */
+    assert.strictEqual(await counter('inflight'), before + 1,
+      'THE GUARANTEE: the duplicate did not enter fn, so fn ran once, not twice');
+
+    const done = await first;
+    assert.strictEqual(done.status, 200, JSON.stringify(done.body));
+    assert.strictEqual(done.body.count, before + 1, 'and the first request ran exactly once');
+
+    // Now that it has finished, the same key returns its real result.
+    const later = await call('/integration/counter', { body, idem });
+    assert.strictEqual(later.status, 200, JSON.stringify(later.body));
+    assert.strictEqual(later.replay, 'true');
+    assert.deepStrictEqual(later.body, done.body, 'the retry gets the real answer it was promised');
+    assert.strictEqual(await counter('inflight'), before + 1, 'still exactly one execution');
+  });
+
+  await t.test('two identical requests at the same instant: fn runs once', async () => {
+    /* The same thing without the hold, which is how it actually arrives. Either
+       ordering is acceptable — the loser may be told to wait or handed the real
+       answer, depending on whether the winner had finished — but there is no
+       ordering in which fn runs twice, and that is what this pins down.
+
+       Contrast with what this asserted before the reservation existed: it had to
+       accept a counter of two, because both requests entered fn and only the
+       commits were deduplicated. */
     const idem = crypto.randomUUID();
     const body = { counter: 'race' };
     const before = await counter('race');
@@ -316,18 +378,153 @@ test('idempotency, against a running server', { skip: cfg ? false : SKIP_REASON 
       call('/integration/counter', { body, idem }),
     ]);
 
-    assert.deepStrictEqual([a.status, b.status], [200, 200], `${a.status} / ${b.status}`);
-    assert.deepStrictEqual(a.body, b.body, 'both callers got the same answer');
-    assert.strictEqual(await outboxCount(), outboxBefore + 1,
-      'EXACTLY ONE committed effect, however they interleaved');
-    assert.strictEqual((await rowsFor(idem)).length, 1, 'and exactly one record');
-    assert.ok(a.replay === 'true' || b.replay === 'true',
-      'the loser was answered with the winner\'s response, not a 500 for work that succeeded');
+    assert.strictEqual(await counter('race'), before + 1,
+      `fn ran exactly once, however they interleaved (${a.status}/${b.status})`);
+    assert.strictEqual(await outboxCount(), outboxBefore + 1, 'and committed exactly one effect');
+    assert.strictEqual((await rowsFor(idem)).length, 1, 'one record');
 
-    // And the honest half: fn was entered twice, which is why only transactional
-    // work is safe inside it.
-    assert.strictEqual(await counter('race'), before + 2,
-      'fn ran twice — the non-transactional counter is the evidence, and the caveat');
+    const winner = [a, b].find((r) => r.status === 200 && r.replay === null);
+    const loser = [a, b].find((r) => r !== winner);
+    assert.ok(winner, `one of them ran it: ${JSON.stringify([a.body, b.body])}`);
+    assert.ok(loser.replay === 'true' || loser.body.code === 'idempotency_in_progress',
+      `the other was either replayed or told to wait, never refused oddly: ${JSON.stringify(loser)}`);
+    if (loser.replay === 'true') assert.deepStrictEqual(loser.body, winner.body);
+  });
+
+  await t.test('a claim abandoned by a crash goes stale, and a retry takes it over', async () => {
+    /* Without this, one crashed process would poison an idempotency key forever —
+       a worse failure than the duplicate work the claim prevents, because nothing
+       ever clears it.
+
+       Written as a row rather than by killing a process mid-handler: what is under
+       test is how a pending claim of a given age is treated, and back-dating it
+       states that directly. TIMESTAMPDIFF and NOW() are second-resolution, so the
+       age is set well clear of the boundary rather than one second past it. */
+    const idem = `abandoned-${crypto.randomUUID()}`;
+    const client = (await sql(cfg, 'SELECT id FROM integration_clients LIMIT 1'))[0].id;
+    const body = { counter: 'stale' };
+    const before = await counter('stale');
+
+    await sql(cfg,
+      'INSERT INTO integration_requests '
+      + '(idempotency_key, client_id, endpoint, request_hash, `status`, created_at, updated_at) '
+      + "VALUES (?, ?, 'POST /api/integration/counter', ?, 'pending', "
+      + 'NOW() - INTERVAL 600 SECOND, NOW() - INTERVAL 600 SECOND)',
+      [idem, client, sha256(JSON.stringify(body))]);
+
+    const r = await call('/integration/counter', { body, idem });
+    assert.strictEqual(r.status, 200, `the key is reusable once abandoned: ${JSON.stringify(r.body)}`);
+    assert.strictEqual(r.replay, null, 'and it really ran rather than replaying a claim');
+    assert.strictEqual(await counter('stale'), before + 1);
+
+    const rows = await rowsFor(idem);
+    assert.strictEqual(rows.length, 1, 'the same row was taken over, not duplicated');
+    assert.strictEqual(rows[0].status, 'complete');
+  });
+
+  await t.test('but a claim that is merely young is not stolen from its own retry', async () => {
+    /* The failure direction that matters most. If the staleness window were
+       shorter than a caller's retry interval, a request that was simply slow would
+       have its key taken by its own retry — and fn would run twice, which is the
+       exact thing the reservation exists to prevent. A fresh pending claim must be
+       refused, not reclaimed. */
+    const idem = `young-${crypto.randomUUID()}`;
+    const client = (await sql(cfg, 'SELECT id FROM integration_clients LIMIT 1'))[0].id;
+    const body = { counter: 'young' };
+    const before = await counter('young');
+
+    await sql(cfg,
+      'INSERT INTO integration_requests '
+      + '(idempotency_key, client_id, endpoint, request_hash, `status`, updated_at) '
+      + "VALUES (?, ?, 'POST /api/integration/counter', ?, 'pending', NOW() - INTERVAL 30 SECOND)",
+      [idem, client, sha256(JSON.stringify(body))]);
+
+    const r = await call('/integration/counter', { body, idem });
+    assert.strictEqual(r.status, 409, JSON.stringify(r.body));
+    assert.strictEqual(r.body.code, 'idempotency_in_progress');
+    assert.strictEqual(r.body.startedSecondsAgo, 30, 'and says how long it has been waiting');
+    assert.strictEqual(await counter('young'), before, 'fn was not entered');
+  });
+
+  await t.test('a failed claim is takeable at once, whatever the body', async () => {
+    /* STATUS IS CHECKED BEFORE THE HASH, and this is why. A failed attempt
+       answered nothing, so a corrected body under the same key is not a conflict —
+       it is the normal way a caller recovers. Checking the hash first would answer
+       422 to exactly that, and the caller would have no way forward short of
+       inventing a new key for work they already have one for. */
+    const idem = `recovered-${crypto.randomUUID()}`;
+
+    const failed = await call('/integration/counter',
+      { body: { counter: 'recovery', fail: true }, idem });
+    assert.ok(failed.status >= 500, `${failed.status}`);
+    assert.strictEqual((await rowsFor(idem))[0].status, 'failed');
+
+    // A DIFFERENT body, same key, immediately.
+    const fixed = await call('/integration/counter', { body: { counter: 'recovery' }, idem });
+    assert.strictEqual(fixed.status, 200,
+      `a corrected body must be allowed after a failure: ${JSON.stringify(fixed.body)}`);
+    assert.strictEqual((await rowsFor(idem))[0].status, 'complete');
+
+    /* And once it HAS answered, the same key with a different body is a conflict
+       again — the hash check is not gone, it is conditional on there being an
+       answer to conflict with. */
+    const clash = await call('/integration/counter', { body: { counter: 'recovery', x: 1 }, idem });
+    assert.strictEqual(clash.status, 422, JSON.stringify(clash.body));
+    assert.strictEqual(clash.body.code, 'idempotency_key_reused');
+  });
+
+  await t.test('the migration does not mistake a finished row for a live claim', async () => {
+    /* THE UPGRADE HAZARD, and it is the dangerous direction.
+     *
+     * Rows written before the reservation existed have no status column, and the
+     * column's default is 'pending'. A finished row left describing itself as
+     * pending would be read as an abandoned claim by the next caller to use that
+     * key — who would take it over and overwrite a stored response somebody may
+     * still retry for. So the migration backfills them, and this asserts that it
+     * does, by putting the table back in its old shape and running the real
+     * migration over it rather than by trusting the code to say so.
+     */
+    const mysql = require('mysql2/promise');
+    const conn = await mysql.createConnection({
+      host: cfg.host, port: cfg.port, user: cfg.user, password: cfg.password, database: cfg.database,
+    });
+    const db = { query: async (text, params) => {
+      const [rows] = await conn.query(text.replace(/\$(\d+)/g, '?'), params || []);
+      return { rows: Array.isArray(rows) ? rows : [], result: rows };
+    } };
+
+    try {
+      const client = (await sql(cfg, 'SELECT id FROM integration_clients LIMIT 1'))[0].id;
+
+      // Back to the old shape: no status, no updated_at, a response that is not null.
+      await db.query('ALTER TABLE integration_requests DROP COLUMN `status`');
+      await db.query('ALTER TABLE integration_requests DROP COLUMN updated_at');
+      const old = `pre-upgrade-${crypto.randomUUID()}`;
+      await db.query(
+        'INSERT INTO integration_requests '
+        + '(idempotency_key, client_id, endpoint, request_hash, response_status, response_body) '
+        + "VALUES (?, ?, 'POST /api/integration/counter', ?, 200, ?)",
+        [old, client, sha256('{}'), JSON.stringify({ was: 'already answered' })]
+      );
+
+      /* ONLY THIS STEP, not the whole migration. Running all of them to reach one
+         means dozens of DDL statements taking metadata locks on a server shared
+         with every other suite, which made this test a measurable cause of
+         failures in unrelated ones. */
+      const migrate = require('../src/migrate');
+      const step = migrate.STEPS.find(([name]) => name === 'integration idempotency reservation');
+      assert.ok(step, 'the step must be in the list, or startup would never run it');
+      await step[1](db, () => {});
+
+      const rows = await sql(cfg,
+        'SELECT `status`, response_status FROM integration_requests WHERE idempotency_key = ?', [old]);
+      assert.strictEqual(rows.length, 1, 'the row survived the migration');
+      assert.strictEqual(rows[0].status, 'complete',
+        'a row that already held an answer is complete, not a claim somebody may seize');
+      assert.strictEqual(Number(rows[0].response_status), 200, 'and its answer is untouched');
+    } finally {
+      await conn.end();
+    }
   });
 
   await t.test('the seven-day window is swept, and only past it', async () => {

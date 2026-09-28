@@ -52,10 +52,32 @@ test('/api/health would notice these tables missing', () => {
       + `${table} would pass the health check`);
   }
 
-  // Same rule the rest of the list follows: name the step to re-run.
+  /* Same rule the rest of the list follows: name the step to re-run — and THE STEP
+     THAT ACTUALLY ADDS IT, which is not always the one that created the table.
+     Columns added later by their own migration step have to name that step, or the
+     health check would send somebody to re-run a step that creates nothing they are
+     missing. So this asserts the step is one of the real ones rather than one
+     particular one. */
+  const STEPS = new Set([
+    'integration tables',
+    'integration idempotency reservation',
+  ]);
   for (const need of schemaCheck.REQUIRED.filter((r) => TABLES.includes(r.table))) {
-    assert.strictEqual(need.step, 'integration tables',
-      `${need.table}${need.column ? `.${need.column}` : ''} must name the migration step that adds it`);
+    assert.ok(STEPS.has(need.step),
+      `${need.table}${need.column ? `.${need.column}` : ''} names "${need.step}", which is not a `
+      + `migration step that adds it — one of: ${[...STEPS].join(', ')}`);
+  }
+
+  /* And the reservation's own columns, which the claim rests on: without status
+     every row reads as complete and the exclusion is gone, and without updated_at
+     nothing can tell a live claim from wreckage. */
+  for (const column of ['status', 'updated_at']) {
+    assert.ok(declared.get('integration_requests').has(column),
+      `integration_requests.${column} carries the reservation's state and must be declared`);
+    const need = schemaCheck.REQUIRED.find(
+      (r) => r.table === 'integration_requests' && r.column === column);
+    assert.strictEqual(need.step, 'integration idempotency reservation',
+      'and must name the step that adds it, not the one that created the table');
   }
 });
 

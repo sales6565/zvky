@@ -1922,10 +1922,17 @@ the retry is the only safe thing this end can do.
 | The caller sends | It gets |
 |---|---|
 | a new key | the work runs; the response is recorded |
-| the same key, same body | the stored response, with `Idempotent-Replay: true`; **the handler does not run** |
-| the same key, a different body | `422`, logged, and nothing runs — one of the two requests would otherwise be lost |
+| the same key, same body, first one finished | the stored response, with `Idempotent-Replay: true`; **the handler does not run** |
+| the same key while the first is **still running** | `409` with `code: idempotency_in_progress` and `Retry-After`; the handler is not entered |
+| the same key, a different body | `422` with `code: idempotency_key_reused`, logged; nothing runs |
 | no key at all | `400` |
-| the same key after a failure | the work runs, because a failed attempt records nothing |
+| the same key after a failure | the work runs, because a failed attempt keeps no answer to replay |
+
+The two 4xx answers carry **distinct codes** because they mean opposite things to
+the machine reading them: `idempotency_in_progress` says wait and come back,
+`idempotency_key_reused` says you have a bug. A client matching on the status
+number alone cannot tell them apart, and the one that looks more like a failure is
+the one it must *not* keep retrying.
 
 **The record commits with the change, or neither does.** If the change committed
 and the record did not, a retry would do the work twice; if the record committed
@@ -1950,16 +1957,45 @@ What the middleware still does is the part that must not be forgettable: refusin
 a keyless mutation, and writing a line to the log when a handler changed something
 without going through the helper at all.
 
-**What is guaranteed, precisely.** Committed effects happen exactly once — the
-primary key on `(client_id, idempotency_key)` enforces that on insert, not the
-lookup in front of it. But `fn` itself runs *at least* once: two duplicate
-requests arriving together both miss the lookup and both enter it, and the loser
-is rolled back and replays the winner's response. So a side effect that is not on
-the connection `fn` was handed — an email, a file, somebody else's API — can
-happen twice, and no rollback takes it back. Those belong in
-`integration_outbox`, written on `trx` and delivered afterwards.
-`tests/integration-idempotency.test.js` asserts both halves of that, including
-the second.
+### Reserve, run, record
+
+The key is **claimed before the handler runs**, by an `INSERT` that commits on its
+own. A duplicate's `INSERT` then violates the primary key and it is turned away
+without ever entering the handler. The claim is what makes the key exclusive; the
+primary key is what makes the claim atomic. Only the claim moved earlier — the
+record that stores the response is still written inside the handler's own
+transaction.
+
+This replaced a check-run-record order, where the "check" was a read, and a read
+cannot exclude anybody: two duplicates both found nothing, both ran, and only
+their *commits* were deduplicated. Database writes were safe; everything the
+handler did outside its transaction happened twice.
+
+So `fn` now runs **exactly once** per `(client, key)`. The one exception is a claim
+left behind by a process killed mid-handler — nothing exists to finish or release
+it, and without a way out one crash would poison that key forever. A claim
+therefore goes stale after `INTEGRATION_IDEMPOTENCY_STALE_SECONDS` (default 120)
+and the next retry takes it over. Two minutes is two of the outbox's minimum
+one-minute retry intervals: the first retry after a crash is still told to wait,
+the second takes over. Setting it *below* a caller's retry interval would let a
+merely-slow request have its key stolen by its own retry — which is the duplicate
+execution all of this exists to prevent, so the direction of that risk is
+asymmetric.
+
+The row is a small state machine, in the `status` column that every other table in
+this schema spells the same way:
+
+| `status` | Means |
+|---|---|
+| `pending` | claimed; the handler is running, or was when its process was last alive |
+| `complete` | finished, with the answer stored — the only state a replay is served from |
+| `failed` | the handler threw, or returned a refusal of its own. Kept for diagnosis, and takeable at once |
+
+A failed claim is takeable **whatever the body**, because `status` is checked
+before the hash: a hash mismatch is only a conflict against a row that *answered*
+something. A failed attempt answered nothing, so a caller correcting the body that
+just failed may reuse the key — which is the normal way a caller recovers, and
+checking the hash first would refuse exactly that.
 
 The key is **scoped to the credential that chose it**. Two clients picking the
 same string are two different requests; without the scoping the second would be

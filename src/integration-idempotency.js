@@ -23,6 +23,37 @@
  * not be forgettable: refusing a mutation that carries no key at all. See
  * requireKey below — a handler that forgets to call withIdempotency must not be
  * able to quietly accept keyless writes.
+ *
+ * RESERVE, RUN, RECORD — and why not check, run, record.
+ *
+ * Checking for an existing row before running is a READ, and a read cannot
+ * exclude anybody. Two duplicate requests arriving together both found nothing,
+ * both entered the handler, and only their commits were deduplicated by the
+ * primary key. Exactly one set of database writes survived, which sounds like
+ * enough until you notice that everything the handler did OUTSIDE its transaction
+ * — an email sent, a file written, somebody else's API called — happened twice
+ * and no rollback takes those back.
+ *
+ * So the row is claimed first, by an INSERT that commits on its own before the
+ * handler is entered. The duplicate's INSERT then violates the primary key, and
+ * it is turned away without ever reaching the handler. The claim is what makes
+ * the key exclusive; the primary key is what makes the claim atomic. There is no
+ * moment in between for two requests to occupy.
+ *
+ * That buys exactly-once execution and costs two things, both of which have to be
+ * answered rather than accepted:
+ *
+ *   A DUPLICATE ARRIVING MID-FLIGHT now finds a claim rather than nothing, and
+ *   there is no answer to replay yet. It is told so, distinctly — see
+ *   IN_PROGRESS_CODE — because "your first request is still running" and "you
+ *   reused a key for different work" are a wait and a bug respectively, and a
+ *   client that cannot tell them apart will retry the one it should fix.
+ *
+ *   A CLAIM CAN OUTLIVE ITS REQUEST. The process holding it can be killed
+ *   mid-handler, and nothing then exists to finish or release it. Without a way
+ *   out, that key is unusable forever — a crash would permanently poison one
+ *   idempotency key, which is a worse failure than the duplicate work this
+ *   prevents. So a claim goes stale: see STALE_SECONDS.
  */
 const crypto = require('node:crypto');
 
@@ -46,6 +77,50 @@ const RETENTION_DAYS = Number(process.env.INTEGRATION_IDEMPOTENCY_DAYS || 7);
 const SWEEP_MINUTES = Number(process.env.INTEGRATION_IDEMPOTENCY_SWEEP_MINUTES || 60);
 
 const MAX_KEY_LENGTH = 191;   // the column's width; see the DDL in src/migrate.js
+
+/* The row's own states. Not an ENUM, matching every other status column in this
+ * schema, so a fourth state would be a row's value rather than a migration.
+ *
+ * pending   claimed, and the handler is running now — or was, when the process
+ *           holding it was last alive
+ * complete  the handler finished and its answer is stored; this is the only state
+ *           a replay can be served from
+ * failed    the handler threw, or answered with a refusal of its own. Kept rather
+ *           than deleted, so a caller asking "what happened to that key" gets an
+ *           answer, and takeable immediately: a failed attempt produced no
+ *           response, so there is nothing for a retry to conflict with.
+ */
+const STATUS = { pending: 'pending', complete: 'complete', failed: 'failed' };
+
+/* HOW LONG A CLAIM IS BELIEVED, and the arithmetic behind the number.
+ *
+ * Too short and a healthy in-flight request has its key stolen by its own retry,
+ * which produces the duplicate execution this exists to prevent — the worst
+ * failure available here. Too long and a process killed mid-handler strands that
+ * key for the whole window.
+ *
+ * The outbox's retry cadence has a one-minute floor, so a retrying caller is not
+ * expected to come back faster than that. Two minutes is therefore two retry
+ * intervals: the first retry after a crash is still told "in progress" and backs
+ * off, and the second is past the window and takes the key over. A request that
+ * legitimately runs longer than two minutes would need this raised — which is a
+ * deployment's decision, so it is an environment variable and not a constant.
+ */
+const STALE_SECONDS = Number(process.env.INTEGRATION_IDEMPOTENCY_STALE_SECONDS || 120);
+
+/* Codes, not just statuses, because the two 4xx answers here mean opposite things
+ * to the machine reading them: one says wait, the other says you have a bug. A
+ * caller matching on the number alone cannot tell them apart, and the one that
+ * looks more like a failure is the one it should NOT retry. */
+const IN_PROGRESS_CODE = 'idempotency_in_progress';
+const REUSED_CODE = 'idempotency_key_reused';
+
+/* How long to suggest waiting. The request holding the claim is normally
+ * milliseconds from finishing, so this is short on purpose: it is a "come
+ * straight back", not a backoff. If the holder died instead, no Retry-After can
+ * help — what frees the key is STALE_SECONDS, which the caller's own retries will
+ * cross on their own. */
+const RETRY_AFTER_SECONDS = 2;
 
 const hashBody = (raw) => crypto.createHash('sha256')
   .update(raw === undefined || raw === null ? '' : String(raw)).digest('hex');
@@ -154,33 +229,22 @@ function replay(res, row) {
  *
  * Returns whatever it sent, so a handler can `return withIdempotency(...)`.
  *
- * WHAT IS GUARANTEED, precisely, because the difference matters when you write
- * the handler:
+ * THREE STEPS, and which transaction each one is in:
  *
- *   committed effects   EXACTLY ONCE. The primary key on
- *                       (client_id, idempotency_key) is what enforces it, on
- *                       insert, so anything fn wrote on trx either commits with
- *                       the record or rolls back with it.
- *   fn itself           AT LEAST ONCE. Two duplicate requests arriving together
- *                       both miss the lookup and both enter fn; the loser's
- *                       insert then violates the key and its transaction is
- *                       rolled back, and it replays the winner's response.
+ *   RESERVE  a single INSERT on the pool. Autocommit makes it its own
+ *            transaction, committed before anything else happens, which is the
+ *            whole point — a claim nobody else can see is not a claim.
+ *   RUN      fn, inside a transaction of its own on a pooled connection.
+ *   RECORD   the UPDATE that moves the row to complete, inside THAT transaction,
+ *            so the answer and the work it describes commit together or not at
+ *            all. Only the claim moved earlier; the record did not.
  *
- * So a side effect fn performs that is NOT on the connection it was handed — an
- * email sent, a file written, somebody else's API called — can happen twice, and
- * no rollback will take it back. Those belong in integration_outbox, written on
- * trx and delivered afterwards, which is the table's whole reason for existing.
- *
- * tests/integration-idempotency.test.js asserts both halves of this, including
- * the second one, rather than only the half that reads well.
- *
- * It could be made exactly-once by inserting the record FIRST, as a placeholder,
- * and updating it with the response before commit: the duplicate then blocks on
- * the key before fn is entered rather than after. That is a deliberate
- * non-choice here — it writes a row for an attempt that has not happened yet,
- * and the order specified for this mechanism is check, run, record. Worth
- * revisiting if a handler ever needs a non-transactional side effect that cannot
- * go through the outbox.
+ * WHAT IS GUARANTEED. fn runs exactly once per (client, key) — a duplicate is
+ * turned away at the reservation, before it is entered. The exception is a claim
+ * left stale by a crashed process, which a later retry takes over: fn may then run
+ * again, for a request whose first attempt provably did not finish. That is the
+ * deliberate trade, and the only one: the alternative is a key poisoned forever by
+ * one crash.
  */
 async function withIdempotency(req, res, fn, deps = {}) {
   const db = deps.db || require('./db');
@@ -195,88 +259,218 @@ async function withIdempotency(req, res, fn, deps = {}) {
   const clientId = req.integration ? req.integration.id : null;
   const endpoint = `${String(req.method).toUpperCase()} ${req.originalUrl.split('?')[0]}`;
   const hash = requestHash(req);
+  const who = req.integration ? req.integration.name : 'unknown';
 
-  const found = await db.query(
-    `SELECT idempotency_key, request_hash, response_status, response_body, created_at
-       FROM integration_requests
-      WHERE client_id = $1 AND idempotency_key = $2`,
-    [clientId, key]
-  );
+  const read = async () => {
+    const found = await db.query(
+      `SELECT idempotency_key, request_hash, \`status\`, response_status, response_body,
+              created_at, updated_at,
+              TIMESTAMPDIFF(SECOND, updated_at, NOW()) AS age
+         FROM integration_requests
+        WHERE client_id = $1 AND idempotency_key = $2`,
+      [clientId, key]
+    );
+    return found.rows[0] || null;
+  };
 
-  if (found.rows.length) {
-    const row = found.rows[0];
-    /* SAME KEY, DIFFERENT BODY. Not a retry — a caller reusing a key for new
-       work, which means one of the two requests is about to be lost. Answered
-       with 422 rather than 409: the request is well-formed and the credential is
-       fine, it is the combination that cannot be processed. Logged, because it
-       is a bug in the caller and nobody watching this end would otherwise see
-       it. Deliberately says nothing about what the first request was. */
-    if (row.request_hash !== hash) {
-      log(`[integration] ${req.integration ? req.integration.name : 'unknown'} reused `
-        + `${KEY_HEADER} "${key}" on ${endpoint} with a different body `
-        + `(first seen ${row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at}).`);
-      req.idempotencyHandled = true;
-      return res.status(422).json({
-        error: `That ${KEY_HEADER} was already used for a request with a different body. `
-          + 'Use a new key for new work, or send the original request again unchanged.',
-        header: KEY_HEADER,
-      });
+  /* THE CLAIM. One INSERT, and the primary key on (client_id, idempotency_key) is
+     what makes it exclusive — a duplicate gets ER_DUP_ENTRY here and never reaches
+     fn. Nothing is wrapped around it: a lone INSERT under autocommit already is
+     its own transaction, committed by the time this returns, which is exactly what
+     was wanted and one fewer moving part than BEGIN/COMMIT around it. */
+  const claim = async () => {
+    try {
+      await db.query(
+        `INSERT INTO integration_requests
+           (idempotency_key, client_id, endpoint, request_hash, \`status\`)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [key, clientId, endpoint, hash, STATUS.pending]
+      );
+      return true;
+    } catch (err) {
+      if (err && err.code === 'ER_DUP_ENTRY') return false;
+      throw err;
     }
-    // Same key, same body: the caller's logic does not run at all.
+  };
+
+  /* TAKING OVER a claim that is finished with or abandoned, in one conditional
+     UPDATE so that two callers racing to reclaim the same dead key cannot both
+     win — whoever the row matches for first has already changed it by the time the
+     other's WHERE is evaluated.
+     
+     The hash and endpoint are overwritten, because this is now a different
+     request's claim. response_status and response_body are cleared so a crash
+     before the next completion cannot leave a previous attempt's answer sitting
+     under a pending row.
+     
+     affectedRows is 1 exactly when the WHERE matched, which holds here because
+     every branch changes something: a failed row's status changes, and a stale
+     pending row's updated_at moves by at least STALE_SECONDS. (MySQL reports
+     CHANGED rows for an UPDATE, not matched ones, so a no-op UPDATE would report
+     0 — worth knowing, since a condition that changed nothing would read as a
+     lost race.) */
+  const takeOver = async () => {
+    const { result } = await db.query(
+      `UPDATE integration_requests
+          SET \`status\` = $1, request_hash = $2, endpoint = $3,
+              response_status = NULL, response_body = NULL, updated_at = NOW()
+        WHERE client_id = $4 AND idempotency_key = $5
+          AND (\`status\` = $6
+               OR (\`status\` = $7 AND updated_at < (NOW() - INTERVAL ${Number(STALE_SECONDS)} SECOND)))`,
+      [STATUS.pending, hash, endpoint, clientId, key, STATUS.failed, STATUS.pending]
+    );
+    return ((result && result.affectedRows) || 0) === 1;
+  };
+
+  // Releasing a claim we could not honour. Its own short write, deliberately
+  // outside fn's rolled-back transaction — that rollback is what makes this
+  // necessary, since the claim was committed separately and rollback cannot reach
+  // it. Never allowed to throw: the response has already been decided, and losing
+  // a release only means the staleness window frees the key instead.
+  const release = async () => {
+    await db.query(
+      `UPDATE integration_requests SET \`status\` = $1, updated_at = NOW()
+        WHERE client_id = $2 AND idempotency_key = $3 AND \`status\` = $4`,
+      [STATUS.failed, clientId, key, STATUS.pending]
+    ).catch((err) => log(`[integration] could not release ${KEY_HEADER} "${key}": ${err.message}`));
+  };
+
+  const inProgress = (row) => {
     req.idempotencyHandled = true;
-    return replay(res, row);
+    res.set('Retry-After', String(RETRY_AFTER_SECONDS));
+    return res.status(409).json({
+      error: 'A request with this Idempotency-Key is still being processed. '
+        + 'Retry with the same key and body; you will get its result once it finishes.',
+      code: IN_PROGRESS_CODE,
+      header: KEY_HEADER,
+      startedSecondsAgo: row && Number.isFinite(Number(row.age)) ? Number(row.age) : null,
+    });
+  };
+
+  const reused = (row) => {
+    /* Not a retry — a caller reusing a key for new work, which means one of the
+       two requests is about to be lost. 422 rather than 409: the request is
+       well-formed and the credential is fine, it is the combination that cannot be
+       processed. Logged, because it is a bug in the caller and nobody watching
+       this end would otherwise see it. Deliberately says nothing about what the
+       first request was. */
+    log(`[integration] ${who} reused ${KEY_HEADER} "${key}" on ${endpoint} with a different body `
+      + `(first seen ${row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at}).`);
+    req.idempotencyHandled = true;
+    return res.status(422).json({
+      error: `That ${KEY_HEADER} was already used for a request with a different body. `
+        + 'Use a new key for new work, or send the original request again unchanged.',
+      code: REUSED_CODE,
+      header: KEY_HEADER,
+    });
+  };
+
+  /* Deciding what an existing row means. Order matters, and it is not the obvious
+     one: STATUS FIRST, then the hash.
+     
+     A hash mismatch is only a conflict against a row that ANSWERED something —
+     that is what "you already used this key for a different request" means. A
+     pending or failed row produced no answer, so there is nothing to conflict
+     with, and a caller correcting the body that just failed must be allowed to use
+     the same key. Checking the hash first would refuse exactly that, which is the
+     normal way a caller recovers. */
+  const decide = async (row) => {
+    if (row.status === STATUS.complete) {
+      if (row.request_hash !== hash) return { answer: () => reused(row) };
+      return { answer: () => { req.idempotencyHandled = true; return replay(res, row); } };
+    }
+    /* A FAST PATH, not the guard. takeOver's WHERE clause enforces the same
+       staleness condition and is the authority on it — removing this line changes
+       no answer, only the number of round trips, which a mutation test duly
+       reports as equivalent. It is here because the mid-flight duplicate is the
+       common case and there is no reason to make it attempt an UPDATE and a second
+       SELECT to be told what this row already says. */
+    if (row.status === STATUS.pending && Number(row.age) < STALE_SECONDS) {
+      return { answer: () => inProgress(row) };
+    }
+    // Failed, or pending and abandoned: ours to take, if nobody beats us to it.
+    if (await takeOver()) return { owned: true };
+
+    /* Lost the reclaim. Whoever won either finished while we looked — in which
+       case their answer is the right one to hand back — or is running now. Read
+       once more rather than guessing, and fall back to "in progress", which is
+       the answer that asks the caller to come back rather than one that asserts
+       anything untrue. */
+    const now = await read();
+    if (now && now.status === STATUS.complete && now.request_hash === hash) {
+      req.idempotencyHandled = true;
+      return { answer: () => replay(res, now) };
+    }
+    if (now && now.status === STATUS.complete) return { answer: () => reused(now) };
+    return { answer: () => inProgress(now) };
+  };
+
+  let owned = await claim();
+  if (!owned) {
+    const row = await read();
+    /* The row vanished between our failed INSERT and this read — swept for age,
+       or deleted by hand. Try the claim once more; if that fails too, something is
+       contending for it and "in progress" is the honest answer. */
+    if (!row) {
+      owned = await claim();
+      if (!owned) return inProgress(null);
+    } else {
+      const outcome = await decide(row);
+      if (!outcome.owned) return outcome.answer();
+      owned = true;
+    }
   }
 
   const conn = await db.connect();
-  let outcome;
   try {
     await conn.query('BEGIN');
-    outcome = await fn(conn);
+    const outcome = await fn(conn);
     const status = Number(outcome && outcome.status) || 200;
     const body = outcome && outcome.body !== undefined ? outcome.body : null;
 
-    /* The record, inside the same transaction as everything fn just did. Only a
-       success is recorded: a 4xx or 5xx that fn chose to return is not a state
-       the caller should be stuck with for seven days, and the retry that fixes
-       their request must be allowed to run. */
     if (status < 400) {
+      /* THE RECORD, in the same transaction as everything fn just did — the claim
+         moved earlier, this did not. An UPDATE rather than an INSERT now, of the
+         row we already own.
+         
+         ON conn, NOT db, AND NO TEST CAN PROVE IT. Both spellings leave the same
+         rows behind whenever the commit below succeeds, which it does in every
+         reachable test, so a mutation swapping them survives — this note is the
+         only thing standing between that line and somebody "simplifying" it.
+         
+         Where they differ is the COMMIT failing: a deadlock, a lost connection, a
+         server going down between here and the next line. On db the row is already
+         marked complete on its own connection, so fn's writes roll back while a
+         stored success stays — and the caller's retry is handed that success for
+         work that never happened. Which is the precise failure this mechanism
+         exists to prevent, arrived at from the other direction. Testing it would
+         need fault injection at the commit, and a test-only hook in this path
+         would be a worse risk than the one it covers. */
       await conn.query(
-        `INSERT INTO integration_requests
-           (idempotency_key, client_id, endpoint, request_hash, response_status, response_body)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [key, clientId, endpoint, hash, status, body === null ? null : JSON.stringify(body)]
+        `UPDATE integration_requests
+            SET \`status\` = $1, response_status = $2, response_body = $3, updated_at = NOW()
+          WHERE client_id = $4 AND idempotency_key = $5`,
+        [STATUS.complete, status, body === null ? null : JSON.stringify(body), clientId, key]
       );
+      await conn.query('COMMIT');
+    } else {
+      /* A refusal fn chose to RETURN rather than throw. Its writes stand — it
+         decided what to write and what to answer — but the outcome is not recorded
+         as an answer to replay, because a 4xx is not a state to hold the caller in
+         for seven days: their corrected request has to be allowed to run, and it
+         will usually carry the same key. So the claim is released instead. */
+      await conn.query('COMMIT');
+      await release();
     }
-    await conn.query('COMMIT');
     req.idempotencyHandled = true;
     return body === null ? res.status(status).end() : res.status(status).json(body);
   } catch (err) {
     await conn.query('ROLLBACK').catch(() => {});
-
-    /* THE RACE, and the reason the primary key matters more than the lookup
-       above. Two requests carrying the same key arrive together, both find
-       nothing, both run. The second one's insert violates the key, and what
-       happens here is that its work is rolled back and it is answered with the
-       first one's response — which is exactly what it would have got had it
-       arrived a second later. Without this it would be a 500 for a request that
-       succeeded. */
-    if (err && err.code === 'ER_DUP_ENTRY') {
-      const again = await db.query(
-        `SELECT request_hash, response_status, response_body
-           FROM integration_requests
-          WHERE client_id = $1 AND idempotency_key = $2`,
-        [clientId, key]
-      ).catch(() => ({ rows: [] }));
-      if (again.rows.length && again.rows[0].request_hash === hash) {
-        req.idempotencyHandled = true;
-        return replay(res, again.rows[0]);
-      }
-    }
-
-    /* Anything else: no row was written, so the caller can send the same key
-       again and it will run properly. That is the point of recording only on
-       success, and it is why this rethrows rather than inventing a response —
-       the error handler in server.js says what went wrong. */
+    /* Everything fn did is gone. The claim is not — it was committed on its own —
+       so it has to be released by hand, or this key would be unusable until it
+       went stale. Marked failed rather than deleted: a caller asking what became
+       of that key gets an answer, and a failed row is takeable immediately. */
+    await release();
     throw err;
   } finally {
     conn.release();
@@ -319,5 +513,6 @@ function schedule(db, log = console.log) {
 
 module.exports = {
   KEY_HEADER, REPLAY_HEADER, GUARDED_METHODS, RETENTION_DAYS, SWEEP_MINUTES, MAX_KEY_LENGTH,
+  STATUS, STALE_SECONDS, IN_PROGRESS_CODE, REUSED_CODE, RETRY_AFTER_SECONDS,
   hashBody, requestHash, requireKey, warnIfUnused, changesNothing, withIdempotency, sweep, schedule,
 };

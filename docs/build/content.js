@@ -1654,6 +1654,15 @@ module.exports = [
       + 'Keys are remembered for a week and then forgotten. That is longer than any real retry and short enough '
       + 'that the record does not grow forever \u2014 a caller that reuses a key a fortnight later is treated '
       + 'as making a new request, which is worth knowing if anything at your end recycles them.'),
+  note('A retry that arrives while the first one is still running',
+    'The key is claimed before the work starts, so a second copy of a request cannot slip in alongside the '
+      + 'first \u2014 it is told, in as many words, that the original is still being processed, and to come back '
+      + 'for the result. That answer is deliberately different from the one given to a key reused for '
+      + 'genuinely different work: one means wait, the other means something at the calling end is wrong, and a '
+      + 'tool that could not tell them apart would keep retrying the mistake.\n\n'
+      + 'If the process handling a request is killed halfway \u2014 a restart, a crash \u2014 the claim it left '
+      + 'behind is treated as abandoned after two minutes, and the next retry takes the work over and runs it '
+      + 'properly. Without that, one badly timed restart would make a single key unusable forever.'),
   note('If it is not configured, it is shut, not open',
     'The signing secret lives in the server environment and nowhere else. A deployment where it has not been set '
       + 'answers every integration request with 503 and does no work, rather than treating "no secret" as "no '
