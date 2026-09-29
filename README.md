@@ -80,6 +80,41 @@ request in `authenticate()` from the user's freshly-read role, so nobody signs
 out and in again, and no session has to be refreshed. Moving somebody to another
 role takes effect the same way.
 
+### A gate written twice: `can()`, never `caps()`
+
+Several controls are gated in two places — the route that performs the action, and the page
+that decides whether to draw the button. When those two consult different things, the API
+allows something the app never offers, and nothing fails: there is no error to see, only a
+button that is not there. `public/index.html` carries a note about this appearing three
+times — Settings, the Users tab, the Add Project button — "always the same way: a screen
+asked `caps()` (the role's TIER) about something the API decides from the role's
+PERMISSIONS. Switching a permission on does not move the tier."
+
+The rule, and it is worth stating in one line: **if a Super Admin can switch it on in
+Settings → Role Permissions, the page gates it with `can('the.same.key')`.** `caps()` is
+only for what a checkbox cannot carry — `projectScope`, `reviewStage`, `deleteAsset`.
+
+Both sides then read one source. `authenticate()` resolves
+`rolePermissions.effectiveFor(db, user.role)`, puts it on `req.permissions` for
+`requirePermission(...)`, and ships the same list to the browser as `user.permissions`,
+which the page's `perms()` reads and re-polls every twenty seconds.
+
+**Hold / Resume is audited and pinned.** It is gated in both places —
+`requirePermission('asset.hold')` on `POST /:id/hold` and `/:id/resume`, and
+`can('asset.hold')` on the page — and `tests/hold-permission.test.js` drives the permission
+off and on in Settings, asserting after each change that the server's answer and the list
+the page gates on move together. The page's own gate line is lifted out of
+`public/index.html` and evaluated by that test, so it checks the real gate rather than a
+copy of it. Mutation-tested: removing the page's check, swapping it for a `caps()` tier
+read, pointing it at another key, and dropping the server's `requirePermission` are all
+caught.
+
+Two things that suite also records, because they are easy to assume otherwise:
+`asset.hold` is `impliedBy: () => true`, so **every** designation holds it until a Super
+Admin turns it off — there is no role that lacks it by default; and holding the key is
+still not permission to hold somebody *else's* task, which the route refuses separately
+(a cross-person hold would need its own permission and its own audit line).
+
 ### What the tier system still does
 
 Permissions are booleans; some things are not. `projectScope` (`all` / `owned` /
