@@ -7931,7 +7931,19 @@ async function openDrawer(id){
      the reason, which is what they need; holding somebody else's work is not
      something this build allows anybody to do. */
   const held = a.held || null;
-  const mayHold = mine && can('asset.hold');
+  /* HOLD: your own task, or one you lead.
+   *
+   * `mine` alone until now, and that was never a permission gap — asset.hold is held by
+   * every designation (impliedBy: () => true), so the button's absence on a teammate's task
+   * was this line doing exactly what it was written to do. The studio has widened it for
+   * four designations inside their own projects, and the scope half of that is a database
+   * question — which projects do I lead or supervise — so the server decorates each asset
+   * with can_hold_others and this reads the answer rather than working it out again.
+   *
+   * `=== true` rather than a truthy read, so an asset that reached this panel by some route
+   * that did not decorate it falls back to `mine` and lets the server decide, instead of
+   * silently gaining a control. */
+  const mayHold = (mine || a.can_hold_others === true) && can('asset.hold');
   const canHold = mayHold && a.work_open;
   /* NO RESUME FOR A PAUSE THE SCHEDULE MADE.
    *
@@ -8346,6 +8358,20 @@ async function openDrawer(id){
       : a.assignee_id ? `<div class="asn-why">Assigned inside the studio \u2014 unassign above to send this out.</div>`
       : can('outsource.manage') ? `
         <select id="d_freelancer"><option value="">Loading\u2026</option></select>
+        <!-- THE AGREED HOURS, ASKED IN THE PANEL rather than in a prompt() dialog.
+             It used to be a prompt(), which made this the one control in the drawer
+             whose failure was SILENT: a browser that suppresses dialogs — Chrome and
+             Firefox both do once somebody ticks "prevent this page from creating
+             additional dialogs", and Chrome does outright in a cross-origin frame —
+             returns null, which the handler could not tell from Cancel. The click did
+             nothing, said nothing, and went on doing nothing. Every other field in this
+             panel is inline with a .ref-err under it; this one now is too. -->
+        <input type="number" id="d_osHours" min="0" step="0.5" inputmode="decimal"
+          placeholder="Agreed man hours\u2026" style="margin-top:6px;"
+          value="${a.man_hours === null || a.man_hours === undefined ? '' : escapeHTML(String(a.man_hours))}">
+        <div style="font-size:10.5px;color:var(--ink-faint);margin-top:4px;">
+          The figure agreed with the freelancer \u2014 no timer runs on outsourced work. 0 is fine if it is not settled yet.
+        </div>
         <div class="asn-row">
           <button class="btn btn-sm btn-brand" id="d_osAssignBtn">Assign to freelancer</button>
         </div>
@@ -8531,16 +8557,25 @@ async function openDrawer(id){
       if(btn) btn.onclick = async ()=>{
         ferr.textContent = '';
         if(!fsel.value){ ferr.textContent = 'Pick a freelancer first.'; return; }
-        /* THE DECIDED MAN HOURS, ASKED ON CONFIRM. It is the whole of what the
-           studio agrees with a freelancer, so it is not a field that can be
-           skipped past — the assignment is not made until there is a number. */
-        const typed = prompt('Decided man hours for this task\n\n'
-          + 'The figure agreed with the freelancer. This is not measured time — '
-          + 'no timer runs on outsourced work.', a.man_hours || '');
-        if(typed === null) return;
+        /* THE DECIDED MAN HOURS, read from the panel. It is the whole of what the studio
+           agrees with a freelancer, so it is not a field that can be skipped past — the
+           assignment is not made until there is a number.
+
+           EVERY EXIT FROM HERE SAYS SOMETHING, which is the fix: the old prompt() had one
+           path that returned in silence, and a suppressed dialog was indistinguishable
+           from a cancelled one. A test pins that this handler has no silent return. */
+        const hoursInput = document.getElementById('d_osHours');
+        const typed = hoursInput ? String(hoursInput.value || '').trim() : '';
+        if(!typed){
+          ferr.textContent = 'Enter the agreed man hours. 0 is allowed if they are not settled yet.';
+          if(hoursInput) hoursInput.focus();
+          return;
+        }
         const hours = Number(typed);
         if(!Number.isFinite(hours) || hours < 0){
-          ferr.textContent = 'Agreed man hours is a number, and cannot be negative.'; return;
+          ferr.textContent = 'Agreed man hours is a number, and cannot be negative.';
+          if(hoursInput) hoursInput.focus();
+          return;
         }
         btn.disabled = true;
         try{

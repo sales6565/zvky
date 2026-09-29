@@ -20,6 +20,9 @@ const {
   canCreateAsset,
   isAssignedArtist,
   canActAtTlGate,
+  canHoldAsset,
+  leadOrSupervisorProjects,
+  HOLD_OTHERS_ROLES,
   tlGateAuthority,
   reviewTeamProjects,
   projectsWithReviewTeam,
@@ -182,12 +185,35 @@ async function attachTasksAndNotes(assets, viewer) {
    * flag can hide a control the server would refuse; it cannot hide one the
    * server would allow. */
   const projectIds = assets.map((a) => a.project_id);
-  const [onTeam, staffed] = await Promise.all([
+  const [onTeam, staffed, ledByViewer] = await Promise.all([
     enrich('project review team', () => reviewTeamProjects(viewer && viewer.id, projectIds))
       .then((v) => (v instanceof Set ? v : new Set())),
     enrich('project staffing', () => projectsWithReviewTeam(projectIds))
       .then((v) => (v instanceof Set ? v : new Set())),
+    /* WHICH OF THESE PROJECTS THIS VIEWER LEADS OR SUPERVISES, for the Hold button below.
+       Batched beside the two above and for the same reason: the board asks it once per card,
+       and one query for the lot beats forty. Narrower than the review team on purpose — the
+       coordinator list is not "leads or supervises"; see leadOrSupervisorProjects. */
+    enrich('projects led or supervised',
+      () => leadOrSupervisorProjects(viewer && viewer.id, projectIds))
+      .then((v) => (v instanceof Set ? v : new Set())),
   ]);
+
+  /* MAY THIS VIEWER HOLD THIS TASK, decorated per asset.
+   *
+   * The same two conditions canHoldAsset applies on the route — the designation, and the
+   * project being one they lead or supervise — plus the studio's own switch. The page reads
+   * this flag rather than working the scope out for itself, because "which projects do I
+   * lead" is a database question and the board has forty cards; and because a second copy
+   * of the rule on the page is the exact shape of gap this codebase keeps finding.
+   *
+   * `mine` is left to the page, which already knows it from the asset it is drawing: this
+   * flag answers only the part the browser cannot. */
+  const mayHoldOthers = (a) => {
+    if (!holds(viewer, 'asset.hold')) return false;
+    if (!viewer || !HOLD_OTHERS_ROLES.includes(viewer.role)) return false;
+    return ledByViewer.has(a.project_id);
+  };
   const mayReviewTl = (a) => {
     if (!holds(viewer, 'review.tl')) return false;
     if (a.assignee_id && viewer && a.assignee_id === viewer.id) return false;
@@ -217,6 +243,8 @@ async function attachTasksAndNotes(assets, viewer) {
   return assets.map((a) => ({
     ...a,
     can_review_tl: mayReviewTl(a),
+    // Whether a lead or supervisor on this project may hold it — see mayHoldOthers.
+    can_hold_others: mayHoldOthers(a),
     outsourced_to: outsourced.get(String(a.id)) || null,
     time_spent_seconds: (timeSpent.get(a.id) || {}).seconds || 0,
     // [{ round, seconds, open, who }], oldest round first.
@@ -1923,15 +1951,28 @@ async function holdableAsset(req, res) {
   const asset = rows[0];
   if (!asset) { res.status(404).json({ error: 'Asset not found' }); return null; }
   if (await projectClosedResponse(res, asset.project_id)) return null;
-  /* Your own task, and nobody else's.
+  /* Your own task, or one you lead.
    *
-   * mayStartWork lets a full-access role stamp a start for oversight; holding
-   * is not the same kind of act, so this is stricter — a hold on somebody
-   * else's work would look to them exactly like the app losing their session.
-   * A lead who wants work stopped reassigns it or moves its stage, both of
-   * which already say in the history who did it. */
-  if (!asset.assignee_id || asset.assignee_id !== req.user.id) {
-    res.status(403).json({ error: 'Only the person a task is assigned to can put it on hold or resume it.' });
+   * IT USED TO BE YOUR OWN AND NOBODY ELSE'S, and the note here said why: a hold on
+   * somebody else's work looks to them exactly like the app losing their session, and a
+   * lead who wanted work stopped could reassign it or move its stage, both of which name
+   * who did it in the history. The studio has since asked for the narrower version of that
+   * authority — four designations, inside the projects they lead or supervise — so the
+   * reasoning above now applies to everybody EXCEPT those four on their own projects, and
+   * the act still lands in asset_events with their name on it.
+   *
+   * canHoldAsset is the whole question, asked in src/permissions.js so the board's button
+   * and this endpoint cannot answer it differently. Note it also asks for asset.hold, which
+   * requirePermission on the route has already established — kept inside the helper anyway,
+   * because the helper is what the decoration calls and a flag that skipped the studio's
+   * switch would light a button the route then refuses. */
+  if (!(await canHoldAsset(req.user, asset))) {
+    res.status(403).json({
+      error: asset.assignee_id && asset.assignee_id !== req.user.id
+        ? 'That task is somebody else\'s. Holding it is for the person it is assigned to, '
+          + 'or a lead or supervisor on its project.'
+        : 'Only the person a task is assigned to can put it on hold or resume it.',
+    });
     return null;
   }
   if (!(await workLog.available(db))) {

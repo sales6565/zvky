@@ -2538,6 +2538,66 @@ must be one `reassign_review` accepts.
 same bug adds to the first rather than replacing it, and that the fix goes on through the
 first gate like any other submission.
 
+### Hold: your own task, or one you lead
+
+`asset.hold` is `impliedBy: () => true` — every designation has always held it — so a lead
+who could not pause a teammate's timer was **never missing a permission**. The gate was
+`mine`: the asset had to be assigned to you, deliberately, and the route said why (a hold on
+somebody else's work looks to them exactly like the app losing their session). The studio has
+since asked for the narrower version of that authority, and this is it.
+
+**Two conditions, both required.** The designation is one of four —
+`team_lead`, `associate_team_lead`, `art_supervisor`, `associate_animation_supervisor` — **and**
+the asset's project is one that person leads or supervises. Without the second it would read
+"any lead may stop any timer in the studio", which is a far larger authority than the one
+asked for; a test mutates that condition away and fails.
+
+**Why a named list of role keys**, when hardcoded role checks are otherwise avoided here: the
+set is not a group. `Supervision` holds six designations and only four were asked for —
+`senior_team_lead` and `technical_manager` were not — so `group === 'Supervision'` would grant
+this to two nobody asked about. It is one exported constant, `HOLD_OTHERS_ROLES`, with the
+reasoning beside it, the same shape as `SHIELDED_ROLES` and `PROJECT_REVIEW_ROLE`. There is
+also no plain `animation_supervisor` in the catalogue; the animation seat is
+`associate_animation_supervisor`, which is what is named.
+
+**"Leads or supervises" is narrower than the review team.** `reviewTeamProjects` unions three
+tables including `project_coordinators`, because the review gate is open to all three. This
+is a different question, so `HOLD_SCOPE_TABLES` is `project_team_leads` and
+`project_supervision` only: one of the four who happens to be on a project's coordinator list
+does not get somebody else's timer with it.
+
+**Both gates, from one helper.** `canHoldAsset()` in
+[`src/permissions.js`](src/permissions.js) is the route's authority, and the assets list
+decorates every row with `can_hold_others` from the same two conditions. The page reads that
+flag (`mine || a.can_hold_others === true`) rather than working the scope out itself — "which
+projects do I lead" is a database question and the board has forty cards, and a second copy of
+the rule in the browser is the exact gap this codebase keeps finding. `=== true` rather than a
+truthy read, so an asset that arrives undecorated falls back to `mine` and lets the server
+decide instead of silently gaining a control.
+
+The widening rides **on** the permission rather than around it: `canHoldAsset` asks for
+`asset.hold` first, so a studio that switches it off for a designation closes this too.
+Everybody outside the four keeps `mine` exactly as before — including full access, because
+holding is not an oversight act.
+
+### Assign to Freelancer: the failure was the dialog
+
+Investigated end to end and the endpoint was sound: a Super Admin and a lead on the project
+both get 201, and the asset then carries `outsourced_to`. Every refusal already named its
+reason — off-project 403, no permission 403, an asset already staffed inside the studio 409
+naming who holds it, an inactive freelancer and a wrong-project asset 422. Discipline is
+**not** involved anywhere in the flow: `validateAssignment` and `checkRefs` never read it, it
+is stored and displayed and nothing else, and a test pins that so a later change which starts
+matching on free text has to say so first.
+
+What was wrong was the one exit with no feedback. The agreed man hours were collected with
+`prompt()`, and a browser that suppresses dialogs — Chrome and Firefox both do once somebody
+ticks "prevent this page from creating additional dialogs", Chrome does outright in a
+cross-origin frame — returns `null`, which the handler could not tell from Cancel. The click
+did nothing, said nothing, and went on saying nothing. It is now an inline number field with a
+`.ref-err` under it, like every other field in that panel, and a test asserts that **every**
+early return in the handler sets a message.
+
 ### Pending Actions and the Team Lead: a default left alone
 
 `pending.view` is not enabled for Team Lead, and it stays that way. It is not an oversight —
@@ -2592,6 +2652,18 @@ npm test
 ```
 
 Runs on Node's built-in test runner — no test framework dependency.
+
+**Two test files at a time, not one per core.** Seventy-six files in `tests/` start their own
+server and run the whole startup migration against their own database. At the runner's
+default concurrency that is four simultaneous boots on four cores and one MariaDB, and some
+suite always loses the race: three consecutive full runs failed with "Server did not start"
+in three *different* suites — `mis-project-access` at a 60s deadline, `auto-resume` at 150s,
+`integration-outbox` at 300s — each passing on its own immediately afterwards. Raising the
+deadline only moved which suite died.
+
+Capping concurrency fixes it, and measured on this container it is also **faster**: 440s and
+one expected failure, against runs that took longer and failed in three places while waiting
+out boot deadlines. Override with `TEST_CONCURRENCY=4 npm test` on a bigger machine.
 
 The policy tests are pure and always run. The endpoint tests need a database and
 are skipped unless you name one, which is **dropped and recreated** on every

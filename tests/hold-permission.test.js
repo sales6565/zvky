@@ -67,13 +67,20 @@ test('the two gates name the same permission, and the page reads the configured 
 
   /* The page's gate. can() over perms(), which is that list — NOT caps(), which is the
      tier and is what the three bugs the page's own comment describes all reached for. */
-  assert.match(PAGE, /const mayHold = mine && can\('asset\.hold'\);/,
-    'the page gates Hold on the permission');
+  /* WIDENED SINCE THIS WAS WRITTEN, deliberately: the gate was `mine && can('asset.hold')`
+     and four designations may now hold a task on a project they lead. What this test is
+     about is unchanged — the page and the server ask the SAME permission, and the page reads
+     the configured set rather than the tier — so the pin follows the new line rather than
+     being deleted. tests/hold-lead-scope.test.js owns the widening itself. */
+  assert.match(PAGE, /const mayHold = \(mine \|\| a\.can_hold_others === true\) && can\('asset\.hold'\);/,
+    'the page gates Hold on the permission, plus the server-decorated scope flag');
   assert.match(PAGE, /function perms\(\)\{ return \(state\.currentUser && state\.currentUser\.permissions\) \|\| \[\]; \}/,
     'and perms() is the server\'s own list');
 
-  // One gate, not two: a second copy is the thing this suite exists to catch.
-  assert.strictEqual((PAGE.match(/asset\.hold/g) || []).length, 1,
+  /* ONE GATE, NOT TWO — still the point, and now counted over code rather than over the whole
+     file: the widening added prose that names the permission, and a comment is not a gate. */
+  const pageCode = PAGE.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '');
+  assert.strictEqual((pageCode.match(/asset\.hold/g) || []).length, 1,
     'asset.hold is asked about in exactly one place on the page');
   const holdArea = PAGE.slice(PAGE.indexOf('const mayHold ='), PAGE.indexOf('const mayHold =') + 600);
   assert.ok(!/caps\(/.test(holdArea), 'and the tier is not consulted anywhere near it');
@@ -104,6 +111,7 @@ test('Hold follows the configured permission, on the page and on the server',
   const tokens = {};
   const ids = {};
   let assetId;
+  let projectId;
 
   const as = (who, p, options = {}) => api(server.base, p, { ...options, token: tokens[who] });
   const login = async (email) => (await api(server.base, '/auth/login',
@@ -117,12 +125,15 @@ test('Hold follows the configured permission, on the page and on the server',
     const me = await as(who, '/auth/me');
     assert.strictEqual(me.status, 200, JSON.stringify(me.body));
     const can = (...keys) => keys.some((k) => (me.body.user.permissions || []).includes(k));
-    const at = PAGE.indexOf('const mayHold = mine && ');
+    const at = PAGE.indexOf('const mayHold = (mine');
     assert.ok(at !== -1, 'the page still has the gate this test reads');
     const line = PAGE.slice(at, PAGE.indexOf(';', at) + 1);
+    /* `a` is the asset row as the panel has it, because the gate now also reads the
+       server-decorated can_hold_others flag off it. Passed through rather than stubbed, so
+       this still evaluates the page's real line. */
     // eslint-disable-next-line no-new-func
-    return new Function('mine', 'can', `${line} return mayHold;`)(
-      asset.assignee_id === me.body.user.id, can);
+    return new Function('mine', 'a', 'can', `${line} return mayHold;`)(
+      asset.assignee_id === me.body.user.id, asset, can);
   };
 
   const setPerms = async (roleKey, keys) => {
@@ -135,8 +146,16 @@ test('Hold follows the configured permission, on the page and on the server',
     assert.strictEqual(r.status, 200, JSON.stringify(r.body));
     return r.body.role.permissions.filter((p) => p.enabled).map((p) => p.key);
   };
-  const assetRow = async () => (await sql(cfg,
-    'SELECT id, assignee_id, `status` FROM assets WHERE id = ?', [assetId]))[0];
+  /* THE DECORATED ROW, as the board serves it — not a raw SELECT. The gate reads
+     can_hold_others, which only the API adds, and a hand-built row would answer a question
+     the page never asks. */
+  const assetRow = async (who = 'artist') => {
+    const board = await as(who, `/assets/project/${projectId}`);
+    assert.strictEqual(board.status, 200, JSON.stringify(board.body));
+    const row = (board.body.assets || []).find((x) => x.id === assetId);
+    assert.ok(row, 'the asset is on the board');
+    return row;
+  };
 
   t.before(async () => {
     await resetSchema(cfg);
@@ -169,6 +188,7 @@ test('Hold follows the configured permission, on the page and on the server',
       method: 'POST', body: { name: 'Pausable', type: 'prop', assigneeId: ids.artist } });
     assert.strictEqual(asset.status, 201, JSON.stringify(asset.body));
     assetId = asset.body.asset.id;
+    projectId = project.body.project.id;
   });
 
   t.after(async () => { if (server) await stopServer(server); });
@@ -259,12 +279,20 @@ test('Hold follows the configured permission, on the page and on the server',
   /* --- and the rule the permission does NOT carry -------------------------- */
 
   await t.test('holding the permission is still not permission to hold somebody else\'s work', async () => {
-    /* The catalogue is explicit that this key does not grant a cross-person hold. Pinned
-       here because the two gates agreeing must not be mistaken for the permission meaning
-       more than it does: root holds every key in the catalogue and is still refused. */
+    /* THE KEY ALONE STILL DOES NOT GRANT A CROSS-PERSON HOLD, which is the claim, and it
+       survives the widening: four designations may now hold a project-mate's task, and the
+       permission is not what admits them — the designation and the project are, on top of
+       it. Root holds every key in the catalogue, is none of the four, and is refused.
+       Holding is not an oversight act, which is the distinction the route has always drawn.
+       The sentence is now the not-mine one rather than the unassigned one; that the refusal
+       explains which case it is, is itself worth pinning. */
     assert.ok((await heldBy('super_admin')).includes('asset.hold'), 'root holds the key');
     const refused = await as('root', `/assets/${assetId}/hold`, { method: 'POST' });
     assert.strictEqual(refused.status, 403, JSON.stringify(refused.body));
-    assert.match(refused.body.error, /Only the person a task is assigned to/);
+    assert.match(refused.body.error, /somebody else's/);
+    assert.match(refused.body.error, /a lead or supervisor on its project/,
+      'and says who it would be for');
+    // The button agrees, which is the pairing this whole suite is about.
+    assert.strictEqual(await mayHoldOnPage('root', await assetRow('root')), false);
   });
 });

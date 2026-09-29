@@ -382,6 +382,76 @@ async function onProjectReviewTeam(user, projectId) {
   return (await reviewTeamProjects(user.id, [projectId])).has(projectId);
 }
 
+/* ---------- holding somebody ELSE's task ----------
+ *
+ * WHAT CHANGED, and it is not a permission. asset.hold is impliedBy: () => true — every
+ * designation has always held it — so a lead who could not pause a teammate's timer was
+ * never missing a permission. The gate was `mine`: the asset had to be assigned to them.
+ * That was deliberate, and the note on the route said why. The studio has now asked for it
+ * to be widened, for four designations and inside their own projects only.
+ *
+ * TWO CONDITIONS, AND BOTH ARE REQUIRED:
+ *
+ *   the designation   one of the four below
+ *   the project       one this person LEADS or SUPERVISES
+ *
+ * Without the second it would be "any lead may stop any timer in the studio", which is a
+ * different and much larger authority than the one asked for.
+ *
+ * WHY A LIST OF ROLE KEYS, when hardcoded role-name checks are otherwise avoided here. The
+ * set the studio named is not a group: `Supervision` holds six designations and only four
+ * of them were asked for — senior_team_lead and technical_manager were not — so
+ * `def.group === 'Supervision'` would grant this to two designations nobody asked about.
+ * It is therefore one named, exported constant with the reasoning beside it, the same shape
+ * as SHIELDED_ROLES and PROJECT_REVIEW_ROLE in src/role-permissions.js, rather than a
+ * comparison scattered through the code. Changing who may do this is editing this list.
+ *
+ * There is no plain `animation_supervisor` in the catalogue — the animation side is
+ * `associate_animation_supervisor`, and that is what is named below. Checked, not assumed.
+ */
+const HOLD_OTHERS_ROLES = [
+  'team_lead',
+  'associate_team_lead',
+  'art_supervisor',
+  'associate_animation_supervisor',
+];
+
+/* LEADS OR SUPERVISES — narrower than the review team on purpose.
+ *
+ * reviewTeamProjects above unions three tables, project_coordinators among them, because
+ * the review GATE is open to all three. This is not that question: the studio asked for
+ * the people who lead or supervise the work, so a designation from the list above that
+ * happens to be on a project's coordinator list does not get somebody else's timer with it.
+ * Same UNION shape, two tables. */
+const HOLD_SCOPE_TABLES = ['project_team_leads', 'project_supervision'];
+
+async function leadOrSupervisorProjects(userId, projectIds) {
+  const ids = [...new Set((projectIds || []).filter(Boolean))];
+  if (!userId || !ids.length) return new Set();
+  const sql = HOLD_SCOPE_TABLES
+    .map((t) => `SELECT project_id FROM ${t} WHERE user_id = $1 AND project_id IN ($2)`)
+    .join(' UNION ');
+  const { rows } = await db.query(sql, [userId, ids]);
+  return new Set(rows.map((r) => r.project_id));
+}
+
+/* May this person hold a task that is not theirs? The route's authority; the board's flag
+   is decorated from the same two conditions so the button and the endpoint cannot drift. */
+async function canHoldOthersWork(user, asset) {
+  if (!user || !asset || !asset.project_id) return false;
+  if (!HOLD_OTHERS_ROLES.includes(user.role)) return false;
+  return (await leadOrSupervisorProjects(user.id, [asset.project_id])).has(asset.project_id);
+}
+
+/* The whole question the Hold and Resume routes ask, in one place: the permission is the
+   studio's switch, and then it is your own task or one you lead. */
+async function canHoldAsset(user, asset) {
+  if (!user || !asset || !asset.assignee_id) return false;
+  if (!holds(user, 'asset.hold')) return false;
+  if (asset.assignee_id === user.id) return true;
+  return canHoldOthersWork(user, asset);
+}
+
 /* Whether a project has been staffed at all.
  *
  * The rule above is "the project's team decides" — which says nothing about a
@@ -639,6 +709,11 @@ module.exports = {
   canManageUsers,
   isAssignedArtist,
   canActAtTlGate,
+  canHoldAsset,
+  canHoldOthersWork,
+  leadOrSupervisorProjects,
+  HOLD_OTHERS_ROLES,
+  HOLD_SCOPE_TABLES,
   tlGateAuthority,
   onProjectReviewTeam,
   reviewTeamProjects,
