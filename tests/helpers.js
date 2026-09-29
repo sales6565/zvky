@@ -97,16 +97,26 @@ async function startServer(cfg, extraEnv = {}) {
    * The loop polls every 250ms and returns the moment health answers, so a
    * longer deadline costs nothing when the machine is quiet.
    *
-   * RAISED AGAIN, from sixty seconds, and for the same reason it was raised to sixty: the
-   * count in the paragraph above is no longer twenty. Seventy-five files in tests/ start a
-   * server now, still on four cores and one MariaDB, and a full run failed with this error
-   * in tests/mis-project-access.test.js — ten subtests and their parent, all because the
-   * server they share never answered /health in time. It passed on its own immediately
-   * afterwards, which is the signature this comment describes.
+   * RAISED TWICE NOW, from sixty to a hundred and fifty to this, and the reason is always
+   * the same: the count in the paragraph above is no longer twenty. Seventy-six files in
+   * tests/ start a server, still on four cores and one MariaDB.
+   *
+   * At sixty it was tests/mis-project-access.test.js — ten subtests and their parent. At a
+   * hundred and fifty it was tests/auto-resume.test.js, whose captured server log had
+   * finished every migration step and printed its last startup line; it simply had not
+   * answered /health yet. Both passed alone, immediately afterwards, which is the signature
+   * this comment describes.
+   *
+   * THE NUMBER IS NOT THE REAL ANSWER and should not be raised a third time in silence. A
+   * boot that needs more than two minutes means seventy-six servers are contending for four
+   * cores, and the fix at that point is fewer of them at once (`--test-concurrency`) or a
+   * larger machine — not a longer wait. This is set where it is so a full run on THIS
+   * container completes, and the env override below is how a smaller box copes without
+   * editing the file.
    *
    * Overridable, so a slower box can raise it without editing this file, and so the number
    * here is a default rather than a claim about every machine. */
-  const deadline = Date.now() + Number(process.env.TEST_SERVER_BOOT_MS || 150000);
+  const deadline = Date.now() + Number(process.env.TEST_SERVER_BOOT_MS || 300000);
   while (Date.now() < deadline) {
     try {
       const res = await fetch(`${base}/health`);
@@ -118,7 +128,7 @@ async function startServer(cfg, extraEnv = {}) {
   }
   child.kill();
   throw new Error('Server did not start within '
-    + `${Math.round(Number(process.env.TEST_SERVER_BOOT_MS || 150000) / 1000)}s. `
+    + `${Math.round(Number(process.env.TEST_SERVER_BOOT_MS || 300000) / 1000)}s. `
     + `Raise TEST_SERVER_BOOT_MS if this machine is slower than the default assumes.\n${output}`);
 }
 
