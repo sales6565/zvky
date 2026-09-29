@@ -5354,6 +5354,67 @@ function cardHTML(a){
  * false for a contributor, who only ever sees their own work — for them the
  * project can be full and the board still bare, and that reading sent people
  * hunting for a bug that was not there. Say which it is. */
+/* ---------- the Dashboard's Art / Animation lens ----------
+ *
+ * THE FIELD IS assets.type, and it is the only one that can carry this split.
+ * Checked rather than assumed: `discipline` exists only as free text on
+ * freelancers; projects.category is drawn from project_categories, which ships
+ * EMPTY on purpose; and milestone_types does hold exactly {art, animation} but
+ * project_milestones joins a TYPE to a PROJECT and never to an asset, so it
+ * cannot partition a board. asset_types is what every asset carries, and
+ * `animation` is one of its six seeded values.
+ *
+ * SO "ART" IS DEFINED AS "NOT ANIMATION", which is a decision and not a
+ * reading of the data. asset_types is editable in Settings, so a studio that
+ * adds Rigging or Layout gets them under Art without being asked. That is the
+ * right default — those are art-side in every studio that has named them so far
+ * — but it is an inference, and the alternative (a discipline flag per asset
+ * type, set in Settings) is the change to make if it ever stops being true.
+ *
+ * NOT A PERMISSION. Every role that can open the Dashboard sees both sub-tabs.
+ * The lens partitions what somebody already sees; it grants nothing and hides
+ * nothing that the board was not already showing them. */
+const BOARD_LENS = [
+  { id: 'art',       label: 'Art',       match: (a) => a.type !== 'animation' },
+  { id: 'animation', label: 'Animation', match: (a) => a.type === 'animation' },
+];
+const BOARD_LENS_DEFAULT = 'art';
+
+/* WHICH LENS IS OPEN, and the two decisions in one line.
+ *
+ * DEFAULT: Art. It is the larger set — five of the six seeded types — so the
+ * first thing a new viewer sees is most of their project rather than a corner
+ * of it.
+ *
+ * RESETS EACH LOAD; it is not remembered. Every one of the six sub-tab groups
+ * already on this page does the same — Pending Actions, the Assets List,
+ * Reports, the Time Sheet — and they are all plain variables that start over.
+ * Persisting this one would make the same component behave differently
+ * depending on which row of it you clicked.
+ *
+ * The stronger reason is what a remembered lens would do on a Monday: somebody
+ * who last looked at Animation comes back to a board with their Art work
+ * missing, and the only thing on screen saying so is a sub-tab they did not
+ * choose today. A filter that hides work has to be one you just set. The
+ * header's project picker is remembered because landing on NO project is
+ * useless; landing on Art is one click from anywhere.
+ *
+ * If the studio would rather it stuck, it is a key in saveContext() — see
+ * contextKey() — and that is the whole change. */
+let boardLens = BOARD_LENS_DEFAULT;
+const boardLensMatch = () =>
+  (BOARD_LENS.find(l => l.id === boardLens) || BOARD_LENS[0]).match;
+
+/* One handler, wired on every draw — including the empty one, or a lens with
+   nothing in it would be a screen with no way off it. The same shape the other
+   six sub-tab groups use: set the variable, redraw. */
+function wireBoardLens(el){
+  el.querySelectorAll('.sub-tab[data-lens]').forEach(b=>b.addEventListener('click', ()=>{
+    boardLens = b.dataset.lens;
+    renderBoard();
+  }));
+}
+
 function emptyBoardReason(){
   return caps().assignable
     ? 'Nothing in this project is assigned to you. You only see your own work here — pick another project, or ask whoever runs it.'
@@ -5363,13 +5424,38 @@ function emptyBoardReason(){
 function renderBoard(){
   const el = document.getElementById('boardView');
   if(!state.currentProjectId){ el.innerHTML = `<div class="empty">No projects assigned to you yet.</div>`; return; }
-  const assets = filteredAssets();
-  if(state.assets.length && !assets.length){ el.innerHTML = `<div class="empty">No assets match your filters.</div>`; return; }
+  /* THE POOL THE LENS SPLITS is filteredAssets() — the search and the type
+     filter first, then the discipline. Applied HERE and not inside
+     filteredAssets(), which the Assets List reads too: that is a different tab
+     with its own sub-tabs, and a lens on the Dashboard has no business
+     narrowing it. */
+  const pool = filteredAssets();
+  if(state.assets.length && !pool.length){ el.innerHTML = `<div class="empty">No assets match your filters.</div>`; return; }
   if(!state.assets.length){ el.innerHTML = `<div class="empty">${emptyBoardReason()}</div>`; return; }
-  el.innerHTML = `<div class="board">${visibleStatuses().map(s=>{
+
+  /* The counts are of the POOL, so they say how many rows clicking the other
+     sub-tab would actually show — the same rule the Assets List states for its
+     own counts. Counting the whole project would put "Animation (9)" above an
+     empty board whenever a search is on. */
+  const lensTabs = `<div class="sub-tabs">${BOARD_LENS.map(l=>
+    `<button class="sub-tab${l.id===boardLens?' active':''}" data-lens="${l.id}">${l.label} <span class="sub-tab-count">${pool.filter(l.match).length}</span></button>`
+  ).join('')}</div>`;
+
+  const assets = pool.filter(boardLensMatch());
+  /* Empty is about THIS lens, and says which one, because an empty board under
+     a sub-tab somebody did not deliberately choose reads as a broken screen. */
+  if(!assets.length){
+    el.innerHTML = lensTabs + `<div class="empty">Nothing in ${
+      escapeHTML((BOARD_LENS.find(l=>l.id===boardLens)||BOARD_LENS[0]).label)
+    } here. The other tab above has the rest of this project.</div>`;
+    wireBoardLens(el);
+    return;
+  }
+  el.innerHTML = lensTabs + `<div class="board">${visibleStatuses().map(s=>{
     const inCol = assets.filter(a=>a.status===s.id);
     return `<div class="column" data-status="${s.id}"><div class="col-head"><span class="chip" style="background:${s.color}"></span><span class="title">${s.label}</span><span class="count">${inCol.length}</span></div>${inCol.map(cardHTML).join('')}</div>`;
   }).join('')}</div>`;
+  wireBoardLens(el);
   document.querySelectorAll('.card').forEach(c=>c.addEventListener('click', ()=>openDrawer(c.dataset.id)));
   document.querySelectorAll('.card').forEach(c=>{
     c.addEventListener('dragstart', e=>{ c.classList.add('dragging'); e.dataTransfer.setData('text/plain', c.dataset.id); });

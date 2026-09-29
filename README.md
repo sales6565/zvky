@@ -427,6 +427,57 @@ which scrambled the history into nonsense.
 The share of assets in **Delivered**. It previously counted `status === 'final'`,
 which is not one of the eight states, so it read **0% however much had shipped**.
 
+### The Dashboard's Art / Animation sub-tabs
+
+Two sub-tabs above the board, splitting the project it already shows. They use the same
+`.sub-tabs` component as Pending Actions, the Assets List, Reports and the Time Sheet — the
+seventh group on the page, wired the same way.
+
+**The field is `assets.type`, and it is the only one that could carry this.** Checked
+rather than assumed, because the obvious candidates all fail: `discipline` exists only as
+free text on `freelancers`; `projects.category` comes from `project_categories`, which
+ships **empty** on purpose; and `milestone_types` does hold exactly `{art, animation}` —
+but `project_milestones` joins a type to a **project**, never to an asset, so it cannot
+partition a board. Nothing in the app filtered or displayed an Art/Animation split before
+this.
+
+**So Animation is `type === 'animation'` and Art is everything else** — a decision, not a
+reading. `asset_types` is editable in Settings, so a studio that adds *Rigging* or *Layout*
+gets them under Art without being asked. That is the right default, and it is an inference:
+the change to make if it stops being true is a discipline flag on the asset type itself,
+not a longer list of strings on the page. A test pins the inference so altering it is
+deliberate.
+
+**Default: Art. Not remembered.** Art because it is five of the six seeded types, so the
+landing screen is most of the project rather than a corner of it. Not remembered because
+every other sub-tab group on the page resets the same way — but the reason that matters is
+what a remembered lens does on a Monday: somebody who last looked at Animation returns to a
+board with their Art work missing, and the only thing on screen saying so is a sub-tab they
+did not choose today. A filter that hides work should be one you just set. The header's
+project picker *is* remembered, because landing on **no project** is useless; landing on Art
+is one click from anywhere. If the studio would rather it stuck, it is one key in
+`saveContext()`.
+
+**It grants and hides nothing.** The Dashboard tab has no permission gate and did not
+acquire one — it is the only main tab with no `id` and no `display:none`, which is what
+makes it everybody's landing screen. The columns are still whatever `visibleStatuses()`
+returns, so a role that could not see the CD columns still cannot, under either sub-tab.
+
+**Where the split is applied, and where it deliberately is not.** In `renderBoard()`, over
+the pool `filteredAssets()` already returns — *not* inside `filteredAssets()` itself, which
+the **Assets List** also reads and which would have silently halved a different tab. The
+board's column counts come from the split pool, so cards and headings cannot disagree. The
+sub-tab counts describe the whole pool, so each says how many rows clicking it would show.
+
+The one aggregate that does **not** follow the lens is the stats band (`#stats` — Assets,
+one tile per status, Final %). It sits *above* the tab row and is drawn on every tab but
+Users, so it summarises the **project**, not the Dashboard; it already ignored the board's
+search and type filter before this change, reading `state.assets` rather than
+`filteredAssets()`. Making it follow a Dashboard sub-tab would make it wrong on the five
+other tabs it appears on. That is pinned by a test rather than left incidental — and if the
+studio would rather the band followed the lens while the Dashboard is open, that is a
+deliberate change with a failing test to answer.
+
 
 
 Assets now move through a fixed pipeline instead of a free-form status field:
