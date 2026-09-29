@@ -3739,7 +3739,7 @@ document.addEventListener('click', async (e)=>{
    which is what makes "select all" mean "all of these" rather than "all of the
    ones I saw two filters ago". */
 let selectedAssets = new Set();
-let state = { view:'board', search:'', filterType:'', listGroup:'active',
+let state = { view:'board', search:'', userSearch:'', filterType:'', listGroup:'active',
   /* The Assets List's column filters — one per heading, see
      ASSET_LIST_FILTERS. On top of the header's search and scope filter, and
      still NOT folded into filteredAssets(): that pool feeds the Board too, and
@@ -4271,6 +4271,10 @@ function setTab(tab){
   }
   const showBoardControls = tab==='board'||tab==='list';
   document.getElementById('search').style.display = showBoardControls ? '' : 'none';
+  /* The box says what the board is filtered by. It was written to and never read back, so
+     any route that set state.search other than by typing here left a filter on with nothing
+     on screen naming it. */
+  document.getElementById('search').value = state.search || '';
   document.getElementById('filterType').style.display = showBoardControls ? '' : 'none';
   document.getElementById('adminDashView').style.display = tab==='admin' ? '' : 'none';
   document.getElementById('pnlView').style.display = tab==='pnl' ? '' : 'none';
@@ -6937,7 +6941,7 @@ async function renderUsers(sections = userSections()){
      silently hides anybody. */
   const status = usersState.status || 'active';
   const { users, total, counts } = await api(
-    `/users?search=${encodeURIComponent(state.search)}&limit=${state.usersRenderLimit}&offset=0&status=${status}`);
+    `/users?search=${encodeURIComponent(state.userSearch)}&limit=${state.usersRenderLimit}&offset=0&status=${status}`);
   el.innerHTML = `
     ${userSectionTabs(sections)}
     <div style="display:flex;gap:10px;margin-bottom:12px;align-items:center;">
@@ -6999,8 +7003,16 @@ async function renderUsers(sections = userSections()){
       status==='active' && counts.inactive ? ` — ${counts.inactive} deactivated ${counts.inactive===1?'account is':'accounts are'} not shown.` : ''}</div>
   `;
   wireUserSections(el);
-  document.getElementById('userSearch').value = state.search;
-  document.getElementById('userSearch').addEventListener('input', e=>{ state.search=e.target.value; renderUsersTab(); });
+  /* ITS OWN TERM, not the board's.
+   *
+   * This box used to write state.search — the same variable filteredAssets() reads for the
+   * Dashboard and the Assets List. Typing a colleague's name here therefore filtered the
+   * BOARD by it, and because the asset search input's value is only ever read from and
+   * never written back, that box looked empty while the board sat at "No assets match your
+   * filters". A search that empties a different screen, silently, is worse than one that
+   * finds nothing. Two boxes, two terms. */
+  document.getElementById('userSearch').value = state.userSearch;
+  document.getElementById('userSearch').addEventListener('input', e=>{ state.userSearch=e.target.value; renderUsersTab(); });
   /* Wired only where rendered — the buttons above are gated one by one. */
   const wire = (id, fn)=>{ const b = document.getElementById(id); if(b) b.addEventListener('click', fn); };
   wire('addUserBtn', openUserModal);

@@ -212,9 +212,53 @@ router.get('/', requirePermission('user.view'), async (req, res) => {
   // the permission got an empty list. Full-access accounts stay in the roster
   // (leaving them out would make it wrong); what they are protected from is
   // being edited, in mayAdministerUser.
+  /* WHAT "SEARCH USERS" SEARCHES, and it used to be less than the list shows.
+   *
+   * Reproduced before it was changed: a term typed as it appears on screen found nothing
+   * in three ordinary cases, and the roster it was searching was right there behind it.
+   *
+   *   " Priya"        a leading space, which is what pasting a name gives you. The term
+   *                   went into %…% raw, so the pattern asked for a space BEFORE the name
+   *                   and "Priya Raman" does not have one. Zero results.
+   *   "Priya  Raman"  a doubled inner space, the other half of the same paste. Zero.
+   *   "Team Lead"     the DESIGNATION, which the list displays in its own column — and
+   *                   which nothing in the query looked at. Zero.
+   *
+   * So the term is normalised — trimmed, and runs of whitespace collapsed to one — and the
+   * designation is searchable by the words a person reads on the screen ("Team Lead") as
+   * well as by its key ("team_lead"). Normalising the TERM rather than the column keeps
+   * this one comparison per row; a REPLACE() over `name` would have to be evaluated for
+   * every row in the table and buys only the case where a stored name itself holds a
+   * double space, which the roster has other problems if it does.
+   *
+   * STILL NOT SEARCHABLE, and deliberately: the manager and the project, which the list
+   * also displays. Both arrive by a later join — see the two lookups below — so putting
+   * them in this WHERE means restructuring the query rather than widening a condition, and
+   * the designation filter beside this box already answers "everyone who is a Team Lead"
+   * without free text. Worth doing if the studio asks; not worth doing quietly. */
   if (search) {
-    params.push(`%${String(search).toLowerCase()}%`);
-    sql += ` AND (lower(name) LIKE $${params.length} OR lower(email) LIKE $${params.length})`;
+    const term = String(search).trim().replace(/\s+/g, ' ').toLowerCase();
+    if (term) {
+      params.push(`%${term}%`);
+      const like = `$${params.length}`;
+      /* Designations whose LABEL or key contains the term — resolved here rather than in
+         SQL, because the labels live in the roles reference table and a studio renames them
+         in Settings. An unknown term matches no designation and the clause is left out
+         entirely, so the common case stays two comparisons. */
+      const byDesignation = roleKeys({ includeInactive: true })
+        .filter((key) => {
+          const def = roleDef(key) || {};
+          return String(key).toLowerCase().includes(term)
+            || String(def.label || '').toLowerCase().includes(term);
+        });
+      if (byDesignation.length) {
+        params.push(byDesignation);
+        sql += ` AND (lower(name) LIKE ${like} OR lower(email) LIKE ${like}`
+          + ` OR role IN ($${params.length}))`;
+      } else {
+        sql += ` AND (lower(name) LIKE ${like} OR lower(email) LIKE ${like})`;
+      }
+    }
   }
   // `role` may be a single key or a comma-separated list, so the frontend can
   // ask for "anyone who can be assigned work" in one call.

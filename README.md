@@ -2580,6 +2580,43 @@ The widening rides **on** the permission rather than around it: `canHoldAsset` a
 Everybody outside the four keeps `mine` exactly as before — including full access, because
 holding is not an oversight act.
 
+### Searching the roster
+
+**Settings → Users**' search box matches, case-insensitively and on partial words: the
+**name**, the **email**, and the **designation** — by the label as displayed ("Team Lead") or
+by its key (`team_lead`). The term is trimmed and runs of whitespace inside it are collapsed
+to one, because a name pasted out of an email arrives with a leading space or a doubled one
+and neither should lose the person.
+
+Three of those were added after a report of "can't search properly", reproduced field by
+field first. `" Priya"` returned nothing, because the raw term became `% priya%` and asked for
+a space *before* a name that has none. `"Priya  Raman"` returned nothing, for the same reason
+one space further in. And `"Team Lead"` returned nothing, because the query looked at the name
+and the email only — while the list displays the designation in its own column, which is the
+field a reader is most likely to search by.
+
+**Still not searchable, deliberately:** the manager and the project, which the list also
+displays. Both arrive by a later join rather than from the `users` row, so including them
+means restructuring the query rather than widening a condition, and the designation filter
+beside the box already answers "everyone who is a Team Lead" without free text.
+
+**The search runs on the server, over the whole roster** — `search`, `limit` and `offset` all
+go with the request — so a term finds somebody who is not on the page being shown. A test
+proves that with a page size of one. The status filter still governs what any term can reach:
+somebody deactivated stays out of the default list however precisely they are named, and is
+one filter away.
+
+**The box has its own term.** It used to write `state.search`, which the Dashboard's asset
+filter also reads — so typing a colleague's name in the Users tab filtered the *board* by it,
+and because the asset search input was only ever read from and never written back, that box
+looked empty while the board sat at "No assets match your filters". Two boxes, two terms, and
+the board's box is now written back so a filter is always visible.
+
+Two related findings, recorded rather than changed: the chat's "Search people…" matches the
+name only while the picker shows the designation beside it — the same mismatch, though it does
+trim and its list is the whole set rather than a page — and the **freelancer roster has no
+search box at all**, which is a missing feature rather than a broken one.
+
 ### Assign to Freelancer: the failure was the dialog
 
 Investigated end to end and the endpoint was sound: a Super Admin and a lead on the project
