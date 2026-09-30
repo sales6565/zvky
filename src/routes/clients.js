@@ -10,6 +10,8 @@ const clients = require('../clients');
 const lifecycle = require('../lifecycle');
 
 router.use(authenticate);
+// Dev & QA hear about every client change; see src/integration-events.js.
+router.use(require('../integration-events').routeHook('client'));
 
 // One shape for every refusal: the first message as `error` so a caller that
 // only shows one thing shows something sensible, `field` so a form can mark the

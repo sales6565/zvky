@@ -14,6 +14,8 @@ const crypto = require('node:crypto');
 const http = require('node:http');
 const net = require('node:net');
 
+// The worker runs in this process; the integration is off unless switched on.
+process.env.INTEGRATION_ENABLED = 'true';
 const { config, resetSchema, startServer, stopServer, sql, SKIP_REASON } = require('./helpers');
 
 /* A socket that accepts and never answers, and CAN BE SHUT DOWN AGAIN.

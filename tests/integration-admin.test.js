@@ -20,6 +20,8 @@ const assert = require('node:assert');
 const crypto = require('node:crypto');
 const http = require('node:http');
 
+// The worker runs in this process; the integration is off unless switched on.
+process.env.INTEGRATION_ENABLED = 'true';
 const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON } = require('./helpers');
 const catalog = require('../src/permission-catalog');
 

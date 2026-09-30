@@ -74,6 +74,10 @@ async function startServer(cfg, extraEnv = {}) {
       // is the real code path, not the feature switched off: an empty list is
       // meant to mean "not configured".
       IP_ALLOWLIST_SEED: '',
+      // The integration is off unless switched on; every suite here runs with it on,
+      // and the test-only probe endpoint mounted. A suite testing the switch overrides it.
+      INTEGRATION_ENABLED: 'true',
+      INTEGRATION_TEST_ENDPOINTS: '1',
       ...extraEnv,
     },
     stdio: ['ignore', 'pipe', 'pipe'],

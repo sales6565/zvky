@@ -385,8 +385,10 @@ test('a bug from the build, and what the studio does about it',
     assert.match(declined.note, /working as designed/);
 
     const out = await sql(cfg, 'SELECT payload FROM integration_outbox ORDER BY seq DESC LIMIT 1');
-    const payload = JSON.parse(out[0].payload);
-    assert.strictEqual(payload.event, 'feedback.declined');
+    const envelope = JSON.parse(out[0].payload);
+    assert.strictEqual(envelope.type, 'feedback.declined');
+    assert.strictEqual(envelope.schemaVersion, 1);
+    const payload = envelope.payload;
     assert.strictEqual(payload.assetId, id);
     assert.strictEqual(payload.restoredTo, 'delivered');
     assert.match(payload.reason, /working as designed/);

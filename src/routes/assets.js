@@ -49,6 +49,8 @@ const assetImport = require('../asset-import');
 const workflow = require('../asset-workflow');
 const submissionLink = require('../submission-link');
 const referenceData = require('../reference-data');
+const integrationEvents = require('../integration-events');
+const feedbackLifecycle = require('../feedback-lifecycle');
 
 /* --- the asset's preview image --------------------------------------------
 
@@ -1103,6 +1105,11 @@ async function applyTransition(req, res, asset, verdict, { note, versionId, conn
       values
     );
   }
+
+  /* A game bug from Dev & QA moves with the asset: a fix submitted, sent back, or
+     approved. Written on the same connection as the move, and a no-op for an asset
+     carrying no open bug. See src/feedback-lifecycle.js. */
+  await feedbackLifecycle.onTransition(run, asset, verdict.action, verdict.to);
   /* The Activity Log's copy of the same transition.
    *
    * Here rather than in each route because every status change in the
@@ -2242,10 +2249,12 @@ router.post('/bulk/send-to-dev', requirePermission('integration.send_to_dev'), a
        reach this request. */
     const sent = results.filter((r) => r.outcome === 'sent');
     if (sent.length) {
-      await conn.query(
-        'INSERT INTO integration_outbox (id, payload, `status`) VALUES ($1, $2, $3)',
-        [uuid(), JSON.stringify({
-          event: 'handoff.created',
+      await integrationEvents.emit(conn, {
+        type: 'handoff.created',
+        projectId: projects[0],
+        entityType: 'handoff',
+        entityId: handoffId,
+        payload: {
           handoffId,
           projectId: projects[0],
           kind,
@@ -2254,10 +2263,11 @@ router.post('/bulk/send-to-dev', requirePermission('integration.send_to_dev'), a
           cpStage: String(body.cpStage || '').trim() || null,
           note: String(body.note || '').trim() || null,
           bugRefs,
-          assets: sent.map((r) => ({ id: r.id, code: r.code, round: r.round })),
+          assets: sent.map((r) => ({ id: r.id, code: r.code, name: (assets.find((a) => a.id === r.id) || {}).name || null, round: r.round })),
           sentBy: req.user.email,
-        }), 'pending']
-      );
+          sentAt: new Date().toISOString(),
+        },
+      });
     }
     await conn.query('COMMIT');
   } catch (err) {
@@ -2275,6 +2285,45 @@ router.post('/bulk/send-to-dev', requirePermission('integration.send_to_dev'), a
      of it. An explicit call would be a second entry for one action, and a second place for
      the wording to drift from every other route's. */
   res.status(201).json({ handoffId, kind, bugRefs, results });
+});
+
+/* POST /api/assets/handoffs/:id/cancel — withdraw a hand-off sent by mistake.
+ *
+ * Only before Dev & QA have acknowledged it in a build: once a drop has landed in a
+ * build, cancelling it here would make the two applications disagree about what is in
+ * that build. Same permission as sending it. Dev & QA hear about it as handoff.cancelled,
+ * written in the same transaction.
+ */
+router.post('/handoffs/:id/cancel', requirePermission('integration.send_to_dev'), async (req, res) => {
+  const { rows } = await db.query('SELECT id, project_id, `status`, build FROM handoffs WHERE id = $1', [req.params.id]);
+  const handoff = rows[0];
+  if (!handoff) return res.status(404).json({ error: 'No such hand-off.' });
+  if (handoff.status === 'cancelled') return res.json({ ok: true, cancelled: true, alreadyCancelled: true });
+  // Acknowledged means Dev & QA moved it off 'queued' (POST /handoffs/:id/ack).
+  if (handoff.status !== 'queued') {
+    return res.status(409).json({
+      error: `Dev & QA already acknowledged this hand-off${handoff.build ? ` in build "${handoff.build}"` : ''}, so it cannot be cancelled.`,
+      code: 'handoff_already_acked',
+    });
+  }
+  const reason = String((req.body && req.body.reason) || '').trim().slice(0, 500) || null;
+  const conn = await db.connect();
+  try {
+    await conn.query('BEGIN');
+    await conn.query("UPDATE handoffs SET `status` = 'cancelled', updated_at = NOW() WHERE id = $1", [handoff.id]);
+    await conn.query("UPDATE handoff_assets SET `status` = 'cancelled' WHERE handoff_id = $1", [handoff.id]);
+    await integrationEvents.emit(conn, {
+      type: 'handoff.cancelled', projectId: handoff.project_id, entityType: 'handoff', entityId: handoff.id,
+      payload: { handoffId: handoff.id, projectId: handoff.project_id, status: 'cancelled', reason, cancelledBy: req.user.email },
+    });
+    await conn.query('COMMIT');
+  } catch (err) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    conn.release();
+  }
+  res.json({ ok: true, cancelled: true });
 });
 
 /* PATCH /api/assets/:id/tech-art — mark an asset as needing a Tech Art pass, or not.
@@ -2489,21 +2538,12 @@ router.post('/:id/game-feedback', async (req, res) => {
       /* Told to Dev & QA through the outbox, written in THIS transaction — the decision
          and the intention to tell them commit together or neither does. Delivery is the
          worker's job afterwards, and nothing about it can reach this request. */
-      await conn.query(
-        'INSERT INTO integration_outbox (id, payload, `status`) VALUES ($1, $2, $3)',
-        [uuid(), JSON.stringify({
-          event: 'feedback.declined',
-          assetId: asset.id,
-          feedbackId: feedback.id,
-          round: feedback.round,
-          source: feedback.source,
-          bugRef: feedback.bug_ref,
-          reason: reason || null,
-          restoredTo: feedback.prev_status,
-          decidedBy: req.user.email,
-          actedVia,
-        }), 'pending']
-      );
+      await feedbackLifecycle.onDecline(conn, asset.id, feedback.id, {
+        reason: reason || null, decidedBy: req.user.email, actedVia, restoredTo: feedback.prev_status,
+      });
+    } else {
+      // Passed to the artist: Dev & QA see it as "With Artist".
+      await feedbackLifecycle.onPass(conn, asset.id);
     }
     await conn.query('COMMIT');
   } catch (err) {

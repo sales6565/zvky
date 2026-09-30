@@ -214,9 +214,13 @@ const stored = (row) => {
   try { return JSON.parse(row.response_body); } catch { return { body: String(row.response_body) }; }
 };
 
-function replay(res, row) {
+function replay(res, row, mark = false) {
   res.set(REPLAY_HEADER, 'true');
-  const body = stored(row);
+  let body = stored(row);
+  /* mark: the endpoint asked for the replay to say so in the BODY too, for a caller
+     that reads bodies and not headers, which would otherwise take a replay for a fresh
+     result. Off by default, so every other endpoint replays byte for byte. */
+  if (mark && body && typeof body === 'object' && !Array.isArray(body)) body = { ...body, replayed: true };
   return body === null ? res.status(row.response_status).end() : res.status(row.response_status).json(body);
 }
 
@@ -377,7 +381,7 @@ async function withIdempotency(req, res, fn, deps = {}) {
   const decide = async (row) => {
     if (row.status === STATUS.complete) {
       if (row.request_hash !== hash) return { answer: () => reused(row) };
-      return { answer: () => { req.idempotencyHandled = true; return replay(res, row); } };
+      return { answer: () => { req.idempotencyHandled = true; return replay(res, row, Boolean(deps.markReplay)); } };
     }
     /* A FAST PATH, not the guard. takeOver's WHERE clause enforces the same
        staleness condition and is the authority on it — removing this line changes
@@ -399,7 +403,7 @@ async function withIdempotency(req, res, fn, deps = {}) {
     const now = await read();
     if (now && now.status === STATUS.complete && now.request_hash === hash) {
       req.idempotencyHandled = true;
-      return { answer: () => replay(res, now) };
+      return { answer: () => replay(res, now, Boolean(deps.markReplay)) };
     }
     if (now && now.status === STATUS.complete) return { answer: () => reused(now) };
     return { answer: () => inProgress(now) };

@@ -41,7 +41,8 @@ test('Send to Dev, and the Tech Art flag', { skip: cfg ? false : SKIP_REASON }, 
     'SELECT seq, action, from_status, to_status, note, actor_email FROM asset_events '
     + 'WHERE asset_id = ? ORDER BY seq', [assetId]);
   const outboxRows = () => sql(cfg,
-    'SELECT id, payload, `status` FROM integration_outbox ORDER BY seq');
+    // Hand-off events only: client and project writes in setup emit events of their own.
+    "SELECT id, payload, `status` FROM integration_outbox WHERE event_type LIKE 'handoff.%' ORDER BY seq");
 
   const newAsset = async (name, { status = 'in_progress', project = null } = {}) => {
     const id = crypto.randomUUID();
@@ -200,8 +201,10 @@ test('Send to Dev, and the Tech Art flag', { skip: cfg ? false : SKIP_REASON }, 
     // it, so a hand-off the studio believed it had sent was one the other end never heard of.
     const rows = await outboxRows();
     assert.strictEqual(rows.length, 1, 'one message for the drop, not one per asset');
-    const payload = JSON.parse(rows[0].payload);
-    assert.strictEqual(payload.event, 'handoff.created');
+    const envelope = JSON.parse(rows[0].payload);
+    assert.strictEqual(envelope.type, 'handoff.created');
+    assert.strictEqual(envelope.entity.type, 'handoff');
+    const payload = envelope.payload;
     assert.strictEqual(payload.handoffId, ids.handoff);
     assert.strictEqual(payload.kind, 'partial_drop');
     assert.strictEqual(payload.build, 'build-1041');
@@ -222,7 +225,7 @@ test('Send to Dev, and the Tech Art flag', { skip: cfg ? false : SKIP_REASON }, 
     assert.strictEqual(drop.kind, 'tech_art');
     const events = await eventsOf(asset);
     assert.match(events.find((e) => e.action === 'sent_to_dev').note, /Tech Art hand-off/);
-    const payload = JSON.parse((await outboxRows()).find((x) => JSON.parse(x.payload).handoffId === r.body.handoffId).payload);
+    const payload = JSON.parse((await outboxRows()).find((x) => JSON.parse(x.payload).payload.handoffId === r.body.handoffId).payload).payload;
     assert.strictEqual(payload.kind, 'tech_art');
   });
 

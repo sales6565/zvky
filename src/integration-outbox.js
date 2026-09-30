@@ -133,7 +133,12 @@ const pathOf = (url) => {
  */
 async function deliver(c, row, { fetchImpl = fetch } = {}) {
   const t = Math.floor(Date.now() / 1000);
-  const body = typeof row.payload === 'string' ? row.payload : JSON.stringify(row.payload);
+  /* A row written through src/integration-events.js is sent as its envelope with its
+     sequence filled in. Anything older (and the test probe's rows) goes as it was
+     written, so a receiver built against those sees no change. */
+  let body = typeof row.payload === 'string' ? row.payload : JSON.stringify(row.payload);
+  const envelope = require('./integration-events').envelopeOf(row);
+  if (envelope.schemaVersion >= 1) body = JSON.stringify(envelope);
   const controller = new AbortController();
   /* An explicit deadline. fetch has none of its own — a hung socket would hold
      this row's claim until the process restarted, which is the failure the claim
@@ -151,9 +156,12 @@ async function deliver(c, row, { fetchImpl = fetch } = {}) {
            every attempt at this row carries the same delivery id, and the attempt
            number says which try it is. */
         'X-Integration-Delivery': String(row.id),
+        'X-Integration-Event-Type': String(envelope.type || ''),
         'X-Integration-Attempt': String(row.attempts),
       },
       body,
+      // A redirect is an answer, not an instruction to post our signed body elsewhere.
+      redirect: 'manual',
       signal: controller.signal,
     });
 
@@ -258,6 +266,8 @@ const shapeEvent = (row) => {
     seq: Number(row.seq),
     id: row.id,
     payload,
+    // The same row in the one event envelope; see src/integration-events.js.
+    envelope: require('./integration-events').envelopeOf(row),
     // What became of OUR attempt to push it. The caller does not need this to
     // process the event; it is here so a receiver comparing notes can see that a
     // row it never received was one we failed to deliver rather than one we held.
@@ -354,6 +364,10 @@ async function settle(db, row, outcome, error) {
 async function sweep(db, { log = console.log, fetchImpl = fetch } = {}) {
   const c = config();
   const tally = { sent: 0, retry: 0, failed: 0, reclaimed: 0, skipped: null };
+  if (!require('./integration-events').enabled()) {
+    tally.skipped = 'disabled';
+    return tally;
+  }
 
   if (secretsCollide()) {
     tally.skipped = 'secrets-collide';
@@ -407,6 +421,7 @@ async function sweep(db, { log = console.log, fetchImpl = fetch } = {}) {
 function schedule(db, log = console.log) {
   const c = config();
   if (secretsCollide() || !ready(c)) return null;   // described at startup instead
+  if (!require('./integration-events').enabled()) return null;
 
   const run = () => sweep(db, { log })
     .then((r) => {
@@ -425,6 +440,11 @@ function schedule(db, log = console.log) {
 
 function describeAtStartup(log = console.log) {
   const c = config();
+  if (!require('./integration-events').enabled()) {
+    log('[outbox] the Dev & QA integration is switched off (INTEGRATION_ENABLED is not true): '
+      + 'no events are written or delivered, and the integration API answers 503.');
+    return;
+  }
   if (secretsCollide()) {
     log(`[outbox] REFUSING TO DELIVER: ${OUTBOUND_SECRET_VAR} and ${INBOUND_SECRET_VAR} are the same `
       + 'value. One secret for both directions means whoever can verify a message can also forge one. '
@@ -441,7 +461,9 @@ function describeAtStartup(log = console.log) {
       + 'Nothing is delivered until both are set.');
     return;
   }
-  log(`[outbox] delivering to ${c.url} every ${c.sweepSeconds}s, `
+  let where = '(unparseable URL)';
+  try { const u = new URL(c.url); where = `${u.protocol}//${u.host}${u.pathname}`; } catch { /* keep the placeholder */ }
+  log(`[outbox] delivering to ${where} every ${c.sweepSeconds}s, `
     + `up to ${c.batch} at a time, ${c.timeoutMs}ms each.`);
 }
 

@@ -112,6 +112,8 @@ function checkMilestones(req, stored = {}, extras = { sets: [] }) {
 }
 
 router.use(authenticate);
+// Dev & QA hear about every project change; see src/integration-events.js.
+router.use(require('../integration-events').routeHook('project'));
 
 // GET /api/projects — only the projects this user is allowed to see
 //

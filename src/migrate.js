@@ -2770,6 +2770,94 @@ async function ensureIntegrationTables(db, log) {
   log('Schema: integration_clients, integration_requests and integration_outbox ready.');
 }
 
+/* The Dev & QA contract, version 1: what the event envelope, the feedback lifecycle
+ * and the paged client and project reads need. Additive only, and every piece is
+ * checked before it is added, so this runs on every start like the steps above.
+ *
+ *   integration_outbox      event_type, entity_type, entity_id, entity_version and
+ *                           project_id beside the payload, so a reconciliation can ask
+ *                           "the last event about this entity" without parsing JSON
+ *   integration_entity_versions
+ *                           one counter per entity, bumped with every event about it;
+ *                           the version a receiver compares to ignore stale events
+ *   clients / projects      updated_at, the cursor for the paged list reads
+ *   external_feedback       the fields a Dev & QA bug carries, and the lifecycle state
+ *                           that says where the bug is now
+ */
+async function columnsOf(db, table) {
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = $1`, [table]
+  ).catch(() => ({ rows: [] }));
+  return new Set(rows.map((r) => String(r.name)));
+}
+
+async function addIndex(db, sql) {
+  await db.query(sql).catch((err) => {
+    if (!/duplicate|exists/i.test(err.sqlMessage || err.message || '')) throw err;
+  });
+}
+
+async function ensureIntegrationContract(db, log) {
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS integration_entity_versions (
+      entity_type VARCHAR(32)  NOT NULL,
+      entity_id   VARCHAR(64)  NOT NULL,
+      version     BIGINT       NOT NULL DEFAULT 0,
+      state_hash  VARCHAR(64)  NOT NULL DEFAULT '',
+      updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (entity_type, entity_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+
+  const outbox = await columnsOf(db, 'integration_outbox');
+  if (outbox.size && !outbox.has('event_type')) {
+    await db.query(`ALTER TABLE integration_outbox
+      ADD COLUMN event_type VARCHAR(64) NULL,
+      ADD COLUMN entity_type VARCHAR(32) NULL,
+      ADD COLUMN entity_id VARCHAR(64) NULL,
+      ADD COLUMN entity_version BIGINT NULL,
+      ADD COLUMN project_id CHAR(36) NULL`);
+    await addIndex(db, 'ALTER TABLE integration_outbox ADD KEY idx_integration_outbox_entity (entity_type, entity_id, seq)');
+    await addIndex(db, 'ALTER TABLE integration_outbox ADD KEY idx_integration_outbox_project (project_id, seq)');
+    log('Schema: integration_outbox carries the event envelope columns.');
+  }
+
+  for (const table of ['clients', 'projects']) {
+    const cols = await columnsOf(db, table);
+    if (cols.size && !cols.has('updated_at')) {
+      await db.query(`ALTER TABLE ${table} ADD COLUMN updated_at DATETIME NOT NULL
+        DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`);
+      await db.query(`UPDATE ${table} SET updated_at = created_at`);
+      await addIndex(db, `ALTER TABLE ${table} ADD KEY idx_${table}_updated (updated_at, id)`);
+      log(`Schema: added ${table}.updated_at.`);
+    }
+  }
+
+  const fb = await columnsOf(db, 'external_feedback');
+  if (fb.size && !fb.has('state')) {
+    await db.query(`ALTER TABLE external_feedback
+      ADD COLUMN \`state\` VARCHAR(24) NOT NULL DEFAULT 'with_lead',
+      ADD COLUMN title VARCHAR(255) NULL,
+      ADD COLUMN checkpoint VARCHAR(32) NULL,
+      ADD COLUMN test_ref VARCHAR(191) NULL,
+      ADD COLUMN sender_team VARCHAR(64) NULL,
+      ADD COLUMN source_app VARCHAR(32) NULL,
+      ADD COLUMN client_bug_id VARCHAR(64) NULL,
+      ADD COLUMN attachments TEXT NULL,
+      ADD COLUMN reported_at DATETIME NULL,
+      ADD COLUMN handoff_id CHAR(36) NULL,
+      ADD COLUMN resolved_at DATETIME NULL,
+      ADD COLUMN resolution_note VARCHAR(500) NULL`);
+    /* Rows from before the lifecycle: a note never moved anything, and a round that
+       moved the asset is left as it stands (legacy), so no old row is mistaken for an
+       open bug that a later approval should close. */
+    await db.query(`UPDATE external_feedback
+                       SET \`state\` = CASE WHEN prev_status IS NULL THEN 'noted_legacy' ELSE 'legacy' END`);
+    await addIndex(db, 'ALTER TABLE external_feedback ADD KEY idx_external_feedback_state (asset_id, `state`)');
+    await addIndex(db, 'ALTER TABLE external_feedback ADD KEY idx_external_feedback_client_bug (source_app, client_bug_id)');
+    log('Schema: external_feedback carries the Dev & QA bug fields and a lifecycle state.');
+  }
+}
+
 async function ensureChatSettings(db, log) {
   await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS chat_settings (
       id                TINYINT   NOT NULL PRIMARY KEY,
@@ -3726,6 +3814,7 @@ const STEPS = [
   // On integration_clients, so after the step that creates it.
   ['integration key rotation', ensureKeyRotation],
   ['asset_events.acted_via', ensureActedVia],
+  ['integration contract v1', ensureIntegrationContract],
   ['chat settings', ensureChatSettings],
   ['chat settings mirror', (db) => chatSettings.load(db)],
   // After the tables exist, and reading the window from the module that owns it.

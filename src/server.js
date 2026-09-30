@@ -182,6 +182,13 @@ app.use('/api/admin/integration', integrationAdminRoutes);
  * So ping, counter and events move to /api/integration/v1 with everything else. They
  * were never reachable on a deployment: the integration is inert without
  * INTEGRATION_INBOUND_SECRET, which no environment has set. */
+/* THE SWITCH. The integration answers only while INTEGRATION_ENABLED is true, so
+   configuring secrets and issuing a key is not, by itself, going live. Checked first,
+   before the address gate, so a switched-off server says only that. */
+app.use('/api/integration/v1', (req, res, next) => {
+  if (require('./integration-events').enabled()) return next();
+  return res.status(503).json({ error: 'The Dev & QA integration is switched off on this server.', code: 'integration_disabled' });
+});
 app.use('/api/integration/v1',
   integrationIpGate.middleware,
   integrationLimiter,

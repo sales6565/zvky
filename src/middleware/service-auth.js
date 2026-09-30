@@ -141,8 +141,16 @@ function verifySignature(req) {
   const expected = crypto.createHmac('sha256', secret)
     .update(signingPayload(t, req.method, target, raw))
     .digest('hex');
+  /* INTEGRATION_INBOUND_SECRET_PREVIOUS: the secret being rotated out. While it is set,
+     a request signed with either verifies, so the two ends can switch at different
+     moments without a window where every call fails. Remove it once the caller has
+     moved to the new secret. */
+  const previous = process.env[`${INBOUND_SECRET_VAR}_PREVIOUS`];
+  const expectedPrevious = previous && previous !== secret
+    ? crypto.createHmac('sha256', previous).update(signingPayload(t, req.method, target, raw)).digest('hex')
+    : null;
 
-  if (!safeEqualHex(parts.v1, expected)) {
+  if (!safeEqualHex(parts.v1, expected) && !(expectedPrevious && safeEqualHex(parts.v1, expectedPrevious))) {
     return { ok: false, status: 401, error: 'The request signature does not match.' };
   }
   return { ok: true, t };
