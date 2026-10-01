@@ -640,11 +640,16 @@ pipeline changes — nothing else needs to know about the list.
 
 ## 4. Configure environment variables
 
+On a host, set these as the application's **environment variables** (cPanel →
+Setup Node.js App → Environment variables); no `.env` file is used there. For local
+development you may instead copy `.env.example` to `.env` (it is git-ignored and must
+never be committed):
+
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` and set:
+Set:
 - `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` — your MySQL
   connection (or a single `DATABASE_URL` instead)
 - `JWT_SECRET` — a long random string (`node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`)
@@ -702,7 +707,7 @@ existing account back to. Both lock the account until it chooses a new one, so
 the value cannot be used to work — but it can be used to make that change, which
 means anybody who knows it and somebody's email could take over a just-created or
 just-reset account before its owner signs in. Set `DEFAULT_USER_PASSWORD` in
-`.env` so the value on your deployment is not the one printed here.
+the deployment's environment variables so the value on your deployment is not the one printed here.
 
 ## 6. Run it
 
@@ -2754,13 +2759,13 @@ minutes a run could start on.
 ## Packaging for deployment
 
 ```bash
-DB_NAME=... DB_USER=... DB_PASSWORD=... CORS_ORIGIN=https://your-domain.com npm run package
+npm run package
 ```
 
-Writes `dist/zvky-backend-godaddy.zip`: the application, a generated `.env`
-carrying those values and a fresh `JWT_SECRET`, and no `node_modules` (cPanel
-installs those itself). Credentials come from the environment so they are never
-written into a committed file. See [DEPLOY-GODADDY.md](DEPLOY-GODADDY.md).
+Writes `dist/zvky-backend-godaddy.zip`: the application and `.env.example`, with no
+`.env`, no secret and no `node_modules` (cPanel installs those itself). Every setting,
+the database password and `JWT_SECRET` included, is an environment variable of the app
+on the host. See [DEPLOY-GODADDY.md](DEPLOY-GODADDY.md).
 
 ## Deploying for real
 

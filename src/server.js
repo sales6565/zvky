@@ -1,4 +1,7 @@
 require('dotenv').config();
+// Before anything else loads: stop with the names of missing or placeholder settings
+// (database, JWT_SECRET) rather than failing later on the first sign-in.
+require('./config-check').enforce();
 const path = require('path');
 const express = require('express');
 const cors = require('cors');

@@ -41,10 +41,12 @@ cPanel → **File Manager**
    anything inside `public_html` is also reachable as plain files.
 2. Upload `zvky-backend-godaddy.zip` into that folder and **Extract** it.
 3. The folder should now contain `app.js`, `package.json`, `src/`, `public/`,
-   `sql/`, `uploads/` and `.env`.
+   `sql/`, `uploads/` and `.env.example`.
 
-> `.env` holds your database password. Keep the app folder outside
-> `public_html` so the file can never be served over HTTP.
+> The archive holds **no `.env` and no secret**. The database password,
+> `JWT_SECRET` and every other setting go into the app's **Environment
+> variables** (step 5). `.env.example` lists the names. Keep the app folder outside
+> `public_html` anyway, so nothing in it can be served over HTTP.
 
 ## 4. Create the Node application
 
@@ -63,8 +65,10 @@ Click **Create**.
 ## 5. Set the environment variables
 
 Still in **Setup Node.js App**, open the app and add these under
-**Environment variables**. They override the packaged `.env`, and cPanel's UI is
-the easier place to change them later.
+**Environment variables**. They are the app's only source of settings on the
+host; no `.env` file is used or needed. The app refuses to start, and logs which
+name is missing, if the database settings or `JWT_SECRET` are absent or still a
+placeholder.
 
 | Name | Value |
 |---|---|
@@ -72,11 +76,22 @@ the easier place to change them later.
 | `DB_NAME` | your prefixed database name |
 | `DB_USER` | your prefixed database user |
 | `DB_PASSWORD` | that user's password |
-| `JWT_SECRET` | the long random value already in `.env`, or a new one |
+| `JWT_SECRET` | a long random value (at least 32 characters; 96 hex characters below) |
 | `CORS_ORIGIN` | the site URL, e.g. `https://pipeline.zvky.com` |
 | `TRUST_PROXY` | `1` |
 
 Don't set `PORT` — Passenger assigns it.
+
+A random `JWT_SECRET`, from any machine with Node.js:
+`node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`, or a
+96-character random string from a password manager. Changing it signs everyone
+out. If a mail server password was saved under Settings → Email and
+`EMAIL_ENCRYPTION_KEY` is not set, that password was encrypted with the old
+`JWT_SECRET`: the Email screen says so, and you enter it again once.
+
+**Rotating the database password.** In cPanel → **MySQL Databases**, change the
+user's password; then put the new password in the app's `DB_PASSWORD`
+environment variable and **Restart** the app. Nothing in the files changes.
 
 ## 6. Install dependencies
 
@@ -145,10 +160,9 @@ there is no hash to paste and no way to write to the wrong database. The route
 returns 404 once any account exists, so it can't become a back door. If you set
 `BOOTSTRAP_TOKEN`, unset it once you're signed in.
 
-> **Which database is the app actually using?** On a managed platform, injected
-> environment variables override anything in `.env` — `dotenv` never replaces a
-> variable that is already set. If the host provisions its own database, that is
-> the one the app talks to, no matter what `.env` says. This is worth checking
+> **Which database is the app actually using?** The one named by the app's
+> environment variables. (A `.env` file, used only in local development, never
+> replaces a variable that is already set.) This is worth checking
 > before hand-writing SQL: `/api/health` reports whether the database the app is
 > connected to has any accounts.
 
@@ -218,4 +232,8 @@ rate limit counts everyone together. Raise `LOGIN_RATE_MAX`.
 **Restart** in the app panel; touching `tmp/restart.txt` in the app root does
 the same thing.
 
-**Changes to `.env` don't take effect** — same reason. Restart the app.
+**Changes to environment variables don't take effect** — same reason. Restart the app.
+
+**App exits at start with "Forge cannot start: its configuration is incomplete"** —
+the log lists each missing or placeholder variable by name. Set it under
+**Environment variables** and restart.

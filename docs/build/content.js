@@ -1105,7 +1105,7 @@ module.exports = [
     + 'for them, in the window between the reset and that person signing in. The lock does not '
     + 'prevent this \u2014 it only prevents the account being USED without a change, and the '
     + 'change is exactly what an impostor would do. So tell the person promptly.\n\n'
-    + 'Two things reduce the risk. Set DEFAULT_USER_PASSWORD in the deployment\u2019s .env so the '
+    + 'Two things reduce the risk. Set DEFAULT_USER_PASSWORD in the deployment\u2019s environment variables so the '
     + 'value is not the one printed in this manual or in the source. And reset a password when the '
     + 'person is there to receive it, rather than in advance.'),
   note('Who may do it',

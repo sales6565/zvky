@@ -1,6 +1,11 @@
 node_modules/
+# Settings and secrets come from the host's environment variables. A local .env (any
+# variant) is for development only and is never committed; .env.example is the
+# template, with placeholders only.
 .env
-.env.production
+.env.*
+!.env.example
+*.env
 uploads/
 *.log
 dist/

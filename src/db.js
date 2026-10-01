@@ -26,7 +26,8 @@ function buildConfig() {
   if (missing.length) {
     console.error(
       `Database is not configured: ${missing.join(' and ')} not set.\n` +
-      'Copy .env.example to .env and fill in DB_HOST, DB_NAME, DB_USER and DB_PASSWORD.'
+      'Set DB_HOST, DB_NAME, DB_USER and DB_PASSWORD as the application\'s environment variables '
+      + '(or, for local development, in a .env file; see .env.example).'
     );
     process.exit(1);
   }
