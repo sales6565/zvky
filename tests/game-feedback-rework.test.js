@@ -29,10 +29,9 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-// The helpers first: they point src/db (loaded by src/permissions) at the test database.
-const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON } = require('./helpers');
 const workflow = require('../src/asset-workflow');
 const { REWORK_STATUSES } = require('../src/permissions');
+const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON } = require('./helpers');
 
 const cfg = config('gfrework');
 const SECRET = 'inbound-secret-for-the-rework-suite';

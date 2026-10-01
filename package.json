@@ -7,7 +7,7 @@
     "start": "node app.js",
     "build": "echo 'No build step required — public/index.html is served as-is.'",
     "dev": "nodemon app.js",
-    "test": "node --test --test-concurrency=${TEST_CONCURRENCY:-2} \"tests/*.test.js\"",
+    "test": "node --test --require ./tests/test-env.js --test-concurrency=${TEST_CONCURRENCY:-2} \"tests/*.test.js\"",
     "roles:check": "node scripts/check-roles.js",
     "asset:check": "node scripts/check-asset.js",
     "tabs:check": "node scripts/check-tabs.js",
