@@ -2849,9 +2849,11 @@ async function ensureIntegrationContract(db, log) {
       ADD COLUMN resolution_note VARCHAR(500) NULL`);
     /* Rows from before the lifecycle: a note never moved anything, and a round that
        moved the asset is left as it stands (legacy), so no old row is mistaken for an
-       open bug that a later approval should close. */
+       open bug that a later approval should close. updated_at is kept as it was:
+       labelling a row is not a change to the feedback it records. */
     await db.query(`UPDATE external_feedback
-                       SET \`state\` = CASE WHEN prev_status IS NULL THEN 'noted_legacy' ELSE 'legacy' END`);
+                       SET \`state\` = CASE WHEN prev_status IS NULL THEN 'noted_legacy' ELSE 'legacy' END,
+                           updated_at = updated_at`);
     await addIndex(db, 'ALTER TABLE external_feedback ADD KEY idx_external_feedback_state (asset_id, `state`)');
     await addIndex(db, 'ALTER TABLE external_feedback ADD KEY idx_external_feedback_client_bug (source_app, client_bug_id)');
     log('Schema: external_feedback carries the Dev & QA bug fields and a lifecycle state.');
