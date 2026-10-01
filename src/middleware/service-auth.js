@@ -40,6 +40,7 @@
 
 const crypto = require('node:crypto');
 const db = require('../db');
+const secrets = require('../integration-secrets');
 
 /* The secret for THIS direction only: Dev & QA calling Forge.
  *
@@ -102,8 +103,42 @@ const refuse = (res, status, error, extra = {}) => res.status(status).json({ err
 const signingPayload = (t, method, target, rawBody) =>
   `${t}.${String(method).toUpperCase()}.${target}.${rawBody}`;
 
+/* THE TARGET THAT IS SIGNED, as this server can see it. Every form is an exact
+ * function of the request that arrived, so accepting any of them never accepts a
+ * signature made without the secret:
+ *
+ *   1. req.originalUrl, the request line as received: what every caller has signed
+ *      until now, and still the first one tried.
+ *   2. the mount path plus the router-relative URL (req.baseUrl + req.url): the
+ *      application-level target, which a host's proxy cannot change by adding or
+ *      removing a path prefix in front of the app.
+ *   3. form 2 with its query parameters in a fixed order (sorted by name, values of a
+ *      repeated name kept in their order) and in URLSearchParams' encoding: what Dev &
+ *      QA signs and sends, so a proxy that reorders or re-encodes a query string does
+ *      not break the signature.
+ */
+function canonicalTargets(req) {
+  const out = [req.originalUrl];
+  if (typeof req.url === 'string') {
+    const mounted = `${req.baseUrl || ''}${req.url}`;
+    out.push(mounted);
+    const q = mounted.indexOf('?');
+    if (q >= 0) {
+      const pairs = [...new URLSearchParams(mounted.slice(q + 1))];
+      const sorted = pairs.map((p, i) => [p, i]).sort((a, b) => (a[0][0] < b[0][0] ? -1 : a[0][0] > b[0][0] ? 1 : a[1] - b[1])).map((x) => x[0]);
+      const qs = new URLSearchParams(sorted).toString();
+      out.push(qs ? `${mounted.slice(0, q)}?${qs}` : mounted.slice(0, q));
+    }
+  }
+  return [...new Set(out.filter((x) => typeof x === 'string'))];
+}
+
 function verifySignature(req) {
-  const secret = process.env[INBOUND_SECRET_VAR];
+  const inbound = secrets.read(INBOUND_SECRET_VAR);
+  if (inbound.problem) {
+    return { ok: false, status: 503, error: `The integration API is not configured: ${inbound.problem}` };
+  }
+  const secret = inbound.value;
   if (!secret) {
     /* Refused, never waved through. A missing secret is a deployment that has
        not been configured, and treating it as "no signature required" would
@@ -137,23 +172,63 @@ function verifySignature(req) {
   }
 
   const raw = req.rawBody === undefined || req.rawBody === null ? '' : String(req.rawBody);
-  const target = req.originalUrl;
-  const expected = crypto.createHmac('sha256', secret)
-    .update(signingPayload(t, req.method, target, raw))
-    .digest('hex');
   /* INTEGRATION_INBOUND_SECRET_PREVIOUS: the secret being rotated out. While it is set,
      a request signed with either verifies, so the two ends can switch at different
      moments without a window where every call fails. Remove it once the caller has
      moved to the new secret. */
-  const previous = process.env[`${INBOUND_SECRET_VAR}_PREVIOUS`];
-  const expectedPrevious = previous && previous !== secret
-    ? crypto.createHmac('sha256', previous).update(signingPayload(t, req.method, target, raw)).digest('hex')
-    : null;
-
-  if (!safeEqualHex(parts.v1, expected) && !(expectedPrevious && safeEqualHex(parts.v1, expectedPrevious))) {
-    return { ok: false, status: 401, error: 'The request signature does not match.' };
+  const prev = secrets.read(`${INBOUND_SECRET_VAR}_PREVIOUS`);
+  const keys = [secret, prev.value && prev.value !== secret ? prev.value : null].filter(Boolean);
+  const targets = canonicalTargets(req);
+  for (const key of keys) {
+    for (const target of targets) {
+      const expected = crypto.createHmac('sha256', key).update(signingPayload(t, req.method, target, raw)).digest('hex');
+      if (safeEqualHex(parts.v1, expected)) return { ok: true, t };
+    }
   }
-  return { ok: true, t };
+  return {
+    ok: false,
+    status: 401,
+    error: 'The request signature does not match.',
+    // For the server log only: nothing here is a secret or a signature.
+    mismatch: {
+      method: String(req.method).toUpperCase(),
+      // As received, so it can be set beside the line Dev & QA logs for the same call.
+      path: targets[0].split('?')[0],
+      queryNames: [...new URLSearchParams((targets[0].split('?')[1]) || '').keys()],
+      ageSeconds: Math.floor(Date.now() / 1000) - t,
+      bodyBytes: Buffer.byteLength(raw, 'utf8'),
+      receivedLength: String(parts.v1).length,
+      expectedLength: 64,
+      fingerprint: inbound.fingerprint,
+      previousFingerprint: prev.fingerprint,
+      targetsTried: targets.length,
+    },
+  };
+}
+
+/* One line in the log for a refused signature, with everything that helps and nothing
+   that is secret: never the signature received or expected, the secret or the key.
+   Whether the API key itself is recognised is looked up here too, so a bad key and a
+   bad signature are never confused (the caller is told only "does not match"). */
+async function logMismatch(req, m) {
+  let keyState = 'not sent';
+  const presented = req.get(KEY_HEADER);
+  if (presented) {
+    const { rows } = await db.query(
+      `SELECT \`name\`, is_active, (key_hash = $1) AS isCurrent FROM integration_clients
+        WHERE key_hash = $1 OR (prev_key_hash = $1 AND prev_key_expires_at > NOW()) ORDER BY isCurrent DESC LIMIT 1`,
+      [sha256Hex(presented)]
+    ).catch(() => ({ rows: null }));
+    keyState = rows === null ? 'could not be checked'
+      : !rows.length ? 'not recognised'
+        : !Number(rows[0].is_active) ? `revoked (${rows[0].name})`
+          : `recognised (${rows[0].name}${Number(rows[0].isCurrent) ? '' : ', previous key'})`;
+  }
+  console.warn(`[service-auth] signature mismatch: ${m.method} ${m.path} `
+    + `(query: ${m.queryNames.length ? m.queryNames.join(', ') : 'none'}; body ${m.bodyBytes} bytes; signed ${m.ageSeconds}s ago; `
+    + `received signature ${m.receivedLength} hex chars, expected ${m.expectedLength}; ${m.targetsTried} target form(s) tried). `
+    + `Inbound signing key ${m.fingerprint}${m.previousFingerprint ? `, previous ${m.previousFingerprint}` : ''}; API key ${keyState}. `
+    + 'If Dev & QA logs a different signing key fingerprint, the two secrets differ.');
 }
 
 /* The action this request is making: the first path segment under
@@ -173,7 +248,10 @@ const parseActions = (csv) => String(csv || '')
 async function serviceAuth(req, res, next) {
   try {
     const signature = verifySignature(req);
-    if (!signature.ok) return refuse(res, signature.status, signature.error);
+    if (!signature.ok) {
+      if (signature.mismatch) await logMismatch(req, signature.mismatch).catch(() => {});
+      return refuse(res, signature.status, signature.error);
+    }
 
     const presented = req.get(KEY_HEADER);
     if (!presented) return refuse(res, 401, `Missing ${KEY_HEADER}.`);
@@ -273,5 +351,5 @@ function requireAction(key) {
 module.exports = {
   serviceAuth, requireAction,
   MAX_SKEW_SECONDS, INBOUND_SECRET_VAR, KEY_HEADER, SIGNATURE_HEADER,
-  sha256Hex, signingPayload, parseSignature, safeEqualHex,
+  sha256Hex, signingPayload, parseSignature, safeEqualHex, canonicalTargets, verifySignature,
 };

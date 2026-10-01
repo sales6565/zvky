@@ -11699,6 +11699,8 @@ async function renderIntegrationSettings(){
       <div>Last call received: ${when(health.inbound && health.inbound.at)}
         ${health.inbound ? `<span class="muted">from ${escapeHTML(health.inbound.client)}</span>` : ''}</div>
       <div>Last message delivered: ${when(health.outbound && health.outbound.at)}</div>
+      ${(health.configured||{}).inboundSecretFingerprint ? `<div class="muted">Inbound signing key fingerprint: <code>${escapeHTML(health.configured.inboundSecretFingerprint)}</code> — Dev &amp; QA's Integrations screen must show the same.</div>` : ''}
+      ${(health.configured||{}).inboundSecretProblem ? `<div class="ref-err" style="margin-top:6px">${escapeHTML(health.configured.inboundSecretProblem)}</div>` : ''}
       <div class="muted">Sending to ${escapeHTML((health.configured||{}).outboundUrl || 'nowhere — no address configured')},
         every ${escapeHTML((health.configured||{}).deliveryEvery || '—')}.</div>
       ${(health.configured||{}).secretsCollide ? `<div class="ref-err" style="margin-top:6px">

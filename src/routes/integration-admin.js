@@ -435,7 +435,11 @@ router.get('/health', async (req, res) => {
     configured: {
       outboundUrl: settings.url || null,
       outboundSecret: Boolean(settings.secret),
-      inboundSecret: Boolean(process.env.INTEGRATION_INBOUND_SECRET),
+      inboundSecret: Boolean(require('../integration-secrets').read('INTEGRATION_INBOUND_SECRET').value),
+      /* Which secrets, by fingerprint only (src/integration-secrets.js): compare with the
+         one Dev & QA's Integrations screen shows. Never the secret itself. */
+      inboundSecretFingerprint: require('../integration-secrets').read('INTEGRATION_INBOUND_SECRET').fingerprint,
+      inboundSecretProblem: require('../integration-secrets').read('INTEGRATION_INBOUND_SECRET').problem,
       /* And the one misconfiguration worth shouting about: one secret for both directions
          means whoever can verify a message can also forge one. */
       secretsCollide: outbox.secretsCollide(),

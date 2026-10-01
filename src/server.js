@@ -527,6 +527,7 @@ async function start() {
     ipGate.describeAtStartup();
     integrationIpGate.describeAtStartup();
     outbox.describeAtStartup();
+    require('./integration-secrets').describeAtStartup();
     startReferenceRefresh(db);
     startAllowlistRefresh(db);
     /* Chat attachments live twelve hours. The first pass runs now rather than

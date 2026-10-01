@@ -67,7 +67,9 @@ const num = (value, fallback) => {
 function config() {
   return {
     url: process.env.INTEGRATION_OUTBOUND_URL || null,
-    secret: process.env[OUTBOUND_SECRET_VAR] || null,
+    // Read the way the inbound side is (src/integration-secrets.js): surrounding
+    // whitespace ignored; a quoted or broken value counts as not set.
+    secret: require('./integration-secrets').read(OUTBOUND_SECRET_VAR).value,
     // 10 seconds, the same deadline src/push-notifications.js holds APNs to. A
     // delivery that has not answered in ten seconds is not about to.
     timeoutMs: num(process.env.INTEGRATION_OUTBOUND_TIMEOUT_MS, 10_000),
@@ -92,8 +94,9 @@ const ready = (c) => Boolean(c.url && c.secret);
  * secret the other party can sign with is worse than not delivering them, because
  * it looks like it is working. */
 function secretsCollide() {
-  const out = process.env[OUTBOUND_SECRET_VAR];
-  const inb = process.env[INBOUND_SECRET_VAR];
+  const read = require('./integration-secrets').read;
+  const out = read(OUTBOUND_SECRET_VAR).value;
+  const inb = read(INBOUND_SECRET_VAR).value;
   return Boolean(out && inb && out === inb);
 }
 

@@ -69,3 +69,28 @@ See `docs/forge-api-contract.md` in the Dev & QA repository for the full table. 
   `/handoffs[/:id]`, `/feedback/:id` and `/feedback?client_bug_id=`. Withdrawal is
   `POST /assets/:id/feedback/:fid/withdraw`. An internal Send to Dev can be cancelled with
   `POST /api/assets/handoffs/:id/cancel` until Dev & QA acknowledges it.
+
+## Signatures, and checking both apps hold the same secret
+
+Dev & QA signs every call: HMAC-SHA256 over `t.METHOD.<target>.<raw body>` with
+`INTEGRATION_INBOUND_SECRET`, where the target is `/api/integration/v1/<path>` with its
+query parameters sorted by name. Forge accepts a signature over any of these, each an
+exact function of the request that arrived:
+- the request line as received (`req.originalUrl`);
+- the mount path plus the router path;
+- that path with the query in the same fixed order.
+
+So a proxy that adds or strips a path prefix, or reorders the query, does not break it.
+Nothing unsigned is accepted, and the ±300 s timestamp window is unchanged.
+
+Surrounding spaces and line breaks in a secret are ignored, and the start-up log says so.
+A value wrapped in quotes, or with whitespace inside it, is refused with a clear message.
+
+**Fingerprints.** Forge logs
+`[integration] Integration inbound signing key fingerprint: sha256:<12 hex>` at start-up
+and shows it to the Super Admin under Settings → Dev & QA Integration. Dev & QA shows the
+fingerprint of its `FORGE_SIGNING_SECRET` the same way. Equal fingerprints mean the same
+secret. A refused signature is logged with safe facts only: method, path, query names,
+body size, timestamp age, signature length, the fingerprint, and whether the API key was
+recognised.
+
