@@ -31,6 +31,18 @@ function config(suffix) {
   };
 }
 
+/* Modules a test loads in its own process (src/db, through src/permissions and
+   others) read DB_* when first required. Point them at the test server, so they
+   never pick up a developer's .env or a real database; without a test database,
+   harmless names, so a file that is skipped still loads instead of exiting. The
+   servers a test starts get their settings from startServer() below. */
+{
+  const t = config('');
+  if (t) Object.assign(process.env, { DB_HOST: t.host, DB_PORT: String(t.port), DB_USER: t.user || '', DB_PASSWORD: t.password, DB_NAME: t.database });
+  else for (const k of ['DB_NAME', 'DB_USER']) if (!process.env[k]) process.env[k] = 'zvky_test_not_configured';
+  delete process.env.DATABASE_URL;
+}
+
 const SKIP_REASON =
   'Set TEST_DB_NAME (and TEST_DB_USER / TEST_DB_PASSWORD if needed) to run integration tests. ' +
   'The database is dropped and recreated, so do not point it at real data.';
