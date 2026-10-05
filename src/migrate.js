@@ -14,6 +14,7 @@ const branding = require('./branding');
 const workSchedule = require('./work-schedule');
 const recordingHours = require('./recording-hours');
 const chatSettings = require('./chat-settings');
+const holidays = require('./holidays');
 const integrationIpAllowlist = require('./integration-ip-allowlist');
 const workLog = require('./work-log');
 const { normalizeCheckClause } = require('./schema-check');
@@ -2860,6 +2861,50 @@ async function ensureIntegrationContract(db, log) {
   }
 }
 
+/* The days the studio is shut.
+ *
+ * NOT SEEDED, and that is a decision rather than an omission. A studio's
+ * holidays are its own — national, regional and the ones it simply takes — and
+ * a list guessed here would be wrong for most deployments while looking
+ * authoritative on every screen. An empty table is the honest starting state
+ * and the Settings section says so in as many words.
+ *
+ * NO RECURRENCE COLUMN either. Each year is entered explicitly: a holiday that
+ * repeated annually would have to decide what the 29th of February does, what
+ * happens when a fixed-date holiday lands on a Sunday, and whether last year's
+ * entry may be edited once this year's has been derived from it — three
+ * questions with studio-specific answers, in exchange for saving a few rows a
+ * year. When a studio asks for it, it is a column and a migration beside this
+ * one rather than a shape that has to be unpicked.
+ */
+async function ensureHolidays(db, log) {
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS studio_holidays (
+      id           CHAR(36)     NOT NULL PRIMARY KEY,
+      -- A DATE, not a DATETIME. A holiday is a day on one wall calendar in one
+      -- office: it begins at 00:00 IST and ends at 24:00 IST, and storing an
+      -- instant would make a server in UTC read it five and a half hours out.
+      -- Compared as 'YYYY-MM-DD' against src/working-time.js istDateOf(), so
+      -- no timezone is applied at either end and none can be applied twice.
+      holiday_date DATE         NOT NULL,
+      -- Required, because it is what the refusal says: "the studio is closed
+      -- for Diwali" rather than "the studio is closed".
+      \`name\`       VARCHAR(120) NOT NULL,
+      note         VARCHAR(500) NULL,
+      created_by   CHAR(36)     NULL,
+      created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      -- One row per date, enforced here as well as in src/holidays.js. Two
+      -- names for one closed day is a disagreement rather than extra
+      -- information, and the second row would be a row that does nothing: the
+      -- schedule reads the day as shut once either way. The application check
+      -- turns the ordinary case into a sentence; this is what settles a race
+      -- between two admins saving at once.
+      UNIQUE KEY uniq_holiday_date (holiday_date)
+    )`));
+  const { rows } = await db.query('SELECT COUNT(*) AS n FROM studio_holidays');
+  if (Number(rows[0].n) === 0) log('Schema: studio_holidays created (empty — the studio enters its own).');
+}
+
 async function ensureChatSettings(db, log) {
   await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS chat_settings (
       id                TINYINT   NOT NULL PRIMARY KEY,
@@ -3758,6 +3803,13 @@ const STEPS = [
      first would cache a schedule with no windows in it until the next
      restart. */
   ['recording hours mirror', (db) => recordingHours.load(db)],
+  /* After users, whose key created_by points at, and BEFORE the working-hours
+     mirror below: work-schedule publishes the closed days as schedule.holidays,
+     so a mirror loaded first would cache a schedule with no holidays in it
+     until the next restart — the same ordering trap the recording-hours mirror
+     above carries a note about. */
+  ['holidays', ensureHolidays],
+  ['holidays mirror', (db) => holidays.load(db)],
   ['working hours mirror', (db) => workSchedule.load(db)],
   // After users and assets, whose keys it points at.
   ['notifications', ensureNotifications],

@@ -92,15 +92,37 @@ const atUTC = (ymd) => new Date(`${ymd}T00:00:00Z`);
  *
  * Inclusive at both ends because a report "for the 4th of March" covers that
  * day, and a week runs Monday to Sunday. */
-function workingDaysBetween(from, to, workingDays = [1, 2, 3, 4, 5]) {
+/* A DAY THE STUDIO IS SHUT FOR A HOLIDAY IS NOT A WORKING DAY, and this is
+ * where that has to be said rather than only in the clock.
+ *
+ * The timer already knows: src/working-time.js hands back no recordable spans
+ * for a closed day, so nobody can start work on one and no seconds accrue. If
+ * this function went on counting it, the Idle Report would expect eight hours
+ * from a day on which the application itself refused to let anybody work, and
+ * the Admin Dashboard's capacity panel — which is built from these same
+ * figures — would report the whole studio as idle for it. That half-migrated
+ * shape, the timer blocked and the report still expecting a full day, is
+ * precisely the bug the holiday feature was asked not to create.
+ *
+ * `holidays` is 'YYYY-MM-DD' strings on the studio's wall calendar, which is
+ * the same vocabulary this function's own `from` and `to` are already in — so
+ * the comparison is string against string with no timezone applied at either
+ * end. The day framing here is UTC, which is a real assumption this file
+ * already states and is consistent with; see the long note in coverage().
+ */
+const closedSet = (holidays) => (holidays instanceof Set ? holidays : new Set(holidays || []));
+const ymd = (date) => date.toISOString().slice(0, 10);
+
+function workingDaysBetween(from, to, workingDays = [1, 2, 3, 4, 5], holidays = []) {
   if (!from || !to) return 0;
   const start = atUTC(from);
   const end = atUTC(to);
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return 0;
   const wanted = new Set(workingDays);
+  const closed = closedSet(holidays);
   let count = 0;
   for (const cursor = new Date(start); cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
-    if (wanted.has(isoDay(cursor))) count += 1;
+    if (wanted.has(isoDay(cursor)) && !closed.has(ymd(cursor))) count += 1;
   }
   return count;
 }
@@ -175,7 +197,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * Rest days are counted rather than measured. See the note at the top of this
  * file: an open span tells you work was on somebody's desk across a Saturday,
  * and nothing whatever about whether they touched it. */
-function coverage(spans, { from, to, workingDays = [1, 2, 3, 4, 5], hoursPerDay = 8, breaks = [] }) {
+function coverage(spans, { from, to, workingDays = [1, 2, 3, 4, 5], hoursPerDay = 8, breaks = [], holidays = [] }) {
   const merged = mergeSpans(spans);
   const start = atUTC(from);
   const end = atUTC(to);
@@ -183,6 +205,7 @@ function coverage(spans, { from, to, workingDays = [1, 2, 3, 4, 5], hoursPerDay 
     return { workingDaySeconds: 0, restDaysCovered: 0 };
   }
   const wanted = new Set(workingDays);
+  const closed = closedSet(holidays);
   const capMs = Math.max(0, hoursPerDay) * HOUR * 1000;
 
   /* THE BREAK WINDOWS, and what they are and are not.
@@ -239,7 +262,16 @@ function coverage(spans, { from, to, workingDays = [1, 2, 3, 4, 5], hoursPerDay 
     }
     if (inDay < 0) inDay = 0;   // belt and braces; the subtraction is bounded above
 
-    if (wanted.has(isoDay(cursor))) workingDayMs += Math.min(inDay, capMs);
+    /* A HOLIDAY IS COUNTED, NOT MEASURED — the same treatment this function
+       already gives a Saturday, and for the same reason stated at the top of
+       this file. A span crossing a closed day says the work sat on somebody's
+       desk across it and nothing whatever about whether they touched it, and
+       the day expects nothing, so crediting its hours as engaged would be
+       engaged time with no expected time to set it against. Falling through to
+       the rest-day branch is what makes the pair add up: the day contributes
+       to neither figure, and the fact that something was open across it still
+       shows, in restDaysCovered. */
+    if (wanted.has(isoDay(cursor)) && !closed.has(ymd(cursor))) workingDayMs += Math.min(inDay, capMs);
     else if (inDay > 0) restDaysCovered += 1;
   }
   return { workingDaySeconds: Math.round(workingDayMs / 1000), restDaysCovered };
@@ -253,12 +285,15 @@ function coverage(spans, { from, to, workingDays = [1, 2, 3, 4, 5], hoursPerDay 
  * number: a person who worked a full day entirely on another project is not
  * idle, and reporting them as 100% idle on this one would be a confident wrong
  * answer. */
-function forUser({ spans = [], from, to, workingDays = [1, 2, 3, 4, 5], hoursPerDay = 8, breaks = [] }) {
-  const days = workingDaysBetween(from, to, workingDays);
+function forUser({ spans = [], from, to, workingDays = [1, 2, 3, 4, 5], hoursPerDay = 8, breaks = [], holidays = [] }) {
+  const days = workingDaysBetween(from, to, workingDays, holidays);
   /* Not adjusted for breaks — see the long note in coverage() for why doing so
-     would count them twice. */
+     would count them twice. Holidays ARE taken out, and the two are not the
+     same case: a break is an hour the studio declares is not part of its eight,
+     already excluded from hoursPerDay; a holiday is a whole day the studio does
+     not have, so there is no eight hours to exclude it from. */
   const expectedHours = round(days * hoursPerDay);
-  const covered = coverage(spans, { from, to, workingDays, hoursPerDay, breaks });
+  const covered = coverage(spans, { from, to, workingDays, hoursPerDay, breaks, holidays });
 
   /* Engaged is what counts against the working day. A rest day is counted, not
      measured — see the note at the top of this file. */
@@ -304,7 +339,27 @@ function idleFor(lastActivity, now = new Date()) {
 /* What the report cannot see. Printed with the numbers, because a manager
    reading "62% idle" deserves to know what that does and does not account
    for. */
+/* DELIBERATELY PERIOD-INDEPENDENT, and it was not for a draft of this change.
+ *
+ * The holiday count a report drops belongs with that report's period — but
+ * tests/team-capacity.test.js asserts the Admin Dashboard's caveats are the
+ * SAME TEXT the Idle Report prints, "not a second wording of it", and the
+ * capacity panel carries three periods at once. A per-period sentence in here
+ * would have made the two lists differ the moment a studio declared a holiday,
+ * quietly breaking an invariant somebody wrote a test for. So the count went to
+ * `holidaysInPeriod` on the report payload, beside the working-day figure it
+ * explains, and these sentences stayed about the schedule. */
 function caveats(schedule) {
+  /* THE HOLIDAY LINE CHANGED MEANING, and leaving it as it was would have been
+     the half-migrated shape this feature was asked to avoid. It read "public
+     holidays, annual leave and sickness are not recorded anywhere in this app,
+     so time away reads as idle time" — and public holidays now are recorded, so
+     that sentence would have told a manager to distrust a figure that had just
+     become right. Leave and sickness still are not, so the caveat keeps them
+     and loses only the part that stopped being true. */
+  const away = 'Annual leave and sickness are not recorded anywhere in this app, so time away reads '
+    + 'as idle time. Declared holidays ARE: a day the studio is closed expects no hours from anybody '
+    + 'and is left out of the figures entirely, the same way a weekend is.';
   return [
     `A working day is ${schedule.hoursPerDay} hours, ${schedule.workingDayNames.join(', ')}.`,
     'Idle means no asset was in progress — between Accept and Start and Submit for Review. '
@@ -312,8 +367,7 @@ function caveats(schedule) {
     `A day counts at most ${schedule.hoursPerDay} hours however long work was left open across it, `
       + 'because this app records no shift times — only the length of a standard day.',
     'Work open across two assets at once counts once, not twice.',
-    'Public holidays, annual leave and sickness are not recorded anywhere in this app, '
-      + 'so time away reads as idle time.',
+    away,
     'Work open across a rest day is counted as a day, not as hours: an asset left open '
       + 'over a weekend cannot be told apart from one worked over it, so no overtime is claimed.',
   ];

@@ -44,6 +44,7 @@ const workLog = require('../work-log');
 const emailNotifications = require('../email-notifications');
 const notifications = require('../notifications');
 const assetSchedule = require('../asset-schedule');
+const holidays = require('../holidays');
 const assignments = require('../assignments');
 const assetImport = require('../asset-import');
 const workflow = require('../asset-workflow');
@@ -1783,6 +1784,45 @@ const AWAITING_HANDOVER = {
     + 'theirs to answer.',
 };
 
+/* THE STUDIO IS SHUT FOR THE DAY, and not for the usual reason.
+ *
+ * Holidays live in the recording schedule — src/working-time.js hands back no
+ * spans at all for a closed day — so the pause sweep, the overnight resume and
+ * every seconds calculation already treat one correctly without being told.
+ * What those cannot do is EXPLAIN it, and the generic off-hours sentence is the
+ * wrong explanation: "the working day ended" read at eleven in the morning on
+ * Diwali sends somebody looking for what else has gone wrong, which is exactly
+ * the complaint that split pausedFor into 'break' and 'day' in the first place.
+ * So the two endpoints that a person presses say which holiday it is.
+ *
+ * WHY /start IS REFUSED, where off-hours is not. Starting at nine in the
+ * evening is accepted and immediately paused, on the stated grounds that
+ * blocking it would only teach somebody to start the work the next morning and
+ * mis-state when they began. A holiday is not that case: it is known in
+ * advance, it is a whole day rather than the edge of one, and there is no
+ * "later today" to be honest about. Refusing is also what the brief asked for.
+ *
+ * The cost is named rather than hidden: /start is also what ACCEPTS an asset
+ * out of Assigned, so on a holiday an artist cannot take work on either. That
+ * is the right answer for a day the studio is closed, and it is a real
+ * difference from the off-hours path, which accepts the work and only refuses
+ * the clock.
+ *
+ * 409, matching every other "not now" refusal on these two endpoints — the
+ * start date, the one-active-task rule, the handover gates. 403 would say the
+ * person may not do this, and they may; it is the day that is wrong.
+ */
+function holidayRefusal(verb) {
+  const closed = holidays.at();
+  if (!closed) return null;
+  return {
+    error: `The studio is closed for ${closed.name} today, so work cannot be ${verb}. `
+      + `The clock starts again when the studio next opens.${closed.note ? ` (${closed.note})` : ''}`,
+    holiday: { date: closed.date, name: closed.name, note: closed.note || null },
+    opensAt: workLog.nextOpening(),
+  };
+}
+
 // POST /api/assets/:id/start — Accept and Start.
 //
 // The only way a session opens. It stamps started_at and, from 'assigned', also
@@ -1825,6 +1865,13 @@ router.post('/:id/start', async (req, res) => {
       startsOn: assetSchedule.asISODate(asset.start_date),
     });
   }
+
+  /* And not on a day the studio is shut. Beside the start-date rule above
+     rather than merged with it, exactly as that one sits beside the
+     one-active-task rule below: these are independent reasons the same button
+     is refused and any one of them alone is enough. See holidayRefusal. */
+  const shutForStart = holidayRefusal('started');
+  if (shutForStart) return res.status(409).json(shutForStart);
 
   /* One active task at a time.
    *
@@ -2029,6 +2076,15 @@ router.post('/:id/hold', requirePermission('asset.hold'), async (req, res) => {
 router.post('/:id/resume', requirePermission('asset.hold'), async (req, res) => {
   const asset = await holdableAsset(req, res);
   if (!asset) return undefined;
+
+  /* BEFORE the pause is even looked up, which is the whole point of the
+     placement. Resume has three possible answers below — nothing is on hold,
+     the schedule paused this and resumes it itself, or somebody held it — and
+     on a holiday all three are the wrong thing to read. "Use Accept and Start"
+     is advice that cannot be taken; "it starts again on its own" is true but
+     says nothing about which day. One refusal, naming the holiday. */
+  const shutForResume = holidayRefusal('resumed');
+  if (shutForResume) return res.status(409).json(shutForResume);
 
   const held = await workLog.heldFor(db, req.params.id, asset.assignee_id);
   if (!held) {

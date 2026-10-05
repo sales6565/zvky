@@ -78,7 +78,19 @@ async function buildIdleReport(req) {
   const projectIds = projects.map((p) => p.id);
   const period = resolvePeriod(req.query);
   const schedule = workSchedule.current();
-  const workingDays = idle.workingDaysBetween(period.from, period.to, schedule.workingDays);
+  /* The days the studio declared shut, taken out of the expected hours.
+     schedule.holidays comes from src/work-schedule.js, which is the same object
+     src/working-time.js reads to decide the clock — so the report cannot expect
+     hours from a day on which the application refused to let anybody work. */
+  const workingDays = idle.workingDaysBetween(period.from, period.to, schedule.workingDays,
+    schedule.holidays);
+  /* Counted over the period's own range rather than over the whole calendar, so
+     a report for March does not mention Diwali. Carried as a FIELD rather than
+     as a caveat sentence: the caveats have to read identically here and on the
+     Admin Dashboard's capacity panel, which covers three periods at once — see
+     the note on caveats() in src/idle.js. */
+  const holidaysInPeriod = (schedule.holidays || [])
+    .filter((d) => d >= period.from && d <= period.to).length;
   const cutover = await workLog.cutover(db).catch(() => ({ at: null, legacyRows: 0, mixed: false }));
 
   const roles = trackingRoleKeys();
@@ -86,6 +98,7 @@ async function buildIdleReport(req) {
     period, schedule, workingDays,
     expectedHours: idle.round(workingDays * schedule.hoursPerDay),
     rows: [], totals: null,
+    holidaysInPeriod,
     caveats: idle.caveats(schedule),
     cutover,
     scope: { roles: roles.length, projects: projects.length },
@@ -198,6 +211,9 @@ async function buildIdleReport(req) {
       /* The configured lunch and break windows, so time a timer ran through a
          break does not count as engaged. */
       breaks: schedule.breaks || [],
+      /* And the closed days, so a span crossing one is counted as a day rather
+         than measured as hours — the treatment a weekend already gets. */
+      holidays: schedule.holidays || [],
     });
     return {
       id: u.id, name: u.name, email: u.email,
@@ -223,6 +239,7 @@ async function buildIdleReport(req) {
     period, schedule, workingDays,
     expectedHours: idle.round(workingDays * schedule.hoursPerDay),
     rows, totals,
+    holidaysInPeriod,
     caveats: idle.caveats(schedule),
     cutover,
     narrowed: Boolean(onlyUsers),

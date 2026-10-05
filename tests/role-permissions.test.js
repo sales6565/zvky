@@ -207,6 +207,69 @@ test('the Settings screen asks permissions, not capabilities', () => {
   }
 });
 
+/* THE DEFAULTS, NAMED, for the keys where the default IS the decision.
+ *
+ * The test above this one checks that every role's seeded set equals
+ * defaultsFor(role), which pins the whole catalogue against itself — so it
+ * catches a default that MOVES and says nothing about whether it was right to
+ * begin with. These few are the ones where somebody will eventually ask "why is
+ * this one on for everybody?", and the answer belongs beside the assertion
+ * rather than only in the catalogue.
+ */
+test('the defaults that are decisions, with the reason for each', () => {
+  const { ROLES } = defaults;
+  const held = (key) => ROLES.filter((r) => rolePermissions.defaultsFor(r.key).has(key)).map((r) => r.key);
+
+  /* ON FOR EVERY DESIGNATION. `impliedBy: () => true`. Putting a task down and
+     picking it up again is not a privilege, it is how the clock is used
+     honestly — a person who cannot say "I have stopped" will leave the timer
+     running instead, which is worse for the figures than any abuse of the
+     button. Holding the key is still not permission to hold somebody ELSE's
+     task: tests/hold-lead-scope.test.js owns that, and the route refuses it
+     separately. */
+  assert.strictEqual(held('asset.hold').length, ROLES.length,
+    'every designation can hold its own work');
+
+  /* ON FOR EVERY DESIGNATION, and the newest of this shape. Knowing which days
+     the studio is closed is something anybody needs to plan their own work, and
+     withholding it would only send them to ask somebody who can see it.
+
+     IT IS NOT WHAT EXPLAINS A REFUSED TIMER, which is the question that nearly
+     made it unnecessary: the 409 from POST /:id/start names the holiday in its
+     body and the paused label comes from describePause() in src/work-log.js,
+     and neither consults this key. tests/holidays.test.js asserts the refusal
+     still names the holiday for a session that has had this revoked. What this
+     gates is the CALENDAR — the planning view — which is a different question.
+
+     CONSEQUENCE WORTH KNOWING: canOpenSettings() in public/index.html is built
+     from SETTINGS_SECTIONS, and Holidays is in that list, so this default is
+     also what puts the Settings TAB in front of every user — with the calendar
+     on it and nothing else. That is intended; narrowing this key is how a
+     studio changes it. */
+  assert.strictEqual(held('settings.holidays_view').length, ROLES.length,
+    'every designation can read the holiday calendar');
+
+  /* SUPER ADMIN ALONE, by managePermissions — the front door
+     settings.recording_hours and settings.ip_blocklist use, and the only
+     capability the Super Admin tier carries exclusively. Deliberately NOT
+     manageSettings, which would hand it to every designation already trusted
+     with the priorities and the branding: those lists rename a dropdown, a
+     holiday stops the clock for the whole studio for a day and refuses Accept
+     and Start. Grantable, so a studio that wants its production manager
+     entering next year's calendar says so in Settings. */
+  for (const key of ['settings.holidays', 'settings.recording_hours']) {
+    assert.deepStrictEqual(held(key), ['super_admin'], `${key} is Super Admin only by default`);
+    assert.ok(catalog.grantableKeys().includes(key), `${key} can still be handed out`);
+  }
+
+  /* WITHHELD FROM EVERY DESIGNATION BUT ONE, and recorded here because it looks
+     like an oversight and is not. Pending Actions is the Creative Art
+     Director's queue; the others reach their own work through their own
+     screens. */
+  assert.deepStrictEqual(held('pending.view'), ['super_admin', 'creative_art_director'],
+    'the pending queue is deliberately narrow');
+});
+
 test('every permission the catalogue lists is either checked or declared pending', () => {
   // The gap this closes: review.cd and review.approve_client were in the
   // catalogue, switchable in Settings, and read by nothing — the workflow asked
@@ -526,10 +589,31 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     await as('root', '/permissions/roles/producer/reset', { method: 'POST', body: {} });
   });
 
-  await t.test('a role with no settings permission is offered no part of the screen', async () => {
+  await t.test('a contributor can manage no part of the settings screen', async () => {
+    /* THE PREMISE MOVED, DELIBERATELY, and the point did not.
+     *
+     * This asserted that a Game Artist holds NO settings.* key at all, which was
+     * true until the holiday calendar arrived. settings.holidays_view is
+     * implied for every designation — knowing which days the studio is closed
+     * is something anybody needs in order to plan, and withholding it would
+     * only send them to ask somebody who can see it — so a contributor now
+     * holds exactly one, and it is read-only.
+     *
+     * Named as the single exception rather than loosened to a prefix match, so
+     * a second settings key reaching this designation by accident still fails
+     * here. And the WRITE side of the calendar is added to the list below,
+     * which makes this guard stronger than it was: what it is really about is
+     * that nothing a contributor can reach changes anything.
+     *
+     * The visible consequence is that the Settings TAB now appears for every
+     * user, because canOpenSettings() in public/index.html is built from
+     * SETTINGS_SECTIONS. That is intended; see the note on this default in
+     * "the defaults that are decisions" above. */
     const res = await call('/auth/login', { method: 'POST', body: { email: 'ana@zvky.test', password: PASSWORD } });
-    const held = res.body.user.permissions.filter((k) => k.startsWith('settings.'));
-    assert.deepStrictEqual(held, [], 'a Game Artist holds none of them');
+    const held = res.body.user.permissions.filter((k) => k.startsWith('settings.')).sort();
+    assert.deepStrictEqual(held, ['settings.holidays_view'],
+      'a Game Artist holds exactly one, and it is the read-only holiday calendar');
+
     for (const path of [
       '/reference/asset-types?includeInactive=1',
       '/reference/priorities?includeInactive=1',
@@ -538,6 +622,18 @@ test('configuring a role', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       '/permissions/roles',
     ]) {
       assert.strictEqual((await as('ana', path)).status, 403, path);
+    }
+
+    // The one thing they CAN reach, and the three they cannot.
+    assert.strictEqual((await as('ana', '/admin/settings/holidays')).status, 200,
+      'the calendar reads');
+    for (const [method, path] of [
+      ['POST', '/admin/settings/holidays'],
+      ['PUT', '/admin/settings/holidays/any'],
+      ['DELETE', '/admin/settings/holidays/any'],
+    ]) {
+      const r = await as('ana', path, { method, body: { date: '2099-01-01', name: 'No' } });
+      assert.strictEqual(r.status, 403, `${method} ${path}`);
     }
   });
 

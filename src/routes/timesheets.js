@@ -8,6 +8,7 @@ const { authenticate, requirePermission } = require('../middleware/auth');
 const { holds } = require('../permissions');
 const sheets = require('../timesheets');
 const workSchedule = require('../work-schedule');
+const holidays = require('../holidays');
 // For the Hours suggestion: what this person's own work sessions say about one day.
 const workLog = require('../work-log');
 const xlsx = require('xlsx');
@@ -196,6 +197,28 @@ const shapeDay = (day, entries, workDate) => {
     hours: total.hours,
     overLong: total.overLong,
     weekend: sheets.isWeekend(workDate),
+    /* THE STUDIO WAS SHUT THAT DAY — a flag, exactly like `weekend` beside it,
+     * and for the reason this function's own comment already gives: these are
+     * real things that happen and a form that blocks them teaches people to lie
+     * to it. Somebody who did come in on a holiday files the hours and the
+     * approver sees why the day is unusual.
+     *
+     * AND THE ROW IS STILL OFFERED, which is where a holiday deliberately
+     * parts company with a weekend. workingDays() drops an unfilled Saturday
+     * from the week, on the grounds that the studio never works one — a
+     * permanent, known fact. A holiday is a row an admin added, possibly for a
+     * date that was a normal working day when somebody worked it, and hiding
+     * the row would leave them unable to file hours they really put in. The
+     * Time Sheet has no expected-hours figure for a holiday to zero out
+     * anyway: it has a soft cap and whatever has been filed. So the day is
+     * labelled rather than removed.
+     *
+     * Null on an ordinary day, which is what lets the page choose its chip
+     * from one field. */
+    holiday: (() => {
+      const closed = holidays.on(workDate);
+      return closed ? { date: closed.date, name: closed.name } : null;
+    })(),
   };
 };
 

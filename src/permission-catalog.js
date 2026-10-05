@@ -1050,6 +1050,78 @@ const GROUPS = [
         danger: 'Switching every recording window off stops time tracking for the whole studio.',
       },
       {
+        /* THE HOLIDAY CALENDAR, READ-ONLY — and the reason it is a key at all.
+         *
+         * The brief that asked for holidays suggested a view permission "on for
+         * everyone, since every user needs to understand why their timer
+         * refused to start", and asked whether the existing off-hours messaging
+         * already covers that. It does, and completely: the refusal from
+         * POST /start names the holiday in its body, and the paused label the
+         * asset panel draws comes from describePause() in src/work-log.js,
+         * which no permission guards. Neither of those consults this key and
+         * neither should — somebody told they may not start work is owed the
+         * reason whatever they may otherwise see.
+         *
+         * So what this actually gates is the LIST: the Holidays section in
+         * Settings, which says when the studio is shut for the rest of the year.
+         * That is a different question from "why did my timer stop", and it is
+         * worth a key because it is the planning view.
+         *
+         * ON FOR EVERY DESIGNATION, by the same `() => true` that gives every
+         * role asset.hold. Knowing which days the studio is closed is something
+         * every person in the building needs in order to plan their own work,
+         * and withholding it would only send them to ask somebody who can see
+         * it. It stays a key so that a Super Admin who wants it narrowed can
+         * narrow it, rather than the code having decided for them. */
+        key: 'settings.holidays_view',
+        label: 'View Holidays',
+        impliedBy: () => true,
+        describe: 'See the studio\u2019s holiday calendar in Settings \u2014 which days the studio is closed, '
+          + 'upcoming and past, who declared each one and any note on it. Read-only, and separate from '
+          + 'being told why a timer refused to start: that reason is always given, to everybody. '
+          /* WHAT THIS DOES NOT HIDE, in the describe text rather than a field of
+             its own — describe() publishes `describe`, `pending` and `danger`
+             and nothing else, so a new key would be dropped before any screen
+             saw it, which is the "switch that lies" problem in miniature.
+
+             The closed DATES are part of the studio's schedule and travel with
+             it: GET /api/branding/schedule is open to anybody signed in, as the
+             working hours and the break windows already are, and the Idle
+             Report carries the same list. Narrowing that would mean the
+             schedule read answering differently per person, and then the one
+             definition of the studio's clock would no longer be one. */
+          + 'Note: the closed dates themselves travel with the studio schedule, which every '
+          + 'signed-in user can read \u2014 switching this off closes the calendar section, not '
+          + 'the fact that a day is closed.',
+      },
+      {
+        /* ADDING, CHANGING AND REMOVING A HOLIDAY.
+         *
+         * SUPER ADMIN ONLY, by the same `managePermissions` front door
+         * settings.recording_hours uses two entries below, and for exactly the
+         * reason given there: a row saved here decides what every timer in the
+         * building records. A holiday is a day on which src/working-time.js
+         * hands back no recordable spans at all, so one of these is a wider
+         * change than any Settings list — it refuses Accept and Start for
+         * everybody, puts every running timer down, and holds the overnight
+         * resume off until the studio opens again.
+         *
+         * NOT implied by manageSettings, which would give it to every
+         * designation already trusted with the priorities and the branding.
+         * Those lists rename a dropdown; this one stops the clock.
+         *
+         * It stays grantable, so a studio that wants its production manager
+         * entering next year's calendar can say so in Settings. */
+        key: 'settings.holidays',
+        label: 'Manage Holidays',
+        impliedBy: has('managePermissions'),
+        describe: 'Add, change and remove the days the studio is closed. A holiday stops the clock for '
+          + 'everybody: work cannot be started or resumed, and a running timer is put down. Dates are '
+          + 'entered in advance \u2014 a day that has begun or passed cannot be edited or removed, so hours '
+          + 'already recorded are never changed.',
+        danger: 'A holiday stops time tracking for the whole studio on that day, and refuses Accept and Start.',
+      },
+      {
         /* Giving the studio's staff side sight of a project.
          *
          * SUPER ADMIN ONLY. What it hands out is visibility into projects the

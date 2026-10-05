@@ -28,12 +28,15 @@
  * numbers without a server, and it is why the awkward cases below are cheap
  * enough to have tests at all.
  *
- * WHAT IT DELIBERATELY DOES NOT KNOW. Holidays. A studio closed for Diwali
- * still counts Diwali as a working day here, because nothing in the application
- * records a holiday calendar and inventing one silently would be worse than the
- * gap. Working days are configurable, so a closure can be handled by editing
- * the schedule for that week, and the limitation is written down rather than
- * discovered.
+ * HOLIDAYS, WHICH THIS USED TO SAY IT DID NOT KNOW. It does now. The note here
+ * read "a studio closed for Diwali still counts Diwali as a working day,
+ * because nothing in the application records a holiday calendar" — and
+ * src/holidays.js is that calendar. It arrives as `schedule.holidays`, a set of
+ * 'YYYY-MM-DD' strings on the studio's own wall calendar, and it is read in
+ * exactly one place: spansOn() below, which hands back no spans for a closed
+ * day. A holiday is therefore the same kind of thing as a Sunday rather than a
+ * second rule beside the schedule, which is why nothing else in this file
+ * mentions one. See the note on spansOn for what that buys.
  */
 
 /* India, once, as a number. Not a timezone database lookup: there is exactly
@@ -72,6 +75,35 @@ function istPartsOf(ms) {
    number and need its weekday without building an instant to ask. */
 function dowOf(day) {
   return ((day % 7) + 7 + 3) % 7 + 1;
+}
+
+/* The studio's wall-calendar date of a day number, as 'YYYY-MM-DD'.
+ *
+ * The only bridge between this file's day numbers and the holiday calendar,
+ * and the reason there is exactly one: a date that crosses the boundary twice
+ * is a date that can be off by one in two places. `day` already counts whole
+ * days in IST — day 0 is 1 January 1970 in IST — so multiplying it back out and
+ * reading the UTC fields of the result gives the IST calendar date with no
+ * second offset applied and none to get wrong.
+ */
+function istDateOf(day) {
+  const d = new Date(day * MS_PER_DAY);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+}
+
+/* Is this day one the studio has declared shut?
+ *
+ * Accepts a Set (what src/holidays.js publishes) or an array (what a test or a
+ * hand-built schedule is likely to pass), because this is the one place the
+ * shape of that field is interpreted and a caller getting it wrong would fail
+ * silently as "no holidays" — which looks exactly like a working day.
+ */
+function isClosedDay(day, schedule) {
+  const closed = schedule && schedule.holidays;
+  if (!closed) return false;
+  const date = istDateOf(day);
+  if (typeof closed.has === 'function') return closed.has(date);
+  return Array.isArray(closed) && closed.includes(date);
 }
 
 // The instant at which a given IST day reaches a given minute past midnight.
@@ -225,8 +257,17 @@ function spansFromEntries(day, entries) {
  * always had here. Callers wanting a particular day pass its day number. */
 function workableMinutesPerDay(schedule, day = null) {
   const total = (spans) => spans.reduce((sum, [a, b]) => sum + (b - a), 0);
-  if (!Array.isArray(schedule.entries)) return total(openSpans(schedule));
+  /* A NAMED DAY GOES THROUGH THE FUNNEL, whichever form the schedule is in.
+     These two lines were the other way round, so with the legacy four time
+     pairs the `day` argument was accepted and then ignored: a Sunday, and now a
+     holiday, came back as a full working day. No caller in src/ passes a day
+     today, which is why it had not bitten — but a consumer added later would
+     have found a function that answers a question other than the one it was
+     asked, and holidays make that answer wrong rather than merely coarse.
+     Asking spansOn is the whole fix, because spansOn is where the closed day,
+     the weekend and the two schedule forms are already told apart. */
   if (day !== null) return total(spansOn(day, schedule));
+  if (!Array.isArray(schedule.entries)) return total(openSpans(schedule));
   let most = 0;
   // Any seven consecutive days are one of each weekday; 0 to 6 will do.
   for (let d = 0; d < 7; d += 1) most = Math.max(most, total(spansFromEntries(d, schedule.entries)));
@@ -290,6 +331,33 @@ function workingSecondsBetween(startMs, endMs, schedule) {
  * switched every window off, and the Settings screen says so in as many words
  * rather than quietly falling back to hours nobody chose. */
 function spansOn(day, schedule) {
+  /* A HOLIDAY IS A DAY WITH NO SPANS, and this one line is the whole feature.
+   *
+   * Put here rather than in each of the six callers deliberately. Every
+   * decision the application makes about the studio's clock funnels through
+   * this function, so a closed day answered once is answered everywhere and in
+   * the same breath: isRecording says no, so /start is refused and the resume
+   * sweep does nothing; stopsAt returns null, so a timer running into a holiday
+   * has nothing to run until; lastStoppedAt walks back past it to the previous
+   * evening, which is where the pause sweep puts the session down; resumesAt
+   * walks forward past it, which is what stops the overnight resume opening a
+   * session on a day the studio is shut; and workingSecondsBetween adds nothing
+   * for it, so a session left open across a holiday is not credited with one.
+   *
+   * None of those six knows the word holiday, exactly as none of them knows the
+   * word weekend. The alternative — a holiday check at each decision point —
+   * is six places to forget it, and the one that would have been forgotten is
+   * the back-dating inside resumeOverdue, which is the only one that writes a
+   * stamp rather than reading one.
+   *
+   * ABOVE the entries/legacy branch, because a studio is shut on a holiday
+   * whichever form its schedule is stored in.
+   *
+   * AND NOT IN spansFromEntries, which is the recurring WEEKLY shape: the
+   * Recording Hours screen draws a week from it and work-schedule derives
+   * `workingDays` from it, and neither should lose a Tuesday because one
+   * Tuesday next March is Holi. */
+  if (isClosedDay(day, schedule)) return [];
   if (Array.isArray(schedule.entries)) return spansFromEntries(day, schedule.entries);
   return isWorkingDay(dowOf(day), schedule) ? openSpans(schedule) : [];
 }
@@ -412,7 +480,8 @@ function resumesAt(ms, schedule) {
 
 module.exports = {
   IST_OFFSET_MINUTES,
-  istPartsOf, dowOf, instantAt, openSpans, spansOn, spansFromEntries, workableMinutesPerDay,
+  istPartsOf, dowOf, istDateOf, isClosedDay,
+  instantAt, openSpans, spansOn, spansFromEntries, workableMinutesPerDay,
   merge, subtract,
   workingSecondsBetween, isRecording, stopsAt, startsAt, resumesAt, lastStoppedAt,
 };

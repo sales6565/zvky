@@ -176,15 +176,27 @@ test('there is no Resume control for a pause the schedule made', () => {
   assert.match(body, /The working day ended/);
 });
 
-test('the server says which of the two scheduled stops it was', () => {
+test('the server says which of the three scheduled stops it was', () => {
   /* Worked out from WHEN recording picks up rather than from the stored stamp:
      later the same IST day is a break, another day is the end of the day or a
      day the studio does not work. src/work-log.js never converts a DATETIME,
-     which is why it is derived this way and not from ended_at. */
+     which is why it is derived this way and not from ended_at.
+
+     THREE STOPS NOW, NOT TWO. A studio holiday is the third, and it is checked
+     FIRST because it would otherwise read as 'day' — recording picks up on
+     another date — and "the working day ended" is the wrong sentence for
+     somebody looking at this at eleven in the morning on a day the studio is
+     closed. That is the same complaint that split 'break' from 'day' in the
+     first place, which is why this guard follows the new line rather than being
+     deleted: tests/holidays.test.js owns the holiday itself, and what is pinned
+     here is unchanged — the answer is derived from opensAt and from the holiday
+     calendar, never from the stored stamp. */
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'work-log.js'), 'utf8');
   const start = src.indexOf('function describePause(row) {');
   const body = src.slice(start, src.indexOf('\n}\n', start));
-  assert.match(body, /pausedFor: byStudio \? \(sameDayResume\(opensAt\) \? 'break' : 'day'\) : null/);
+  assert.match(body, /pausedFor: byStudio \? \(closedToday \? 'holiday' : \(sameDayResume\(opensAt\) \? 'break' : 'day'\)\) : null/);
+  assert.match(body, /const closedToday = byStudio \? holidays\.at\(\) : null;/,
+    'and the closed day is asked of the calendar at this moment, not of the row');
   assert.ok(!/ended_at\)/.test(body.replace(/since: row\.ended_at,/, '')),
     'and does not parse the stored stamp to decide');
 });

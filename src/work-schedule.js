@@ -186,6 +186,36 @@ function namedEntries() {
   }
 }
 
+/* The days the studio has declared shut, for working-time.js.
+ *
+ * Required lazily and swallowed on failure for the same reason namedEntries
+ * above is: a deployment whose studio_holidays table could not be created must
+ * still keep a clock, and the honest answer for it is "no holidays" rather than
+ * a request that throws. An empty set is also exactly what a studio that has
+ * entered none has, so the degraded case and the ordinary one are the same
+ * code path rather than two.
+ *
+ * ALWAYS PRESENT, never left off the way `entries` is. `entries` absent means
+ * "use the legacy four time pairs", which is a real second meaning; a holiday
+ * list absent would mean nothing but "none", and an optional field that is
+ * usually there is how a reader ends up forgetting to pass it.
+ *
+ * AND ALWAYS A SORTED ARRAY, not the Set src/holidays.js keeps. current() is
+ * returned to the browser by GET /api/branding/schedule and sits inside the
+ * Idle Report's payload, and a Set serialises to `{}` — so a Set here would
+ * reach every screen as an empty object that read as "no holidays" while the
+ * clock knew better. One shape for both readers rather than a Set for the
+ * timer and an array for the page: the few string comparisons that costs are
+ * bounded by a handful of rows a year, and two shapes of one field is how the
+ * hot one ends up being the one nobody tested. */
+function closedDates() {
+  try {
+    return [...require('./holidays').dates()].sort();
+  } catch (err) {
+    return [];
+  }
+}
+
 /* The named windows, expressed in the old form's vocabulary.
  *
  * WHY BOTHER, when working-time.js reads `entries` directly and gets the exact
@@ -293,6 +323,14 @@ function current() {
     breakMinutes: (shaped ? shaped.breaks : breakWindows())
       .reduce((total, w) => total + (w.end - w.start), 0),
     maxHours: TIMESHEET_MAX_HOURS,
+    /* The days the studio is shut, which are part of the schedule and not a
+       footnote to it. Here as well as on trackingWindow() below because the
+       readers split between the two: the timer reads trackingWindow, while the
+       Idle Report and the Admin Dashboard's capacity panel read this one and
+       have to measure available time against the same closed days the clock
+       keeps. A figure that expected eight hours on a day no timer could run is
+       the half-migrated shape this is placed here to avoid. */
+    holidays: closedDates(),
     /* A label, not a conversion. The times above are minutes past midnight with
        no timezone in them, so this says which clock a reader should picture and
        changes nothing if it is edited. Kept here so the Settings screen and the
@@ -347,6 +385,13 @@ function trackingWindow() {
     dayStart: shaped ? shaped.dayStart : cache.dayStart,
     dayEnd: shaped ? shaped.dayEnd : cache.dayEnd,
     breaks: shaped ? shaped.breaks : breakWindows(),
+    /* THE OTHER LINE THE TIMER ITSELF READS, beside `entries` below and for the
+       same reason. src/working-time.js hands back no spans at all for a day in
+       this set, so this is what stops the clock on a holiday, refuses Accept
+       and Start, and keeps the overnight resume from opening a session on a day
+       the studio is shut. Omitting it here while current() carried it would be
+       a screen that knew about a holiday and a clock that did not. */
+    holidays: closedDates(),
     timezone: TIMEZONE_LABEL,
     /* THE LINE THE TIMER ITSELF READS. src/work-log.js takes its whole picture
        of the studio's clock from this object — the pause sweep, the automatic

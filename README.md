@@ -71,9 +71,15 @@ permissions come from their role — there are no per-user grants. Change a role
 and everyone holding it changes together.
 
 The catalogue lives in
-[`src/permission-catalog.js`](src/permission-catalog.js) — 28 permissions in
-five groups — and the settings live in `role_permissions` as
+[`src/permission-catalog.js`](src/permission-catalog.js) — 88 permissions in
+twelve groups — and the settings live in `role_permissions` as
 `(role_key, permission_key, enabled)`.
+
+Every key sits in the group its prefix names, and
+`tests/role-permissions.test.js` checks that: a `settings.*` key in another
+group would be the first exception. That is why the holiday calendar's two keys
+are `settings.holidays_view` and `settings.holidays` rather than `holiday.view`
+and `holiday.manage`.
 
 **When a change takes effect: the next request.** The permission set is read per
 request in `authenticate()` from the user's freshly-read role, so nobody signs
@@ -116,6 +122,107 @@ still not permission to hold somebody *else's* task, which the route refuses sep
 (a cross-person hold would need its own permission and its own audit line).
 
 ### What the tier system still does
+
+### Holidays: two keys, and why one of them is on for everybody
+
+**Settings → Holidays** is the studio's closed-day calendar, and it is gated by a pair:
+
+| Key | Label | Default |
+| --- | --- | --- |
+| `settings.holidays_view` | View Holidays | **On for every designation** (`impliedBy: () => true`) |
+| `settings.holidays` | Manage Holidays | **Super Admin only** (`impliedBy: has('managePermissions')`) |
+
+*View* is on for everyone because knowing which days the studio is shut is
+something anybody needs to plan their own work, and withholding it would only
+send them to ask somebody who can see it. It is still a key, so a Super Admin
+can narrow it — the code has not decided that for them.
+
+*Manage* goes through `managePermissions`, the same front door
+`settings.recording_hours` uses, and deliberately **not** through
+`manageSettings`. A row saved here is a wider change than any other Settings
+list: the priorities and the branding rename a dropdown, a holiday stops the
+clock for the whole studio for a day.
+
+**The view key is not what explains a refused timer, and must not be.** The 409
+from `POST /:id/start` names the holiday in its body, and the paused label the
+asset panel draws comes from `describePause()` in `src/work-log.js`. Neither
+consults `settings.holidays_view`, and `tests/holidays.test.js` asserts the
+refusal still names the holiday from a session that has had that key revoked.
+Somebody told they may not start work is owed the reason whatever else they may
+see.
+
+**Both gates read the same key the same way.** The four routes in
+`src/routes/holidays.js` use `requirePermission`, *not* `requireSuperAdmin` —
+which is the one difference from Recording Hours beside it, and the reason the
+page can mirror the server exactly. `requireSuperAdmin` passes on the tier **or**
+the key, and `can()` in the browser knows nothing about tiers, so a page written
+against it would have been a fourth instance of the `caps()`-vs-`can()` bug
+above. Mutation-tested: dropping the server's `requirePermission`, and swapping
+the page's `canManage` for a `caps()` tier read, are both caught.
+
+### Holidays are part of the schedule, not a check beside it
+
+Worth knowing before adding anything that asks "is the studio open". A holiday
+is a day on which the recording windows produce **no spans at all** — which is
+exactly what a Sunday already is — and that is decided in one place:
+`spansOn()` in [`src/working-time.js`](src/working-time.js). Six consumers then
+come out right without any of them mentioning a holiday:
+
+| Function | What a closed day makes it do |
+| --- | --- |
+| `isRecording` | false, so `POST /:id/start` and `/resume` are refused and both halves of the sweep no-op |
+| `stopsAt` | null — there is nothing for a timer on a holiday to run until |
+| `lastStoppedAt` | walks back past it, which is where `pauseOverdue` puts a running session down |
+| `resumesAt` | walks **forward** past it, which is what stops the overnight resume opening a session on a closed day |
+| `workingSecondsBetween` | adds nothing for it, so a session left open across one is not credited with it |
+| `workableMinutesPerDay` | 0 for that day |
+
+The last two are the ones that cost money if they are missed: `work_sessions.seconds`
+is the single column behind Time Spent, the Efficiency report, the Time Sheet's
+suggestions and both P&L tabs. `resumesAt` is the only one of the six that
+*writes* a stamp rather than reading one, so it has a case of its own.
+
+**It is deliberately not in `spansFromEntries`,** which is the recurring weekly
+shape the Recording Hours screen draws a week from and `work-schedule` derives
+`workingDays` from. A studio with one holiday next March must not lose Tuesdays
+from its schedule summary.
+
+**Dates are calendar dates in IST.** `studio_holidays.holiday_date` is a `DATE`,
+the value moved around is a `'YYYY-MM-DD'` string, and the only conversion
+anywhere is `istDateOf()` turning working-time's IST day number into one — so a
+holiday begins at 00:00 IST and ends at 24:00 IST on every machine. The
+midnight boundary is pinned at four instants (23:59 on the eve, 00:00 and 23:59
+on the holiday, 00:00 the day after), and shifting `istDateOf` by the IST offset
+is one of the mutants the suite kills.
+
+**The past is read-only, and that is load-bearing rather than tidy.** The
+earliest date the screen accepts is **tomorrow**, and a holiday that has begun
+or passed can be neither edited nor deleted. Because holidays go into the one
+funnel, a holiday dated over a day that already has work on it would change what
+that work was worth — a session open since half past nine, with today declared a
+holiday at two o'clock, would be put down for nought seconds and the morning
+would be gone. Refusing today and earlier makes recorded time safe by
+construction instead of by a rule somewhere else remembering to protect it.
+Duplicate dates are refused, in `src/holidays.js` and again by a `UNIQUE` key.
+There is no annual recurrence: each year is entered explicitly.
+
+**Available-time figures were migrated with it,** because the shape this project
+keeps finding is the timer blocked and the report still expecting eight hours.
+`src/idle.js` takes closed days out of `workingDaysBetween`, so the Idle
+Report's `expectedHours` and the Admin Dashboard's capacity panel — which is
+built from the same `buildIdleReport`, by construction — both drop a holiday,
+and the report says how many it dropped, as `holidaysInPeriod` beside the
+working-day figure it explains. That number is deliberately **not** a caveat
+sentence: `tests/team-capacity.test.js` asserts the capacity panel's caveats are
+word for word the Idle Report's, and the panel covers three periods at once, so
+a period-specific sentence in `caveats()` would have broken that invariant the
+moment a studio declared a holiday. A holiday somebody *did* work is
+counted rather than measured, the treatment a worked Saturday already gets. The
+Time Sheet labels the day and **still offers the row**, which is where a holiday
+parts company with a weekend: a weekend is permanent and known, a holiday is a
+row an admin added, and hiding it would leave somebody unable to file hours they
+really worked. The Efficiency report is deliberately untouched — it is Man Hours
+over Time Spent and has no notion of available time at all.
 
 Permissions are booleans; some things are not. `projectScope` (`all` / `owned` /
 `team` / `assigned` / `own_work`), `reviewStage` (`tl` / `cd`) and `deleteAsset`
@@ -882,6 +989,15 @@ heading can be reworded without silently detaching its index entry.
 omission, since `canOpenSettings()` is built from it: a designation granted
 Working Hours and nothing else held a permission whose screen it could not
 reach, because the Settings tab was not there to open. It is in the list now.
+
+**Holidays is the one section everybody reaches.** `settings.holidays_view` is
+implied for every designation, and `canOpenSettings()` is built from
+`SETTINGS_SECTIONS` — so adding Holidays to that list puts the **Settings tab
+in front of every user**, with the closed-day calendar on it and nothing else.
+That is intended, and it is why the section's note says *read-only unless you
+manage holidays*: somebody arriving at Settings for the first time because of
+this entry should see at once that reading the calendar is all they can do
+there.
 
 ## Settings: the value lists behind the dropdowns
 

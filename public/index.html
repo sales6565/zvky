@@ -730,6 +730,19 @@ tr.past-round{opacity:0.62;}
 .rh-err{font-size:11px;color:#d9534f;}
 .rh-meta{margin-top:6px;font-size:10px;color:var(--ink-faint);}
 .rh-empty{font-size:11.5px;color:var(--ink-faint);padding:6px 0 10px;}
+/* --- Holidays: the days the clock does not run -----------------------------
+   Reuses the Recording Hours row shell above rather than a second one, because
+   a studio setting that is a repeatable row should look like the other
+   repeatable rows. Only the read-only line is new: a holiday that has begun,
+   and every holiday for a designation that may look and not change.
+
+   DELIBERATELY NOT the brand colour. The studio's workflow colours are kept
+   distinct from #7f1416, and a closed day is a state rather than an action. */
+.hol-read{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;}
+.hol-date{font-family:'Space Grotesk';font-size:12.5px;font-variant-numeric:tabular-nums;}
+.hol-name{font-size:12.5px;font-weight:600;}
+.hol-note{font-size:11px;color:var(--ink-muted);}
+.hol-locked{font-size:10px;color:var(--ink-faint);font-style:italic;margin-left:auto;}
 /* The Working Hours window, once Recording Hours decides it: a summary to read,
    not a form to fill. Time inputs were wrong for this even disabled — a day
    ending at midnight is 24:00, which <input type=time> refuses, so the field
@@ -2968,6 +2981,15 @@ const SETTINGS_SECTIONS = [
      see the catalogue entry. Listed here like any other section so that a
      designation explicitly granted it can reach the Settings tab at all. */
   { permission:'settings.recording_hours', label:'Recording Hours', heading:'Recording Hours', note:'The named windows the clock runs in, and the ones it stops for. Any number of each.' },
+  /* THE ONLY SECTION IN THIS LIST EVERYBODY REACHES. settings.holidays_view is
+     implied for every designation — knowing which days the studio is closed is
+     something anyone needs in order to plan — so this is also what puts the
+     Settings TAB in front of every user. That is deliberate and it is the
+     reason the note says "read-only unless": somebody arriving at Settings for
+     the first time because of this entry should see at once that the calendar
+     is all they can do here. Changing it is settings.holidays, which only the
+     Super Admin holds; the section reads that separately. */
+  { permission:'settings.holidays_view', label:'Holidays', heading:'Holidays', note:'The days the studio is closed \u2014 no work can be started or resumed, and running timers are put down. Read-only unless you manage holidays.' },
   /* Super Admin only, like Recording Hours above and by the same route: a
      permission implied by managePermissions. */
   { permission:'chat.settings', label:'Chat', heading:'Chat', note:'The largest number of people a chat group may hold, studio-wide \u2014 or no limit at all.' },
@@ -4803,7 +4825,7 @@ async function renderTimesheet(){
       ${week.days.map(day=>{
         const pill = TS_STATUS[day.status] || { label: day.status, color:'var(--ink-muted)' };
         const editable = week.mayEdit && !day.locked;
-        return `<div class="ts-day${day.overLong?' over':''}${day.weekend?' weekend':''}">
+        return `<div class="ts-day${day.overLong?' over':''}${day.weekend||day.holiday?' weekend':''}">
           <div class="ts-day-head">
             <span class="ts-day-name">${tsDayName(day.date)}</span>
             <span class="ts-day-date">${tsPretty(day.date)}</span>
@@ -4813,6 +4835,7 @@ async function renderTimesheet(){
           <div class="ts-day-status">
             <span class="status-pill" style="background:${pill.color}22;color:${pill.color};"><span class="d" style="background:${pill.color}"></span>${pill.label}</span>
             ${day.weekend && day.hours ? '<span class="ts-flag">Weekend</span>' : ''}
+            ${day.holiday ? `<span class="ts-flag">${escapeHTML(day.holiday.name)}</span>` : ''}
             ${day.overLong ? `<span class="ts-flag over">Over ${wd.maxHours}h</span>` : ''}
           </div>
           ${day.status==='rejected' && day.rejectionReason ? `
@@ -6472,7 +6495,7 @@ async function renderIdleReport(sections = reportSections()){
       <div class="sub-tabs">${IDLE_PERIODS.map(p=>
         `<button class="sub-tab${p.id===idleState.period?' active':''}" data-period="${p.id}">${p.label}</button>`).join('')}</div>
       <label class="rep-date">Containing <input type="date" id="idle_on" value="${anchor}"></label>
-      <span class="idle-range">${escapeHTML(d.period.label)} · ${d.workingDays} working day${d.workingDays===1?'':'s'} · ${d.expectedHours}h expected each</span>
+      <span class="idle-range">${escapeHTML(d.period.label)} · ${d.workingDays} working day${d.workingDays===1?'':'s'}${d.holidaysInPeriod ? ` (${d.holidaysInPeriod} studio holiday${d.holidaysInPeriod===1?'':'s'} taken out)` : ''} · ${d.expectedHours}h expected each</span>
     </div>`;
 
   const t = d.totals;
@@ -7675,6 +7698,23 @@ function pauseWords(held){
      morning break that stopped the clock — and somebody told the day had ended
      would go looking for what else had gone wrong. `pausedFor` comes from the
      server, which knows the schedule; see describePause in src/work-log.js. */
+  /* A holiday is the third scheduled stop, and it needs its own sentence for
+     exactly the reason the break/day split exists: "the working day ended" read
+     at eleven in the morning on a day the studio is closed sends somebody
+     looking for what else has gone wrong. `pausedFor` and `holiday` both come
+     from describePause in src/work-log.js, which reads the holiday calendar —
+     the page does no date arithmetic of its own, so it cannot disagree with the
+     clock about which day it is. */
+  if(held.byStudio && held.pausedFor === 'holiday') return {
+    short: held.holiday ? held.holiday.name : 'Studio holiday',
+    lower: 'paused \u2014 studio holiday',
+    title: held.holiday ? `Paused \u2014 ${held.holiday.name}` : 'Paused \u2014 studio holiday',
+    why: held.holiday
+      ? `The studio is closed for ${held.holiday.name}, so the clock is down. A holiday is not recorded as worked time.`
+      : 'The studio is closed today, so the clock is down. A holiday is not recorded as worked time.',
+    opens: held.opensAt ? `It starts again on its own at ${fmtIST(held.opensAt)}.` : '',
+    resumesItself: true,
+  };
   if(held.byStudio) return held.pausedFor === 'break' ? {
     short: 'Break',
     lower: 'paused \u2014 break',
@@ -10389,6 +10429,7 @@ async function renderSettings(){
     ${lists.map(sec=>renderRefSection(sec)).join('')}
     ${can('settings.branding') ? '<div id="brandingSection"></div>' : ''}
     ${can('settings.recording_hours') ? '<div id="recordingHoursSection"></div>' : ''}
+    ${can('settings.holidays_view') ? '<div id="holidaysSection"></div>' : ''}
     ${can('chat.settings') ? '<div id="chatSettingsSection"></div>' : ''}
     ${can('settings.mis_access') ? '<div id="misAccessSection"></div>' : ''}
     ${can('settings.working_hours') ? '<div id="scheduleSection"></div>' : ''}
@@ -10406,6 +10447,7 @@ async function renderSettings(){
   wireSettings();
   if(can('settings.branding')) renderBranding();
   if(can('settings.recording_hours')) renderRecordingHours();
+  if(can('settings.holidays_view')) renderHolidays();
   if(can('chat.settings')) renderChatSettings();
   if(can('settings.mis_access')) renderMisAccess();
   if(can('settings.working_hours')) renderSchedule();
@@ -13056,6 +13098,193 @@ async function renderRecordingHours(){
    against them and the Time Sheet draws its form from them, so all three are
    dropped rather than left to go stale behind a tab nobody has reopened. */
 function rhScheduleChanged(){
+  SCHEDULE = null;
+  idleState.data = null;
+  tsState.week = null;
+  if(document.getElementById('scheduleSection')) renderSchedule();
+}
+
+
+/* ---------- Holidays ----------
+
+   The days the studio is closed. Everybody can read this; only a designation
+   holding settings.holidays can change it.
+
+   TWO GATES, TWO KEYS, AND NEITHER IS THE TIER. The section renders behind
+   can('settings.holidays_view') and every control inside it behind
+   can('settings.holidays') — the same two keys the four endpoints in
+   src/routes/holidays.js are gated on, read through the permission list the
+   server sent. That pairing is the whole point: this page carries a note about
+   the same bug appearing three times, always a screen asking caps() about
+   something the API decides from permissions, and Holidays is written so there
+   is nothing for the two sides to disagree about.
+
+   `canManage` comes from the SERVER rather than from can() for the rows'
+   buttons, and both are used deliberately: can() decides whether to draw the
+   form at all (so nothing flashes up for somebody who cannot use it), and the
+   server's answer is what the rows trust. They can only differ if the page's
+   list is stale, and then the server's is the right one.
+
+   `editable` ALSO COMES FROM THE SERVER, per row. A holiday that has begun or
+   passed cannot be edited or removed, and deciding that here would mean
+   comparing dates in the BROWSER's timezone — which for a laptop west of India
+   is yesterday for five and a half hours every day. src/holidays.js answers it
+   on the studio's own calendar and the page just draws what it is told.
+
+   NOTHING HERE IS THE LOCK. Every endpoint is behind requirePermission on the
+   server. This section not rendering, and its buttons not being drawn, are
+   courtesies to the reader. */
+let holState = { data:null, draft:null, errors:{}, typed:{}, busy:false };
+
+function holRowHTML(entry, opts){
+  const key = entry.id || 'new';
+  const errs = holState.errors[key] || [];
+  const t = holState.typed[key];
+  const row = t ? { ...entry, date:t.date, name:t.name, note:t.note } : entry;
+  const errFor = (f)=>{ const e = errs.find(x=>x.field===f); return e ? e.message : ''; };
+  const bad = (f)=> errFor(f) ? ' rh-bad' : '';
+  const may = holState.data.canManage && (opts.isDraft || row.editable);
+  if(!may){
+    /* Read-only, which is what everybody but a Super Admin sees and also what a
+       Super Admin sees for a day that has already begun. One shape for both,
+       because "you cannot change this" and "this can no longer be changed" look
+       the same on a row and differ only in the sentence under it. */
+    return `
+      <div class="rh-row" data-id="${escapeHTML(row.id||'')}">
+        <div class="hol-read">
+          <span class="hol-date">${escapeHTML(row.date||'')}</span>
+          <span class="hol-name">${escapeHTML(row.name||'')}</span>
+          ${row.note ? `<span class="hol-note">${escapeHTML(row.note)}</span>` : ''}
+          ${holState.data.canManage ? '<span class="hol-locked">closed — kept as a record</span>' : ''}
+        </div>
+        ${row.createdByName ? `<div class="rh-meta">Declared by ${escapeHTML(row.createdByName)}</div>` : ''}
+      </div>`;
+  }
+  return `
+    <div class="rh-row" data-key="${escapeHTML(key)}" data-id="${escapeHTML(row.id||'')}">
+      <div class="rh-grid">
+        <div class="rh-f">
+          <label>Date</label>
+          <input type="date" class="narrow${bad('date')}" data-f="date"
+                 min="${escapeHTML(holState.data.earliest||'')}" value="${escapeHTML(row.date||'')}">
+        </div>
+        <div class="rh-f rh-wide">
+          <label>Name</label>
+          <input type="text" class="${bad('name').trim()}" data-f="name" maxlength="120"
+                 placeholder="Diwali" value="${escapeHTML(row.name||'')}">
+        </div>
+        <div class="rh-f rh-wide">
+          <label>Note <span class="rh-opt">optional</span></label>
+          <input type="text" class="${bad('note').trim()}" data-f="note" maxlength="500"
+                 placeholder="Office closed, no on-call" value="${escapeHTML(row.note||'')}">
+        </div>
+        <div class="rh-f rh-act">
+          <button class="btn btn-sm hol-save">${row.id?'Save':'Add'}</button>
+          <button class="icon-btn hol-del" title="${row.id?'Delete this holiday':'Discard this row'}" aria-label="Delete">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+          </button>
+        </div>
+      </div>
+      ${errs.length ? `<div class="rh-errs">${errs.map(e=>`<div class="rh-err">${escapeHTML(e.message)}</div>`).join('')}</div>` : ''}
+      ${row.createdByName ? `<div class="rh-meta">Declared by ${escapeHTML(row.createdByName)}</div>` : ''}
+    </div>`;
+}
+
+function holListHTML(which){
+  const list = holState.data[which] || [];
+  const drafts = which==='upcoming' && holState.draft ? [holState.draft] : [];
+  const heading = which==='upcoming' ? 'Upcoming' : 'Past';
+  const rows = list.map(e=>holRowHTML(e,{isDraft:false}))
+    .concat(drafts.map(e=>holRowHTML(e,{isDraft:true})));
+  return `
+    <div class="rh-list">
+      <div class="rh-head"><h4>${heading}</h4><span class="rh-count">${list.length + drafts.length}</span></div>
+      ${rows.length ? rows.join('') : `<div class="rh-empty">No ${heading.toLowerCase()} holidays.</div>`}
+      ${which==='upcoming' && holState.data.canManage && !holState.draft
+        ? '<button class="btn btn-sm hol-add">+ Add Holiday</button>' : ''}
+    </div>`;
+}
+
+async function renderHolidays(){
+  const el = document.getElementById('holidaysSection');
+  if(!el) return;
+  if(!holState.data){
+    try{ holState.data = await api('/admin/settings/holidays'); }
+    catch(err){ el.innerHTML = `<div class="ref-section"><div class="ref-err">${escapeHTML(err.message)}</div></div>`; return; }
+  }
+  const d = holState.data;
+  el.innerHTML = `
+    <div class="ref-section">
+      <div class="ref-head"><h3>Holidays</h3>${d.canManage?'<span class="rh-badge">Super Admin</span>':''}</div>
+      <div class="ref-note">
+        <strong>A holiday is a day the clock does not run.</strong> Nobody can start or resume work on one,
+        a timer still running when it begins is put down, and the overnight resume waits until the studio
+        opens again. Dates are calendar dates in ${escapeHTML(d.timezone||'IST')} — a holiday begins at
+        midnight and ends at midnight on the studio's own clock, whatever timezone a server or a laptop is set to.
+        ${d.canManage ? `Holidays are declared in advance: the earliest date is <strong>${escapeHTML(d.earliest||'')}</strong>.
+        A day that has begun or passed can no longer be edited or removed, so hours already recorded are never changed.`
+        : 'This list is read-only for your designation.'}
+      </div>
+      ${holListHTML('upcoming')}
+      ${holListHTML('past')}
+    </div>`;
+
+  const add = el.querySelector('.hol-add');
+  if(add) add.onclick = ()=>{ holState.draft = { id:null, date:'', name:'', note:'', editable:true }; renderHolidays(); };
+
+  el.querySelectorAll('.rh-row').forEach(rowEl=>{
+    const saveBtn = rowEl.querySelector('.hol-save');
+    if(!saveBtn) return;                      // a read-only row has no controls
+    const read = ()=>({
+      date: rowEl.querySelector('[data-f="date"]').value || '',
+      name: rowEl.querySelector('[data-f="name"]').value,
+      note: rowEl.querySelector('[data-f="note"]').value,
+    });
+    saveBtn.onclick = async ()=>{
+      if(holState.busy) return;
+      holState.busy = true;
+      const id = rowEl.dataset.id;
+      const key = rowEl.dataset.key;
+      const body = read();
+      // What was typed wins over what was stored, so a refused row keeps its
+      // edits rather than showing an error about values no longer on screen.
+      holState.typed[key] = body;
+      try{
+        const res = id
+          ? await api(`/admin/settings/holidays/${id}`, { method:'PUT', body })
+          : await api('/admin/settings/holidays', { method:'POST', body });
+        delete holState.errors[key];
+        delete holState.typed[key];
+        if(!id) holState.draft = null;
+        holState.data = res;
+        holScheduleChanged();
+        showToast(id ? 'Holiday saved.' : 'Holiday added.');
+      }catch(e){
+        holState.errors[key] = (e.body && e.body.errors) ? e.body.errors : [{ field:null, message:e.message }];
+      }finally{ holState.busy = false; renderHolidays(); }
+    };
+    rowEl.querySelector('.hol-del').onclick = async ()=>{
+      const id = rowEl.dataset.id;
+      if(!id){ holState.draft = null; holState.errors = {}; holState.typed = {}; return renderHolidays(); }
+      if(!confirm('Delete this holiday?\n\nThe clock will run on that day again. '
+        + 'Hours already recorded are not changed.')) return;
+      try{
+        holState.data = await api(`/admin/settings/holidays/${id}`, { method:'DELETE' });
+        holScheduleChanged();
+        showToast('Holiday deleted.');
+      }catch(e){ holState.errors[rowEl.dataset.key] = [{ field:null, message:e.message }]; }
+      renderHolidays();
+    };
+  });
+}
+
+/* Everything downstream of a closed day, invalidated together — the same list
+   rhScheduleChanged drops, and for the same reason: the Idle Report measures
+   available hours against the holidays, the Working Hours summary reads the
+   schedule they are part of, and the Time Sheet labels its rows from them. A
+   tab nobody has reopened would otherwise go on showing the week as it was. */
+function holScheduleChanged(){
   SCHEDULE = null;
   idleState.data = null;
   tsState.week = null;

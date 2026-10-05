@@ -32,6 +32,7 @@
 const { v4: uuid } = require('uuid');
 const workingTime = require('./working-time');
 const workSchedule = require('./work-schedule');
+const holidays = require('./holidays');
 
 /* Why a session ended. Absent on every row written before this change, which is
  * what tells the reports where the meaning of `seconds` switches from active
@@ -710,6 +711,8 @@ function describePause(row) {
   // Only worth saying for the automatic one — somebody who chose to stop knows
   // perfectly well when they can start again.
   const opensAt = byStudio ? nextOpening() : null;
+  // Is the studio shut for a holiday at this moment? See pausedFor below.
+  const closedToday = byStudio ? holidays.at() : null;
   return {
     since: row.ended_at,
     note: row.hold_note || null,
@@ -729,8 +732,24 @@ function describePause(row) {
      * resume later the same IST day is a break, and one on another day is the
      * end of the day or a day the studio does not work. That avoids converting
      * a stored DATETIME, which this module never does — see the note above
-     * AGE. */
-    pausedFor: byStudio ? (sameDayResume(opensAt) ? 'break' : 'day') : null,
+     * AGE.
+     *
+     * THREE scheduled stops now, not two. A holiday reads as 'day' under the
+     * rule above — recording picks up on another date, so it is not a break —
+     * and "the working day ended" is the wrong sentence for somebody looking at
+     * this at eleven in the morning on Diwali, for exactly the reason the
+     * break/day split exists. So a closed day is named, and the panel has a
+     * third sentence and the holiday's own name to put in it.
+     *
+     * Asked of NOW rather than of the pause stamp, deliberately: the question
+     * the screen is answering is "why is my clock down at this moment", and a
+     * session paused last Friday evening that is being looked at on a holiday
+     * is down because of the holiday. */
+    pausedFor: byStudio ? (closedToday ? 'holiday' : (sameDayResume(opensAt) ? 'break' : 'day')) : null,
+    /* The name, so the panel can say which holiday rather than just that it is
+       one. Null on every other kind of pause, which is what lets the page
+       choose its sentence from one field instead of two. */
+    holiday: byStudio && closedToday ? { date: closedToday.date, name: closedToday.name } : null,
   };
 }
 

@@ -638,6 +638,34 @@ module.exports = [
     + 'working day stays on the Working Hours screen: it is what a full day is EXPECTED to be, which the Idle '
     + 'Report divides by, and it is not a window the clock runs in.'),
 
+  h2('7.3d Holidays \u2014 the days the studio is shut'),
+  p('Settings \u2192 Holidays is the studio\u2019s closed-day calendar. A holiday is a day the clock does '
+    + 'not run at all: nobody can start or resume work on one, a timer still going when it begins is put '
+    + 'down at midnight, and the overnight resume waits until the studio opens again. It is the same '
+    + 'mechanism as the lunch blackout above \u2014 a day with no recording windows in it rather than a '
+    + 'second rule \u2014 which is why every figure in the application already understands one.'),
+  table(['What it asks for', 'What it means'], [
+    ['Date', 'A calendar date in IST. The holiday begins at midnight and ends at midnight on the studio\u2019s own clock, whatever timezone a server or a laptop is set to.'],
+    ['Name', 'Required, because it is what the refusal says: "The studio is closed for Diwali today" rather than just "the studio is closed".'],
+    ['Note', 'Optional. Anything the studio wants on the record beside the day.'],
+  ]),
+  bullets([
+    'DECLARED IN ADVANCE. The earliest date the form accepts is tomorrow, and a day that has begun or passed can no longer be edited or removed. That is what protects hours already recorded: a holiday dated over a day somebody has already worked would change what that work was worth.',
+    'ONE PER DATE. A second holiday on the same day is refused and names the one already there.',
+    'NO ANNUAL REPEAT. Each year is entered explicitly, so a fixed-date holiday landing on a Sunday, and a leap day, are decisions the studio makes rather than ones the application guesses.',
+    'EVERYBODY CAN READ IT. View Holidays is on for every designation \u2014 knowing when the studio is shut is something anyone needs in order to plan \u2014 so the Settings tab shows this one section even to somebody who has no other Settings access.',
+    'ONLY A SUPER ADMIN CHANGES IT, by default. Manage Holidays can be handed to a designation in Settings \u2192 Permissions, which is the only way anybody else gets it.',
+  ]),
+  note('What a holiday changes, and what it does not',
+    'A holiday takes the day out of the Idle Report\u2019s expected hours and out of the Admin '
+    + 'Dashboard\u2019s available hours, so nobody is reported idle for a day the studio was closed, and the '
+    + 'report says how many holidays it took out. The Time Sheet labels the day and still lets you file '
+    + 'hours against it, because somebody who did come in should be able to say so.\n\n'
+    + 'It does not change anything already recorded. Seconds on a closed round keep the figure they were '
+    + 'given, which is also why a past date cannot be declared a holiday after the fact.\n\n'
+    + 'Every addition, change and deletion is written to the Activity Log with the holiday before and '
+    + 'after, because a row here stops the clock for the whole studio for a day.'),
+
   h2('7.4 Not before the start date'),
   p('An asset carrying a Start Date cannot be accepted before that day. The button is disabled until then and says '
     + 'which day it is waiting for, and the server refuses an early start as well \u2014 a disabled button is a '
