@@ -2922,8 +2922,9 @@ door open and is ignored when there is none.
 
 ### Suites that place a window relative to now
 
-`tests/recording-schedule.test.js`, `tests/recording-hours.test.js` and
-`tests/late-sweep-hours.test.js` all test code that reads the real clock — the
+`tests/recording-schedule.test.js`, `tests/recording-hours.test.js`,
+`tests/late-sweep-hours.test.js` and one case in `tests/working-hours.test.js`
+all test code that reads the real clock — the
 pause sweep, the automatic resume, and the seconds a session is credited with —
 so their cases cannot use fixed dates. They say "the break started ten minutes
 ago" instead, and build the window from that.
@@ -2942,6 +2943,24 @@ go in through Recording Hours, which has that flag. Anything new that places a
 window relative to now should use those rather than subtracting minutes itself —
 `tests/recording-hours.test.js` checks the builder against every one of the 1440
 minutes a run could start on.
+
+**A fourth suite had the same fault and was found the same way.** The downstream-
+readers case in `tests/working-hours.test.js` placed its blackout at a **fixed**
+00:00–01:00 and relied on a session backdated two hours straddling it. Between
+midnight and one in the morning IST that blackout contains the present moment, so
+`POST /start` opens the session and immediately puts it down again `off_hours` for
+nought seconds, and the case fails with nothing wrong but the hour. It was
+reproduced at 00:45 IST on an untouched tree before being changed. Its window is
+now derived from one `studioMinute()` read, with the blackout from 90 to 30
+minutes ago — wholly inside the span and wholly in the past, so an hour of the two
+is cut out at every hour of the day.
+
+Two details of that fix are worth copying. A window must end **after** now, not
+at it: a span includes its start and not its end, so a window ending at the
+present moment is one the present moment is outside. And it has to go in through
+Recording Hours rather than the legacy four time pairs, because a window placed
+relative to now can cross midnight and only the named windows carry the
+`spansMidnight` flag that makes that storable.
 
 ## Packaging for deployment
 

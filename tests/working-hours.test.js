@@ -38,7 +38,8 @@ const path = require('node:path');
 
 const wt = require('../src/working-time');
 const workSchedule = require('../src/work-schedule');
-const { config, resetSchema, startServer, stopServer, api, sql, openStudio, SKIP_REASON } = require('./helpers');
+const { config, resetSchema, startServer, stopServer, api, sql, openStudio, SKIP_REASON,
+  studioMinute, windowAgo, setRecordingWindows } = require('./helpers');
 
 const cfg = config('workinghours');
 const PAGE = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
@@ -656,7 +657,36 @@ test('recording against the studio clock', { skip: cfg ? false : SKIP_REASON }, 
        This is that claim, checked rather than asserted in a comment: one
        session, half of it outside the window, and every reader agreeing on the
        half that was inside. */
-    await setWindow({ days: [1, 2, 3, 4, 5, 6, 7], from: 0, to: 24 * 60, lunch: ['00:00', '01:00'] });
+    /* THE WINDOW IS ANCHORED TO NOW, and it was not — which made this case fail
+       for an hour a day for reasons that had nothing to do with what it asserts.
+       
+       It used to set a blackout at a FIXED 00:00-01:00 and rely on a session
+       backdated two hours straddling it. Between midnight and one in the morning
+       IST that blackout contains the present moment, so POST /start opens the
+       session and immediately puts it down again off_hours for nought seconds —
+       and `stored > 0` fails with nothing wrong but the clock. Reproduced at
+       00:45 IST on an untouched tree.
+       
+       This is the same fault the three suites in README's "Suites that place a
+       window relative to now" were fixed for, and the same cure: the clock is
+       read ONCE and both ends of every window are derived from that one number.
+       The blackout now sits from 90 to 30 minutes ago — wholly inside the
+       backdated span and wholly in the past, so the present moment is always
+       recordable and exactly an hour of the two is always cut out.
+       
+       It goes in through Recording Hours rather than the legacy four time pairs
+       because a window placed relative to now can cross midnight, and only the
+       named windows carry the spansMidnight flag that makes that storable. */
+    const anchor = studioMinute();
+    await setRecordingWindows(server.base, tok.root, [
+      /* Ending 59 minutes AHEAD, not at now. A span includes its start and not
+         its end, so a window ending exactly at the present moment is one the
+         present moment is outside — POST /start would put the session straight
+         back down. 1380 behind plus 59 ahead is 1439 minutes, which is the most
+         a single window can hold. */
+      { type: 'recording', label: 'All day', ...windowAgo(anchor, 1380, -59) },
+      { type: 'non_recording', label: 'Mid-span break', ...windowAgo(anchor, 90, 30) },
+    ]);
     const asset = await assignedAsset();
     await as('ana', `/assets/${asset}/start`, { method: 'POST' });
     await backdateStart(asset, 120);
@@ -664,6 +694,12 @@ test('recording against the studio clock', { skip: cfg ? false : SKIP_REASON }, 
 
     const stored = Number((await sessions(asset))[0].seconds);
     assert.ok(stored > 0, 'something was recorded');
+    /* AND THE HALF THAT WAS CUT OUT IS THE POINT OF THE CASE, so it is asserted
+       rather than left implied: two hours open, one hour of blackout inside it,
+       an hour recorded. A minute of tolerance because the start and the submit
+       are two real instants. */
+    assert.ok(Math.abs(stored - 3600) <= 60,
+      `an hour of the two was inside the window — got ${stored}s`);
 
     const panel = await workOf(asset, 'root');
     assert.strictEqual(panel.totalSeconds, stored, 'the asset panel');
