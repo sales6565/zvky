@@ -71,7 +71,7 @@ permissions come from their role — there are no per-user grants. Change a role
 and everyone holding it changes together.
 
 The catalogue lives in
-[`src/permission-catalog.js`](src/permission-catalog.js) — 89 permissions in
+[`src/permission-catalog.js`](src/permission-catalog.js) — 90 permissions in
 twelve groups — and the settings live in `role_permissions` as
 `(role_key, permission_key, enabled)`.
 
@@ -159,6 +159,96 @@ the key, and `can()` in the browser knows nothing about tiers, so a page written
 against it would have been a fourth instance of the `caps()`-vs-`can()` bug
 above. Mutation-tested: dropping the server's `requirePermission`, and swapping
 the page's `canManage` for a `caps()` tier read, are both caught.
+
+### The Time Sheet's options, and the two ends of the Time Sheet group
+
+`timesheet.own` is **on for every designation** and is the only permission in the
+application that starts that way: filling in your own hours is not a privilege
+somebody grants you. `timesheet.options` is **Super Admin only**, via
+`managePermissions`.
+
+| Key | Default | What it is |
+| --- | --- | --- |
+| `timesheet.own` | **every designation** | Open the tab, record your own hours |
+| `timesheet.team` | `manageAccess` | Read your team's weeks |
+| `timesheet.all` | `fullAccess` | Read the studio's |
+| `timesheet.options` | **Super Admin** | Decide what the form offers everybody |
+
+A separate key rather than widening an existing one, because nothing about
+managing the options should narrow anybody's ability to log their own time — and
+the three existing keys are all about *whose week you may read*, which is a
+different question from *what the form offers*. Deliberately not
+`manageSettings`: a category retired here leaves every person's Add line form,
+and a back-dating window set here decides whether last month can still be
+corrected.
+
+**One key for both halves of the section.** The policy numbers are
+`/api/admin/settings/timesheet`; the category list goes through the ordinary
+`/api/reference/timesheet-categories`. `timesheet-categories` is the one entry in
+`PERMISSION_BY_PATH` that is not a `settings.*` key, so that a Super Admin
+granting the section does not have to find a second switch somewhere else.
+
+### What is actually an option on the Time Sheet
+
+The inventory, because most of the candidates turned out not to exist:
+
+| Option | Was | Now |
+| --- | --- | --- |
+| Non-project categories | a hardcoded array of five in `src/timesheets.js` | reference data, `timesheet_categories` |
+| Length of a normal day (the soft cap) | `TIMESHEET_MAX_HOURS = 8` | `timesheet_settings.max_day_hours` |
+| Smallest line | `MIN_LINE_HOURS = 0.25` | `min_line_hours` |
+| Largest line | `MAX_LINE_HOURS = 24` | `max_line_hours` |
+| Which days hours can be logged on | `isWeekend()`, fixed | `loggable_days`, default Mon–Fri |
+| How far back a line may be filed | **did not exist** | `backdate_days`, default no limit |
+| How far ahead | **did not exist** | `future_days`, default no limit |
+| Project work vs non-project | `tl_kind` | **fixed** — it is what a line *is*, not a setting |
+| Line statuses and which lock a day | `STATUSES` / `LOCKED` | **fixed** — the submission cycle keys off them by name |
+| Whether a line needs approval | **removed by the studio** | **not re-added** — see the note on `timesheet.approve` |
+| Work type, billable flag, entry type | **never existed** | — |
+
+Every default is the constant it replaced, so a deployment that takes the
+release and never visits Settings behaves identically. The two windows default
+to `NULL`, which means no limit — which is exactly what the application did
+before they existed.
+
+**Existing lines are never re-judged.** Tightening a window refuses *new and
+edited* lines outside it; nothing walks the table looking for lines that would
+now be refused. A rule applied backwards would make a submitted week unopenable
+and a figure already reported unexplainable.
+
+**Two couplings worth knowing.** `max_day_hours` is read by the Working Hours
+validator, which refuses a recording window too short to hold a full timesheet
+day — so raising it past what the windows allow is refused *here*, where the
+person changing it can read why, rather than leaving Working Hours unable to save
+its own current value. And `loggable_days` is deliberately **not** wired to
+`workingDays`: that one drives the Idle Report's expected hours, so coupling them
+would mean widening the timesheet silently changed every utilisation figure in
+the studio.
+
+### Idle: counted in the hours, named apart from them
+
+`idle` is a seeded `timesheet_categories` row with `is_system = 1` — renameable,
+not deactivatable, not deletable, because the week's totals key off it. **The
+code says `'idle'` and never `"Idle"`,** so a studio renaming it to "Bench time"
+changes the dropdown and nothing else.
+
+`kindOf()` in `src/timesheets.js` is the single classifier — `project`,
+`nonProject`, `idle` — and `splitHours()` the single sum, shared by the day
+total, the week total and the exports. Idle **counts toward hours logged** (the
+week really was that long) and is **shown separately** beside the week total.
+
+**There is no productive-or-billable figure for it to be excluded from, and that
+is a finding rather than a decision.** Nothing outside `src/timesheets.js` and
+its route reads `timesheet_entries` — the Efficiency report, the Idle Report, the
+Admin Dashboard and both P&L tabs all read `work_sessions`, which is *measured*
+time between Accept and Submit. The module header has said so from the start:
+"Merging them would make Time Spent mean two things at once." So the consumers
+changed are the day total, the week total and the week payload; the consumers
+deliberately left alone are every report built on `work_sessions`, which already
+reads an idle hour as idle *by its absence* — an idle hour produces no session.
+`tests/timesheet-options.test.js` greps the tree for new readers of
+`timesheet_entries` so that wiring a report to these hours fails there rather
+than silently acquiring an Idle bug.
 
 ### Two permissions called "Mark as Delivered", and they are near opposites
 

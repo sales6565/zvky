@@ -574,6 +574,42 @@ const GROUPS = [
           + 'projects and assets or against non-project time.',
       },
       {
+        /* THE STUDIO'S TIME SHEET POLICY, which is not the same as filling one in.
+         *
+         * What it gates: the non-project category list (add, rename, reorder,
+         * deactivate) and the policy numbers — how long a normal day is, the
+         * smallest and largest a line can be, how far back and how far ahead a
+         * line may be filed, and which days of the week hours can be logged on.
+         *
+         * SUPER ADMIN ONLY by default, through managePermissions — the same
+         * front door settings.recording_hours and settings.ip_blocklist use, and
+         * the only capability the Super Admin tier carries exclusively.
+         * Deliberately NOT manageSettings: that set is every designation already
+         * trusted with the priorities and the branding, and this is not a
+         * dropdown of its own. A category deactivated here disappears from every
+         * person's Add line form, and a back-dating window set here decides
+         * whether last month can still be corrected — studio-wide, for everyone,
+         * at once.
+         *
+         * SEPARATE FROM timesheet.own, WHICH NOBODY LOSES. Everyone keeps
+         * filling in their own hours exactly as before: that key is implied for
+         * every designation and is untouched by this. The three existing keys
+         * are about whose WEEK you may read — your own, your team's, the
+         * studio's — and none of them is about what the form offers. This is the
+         * first that is.
+         *
+         * It is grantable, so a studio that wants its production manager owning
+         * the category list can say so in Settings. */
+        key: 'timesheet.options',
+        label: 'Manage Time Sheet Options',
+        impliedBy: has('managePermissions'),
+        describe: 'Edit the Time Sheet\u2019s own settings: the non-project categories people log '
+          + 'against, how long a normal day is, the smallest and largest a line can be, how far '
+          + 'back and ahead a line may be filed, and which days hours can be logged on. Separate '
+          + 'from filling in your own hours, which every designation can do.',
+        danger: 'These apply to everybody\u2019s Time Sheet at once. Tightening a window stops new lines being filed outside it \u2014 lines already filed are never changed.',
+      },
+      {
         /* Reading your team's weeks, which is not the same as deciding on
            them: a coordinator may need to see where the hours went without
            being the person who signs them off, and a studio should be able to

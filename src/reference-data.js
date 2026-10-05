@@ -65,6 +65,25 @@ const COLLECTIONS = {
     extra: ['color'],
     usedBy: { table: 'project_milestones', column: 'milestone_type' },
   },
+  /* WHAT A TIMESHEET LINE CAN BE WHEN IT IS NOT PROJECT WORK.
+   *
+   * These five were a hardcoded array in src/timesheets.js, whose comment said
+   * why and what the way out was: "Fixed rather than a Settings collection:
+   * these five are what every studio means by them... Moving them into
+   * reference data later is a migration, not a redesign — the column already
+   * holds a key." This is that migration, and the column did indeed already
+   * hold a key, so no existing line needed touching.
+   *
+   * `usedBy` points at timesheet_entries.non_project, which is what makes
+   * "Training is used by 48 lines — deactivate it instead" the answer rather
+   * than a delete that would orphan them.
+   */
+  timesheet_categories: {
+    table: 'timesheet_categories',
+    singular: 'timesheet category',
+    extra: ['color'],
+    usedBy: { table: 'timesheet_entries', column: 'non_project' },
+  },
   roles: {
     table: 'roles',
     singular: 'role',
@@ -79,7 +98,8 @@ const COLLECTION_NAMES = Object.keys(COLLECTIONS);
    the definitions rather than inline in create(), so adding a list of this
    shape is one entry in each place and not a condition somebody has to notice
    inside a function. */
-const PLAIN = ['priorities', 'categories', 'project_categories', 'milestone_types'];
+const PLAIN = ['priorities', 'categories', 'project_categories', 'milestone_types',
+  'timesheet_categories'];
 
 let cache = Object.fromEntries(COLLECTION_NAMES.map((name) => [name, []]));
 let loaded = false;

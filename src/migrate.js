@@ -14,6 +14,7 @@ const branding = require('./branding');
 const workSchedule = require('./work-schedule');
 const recordingHours = require('./recording-hours');
 const chatSettings = require('./chat-settings');
+const timesheetSettings = require('./timesheet-settings');
 const holidays = require('./holidays');
 const integrationIpAllowlist = require('./integration-ip-allowlist');
 const workLog = require('./work-log');
@@ -193,6 +194,24 @@ const REFERENCE_TABLES = {
       is_system TINYINT(1) NOT NULL DEFAULT 0,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE KEY uq_milestone_types_key (\`key\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  /* The Time Sheet's non-project category list.
+     
+     Same shape as the three plain lists above it, and created by the same loop,
+     so a deployment that has never seen this table gets it on the next start.
+     The KEY column is what timesheet_entries.non_project already holds — those
+     lines were written against a hardcoded array using the same five keys, so
+     this table adopts them rather than migrating anything. */
+  timesheet_categories: `CREATE TABLE IF NOT EXISTS timesheet_categories (
+      id CHAR(36) NOT NULL PRIMARY KEY,
+      \`key\` VARCHAR(64) NOT NULL,
+      label VARCHAR(100) NOT NULL,
+      color VARCHAR(16) NULL,
+      position INT NOT NULL DEFAULT 0,
+      is_active TINYINT(1) NOT NULL DEFAULT 1,
+      is_system TINYINT(1) NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_timesheet_categories_key (\`key\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   roles: `CREATE TABLE IF NOT EXISTS roles (
       id CHAR(36) NOT NULL PRIMARY KEY,
@@ -647,6 +666,24 @@ async function ensureReferenceData(db, log) {
      column could not be used at all until somebody visited Settings. Anything
      further is added there. */
   await seedReferenceTable(db, 'milestone_types', defaults.MILESTONE_TYPES, (r) => ({
+    columns: ['id', '`key`', 'label', 'color', 'position', 'is_active', 'is_system'],
+    values: [uuid(), r.key, r.label, r.color, r.position, 1, r.isSystem ? 1 : 0],
+  }), log);
+
+  /* The five that were hardcoded, plus Idle.
+   *
+   * IDEMPOTENT BY KEY, which is the whole mechanism: seedReferenceTable reads
+   * the keys already present and inserts only what is missing. So this runs on
+   * every start and does nothing after the first; and on a database deployed
+   * before Idle existed it adds that one row and leaves the other five, and
+   * every timesheet line already referencing them, exactly as they were. The
+   * UNIQUE key on `key` is the second line of defence if two workers start at
+   * once.
+   *
+   * SEEDED EVEN THOUGH A STUDIO CAN EDIT THE LIST, unlike the two category
+   * lists which start empty: a timesheet nobody can fill in until an admin has
+   * visited Settings is a timesheet nobody fills in. */
+  await seedReferenceTable(db, 'timesheet_categories', defaults.TIMESHEET_CATEGORIES, (r) => ({
     columns: ['id', '`key`', 'label', 'color', 'position', 'is_active', 'is_system'],
     values: [uuid(), r.key, r.label, r.color, r.position, 1, r.isSystem ? 1 : 0],
   }), log);
@@ -2920,6 +2957,52 @@ async function ensureHolidays(db, log) {
   if (Number(rows[0].n) === 0) log('Schema: studio_holidays created (empty — the studio enters its own).');
 }
 
+/* The Time Sheet's policy row.
+ *
+ * ONE ROW, id = 1, exactly as chat_settings is, and absent on a database that
+ * has not migrated — which src/timesheet-settings.js reads as "use the
+ * constants the code always had" rather than as nulls. That distinction is the
+ * reason the row is INSERTed here with the defaults rather than left to appear
+ * on the first save: a reader can then tell "the studio chose no limit" (NULL in
+ * the column) from "nobody has chosen anything" (no row).
+ *
+ * The two window columns are NULL on purpose and that is not a missing default:
+ * there was no back-dating rule and no future-date rule in this application
+ * before, so NULL — meaning no limit — IS the previous behaviour, and a
+ * deployment that upgrades without visiting Settings behaves identically.
+ */
+async function ensureTimesheetSettings(db, log) {
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS timesheet_settings (
+      id              TINYINT      NOT NULL PRIMARY KEY,
+      -- The soft cap the form quotes and the week flags against. Was
+      -- TIMESHEET_MAX_HOURS in src/work-schedule.js, which the Working Hours
+      -- validator still reads through this module.
+      max_day_hours   DECIMAL(5,2) NOT NULL DEFAULT 8,
+      min_line_hours  DECIMAL(5,2) NOT NULL DEFAULT 0.25,
+      max_line_hours  DECIMAL(5,2) NOT NULL DEFAULT 24,
+      -- NULL is "no limit", which is what the application did before these
+      -- existed. A sentinel would have put a magic number into every comparison.
+      backdate_days   INT          NULL,
+      future_days     INT          NULL,
+      -- ISO weekdays as a sorted CSV, like work_schedule.working_days and
+      -- recording_hour_configs.days_of_week. Monday to Friday is what
+      -- isWeekend() hardcoded, so this default changes nothing.
+      loggable_days   VARCHAR(32)  NOT NULL DEFAULT '1,2,3,4,5',
+      updated_by      CHAR(36)     NULL,
+      updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )`));
+  const { rows } = await db.query('SELECT id FROM timesheet_settings WHERE id = 1');
+  if (rows.length) return;
+  await db.query(
+    `INSERT INTO timesheet_settings
+       (id, max_day_hours, min_line_hours, max_line_hours, backdate_days, future_days, loggable_days)
+     VALUES (1, $1, $2, $3, NULL, NULL, $4)`,
+    [timesheetSettings.DEFAULTS.maxDayHours, timesheetSettings.DEFAULTS.minLineHours,
+      timesheetSettings.DEFAULTS.maxLineHours, timesheetSettings.DEFAULTS.loggableDays.join(',')]
+  );
+  log('Schema: timesheet_settings created with the numbers the code already used.');
+}
+
 async function ensureChatSettings(db, log) {
   await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS chat_settings (
       id                TINYINT   NOT NULL PRIMARY KEY,
@@ -3886,6 +3969,11 @@ const STEPS = [
   ['integration contract v1', ensureIntegrationContract],
   ['chat settings', ensureChatSettings],
   ['chat settings mirror', (db) => chatSettings.load(db)],
+  /* After timesheet_entries exists (the lines its policy governs) and after the
+     reference tables, whose timesheet_categories list the form reads beside
+     these numbers. The mirror loads straight after, like every other. */
+  ['timesheet settings', ensureTimesheetSettings],
+  ['timesheet settings mirror', (db) => timesheetSettings.load(db)],
   // After the tables exist, and reading the window from the module that owns it.
   ['chat attachment expiry window', ensureChatExpiryWindow],
   // After users and after role_permissions: it touches a column on one and a

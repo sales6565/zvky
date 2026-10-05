@@ -10,6 +10,24 @@
 // reports, which read measured time (the clock between Accept and Submit).
 // This is declared time, including the parts of a day that are not an asset at
 // all. Merging them would make "Time Spent" mean two things at once.
+//
+// THAT INDEPENDENCE IS WORTH RESTATING, because it answers a question this file
+// keeps being asked: nothing outside this module and its route reads
+// timesheet_entries. Not the Efficiency report, not the Idle Report, not the
+// Admin Dashboard, not either P&L tab — every one of those reads work_sessions.
+// So a new non-project category cannot be "counted by one report and not
+// another": the only aggregates over these hours are the day and week totals
+// below, and the two exports that print them.
+//
+// NOT PURE ANY MORE, and the two things it now reads are in-memory mirrors
+// rather than queries. The non-project category list is reference data a Super
+// Admin manages (src/reference-data.js) and the policy numbers are one row
+// (src/timesheet-settings.js). Both are synchronous property reads, so every
+// function here is still a function of its arguments plus a studio-wide
+// setting, and still testable without a server.
+
+const referenceData = require('./reference-data');
+const timesheetSettings = require('./timesheet-settings');
 
 const WEEK_DAYS = 7;
 
@@ -175,18 +193,62 @@ function isWeekend(iso) {
 
 /* What a day can be spent on that is not a project.
  *
- * Fixed rather than a Settings collection: these five are what every studio
- * means by them, and a timesheet that cannot be filled in until somebody
- * configures a list is a timesheet nobody fills in. Moving them into reference
- * data later is a migration, not a redesign — the column already holds a key. */
-const NON_PROJECT = [
-  { key: 'leave',    label: 'Leave' },
-  { key: 'holiday',  label: 'Holiday' },
-  { key: 'meeting',  label: 'Internal Meeting' },
-  { key: 'training', label: 'Training' },
-  { key: 'admin',    label: 'Admin' },
-];
-const NON_PROJECT_KEYS = NON_PROJECT.map((n) => n.key);
+ * THIS WAS A HARDCODED ARRAY, and the comment that stood here said why and what
+ * the way out would be: "Fixed rather than a Settings collection: these five are
+ * what every studio means by them, and a timesheet that cannot be filled in
+ * until somebody configures a list is a timesheet nobody fills in. Moving them
+ * into reference data later is a migration, not a redesign — the column already
+ * holds a key."
+ *
+ * That is what has happened. timesheet_entries.non_project did already hold a
+ * key, so the reference table ADOPTS the five keys rather than migrating
+ * anything, and no existing line was touched. The seeded-not-empty half of that
+ * reasoning still holds and is honoured: src/migrate.js seeds the list, unlike
+ * the two asset/project category lists which start empty on purpose.
+ *
+ * FUNCTIONS, NOT CONSTANTS, and that is the load-bearing part of the change. A
+ * module-level array captured at import time would go stale the moment an admin
+ * added a category — which is exactly the bug src/reference-data.js exists to
+ * prevent and which its own comment on roles warns about ("re-exported as
+ * functions rather than arrays: a value captured at import time would go stale
+ * the moment one is added"). Both of these read the in-memory mirror, which is a
+ * synchronous property read, so validateEntry stays a pure function of its
+ * arguments plus that mirror.
+ *
+ * INACTIVE CATEGORIES ARE STILL VALID TO *VIEW*, AND NOT TO *FILE*. nonProject()
+ * is what the form's dropdown is built from and what a new line is checked
+ * against — deactivating Training stops new Training lines. labelFor() reads the
+ * whole list including inactive ones, so the forty-eight Training lines already
+ * filed keep saying Training rather than falling back to their raw key. Those
+ * are two different questions and they are answered by two different functions
+ * on purpose.
+ */
+const nonProject = () => referenceData.list('timesheet_categories')
+  .map((e) => ({ key: e.key, label: e.label, color: e.color || null }));
+const nonProjectKeys = () => nonProject().map((n) => n.key);
+
+/* The label to SHOW for a key, including categories that have been retired.
+ * Falls back to the key itself, which is what a line filed against a category
+ * somebody later deleted outright would otherwise render as nothing. */
+const nonProjectLabel = (key) => {
+  if (!key) return '';
+  const found = referenceData.list('timesheet_categories', { includeInactive: true })
+    .find((e) => e.key === key);
+  return found ? found.label : key;
+};
+
+/* THE ONE KEY THE CODE KNOWS BY NAME, and the only one.
+ *
+ * The week's totals split idle time out from project work and from other
+ * non-project time, so this string appears in arithmetic rather than only in a
+ * dropdown. That is exactly why its reference row is is_system: it can be
+ * RENAMED — a studio calling it "Bench time" changes the label and nothing here
+ * notices — but it cannot be deactivated or deleted, because the split would
+ * then read nought while the hours were still being logged.
+ *
+ * Nothing else in this file compares non_project to a literal. If a second one
+ * is ever needed, it goes here beside this and its row gets is_system too. */
+const IDLE = 'idle';
 
 // Where a week can be. A sheet is locked to the person whose it is in exactly
 // two of these, and that is the whole of the approval cycle.
@@ -200,22 +262,27 @@ const LOCKED = ['submitted', 'approved'];
  * because an approval that can be edited afterwards approves nothing. */
 const isLocked = (status) => LOCKED.includes(status);
 
-/* A soft ceiling, as the studio asked. Twenty-four hours in a day is not a
-   rule anybody should be stopped by — a night shift crossing midnight is
-   legitimately logged as a long day — but it is almost always a typo, and the
-   right response to "almost always" is to say so rather than to refuse. */
-const DAY_WARN_HOURS = 24;
+/* DAY_WARN_HOURS = 24 was declared here and read by nothing — not by this
+   module, not by its route, not by the page, and not exported. A constant
+   nothing reads is a claim that something still works this way, so it is gone
+   rather than left to be found again. What actually warns about a long day is
+   maxDayHours, the studio's soft cap, which the day total flags against. */
 
-/* The smallest and largest a line can be.
+/* The smallest and largest a line can be, and the soft day cap, ARE SETTINGS NOW.
  *
- * A quarter of an hour is the finest grain anybody fills a timesheet in at, and
- * a line of nought hours is a line saying nobody worked — refused rather than
- * stored, the same answer the clock version gave a span that subtracted to
- * nothing. Twenty-four is the ceiling on ONE line; the day's soft warning is a
+ * They were the constants MIN_LINE_HOURS = 0.25 and MAX_LINE_HOURS = 24 here,
+ * and TIMESHEET_MAX_HOURS = 8 in src/work-schedule.js. The reasoning that chose
+ * those numbers still stands and has moved to src/timesheet-settings.js with
+ * them, as the defaults: a quarter of an hour is the finest grain anybody fills
+ * a timesheet in at, a line of nought hours is a line saying nobody worked, and
+ * twenty-four is the ceiling on ONE line while the day's soft warning is a
  * separate and much lower number.
- */
-const MIN_LINE_HOURS = 0.25;
-const MAX_LINE_HOURS = 24;
+ *
+ * What changed is who decides. They are read through timesheetSettings.current()
+ * at the moment they are needed rather than captured here, for the same reason
+ * the category list is a function: a Super Admin can change them while the
+ * server is up, and a line filed after that must be judged by the setting in
+ * force when it was filed. */
 
 /* Hours, from whatever the form sent. Accepts "3", "3.5", " 3.50 " and 3.5.
  * Rejects anything that is not a finite number, which is what an empty field
@@ -249,33 +316,116 @@ function parseHours(value) {
  * What survives is the soft eight-hour day, which is a warning and not a wall,
  * and the rule that a line is either project work or non-project time.
  */
-/* Saturday and Sunday are not working days here, and a line cannot be filed on
- * one. Checked in validateEntry rather than at the route so the API and the
- * form give the same answer, and so a client that has not been updated cannot
- * put a row somewhere the screen will not show it. */
-const WEEKEND_REFUSAL = 'The studio does not work weekends, so hours cannot be logged on a Saturday or Sunday.';
+/* WHICH DAYS A LINE MAY BE FILED ON, and this was Saturday and Sunday, fixed.
+ *
+ * It read `isWeekend(date)` — a function of the date alone — while Settings ->
+ * Working Hours has had a configurable set of working days all along. A studio
+ * that works Saturdays could configure one and then not be able to log it. That
+ * inconsistency is now a setting rather than a surprise: loggableDays defaults
+ * to Monday-to-Friday, which is exactly what this refused before, and an admin
+ * can widen it.
+ *
+ * DELIBERATELY ITS OWN SETTING rather than wired to workingDays. Two reasons,
+ * both load-bearing. workingDays drives the Idle Report's expected hours, so
+ * coupling them would mean widening the timesheet silently changed every
+ * utilisation figure in the studio. And they are two questions — which days the
+ * studio RECORDS time on, and which days a person may FILE hours for — that
+ * happen to coincide today.
+ *
+ * Checked in validateEntry rather than at the route, so the API and the form
+ * give the same answer and a client that has not been updated cannot put a row
+ * somewhere the screen will not show it. */
+const isoDayOf = (iso) => {
+  const [y, m, d] = String(iso).split('-').map(Number);
+  const day = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return day === 0 ? 7 : day;
+};
 
-function validateEntry(raw = {}, win) {
+/* Today, on the studio's wall calendar — for the back-dating window.
+ *
+ * IST, like every other date question in this application, and for the reason
+ * src/working-time.js gives: a timesheet date is a day in one office, and a
+ * server in UTC must not decide that yesterday is still today for five and a
+ * half hours. Taken from the same offset rather than a second copy of it. */
+const studioToday = (at = Date.now()) => {
+  const shifted = new Date(at + (5 * 60 + 30) * 60 * 1000);
+  return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, '0')}-${String(shifted.getUTCDate()).padStart(2, '0')}`;
+};
+
+// Whole days between two 'YYYY-MM-DD' dates. Positive when `then` is earlier.
+const daysBefore = (then, today) =>
+  Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${then}T00:00:00Z`)) / 86400000);
+
+function validateEntry(raw = {}, win, { now = Date.now() } = {}) {
   const { maxHours } = windowOf(win);
+  const policy = timesheetSettings.current();
   const date = toISO(raw.date);
   if (!date) return { ok: false, error: 'That is not a date.', field: 'date' };
-  if (isWeekend(date)) return { ok: false, error: WEEKEND_REFUSAL, field: 'date' };
+
+  if (!policy.loggableDays.includes(isoDayOf(date))) {
+    return {
+      ok: false,
+      field: 'date',
+      error: `The studio logs hours on ${policy.loggableDays.length === 7 ? 'every day'
+        : policy.loggableDayNames.join(', ')}, so nothing can be logged on a `
+        + `${timesheetSettings.DAY_NAMES[isoDayOf(date)]}.`,
+    };
+  }
+
+  /* THE TWO WINDOWS, AND WHAT THEY DO NOT TOUCH.
+   *
+   * Both default to no limit, which is what this application did before they
+   * existed, so a deployment that never visits Settings behaves identically.
+   *
+   * EXISTING LINES ARE NEVER RE-JUDGED. A studio that tightens back-dating to
+   * seven days does not invalidate the line somebody filed three weeks ago: the
+   * rule is checked when a line is created or edited, and nothing walks the
+   * table looking for lines that would now be refused. That is the only
+   * defensible reading — a rule applied backwards would make a submitted week
+   * unopenable and a figure already reported unexplainable — and it is the one
+   * the Settings screen states in as many words. */
+  const today = studioToday(now);
+  if (policy.backdateDays !== null) {
+    const behind = daysBefore(date, today);
+    if (behind > policy.backdateDays) {
+      return {
+        ok: false,
+        field: 'date',
+        error: `${date} is ${behind} days ago, and the studio allows lines to be filed up to `
+          + `${policy.backdateDays} day${policy.backdateDays === 1 ? '' : 's'} back. `
+          + 'Lines filed before this rule was set are unaffected.',
+      };
+    }
+  }
+  if (policy.futureDays !== null) {
+    const ahead = -daysBefore(date, today);
+    if (ahead > policy.futureDays) {
+      return {
+        ok: false,
+        field: 'date',
+        error: policy.futureDays === 0
+          ? `${date} is in the future, and the studio does not allow hours to be logged ahead of today.`
+          : `${date} is ${ahead} days ahead, and the studio allows lines up to `
+            + `${policy.futureDays} day${policy.futureDays === 1 ? '' : 's'} ahead.`,
+      };
+    }
+  }
 
   const hours = parseHours(raw.hours);
   if (hours === null) {
     return { ok: false, error: 'Say how many hours, as 3 or 3.5.', field: 'hours' };
   }
-  if (hours < MIN_LINE_HOURS) {
+  if (hours < policy.minLineHours) {
     return {
       ok: false,
       error: hours <= 0
         ? 'A line has to be more than nought hours.'
-        : `The smallest a line can be is ${MIN_LINE_HOURS} of an hour.`,
+        : `The smallest a line can be is ${policy.minLineHours} of an hour.`,
       field: 'hours',
     };
   }
-  if (hours > MAX_LINE_HOURS) {
-    return { ok: false, error: `A single line cannot be more than ${MAX_LINE_HOURS} hours.`, field: 'hours' };
+  if (hours > policy.maxLineHours) {
+    return { ok: false, error: `A single line cannot be more than ${policy.maxLineHours} hours.`, field: 'hours' };
   }
 
   const nonProject = raw.nonProject ? String(raw.nonProject).trim() : null;
@@ -284,8 +434,25 @@ function validateEntry(raw = {}, win) {
   const assetId = raw.assetId || null;
 
   if (nonProject) {
-    if (!NON_PROJECT_KEYS.includes(nonProject)) {
-      return { ok: false, error: 'That is not a category.', field: 'nonProject', allowed: NON_PROJECT_KEYS };
+    /* ACTIVE categories only, which is what makes deactivating one mean
+       something: Training disappears from the dropdown AND is refused on a new
+       line. An old line already holding it keeps rendering, because the label
+       lookup reads the whole list — see nonProjectLabel. */
+    const allowed = nonProjectKeys();
+    if (!allowed.includes(nonProject)) {
+      /* Named differently when the category EXISTS but has been retired, because
+         "that is not a category" is a confusing thing to read about a word that
+         is on screen in last week's rows. */
+      const retired = referenceData.list('timesheet_categories', { includeInactive: true })
+        .find((e) => e.key === nonProject);
+      return {
+        ok: false,
+        field: 'nonProject',
+        error: retired
+          ? `"${retired.label}" is no longer one of the studio's categories. Existing lines keep it; new ones cannot use it.`
+          : 'That is not a category.',
+        allowed,
+      };
     }
     if (projectId || clientId || assetId) {
       return {
@@ -335,6 +502,47 @@ function validateEntry(raw = {}, win) {
   };
 }
 
+/* WHAT KIND OF TIME A LINE IS, in one place.
+ *
+ * Three answers, not two, and the third is the whole of the Idle decision:
+ *
+ *   project   a line against a client, project or asset. Work on the studio's
+ *             own output.
+ *   nonProject  leave, a holiday, a meeting, training, admin — recorded time
+ *             that is not project work but is not idleness either. Somebody was
+ *             doing something.
+ *   idle      nobody had anything to give them. Recorded, and counted in the
+ *             hours logged, because the day really was eight hours long and a
+ *             timesheet that hid them would make the week not add up. But it is
+ *             not work, and a figure that folded it in with training would say
+ *             the studio was busier than it was.
+ *
+ * IT COUNTS TOWARD HOURS LOGGED AND IS SHOWN SEPARATELY. That is the whole
+ * treatment, and it is the whole treatment available: nothing outside this
+ * module reads timesheet_entries, so there is no productive-versus-billable
+ * figure elsewhere for Idle to be excluded from. Saying it is "excluded from
+ * utilisation" would be describing an exclusion from a calculation that does not
+ * exist. The Idle Report and the Admin Dashboard's utilisation are built from
+ * work_sessions, and an idle hour produces no session — which is why they
+ * already read it as idle, by its absence, and why none of them changed.
+ *
+ * KEYED ON 'idle', NEVER ON THE LABEL. A studio renaming it to "Bench time"
+ * changes what the dropdown says and nothing here. */
+const kindOf = (entry) => {
+  const key = entry.nonProject || entry.non_project || null;
+  if (!key) return 'project';
+  return key === IDLE ? 'idle' : 'nonProject';
+};
+
+/* The same split, as three sums. Used by the week totals and by the day total,
+   so a figure on the grid and the same figure in the export cannot disagree. */
+function splitHours(entries) {
+  const out = { project: 0, nonProject: 0, idle: 0 };
+  for (const entry of entries) out[kindOf(entry)] += Number(entry.hours) || 0;
+  const round = (n) => Math.round(n * 100) / 100;
+  return { project: round(out.project), nonProject: round(out.nonProject), idle: round(out.idle) };
+}
+
 /* The totals the grid shows while somebody types, worked out here so the number
    on screen and the number in the export come from one place. Hours arrive from
    MySQL as strings (DECIMAL), which is why everything is put through Number. */
@@ -361,7 +569,15 @@ function totals(entries, date, win) {
        normally open. Both are flagged for whoever approves rather than refused
        at the form, because both are things that genuinely happen. */
     overLong: days.filter((d) => perDay[d] > maxHours),
-    weekend: days.filter((d) => isWeekend(d) && perDay[d] > 0),
+    /* Days the studio does not log hours on that nevertheless have some. Read
+       from the setting rather than from isWeekend, so a studio that logs
+       Saturdays does not have every Saturday flagged for review. */
+    weekend: days.filter((d) => !timesheetSettings.current().loggableDays.includes(isoDayOf(d))
+      && perDay[d] > 0),
+    /* THE SPLIT, over the whole week. This is where Idle becomes visible to a
+       manager: the week's hours, and how many of them were nobody's project,
+       nobody's meeting and nobody's training. */
+    ...splitHours(entries),
   };
 }
 
@@ -376,6 +592,9 @@ function dayTotal(entries, win) {
     lines: entries.length,
     overLong: minutes > maxHours * 60,
     maxHours,
+    // The same three sums the week carries, so a day row and the week footer
+    // read the same arithmetic.
+    ...splitHours(entries),
   };
 }
 
@@ -415,8 +634,16 @@ async function hoursLoggedOn(db, { assetId, userId, exceptId = null }) {
 
 module.exports = {
   WEEK_DAYS,
-  NON_PROJECT,
-  NON_PROJECT_KEYS,
+  /* Functions, not arrays. See the note on nonProject(): a value captured at
+     import time goes stale the moment an admin adds a category. */
+  nonProject,
+  nonProjectKeys,
+  nonProjectLabel,
+  IDLE,
+  kindOf,
+  splitHours,
+  isoDayOf,
+  studioToday,
   STATUSES,
   LOCKED,
   /* The studio's working day, which is now ONE number: how long a day is
@@ -432,9 +659,16 @@ module.exports = {
   parseClock,
   clockLabel,
   isWeekend,
-  MIN_LINE_HOURS,
-  MAX_LINE_HOURS,
-  WEEKEND_REFUSAL,
+  /* The policy numbers moved to src/timesheet-settings.js. Re-exported as
+     getters so the handful of callers that quote them in a message read the
+     studio's setting rather than a constant this module no longer owns. */
+  get MIN_LINE_HOURS() { return timesheetSettings.current().minLineHours; },
+  get MAX_LINE_HOURS() { return timesheetSettings.current().maxLineHours; },
+  /* WEEKEND_REFUSAL was exported here and read by nothing — not the route, not
+     the page, not a test. It was one hardcoded sentence about Saturday and
+     Sunday, and which days may be logged is a setting now, so the sentence is
+     built from that setting inside validateEntry rather than being a constant
+     somebody could quote without it. */
   parseHours,
   weekStart,
   weekDays,

@@ -155,8 +155,10 @@ async function record(userId, workDate, action, actor, detail) {
 function describeLine(row) {
   if (!row) return 'a line';
   if (row.nonProject) {
-    const found = sheets.NON_PROJECT.find((n) => n.key === row.nonProject);
-    return found ? found.label : row.nonProject;
+    /* The label for a key, INCLUDING a category that has since been retired —
+       sheets.nonProjectLabel reads the whole list rather than the active one, so
+       last month's Training lines keep saying Training. */
+    return sheets.nonProjectLabel(row.nonProject);
   }
   const where = [row.clientName, row.projectName].filter(Boolean).join(' / ') || 'a project';
   return row.assetCode ? `${where} · ${row.assetCode}` : where;
@@ -196,6 +198,12 @@ const shapeDay = (day, entries, workDate) => {
     })),
     hours: total.hours,
     overLong: total.overLong,
+    /* THE DAY SPLIT THREE WAYS. dayTotal computes it; this is where it reaches
+       the payload. Spelled out field by field like everything else in this
+       shape rather than spread, so a reader can see what the day carries. */
+    project: total.project,
+    nonProject: total.nonProject,
+    idle: total.idle,
     weekend: sheets.isWeekend(workDate),
     /* THE STUDIO WAS SHUT THAT DAY — a flag, exactly like `weekend` beside it,
      * and for the reason this function's own comment already gives: these are
@@ -227,6 +235,8 @@ const shapeDay = (day, entries, workDate) => {
    the form, its refusals and its hints together, with nothing to redeploy.
    hasLunch is false for a studio with no fixed break, which is a real answer
    and not the same as a lunch hour of length zero. */
+const policy = () => require('../timesheet-settings').current();
+
 const workingDay = () => {
   const win = workSchedule.timesheetWindow();
   return {
@@ -237,6 +247,17 @@ const workingDay = () => {
        worse than no setting. hoursPerDay stays: it is this cap AND what the
        Idle report measures a day against. */
     maxHours: win.maxHours,
+    /* THE POLICY THE FORM HAS TO QUOTE, from the studio's setting rather than
+       from words in the page. "Monday to Friday" was hardcoded in two places on
+       screen while the rule itself was hardcoded in validateEntry; now the form
+       says what the server will actually accept, so a studio that logs Saturdays
+       does not read a hint that contradicts its own settings. */
+    loggableDayNames: policy().loggableDayNames,
+    loggableDays: policy().loggableDays,
+    minLineHours: policy().minLineHours,
+    maxLineHours: policy().maxLineHours,
+    backdateDays: policy().backdateDays,
+    futureDays: policy().futureDays,
   };
 };
 
@@ -284,7 +305,7 @@ router.get('/week', requirePermission('timesheet.own'), async (req, res) => {
       /* Somebody else's sheet is read-only for everybody now. There is no
          decision to make on it — approving was removed, and what replaced the
          way back out of a locked day is the owner's own reopen. */
-      nonProjectTypes: sheets.NON_PROJECT,
+      nonProjectTypes: sheets.nonProject(),
       workingDay: workingDay(),
       days: shaped,
       weekStart: days[0],
@@ -292,15 +313,24 @@ router.get('/week', requirePermission('timesheet.own'), async (req, res) => {
       /* So the screen can say why Saturday and Sunday are not there. */
       weekendOff: true,
       weekHours: Math.round(shaped.reduce((n, d) => n + d.hours, 0) * 100) / 100,
+      /* THE WEEK SPLIT THREE WAYS, which is where Idle becomes visible.
+       *
+       * Computed by sheets.splitHours over the week's RANGE rather than over the
+       * shown days, so it agrees with weekHours above: a filled Saturday that is
+       * shown and a filled Saturday on a studio that has stopped logging
+       * Saturdays both land in the same total. One function, used here and by the
+       * day totals and the exports, so no two of them can split differently. */
+      weekSplit: sheets.splitHours(entries),
     });
   } catch (err) {
     if (!unavailable(err)) throw err;
     console.warn(`[schema] timesheet tables unavailable (${err.code}); the week reads empty.`);
     res.json({
       user: null, mine: true, mayEdit: false, mayDecide: false, unavailable: true,
-      nonProjectTypes: sheets.NON_PROJECT, workingDay: workingDay(),
+      nonProjectTypes: sheets.nonProject(), workingDay: workingDay(),
       days: days.map((d) => shapeDay(null, [], d)),
       weekStart: days[0], weekEnd: days[6], weekHours: 0,
+      weekSplit: { project: 0, nonProject: 0, idle: 0 },
     });
   }
 });
@@ -791,7 +821,10 @@ async function exportRows(req) {
   );
   const statusOf = new Map(dayRows.map((d) => [sheets.toISO(d.date), d.status]));
 
-  const nonProjectLabel = Object.fromEntries(sheets.NON_PROJECT.map((n) => [n.key, n.label]));
+  /* Every category INCLUDING retired ones, because an export covers filed lines
+     and a line filed against a category since deactivated must print its name
+     rather than its key. */
+  const nonProjectLabel = (key) => sheets.nonProjectLabel(key);
   return {
     ok: true,
     person: who[0] || { name: 'Unknown', email: '' },
@@ -806,7 +839,7 @@ async function exportRows(req) {
       Client: r.clientName || '',
       Project: r.projectName || '',
       Asset: r.assetCode ? `${r.assetCode} — ${r.assetName}` : '',
-      Category: r.nonProject ? (nonProjectLabel[r.nonProject] || r.nonProject) : '',
+      Category: r.nonProject ? nonProjectLabel(r.nonProject) : '',
       Hours: Number(r.hours),
       Notes: r.notes || '',
       Status: statusOf.get(sheets.toISO(r.date)) || 'draft',

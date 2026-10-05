@@ -28,6 +28,7 @@ const reportRoutes = require('./routes/reports');
 const brandingRoutes = require('./routes/branding');
 const recordingHoursRoutes = require('./routes/recording-hours');
 const holidayRoutes = require('./routes/holidays');
+const timesheetOptionRoutes = require('./routes/timesheet-options');
 const chatSettingsRoutes = require('./routes/chat-settings');
 const misAccessRoutes = require('./routes/mis-access');
 const outsourceRoutes = require('./routes/outsource');
@@ -162,6 +163,7 @@ app.use('/api/chat-activity', chatActivityRoutes);
 app.use('/api/branding', brandingRoutes);
 app.use('/api/admin/settings/recording-hours', recordingHoursRoutes);
 app.use('/api/admin/settings/holidays', holidayRoutes);
+app.use('/api/admin/settings/timesheet', timesheetOptionRoutes);
 app.use('/api/admin/settings/chat-group-limit', chatSettingsRoutes);
 /* The integration's management screen. Its own mount under /api/admin, and every route
    in it behind settings.integrations — which is not grantable to anybody but the Super

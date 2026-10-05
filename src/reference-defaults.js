@@ -43,6 +43,41 @@ const MILESTONE_TYPES = [
   { key: 'animation', label: 'Animation', color: '#4fb3ff', position: 10, isSystem: false },
 ];
 
+/* WHAT A TIMESHEET DAY CAN BE SPENT ON THAT IS NOT A PROJECT.
+ *
+ * These were a hardcoded array in src/timesheets.js. They are reference data
+ * now, so a studio can add "Recruitment" or retire "Training" in Settings
+ * without a deploy — but they are SEEDED rather than starting empty, unlike the
+ * two category lists, for the reason the old comment gave: "a timesheet that
+ * cannot be filled in until somebody configures a list is a timesheet nobody
+ * fills in."
+ *
+ * position descends, matching every other list here, so the order below is the
+ * order of the dropdown.
+ *
+ * IDLE IS A SYSTEM VALUE and the only one of the six. isSystem means it can be
+ * RENAMED but not deactivated and not deleted — see update() and remove() in
+ * src/reference-data.js. It is protected because code keys off it: the week's
+ * totals split idle time out from project work and from other non-project time,
+ * so a studio that deactivated it would leave that split reading nought while
+ * the hours were still being logged somewhere. The other five are protected the
+ * ordinary way, by `usedBy` — they cannot be deleted while lines reference them,
+ * and deactivating one is a legitimate thing to want.
+ *
+ * The code always says 'idle', never "Idle": a studio renaming it to "Bench
+ * time" or "Unallocated" changes the label and nothing keys off the label. */
+const TIMESHEET_CATEGORIES = [
+  { key: 'leave',    label: 'Leave',            color: '#9b7ef0', position: 60, isSystem: false },
+  { key: 'holiday',  label: 'Holiday',          color: '#4fb3ff', position: 50, isSystem: false },
+  { key: 'meeting',  label: 'Internal Meeting', color: '#2f6f9f', position: 40, isSystem: false },
+  { key: 'training', label: 'Training',         color: '#4c9a75', position: 30, isSystem: false },
+  { key: 'admin',    label: 'Admin',            color: '#6b7a8f', position: 20, isSystem: false },
+  /* Last in the dropdown and lowest in the order: it is the one somebody picks
+     when there was nothing to pick, and it should not sit above the things they
+     might actually have been doing. */
+  { key: 'idle',     label: 'Idle',             color: '#d9822b', position: 10, isSystem: true },
+];
+
 const ROLES = [
   {
     key: "super_admin",
@@ -586,4 +621,4 @@ const ROLES = [
   }
 ];
 
-module.exports = { ASSET_TYPES, PRIORITIES, MILESTONE_TYPES, ROLES };
+module.exports = { ASSET_TYPES, PRIORITIES, MILESTONE_TYPES, TIMESHEET_CATEGORIES, ROLES };

@@ -897,15 +897,40 @@ module.exports = [
   p('The line above the days says what a day is flagged at. It is the studio’s own number rather than a fixed '
     + 'rule of the software: a Super Admin changes it in Settings (chapter 13.2) and the change applies to '
     + 'everybody from that moment.'),
-  note('There is no Saturday or Sunday',
-    'The week shows five cards, Monday to Friday, and the API refuses a line dated to a weekend as well — so '
-    + 'an out-of-date browser cannot put a row somewhere the screen will never show it. The date range at the top '
-    + 'names the days actually shown, not the calendar week behind them.\n\n'
+  note('Which days the week shows is a setting now',
+    'It shows Monday to Friday by default, and a Super Admin can widen it in Settings \u2192 Time Sheet '
+    + 'Options \u2014 a studio that works Saturdays logs them. Whatever is set, the API refuses a line dated '
+    + 'to a day outside it as well, so '
+    + 'an out-of-date browser cannot put a row somewhere the screen will never show it. The hint at the top of '
+    + 'the week names the days actually offered.\n\n'
+    + 'THIS IS NOT THE SAME SETTING as the studio\u2019s working days in Working Hours, and deliberately: that '
+    + 'one is what the Idle Report measures everybody\u2019s available hours against, and widening the Time '
+    + 'Sheet should not quietly change every utilisation figure in the studio.\n\n'
     + 'Weekend WORK is not lost. Time recorded by the timer on a Saturday still counts towards the asset, and the '
     + 'hours it recorded are offered on the next weekday you file against that asset — because the figure is '
     + 'your whole recorded time on the asset, not that one day’s. What is gone is the weekend ROW, not the '
     + 'weekend’s hours. A weekend day that already carries lines from before this change is still shown, so '
     + 'nothing already filed disappears.'),
+
+  h2('9.1a Idle, and the other things a day is not a project'),
+  p('A line is either project work or it is not. A line that is not names a CATEGORY, and the studio\u2019s '
+    + 'list starts with six: Leave, Holiday, Internal Meeting, Training, Admin and <b>Idle</b>. A Super Admin '
+    + 'adds to the list or retires from it in Settings \u2192 Time Sheet Options.'),
+  note('What Idle is for, and how it is counted',
+    'Idle is the honest answer when there was nothing to give somebody. It is recorded time: the day really '
+    + 'was eight hours long, and a timesheet that hid them would not add up \u2014 so idle hours ARE counted '
+    + 'in the day total and in the week total.\n\n'
+    + 'And they are named apart from them. The week total says "incl. 6h idle" beside it, so a manager '
+    + 'reading the week sees the idleness rather than discovering it by reading every line. Idle is also kept '
+    + 'separate from the other non-project time: leave and training are things somebody was doing, and '
+    + 'folding idleness in with them would say the studio was busier than it was.\n\n'
+    + 'IT IS NOT IN THE EFFICIENCY REPORT OR THE DASHBOARD\u2019S UTILISATION, and that needs no setting: '
+    + 'those are built from the timer between Accept and Start and Submit for Review, and an idle hour starts '
+    + 'no timer. They already read it as idle, by its absence.'),
+  bullets([
+    'IDLE CAN BE RENAMED AND NOT RETIRED. Call it "Bench time" or "Unallocated" if that is the studio\u2019s word \u2014 the reports follow the rename, because they are keyed on the row and not on what it is called. It cannot be deactivated or deleted, because the week\u2019s totals count it separately and a studio that retired it would leave that figure reading nought while the hours were still being logged.',
+    'ANY OTHER CATEGORY CAN BE RETIRED, and that is the right way to remove one. It leaves the Add line dropdown at once and new lines cannot use it \u2014 while every line already filed against it keeps showing its name, in the week, in the audit trail and in both exports. A category with lines against it cannot be deleted outright, and the refusal says how many and offers to retire it instead.',
+  ]),
 
   h2('9.2 Adding a line'),
   steps([
@@ -1543,6 +1568,33 @@ module.exports = [
 
   h2('13.1 The Settings index'),
   shot('12-settings-top', 'The Settings page. The index at the top lists what you hold and, greyed, what lives elsewhere.'),
+
+  h2('13.1b Time Sheet Options \u2014 Super Admin'),
+  p('Settings \u2192 Time Sheet Options is two panels. The first is the CATEGORY list \u2014 what a line can '
+    + 'be when it is not project work \u2014 managed exactly as the Scope of Work and Priority lists are: add, '
+    + 'rename, reorder, and retire. The second is the studio\u2019s POLICY: the numbers the Add line form and '
+    + 'the server both enforce.'),
+  table(['Setting', 'What it does'], [
+    ['A normal day', 'The soft cap. A day over it is flagged for whoever reads the sheet, never refused. 8 hours out of the box.'],
+    ['Smallest line', 'Anything less is refused. A quarter of an hour out of the box, which is the finest grain anybody fills a sheet in at.'],
+    ['Largest line', 'On ONE line, not on a day \u2014 a night shift crossing midnight is a legitimately long line. 24 hours out of the box.'],
+    ['Days back', 'How old a date a new line may carry. Blank is no limit, which is how it shipped.'],
+    ['Days ahead', '0 refuses tomorrow; blank allows any date. Blank is how it shipped.'],
+    ['Days hours can be logged on', 'Monday to Friday out of the box. Separate from the studio\u2019s working days in 13.2 \u2014 see below.'],
+  ]),
+  note('Nothing here changes a line that is already filed',
+    'Tightening a window stops NEW and EDITED lines being filed outside it. Last month stays exactly as it was '
+    + 'recorded, and nothing goes looking for lines that would now be refused \u2014 a rule applied backwards '
+    + 'would make a submitted week unopenable and a figure already reported unexplainable.\n\n'
+    + 'The same is true of the category list: retiring one takes it out of the dropdown and refuses new lines '
+    + 'against it, and every line already filed keeps showing its name.'),
+  bullets([
+    'THE DAYS SETTING IS NOT THE STUDIO\u2019S WORKING DAYS. Working Hours (13.2) decides what the TIMER records and what the Idle Report measures everybody\u2019s available hours against. This decides which days a person may FILE hours for. They match out of the box; widening one does not widen the other, which is deliberate \u2014 widening the Time Sheet should not quietly change every utilisation figure in the studio.',
+    'A NORMAL DAY CANNOT EXCEED WHAT THE RECORDING WINDOWS HOLD. Working Hours already refuses a day too short to hold a full timesheet day, and that check reads this number \u2014 so raising it beyond what the windows allow is refused here, where it can say why, rather than leaving Working Hours unable to save its own current value. Widen Recording Hours first.',
+    'IT TAKES Manage Time Sheet Options, which is the Super Admin by default and can be granted to a designation in Settings \u2192 Permissions. It is deliberately NOT one of the permissions that travel with Settings generally: a category retired here leaves every person\u2019s form, and a back-dating window set here decides whether last month can still be corrected.',
+    'FILLING IN YOUR OWN HOURS IS UNAFFECTED. That is a separate permission, on for every designation, and nothing on this screen narrows it.',
+    'EVERY SAVE IS LOGGED, with the whole policy as a sentence before and after.',
+  ]),
 
   h2('13.2 Working hours and lunch'),
   shot('12-settings-working-hours', 'The working-hours control.'),

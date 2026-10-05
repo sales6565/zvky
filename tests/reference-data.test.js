@@ -472,8 +472,28 @@ test('categories are a managed list like the others, starting empty', async () =
      normal asset. */
   const referenceData2 = require('../src/reference-data');
   assert.ok(referenceData2.COLLECTION_NAMES.includes('categories'));
-  assert.ok(!Object.keys(defaults).some((k) => /categor/i.test(k)),
-    'reference-defaults should not seed a category list');
+  /* NARROWED TO THE TWO LISTS THIS IS ABOUT, from a /categor/i match over every
+     export name.
+     
+     The claim is that the ASSET category list and the PROJECT category list ship
+     empty, because the studio's own taxonomy is not something to guess at. The
+     old spelling asserted it by finding no export whose NAME contained
+     "categor", which was the same thing only while those were the only two
+     collections with the word in them — TIMESHEET_CATEGORIES tripped it, and
+     that list is seeded ON PURPOSE for the opposite reason: a timesheet nobody
+     can fill in until an admin has visited Settings is a timesheet nobody fills
+     in (see the note in src/reference-defaults.js). So the two lists are named,
+     and a third empty-by-design list added later is one line here rather than a
+     regex somebody has to decode. */
+  for (const collection of ['categories', 'project_categories']) {
+    const seeded = Object.entries(defaults)
+      .filter(([, value]) => Array.isArray(value) && value.length)
+      .map(([name]) => name);
+    assert.ok(!seeded.includes(collection.toUpperCase()),
+      `reference-defaults should not seed ${collection}`);
+  }
+  assert.ok(!defaults.CATEGORIES && !defaults.PROJECT_CATEGORIES,
+    'neither category list has a seed at all');
 
   const catalog = require('../src/permission-catalog');
   const keys = catalog.GROUPS.flatMap((g) => g.permissions).map((p) => p.key);

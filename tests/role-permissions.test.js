@@ -291,6 +291,25 @@ test('the defaults that are decisions, with the reason for each', () => {
     'delivering outsourced work travels with managing it, and goes no wider');
   assert.notDeepStrictEqual(held('outsource.deliver'), held('review.deliver'),
     'and is not the same grant as delivering to the client');
+
+  /* THE TIME SHEET'S TWO ENDS, and the asymmetry between them is the decision.
+   *
+   * timesheet.own is ON FOR EVERY DESIGNATION and is the only permission in the
+   * application that starts that way — "filling in your own hours is not a
+   * privilege somebody grants you... an account that cannot record its own week
+   * cannot be paid from this system". Nothing about managing the options
+   * narrows it, which is the point of a separate key.
+   *
+   * timesheet.options is SUPER ADMIN ONLY, through managePermissions — the same
+   * front door settings.recording_hours uses and the only capability that tier
+   * carries exclusively. Deliberately NOT manageSettings, which is every
+   * designation already trusted with the priorities and the branding: a category
+   * retired here leaves every person's Add line form, and a back-dating window
+   * set here decides whether last month can still be corrected. */
+  assert.strictEqual(held('timesheet.own').length, ROLES.length,
+    'everybody fills in their own hours');
+  assert.deepStrictEqual(held('timesheet.options'), ['super_admin'],
+    'and one designation decides what the form offers');
 });
 
 test('every permission the catalogue lists is either checked or declared pending', () => {

@@ -91,7 +91,23 @@ function breakMinutes(from = cache) {
    second look. They are both eight, and they are not the same statement — a
    studio could expect eight and only want flagging above ten. Kept here so the
    window can be checked against it in one place. */
+/* THE SOFT DAY CAP IS A SETTING NOW, and this is the default rather than the
+   value. It is read through src/timesheet-settings.js at the moment it is
+   needed — by timesheetWindow() below, and by the validator that refuses a
+   recording window too short to hold a full timesheet day. Required lazily
+   inside those two, not at the top of the file: timesheet-settings requires
+   THIS module for that same validation, and a require up there would be a
+   cycle. */
 const TIMESHEET_MAX_HOURS = 8;
+const timesheetMaxHours = () => {
+  try {
+    return require('./timesheet-settings').current().maxDayHours;
+  } catch (err) {
+    // A deployment whose settings row could not be read keeps the number the
+    // constant always held, which is the studio's real answer.
+    return TIMESHEET_MAX_HOURS;
+  }
+};
 
 /* The studio is in India and the stored times have no timezone in them, so this
    is display only — see the note on current().timezone. */
@@ -322,7 +338,7 @@ function current() {
     })),
     breakMinutes: (shaped ? shaped.breaks : breakWindows())
       .reduce((total, w) => total + (w.end - w.start), 0),
-    maxHours: TIMESHEET_MAX_HOURS,
+    maxHours: timesheetMaxHours(),
     /* The days the studio is shut, which are part of the schedule and not a
        footnote to it. Here as well as on trackingWindow() below because the
        readers split between the two: the timer reads trackingWindow, while the
@@ -359,7 +375,7 @@ function timesheetWindow() {
     breaks: shaped ? shaped.breaks : breakWindows(),
     breakMinutes: (shaped ? shaped.breaks : breakWindows())
       .reduce((total, w) => total + (w.end - w.start), 0),
-    maxHours: TIMESHEET_MAX_HOURS,
+    maxHours: timesheetMaxHours(),
     timezone: TIMEZONE_LABEL,
   };
 }
@@ -533,13 +549,14 @@ function cleanWindow(input) {
      Every break comes off, not just lunch. */
   const breakTotal = set.reduce((t, w) => t + (w.end - w.start), 0);
   const loggable = (end - start) - breakTotal;
-  if (loggable < TIMESHEET_MAX_HOURS * 60) {
+  const cap = timesheetMaxHours();
+  if (loggable < cap * 60) {
     const hours = Math.round((loggable / 60) * 100) / 100;
     return {
       errors: [{
         field: 'dayEnd',
         message: `That leaves ${hours} loggable hours a day, and the Time Sheet allows up to `
-          + `${TIMESHEET_MAX_HOURS}. Widen the day, or shorten the breaks.`,
+          + `${cap}. Widen the day, or shorten the breaks.`,
       }],
     };
   }
@@ -602,7 +619,7 @@ async function save(db, input = {}) {
 }
 
 module.exports = {
-  DEFAULTS, DAY_NAMES, TIMESHEET_MAX_HOURS, TIMEZONE_LABEL, BREAKS,
+  DEFAULTS, DAY_NAMES, TIMESHEET_MAX_HOURS, timesheetMaxHours, TIMEZONE_LABEL, BREAKS,
   breakWindows, breakMinutes,
   load, current, isLoaded, save, trackingWindow, rawWindow,
   cleanHours, cleanDays, cleanWindow, parseDays, parseClock, clockLabel,

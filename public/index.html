@@ -1477,6 +1477,14 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
 .ts-flag{font-size:10px;font-family:'IBM Plex Mono';padding:1px 6px;border-radius:9px;
   background:var(--surface-3);color:var(--ink-muted);}
 .ts-flag.over{background:#e8a33d1f;color:#e8a33d;}
+/* Idle hours, named beside the week total rather than taken out of it. Amber,
+   the same family the long-day flag uses and the same family the Idle category's
+   own seeded colour uses — it says "look at this", not "this is wrong", because
+   idle time is a fact about the week and not a mistake in it. Deliberately not
+   the brand red: a figure wearing the application's own colour would read as the
+   product rather than as a number. */
+.ts-idle{font-size:10.5px;font-family:'IBM Plex Mono';font-weight:400;color:#d9822b;
+  margin-left:4px;white-space:nowrap;}
 .ts-day.weekend{background:var(--surface-1);}
 .ts-sentback{font-size:11.5px;background:#e8402c14;border:1px solid #e8402c44;border-radius:8px;
   padding:7px 9px;color:var(--ink);}
@@ -2989,6 +2997,12 @@ const SETTINGS_SECTIONS = [
      the first time because of this entry should see at once that the calendar
      is all they can do here. Changing it is settings.holidays, which only the
      Super Admin holds; the section reads that separately. */
+  /* The Time Sheet's own options. Listed here like any other section so that a
+     designation granted it and nothing else can reach the Settings tab at all —
+     canOpenSettings() is built from this list, and Working Hours was once
+     missing from it for exactly that reason. One entry for both panels: the
+     category list and the policy numbers share the key. */
+  { permission:'timesheet.options', label:'Time Sheet', heading:'Time Sheet Options', note:'What a non-project line can be, how long a day is, and how far back hours can be filed.' },
   { permission:'settings.holidays_view', label:'Holidays', heading:'Holidays', note:'The days the studio is closed \u2014 no work can be started or resumed, and running timers are put down. Read-only unless you manage holidays.' },
   /* Super Admin only, like Recording Hours above and by the same route: a
      permission implied by managePermissions. */
@@ -4842,8 +4856,21 @@ async function renderTimesheet(){
         tsPretty(week.days[week.days.length-1].date)}, ${week.weekEnd.slice(0,4)}</span>
       ${picker}
       <div class="spacer"></div>
-      <span class="ts-hint">Monday to Friday · hours against an asset are worked out from its recorded time · a day over ${wd.maxHours}h is flagged</span>
-      <span class="ts-total">Week <strong>${week.weekHours}h</strong></span>
+      <span class="ts-hint">${escapeHTML((wd.loggableDayNames||['Monday','Friday']).length===7
+        ? 'Every day' : (wd.loggableDayNames||[]).join(', '))} · hours against an asset are worked out from its recorded time · a day over ${wd.maxHours}h is flagged</span>
+      <span class="ts-total">Week <strong>${week.weekHours}h</strong>${(()=>{
+        /* IDLE, SHOWN SEPARATELY — the whole of what the Idle category is for.
+           It is counted in the week total beside it, because the week really was
+           that long and a figure that hid the hours would not add up; and it is
+           named apart from it, because a manager looking at the week needs to see
+           that six of its hours were nobody's project rather than discovering it
+           by reading every line. Only when there are any, so an ordinary week is
+           not given a figure that says nothing. */
+        const sp = week.weekSplit || {};
+        return Number(sp.idle) > 0
+          ? ` <span class="ts-idle" title="Counted in the week total above. Shown separately because it is recorded time that was not work.">incl. ${sp.idle}h idle</span>`
+          : '';
+      })()}</span>
       ${can('timesheet.own') ? `
         <button class="btn btn-ghost btn-sm" id="ts_xlsx">Excel</button>
         <button class="btn btn-ghost btn-sm" id="ts_pdf">PDF</button>` : ''}
@@ -5017,8 +5044,23 @@ function openTimesheetLine(day){
   document.getElementById('tl_hours').value = '';
   tlLockHours(false);
   document.getElementById('tl_suggest').textContent = '';
+  /* THE FORM'S OWN HINT, FROM THE SERVER'S POLICY. It said "Monday to Friday"
+     and a fixed eight hours; both are settings now, and a hint that contradicts
+     what the server will accept is worse than no hint. */
+  const days = (wd.loggableDayNames||[]).length === 7 ? 'Every day'
+    : (wd.loggableDayNames||[]).join(', ');
+  const windowBits = [];
+  if(wd.backdateDays !== null && wd.backdateDays !== undefined){
+    windowBits.push(`up to ${wd.backdateDays} day${wd.backdateDays===1?'':'s'} back`);
+  }
+  if(wd.futureDays !== null && wd.futureDays !== undefined){
+    windowBits.push(wd.futureDays === 0 ? 'nothing ahead of today'
+      : `up to ${wd.futureDays} day${wd.futureDays===1?'':'s'} ahead`);
+  }
   document.getElementById('tl_window').textContent =
-    `Monday to Friday. A day over ${wd.maxHours} hours is flagged, not refused. Pick an asset and its hours are worked out for you; leave, training and time with no asset are typed in.`;
+    `${days}. A day over ${wd.maxHours} hours is flagged, not refused.`
+    + (windowBits.length ? ` Lines can be filed ${windowBits.join(' and ')}.` : '')
+    + ' Pick an asset and its hours are worked out for you; leave, training and time with no asset are typed in.';
   document.getElementById('tl_cat').innerHTML =
     (w.nonProjectTypes||[]).map(n=>`<option value="${n.key}">${escapeHTML(n.label)}</option>`).join('');
   document.getElementById('tl_client').innerHTML =
@@ -10412,6 +10454,30 @@ const REF_SECTIONS = [
     ],
   },
   {
+    /* THE TIME SHEET'S NON-PROJECT CATEGORIES, and the whole of the list half of
+       "all editable options of the Time Sheet".
+       
+       An entry here is the entire change: this registry already gives every list
+       add, rename, reorder, deactivate, and a delete that refuses anything in
+       use and offers deactivation instead — which is exactly what the brief asks
+       for a category with lines against it. Nothing about the component had to
+       be extended.
+       
+       NOT a settings.* permission, unlike every other row in this list. Managing
+       the Time Sheet's options is a Time Sheet decision and the catalogue has a
+       group for it; splitting the categories under Settings and the policy
+       numbers under Time Sheet would mean a Super Admin granting one and hunting
+       for the other. The policy numbers are the panel immediately below. */
+    collection: 'timesheet-categories',
+    permission: 'timesheet.options',
+    title: 'Time Sheet Categories',
+    note: 'What a Time Sheet line can be when it is not project work \u2014 the Category dropdown on Add line. Retiring one takes it out of the dropdown; lines already filed against it keep showing it. "Idle" is built in and can be renamed but not retired, because the week\u2019s totals count it separately.',
+    columns: [
+      { key:'label', label:'Name',   input:'text', placeholder:'e.g. Recruitment', required:true },
+      { key:'color', label:'Colour', input:'color' },
+    ],
+  },
+  {
     /* The stages a project is planned in. Sits after the two category lists
        because it is read the same way — a short list of labels somebody adds
        to — and before Roles, which is the one panel on this screen that changes
@@ -10467,6 +10533,7 @@ async function renderSettings(){
     ${can('settings.branding') ? '<div id="brandingSection"></div>' : ''}
     ${can('settings.recording_hours') ? '<div id="recordingHoursSection"></div>' : ''}
     ${can('settings.holidays_view') ? '<div id="holidaysSection"></div>' : ''}
+    ${can('timesheet.options') ? '<div id="timesheetOptionsSection"></div>' : ''}
     ${can('chat.settings') ? '<div id="chatSettingsSection"></div>' : ''}
     ${can('settings.mis_access') ? '<div id="misAccessSection"></div>' : ''}
     ${can('settings.working_hours') ? '<div id="scheduleSection"></div>' : ''}
@@ -10485,6 +10552,7 @@ async function renderSettings(){
   if(can('settings.branding')) renderBranding();
   if(can('settings.recording_hours')) renderRecordingHours();
   if(can('settings.holidays_view')) renderHolidays();
+  if(can('timesheet.options')) renderTimesheetOptions();
   if(can('chat.settings')) renderChatSettings();
   if(can('settings.mis_access')) renderMisAccess();
   if(can('settings.working_hours')) renderSchedule();
@@ -13326,6 +13394,133 @@ function holScheduleChanged(){
   idleState.data = null;
   tsState.week = null;
   if(document.getElementById('scheduleSection')) renderSchedule();
+}
+
+
+/* ---------- Time Sheet options ----------
+
+   The policy half of "all editable options of the Time Sheet". The non-project
+   CATEGORY list is the panel above this one, drawn by the ordinary reference-list
+   component from its REF_SECTIONS entry — there is no second implementation of
+   add/rename/reorder/deactivate here.
+
+   ONE GATE, ONE KEY. The section renders behind can('timesheet.options') and so
+   does every control in it, which is the same key requirePermission uses on both
+   routes — /api/admin/settings/timesheet and /api/reference/timesheet-categories.
+   The tier is not consulted anywhere: this page carries a note about that bug
+   appearing four times now, always a screen asking caps() about something the
+   API decides from permissions.
+
+   WHAT THE NUMBERS MEAN IS SAID ON SCREEN, not left to a tooltip. Two of them
+   change what the form will accept for everybody, and one of those — the
+   back-dating window — decides whether last month can still be corrected. The
+   panel says plainly that tightening it leaves existing lines alone.
+
+   NOTHING HERE IS THE LOCK. Both endpoints are behind requirePermission. */
+let tsoState = { data:null, errors:[], busy:false };
+
+async function renderTimesheetOptions(){
+  const el = document.getElementById('timesheetOptionsSection');
+  if(!el) return;
+  if(!tsoState.data){
+    try{ tsoState.data = await api('/admin/settings/timesheet'); }
+    catch(err){ el.innerHTML = `<div class="ref-section"><div class="ref-err">${escapeHTML(err.message)}</div></div>`; return; }
+  }
+  const d = tsoState.data;
+  const s = d.settings;
+  const errFor = (f)=>{ const e = tsoState.errors.find(x=>x.field===f); return e ? e.message : ''; };
+  const bad = (f)=> errFor(f) ? ' rh-bad' : '';
+  const num = (key, label, hint, value)=>`
+    <div class="rh-f">
+      <label>${label}</label>
+      <input type="number" class="narrow${bad(key)}" id="tso_${key}" step="0.25" min="0"
+             max="${d.limits.hours}" value="${escapeHTML(String(value))}">
+      <span class="rh-opt">${hint}</span>
+    </div>`;
+  /* Blank is "no limit", and the placeholder says so rather than leaving an
+     empty box ambiguous. The two windows are the only fields here where empty is
+     a real answer rather than a missing one. */
+  const window = (key, label, hint, value)=>`
+    <div class="rh-f">
+      <label>${label}</label>
+      <input type="number" class="narrow${bad(key)}" id="tso_${key}" step="1" min="0"
+             max="${d.limits.window}" placeholder="no limit"
+             value="${value === null || value === undefined ? '' : escapeHTML(String(value))}">
+      <span class="rh-opt">${hint}</span>
+    </div>`;
+
+  el.innerHTML = `
+    <div class="ref-section">
+      <div class="ref-head"><h3>Time Sheet Options</h3><span class="rh-badge">Super Admin</span></div>
+      <div class="ref-note">
+        <strong>These apply to everybody&rsquo;s Time Sheet.</strong> The categories people log
+        against are the panel above; these are the limits the Add line form and the server both
+        enforce. <strong>Lines already filed are never changed by anything here</strong> &mdash;
+        tightening a window stops new lines being filed outside it and leaves last month exactly
+        as it was recorded.
+      </div>
+      <div class="rh-list">
+        <div class="rh-head"><h4>How long a day and a line can be</h4></div>
+        <div class="rh-grid">
+          ${num('maxDayHours', 'A normal day', 'Flagged above this, never refused.', s.maxDayHours)}
+          ${num('minLineHours', 'Smallest line', 'Anything less is refused.', s.minLineHours)}
+          ${num('maxLineHours', 'Largest line', 'On one line, not on a day.', s.maxLineHours)}
+        </div>
+      </div>
+      <div class="rh-list">
+        <div class="rh-head"><h4>When hours may be filed</h4></div>
+        <div class="rh-grid">
+          ${window('backdateDays', 'Days back', 'How old a date a new line may carry.', s.backdateDays)}
+          ${window('futureDays', 'Days ahead', '0 refuses tomorrow; blank allows any date.', s.futureDays)}
+          <div class="rh-f rh-days">
+            <label>Days hours can be logged on</label>
+            <div class="rh-dayset${bad('loggableDays')}">
+              ${[1,2,3,4,5,6,7].map(n=>`<label class="rh-day"><input type="checkbox" data-tsoday="${n}"${
+                s.loggableDays.includes(n)?' checked':''}><span>${escapeHTML(d.dayNames[n])}</span></label>`).join('')}
+            </div>
+            <span class="rh-opt">Separate from the studio&rsquo;s working days, which the Idle Report measures against.</span>
+          </div>
+        </div>
+      </div>
+      ${tsoState.errors.length?`<div class="rh-errs">${tsoState.errors.map(e=>`<div class="rh-err">${escapeHTML(e.message)}</div>`).join('')}</div>`:''}
+      <div class="ref-add" style="margin-top:4px;">
+        <button class="btn btn-brand btn-sm" id="tso_save"${tsoState.busy?' disabled':''}>Save</button>
+        ${s.updatedByName?`<span class="rh-opt">Last changed by ${escapeHTML(s.updatedByName)}</span>`:''}
+      </div>
+    </div>`;
+
+  document.getElementById('tso_save').onclick = async ()=>{
+    if(tsoState.busy) return;
+    tsoState.busy = true;
+    const val = (key)=>document.getElementById('tso_'+key).value;
+    const body = {
+      maxDayHours: val('maxDayHours'),
+      minLineHours: val('minLineHours'),
+      maxLineHours: val('maxLineHours'),
+      /* Sent as '' rather than omitted when blank, because an absent field means
+         "leave this as it was" to the validator and an empty one means "no
+         limit". Those are different intentions and the form has to say which. */
+      backdateDays: val('backdateDays'),
+      futureDays: val('futureDays'),
+      loggableDays: [...el.querySelectorAll('[data-tsoday]:checked')].map(i=>Number(i.dataset.tsoday)),
+    };
+    try{
+      tsoState.data = await api('/admin/settings/timesheet', { method:'PUT', body });
+      tsoState.errors = [];
+      /* Everything downstream of these numbers, dropped together: the Add line
+         form quotes the day cap and the category list, and the week's totals flag
+         against both. A tab left open would otherwise keep enforcing the old
+         policy in its own form while the server enforced the new one. */
+      tsState.week = null;
+      SCHEDULE = null;
+      showToast('Time Sheet options saved.');
+    }catch(e){
+      tsoState.errors = (e.body && e.body.errors) ? e.body.errors : [{ field:null, message:e.message }];
+    }finally{
+      tsoState.busy = false;
+      renderTimesheetOptions();
+    }
+  };
 }
 
 

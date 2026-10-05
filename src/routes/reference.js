@@ -22,6 +22,11 @@ const COLLECTION_BY_PATH = {
   'categories': 'categories',
   'project-categories': 'project_categories',
   'milestone-types': 'milestone_types',
+  /* The Time Sheet's non-project categories. These were a hardcoded array in
+     src/timesheets.js; they are reference data now, so the whole of this
+     route — list, usage, create, rename, reorder, deactivate and the delete
+     that refuses anything in use — serves them with no new endpoint. */
+  'timesheet-categories': 'timesheet_categories',
   priorities: 'priorities',
   roles: 'roles',
 };
@@ -37,6 +42,13 @@ const PERMISSION_BY_PATH = {
   // The stages a project is planned in. Its own key too, for the same reason:
   // the list changes a dropdown for the whole studio.
   'milestone-types': 'settings.milestone_types',
+  /* The one entry in this table that is NOT a settings.* key, and deliberately.
+     Managing the Time Sheet's options is a Time Sheet decision, and the studio
+     already has a permission group for that — see timesheet.options in the
+     catalogue. A settings.timesheet_categories key would have put half of "the
+     Time Sheet's editable options" under Settings and half under Time Sheet,
+     and a Super Admin granting one would have had to find the other. */
+  'timesheet-categories': 'timesheet.options',
   priorities: 'settings.priorities',
   roles: 'settings.roles',
 };
