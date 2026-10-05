@@ -107,8 +107,15 @@ test('the clock rules went with the clock, and nothing pretends otherwise', () =
 test('eight hours is a warning, and under eight is silent', () => {
   /* Soft, as the studio chose. A genuinely long day exists, and a form that
      refuses one teaches somebody to log eight and go home late. */
+  /* THE SPLIT IS PART OF THE DAY NOW, and the whole object is still pinned
+     rather than loosened to a field check: these two lines are project work, so
+     all nine hours land in `project` and the other two sums are nought. That is
+     the assertion that would fail if a line's kind were ever misclassified. */
   assert.deepStrictEqual(sheets.dayTotal([{ hours: 5 }, { hours: 4 }]),
-    { hours: 9, lines: 2, overLong: true, maxHours: 8 });
+    { hours: 9, lines: 2, overLong: true, maxHours: 8, project: 9, nonProject: 0, idle: 0 });
+  // And an idle day, to show which sum moves.
+  assert.deepStrictEqual(sheets.dayTotal([{ hours: 5, nonProject: 'idle' }, { hours: 4 }]),
+    { hours: 9, lines: 2, overLong: true, maxHours: 8, project: 4, nonProject: 0, idle: 5 });
   assert.strictEqual(sheets.dayTotal([{ hours: 8 }]).overLong, false, 'exactly eight is not over');
   // A half day is an ordinary thing and worth no words at all.
   assert.strictEqual(sheets.dayTotal([{ hours: 4 }]).overLong, false);
@@ -118,11 +125,22 @@ test('eight hours is a warning, and under eight is silent', () => {
 test('a weekend line is refused outright', () => {
   /* It used to be taken and marked. The studio does not work weekends, so a
      Saturday is no longer a day the sheet has — and the domain layer is where
-     that is decided, so the API and the form give one answer. */
+     that is decided, so the API and the form give one answer.
+     
+     WHICH DAYS IS A SETTING NOW, and the default is the Monday-to-Friday this
+     case was written against — so the behaviour asserted here is unchanged and
+     only the sentence moved. It used to read "the studio does not work
+     weekends", from an isWeekend() built on the date alone; it is now built from
+     the studio's loggable days, so a studio that logs Saturdays reads a refusal
+     that matches its own settings instead of one contradicting them. The regex
+     follows the new sentence rather than being loosened: what matters is that it
+     names the day it refused. */
   const sat = sheets.validateEntry({ date: '2026-03-07', hours: 2, nonProject: 'admin' });
   assert.strictEqual(sat.ok, false);
   assert.strictEqual(sat.field, 'date');
-  assert.match(sat.error, /does not work weekends/i);
+  assert.match(sat.error, /nothing can be logged on a Saturday/i);
+  assert.match(sat.error, /The studio logs hours on Monday, Tuesday, Wednesday, Thursday, Friday/,
+    'and says which days it does accept');
   assert.strictEqual(sheets.validateEntry({ date: '2026-03-08', hours: 2, nonProject: 'admin' }).ok, false);
   assert.strictEqual(sheets.validateEntry({ date: '2026-03-06', hours: 2, nonProject: 'admin' }).ok, true);
 
@@ -323,10 +341,37 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(first.startLabel, '');
     assert.strictEqual(first.endLabel, '');
 
-    /* One rule travels with the week now, where four used to. The window and
-       the lunch hour went with the clock fields, so a payload still carrying
-       them would mean a form still drawing them. */
-    assert.deepStrictEqual(mine.workingDay, { timezone: 'IST', maxHours: 8 });
+    /* ONE RULE BECAME SIX, and the point of this assertion is unchanged.
+     *
+     * It pinned `{ timezone, maxHours }` to say that the clock times and the
+     * lunch hour had gone with the clock fields — "a payload still carrying
+     * them would mean a form still drawing them". That claim is still what is
+     * being made, and the NEGATIVE half of it is now asserted directly rather
+     * than by the object being exactly two fields: dayStart, dayEnd, lunchStart
+     * and lunchEnd must not be here.
+     *
+     * What IS here is the studio's Time Sheet policy, because the form has to
+     * quote it: which days hours may be logged on, the line limits, and the two
+     * filing windows. Those were constants and a hardcoded isWeekend() before,
+     * so the form said "Monday to Friday" and "8 hours" in words while the
+     * server decided from somewhere else. Keeping the deep-equal and adding the
+     * fields keeps this honest both ways — a seventh field appearing fails here
+     * and has to be justified. */
+    for (const gone of ['dayStart', 'dayEnd', 'lunchStart', 'lunchEnd']) {
+      assert.ok(!(gone in mine.workingDay), `${gone} went with the clock fields`);
+    }
+    assert.deepStrictEqual(mine.workingDay, {
+      timezone: 'IST',
+      maxHours: 8,
+      loggableDays: [1, 2, 3, 4, 5],
+      loggableDayNames: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+      minLineHours: 0.25,
+      maxLineHours: 24,
+      // Null is "no limit", which is what this application did before the two
+      // windows existed and what a studio that has not set one still gets.
+      backdateDays: null,
+      futureDays: null,
+    });
   });
 
   await t.test('a line filed before the change keeps its clock', async () => {
@@ -695,9 +740,13 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
        fillable — refused by the API as well as absent from the week, because a
        client that has not been updated must not be able to put a row somewhere
        the screen will never show it. */
+    /* The default is still Monday to Friday, so this refusal is unchanged — only
+       its wording, which is now built from the studio's loggable-days setting
+       rather than from a hardcoded isWeekend(). A studio that logs Saturdays can
+       now say so, and then reads no refusal at all. */
     const sat = await add('ana', { date: SAT, hours: 2, clientId, projectId });
     assert.strictEqual(sat.status, 400);
-    assert.match(sat.body.error, /does not work weekends/i);
+    assert.match(sat.body.error, /nothing can be logged on a Saturday/i);
     assert.strictEqual(sat.body.field, 'date');
 
     const sun = await add('ana', { date: '2026-03-08', hours: 2, clientId, projectId });

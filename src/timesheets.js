@@ -223,8 +223,31 @@ function isWeekend(iso) {
  * are two different questions and they are answered by two different functions
  * on purpose.
  */
-const nonProject = () => referenceData.list('timesheet_categories')
-  .map((e) => ({ key: e.key, label: e.label, color: e.color || null }));
+/* THE SHIPPED LIST WHEN THE MIRROR HAS NOTHING, which is a real fallback and
+ * not belt-and-braces. An empty cache would make nonProjectKeys() empty, and an
+ * empty allow-list refuses EVERY non-project line with "that is not a
+ * category" — so a request arriving before the mirror loaded, or on a
+ * deployment whose reference table could not be read, would reject leave and
+ * training alike while the dropdown sat empty beside it.
+ *
+ * The same reasoning src/work-log.js gives for its own schedule fallback:
+ * "before the schedule has been loaded... this hands back the defaults, which
+ * are the studio's real answer. So the worst case is the right window rather
+ * than no window." Here the worst case is the six the migration seeds rather
+ * than none of them.
+ *
+ * NO ROWS is the only case this covers. A studio that has genuinely retired
+ * five of the six has one row, which is not empty, and is honoured. */
+const seededCategories = () => require('./reference-defaults').TIMESHEET_CATEGORIES
+  .map((c) => ({ key: c.key, label: c.label, color: c.color || null }));
+
+const nonProject = () => {
+  const held = referenceData.list('timesheet_categories');
+  if (!held.length && !referenceData.list('timesheet_categories', { includeInactive: true }).length) {
+    return seededCategories();
+  }
+  return held.map((e) => ({ key: e.key, label: e.label, color: e.color || null }));
+};
 const nonProjectKeys = () => nonProject().map((n) => n.key);
 
 /* The label to SHOW for a key, including categories that have been retired.
@@ -232,8 +255,8 @@ const nonProjectKeys = () => nonProject().map((n) => n.key);
  * somebody later deleted outright would otherwise render as nothing. */
 const nonProjectLabel = (key) => {
   if (!key) return '';
-  const found = referenceData.list('timesheet_categories', { includeInactive: true })
-    .find((e) => e.key === key);
+  const all = referenceData.list('timesheet_categories', { includeInactive: true });
+  const found = (all.length ? all : seededCategories()).find((e) => e.key === key);
   return found ? found.label : key;
 };
 
