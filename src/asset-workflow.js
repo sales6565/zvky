@@ -189,6 +189,10 @@ const actors = {
   handOver: (ctx) => Boolean(ctx.canHandOver),
   // Whoever signs off that the client has it.
   deliverer: (ctx) => ctx.canDeliver,
+  /* Whoever may hand a freelancer's finished work back into the studio.
+     Its own predicate and its own permission — NOT deliverer above, which is a
+     different act with a different meaning. See the transition. */
+  outsourceDeliverer: (ctx) => Boolean(ctx.canDeliverOutsourced),
   /* The client's round, gated by three separate permissions rather than one.
      Split because they are three different decisions: putting work in front of
      a client, accepting their yes, and passing their no back into the studio.
@@ -499,6 +503,56 @@ const TRANSITIONS = [
     routeTo: 'reviewQueue',
     describe: 'Delivered to the client',
   },
+  {
+    /* --- THE OTHER DELIVERED, AND WHY IT IS NOT THE ONE ABOVE ----------------
+     *
+     * 'deliver' above means the CLIENT has it: approved_for_client -> delivered,
+     * the end of the pipeline. A freelancer handing finished work back to the
+     * studio is the opposite end of the same word. The work is not finished —
+     * nobody inside the studio has looked at it yet — and recording it as
+     * Delivered would tell every board, the Assets List and the project's own
+     * "open work" queries that the client has something they have never seen.
+     *
+     * This was checked rather than assumed. An outsourced asset is in
+     * 'not_started': src/outsource.js refuses to send out a task that has an
+     * internal assignee, and 'assigned' requires one — so Not Assigned is the
+     * only status an outsourced task can hold. POST /assets/bulk/deliver
+     * already refuses it in exactly those terms: "An asset in 'Not Assigned'
+     * cannot be marked delivered — only work the client has approved can be
+     * delivered." The table was already right; what was missing was this.
+     *
+     * WHERE IT LANDS: pending_tl_review. WHO PICKS IT UP: the team lead,
+     * through the review gate they already stand at, with the Approve and
+     * Request Changes they already use.
+     *
+     * An EXISTING status, deliberately, and it is the whole reason nothing
+     * downstream needed changing. Every list that counts or groups statuses —
+     * the board's columns, the Assets List's Active group, the Admin
+     * Dashboard's in-review count, the pending queues, the status CHECK
+     * constraint, the "open work" exclusions in src/routes/idle.js and
+     * src/routes/projects.js — already knows pending_tl_review and already
+     * treats it as work in flight. A new status would have been a new entry in
+     * every one of those, and the one that was forgotten is where this feature
+     * would have half-migrated.
+     *
+     * NO ASSIGNEE, AND THE GATE COPES. canActAtTlGate() guards every read of
+     * asset.assignee_id, so a project's review team can act on this and, on a
+     * project with no named team, any lead who can see the work can. Nobody is
+     * locked out, and nobody is reviewing their own work: the freelancer's
+     * delivery writes no asset_versions row, so submittedCurrentVersion is
+     * false for everybody.
+     *
+     * 'from' is ['not_started'] and not wider on purpose. Delivering twice, or
+     * delivering a task somebody in the studio has taken on since, is then
+     * refused by the table rather than by a check somebody has to remember.
+     */
+    action: 'outsource_delivered',
+    from: ['not_started'],
+    to: 'pending_tl_review',
+    who: 'outsourceDeliverer',
+    routeTo: 'reviewQueue',
+    describe: 'Delivered by the freelancer — ready for team lead review',
+  },
   /* --- the client's own round ---------------------------------------------
    *
    * Approved for Client means the studio is happy with it. What follows is the
@@ -621,6 +675,9 @@ function evaluate(action, ctx, { note } = {}) {
       tl_send_to_client: 'sent straight to the client — that is only possible once a team lead has approved it',
       relay: 'passed on to the assignee — the director\'s notes are only relayed once, from CD Feedbacks',
       deliver: 'marked delivered — only work the client has approved can be delivered',
+      outsource_delivered: 'marked delivered by the freelancer — that is only possible while the task is '
+        + 'Not Assigned, which is where outsourced work sits. A task somebody in the studio has taken on, '
+        + 'or one already in review, is no longer the freelancer\'s to hand back',
       client_sent: 'sent to the client — only work that has been approved for the client can go out',
       client_approved: 'closed off as approved by the client — that is only possible while it is waiting on the client',
       client_changes: 'sent back with the client\'s changes — that is only possible while it is waiting on the client',
@@ -696,6 +753,12 @@ function refusal(transition, ctx) {
       return 'Only the Creative Director can act on it at this stage.';
     case 'deliverer':
       return 'You cannot mark this asset as delivered.';
+    /* Named separately from the one above, because the two are different acts
+       and a person refused one needs to know which. "You cannot mark this as
+       delivered" on the Outsource tab would send somebody to ask for
+       review.deliver, which would not help them. */
+    case 'outsourceDeliverer':
+      return 'You cannot mark outsourced work as delivered on this project.';
     /* Each names its own permission, because all three sit on one status and
        "you cannot do that" would leave the reader unable to tell which of the
        three they are missing. */

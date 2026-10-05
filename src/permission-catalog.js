@@ -865,6 +865,48 @@ const GROUPS = [
           + 'Log with what it was before.',
       },
       {
+        /* MARKING A FREELANCER'S WORK DELIVERED, which is not editing a field.
+         *
+         * WHY IT IS NOT JUST outsource.manage. That permission already lets
+         * somebody set an assignment's status, and it still does for Assigned,
+         * In Progress and Revision Requested. Delivery is different in kind: it
+         * puts the TASK into the team lead's review queue, through the
+         * outsource_delivered transition. That is a studio-wide act with
+         * somebody else's work queue on the other end of it, and a Super Admin
+         * should be able to grant or withhold it on its own.
+         *
+         * THE DEFAULT IS THE SAME PREDICATE outsource.manage USES, word for
+         * word, and that is the decision rather than an accident. The brief's
+         * recommendation was "off by default except for the roles that already
+         * manage outsourcing" — and this predicate IS that set: Lead,
+         * Production, Creative Direction and above. Anything narrower would
+         * have been a REGRESSION dressed as caution: those designations can
+         * already mark an assignment delivered through the edit form today, so
+         * a key they did not hold would mean the same studio act was possible
+         * one way and refused the other. That divergence is the shape of bug
+         * this codebase keeps finding, and it is not worth introducing to look
+         * careful.
+         *
+         * REACH IS STILL THE ROLE'S. canDeliverOutsourced() in
+         * src/permissions.js pairs this key with projectScope exactly as
+         * canMarkDelivered pairs review.deliver with it, so a lead granted this
+         * delivers the outsourced work on their own projects and not the
+         * studio's.
+         *
+         * NOT review.deliver, which is the OTHER delivered: that one says the
+         * client has the work and is the end of the pipeline. This one says a
+         * freelancer has handed work back and the studio has to review it. One
+         * key for both would have meant granting either to grant the other. */
+        key: 'outsource.deliver',
+        label: 'Mark Outsourced Work Delivered',
+        impliedBy: anyOf(has('leadsTeam'), has('deliver'), has('manageUsers')),
+        describe: 'Mark a freelancer\u2019s assignment as delivered, one at a time or several at once. '
+          + 'The task moves to TL Review, where a team lead checks the work as they would an '
+          + 'artist\u2019s. Distinct from Mark as Delivered in the Review group, which means the '
+          + 'client has it \u2014 that is the end of the pipeline, this is the start of a review.',
+        danger: 'This puts the task into the team lead\u2019s review queue, and the task cannot be handed back to the freelancer afterwards without unassigning them.',
+      },
+      {
         key: 'outsource.rates',
         label: 'See Freelancer Pay Rates',
         /* SEPARATE, and narrower than managing the work. This is the same split

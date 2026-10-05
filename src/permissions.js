@@ -656,6 +656,26 @@ async function canMarkDelivered(user, asset) {
   return canAccessProject(user, asset.project_id);
 }
 
+/* Who may hand a freelancer's finished work back into the studio.
+ *
+ * THE SAME SHAPE AS canMarkDelivered ABOVE, and that is the point: a permission
+ * says what somebody may do, their designation says how much of the studio they
+ * may do it to. outsource.deliver opens the action; projectScope decides the
+ * range, so a lead granted it delivers the outsourced work on their own
+ * projects and not the studio's.
+ *
+ * A DIFFERENT KEY from review.deliver, because it is a different act. That one
+ * says the client has the work; this one says a freelancer has handed it back
+ * and the studio must now review it. Reusing the key would have meant granting
+ * one to grant the other.
+ */
+async function canDeliverOutsourced(user, asset) {
+  if (!holds(user, 'outsource.deliver')) return false;
+  const def = roleDef(user.role);
+  if (def && def.projectScope === 'all') return true;
+  return canAccessProject(user, asset.project_id);
+}
+
 // Can this user delete the asset outright?
 async function canDeleteAsset(user, asset) {
   if (!holds(user, 'asset.delete')) return false;
@@ -722,6 +742,7 @@ module.exports = {
   canReviewAsCD,
   canOverrideReview,
   canMarkDelivered,
+  canDeliverOutsourced,
   isReport,
   // Re-exported as functions rather than arrays: roles are managed in Settings
   // now, so a value captured at import time would go stale the moment one

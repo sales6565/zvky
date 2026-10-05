@@ -30,6 +30,10 @@ const crypto = require('crypto');
    is a deliberate act with its own permission check and its own audit entry. */
 const STATUSES = ['assigned', 'in_progress', 'delivered', 'revision_requested'];
 const CANCELLED = 'cancelled';
+/* Named, like CANCELLED above, because three files now ask about this one value
+   — the bulk action, the edit route's refusal, and the screen — and a string
+   spelled out in each is a string one of them will eventually spell wrong. */
+const DELIVERED = 'delivered';
 const STATUS_LABELS = {
   assigned: 'Assigned',
   in_progress: 'In Progress',
@@ -258,19 +262,28 @@ const assignmentRow = (row) => ({
   cancelled: row.status === CANCELLED,
   cancelledByName: row.cancelled_by_name || null,
   cancelledAt: row.cancelled_at || null,
+  /* Who handed the work back and when. Read by the Outsource tab, which has no
+     asset to read the task's own history from — an assignment need not name
+     one. Null on everything delivered before these columns existed, which reads
+     as "we do not know" rather than as a wrong name or a wrong date. */
+  delivered: row.status === DELIVERED,
+  deliveredByName: row.delivered_by_name || null,
+  deliveredAt: row.delivered_at || null,
 });
 
 const ASSIGNMENT_SELECT = `
   SELECT a.*, f.\`name\` AS freelancer_name, f.discipline AS freelancer_discipline,
          p.\`name\` AS project_name,
          s.\`name\` AS asset_name, s.\`code\` AS asset_code, s.man_hours AS asset_man_hours,
-         u.\`name\` AS assigned_by_name, x.\`name\` AS cancelled_by_name
+         u.\`name\` AS assigned_by_name, x.\`name\` AS cancelled_by_name,
+         dv.\`name\` AS delivered_by_name
     FROM outsource_assignments a
     JOIN freelancers f ON f.id = a.freelancer_id
     JOIN projects p    ON p.id = a.project_id
     LEFT JOIN assets s ON s.id = a.asset_id
     LEFT JOIN users u  ON u.id = a.assigned_by
-    LEFT JOIN users x  ON x.id = a.cancelled_by`;
+    LEFT JOIN users x  ON x.id = a.cancelled_by
+    LEFT JOIN users dv ON dv.id = a.delivered_by`;
 
 /* Assignments, narrowed to the projects this reader may see.
  *
@@ -499,6 +512,63 @@ async function cancelAssignment(db, id, userId) {
   return { ok: true, before: current, assignment: await getAssignment(db, id) };
 }
 
+/* HANDING A FREELANCER'S WORK BACK, the assignment half of it.
+ *
+ * ONE DEFINITION OF "THIS WAS DELIVERED", reached from one place. The status
+ * column, the deliverer and the stamp are written together here; the route
+ * above it owns the asset's transition. Splitting it the other way round — a
+ * generic status edit that also moved the asset — would have made a field edit
+ * carry a studio-wide side effect, which is why PUT /assignments/:id now
+ * REFUSES a move into 'delivered' and names this action instead. There is one
+ * way to deliver outsourced work and it is this one.
+ *
+ * REFUSALS, each on its own terms and each cleanly rather than silently:
+ *
+ *   already delivered   409. Delivering twice is not a no-op to be swallowed —
+ *                       it would overwrite the first deliverer and the first
+ *                       stamp with whoever pressed it second.
+ *   cancelled           409. The work was taken back; there is nothing to hand
+ *                       in. Reviving it is the assign flow, not this.
+ *   no such assignment  404.
+ *
+ * AN ASSIGNMENT WITH NO ASSET STILL DELIVERS, and that is a decision rather
+ * than an oversight. The asset link is optional by design — "outsourced work is
+ * sometimes a tracked asset and sometimes a job that never enters the pipeline"
+ * — so ad hoc work has no task to move and no review to go into. Its status
+ * moves, its deliverer is recorded, and `movedAsset` comes back false so the
+ * caller can say so rather than implying a transition that did not happen.
+ */
+async function deliverAssignment(db, id, userId) {
+  const current = await getAssignment(db, id);
+  if (!current) return { ok: false, status: 404, error: 'No such assignment.' };
+  if (current.status === CANCELLED) {
+    return { ok: false, status: 409,
+      error: 'That assignment was cancelled, so there is nothing to deliver. '
+        + 'Give the work out again if the freelancer is back on it.' };
+  }
+  if (current.status === DELIVERED) {
+    return { ok: false, status: 409,
+      error: `${current.freelancerName} already delivered this`
+        + `${current.deliveredAt ? ` on ${String(current.deliveredAt).replace('T', ' ').slice(0, 16)}` : ''}.` };
+  }
+  await db.query(
+    `UPDATE outsource_assignments
+        SET status = $1, delivered_by = $2, delivered_at = NOW()
+      WHERE id = $3`,
+    [DELIVERED, userId || null, id]
+  );
+  return { ok: true, before: current, assignment: await getAssignment(db, id) };
+}
+
+/* Is this assignment one the Mark as Delivered action could reach?
+ *
+ * The page's tick boxes read the same answer off the row, so a box that is
+ * offered can be pressed. Spelled here rather than in two places for the reason
+ * this codebase keeps rediscovering: a screen and a server that each decide the
+ * same thing eventually decide it differently. */
+const isDeliverable = (assignment) =>
+  Boolean(assignment) && assignment.status !== DELIVERED && assignment.status !== CANCELLED;
+
 /* Totals for the tab's own summary: per freelancer, and per freelancer within a
    project. Computed here so the screen and any later invoice read one sum. */
 function summarise(assignments) {
@@ -525,7 +595,8 @@ function summarise(assignments) {
 }
 
 module.exports = {
-  STATUSES, STATUS_LABELS, FREELANCER_STATUSES, HOURS_MAX, CANCELLED, isActive,
+  STATUSES, STATUS_LABELS, FREELANCER_STATUSES, HOURS_MAX, CANCELLED, DELIVERED, isActive,
+  deliverAssignment, isDeliverable,
   validateFreelancer, listFreelancers, getFreelancer, createFreelancer, updateFreelancer,
   validateAssignment, listAssignments, getAssignment, createAssignment, updateAssignment,
   costFor, costForProject, summarise,

@@ -29,6 +29,7 @@ const {
   canReviewAsCD,
   canOverrideReview,
   canMarkDelivered,
+  canDeliverOutsourced,
   canOverrideStage,
   mayAssign,
   canHandOverInReview,
@@ -1048,6 +1049,10 @@ async function contextFor(req, asset) {
     // canHandOverInReview. The reviewer holding it counts, not just the creator.
     canHandOver: await canHandOverInReview(req.user, asset),
     canDeliver: await canMarkDelivered(req.user, asset),
+    /* The freelancer's hand-back, which is NOT the delivery above. Its own
+       permission paired with project reach, the same way canMarkDelivered is —
+       see the outsource_delivered transition for why the two are separate. */
+    canDeliverOutsourced: await canDeliverOutsourced(req.user, asset),
     // The two halves of the Creative Director's gate, from the role's
     // permissions rather than from its tier.
     canReviewCd: canReviewAsCD(req.user),
@@ -1240,6 +1245,164 @@ router.post('/bulk/deliver', async (req, res) => {
   console.log(
     `${req.user.email} delivered ${delivered} of ${ids.length} asset(s) in one action `
     + `(batch ${batchId}${delivered < ids.length ? `; refused: ${results.filter((r) => !r.ok).map((r) => r.code || r.id).join(', ')}` : ''}).`
+  );
+
+  res.json({ batchId, requested: ids.length, delivered, failed: ids.length - delivered, results });
+});
+
+/* POST /api/assets/bulk/outsource-deliver — a freelancer has handed work back.
+ *
+ * body: { assignmentIds: [...], note? }
+ *
+ * HERE, BESIDE THE OTHER TWO BULK ROUTES, and above every '/:id/...' route, for
+ * the reason the note on bulk/deliver gives: Express matches in definition
+ * order, so a '/bulk/...' path below them answers "Asset not found" with
+ * id = "bulk". It is also where contextFor, workflow.evaluate and
+ * applyTransition live, and reimplementing those in the outsource route to keep
+ * the file tidy is exactly how a second definition of "move an asset" would get
+ * written — the thing this codebase keeps paying for.
+ *
+ * IT TAKES ASSIGNMENT IDS, not asset ids, because the Outsource tab's rows are
+ * assignments and some of them have no asset at all. The asset link is optional
+ * by design — "outsourced work is sometimes a tracked asset and sometimes a job
+ * that never enters the pipeline" — so an ad hoc assignment delivers its own
+ * status and moves no task, and says so with movedAsset: false rather than
+ * implying a transition that did not happen.
+ *
+ * SHAPED LIKE bulk/deliver DELIBERATELY: one request, one result per row,
+ * successes kept when a sibling is refused, and a batch row recording who, when,
+ * how many were asked for and how many landed. A producer handing back twenty
+ * assignments should not lose nineteen because the twentieth was already
+ * delivered.
+ *
+ * TWO GATES, AND BOTH EARN THEIR PLACE. requirePermission('outsource.deliver')
+ * on the route answers 403 once for somebody who does not hold the key at all,
+ * rather than 200 with every row refused for the same reason — and it is the
+ * gate the page mirrors with can(). The per-row check below it is the REACH:
+ * projectScope is per project and a middleware cannot ask it, so
+ * canDeliverOutsourced is asked again for each assignment's own project.
+ *
+ * THE ORDER OF THE TWO WRITES IS LOAD-BEARING. Everything that can REFUSE —
+ * reach, the assignment's own state, the project's, and the state machine — is
+ * asked before anything is written, so a refusal leaves both halves untouched.
+ * The asset moves first and the assignment second; a process that died between
+ * them would leave a task in TL Review whose assignment still reads In
+ * Progress, which is visible on both screens and recoverable by pressing the
+ * button again, rather than the reverse (an assignment that claims delivery of
+ * work nobody can find).
+ */
+const BULK_OUTSOURCE_DELIVER_MAX = 200;
+
+router.post('/bulk/outsource-deliver', requirePermission('outsource.deliver'), async (req, res) => {
+  const { assignmentIds, note } = req.body || {};
+  if (!Array.isArray(assignmentIds) || !assignmentIds.length) {
+    return res.status(400).json({
+      error: 'Choose at least one assignment to mark delivered.', field: 'assignmentIds' });
+  }
+  // De-duplicated: a list sent twice delivers once and reports once.
+  const ids = [...new Set(assignmentIds.filter((id) => typeof id === 'string' && id))];
+  if (ids.length > BULK_OUTSOURCE_DELIVER_MAX) {
+    return res.status(400).json({
+      error: `That is ${ids.length} assignments. ${BULK_OUTSOURCE_DELIVER_MAX} at a time is the most `
+        + 'this will do in one go.',
+      field: 'assignmentIds',
+    });
+  }
+
+  const batchId = uuid();
+  const results = [];
+  for (const id of ids) {
+    const assignment = await oversightOutsource.getAssignment(db, id);
+    if (!assignment) {
+      results.push({ id, ok: false, error: 'That assignment no longer exists.' });
+      continue;
+    }
+    const label = {
+      id,
+      code: assignment.assetCode || null,
+      name: assignment.assetName || assignment.description || null,
+      freelancerName: assignment.freelancerName,
+    };
+    try {
+      /* THE PERMISSION AND THE REACH, per row and in one question. The key opens
+         the action; projectScope decides the range — so a lead delivering in
+         bulk reaches the outsourced work on their own projects and no further.
+         Asked with the assignment's project because an ad hoc row has no asset
+         to read one from. */
+      if (!(await canDeliverOutsourced(req.user, { project_id: assignment.projectId }))) {
+        results.push({ ...label, ok: false,
+          error: 'You do not have permission to mark outsourced work delivered on that project.' });
+        continue;
+      }
+      /* Already delivered, or cancelled. Refused by name rather than skipped, and
+         the sentence comes from the same place the single-assignment refusal
+         comes from — deliverAssignment() below would say the same thing, and
+         asking it here is how the two cannot word it differently. It refuses
+         before it writes anything, which is what makes calling it safe. */
+      if (!oversightOutsource.isDeliverable(assignment)) {
+        const refused = await oversightOutsource.deliverAssignment(db, id, req.user.id);
+        results.push({ ...label, ok: false,
+          error: refused.error || 'That assignment cannot be delivered.' });
+        continue;
+      }
+      // A closed project refuses every write, in bulk as singly.
+      const { rows: project } = await db.query('SELECT * FROM projects WHERE id = $1', [assignment.projectId]);
+      const shut = project.length ? lifecycle.projectRefusal(project[0]) : null;
+      if (shut) { results.push({ ...label, ok: false, error: shut }); continue; }
+
+      /* THE TASK'S HALF, through the table rather than by writing a status.
+         Evaluated before either write, so a refusal — a task somebody in the
+         studio has taken on since, or one already in review — leaves the
+         assignment alone too. */
+      let verdict = null;
+      let asset = null;
+      if (assignment.assetId) {
+        const { rows: found } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [assignment.assetId]);
+        asset = found[0] || null;
+        if (!asset) {
+          results.push({ ...label, ok: false, error: 'The task this assignment names no longer exists.' });
+          continue;
+        }
+        const ctx = await contextFor(req, asset);
+        verdict = workflow.evaluate('outsource_delivered', ctx, { note });
+        if (!verdict.ok) { results.push({ ...label, ok: false, error: verdict.error }); continue; }
+      }
+
+      if (verdict) await applyTransition(req, res, asset, verdict, { note, batchId });
+      const done = await oversightOutsource.deliverAssignment(db, id, req.user.id);
+      if (!done.ok) { results.push({ ...label, ok: false, error: done.error }); continue; }
+
+      results.push({
+        ...label, ok: true,
+        movedAsset: Boolean(verdict),
+        status: verdict ? verdict.to : null,
+        deliveredAt: done.assignment.deliveredAt,
+      });
+    } catch (err) {
+      // One row failing on something unforeseen must not take the batch with it.
+      console.error(`[outsource deliver] ${id} failed: ${err.stack || err.message}`);
+      results.push({ ...label, ok: false, error: 'Something went wrong delivering this one.' });
+    }
+  }
+
+  const delivered = results.filter((r) => r.ok).length;
+  /* The batch row, written after the fact and holding what actually happened.
+     'outsource_deliver' rather than 'deliver': the two are different acts and a
+     log that called them the same thing could not answer either question. */
+  try {
+    await db.query(
+      `INSERT INTO asset_event_batches (id, action, actor_id, actor_email, requested, succeeded)
+       VALUES ($1,'outsource_deliver',$2,$3,$4,$5)`,
+      [batchId, req.user.id, req.user.email, ids.length, delivered]
+    );
+  } catch (err) {
+    console.warn(`[outsource deliver] could not record the batch ${batchId}: ${err.message}`);
+  }
+
+  console.log(
+    `${req.user.email} marked ${delivered} of ${ids.length} outsourced assignment(s) delivered `
+    + `(batch ${batchId}${delivered < ids.length
+      ? `; refused: ${results.filter((r) => !r.ok).map((r) => r.code || r.id).join(', ')}` : ''}).`
   );
 
   res.json({ batchId, requested: ids.length, delivered, failed: ids.length - delivered, results });

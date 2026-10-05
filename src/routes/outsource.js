@@ -31,6 +31,16 @@ router.use(requirePermission('outsource.view'));
 
 const mayManage = (req) => can(req, 'outsource.manage');
 const maySeeRates = (req) => can(req, 'outsource.rates');
+/* Marking a freelancer's work delivered. Its own key, not outsource.manage —
+   see the catalogue entry: this one moves the TASK into a team lead's review
+   queue, which the other three status values do not.
+
+   THE KEY ALONE IS ENOUGH FOR THE SCREEN, and the reach is not missing from it.
+   listAssignments() has already narrowed the rows to the projects this reader
+   may see, so every row on the page is in reach by construction; the server
+   asks canDeliverOutsourced per row anyway, because a request need not come
+   from the page. */
+const mayDeliver = (req) => can(req, 'outsource.deliver');
 
 const refuseUnlessManager = (req, res) => {
   if (mayManage(req)) return false;
@@ -139,6 +149,12 @@ router.get('/assignments', async (req, res) => {
     statuses: outsource.STATUSES.map((key) => ({ key, label: outsource.STATUS_LABELS[key] })),
     canManage: mayManage(req),
     canSeeRates: maySeeRates(req),
+    canDeliver: mayDeliver(req),
+    /* The one value the edit form must no longer offer, named by the server
+       rather than hardcoded in the page: PUT refuses a move into it and tells
+       the reader to use the action instead, so a dropdown that still listed it
+       would be a control that cannot be used. */
+    deliverViaAction: outsource.DELIVERED,
   });
 });
 
@@ -228,6 +244,38 @@ router.put('/assignments/:id', async (req, res) => {
   if (movingTo && String(movingTo) !== String(existing.assetId || '')) {
     const blocked = await outsource.outsourceBlocked(db, String(movingTo));
     if (blocked) return res.status(409).json({ error: blocked, field: 'assetId' });
+  }
+
+  /* DELIVERY IS NOT A FIELD EDIT, and this is where that is enforced.
+   *
+   * This route would happily have written status = 'delivered' straight into
+   * the column, as it does for the other three — and that is precisely the
+   * "direct status write" the task moves away from. Delivery now also sends the
+   * TASK into the team lead's review queue, through the outsource_delivered
+   * transition, under its own permission and with a deliverer and a stamp
+   * recorded. A generic edit that did all of that as a side effect of one
+   * dropdown would be a field with a studio-wide consequence; one that did only
+   * half of it would leave an assignment claiming delivery of a task nobody had
+   * been asked to review. So there is one way to deliver, and it is named here.
+   *
+   * ONLY A MOVE *INTO* DELIVERED. An assignment that is already delivered stays
+   * editable — the agreed hours may still need correcting, and the form sends
+   * the status back unchanged with every save, so refusing on the value alone
+   * would have frozen those rows entirely.
+   *
+   * NOTHING IS LOST. Everything outsource.manage could do here it can still do;
+   * what was one dropdown is now a button, with the same designations holding
+   * it by default. */
+  const wantsDelivered = body.status === outsource.DELIVERED
+    && existing.status !== outsource.DELIVERED;
+  if (wantsDelivered) {
+    return res.status(409).json({
+      error: 'Use Mark as Delivered to hand a freelancer\u2019s work back. It moves the task to '
+        + 'TL Review for a team lead to check, and records who delivered it and when \u2014 which '
+        + 'editing the status here would not.',
+      field: 'status',
+      useAction: 'outsource_deliver',
+    });
   }
   const result = await outsource.updateAssignment(db, req.params.id, body);
   if (!result.ok) return res.status(result.status).json({ errors: result.errors, error: result.errors[0].message });

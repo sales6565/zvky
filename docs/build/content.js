@@ -1229,6 +1229,31 @@ module.exports = [
     'EVERY UNASSIGN IS LOGGED, with the figure that was agreed before it was taken back.',
   ]),
 
+  h2('11.7b Marking outsourced work delivered'),
+  p('When a freelancer hands work back, mark it delivered from the <b>Assigned work</b> list. '
+    + 'Tick the rows \u2014 one at a time, or the box in the header for all of them \u2014 and press '
+    + '<b>Mark as Delivered</b>. The count is in the button and in the confirmation, so you can see '
+    + 'what is about to happen before it does.'),
+  note('What delivering actually does, and why the task moves',
+    'Two things happen, and the second is the one worth knowing about. The assignment is marked '
+    + 'Delivered, with who delivered it and when on the record. And the TASK moves to <b>TL '
+    + 'Review</b>, where a team lead checks the work exactly as they would an artist\u2019s \u2014 '
+    + 'because a freelancer handing work in is a submission, not a finished job.\n\n'
+    + 'IT IS NOT THE SAME AS "Delivered" ON THE BOARD. That one means the CLIENT has the work and '
+    + 'is the end of the pipeline. This one is the start of a review. They are separate '
+    + 'permissions for that reason: Mark as Delivered in the Review group is the client-facing '
+    + 'one, Mark Outsourced Work Delivered is this.\n\n'
+    + 'AD HOC WORK HAS NO TASK TO MOVE. An assignment that names no asset simply becomes '
+    + 'Delivered, and the confirmation says so before you press it.'),
+  bullets([
+    'ONE BAD ROW DOES NOT LOSE THE REST. Each row succeeds or fails on its own: mark twenty delivered and the one already delivered is named with its reason while the other nineteen go through.',
+    'DELIVERING TWICE IS REFUSED, by name. So is delivering work that was taken back from the freelancer, and a task somebody in the studio has since picked up \u2014 that one is no longer theirs to hand back.',
+    'ONLY ROWS IT CAN REACH GET A BOX. Already delivered or cancelled rows have no tick box at all; the Status beside them says which.',
+    'A SELECTION SURVIVES THE REFRESH. Ticks are kept while the page redraws, and a row that leaves the list \u2014 somebody else delivered it, or it was cancelled \u2014 drops out of the selection rather than being carried into an action that would refuse it.',
+    'IT TAKES Mark Outsourced Work Delivered, which the designations that manage outsourcing hold by default. Reach is still the role\u2019s: a lead delivers the outsourced work on their own projects, and a batch spanning a project they cannot see delivers the half they can and names the rest.',
+    'THE STATUS DROPDOWN NO LONGER DOES IT. Editing an assignment can still set Assigned, In Progress or Revision Requested; Delivered is the button, because only the button moves the task and records the deliverer.',
+  ]),
+
   p('PAY RATES ARE A SEPARATE PERMISSION. Manage Outsourcing lets somebody add freelancers, give '
     + 'them work and set the agreed hours. See Freelancer Pay Rates — the Super Admin by default '
     + '— is what shows the money: the rate, the cost column and the P&L figures above. Without '

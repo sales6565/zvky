@@ -71,7 +71,7 @@ permissions come from their role — there are no per-user grants. Change a role
 and everyone holding it changes together.
 
 The catalogue lives in
-[`src/permission-catalog.js`](src/permission-catalog.js) — 88 permissions in
+[`src/permission-catalog.js`](src/permission-catalog.js) — 89 permissions in
 twelve groups — and the settings live in `role_permissions` as
 `(role_key, permission_key, enabled)`.
 
@@ -159,6 +159,77 @@ the key, and `can()` in the browser knows nothing about tiers, so a page written
 against it would have been a fourth instance of the `caps()`-vs-`can()` bug
 above. Mutation-tested: dropping the server's `requirePermission`, and swapping
 the page's `canManage` for a `caps()` tier read, are both caught.
+
+### Two permissions called "Mark as Delivered", and they are near opposites
+
+This is the one pair in the catalogue most likely to be confused, so it is
+written down rather than left to be worked out from the labels.
+
+| Key | Transition | Means |
+| --- | --- | --- |
+| `review.deliver` (Review group) | `deliver`: `approved_for_client` → `delivered` | **The client has the work.** The end of the pipeline. |
+| `outsource.deliver` (Outsourcing group) | `outsource_delivered`: `not_started` → `pending_tl_review` | **A freelancer has handed work back.** The start of a review. |
+
+Reusing the first for the second would tell every board, the Assets List's
+Active group and both "open work" queries that the client had been sent
+something nobody inside the studio had reviewed. The transition table already
+refuses it — `deliver` is `from: ['approved_for_client']` — and
+`tests/outsource-deliver.test.js` pins that refusal against a running server
+rather than leaving it as a thing somebody once checked.
+
+**An outsourced task is in `not_started` ("Not Assigned"), and that is the only
+status it can hold.** `src/outsource.js` refuses to send out a task that has an
+internal assignee, and `assigned` requires one. So `from: ['not_started']` is
+complete: delivering twice, or delivering a task somebody in the studio has
+taken on since, is refused by the table rather than by a check somebody has to
+remember.
+
+**It lands in an existing status on purpose, and that is what kept the change
+small.** `pending_tl_review` is already known to the board's columns, the Assets
+List's Active group, the Admin Dashboard's Attention Required count, the status
+`CHECK` constraint, and the `NOT IN ('delivered', 'approved_for_client')`
+exclusions in `src/routes/idle.js` and `src/routes/projects.js`. A **new** status
+would have been a new entry in every one of those, and whichever got forgotten is
+where the feature would have half-migrated. The suite greps each of them.
+
+**Who picks it up next: the team lead,** through the review gate they already
+stand at. The task has no assignee — `canActAtTlGate()` guards every read of
+`assignee_id`, so the project's review team can act, and on a project with no
+named team any lead who can see the work can. Nobody reviews their own work
+either: the delivery writes no `asset_versions` row, so `submittedCurrentVersion`
+is false for everybody.
+
+**No timer is closed, because an outsourced task has none** — verified, not
+assumed. A session is only ever opened by `POST /:id/start`, which refuses
+anybody who is not the assignee, and an outsourced task has no assignee by
+construction.
+
+**Delivery is no longer a field edit.** `PUT /api/outsource/assignments/:id`
+refuses a move *into* `delivered` and names the action instead. It used to write
+the column directly, which is the "direct status write" this feature replaces: the
+act now also moves a task into somebody's queue, records a deliverer and a stamp,
+and has its own permission. Only a move *into* the state is refused — a delivered
+assignment stays editable, because the form sends its status back unchanged with
+every save and the agreed hours may still need correcting.
+
+**Bulk shape, lifted from `POST /assets/bulk/deliver`:** one request, one result
+per row, successes kept when a sibling is refused, and an `asset_event_batches`
+row recording who, when, how many were asked for and how many landed — under its
+own action id, `outsource_deliver`, so the two deliveries stay countable apart.
+The endpoint lives in `src/routes/assets.js` beside the other two bulk routes,
+above every `/:id/...` route: Express matches in definition order, and it is also
+where `contextFor`, `workflow.evaluate` and `applyTransition` live. It takes
+**assignment** ids, not asset ids, because the Outsource tab's rows are
+assignments and an assignment need not name an asset at all — ad hoc work moves
+its own status and reports `movedAsset: false` rather than implying a transition
+that did not happen.
+
+**Two gates on the server, and both earn their place.**
+`requirePermission('outsource.deliver')` answers 403 once for somebody without
+the key — and is the gate the page mirrors with `can()`. The per-row
+`canDeliverOutsourced()` is the *reach*: `projectScope` is per project and
+middleware cannot ask it, so a lead delivering a mixed batch gets the half on
+their own projects and a named refusal on the rest.
 
 ### Holidays are part of the schedule, not a check beside it
 

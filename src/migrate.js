@@ -2169,7 +2169,7 @@ async function ensureOutsource(db, log) {
   const { rows: cols } = await db.query(
     `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'outsource_assignments'
-        AND COLUMN_NAME IN ('cancelled_by','cancelled_at')`
+        AND COLUMN_NAME IN ('cancelled_by','cancelled_at','delivered_by','delivered_at')`
   );
   const have = new Set(cols.map((c) => c.COLUMN_NAME));
   if (!have.has('cancelled_by')) {
@@ -2177,6 +2177,21 @@ async function ensureOutsource(db, log) {
   }
   if (!have.has('cancelled_at')) {
     await db.query('ALTER TABLE outsource_assignments ADD COLUMN cancelled_at DATETIME NULL');
+  }
+  /* WHO HANDED THE WORK BACK, AND WHEN — the mirror of the cancelled pair above,
+     arriving the same way for the same reason.
+     
+     Stored on the assignment as well as in the asset's own history, and that is
+     deliberate rather than redundant. The asset_events row the transition writes
+     is the authority for what happened to the TASK, and a reader of the Outsource
+     tab has no asset to read it from: an assignment need not name one at all.
+     So the tab answers "when did Ravi hand this back" from its own row, and the
+     two are written in the same act so they cannot disagree. */
+  if (!have.has('delivered_by')) {
+    await db.query('ALTER TABLE outsource_assignments ADD COLUMN delivered_by CHAR(36) NULL');
+  }
+  if (!have.has('delivered_at')) {
+    await db.query('ALTER TABLE outsource_assignments ADD COLUMN delivered_at DATETIME NULL');
   }
   log('Schema: freelancers and outsource_assignments ready.');
 }

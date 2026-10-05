@@ -3543,6 +3543,37 @@ function mayBulkAssign(){ return can('asset.bulk_assign'); }
 function sendableToDev(){ return true; }
 function mayBulkSendToDev(){ return can('integration.send_to_dev'); }
 
+/* --- the Outsource tab's own bulk action ------------------------------------
+ *
+ * Mark as Delivered, on the Assigned work list. Kept here beside the Assets
+ * List's three rather than down in the Outsource section, because this is where
+ * a reader looks for "what can be done to several things at once" and because
+ * the shape is deliberately the same: a predicate mirroring the server, a
+ * permission asked once, a Set of ids pruned on every render.
+ *
+ * osDeliverable MIRRORS isDeliverable() in src/outsource.js, key for key: an
+ * assignment that is neither already delivered nor cancelled. The server
+ * decides; this only decides what is offered, and tests/outsource-deliver.test.js
+ * holds the two to the same answer.
+ *
+ * NOT the same question as deliverable() above, and the two must not be
+ * confused. That one is review.deliver on an asset in Approved for Client — the
+ * CLIENT has it, the end of the pipeline. This one is outsource.deliver on an
+ * assignment — a freelancer has handed work back, and the task goes into TL
+ * Review. Different key, different meaning, different table. */
+function osDeliverable(a){ return Boolean(a) && a.status !== 'delivered' && a.status !== 'cancelled'; }
+function osMayDeliver(){ return can('outsource.deliver'); }
+
+/* Which assignments are ticked on the Outsource tab, by assignment id.
+   
+   Outside osState on purpose. osState.data is dropped and refetched after every
+   write, and the twenty-second permission refresh redraws the tab from whatever
+   is cached — a selection stored in there would vanish under the reader on both
+   paths, which is the one thing the brief asked it to survive. Pruned on every
+   render to the rows actually on screen, so a row that has left the list (
+   delivered by somebody else, or cancelled) cannot stay ticked. */
+let selectedAssignments = new Set();
+
 // Every bulk action this account holds, with the rule for what each one reaches.
 // One list, so the tick boxes, the bar and the pruning cannot disagree about
 // which rows are worth selecting.
@@ -9101,6 +9132,12 @@ const HISTORY_ACTIONS = {
   cd_request_changes: { label: 'CD asked for changes', color: '#e8402c' },
   relay:              { label: 'Passed to assignee', color: '#ffd23d' },
   deliver:            { label: 'Delivered',         color: 'var(--final)' },
+  /* THE OTHER DELIVERED, and it must not read as the one above it. "Delivered"
+     on its own beside a producer's avatar would say the client has the work;
+     this is a freelancer handing it back for review, which is nearly the
+     opposite event. Named for who did what, and coloured as work arriving for
+     review rather than as work finished — it lands in TL Review. */
+  outsource_delivered: { label: 'Delivered by the freelancer', color: 'var(--review)' },
   /* The client's round. Named for what happened rather than for the state it
      landed in: "Delivered" beside a client's approval and "Delivered" beside a
      direct sign-off are different events, and the history is where somebody
@@ -13564,21 +13601,69 @@ function osRenderAssignments(body, canManage, canSeeRates){
   const rows = d.assignments;
   const errFor = (f)=>{ const e = osState.errors.find(x=>x.field===f); return e ? e.message : ''; };
 
+  /* THE SELECTION, PRUNED FIRST.
+   *
+   * `canDeliver` comes from the server rather than from can() alone, and both
+   * are used deliberately: the payload's flag is the authority, osMayDeliver()
+   * is the same key read the way every other control on this page reads one, so
+   * a drift between them is a test failure rather than a silent difference.
+   *
+   * Pruned to rows that are BOTH on screen and still deliverable, which is the
+   * brief's "an asset that is no longer in Assigned work cannot stay selected":
+   * a row somebody else delivered, or one that has been cancelled, drops out of
+   * the tick list the next time this draws rather than being carried into an
+   * action that would then refuse it. */
+  const mayDeliver = Boolean(d.canDeliver) && osMayDeliver();
+  const selectable = mayDeliver ? rows.filter(osDeliverable) : [];
+  const selectableIds = new Set(selectable.map(a=>a.id));
+  for(const id of [...selectedAssignments]) if(!selectableIds.has(id)) selectedAssignments.delete(id);
+  const chosen = selectable.filter(a=>selectedAssignments.has(a.id));
+  const allTicked = selectable.length > 0 && chosen.length === selectable.length;
+  /* Ticked rows the reader can see but cannot act on, counted so the bar can say
+     so. With the pruning above this is always nought — every ticked row is
+     selectable by construction — and it is computed anyway, because that is a
+     fact about this render rather than a promise about every future one, and a
+     count that silently became wrong is how a selection starts skipping rows. */
+  const skipped = chosen.length - chosen.filter(osDeliverable).length;
+
+  const bar = (mayDeliver && chosen.length) ? `<div class="bulk-bar">
+      <span class="bulk-count">${chosen.length} selected${skipped
+        ? ` <span style="font-weight:400;color:var(--ink-muted);">(${skipped} cannot be delivered)</span>` : ''}</span>
+      <button class="btn btn-ghost btn-sm" id="osDeliverClear">Clear</button>
+      <button class="btn btn-brand btn-sm" id="osDeliverGo">Mark as Delivered (${chosen.length})</button>
+    </div>` : '';
+
+  const headBox = mayDeliver
+    ? `<th class="pick-col">${selectable.length
+        ? `<input type="checkbox" id="osPickAll"${allTicked?' checked':''} title="Select every assignment here that can be marked delivered">`
+        : ''}</th>`
+    : '';
+
   body.innerHTML = `
     ${canManage ? `<div class="os-bar">
       <button class="btn btn-brand btn-sm" id="osNewAssignment">+ Assign work</button>
     </div>` : ''}
     ${osState.editing && osState.editing.kind==='assignment' ? osAssignmentFormHTML(errFor) : ''}
+    ${!osState.editing && osState.errors.length ? `<div class="rh-errs" style="margin-bottom:10px;">${
+      osState.errors.map(e=>`<div class="rh-err">${escapeHTML(e.message)}</div>`).join('')}</div>` : ''}
+    ${bar}
     ${rows.length ? `
     <table class="os-table">
       <thead><tr>
-        <th>Freelancer</th><th>Project</th><th>Task / asset</th>
+        ${headBox}<th>Freelancer</th><th>Project</th><th>Task / asset</th>
         <th class="num">Decided hours</th>${canSeeRates?'<th class="num">Cost</th>':''}
         <th>Status</th><th>Due</th>${canManage?'<th></th>':''}
       </tr></thead>
       <tbody>
         ${rows.map(a=>`
           <tr>
+            ${mayDeliver ? `<td class="pick-col">${osDeliverable(a)
+              ? `<input type="checkbox" data-ospick="${escapeHTML(a.id)}"${selectedAssignments.has(a.id)?' checked':''}>`
+              /* No box rather than a disabled one: a row that is already
+                 delivered or cancelled is not a thing this action can reach, and
+                 a box that cannot be ticked invites the question of why. The
+                 Status cell beside it already says which. */
+              : ''}</td>` : ''}
             <td><strong>${escapeHTML(a.freelancerName)}</strong>
               ${a.freelancerDiscipline?`<div class="os-sub">${escapeHTML(a.freelancerDiscipline)}</div>`:''}</td>
             <td>${escapeHTML(a.projectName)}</td>
@@ -13588,12 +13673,83 @@ function osRenderAssignments(body, canManage, canSeeRates){
                   : `<span class="os-adhoc">${escapeHTML(a.description||'ad hoc')}</span>`}</td>
             <td class="num"><strong>${osHours(a.decidedManHours)}</strong></td>
             ${canSeeRates?`<td class="num">${osMoney(osCostOf(a))}</td>`:''}
-            <td><span class="os-pill" style="--tone:${OS_STATUS_TONE[a.status]||'#6b7a8f'}">${escapeHTML(a.statusLabel)}</span></td>
+            <td><span class="os-pill" style="--tone:${OS_STATUS_TONE[a.status]||'#6b7a8f'}">${escapeHTML(a.statusLabel)}</span>
+              ${a.delivered && a.deliveredAt ? `<div class="os-sub">${escapeHTML(String(a.deliveredAt).replace('T',' ').slice(0,16))}${
+                a.deliveredByName ? ` \u00b7 ${escapeHTML(a.deliveredByName)}` : ''}</div>` : ''}</td>
             <td>${a.dueDate ? escapeHTML(a.dueDate) : '—'}</td>
             ${canManage?`<td><button class="btn btn-sm btn-ghost" data-edit="${escapeHTML(a.id)}">Edit</button></td>`:''}
           </tr>`).join('')}
       </tbody>
     </table>` : '<div class="os-empty">No outsourced work on the projects you can see.</div>'}`;
+
+  /* --- the selection's own wiring ---------------------------------------- */
+  body.querySelectorAll('[data-ospick]').forEach(box=>{
+    box.onchange = ()=>{
+      if(box.checked) selectedAssignments.add(box.dataset.ospick);
+      else selectedAssignments.delete(box.dataset.ospick);
+      renderOutsource();
+    };
+  });
+  const pickAll = document.getElementById('osPickAll');
+  if(pickAll) pickAll.onchange = ()=>{
+    /* "All of these", meaning the rows this action can reach on this screen —
+       not every assignment in the studio and not the ones it would refuse. */
+    if(pickAll.checked) selectable.forEach(a=>selectedAssignments.add(a.id));
+    else selectable.forEach(a=>selectedAssignments.delete(a.id));
+    renderOutsource();
+  };
+  const clear = document.getElementById('osDeliverClear');
+  if(clear) clear.onclick = ()=>{ selectedAssignments.clear(); renderOutsource(); };
+
+  const go = document.getElementById('osDeliverGo');
+  if(go) go.onclick = async ()=>{
+    if(osState.busy) return;
+    const ids = chosen.map(a=>a.id);
+    if(!ids.length) return;
+    /* THE CONFIRMATION NAMES THE COUNT, and what it is about to do to the tasks
+       — because the second half is the part somebody would not expect from a
+       button on the Outsource tab. The work goes into a team lead's queue. */
+    const withTasks = chosen.filter(a=>a.assetId).length;
+    const adHoc = ids.length - withTasks;
+    if(!confirm(`Mark ${ids.length} assignment${ids.length===1?'':'s'} as delivered?\n\n`
+      + (withTasks ? `${withTasks} task${withTasks===1?'':'s'} will move to TL Review for a team lead to check.\n` : '')
+      + (adHoc ? `${adHoc} ${adHoc===1?'is ad hoc work with no task, so only its status changes':'are ad hoc work with no task, so only their status changes'}.\n` : '')
+      + '\nWho delivered it and when is recorded. This cannot be undone from here — '
+      + 'unassign the freelancer if the work has to go back to them.')) return;
+    osState.busy = true;
+    go.disabled = true;
+    try{
+      const r = await api('/assets/bulk/outsource-deliver', { method:'POST', body:{ assignmentIds: ids } });
+      /* SUCCESSES ARE KEPT WHEN A SIBLING IS REFUSED, which is what the
+         per-row reply is for — so the toast says both numbers and the refusals
+         are listed with their own reason rather than one blanket failure. */
+      const failed = (r.results||[]).filter(x=>!x.ok);
+      if(failed.length){
+        osState.errors = failed.map(x=>({ field:null,
+          message: `${x.code || x.freelancerName || 'One row'}: ${x.error}` }));
+        showToast(`${r.delivered} of ${r.requested} delivered.`);
+      }else{
+        osState.errors = [];
+        showToast(`${r.delivered} assignment${r.delivered===1?'':'s'} delivered.`);
+      }
+      /* CLEARED ON SUCCESS, and only the rows that actually landed are forgotten
+         — a refused row stays ticked so somebody can read its reason beside the
+         box it belongs to and try again or clear it themselves. */
+      (r.results||[]).filter(x=>x.ok).forEach(x=>selectedAssignments.delete(x.id));
+      osState.data = null;
+      /* The internal side too. A delivered task is now in TL Review, so the
+         board, the Assets List and the pending queues are all stale — dropped
+         here rather than left to the next navigation, which is what makes both
+         views reflect the change on the normal refresh. */
+      state.assets = [];
+      refreshPendingCount();
+    }catch(e){
+      osState.errors = [{ field:null, message:e.message }];
+    }finally{
+      osState.busy = false;
+      await renderOutsource();
+    }
+  };
 
   const add = document.getElementById('osNewAssignment');
   if(add) add.onclick = async ()=>{
@@ -13655,7 +13811,15 @@ function osAssignmentFormHTML(errFor){
                  value="${escapeHTML(String(f.decidedManHours ?? ''))}"></div>
         <div><label>Status</label>
           <select id="osStatus">
-            ${(osState.data.statuses||[]).map(s=>`<option value="${escapeHTML(s.key)}"${f.status===s.key?' selected':''}>${escapeHTML(s.label)}</option>`).join('')}
+            ${/* Delivered is left out unless the row is ALREADY in it.
+                  PUT refuses a move into it and names the action instead — see
+                  src/routes/outsource.js — so offering it here would be a
+                  dropdown value that cannot be saved. An assignment already
+                  delivered keeps it listed, or its own status would vanish from
+                  its own form and the next save would silently change it. */
+              (osState.data.statuses||[])
+                .filter(s=>s.key !== osState.data.deliverViaAction || f.status === s.key)
+                .map(s=>`<option value="${escapeHTML(s.key)}"${f.status===s.key?' selected':''}>${escapeHTML(s.label)}</option>`).join('')}
           </select></div>
         <div><label>Due date <span class="os-opt">optional</span></label>
           <input type="date" id="osDue" class="narrow${bad('dueDate')}" value="${escapeHTML(f.dueDate||'')}"></div>

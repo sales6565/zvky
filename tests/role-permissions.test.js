@@ -268,6 +268,29 @@ test('the defaults that are decisions, with the reason for each', () => {
      screens. */
   assert.deepStrictEqual(held('pending.view'), ['super_admin', 'creative_art_director'],
     'the pending queue is deliberately narrow');
+
+  /* THE SAME SET AS ITS SIBLING, which is the decision rather than laziness.
+   *
+   * outsource.deliver is a SEPARATE key from outsource.manage because it does
+   * something the edit form does not: it moves the TASK into a team lead's
+   * review queue, through the outsource_delivered transition. So a Super Admin
+   * can withhold delivering without withholding the rest of the tab.
+   *
+   * Its DEFAULT is outsource.manage's predicate word for word, and that is "off
+   * by default except for the roles that already manage outsourcing" read
+   * literally — that predicate IS that set. Anything narrower would have been a
+   * regression dressed as caution: those designations could already mark an
+   * assignment delivered through the status dropdown before this existed, so a
+   * key they did not hold would mean the same studio act was possible one way
+   * and refused the other.
+   *
+   * And NOT review.deliver's set, because the two deliveries mean opposite
+   * things: that one says the client has the work, this one says a freelancer
+   * has handed it back for review. */
+  assert.deepStrictEqual(held('outsource.deliver'), held('outsource.manage'),
+    'delivering outsourced work travels with managing it, and goes no wider');
+  assert.notDeepStrictEqual(held('outsource.deliver'), held('review.deliver'),
+    'and is not the same grant as delivering to the client');
 });
 
 test('every permission the catalogue lists is either checked or declared pending', () => {
