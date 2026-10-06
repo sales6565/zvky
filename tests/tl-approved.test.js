@@ -69,15 +69,33 @@ test('TL Review has exactly two ways out, and one of them is the new stage', () 
   /* The studio's first requirement, read off the state machine rather than off
      the screen: whatever the panel draws, these are the only moves the server
      will make from TL Review. */
-  const out = workflow.TRANSITIONS
-    .filter((t) => t.from.includes('pending_tl_review'))
-    /* reassign_review is not a review answer — it is handing the work to
-       somebody else, which is offered from four stages and is a different
-       control in a different part of the panel. */
-    .filter((t) => t.action !== 'reassign_review');
+  /* TWO THINGS LEAVE TL REVIEW WITHOUT BEING A REVIEW ANSWER, and they are
+     named here rather than filtered out silently, so that a THIRD one appearing
+     has to come past this line.
+       reassign_review  hands the work to somebody else. Offered from four
+                        stages, and a different control in a different part of
+                        the panel.
+       outsource_reopen undoes a freelancer's delivery. Offered only on the
+                        Outsource tab, only for outsourced work, and behind its
+                        own permission; a lead reading this queue is never shown
+                        it. See README: "Freelancers have no logins". */
+  const NOT_ANSWERS = ['reassign_review', 'outsource_reopen'];
+  const fromReview = workflow.TRANSITIONS.filter((t) => t.from.includes('pending_tl_review'));
+  assert.deepStrictEqual(
+    fromReview.map((t) => t.action).filter((a) => NOT_ANSWERS.includes(a)).sort(),
+    [...NOT_ANSWERS].sort(),
+    'both of the non-answers are still there, and no third one has joined them'
+  );
+
+  const out = fromReview.filter((t) => !NOT_ANSWERS.includes(t.action));
   assert.deepStrictEqual(out.map((t) => t.action).sort(), ['tl_approve', 'tl_request_changes']);
   assert.strictEqual(workflow.transitionFor('tl_approve').to, 'tl_approved');
   assert.strictEqual(workflow.transitionFor('tl_request_changes').to, 'tl_changes_requested');
+
+  /* AND THE REVERSAL GOES BACKWARDS, not onwards. If it ever landed in a review
+     state it would be a way of moving work through the pipeline without a lead
+     answering, which is the thing this whole test exists to prevent. */
+  assert.strictEqual(workflow.transitionFor('outsource_reopen').to, 'not_started');
 });
 
 test('TL Approved has exactly two ways out', () => {
