@@ -127,11 +127,16 @@ test('the page and the server mirror one deliverability rule', () => {
   assert.strictEqual(onPage(null), false, 'and neither offers a box on nothing');
   assert.strictEqual(outsource.isDeliverable(null), false);
 
-  // Which rows those actually are, spelled out so a change of mind is visible.
+  /* Which rows those actually are, spelled out so a change of mind is visible.
+     'completed' IS AMONG THEM, and it is the one entry here that is a decision
+     rather than an obvious consequence: the stages are Assigned -> Completed ->
+     Delivered, and a row the studio has already marked completed is precisely a
+     row waiting to be delivered. Going straight from Assigned to Delivered in
+     one action is allowed too, which is why 'assigned' is still here beside it. */
   assert.deepStrictEqual(
     [...outsource.STATUSES, outsource.CANCELLED].filter((st) => outsource.isDeliverable({ status: st })),
-    ['assigned', 'in_progress', 'revision_requested'],
-    'anything a freelancer still holds; nothing already delivered or taken back'
+    ['assigned', 'in_progress', 'completed', 'revision_requested'],
+    'anything a freelancer still holds or has finished; nothing already delivered or taken back'
   );
 });
 
@@ -142,8 +147,20 @@ test('the page gates the boxes and the button on the permission, never the tier'
      tier anywhere near it. */
   assert.match(PAGE, /function osMayDeliver\(\)\{ return can\('outsource\.deliver'\); \}/,
     'the page asks the permission');
-  assert.match(PAGE, /const mayDeliver = Boolean\(d\.canDeliver\) && osMayDeliver\(\);/,
+  /* RENAMED, not loosened. One key, outsource.deliver, now opens BOTH forward
+     stages — Mark completed and Mark delivered — so the variable says what it
+     gates. osMayRecordStage() reads that same key; the pair is pinned below so
+     the two cannot drift into asking different things. */
+  assert.match(PAGE, /function osMayRecordStage\(\)\{ return can\('outsource\.deliver'\); \}/,
+    'recording either forward stage is the same key');
+  assert.match(PAGE, /const mayRecord = Boolean\(d\.canDeliver\) && osMayRecordStage\(\);/,
     'and the server\'s own answer alongside it');
+  /* Undoing one is a DIFFERENT key, read separately. A page that reused
+     mayRecord here would offer Reopen to everybody who may record. */
+  assert.match(PAGE, /function osMayReopen\(\)\{ return can\('outsource\.reopen'\); \}/,
+    'the reversal has its own key');
+  assert.match(PAGE, /const mayReopen = Boolean\(d\.canReopen\) && osMayReopen\(\);/,
+    'and its own flag from the server');
 
   const code = PAGE.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '');
   const from = code.indexOf('function osRenderAssignments');
@@ -155,9 +172,9 @@ test('the page gates the boxes and the button on the permission, never the tier'
     'the boxes, the select-all and the button are all drawn here');
   /* All three inside the SAME gate. A box drawn outside it would be tickable by
      somebody the button is withheld from. */
-  assert.ok(/mayDeliver \? `<td class="pick-col">/.test(area), 'the row box is behind the gate');
-  assert.ok(/const headBox = mayDeliver/.test(area), 'the select-all is behind the gate');
-  assert.ok(/const bar = \(mayDeliver && chosen\.length\)/.test(area), 'and so is the button');
+  assert.ok(/mayRecord \? `<td class="pick-col">/.test(area), 'the row box is behind the gate');
+  assert.ok(/const headBox = mayRecord/.test(area), 'the select-all is behind the gate');
+  assert.ok(/const bar = \(mayRecord && chosen\.length\)/.test(area), 'and so is the button');
 
   /* THE SELECTION OUTLIVES A REDRAW, which it can only do by living outside the
      cache that a refresh drops. */
@@ -169,8 +186,19 @@ test('the page gates the boxes and the button on the permission, never the tier'
 
 test('the server gates it with requirePermission, and the reach per row', () => {
   const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'assets.js'), 'utf8');
-  assert.match(route, /router\.post\('\/bulk\/outsource-deliver', requirePermission\('outsource\.deliver'\)/,
-    'the route is behind the same key the page reads');
+  /* THE GATE MOVED, not the rule. The three stages share one endpoint, so the
+     key depends on which stage was asked for and a middleware cannot read the
+     body — it is asked in the handler instead, from a table, and the older
+     /bulk/outsource-deliver path forces the one stage it ever recorded and hands
+     straight over rather than keeping a second copy of any of this. */
+  const stageKeys = route.slice(route.indexOf('const STAGE_PERMISSION = {'));
+  assert.match(stageKeys.slice(0, stageKeys.indexOf('};') + 2),
+    /completed: 'outsource\.deliver', delivered: 'outsource\.deliver', reopened: 'outsource\.reopen'/,
+    'each stage names its key in one place');
+  assert.match(route, /if \(!can\(req, STAGE_PERMISSION\[stage\]\)\) \{\n\s*return res\.status\(403\)/,
+    'and the handler refuses 403 once for somebody without it');
+  assert.match(route, /router\.post\('\/bulk\/outsource-deliver', \(req, res, next\) => \{[\s\S]{0,200}?stage: 'delivered'/,
+    'the older path still answers, by delegating rather than repeating');
   assert.match(route, /await canDeliverOutsourced\(req\.user, \{ project_id: assignment\.projectId \}\)/,
     'and the project reach is asked again per row, which a middleware cannot do');
 
@@ -365,7 +393,10 @@ test('delivering a freelancer\'s work', { skip: cfg ? false : SKIP_REASON }, asy
     // The batch row, with its own action id so the two deliveries stay countable apart.
     const batch = await sql(cfg,
       `SELECT action, requested, succeeded, actor_email FROM asset_event_batches WHERE id = '${r.body.batchId}'`);
-    assert.strictEqual(batch[0].action, 'outsource_deliver');
+    /* PER STAGE, not one word for all three: "how often is a delivery reopened"
+       is a question the log can only answer if a reversal is not recorded as a
+       delivery. The same id the asset_events row above carries. */
+    assert.strictEqual(batch[0].action, 'outsource_delivered');
     assert.strictEqual(Number(batch[0].requested), 1);
     assert.strictEqual(Number(batch[0].succeeded), 1);
 
@@ -423,7 +454,9 @@ test('delivering a freelancer\'s work', { skip: cfg ? false : SKIP_REASON }, asy
     await as('root', `/outsource/assignments/${taken.assignment.id}/cancel`, { method: 'POST' });
     const cancelled = await deliver('root', [taken.assignment.id]);
     assert.strictEqual(cancelled.body.results[0].ok, false);
-    assert.match(cancelled.body.results[0].error, /was cancelled, so there is nothing to deliver/);
+    /* One sentence for all three stages now, because the reason is the same
+       whichever was asked for: there is no stage to record on work nobody holds. */
+    assert.match(cancelled.body.results[0].error, /was cancelled, so there is no stage to record/);
     assert.strictEqual(await statusOf(taken.asset.id), 'not_started', 'and the task did not move');
   });
 
@@ -512,7 +545,8 @@ test('delivering a freelancer\'s work', { skip: cfg ? false : SKIP_REASON }, asy
     const byId = new Map(r.body.results.map((x) => [x.id, x]));
     assert.strictEqual(byId.get(mine.assignment.id).ok, true, 'their own project delivers');
     assert.strictEqual(byId.get(theirs.assignment.id).ok, false);
-    assert.match(byId.get(theirs.assignment.id).error, /permission to mark outsourced work delivered on that project/);
+    assert.match(byId.get(theirs.assignment.id).error,
+      /permission to record a stage on outsourced work on that project/);
     assert.strictEqual(await statusOf(theirs.asset.id, id.other), 'not_started',
       'and the off-project task is untouched');
   });

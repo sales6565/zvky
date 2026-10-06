@@ -1254,11 +1254,46 @@ module.exports = [
     'EVERY UNASSIGN IS LOGGED, with the figure that was agreed before it was taken back.',
   ]),
 
-  h2('11.7b Marking outsourced work delivered'),
-  p('When a freelancer hands work back, mark it delivered from the <b>Assigned work</b> list. '
-    + 'Tick the rows \u2014 one at a time, or the box in the header for all of them \u2014 and press '
-    + '<b>Mark as Delivered</b>. The count is in the button and in the confirmation, so you can see '
-    + 'what is about to happen before it does.'),
+  h2('11.7b Moving outsourced work through its stages'),
+  p('FREELANCERS DO NOT LOG IN. The <b>Assigned work</b> list is the studio\u2019s own record, and '
+    + 'our staff move every outsourced task through its stages on the freelancer\u2019s behalf. That is '
+    + 'why nothing here asks the freelancer to do anything, and why every stage records which of '
+    + 'OUR people entered it.'),
+  p('Each row carries a <b>Stage</b>: <b>With freelancer</b> while they have it, <b>Completed</b> '
+    + 'once they have finished, <b>Delivered</b> once the studio has taken it back, '
+    + '<b>Cancelled</b> if the work was withdrawn. The chips above the list filter by stage, and '
+    + 'with nothing chosen the list is grouped by stage \u2014 work still out at the top, finished '
+    + 'work below it \u2014 so a long history of delivered rows does not bury what is live.'),
+  p('Per row: <b>Mark completed</b>, <b>Mark delivered</b>, and <b>Reopen</b> for whoever holds '
+    + 'that last permission. For several at once, tick the rows \u2014 one at a time, or the box in '
+    + 'the header for all of them \u2014 and press <b>Mark as Delivered</b>. The count is in the '
+    + 'button, and the confirmation names both the count and the freelancers it is acting for.'),
+  note('Completed and Delivered are two different things',
+    'MARK COMPLETED says the freelancer has finished. The task does not move: it stays where it '
+    + 'was, and nobody in the studio is asked to look at it yet. Use it when work comes back and '
+    + 'the hand-ins are collected later \u2014 on a Friday, say.\n\n'
+    + 'MARK DELIVERED is the hand-back. THAT is what moves the task to TL Review. You can press it '
+    + 'straight from With freelancer without marking Completed first; Completed is a step you may '
+    + 'record, not one you have to.\n\n'
+    + 'Both record who entered it and when, and both leave a line in the task\u2019s history naming '
+    + 'the person and the freelancer \u2014 "Marked delivered by Priya on behalf of Ravi K."'),
+  note('Reopen, for when one of them was a mistake',
+    'REOPEN undoes a Completed or a Delivered. The task goes back to Not Assigned, the work goes '
+    + 'back to being with the freelancer, and the recorded stage and its timestamps are cleared \u2014 '
+    + 'a stage that had been undone but still carried a date would be a record arguing with '
+    + 'itself. The reversal itself is kept in the history.\n\n'
+    + 'IT IS A SEPARATE PERMISSION, Reopen Outsourced Work, and a deliberately narrow one: the '
+    + 'same designations that can delete a user. Everything else on this tab writes something new; '
+    + 'this is the only control that rewrites what somebody else already wrote down. Somebody who '
+    + 'records stages all day may well not hold it, and that is the intended shape.'),
+  note('No timers run on outsourced work, and no report treats it as nought hours',
+    'The studio does not run a clock on somebody it does not employ, so an outsourced task never '
+    + 'has a work session \u2014 nobody can press Accept and Start on it, not even a Super Admin.\n\n'
+    + 'WHICH MEANS THE REPORTS HAVE TO SAY SO RATHER THAN AVERAGE IT IN. The Efficiency report '
+    + 'lists an outsourced task under Excluded with the reason "outsourced \u2014 no tracked time", '
+    + 'and its estimate stays out of every average and both hour totals. The agreed hours and '
+    + 'their cost are not lost: they are on the Profit & Loss, where the outsourced figure '
+    + 'belongs.'),
   note('What delivering actually does, and why the task moves',
     'Two things happen, and the second is the one worth knowing about. The assignment is marked '
     + 'Delivered, with who delivered it and when on the record. And the TASK moves to <b>TL '
@@ -1267,7 +1302,7 @@ module.exports = [
     + 'IT IS NOT THE SAME AS "Delivered" ON THE BOARD. That one means the CLIENT has the work and '
     + 'is the end of the pipeline. This one is the start of a review. They are separate '
     + 'permissions for that reason: Mark as Delivered in the Review group is the client-facing '
-    + 'one, Mark Outsourced Work Delivered is this.\n\n'
+    + 'one, Record Outsourced Work Stages is this.\n\n'
     + 'AD HOC WORK HAS NO TASK TO MOVE. An assignment that names no asset simply becomes '
     + 'Delivered, and the confirmation says so before you press it.'),
   bullets([
@@ -1275,8 +1310,9 @@ module.exports = [
     'DELIVERING TWICE IS REFUSED, by name. So is delivering work that was taken back from the freelancer, and a task somebody in the studio has since picked up \u2014 that one is no longer theirs to hand back.',
     'ONLY ROWS IT CAN REACH GET A BOX. Already delivered or cancelled rows have no tick box at all; the Status beside them says which.',
     'A SELECTION SURVIVES THE REFRESH. Ticks are kept while the page redraws, and a row that leaves the list \u2014 somebody else delivered it, or it was cancelled \u2014 drops out of the selection rather than being carried into an action that would refuse it.',
-    'IT TAKES Mark Outsourced Work Delivered, which the designations that manage outsourcing hold by default. Reach is still the role\u2019s: a lead delivers the outsourced work on their own projects, and a batch spanning a project they cannot see delivers the half they can and names the rest.',
+    'IT TAKES Record Outsourced Work Stages, which the designations that manage outsourcing hold by default \u2014 one permission for both Mark completed and Mark delivered. Reach is still the role\u2019s: a lead records stages on their own projects, and a batch spanning a project they cannot see does the half they can and names the rest.',
     'THE STATUS DROPDOWN NO LONGER DOES IT. Editing an assignment can still set Assigned, In Progress or Revision Requested; Delivered is the button, because only the button moves the task and records the deliverer.',
+    'A WRONG STAGE IS REFUSED BY NAME, with the date it already carries: delivering twice, completing something already delivered (reopen it first), or reopening work still out with the freelancer.',
   ]),
 
   p('PAY RATES ARE A SEPARATE PERMISSION. Manage Outsourcing lets somebody add freelancers, give '

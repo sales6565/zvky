@@ -259,6 +259,7 @@ written down rather than left to be worked out from the labels.
 | --- | --- | --- |
 | `review.deliver` (Review group) | `deliver`: `approved_for_client` → `delivered` | **The client has the work.** The end of the pipeline. |
 | `outsource.deliver` (Outsourcing group) | `outsource_delivered`: `not_started` → `pending_tl_review` | **A freelancer has handed work back.** The start of a review. |
+| `outsource.reopen` (Outsourcing group) | `outsource_reopen`: back to `not_started` | **Undoing one of the above.** Its own key; see below. |
 
 Reusing the first for the second would tell every board, the Assets List's
 Active group and both "open work" queries that the client had been sent
@@ -305,7 +306,9 @@ every save and the agreed hours may still need correcting.
 **Bulk shape, lifted from `POST /assets/bulk/deliver`:** one request, one result
 per row, successes kept when a sibling is refused, and an `asset_event_batches`
 row recording who, when, how many were asked for and how many landed — under its
-own action id, `outsource_deliver`, so the two deliveries stay countable apart.
+own action id **per stage** — `outsource_delivered`, `outsource_completed`,
+`outsource_reopen` — so the two deliveries stay countable apart and "how often is
+a delivery reopened" is a question the log can answer.
 The endpoint lives in `src/routes/assets.js` beside the other two bulk routes,
 above every `/:id/...` route: Express matches in definition order, and it is also
 where `contextFor`, `workflow.evaluate` and `applyTransition` live. It takes
@@ -314,12 +317,103 @@ assignments and an assignment need not name an asset at all — ad hoc work move
 its own status and reports `movedAsset: false` rather than implying a transition
 that did not happen.
 
-**Two gates on the server, and both earn their place.**
-`requirePermission('outsource.deliver')` answers 403 once for somebody without
-the key — and is the gate the page mirrors with `can()`. The per-row
-`canDeliverOutsourced()` is the *reach*: `projectScope` is per project and
-middleware cannot ask it, so a lead delivering a mixed batch gets the half on
-their own projects and a named refusal on the rest.
+**Two gates on the server, and both earn their place.** The key is asked once, up
+front, and answers 403 for somebody who does not hold it — and it is the gate the
+page mirrors with `can()`. It is asked **in the handler rather than as
+middleware**, because one endpoint now serves three stages and the key depends on
+which stage the body names (`STAGE_PERMISSION` in `src/routes/assets.js`), which
+middleware cannot read. The per-row `canDeliverOutsourced()` /
+`canReopenOutsourced()` is the *reach*: `projectScope` is per project and
+middleware cannot ask it either, so a lead recording a mixed batch gets the half
+on their own projects and a named refusal on the rest.
+
+### Freelancers have no logins, so our own staff move the stages
+
+The fact the outsourced lifecycle is built on, and the one worth knowing before
+touching any of it: **nobody outside the studio ever clicks anything in this
+application.** The Assigned work list on the Outsource tab is an internal record,
+and every stage an outsourced task passes through is recorded by a member of staff
+*on the freelancer's behalf*.
+
+**That is why the assignee gates could not be used, and were not widened.** The
+pipeline was written around the person doing the work being the person clicking —
+`actors.assignee`, `ASSIGNEE_STATUSES`, `STARTABLE`, `mayStartWork`,
+`canHoldAsset`, and the page's mine-style checks all read `assignee_id`. An
+outsourced task has **no** `assignee_id`, by the exclusivity rule in
+`src/outsource.js`. Traced against a running server, each gate does this:
+
+| Gate | On an outsourced task |
+| --- | --- |
+| `POST /:id/start` | 409 for a full-access reader (`not_started` is not in `STARTABLE`), 403 for everybody else (`mayStartWork`) |
+| `POST /:id/submit` | 403 for **everybody**, including a Super Admin — `actors.assignee` has no tier bypass, by design |
+| `POST /:id/hold` | 403 — `canHoldAsset()` returns false when `assignee_id` is null |
+| `work_sessions` | none, ever |
+
+Widening any of those would have changed ordinary work, so the stages are three
+**new** transitions with their own actors instead, and
+`tests/outsource-stage.test.js` pins the old gates to exactly the answers above.
+
+**Three stages, two real states and one reversal.**
+
+| Transition | Moves the task | Says |
+| --- | --- | --- |
+| `outsource_completed` | `not_started` → `not_started` — **nothing moves** | The freelancer has finished |
+| `outsource_delivered` | `not_started` → `pending_tl_review` | The studio has taken it back and it needs reviewing |
+| `outsource_reopen` | back to `not_started`, stamps cleared | One of the above was a mistake |
+
+**Completed and Delivered are two states, not one, and that is a decision.**
+Finishing is something the freelancer did; handing on is something the studio
+decides. A studio that collects its hand-ins on a Friday needs to record the
+first without doing the second — so Completed moves no asset status at all (its
+`to` *is* its `from`) and reports `movedAsset: false`. **Marking straight from
+Assigned to Delivered in one action is supported**, not a shortcut around a
+required step: `isDeliverable()` accepts a row nobody marked completed.
+
+**Every stage is a transition, and none of them writes a status.** The route runs
+`workflow.evaluate(STAGE_ACTION[stage])` and `applyTransition`, then records the
+assignment's own half — so the asset's history row and the Activity Log entry come
+from the same place every other status change in the application comes from.
+
+**The history sentence names both people**, which is the whole point of a record
+of an act done on somebody's behalf: *"Marked delivered by Priya on behalf of Ravi
+K."* Built by `onBehalfOf()` in `src/asset-workflow.js` and written as the event's
+`note`. It degrades rather than printing `undefined` when either name is missing.
+
+**`completed_at` / `completed_by` and `delivered_at` / `delivered_by`** are
+recorded on the assignment, and the reversal **clears all four** — a cleared stage
+with a stamp still on it would be a record contradicting itself. The stamps are
+rendered through `istStamp()`, in IST: `mysql2` hands a `DATETIME` back as a
+`Date`, and `String(d).replace('T', ' ')` strikes the T of "Tue" — which is how a
+refusal once read *"on  ue Oct 06 2026 ."*
+
+**The reversal has its own permission.** `outsource.reopen` defaults to
+`user.delete`'s eight designations rather than `outsource.manage`'s twenty-five: it
+is the only control on that tab that rewrites a record somebody else wrote. A team
+lead records stages all day and cannot unrecord one. Grantable, so a studio that
+finds that too strict says so in Settings.
+
+**No timers, and therefore no zero-hour work.** The studio does not run a clock on
+somebody it does not employ, so an outsourced task has no work session ever — and
+the STARTABLE lesson from the Game Feedback work is that a round recording nought
+hours silently under-reports. So every hours-based surface was checked:
+
+- **Efficiency** excluded it already, but *as* "never submitted", which reads as
+  somebody having forgotten to hand the work in. `exclusionReason()` names it
+  first now — *"outsourced — no tracked time"* — and it stays out of every average
+  and both hour totals, so an 8-hour estimate never sits against nought spent.
+- **Team capacity** and the **Idle report's** waiting list key off `assignee_id`,
+  which an outsourced task has none of. There is no person to show nought against.
+- **The P&L** carries the decided hours and their cost as their own figure
+  (`costFor()` in `src/outsource.js`), so outsourced work is hours *somewhere*
+  rather than hours nowhere.
+- **The work-hours sweep** only touches open sessions, and there are none.
+
+**On the tab:** per-row *Mark completed*, *Mark delivered* and *Reopen*, each
+behind its own key and its own predicate; the stage as a badge with who recorded
+it and when; a chip row that filters by stage and, unfiltered, groups the rows
+under a heading per stage so finished work sits below work still out; and the
+checkbox selection with bulk *Mark as Delivered*, whose confirmation names the
+count **and the freelancers it is acting for**.
 
 ### Holidays are part of the schedule, not a check beside it
 

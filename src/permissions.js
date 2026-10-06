@@ -676,6 +676,20 @@ async function canDeliverOutsourced(user, asset) {
   return canAccessProject(user, asset.project_id);
 }
 
+/* Who may undo a recorded stage on outsourced work.
+ *
+ * SAME SHAPE AS canDeliverOutsourced, DIFFERENT KEY — the permission opens the
+ * action, the designation's projectScope decides the range. The key is narrower
+ * by default (see the catalogue): recording that a freelancer finished is
+ * bookkeeping, taking a delivery back out of a team lead's review queue is not.
+ */
+async function canReopenOutsourced(user, asset) {
+  if (!holds(user, 'outsource.reopen')) return false;
+  const def = roleDef(user.role);
+  if (def && def.projectScope === 'all') return true;
+  return canAccessProject(user, asset.project_id);
+}
+
 // Can this user delete the asset outright?
 async function canDeleteAsset(user, asset) {
   if (!holds(user, 'asset.delete')) return false;
@@ -743,6 +757,7 @@ module.exports = {
   canOverrideReview,
   canMarkDelivered,
   canDeliverOutsourced,
+  canReopenOutsourced,
   isReport,
   // Re-exported as functions rather than arrays: roles are managed in Settings
   // now, so a value captured at import time would go stale the moment one

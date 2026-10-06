@@ -934,13 +934,51 @@ const GROUPS = [
          * freelancer has handed work back and the studio has to review it. One
          * key for both would have meant granting either to grant the other. */
         key: 'outsource.deliver',
-        label: 'Mark Outsourced Work Delivered',
+        label: 'Record Outsourced Work Stages',
         impliedBy: anyOf(has('leadsTeam'), has('deliver'), has('manageUsers')),
-        describe: 'Mark a freelancer\u2019s assignment as delivered, one at a time or several at once. '
-          + 'The task moves to TL Review, where a team lead checks the work as they would an '
-          + 'artist\u2019s. Distinct from Mark as Delivered in the Review group, which means the '
-          + 'client has it \u2014 that is the end of the pipeline, this is the start of a review.',
+        describe: 'Record where a freelancer\u2019s work has got to \u2014 Completed when they say it is '
+          + 'finished, Delivered when we have it \u2014 one row at a time or several at once. A '
+          + 'freelancer has no login, so these are always recorded by somebody here on their behalf, '
+          + 'and the history says which. Delivered moves the task to TL Review, where a team lead '
+          + 'checks the work as they would an artist\u2019s. Distinct from Mark as Delivered in the '
+          + 'Review group, which means the client has it \u2014 that is the end of the pipeline, '
+          + 'this is the start of a review. Undoing one of these is a separate permission.',
         danger: 'This puts the task into the team lead\u2019s review queue, and the task cannot be handed back to the freelancer afterwards without unassigning them.',
+      },
+      {
+        /* UNDOING A RECORDED STAGE, and narrower than recording one on purpose.
+         *
+         * WHY A SEPARATE KEY. Recording that a freelancer finished is
+         * bookkeeping — a mis-click costs a badge in the wrong column until
+         * somebody notices. Reopening a DELIVERY takes the task back out of a
+         * team lead's review queue, where somebody may already have begun
+         * looking at it, and clears the deliverer and the stamp off the record.
+         * Those are not the same weight of action and a studio should be able to
+         * hand out the first without the second.
+         *
+         * WHY A SEPARATE KEY RATHER THAN NO REVERSAL AT ALL. The alternative is
+         * permanent mis-clicks, and the shape that produces is somebody editing
+         * the database or re-assigning the freelancer to undo a button press.
+         * A gated, audited step is the smaller risk.
+         *
+         * THE DEFAULT IS has('manageUsers'), which is the eight designations
+         * that already hold the heaviest administrative actions in this
+         * application — user.delete is exactly the same set. Narrower than
+         * outsource.deliver's twenty-five, wider than Super Admin alone, because
+         * a production head finding a mis-click at six in the evening should not
+         * have to escalate to undo it. Grantable, so a studio that wants it
+         * tighter or looser says so in Settings.
+         *
+         * REACH IS STILL THE ROLE'S. canReopenOutsourced() pairs this key with
+         * projectScope exactly as its sibling does. */
+        key: 'outsource.reopen',
+        label: 'Reopen Outsourced Work',
+        impliedBy: has('manageUsers'),
+        describe: 'Undo a Completed or Delivered that was recorded by mistake, putting the work back '
+          + 'with the freelancer. Only while the delivery is still waiting on a team lead and nobody '
+          + 'has acted on it \u2014 once the work is through review it belongs to the studio\u2019s own '
+          + 'pipeline. The reversal is written to the task\u2019s history and clears the stamps it undoes.',
+        danger: 'Reopening a delivery takes the task out of the team lead\u2019s review queue and clears who delivered it and when.',
       },
       {
         key: 'outsource.rates',

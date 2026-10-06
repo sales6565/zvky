@@ -292,6 +292,26 @@ test('the defaults that are decisions, with the reason for each', () => {
   assert.notDeepStrictEqual(held('outsource.deliver'), held('review.deliver'),
     'and is not the same grant as delivering to the client');
 
+  /* AND ITS COUNTERPART, which is the narrowest key the Outsource tab has.
+   *
+   * outsource.reopen UNDOES a recorded stage. Every other control on that tab
+   * writes something new; this one rewrites something somebody else already
+   * wrote down, and the stamp it clears is the studio's record of who acted on a
+   * freelancer's behalf and when. So its default is user.delete's set — the eight
+   * designations that already hold the heaviest switch in the application —
+   * rather than outsource.manage's twenty-five.
+   *
+   * THE ASYMMETRY IS THE FEATURE. A team lead records stages all day and cannot
+   * unrecord one; they ask somebody who can. A studio that finds that too strict
+   * says so in Settings, which is what makes it grantable rather than a rule. */
+  assert.deepStrictEqual(held('outsource.reopen'), held('user.delete'),
+    'undoing a recorded stage sits with the designations that hold user.delete');
+  assert.ok(held('outsource.deliver').length > held('outsource.reopen').length,
+    'and is strictly narrower than recording one');
+  assert.ok(held('outsource.deliver').includes('team_lead') && !held('outsource.reopen').includes('team_lead'),
+    'a lead records and does not undo');
+  assert.ok(catalog.grantableKeys().includes('outsource.reopen'), 'a studio can still widen it');
+
   /* THE TIME SHEET'S TWO ENDS, and the asymmetry between them is the decision.
    *
    * timesheet.own is ON FOR EVERY DESIGNATION and is the only permission in the

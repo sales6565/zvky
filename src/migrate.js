@@ -2206,7 +2206,8 @@ async function ensureOutsource(db, log) {
   const { rows: cols } = await db.query(
     `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'outsource_assignments'
-        AND COLUMN_NAME IN ('cancelled_by','cancelled_at','delivered_by','delivered_at')`
+        AND COLUMN_NAME IN ('cancelled_by','cancelled_at','delivered_by','delivered_at',
+                            'completed_by','completed_at')`
   );
   const have = new Set(cols.map((c) => c.COLUMN_NAME));
   if (!have.has('cancelled_by')) {
@@ -2229,6 +2230,20 @@ async function ensureOutsource(db, log) {
   }
   if (!have.has('delivered_at')) {
     await db.query('ALTER TABLE outsource_assignments ADD COLUMN delivered_at DATETIME NULL');
+  }
+  /* WHO RECORDED THAT THE FREELANCER HAD FINISHED, AND WHEN — the mirror of the
+     delivered pair, and a second pair rather than a reuse of it because the two
+     say different things: Completed is "they tell us it is done", Delivered is
+     "we have it". A single pair could not hold both, and a studio that marks
+     Completed on Tuesday and Delivered on Friday wants the gap on the record.
+     
+     Both are a member of OUR staff. A freelancer has no login, so there is no
+     stamp on this row that is not somebody here acting on their behalf. */
+  if (!have.has('completed_by')) {
+    await db.query('ALTER TABLE outsource_assignments ADD COLUMN completed_by CHAR(36) NULL');
+  }
+  if (!have.has('completed_at')) {
+    await db.query('ALTER TABLE outsource_assignments ADD COLUMN completed_at DATETIME NULL');
   }
   log('Schema: freelancers and outsource_assignments ready.');
 }

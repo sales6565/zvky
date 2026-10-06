@@ -10,7 +10,7 @@ const XLSX = require('xlsx');
 const db = require('../db');
 const oversight = require('../project-oversight');
 const oversightOutsource = require('../outsource');
-const { authenticate, requirePermission } = require('../middleware/auth');
+const { authenticate, requirePermission, can } = require('../middleware/auth');
 const { upload, uploadImport } = require('../upload');
 const {
   canAccessProject,
@@ -30,6 +30,7 @@ const {
   canOverrideReview,
   canMarkDelivered,
   canDeliverOutsourced,
+  canReopenOutsourced,
   canOverrideStage,
   mayAssign,
   canHandOverInReview,
@@ -215,6 +216,17 @@ async function attachTasksAndNotes(assets, viewer) {
    * flag answers only the part the browser cannot. */
   const mayHoldOthers = (a) => {
     if (!holds(viewer, 'asset.hold')) return false;
+    /* NOBODY'S WORK TO HOLD. Found by tracing the assignee-based gates for an
+       outsourced asset: this said true for a lead on the project while
+       canHoldAsset() on the server answers false for any asset with no assignee
+       — "if (!asset.assignee_id) return false" — so the page drew a Hold button
+       that could only ever come back 403. Outsourced work is the common case
+       (its assignee is a freelancer, who has no login and so is not an
+       assignee_id at all), and an unassigned task is the other.
+       
+       The server was right and is unchanged; this is the page's copy of the same
+       question catching up. */
+    if (!a.assignee_id) return false;
     if (!viewer || !HOLD_OTHERS_ROLES.includes(viewer.role)) return false;
     return ledByViewer.has(a.project_id);
   };
@@ -1053,6 +1065,14 @@ async function contextFor(req, asset) {
        permission paired with project reach, the same way canMarkDelivered is —
        see the outsource_delivered transition for why the two are separate. */
     canDeliverOutsourced: await canDeliverOutsourced(req.user, asset),
+    // Undoing one of those, which is a narrower permission — see the catalogue.
+    canReopenOutsourced: await canReopenOutsourced(req.user, asset),
+    /* The assignment, so the three outsource transitions can name the freelancer
+       in their history sentence. Looked up once here rather than in each
+       describe: a freelancer has no login, so the name is not on req.user and
+       has nowhere else to come from. Null for an ordinary asset, which is what
+       makes onBehalfOf degrade to the bare action rather than inventing a name. */
+    outsourcedTo: await oversightOutsource.activeForAsset(db, asset.id).catch(() => null),
     // The two halves of the Creative Director's gate, from the role's
     // permissions rather than from its tier.
     canReviewCd: canReviewAsCD(req.user),
@@ -1293,11 +1313,46 @@ router.post('/bulk/deliver', async (req, res) => {
  */
 const BULK_OUTSOURCE_DELIVER_MAX = 200;
 
-router.post('/bulk/outsource-deliver', requirePermission('outsource.deliver'), async (req, res) => {
+/* THE THREE STAGES, THROUGH ONE ROUTE. 'completed' | 'delivered' | 'reopened'.
+ *
+ * ONE PATH, because per-row and in-bulk are the same act on a different number
+ * of rows — the page's per-row buttons send one id and the bulk bar sends
+ * twenty, and a separate single-row endpoint would be a second place for the
+ * permission, the reach check, the state machine and the audit row to drift.
+ *
+ * THE PERMISSION IS PER STAGE, which is why there is no route-level
+ * requirePermission here and the check is the first thing inside: reopening takes
+ * outsource.reopen and the other two take outsource.deliver. One middleware could
+ * only have asked for one of them, and asking for the wider one would have let
+ * anybody who can record a stage undo a delivery.
+ */
+const STAGE_PERMISSION = {
+  completed: 'outsource.deliver', delivered: 'outsource.deliver', reopened: 'outsource.reopen',
+};
+const STAGE_ACTION = {
+  completed: 'outsource_completed', delivered: 'outsource_delivered', reopened: 'outsource_reopen',
+};
+
+router.post('/bulk/outsource-stage', async (req, res) => {
   const { assignmentIds, note } = req.body || {};
+  const stage = String((req.body || {}).stage || '');
+  if (!STAGE_PERMISSION[stage]) {
+    return res.status(400).json({
+      error: 'That is not a stage. Choose completed, delivered or reopened.',
+      field: 'stage', allowed: Object.keys(STAGE_PERMISSION),
+    });
+  }
+  /* 403 ONCE for somebody who does not hold the key at all, rather than 200 with
+     every row refused for the same reason — and it is the gate the page mirrors
+     with can(). The per-row check below it is the REACH, which middleware cannot
+     ask because projectScope is per project. */
+  if (!can(req, STAGE_PERMISSION[stage])) {
+    return res.status(403).json({ error: 'You do not have permission to do that' });
+  }
   if (!Array.isArray(assignmentIds) || !assignmentIds.length) {
     return res.status(400).json({
-      error: 'Choose at least one assignment to mark delivered.', field: 'assignmentIds' });
+      error: `Choose at least one assignment to mark ${stage === 'reopened' ? 'reopened' : stage}.`,
+      field: 'assignmentIds' });
   }
   // De-duplicated: a list sent twice delivers once and reports once.
   const ids = [...new Set(assignmentIds.filter((id) => typeof id === 'string' && id))];
@@ -1324,25 +1379,32 @@ router.post('/bulk/outsource-deliver', requirePermission('outsource.deliver'), a
       freelancerName: assignment.freelancerName,
     };
     try {
-      /* THE PERMISSION AND THE REACH, per row and in one question. The key opens
-         the action; projectScope decides the range — so a lead delivering in
-         bulk reaches the outsourced work on their own projects and no further.
-         Asked with the assignment's project because an ad hoc row has no asset
-         to read one from. */
-      if (!(await canDeliverOutsourced(req.user, { project_id: assignment.projectId }))) {
+      /* THE REACH, per row. The key opened the action at the top; projectScope
+         decides the range — so a lead reaches the outsourced work on their own
+         projects and no further. Asked with the assignment's project because an
+         ad hoc row has no asset to read one from, and asked with the key that
+         matches the STAGE, because reopening is a different permission. */
+      const reaches = stage === 'reopened'
+        ? await canReopenOutsourced(req.user, { project_id: assignment.projectId })
+        : await canDeliverOutsourced(req.user, { project_id: assignment.projectId });
+      if (!reaches) {
         results.push({ ...label, ok: false,
-          error: 'You do not have permission to mark outsourced work delivered on that project.' });
+          error: `You do not have permission to ${stage === 'reopened' ? 'reopen' : 'record a stage on'}`
+            + ' outsourced work on that project.' });
         continue;
       }
-      /* Already delivered, or cancelled. Refused by name rather than skipped, and
-         the sentence comes from the same place the single-assignment refusal
-         comes from — deliverAssignment() below would say the same thing, and
-         asking it here is how the two cannot word it differently. It refuses
+      /* Already in that stage, cancelled, or nothing to undo. Refused BY NAME
+         rather than skipped, and the sentence comes from the same place a
+         single-row refusal comes from — recordStage() would say the same thing,
+         and asking it here is how the two cannot word it differently. It refuses
          before it writes anything, which is what makes calling it safe. */
-      if (!oversightOutsource.isDeliverable(assignment)) {
-        const refused = await oversightOutsource.deliverAssignment(db, id, req.user.id);
+      const reachable = stage === 'completed' ? oversightOutsource.isCompletable(assignment)
+        : stage === 'delivered' ? oversightOutsource.isDeliverable(assignment)
+          : oversightOutsource.isReopenable(assignment);
+      if (!reachable) {
+        const refused = await oversightOutsource.recordStage(db, id, stage, req.user.id);
         results.push({ ...label, ok: false,
-          error: refused.error || 'That assignment cannot be delivered.' });
+          error: refused.error || 'That stage cannot be recorded on this assignment.' });
         continue;
       }
       // A closed project refuses every write, in bulk as singly.
@@ -1364,24 +1426,44 @@ router.post('/bulk/outsource-deliver', requirePermission('outsource.deliver'), a
           continue;
         }
         const ctx = await contextFor(req, asset);
-        verdict = workflow.evaluate('outsource_delivered', ctx, { note });
+        verdict = workflow.evaluate(STAGE_ACTION[stage], ctx, { note });
         if (!verdict.ok) { results.push({ ...label, ok: false, error: verdict.error }); continue; }
       }
 
-      if (verdict) await applyTransition(req, res, asset, verdict, { note, batchId });
-      const done = await oversightOutsource.deliverAssignment(db, id, req.user.id);
+      /* THE HISTORY SENTENCE, written as the event's note.
+       *
+       * verdict.describe is what names both people — "Marked delivered by Priya
+       * on behalf of Ravi K." — and it has to be passed, because applyTransition
+       * writes whatever `note` it is handed and nothing else. Leaving it out is
+       * how this shipped with three transitions and an empty history panel: the
+       * status moved, the Activity Log had a line, and the one record that said
+       * WHO acted for WHOM was never written. A note typed by the person wins
+       * and the sentence follows it, so neither is lost. */
+      const trail = [verdict && verdict.describe, String(note || '').trim()]
+        .filter(Boolean).join(' — ');
+      if (verdict) await applyTransition(req, res, asset, verdict, { note: trail, batchId });
+      const done = await oversightOutsource.recordStage(db, id, stage, req.user.id);
       if (!done.ok) { results.push({ ...label, ok: false, error: done.error }); continue; }
 
       results.push({
         ...label, ok: true,
-        movedAsset: Boolean(verdict),
+        stage: done.assignment.stage,
+        stageLabel: done.assignment.stageLabel,
+        /* Whether the TASK moved, not whether anything happened. Completed moves
+           no asset status — its transition's `to` is its own `from` — and ad hoc
+           work has no asset at all, so this is false for two different and
+           equally legitimate reasons, and the caller is told rather than left to
+           infer a transition from a success. */
+        movedAsset: Boolean(verdict) && verdict.to !== asset.status,
         status: verdict ? verdict.to : null,
+        completedAt: done.assignment.completedAt,
         deliveredAt: done.assignment.deliveredAt,
       });
     } catch (err) {
       // One row failing on something unforeseen must not take the batch with it.
-      console.error(`[outsource deliver] ${id} failed: ${err.stack || err.message}`);
-      results.push({ ...label, ok: false, error: 'Something went wrong delivering this one.' });
+      console.error(`[outsource ${stage}] ${id} failed: ${err.stack || err.message}`);
+      results.push({ ...label, ok: false,
+        error: `Something went wrong recording ${stage === 'reopened' ? 'the reopening of' : stage + ' on'} this one.` });
     }
   }
 
@@ -1392,20 +1474,39 @@ router.post('/bulk/outsource-deliver', requirePermission('outsource.deliver'), a
   try {
     await db.query(
       `INSERT INTO asset_event_batches (id, action, actor_id, actor_email, requested, succeeded)
-       VALUES ($1,'outsource_deliver',$2,$3,$4,$5)`,
-      [batchId, req.user.id, req.user.email, ids.length, delivered]
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      /* The batch's own action id, PER STAGE rather than one word for all three:
+         "how often is a delivery reopened" is a question the log can only answer
+         if a reversal is not recorded as a delivery. */
+      [batchId, STAGE_ACTION[stage], req.user.id, req.user.email, ids.length, delivered]
     );
   } catch (err) {
-    console.warn(`[outsource deliver] could not record the batch ${batchId}: ${err.message}`);
+    console.warn(`[outsource ${stage}] could not record the batch ${batchId}: ${err.message}`);
   }
 
   console.log(
-    `${req.user.email} marked ${delivered} of ${ids.length} outsourced assignment(s) delivered `
+    `${req.user.email} recorded ${stage} on ${delivered} of ${ids.length} outsourced assignment(s) `
     + `(batch ${batchId}${delivered < ids.length
       ? `; refused: ${results.filter((r) => !r.ok).map((r) => r.code || r.id).join(', ')}` : ''}).`
   );
 
-  res.json({ batchId, requested: ids.length, delivered, failed: ids.length - delivered, results });
+  /* `succeeded` and `delivered` carry the same number. `delivered` is kept
+     because the older /bulk/outsource-deliver reply named it that and the page
+     read it; `succeeded` is what a caller recording Completed or a reversal
+     should read, since calling a reopened row "delivered" is the sort of wording
+     that ends up in a toast in front of somebody. */
+  res.json({ batchId, stage, requested: ids.length, delivered, succeeded: delivered,
+    failed: ids.length - delivered, results });
+});
+
+/* The earlier name for the same act, kept because it is two weeks old and may
+   already be bookmarked or scripted against. It forces the one stage it ever
+   recorded and hands straight over, so there is no second implementation and no
+   second place for any of the checks above to live. */
+router.post('/bulk/outsource-deliver', (req, res, next) => {
+  req.body = { ...(req.body || {}), stage: 'delivered' };
+  req.url = '/bulk/outsource-stage';
+  return router.handle(req, res, next);
 });
 
 /* POST /api/assets/bulk/assign — give several assets one assignee and/or one

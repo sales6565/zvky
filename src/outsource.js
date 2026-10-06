@@ -23,20 +23,58 @@
  */
 
 const crypto = require('crypto');
+// For istStamp() below: the studio's clock lives in one file and this asks it
+// rather than keeping a second copy of the offset.
+const workingTime = require('./working-time');
 
 /* The statuses an assignment may be PUT INTO by hand. 'cancelled' is not among
    them on purpose: it is not a state somebody types, it is what unassigning
    does, and it has its own endpoint so that taking work back from a freelancer
    is a deliberate act with its own permission check and its own audit entry. */
-const STATUSES = ['assigned', 'in_progress', 'delivered', 'revision_requested'];
+const STATUSES = ['assigned', 'in_progress', 'completed', 'delivered', 'revision_requested'];
 const CANCELLED = 'cancelled';
 /* Named, like CANCELLED above, because three files now ask about this one value
    — the bulk action, the edit route's refusal, and the screen — and a string
    spelled out in each is a string one of them will eventually spell wrong. */
 const DELIVERED = 'delivered';
+/* THE FREELANCER SAYS THE WORK IS DONE; WE HAVE NOT RECEIVED IT YET.
+ *
+ * TWO STATES AND NOT ONE, and the difference is operational rather than
+ * bookkeeping. Delivered moves the TASK into pending_tl_review, so a review
+ * step downstream genuinely has to know; Completed moves nothing. The gap
+ * between them is the gap between "chase the files" and "review the files",
+ * which for an internal record is exactly the thing somebody is looking at the
+ * list to find out.
+ *
+ * And because they are two states, Completed must not be a toll gate: a studio
+ * that receives the work in the same breath as hearing it is finished marks
+ * Delivered straight from Assigned, and the transition table allows that
+ * directly rather than making somebody click twice. */
+const COMPLETED = 'completed';
+
+/* The stage of an assignment as the list shows it, which is not the same as its
+ * status column: 'assigned', 'in_progress' and 'revision_requested' are all
+ * "still with the freelancer", and the badge says so. One function, so the
+ * badge, the filter and the per-row buttons cannot disagree about which stage a
+ * row is in. */
+const STAGES = ['with_freelancer', 'completed', 'delivered', 'cancelled'];
+const STAGE_LABELS = {
+  with_freelancer: 'With freelancer',
+  completed: 'Completed',
+  delivered: 'Delivered',
+  cancelled: 'Cancelled',
+};
+const stageOf = (assignment) => {
+  if (!assignment) return null;
+  if (assignment.status === CANCELLED) return 'cancelled';
+  if (assignment.status === DELIVERED) return 'delivered';
+  if (assignment.status === COMPLETED) return 'completed';
+  return 'with_freelancer';
+};
 const STATUS_LABELS = {
   assigned: 'Assigned',
   in_progress: 'In Progress',
+  completed: 'Completed',
   delivered: 'Delivered',
   revision_requested: 'Revision Requested',
   [CANCELLED]: 'Cancelled',
@@ -269,6 +307,14 @@ const assignmentRow = (row) => ({
   delivered: row.status === DELIVERED,
   deliveredByName: row.delivered_by_name || null,
   deliveredAt: row.delivered_at || null,
+  /* The mirror of the delivered pair. Who on OUR side recorded that the
+     freelancer had finished, and when — a freelancer has no login, so every
+     stamp on this row is a member of staff acting on their behalf, and the one
+     thing the record must not lose is which of ours it was. */
+  completedByName: row.completed_by_name || null,
+  completedAt: row.completed_at || null,
+  stage: stageOf({ status: row.status }),
+  stageLabel: STAGE_LABELS[stageOf({ status: row.status })] || '',
 });
 
 const ASSIGNMENT_SELECT = `
@@ -276,14 +322,15 @@ const ASSIGNMENT_SELECT = `
          p.\`name\` AS project_name,
          s.\`name\` AS asset_name, s.\`code\` AS asset_code, s.man_hours AS asset_man_hours,
          u.\`name\` AS assigned_by_name, x.\`name\` AS cancelled_by_name,
-         dv.\`name\` AS delivered_by_name
+         dv.\`name\` AS delivered_by_name, cp.\`name\` AS completed_by_name
     FROM outsource_assignments a
     JOIN freelancers f ON f.id = a.freelancer_id
     JOIN projects p    ON p.id = a.project_id
     LEFT JOIN assets s ON s.id = a.asset_id
     LEFT JOIN users u  ON u.id = a.assigned_by
     LEFT JOIN users x  ON x.id = a.cancelled_by
-    LEFT JOIN users dv ON dv.id = a.delivered_by`;
+    LEFT JOIN users dv ON dv.id = a.delivered_by
+    LEFT JOIN users cp ON cp.id = a.completed_by`;
 
 /* Assignments, narrowed to the projects this reader may see.
  *
@@ -512,53 +559,138 @@ async function cancelAssignment(db, id, userId) {
   return { ok: true, before: current, assignment: await getAssignment(db, id) };
 }
 
-/* HANDING A FREELANCER'S WORK BACK, the assignment half of it.
+/* RECORDING A STAGE, all three of them through one function.
  *
- * ONE DEFINITION OF "THIS WAS DELIVERED", reached from one place. The status
- * column, the deliverer and the stamp are written together here; the route
- * above it owns the asset's transition. Splitting it the other way round — a
- * generic status edit that also moved the asset — would have made a field edit
- * carry a studio-wide side effect, which is why PUT /assignments/:id now
- * REFUSES a move into 'delivered' and names this action instead. There is one
- * way to deliver outsourced work and it is this one.
+ * THIS REPLACED deliverAssignment(), whose header explained the single-stage
+ * version of the same thing: "ONE DEFINITION OF 'THIS WAS DELIVERED', reached
+ * from one place... Splitting it the other way round — a generic status edit
+ * that also moved the asset — would have made a field edit carry a studio-wide
+ * side effect, which is why PUT /assignments/:id REFUSES a move into
+ * 'delivered' and names this action instead." All of that still holds, and now
+ * holds for Completed and for the reversal too: there is one way to record a
+ * stage and it is this.
  *
- * REFUSALS, each on its own terms and each cleanly rather than silently:
+ * ONE WRITER, because the three acts differ only in which column pair they
+ * stamp and which status they land on — and three near-identical functions is
+ * how two of them come to behave differently a year from now. The refusals are
+ * per stage, because those genuinely are different sentences.
  *
- *   already delivered   409. Delivering twice is not a no-op to be swallowed —
- *                       it would overwrite the first deliverer and the first
- *                       stamp with whoever pressed it second.
- *   cancelled           409. The work was taken back; there is nothing to hand
- *                       in. Reviving it is the assign flow, not this.
- *   no such assignment  404.
+ * EVERY STAMP IS A MEMBER OF STAFF. A freelancer has no login, so nothing here
+ * is ever recorded BY the freelancer: `userId` is always one of ours, acting on
+ * their behalf, and that is the fact the whole record turns on. It is why the
+ * history sentence the transition writes names both.
  *
- * AN ASSIGNMENT WITH NO ASSET STILL DELIVERS, and that is a decision rather
- * than an oversight. The asset link is optional by design — "outsourced work is
- * sometimes a tracked asset and sometimes a job that never enters the pipeline"
- * — so ad hoc work has no task to move and no review to go into. Its status
- * moves, its deliverer is recorded, and `movedAsset` comes back false so the
- * caller can say so rather than implying a transition that did not happen.
+ * THE ASSET'S HALF IS NOT HERE. The caller runs the workflow transition, which
+ * is what writes the asset's status and its history row; this writes the
+ * assignment. Keeping them apart is what lets Completed — which moves no asset
+ * status at all — take the same path as Delivered, which moves one.
  */
-async function deliverAssignment(db, id, userId) {
+const STAGE_TARGET = {
+  completed: COMPLETED,
+  delivered: DELIVERED,
+  /* Undoing either. Back to the state the work was given out in, not to
+     in_progress or revision_requested: those are things somebody chose, and a
+     reversal should not invent a choice nobody made. */
+  reopened: 'assigned',
+};
+
+/* A stored timestamp as a refusal sentence should say it.
+ *
+ * NOT String(stamp).slice(...). mysql2 hands a DATETIME back as a Date object,
+ * whose String() is 'Tue Oct 06 2026 19:23:45 GMT+0000' — and the old
+ * .replace('T', ' ') there struck the T of 'Tue', printing ' ue Oct 06 2026 '.
+ * Going through the number instead works for a Date, for an ISO string, and for
+ * the plain 'YYYY-MM-DD HH:MM:SS' some drivers return.
+ *
+ * IST because the reader is in the studio, and a delivery recorded at 02:00 UTC
+ * happened at half past seven in the evening to them. The schedule, the Time
+ * Sheet and the holiday calendar are all IST; a stamp that is not would be the
+ * only clock in the application telling a different time.
+ */
+function istStamp(stamp) {
+  if (stamp === null || stamp === undefined || stamp === '') return null;
+  const ms = stamp instanceof Date
+    ? stamp.getTime()
+    : Date.parse(/^\d{4}-\d{2}-\d{2} /.test(String(stamp))
+      // A space instead of a T is not an ISO instant, and Date.parse of it is
+      // implementation-defined. Make it one, and in UTC, which is what the
+      // column holds.
+      ? `${String(stamp).replace(' ', 'T')}Z`
+      : String(stamp));
+  if (!Number.isFinite(ms)) return null;
+  const { day, minute } = workingTime.istPartsOf(ms);
+  const hh = String(Math.floor(minute / 60)).padStart(2, '0');
+  const mm = String(Math.floor(minute % 60)).padStart(2, '0');
+  return `${workingTime.istDateOf(day)} ${hh}:${mm} IST`;
+}
+
+function stageRefusal(current, stage) {
+  if (current.status === CANCELLED) {
+    return 'That assignment was cancelled, so there is no stage to record. '
+      + 'Give the work out again if the freelancer is back on it.';
+  }
+  if (stage === 'completed') {
+    if (current.status === COMPLETED) {
+      return `${current.freelancerName}'s work was already marked completed`
+        + `${istStamp(current.completedAt) ? ` on ${istStamp(current.completedAt)}` : ''}.`;
+    }
+    if (current.status === DELIVERED) {
+      /* Delivered is PAST Completed, so this is not a refusal about order but
+         about going backwards — and the way back is the reversal, which has its
+         own permission because it is a heavier act. */
+      return `${current.freelancerName}'s work has already been delivered. `
+        + 'Reopen it first if it needs to go back to them.';
+    }
+  }
+  if (stage === 'delivered' && current.status === DELIVERED) {
+    return `${current.freelancerName} already delivered this`
+      + `${istStamp(current.deliveredAt) ? ` on ${istStamp(current.deliveredAt)}` : ''}.`;
+  }
+  if (stage === 'reopened' && current.status !== COMPLETED && current.status !== DELIVERED) {
+    return `${current.freelancerName}'s work is still with them, so there is nothing to reopen.`;
+  }
+  return null;
+}
+
+async function recordStage(db, id, stage, userId) {
+  if (!STAGE_TARGET[stage]) return { ok: false, status: 400, error: 'That is not a stage.' };
   const current = await getAssignment(db, id);
   if (!current) return { ok: false, status: 404, error: 'No such assignment.' };
-  if (current.status === CANCELLED) {
-    return { ok: false, status: 409,
-      error: 'That assignment was cancelled, so there is nothing to deliver. '
-        + 'Give the work out again if the freelancer is back on it.' };
-  }
-  if (current.status === DELIVERED) {
-    return { ok: false, status: 409,
-      error: `${current.freelancerName} already delivered this`
-        + `${current.deliveredAt ? ` on ${String(current.deliveredAt).replace('T', ' ').slice(0, 16)}` : ''}.` };
-  }
+  const refused = stageRefusal(current, stage);
+  if (refused) return { ok: false, status: 409, error: refused };
+
+  /* WHAT EACH STAGE WRITES, spelled out rather than built, because the
+     interesting part is what the reversal CLEARS. A row that still said
+     "delivered by Priya on the 4th" after being sent back to the freelancer
+     would be a record of something that is no longer true. */
+  const sets = {
+    completed: 'status = $1, completed_by = $2, completed_at = NOW()',
+    delivered: 'status = $1, delivered_by = $2, delivered_at = NOW()',
+    reopened: 'status = $1, completed_by = NULL, completed_at = NULL, '
+      + 'delivered_by = NULL, delivered_at = NULL',
+  }[stage];
+  const params = stage === 'reopened'
+    ? [STAGE_TARGET[stage], id]
+    : [STAGE_TARGET[stage], userId || null, id];
   await db.query(
-    `UPDATE outsource_assignments
-        SET status = $1, delivered_by = $2, delivered_at = NOW()
-      WHERE id = $3`,
-    [DELIVERED, userId || null, id]
+    `UPDATE outsource_assignments SET ${sets} WHERE id = $${params.length}`, params
   );
   return { ok: true, before: current, assignment: await getAssignment(db, id) };
 }
+
+// Kept as the name the bulk delivery route and the page already use. A delegate
+// rather than a copy, so there is still exactly one writer.
+const deliverAssignment = (db, id, userId) => recordStage(db, id, 'delivered', userId);
+
+/* Which stages each row can be moved to, decided here and read by the page.
+ *
+ * The page draws a button where one of these is true, so a button that is
+ * offered can be pressed — the same promise the Assets List's bulk bar makes.
+ * Spelled once rather than in two places, for the reason this codebase keeps
+ * rediscovering. */
+const isCompletable = (a) => Boolean(a)
+  && a.status !== COMPLETED && a.status !== DELIVERED && a.status !== CANCELLED;
+const isReopenable = (a) => Boolean(a) && (a.status === COMPLETED || a.status === DELIVERED);
 
 /* Is this assignment one the Mark as Delivered action could reach?
  *
@@ -595,8 +727,9 @@ function summarise(assignments) {
 }
 
 module.exports = {
-  STATUSES, STATUS_LABELS, FREELANCER_STATUSES, HOURS_MAX, CANCELLED, DELIVERED, isActive,
-  deliverAssignment, isDeliverable,
+  STATUSES, STATUS_LABELS, FREELANCER_STATUSES, HOURS_MAX, CANCELLED, DELIVERED, COMPLETED,
+  STAGES, STAGE_LABELS, stageOf, isActive, istStamp,
+  deliverAssignment, isDeliverable, isCompletable, isReopenable, recordStage, STAGE_TARGET,
   validateFreelancer, listFreelancers, getFreelancer, createFreelancer, updateFreelancer,
   validateAssignment, listAssignments, getAssignment, createAssignment, updateAssignment,
   costFor, costForProject, summarise,

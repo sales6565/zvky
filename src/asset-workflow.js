@@ -193,6 +193,10 @@ const actors = {
      Its own predicate and its own permission — NOT deliverer above, which is a
      different act with a different meaning. See the transition. */
   outsourceDeliverer: (ctx) => Boolean(ctx.canDeliverOutsourced),
+  /* Undoing a recorded stage, which is its own permission because it is a
+     heavier act than recording one: a delivery already in the team lead's queue
+     is work somebody may have started looking at. See outsource_reopen. */
+  outsourceReopener: (ctx) => Boolean(ctx.canReopenOutsourced),
   /* The client's round, gated by three separate permissions rather than one.
      Split because they are three different decisions: putting work in front of
      a client, accepting their yes, and passing their no back into the studio.
@@ -205,6 +209,28 @@ const actors = {
 
 // Where the asset sits after a transition. Returning a function rather than an
 // id because most of these are "the assignee", which the asset itself knows.
+/* "Marked delivered by Priya on behalf of Ravi K."
+ *
+ * ONE BUILDER FOR THE THREE OUTSOURCE SENTENCES, because the shape is the whole
+ * point and three copies of it is three chances to lose half. A freelancer has
+ * no login, so each of these records a member of staff acting for somebody who
+ * cannot click anything — and a history line that named only one of them would
+ * be missing whichever one the reader came back for.
+ *
+ * Degrades rather than breaks. An assignment can be cancelled and a user
+ * deactivated long after the row was written, and a history panel still has to
+ * render: with neither name it reads as the bare action, which is what the
+ * static describes on every other transition read like anyway. */
+function onBehalfOf(ctx, action) {
+  const staff = ctx && ctx.user && ctx.user.name ? String(ctx.user.name).trim() : '';
+  const freelancer = ctx && ctx.outsourcedTo && ctx.outsourcedTo.freelancerName
+    ? String(ctx.outsourcedTo.freelancerName).trim() : '';
+  if (staff && freelancer) return `${action} by ${staff} on behalf of ${freelancer}`;
+  if (staff) return `${action} by ${staff}`;
+  if (freelancer) return `${action} on behalf of ${freelancer}`;
+  return action;
+}
+
 const routes = {
   assignee: (ctx) => ctx.asset.assignee_id || null,
   // Nobody in particular: a review queue, picked up by whoever holds that gate.
@@ -551,7 +577,74 @@ const TRANSITIONS = [
     to: 'pending_tl_review',
     who: 'outsourceDeliverer',
     routeTo: 'reviewQueue',
-    describe: 'Delivered by the freelancer — ready for team lead review',
+    /* NAMED FOR BOTH PEOPLE, and that is the point of a function here.
+     *
+     * A freelancer has no login. Every one of these is a member of staff
+     * recording something on somebody else's behalf, and a history line reading
+     * only "Delivered by the freelancer" loses the half somebody will come back
+     * for: which of ours wrote it down. So the sentence carries both — "Marked
+     * delivered by Priya on behalf of Ravi K." — and falls back gracefully when
+     * either name is missing, because an assignment can be cancelled and a user
+     * deactivated after the fact and a history row must still read. */
+    describe: (ctx) => onBehalfOf(ctx, 'Marked delivered'),
+  },
+  {
+    /* THE FREELANCER SAYS IT IS FINISHED; WE HAVE NOT RECEIVED IT YET.
+     *
+     * `to` IS ITS OWN `from`, deliberately, and this is the only self-transition
+     * in the table. Completed is a fact about the ASSIGNMENT, not about the
+     * asset: the task is still Not Assigned, because nobody here has it and no
+     * review can begin until the files arrive. Moving the asset would be a lie
+     * on every board in the studio.
+     *
+     * So why a transition at all, rather than a column write? Because the
+     * alternative is a direct status write with its own permission check, its
+     * own project-closed check and its own audit path — three things this table
+     * already does, and three things that drift. Going through evaluate() and
+     * applyTransition() gets the actor gate, the closed-project refusal and an
+     * asset_events row with the history sentence, for the price of a `to` that
+     * equals its `from`. closeIfWorkStopped() is a no-op when the two are
+     * equal, so nothing is closed that should not be.
+     *
+     * NOT A TOLL GATE ON DELIVERY. outsource_delivered above is legal straight
+     * from not_started, so a studio that hears and receives in one breath marks
+     * Delivered without passing through here. */
+    action: 'outsource_completed',
+    from: ['not_started'],
+    to: 'not_started',
+    who: 'outsourceDeliverer',
+    /* Nobody's desk, which is what it already was. The asset has no internal
+       assignee and no review has begun — routing it anywhere would put it in a
+       queue for work that has not arrived. */
+    routeTo: 'reviewQueue',
+    describe: (ctx) => onBehalfOf(ctx, 'Marked completed by the freelancer, recorded'),
+  },
+  {
+    /* UNDOING A MIS-CLICK, and the one action in this pair that can move an
+     * asset backwards.
+     *
+     * TWO SHAPES, ONE ACTION. Undoing a Completed is a self-transition — the
+     * asset never moved — and undoing a Delivered brings it back from
+     * pending_tl_review to not_started. Both land on not_started, which is where
+     * outsourced work sits, so one `to` covers both and the `from` list says
+     * which two states it can be reached from.
+     *
+     * ONLY WHILE NOBODY HAS ACTED. pending_tl_review is in the `from` list and
+     * nothing further along is: once a lead has approved the work it is in the
+     * studio's own pipeline, and dragging it back to Not Assigned would strand a
+     * review somebody has already done. A delivery that has gone that far is
+     * corrected by the pipeline's own actions, not by this.
+     *
+     * ITS OWN PERMISSION, outsource.reopen, held by fewer designations than the
+     * one that records a stage — see the catalogue entry. Recording that a
+     * freelancer finished is bookkeeping; taking a delivery back out of
+     * somebody's review queue is not. */
+    action: 'outsource_reopen',
+    from: ['not_started', 'pending_tl_review'],
+    to: 'not_started',
+    who: 'outsourceReopener',
+    routeTo: 'reviewQueue',
+    describe: (ctx) => onBehalfOf(ctx, 'Reopened and sent back to the freelancer, recorded'),
   },
   /* --- the client's own round ---------------------------------------------
    *
@@ -675,6 +768,10 @@ function evaluate(action, ctx, { note } = {}) {
       tl_send_to_client: 'sent straight to the client — that is only possible once a team lead has approved it',
       relay: 'passed on to the assignee — the director\'s notes are only relayed once, from CD Feedbacks',
       deliver: 'marked delivered — only work the client has approved can be delivered',
+      outsource_completed: 'marked completed by the freelancer — that is only possible while the '
+        + 'task is Not Assigned, which is where outsourced work sits',
+      outsource_reopen: 'reopened and sent back to the freelancer — that is only possible while the '
+        + 'delivery is still waiting on a team lead and nobody has acted on it',
       outsource_delivered: 'marked delivered by the freelancer — that is only possible while the task is '
         + 'Not Assigned, which is where outsourced work sits. A task somebody in the studio has taken on, '
         + 'or one already in review, is no longer the freelancer\'s to hand back',
@@ -758,7 +855,10 @@ function refusal(transition, ctx) {
        delivered" on the Outsource tab would send somebody to ask for
        review.deliver, which would not help them. */
     case 'outsourceDeliverer':
-      return 'You cannot mark outsourced work as delivered on this project.';
+      return 'You cannot record a stage on outsourced work on this project.';
+    case 'outsourceReopener':
+      return 'You cannot reopen outsourced work on this project. Undoing a delivery is a '
+        + 'separate permission from recording one.';
     /* Each names its own permission, because all three sit on one status and
        "you cannot do that" would leave the reader unable to tell which of the
        three they are missing. */

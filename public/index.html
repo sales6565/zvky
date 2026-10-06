@@ -670,6 +670,17 @@ tr.past-round{opacity:0.62;}
 .os-table th.num,.os-table td.num{text-align:right;white-space:nowrap;}
 .os-table tr.os-off{opacity:.55;}
 .os-sub{font-size:10.5px;color:var(--ink-faint);margin-top:2px;}
+.os-stagebar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;}
+.os-stagechip{background:var(--surface-2);border:1px solid var(--border);border-radius:999px;
+  color:var(--ink-muted);cursor:pointer;font-size:11.5px;padding:4px 11px;}
+.os-stagechip:hover:not(:disabled){color:var(--ink);}
+.os-stagechip.active{background:var(--brand-accent);border-color:var(--brand-accent);color:#fff;font-weight:600;}
+.os-stagechip:disabled{cursor:default;opacity:.45;}
+.os-stagen{opacity:.7;font-variant-numeric:tabular-nums;}
+.os-grouphead td{background:var(--surface-2);color:var(--ink-muted);font-size:10.5px;
+  font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:6px 10px;}
+.os-actions{white-space:nowrap;}
+.os-actions .btn{margin-right:4px;}
 .os-code{font-family:ui-monospace,monospace;font-size:11px;color:var(--ink-muted);}
 .os-adhoc{color:var(--ink-faint);font-style:italic;}
 .os-pill{display:inline-block;font-size:10.5px;padding:1px 9px;border-radius:999px;white-space:nowrap;
@@ -3577,6 +3588,41 @@ function mayBulkSendToDev(){ return can('integration.send_to_dev'); }
  * Review. Different key, different meaning, different table. */
 function osDeliverable(a){ return Boolean(a) && a.status !== 'delivered' && a.status !== 'cancelled'; }
 function osMayDeliver(){ return can('outsource.deliver'); }
+
+/* The other two stage predicates, mirroring isCompletable() and isReopenable()
+   in src/outsource.js the same way and for the same reason.
+   
+   WHY A FREELANCER'S WORK HAS STAGES AT ALL AND THE ASSIGNEE'S DOES NOT: a
+   freelancer has no login. Nobody outside the studio ever clicks anything here,
+   so every stage on this tab is recorded BY A MEMBER OF STAFF ON THEIR BEHALF —
+   which is why these are gated by outsource.deliver and outsource.reopen and
+   not by the assignee gates (actors.assignee, STARTABLE, mayStartWork) that the
+   rest of the pipeline uses. Those stay exactly as they were; widening them so
+   that an unassigned task could be started or submitted would change ordinary
+   work, and ordinary work is not what this is about. */
+function osCompletable(a){
+  return Boolean(a) && a.status !== 'completed' && a.status !== 'delivered' && a.status !== 'cancelled';
+}
+function osReopenable(a){ return Boolean(a) && (a.status === 'completed' || a.status === 'delivered'); }
+/* Recording a stage and UNDOING one are different permissions, read separately
+   here so a role that may do the first cannot be shown the second. can() and
+   not caps(): both keys are in the catalogue for a Super Admin to switch on, and
+   this page's rule is that anything switchable is asked with can(). */
+function osMayRecordStage(){ return can('outsource.deliver'); }
+function osMayReopen(){ return can('outsource.reopen'); }
+
+/* The stage groups, in the order the list shows them: work still out first,
+   finished work last. Falls back to the four we ship when the payload is old or
+   empty, so the tab still groups rather than dropping every row. */
+function osStages(){
+  const fromServer = (osState.data && osState.data.stages) || [];
+  return fromServer.length ? fromServer : [
+    { key:'with_freelancer', label:'With freelancer' },
+    { key:'completed', label:'Completed' },
+    { key:'delivered', label:'Delivered' },
+    { key:'cancelled', label:'Cancelled' },
+  ];
+}
 
 /* Which assignments are ticked on the Outsource tab, by assignment id.
    
@@ -9180,6 +9226,13 @@ const HISTORY_ACTIONS = {
      opposite event. Named for who did what, and coloured as work arriving for
      review rather than as work finished — it lands in TL Review. */
   outsource_delivered: { label: 'Delivered by the freelancer', color: 'var(--review)' },
+  /* The freelancer says it is finished; we do not have it yet. Amber, because it
+     is a wait rather than an arrival — the same family the Game Feedback state
+     uses and deliberately not the green of work landing. */
+  outsource_completed: { label: 'Completed by the freelancer', color: '#d9822b' },
+  /* Undoing one of the two above. Named for what it did rather than for where it
+     landed: "Not Assigned" beside somebody's avatar would read as an unassignment. */
+  outsource_reopen: { label: 'Reopened — back to the freelancer', color: '#ffd23d' },
   /* The client's round. Named for what happened rather than for the state it
      landed in: "Delivered" beside a client's approval and "Delivered" beside a
      direct sign-off are different events, and the history is where somebody
@@ -13731,10 +13784,25 @@ async function renderMisAccess(){
    the field out of the response, so this checks canSeeRates only to avoid
    drawing a column that would be empty. */
 let osState = { tab:'assignments', data:null, people:null, targets:null,
-  editing:null, form:{}, errors:[], busy:false, assets:{} };
+  editing:null, form:{}, errors:[], busy:false, assets:{},
+  /* Which stage the Assigned work list is narrowed to, or 'all' — which groups
+     by stage rather than hiding anything. In osState and not beside
+     selectedAssignments because unlike a selection it SHOULD survive a refetch:
+     somebody who narrowed to Completed is looking at Completed, and the
+     twenty-second refresh putting them back on All would be the list moving
+     under them. */
+  stage:'all' };
 
 const OS_STATUS_TONE = { assigned:'#6b7a8f', in_progress:'#2f6f9f',
-  delivered:'#2e7d5b', revision_requested:'#b8860b' };
+  completed:'#5a4fbf', delivered:'#2e7d5b', revision_requested:'#b8860b' };
+
+/* The stage badge's colours. Four tones, none of them the brand red (#7f1416):
+   a status that looked like the brand would read as chrome rather than as a
+   state, which is the rule the asset statuses follow too. With the freelancer is
+   the blue of work in progress, Completed the violet of done-but-not-handed-on,
+   Delivered the same green a delivery is already shown in, Cancelled grey. */
+const OS_STAGE_TONE = { with_freelancer:'#2f6f9f', completed:'#5a4fbf',
+  delivered:'#2e7d5b', cancelled:'#6b7a8f' };
 
 function osMoney(n){
   if(n === null || n === undefined) return '—';
@@ -13793,23 +13861,53 @@ async function renderOutsource(){
 
 function osRenderAssignments(body, canManage, canSeeRates){
   const d = osState.data;
-  const rows = d.assignments;
+  const all = d.assignments;
   const errFor = (f)=>{ const e = osState.errors.find(x=>x.field===f); return e ? e.message : ''; };
 
-  /* THE SELECTION, PRUNED FIRST.
+  /* THE THREE STAGE PERMISSIONS, each asked the same way: the payload's flag is
+   * the authority and can() is the same key read the way every other control on
+   * this page reads one, so a drift between them is a test failure rather than a
+   * silent difference.
    *
-   * `canDeliver` comes from the server rather than from can() alone, and both
-   * are used deliberately: the payload's flag is the authority, osMayDeliver()
-   * is the same key read the way every other control on this page reads one, so
-   * a drift between them is a test failure rather than a silent difference.
+   * canDeliver covers recording EITHER forward stage — Completed and Delivered
+   * are two steps of one act and one key, outsource.deliver, opens both.
+   * canReopen is separate because undoing a recorded stage is the only thing on
+   * this tab that unsays something already written down. */
+  const mayRecord = Boolean(d.canDeliver) && osMayRecordStage();
+  const mayReopen = Boolean(d.canReopen) && osMayReopen();
+
+  /* THE STAGE FILTER, and the grouping under it.
+   *
+   * Nothing is hidden by default: 'all' groups the rows under a heading per
+   * stage, in the server's stage order, so work still out sits above work that
+   * is finished instead of being interleaved with it. Choosing one stage narrows
+   * to it. Both answer the brief's "finished work does not clutter active work"
+   * without a row disappearing from a list somebody was reading yesterday. */
+  const stages = osStages();
+  const counts = {};
+  stages.forEach(st=>{ counts[st.key] = all.filter(a=>a.stage===st.key).length; });
+  if(osState.stage && osState.stage !== 'all' && !stages.some(st=>st.key===osState.stage)) osState.stage = 'all';
+  const picked = osState.stage || 'all';
+  const rows = picked === 'all' ? all : all.filter(a=>a.stage===picked);
+
+  const chips = all.length ? `<div class="os-stagebar">
+      ${[{ key:'all', label:'All' }, ...stages].map(st=>{
+        const n = st.key === 'all' ? all.length : counts[st.key];
+        return `<button class="os-stagechip${picked===st.key?' active':''}" data-osstagefilter="${st.key}"${
+          st.key!=='all' && !n ? ' disabled' : ''}>${escapeHTML(st.label)} <span class="os-stagen">${n}</span></button>`;
+      }).join('')}
+    </div>` : '';
+
+  /* THE SELECTION, PRUNED FIRST.
    *
    * Pruned to rows that are BOTH on screen and still deliverable, which is the
    * brief's "an asset that is no longer in Assigned work cannot stay selected":
    * a row somebody else delivered, or one that has been cancelled, drops out of
    * the tick list the next time this draws rather than being carried into an
-   * action that would then refuse it. */
-  const mayDeliver = Boolean(d.canDeliver) && osMayDeliver();
-  const selectable = mayDeliver ? rows.filter(osDeliverable) : [];
+   * action that would then refuse it. ROWS, not `all` — a stage filter takes a
+   * row off the screen, and a ticked row the reader can no longer see is a row
+   * the count would lie about. */
+  const selectable = mayRecord ? rows.filter(osDeliverable) : [];
   const selectableIds = new Set(selectable.map(a=>a.id));
   for(const id of [...selectedAssignments]) if(!selectableIds.has(id)) selectedAssignments.delete(id);
   const chosen = selectable.filter(a=>selectedAssignments.has(a.id));
@@ -13821,38 +13919,27 @@ function osRenderAssignments(body, canManage, canSeeRates){
      count that silently became wrong is how a selection starts skipping rows. */
   const skipped = chosen.length - chosen.filter(osDeliverable).length;
 
-  const bar = (mayDeliver && chosen.length) ? `<div class="bulk-bar">
+  const bar = (mayRecord && chosen.length) ? `<div class="bulk-bar">
       <span class="bulk-count">${chosen.length} selected${skipped
         ? ` <span style="font-weight:400;color:var(--ink-muted);">(${skipped} cannot be delivered)</span>` : ''}</span>
       <button class="btn btn-ghost btn-sm" id="osDeliverClear">Clear</button>
       <button class="btn btn-brand btn-sm" id="osDeliverGo">Mark as Delivered (${chosen.length})</button>
     </div>` : '';
 
-  const headBox = mayDeliver
+  const headBox = mayRecord
     ? `<th class="pick-col">${selectable.length
         ? `<input type="checkbox" id="osPickAll"${allTicked?' checked':''} title="Select every assignment here that can be marked delivered">`
         : ''}</th>`
     : '';
+  // One actions column for Edit and the stage buttons together, rather than two
+  // columns that would each be empty for half the readers.
+  const hasActions = canManage || mayRecord || mayReopen;
 
-  body.innerHTML = `
-    ${canManage ? `<div class="os-bar">
-      <button class="btn btn-brand btn-sm" id="osNewAssignment">+ Assign work</button>
-    </div>` : ''}
-    ${osState.editing && osState.editing.kind==='assignment' ? osAssignmentFormHTML(errFor) : ''}
-    ${!osState.editing && osState.errors.length ? `<div class="rh-errs" style="margin-bottom:10px;">${
-      osState.errors.map(e=>`<div class="rh-err">${escapeHTML(e.message)}</div>`).join('')}</div>` : ''}
-    ${bar}
-    ${rows.length ? `
-    <table class="os-table">
-      <thead><tr>
-        ${headBox}<th>Freelancer</th><th>Project</th><th>Task / asset</th>
-        <th class="num">Decided hours</th>${canSeeRates?'<th class="num">Cost</th>':''}
-        <th>Status</th><th>Due</th>${canManage?'<th></th>':''}
-      </tr></thead>
-      <tbody>
-        ${rows.map(a=>`
+  /* ONE ROW. Pulled out of the map so the grouped and the filtered lists cannot
+     drift into drawing a row two different ways. */
+  const rowHTML = (a)=>`
           <tr>
-            ${mayDeliver ? `<td class="pick-col">${osDeliverable(a)
+            ${mayRecord ? `<td class="pick-col">${osDeliverable(a)
               ? `<input type="checkbox" data-ospick="${escapeHTML(a.id)}"${selectedAssignments.has(a.id)?' checked':''}>`
               /* No box rather than a disabled one: a row that is already
                  delivered or cancelled is not a thing this action can reach, and
@@ -13868,14 +13955,52 @@ function osRenderAssignments(body, canManage, canSeeRates){
                   : `<span class="os-adhoc">${escapeHTML(a.description||'ad hoc')}</span>`}</td>
             <td class="num"><strong>${osHours(a.decidedManHours)}</strong></td>
             ${canSeeRates?`<td class="num">${osMoney(osCostOf(a))}</td>`:''}
-            <td><span class="os-pill" style="--tone:${OS_STATUS_TONE[a.status]||'#6b7a8f'}">${escapeHTML(a.statusLabel)}</span>
-              ${a.delivered && a.deliveredAt ? `<div class="os-sub">${escapeHTML(String(a.deliveredAt).replace('T',' ').slice(0,16))}${
-                a.deliveredByName ? ` \u00b7 ${escapeHTML(a.deliveredByName)}` : ''}</div>` : ''}</td>
+            <td>${osStageBadge(a)}</td>
+            <td><span class="os-pill" style="--tone:${OS_STATUS_TONE[a.status]||'#6b7a8f'}">${escapeHTML(a.statusLabel)}</span></td>
             <td>${a.dueDate ? escapeHTML(a.dueDate) : '—'}</td>
-            ${canManage?`<td><button class="btn btn-sm btn-ghost" data-edit="${escapeHTML(a.id)}">Edit</button></td>`:''}
-          </tr>`).join('')}
+            ${hasActions?`<td class="os-actions">${osStageButtons(a, mayRecord, mayReopen)}${
+              canManage?`<button class="btn btn-sm btn-ghost" data-edit="${escapeHTML(a.id)}">Edit</button>`:''}</td>`:''}
+          </tr>`;
+
+  const colCount = (mayRecord?1:0) + 7 + (canSeeRates?1:0) + (hasActions?1:0);
+  const groupedBody = ()=> stages.map(st=>{
+    const group = all.filter(a=>a.stage===st.key);
+    if(!group.length) return '';
+    return `<tr class="os-grouphead"><td colspan="${colCount}">${escapeHTML(st.label)}
+        <span class="os-stagen">${group.length}</span></td></tr>${group.map(rowHTML).join('')}`;
+  }).join('');
+
+  body.innerHTML = `
+    ${canManage ? `<div class="os-bar">
+      <button class="btn btn-brand btn-sm" id="osNewAssignment">+ Assign work</button>
+    </div>` : ''}
+    ${osState.editing && osState.editing.kind==='assignment' ? osAssignmentFormHTML(errFor) : ''}
+    ${!osState.editing && osState.errors.length ? `<div class="rh-errs" style="margin-bottom:10px;">${
+      osState.errors.map(e=>`<div class="rh-err">${escapeHTML(e.message)}</div>`).join('')}</div>` : ''}
+    ${chips}
+    ${bar}
+    ${all.length ? `
+    <table class="os-table">
+      <thead><tr>
+        ${headBox}<th>Freelancer</th><th>Project</th><th>Task / asset</th>
+        <th class="num">Decided hours</th>${canSeeRates?'<th class="num">Cost</th>':''}
+        <th>Stage</th><th>Status</th><th>Due</th>${hasActions?'<th></th>':''}
+      </tr></thead>
+      <tbody>
+        ${picked === 'all' ? groupedBody() : rows.map(rowHTML).join('')}
       </tbody>
-    </table>` : '<div class="os-empty">No outsourced work on the projects you can see.</div>'}`;
+    </table>
+    ${!rows.length ? `<div class="os-empty">No ${escapeHTML((stages.find(st=>st.key===picked)||{}).label||'').toLowerCase()} work.</div>` : ''}`
+    : '<div class="os-empty">No outsourced work on the projects you can see.</div>'}`;
+
+  /* --- the stage filter's wiring ----------------------------------------- */
+  body.querySelectorAll('[data-osstagefilter]').forEach(b=>b.onclick = ()=>{
+    osState.stage = b.dataset.osstagefilter;
+    /* The selection is NOT cleared here. Pruning above drops whatever has left
+       the screen, which is the honest half; a reader narrowing to one stage to
+       look at it has not changed their mind about what they ticked. */
+    renderOutsource();
+  });
 
   /* --- the selection's own wiring ---------------------------------------- */
   body.querySelectorAll('[data-ospick]').forEach(box=>{
@@ -13897,54 +14022,18 @@ function osRenderAssignments(body, canManage, canSeeRates){
   if(clear) clear.onclick = ()=>{ selectedAssignments.clear(); renderOutsource(); };
 
   const go = document.getElementById('osDeliverGo');
-  if(go) go.onclick = async ()=>{
-    if(osState.busy) return;
-    const ids = chosen.map(a=>a.id);
-    if(!ids.length) return;
-    /* THE CONFIRMATION NAMES THE COUNT, and what it is about to do to the tasks
-       — because the second half is the part somebody would not expect from a
-       button on the Outsource tab. The work goes into a team lead's queue. */
-    const withTasks = chosen.filter(a=>a.assetId).length;
-    const adHoc = ids.length - withTasks;
-    if(!confirm(`Mark ${ids.length} assignment${ids.length===1?'':'s'} as delivered?\n\n`
-      + (withTasks ? `${withTasks} task${withTasks===1?'':'s'} will move to TL Review for a team lead to check.\n` : '')
-      + (adHoc ? `${adHoc} ${adHoc===1?'is ad hoc work with no task, so only its status changes':'are ad hoc work with no task, so only their status changes'}.\n` : '')
-      + '\nWho delivered it and when is recorded. This cannot be undone from here — '
-      + 'unassign the freelancer if the work has to go back to them.')) return;
-    osState.busy = true;
-    go.disabled = true;
-    try{
-      const r = await api('/assets/bulk/outsource-deliver', { method:'POST', body:{ assignmentIds: ids } });
-      /* SUCCESSES ARE KEPT WHEN A SIBLING IS REFUSED, which is what the
-         per-row reply is for — so the toast says both numbers and the refusals
-         are listed with their own reason rather than one blanket failure. */
-      const failed = (r.results||[]).filter(x=>!x.ok);
-      if(failed.length){
-        osState.errors = failed.map(x=>({ field:null,
-          message: `${x.code || x.freelancerName || 'One row'}: ${x.error}` }));
-        showToast(`${r.delivered} of ${r.requested} delivered.`);
-      }else{
-        osState.errors = [];
-        showToast(`${r.delivered} assignment${r.delivered===1?'':'s'} delivered.`);
-      }
-      /* CLEARED ON SUCCESS, and only the rows that actually landed are forgotten
-         — a refused row stays ticked so somebody can read its reason beside the
-         box it belongs to and try again or clear it themselves. */
-      (r.results||[]).filter(x=>x.ok).forEach(x=>selectedAssignments.delete(x.id));
-      osState.data = null;
-      /* The internal side too. A delivered task is now in TL Review, so the
-         board, the Assets List and the pending queues are all stale — dropped
-         here rather than left to the next navigation, which is what makes both
-         views reflect the change on the normal refresh. */
-      state.assets = [];
-      refreshPendingCount();
-    }catch(e){
-      osState.errors = [{ field:null, message:e.message }];
-    }finally{
-      osState.busy = false;
-      await renderOutsource();
-    }
+  if(go) go.onclick = ()=>{
+    if(!chosen.length) return;
+    return osRunStage('delivered', chosen, go);
   };
+
+  /* --- one row's own stage buttons --------------------------------------- */
+  body.querySelectorAll('[data-osstage]').forEach(b=>b.onclick = ()=>{
+    const [id, stage] = b.dataset.osstage.split(':');
+    const a = all.find(x=>x.id===id);
+    if(!a) return;
+    return osRunStage(stage, [a], b);
+  });
 
   const add = document.getElementById('osNewAssignment');
   if(add) add.onclick = async ()=>{
@@ -13956,7 +14045,7 @@ function osRenderAssignments(body, canManage, canSeeRates){
   };
   body.querySelectorAll('[data-edit]').forEach(b=>b.onclick = async ()=>{
     await osLoadTargets();
-    const a = rows.find(x=>x.id===b.dataset.edit);
+    const a = all.find(x=>x.id===b.dataset.edit);
     osState.editing = { kind:'assignment', id:a.id };
     osState.form = { freelancerId:a.freelancerId, projectId:a.projectId, assetId:a.assetId||'',
       description:a.description, decidedManHours:a.decidedManHours, status:a.status,
@@ -13966,6 +14055,123 @@ function osRenderAssignments(body, canManage, canSeeRates){
     renderOutsource();
   });
   osWireAssignmentForm();
+}
+
+/* The stage, as a badge, with who recorded it and when underneath.
+ *
+ * WHO is the point of the sub-line, not decoration. A freelancer has no login,
+ * so "Marked completed" was always done by a member of staff on their behalf,
+ * and a record that showed only the stage would have lost the one name anybody
+ * asking about it later needs. Null on everything recorded before the columns
+ * existed, which reads as "we do not know" rather than as a wrong name. */
+function osStageBadge(a){
+  const tone = OS_STAGE_TONE[a.stage] || '#6b7a8f';
+  const stamp = a.stage === 'delivered' ? { by:a.deliveredByName, at:a.deliveredAt, verb:'delivered' }
+    : a.stage === 'completed' ? { by:a.completedByName, at:a.completedAt, verb:'completed' }
+      : a.stage === 'cancelled' ? { by:a.cancelledByName, at:a.cancelledAt, verb:'cancelled' }
+        : null;
+  const sub = stamp && (stamp.by || stamp.at)
+    ? `<div class="os-sub">${stamp.verb}${stamp.by?` by ${escapeHTML(stamp.by)}`:''}${
+        stamp.at?` · ${escapeHTML(fmtDate(stamp.at))}`:''}</div>`
+    : '';
+  return `<span class="os-pill" style="--tone:${tone}">${escapeHTML(a.stageLabel || a.stage || '—')}</span>${sub}`;
+}
+
+/* The buttons one row offers, from the two keys and the row's own stage.
+   Hidden rather than disabled, for the reason the tick box is: a control that
+   cannot be used is a question, and the Stage cell beside it is the answer. */
+function osStageButtons(a, mayRecord, mayReopen){
+  const out = [];
+  if(mayRecord && osCompletable(a)){
+    out.push(`<button class="btn btn-sm btn-ghost" data-osstage="${escapeHTML(a.id)}:completed"
+      title="Record that ${escapeHTML(a.freelancerName)} has finished — the task stays where it is">Mark completed</button>`);
+  }
+  if(mayRecord && osDeliverable(a)){
+    out.push(`<button class="btn btn-sm btn-ghost" data-osstage="${escapeHTML(a.id)}:delivered"
+      title="Record the hand-back from ${escapeHTML(a.freelancerName)} and send the task to TL Review">Mark delivered</button>`);
+  }
+  if(mayReopen && osReopenable(a)){
+    out.push(`<button class="btn btn-sm btn-ghost" data-osstage="${escapeHTML(a.id)}:reopened"
+      title="Undo the recorded stage and put the work back with ${escapeHTML(a.freelancerName)}">Reopen</button>`);
+  }
+  return out.join('');
+}
+
+/* THE ONE PLACE A STAGE IS RECORDED FROM, for one row or for a selection.
+ *
+ * Per-row and bulk share it deliberately: both are the same request to the same
+ * endpoint with the same per-row results, and the only difference is how many
+ * ids are in the list. Two copies would be two confirmations and two ways of
+ * reading a partial failure. */
+const OS_STAGE_WORDS = {
+  completed: { verb:'completed', title:'Mark', past:'marked completed' },
+  delivered: { verb:'delivered', title:'Mark', past:'delivered' },
+  reopened:  { verb:'reopened',  title:'Reopen', past:'reopened' },
+};
+
+async function osRunStage(stage, rows, button){
+  const words = OS_STAGE_WORDS[stage];
+  if(!words || !rows.length || osState.busy) return;
+  const ids = rows.map(a=>a.id);
+
+  /* THE CONFIRMATION NAMES THE COUNT AND THE FREELANCER(S) — the brief's words,
+     and the reason is that this acts on somebody else's behalf. Up to three
+     names are listed; beyond that the count carries it, because a confirmation
+     nobody reads to the end has stopped being one. */
+  const names = [...new Set(rows.map(a=>a.freelancerName).filter(Boolean))];
+  const who = names.length === 0 ? 'the freelancer'
+    : names.length <= 3 ? names.join(', ')
+      : `${names.slice(0,3).join(', ')} and ${names.length-3} other${names.length-3===1?'':'s'}`;
+  const withTasks = rows.filter(a=>a.assetId).length;
+  const adHoc = ids.length - withTasks;
+  const consequence = stage === 'delivered'
+    ? (withTasks ? `${withTasks} task${withTasks===1?'':'s'} will move to TL Review for a team lead to check.\n` : '')
+      + (adHoc ? `${adHoc} ${adHoc===1?'is ad hoc work with no task, so only its status changes':'are ad hoc work with no task, so only their status changes'}.\n` : '')
+      + '\nWho recorded it and when is kept. Reopening it afterwards is a separate permission.'
+    : stage === 'completed'
+      ? 'The task does not move: Completed records that the freelancer has finished, and\n'
+        + 'Mark delivered is the step that sends it to TL Review.\n\n'
+        + 'Who recorded it and when is kept.'
+      : 'The recorded stage is cleared and the work goes back to being with them.\n'
+        + 'The task returns to Not Started, and the reversal is kept in the history.';
+  if(!confirm(`${words.title} ${ids.length} assignment${ids.length===1?'':'s'} as ${words.verb}?\n\n`
+    + `On behalf of: ${who}\n\n` + consequence)) return;
+
+  osState.busy = true;
+  if(button) button.disabled = true;
+  try{
+    const r = await api('/assets/bulk/outsource-stage', { method:'POST', body:{ assignmentIds: ids, stage } });
+    const done = r.succeeded === undefined ? r.delivered : r.succeeded;
+    /* SUCCESSES ARE KEPT WHEN A SIBLING IS REFUSED, which is what the per-row
+       reply is for — so the toast says both numbers and the refusals are listed
+       with their own reason rather than one blanket failure. */
+    const failed = (r.results||[]).filter(x=>!x.ok);
+    if(failed.length){
+      osState.errors = failed.map(x=>({ field:null,
+        message: `${x.code || x.freelancerName || 'One row'}: ${x.error}` }));
+      showToast(`${done} of ${r.requested} ${words.past}.`);
+    }else{
+      osState.errors = [];
+      showToast(`${done} assignment${done===1?'':'s'} ${words.past}.`);
+    }
+    /* CLEARED ON SUCCESS, and only the rows that actually landed are forgotten
+       — a refused row stays ticked so somebody can read its reason beside the
+       box it belongs to and try again or clear it themselves. */
+    (r.results||[]).filter(x=>x.ok).forEach(x=>selectedAssignments.delete(x.id));
+    osState.data = null;
+    /* The internal side too. A delivered task is now in TL Review and a reopened
+       one is back in Not Started, so the board, the Assets List and the pending
+       queues are all stale — dropped here rather than left to the next
+       navigation, which is what makes both views reflect the change on the
+       normal refresh. */
+    state.assets = [];
+    refreshPendingCount();
+  }catch(e){
+    osState.errors = [{ field:null, message:e.message }];
+  }finally{
+    osState.busy = false;
+    await renderOutsource();
+  }
 }
 
 /* The cost of one assignment, worked out on the page from figures it already

@@ -86,6 +86,14 @@ async function buildReport(req) {
             ${finishedAt} AS finishedAt,
             (a.status = 'delivered') AS delivered,
             (SELECT COUNT(*) FROM asset_versions v WHERE v.asset_id = a.id) AS rounds,
+            /* Is this task out with a freelancer, or was it? The Efficiency
+               report excludes it either way — there is no measured time on work
+               the studio does not run its clock on — and this is what lets the
+               Excluded list say THAT rather than "never submitted", which reads
+               as somebody having forgotten. Cancelled assignments do not count:
+               taking the work back makes the task the studio's again. */
+            EXISTS (SELECT 1 FROM outsource_assignments oa
+                     WHERE oa.asset_id = a.id AND oa.status <> 'cancelled') AS outsourced,
             (SELECT COUNT(DISTINCT x.user_id) FROM asset_assignments x WHERE x.asset_id = a.id) AS contributors,
             /* Did a team lead take the Creative Director out of the loop?
              *
@@ -159,6 +167,8 @@ async function buildReport(req) {
     // An asset is in the report once it has been submitted at least once —
     // before that there is nothing to have been efficient about.
     submitted: Number(r.rounds) > 0,
+    // From MySQL as 1 or 0; every consumer below reads a boolean.
+    outsourced: Boolean(Number(r.outsourced)),
     categoryLabel: categories.get(r.category) || r.category,
     typeLabel: scopes.get(r.type) || r.type,
   }));

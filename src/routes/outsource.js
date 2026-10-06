@@ -42,6 +42,13 @@ const maySeeRates = (req) => can(req, 'outsource.rates');
    from the page. */
 const mayDeliver = (req) => can(req, 'outsource.deliver');
 
+/* Undoing a stage. A SEPARATE KEY on purpose, and asked separately here: a
+   reader may record every stage all day and still not be somebody who may
+   rewrite a recorded one. outsource.reopen is held by the designations that
+   hold user.delete — the same small set — because it is the only control on
+   this tab that unsays something already written down. */
+const mayReopen = (req) => can(req, 'outsource.reopen');
+
 const refuseUnlessManager = (req, res) => {
   if (mayManage(req)) return false;
   res.status(403).json({ error: 'You do not have permission to change outsourced work.' });
@@ -150,6 +157,12 @@ router.get('/assignments', async (req, res) => {
     canManage: mayManage(req),
     canSeeRates: maySeeRates(req),
     canDeliver: mayDeliver(req),
+    canReopen: mayReopen(req),
+    /* The stages, named by the server. The page groups and filters by these, so
+       taking the list from here rather than repeating it in the page means a
+       stage added to src/outsource.js appears on the tab instead of silently
+       falling into whichever group the page happened to list last. */
+    stages: outsource.STAGES.map((key) => ({ key, label: outsource.STAGE_LABELS[key] })),
     /* The one value the edit form must no longer offer, named by the server
        rather than hardcoded in the page: PUT refuses a move into it and tells
        the reader to use the action instead, so a dropdown that still listed it

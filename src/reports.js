@@ -63,6 +63,22 @@ function efficiencyOf(manHours, seconds) {
 /* Why an asset is not in the report. One reason per asset, in the order a
  * person would ask about them. */
 function exclusionReason(row) {
+  /* OUTSOURCED WORK IS NAMED FIRST, and it is the only one of these that is not
+   * a gap in the record.
+   *
+   * It was already excluded, and correctly: a freelancer has no login and no
+   * work session, so totalSeconds is nought and `rounds` is nought — the
+   * delivery writes no asset_versions row — and either of the clauses below
+   * would have caught it. What it was excluded AS was "never submitted", which
+   * reads as somebody having forgotten to hand the work in. The work was handed
+   * in; there is simply no measured time to be efficient with, because the
+   * studio does not run its clock on somebody it does not employ.
+   *
+   * So the reason says so. The asset still never reaches the averages or the
+   * two hour totals — which is what matters, and is what stops an outsourced
+   * estimate sitting in the Man Hours column against nought hours spent — and
+   * the Excluded list now explains itself. */
+  if (row.outsourced) return 'outsourced \u2014 no tracked time';
   if (!row.submitted) return 'never submitted';
   if (!(Number(row.manHours) > 0)) return 'no Man Hours estimate';
   if (!(Number(row.totalSeconds) > 0)) return 'no time recorded';
