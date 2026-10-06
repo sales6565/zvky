@@ -59,22 +59,13 @@ test('the pipeline is the app\'s real workflow, not a list of its own', () => {
      pipeline is the asset workflow, and the panel has to move with it — a stage
      added next year must appear here without anybody remembering to. */
   const blank = dashboard.empty().pipeline;
-  /* THE WORKFLOW'S STATES, PLUS ONE THAT IS NOT A STATE. Back from Freelancer is
-     a view of pending_tl_review, not a status — the asset really is in TL Review
-     — and it is here because the Dashboard's board draws it as its own column
-     and a panel above that board saying "TL Review 2" over a board showing
-     "TL Review 1 / Back from Freelancer 1" is a drift somebody has to reconcile
-     by hand. Spliced in from workflow.OUTSOURCE_DELIVERED_COLUMN, so a stage
-     added next year still appears here without anybody remembering to. */
-  const col = workflow.OUTSOURCE_DELIVERED_COLUMN;
-  const expected = [];
-  for (const id of workflow.STATE_IDS) {
-    expected.push(id);
-    if (id === col.after) expected.push(col.id);
-  }
-  assert.deepStrictEqual(blank.map((s) => s.id), expected);
-  assert.ok(!workflow.STATE_IDS.includes(col.id),
-    'and the extra row is deliberately not a status');
+  /* ONE ROW PER STATUS, which is what this was before a freelancer's hand-back
+     landed in pending_tl_review and had to be told apart from an artist's
+     submission — and is what it is again now that the hand-back goes straight to
+     'delivered', a status the panel has always counted. */
+  assert.deepStrictEqual(blank.map((s) => s.id), workflow.STATE_IDS);
+  assert.ok(!blank.some((s) => s.id === 'outsource_delivered'),
+    'the superseded Back from Freelancer row is gone with the column');
   assert.ok(blank.every((s) => s.color), 'every stage carries the workflow colour it is drawn in');
   assert.ok(blank.every((s) => s.count === 0));
 });
@@ -235,16 +226,14 @@ test('the Admin Dashboard', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(stage('pending_cd_review'), 1);
     assert.strictEqual(stage('awaiting_client_feedback'), 1);
     assert.strictEqual(stage('delivered'), 0, 'the closed project\'s work is not in the pipeline');
-    /* ONE ROW MORE THAN THERE ARE STATUSES, and it is Back from Freelancer —
-       work a freelancer has handed back, split out of TL Review so this panel
-       and the Dashboard's board say the same thing about the same asset. The
-       count still has to be the FULL list whether or not anything is in it: a
+    /* ONE ROW PER STATUS, and the FULL list whether or not anything is in it: a
        panel that gains and loses rows as work moves changes shape under the
        reader, which is what this assertion has always been about. empty() and
-       stageCounts() build it from one function for that reason. */
-    assert.strictEqual(body.pipeline.length, workflow.STATE_IDS.length + 1,
+       stageCounts() build it from one function for that reason — they once did
+       not, and a viewer with no projects saw a shorter panel than a viewer with
+       one. */
+    assert.strictEqual(body.pipeline.length, workflow.STATE_IDS.length,
       'every stage is returned, including the empty ones, so the panel does not change shape');
-    assert.strictEqual(stage('outsource_delivered'), 0, 'nothing is outsourced in this fixture');
     assert.deepStrictEqual(body.pipeline.map((s) => s.id),
       dashboard.empty().pipeline.map((s) => s.id),
       'and a viewer with projects sees the same rows as a viewer with none');
@@ -391,7 +380,7 @@ test('the Admin Dashboard', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.deepStrictEqual(res.body.pipeline.map((s) => s.id),
       dashboard.empty().pipeline.map((s) => s.id),
       'and the pipeline still names every stage rather than collapsing');
-    assert.strictEqual(res.body.pipeline.length, workflow.STATE_IDS.length + 1);
+    assert.strictEqual(res.body.pipeline.length, workflow.STATE_IDS.length);
 
     await as('root', '/permissions/roles/game_artist', {
       method: 'PUT', body: { permissions: held },

@@ -1,34 +1,26 @@
-/* THE DASHBOARD'S "Back from Freelancer" COLUMN.
+/* THE DASHBOARD, AFTER A FREELANCER'S WORK IS DELIVERED.
  *
  * "Dashboard" IS TWO THINGS IN THIS APPLICATION and the mix-up has happened
  * before, so: this file is about the tab labelled Dashboard, which is the
  * per-project BOARD (data-tab="board", renderBoard()). The permission-gated
- * ADMIN Dashboard is a different screen and is treated here as a CONSUMER —
- * src/admin-dashboard.js reads assets in four places and one of them had to
- * learn the same split.
+ * ADMIN Dashboard is a different screen and is treated here as a consumer.
  *
- * WHAT WAS TRUE BEFORE THIS, established by reproduction rather than assumed:
- * a freelancer-delivered asset holds status pending_tl_review — a REAL workflow
- * status — so it sat in the TL Review column beside an artist's own submission,
- * in exactly one column, visible. Nothing vanished. What was missing was any
- * sign that it had come from outside: the card's only difference was an empty
- * avatar slot, which reads as "nobody has picked this up" about work that has
- * been done and handed back.
+ * WHAT THIS FILE USED TO BE ABOUT, and why it is not any more. For two commits
+ * Mark delivered landed a freelancer's task in pending_tl_review, so the board
+ * drew it in a column of its own — "Back from Freelancer" — to stop it reading
+ * as an artist's submission sitting in TL Review. The studio then re-pointed the
+ * delivery at the pipeline's own terminal status, 'delivered'. The board has
+ * always had a Delivered column, so there is nothing left for an extra column to
+ * claim: BOARD_EXTRA_COLUMNS is empty, and OUTSOURCE_DELIVERED_COLUMN survives
+ * only as a named record of the superseded destination.
  *
- * "DELIVERED" IS NOT THE ASSET'S STATUS. The asset holds pending_tl_review and
- * the ASSIGNMENT holds 'delivered' (outsource_assignments.status, with
- * delivered_by and delivered_at). There is also a `delivered` asset status and
- * it is the OPPOSITE end of the pipeline — the client has the work — which is
- * why this column is NOT called Delivered. Two columns under one word meaning
- * near opposites is the confusion the README's "Two permissions called Mark as
- * Delivered" exists to prevent.
- *
- * THE RISK THIS FILE IS REALLY ABOUT is the half-migrated filter, the shape
- * behind the canHandOverInReview and REWORK_STATUSES gaps: a column added to
- * the cards but not to the counts, or a lens applied to the old columns and not
- * the new one. So the board is RENDERED with the page's own function and the
- * output is read, and the property test at the end fails if ANY status the
- * server can set stops mapping to exactly one column.
+ * SO WHAT THIS FILE VERIFIES NOW is mostly that nothing had to be built: the
+ * asset appears in the Delivered column the board already drew, in exactly one
+ * column, counted once everywhere. The two things that ARE new are the card's
+ * freelancer line — which had to stop being keyed on a column that no longer
+ * exists — and the property test, which is worth keeping whatever the columns
+ * are: it fails if ANY status the server can set stops mapping to exactly one
+ * column, which on a board means a card vanishing.
  */
 const test = require('node:test');
 const assert = require('node:assert');
@@ -135,9 +127,9 @@ const columnsOf = (html, id) =>
 // ---------------------------------------------------------------------------
 
 const DELIVERED_AT = '2026-10-06T07:30:00.000Z';
-const backFromFreelancer = (over = {}) => ({
+const deliveredByFreelancer = (over = {}) => ({
   id: 'f1', code: 'CHR-002', name: 'Lantern Keeper', type: 'character',
-  status: 'pending_tl_review', assignee_id: null, assignee_name: null,
+  status: 'delivered', assignee_id: null, assignee_name: null,
   man_hours: 24, due_date: null, priority: 'low', tasks: [], held: null,
   outsourced_to: {
     freelancerName: 'Ravi K.', status: 'delivered', stage: 'delivered',
@@ -155,39 +147,50 @@ const ordinary = (id, status, over = {}) => ({
 // The column, and the one-column rule.
 // ---------------------------------------------------------------------------
 
-test('a freelancer-delivered asset is in Back from Freelancer and in no other column', () => {
-  const html = renderBoard({ assets: [backFromFreelancer(), ordinary('o1', 'pending_tl_review')] });
+test('a freelancer-delivered asset is in the Delivered column and in no other', () => {
+  const html = renderBoard({ assets: [deliveredByFreelancer(), ordinary('o1', 'pending_tl_review')] });
   const cols = placement(html);
 
-  assert.deepStrictEqual(columnsOf(html, 'f1'), ['outsource_delivered'],
-    'exactly one column, and it is the new one');
+  assert.deepStrictEqual(columnsOf(html, 'f1'), ['delivered'],
+    'exactly one column, and it is the one the board already had');
   assert.deepStrictEqual(columnsOf(html, 'o1'), ['pending_tl_review'],
-    'and the artist\'s own submission stays where it was');
-
-  // The counts are of the cards actually in each column, not of the status.
-  assert.strictEqual(cols.get('outsource_delivered').count, 1);
+    'and an artist\'s submission is untouched');
+  assert.strictEqual(cols.get('delivered').count, 1);
   assert.strictEqual(cols.get('pending_tl_review').count, 1);
 
-  /* THE HEADER IS NOT "Delivered". `delivered` is a status meaning the client
-     has the work, and it has its own column further along — two columns under
-     one word would be the confusion this whole feature had to avoid. */
-  assert.match(cols.get('outsource_delivered').html, /<span class="title">Back from Freelancer<\/span>/);
-  assert.ok(cols.has('delivered'), 'the client Delivered column is still there');
-  assert.notStrictEqual(workflow.OUTSOURCE_DELIVERED_COLUMN.label, 'Delivered');
+  /* NOTHING WAS BUILT FOR THIS, which is the point of the change: 'delivered' is
+     the status the board has drawn since before any outsourcing existed. */
+  assert.match(cols.get('delivered').html, /<span class="title">Delivered<\/span>/);
+  assert.strictEqual(workflow.transitionFor('outsource_delivered').to, 'delivered');
+
+  /* AND Back from Freelancer IS GONE FROM THE BOARD. Superseded: the constant
+     survives as a record of the old destination, listed in no extras array and
+     drawn on no screen. A candidate for later clean-up, and this is what fails
+     if it comes back. */
+  assert.ok(!/Back from Freelancer/.test(html), 'the superseded column is not drawn');
+  assert.ok(!cols.has('outsource_delivered'), 'and has no column at all');
+  const extras = new Function(`${COLUMN_SOURCE}; return BOARD_EXTRA_COLUMNS;`)();
+  assert.deepStrictEqual(extras, [], 'the page lists no extra columns');
+  assert.ok(workflow.OUTSOURCE_DELIVERED_COLUMN,
+    'the constant is still defined, so the decision stays readable');
+  assert.ok(!workflow.STATE_IDS.includes(workflow.OUTSOURCE_DELIVERED_COLUMN.id),
+    'and was never a status, so there is nothing to retire');
 });
 
-test('the column sits straight after TL Review, not last', () => {
-  const html = renderBoard({ assets: [backFromFreelancer()] });
+test('Delivered is the last column, and the only way out of it is the reversal', () => {
+  const html = renderBoard({ assets: [deliveredByFreelancer()] });
   const order = [...placement(html).keys()];
-  assert.strictEqual(order[order.indexOf('pending_tl_review') + 1], 'outsource_delivered',
-    'beside the queue it is waiting in');
-  /* NOT LAST, and that is a decision against the brief's recommendation. This
-     work is waiting on a team lead and leaves the column the moment one acts, so
-     it is not an end state; filing it past three approval stages and next to the
-     client's finished work is where it would stop being noticed. */
-  assert.notStrictEqual(order[order.length - 1], 'outsource_delivered');
   assert.strictEqual(order[order.length - 1], 'delivered',
-    'the last column is still the client delivery, which IS an end state');
+    'the end of the pipeline is the end of the board');
+  assert.deepStrictEqual(order, PAGE_STATUSES.map((x) => x.id),
+    'and the columns are exactly the statuses, in their order');
+
+  /* TERMINAL, AND THE ONE EXCEPTION IS PERMISSION-GATED. Nothing leads out of
+     Delivered but the outsourced reversal, which exists so a mistaken delivery
+     can be undone and is held by the designations that hold user.delete. */
+  assert.deepStrictEqual(
+    workflow.TRANSITIONS.filter((t) => t.from.includes('delivered')).map((t) => t.action),
+    ['outsource_reopen']);
 });
 
 test('every status the server can set maps to exactly one column', () => {
@@ -214,52 +217,34 @@ test('every status the server can set maps to exactly one column', () => {
   assert.strictEqual(total, assets.length, 'every asset is on the board somewhere');
 });
 
-test('the claim needs BOTH halves, so the card moves on when a lead acts', () => {
-  const fn = new Function(`${COLUMN_SOURCE}; return { boardColumnOf, BOARD_EXTRA_COLUMNS };`)();
+test('one column per asset is structural, and the mapping is the status', () => {
+  const fn = new Function(`${COLUMN_SOURCE}; return { boardColumnOf, boardColumns, BOARD_EXTRA_COLUMNS };`)();
 
-  const delivered = backFromFreelancer();
-  assert.strictEqual(fn.boardColumnOf(delivered), 'outsource_delivered');
-
-  /* A LEAD APPROVES IT. The review does not touch the assignment, so the stage
-     is STILL 'delivered' — and claiming on the stage alone would hold this card
-     in the column for ever and it would never appear in TL Approved. */
-  const approved = backFromFreelancer({ status: 'tl_approved' });
-  assert.strictEqual(approved.outsourced_to.stage, 'delivered', 'the assignment has not changed');
-  assert.strictEqual(fn.boardColumnOf(approved), 'tl_approved',
-    'but the card has moved on, because the claim asks about the status too');
-
-  // Still with the freelancer, or completed but not handed back: its own status.
-  assert.strictEqual(fn.boardColumnOf(backFromFreelancer({
-    status: 'not_started', outsourced_to: { stage: 'with_freelancer' } })), 'not_started');
-  assert.strictEqual(fn.boardColumnOf(backFromFreelancer({
-    status: 'not_started', outsourced_to: { stage: 'completed' } })), 'not_started');
-  // Reopened: the assignment goes back to with_freelancer and the task to Not Assigned.
-  assert.strictEqual(fn.boardColumnOf(ordinary('x', 'not_started')), 'not_started');
-  // And nothing at all is not a column.
+  /* WITH NO EXTRA COLUMNS the mapping is the asset's own status — which is what
+     this page did before any of it, and is the behaviour the re-pointing
+     restored. The machinery stays because it is what makes "exactly one column"
+     structural rather than something each caller has to be careful of: ONE
+     answer per asset, asked by the board, its counts and the stats band. */
+  assert.strictEqual(fn.boardColumnOf(deliveredByFreelancer()), 'delivered');
+  assert.strictEqual(fn.boardColumnOf(ordinary('o1', 'pending_tl_review')), 'pending_tl_review');
+  for (const status of workflow.STATE_IDS) {
+    assert.strictEqual(fn.boardColumnOf(ordinary('x', status)), status,
+      `an asset in ${status} maps to its own column`);
+  }
+  // A delivered assignment no longer changes where the card goes; the status does.
+  assert.strictEqual(fn.boardColumnOf(deliveredByFreelancer({ status: 'in_progress' })), 'in_progress');
   assert.strictEqual(fn.boardColumnOf(null), null);
 
-  /* THE COLUMN'S VOCABULARY COMES FROM THE SERVER, so the board and the Admin
-     Dashboard cannot name the same thing differently. */
-  const col = workflow.OUTSOURCE_DELIVERED_COLUMN;
-  const [onPage] = fn.BOARD_EXTRA_COLUMNS;
-  assert.strictEqual(onPage.id, col.id);
-  assert.strictEqual(onPage.label, col.label);
-  assert.strictEqual(onPage.color, col.color);
-  assert.strictEqual(onPage.after, col.after);
-  /* AND THE STATUS IT CLAIMS OUT OF IS THE ONE THE DELIVERY LANDS IN. If the
-     transition ever moved, this fails rather than the column silently emptying. */
-  assert.strictEqual(col.from, workflow.transitionFor('outsource_delivered').to);
-  // No stage colour is the brand red.
-  assert.ok(!/7f1416/i.test(col.color));
+  // And the columns are the visible statuses, with nothing spliced in.
+  const statuses = [{ id: 'a' }, { id: 'b' }];
+  const cols = new Function('visibleStatuses',
+    `${COLUMN_SOURCE}; return boardColumns();`)(() => statuses);
+  assert.deepStrictEqual(cols, statuses, 'no extras, so the columns are the statuses');
 });
 
-// ---------------------------------------------------------------------------
-// The card.
-// ---------------------------------------------------------------------------
-
 test('the card says whose work it is and when, and shows no hours', () => {
-  const html = renderBoard({ assets: [backFromFreelancer(), ordinary('o1', 'pending_tl_review')] });
-  const mine = placement(html).get('outsource_delivered').html;
+  const html = renderBoard({ assets: [deliveredByFreelancer(), ordinary('o1', 'pending_tl_review')] });
+  const mine = placement(html).get('delivered').html;
 
   assert.match(mine, /class="card-fl"/, 'the card carries the freelancer line');
   assert.match(mine, /Ravi K\./, 'with the freelancer\'s name');
@@ -284,14 +269,14 @@ test('the card says whose work it is and when, and shows no hours', () => {
   assert.match(theirs, /class="avatar">Ana</, 'and still its assignee');
 
   // The due date is not hours, so it stays on a freelancer's card.
-  const withDue = renderBoard({ assets: [backFromFreelancer({ due_date: '2026-11-02' })] });
-  assert.match(placement(withDue).get('outsource_delivered').html, /CHR-002 · /,
+  const withDue = renderBoard({ assets: [deliveredByFreelancer({ due_date: '2026-11-02' })] });
+  assert.match(placement(withDue).get('delivered').html, /CHR-002 · /,
     'a due date still prints');
 });
 
-test('a card in the new column opens and drags exactly like any other', () => {
-  const html = renderBoard({ assets: [backFromFreelancer()] });
-  const mine = placement(html).get('outsource_delivered').html;
+test('a delivered freelancer card opens and drags exactly like any other', () => {
+  const html = renderBoard({ assets: [deliveredByFreelancer()] });
+  const mine = placement(html).get('delivered').html;
   /* Same markup, so the handlers renderBoard wires — the click that opens the
      drawer, the dragstart — find it the same way. Nothing special-cases this
      column, which is what makes "behaves like any other card" true rather than
@@ -306,30 +291,34 @@ test('a card in the new column opens and drags exactly like any other', () => {
      rather than a PATCH with a status that does not exist. */
   assert.match(src, /const FREE = \['not_started','assigned','in_progress'\];/);
   assert.ok(!workflow.STATE_IDS.includes('outsource_delivered'),
-    'the column id is deliberately not a status');
+    'the superseded column id is deliberately not a status');
+  /* AND A DRAG CANNOT MOVE IT OUT. 'delivered' is not in FREE, so the card is
+     draggable and every drop involving it gets the existing toast — the reversal
+     is the only way back, and it is permission-gated. */
+  assert.ok(!['not_started', 'assigned', 'in_progress'].includes('delivered'));
 });
 
 // ---------------------------------------------------------------------------
 // The half-migrated filter: the lens, the counts, the band.
 // ---------------------------------------------------------------------------
 
-test('the Art/Animation lens filters the new column too, and its counts include it', () => {
+test('the Art/Animation lens filters the Delivered column too, and its counts include it', () => {
   const assets = [
-    backFromFreelancer(),                                            // character -> Art
-    backFromFreelancer({ id: 'f2', code: 'ANM-001', type: 'animation' }), // -> Animation
+    deliveredByFreelancer(),                                            // character -> Art
+    deliveredByFreelancer({ id: 'f2', code: 'ANM-001', type: 'animation' }), // -> Animation
     ordinary('o1', 'in_progress'),
   ];
 
   const art = renderBoard({ assets, lensId: 'art' });
-  assert.deepStrictEqual(columnsOf(art, 'f1'), ['outsource_delivered'], 'the Art one shows');
+  assert.deepStrictEqual(columnsOf(art, 'f1'), ['delivered'], 'the Art one shows');
   assert.strictEqual(columnsOf(art, 'f2').length, 0, 'the Animation one does not');
-  assert.strictEqual(placement(art).get('outsource_delivered').count, 1,
-    'and the column count follows the lens');
+  assert.strictEqual(placement(art).get('delivered').count, 1,
+    'and the Delivered count follows the lens');
 
   const anim = renderBoard({ assets, lensId: 'animation' });
-  assert.deepStrictEqual(columnsOf(anim, 'f2'), ['outsource_delivered']);
+  assert.deepStrictEqual(columnsOf(anim, 'f2'), ['delivered']);
   assert.strictEqual(columnsOf(anim, 'f1').length, 0);
-  assert.strictEqual(placement(anim).get('outsource_delivered').count, 1);
+  assert.strictEqual(placement(anim).get('delivered').count, 1);
 
   /* THE SUB-TAB COUNTS INCLUDE DELIVERED WORK. This is the half-migration shape:
      a count built from a pool the new column was excluded from would say
@@ -343,7 +332,7 @@ test('the Art/Animation lens filters the new column too, and its counts include 
   const helper = grab('function filteredAssets()');
   assert.ok(!/boardLens|BOARD_LENS/.test(helper), 'the shared helper knows nothing of the lens');
   assert.ok(!/outsourced_to|outsource_delivered/.test(helper),
-    'nor of the new column — the Assets List groups by status and is untouched');
+    'nor of outsourcing at all — the Assets List groups by status and is untouched');
 });
 
 test('the stats band agrees with the board, and still ignores its filters', () => {
@@ -368,21 +357,25 @@ test('the stats band agrees with the board, and still ignores its filters', () =
     return html;
   };
 
-  const assets = [backFromFreelancer(), ordinary('o1', 'pending_tl_review'),
+  const assets = [deliveredByFreelancer(), ordinary('o1', 'pending_tl_review'),
     ordinary('o2', 'delivered')];
   const html = run(assets);
 
   assert.match(html, /<div class="num">3<\/div><div class="lbl">Assets<\/div>/,
     'the delivered freelancer asset is counted in the project total');
-  /* THE SAME VOCABULARY THE BOARD USES. The band sits directly above the board
-     on the same tab, so "TL Review 1" over an empty TL Review column is exactly
-     the drift this is about. */
-  assert.match(html, /<div class="num"[^>]*>1<\/div><div class="lbl">Back from Freelancer<\/div>/);
+  /* THE SAME VOCABULARY THE BOARD USES — which is now simply the statuses, so
+     the band and the board agree without either having to be told about
+     outsourcing. Two in Delivered: the freelancer's and the studio's own. */
+  assert.match(html, /<div class="num"[^>]*>2<\/div><div class="lbl">Delivered<\/div>/);
   assert.match(html, /<div class="num"[^>]*>1<\/div><div class="lbl">TL Review<\/div>/,
     'and TL Review counts only the artist\'s own submission');
+  assert.ok(!/Back from Freelancer/.test(html), 'the superseded tile is gone');
 
-  // Final % is still a share of the `delivered` STATUS — the client's end.
-  assert.match(html, /<div class="num">33%<\/div><div class="lbl">Final<\/div>/);
+  /* FINAL % NOW INCLUDES OUTSOURCED DELIVERIES, and that is a consequence of the
+     re-pointing worth pinning: the tile is the share of the project in the
+     'delivered' STATUS, and a freelancer's work that the studio has attested was
+     handed over really is finished. Two of three. */
+  assert.match(html, /<div class="num">67%<\/div><div class="lbl">Final<\/div>/);
 
   /* INDEPENDENT OF THE BOARD'S FILTERS, which is what makes it a project
      summary. The stubs above throw if it reaches for either, and the pool is
@@ -397,36 +390,140 @@ test('the stats band agrees with the board, and still ignores its filters', () =
 // The Admin Dashboard, as a consumer.
 // ---------------------------------------------------------------------------
 
-test('the Admin Dashboard splits the same figure the same way', () => {
+test('the Admin Dashboard needed no split at all', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'admin-dashboard.js'), 'utf8');
-  /* ONE VOCABULARY. The panel takes the id, label, colour and position from the
-     workflow, like the board does, so the two screens cannot name it
-     differently or place it differently. */
-  assert.match(src, /const col = workflow\.OUTSOURCE_DELIVERED_COLUMN;/);
-  /* ONE BUILDER FOR THE ROWS, and this is the bug it was extracted for: empty()
-     built its pipeline from workflow.STATES while stageCounts() built the split
-     one, so a viewer with no projects got twelve rows and a viewer with one got
-     thirteen — the panel changed shape depending on how much work there was. */
-  assert.match(src, /function pipelineRows\(\) \{/, 'the rows come from one function');
-  assert.match(src, /if \(s\.id === col\.after\) rows\.push\(/, 'spliced in after its anchor');
-  assert.match(src, /pipeline: pipelineRows\(\),/, 'and empty\(\) uses it too');
-  assert.match(src, /const blank = pipelineRows\(\);/, 'as does the counted one');
-  /* COUNTED ONCE: the row it is added to is the row it is taken out of. */
-  assert.match(src, /if \(s\.id === col\.from\) return \{ \.\.\.s, count: \(counts\.get\(s\.id\) \|\| 0\) - backOut \};/);
+  /* SUPERSEDED, AND REVERTED. For two commits this split pending_tl_review into
+     TL Review and Back from Freelancer. The delivery now targets 'delivered', a
+     status the panel has always counted, so the figure needs no splitting: one
+     GROUP BY counts an outsourced delivery exactly as it counts everything else. */
+  assert.match(src, /function pipelineRows\(\) \{\n\s*return workflow\.STATES\.map/,
+    'one row per status, from the workflow');
+  assert.ok(!/OUTSOURCE_DELIVERED_COLUMN/.test(src),
+    'and the superseded column is not referenced here any more');
+  assert.ok(!/backFromFreelancer/.test(src), 'nor is the split it needed');
+
+  /* THE ROW BUILDER STAYS, though, because extracting it fixed a real bug:
+     empty() built its pipeline from workflow.STATES while stageCounts() built the
+     split list, so a viewer with no projects saw twelve rows and one with a
+     project saw thirteen — the panel changed shape with the workload. */
+  assert.match(src, /pipeline: pipelineRows\(\),/, 'empty() uses it');
+  assert.match(src, /const blank = pipelineRows\(\);/, 'and so does the counted one');
 
   /* AND THE FOUR READS OF ASSETS, each named with what happened to it:
-       stageCounts   SPLIT, above.
-       waitingCounts LEFT ALONE — it answers "what is sitting with somebody for a
-                     decision", and this work is. Not double counting: a
-                     different question.
-       lateRows      LEFT ALONE — excludes DONE_STATES ('delivered'), and a
-                     freelancer hand-back is not done; if it is overdue it is
-                     overdue.
-       upcoming      LEFT ALONE, for the same reason. */
-  assert.match(src, /const DONE_STATES = \['delivered'\];/,
-    'done still means the client has it, which this is not');
-  assert.match(src, /const REVIEW_STATES = \['pending_tl_review', 'pending_cd_review'\];/,
-    'and work back from a freelancer is still waiting on a reviewer');
+       stageCounts   back to one row per status; an outsourced delivery lands in
+                     the Delivered row.
+       waitingCounts UNCHANGED, and it now stops counting the task — a delivered
+                     asset is in neither REVIEW_STATES nor CLIENT_STATES, which
+                     is right: nobody is waiting on it.
+       lateRows      UNCHANGED, and it now EXCLUDES the task, because 'delivered'
+                     is DONE_STATES. A delivered task cannot be overdue.
+       upcoming      UNCHANGED, for the same reason.
+     None of the four needed editing for this change; all four changed answer,
+     which is what re-pointing at an existing status buys. */
+  assert.match(src, /const DONE_STATES = \['delivered'\];/);
+  assert.match(src, /const REVIEW_STATES = \['pending_tl_review', 'pending_cd_review'\];/);
+});
+
+
+// ---------------------------------------------------------------------------
+// THE SKIPPED STAGES, and what downstream makes of them.
+// ---------------------------------------------------------------------------
+
+test('nothing downstream assumes Delivered was reached through the pipeline', () => {
+  /* THE DELIBERATE CHOICE THIS GUARDS. An outsourced task marked delivered from
+     In Progress jumps TL Review, TL Approved, CD Review, Approved for Client and
+     Awaiting Client Feedback in one move. Every consumer that could have assumed
+     otherwise is listed here with the reason it tolerates the absence — and
+     NOTHING was back-filled: no fake review round, no invented
+     awaiting_client_feedback step, no synthetic 'deliver' event. */
+
+  /* 1. THE EFFICIENCY REPORT excludes outsourced work by name, before it asks
+        anything about submissions or hours — so no average, hour total or
+        turnaround figure moves. This is the one that matters most, because it is
+        the only report that divides by hours. */
+  const reports = require('../src/reports');
+  assert.strictEqual(
+    reports.exclusionReason({ outsourced: true, submitted: false, manHours: 24, totalSeconds: 0 }),
+    'outsourced — no tracked time');
+  const prepared = reports.prepare([
+    { id: 'f1', code: 'CHR-002', name: 'Lantern', outsourced: true, submitted: false,
+      manHours: 24, totalSeconds: 0, firstPassSeconds: 0 },
+  ]);
+  assert.strictEqual(prepared.included.length, 0, 'it reaches no average');
+  assert.deepStrictEqual(prepared.excluded.map((x) => x.reason), ['outsourced — no tracked time']);
+
+  /* 2. TURNAROUND TIMESTAMPS. finishedAt COALESCEs the last 'deliver' EVENT then
+        the last submitted version. This action is 'outsource_delivered', and an
+        outsourced task has no versions — so finishedAt is NULL and a
+        date-filtered report simply does not include the row, which is the same
+        answer the exclusion above already gives. Pinned as source because the
+        tolerance is in the COALESCE, and a change to either arm would alter it. */
+  const reportRoute = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'reports.js'), 'utf8');
+  assert.match(reportRoute, /WHERE e\.asset_id = a\.id AND e\.action = 'deliver'/,
+    'the turnaround date keys on the client delivery event, not on this one');
+  assert.ok(!/action = 'outsource_delivered'/.test(reportRoute),
+    'and no synthetic event was invented to satisfy it');
+  assert.match(reportRoute, /submitted: Number\(r\.rounds\) > 0,/,
+    'review counts are COUNT(asset_versions), which is 0 and reads as never submitted');
+
+  /* 3. FEEDBACK ROUNDS are rows in `feedback`, written by the review routes.
+        None exists for an outsourced delivery and none is required; nothing reads
+        `feedback` expecting a row per delivered asset. */
+  const workflowSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'asset-workflow.js'), 'utf8');
+  assert.match(workflowSrc, /feedback rounds/, 'the decision is recorded beside the transition');
+
+  /* 4. THE P&L sums work_sessions on delivered assets. An outsourced task has
+        none, so it adds nought HOURS — and the agreed hours and their cost come
+        from outsource.costFor() instead, which is where an outsourced figure
+        belongs. So "delivered with no sessions" is a shape the P&L already had. */
+  const pnl = fs.readFileSync(path.join(__dirname, '..', 'src', 'pnl-hours.js'), 'utf8');
+  assert.match(pnl, /const DELIVERED = 'delivered';/);
+  assert.match(pnl, /if \(!workflow\.STATE_IDS\.includes\(DELIVERED\)\)/,
+    'and it checks the state exists rather than assuming a path to it');
+
+  /* 5. THE PROJECT LIFECYCLE counts anything not 'delivered' as unfinished, so an
+        outsourced delivery now lets a project be closed. That is correct under
+        the new meaning — the studio has attested the work went out — and is the
+        one consumer whose ANSWER changes rather than staying the same. */
+  const lifecycle = fs.readFileSync(path.join(__dirname, '..', 'src', 'lifecycle.js'), 'utf8');
+  assert.match(lifecycle, /const ASSET_DONE = 'delivered';/);
+
+  /* 6. DEV & QA can raise a bug on it: IDLE_STATUSES includes 'delivered' and an
+        outsourced task has no open round, so a bug pulls it into Game Feedback.
+        Correct under the new meaning — it shipped and came back — and nothing had
+        to change for it. */
+  const integration = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'integration.js'), 'utf8');
+  assert.match(integration, /const IDLE_STATUSES = \['delivered', 'approved_for_client'\];/);
+});
+
+test('the superseded destination is unreachable, and nothing else uses it', () => {
+  /* THE BRIEF'S QUESTION: does Back from Freelancer remain for any legitimate
+     use? NO. It claimed assets in pending_tl_review whose assignment was
+     delivered, and that combination is no longer produced, so nothing can reach
+     it. It is listed in no extras array, drawn on no screen, counted in no panel. */
+  const col = workflow.OUTSOURCE_DELIVERED_COLUMN;
+  assert.ok(col, 'the constant is still defined, so the decision stays readable');
+  assert.strictEqual(col.from, 'pending_tl_review',
+    'and records which status the old delivery landed in, which the audit query looks for');
+  assert.notStrictEqual(workflow.transitionFor('outsource_delivered').to, col.from,
+    'the delivery no longer lands there, so the column can never claim anything');
+
+  // NOT a status, so there is no state to retire and no row to rewrite.
+  assert.ok(!workflow.STATE_IDS.includes(col.id));
+
+  // Nothing renders it.
+  const extras = new Function(`${COLUMN_SOURCE}; return BOARD_EXTRA_COLUMNS;`)();
+  assert.deepStrictEqual(extras, []);
+  const dash = fs.readFileSync(path.join(__dirname, '..', 'src', 'admin-dashboard.js'), 'utf8');
+  assert.ok(!/OUTSOURCE_DELIVERED_COLUMN/.test(dash));
+
+  /* THE CARD'S FREELANCER LINE SURVIVED IT, re-keyed on the assignment rather
+     than on the column — which is the question the line was really asking. */
+  const card = grab('function cardHTML(a)');
+  assert.match(card, /a\.outsourced_to && a\.outsourced_to\.stage === 'delivered'/,
+    'the line asks the assignment, not a column');
+  assert.ok(!/boardColumnOf\(a\) === 'outsource_delivered'/.test(card),
+    'and no longer asks a column that cannot exist');
 });
 
 // ---------------------------------------------------------------------------
@@ -459,19 +556,22 @@ test('from the Outsource tab to the board', { skip: cfg ? false : SKIP_REASON },
   });
   t.after(async () => { if (server) await stopServer(server); });
 
-  await t.test('the asset the board fetches carries what the column needs', async () => {
+  await t.test('THE REPORTED SCENARIO: In Progress, delivered, and on the board in Delivered', async () => {
     const asset = (await as('root', `/assets/project/${id.project}`, { method: 'POST',
       body: { name: 'Lantern Keeper', type: 'character', manHours: 24 } })).body.asset;
     const assignment = (await as('root', '/outsource/assignments', { method: 'POST',
       body: { freelancerId: id.freelancer, projectId: id.project, assetId: asset.id,
         decidedManHours: 24 } })).body.assignment;
 
-    /* BEFORE: with the freelancer, so the board shows it in Not Assigned. */
+    /* THE EXACT SCENARIO FROM THE REPORT: the card is dragged to In Progress on
+       the board — a free move that asks nothing about outsourcing — and then the
+       work comes back and is marked delivered. */
+    await as('root', `/assets/${asset.id}`, { method: 'PATCH', body: { status: 'in_progress' } });
     const before = (await as('root', `/assets/project/${id.project}`)).body.assets
       .find((a) => a.id === asset.id);
-    assert.strictEqual(before.status, 'not_started');
+    assert.strictEqual(before.status, 'in_progress');
     assert.strictEqual(before.outsourced_to.stage, 'with_freelancer');
-    assert.deepStrictEqual(columnsOf(renderBoard({ assets: [before] }), asset.id), ['not_started']);
+    assert.deepStrictEqual(columnsOf(renderBoard({ assets: [before] }), asset.id), ['in_progress']);
 
     // Marked delivered on the Outsource tab.
     const r = await as('root', '/assets/bulk/outsource-stage', { method: 'POST',
@@ -485,16 +585,18 @@ test('from the Outsource tab to the board', { skip: cfg ? false : SKIP_REASON },
        this request, and it is enough to place the card. */
     const after = (await as('root', `/assets/project/${id.project}`)).body.assets
       .find((a) => a.id === asset.id);
-    assert.strictEqual(after.status, 'pending_tl_review', 'the status the delivery sets');
+    assert.strictEqual(after.status, 'delivered', 'the status the delivery sets');
     assert.strictEqual(after.outsourced_to.stage, 'delivered');
     assert.strictEqual(after.outsourced_to.freelancerName, 'Ravi K.');
     assert.ok(after.outsourced_to.deliveredAt, 'with the date the card prints');
     assert.strictEqual(after.time_spent_seconds, 0, 'and no tracked time to show');
 
     const html = renderBoard({ assets: [after] });
-    assert.deepStrictEqual(columnsOf(html, asset.id), ['outsource_delivered'],
-      'the board puts it in the new column on the next refresh, with no reload');
-    assert.match(placement(html).get('outsource_delivered').html, /Ravi K\./);
+    assert.deepStrictEqual(columnsOf(html, asset.id), ['delivered'],
+      'the board shows it in Delivered on the next refresh, with no reload');
+    assert.match(placement(html).get('delivered').html, /Ravi K\./,
+      'and the card still says whose work it was');
+    assert.ok(!/Back from Freelancer/.test(html));
 
     /* THE MECHANISM, PINNED. If render() ever started drawing the board from a
        cache, this is the line that would have to change. */
@@ -503,26 +605,25 @@ test('from the Outsource tab to the board', { skip: cfg ? false : SKIP_REASON },
     assert.match(grab('function setTab(tab)'), /render\(\);/);
   });
 
-  await t.test('the Admin Dashboard counts it once, and as Back from Freelancer', async () => {
+  await t.test('the Admin Dashboard counts it once, and as Delivered', async () => {
     const d = await as('root', '/admin-dashboard');
     assert.strictEqual(d.status, 200, JSON.stringify(d.body));
     const row = (id2) => (d.body.pipeline || []).find((s) => s.id === id2);
-    assert.strictEqual(row('outsource_delivered').count, 1, 'counted as its own row');
-    assert.strictEqual(row('pending_tl_review').count, 0,
-      'and taken out of TL Review, so nothing is counted twice');
+    assert.strictEqual(row('delivered').count, 1, 'counted in the Delivered row');
+    assert.strictEqual(row('pending_tl_review').count, 0, 'and not in TL Review');
+    assert.strictEqual(row('in_progress').count, 0, 'nor where the card used to sit');
     assert.strictEqual((d.body.pipeline || []).reduce((n, s) => n + s.count, 0), 1,
-      'the panel still adds up to the number of assets');
-    /* NOT IN PROGRESS, which it never was — this panel counts by status and
-       in_progress is its own row. Pinned so a later change cannot fold it in. */
-    assert.strictEqual(row('in_progress').count, 0);
+      'the panel adds up to the number of assets — counted once');
+    assert.strictEqual((d.body.pipeline || []).length, workflow.STATE_IDS.length,
+      'one row per status; the superseded row is gone');
+    assert.ok(!(d.body.pipeline || []).some((s) => s.id === 'outsource_delivered'));
 
-    /* STILL WAITING ON A REVIEWER, deliberately. A different question from the
-       pipeline's, and the honest answer to it is yes. */
-    const waiting = (d.body.attention || []).find((a) => /waiting on review/.test(a.label));
-    assert.ok(waiting && waiting.count === 1,
-      `it is still counted as waiting on review: ${JSON.stringify(d.body.attention)}`);
-
-    // The label the dashboard prints is the label the board prints.
-    assert.strictEqual(row('outsource_delivered').label, workflow.OUTSOURCE_DELIVERED_COLUMN.label);
+    /* NOT WAITING ON ANYBODY, which is the inverse of what this asserted when the
+       delivery landed in TL Review — and is right for the same reason it was
+       right then. A delivered task is in neither REVIEW_STATES nor CLIENT_STATES.
+       Nothing in the dashboard changed; the status did. */
+    const waiting = (d.body.attention || []).find((a) => /waiting on review/.test(a.label || ''));
+    assert.ok(!waiting || Number(waiting.count) === 0,
+      `a delivered task is not waiting on a reviewer: ${JSON.stringify(d.body.attention)}`);
   });
 });

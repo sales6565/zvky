@@ -32,7 +32,7 @@ const STATES = [
   ['CD Feedbacks', 'The Creative Director asked for changes. Sits with the team lead until relayed.', 'The Creative Director.'],
   ['Approved for Client', 'Cleared internally. Ready to leave the studio.', 'The Creative Director, or a lead who may skip the second gate.'],
   ['Awaiting Client Feedback', 'It has gone to the client and the studio is waiting.', 'Whoever holds Send to Client Review.'],
-  ['Delivered', 'Finished and handed over.', 'Whoever holds Deliver, or the client approving.'],
+  ['Delivered', 'Finished and handed over.', 'Whoever holds Deliver, the client approving, or staff marking a freelancer\u2019s work delivered.'],
 ];
 
 const TRANSITIONS = [
@@ -52,6 +52,8 @@ const TRANSITIONS = [
   ['Client approved', 'Awaiting Client Feedback', 'Delivered', 'Record Client Approval'],
   ['Client asked for changes', 'Awaiting Client Feedback', 'TL Feedbacks', 'Record Client Changes'],
   ['Deliver', 'Approved for Client', 'Delivered', 'Deliver'],
+  ['Mark delivered (outsourced)', 'Not Assigned / Assigned / In Progress / TL Feedbacks / CD Feedbacks', 'Delivered \u2014 review stages are skipped', 'Record Outsourced Work Stages'],
+  ['Reopen (outsourced)', 'Delivered, or wherever a stage was recorded', 'Not Assigned', 'Reopen Outsourced Work'],
   ['Hand over (Reassign to Any User)', 'TL Review / CD Review / TL Feedbacks / CD Feedbacks', 'Assigned — the new person starts their own round', 'Asset Assign'],
   ['Reassign to Same User', 'TL Feedbacks', 'Assigned — the same person, a fresh round', 'Asset Assign'],
   ['Change the assignee', 'Not Assigned / Assigned / In Progress', 'Assigned', 'Asset Assign'],
@@ -194,18 +196,21 @@ module.exports = [
     'A coloured corner flag for priority.',
     'On a card in Back from Freelancer: the freelancer\u2019s name and the date the work came back. Hover for who recorded it.',
   ]),
-  note('Back from Freelancer is a column, not a status',
-    'Work a freelancer has handed back is waiting on a team lead \u2014 the same place an artist\u2019s submission '
-    + 'waits \u2014 but it is not the same thing, and before this it sat in TL REVIEW looking exactly like one. It '
-    + 'now has its own column, straight after TL Review, so a lead can see at a glance what came from outside.\n\n'
-    + 'IT IS NOT THE SAME AS "DELIVERED" AT THE END OF THE BOARD. That column means the CLIENT has the work and '
-    + 'the job is finished. This one is the start of a review.\n\n'
-    + 'IT LEAVES THE COLUMN WHEN YOU ACT ON IT. Approve it or send it back and the card moves on to TL Approved or '
-    + 'TL Feedbacks like any other \u2014 nothing has to be moved by hand, and nothing stays here once it has been '
-    + 'looked at.\n\n'
+  note('A freelancer\u2019s delivered work appears in DELIVERED',
+    'Mark delivered on the Outsource tab puts the task straight into the DELIVERED column \u2014 the last one on '
+    + 'the board, the same place the studio\u2019s own finished work lands. Marking it delivered is you saying the '
+    + 'work went to the client or was accepted here, so there is no further review step: the card does not pass '
+    + 'through TL Review, CD Review or Awaiting Client Feedback on the way.\n\n'
+    + 'THAT IS THE WHOLE POINT, AND IT IS WORTH KNOWING. Nobody inside the studio is asked to check a '
+    + 'freelancer\u2019s work before it counts as delivered. If you want it reviewed first, do not mark it '
+    + 'delivered \u2014 give the task to somebody here and let it go through the pipeline normally.\n\n'
+    + 'YOU CAN STILL SEE WHERE IT CAME FROM. The card in Delivered carries the freelancer\u2019s name and the date '
+    + 'the work came back; hover it for who recorded it, and the task\u2019s history has the full sentence.\n\n'
     + 'NO HOURS ON THESE CARDS. Every other card shows the estimate; this one does not, because a figure printed '
     + 'above a freelancer\u2019s name reads as hours they logged, and the studio does not run its clock on '
-    + 'somebody it does not employ. The estimate is still on the asset panel and in the Assets List.'),
+    + 'somebody it does not employ. The estimate is still on the asset panel and in the Assets List.\n\n'
+    + 'A MISTAKE CAN BE UNDONE, by whoever holds Reopen Outsourced Work \u2014 see 11.7b. That is the only way back '
+    + 'out of Delivered.'),
   note('Colour',
     'Stage colours are deliberately distinct from the studio brand colour, so a red card never reads as branding '
     + 'and branding never reads as an alert.'),
@@ -1285,13 +1290,22 @@ module.exports = [
     + 'that last permission. For several at once, tick the rows \u2014 one at a time, or the box in '
     + 'the header for all of them \u2014 and press <b>Mark as Delivered</b>. The count is in the '
     + 'button, and the confirmation names both the count and the freelancers it is acting for.'),
+  note('Where Mark delivered sends the task',
+    'STRAIGHT TO DELIVERED, the last column on the board. Marking it delivered is you recording that the work '
+    + 'went to the client or was accepted here, so no review step follows: the task does not pass through TL '
+    + 'Review, CD Review or Awaiting Client Feedback.\n\n'
+    + 'IF THE WORK SHOULD BE CHECKED FIRST, do not mark it delivered. Take the task back from the freelancer, '
+    + 'give it to somebody here, and it goes through the pipeline the normal way.\n\n'
+    + 'IT WORKS FROM WHEREVER THE TASK IS \u2014 Not Assigned, Assigned, In Progress, TL Feedbacks or CD Feedbacks '
+    + '\u2014 and is refused once the task has been handed in or approved inside the studio, with a message naming '
+    + 'the statuses it needs and the one the task is actually in.'),
   note('Completed and Delivered are two different things',
     'MARK COMPLETED says the freelancer has finished. The task does not move: it stays where it '
     + 'was, and nobody in the studio is asked to look at it yet. Use it when work comes back and '
     + 'the hand-ins are collected later \u2014 on a Friday, say.\n\n'
-    + 'MARK DELIVERED is the hand-back. THAT is what moves the task to TL Review. You can press it '
+    + 'MARK DELIVERED is the hand-over. THAT is what moves the task to Delivered. You can press it '
     + 'straight from With freelancer without marking Completed first; Completed is a step you may '
-    + 'record, not one you have to.\n\n'
+    + 'record, not one you have to \u2014 it is a note to yourselves, and it never blocks a delivery.\n\n'
     + 'Both record who entered it and when, and both leave a line in the task\u2019s history naming '
     + 'the person and the freelancer \u2014 "Marked delivered by Priya on behalf of Ravi K."'),
   note('Which statuses a stage can be recorded from',

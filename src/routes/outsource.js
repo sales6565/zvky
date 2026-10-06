@@ -175,6 +175,15 @@ router.get('/assignments', async (req, res) => {
        copy of its own. */
     stageFrom: workflow.OUTSOURCE_STAGE_FROM,
     stageFromLabels: workflow.OUTSOURCE_STAGE_FROM.map((id) => workflow.label(id)),
+    /* THE REVERSAL'S OWN LIST, because it is not the forward one.
+       
+       It reaches one status the forward stages deliberately exclude: 'delivered',
+       where Mark delivered lands — undoing a mistaken delivery is the whole point
+       of the key. The page kept a literal 'pending_tl_review' here for the old
+       destination, which went stale the moment the delivery was re-pointed and
+       hid the Reopen button on every delivered row. Sent from the transition so
+       it cannot go stale again. */
+    reopenFrom: workflow.transitionFor('outsource_reopen').from,
     /* The one value the edit form must no longer offer, named by the server
        rather than hardcoded in the page: PUT refuses a move into it and tells
        the reader to use the action instead, so a dropdown that still listed it

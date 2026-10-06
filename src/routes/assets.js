@@ -1073,6 +1073,24 @@ async function contextFor(req, asset) {
        has nowhere else to come from. Null for an ordinary asset, which is what
        makes onBehalfOf degrade to the bare action rather than inventing a name. */
     outsourcedTo: await oversightOutsource.activeForAsset(db, asset.id).catch(() => null),
+    /* HAS ANYBODY INSIDE THE STUDIO HANDED THIS IN? Read by the reopener actor,
+       and the reason it exists:
+       
+       Mark delivered now lands a freelancer's task in 'delivered' — the terminal
+       state — so the reversal has to be able to reach that state or a mistaken
+       delivery could never be undone. But the CLIENT route reaches the same
+       state, from approved_for_client, after submissions and approvals. Without
+       this, a stale assignment row on a task that had gone the whole way through
+       review could be used to yank client-delivered work back to Not Assigned.
+       
+       A SUBMITTED VERSION IS THE DISCRIMINATOR, and it is a fact rather than an
+       inference: an outsourced delivery writes no asset_versions row, and the
+       studio's own pipeline cannot reach approved_for_client without one. So
+       "no versions" means "this got to Delivered by the outsourced route", which
+       is exactly the delivery this reversal owns. Counted rather than assumed. */
+    submittedVersions: await db.query(
+      'SELECT COUNT(*) AS n FROM asset_versions WHERE asset_id = $1', [asset.id]
+    ).then(({ rows }) => Number(rows[0].n) || 0).catch(() => 0),
     // The two halves of the Creative Director's gate, from the role's
     // permissions rather than from its tier.
     canReviewCd: canReviewAsCD(req.user),

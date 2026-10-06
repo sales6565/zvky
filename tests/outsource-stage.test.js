@@ -26,10 +26,14 @@
  *                        handing on is something the studio decides, and a
  *                        studio that batches its hand-ins on a Friday needs to
  *                        record the first without doing the second.
- *   outsource_delivered  not_started -> pending_tl_review. The hand-back. Legal
- *                        from Assigned as well as from Completed, so marking
- *                        straight to Delivered in one action is a supported
- *                        path and not a shortcut around a required step.
+ *   outsource_delivered  any eligible status -> delivered. THE END OF THE
+ *                        PIPELINE. It landed in pending_tl_review for two
+ *                        commits, on the reasoning that a hand-back is a
+ *                        submission nobody inside has reviewed; the studio
+ *                        overruled that — marking delivered is staff ATTESTING
+ *                        the work went to the client or was accepted internally,
+ *                        which no internal review can attest for them. It skips
+ *                        every review stage in one move, deliberately.
  *   outsource_reopen     back to not_started, stamps cleared. ONE reversal for
  *                        both, with its OWN permission — it is the only control
  *                        on the tab that unsays something already written down.
@@ -89,7 +93,9 @@ test('three transitions, and what each one does to the task', () => {
 
   // DELIVERED is the one that hands on, into a status every list already knows.
   assert.deepStrictEqual(delivered.from, workflow.OUTSOURCE_STAGE_FROM);
-  assert.strictEqual(delivered.to, 'pending_tl_review');
+  assert.strictEqual(delivered.to, 'delivered');
+  assert.strictEqual(delivered.to, workflow.OUTSOURCE_DELIVERED_TO,
+    'named once, so the reversal and the discriminator cannot drift from it');
 
   /* THE REVERSAL REACHES BOTH, because either can be a mistake: a Completed
      recorded on the wrong row, or a Delivered that should not have gone to
@@ -100,7 +106,14 @@ test('three transitions, and what each one does to the task', () => {
      the one place a delivery lands. A Completed recorded on a task in In
      Progress leaves it there, so a reversal that could not be reached from In
      Progress would be a stage you could record and never undo. */
-  assert.deepStrictEqual(reopen.from, [...workflow.OUTSOURCE_STAGE_FROM, 'pending_tl_review']);
+  /* THE REVERSAL REACHES BOTH DESTINATIONS this feature has had: 'delivered',
+     where Mark delivered lands now, and pending_tl_review, where it landed for
+     two commits — those rows are still out there and still reversible. Derived
+     from the transition rather than typed: re-pointing the delivery once already
+     left this list on the old destination, which is a reversal that silently
+     stopped working. */
+  assert.deepStrictEqual(reopen.from,
+    [...workflow.OUTSOURCE_STAGE_FROM, 'pending_tl_review', workflow.OUTSOURCE_DELIVERED_TO]);
   assert.strictEqual(reopen.to, 'not_started');
 
   // Assigned straight to Delivered is one action, not two.
@@ -150,7 +163,10 @@ test('the history sentence names the staff member and the freelancer', () => {
     const t = byAction(action);
     return typeof t.describe === 'function' ? t.describe(ctx) : t.describe;
   };
-  assert.strictEqual(say('outsource_delivered'), 'Marked delivered by Priya on behalf of Ravi K.');
+  /* "Delivered by", not "Marked delivered by": the task really is delivered
+     now rather than recorded as handed back, so the sentence reads for its
+     destination. */
+  assert.strictEqual(say('outsource_delivered'), 'Delivered by Priya on behalf of Ravi K.');
   /* "by the freelancer, recorded" is gone from this one too: it read as though
      the freelancer had clicked something, and the sentence is now parallel to
      the delivery's. */
@@ -164,10 +180,10 @@ test('the history sentence names the staff member and the freelancer', () => {
   /* AND IT DEGRADES RATHER THAN PRINTING "undefined". A history row is written
      inside a transaction; a missing name must not be able to fail one. */
   const t = byAction('outsource_delivered');
-  assert.strictEqual(t.describe({ user: { name: 'Priya' } }), 'Marked delivered by Priya');
+  assert.strictEqual(t.describe({ user: { name: 'Priya' } }), 'Delivered by Priya');
   assert.strictEqual(t.describe({ outsourcedTo: { freelancerName: 'Ravi K.' } }),
-    'Marked delivered on behalf of Ravi K.');
-  assert.strictEqual(t.describe({}), 'Marked delivered');
+    'Delivered on behalf of Ravi K.');
+  assert.strictEqual(t.describe({}), 'Delivered');
 });
 
 test('a recorded stamp reads as a date in the studio\'s own clock', () => {
@@ -564,7 +580,7 @@ test('the refusal says what the action needs, and not "by the freelancer"', () =
     assert.strictEqual(v.ok, false);
     assert.strictEqual(v.status, 409, 'a wrong status is a conflict, not a permission problem');
     // WHAT IT IS NOW: the current status, and the ones it would need.
-    assert.match(v.error, /^An asset in "Delivered" cannot be recorded as (completed|delivered) — /);
+    assert.match(v.error, /^An asset in "Delivered" cannot be (recorded as completed|delivered) — /);
     assert.match(v.error,
       /the task has to be in Not Assigned, Assigned, In Progress, TL Feedbacks or CD Feedbacks\.$/);
     // WHAT IT IS NOT.
@@ -574,8 +590,14 @@ test('the refusal says what the action needs, and not "by the freelancer"', () =
   }
 
   /* THE ONE THAT KEEPS ITS FREELANCER, because it is about where the work GOES
-     and not about who clicked: a reversal really does send it back to them. */
-  assert.match(workflow.evaluate('outsource_reopen', ctx).error, /sent back to the freelancer/);
+     and not about who clicked: a reversal really does send it back to them.
+     
+     Asked from TL Approved rather than from Delivered: the reversal now REACHES
+     Delivered — that is where Mark delivered lands, and a mistaken delivery has
+     to be undoable — so asking there would get an approval, not a refusal. */
+  const unreachable = { ...ctx, asset: { ...ctx.asset, status: 'tl_approved' } };
+  assert.match(workflow.evaluate('outsource_reopen', unreachable).error,
+    /sent back to the freelancer/);
 
   /* THE REST OF THE FAMILY, checked rather than assumed. The page's history
      labels said "Delivered by the freelancer" beside the avatar of whoever had
@@ -696,6 +718,41 @@ test('the tab offers the stage buttons for exactly the statuses the server allow
   assert.ok(delivered.includes('data-osstage="a1:reopened"'),
     'Reopen shows on a delivery waiting in TL Review');
   assert.ok(!delivered.includes('data-osstage="a1:delivered"'), 'and nothing forward does');
+});
+
+test('the reversal\'s button follows the reversal\'s own status list', () => {
+  /* THE DRIFT THIS PINS, and it was live for the length of one commit: the page
+     asked the FORWARD list whether Reopen could be offered, plus a literal
+     'pending_tl_review' for where a delivery landed at the time. Re-pointing the
+     delivery at 'delivered' made both false for every delivered row, so the
+     button vanished from exactly the rows the key exists for — the server would
+     have allowed it and the page withheld it. The same
+     control-offered-then-withdrawn shape as REWORK_STATUSES, in the other
+     direction. */
+  const code = PAGE.replace(/\/\*[\s\S]*?\*\//g, '');
+  const at = code.indexOf('function osReopenReachable(a)');
+  assert.ok(at !== -1, 'the reversal asks its own question');
+  const fn = code.slice(at, code.indexOf('\n}', at));
+  assert.match(fn, /osState\.data\.reopenFrom/, 'from the payload, not a literal');
+  for (const status of workflow.transitionFor('outsource_reopen').from) {
+    assert.ok(!fn.includes(`'${status}'`), `${status} is not written down in the page`);
+  }
+
+  // The server really sends it, from the transition rather than a copy.
+  const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'outsource.js'), 'utf8');
+  assert.match(route, /reopenFrom: workflow\.transitionFor\('outsource_reopen'\)\.from,/);
+
+  /* AND THE TWO LISTS REALLY DIFFER, which is why one could not serve both:
+     the reversal reaches the delivery's destination and the forward stages
+     deliberately do not. */
+  assert.ok(workflow.transitionFor('outsource_reopen').from.includes(workflow.OUTSOURCE_DELIVERED_TO));
+  assert.ok(!workflow.OUTSOURCE_STAGE_FROM.includes(workflow.OUTSOURCE_DELIVERED_TO));
+
+  // And osReopenable asks it rather than the forward one.
+  const rea = code.slice(code.indexOf('function osReopenable(a)'));
+  const body = rea.slice(0, rea.indexOf('\n}'));
+  assert.match(body, /osReopenReachable\(a\)/);
+  assert.ok(!/osStageReachable/.test(body), 'not the forward list');
 });
 
 test('the page keeps no copy of the allow-list — it reads the server\'s', () => {
@@ -867,7 +924,7 @@ test('moving outsourced work through its stages', { skip: cfg ? false : SKIP_REA
     const second = await stage('root', 'delivered', [assignment.id]);
     assert.strictEqual(second.status, 200, JSON.stringify(second.body));
     assert.strictEqual(second.body.results[0].movedAsset, true);
-    assert.strictEqual(await statusOf(asset.id), 'pending_tl_review', 'now a lead has it to check');
+    assert.strictEqual(await statusOf(asset.id), 'delivered', 'and the task is delivered');
 
     const afterDelivered = await row(assignment.id);
     assert.strictEqual(afterDelivered.stage, 'delivered');
@@ -881,7 +938,7 @@ test('moving outsourced work through its stages', { skip: cfg ? false : SKIP_REA
     const sentences = (h.events || h.history || []).map((e) => e.note || e.summary || e.describe || '');
     assert.ok(sentences.some((s) => /^Marked completed by Root on behalf of Ravi K\.$/.test(s)),
       `the completed sentence is in the history: ${JSON.stringify(sentences)}`);
-    assert.ok(sentences.some((s) => /Marked delivered by Root on behalf of Ravi K\./.test(s)),
+    assert.ok(sentences.some((s) => /^Delivered by Root on behalf of Ravi K\.$/.test(s)),
       `and the delivered one: ${JSON.stringify(sentences)}`);
 
     // Still no clock, after a whole lifecycle.
@@ -894,7 +951,7 @@ test('moving outsourced work through its stages', { skip: cfg ? false : SKIP_REA
     const r = await stage('root', 'delivered', [assignment.id]);
     assert.strictEqual(r.status, 200, JSON.stringify(r.body));
     assert.strictEqual(r.body.succeeded, 1);
-    assert.strictEqual(await statusOf(asset.id), 'pending_tl_review');
+    assert.strictEqual(await statusOf(asset.id), 'delivered');
     const after = await row(assignment.id);
     assert.strictEqual(after.stage, 'delivered');
     assert.strictEqual(after.completedAt, null,
@@ -935,7 +992,7 @@ test('moving outsourced work through its stages', { skip: cfg ? false : SKIP_REA
     assert.ok(!held.includes('outsource.reopen'), 'and cannot undo one');
     const refused = await stage('priya', 'reopened', [assignment.id]);
     assert.strictEqual(refused.status, 403, JSON.stringify(refused.body));
-    assert.strictEqual(await statusOf(asset.id), 'pending_tl_review', 'nothing moved');
+    assert.strictEqual(await statusOf(asset.id), 'delivered', 'nothing moved');
 
     // Granted, on the same token, with no sign-out — the page re-reads /auth/me.
     await setPerms('team_lead', [...held, 'outsource.reopen']);
@@ -994,7 +1051,7 @@ test('moving outsourced work through its stages', { skip: cfg ? false : SKIP_REA
         'and the key alone does not reach across the studio');
       assert.match(byId.get(theirs.assignment.id).error,
         /permission to reopen outsourced work on that project/);
-      assert.strictEqual(await statusOf(theirs.asset.id, id.other), 'pending_tl_review',
+      assert.strictEqual(await statusOf(theirs.asset.id, id.other), 'delivered',
         'the off-project task is untouched');
       assert.strictEqual((await row(theirs.assignment.id)).stage, 'delivered',
         'and so is its recorded stage');
@@ -1003,52 +1060,68 @@ test('moving outsourced work through its stages', { skip: cfg ? false : SKIP_REA
     }
   });
 
-  await t.test('once a lead has acted, the reversal is refused by the table', async () => {
-    /* THE LIMIT OF THE REVERSAL, which is the one claim its catalogue entry makes
-       that nothing else here pins: reopening is possible while the delivery is
-       still waiting on a team lead, and not after. Once the work is through
-       review it belongs to the studio's own pipeline, and sending it back to a
-       freelancer from there would unsay a decision somebody inside the studio
-       made — so it is the TRANSITION's `from` that refuses it, not a check in the
-       route, and the assignment is left exactly as it was. */
-    const { asset, assignment } = await outsourced('Through Review');
-    assert.strictEqual((await stage('root', 'delivered', [assignment.id])).body.succeeded, 1);
-
-    const review = await as('priya', `/assets/${asset.id}/review`, {
-      method: 'POST', body: { decision: 'approved' } });
-    assert.strictEqual(review.status, 200, JSON.stringify(review.body));
-    assert.strictEqual(await statusOf(asset.id), 'tl_approved',
-      'the freelancer\'s work goes through the same review an artist\'s does');
-
-    const held = await heldBy('team_lead');
-    await setPerms('team_lead', [...held, 'outsource.reopen']);
-    try {
-      const r = await stage('priya', 'reopened', [assignment.id]);
-      assert.strictEqual(r.status, 200, 'the request is well-formed');
-      assert.strictEqual(r.body.results[0].ok, false);
-      assert.match(r.body.results[0].error,
-        /An asset in "TL Approved" cannot be reopened and sent back to the freelancer/,
-        `refused by the table, naming the status: ${JSON.stringify(r.body.results[0].error)}`);
-    } finally {
-      await setPerms('team_lead', held);
+  await t.test('a task the studio itself delivered is not this reversal\'s to undo', async () => {
+    /* THE LIMIT OF THE REVERSAL, rewritten for the new destination — and the
+     * hazard it closes is one the re-pointing created.
+     *
+     * Mark delivered now lands in 'delivered', the terminal state, so the
+     * reversal has to reach that state or a mistaken delivery could never be
+     * undone. But the CLIENT route reaches the same state, from
+     * approved_for_client, after submissions and approvals. Without a
+     * discriminator, a stale assignment row on a task that had gone the whole
+     * way through review would be a back door to yanking client-delivered work
+     * back to Not Assigned.
+     *
+     * A SUBMITTED VERSION IS THE DISCRIMINATOR, and it is a fact rather than an
+     * inference: an outsourced delivery writes no asset_versions row, and the
+     * studio's pipeline cannot reach approved_for_client without one. */
+    const asset = (await as('root', `/assets/project/${id.project}`, {
+      method: 'POST', body: { name: 'Ours Then Theirs', type: 'prop', assigneeId: id.ana } })).body.asset;
+    // The studio's own round: started, submitted, approved, sent to the client.
+    const mineBusy = await as('ana', `/assets/project/${id.project}`);
+    const busy = (mineBusy.body || {}).activeWork;
+    if (busy && busy.assetId) {
+      await as('ana', `/assets/${busy.assetId}/submit`,
+        { method: 'POST', body: { link: 'https://x.test/clear' } }).catch(() => null);
     }
-    // AND NOTHING WAS HALF-DONE: the assignment keeps its stage and its stamp.
-    const after = await row(assignment.id);
-    assert.strictEqual(after.stage, 'delivered');
-    assert.ok(after.deliveredAt, 'the stamp is untouched');
-    assert.strictEqual(await statusOf(asset.id), 'tl_approved');
-  });
+    assert.strictEqual((await as('ana', `/assets/${asset.id}/start`, { method: 'POST' })).status, 200);
+    assert.strictEqual((await as('ana', `/assets/${asset.id}/submit`,
+      { method: 'POST', body: { link: 'https://x.test/v1' } })).status, 201);
+    assert.ok((await as('priya', `/assets/${asset.id}/review`,
+      { method: 'POST', body: { decision: 'approved' } })).status < 400);
+    assert.ok((await as('root', `/assets/${asset.id}/send-to-client`, { method: 'POST' })).status < 400
+      || (await as('root', `/assets/${asset.id}/send-to-cd`, { method: 'POST' })).status < 400,
+    'the studio moves it on toward the client');
 
-  await t.test('a project the recorder cannot reach is refused, per row', async () => {
-    const mine = await outsourced('Lead\'s Own');
-    const theirs = await outsourced('Off Project', id.other);
-    const r = await stage('priya', 'completed', [mine.assignment.id, theirs.assignment.id]);
-    assert.strictEqual(r.status, 200, JSON.stringify(r.body));
-    const byId = new Map(r.body.results.map((x) => [x.id, x]));
-    assert.strictEqual(byId.get(mine.assignment.id).ok, true, 'their own project records');
-    assert.strictEqual(byId.get(theirs.assignment.id).ok, false);
-    assert.match(byId.get(theirs.assignment.id).error,
-      /permission to record a stage on outsourced work on that project/);
+    /* Forced the rest of the way and the assignee cleared, so the asset is in
+       Delivered WITH submitted versions — the shape the discriminator is for. */
+    await as('root', `/assets/${asset.id}`, { method: 'PATCH', body: { status: 'delivered' } });
+    await as('root', `/assets/${asset.id}`, { method: 'PATCH', body: { assigneeId: null } });
+    assert.strictEqual(await statusOf(asset.id), 'delivered');
+
+    // A stale assignment row pointing at it, with its stage already delivered.
+    const assignment = (await as('root', '/outsource/assignments', { method: 'POST',
+      body: { freelancerId: id.freelancer, projectId: id.project, assetId: asset.id,
+        decidedManHours: 4 } })).body.assignment;
+    await sql(cfg, `UPDATE outsource_assignments SET status = 'delivered' WHERE id = '${assignment.id}'`);
+
+    const r = await stage('root', 'reopened', [assignment.id]);
+    assert.strictEqual(r.status, 200, 'the request is well-formed');
+    assert.strictEqual(r.body.results[0].ok, false);
+    assert.match(r.body.results[0].error,
+      /was submitted and reviewed inside the studio before it was delivered/,
+      `refused on the task's own history: ${JSON.stringify(r.body.results[0].error)}`);
+    assert.ok(!/separate permission/.test(r.body.results[0].error),
+      'and not with a permission sentence, which would send somebody to Settings for nothing');
+    assert.strictEqual(await statusOf(asset.id), 'delivered', 'client-delivered work is untouched');
+
+    /* AND THE OUTSOURCED DELIVERY IS STILL REVERSIBLE — the discriminator says
+       which is which rather than closing the door on both. */
+    const theirs = await outsourced('Purely Theirs');
+    assert.strictEqual((await stage('root', 'delivered', [theirs.assignment.id])).body.succeeded, 1);
+    const undo = await stage('root', 'reopened', [theirs.assignment.id]);
+    assert.strictEqual(undo.body.succeeded, 1, JSON.stringify(undo.body.results));
+    assert.strictEqual(await statusOf(theirs.asset.id), 'not_started');
   });
 
   await t.test('the key, off and on again on the same token', async () => {
@@ -1065,7 +1138,7 @@ test('moving outsourced work through its stages', { skip: cfg ? false : SKIP_REA
     }
     const ok = await stage('priya', 'delivered', [assignment.id]);
     assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
-    assert.strictEqual(await statusOf(asset.id), 'pending_tl_review');
+    assert.strictEqual(await statusOf(asset.id), 'delivered');
   });
 
   await t.test('a mixed batch applies the good rows and reports each refusal', async () => {
@@ -1090,7 +1163,7 @@ test('moving outsourced work through its stages', { skip: cfg ? false : SKIP_REA
     for (const res of r.body.results.filter((x) => !x.ok && x.id !== 'no-such-id')) {
       assert.ok(res.freelancerName, 'the refusal says whose work it was about');
     }
-    assert.strictEqual(await statusOf(ready.asset.id), 'pending_tl_review');
+    assert.strictEqual(await statusOf(ready.asset.id), 'delivered');
     assert.strictEqual(await statusOf(gone.asset.id), 'not_started', 'and the cancelled task is untouched');
   });
 
@@ -1139,6 +1212,9 @@ test('moving outsourced work through its stages', { skip: cfg ? false : SKIP_REA
       { method: 'POST', body: { link: 'https://x.test/b' } });
     // 201: a submission CREATES a version row, and has answered that way all along.
     assert.strictEqual(submitted.status, 201, JSON.stringify(submitted.body));
+    /* pending_tl_review, NOT delivered. An ordinary asset's submission goes to a
+       team lead exactly as it always has — the outsourced delivery's new
+       destination changed nothing here, and this line is what says so. */
     assert.strictEqual(await statusOf(asset.id), 'pending_tl_review');
 
     /* AND THE OUTSOURCED STAGES ARE NOT AVAILABLE TO IT. This is the mutation
@@ -1218,7 +1294,7 @@ test('moving outsourced work through its stages', { skip: cfg ? false : SKIP_REA
 
       const d = await stage('root', 'delivered', [assignment.id]);
       assert.strictEqual(d.body.succeeded, 1, `delivered from ${status}: ${JSON.stringify(d.body.results)}`);
-      assert.strictEqual(await statusOf(asset.id), 'pending_tl_review',
+      assert.strictEqual(await statusOf(asset.id), 'delivered',
         'and the hand-back always lands in TL Review, wherever it came from');
       assert.strictEqual((await row(assignment.id)).completedByName, 'Root');
       assert.strictEqual((await row(assignment.id)).deliveredByName, 'Root');
@@ -1241,7 +1317,8 @@ test('moving outsourced work through its stages', { skip: cfg ? false : SKIP_REA
         assert.strictEqual(r.status, 200, 'the request is well-formed');
         assert.strictEqual(r.body.succeeded, 0, `${which} is refused from ${status}`);
         const err = r.body.results[0].error;
-        assert.match(err, new RegExp(`^An asset in "${workflow.label(status)}" cannot be recorded as ${which}`),
+        const phrase = which === 'completed' ? 'recorded as completed' : 'delivered';
+        assert.match(err, new RegExp(`^An asset in "${workflow.label(status)}" cannot be ${phrase}`),
           `the refusal names what it is: ${JSON.stringify(err)}`);
         assert.match(err, /the task has to be in Not Assigned, Assigned, In Progress, TL Feedbacks or CD Feedbacks\./,
           'and what it would need');
@@ -1273,13 +1350,13 @@ test('moving outsourced work through its stages', { skip: cfg ? false : SKIP_REA
     assert.strictEqual(c.body.succeeded, 1, JSON.stringify(c.body.results));
     const d = await stage('root', 'delivered', [assignment.id]);
     assert.strictEqual(d.body.succeeded, 1, JSON.stringify(d.body.results));
-    assert.strictEqual(await statusOf(asset.id), 'pending_tl_review');
+    assert.strictEqual(await statusOf(asset.id), 'delivered');
 
     // And both are in the task's history, naming the staff member and the freelancer.
     const h = await history(asset.id);
     const sentences = (h.events || []).map((e) => e.note || '');
     assert.ok(sentences.some((s) => /^Marked completed by Root on behalf of Ravi K\.$/.test(s)));
-    assert.ok(sentences.some((s) => /^Marked delivered by Root on behalf of Ravi K\.$/.test(s)));
+    assert.ok(sentences.some((s) => /^Delivered by Root on behalf of Ravi K\.$/.test(s)));
   });
 
   await t.test('sending work outside normalises a drifted task and stops the clock', async () => {
@@ -1396,6 +1473,7 @@ test('moving outsourced work through its stages', { skip: cfg ? false : SKIP_REA
     const theirs = await as('ana', `/assets/${asset.id}/submit`,
       { method: 'POST', body: { link: 'https://x.test/b' } });
     assert.strictEqual(theirs.status, 201, JSON.stringify(theirs.body));
+    // Still the lead's queue. Ordinary work reaches Delivered only through review.
     assert.strictEqual(await statusOf(asset.id), 'pending_tl_review');
   });
 
@@ -1414,7 +1492,7 @@ test('moving outsourced work through its stages', { skip: cfg ? false : SKIP_REA
     const ok = await stage('priya', 'delivered', [assignment.id]);
     assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
     assert.strictEqual(ok.body.succeeded, 1);
-    assert.strictEqual(await statusOf(asset.id), 'pending_tl_review');
+    assert.strictEqual(await statusOf(asset.id), 'delivered');
   });
 
   await t.test('the Efficiency report never shows it as zero-hour work', async () => {

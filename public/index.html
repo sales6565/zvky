@@ -3609,11 +3609,28 @@ function osCompletable(a){
     && osStageReachable(a);
 }
 function osReopenable(a){
+  /* THE REVERSAL HAS ITS OWN STATUS LIST, and asking the forward one is how this
+     broke: it reaches 'delivered', which the forward stages deliberately exclude
+     — undoing a mistaken delivery is the whole point of the key.
+     
+     This line used to read `osStageReachable(a) || a.assetStatus ===
+     'pending_tl_review'`, a literal for where the delivery landed at the time.
+     Re-pointing the delivery at 'delivered' made that literal false for every
+     delivered row, so the Reopen button vanished from exactly the rows it exists
+     for — the server would have allowed it and the page withheld it. The list now
+     comes from the transition, through the payload, so it cannot go stale again. */
   return Boolean(a) && (a.status === 'completed' || a.status === 'delivered')
-    /* The reversal reaches one status the forward stages do not: a delivery sits
-       in TL Review, and taking it back out of there is the whole point. Asked
-       through the same published list so there is still no copy of it here. */
-    && (osStageReachable(a) || a.assetStatus === 'pending_tl_review');
+    && osReopenReachable(a);
+}
+
+/* Is the TASK in a status the reversal can be reached from? Same shape as
+   osStageReachable, same fallbacks, different published list. */
+function osReopenReachable(a){
+  if(!a || !a.assetId) return true;
+  if(a.assetAssigneeId) return false;
+  const allowed = (osState.data && osState.data.reopenFrom) || null;
+  if(!Array.isArray(allowed) || !allowed.length) return true;
+  return allowed.includes(a.assetStatus);
 }
 
 /* IS THE TASK IN A STATUS A STAGE CAN BE RECORDED FROM?
@@ -3754,43 +3771,22 @@ function visibleStatuses(){
  * list, which tests/board-delivered.test.js fails on for every status the
  * server can set.
  */
-const BOARD_EXTRA_COLUMNS = [
-  {
-    id: 'outsource_delivered',
-    /* NOT "Delivered" — see above. Named for what happened, in the style of TL
-       Feedbacks and Approved for Client: somebody outside sent work back in. */
-    label: 'Back from Freelancer',
-    // The green a delivery already wears on the Outsource tab, and not the
-    // brand red — a column in the application's own colour reads as chrome.
-    color: '#2e7d5b',
-    /* WHERE IT SITS: straight after TL Review, not last.
-     *
-     * The brief's recommendation was last, on the reading that Delivered is an
-     * end state. It is not one: this work is WAITING ON A TEAM LEAD, and it
-     * leaves the column the moment one acts. Putting it last would file work
-     * that needs reviewing today past three approval stages and next to the
-     * client Delivered column, which is where finished work lives. Beside the
-     * queue it belongs to is where a lead looking for things to review will
-     * see it. */
-    after: 'pending_tl_review',
-    /* WHAT IT CLAIMS: a live assignment whose stage is delivered, while the task
-     * is still in the status the delivery put it in.
-     *
-     * BOTH HALVES MATTER. The assignment stays 'delivered' after a lead
-     * approves the work — nothing in the review touches it — so claiming on the
-     * stage alone would hold the card here for ever and it would never appear in
-     * TL Approved. Asking for the status too is what makes "it moves on when the
-     * next step picks it up" true without anything having to remember to move
-     * it.
-     *
-     * AND IF THE DELIVERY EVER LANDS SOMEWHERE ELSE, this stops claiming and the
-     * card shows in its own status column — visible in the wrong place rather
-     * than vanished, which is the right way round for a board. */
-    claims: (a) => Boolean(a && a.outsourced_to)
-      && a.outsourced_to.stage === 'delivered'
-      && a.status === 'pending_tl_review',
-  },
-];
+/* NO EXTRA COLUMNS, and the empty array is the point.
+ *
+ * SUPERSEDED. For two commits this held a Back from Freelancer column, because
+ * Mark delivered put a freelancer's task into pending_tl_review and it then sat
+ * in the TL Review column looking like an artist's submission. Mark delivered
+ * now targets the 'delivered' status directly, so the board shows the task in
+ * the Delivered column it already had, and the extra column has nothing left to
+ * claim.
+ *
+ * THE MACHINERY STAYS because it is what makes "exactly one column" structural
+ * rather than a thing each caller is careful about: boardColumnOf() returns ONE
+ * id per asset, and the board, its counts and the stats band all ask it. With
+ * the list empty that id is always the asset's status, which is the behaviour
+ * this page had before any of it — and adding a column later is one entry here
+ * rather than three filters to keep in step. */
+const BOARD_EXTRA_COLUMNS = [];
 
 // The one column an asset belongs in. One answer per asset, which is what makes
 // "never two" structural rather than something each caller has to be careful of.
@@ -5633,7 +5629,12 @@ function cardHTML(a){
    * recorded it — that is in the task's history, where somebody asking "who
    * entered this" will look; the card answers "whose work is this". It is in the
    * hover, though, because that question does get asked. */
-  const fl = boardColumnOf(a) === 'outsource_delivered' ? a.outsourced_to : null;
+  /* KEYED ON THE ASSIGNMENT, not on a column. It used to ask whether the card
+     was in the Back from Freelancer column; that column is gone, and the
+     question it was really asking — "did this come back from a freelancer?" — is
+     answered by the assignment's own stage. So the line survives the column, and
+     now appears on the card wherever it sits, which is the Delivered column. */
+  const fl = (a.outsourced_to && a.outsourced_to.stage === 'delivered') ? a.outsourced_to : null;
   const metaBits = [];
   /* NO HOURS FIGURE ON A FREELANCER'S CARD, and this is the one place the card
      is not the same as every other.

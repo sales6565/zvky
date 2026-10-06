@@ -250,45 +250,64 @@ reads an idle hour as idle *by its absence* — an idle hour produces no session
 `timesheet_entries` so that wiring a report to these hours fails there rather
 than silently acquiring an Idle bug.
 
-### Two permissions called "Mark as Delivered", and they are near opposites
+### Two permissions called "Mark as Delivered", reaching one state two ways
 
 This is the one pair in the catalogue most likely to be confused, so it is
 written down rather than left to be worked out from the labels.
 
 | Key | Transition | Means |
 | --- | --- | --- |
-| `review.deliver` (Review group) | `deliver`: `approved_for_client` → `delivered` | **The client has the work.** The end of the pipeline. |
-| `outsource.deliver` (Outsourcing group) | `outsource_delivered`: `not_started` → `pending_tl_review` | **A freelancer has handed work back.** The start of a review. |
+| `review.deliver` (Review group) | `deliver`: `approved_for_client` → `delivered` | **The client has the work,** after the studio's own review. |
+| `outsource.deliver` (Outsourcing group) | `outsource_delivered`: any eligible status → `delivered` | **Staff attest a freelancer's work was handed to the client or accepted internally.** |
 | `outsource.reopen` (Outsourcing group) | `outsource_reopen`: back to `not_started` | **Undoing one of the above.** Its own key; see below. |
 
-Reusing the first for the second would tell every board, the Assets List's
-Active group and both "open work" queries that the client had been sent
-something nobody inside the studio had reviewed. The transition table already
-refuses it — `deliver` is `from: ['approved_for_client']` — and
-`tests/outsource-deliver.test.js` pins that refusal against a running server
-rather than leaving it as a thing somebody once checked.
+**They land in the same state, and that is a studio decision that reversed this
+feature's original design.** For two commits `outsource_delivered` targeted
+`pending_tl_review`, on the reasoning that a freelancer's hand-back is a
+*submission* nobody inside the studio has reviewed, so recording it as Delivered
+would tell every board and every "open work" query that the client had something
+unseen. The studio overruled it: only staff can attest what happened outside the
+studio, and marking delivered is that attestation.
 
-**An outsourced task is in `not_started` ("Not Assigned"), and that is the only
-status it can hold.** `src/outsource.js` refuses to send out a task that has an
-internal assignee, and `assigned` requires one. So `from: ['not_started']` is
-complete: delivering twice, or delivering a task somebody in the studio has
-taken on since, is refused by the table rather than by a check somebody has to
-remember.
+**So what still has to be true is not disjoint destinations — it is that they
+remain two transitions.** Separate source lists, separate actors, separate
+permissions. One loosened transition serving both is the change that would let an
+ordinary asset skip review to Delivered, and `deliver` is asserted unchanged
+(`from: ['approved_for_client']`, actor `deliverer`) for exactly that reason. An
+ordinary asset cannot reach Delivered any way it could not before, and
+`outsource_delivered` is unreachable for one because the endpoint takes
+**assignment** ids.
 
-**It lands in an existing status on purpose, and that is what kept the change
-small.** `pending_tl_review` is already known to the board's columns, the Assets
-List's Active group, the Admin Dashboard's Attention Required count, the status
-`CHECK` constraint, and the `NOT IN ('delivered', 'approved_for_client')`
-exclusions in `src/routes/idle.js` and `src/routes/projects.js`. A **new** status
-would have been a new entry in every one of those, and whichever got forgotten is
-where the feature would have half-migrated. The suite greps each of them.
+**It skips stages, deliberately.** A task marked delivered from In Progress jumps
+TL Review, TL Approved, CD Review, Approved for Client and Awaiting Client
+Feedback in one move. Nothing downstream assumes it passed through any of them —
+checked, not hoped, and **nothing was back-filled**: no fake review round, no
+invented `awaiting_client_feedback` step, no synthetic `deliver` event.
 
-**Who picks it up next: the team lead,** through the review gate they already
-stand at. The task has no assignee — `canActAtTlGate()` guards every read of
-`assignee_id`, so the project's review team can act, and on a project with no
-named team any lead who can see the work can. Nobody reviews their own work
-either: the delivery writes no `asset_versions` row, so `submittedCurrentVersion`
-is false for everybody.
+| Consumer | How it tolerates the missing stages |
+| --- | --- |
+| Feedback rounds | `feedback` rows are written by the review routes; none exists and none is required. `feedbackLifecycle.onTransition()` is a no-op without an open bug |
+| Review counts | `COUNT(asset_versions)`, which is 0 and reads as "never submitted" — true of outsourced work |
+| **Efficiency report** | excludes outsourced tasks **by name** before asking anything else (*"outsourced — no tracked time"*), so no average, hour total or turnaround figure moves |
+| Turnaround timestamps | `finishedAt` COALESCEs the last `deliver` **event** then the last version; this action is `outsource_delivered` and there are no versions, so it is NULL and a date-filtered report omits the row — the same answer the exclusion gives |
+| P&L `recordedHours` | sums `work_sessions` on delivered assets; an outsourced task has none, so it adds nought hours. The agreed hours and their cost come from `outsource.costFor()` |
+| Project lifecycle | `ASSET_DONE = 'delivered'`, so a delivered outsourced task now lets a project be closed — the one consumer whose **answer** changes rather than staying the same, and correct under the new meaning |
+| Dev & QA | `IDLE_STATUSES` includes `delivered`, so a bug raised on it pulls it into Game Feedback. Correct: it shipped and came back |
+| Open-work counts | `routes/idle.js` and `routes/projects.js` exclude `delivered`, so a delivered task stops counting as somebody's open workload |
+
+**The one thing that is now unreachable:** nothing reviews a freelancer's work
+before it counts as delivered. That was the point of the old destination and it is
+the cost of the change, recorded here rather than discovered later. `delivered` is
+terminal — the only transition out of it is `outsource_reopen`.
+
+**Delivering twice is refused twice over**: by `isDeliverable()` on the
+assignment, which names the date it was already delivered on, and by the
+transition's own source list, which does not contain `delivered`.
+
+**Who picks it up next: nobody.** That was the old destination's answer — a team
+lead, through the review gate they already stand at — and it no longer applies.
+Delivered is terminal, so a lead's Approve on a delivered task is refused by the
+table. Staff attesting delivery *is* the check.
 
 **No timer is closed, because an outsourced task has none** — verified, not
 assumed. A session is only ever opened by `POST /:id/start`, which refuses
@@ -367,8 +386,9 @@ the freelancer. The list is `OUTSOURCE_STAGE_FROM` in `src/asset-workflow.js`:
 | `assigned`, `in_progress` | Meaningless with no internal assignee, but reachable by a board drag. Here for the rows that drifted before normalisation existed |
 | `tl_changes_requested`, `cd_changes_requested` | A rework sent outside — legitimate, confirmed reachable, and *not* normalised away because "a lead asked for changes" is information `not_started` would destroy |
 
-Excluded, each for its own reason: `pending_tl_review` (already handed in — that
-is where `outsource_reopen` operates, and the two must not overlap), `tl_approved`
+Excluded, each for its own reason: `pending_tl_review` (an artist has handed this
+in — it is in the studio's own pipeline, and it is one of the two states
+`outsource_reopen` reaches instead), `tl_approved`
 (a lead has accepted it; a hand-back would unsay a studio decision),
 `pending_cd_review` (the director has it), `game_feedback` (a Dev & QA round with
 its own lifecycle), `approved_for_client` (this would push approved work backwards
@@ -411,7 +431,7 @@ work reaches every gate below it unchanged.
 | Transition | Moves the task | Says |
 | --- | --- | --- |
 | `outsource_completed` | `not_started` → `not_started` — **nothing moves** | The freelancer has finished |
-| `outsource_delivered` | `not_started` → `pending_tl_review` | The studio has taken it back and it needs reviewing |
+| `outsource_delivered` | any eligible status → `delivered` | Staff attest the work went to the client or was accepted internally |
 | `outsource_reopen` | back to `not_started`, stamps cleared | One of the above was a mistake |
 
 **Completed and Delivered are two states, not one, and that is a decision.**
@@ -906,7 +926,7 @@ board's column counts come from the split pool, so cards and headings cannot dis
 sub-tab counts describe the whole pool, so each says how many rows clicking it would show.
 
 The one aggregate that does **not** follow the lens is the stats band (`#stats` — Assets,
-one tile per board column, Final %). It sits *above* the tab row and is drawn on every tab but
+one tile per status, Final %). It sits *above* the tab row and is drawn on every tab but
 Users, so it summarises the **project**, not the Dashboard; it already ignored the board's
 search and type filter before this change, reading `state.assets` rather than
 `filteredAssets()`. Making it follow a Dashboard sub-tab would make it wrong on the five
@@ -916,135 +936,69 @@ deliberate change with a failing test to answer.
 
 
 
-### The Dashboard's "Back from Freelancer" column
+### The board's columns, and the column that was superseded
 
-**The board's columns are no longer exactly the statuses**, and this is the one
-exception. Everything below is about the tab labelled **Dashboard**, which is the
+**The board's columns are exactly the statuses**, and after a brief detour they
+are again. Everything here is about the tab labelled **Dashboard**, which is the
 per-project board (`data-tab="board"`, `renderBoard()`); the permission-gated
-**Admin Dashboard** is a different screen and appears here as a consumer.
+**Admin Dashboard** is a different screen.
 
-**"Delivered" is not the asset's status**, and the whole design rests on that.
-After *Mark delivered* on the Outsource tab the **asset** holds
-`pending_tl_review` — a real workflow status, chosen in Prompt 23 precisely
-because every list already knows it — and the **assignment** holds `delivered`
-(`outsource_assignments.status`, with `delivered_by` and `delivered_at`). There is
-also a `delivered` *asset* status and it is the opposite end of the pipeline: the
-client has the work.
+**The detour, recorded because the machinery it left behind is still in use.**
+When `outsource_delivered` targeted `pending_tl_review`, a freelancer's hand-back
+sat in the TL Review column looking exactly like an artist's submission, so the
+board grew an extra column — *Back from Freelancer* — to tell them apart. The
+delivery now targets `delivered`, a column the board has always drawn, so there is
+nothing left for an extra column to claim. `BOARD_EXTRA_COLUMNS` is **empty**, and
+`workflow.OUTSOURCE_DELIVERED_COLUMN` survives only as a named record of the old
+destination — its `from` is what `docs/outsourced-delivery-audit.sql` looks for
+when counting rows that predate the change. **It was never a status** (its id is
+deliberately absent from `STATE_IDS`), so there is no state to retire and no row to
+rewrite. Once that query returns nothing on the studio's own database, the constant
+and the empty-extras machinery can go together.
 
-**What it looked like before** (reproduced, not assumed): the freelancer's task
-sat in the **TL Review** column beside an artist's own submission, in exactly one
-column. Nothing vanished — the brief's other hypothesis. What was missing was any
-sign it had come from outside; the only visible difference was an empty avatar
-slot, which reads as *"nobody has picked this up"* about work that has been done
-and handed back.
+**The machinery stays, though, and earns its place.** `boardColumnOf(asset)`
+returns **one** id per asset — the first extra column that claims it, or its
+status — and the board, its counts and the stats band all ask that one function. A
+card cannot be in two columns because there is one answer, and cannot be in none
+unless its answer is missing from the column list, which
+`tests/board-delivered.test.js` fails on for **every** status the server can set.
+With the extras list empty that id is simply the status, which is what this page
+did before any of it.
 
-**So it gets its own column, and it is not called Delivered.** Two columns under
-one word meaning near opposites is the confusion "Two permissions called Mark as
-Delivered" above exists to prevent. The column is **Back from Freelancer**,
-declared once in `workflow.OUTSOURCE_DELIVERED_COLUMN` and read by both the board
-and the Admin Dashboard so the two cannot name or place it differently.
+**What a delivered freelancer card shows.** The freelancer's name and the
+delivered date, with who *recorded* it in the hover — the card answers "whose work
+is this", the history answers "who entered it". The line is keyed on the
+assignment's own stage, not on a column, which is why it survived the column it
+was written for. **No hours figure** on those cards: `man_hours` is the estimate
+and no card has ever shown tracked time, but "24h" printed above "Ravi K." reads as
+hours Ravi logged, and there is no such figure.
 
-**Where it sits: straight after TL Review, not last** — a deliberate departure
-from the brief's recommendation. This work is *waiting on a team lead* and leaves
-the column the moment one acts, so it is not an end state; filing it past three
-approval stages, next to the client's finished work, is where it would stop being
-noticed.
+**The consumers, and what each needed.** Almost nothing, which is the point of
+re-pointing at a status the application already knew:
 
-**Exactly one column, by construction.** `boardColumnOf(asset)` returns **one**
-id — the first extra column that claims it, or its status — and the board, its
-counts and the stats band all ask that one function. A card cannot be in two
-columns because there is one answer, and cannot be in none unless its answer is
-missing from the list, which `tests/board-delivered.test.js` fails on for every
-status the server can set.
-
-**The claim needs both halves**: a live assignment whose stage is `delivered`
-**and** a task still in `pending_tl_review`. The review does not touch the
-assignment, so claiming on the stage alone would hold the card here for ever and
-it would never appear in TL Approved. Asking for the status too is what makes "it
-moves on when the next step picks it up" true with nothing having to remember.
-`col.from` is pinned equal to the delivery transition's `to`, so if the delivery
-ever lands elsewhere the test fails rather than the column silently emptying.
-
-**The card** shows the freelancer's name and the delivered date, with who
-*recorded* it in the hover — the card answers "whose work is this", the history
-answers "who entered it". **No hours figure**: `man_hours` is the estimate and no
-card has ever shown tracked time, but "24h" printed above "Ravi K." reads as hours
-Ravi logged, and there is no such figure. The due date stays; a date is not hours.
-Everything else about the card is unchanged, so the click that opens the drawer and
-the drag handlers find it exactly as before — and `outsource_delivered` is not in
-the drag's `FREE` list, so no drop can write it as a status.
-
-**The consumers, each with what happened to it:**
-
-| Consumer | What was done |
+| Consumer | What was needed |
 | --- | --- |
-| `renderBoard()` columns and counts | **Changed** — `boardColumns()`, `boardColumnOf()` |
-| `cardHTML()` | **Changed** — freelancer line; hours suppressed on those cards only |
-| `#stats` band | **Changed** to the same column vocabulary, because it sits directly above the board and "TL Review 1" over an empty TL Review column is the drift. Still reads `state.assets` raw: no search, no type filter, no lens |
-| Art/Animation lens + sub-tab counts | **Verified, no change needed** — the lens is applied to the whole pool *before* columns, so the new column is filtered and the counts include delivered work by construction |
-| `filteredAssets()` | **Left alone** — shared with the Assets List; both the lens and the column stay out of it |
-| Assets List, `ASSET_LIST_GROUPS` | **Left alone** — groups by *status*, so a hand-back is Active, which is right |
-| `visibleStatuses()` in `renderList()` | **Left alone** — a permission filter over statuses, not a column vocabulary |
-| Admin Dashboard `stageCounts` | **Changed** — split out of TL Review, counted **once**, same labels as the board |
-| Admin Dashboard `waitingCounts` | **Left alone** — it answers "what is sitting with somebody for a decision", and this work is. A different question, not double counting |
-| Admin Dashboard `lateRows`, `upcoming` | **Left alone** — they exclude only `DONE_STATES` (`delivered`), and a hand-back is not done |
-| `renderPipeline` / `pipelineTotal` | **No change needed** — they render whatever rows the payload carries, and the split moves a count rather than adding one |
-| Pending Actions | **Left alone** — it reads `project_reviews`, not asset statuses |
-| `routes/projects.js` "my work", `routes/idle.js` waiting list | **Left alone** — keyed on `assignee_id`, which outsourced work has none of |
-| Reports and exports | **Left alone** — nothing groups by status, and Efficiency already excludes outsourced assets by name |
+| `renderBoard()` columns and counts | **nothing** — `delivered` has always had a column |
+| `cardHTML()` | the freelancer line re-keyed off the assignment instead of the removed column |
+| `#stats` band | **nothing** — it counts by `boardColumnOf()`, which is now the status. *Final %* now includes outsourced deliveries, which is correct: the studio has attested the work went out |
+| Art/Animation lens + sub-tab counts | **nothing** — the lens is applied to the whole pool before columns |
+| `filteredAssets()` | untouched; shared with the Assets List |
+| Assets List, `ASSET_LIST_GROUPS` | **nothing** — `delivered` is in the Archived group, so a delivered task moves out of Active, which is right |
+| Admin Dashboard `stageCounts` | the Prompt-27 split **reverted** — one row per status again, counted once under Delivered |
+| Admin Dashboard `waitingCounts` | **nothing**, and it now stops counting the task: a delivered asset waits on nobody |
+| Admin Dashboard `lateRows`, `upcoming` | **nothing**, and they now exclude it: `delivered` is `DONE_STATES`, so a delivered task cannot be overdue |
+| `renderPipeline` / `pipelineTotal` | **nothing** — they render whatever rows the payload carries |
+| Pending Actions | **nothing** — it reads `project_reviews`, not asset statuses |
+| `routes/projects.js`, `routes/idle.js` | **nothing**, and they now exclude it from open-work counts |
+| Reports and exports | **nothing** — see the tolerance table above |
 
 **Freshness needs no timer, because the board has no cache.** `setTab()` ends in
 `render()`, and `render()` calls `loadAssets()` whenever the view is the board or
 the list — so switching to the Dashboard always refetches and cannot show a stale
-state. That is pinned as source, next to an integration case proving the refetched
-row carries what the column needs.
+state.
 
-**No new permission.** Viewing the board is already gated, the cards are assets
-the server narrowed by `visibleProjects()`, and an extra column is only drawn when
-the column it sits after is — so a role that cannot see TL Review cannot see
-freelancer deliveries sitting in it either. That falls out of `boardColumns()`
-rather than needing a rule of its own.
-
-**One bug this change introduced and a test caught:** `empty()` built the pipeline
-from `workflow.STATES` while `stageCounts()` built the split list, so a viewer with
-no projects saw twelve rows and a viewer with one saw thirteen — the panel changed
-shape with the workload. Both now call `pipelineRows()`.
-
-
-Assets now move through a fixed pipeline instead of a free-form status field:
-
-```
-not_started → assigned → in_progress → pending_tl_review ⇄ tl_changes_requested
-                                    ↓ (TL approves)
-                             pending_cd_review ⇄ cd_changes_requested
-                                    ↓ (CD approves)
-                             approved_for_client → delivered
-```
-
-- The **assigned artist, animator or designer** uploads a file via
-  `POST /api/assets/:id/submit` (multipart, field name `file`). Where it routes
-  depends on where it came from: fresh work or a lead's rework request goes to
-  **pending_tl_review**; an art-director rework request skips the lead and goes
-  straight back to **pending_cd_review**.
-- Their **lead or supervisor** calls `POST /api/assets/:id/review` with
-  `{ decision: "approved" | "changes_requested", text }` while the asset is
-  `pending_tl_review`. Approving sends it to the art director;
-  requesting changes sends it back to the artist with the note attached.
-- The **art director** (or super admin, as an override) does the same on
-  `pending_cd_review`. Approving marks it `approved_for_client`.
-- Anyone who can manage the project (super admin, admin, production
-  coordinator, or the art director) calls `POST /api/assets/:id/deliver` once
-  it's `approved_for_client` to mark it `delivered`.
-
-Dashboard/list drag-and-drop in the frontend only works between `not_started`,
-`assigned` and `in_progress` — everything past that point has to go through the
-actions above, and the API enforces this even if someone calls `PATCH` directly.
-
-Every submission is stored as a version (`asset_versions`) and every
-decision as feedback (`feedback`), so the full review history — files and
-notes — stays attached to the asset. Files are served back out through
-`GET /api/assets/versions/:versionId/download`, which re-checks the same
-view permissions rather than being a public URL.
+**No new permission.** Viewing the board is already gated and the cards are assets
+the server narrowed by `visibleProjects()`.
 
 ### File storage
 

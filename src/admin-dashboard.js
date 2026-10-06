@@ -74,26 +74,18 @@ function addDays(date, days) {
    no projects at all, and a database that could not answer. Both are honest
    zeroes rather than an error page — an overview screen that refuses to render
    because there is nothing to show is worse than one that says so. */
-/* THE PIPELINE'S ROWS, in one place.
- *
- * The workflow's states, with OUTSOURCE_DELIVERED_COLUMN spliced in after its
- * anchor — the same list, in the same order, that the Dashboard's board draws.
+/* THE PIPELINE'S ROWS, in one place: the workflow's states, which is the same
+ * list in the same order that the Dashboard's board draws.
  *
  * WHY IT IS A FUNCTION AND NOT A CONSTANT, and the bug it was extracted for:
- * empty() built its pipeline from workflow.STATES while stageCounts() built the
- * split one, so a viewer with no projects got a 12-row panel and a viewer with
- * one got 13. The panel changed shape depending on how much work there was,
- * which is exactly what the "every stage is returned, including the empty ones"
- * guard exists to prevent. One builder, two callers, no drift.
+ * empty() built its pipeline one way and stageCounts() built it another, so a
+ * viewer with no projects got a panel of one shape and a viewer with one got a
+ * different shape. That is exactly what the "every stage is returned, including
+ * the empty ones" guard exists to prevent. One builder, two callers, no drift —
+ * and the reason it stays a function now that both are trivially the same list.
  */
 function pipelineRows() {
-  const col = workflow.OUTSOURCE_DELIVERED_COLUMN;
-  const rows = [];
-  for (const s of workflow.STATES) {
-    rows.push({ id: s.id, label: s.label, color: s.color, count: 0 });
-    if (s.id === col.after) rows.push({ id: col.id, label: col.label, color: col.color, count: 0 });
-  }
-  return rows;
+  return workflow.STATES.map((s) => ({ id: s.id, label: s.label, color: s.color, count: 0 }));
 }
 
 function empty(reason = null) {
@@ -261,52 +253,24 @@ async function build(db, user) {
  * zeroes changes shape as work moves through it, and a panel whose axis moves
  * cannot be read at a glance — which is the only way this one is ever read. */
 async function stageCounts(db, projectIds) {
-  /* WORK BACK FROM A FREELANCER IS ITS OWN ROW, not a share of TL Review.
-   *
-   * It is in pending_tl_review and the status is right — but the Dashboard's
-   * board draws it as its own column, and this panel sitting above it saying
-   * "TL Review 2" over a board showing "TL Review 1 / Back from Freelancer 1" is
-   * the drift this split exists to prevent. The id, label, colour and position
-   * all come from workflow.OUTSOURCE_DELIVERED_COLUMN, so there is one
-   * vocabulary and the two screens cannot name it differently.
-   *
-   * COUNTED ONCE. The row it is added to is the row it is taken out of, so the
-   * panel still adds up to the number of assets. The Attention Required row
-   * below keeps counting it as waiting on review, and that is not double
-   * counting: that panel answers "what is sitting with somebody for a decision",
-   * and this work is. */
-  const col = workflow.OUTSOURCE_DELIVERED_COLUMN;
+  /* ONE ROW PER STATUS, which is what this was before a freelancer's hand-back
+     needed telling apart from an artist's submission — and is what it is again.
+     
+     SUPERSEDED. For two commits this split pending_tl_review into TL Review and
+     Back from Freelancer, because Mark delivered landed outsourced work in that
+     status. It now targets 'delivered' directly, so the figure needs no
+     splitting: an outsourced delivery is counted once, under Delivered, by the
+     same GROUP BY that counts everything else. */
   const blank = pipelineRows();
   if (!projectIds.length) return blank;
 
   const placeholders = projectIds.map((_, i) => `$${i + 1}`).join(',');
   const { rows } = await db.query(
-    `SELECT a.\`status\`,
-            COUNT(*) AS n,
-            /* The same two questions the page's claims() asks: a live assignment
-               handed back, on a task still holding the status the delivery put
-               it in. 'delivered' cannot be a cancelled row — taking work back
-               sets 'cancelled' — so one comparison covers both. */
-            SUM(CASE WHEN EXISTS (
-                  SELECT 1 FROM outsource_assignments oa
-                   WHERE oa.asset_id = a.id AND oa.\`status\` = 'delivered'
-                ) THEN 1 ELSE 0 END) AS backFromFreelancer
-       FROM assets a
-      WHERE a.project_id IN (${placeholders})
-      GROUP BY a.\`status\``,
+    `SELECT \`status\`, COUNT(*) AS n FROM assets WHERE project_id IN (${placeholders}) GROUP BY \`status\``,
     projectIds
   );
   const counts = new Map(rows.map((r) => [r.status, Number(r.n) || 0]));
-  /* Only from the status the column claims out of. A delivered assignment on a
-     task a lead has since approved stays counted under TL Approved, exactly as
-     the board leaves that card in the TL Approved column. */
-  const fromRow = rows.find((r) => r.status === col.from);
-  const backOut = fromRow ? Number(fromRow.backFromFreelancer) || 0 : 0;
-  return blank.map((s) => {
-    if (s.id === col.id) return { ...s, count: backOut };
-    if (s.id === col.from) return { ...s, count: (counts.get(s.id) || 0) - backOut };
-    return { ...s, count: counts.get(s.id) || 0 };
-  });
+  return blank.map((s) => ({ ...s, count: counts.get(s.id) || 0 }));
 }
 
 /* The next few dates something is due on, soonest first. */

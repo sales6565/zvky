@@ -1,31 +1,33 @@
 /* MARKING A FREELANCER'S WORK DELIVERED, in bulk, from the Outsource tab.
  *
- * THE FINDING THIS SUITE IS BUILT AROUND, because it decided the whole design:
- * there are TWO "delivered" in this application and they are nearly opposites.
+ * TWO TRANSITIONS, ONE DESTINATION, and the destination is a studio decision
+ * that reversed this suite's original premise.
  *
  *   review.deliver / the 'deliver' transition: approved_for_client -> delivered.
- *   The CLIENT has the work. The end of the pipeline. It already existed, with
- *   a bulk action, a permission, a modal and tests/bulk-deliver.test.js.
+ *   The CLIENT has the work, after the studio's own review. It already existed,
+ *   with a bulk action, a permission, a modal and tests/bulk-deliver.test.js.
  *
- *   outsource.deliver / the 'outsource_delivered' transition: not_started ->
- *   pending_tl_review. A FREELANCER has handed work back and the studio has not
- *   looked at it yet.
+ *   outsource.deliver / 'outsource_delivered': any eligible status -> delivered.
+ *   Staff attesting that a freelancer's work was handed to the client or
+ *   accepted internally.
  *
- * Reusing the first for the second would have told every board, the Assets
- * List's Active group and both "open work" queries that the client had been
- * sent something nobody inside the studio had reviewed. The transition table
- * already refused it — `from: ['approved_for_client']` — and the first test
- * below pins that refusal as the premise rather than leaving it as a thing
- * somebody once checked.
+ * WHAT THIS FILE USED TO ASSERT, and why it no longer does: that the second
+ * landed in pending_tl_review and that the two "never reached the other's
+ * states". The reasoning was that a hand-back is a submission nobody inside the
+ * studio has looked at, so recording it as Delivered would tell every board that
+ * the client had something unseen. The studio overruled it — only staff can
+ * attest what happened outside the studio, and that is what this action now
+ * records. The asset skips TL Review, CD Review, Approved for Client and
+ * Awaiting Client Feedback in one move, deliberately.
  *
- * AND WHY THE DESTINATION IS AN EXISTING STATUS. pending_tl_review is already
- * known to every list that counts or groups statuses: the board's columns, the
- * Assets List's Active group, the Admin Dashboard's in-review tile, the pending
- * queues, the status CHECK constraint, and the `NOT IN ('delivered',
- * 'approved_for_client')` exclusions in src/routes/idle.js and
- * src/routes/projects.js. A NEW status would have been a new entry in each of
- * those, and the one that got forgotten is where this feature would have
- * half-migrated. The cases below walk those surfaces to show it did not.
+ * SO THE INVARIANT MOVED, and the first test below says where to. It is no
+ * longer "different destinations"; it is "two transitions": separate source
+ * lists, separate actors, separate permissions. One loosened transition serving
+ * both is the change that would let an ordinary asset skip review to Delivered,
+ * and 'deliver' is asserted unchanged for exactly that reason.
+ *
+ * THE DESTINATION IS STILL AN EXISTING STATUS, which is still why nothing
+ * downstream needed inventing — it is simply the other end of the pipeline now.
  */
 const test = require('node:test');
 const assert = require('node:assert');
@@ -64,15 +66,34 @@ test('the two deliveries are two transitions, and neither reaches the other\'s s
   assert.ok(back.from.includes('not_started'), 'where outsourced work belongs is still on it');
   assert.ok(!back.from.includes('delivered') && !back.from.includes('approved_for_client'),
     'and nothing closed or approved is');
-  assert.strictEqual(back.to, 'pending_tl_review');
+  /* THEY LAND IN THE SAME STATE NOW, and the studio decided that deliberately.
+   *
+   * This test used to assert they did NOT — "neither reaches the other's
+   * states" — on the reasoning that a freelancer's hand-back is a submission
+   * nobody inside the studio has reviewed, so calling it Delivered would tell
+   * every board that the client had something unseen. The studio overruled it:
+   * marking delivered is staff ATTESTING the work was handed to the client or
+   * accepted internally, which is a statement about the outside world that no
+   * internal review step can make for them.
+   *
+   * SO WHAT STILL HAS TO BE TRUE is not disjoint destinations. It is that they
+   * remain TWO TRANSITIONS: separate source lists, separate actors, separate
+   * permissions. One loosened transition serving both is the change that would
+   * let an ordinary asset skip review to Delivered, and these are the
+   * assertions that would fail if somebody made it. */
+  assert.strictEqual(back.to, 'delivered');
+  assert.strictEqual(back.to, client.to, 'one destination, reached two ways');
+  assert.strictEqual(back.to, workflow.OUTSOURCE_DELIVERED_TO,
+    'and the destination is named once, not typed in two places');
 
-  /* NO OVERLAP IN EITHER DIRECTION. This is the assertion that would fail if
-     somebody later "simplified" the two into one by widening a `from` — which
-     is the change that would ship unreviewed work to a client. */
   assert.deepStrictEqual(client.from.filter((st) => back.from.includes(st)), [],
-    'the two are legal from disjoint states');
-  assert.notStrictEqual(client.to, back.to, 'and they land in different places');
+    'their source lists are still disjoint — neither can start where the other does');
   assert.notStrictEqual(client.who, back.who, 'behind different actor gates');
+  /* THE CLIENT ROUTE IS UNTOUCHED, which is what keeps ordinary work unchanged:
+     an ordinary asset still reaches Delivered only from Approved for Client, and
+     only through review.deliver. */
+  assert.deepStrictEqual(client.from, ['approved_for_client']);
+  assert.strictEqual(client.who, 'deliverer');
 
   // Each has its own refusal sentence. A missing entry falls through to a
   // fallback that reads the action id as English, which works for none of them.
@@ -82,7 +103,7 @@ test('the two deliveries are two transitions, and neither reaches the other\'s s
      freelancers have no logins. The sentence now names the statuses the action
      needs, GENERATED from the allow-list so it cannot promise a status the table
      refuses. */
-  assert.match(src, /outsource_delivered: `recorded as delivered — the task has to be in \$\{allowedStatuses\(\)\}`/,
+  assert.match(src, /outsource_delivered: `delivered — the task has to be in \$\{allowedStatuses\(\)\}`/,
     'the refusal says what the action needs, from the list that enforces it');
   assert.ok(!/cannot be marked delivered by the freelancer/.test(src));
 });
@@ -96,32 +117,32 @@ test('the destination is a status every list already knows', () => {
   const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
   const PLACES = [
     ['src/migrate.js', 'the status CHECK constraint'],
-    ['src/admin-dashboard.js', 'the Admin Dashboard\'s in-review count'],
-    ['src/routes/assets.js', 'the pending queues'],
-    ['src/permissions.js', 'the handover gate'],
+    ['src/admin-dashboard.js', 'the Admin Dashboard\'s done states'],
+    ['src/lifecycle.js', 'whether a project still has unfinished work'],
+    ['src/pnl-hours.js', 'the P&L\'s recorded hours'],
     ['public/index.html', 'the board columns and the Assets List groups'],
   ];
   for (const [file, what] of PLACES) {
-    assert.match(read(file), /pending_tl_review/, `${what} (${file}) knows the destination`);
+    assert.match(read(file), /'delivered'/, `${what} (${file}) knows the destination`);
   }
 
-  /* And the two "open work" exclusions, which must NOT list it: a task a
-     freelancer has just handed back is work in flight, and excluding it would
-     drop it out of the project's own open-work count. */
+  /* AND THE TWO "OPEN WORK" EXCLUSIONS DO LIST IT, which is the opposite of what
+     this test asserted when the destination was TL Review — and is right for the
+     same reason it was right then. A freelancer's hand-back used to be work in
+     flight and had to be counted; it is now finished work and must not be, or a
+     delivered task would go on being counted as somebody's open workload. */
   for (const file of ['src/routes/idle.js', 'src/routes/projects.js']) {
     const text = read(file);
-    const m = text.match(/NOT IN \('delivered', 'approved_for_client'\)/);
-    assert.ok(m, `${file} still excludes only the two finished states`);
-    assert.ok(!/NOT IN \([^)]*pending_tl_review/.test(text),
-      `${file} does not exclude work that has just come back`);
+    assert.match(text, /NOT IN \('delivered', 'approved_for_client'\)/,
+      `${file} excludes finished work, which now includes an outsourced delivery`);
   }
 
-  // The page's own status list and its Active group.
-  assert.match(PAGE, /\{id:'pending_tl_review', label:'TL Review'/, 'the page has the status');
-  const activeAt = PAGE.indexOf("{ id:'active',   label:'Active'");
-  assert.ok(activeAt !== -1);
-  assert.match(PAGE.slice(activeAt, activeAt + 400), /pending_tl_review/,
-    'and counts it as active work');
+  // The page's own status list and its Archived group.
+  assert.match(PAGE, /\{id:'delivered', label:'Delivered'/, 'the page has the status');
+  const archivedAt = PAGE.indexOf("{ id:'archived', label:'Archived'");
+  assert.ok(archivedAt !== -1);
+  assert.match(PAGE.slice(archivedAt, archivedAt + 200), /delivered/,
+    'and files it as archived rather than active');
 });
 
 test('the page and the server mirror one deliverability rule', () => {
@@ -377,7 +398,7 @@ test('delivering a freelancer\'s work', { skip: cfg ? false : SKIP_REASON }, asy
     await as('root', `/outsource/assignments/${assignment.id}/cancel`, { method: 'POST' });
   });
 
-  await t.test('a delivered assignment moves its task to TL Review, and records who and when', async () => {
+  await t.test('a delivered assignment moves its task to Delivered, and records who and when', async () => {
     const { asset, assignment } = await outsourced('Rig Pass');
     const before = Date.now();
 
@@ -388,10 +409,10 @@ test('delivering a freelancer\'s work', { skip: cfg ? false : SKIP_REASON }, asy
     assert.strictEqual(r.body.failed, 0);
     assert.strictEqual(r.body.results[0].ok, true);
     assert.strictEqual(r.body.results[0].movedAsset, true);
-    assert.strictEqual(r.body.results[0].status, 'pending_tl_review');
+    assert.strictEqual(r.body.results[0].status, 'delivered');
 
-    assert.strictEqual(await statusOf(asset.id), 'pending_tl_review',
-      'the task is in the team lead\'s queue');
+    assert.strictEqual(await statusOf(asset.id), 'delivered',
+      'the task is at the end of the pipeline, which is what the studio attests');
 
     const row = await assignmentRow(assignment.id);
     assert.strictEqual(row.status, 'delivered');
@@ -408,7 +429,7 @@ test('delivering a freelancer\'s work', { skip: cfg ? false : SKIP_REASON }, asy
         WHERE asset_id = '${asset.id}' ORDER BY created_at DESC LIMIT 1`);
     assert.strictEqual(events[0].action, 'outsource_delivered');
     assert.strictEqual(events[0].from_status, 'not_started');
-    assert.strictEqual(events[0].to_status, 'pending_tl_review');
+    assert.strictEqual(events[0].to_status, 'delivered');
     assert.strictEqual(events[0].actor_email, 'root@zvky.test');
     assert.strictEqual(events[0].batch_id, r.body.batchId, 'and says which act it was part of');
 
@@ -422,14 +443,25 @@ test('delivering a freelancer\'s work', { skip: cfg ? false : SKIP_REASON }, asy
     assert.strictEqual(Number(batch[0].requested), 1);
     assert.strictEqual(Number(batch[0].succeeded), 1);
 
-    /* AND NOW THE TEAM LEAD CAN ACT ON IT, with no assignee on the asset at all.
-       This is the part that would have stranded the work: canActAtTlGate guards
-       every read of assignee_id, so the project's lead stands at the gate. */
+    /* AND THERE IS NOTHING LEFT TO REVIEW, which is the consequence of the new
+       destination and is asserted rather than left implicit. Delivered is
+       terminal: no transition leads out of it, so a lead's Approve is refused by
+       the table. The studio has said the work went out; a review afterwards
+       would be reviewing something the client already has.
+       
+       THIS IS THE COST OF THE CHANGE and the reason it is written down here. The
+       old destination put every freelancer hand-back in front of a team lead.
+       Nothing does now — staff attesting delivery IS the check. */
     const review = await as('lee', `/assets/${asset.id}/review`, {
       method: 'POST', body: { decision: 'approved' } });
-    assert.strictEqual(review.status, 200, JSON.stringify(review.body));
-    assert.strictEqual(await statusOf(asset.id), 'tl_approved',
-      'the freelancer\'s work goes through the same review an artist\'s does');
+    assert.strictEqual(review.status, 409, JSON.stringify(review.body));
+    assert.match(review.body.error, /An asset in "Delivered" cannot be approved by a team lead/);
+    assert.strictEqual(await statusOf(asset.id), 'delivered', 'and it has not moved');
+    assert.deepStrictEqual(
+      workflow.TRANSITIONS.filter((t) => t.from.includes('delivered')).map((t) => t.action),
+      ['outsource_reopen'],
+      'the only way out of Delivered is the outsourced reversal, which is permission-gated'
+    );
   });
 
   await t.test('no timer is touched, because an outsourced task has none', async () => {
@@ -546,7 +578,7 @@ test('delivering a freelancer\'s work', { skip: cfg ? false : SKIP_REASON }, asy
     /* NEVER ROLLED BACK SILENTLY: the two good ones really did land, which is
        the whole point of a per-row reply rather than a status code. */
     for (const g of good) {
-      assert.strictEqual(await statusOf(g.asset.id), 'pending_tl_review');
+      assert.strictEqual(await statusOf(g.asset.id), 'delivered');
       assert.strictEqual((await assignmentRow(g.assignment.id)).status, 'delivered');
     }
     // One batch row covering the act, holding what actually happened.
@@ -614,7 +646,7 @@ test('delivering a freelancer\'s work', { skip: cfg ? false : SKIP_REASON }, asy
     const ok = await deliver('lee', [assignment.id]);
     assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
     assert.strictEqual(ok.body.delivered, 1);
-    assert.strictEqual(await statusOf(asset.id), 'pending_tl_review');
+    assert.strictEqual(await statusOf(asset.id), 'delivered');
 
     /* AND THE PAYLOAD THE PAGE GATES ON FOLLOWS IT, in both directions — which
        is what stops the boxes being drawn for somebody the server would refuse. */
@@ -675,35 +707,49 @@ test('delivering a freelancer\'s work', { skip: cfg ? false : SKIP_REASON }, asy
     // The internal side: the board's own payload, and the lead's pending queue.
     const board = (await as('lee', `/assets/project/${id.project}`)).body.assets
       .find((a) => a.id === asset.id);
-    assert.strictEqual(board.status, 'pending_tl_review', 'the board has it in TL Review');
-    /* AND THE SURFACES THAT COUNT STATUSES, which is where a new state would
-       have half-migrated. The Admin Dashboard's Attention Required reads
-       REVIEW_STATES = ['pending_tl_review','pending_cd_review'], so a delivered
-       outsourced task is counted as work waiting on a decision — without a line
-       of dashboard code having changed, because the destination is a status it
-       already knew. */
+    assert.strictEqual(board.status, 'delivered', 'the board has it in Delivered');
+    /* AND THE SURFACES THAT COUNT STATUSES. The destination is still a status
+       every one of them already knew — it is simply the other end of the
+       pipeline now, so Attention Required stops counting it (it is not waiting
+       on anybody) and the Delivered figures start. Nothing in the dashboard
+       changed for either reading. */
     const dash = await as('root', '/admin-dashboard');
     assert.ok(dash.status < 400, JSON.stringify(dash.body));
     /* `attention` is a list of rows, each with its own count — and the rows with
         a count of nought are filtered out, so finding the row AT ALL is half the
         assertion. */
+    /* IT IS NOT WAITING ON ANYBODY ANY MORE, which is the inverse of what this
+       assertion checked when the destination was TL Review. Attention Required
+       reads REVIEW_STATES = ['pending_tl_review','pending_cd_review'] and a
+       delivered task is in neither, so the row is absent or does not name this
+       asset's project on account of it. Nothing in the dashboard changed; the
+       status did. */
     const waiting = (dash.body.attention || []).find((r) => /waiting on review/.test(r.label || ''));
-    assert.ok(waiting, `the dashboard has a waiting-on-review row (saw ${JSON.stringify(dash.body.attention)})`);
-    assert.ok(Number(waiting.count) >= 1, 'counting at least this one');
-    assert.ok((waiting.projects || []).some((pr) => pr.id === id.project),
-      'and it names the project to open, which is what makes the number actionable');
+    if (waiting) {
+      assert.ok(!(waiting.projects || []).some((pr) => pr.id === id.project && pr.count > 0)
+        || Number(waiting.count) === 0,
+      `a delivered task is not waiting on a reviewer (saw ${JSON.stringify(waiting)})`);
+    }
+    /* AND IT IS COUNTED AS DONE. The pipeline panel counts by status, so the
+       delivery lands in the Delivered row — once, with nothing else changed. */
+    const pipeline = (dash.body.pipeline || []);
+    const deliveredRow = pipeline.find((r) => r.id === 'delivered');
+    assert.ok(deliveredRow && deliveredRow.count >= 1,
+      `the Delivered row counts it (saw ${JSON.stringify(pipeline.filter((r) => r.count))})`);
+    assert.strictEqual(pipeline.length, workflow.STATE_IDS.length,
+      'one row per status — the Back from Freelancer row is gone with the column');
 
     /* NOT in Pending Actions, and that is correct rather than a gap. That queue
-       is about project review REQUESTS and game bugs; a lead's queue of work to
-       review is the board's TL Review column, which is asserted above. Pinned so
-       the distinction is recorded rather than rediscovered as a bug. */
+       is about project review REQUESTS and game bugs, and a delivered task is
+       not waiting on either. Pinned so the distinction is recorded rather than
+       rediscovered as a bug. */
     const held = await heldBy('team_lead');
     await setPerms('team_lead', [...held, 'pending.view']);
     try {
       const pending = await as('lee', '/project-reviews/pending-actions');
       assert.strictEqual(pending.status, 200, JSON.stringify(pending.body));
       assert.ok(!JSON.stringify(pending.body).includes(asset.id),
-        'Pending Actions is for review requests and game bugs, not for assets in TL Review');
+        'Pending Actions is for review requests and game bugs, not for delivered assets');
     } finally {
       await setPerms('team_lead', held);
     }

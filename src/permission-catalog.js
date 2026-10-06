@@ -939,11 +939,12 @@ const GROUPS = [
         describe: 'Record where a freelancer\u2019s work has got to \u2014 Completed when they say it is '
           + 'finished, Delivered when we have it \u2014 one row at a time or several at once. A '
           + 'freelancer has no login, so these are always recorded by somebody here on their behalf, '
-          + 'and the history says which. Delivered moves the task to TL Review, where a team lead '
-          + 'checks the work as they would an artist\u2019s. Distinct from Mark as Delivered in the '
-          + 'Review group, which means the client has it \u2014 that is the end of the pipeline, '
-          + 'this is the start of a review. Undoing one of these is a separate permission.',
-        danger: 'This puts the task into the team lead\u2019s review queue, and the task cannot be handed back to the freelancer afterwards without unassigning them.',
+          + 'and the history says which. Delivered moves the task straight to Delivered, the end of '
+          + 'the pipeline: marking it is the studio attesting the work went to the client or was '
+          + 'accepted here, so NO REVIEW STEP FOLLOWS IT. The Review group\u2019s Mark as Delivered '
+          + 'reaches the same state from Approved for Client, after the studio\u2019s own review; this '
+          + 'one is for work done outside. Undoing either is a separate permission.',
+        danger: 'This marks the task Delivered \u2014 the end of the pipeline \u2014 without anybody inside the studio reviewing the work, and only Reopen Outsourced Work can undo it.',
       },
       {
         /* UNDOING A RECORDED STAGE, and narrower than recording one on purpose.
@@ -975,10 +976,12 @@ const GROUPS = [
         label: 'Reopen Outsourced Work',
         impliedBy: has('manageUsers'),
         describe: 'Undo a Completed or Delivered that was recorded by mistake, putting the work back '
-          + 'with the freelancer. Only while the delivery is still waiting on a team lead and nobody '
-          + 'has acted on it \u2014 once the work is through review it belongs to the studio\u2019s own '
-          + 'pipeline. The reversal is written to the task\u2019s history and clears the stamps it undoes.',
-        danger: 'Reopening a delivery takes the task out of the team lead\u2019s review queue and clears who delivered it and when.',
+          + 'with the freelancer. It is the only way back out of Delivered, which is otherwise '
+          + 'terminal. Refused on a task that was submitted and reviewed inside the studio before it '
+          + 'was delivered \u2014 that is the studio\u2019s own delivery rather than the outsourced one, and '
+          + 'moving it back is a pipeline override. The reversal is written to the task\u2019s history '
+          + 'and clears the stamps it undoes.',
+        danger: 'Reopening a delivery takes the task back out of Delivered to Not Assigned and clears who delivered it and when.',
       },
       {
         key: 'outsource.rates',
