@@ -119,6 +119,73 @@ function cdChangesReentry() {
 // straight past the lead who was supposed to brief them.
 const ASSIGNEE_STATUSES = ['not_started', 'assigned', 'in_progress', 'tl_changes_requested'];
 
+/* WHERE A FREELANCER'S WORK CAN BE RECORDED FROM, as one list.
+ *
+ * It used to be ['not_started'] alone, on the reasoning that outsourced work
+ * always sits in Not Assigned. That reasoning was wrong, and a studio hit it:
+ * a lead dragged an outsourced card to In Progress on the board — a free move
+ * among FREE_STATUSES that asks nothing about outsourcing — and both Mark
+ * completed and Mark delivered then refused the row for ever. The work was out
+ * with a freelancer, really came back, and there was no way to say so.
+ *
+ * SO THE LIST IS WHEREVER OUTSOURCED WORK CAN HONESTLY BE, and each entry is a
+ * decision:
+ *
+ *   not_started           Where it belongs, and where a fresh assignment leaves
+ *                         it. The ordinary case.
+ *   assigned, in_progress Meaningless for an asset with no internal assignee —
+ *                         assigned to nobody, in progress by nobody — but
+ *                         reachable by a board drag, and normalise() below now
+ *                         pulls a new assignment out of them. They are here for
+ *                         the rows that drifted before it existed: the work is
+ *                         genuinely with a freelancer, so recording its stage
+ *                         must be possible.
+ *   tl_changes_requested, A rework sent outside. A lead or the director asks for
+ *   cd_changes_requested  changes, the assignee is cleared and the round goes to
+ *                         a freelancer — a legitimate thing to do, confirmed
+ *                         reachable, and NOT normalised away, because
+ *                         "a lead asked for changes" is information that
+ *                         not_started would destroy.
+ *
+ * AND WHAT IS DELIBERATELY NOT HERE:
+ *
+ *   pending_tl_review     Already handed in; a lead has it. Recording a delivery
+ *                         again would re-queue work already in the queue. This
+ *                         is where outsource_reopen operates, which is the
+ *                         correct action there, and the two must not overlap.
+ *   tl_approved           A lead has accepted the work. A hand-back afterwards
+ *                         would unsay a decision somebody inside the studio made.
+ *   pending_cd_review     The director has it. TL Review's reason, one gate up.
+ *   game_feedback         A Dev & QA round with its own lifecycle and its own
+ *                         actor gate. Not a freelancer hand-back.
+ *   approved_for_client   Approved and queued to go out; this would push it
+ *                         backwards into review.
+ *   awaiting_client_      The client has it. Moving it would contradict what the
+ *   feedback              client was told.
+ *   delivered             Closed. The client has the work. Never.
+ *
+ * DELIVERING TWICE is not on this list because it is not a question about the
+ * asset's status: isDeliverable() and isCompletable() in src/outsource.js refuse
+ * an assignment already completed, already delivered or cancelled, whatever the
+ * task says. Both halves have to pass.
+ */
+const OUTSOURCE_STAGE_FROM = ['not_started', 'assigned', 'in_progress',
+  'tl_changes_requested', 'cd_changes_requested'];
+
+/* The statuses a drifted assignment is pulled OUT of when work is sent outside.
+   The free stages minus the one that is already right — see normalise() in
+   src/outsource.js, which is the only caller. */
+const OUTSOURCE_NORMALISE_FROM = ['assigned', 'in_progress'];
+
+/* The allow-list as a reader sees it: "Not Assigned, Assigned, In Progress, TL
+   Feedbacks or CD Feedbacks". Built from the list so a refusal cannot name a
+   different set of statuses from the one the table enforces. */
+function allowedStatuses(ids = OUTSOURCE_STAGE_FROM) {
+  const names = ids.map((id) => label(id));
+  if (names.length < 2) return names[0] || '';
+  return `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}`;
+}
+
 // The statuses a status may be dragged between on the dashboard, in either
 // direction, without going through a review action. Everything past In Progress
 // is a review decision and has its own action.
@@ -129,6 +196,27 @@ const ASSIGNEE_STATUSES = ['not_started', 'assigned', 'in_progress', 'tl_changes
 // no card could be dragged into. The frontend copy is checked against this one
 // by a test.
 const FREE_STATUSES = ['not_started', 'assigned', 'in_progress'];
+
+/* IS THIS TASK STILL THE FREELANCER'S TO ACT ON?
+ *
+ * THE HALF THE STATUS CANNOT ANSWER, and the reason this exists: widening the
+ * stage transitions to an allow-list of statuses let through a case the old
+ * ['not_started'] had been blocking by accident. Unassign the freelancer, let an
+ * artist pick the work up — the task is now in Assigned, which the allow-list
+ * contains — and a stale assignment row could hand back work somebody inside
+ * the studio was doing. An existing test caught it.
+ *
+ * So the real invariant is written down rather than implied by a status: the
+ * exclusivity rule in src/outsource.js says a task is somebody's inside the
+ * studio or somebody's outside it and never both, and an internal assignee is
+ * the half of that which says the work came back in. A task that has one is not
+ * a freelancer's to complete, deliver or reopen, whatever status it sits in.
+ *
+ * Checked on the ASSET, in the actor, so it is part of the one gate rather than
+ * a check a route has to remember — and refusal() below gives it its own
+ * sentence, because "you cannot do that" would send somebody to Settings to fix
+ * a permission that is not the problem. */
+const freelancersToAct = (ctx) => !ctx.asset || !ctx.asset.assignee_id;
 
 const actors = {
   // The person the asset is assigned to, and only while it is on their desk.
@@ -192,11 +280,11 @@ const actors = {
   /* Whoever may hand a freelancer's finished work back into the studio.
      Its own predicate and its own permission — NOT deliverer above, which is a
      different act with a different meaning. See the transition. */
-  outsourceDeliverer: (ctx) => Boolean(ctx.canDeliverOutsourced),
+  outsourceDeliverer: (ctx) => Boolean(ctx.canDeliverOutsourced) && freelancersToAct(ctx),
   /* Undoing a recorded stage, which is its own permission because it is a
      heavier act than recording one: a delivery already in the team lead's queue
      is work somebody may have started looking at. See outsource_reopen. */
-  outsourceReopener: (ctx) => Boolean(ctx.canReopenOutsourced),
+  outsourceReopener: (ctx) => Boolean(ctx.canReopenOutsourced) && freelancersToAct(ctx),
   /* The client's round, gated by three separate permissions rather than one.
      Split because they are three different decisions: putting work in front of
      a client, accepting their yes, and passing their no back into the studio.
@@ -568,12 +656,15 @@ const TRANSITIONS = [
      * delivery writes no asset_versions row, so submittedCurrentVersion is
      * false for everybody.
      *
-     * 'from' is ['not_started'] and not wider on purpose. Delivering twice, or
-     * delivering a task somebody in the studio has taken on since, is then
-     * refused by the table rather than by a check somebody has to remember.
+     * 'from' is OUTSOURCE_STAGE_FROM — see that list for why each status is on
+     * it and each exclusion is off it. It was ['not_started'] once, which made
+     * an outsourced task that had drifted to In Progress impossible to ever
+     * record. Delivering TWICE is still refused, but by isDeliverable() on the
+     * assignment rather than by this list: that is a question about the
+     * assignment, not about the task.
      */
     action: 'outsource_delivered',
-    from: ['not_started'],
+    from: OUTSOURCE_STAGE_FROM,
     to: 'pending_tl_review',
     who: 'outsourceDeliverer',
     routeTo: 'reviewQueue',
@@ -610,14 +701,28 @@ const TRANSITIONS = [
      * from not_started, so a studio that hears and receives in one breath marks
      * Delivered without passing through here. */
     action: 'outsource_completed',
-    from: ['not_started'],
-    to: 'not_started',
+    from: OUTSOURCE_STAGE_FROM,
+    /* STAY EXACTLY WHERE YOU ARE — a function now, and it has to be.
+     *
+     * This was the literal 'not_started', which was the same thing as its only
+     * `from` and so moved nothing. Widening `from` turned that constant into a
+     * bug waiting to happen: recording Completed on a task sitting in In
+     * Progress would have MOVED it to Not Assigned, which is a status change
+     * nobody asked for and the opposite of what Completed means. Reading the
+     * current status back keeps the promise at every entry in the list, and
+     * keeps movedAsset false and closeIfWorkStopped a no-op with it. */
+    to: (ctx) => ctx.asset.status,
     who: 'outsourceDeliverer',
     /* Nobody's desk, which is what it already was. The asset has no internal
        assignee and no review has begun — routing it anywhere would put it in a
        queue for work that has not arrived. */
     routeTo: 'reviewQueue',
-    describe: (ctx) => onBehalfOf(ctx, 'Marked completed by the freelancer, recorded'),
+    /* "Marked completed by Priya on behalf of Ravi K." — parallel to the
+       delivery's sentence, and no longer "by the freelancer, recorded", which
+       read as though the freelancer had clicked something. They have no login;
+       the staff member is the actor and the freelancer is who it concerns, which
+       is exactly what onBehalfOf says. */
+    describe: (ctx) => onBehalfOf(ctx, 'Marked completed'),
   },
   {
     /* UNDOING A MIS-CLICK, and the one action in this pair that can move an
@@ -640,11 +745,19 @@ const TRANSITIONS = [
      * freelancer finished is bookkeeping; taking a delivery back out of
      * somebody's review queue is not. */
     action: 'outsource_reopen',
-    from: ['not_started', 'pending_tl_review'],
+    /* EVERYWHERE A STAGE COULD HAVE BEEN RECORDED FROM, plus the one place a
+       delivery lands. A Completed recorded on a task sitting in In Progress
+       leaves it in In Progress, so a reversal that could not be reached from
+       there would have been a stage you could record and not undo. */
+    from: [...OUTSOURCE_STAGE_FROM, 'pending_tl_review'],
+    /* AND IT NORMALISES. not_started is where outsourced work belongs, so a
+       reversal from a drifted status both undoes the stage and puts the task
+       where it should have been — the one place in this feature a status change
+       is the point rather than a side effect. */
     to: 'not_started',
     who: 'outsourceReopener',
     routeTo: 'reviewQueue',
-    describe: (ctx) => onBehalfOf(ctx, 'Reopened and sent back to the freelancer, recorded'),
+    describe: (ctx) => onBehalfOf(ctx, 'Reopened and sent back to the freelancer'),
   },
   /* --- the client's own round ---------------------------------------------
    *
@@ -768,13 +881,24 @@ function evaluate(action, ctx, { note } = {}) {
       tl_send_to_client: 'sent straight to the client — that is only possible once a team lead has approved it',
       relay: 'passed on to the assignee — the director\'s notes are only relayed once, from CD Feedbacks',
       deliver: 'marked delivered — only work the client has approved can be delivered',
-      outsource_completed: 'marked completed by the freelancer — that is only possible while the '
-        + 'task is Not Assigned, which is where outsourced work sits',
-      outsource_reopen: 'reopened and sent back to the freelancer — that is only possible while the '
-        + 'delivery is still waiting on a team lead and nobody has acted on it',
-      outsource_delivered: 'marked delivered by the freelancer — that is only possible while the task is '
-        + 'Not Assigned, which is where outsourced work sits. A task somebody in the studio has taken on, '
-        + 'or one already in review, is no longer the freelancer\'s to hand back',
+      /* THE THREE OUTSOURCED STAGES SAY WHICH STATUSES THEY ALLOW, and the list
+       * is GENERATED from OUTSOURCE_STAGE_FROM rather than typed — a status
+       * added to the allow-list appears in the message, and a message cannot
+       * promise a status the table refuses.
+       *
+       * NONE OF THEM SAYS "by the freelancer" ANY MORE. They did, and it was
+       * actively misleading: a freelancer has no login and never performs any of
+       * these, so a member of staff who had just clicked Mark completed was told
+       * the freelancer could not do it. The sentence now names what the action
+       * needs and what the task actually is, which is what somebody looking at
+       * the refusal can act on. */
+      outsource_completed: `recorded as completed — the task has to be in ${allowedStatuses()}`,
+      outsource_delivered: `recorded as delivered — the task has to be in ${allowedStatuses()}`,
+      /* The reversal keeps "sent back to the freelancer", which is about the
+         DESTINATION of the work and not about who clicks: the work really does
+         go back to them. */
+      outsource_reopen: `reopened and sent back to the freelancer — that is only possible from `
+        + `${allowedStatuses()}, or while a delivery is still waiting on a team lead`,
       client_sent: 'sent to the client — only work that has been approved for the client can go out',
       client_approved: 'closed off as approved by the client — that is only possible while it is waiting on the client',
       client_changes: 'sent back with the client\'s changes — that is only possible while it is waiting on the client',
@@ -814,6 +938,16 @@ function evaluate(action, ctx, { note } = {}) {
  * a case, so a team lead clicking a button the page had offered them got
  * exactly that, with nothing to say whether it was their permissions or the
  * asset. A test now fails if an actor has no case. */
+/* The sentence for a task that has come back inside the studio, or null when it
+   has not. One place, so the deliverer and the reopener cannot explain the same
+   fact two different ways. */
+function takenBack(ctx) {
+  if (!ctx.asset || !ctx.asset.assignee_id) return null;
+  return `${ctx.asset.code || 'This task'} is assigned to somebody in the studio now, so it is no `
+    + 'longer the freelancer\'s to hand back. Clear the internal assignee first if the work really '
+    + 'is still with them.';
+}
+
 function refusal(transition, ctx) {
   switch (transition.who) {
     /* Two different refusals wearing one actor, and telling them apart is the
@@ -854,11 +988,19 @@ function refusal(transition, ctx) {
        and a person refused one needs to know which. "You cannot mark this as
        delivered" on the Outsource tab would send somebody to ask for
        review.deliver, which would not help them. */
+    /* TWO REFUSALS WEARING ONE ACTOR, like tlClientSender above, and telling them
+       apart matters for the same reason: one is a permission a Super Admin can
+       grant, the other is a fact about the task that no permission changes.
+       takenBack() is asked first because it is the more specific of the two —
+       somebody holding the key and seeing the permission sentence would go and
+       check Settings for nothing. */
     case 'outsourceDeliverer':
-      return 'You cannot record a stage on outsourced work on this project.';
+      return takenBack(ctx)
+        || 'You cannot record a stage on outsourced work on this project.';
     case 'outsourceReopener':
-      return 'You cannot reopen outsourced work on this project. Undoing a delivery is a '
-        + 'separate permission from recording one.';
+      return takenBack(ctx)
+        || 'You cannot reopen outsourced work on this project. Undoing a delivery is a '
+          + 'separate permission from recording one.';
     /* Each names its own permission, because all three sit on one status and
        "you cannot do that" would leave the reader unable to tell which of the
        three they are missing. */
@@ -891,6 +1033,8 @@ module.exports = {
   STATES,
   transitionFor,
   ASSIGNEE_STATUSES,
+  OUTSOURCE_STAGE_FROM,
+  OUTSOURCE_NORMALISE_FROM,
   FREE_STATUSES,
   STATE_IDS,
   TRANSITIONS,

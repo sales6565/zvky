@@ -54,7 +54,16 @@ test('the two deliveries are two transitions, and neither reaches the other\'s s
 
   assert.deepStrictEqual(client.from, ['approved_for_client']);
   assert.strictEqual(client.to, 'delivered');
-  assert.deepStrictEqual(back.from, ['not_started']);
+  /* WIDENED, AND THE INVARIANT THIS TEST GUARDS IS NOT ABOUT ITS LENGTH. It was
+     ['not_started'] on the belief that outsourced work always sits there; a
+     studio proved otherwise by dragging an outsourced card to In Progress, after
+     which both stages refused the row for ever. The list is the workflow's own
+     allow-list now, read rather than copied, and what still has to be true is
+     the DISJOINTNESS asserted below. */
+  assert.deepStrictEqual(back.from, workflow.OUTSOURCE_STAGE_FROM);
+  assert.ok(back.from.includes('not_started'), 'where outsourced work belongs is still on it');
+  assert.ok(!back.from.includes('delivered') && !back.from.includes('approved_for_client'),
+    'and nothing closed or approved is');
   assert.strictEqual(back.to, 'pending_tl_review');
 
   /* NO OVERLAP IN EITHER DIRECTION. This is the assertion that would fail if
@@ -68,8 +77,14 @@ test('the two deliveries are two transitions, and neither reaches the other\'s s
   // Each has its own refusal sentence. A missing entry falls through to a
   // fallback that reads the action id as English, which works for none of them.
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'asset-workflow.js'), 'utf8');
-  assert.match(src, /outsource_delivered: 'marked delivered by the freelancer/,
-    'the refusal names what it is, not the action id');
+  /* NOT "by the freelancer" ANY MORE — that wording told a member of staff who
+     had just clicked Mark delivered that the freelancer could not do it, and
+     freelancers have no logins. The sentence now names the statuses the action
+     needs, GENERATED from the allow-list so it cannot promise a status the table
+     refuses. */
+  assert.match(src, /outsource_delivered: `recorded as delivered — the task has to be in \$\{allowedStatuses\(\)\}`/,
+    'the refusal says what the action needs, from the list that enforces it');
+  assert.ok(!/cannot be marked delivered by the freelancer/.test(src));
 });
 
 test('the destination is a status every list already knows', () => {
@@ -116,9 +131,16 @@ test('the page and the server mirror one deliverability rule', () => {
      them, so a difference in either shows up as a wrong answer here. */
   const at = PAGE.indexOf('function osDeliverable(a)');
   assert.ok(at !== -1, 'the page still has the predicate this test reads');
-  const line = PAGE.slice(at, PAGE.indexOf('\n', at));
+  /* Sliced to the closing brace rather than to the end of the line: the
+     predicate grew a second clause (the task's status, against the allow-list
+     the server publishes) and a one-line slice then cut it in half and threw. */
+  const body = PAGE.slice(at, PAGE.indexOf('\n}', at) + 2);
+  /* osStageReachable is stubbed TRUE here on purpose. This test is about the
+     ASSIGNMENT half of the rule — which assignment statuses can be delivered —
+     and the task half is held to the server's list in
+     tests/outsource-stage.test.js, where the renderer is run for real. */
   // eslint-disable-next-line no-new-func
-  const onPage = new Function(`${line} return osDeliverable;`)();
+  const onPage = new Function(`const osStageReachable = () => true; ${body} return osDeliverable;`)();
 
   for (const status of [...outsource.STATUSES, outsource.CANCELLED]) {
     assert.strictEqual(onPage({ status }), outsource.isDeliverable({ status }),
@@ -414,13 +436,21 @@ test('delivering a freelancer\'s work', { skip: cfg ? false : SKIP_REASON }, asy
     /* VERIFIED, NOT ASSUMED, which is what the brief asked for. src/outsource.js
        opens with "there is no timer here, no work session"; the reason it holds
        is structural rather than a matter of discipline — outsourceBlocked()
-       refuses to send out a task that has an internal assignee, and a session is
-       only ever opened by POST /:id/start, which refuses anybody who is not the
-       assignee. So there is nothing for delivery to close. */
+       refuses to send out a task that has an internal assignee, and /start now
+       refuses an outsourced task OUTRIGHT. So there is nothing for delivery to
+       close.
+       
+       IT USED TO BE A 403 HERE, and that was luck rather than design: the
+       refusal came from not being the assignee, and a task that had drifted to
+       In Progress could be started by anybody with full access. /start asks
+       about the assignment first now, so the refusal is a 409 that names the
+       freelancer — see tests/outsource-stage.test.js, which holds it for all
+       three roles. */
     const { asset, assignment } = await outsourced('No Clock');
     const start = await as('ana', `/assets/${asset.id}/start`, { method: 'POST' });
-    assert.strictEqual(start.status, 403,
-      'nobody can start work on an outsourced task — there is no assignee to be');
+    assert.strictEqual(start.status, 409,
+      'nobody can start work on an outsourced task, whatever their role');
+    assert.match(start.body.error, /is out with Ravi Freelance/, 'and the reason names who has it');
 
     await deliver('root', [assignment.id]);
     const sessions = await sql(cfg,
@@ -478,8 +508,17 @@ test('delivering a freelancer\'s work', { skip: cfg ? false : SKIP_REASON }, asy
         WHERE id = '${assignment.id}'`);
     const r = await deliver('root', [assignment.id]);
     assert.strictEqual(r.body.results[0].ok, false);
-    assert.match(r.body.results[0].error, /cannot be marked delivered by the freelancer/);
-    assert.match(r.body.results[0].error, /Not Assigned/, 'and says which status it needs');
+    /* THE REFUSAL MOVED FROM THE STATUS TO THE ASSIGNEE, and this test is why.
+       'assigned' is on the allow-list now — it has to be, because a drifted
+       outsourced task can sit there — so a guard reading only the status would
+       have let this through and handed back work an artist was doing. The real
+       invariant is the exclusivity rule: a task with an internal assignee is not
+       the freelancer's, whatever status it holds. */
+    assert.match(r.body.results[0].error, /is assigned to somebody in the studio now/);
+    assert.match(r.body.results[0].error, /Clear the internal assignee first/,
+      'and says what to do about it');
+    assert.ok(!/by the freelancer/.test(r.body.results[0].error),
+      'and no longer blames somebody who has no login');
     assert.strictEqual(await statusOf(asset.id), 'assigned', 'the task is untouched');
     assert.strictEqual((await assignmentRow(assignment.id)).status, 'assigned',
       'and so is the assignment — a refused asset move leaves both halves alone');

@@ -353,6 +353,59 @@ Widening any of those would have changed ordinary work, so the stages are three
 **new** transitions with their own actors instead, and
 `tests/outsource-stage.test.js` pins the old gates to exactly the answers above.
 
+**Where a stage can be recorded from, and the assumption that was wrong.** The
+three transitions started out with `from: ['not_started']`, on the reasoning that
+outsourced work always sits in Not Assigned. A studio proved otherwise: a lead
+dragged an outsourced card to In Progress on the board — a free move among
+`FREE_STATUSES` that asks nothing about outsourcing — and **both Mark completed
+and Mark delivered then refused that task for ever**, with a message that blamed
+the freelancer. The list is `OUTSOURCE_STAGE_FROM` in `src/asset-workflow.js`:
+
+| Allowed | Why |
+| --- | --- |
+| `not_started` | Where outsourced work belongs, and where a new assignment leaves it |
+| `assigned`, `in_progress` | Meaningless with no internal assignee, but reachable by a board drag. Here for the rows that drifted before normalisation existed |
+| `tl_changes_requested`, `cd_changes_requested` | A rework sent outside — legitimate, confirmed reachable, and *not* normalised away because "a lead asked for changes" is information `not_started` would destroy |
+
+Excluded, each for its own reason: `pending_tl_review` (already handed in — that
+is where `outsource_reopen` operates, and the two must not overlap), `tl_approved`
+(a lead has accepted it; a hand-back would unsay a studio decision),
+`pending_cd_review` (the director has it), `game_feedback` (a Dev & QA round with
+its own lifecycle), `approved_for_client` (this would push approved work backwards
+into review), `awaiting_client_feedback` (the client has it), `delivered`
+(closed — never).
+
+**Delivering twice is refused somewhere else**, and that separation matters: it is
+a question about the *assignment*, answered by `isDeliverable()` and
+`isCompletable()`, not about the task's status. Both halves have to pass.
+
+**And the status is only half the rule.** Widening the list let through a case the
+old `['not_started']` had been blocking by accident: unassign the freelancer, let
+an artist pick the work up, and the task sits in `assigned` — which is *on* the
+list — so a stale assignment could hand back work somebody inside was doing. An
+existing test caught it. The real invariant is the exclusivity rule, so
+`freelancersToAct()` refuses any task that has an internal assignee, whatever its
+status, with its own sentence: *"CHR-002 is assigned to somebody in the studio
+now…"*.
+
+**The cause as well as the symptom.** Sending work outside now calls
+`outsource.normalise()`: a task in `assigned` or `in_progress` goes back to
+`not_started`, any open work session is **closed** (seconds computed and kept — an
+artist who worked two hours before the job went outside keeps those two hours),
+and the move is recorded as an `override` event so it is not a mystery later. A
+rework status is deliberately left alone. **No backfill of existing rows** — the
+allow-list accepts them, and a rewrite of production statuses is irreversible and
+would alter history. `docs/outsourced-status-audit.sql` is the read-only query for
+counting what is out there.
+
+**No clock on outsourced work, for anybody.** This was a real hole, found by
+reproduction rather than by reading: `in_progress` **is** in `STARTABLE` and
+`mayStartWork()` lets full access past the assignee check, so a drifted outsourced
+task could be started by a Super Admin and the studio's clock would run against
+somebody it does not employ. `POST /:id/start` and `/:id/resume` now ask
+`activeForAsset()` **first** and refuse with no full-access exemption. Ordinary
+work reaches every gate below it unchanged.
+
 **Three stages, two real states and one reversal.**
 
 | Transition | Moves the task | Says |
@@ -373,6 +426,18 @@ required step: `isDeliverable()` accepts a row nobody marked completed.
 `workflow.evaluate(STAGE_ACTION[stage])` and `applyTransition`, then records the
 assignment's own half — so the asset's history row and the Activity Log entry come
 from the same place every other status change in the application comes from.
+
+**None of the refusals says "by the freelancer" any more**, and that wording was
+not a detail: a member of staff who had just clicked Mark completed was told the
+freelancer could not do it. Each now names what the action needs and what the task
+is — *"An asset in \"TL Review\" cannot be recorded as completed — the task has to
+be in Not Assigned, Assigned, In Progress, TL Feedbacks or CD Feedbacks."* — and
+the status list in the sentence is **generated** from the allow-list, so a message
+cannot promise a status the table refuses. The page's history labels went the same
+way (`Outsourced work delivered`, not `Delivered by the freelancer`, which named
+the wrong person beside the avatar of whoever had acted). `outsource_reopen` keeps
+its freelancer in both places, because *"sent back to the freelancer"* is about
+where the work goes, not about who clicked.
 
 **The history sentence names both people**, which is the whole point of a record
 of an act done on somebody's behalf: *"Marked delivered by Priya on behalf of Ravi
@@ -414,6 +479,15 @@ it and when; a chip row that filters by stage and, unfiltered, groups the rows
 under a heading per stage so finished work sits below work still out; and the
 checkbox selection with bulk *Mark as Delivered*, whose confirmation names the
 count **and the freelancers it is acting for**.
+
+**The tab gates on the server's list, and holds no copy of it.** It used to ask
+only about the *assignment's* status, so it drew Mark completed on a task in TL
+Review and let the server refuse it — the same control-offered-then-withdrawn
+shape as the `REWORK_STATUSES` and `canHandOverInReview` drift before it. The
+assignment row now carries `assetStatus` and `assetAssigneeId`, the payload carries
+`stageFrom` (straight from `OUTSOURCE_STAGE_FROM`), and `osStageReachable()` reads
+it. A test fails if the page ever grows a literal copy of the list, and another
+runs the real renderer for every allowed and excluded status.
 
 ### Holidays are part of the schedule, not a check beside it
 
@@ -3066,17 +3140,21 @@ npm test
 
 Runs on Node's built-in test runner — no test framework dependency.
 
-**Two test files at a time, not one per core.** Seventy-six files in `tests/` start their own
+**One test file at a time, not one per core.** Ninety-six files in `tests/` start their own
 server and run the whole startup migration against their own database. At the runner's
-default concurrency that is four simultaneous boots on four cores and one MariaDB, and some
+default concurrency that is one simultaneous boot per core against one MariaDB, and some
 suite always loses the race: three consecutive full runs failed with "Server did not start"
 in three *different* suites — `mis-project-access` at a 60s deadline, `auto-resume` at 150s,
 `integration-outbox` at 300s — each passing on its own immediately afterwards. Raising the
 deadline only moved which suite died.
 
-Capping concurrency fixes it, and measured on this container it is also **faster**: 440s and
-one expected failure, against runs that took longer and failed in three places while waiting
-out boot deadlines. Override with `TEST_CONCURRENCY=4 npm test` on a bigger machine.
+**Two at a time was not enough, which is why this now says one.** The cap was `2` and
+measured again as the suite grew: 12 boot timeouts in one run, with 11 failures concentrated
+in `game-feedback-panel` — which passes 16/16 on its own. At `1`: **zero boot timeouts, 1796
+of 1797 passing, about 16 minutes.** That is the honest cost of the cap, and it is the right
+trade — a boot timeout is a capacity problem, and capping concurrency is the remedy for it,
+whereas raising a deadline only hides which suite is starving. Override with
+`TEST_CONCURRENCY=4 npm test` on a bigger machine.
 
 The policy tests are pure and always run. The endpoint tests need a database and
 are skipped unless you name one, which is **dropped and recreated** on every

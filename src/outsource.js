@@ -26,6 +26,10 @@ const crypto = require('crypto');
 // For istStamp() below: the studio's clock lives in one file and this asks it
 // rather than keeping a second copy of the offset.
 const workingTime = require('./working-time');
+// For normalise() below: the clock is stopped through the one module that knows
+// how, and the status set it pulls a task out of is the workflow's, not a copy.
+const workLog = require('./work-log');
+const workflow = require('./asset-workflow');
 
 /* The statuses an assignment may be PUT INTO by hand. 'cancelled' is not among
    them on purpose: it is not a state somebody types, it is what unassigning
@@ -288,6 +292,22 @@ const assignmentRow = (row) => ({
      one where the other is meant is how a figure becomes wrong quietly. */
   assetManHours: row.asset_man_hours === null || row.asset_man_hours === undefined
     ? null : Number(row.asset_man_hours),
+  /* THE TASK'S OWN STATUS, carried so the tab can offer exactly the stages the
+     server would accept.
+     
+     Without it the page asked only about the ASSIGNMENT's status, so it drew
+     Mark completed and Mark delivered on a task sitting in TL Review and let
+     the server refuse them — the mirror image of the REWORK_STATUSES problem,
+     a control offered and then withdrawn. Null for ad hoc work, which has no
+     task and is therefore never status-blocked. */
+  assetStatus: row.asset_status || null,
+  /* AND WHETHER THE TASK HAS COME BACK INSIDE THE STUDIO. The other half of what
+     decides a stage, and not answerable from the status: a task an artist has
+     picked up sits in Assigned, which the allow-list contains. Carried so the
+     tab withholds the buttons for the same reason the server would refuse them,
+     rather than offering a control and then taking it away. */
+  assetAssigneeId: row.asset_assignee_id || null,
+  assetAssigneeName: row.asset_assignee_name || null,
   description: row.description || '',
   notes: row.notes || '',
   decidedManHours: Number(row.decided_man_hours),
@@ -321,6 +341,8 @@ const ASSIGNMENT_SELECT = `
   SELECT a.*, f.\`name\` AS freelancer_name, f.discipline AS freelancer_discipline,
          p.\`name\` AS project_name,
          s.\`name\` AS asset_name, s.\`code\` AS asset_code, s.man_hours AS asset_man_hours,
+         s.\`status\` AS asset_status,
+         s.assignee_id AS asset_assignee_id, sa.\`name\` AS asset_assignee_name,
          u.\`name\` AS assigned_by_name, x.\`name\` AS cancelled_by_name,
          dv.\`name\` AS delivered_by_name, cp.\`name\` AS completed_by_name
     FROM outsource_assignments a
@@ -330,7 +352,8 @@ const ASSIGNMENT_SELECT = `
     LEFT JOIN users u  ON u.id = a.assigned_by
     LEFT JOIN users x  ON x.id = a.cancelled_by
     LEFT JOIN users dv ON dv.id = a.delivered_by
-    LEFT JOIN users cp ON cp.id = a.completed_by`;
+    LEFT JOIN users cp ON cp.id = a.completed_by
+    LEFT JOIN users sa ON sa.id = s.assignee_id`;
 
 /* Assignments, narrowed to the projects this reader may see.
  *
@@ -481,6 +504,58 @@ async function costForProject(db, projectId) {
  * is no task. Exclusivity is a fact about a TASK, so it applies exactly where
  * there is one.
  * ------------------------------------------------------------------------- */
+
+/* PUTTING A DRIFTED TASK BACK WHERE OUTSOURCED WORK BELONGS, when work is sent
+ * outside. The cause-fix for the stray In Progress rows, as opposed to the
+ * allow-list, which is the symptom-fix for the ones already out there.
+ *
+ * THE SEQUENCE THIS CLOSES: an artist is given a task and starts it, so it is In
+ * Progress; the assignee is cleared with a status in the same request, which the
+ * PATCH route honours over its own backToPool normalisation; the task is then
+ * sent to a freelancer, and outsourceBlocked() lets it through because it asks
+ * only about assignee_id and never about the status. The task is now In Progress
+ * with nobody on it.
+ *
+ * ONLY FROM assigned AND in_progress — workflow.OUTSOURCE_NORMALISE_FROM. Those
+ * two are meaningless once there is no internal assignee: assigned to nobody, in
+ * progress by nobody. A REWORK STATUS IS LEFT ALONE on purpose: tl_changes_
+ * requested says a lead asked for changes, which is true of the round whoever
+ * picks it up is doing, and not_started would destroy it. The allow-list accepts
+ * those statuses instead.
+ *
+ * THE CLOCK IS STOPPED, NOT ERASED. workLog.close() computes the session's
+ * seconds and stores them, which is the same thing unassigning already does —
+ * so an artist who worked two hours before the job went outside keeps those two
+ * hours on their round, and nothing after this point adds to them. An open
+ * session left running on a task nobody holds is what would have kept the
+ * studio's clock ticking against a freelancer.
+ *
+ * Recorded as an 'override' event rather than silently, for the reason the PATCH
+ * route records a forced status: a task that changed status without anybody
+ * clicking it should not be a mystery three weeks later.
+ */
+async function normalise(db, assetId, actor = null) {
+  if (!assetId) return { changed: false };
+  const { rows } = await db.query('SELECT id, `status`, routed_to_id FROM assets WHERE id = $1', [assetId]);
+  if (!rows.length) return { changed: false };
+  const was = rows[0].status;
+  const closed = await workLog.close(db, assetId, 'unassigned').catch(() => ({ wasOpen: false }));
+  if (!workflow.OUTSOURCE_NORMALISE_FROM.includes(was)) {
+    return { changed: false, status: was, sessionClosed: Boolean(closed && closed.wasOpen) };
+  }
+  await db.query('UPDATE assets SET `status` = $1, routed_to_id = NULL WHERE id = $2',
+    ['not_started', assetId]);
+  if (actor) {
+    await db.query(
+      `INSERT INTO asset_events (id, asset_id, action, from_status, to_status, actor_id, actor_email, note, routed_to_id)
+       VALUES ($1,$2,'override',$3,'not_started',$4,$5,$6,NULL)`,
+      [crypto.randomUUID(), assetId, was, actor.id, actor.email,
+        'Sent to a freelancer, so the task went back to Not Assigned']
+    ).catch((err) => console.warn(`[outsource] could not record the normalisation of ${assetId}: ${err.message}`));
+  }
+  return { changed: true, from: was, status: 'not_started',
+    sessionClosed: Boolean(closed && closed.wasOpen) };
+}
 
 /* The live outsource assignment on this task, or null. Cancelled ones do not
    count: taking the work back is what makes the task assignable again. */
@@ -734,4 +809,5 @@ module.exports = {
   validateAssignment, listAssignments, getAssignment, createAssignment, updateAssignment,
   costFor, costForProject, summarise,
   activeForAsset, activeByAsset, internalAssignBlocked, outsourceBlocked, cancelAssignment,
+  normalise,
 };

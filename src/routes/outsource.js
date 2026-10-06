@@ -23,6 +23,9 @@ const router = asyncRouter();
 const db = require('../db');
 const { authenticate, requirePermission, can } = require('../middleware/auth');
 const outsource = require('../outsource');
+// For the allow-list the tab gates its stage buttons on — one list, the
+// workflow's, published rather than duplicated.
+const workflow = require('../asset-workflow');
 const activity = require('../activity');
 const { visibleProjects } = require('../permissions');
 
@@ -163,6 +166,15 @@ router.get('/assignments', async (req, res) => {
        stage added to src/outsource.js appears on the tab instead of silently
        falling into whichever group the page happened to list last. */
     stages: outsource.STAGES.map((key) => ({ key, label: outsource.STAGE_LABELS[key] })),
+    /* THE ALLOW-LIST, SENT TO THE PAGE rather than copied into it.
+       
+       The page has to know which task statuses a stage can be recorded from, or
+       it draws Mark completed on a row the server will refuse — which is what it
+       did. Sending the workflow's own list means there is one list and the two
+       sides cannot drift; tests/outsource-stage.test.js asserts the page holds no
+       copy of its own. */
+    stageFrom: workflow.OUTSOURCE_STAGE_FROM,
+    stageFromLabels: workflow.OUTSOURCE_STAGE_FROM.map((id) => workflow.label(id)),
     /* The one value the edit form must no longer offer, named by the server
        rather than hardcoded in the page: PUT refuses a move into it and tells
        the reader to use the action instead, so a dropdown that still listed it
@@ -227,6 +239,11 @@ router.post('/assignments', async (req, res) => {
   const result = await outsource.createAssignment(db, body, req.user.id);
   if (!result.ok) return res.status(result.status).json({ errors: result.errors, error: result.errors[0].message });
   const a = result.assignment;
+  /* AND THE TASK GOES BACK TO NOT ASSIGNED IF IT HAD DRIFTED, with any open
+     clock stopped and the hours already on it kept. After the write, not before:
+     a task is only normalised once the work really has gone outside. See
+     normalise() in src/outsource.js for the sequence this closes. */
+  const settled = a.assetId ? await outsource.normalise(db, a.assetId, req.user) : { changed: false };
   req.activity({
     module: 'settings', action: 'outsource.assigned',
     entityType: 'outsource_assignment', entityId: a.id,
@@ -235,7 +252,10 @@ router.post('/assignments', async (req, res) => {
       + (a.assetCode ? ` (${a.assetCode})` : ''),
     changes: activity.diff({ decidedManHours: null }, { decidedManHours: a.decidedManHours }),
   });
-  res.status(201).json({ assignment: a });
+  /* Re-read when the task moved, so the reply carries the status the tab will
+     now gate on rather than the one from before the normalisation. */
+  const fresh = settled.changed ? await outsource.getAssignment(db, a.id) : a;
+  res.status(201).json({ assignment: fresh, normalised: settled.changed ? settled : undefined });
 });
 
 // PUT /api/outsource/assignments/:id
@@ -295,6 +315,13 @@ router.put('/assignments/:id', async (req, res) => {
 
   const before = result.before;
   const after = result.assignment;
+  /* AN EDIT CAN MOVE AN ASSIGNMENT ONTO A TASK, so it normalises the same way a
+     create does — otherwise the one route that sends work outside without
+     normalising would be the one nobody thought of. Only the task it moved ONTO:
+     the one it came off is the studio's again and keeps whatever status it had. */
+  const settled = (after.assetId && String(after.assetId) !== String(before.assetId || ''))
+    ? await outsource.normalise(db, after.assetId, req.user)
+    : { changed: false };
   /* THE FIGURE, NAMED. A change to the agreed hours is what somebody is paid
      against, so the summary says the old number and the new one rather than
      leaving a reader to open the diff. */
@@ -313,7 +340,8 @@ router.put('/assignments/:id', async (req, res) => {
       { decidedManHours: after.decidedManHours, status: after.statusLabel, dueDate: after.dueDate }
     ),
   });
-  res.json({ assignment: after });
+  const fresh = settled.changed ? await outsource.getAssignment(db, after.id) : after;
+  res.json({ assignment: fresh, normalised: settled.changed ? settled : undefined });
 });
 
 /* POST /api/outsource/assignments/:id/cancel — take the work back.

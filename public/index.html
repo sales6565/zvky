@@ -3586,7 +3586,8 @@ function mayBulkSendToDev(){ return can('integration.send_to_dev'); }
  * CLIENT has it, the end of the pipeline. This one is outsource.deliver on an
  * assignment — a freelancer has handed work back, and the task goes into TL
  * Review. Different key, different meaning, different table. */
-function osDeliverable(a){ return Boolean(a) && a.status !== 'delivered' && a.status !== 'cancelled'; }
+function osDeliverable(a){ return Boolean(a) && a.status !== 'delivered' && a.status !== 'cancelled'
+  && osStageReachable(a); }
 function osMayDeliver(){ return can('outsource.deliver'); }
 
 /* The other two stage predicates, mirroring isCompletable() and isReopenable()
@@ -3601,9 +3602,50 @@ function osMayDeliver(){ return can('outsource.deliver'); }
    that an unassigned task could be started or submitted would change ordinary
    work, and ordinary work is not what this is about. */
 function osCompletable(a){
-  return Boolean(a) && a.status !== 'completed' && a.status !== 'delivered' && a.status !== 'cancelled';
+  return Boolean(a) && a.status !== 'completed' && a.status !== 'delivered' && a.status !== 'cancelled'
+    && osStageReachable(a);
 }
-function osReopenable(a){ return Boolean(a) && (a.status === 'completed' || a.status === 'delivered'); }
+function osReopenable(a){
+  return Boolean(a) && (a.status === 'completed' || a.status === 'delivered')
+    /* The reversal reaches one status the forward stages do not: a delivery sits
+       in TL Review, and taking it back out of there is the whole point. Asked
+       through the same published list so there is still no copy of it here. */
+    && (osStageReachable(a) || a.assetStatus === 'pending_tl_review');
+}
+
+/* IS THE TASK IN A STATUS A STAGE CAN BE RECORDED FROM?
+ *
+ * THE BUG THIS EXISTS FOR, reported from a studio: an outsourced task had been
+ * dragged to In Progress on the board, and the tab went on drawing Mark
+ * completed and Mark delivered on it while the server refused both — a control
+ * offered and then withdrawn, which is the same shape as the REWORK_STATUSES and
+ * canHandOverInReview drift before it. The page asked only about the
+ * ASSIGNMENT's status and never about the TASK's.
+ *
+ * THE LIST IS THE SERVER'S, read from the payload and never written down here.
+ * stageFrom comes from workflow.OUTSOURCE_STAGE_FROM, so widening the allow-list
+ * on the server widens the buttons with no page change at all, and
+ * tests/outsource-stage.test.js fails if this file ever grows a copy of it.
+ *
+ * AD HOC WORK IS ALWAYS REACHABLE. An assignment that names no task has no
+ * status to be blocked by — the point of the optional link — so it falls through
+ * to the assignment-level predicates alone, which is what the server does too.
+ *
+ * NO LIST YET — an older payload, or the first paint — means OFFER IT. The server
+ * is the authority and refuses per row with a sentence naming the statuses; a
+ * page that hid the button instead would leave somebody with no way to act and
+ * nothing explaining why, which is the worse of the two failures. */
+function osStageReachable(a){
+  if(!a || !a.assetId) return true;
+  /* TAKEN BACK INSIDE THE STUDIO, which no status answers — see
+     freelancersToAct() in src/asset-workflow.js. An artist picking the work up
+     leaves the task in Assigned, which IS on the allow-list, so a page checking
+     only the status would offer a hand-back on somebody else's live work. */
+  if(a.assetAssigneeId) return false;
+  const allowed = (osState.data && osState.data.stageFrom) || null;
+  if(!Array.isArray(allowed) || !allowed.length) return true;
+  return allowed.includes(a.assetStatus);
+}
 /* Recording a stage and UNDOING one are different permissions, read separately
    here so a role that may do the first cannot be shown the second. can() and
    not caps(): both keys are in the catalogue for a Super Admin to switch on, and
@@ -9225,11 +9267,15 @@ const HISTORY_ACTIONS = {
      this is a freelancer handing it back for review, which is nearly the
      opposite event. Named for who did what, and coloured as work arriving for
      review rather than as work finished — it lands in TL Review. */
-  outsource_delivered: { label: 'Delivered by the freelancer', color: 'var(--review)' },
+  /* NOT "by the freelancer": a history label sits beside the avatar of whoever
+     acted, and freelancers have no logins — so that wording named the wrong
+     person for the row it is printed on. The note beside it carries both names
+     ("Marked delivered by Priya on behalf of Ravi K."). */
+  outsource_delivered: { label: 'Outsourced work delivered', color: 'var(--review)' },
   /* The freelancer says it is finished; we do not have it yet. Amber, because it
      is a wait rather than an arrival — the same family the Game Feedback state
      uses and deliberately not the green of work landing. */
-  outsource_completed: { label: 'Completed by the freelancer', color: '#d9822b' },
+  outsource_completed: { label: 'Outsourced work completed', color: '#d9822b' },
   /* Undoing one of the two above. Named for what it did rather than for where it
      landed: "Not Assigned" beside somebody's avatar would read as an unassignment. */
   outsource_reopen: { label: 'Reopened — back to the freelancer', color: '#ffd23d' },

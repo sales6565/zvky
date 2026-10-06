@@ -46,6 +46,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const outsource = require('../src/outsource');
 const workflow = require('../src/asset-workflow');
@@ -73,14 +74,21 @@ test('three transitions, and what each one does to the task', () => {
   const reopen = byAction('outsource_reopen');
   assert.ok(completed && delivered && reopen, 'all three are in the table');
 
-  /* COMPLETED MOVES NOTHING, and that is the decision this pins: its `to` is its
-     own `from`. If it ever moved the task, Completed and Delivered would be the
-     same act and the Friday hand-in would be impossible. */
-  assert.deepStrictEqual(completed.from, ['not_started']);
-  assert.strictEqual(completed.to, 'not_started');
+  /* COMPLETED MOVES NOTHING, and that is the decision this pins — but it is a
+     FUNCTION now, not the constant 'not_started'. The constant was safe only
+     while 'not_started' was also its only `from`; once the allow-list widened,
+     a constant would have moved a task sitting in In Progress to Not Assigned,
+     which is the opposite of what Completed means. Asserted at every entry in
+     the list rather than at one. */
+  assert.deepStrictEqual(completed.from, workflow.OUTSOURCE_STAGE_FROM);
+  assert.strictEqual(typeof completed.to, 'function', 'it reads the current status back');
+  for (const status of workflow.OUTSOURCE_STAGE_FROM) {
+    assert.strictEqual(completed.to({ asset: { status } }), status,
+      `Completed leaves a task in ${status} exactly where it is`);
+  }
 
   // DELIVERED is the one that hands on, into a status every list already knows.
-  assert.deepStrictEqual(delivered.from, ['not_started']);
+  assert.deepStrictEqual(delivered.from, workflow.OUTSOURCE_STAGE_FROM);
   assert.strictEqual(delivered.to, 'pending_tl_review');
 
   /* THE REVERSAL REACHES BOTH, because either can be a mistake: a Completed
@@ -88,7 +96,11 @@ test('three transitions, and what each one does to the task', () => {
      review. Back to not_started and not to in_progress or revision_requested —
      those are things somebody chose, and a reversal must not invent a choice
      nobody made. */
-  assert.deepStrictEqual(reopen.from, ['not_started', 'pending_tl_review']);
+  /* THE REVERSAL REACHES EVERYWHERE A STAGE COULD HAVE BEEN RECORDED FROM, plus
+     the one place a delivery lands. A Completed recorded on a task in In
+     Progress leaves it there, so a reversal that could not be reached from In
+     Progress would be a stage you could record and never undo. */
+  assert.deepStrictEqual(reopen.from, [...workflow.OUTSOURCE_STAGE_FROM, 'pending_tl_review']);
   assert.strictEqual(reopen.to, 'not_started');
 
   // Assigned straight to Delivered is one action, not two.
@@ -139,8 +151,15 @@ test('the history sentence names the staff member and the freelancer', () => {
     return typeof t.describe === 'function' ? t.describe(ctx) : t.describe;
   };
   assert.strictEqual(say('outsource_delivered'), 'Marked delivered by Priya on behalf of Ravi K.');
-  assert.match(say('outsource_completed'), /^Marked completed by the freelancer, recorded by Priya on behalf of Ravi K\.$/);
+  /* "by the freelancer, recorded" is gone from this one too: it read as though
+     the freelancer had clicked something, and the sentence is now parallel to
+     the delivery's. */
+  assert.strictEqual(say('outsource_completed'), 'Marked completed by Priya on behalf of Ravi K.');
   assert.match(say('outsource_reopen'), /by Priya on behalf of Ravi K\.$/);
+  for (const action of ['outsource_completed', 'outsource_delivered']) {
+    assert.ok(!/by the freelancer/.test(say(action)),
+      `${action} does not credit somebody who has no login`);
+  }
 
   /* AND IT DEGRADES RATHER THAN PRINTING "undefined". A history row is written
      inside a transaction; a missing name must not be able to fail one. */
@@ -450,6 +469,261 @@ test('the per-person reports cannot attribute an outsourced task to anybody', ()
     'the decided hours are totalled for the P&L');
 });
 
+
+// ---------------------------------------------------------------------------
+// THE ALLOW-LIST, and the drift it was written for.
+// ---------------------------------------------------------------------------
+
+test('the allow-list is a decision, status by status', () => {
+  /* THE REPORT THIS CAME FROM: "An asset in 'In Progress' cannot be marked
+     completed by the freelancer — that is only possible while the task is Not
+     Assigned, which is where outsourced work sits." The assumption in that
+     sentence was wrong; the list below is what replaced it, and every entry on
+     and off it is a decision somebody should be able to read. */
+  const allow = workflow.OUTSOURCE_STAGE_FROM;
+
+  assert.deepStrictEqual(allow,
+    ['not_started', 'assigned', 'in_progress', 'tl_changes_requested', 'cd_changes_requested'],
+    'where a freelancer\'s stage can be recorded from');
+
+  for (const [status, why] of [
+    ['not_started', 'where outsourced work belongs, and where a new assignment leaves it'],
+    ['assigned', 'meaningless with no internal assignee, but reachable by a board drag'],
+    ['in_progress', 'the reported stray state — the work really is out, so it must be recordable'],
+    ['tl_changes_requested', 'a rework sent outside; confirmed reachable'],
+    ['cd_changes_requested', 'the same, one gate up'],
+  ]) assert.ok(allow.includes(status), `${status}: ${why}`);
+
+  for (const [status, why] of [
+    ['pending_tl_review', 'already handed in; this is where outsource_reopen operates instead'],
+    ['tl_approved', 'a lead has accepted it — a hand-back would unsay a studio decision'],
+    ['pending_cd_review', 'the director has it'],
+    ['game_feedback', 'a Dev & QA round with its own lifecycle and actor gate'],
+    ['approved_for_client', 'approved and queued to go out; this would push it backwards'],
+    ['awaiting_client_feedback', 'the client has it'],
+    ['delivered', 'closed — the client has the work. Never.'],
+  ]) assert.ok(!allow.includes(status), `${status} is excluded: ${why}`);
+
+  // Every entry is a real status, and the list covers the whole enum either way.
+  for (const status of allow) assert.ok(workflow.STATE_IDS.includes(status), `${status} is a status`);
+  assert.strictEqual(allow.length + 7, workflow.STATE_IDS.length,
+    'five allowed and seven excluded accounts for every status there is');
+});
+
+test('a task that has come back inside the studio is refused whatever its status', () => {
+  /* THE SECOND HALF OF THE RULE, and the allow-list is unsafe without it. An
+     existing test caught this: unassign the freelancer, let an artist pick the
+     work up, and the task sits in Assigned — which is ON the allow-list. A guard
+     reading only the status would hand back work somebody inside was doing. */
+  const ctx = (status, assigneeId) => ({
+    asset: { status, code: 'CHR-002', assignee_id: assigneeId, routed_to_id: null },
+    canDeliverOutsourced: true, canReopenOutsourced: true,
+    user: { name: 'Priya', role: 'team_lead' }, outsourcedTo: { freelancerName: 'Ravi K.' },
+  });
+  for (const status of workflow.OUTSOURCE_STAGE_FROM) {
+    for (const action of ['outsource_completed', 'outsource_delivered', 'outsource_reopen']) {
+      const free = workflow.evaluate(action, ctx(status, null));
+      const taken = workflow.evaluate(action, ctx(status, 'some-artist'));
+      if (action !== 'outsource_reopen' || status !== 'pending_tl_review') {
+        assert.strictEqual(free.ok, true, `${action} from ${status} with nobody inside on it`);
+      }
+      assert.strictEqual(taken.ok, false, `${action} from ${status} with an artist on it`);
+      assert.match(taken.error, /is assigned to somebody in the studio now/,
+        'and the refusal says so rather than naming a permission');
+    }
+  }
+  /* AND IT IS THE MORE SPECIFIC OF THE TWO REFUSALS THE ACTOR CARRIES. Somebody
+     who holds the key and sees the permission sentence goes to check Settings
+     for nothing. */
+  const noKey = workflow.evaluate('outsource_delivered',
+    { ...ctx('not_started', null), canDeliverOutsourced: false });
+  assert.match(noKey.error, /cannot record a stage on outsourced work on this project/);
+});
+
+test('the refusal says what the action needs, and not "by the freelancer"', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'asset-workflow.js'), 'utf8');
+  /* THE LIST IN THE MESSAGE IS GENERATED, so a status added to the allow-list
+     appears in the sentence and a sentence cannot promise a status the table
+     refuses. Pinned as source because that is the property — a hand-typed list
+     that happened to match today is the bug this prevents. */
+  for (const action of ['outsource_completed', 'outsource_delivered', 'outsource_reopen']) {
+    const at = src.indexOf(`${action}: \``);
+    assert.ok(at !== -1, `${action} has a backtick-quoted refusal`);
+    /* To the next entry, not to the end of the line: the reversal's sentence is
+       split across two string literals and a one-line slice cut the generated
+       part off. */
+    const phrase = src.slice(at, at + 400);
+    assert.ok(phrase.includes('${allowedStatuses()}'),
+      `${action}'s refusal names the allowed statuses from the list itself, not a typed copy`);
+  }
+
+  const ctx = { asset: { status: 'delivered', code: 'CHR-002', assignee_id: null, routed_to_id: null },
+    canDeliverOutsourced: true, canReopenOutsourced: true, user: { name: 'Priya' } };
+  for (const action of ['outsource_completed', 'outsource_delivered']) {
+    const v = workflow.evaluate(action, ctx);
+    assert.strictEqual(v.ok, false);
+    assert.strictEqual(v.status, 409, 'a wrong status is a conflict, not a permission problem');
+    // WHAT IT IS NOW: the current status, and the ones it would need.
+    assert.match(v.error, /^An asset in "Delivered" cannot be recorded as (completed|delivered) — /);
+    assert.match(v.error,
+      /the task has to be in Not Assigned, Assigned, In Progress, TL Feedbacks or CD Feedbacks\.$/);
+    // WHAT IT IS NOT.
+    assert.ok(!/by the freelancer/.test(v.error), 'nobody without a login is blamed');
+    assert.ok(!/which is where outsourced work sits/.test(v.error),
+      'and the assumption that was wrong is gone');
+  }
+
+  /* THE ONE THAT KEEPS ITS FREELANCER, because it is about where the work GOES
+     and not about who clicked: a reversal really does send it back to them. */
+  assert.match(workflow.evaluate('outsource_reopen', ctx).error, /sent back to the freelancer/);
+
+  /* THE REST OF THE FAMILY, checked rather than assumed. The page's history
+     labels said "Delivered by the freelancer" beside the avatar of whoever had
+     actually acted, which named the wrong person on the row it was printed on. */
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const labels = page.slice(page.indexOf('const HISTORY_ACTIONS'));
+  const family = labels.slice(0, labels.indexOf('\n};'));
+  assert.match(family, /outsource_delivered: \{ label: 'Outsourced work delivered'/);
+  assert.match(family, /outsource_completed: \{ label: 'Outsourced work completed'/);
+  /* And the reversal's label keeps it, for the same reason its refusal does. */
+  assert.match(family, /outsource_reopen: \{ label: 'Reopened — back to the freelancer'/);
+});
+
+// ---------------------------------------------------------------------------
+// The page, with the renderer actually run.
+// ---------------------------------------------------------------------------
+
+/* THE PAGE'S OWN CODE, EXECUTED — not grepped.
+ *
+ * Every other page assertion in this file reads the source text, which cannot
+ * answer "does the button appear for a task in In Progress". This runs the real
+ * functions against stub globals and looks at the HTML they produce. caps()
+ * throws, so a gate reading the tier instead of the permission fails loudly. */
+function renderTab(rows, payload = {}) {
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const grab = (from, to) => {
+    const at = page.indexOf(from);
+    assert.ok(at !== -1, `the page still has ${from}`);
+    const end = page.indexOf(to, at);
+    assert.ok(end > at, `and ${to} after it`);
+    return page.slice(at, end);
+  };
+  const source = [
+    grab('function osDeliverable(a)', 'let selectedAssignments'),
+    grab('const OS_STATUS_TONE', 'function osMoney'),
+    grab('function osMoney', 'async function renderOutsource'),
+    grab('function osRenderAssignments(body, canManage, canSeeRates){', '/* The cost of one assignment'),
+  ].join('\n');
+
+  const el = () => ({ innerHTML: '', onclick: null, onchange: null, checked: false,
+    disabled: false, dataset: {}, querySelectorAll: () => [] });
+  const sandbox = {
+    console,
+    escapeHTML: (v) => String(v == null ? '' : v).replace(/[&<>"']/g,
+      (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])),
+    can: (k) => ['outsource.deliver', 'outsource.reopen', 'outsource.view', 'outsource.manage'].includes(k),
+    caps: () => { throw new Error('caps() must not decide anything on this tab'); },
+    fmtDate: (v) => new Date(v).toISOString().slice(0, 16).replace('T', ' '),
+    osState: { tab: 'assignments', data: null, people: { freelancers: [] }, errors: [],
+      editing: null, stage: 'all' },
+    selectedAssignments: new Set(),
+    renderOutsource: () => {}, showToast: () => {}, api: async () => ({ results: [] }),
+    state: { assets: [] }, refreshPendingCount: () => {},
+    osAssignmentFormHTML: () => '', osLoadTargets: async () => {}, osLoadAssets: async () => {},
+    osWireAssignmentForm: () => {}, document: { getElementById: () => null }, confirm: () => false,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(source, sandbox);
+  sandbox.osState.data = {
+    assignments: rows, canDeliver: true, canReopen: true, canManage: true,
+    stages: workflow.OUTSOURCE_STAGE_FROM && null,
+    stageFrom: workflow.OUTSOURCE_STAGE_FROM,
+    ...payload,
+  };
+  const body = el();
+  sandbox.osRenderAssignments(body, true, false);
+  return body.innerHTML;
+}
+
+const outsourcedRow = (over = {}) => ({
+  id: 'a1', freelancerId: 'f1', freelancerName: 'Ravi K.', freelancerDiscipline: 'rigging',
+  projectId: 'p1', projectName: 'Mega', assetId: 'x1', assetCode: 'CHR-002', assetName: 'Lantern',
+  assetManHours: 8, assetStatus: 'not_started', assetAssigneeId: null, assetAssigneeName: null,
+  decidedManHours: 8, status: 'assigned', statusLabel: 'Assigned',
+  stage: 'with_freelancer', stageLabel: 'With freelancer', dueDate: null,
+  deliveredAt: null, deliveredByName: null, completedAt: null, completedByName: null,
+  cancelledAt: null, cancelledByName: null, ...over,
+});
+
+test('the tab offers the stage buttons for exactly the statuses the server allows', () => {
+  const EXCLUDED = ['pending_tl_review', 'tl_approved', 'pending_cd_review', 'game_feedback',
+    'approved_for_client', 'awaiting_client_feedback', 'delivered'];
+
+  for (const status of workflow.OUTSOURCE_STAGE_FROM) {
+    const html = renderTab([outsourcedRow({ assetStatus: status })]);
+    assert.ok(html.includes('data-osstage="a1:completed"'), `Mark completed shows in ${status}`);
+    assert.ok(html.includes('data-osstage="a1:delivered"'), `Mark delivered shows in ${status}`);
+    assert.ok(html.includes('data-ospick="a1"'), `and the row can be selected in ${status}`);
+  }
+
+  for (const status of EXCLUDED) {
+    const html = renderTab([outsourcedRow({ assetStatus: status })]);
+    assert.ok(!html.includes('data-osstage="a1:completed"'), `Mark completed hidden in ${status}`);
+    assert.ok(!html.includes('data-osstage="a1:delivered"'), `Mark delivered hidden in ${status}`);
+    assert.ok(!html.includes('data-ospick="a1"'), `and the row offers no tick box in ${status}`);
+    /* THE ROW IS STILL THERE AND STILL READABLE. Hiding the whole assignment
+       would lose the record of work that was sent out. */
+    assert.ok(html.includes('Ravi K.'), `the assignment is still listed in ${status}`);
+  }
+
+  /* AD HOC WORK HAS NO TASK TO BE BLOCKED BY — the point of the optional link,
+     and the server treats it the same way. */
+  const adHoc = renderTab([outsourcedRow({ assetId: null, assetStatus: null,
+    description: 'concept sketches' })]);
+  assert.ok(adHoc.includes('data-osstage="a1:delivered"'), 'ad hoc work is always recordable');
+
+  /* AND A TASK AN ARTIST HAS TAKEN BACK OFFERS NOTHING, even though 'assigned'
+     is on the allow-list. Same rule the server applies, same reason. */
+  const taken = renderTab([outsourcedRow({ assetStatus: 'assigned',
+    assetAssigneeId: 'u1', assetAssigneeName: 'Ana' })]);
+  assert.ok(!taken.includes('data-osstage='), 'nothing is offered on work that came back inside');
+
+  /* THE REVERSAL REACHES ONE STATUS THE FORWARD STAGES DO NOT: a delivery sits
+     in TL Review, and taking it back out of there is what the key is for. */
+  const delivered = renderTab([outsourcedRow({ status: 'delivered', statusLabel: 'Delivered',
+    stage: 'delivered', stageLabel: 'Delivered', assetStatus: 'pending_tl_review',
+    deliveredAt: '2026-10-06T07:30:00.000Z', deliveredByName: 'Priya' })]);
+  assert.ok(delivered.includes('data-osstage="a1:reopened"'),
+    'Reopen shows on a delivery waiting in TL Review');
+  assert.ok(!delivered.includes('data-osstage="a1:delivered"'), 'and nothing forward does');
+});
+
+test('the page keeps no copy of the allow-list — it reads the server\'s', () => {
+  /* THE DRIFT THIS PREVENTS is the one REWORK_STATUSES and canHandOverInReview
+     already caused twice: two lists, one updated. There is one list, it lives in
+     src/asset-workflow.js, the payload carries it, and the page cannot answer
+     without it. */
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const at = page.indexOf('function osStageReachable(a)');
+  assert.ok(at !== -1, 'the page asks the question in one place');
+  const fn = page.slice(at, page.indexOf('\n}', at));
+  assert.match(fn, /osState\.data && osState\.data\.stageFrom/, 'and takes the answer from the payload');
+  for (const status of workflow.OUTSOURCE_STAGE_FROM) {
+    assert.ok(!fn.includes(`'${status}'`), `${status} is not written down in the page`);
+  }
+
+  /* THE SERVER REALLY SENDS IT, from the workflow and not from a literal. */
+  const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'outsource.js'), 'utf8');
+  assert.match(route, /stageFrom: workflow\.OUTSOURCE_STAGE_FROM,/);
+
+  /* AND WITHOUT IT THE PAGE OFFERS THE BUTTON RATHER THAN HIDING IT. An older
+     payload or the first paint must not leave somebody with no control and
+     nothing explaining why; the server still refuses per row, with a sentence. */
+  const noList = renderTab([outsourcedRow({ assetStatus: 'pending_tl_review' })], { stageFrom: null });
+  assert.ok(noList.includes('data-osstage="a1:delivered"'),
+    'with no list, the server stays the authority');
+});
+
 // ---------------------------------------------------------------------------
 // Against a live server.
 // ---------------------------------------------------------------------------
@@ -489,6 +763,9 @@ test('moving outsourced work through its stages', { skip: cfg ? false : SKIP_REA
     (await as('root', '/outsource/assignments')).body.assignments.find((a) => a.id === assignmentId);
   const history = async (assetId) =>
     (await as('root', `/assets/${assetId}/history`)).body;
+  const sessionsOn = async (assetId) => (await sql(cfg,
+    `SELECT COUNT(*) AS n, COALESCE(SUM(COALESCE(seconds,0)),0) AS s, SUM(ended_at IS NULL) AS open
+       FROM work_sessions WHERE asset_id = '${assetId}'`))[0];
 
   t.before(async () => {
     await resetSchema(cfg);
@@ -537,13 +814,19 @@ test('moving outsourced work through its stages', { skip: cfg ? false : SKIP_REA
     assert.strictEqual(row0.status, 'not_started');
     assert.strictEqual(row0.assignee_id ?? null, null, 'and no assignee, by the exclusivity rule');
 
-    // /start: the full-access reader is refused by the state machine, everybody
-    // else before it — two different refusals, both of them refusals.
-    const startRoot = await as('root', `/assets/${asset.id}/start`, { method: 'POST' });
-    assert.strictEqual(startRoot.status, 409, JSON.stringify(startRoot.body));
-    for (const who of ['priya', 'ana']) {
+    /* /start: ONE refusal for everybody now, and it says why.
+     *
+     * It used to be two — a 409 from STARTABLE for a full-access reader, a 403
+     * from mayStartWork for everybody else — and the first of those was luck
+     * rather than a decision: not_started simply is not in STARTABLE. The moment
+     * a task drifted to In Progress, which IS in STARTABLE, anybody with full
+     * access could open a clock on a freelancer's work. /start asks about the
+     * assignment first now, so the answer does not depend on the status at all. */
+    for (const who of ['root', 'priya', 'ana']) {
       const r = await as(who, `/assets/${asset.id}/start`, { method: 'POST' });
-      assert.strictEqual(r.status, 403, `${who} cannot start it either`);
+      assert.strictEqual(r.status, 409, `${who} cannot start it: ${JSON.stringify(r.body)}`);
+      assert.match(r.body.error, /is out with Ravi K\., so there is no time to record on it here/,
+        'and is told who has it and where to record the stage');
     }
 
     /* /submit: 403 for everybody INCLUDING the full-access reader, because
@@ -596,7 +879,7 @@ test('moving outsourced work through its stages', { skip: cfg ? false : SKIP_REA
        studio reads when somebody asks what happened to a freelancer's task. */
     const h = await history(asset.id);
     const sentences = (h.events || h.history || []).map((e) => e.note || e.summary || e.describe || '');
-    assert.ok(sentences.some((s) => /Marked completed by the freelancer, recorded by Root on behalf of Ravi K\./.test(s)),
+    assert.ok(sentences.some((s) => /^Marked completed by Root on behalf of Ravi K\.$/.test(s)),
       `the completed sentence is in the history: ${JSON.stringify(sentences)}`);
     assert.ok(sentences.some((s) => /Marked delivered by Root on behalf of Ravi K\./.test(s)),
       `and the delivered one: ${JSON.stringify(sentences)}`);
@@ -676,7 +959,7 @@ test('moving outsourced work through its stages', { skip: cfg ? false : SKIP_REA
       // The reversal is in the history, naming both people.
       const h = await history(asset.id);
       const sentences = (h.events || h.history || []).map((e) => e.note || e.summary || '');
-      assert.ok(sentences.some((s) => /Reopened and sent back to the freelancer, recorded by Priya on behalf of Ravi K\./.test(s)),
+      assert.ok(sentences.some((s) => /^Reopened and sent back to the freelancer by Priya on behalf of Ravi K\.$/.test(s)),
         `the reversal is recorded: ${JSON.stringify(sentences)}`);
       // And its own batch action, so a reopen is never counted as a delivery.
       const batch = await sql(cfg,
@@ -867,6 +1150,271 @@ test('moving outsourced work through its stages', { skip: cfg ? false : SKIP_REA
     assert.strictEqual(anyStage.body.results[0].ok, false);
     assert.match(anyStage.body.results[0].error, /no longer exists/,
       'an asset id is not an assignment id');
+  });
+
+  /* Driving an outsourced task into one particular status, through real routes.
+   *
+   * The sequences are the ones the reproduction found, not hand-written rows:
+   * the board drag for the free stages, and a real review round for the rework
+   * ones. Built this way so the test proves these states are REACHABLE as well
+   * as recordable — a fixture written straight into the table would prove only
+   * the second. */
+  const outsourcedIn = async (name, status) => {
+    const asset = (await as('root', `/assets/project/${id.project}`, {
+      method: 'POST', body: { name, type: 'prop', manHours: 8 } })).body.asset;
+
+    if (status === 'tl_changes_requested' || status === 'cd_changes_requested') {
+      await as('root', `/assets/${asset.id}`, { method: 'PATCH', body: { assigneeId: id.ana } });
+      await as('ana', `/assets/${asset.id}/start`, { method: 'POST' });
+      await as('ana', `/assets/${asset.id}/submit`, { method: 'POST', body: { link: 'https://x.test/a' } });
+      if (status === 'cd_changes_requested') {
+        const approved = await as('priya', `/assets/${asset.id}/review`,
+          { method: 'POST', body: { decision: 'approved' } });
+        assert.ok(approved.status < 400, `TL approve: ${JSON.stringify(approved.body)}`);
+        /* /send-to-cd, not /to-cd — and asserted rather than swallowed. A
+           silently failed step left the asset in TL Approved and the next call
+           was then read as a TL request-changes, which passed for the wrong
+           reason until this said so. */
+        const toCd = await as('root', `/assets/${asset.id}/send-to-cd`, { method: 'POST' });
+        assert.ok(toCd.status < 400, `send to CD: ${JSON.stringify(toCd.body)}`);
+        const r = await as('root', `/assets/${asset.id}/review`,
+          { method: 'POST', body: { decision: 'changes_requested', text: 'director wants changes' } });
+        assert.ok(r.status < 400, `CD changes: ${JSON.stringify(r.body)}`);
+      } else {
+        const r = await as('priya', `/assets/${asset.id}/review`,
+          { method: 'POST', body: { decision: 'changes_requested', text: 'redo the hands' } });
+        assert.ok(r.status < 400, `TL changes: ${JSON.stringify(r.body)}`);
+      }
+      // The assignee is cleared so the rework can go outside. The status stays —
+      // a rework status is NOT in FREE_STATUSES, so backToPool does not fire.
+      await as('root', `/assets/${asset.id}`, { method: 'PATCH', body: { assigneeId: null } });
+    }
+
+    const r = await as('root', '/outsource/assignments', { method: 'POST',
+      body: { freelancerId: id.freelancer, projectId: id.project, assetId: asset.id, decidedManHours: 8 } });
+    assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+
+    /* AND THE DRIFT, after the assignment — which is the order it happened in
+       the studio: the work went out, and somebody moved the card afterwards.
+       Normalisation runs on the assignment, so doing it before would be undone. */
+    if (status === 'assigned' || status === 'in_progress') {
+      const moved = await as('root', `/assets/${asset.id}`, { method: 'PATCH', body: { status } });
+      assert.strictEqual(moved.status, 200, JSON.stringify(moved.body));
+    }
+    assert.strictEqual(await statusOf(asset.id), status === 'not_started' ? 'not_started' : status,
+      `the fixture really is in ${status}`);
+    return { asset, assignment: r.body.assignment };
+  };
+
+  await t.test('every allowed status can be completed and then delivered', async () => {
+    for (const status of workflow.OUTSOURCE_STAGE_FROM) {
+      const { asset, assignment } = await outsourcedIn(`Allowed ${status}`, status);
+
+      const c = await stage('root', 'completed', [assignment.id]);
+      assert.strictEqual(c.body.succeeded, 1, `completed from ${status}: ${JSON.stringify(c.body.results)}`);
+      assert.strictEqual(c.body.results[0].movedAsset, false, 'Completed moves no task');
+      assert.strictEqual(await statusOf(asset.id), status,
+        `and leaves it in ${status} rather than dragging it to Not Assigned`);
+
+      const d = await stage('root', 'delivered', [assignment.id]);
+      assert.strictEqual(d.body.succeeded, 1, `delivered from ${status}: ${JSON.stringify(d.body.results)}`);
+      assert.strictEqual(await statusOf(asset.id), 'pending_tl_review',
+        'and the hand-back always lands in TL Review, wherever it came from');
+      assert.strictEqual((await row(assignment.id)).completedByName, 'Root');
+      assert.strictEqual((await row(assignment.id)).deliveredByName, 'Root');
+    }
+  });
+
+  await t.test('every excluded status is refused, by name, and nothing moves', async () => {
+    /* Reached by forcing the status with the override permission a Super Admin
+       holds — which is how one of these would really arise — and then asking.
+       The assignment is left live so the refusal has to come from the task. */
+    const EXCLUDED = ['pending_tl_review', 'tl_approved', 'pending_cd_review', 'game_feedback',
+      'approved_for_client', 'awaiting_client_feedback', 'delivered'];
+    for (const status of EXCLUDED) {
+      const { asset, assignment } = await outsourcedIn(`Excluded ${status}`, 'not_started');
+      const forced = await as('root', `/assets/${asset.id}`, { method: 'PATCH', body: { status } });
+      assert.strictEqual(forced.status, 200, `forcing ${status}: ${JSON.stringify(forced.body)}`);
+
+      for (const which of ['completed', 'delivered']) {
+        const r = await stage('root', which, [assignment.id]);
+        assert.strictEqual(r.status, 200, 'the request is well-formed');
+        assert.strictEqual(r.body.succeeded, 0, `${which} is refused from ${status}`);
+        const err = r.body.results[0].error;
+        assert.match(err, new RegExp(`^An asset in "${workflow.label(status)}" cannot be recorded as ${which}`),
+          `the refusal names what it is: ${JSON.stringify(err)}`);
+        assert.match(err, /the task has to be in Not Assigned, Assigned, In Progress, TL Feedbacks or CD Feedbacks\./,
+          'and what it would need');
+        assert.ok(!/by the freelancer/.test(err), 'and blames nobody without a login');
+      }
+      assert.strictEqual(await statusOf(asset.id), status, 'the task is untouched');
+      assert.strictEqual((await row(assignment.id)).stage, 'with_freelancer',
+        'and so is the assignment — a refused move leaves both halves alone');
+    }
+  });
+
+  await t.test('THE REPORTED SCENARIO: In Progress, assigned to a freelancer, completed, delivered', async () => {
+    /* The report, start to finish, in the order it happened. CHR-002 in the
+       message was the ASSET CODE, not an error code — there is no error code in
+       this application — and the task was a character sitting In Progress with
+       a freelancer on it. */
+    const asset = (await as('root', `/assets/project/${id.project}`, {
+      method: 'POST', body: { name: 'Lantern Keeper', type: 'character', manHours: 24 } })).body.asset;
+    assert.match(asset.code, /^CHR-\d+$/, 'a character, so its code is a CHR one');
+
+    const assignment = (await as('root', '/outsource/assignments', { method: 'POST',
+      body: { freelancerId: id.freelancer, projectId: id.project, assetId: asset.id,
+        decidedManHours: 24 } })).body.assignment;
+    // A lead drags the card to In Progress on the board, which is a free move.
+    await as('root', `/assets/${asset.id}`, { method: 'PATCH', body: { status: 'in_progress' } });
+    assert.strictEqual(await statusOf(asset.id), 'in_progress', 'the state from the report');
+
+    const c = await stage('root', 'completed', [assignment.id]);
+    assert.strictEqual(c.body.succeeded, 1, JSON.stringify(c.body.results));
+    const d = await stage('root', 'delivered', [assignment.id]);
+    assert.strictEqual(d.body.succeeded, 1, JSON.stringify(d.body.results));
+    assert.strictEqual(await statusOf(asset.id), 'pending_tl_review');
+
+    // And both are in the task's history, naming the staff member and the freelancer.
+    const h = await history(asset.id);
+    const sentences = (h.events || []).map((e) => e.note || '');
+    assert.ok(sentences.some((s) => /^Marked completed by Root on behalf of Ravi K\.$/.test(s)));
+    assert.ok(sentences.some((s) => /^Marked delivered by Root on behalf of Ravi K\.$/.test(s)));
+  });
+
+  await t.test('sending work outside normalises a drifted task and stops the clock', async () => {
+    /* THE CAUSE-FIX, as opposed to the allow-list, which is the symptom-fix.
+       An artist works on it, the assignee is cleared WITH a status in the same
+       request — which the PATCH route honours over its own normalisation — and
+       the task is then sent outside. */
+    const asset = (await as('root', `/assets/project/${id.project}`, {
+      method: 'POST', body: { name: 'Drifted', type: 'prop', manHours: 8 } })).body.asset;
+    await as('root', `/assets/${asset.id}`, { method: 'PATCH', body: { assigneeId: id.ana } });
+    await as('ana', `/assets/${asset.id}/start`, { method: 'POST' });
+    const before = await sessionsOn(asset.id);
+    assert.strictEqual(Number(before.n), 1, 'the artist has a round open');
+    assert.strictEqual(Number(before.open), 1);
+
+    await as('root', `/assets/${asset.id}`, {
+      method: 'PATCH', body: { assigneeId: null, status: 'in_progress' } });
+    assert.strictEqual(await statusOf(asset.id), 'in_progress', 'and it stayed In Progress');
+
+    /* AND A ROUND IS OPEN AGAIN WHEN THE WORK GOES OUT, which took finding: the
+       unassign above closes the artist's session itself, so a fixture that
+       stopped there proved nothing about normalise() — the mutation that deleted
+       its workLog.close() passed every test. The reachable path is this one. A
+       full-access reader may start an UNASSIGNED task (mayStartWork lets the tier
+       past the assignee check, and in_progress is in STARTABLE), so the clock can
+       be running on a task with nobody on it at the moment it is sent outside. */
+    const reopened = await as('root', `/assets/${asset.id}/start`, { method: 'POST' });
+    assert.strictEqual(reopened.status, 200, JSON.stringify(reopened.body));
+    const running = await sessionsOn(asset.id);
+    assert.strictEqual(Number(running.open), 1, 'a round really is open at this point');
+
+    const r = await as('root', '/outsource/assignments', { method: 'POST',
+      body: { freelancerId: id.freelancer, projectId: id.project, assetId: asset.id, decidedManHours: 8 } });
+    assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+    assert.strictEqual(await statusOf(asset.id), 'not_started',
+      'sending it outside put it back where outsourced work belongs');
+    assert.strictEqual(r.body.normalised.from, 'in_progress', 'and the reply says it moved it');
+    assert.strictEqual(r.body.assignment.assetStatus, 'not_started',
+      'the row the tab gates on carries the status it ended up with');
+
+    /* THE CLOCK IS STOPPED AND THE HOURS ARE KEPT. Closed, not deleted: the
+       artist's round still exists with its seconds on it, and nothing can be
+       added to it. */
+    const after = await sessionsOn(asset.id);
+    assert.strictEqual(Number(after.n), Number(running.n), 'no session was removed');
+    assert.strictEqual(Number(after.open || 0), 0,
+      'and none is left running — the clock does not tick on a freelancer');
+    assert.strictEqual(r.body.normalised.sessionClosed, true, 'the reply says it stopped one');
+    assert.ok(Number(after.s) >= Number(before.s),
+      'the recorded seconds were not reduced');
+
+    // The move is on the record rather than being a mystery later.
+    const h = await history(asset.id);
+    assert.ok((h.events || []).some((e) => e.action === 'override'
+      && /Sent to a freelancer, so the task went back to Not Assigned/.test(e.note || '')),
+      'the normalisation is in the history');
+  });
+
+  await t.test('no clock can be started or resumed on outsourced work, by anybody', async () => {
+    /* THE HOLE THE REPRODUCTION FOUND, which the brief did not anticipate:
+       in_progress IS in STARTABLE and mayStartWork lets full access past the
+       assignee check, so a drifted outsourced task could be started by a Super
+       Admin. The studio's clock would then have been running against somebody
+       it does not employ. */
+    const { asset } = await outsourcedIn('No Clock Here', 'in_progress');
+    for (const who of ['root', 'priya', 'ana']) {
+      const r = await as(who, `/assets/${asset.id}/start`, { method: 'POST' });
+      assert.strictEqual(r.status, 409, `${who} is refused: ${JSON.stringify(r.body)}`);
+      assert.match(r.body.error, /is out with Ravi K\./);
+      const resumed = await as(who, `/assets/${asset.id}/resume`, { method: 'POST' });
+      assert.ok(resumed.status >= 400, `${who} cannot resume either (${resumed.status})`);
+    }
+    assert.strictEqual(Number((await sessionsOn(asset.id)).n), 0, 'and no session exists');
+
+    /* ORDINARY WORK IS UNTOUCHED: the same routes, on a task with no live
+       assignment, behave exactly as they did. */
+    const mine = (await as('root', `/assets/project/${id.project}`, {
+      method: 'POST', body: { name: 'Still Ours', type: 'prop', assigneeId: id.ana } })).body.asset;
+    const ok = await as('ana', `/assets/${mine.id}/start`, { method: 'POST' });
+    assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
+    assert.strictEqual(Number((await sessionsOn(mine.id)).n), 1, 'ordinary work keeps its clock');
+  });
+
+  await t.test('an ordinary In Progress task is refused exactly as it was', async () => {
+    /* THE PROMISE THE BRIEF ASKED FOR, held against the running server. The
+       allow-list widened the STAGES; it must not have widened anything an
+       ordinary task meets. */
+    const asset = (await as('root', `/assets/project/${id.project}`, {
+      method: 'POST', body: { name: 'Ordinary InProgress', type: 'prop', assigneeId: id.ana } })).body.asset;
+    /* ASSERTED, not fired and hoped for. The studio's rule is one active task at
+       a time, so an earlier subtest leaving Ana's round open makes this a 409 —
+       and without this line the asset stayed in Assigned and the test below
+       passed for the wrong reason. Her open round is closed first. */
+    const mine = await as('ana', `/assets/project/${id.project}`);
+    const busy = (mine.body || {}).activeWork;
+    if (busy && busy.assetId) {
+      await as('ana', `/assets/${busy.assetId}/submit`,
+        { method: 'POST', body: { link: 'https://x.test/clear' } }).catch(() => null);
+    }
+    const started = await as('ana', `/assets/${asset.id}/start`, { method: 'POST' });
+    assert.strictEqual(started.status, 200, JSON.stringify(started.body));
+    assert.strictEqual(await statusOf(asset.id), 'in_progress');
+
+    // No assignment exists, so there is nothing for the endpoint to act on.
+    const byAsset = await stage('root', 'delivered', [asset.id]);
+    assert.strictEqual(byAsset.body.results[0].ok, false);
+    assert.match(byAsset.body.results[0].error, /no longer exists/,
+      'an asset id is still not an assignment id');
+
+    // And the assignee gates still answer the way they always did.
+    const notTheirs = await as('priya', `/assets/${asset.id}/submit`,
+      { method: 'POST', body: { link: 'https://x.test/b' } });
+    assert.strictEqual(notTheirs.status, 403, 'somebody else still cannot hand it in');
+    const theirs = await as('ana', `/assets/${asset.id}/submit`,
+      { method: 'POST', body: { link: 'https://x.test/b' } });
+    assert.strictEqual(theirs.status, 201, JSON.stringify(theirs.body));
+    assert.strictEqual(await statusOf(asset.id), 'pending_tl_review');
+  });
+
+  await t.test('the permission gating is unchanged by the widening', async () => {
+    const { asset, assignment } = await outsourcedIn('Still Gated', 'in_progress');
+    const held = await heldBy('team_lead');
+    await setPerms('team_lead', held.filter((k) => k !== 'outsource.deliver'));
+    try {
+      const refused = await stage('priya', 'completed', [assignment.id]);
+      assert.strictEqual(refused.status, 403, JSON.stringify(refused.body));
+      assert.strictEqual(await statusOf(asset.id), 'in_progress', 'and nothing moved');
+    } finally {
+      await setPerms('team_lead', held);
+    }
+    // Granted back, same token, no sign-out.
+    const ok = await stage('priya', 'delivered', [assignment.id]);
+    assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
+    assert.strictEqual(ok.body.succeeded, 1);
+    assert.strictEqual(await statusOf(asset.id), 'pending_tl_review');
   });
 
   await t.test('the Efficiency report never shows it as zero-hour work', async () => {

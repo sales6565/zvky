@@ -2098,6 +2098,30 @@ router.post('/:id/start', async (req, res) => {
   const asset = rows[0];
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
   if (await projectClosedResponse(res, asset.project_id)) return undefined;
+  /* NO CLOCK RUNS ON WORK THE STUDIO DOES NOT DO — asked FIRST, and asked of
+   * everybody.
+   *
+   * This hole was real and this is the probe that found it: an outsourced task
+   * that had drifted to In Progress could be started by anybody with full
+   * access, because mayStartWork() lets full access past the assignee check and
+   * in_progress IS in STARTABLE. The 409 that protected a tidy outsourced task
+   * came only from not_started being absent from STARTABLE — an accident of the
+   * status, not a decision about outsourcing — so it vanished the moment the
+   * status drifted, and the studio's clock began ticking against a freelancer.
+   *
+   * Above mayStartWork so the reason given is the true one, and with NO full
+   * access exemption: there is no member of staff for whom starting a
+   * freelancer's task is meaningful. Ordinary work is untouched — an asset with
+   * no live assignment gets null here and falls through to exactly the gates it
+   * met before. */
+  const outsourcedTo = await oversightOutsource.activeForAsset(db, asset.id);
+  if (outsourcedTo) {
+    return res.status(409).json({
+      error: `${asset.code || 'This task'} is out with ${outsourcedTo.freelancerName}, so there is no `
+        + 'time to record on it here. Record the stage on the Outsource tab, or take the work back from '
+        + 'them first.',
+    });
+  }
   if (!mayStartWork(req, asset)) {
     return res.status(403).json({ error: 'Only the person this asset is assigned to can start work on it.' });
   }
@@ -2349,6 +2373,19 @@ router.post('/:id/resume', requirePermission('asset.hold'), async (req, res) => 
      says nothing about which day. One refusal, naming the holiday. */
   const shutForResume = holidayRefusal('resumed');
   if (shutForResume) return res.status(409).json(shutForResume);
+
+  /* AND THE SAME GUARD /start NOW CARRIES. A task that drifted and had a session
+     opened on it before that gate existed may still hold a paused round, and
+     resuming it would set the studio's clock running against a freelancer by the
+     back door. Null for ordinary work, which reaches every gate below unchanged. */
+  const outsourcedTo = await oversightOutsource.activeForAsset(db, asset.id);
+  if (outsourcedTo) {
+    return res.status(409).json({
+      error: `${asset.code || 'This task'} is out with ${outsourcedTo.freelancerName}, so there is no `
+        + 'time to record on it here. Record the stage on the Outsource tab, or take the work back from '
+        + 'them first.',
+    });
+  }
 
   const held = await workLog.heldFor(db, req.params.id, asset.assignee_id);
   if (!held) {

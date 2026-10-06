@@ -1277,6 +1277,35 @@ module.exports = [
     + 'record, not one you have to.\n\n'
     + 'Both record who entered it and when, and both leave a line in the task\u2019s history naming '
     + 'the person and the freelancer \u2014 "Marked delivered by Priya on behalf of Ravi K."'),
+  note('Which statuses a stage can be recorded from',
+    'A STAGE IS RECORDED AGAINST THE TASK, so the task has to be somewhere that makes sense. '
+    + 'Mark completed and Mark delivered work while the task is in NOT ASSIGNED \u2014 where '
+    + 'outsourced work normally sits \u2014 and also in ASSIGNED, IN PROGRESS, TL FEEDBACKS or CD '
+    + 'FEEDBACKS, because a card can be dragged on the board and because a rework is a perfectly '
+    + 'ordinary thing to send outside.\n\n'
+    + 'THEY ARE NOT OFFERED once the work has been handed in or approved \u2014 TL Review, TL '
+    + 'Approved, CD Review, Approved for Client, Awaiting Client Feedback, Delivered \u2014 or on a '
+    + 'task carrying a game bug. Past TL Review the work is in the studio\u2019s own pipeline, and '
+    + 'handing it back again would unsay a decision somebody here made. A delivery sitting in TL '
+    + 'Review is corrected with Reopen instead.\n\n'
+    + 'IF A TASK HAS SOMEBODY HERE ON IT, nothing is offered at all, whatever its status: it has '
+    + 'come back inside the studio and is no longer the freelancer\u2019s to hand back. Clear the '
+    + 'internal assignee first if the work really is still with them.\n\n'
+    + 'THE BUTTONS SHOW ONLY WHERE THEY WORK. If a row offers neither, the Stage and Status '
+    + 'beside it say why; the refusal, if you reach one another way, names the statuses it needs '
+    + 'and the one the task is actually in.'),
+  note('Sending work outside tidies the task up',
+    'A task that was being worked on here and is then given to a freelancer goes back to NOT '
+    + 'ASSIGNED, and any running timer on it is stopped. THE HOURS ALREADY RECORDED ARE KEPT \u2014 '
+    + 'somebody who put two hours in before the job went outside still has those two hours on '
+    + 'their round, and nothing is added to them afterwards. The change is written into the '
+    + 'task\u2019s history, so it is not a status that moved on its own.\n\n'
+    + 'A REWORK IS LEFT WHERE IT IS. TL Feedbacks and CD Feedbacks say a lead or the director '
+    + 'asked for changes, which is true of whoever picks the round up next \u2014 moving it to Not '
+    + 'Assigned would throw that away.\n\n'
+    + 'AND NO TIMER RUNS ON OUTSOURCED WORK. Accept and Start and Resume both refuse a task that '
+    + 'is out with a freelancer, for everybody \u2014 including a Super Admin \u2014 and say who has '
+    + 'it. The studio does not run its clock on somebody it does not employ.'),
   note('Reopen, for when one of them was a mistake',
     'REOPEN undoes a Completed or a Delivered. The task goes back to Not Assigned, the work goes '
     + 'back to being with the freelancer, and the recorded stage and its timestamps are cleared \u2014 '
