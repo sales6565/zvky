@@ -906,7 +906,7 @@ board's column counts come from the split pool, so cards and headings cannot dis
 sub-tab counts describe the whole pool, so each says how many rows clicking it would show.
 
 The one aggregate that does **not** follow the lens is the stats band (`#stats` — Assets,
-one tile per status, Final %). It sits *above* the tab row and is drawn on every tab but
+one tile per board column, Final %). It sits *above* the tab row and is drawn on every tab but
 Users, so it summarises the **project**, not the Dashboard; it already ignored the board's
 search and type filter before this change, reading `state.assets` rather than
 `filteredAssets()`. Making it follow a Dashboard sub-tab would make it wrong on the five
@@ -914,6 +914,101 @@ other tabs it appears on. That is pinned by a test rather than left incidental �
 studio would rather the band followed the lens while the Dashboard is open, that is a
 deliberate change with a failing test to answer.
 
+
+
+### The Dashboard's "Back from Freelancer" column
+
+**The board's columns are no longer exactly the statuses**, and this is the one
+exception. Everything below is about the tab labelled **Dashboard**, which is the
+per-project board (`data-tab="board"`, `renderBoard()`); the permission-gated
+**Admin Dashboard** is a different screen and appears here as a consumer.
+
+**"Delivered" is not the asset's status**, and the whole design rests on that.
+After *Mark delivered* on the Outsource tab the **asset** holds
+`pending_tl_review` — a real workflow status, chosen in Prompt 23 precisely
+because every list already knows it — and the **assignment** holds `delivered`
+(`outsource_assignments.status`, with `delivered_by` and `delivered_at`). There is
+also a `delivered` *asset* status and it is the opposite end of the pipeline: the
+client has the work.
+
+**What it looked like before** (reproduced, not assumed): the freelancer's task
+sat in the **TL Review** column beside an artist's own submission, in exactly one
+column. Nothing vanished — the brief's other hypothesis. What was missing was any
+sign it had come from outside; the only visible difference was an empty avatar
+slot, which reads as *"nobody has picked this up"* about work that has been done
+and handed back.
+
+**So it gets its own column, and it is not called Delivered.** Two columns under
+one word meaning near opposites is the confusion "Two permissions called Mark as
+Delivered" above exists to prevent. The column is **Back from Freelancer**,
+declared once in `workflow.OUTSOURCE_DELIVERED_COLUMN` and read by both the board
+and the Admin Dashboard so the two cannot name or place it differently.
+
+**Where it sits: straight after TL Review, not last** — a deliberate departure
+from the brief's recommendation. This work is *waiting on a team lead* and leaves
+the column the moment one acts, so it is not an end state; filing it past three
+approval stages, next to the client's finished work, is where it would stop being
+noticed.
+
+**Exactly one column, by construction.** `boardColumnOf(asset)` returns **one**
+id — the first extra column that claims it, or its status — and the board, its
+counts and the stats band all ask that one function. A card cannot be in two
+columns because there is one answer, and cannot be in none unless its answer is
+missing from the list, which `tests/board-delivered.test.js` fails on for every
+status the server can set.
+
+**The claim needs both halves**: a live assignment whose stage is `delivered`
+**and** a task still in `pending_tl_review`. The review does not touch the
+assignment, so claiming on the stage alone would hold the card here for ever and
+it would never appear in TL Approved. Asking for the status too is what makes "it
+moves on when the next step picks it up" true with nothing having to remember.
+`col.from` is pinned equal to the delivery transition's `to`, so if the delivery
+ever lands elsewhere the test fails rather than the column silently emptying.
+
+**The card** shows the freelancer's name and the delivered date, with who
+*recorded* it in the hover — the card answers "whose work is this", the history
+answers "who entered it". **No hours figure**: `man_hours` is the estimate and no
+card has ever shown tracked time, but "24h" printed above "Ravi K." reads as hours
+Ravi logged, and there is no such figure. The due date stays; a date is not hours.
+Everything else about the card is unchanged, so the click that opens the drawer and
+the drag handlers find it exactly as before — and `outsource_delivered` is not in
+the drag's `FREE` list, so no drop can write it as a status.
+
+**The consumers, each with what happened to it:**
+
+| Consumer | What was done |
+| --- | --- |
+| `renderBoard()` columns and counts | **Changed** — `boardColumns()`, `boardColumnOf()` |
+| `cardHTML()` | **Changed** — freelancer line; hours suppressed on those cards only |
+| `#stats` band | **Changed** to the same column vocabulary, because it sits directly above the board and "TL Review 1" over an empty TL Review column is the drift. Still reads `state.assets` raw: no search, no type filter, no lens |
+| Art/Animation lens + sub-tab counts | **Verified, no change needed** — the lens is applied to the whole pool *before* columns, so the new column is filtered and the counts include delivered work by construction |
+| `filteredAssets()` | **Left alone** — shared with the Assets List; both the lens and the column stay out of it |
+| Assets List, `ASSET_LIST_GROUPS` | **Left alone** — groups by *status*, so a hand-back is Active, which is right |
+| `visibleStatuses()` in `renderList()` | **Left alone** — a permission filter over statuses, not a column vocabulary |
+| Admin Dashboard `stageCounts` | **Changed** — split out of TL Review, counted **once**, same labels as the board |
+| Admin Dashboard `waitingCounts` | **Left alone** — it answers "what is sitting with somebody for a decision", and this work is. A different question, not double counting |
+| Admin Dashboard `lateRows`, `upcoming` | **Left alone** — they exclude only `DONE_STATES` (`delivered`), and a hand-back is not done |
+| `renderPipeline` / `pipelineTotal` | **No change needed** — they render whatever rows the payload carries, and the split moves a count rather than adding one |
+| Pending Actions | **Left alone** — it reads `project_reviews`, not asset statuses |
+| `routes/projects.js` "my work", `routes/idle.js` waiting list | **Left alone** — keyed on `assignee_id`, which outsourced work has none of |
+| Reports and exports | **Left alone** — nothing groups by status, and Efficiency already excludes outsourced assets by name |
+
+**Freshness needs no timer, because the board has no cache.** `setTab()` ends in
+`render()`, and `render()` calls `loadAssets()` whenever the view is the board or
+the list — so switching to the Dashboard always refetches and cannot show a stale
+state. That is pinned as source, next to an integration case proving the refetched
+row carries what the column needs.
+
+**No new permission.** Viewing the board is already gated, the cards are assets
+the server narrowed by `visibleProjects()`, and an extra column is only drawn when
+the column it sits after is — so a role that cannot see TL Review cannot see
+freelancer deliveries sitting in it either. That falls out of `boardColumns()`
+rather than needing a rule of its own.
+
+**One bug this change introduced and a test caught:** `empty()` built the pipeline
+from `workflow.STATES` while `stageCounts()` built the split list, so a viewer with
+no projects saw twelve rows and a viewer with one saw thirteen — the panel changed
+shape with the workload. Both now call `pipelineRows()`.
 
 
 Assets now move through a fixed pipeline instead of a free-form status field:

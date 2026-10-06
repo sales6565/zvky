@@ -146,11 +146,27 @@ test('the dashboard is drawn from the same states and the same free range', () =
   // places, and the last time those two places each kept their own copy of a
   // status list they drifted — which is how the Assigned column became one no
   // card could be dragged into.
-  const gated = 'visibleStatuses()';
-  for (const site of ['`<div class="board">${' + gated, '    ' + gated + '.map(s=>{ const c=pool.filter']) {
+  /* BOTH SITES NOW GO THROUGH boardColumns(), and the permission rule they were
+     written to protect is unchanged — it moved one level down.
+     
+     The board grew a column that is NOT a status (Back from Freelancer: work a
+     freelancer has handed back, which is in pending_tl_review), so the two sites
+     could no longer map the status list directly. boardColumns() IS
+     visibleStatuses() with the extra columns spliced in after their anchors — so
+     a status this role may not see is still absent, AND an extra column whose
+     anchor is hidden is hidden with it, which is one fewer thing to get wrong
+     than two lists would have been. */
+  for (const site of ['`<div class="board">${boardColumns()',
+    '    boardColumns().map(s=>{ const c=pool.filter']) {
     assert.ok(page.includes(site),
-      `the dashboard should draw its columns and its stat tiles from ${gated} — missing: ${site}`);
+      `the dashboard should draw its columns and its stat tiles from boardColumns() — missing: ${site}`);
   }
+  const cols = page.slice(page.indexOf('function boardColumns()'));
+  const body = cols.slice(0, cols.indexOf('\n}') + 2);
+  assert.match(body, /for\(const s of visibleStatuses\(\)\)\{/,
+    'and boardColumns() is built from visibleStatuses(), so the permission gate still decides');
+  assert.match(body, /if\(extra\.after === s\.id\) out\.push\(extra\);/,
+    'an extra column only appears when the column it sits after does');
   /* The stages not shown to everyone, and what makes each one worth showing.
      Every id must be a real state — a typo here would hide nothing and say
      nothing — and every permission must be a real key, or the rule can never

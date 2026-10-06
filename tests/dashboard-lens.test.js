@@ -115,7 +115,21 @@ test('the default sub-tab is Art, and the choice is deliberately not remembered'
  * ships rather than a paraphrase of it. The stub records innerHTML; the handlers it wires
  * are no-ops, because what is asserted is what a viewer would see. */
 function renderWith({ assets, lensId, statuses }) {
-  const source = grab('function renderBoard()')
+  /* THE COLUMN MACHINERY COMES WITH IT. renderBoard() builds its columns from
+     boardColumns() and places each card with boardColumnOf() — the board has one
+     column that is not a status (Back from Freelancer, for work a freelancer has
+     handed back) — so the three declarations have to be in scope here or the
+     render throws. tests/board-delivered.test.js owns that column; this file
+     still owns the lens, and the point of including them is that the lens is
+     asserted over the board as it really draws. */
+  const columnSource = (() => {
+    const at = PAGE.indexOf('const BOARD_EXTRA_COLUMNS = [');
+    const last = PAGE.indexOf('function boardColumns()', at);
+    assert.ok(at !== -1 && last > at, 'the board still builds its columns here');
+    return PAGE.slice(at, PAGE.indexOf('\n}', last) + 2);
+  })();
+  const source = columnSource
+    + '\n' + grab('function renderBoard()')
     + '\n' + grab('function wireBoardLens(el)');
   const captured = { html: '' };
   const node = {

@@ -177,6 +177,40 @@ const OUTSOURCE_STAGE_FROM = ['not_started', 'assigned', 'in_progress',
    src/outsource.js, which is the only caller. */
 const OUTSOURCE_NORMALISE_FROM = ['assigned', 'in_progress'];
 
+/* A BOARD COLUMN THAT IS NOT A STATUS, declared here so there is one of it.
+ *
+ * Work a freelancer has handed back sits in pending_tl_review — the status is
+ * right and nothing about it changes — but on a board it reads as an artist's
+ * submission, because that is what every other card in that column is. So the
+ * Dashboard draws it as its own column, and the Admin Dashboard splits the same
+ * figure the same way, and both take the id, the label and the colour from here
+ * rather than keeping two copies that drift.
+ *
+ * NOT CALLED "Delivered". `delivered` is already a status and it means the
+ * CLIENT has the work — the opposite end of the pipeline. Two columns under one
+ * word, meaning near opposites, is the confusion the README's "Two permissions
+ * called Mark as Delivered" exists to prevent.
+ *
+ * `after` is where it sits: straight after the queue it is waiting in, not last.
+ * This work needs a lead TODAY; filing it past three approval stages, beside the
+ * client's finished work, is where it would stop being noticed.
+ *
+ * THE PREDICATE IS NOT HERE, and cannot be: it reads an asset row joined to its
+ * assignment, which the page has as a.outsourced_to and the server has as a
+ * SQL EXISTS. Both ask the same two questions — the assignment's stage is
+ * delivered AND the task still holds `from` — and tests/board-delivered.test.js
+ * holds them to the same answer.
+ */
+const OUTSOURCE_DELIVERED_COLUMN = {
+  id: 'outsource_delivered',
+  label: 'Back from Freelancer',
+  color: '#2e7d5b',
+  after: 'pending_tl_review',
+  // The status the delivery leaves the task in, which is also the status this
+  // column takes its cards out of. One place, so the two cannot disagree.
+  from: 'pending_tl_review',
+};
+
 /* The allow-list as a reader sees it: "Not Assigned, Assigned, In Progress, TL
    Feedbacks or CD Feedbacks". Built from the list so a refusal cannot name a
    different set of statuses from the one the table enforces. */
@@ -1034,6 +1068,7 @@ module.exports = {
   transitionFor,
   ASSIGNEE_STATUSES,
   OUTSOURCE_STAGE_FROM,
+  OUTSOURCE_DELIVERED_COLUMN,
   OUTSOURCE_NORMALISE_FROM,
   FREE_STATUSES,
   STATE_IDS,

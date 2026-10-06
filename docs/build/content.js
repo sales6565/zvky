@@ -171,6 +171,10 @@ module.exports = [
   shot('02-dashboard-stats', 'The strip above the tabs: a count for every stage, and the percentage of the project that is finished.'),
   p('The strip counts only what you are allowed to see. An artist looking at the same project as a producer will see '
     + 'smaller numbers, because the artist is counting their own work and the producer is counting the project.'),
+  p('IT COUNTS THE WHOLE PROJECT, not what the board is showing. A search, a scope-of-work filter or the '
+    + 'Art / Animation sub-tab all narrow the board and change none of these numbers \u2014 the strip is drawn above '
+    + 'the tabs and appears on nearly every tab, so it summarises the project rather than whichever view is open. '
+    + 'Its tiles are the board\u2019s columns, so the strip and the board always agree about where a task is.'),
 
   h2('3.2 The board'),
   shot('02-dashboard-board', 'The board. Each column is a stage; each card is an asset.'),
@@ -188,7 +192,20 @@ module.exports = [
     'The asset name.',
     'The scope of work, the task count, and the initials of whoever holds it.',
     'A coloured corner flag for priority.',
+    'On a card in Back from Freelancer: the freelancer\u2019s name and the date the work came back. Hover for who recorded it.',
   ]),
+  note('Back from Freelancer is a column, not a status',
+    'Work a freelancer has handed back is waiting on a team lead \u2014 the same place an artist\u2019s submission '
+    + 'waits \u2014 but it is not the same thing, and before this it sat in TL REVIEW looking exactly like one. It '
+    + 'now has its own column, straight after TL Review, so a lead can see at a glance what came from outside.\n\n'
+    + 'IT IS NOT THE SAME AS "DELIVERED" AT THE END OF THE BOARD. That column means the CLIENT has the work and '
+    + 'the job is finished. This one is the start of a review.\n\n'
+    + 'IT LEAVES THE COLUMN WHEN YOU ACT ON IT. Approve it or send it back and the card moves on to TL Approved or '
+    + 'TL Feedbacks like any other \u2014 nothing has to be moved by hand, and nothing stays here once it has been '
+    + 'looked at.\n\n'
+    + 'NO HOURS ON THESE CARDS. Every other card shows the estimate; this one does not, because a figure printed '
+    + 'above a freelancer\u2019s name reads as hours they logged, and the studio does not run its clock on '
+    + 'somebody it does not employ. The estimate is still on the asset panel and in the Assets List.'),
   note('Colour',
     'Stage colours are deliberately distinct from the studio brand colour, so a red card never reads as branding '
     + 'and branding never reads as an alert.'),

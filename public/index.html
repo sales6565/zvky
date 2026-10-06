@@ -670,6 +670,9 @@ tr.past-round{opacity:0.62;}
 .os-table th.num,.os-table td.num{text-align:right;white-space:nowrap;}
 .os-table tr.os-off{opacity:.55;}
 .os-sub{font-size:10.5px;color:var(--ink-faint);margin-top:2px;}
+.card-fl{align-items:center;color:#8fd3b0;display:flex;font-size:10px;gap:4px;
+  margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.card-fl-dot{background:#2e7d5b;border-radius:50%;flex:0 0 auto;height:5px;width:5px;}
 .os-stagebar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;}
 .os-stagechip{background:var(--surface-2);border:1px solid var(--border);border-radius:999px;
   color:var(--ink-muted);cursor:pointer;font-size:11.5px;padding:4px 11px;}
@@ -3725,6 +3728,93 @@ function visibleStatuses(){
     return !rule || rule.needs.some(p=>can(p));
   });
 }
+
+/* ---------- the board's columns, which are not quite the statuses ----------
+ *
+ * THE PROBLEM THIS SOLVES. Work a freelancer has handed back lands in
+ * pending_tl_review — a real workflow status, chosen in Prompt 23 precisely
+ * because every list in the studio already knows it — so before this it sat in
+ * the TL Review column next to an artist's own submission, indistinguishable at
+ * a glance. Nothing was lost and nothing vanished; the two were simply not
+ * told apart on the one screen a lead scans.
+ *
+ * "Delivered" IS NOT THE ASSET'S STATUS, and that is the fact the whole design
+ * rests on. After Mark delivered the asset holds pending_tl_review and the
+ * ASSIGNMENT holds 'delivered' (outsource_assignments.status, with delivered_by
+ * and delivered_at beside it). There is also a `delivered` asset status, and it
+ * is the OPPOSITE end of the pipeline — the client has the work — which is why
+ * this column is not called Delivered: two columns under one word, meaning near
+ * opposites, is the confusion the README's "Two permissions called Mark as
+ * Delivered" exists to prevent.
+ *
+ * EXACTLY ONE COLUMN, BY CONSTRUCTION. boardColumnOf() returns ONE id for an
+ * asset — the first extra column that claims it, or its status. The board and
+ * the stats band both ask it, so a card cannot be in two columns (there is one
+ * answer) and cannot be in none unless its answer is missing from the column
+ * list, which tests/board-delivered.test.js fails on for every status the
+ * server can set.
+ */
+const BOARD_EXTRA_COLUMNS = [
+  {
+    id: 'outsource_delivered',
+    /* NOT "Delivered" — see above. Named for what happened, in the style of TL
+       Feedbacks and Approved for Client: somebody outside sent work back in. */
+    label: 'Back from Freelancer',
+    // The green a delivery already wears on the Outsource tab, and not the
+    // brand red — a column in the application's own colour reads as chrome.
+    color: '#2e7d5b',
+    /* WHERE IT SITS: straight after TL Review, not last.
+     *
+     * The brief's recommendation was last, on the reading that Delivered is an
+     * end state. It is not one: this work is WAITING ON A TEAM LEAD, and it
+     * leaves the column the moment one acts. Putting it last would file work
+     * that needs reviewing today past three approval stages and next to the
+     * client Delivered column, which is where finished work lives. Beside the
+     * queue it belongs to is where a lead looking for things to review will
+     * see it. */
+    after: 'pending_tl_review',
+    /* WHAT IT CLAIMS: a live assignment whose stage is delivered, while the task
+     * is still in the status the delivery put it in.
+     *
+     * BOTH HALVES MATTER. The assignment stays 'delivered' after a lead
+     * approves the work — nothing in the review touches it — so claiming on the
+     * stage alone would hold the card here for ever and it would never appear in
+     * TL Approved. Asking for the status too is what makes "it moves on when the
+     * next step picks it up" true without anything having to remember to move
+     * it.
+     *
+     * AND IF THE DELIVERY EVER LANDS SOMEWHERE ELSE, this stops claiming and the
+     * card shows in its own status column — visible in the wrong place rather
+     * than vanished, which is the right way round for a board. */
+    claims: (a) => Boolean(a && a.outsourced_to)
+      && a.outsourced_to.stage === 'delivered'
+      && a.status === 'pending_tl_review',
+  },
+];
+
+// The one column an asset belongs in. One answer per asset, which is what makes
+// "never two" structural rather than something each caller has to be careful of.
+function boardColumnOf(a){
+  const extra = BOARD_EXTRA_COLUMNS.find(c=>c.claims(a));
+  return extra ? extra.id : (a ? a.status : null);
+}
+
+/* The columns, left to right: the statuses this role may see, with each extra
+   spliced in after its anchor.
+   
+   An extra is only drawn when its anchor is — so a role that cannot see TL
+   Review cannot see freelancer deliveries sitting in it either, and that falls
+   out of the structure rather than needing a permission of its own. Viewing the
+   board is already gated, and these cards are assets from state.assets, which
+   the server has already narrowed by visibleProjects(). */
+function boardColumns(){
+  const out = [];
+  for(const s of visibleStatuses()){
+    out.push(s);
+    for(const extra of BOARD_EXTRA_COLUMNS) if(extra.after === s.id) out.push(extra);
+  }
+  return out;
+}
 function initials(name){ return (name||'?').trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase(); }
 
 /* ---------- who somebody is, on screen ----------
@@ -5362,7 +5452,15 @@ function renderStats(){
   const deliveredCount = pool.filter(a=>a.status==='delivered').length;
   const pct = total ? Math.round(deliveredCount/total*100) : 0;
   el.innerHTML = `<div class="stat"><div class="num">${total}</div><div class="lbl">Assets</div></div>` +
-    visibleStatuses().map(s=>{ const c=pool.filter(a=>a.status===s.id).length; return `<div class="stat"><div class="num" style="color:${s.color}">${c}</div><div class="lbl">${s.label}</div></div>`; }).join('') +
+    /* THE SAME COLUMNS THE BOARD DRAWS, and that is a decision.
+    
+       The band sits directly above the board on the same tab, so "TL Review 1"
+       over an empty TL Review column is the drift this prompt was written about.
+       It reads boardColumnOf() for that reason — and still from state.assets
+       RAW, so it stays whole-project and ignores the search, the type filter and
+       the Art/Animation lens, which is what makes it a project summary rather
+       than a second copy of the board. */
+    boardColumns().map(s=>{ const c=pool.filter(a=>boardColumnOf(a)===s.id).length; return `<div class="stat"><div class="num" style="color:${s.color}">${c}</div><div class="lbl">${s.label}</div></div>`; }).join('') +
     `<div class="stat"><div class="num">${pct}%</div><div class="lbl">Final</div></div>`;
 }
 function typeIconSVG(type, color){
@@ -5522,13 +5620,41 @@ function cardHTML(a){
   const t=typeOf(a.type); const p=priorityOf(a.priority);
   const pClass = a.priority==='high'?'priority-high':a.priority==='med'?'priority-med':'';
   const doneTasks = a.tasks.filter(t=>t.done).length;
+  /* WHO SENT IT BACK AND WHEN, on a card in the Back from Freelancer column.
+   *
+   * THE POINT IS THAT IT CAME FROM OUTSIDE. Before this, a freelancer's task in
+   * the TL Review column looked exactly like an artist's submission except for
+   * an empty avatar slot — and an empty slot reads as "nobody has picked this
+   * up", which is a different and wrong statement about work that has been done
+   * and handed back.
+   *
+   * Drawn from what Prompt 25 recorded on the assignment: the freelancer's name
+   * and delivered_at. Not deliveredByName, which is the member of staff who
+   * recorded it — that is in the task's history, where somebody asking "who
+   * entered this" will look; the card answers "whose work is this". It is in the
+   * hover, though, because that question does get asked. */
+  const fl = boardColumnOf(a) === 'outsource_delivered' ? a.outsourced_to : null;
   const metaBits = [];
-  if(a.man_hours) metaBits.push(a.man_hours+'h');
+  /* NO HOURS FIGURE ON A FREELANCER'S CARD, and this is the one place the card
+     is not the same as every other.
+     
+     man_hours is the ESTIMATE, not time spent — no card on this board has ever
+     shown tracked time or a running clock, so there was never a timer here to
+     remove. But "24h" printed directly above "Ravi K." reads as twenty-four
+     hours Ravi logged, and the studio does not run its clock on somebody it does
+     not employ: there is no such figure and the card must not imply one. The
+     estimate is still on the task panel and in the Assets List, where nothing
+     sits next to it to be misread. The due date stays; a date is not hours. */
+  if(a.man_hours && !fl) metaBits.push(a.man_hours+'h');
   if(a.due_date) metaBits.push(new Date(a.due_date).toLocaleDateString(undefined,{month:'short',day:'numeric'}));
   return `<div class="card ${pClass}" draggable="true" data-id="${a.id}">
     ${a.priority!=='low' ? '<div class="priority-flag"></div>' : ''}<div class="reg"></div>
     <div class="thumb" style="background:linear-gradient(135deg, ${t.color}33, ${t.color}0d);">${thumbInner(a, 36)}</div>
     <div class="code">${a.code}${metaBits.length? ' · '+metaBits.join(' · ') : ''}</div><div class="name">${escapeHTML(a.name)}</div>
+    ${fl ? `<div class="card-fl" title="Sent back by ${escapeHTML(fl.freelancerName)}${
+      fl.deliveredAt ? ` on ${escapeHTML(fmtDate(fl.deliveredAt))}` : ''}${
+      fl.deliveredByName ? `, recorded by ${escapeHTML(fl.deliveredByName)}` : ''}"><span class="card-fl-dot"></span>${
+      escapeHTML(fl.freelancerName)}${fl.deliveredAt ? ` · ${escapeHTML(fmtDate(fl.deliveredAt))}` : ''}</div>` : ''}
     <div class="meta"><span class="type-tag">${t.label}</span>
       <div style="display:flex;align-items:center;gap:6px;">
         ${a.held ? `<span class="badge hold-badge" title="${escapeHTML(pauseWords(a.held).title)} since ${escapeHTML(fmtDate(a.held.since))}${a.held.note ? ` — ${escapeHTML(a.held.note)}` : ''}">${escapeHTML(pauseWords(a.held).short)}</span>` : ''}
@@ -5639,8 +5765,11 @@ function renderBoard(){
     wireBoardLens(el);
     return;
   }
-  el.innerHTML = lensTabs + `<div class="board">${visibleStatuses().map(s=>{
-    const inCol = assets.filter(a=>a.status===s.id);
+  /* boardColumns(), not visibleStatuses(), and boardColumnOf(), not a.status ===
+     s.id. One answer per asset is what keeps a card out of two columns; see the
+     note on BOARD_EXTRA_COLUMNS. */
+  el.innerHTML = lensTabs + `<div class="board">${boardColumns().map(s=>{
+    const inCol = assets.filter(a=>boardColumnOf(a)===s.id);
     return `<div class="column" data-status="${s.id}"><div class="col-head"><span class="chip" style="background:${s.color}"></span><span class="title">${s.label}</span><span class="count">${inCol.length}</span></div>${inCol.map(cardHTML).join('')}</div>`;
   }).join('')}</div>`;
   wireBoardLens(el);
