@@ -71,6 +71,12 @@ function renderBoard({ assets, lensId = 'art', statuses = PAGE_STATUSES, realCar
     columns,
     grab('const BOARD_LENS = [', '\n];'),
     grab('const boardLensMatch = ()', ';'),
+    /* The arrival lens, which renderBoard spends on its first draw after an
+       Admin Dashboard chip is clicked (tests/dashboard-link.test.js owns it).
+       Included rather than stubbed so this file still runs the board as it
+       ships; null throughout here, which is what it is on an ordinary draw. */
+    grab('let boardLensArrival = null;', ';'),
+    grab('function arrivalLens(pool, statuses, current)'),
     realCards ? grab('function cardHTML(a)') : '',
     grab('function renderBoard()'),
     grab('function wireBoardLens(el)'),

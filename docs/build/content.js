@@ -187,6 +187,20 @@ module.exports = [
   ]),
   shot('02-dashboard-full', 'The whole Dashboard as a Super Admin sees it, with every column and both upload buttons.'),
 
+  note('Arriving here from an alert',
+    'The Admin Dashboard (the other tab called Dashboard, for whoever holds it) lists what needs attention across '
+    + 'every project, and names the projects in each alert. Clicking one of those project chips brings you '
+    + 'straight here, to that project\u2019s board.\n\n'
+    + 'IT CLEARS THE BOARD\u2019S FILTERS ON THE WAY. A search you typed and a scope of work you picked both stay '
+    + 'set when you move between tabs, and either could hide the very task the alert was about \u2014 so arriving '
+    + 'from an alert empties both, and the boxes in the header show that they are empty.\n\n'
+    + 'AND IT OPENS THE RIGHT SUB-TAB. If the alert was about animation work, the board opens on Animation rather '
+    + 'than on Art; if the project you clicked holds nothing under the sub-tab you would have landed on, it opens '
+    + 'on the one that has the work. An alert never sends you to an empty board.\n\n'
+    + 'THE PROJECT YOU CLICKED IS NOW THE ONE YOU ARE ON, in the header pickers and the next time you sign in \u2014 '
+    + 'exactly as if you had chosen it yourself. To go back to the alert list, use the tab bar; the browser\u2019s '
+    + 'Back button does not move between tabs in this application.'),
+
   h2('3.3 What is on a card'),
   bullets([
     'The preview image, if one has been set (chapter 6.3). Without one, the card shows the scope-of-work icon.',

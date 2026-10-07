@@ -1027,8 +1027,20 @@ tr.past-round{opacity:0.62;}
 .ad-chip{background:var(--surface-2);border:1px solid var(--border);color:var(--ink-muted);
   font-size:11px;padding:3px 9px;border-radius:20px;cursor:pointer;font-family:'Inter',sans-serif;}
 .ad-chip:hover{border-color:var(--brand-accent);color:var(--ink);}
+/* Keyboard parity with the hover, and the same ring the rest of the page uses
+   (.cap-period in this very panel, the chat buttons, the Settings headings). A
+   chip that can be tabbed to and gives no sign of it is a control only a mouse
+   can find. */
+.ad-chip:focus-visible{outline:2px solid var(--brand-accent);outline-offset:2px;border-color:var(--brand-accent);color:var(--ink);}
+/* The same chip, for a project this page cannot open — a <span>, so it is not
+   in the tab order and nothing about it invites a click. */
+.ad-chip-plain{cursor:default;opacity:.72;}
+.ad-chip-plain:hover{border-color:var(--border);color:var(--ink-muted);}
 .ad-chip .mono{color:var(--ink);margin-left:4px;}
-.ad-chip-more{font-size:11px;color:var(--ink-faint);align-self:center;}
+.ad-chip-more{font-size:11px;color:var(--ink-faint);align-self:center;background:none;border:0;
+  padding:3px 4px;cursor:pointer;font-family:'Inter',sans-serif;text-decoration:underline dotted;}
+.ad-chip-more:hover{color:var(--ink);}
+.ad-chip-more:focus-visible{outline:2px solid var(--brand-accent);outline-offset:2px;border-radius:4px;}
 .ad-note{font-size:10.5px;color:var(--ink-faint);margin-top:12px;line-height:1.5;}
 /* Team Capacity. Borrows the panel chrome above; the only new pieces are the
    period switch, the three figures and the utilisation bar. */
@@ -4495,11 +4507,138 @@ function renderContextPickers(){
     render();
   };
   projSel.onchange = ()=>{
-    state.currentProjectId = projSel.value || null;
-    saveContext();
-    applyGate('editProjectBtn');
+    /* THROUGH THE FUNNEL, like every other way of choosing a project. The
+       picker is the thing selectProject() is modelled on, so if it did the work
+       itself there would be two versions of "point the app at a project" and
+       one of them would be the one that forgets something. */
+    if(!selectProject(projSel.value)){
+      /* No such project in this account's list — the "No projects under this
+         client" option, which carries an empty value. Left as it was: a null
+         project is a real state the board draws an explanation for. */
+      state.currentProjectId = projSel.value || null;
+      saveContext();
+      applyGate('editProjectBtn');
+    }
     render();
   };
+}
+
+/* ---------- pointing the whole header at a project ----------
+ *
+ * ONE FUNNEL, because there were four of these and they did not agree.
+ *
+ *   the header picker          set the id, saved, re-gated
+ *   the Projects tab's Open    set the id and the <select>.value, no save
+ *   the Admin Dashboard chip   set the id and .value, no save, and gave up
+ *                              entirely when the project was under a different
+ *                              client — the picker is narrowed by the Client
+ *                              box beside it, so the option was simply not
+ *                              there and the click landed on the Projects tab
+ *   a notification             the only one that did the whole job: project,
+ *                              CLIENT, save, redraw the pickers, re-gate
+ *
+ * So this is the notification's version, named, and the other three now call
+ * it. The client context is the part everybody forgot and it is the part that
+ * matters: without it the project picker is left showing a project its own
+ * client filter excludes, which is the "picker and board disagree" state this
+ * is written to make impossible.
+ *
+ * IT DOES NOT RENDER. Callers follow it with render() or setTab(), because what
+ * to draw afterwards is their business — the picker redraws in place, the
+ * Projects tab goes to the board, a notification opens a drawer on top.
+ *
+ * RETURNS FALSE for a project this account's list does not hold, and changes
+ * nothing. That is not only the permission case: state.projects is a snapshot
+ * from page load, so a project created or shared since then is legitimately
+ * absent, and the caller decides what to say about it. */
+function selectProject(projectId){
+  const target = state.projects.find(p=>p.id===projectId);
+  if(!target) return false;
+  state.currentProjectId = target.id;
+  /* The client has to move too, or projectsForContext() filters the chosen
+     project out of the very picker that is supposed to be showing it. A project
+     with no client cannot happen through the API — clientId is required — but
+     leaving the context alone is the honest answer if one ever does. */
+  if(target.client_id) state.clientContextId = target.client_id;
+  saveContext();
+  renderContextPickers();
+  applyGate('editProjectBtn');
+  return true;
+}
+
+/* Is this project one this page can open? The same question selectProject()
+   answers, asked without doing anything — for a screen deciding whether to draw
+   a link or plain text. */
+const projectReachable = (projectId)=> state.projects.some(p=>p.id===projectId);
+
+/* THE PROJECT SNAPSHOT, RE-READ. state.projects is loaded once at boot, so a
+ * project created, shared or re-scoped since then is missing from it — and both
+ * callers exist precisely because something has changed since the page loaded:
+ * a notification about work somebody has just been given, and the Admin
+ * Dashboard deciding which of its chips are openable.
+ *
+ * NOT bootApp(), which re-reads this and then calls restoreContext() — it would
+ * move the header back to the remembered project in the middle of a
+ * navigation. This is the one request, and nothing else.
+ *
+ * Silent on failure: a stale list is a chip drawn as plain text or one toast,
+ * and neither is worth failing a click over. */
+async function refreshProjects(){
+  try{
+    const { projects } = await api('/projects');
+    state.projects = projects;
+    return true;
+  }catch{ return false; }
+}
+
+/* What the board is narrowed by, cleared — STATE AND THE CONTROLS TOGETHER.
+ *
+ * Arriving from an alert must show what the alert is about, and the header's
+ * search box and scope-of-work picker survive a tab change: somebody who
+ * searched "crate" last week, clicked an alert about three overdue characters,
+ * and landed on an empty board would have no reason to think of the search box
+ * three panels away. So both are cleared on arrival.
+ *
+ * THE DOM VALUES AS WELL AS THE STATE. setTab() writes the search box back from
+ * state.search, but nothing syncs the scope picker — so clearing only the state
+ * would leave a box reading "Characters" over a board showing everything, which
+ * is the same disagreement in the other direction.
+ *
+ * NOT state.listFilter. That is the Assets List's own column filter bar — it
+ * does not narrow the board at all (see filteredAssets), it is on screen with a
+ * Reset beside it wherever it applies, and its own note says it is deliberately
+ * kept across a project change. Clearing another tab's controls from a
+ * navigation would be a surprise, not a courtesy. */
+function clearBoardNarrowing(){
+  state.search = '';
+  state.filterType = '';
+  const box = document.getElementById('search');
+  if(box) box.value = '';
+  const type = document.getElementById('filterType');
+  if(type) type.value = '';
+}
+
+/* ---------- Admin Dashboard -> this project's board ----------
+ *
+ * THE ONE ACTION the Attention Required chips perform, and the reason it is a
+ * function rather than four lines in a click handler: arriving somewhere is
+ * more than switching tabs. The project, the client, the remembered context and
+ * both header controls all have to agree before the board draws, or the alert
+ * sends somebody to a screen that does not show what they clicked.
+ *
+ * `statuses` is what the row was about — the asset statuses the server counted.
+ * It is handed to the lens, not to a filter: see boardLensArrival. A row about
+ * projects passes none.
+ *
+ * THE PERSISTED CONTEXT BECOMES THE CLICKED PROJECT, exactly as if the picker
+ * had been used, because that is what the click means. Somebody who follows an
+ * alert and then reloads is still on the project they went to look at. */
+function openProjectBoard(projectId, statuses){
+  if(!selectProject(projectId)) return false;
+  clearBoardNarrowing();
+  boardLensArrival = Array.isArray(statuses) && statuses.length ? statuses : [];
+  setTab('board');
+  return true;
 }
 
 /* ---------- tabs ---------- */
@@ -5771,6 +5910,55 @@ const BOARD_LENS_DEFAULT = 'art';
  * If the studio would rather it stuck, it is a key in saveContext() — see
  * contextKey() — and that is the whole change. */
 let boardLens = BOARD_LENS_DEFAULT;
+
+/* ARRIVING FROM AN ALERT, and the one case the default is wrong for.
+ *
+ * Null normally. An Admin Dashboard chip sets it to the statuses that row was
+ * about, and the next draw of the board spends it — once — to choose the lens
+ * that actually holds the work being pointed at, then clears it.
+ *
+ * WHY NOT JUST SET boardLens: because the answer depends on what is in the
+ * project, which is not loaded until after the tab switch. And why one-shot:
+ * a lens that corrected itself on every draw would overrule somebody who had
+ * deliberately clicked Animation on a project full of Art, which is the
+ * existing "Nothing in Animation here" screen and is the right answer for a
+ * choice somebody just made. This only overrules the DEFAULT, on the one draw
+ * that follows a click somebody made somewhere else.
+ *
+ * AN EMPTY ARRAY still means "arriving" — a row about projects rather than
+ * assets. There is no asset to aim at, so the lens stays where it is unless it
+ * would be empty, which is the never-land-on-nothing rule below. */
+let boardLensArrival = null;
+
+/* Which lens to open on, for an arrival. Returns the lens id.
+ *
+ *   1. The lens holding most of the alerting assets, when the row named
+ *      statuses and any of them are here. "Most" rather than "any" because a
+ *      row can span both halves and the heavier side is the one worth opening.
+ *   2. Otherwise the lens that is already chosen — the default, Art.
+ *   3. Unless that one is EMPTY while the other is not, in which case the other.
+ *      This is the rule that stops an alert ever landing on a blank board: a
+ *      project whose every asset is an animation has nothing under Art, and a
+ *      viewer who clicked "2 overdue" would be looking at an empty column set
+ *      with no indication that the work is one sub-tab away.
+ *
+ * It never returns a lens with nothing in it when one with something exists. */
+function arrivalLens(pool, statuses, current){
+  const held = (l)=> pool.filter(l.match);
+  if(statuses && statuses.length){
+    const alerting = pool.filter(a=>statuses.includes(a.status));
+    if(alerting.length){
+      const ranked = BOARD_LENS
+        .map(l=>({ id:l.id, n: alerting.filter(l.match).length }))
+        .sort((x,y)=>y.n-x.n);
+      if(ranked[0].n > 0) return ranked[0].id;
+    }
+  }
+  const now = BOARD_LENS.find(l=>l.id===current) || BOARD_LENS[0];
+  if(held(now).length) return now.id;
+  const other = BOARD_LENS.find(l=>l.id!==now.id && held(l).length);
+  return other ? other.id : now.id;
+}
 const boardLensMatch = () =>
   (BOARD_LENS.find(l => l.id === boardLens) || BOARD_LENS[0]).match;
 
@@ -5799,6 +5987,13 @@ function renderBoard(){
      with its own sub-tabs, and a lens on the Dashboard has no business
      narrowing it. */
   const pool = filteredAssets();
+  /* THE ARRIVAL'S LENS, spent here and nowhere else. Above the two empty
+     returns so that it is cleared whatever this draw ends up being — a flag
+     left set would steer the next draw, which by then is somebody's own click. */
+  if(boardLensArrival !== null){
+    boardLens = arrivalLens(pool, boardLensArrival, boardLens);
+    boardLensArrival = null;
+  }
   if(state.assets.length && !pool.length){ el.innerHTML = `<div class="empty">No assets match your filters.</div>`; return; }
   if(!state.assets.length){ el.innerHTML = `<div class="empty">${emptyBoardReason()}</div>`; return; }
 
@@ -7859,13 +8054,12 @@ function wireProjects(){
     }catch(err){ showToast(err.message); }
   }));
   /* Opening a project's board is what the header dropdown does, so it does the
-     same thing rather than a second mechanism. */
+     same thing rather than a second mechanism — selectProject(), which is that
+     mechanism named. It used to poke the <select> directly and skip the client
+     context and the save, which meant opening a project under another client
+     left the picker filtering it back out again. */
   document.querySelectorAll('.openProjectBtn').forEach(b=>b.addEventListener('click', ()=>{
-    const sel = document.getElementById('projectSelect');
-    if([...sel.options].some(o=>o.value===b.dataset.id)){
-      sel.value = b.dataset.id; state.currentProjectId = b.dataset.id;
-      applyGate('editProjectBtn');
-    }
+    selectProject(b.dataset.id);
     setTab('board');
   }));
 }
@@ -11774,6 +11968,14 @@ async function renderAdminDashboard(){
     return;
   }
   ADMIN_DASH = d;
+  /* THE CHIPS ARE DECIDED AGAINST A CURRENT PROJECT LIST, not against the one
+     this page loaded with. Both lists come from permissions.visibleProjects, so
+     a project named here is one the picker holds — but state.projects is a
+     snapshot and this payload is a moment old, and the gap between them is the
+     only thing that can make a chip undrawable. One request on a screen
+     somebody opens and reads, so that "plain text" means "you cannot open
+     this" rather than "this page is out of date". */
+  await refreshProjects();
   const c = d.counts;
   const who = (d.viewer && d.viewer.name) || (state.currentUser && state.currentUser.name) || '';
   const firstName = String(who).trim().split(/\s+/)[0] || who;
@@ -11891,44 +12093,128 @@ function renderCalendar(dates){
  * one project — so a row saying "6 assets waiting on review" with nothing to
  * click would be a dead end. Naming the projects, heaviest first, ends every
  * row somewhere real. */
+const ATTENTION_CHIP_CAP = 6;
+
+/* WHICH ROWS HAVE BEEN OPENED OUT past the chip cap, by row key.
+ *
+ * Module-level and keyed by something stable, not by index, because this screen
+ * is redrawn from scratch — switching tabs and back, or anything that calls
+ * render() while it is open, rebuilds the whole panel. A set of expanded rows
+ * kept inside the render would collapse under somebody's hands. */
+const ATTENTION_OPEN = new Set();
+const attentionKey = (r)=> `${r.severity}|${r.label}`;
+
+/* One project, as something to click — or as plain text when it is not.
+ *
+ * NOT CLICKABLE IS A REAL ANSWER, and it is drawn rather than hidden. The two
+ * screens have the same reach by construction (both go through
+ * permissions.visibleProjects — see the note in wireAdminDashboard), so the
+ * case left is a project that has appeared SINCE this page loaded:
+ * state.projects is a snapshot and this payload is not. Offering a link that
+ * would land nowhere is worse than naming the project and saying to reload, and
+ * a <span> cannot be tabbed to or pressed, so nobody meets a dead control.
+ *
+ * A BUTTON, not a div with a click: focusable in order, Enter and Space for
+ * free, announced as a button, and the label says where it goes rather than
+ * just naming the project. */
+function attentionChip(p, statuses){
+  const count = p.count ? ` <span class="mono">${p.count}</span>` : '';
+  if(!projectReachable(p.id)){
+    return `<span class="ad-chip ad-chip-plain"
+      title="Not in your project list on this page — reload to open it.">${escapeHTML(p.name)}${count}</span>`;
+  }
+  return `<button type="button" class="ad-chip" data-project="${escapeHTML(p.id)}"
+    data-statuses="${escapeHTML((statuses||[]).join(','))}"
+    aria-label="Open ${escapeHTML(p.name)} dashboard">${escapeHTML(p.name)}${count}</button>`;
+}
+
 function renderAttention(rows, thresholds){
   if(!rows || !rows.length){
     return `<div class="ad-empty">Nothing needs attention. Every project is on track and
       nothing is waiting on a decision.</div>`;
   }
-  return `<div class="ad-flags">${rows.map(r=>`
+  return `<div class="ad-flags">${rows.map(r=>{
+    const projects = r.projects || [];
+    const open = ATTENTION_OPEN.has(attentionKey(r));
+    const shown = open ? projects : projects.slice(0, ATTENTION_CHIP_CAP);
+    const hidden = projects.length - shown.length;
+    return `
     <div class="ad-flag ad-sev-${escapeHTML(r.severity)}">
       <span class="ad-dot" aria-hidden="true"></span>
       <div class="ad-flag-body">
+        <!-- The lead is the row's own count ACROSS projects, and it is
+             deliberately not a link: there is no one project to send anybody to,
+             and picking one would be a guess. The chips below it are where the
+             row ends. -->
         <div class="ad-flag-lead"><span class="mono ad-flag-n">${r.count}</span> ${escapeHTML(r.label)}</div>
         <div class="ad-flag-detail">${escapeHTML(r.detail)}</div>
-        ${(r.projects||[]).length ? `<div class="ad-chips">${r.projects.slice(0,6).map(p=>`
-          <button class="ad-chip" data-project="${escapeHTML(p.id)}">${escapeHTML(p.name)}${
-            p.count ? ` <span class="mono">${p.count}</span>` : ''}</button>`).join('')}${
-          r.projects.length>6 ? `<span class="ad-chip-more">+${r.projects.length-6} more</span>` : ''}</div>` : ''}
+        ${projects.length ? `<div class="ad-chips">${
+          shown.map(p=>attentionChip(p, r.statuses)).join('')}${
+          hidden > 0 ? `<button type="button" class="ad-chip-more" data-more="${escapeHTML(attentionKey(r))}"
+            aria-label="Show ${hidden} more project${hidden===1?'':'s'} in this alert">+${hidden} more</button>` : ''}${
+          open && projects.length > ATTENTION_CHIP_CAP ? `<button type="button" class="ad-chip-more"
+            data-less="${escapeHTML(attentionKey(r))}" aria-label="Show fewer projects in this alert">show fewer</button>` : ''
+        }</div>` : ''}
       </div>
-    </div>`).join('')}
+    </div>`;
+  }).join('')}
     <div class="ad-note">At risk means unfinished work due inside
       ${Number(thresholds && thresholds.atRiskDays) || 7} days. Overdue means already past a due date.</div>
   </div>`;
 }
 
 function wireAdminDashboard(){
-  /* Opening a project is the same mechanism the Projects tab and the header
-     dropdown use, rather than a second way of doing it. */
-  document.querySelectorAll('#adminDashView .ad-chip').forEach(b=>b.addEventListener('click', ()=>{
-    const sel = document.getElementById('projectSelect');
-    if(sel && [...sel.options].some(o=>o.value===b.dataset.project)){
-      sel.value = b.dataset.project;
-      state.currentProjectId = b.dataset.project;
-      applyGate('editProjectBtn');
-      setTab('board');
-    }else{
-      /* The project is not in this person's picker — archived, or outside their
-         scope since the page loaded. Send them to Projects rather than to a
-         board that would render somebody else's work or nothing at all. */
+  /* THE LINK BETWEEN THE TWO SCREENS CALLED DASHBOARD. A chip on this one opens
+   * that project's board on the other, through openProjectBoard() — the same
+   * funnel the header picker and the Projects tab go through, so the picker,
+   * the remembered context and the board cannot end up pointing at three
+   * different things.
+   *
+   * WHAT THIS USED TO DO, and why it was not enough: it set the id and the
+   * <select>.value by hand, saved nothing, and — because the project picker is
+   * narrowed by the Client box beside it — gave up and went to the Projects tab
+   * whenever the project belonged to a different client than the one the header
+   * happened to be on. Which, from a studio-wide alert list, is most of them.
+   *
+   * REACH IS NOT CHECKED HERE because it cannot differ: the Admin Dashboard's
+   * projects come from permissions.visibleProjects(user) and GET /api/projects
+   * returns that same call, so what this screen can name is what the picker
+   * holds. The chips a snapshot does not hold are drawn as plain text by
+   * attentionChip() and never reach this handler. The board's own request is
+   * still checked server-side by canAccessProject — which is visibleProjects
+   * again — so a crafted id is refused there whatever the page draws.
+   *
+   * Re-wired on every draw, because the panel is rebuilt by innerHTML and the
+   * old nodes go with it. */
+  document.querySelectorAll('#adminDashView .ad-chip[data-project]').forEach(b=>b.addEventListener('click', (ev)=>{
+    /* The chip is the control, and the row around it carries no handler — so a
+       click here is not also a click on something larger. Stopped anyway: if a
+       row ever becomes clickable, the chip must still win. */
+    ev.stopPropagation();
+    const statuses = String(b.dataset.statuses||'').split(',').filter(Boolean);
+    if(!openProjectBoard(b.dataset.project, statuses)){
+      /* The snapshot has moved on since the panel was drawn. Projects is the
+         screen that lists every project this account can open, and reloads it. */
       setTab('projects');
     }
+  }));
+
+  /* The cap, opened out and closed again. Only the panel is redrawn — the
+     expanded set is module state, so the timed refresh and a tab round trip
+     both leave it where somebody put it. */
+  const redraw = ()=>{
+    const slot = document.getElementById('adminDashView');
+    if(!slot || !ADMIN_DASH) return;
+    const panel = slot.querySelector('.ad-flags');
+    if(!panel) return;
+    panel.outerHTML = renderAttention(ADMIN_DASH.attention, ADMIN_DASH.thresholds);
+    wireAdminDashboard();
+  };
+  document.querySelectorAll('#adminDashView [data-more]').forEach(b=>b.addEventListener('click', ()=>{
+    ATTENTION_OPEN.add(b.dataset.more); redraw();
+  }));
+  document.querySelectorAll('#adminDashView [data-less]').forEach(b=>b.addEventListener('click', ()=>{
+    ATTENTION_OPEN.delete(b.dataset.less); redraw();
   }));
 }
 
@@ -16041,15 +16327,18 @@ async function openNotification({ id, asset, project, conversation }){
        context first, the same way choosing from the picker does — otherwise the
        drawer opens against a board that does not contain it. The client has to
        move too, or the project picker is left showing a project its client
-       filter excludes. */
+       filter excludes.
+       
+       These six lines are what selectProject() was extracted FROM; it is called
+       here so there is one of them rather than two that drift. */
     if(project && project !== state.currentProjectId){
-      const target = state.projects.find(p=>p.id === project);
-      state.currentProjectId = project;
-      if(target && target.client_id) state.clientContextId = target.client_id;
-      saveContext();
-      renderContextPickers();
-      applyGate('editProjectBtn');
-      await render();
+      /* RETRIED AFTER A REFRESH, because the snapshot not holding the project is
+         the NORMAL case here rather than an edge one — this notification exists
+         because something changed since the page loaded, and being newly given
+         work in a project is one of the things it announces. Without the retry
+         the context would stay put and the asset would read as unavailable. */
+      if(!selectProject(project)) await refreshProjects();
+      if(selectProject(project)) await render();
     }
 
     /* openDrawer reads state.assets and returns silently when the asset is not

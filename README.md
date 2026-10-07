@@ -1819,6 +1819,87 @@ is a link. That is not decoration: this application has no studio-wide list of
 assets — the board and the Assets List are both scoped to one project — so a row
 saying "6 assets waiting on review" with nothing to click would be a dead end.
 
+### Where an Attention chip goes, and what it resets
+
+A chip opens **that project's board** — the other screen called Dashboard. What
+is linked, and what deliberately is not:
+
+| Row | What it represents | Click target |
+| --- | --- | --- |
+| *n* projects overdue | projects | each chip → that project's board |
+| *n* projects at risk | projects | each chip → that project's board |
+| *n* assets waiting on review | assets, broken down per project | each chip → that project's board, under the lens holding the waiting work |
+| *n* assets awaiting client feedback | assets, broken down per project | the same |
+| the row's own count and label | an aggregate across projects | **not a link** — there is no one project to go to, and picking one would be a guess |
+| the four cards, the pipeline bars, the calendar rows | aggregates across projects | **not links**, for the same reason |
+
+**One funnel, because there were four.** `selectProject()` in
+`public/index.html` is now the only way the app points itself at a project, and
+the header picker, the Projects tab's *Open*, an Attention chip and a
+notification all call it. Each of the four used to do it by hand and only one
+did the whole job — the others left the **client** context behind, and the
+project picker is *filtered by* that client, so opening a project under another
+client left the picker showing a project its own filter excluded. Worse, the
+Attention chip tested the `<select>`'s options and, finding the project missing
+for exactly that reason, gave up and went to the Projects tab — which from a
+studio-wide alert list is most of them.
+
+**What arrival resets, and why.** The header's search box and scope-of-work
+picker both survive a tab change, so an alert clicked a week later would land on
+a board narrowed by something nobody remembers setting — hiding the very asset
+the alert is about. `clearBoardNarrowing()` clears both, **in the state and in
+the controls**: nothing syncs the scope picker from state, so clearing one
+without the other would leave a box reading "Characters" over a board showing
+everything. The Assets List's own column filters (`state.listFilter`, which is
+where the assignee filter lives) are **left alone** — they do not narrow the
+board at all, they are drawn on screen with a Reset beside them, and clearing
+another tab's controls from a navigation would be a surprise rather than a
+courtesy.
+
+**The lens follows the work.** The Art/Animation lens defaults to Art and resets
+each load, so an alert about three animations would otherwise land on a board
+holding none of them. Each asset row now carries the **statuses** it counted
+(not the asset ids — the page already has the project's assets once the board
+loads, and ids would be a second list to keep in step with the counts), and
+`arrivalLens()` picks the lens holding most of the alerting work. A *project*
+row names no asset, so the default stands — **unless it would be empty**, in
+which case the other lens wins. An alert can never land on a blank board. It is
+**one-shot**: it steers the one draw that follows the click and is then cleared,
+so it never overrules somebody who chose a lens themselves.
+
+**The persisted context becomes the clicked project**, exactly as if the picker
+had been used, so somebody who follows an alert and then reloads is still
+looking at what they went to see.
+
+**Reach: there is no mismatch, and no new permission key.** The Admin Dashboard
+lists `permissions.visibleProjects(user)`; `GET /api/projects` — the list the
+page draws its chips from — returns that same call; and `canAccessProject`,
+which guards the board's own request, *is* that call. So a project this screen
+can name is one whose board opens, and the server still refuses a crafted id
+(pinned). A chip is drawn as **plain text** rather than a button when the page's
+own project list does not hold it, which after the refresh below can only mean
+reach changed under the reader — and `renderAdminDashboard()` re-reads that list
+on every draw so "plain text" means "you cannot open this" rather than "this
+page is stale".
+
+**No routing was introduced.** The app has none at all — no hash, no
+`pushState`, no `popstate` listener; `location` is read for the API base and the
+sign-out redirect and nowhere else. So the destination is **not addressable**:
+reload lands wherever the remembered context points (which, after a click, is
+the project clicked), and the browser's Back button does not retrace a tab
+change. The way back to the Admin Dashboard is the tab bar. Adding routing for
+one link would be a navigation model for the whole application, which is a
+larger change than this.
+
+**Accessibility.** Each chip is a real `<button type="button">` — in the tab
+order, activated by Enter and Space, announced as a button — labelled
+`Open <project> dashboard` rather than just named. It has the same focus ring
+the rest of the page uses. The row around it carries **no** handler, so the text
+of an alert stays selectable and a click on a chip is not also a click on
+something larger; the chip stops the event anyway. Past six projects a row shows
+`+n more`, which is itself a button and expands in place; what it opens is kept
+**outside** the render, so a redraw of the panel does not collapse it.
+
 ### Team Capacity
 
 A right-hand panel: **Available**, **Consumed** and **Idle** hours across the

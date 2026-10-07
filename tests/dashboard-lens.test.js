@@ -129,6 +129,12 @@ function renderWith({ assets, lensId, statuses }) {
     return PAGE.slice(at, PAGE.indexOf('\n}', last) + 2);
   })();
   const source = columnSource
+    /* The arrival lens. renderBoard spends it on the first draw after an Admin
+       Dashboard alert is clicked, so it has to be in scope here or the render
+       throws; tests/dashboard-link.test.js is where it is exercised. It is null
+       on every draw in this file, which is what an ordinary draw sees. */
+    + '\n' + grab('let boardLensArrival = null;', ';')
+    + '\n' + grab('function arrivalLens(pool, statuses, current)')
     + '\n' + grab('function renderBoard()')
     + '\n' + grab('function wireBoardLens(el)');
   const captured = { html: '' };

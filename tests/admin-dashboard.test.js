@@ -263,6 +263,43 @@ test('the Admin Dashboard', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.ok(body.attention.every((r) => r.count > 0));
   });
 
+  await t.test('every row carries the project ids and the statuses it counted', async () => {
+    /* WHAT THE LINK IS BUILT ON. The Attention panel's chips open that project's
+       board, so the id has to come from the payload — matching on the display
+       NAME would break the moment two clients both have a "Season 2", and
+       renaming a project would break it silently.
+       
+       The statuses are what the row is ABOUT, and they are here because the
+       board opens under the Art/Animation lens, which defaults to Art: an
+       alert about three animations has to be able to say so, or it lands on a
+       board that holds none of them. The page works out which lens from the
+       assets it already has — see arrivalLens() — so this is a status list and
+       not a second copy of the counts. */
+    const body = (await as('root', '/admin-dashboard')).body;
+    const row = (severity, match) => body.attention.find((r) => r.severity === severity && match.test(r.label));
+
+    for (const r of body.attention) {
+      assert.ok(Array.isArray(r.projects), `${r.label} names its projects`);
+      for (const p of r.projects) {
+        assert.match(p.id, /^[0-9a-f-]{36}$/i, `${r.label}: ${p.name} carries an id, not just a name`);
+        assert.ok(p.name, 'and a name to print');
+      }
+      assert.ok(Array.isArray(r.statuses), `${r.label} says which statuses it counted`);
+    }
+
+    // A row about projects has no asset to aim a lens at, and says so.
+    assert.deepStrictEqual(row('overdue', /overdue/).statuses, []);
+    assert.deepStrictEqual(row('at-risk', /project/).statuses, []);
+    // A row about assets carries the states it summed, from the module's own lists.
+    assert.deepStrictEqual(row('at-risk', /review/).statuses, dashboard.REVIEW_STATES);
+    assert.deepStrictEqual(row('client', /client/).statuses, dashboard.CLIENT_STATES);
+    // A copy, not the module's array: a caller mutating it must not change the next answer.
+    assert.notStrictEqual(row('client', /client/).statuses, dashboard.CLIENT_STATES);
+
+    // The ids are the real projects, so a chip opens the right board.
+    assert.deepStrictEqual(row('overdue', /overdue/).projects.map((p) => p.id), [project.lateE.id]);
+  });
+
   await t.test('the delivery calendar is grouped by date, soonest first', async () => {
     const body = (await as('root', '/admin-dashboard')).body;
     const dates = body.calendar.map((d) => d.date);
@@ -318,6 +355,39 @@ test('the Admin Dashboard', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       method: 'PUT', body: { permissions: held },
     });
     assert.strictEqual((await as('ana', '/admin-dashboard')).status, 403);
+  });
+
+  await t.test('the link cannot reach past the viewer\'s own scope — the server still decides', async () => {
+    /* THE CRAFTED REQUEST. The chips are drawn from what this account can see,
+       but a page is not a permission: what matters is that the board's own
+       endpoint refuses a project id somebody types in.
+       
+       Both screens ask permissions.visibleProjects — canAccessProject IS that
+       call — so there is no gap between what the dashboard names and what the
+       board opens. This pins the refusal anyway, because that agreement is the
+       thing a future change would break. */
+    const held = (await as('root', '/permissions/roles/game_artist')).body.role.permissions
+      .filter((p) => p.enabled).map((p) => p.key);
+    await as('root', '/permissions/roles/game_artist', {
+      method: 'PUT', body: { permissions: [...held, 'report.admin_dashboard'] },
+    });
+
+    const mine = await as('ana', '/admin-dashboard');
+    assert.strictEqual(mine.status, 200);
+    const named = new Set(mine.body.attention.flatMap((r) => r.projects.map((p) => p.id)));
+    assert.ok(!named.has(project.lateE.id),
+      'the artist is not attached to Late E, so no chip for it is ever drawn');
+
+    // And asking for it directly is refused, whatever the page shows.
+    const crafted = await as('ana', `/assets/project/${project.lateE.id}`);
+    assert.strictEqual(crafted.status, 403, JSON.stringify(crafted.body));
+    assert.match(crafted.body.error, /No access to this project/);
+
+    // The one she CAN see opens, which is the other half of "no reach mismatch".
+    const ok = await as('ana', `/assets/project/${project.onTrackA.id}`);
+    assert.strictEqual(ok.status, 200, 'a project on her dashboard opens its board');
+
+    await as('root', '/permissions/roles/game_artist', { method: 'PUT', body: { permissions: held } });
   });
 
   await t.test('it is read-only: there is no verb here but GET', async () => {

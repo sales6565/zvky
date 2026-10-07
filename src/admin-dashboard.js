@@ -195,6 +195,21 @@ async function build(db, user) {
      sends you to is where the work happens. */
   const waiting = await waitingCounts(db, openIds);
   const named = (list) => list.map((p) => ({ id: p.id, name: p.name, count: null }));
+
+  /* WHAT THE ROW IS ABOUT, in statuses, and why the screen is given them.
+   *
+   * A row about PROJECTS carries none: the whole project is the subject.
+   * A row about ASSETS carries the statuses it counted, because clicking its
+   * project chip now opens that project's board — and the board opens under
+   * the Art/Animation lens, which defaults to Art. An alert about three
+   * animations would otherwise land on an Art board that does not contain one
+   * of them, which reads as a broken link rather than as a lens.
+   *
+   * THE STATUSES RATHER THAN THE ASSET IDS, deliberately. The page already has
+   * the project's assets once the board loads, so it can find the alerting ones
+   * itself; sending the ids would be a second list to keep in step with the
+   * counts, and would grow this payload with every submission. The page needs
+   * to know which lens holds them, and a status list answers that. */
   const attention = [
     {
       severity: 'overdue',
@@ -202,6 +217,7 @@ async function build(db, user) {
       label: buckets.overdue.length === 1 ? 'project overdue' : 'projects overdue',
       detail: 'Past its end date, or holding work already past its due date.',
       projects: named(buckets.overdue),
+      statuses: [],
     },
     {
       severity: 'at-risk',
@@ -209,6 +225,7 @@ async function build(db, user) {
       label: buckets.atRisk.length === 1 ? 'project at risk' : 'projects at risk',
       detail: `Something due inside ${AT_RISK_DAYS} days is not finished.`,
       projects: named(buckets.atRisk),
+      statuses: [],
     },
     {
       severity: 'at-risk',
@@ -216,6 +233,7 @@ async function build(db, user) {
       label: waiting.review === 1 ? 'asset waiting on review' : 'assets waiting on review',
       detail: 'Submitted, and sitting with a team lead or the Creative Director.',
       projects: waiting.reviewBy,
+      statuses: [...REVIEW_STATES],
     },
     {
       severity: 'client',
@@ -223,6 +241,7 @@ async function build(db, user) {
       label: waiting.client === 1 ? 'asset awaiting client feedback' : 'assets awaiting client feedback',
       detail: 'Delivered to the client and waiting on their word.',
       projects: waiting.clientBy,
+      statuses: [...CLIENT_STATES],
     },
   ].filter((row) => row.count > 0);
 
