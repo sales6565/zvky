@@ -37,6 +37,7 @@ const vm = require('node:vm');
 
 const gate = require('../src/timesheet-gate');
 const timesheetSettings = require('../src/timesheet-settings');
+const holidays = require('../src/holidays');
 const catalog = require('../src/permission-catalog');
 const rolePermissions = require('../src/role-permissions');
 const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON,
@@ -115,6 +116,58 @@ test('the date boundary is midnight IST, not midnight UTC', () => {
   // And the ISO weekday is read through UTC, so the server's own zone cannot shift it.
   assert.strictEqual(gate.isoDayOf('2026-10-05'), 1, 'Monday is 1');
   assert.strictEqual(gate.isoDayOf('2026-10-04'), 7, 'Sunday is 7');
+});
+
+test('an empty holiday calendar is not a missing one, and only one of them frees anybody', async () => {
+  /* THE BRIEF ASKED WHAT HAPPENS WHEN THE HOLIDAY TABLE IS EMPTY, and the
+   * honest answer is that there are two different states behind that question:
+   *
+   *   READ, AND THERE IS NOTHING IN IT — a studio that has declared no
+   *      holidays. Nothing to skip, so the demand lands on the plain previous
+   *      working day and the rule applies normally. Freeing everybody here
+   *      would mean the rule never worked on a fresh install.
+   *
+   *   NEVER READ — a process that cannot answer the question at all. Nobody is
+   *      blocked, because a rule about paperwork must not be an outage.
+   *
+   * THE FIRST HALF RUNS BEFORE ANYTHING IN THIS FILE LOADS THE MIRROR, which is
+   * what makes isLoaded() false here: a fresh process. It is asserted rather
+   * than assumed, so this reads as a failure of the premise rather than of the
+   * gate if that ever changes.
+   *
+   * WORTH KNOWING, AND NOT WHAT THE BRIEF EXPECTED: holidays.load() swallows
+   * its own query error and leaves the mirror LOADED and empty, so a broken or
+   * missing studio_holidays table reads as "no holidays" rather than as "cannot
+   * tell". The gate then asks for the plain previous day, which may really have
+   * been a holiday — and a Holiday or Idle line still satisfies it, so nobody
+   * is locked out either way. That is the holidays module's existing choice,
+   * made before this rule, and is left alone rather than reinterpreted here. */
+  const POLICY = { requirePreviousDay: true, loggableDays: [1, 2, 3, 4, 5], backdateDays: null };
+  const user = { id: 'u1', created_at: '2020-01-01 00:00:00' };
+  // Wed 7 Oct 2026, 11:30 IST. Nothing filled, so the only question is the date.
+  const now = Date.parse('2026-10-07T06:00:00Z');
+  const nothingFilled = { query: async () => ({ rows: [{ n: 0 }] }) };
+
+  assert.strictEqual(holidays.isLoaded(), false,
+    'the premise: this case runs before the mirror has been read in this process');
+  const unread = await gate.check(nothingFilled, user, { now, settings: POLICY });
+  assert.strictEqual(unread.blocked, false, 'a calendar that cannot be read blocks nobody');
+  assert.strictEqual(unread.reason, 'holiday calendar unavailable');
+
+  // Now read it, from a table with nothing in it.
+  await holidays.load({ query: async () => ({ rows: [] }) });
+  assert.strictEqual(holidays.isLoaded(), true, 'read, and empty');
+  const owed = await gate.check(nothingFilled, user, { now, settings: POLICY });
+  assert.strictEqual(owed.blocked, true, 'an empty calendar skips nothing, so the rule still applies');
+  assert.strictEqual(owed.date, '2026-10-06', 'the plain previous working day');
+
+  /* AND THE OTHER FAIL-OPEN PATH, from the same place: anything the lines query
+     throws. The live case below drops the table for real; this pins that the
+     answer is the same for a database that is simply not there. */
+  const broken = { query: async () => { throw new Error('ER_NO_SUCH_TABLE: it is gone'); } };
+  const onError = await gate.check(broken, user, { now, settings: POLICY });
+  assert.strictEqual(onError.blocked, false, 'and a throw frees the clock rather than stopping it');
+  assert.strictEqual(onError.reason, 'error');
 });
 
 test('the date is named in words a person can match to the day picker', () => {

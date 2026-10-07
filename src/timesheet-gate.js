@@ -2,7 +2,9 @@
  *
  * When the studio switches it on, a person who has not filled their timesheet
  * for the previous working day cannot start or resume a task. Fill it and the
- * clock unlocks on the next poll — no sign-out, no waiting.
+ * clock unlocks straight away: the Time Sheet re-asks /auth/me the moment a
+ * line is saved, and the twenty-second permission poll carries the same answer
+ * for every other way it can change. No sign-out, no waiting.
  *
  * ONE MODULE BECAUSE THERE ARE TWO DEFINITIONS AND BOTH ARE EASY TO GET WRONG.
  * "Previous working day" and "filled" are decided here, once, and every caller
