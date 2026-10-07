@@ -4613,6 +4613,28 @@ function timesheetBlock(){
   return g && g.blocked ? g : null;
 }
 
+/* AND THE UNLOCK, THE MOMENT THE LINE IS SAVED.
+ *
+ * refreshPermissions() carries the same field, and is throttled to one read in
+ * twenty seconds. That is right for a background poll and wrong for the direct
+ * consequence of something somebody has just done: a line saved two seconds
+ * after the last poll would leave Accept and Start refused for eighteen more,
+ * with the explanation still naming a day they have just filled.
+ *
+ * So the gate is re-asked on the action, and the poll stays as the safety net
+ * for every other way the answer can change — midnight, a holiday declared, the
+ * switch flipped. It asks the SERVER again rather than deciding locally that
+ * the debt is paid, which is the same rule timesheetBlock() is written to. A
+ * failure is silent: the poll will catch up, and the server refuses the click
+ * regardless. */
+async function refreshTimesheetGate(){
+  if(!state.token || !state.currentUser) return;
+  try{
+    const { timesheetGate } = await api('/auth/me');
+    state.timesheetGate = timesheetGate || null;
+  }catch(e){ /* the twenty-second poll will catch up */ }
+}
+
 /* The date this asset cannot be started before, or null when nothing is
    scheduled. Blank keeps meaning what it meant before the field existed. */
 function notYetStartable(a){
@@ -5166,7 +5188,11 @@ function wireTimesheet(el){
   el.querySelectorAll('.ts-add').forEach(b=>b.onclick = ()=>openTimesheetLine(b.dataset.day));
   el.querySelectorAll('.ts-del').forEach(b=>b.onclick = async ()=>{
     b.disabled = true;
-    try{ await api('/timesheets/entries/'+b.dataset.id, { method:'DELETE' }); await renderTimesheet(); }
+    try{ await api('/timesheets/entries/'+b.dataset.id, { method:'DELETE' }); await renderTimesheet();
+      /* The other direction: removing the last line on the owed day puts the
+         demand back, and the button has to say so rather than failing on the
+         click. */
+      await refreshTimesheetGate(); }
     catch(e){ showToast(e.message); b.disabled = false; }
   });
 
@@ -5459,6 +5485,7 @@ document.getElementById('tl_save').addEventListener('click', async ()=>{
     timesheetLineWrap.classList.remove('show');
     if(res.overLong) showToast('Logged — that day is over the standard day, and is flagged.');
     await renderTimesheet();
+    await refreshTimesheetGate();   // the line may be the one holding Start shut
   }catch(e){ err.textContent = e.message; }
   finally{ btn.disabled = false; }
 });

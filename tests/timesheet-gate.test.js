@@ -237,9 +237,11 @@ test('the page holds no date logic of its own', () => {
   assert.strictEqual(pageBlock(null), null);
   assert.strictEqual(pageBlock(undefined), null);
 
-  // And both reads of /auth/me store it, so a reload and a poll agree.
-  assert.strictEqual((PAGE.match(/state\.timesheetGate = timesheetGate \|\| null;/g) || []).length, 2,
-    'the boot read and the twenty-second poll both keep it');
+  /* And every read of /auth/me stores it the same way, so a reload, a poll and
+     the read taken straight after a line is saved cannot disagree: the boot
+     read, refreshPermissions() and refreshTimesheetGate(). */
+  assert.strictEqual((PAGE.match(/state\.timesheetGate = timesheetGate \|\| null;/g) || []).length, 3,
+    'the boot read, the twenty-second poll and the read on saving a line');
 });
 
 test('the blocked Start button says what to do and links to the day', () => {
@@ -266,6 +268,37 @@ test('the blocked Start button says what to do and links to the day', () => {
      explanation names a day and the tab lands somewhere else. */
   assert.match(code, /if\(date\) tsState\.date = date;/);
   assert.match(code, /setTab\('timesheet'\);/);
+});
+
+test('saving the line re-asks the server, rather than waiting out the poll', () => {
+  /* THE BRIEF ASKED FOR THE UNLOCK TO BE IMMEDIATE, and the twenty-second poll
+     is not that: a line saved two seconds after the last poll would leave the
+     button refused for eighteen more, with the explanation still naming a day
+     that is now filled. So the Time Sheet re-asks on the action.
+
+     IT RE-ASKS THE SERVER rather than deciding locally that the debt is paid,
+     which is the same rule timesheetBlock() is written to — the page holds the
+     answer and never the reasoning. */
+  const code = PAGE.replace(/\/\*[\s\S]*?\*\//g, '');
+  const at = code.indexOf('async function refreshTimesheetGate()');
+  assert.ok(at !== -1, 'the page has the one-off read');
+  const body = code.slice(at, code.indexOf('\n}', at));
+  assert.match(body, /api\('\/auth\/me'\)/, 'it asks the endpoint the server answers on');
+  assert.match(body, /state\.timesheetGate = timesheetGate \|\| null;/, 'and stores what it gets');
+  for (const forbidden of ['loggableDays', 'previousWorking', 'blocked = false', 'blocked=false']) {
+    assert.ok(!body.includes(forbidden), `it does not decide locally (${forbidden})`);
+  }
+
+  // Both ends of the day's state: the line that pays the debt, and its removal.
+  assert.match(code, /await renderTimesheet\(\);\s*\n\s*await refreshTimesheetGate\(\);/,
+    'a saved line re-asks at once');
+  assert.ok(/method:'DELETE' \}\); await renderTimesheet\(\);[\s\S]{0,120}refreshTimesheetGate\(\)/.test(code),
+    'and so does deleting the last one, which puts the demand back');
+
+  /* AND THE POLL IS STILL THERE as the safety net for every other way the
+     answer changes — midnight passing, a holiday declared, the switch flipped
+     by somebody else. */
+  assert.match(PAGE, /const PERMISSION_REFRESH_MS = 20000;/);
 });
 
 test('the toggle is in the panel that already existed, with the warning on it', () => {
