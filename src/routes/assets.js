@@ -47,6 +47,8 @@ const emailNotifications = require('../email-notifications');
 const notifications = require('../notifications');
 const assetSchedule = require('../asset-schedule');
 const holidays = require('../holidays');
+// Yesterday's timesheet as a condition of starting today's — see timesheetRefusal.
+const timesheetGate = require('../timesheet-gate');
 const assignments = require('../assignments');
 const assetImport = require('../asset-import');
 const workflow = require('../asset-workflow');
@@ -2105,6 +2107,29 @@ function holidayRefusal(verb) {
   };
 }
 
+/* AND NOT UNTIL YESTERDAY'S TIMESHEET IS IN, when the studio asks for that.
+ *
+ * Shaped exactly like holidayRefusal above and used in the same places, so
+ * every route that begins timed work is covered by one call rather than by a
+ * rule each of them remembers. src/timesheet-gate.js decides; this only turns
+ * the answer into a response body.
+ *
+ * FAILS OPEN by construction: check() returns not-blocked on every error path,
+ * so a missing timesheet table or an unloaded holiday cache lets the clock run.
+ * A rule about paperwork must never be the reason the floor stops. */
+async function timesheetRefusal(req) {
+  const gate = await timesheetGate.check(db, req.user);
+  if (!gate.blocked) return null;
+  return {
+    error: gate.error,
+    code: gate.code,
+    /* The named field beside the sentence, like `holiday` and `startsOn` — the
+       page reads this to build the link to the right day rather than parsing
+       the message. */
+    timesheetGate: { date: gate.date, dateLabel: gate.dateLabel },
+  };
+}
+
 // POST /api/assets/:id/start — Accept and Start.
 //
 // The only way a session opens. It stamps started_at and, from 'assigned', also
@@ -2178,6 +2203,14 @@ router.post('/:id/start', async (req, res) => {
      is refused and any one of them alone is enough. See holidayRefusal. */
   const shutForStart = holidayRefusal('started');
   if (shutForStart) return res.status(409).json(shutForStart);
+
+  /* And not while yesterday's sheet is missing. Fourth in the row of
+     independent reasons this one button is refused — the start date, the
+     holiday, this, and the one-active-task rule below — and any one alone is
+     enough. Above the accept transition for the same reason that rule is:
+     nothing has happened yet, so a refusal here leaves no half-done state. */
+  const owingForStart = await timesheetRefusal(req);
+  if (owingForStart) return res.status(409).json(owingForStart);
 
   /* One active task at a time.
    *
@@ -2391,6 +2424,13 @@ router.post('/:id/resume', requirePermission('asset.hold'), async (req, res) => 
      says nothing about which day. One refusal, naming the holiday. */
   const shutForResume = holidayRefusal('resumed');
   if (shutForResume) return res.status(409).json(shutForResume);
+
+  /* Resume is starting work too, so it asks the same question. Beside the
+     holiday refusal and before the pause is looked up, for the reason stated
+     there: on a day the clock cannot run, what kind of pause this is does not
+     matter yet. */
+  const owingForResume = await timesheetRefusal(req);
+  if (owingForResume) return res.status(409).json(owingForResume);
 
   /* AND THE SAME GUARD /start NOW CARRIES. A task that drifted and had a session
      opened on it before that gate existed may still hold a paused round, and

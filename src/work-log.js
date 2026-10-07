@@ -464,6 +464,9 @@ async function resumeOverdue(db) {
      way. lifecycle has no requires at all and rides along for locality. */
   const assignments = require('./assignments');
   const lifecycle = require('./lifecycle');
+  // Same reason as the two above: src/timesheet-gate.js reaches the settings
+  // and holiday mirrors, and a top-level require here would be a cycle.
+  const timesheetGate = require('./timesheet-gate');
 
   /* Recording is happening, so there is a stretch to resume into. Asked twice
      on purpose: isRecording above is the cheap early-out that skips the query
@@ -476,9 +479,13 @@ async function resumeOverdue(db) {
   const { rows } = await db.query(
     `SELECT w.id, w.asset_id AS assetId, w.user_id AS userId,
             ${AGE('w.ended_at')} AS paused_age,
-            a.\`code\`, a.\`name\`, a.status, a.assignee_id, a.project_id
+            a.\`code\`, a.\`name\`, a.status, a.assignee_id, a.project_id,
+            -- For the timesheet gate's joined-after-that-day check, so the
+            -- sweep asks the same question /start asks rather than a weaker one.
+            u.created_at AS userCreatedAt
        FROM work_sessions w
        JOIN assets a ON a.id = w.asset_id
+       LEFT JOIN users u ON u.id = w.user_id
       WHERE w.ended_reason = '${REASONS.off_hours}' AND ${HELD_ROW}`
   ).catch((err) => {
     if (!unavailable(err)) throw err;
@@ -501,6 +508,26 @@ async function resumeOverdue(db) {
        this morning keeps it, and last night's timer stays down for them to
        pick up by hand when they are ready. */
     if (await openForUser(db, row.userId, row.assetId)) continue;
+
+    /* AND NOT INTO A BLOCKED STATE. If the studio asks for yesterday's
+     * timesheet and this person has not filled it, the session STAYS PAUSED.
+     *
+     * Not resumed-then-refused, which is the shape worth avoiding: the sweep
+     * would open a stretch the person is not allowed to have, and /start would
+     * then refuse them while their clock ran. Leaving it down means the first
+     * thing they meet in the morning is the explanation on the Start button,
+     * with the date and the link, and the round is still there to pick up the
+     * moment they fill it.
+     *
+     * The reason is logged per person rather than silently skipped, because a
+     * timer that did not come back is the kind of thing somebody asks about.
+     * Fails open with everything else in check(). */
+    const owed = await timesheetGate.check(db, { id: row.userId, created_at: row.userCreatedAt });
+    if (owed.blocked) {
+      console.log(`[resume sweep] ${row.code || row.assetId} stays paused: `
+        + `${row.userId} has not filled ${owed.date}.`);
+      continue;
+    }
 
     /* WHERE THE PAUSE LEFT OFF, not where this stretch began.
      *

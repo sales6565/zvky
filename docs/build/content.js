@@ -934,6 +934,14 @@ module.exports = [
     + 'weekend’s hours. A weekend day that already carries lines from before this change is still shown, so '
     + 'nothing already filed disappears.'),
 
+  note('If Start is refused and asks for yesterday\u2019s sheet',
+    'A studio can switch on a rule that nobody starts today\u2019s work before yesterday\u2019s sheet is '
+    + 'filled in (13.1b). If it is on and you are refused, the message names the day \u2014 the last working '
+    + 'day before today, so Monday asks for Friday and a holiday moves it back further \u2014 and links '
+    + 'straight to it.\n\n'
+    + 'ONE LINE IS ENOUGH, and Idle counts. You do not have to submit the day. Add the line and the Start '
+    + 'button works within seconds without signing out. Anything you already had running keeps running.'),
+
   h2('9.1a Idle, and the other things a day is not a project'),
   p('A line is either project work or it is not. A line that is not names a CATEGORY, and the studio\u2019s '
     + 'list starts with six: Leave, Holiday, Internal Meeting, Training, Admin and <b>Idle</b>. A Super Admin '
@@ -1677,6 +1685,7 @@ module.exports = [
     ['Days back', 'How old a date a new line may carry. Blank is no limit, which is how it shipped.'],
     ['Days ahead', '0 refuses tomorrow; blank allows any date. Blank is how it shipped.'],
     ['Days hours can be logged on', 'Monday to Friday out of the box. Separate from the studio\u2019s working days in 13.2 \u2014 see below.'],
+    ['Yesterday\u2019s sheet before today\u2019s work', 'OFF out of the box. On, nobody can start or resume a task until their sheet for the previous working day has a line on it. See the warning below before ticking it.'],
   ]),
   note('Nothing here changes a line that is already filed',
     'Tightening a window stops NEW and EDITED lines being filed outside it. Last month stays exactly as it was '
@@ -1684,11 +1693,33 @@ module.exports = [
     + 'would make a submitted week unopenable and a figure already reported unexplainable.\n\n'
     + 'The same is true of the category list: retiring one takes it out of the dropdown and refuses new lines '
     + 'against it, and every line already filed keeps showing its name.'),
+  note('Yesterday\u2019s sheet before today\u2019s work \u2014 read this before switching it on',
+    'IT BLOCKS PEOPLE STRAIGHT AWAY. Nobody has been filling the sheet daily until now, so the morning you '
+    + 'tick this box is the morning the studio is refused its first Start. That is what the rule does; it is '
+    + 'still worth knowing the hour you do it rather than the hour the calls start.\n\n'
+    + 'WHAT IT ASKS FOR is one line on the PREVIOUS WORKING DAY \u2014 the last day before today that is both '
+    + 'a day hours can be logged on and not a holiday. So Monday asks for Friday, and a Friday holiday moves '
+    + 'the demand to Thursday. Any line counts: project work, a meeting, or Idle, which is the honest answer '
+    + 'for a day with nothing to report, and is why complying is always possible.\n\n'
+    + 'A DRAFT COUNTS. The line does not have to be submitted \u2014 submitting LOCKS the day, and a rule that '
+    + 'was only satisfied by locking the day would be a rule against correcting it.\n\n'
+    + 'FILLING IT UNLOCKS THE BUTTON AT ONCE, with no signing out: add the line, and Start works within '
+    + 'seconds. The refusal itself names the date and links to that day.\n\n'
+    + 'NOBODY IS ASKED FOR A DAY THEY COULD NOT FILL. Somebody whose account was created after that day is not '
+    + 'blocked, and if Days back is set narrow enough to put the owed day out of reach, the form accepts that '
+    + 'one day anyway rather than leaving them stuck between two settings. There is no leave register in this '
+    + 'application, so somebody on leave files a Leave or Idle line for the day \u2014 which is a line.\n\n'
+    + 'WORK ALREADY RUNNING IS NEVER STOPPED. The rule is about starting. Open timers keep running when the '
+    + 'switch is flipped and when midnight passes; a task the overnight sweep would have resumed stays paused '
+    + 'instead, with the reason recorded. And if the timesheet or the holiday calendar cannot be read at all, '
+    + 'the rule lets everybody start \u2014 paperwork is never the reason the floor stops.'),
+
   bullets([
     'THE DAYS SETTING IS NOT THE STUDIO\u2019S WORKING DAYS. Working Hours (13.2) decides what the TIMER records and what the Idle Report measures everybody\u2019s available hours against. This decides which days a person may FILE hours for. They match out of the box; widening one does not widen the other, which is deliberate \u2014 widening the Time Sheet should not quietly change every utilisation figure in the studio.',
     'A NORMAL DAY CANNOT EXCEED WHAT THE RECORDING WINDOWS HOLD. Working Hours already refuses a day too short to hold a full timesheet day, and that check reads this number \u2014 so raising it beyond what the windows allow is refused here, where it can say why, rather than leaving Working Hours unable to save its own current value. Widen Recording Hours first.',
     'IT TAKES Manage Time Sheet Options, which is the Super Admin by default and can be granted to a designation in Settings \u2192 Permissions. It is deliberately NOT one of the permissions that travel with Settings generally: a category retired here leaves every person\u2019s form, and a back-dating window set here decides whether last month can still be corrected.',
     'FILLING IN YOUR OWN HOURS IS UNAFFECTED. That is a separate permission, on for every designation, and nothing on this screen narrows it.',
+    'THE SWITCH TAKES THE SAME PERMISSION as the rest of the panel, because it saves with it. There is no second permission for it to be held without.',
     'EVERY SAVE IS LOGGED, with the whole policy as a sentence before and after.',
   ]),
 

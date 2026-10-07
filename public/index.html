@@ -2562,8 +2562,13 @@ async function refreshPermissions(){
   permissionsCheckedAt = Date.now();
   const before = perms().join(',');
   try{
-    const { user } = await api('/auth/me');
+    const { user, timesheetGate } = await api('/auth/me');
     state.currentUser = user;
+    /* THE SERVER'S ANSWER, STORED AS GIVEN. Not the inputs — see the note on
+       timesheetBlock() — and refreshed on this same twenty-second poll, which
+       is what makes the Start button unlock after a line is saved without
+       anybody reloading. */
+    state.timesheetGate = timesheetGate || null;
   }catch(e){ return false; }          /* a blip must not blank the screen */
   return perms().join(',') !== before;
 }
@@ -4122,8 +4127,9 @@ async function boot(){
   if(saved){
     state.token = saved;
     try{
-      const { user } = await api('/auth/me');
+      const { user, timesheetGate } = await api('/auth/me');
       state.currentUser = user;
+      state.timesheetGate = timesheetGate || null;
       booting = false;
       await showApp();
       /* After the app is drawn, not before: showApp() is what puts the frame
@@ -4584,6 +4590,27 @@ function fmtDay(value){
 
 function todayIST(now = new Date()){
   return new Date(now.getTime() + (5*60+30)*60*1000).toISOString().slice(0,10);
+}
+
+/* YESTERDAY'S TIMESHEET, OR NULL — the third reason Accept and Start is closed.
+ *
+ * READS THE SERVER'S ANSWER AND NOTHING ELSE. /auth/me returns
+ * { blocked, date, dateLabel, message } and this hands it straight back.
+ *
+ * WHY NOT WORK IT OUT HERE, which is the whole point: the rule spans the
+ * studio's weekly-off list, the holiday calendar and an IST date boundary, and
+ * a second copy of that in the browser is a copy that will disagree. The gates
+ * in this application have drifted exactly that way before — REWORK_STATUSES
+ * and canHandOverInReview both — and the fix each time was one answer, computed
+ * once. tests/timesheet-gate.test.js holds this to the server's reply.
+ *
+ * NULL WHEN NOT BLOCKED, and null when the field is missing: a payload from an
+ * older server, or the first paint before /auth/me has landed, must not disable
+ * a button. The server refuses the click if it has to, and a refusal that
+ * arrives is better than a control withheld for no stated reason. */
+function timesheetBlock(){
+  const g = state.timesheetGate;
+  return g && g.blocked ? g : null;
 }
 
 /* The date this asset cannot be started before, or null when nothing is
@@ -8260,6 +8287,10 @@ async function openDrawer(id){
      alone disables it; it opens only when both allow. Both are also checked in
      POST /assets/:id/start — the button is a courtesy, the server is the rule. */
   const waiting = notYetStartable(a);
+  /* The third independent reason, beside the open-task rule and the start date.
+     Not asset-specific — it is about the person, not the task — which is why it
+     takes no argument and why every task on the board closes together. */
+  const owing = timesheetBlock();
   /* Put down on purpose, and by whom it can be picked up again.
      
      A held asset has no open session, so without this it would satisfy every
@@ -8301,11 +8332,11 @@ async function openDrawer(id){
    * back from it. The two are one column apart in the record and are told apart
    * by `byStudio`, exactly as the wording beside them already is. */
   const canResume = mayHold && Boolean(held) && !held.byStudio && !a.work_open;
-  const canStart = mayStart && !a.work_open && !held && (mine || a.status!=='assigned') && !blocked && !waiting;
+  const canStart = mayStart && !a.work_open && !held && (mine || a.status!=='assigned') && !blocked && !waiting && !owing;
   /* Offered and refused, rather than absent: somebody looking for the button
      they used yesterday should find it and be told why it is not available,
      not be left wondering whether the asset is theirs at all. */
-  const startBlocked = mayStart && !a.work_open && !held && (mine || a.status!=='assigned') && Boolean(blocked || waiting);
+  const startBlocked = mayStart && !a.work_open && !held && (mine || a.status!=='assigned') && Boolean(blocked || waiting || owing);
   /* The checklist is set by the creator and the reviewers, not by whoever is
      carrying the work — they read it and work to it. Mirrors canManageTasks in
      src/permissions.js; the API decides, this only stops offering a control
@@ -8423,7 +8454,14 @@ async function openDrawer(id){
               ? 'Nothing to press.'
               : 'Press Resume when you pick it up again.'}` : ''}
         </div>` : ''}
-        ${startBlocked ? (blocked ? `
+        ${startBlocked ? (owing ? `
+          <button class="btn btn-brand" id="d_startBtn" disabled
+            title="Fill your timesheet for ${escapeHTML(owing.dateLabel || owing.date)} first">Accept and Start</button>
+          <div class="start-blocked">Fill your timesheet for
+            <strong>${escapeHTML(owing.dateLabel || owing.date)}</strong> to start work.
+            An Idle line counts, and this unlocks as soon as it is saved.
+            <a href="#" class="ts-gate-link" data-tsgate="${escapeHTML(owing.date || '')}">Open the Time Sheet</a></div>`
+          : blocked ? `
           <button class="btn btn-brand" id="d_startBtn" disabled
             title="Finish ${escapeHTML(blocked.code || 'your current task')} first">Accept and Start</button>
           <div class="start-blocked">Finish your current task before starting another —
@@ -9095,6 +9133,21 @@ async function openDrawer(id){
       showToast('Preview image removed.');
     }catch(e){ thumbErr().textContent = e.message; thumbClear.disabled = false; }
   };
+
+  /* THE LINK OUT OF THE REFUSAL. A disabled button with an explanation is only
+     half the job: the explanation names a date, and the Time Sheet opens on
+     that date rather than on today, so the fix is one click rather than a
+     search. The drawer closes behind it, because leaving a panel open over the
+     tab somebody was just sent to is how a "nothing happened" bug gets filed. */
+  document.querySelectorAll('[data-tsgate]').forEach(link=>{
+    link.onclick = (ev)=>{
+      ev.preventDefault();
+      const date = link.dataset.tsgate;
+      if(date) tsState.date = date;
+      closeDrawer();
+      setTab('timesheet');
+    };
+  });
 
   const startBtn = document.getElementById('d_startBtn');
   if(startBtn) startBtn.onclick = async (ev)=>{
@@ -13711,6 +13764,25 @@ async function renderTimesheetOptions(){
           </div>
         </div>
       </div>
+      <div class="rh-list">
+        <div class="rh-head"><h4>Yesterday&rsquo;s sheet before today&rsquo;s work</h4></div>
+        <div class="rh-grid">
+          <div class="rh-f rh-days">
+            <label class="rh-day"><input type="checkbox" id="tso_requirePreviousDay"${
+              s.requirePreviousDay?' checked':''}><span>Require the previous working day to be filled
+              before anybody can start a task</span></label>
+            <span class="rh-opt">
+              <strong>Off by default, and switching it on blocks people straight away.</strong>
+              With it on, Accept and Start is refused until that person has at least one line for
+              the most recent working day &mdash; skipping weekends and anything on the Holidays
+              list. An <strong>Idle</strong> line counts, so there is always a quick way to comply,
+              and the refusal names the date and links to it. Somebody who joined after that day is
+              not asked for it, a timer already running is never stopped, and the overnight resume
+              leaves their task paused rather than resuming into a refusal.
+            </span>
+          </div>
+        </div>
+      </div>
       ${tsoState.errors.length?`<div class="rh-errs">${tsoState.errors.map(e=>`<div class="rh-err">${escapeHTML(e.message)}</div>`).join('')}</div>`:''}
       <div class="ref-add" style="margin-top:4px;">
         <button class="btn btn-brand btn-sm" id="tso_save"${tsoState.busy?' disabled':''}>Save</button>
@@ -13732,6 +13804,7 @@ async function renderTimesheetOptions(){
       backdateDays: val('backdateDays'),
       futureDays: val('futureDays'),
       loggableDays: [...el.querySelectorAll('[data-tsoday]:checked')].map(i=>Number(i.dataset.tsoday)),
+      requirePreviousDay: document.getElementById('tso_requirePreviousDay').checked,
     };
     try{
       tsoState.data = await api('/admin/settings/timesheet', { method:'PUT', body });

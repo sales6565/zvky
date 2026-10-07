@@ -6,6 +6,9 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { v4: uuid } = require('uuid');
 const db = require('../db');
+// The previous-working-day rule's answer, which /me hands to the page so the
+// browser never recomputes a date rule the server owns.
+const timesheetGate = require('../timesheet-gate');
 const { userFields } = require('../user-fields');
 const { authenticate } = require('../middleware/auth');
 const { capabilitiesFor, catalogue } = require('../roles');
@@ -104,8 +107,35 @@ router.post('/login', async (req, res) => {
   }
 });
 
-router.get('/me', authenticate, (req, res) => {
-  res.json({ user: req.user });
+router.get('/me', authenticate, async (req, res) => {
+  /* THE TIMESHEET GATE'S ANSWER, computed by the server and handed over.
+   *
+   * NOT the inputs — not loggableDays plus the holiday list for the browser to
+   * walk back through. Two copies of a date rule is how the gates in this
+   * application have drifted before, and this one spans a weekend, a holiday
+   * calendar and a timezone. The page is told blocked yes/no and which date,
+   * and it renders that.
+   *
+   * HERE RATHER THAN IN authenticate(): this is one query, and authenticate
+   * runs on every request in the application. The page already re-polls this
+   * endpoint every twenty seconds for permissions, which is the "normal refresh
+   * cycle" the unlock has to land inside, and it polls it again straight after
+   * a timesheet line is saved.
+   *
+   * Its own field rather than folded into `user`, because it is a fact about
+   * this moment and not about the account. */
+  const gate = await timesheetGate.check(db, req.user);
+  res.json({
+    user: req.user,
+    timesheetGate: {
+      blocked: gate.blocked,
+      date: gate.date,
+      dateLabel: gate.dateLabel,
+      // The sentence the page shows, so the wording cannot differ from the
+      // server's refusal. Null when nothing is owed.
+      message: gate.blocked ? gate.error : null,
+    },
+  });
 });
 
 /* POST /api/auth/tour-seen — "I have been shown the Quick Tour."

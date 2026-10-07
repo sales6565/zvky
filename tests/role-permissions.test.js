@@ -330,6 +330,17 @@ test('the defaults that are decisions, with the reason for each', () => {
     'everybody fills in their own hours');
   assert.deepStrictEqual(held('timesheet.options'), ['super_admin'],
     'and one designation decides what the form offers');
+  /* AND IT NOW CARRIES THE PREVIOUS-WORKING-DAY SWITCH as well, which is why
+     this line is worth re-reading rather than being one more default.
+     requirePreviousDay stops a person starting any task until yesterday's sheet
+     exists (src/timesheet-gate.js); it was given no key of its own because the
+     checkbox sits inside the Time Sheet Options form, in the same Save as the
+     numbers above, and two keys over one form would let somebody hold one half
+     of a screen. Grantable, so a studio that wants its production manager
+     flipping it says so in Settings — the same answer as every other key here,
+     and never the tier. */
+  assert.ok(catalog.grantableKeys().includes('timesheet.options'),
+    'including the switch that blocks starting work, so it can be handed on');
 });
 
 test('every permission the catalogue lists is either checked or declared pending', () => {

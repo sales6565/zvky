@@ -28,6 +28,10 @@
 
 const referenceData = require('./reference-data');
 const timesheetSettings = require('./timesheet-settings');
+// For the one back-dating exemption below. Required lazily inside the check
+// rather than here, because src/timesheet-gate.js requires this module's
+// settings sibling and a top-level require would make the cycle plain.
+const holidays = require('./holidays');
 
 const WEEK_DAYS = 7;
 
@@ -410,7 +414,29 @@ function validateEntry(raw = {}, win, { now = Date.now() } = {}) {
   const today = studioToday(now);
   if (policy.backdateDays !== null) {
     const behind = daysBefore(date, today);
-    if (behind > policy.backdateDays) {
+    /* THE ONE DAY THE WINDOW DOES NOT CLOSE ON, while the previous-day rule is
+     * switched on.
+     *
+     * THE CONFLICT THIS RESOLVES, which the two settings create between them:
+     * the rule refuses to let somebody start work until they have filled the
+     * previous working day, and backdateDays could put that very day out of
+     * reach. A window of 1 and a Monday morning is the plain case — Friday is
+     * three days back — and the result would be a person told to fill a day the
+     * form then refuses, with no way out of either. A rule that demands the
+     * impossible is worse than no rule.
+     *
+     * So the gate's own day is always fillable. Exactly that day, and only
+     * while the rule is on: every other date keeps the window the studio set.
+     * src/timesheet-gate.js decides which day it is, so there is one answer and
+     * it cannot drift from the one the refusal names. */
+    const gate = require('./timesheet-gate');
+    const owed = gate.exemptBackdate(policy)
+      ? gate.previousWorkingDay(today, {
+        loggableDays: policy.loggableDays,
+        isHoliday: (d) => Boolean(holidays.on(d)),
+      })
+      : null;
+    if (behind > policy.backdateDays && date !== owed) {
       return {
         ok: false,
         field: 'date',
@@ -655,6 +681,40 @@ async function hoursLoggedOn(db, { assetId, userId, exceptId = null }) {
   return Math.round((Number(rows[0].hours) || 0) * 100) / 100;
 }
 
+/* IS THERE ANY LINE AT ALL ON THIS DAY — the whole of "filled" for the
+ * previous-working-day rule in src/timesheet-gate.js.
+ *
+ * IT LIVES HERE BECAUSE THE TABLE DOES. Nothing outside this module and its
+ * route reads timesheet_entries, and tests/timesheet-options.test.js enforces
+ * that so a new reader of these hours has to decide what Idle means to it
+ * before shipping. This is that decision, written where somebody will find it:
+ * EVERY LINE COUNTS, Idle included. Idle is the honest answer for a day with
+ * nothing to report, and a rule that refused it would be a rule nobody could
+ * comply with on a quiet day — they would invent a line instead, which is worse
+ * for the figures than the truth.
+ *
+ * COUNT OF LINES, NOT SUM OF HOURS, and not a category filter: the gate asks
+ * whether the day was filled in, not whether it was filled in acceptably. The
+ * soft cap is the form's business.
+ *
+ * DRAFTS COUNT, which is not a choice this function makes but a fact about the
+ * schema: draft-versus-submitted lives on timesheet_days.status and the lines
+ * carry no status of their own. Submitting LOCKS them, so reading "filled" as
+ * "submitted" would mean the only way to satisfy the rule was also the way to
+ * stop correcting it.
+ *
+ * MISSING TABLE READS AS "CANNOT TELL", not as "empty" — the distinction the
+ * gate needs to fail open. hoursLoggedOn() above swallows ER_NO_SUCH_TABLE and
+ * answers 0 because a missing table genuinely means no hours were offered; here
+ * 0 would mean "block them", so the error is left to reach the caller. */
+async function hasLineOn(db, userId, date) {
+  const { rows } = await db.query(
+    'SELECT COUNT(*) AS n FROM timesheet_entries WHERE user_id = $1 AND entry_date = $2',
+    [userId, date]
+  );
+  return Number(rows[0].n) > 0;
+}
+
 module.exports = {
   WEEK_DAYS,
   /* Functions, not arrays. See the note on nonProject(): a value captured at
@@ -702,4 +762,5 @@ module.exports = {
   totals,
   dayTotal,
   hoursLoggedOn,
+  hasLineOn,
 };

@@ -48,6 +48,15 @@ const DEFAULTS = {
   backdateDays: null,    // new; null = no limit, which is what there was
   futureDays: null,      // new; null = no limit, which is what there was
   loggableDays: [1, 2, 3, 4, 5],
+  /* OFF ON EVERY EXISTING INSTALL, and that is the decision rather than the
+     cautious default.
+     
+     Switching it on blocks everybody who has not filled the previous working
+     day — which, the morning after a deployment, is most of a studio. A feature
+     that locks the floor the moment it ships is one nobody forgives, so this
+     arrives inert and the Super Admin turns it on when the studio has been
+     told. See the Settings panel's description. */
+  requirePreviousDay: false,
 };
 
 const DAY_NAMES = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -99,6 +108,11 @@ async function load(db) {
     futureDays: row.future_days === null || row.future_days === undefined
       ? null : Number(row.future_days),
     loggableDays: parseDays(row.loggable_days),
+    /* A column added after the table shipped, so a database part-way through
+       its migration has the row without it: undefined reads as the default,
+       which is off. */
+    requirePreviousDay: row.require_previous_day === undefined
+      ? DEFAULTS.requirePreviousDay : Boolean(Number(row.require_previous_day)),
     updatedBy: row.updated_by || null,
     updatedByName: row.updated_by_name || null,
     updatedAt: row.updated_at || null,
@@ -195,11 +209,19 @@ function validate(input) {
     });
   }
 
+  /* A BOOLEAN, so there is nothing to validate but the shape. Read loosely on
+     purpose — a checkbox posts true/false, a form post may send the string
+     'true', and an absent field means "leave it as it was", which is what
+     pick() already does for every other setting here. */
+  const raw = pick('requirePreviousDay', cache.requirePreviousDay);
+  const requirePreviousDay = raw === true || raw === 'true' || raw === 1 || raw === '1';
+
   if (errors.length) return { ok: false, errors };
   return {
     ok: true,
     errors: [],
-    value: { maxDayHours, minLineHours, maxLineHours, backdateDays, futureDays, loggableDays },
+    value: { maxDayHours, minLineHours, maxLineHours, backdateDays, futureDays, loggableDays,
+      requirePreviousDay },
   };
 }
 
@@ -211,13 +233,14 @@ async function save(db, input, userId) {
   await db.query(
     `INSERT INTO timesheet_settings
        (id, max_day_hours, min_line_hours, max_line_hours, backdate_days, future_days,
-        loggable_days, updated_by)
-     VALUES (1, $1, $2, $3, $4, $5, $6, $7)
+        loggable_days, require_previous_day, updated_by)
+     VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8)
      ON DUPLICATE KEY UPDATE
        max_day_hours = $1, min_line_hours = $2, max_line_hours = $3,
-       backdate_days = $4, future_days = $5, loggable_days = $6, updated_by = $7`,
+       backdate_days = $4, future_days = $5, loggable_days = $6,
+       require_previous_day = $7, updated_by = $8`,
     [v.maxDayHours, v.minLineHours, v.maxLineHours, v.backdateDays, v.futureDays,
-      v.loggableDays.join(','), userId || null]
+      v.loggableDays.join(','), v.requirePreviousDay ? 1 : 0, userId || null]
   );
   await load(db);
   return { ok: true, before, settings: current() };
@@ -232,6 +255,10 @@ const summarise = (s) => [
   `back-dating ${s.backdateDays === null ? 'unlimited' : `${s.backdateDays} days`}`,
   `ahead ${s.futureDays === null ? 'unlimited' : `${s.futureDays} days`}`,
   `days ${s.loggableDays.length === 7 ? 'every day' : (s.loggableDayShort || []).join('/')}`,
+  /* NAMED IN THE AUDIT LINE, because this is the one setting here that can stop
+     somebody working. A log that recorded the hour limits and not the switch
+     would be missing the only change anybody would come looking for. */
+  `yesterday's sheet ${s.requirePreviousDay ? 'REQUIRED before starting work' : 'not required'}`,
 ].join(', ');
 
 module.exports = {

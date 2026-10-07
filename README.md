@@ -172,7 +172,7 @@ somebody grants you. `timesheet.options` is **Super Admin only**, via
 | `timesheet.own` | **every designation** | Open the tab, record your own hours |
 | `timesheet.team` | `manageAccess` | Read your team's weeks |
 | `timesheet.all` | `fullAccess` | Read the studio's |
-| `timesheet.options` | **Super Admin** | Decide what the form offers everybody |
+| `timesheet.options` | **Super Admin** | Decide what the form offers everybody, and whether yesterday's sheet gates today's work |
 
 A separate key rather than widening an existing one, because nothing about
 managing the options should narrow anybody's ability to log their own time — and
@@ -201,6 +201,7 @@ The inventory, because most of the candidates turned out not to exist:
 | Which days hours can be logged on | `isWeekend()`, fixed | `loggable_days`, default Mon–Fri |
 | How far back a line may be filed | **did not exist** | `backdate_days`, default no limit |
 | How far ahead | **did not exist** | `future_days`, default no limit |
+| Whether yesterday's sheet is required before today's work | **did not exist** | `require_previous_day`, **default off** |
 | Project work vs non-project | `tl_kind` | **fixed** — it is what a line *is*, not a setting |
 | Line statuses and which lock a day | `STATUSES` / `LOCKED` | **fixed** — the submission cycle keys off them by name |
 | Whether a line needs approval | **removed by the studio** | **not re-added** — see the note on `timesheet.approve` |
@@ -224,6 +225,76 @@ its own current value. And `loggable_days` is deliberately **not** wired to
 `workingDays`: that one drives the Idle Report's expected hours, so coupling them
 would mean widening the timesheet silently changed every utilisation figure in
 the studio.
+
+### Yesterday's sheet before today's work
+
+**Off by default, and switching it on blocks people straight away** — so the
+checkbox in Settings → Time Sheet says that next to itself. On an existing
+install nobody has been filling the sheet daily, so the morning it is switched on
+is the morning the whole studio is refused its first Start. That is the intended
+behaviour of the rule and it is still worth reading before ticking the box.
+
+When it is on, a person who has not filled their timesheet for the **previous
+working day** cannot start or resume a task. Filling it unlocks the Start button
+**immediately, with no sign-out** — the page re-reads `/auth/me` every 20
+seconds and the gate's answer rides on that response.
+
+Two definitions carry the whole rule, and both live once in
+`src/timesheet-gate.js` so that `/start`, `/resume`, the auto-resume sweep and
+`/auth/me` cannot answer differently:
+
+- **Previous working day** — the most recent day before today, in IST, that is
+  both on `timesheet_settings.loggable_days` (the studio's own weekly-off list,
+  Mon–Fri by default) and not on the holiday calendar. So Monday asks for
+  Friday, and a Friday holiday pushes the demand to Thursday. It is
+  `loggable_days` rather than `work_schedule.working_days` on purpose: the rule
+  asks for a *timesheet*, and `validateEntry()` refuses a date outside
+  `loggable_days` outright — a day the clock counts but the form will not accept
+  is a day nobody could comply for. The two lists are identical by default.
+- **Filled** — at least one line exists for that date. Any line: project,
+  non-project, or **Idle**, which is what makes compliance always possible on a
+  day with nothing to report. **A draft counts.** The draft/submitted
+  distinction lives on `timesheet_days.status` and not on the lines, and
+  submitting *locks* them, so reading "filled" as "submitted" would mean the
+  only way to satisfy the rule was also the way to stop correcting it. It is
+  not an hours threshold and not configurable: `max_day_hours` is a soft cap the
+  form quotes, not a floor, and a floor would refuse somebody whose Tuesday
+  honestly was three hours.
+
+**Nobody is asked for a day they could not fill.** A user whose `created_at` is
+after that day is not blocked. If `backdate_days` is set narrow enough to put
+the owed day out of reach, the gate and the policy are made to agree rather than
+left to deadlock: `validateEntry()` exempts the one day the gate is demanding
+while the rule is on, and nothing else about the window moves. **There is no
+leave mechanism in this application** — `leave` exists only as a non-project
+timesheet category — so no leave handling was invented; somebody on leave files
+an Idle or Leave line for the day, which is a line, which is filled.
+
+**It fails open, everywhere.** A missing `timesheet_entries` table, an unloaded
+holiday mirror, a query that throws: not blocked, with a line in the log. A rule
+about paperwork must never be the reason the floor stops, and the case is pinned
+against a live server with the table actually dropped.
+
+**The refusal is a 409 with its own code,** `TIMESHEET_INCOMPLETE`, beside the
+named field every other refusal here uses (`holiday`, `startsOn`, `opensAt`):
+`timesheetGate: { date, dateLabel }`. The sentence names the day in words a
+person can match to the day picker and says where to fix it. **The page never
+recomputes the date** — it reads `timesheetGate` off `/auth/me` and links
+straight to that day in the Time Sheet tab, because two copies of this date
+arithmetic have come apart before.
+
+**A session already running is never stopped.** The rule is about *starting*.
+Switching it on mid-afternoon leaves every open timer alone; midnight passing
+does the same. The auto-resume sweep in `src/work-log.js` does not resume into a
+blocked state: the session **stays paused** and the reason is logged with the
+user and the date owed, rather than being resumed and then refused.
+
+**The switch is `timesheet.options`, not a key of its own,** because the checkbox
+sits inside the Time Sheet Options form and shares its Save — two keys over one
+form would let somebody hold one half of a screen. Super Admin only by default,
+enforced by `requirePermission` on the server and `can()` on the page, never the
+tier, and grantable in Settings like everything else. Every flip is in the
+Activity Log with the policy as a sentence on both sides.
 
 ### Idle: counted in the hours, named apart from them
 

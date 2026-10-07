@@ -3003,9 +3003,29 @@ async function ensureTimesheetSettings(db, log) {
       -- recording_hour_configs.days_of_week. Monday to Friday is what
       -- isWeekend() hardcoded, so this default changes nothing.
       loggable_days   VARCHAR(32)  NOT NULL DEFAULT '1,2,3,4,5',
+      -- Must somebody have filled the previous working day before they can
+      -- start a task? DEFAULT 0, so an existing install is unaffected until a
+      -- Super Admin turns it on — switching it on blocks everybody who has not
+      -- filled yesterday, which the morning after a deployment is most of a
+      -- studio.
+      require_previous_day TINYINT(1) NOT NULL DEFAULT 0,
       updated_by      CHAR(36)     NULL,
       updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )`));
+  /* The column, for a database whose table predates it. Idempotent by asking
+     information_schema, the same way ensurePasswordChangedAt does. */
+  const { rows: col } = await db.query(
+    `SELECT 1 AS present FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'timesheet_settings'
+        AND COLUMN_NAME = 'require_previous_day'`
+  );
+  if (!col.length) {
+    await db.query(
+      'ALTER TABLE timesheet_settings ADD COLUMN require_previous_day TINYINT(1) NOT NULL DEFAULT 0'
+    );
+    log('Schema: added timesheet_settings.require_previous_day, off, so nothing changes until it is switched on.');
+  }
+
   const { rows } = await db.query('SELECT id FROM timesheet_settings WHERE id = 1');
   if (rows.length) return;
   await db.query(
