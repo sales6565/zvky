@@ -307,6 +307,32 @@ test('the rule, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   const statusOf = async (assetId) => (await as('root', `/assets/project/${id.project}`))
     .body.assets.find((a) => a.id === assetId).status;
 
+  /* THE SWEEP RUNS AT STARTUP, so the way to run it is to restart the process —
+     which is also the production path the auto-resume suite uses: the sweep
+     fires once on boot precisely so a server that was down overnight does what
+     nobody was there to do. WORK_HOURS_SWEEP_MINUTES: '0' leaves the periodic
+     timer off, so the boot sweep is the only one and the cases below are not
+     racing a tick. The tokens survive a restart because the test JWT secret is
+     fixed in the environment. */
+  const restart = async () => {
+    await stopServer(server);
+    server = await startServer(cfg, { BOOTSTRAP_TOKEN: 'tsg-token', WORK_HOURS_SWEEP_MINUTES: '0' });
+  };
+  const openSessions = async (assetId) => Number((await sql(cfg,
+    `SELECT COUNT(*) AS n FROM work_sessions
+      WHERE asset_id = '${assetId}' AND ended_at IS NULL`))[0].n);
+  /* Wait for the sweep to have SAID something about this asset, up to a few
+     seconds. Without this the next assertion — that nothing was resumed —
+     would also pass on a sweep that had not run yet, which is the way a
+     negative case lies. */
+  const sweptLine = async (re) => {
+    for (let i = 0; i < 80; i += 1) {
+      if (re.test(server.output())) return true;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return false;
+  };
+
   t.before(async () => {
     await resetSchema(cfg);
     server = await startServer(cfg, { BOOTSTRAP_TOKEN: 'tsg-token', WORK_HOURS_SWEEP_MINUTES: '0' });
@@ -456,6 +482,54 @@ test('the rule, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     // She can still submit it — the rule gates starting, not finishing.
     const sub = await as('ana', `/assets/${asset.id}/submit`, { method: 'POST', body: { link: 'https://x.test/e' } });
     assert.strictEqual(sub.status, 201, JSON.stringify(sub.body));
+  });
+
+  await t.test('the overnight sweep leaves a blocked user paused, and records why', async () => {
+    /* THE THIRD WAY A SESSION OPENS, and the one nobody is watching. /start and
+       /resume refuse a person to their face; the sweep would have resumed them
+       at half past nine and left /start refusing them while their clock ran.
+       It stays down instead, and says so in the log — a timer that did not come
+       back is the kind of thing somebody asks about afterwards. */
+    const owed = gate.previousWorkingDay(gate.istDate(), { loggableDays: WEEK });
+    await setGate(false);
+    await sql(cfg, `DELETE FROM timesheet_entries WHERE user_id = '${id.bo}' AND entry_date = '${owed}'`);
+    await sql(cfg, `UPDATE work_sessions SET ended_at = NOW(), seconds = 0,
+                      ended_reason = 'submitted' WHERE user_id = '${id.bo}' AND ended_at IS NULL`);
+
+    const asset = await mk('Overnight', id.bo);
+    assert.strictEqual((await start('bo', asset.id)).status, 200);
+    /* The studio's own pause, written the way the cutoff writes it: the stretch
+       closed with off_hours and the asset still in a status work continues in.
+       Through the database rather than by winding the clock, because what is
+       under test here is the gate and not the cutoff arithmetic — tests/
+       auto-resume.test.js owns that, at length. */
+    await sql(cfg, `UPDATE work_sessions SET ended_at = NOW(), seconds = 60,
+                      ended_reason = 'off_hours'
+                     WHERE asset_id = '${asset.id}' AND ended_at IS NULL`);
+    assert.strictEqual(await openSessions(asset.id), 0, 'put down for the night');
+
+    await setGate(true);
+    await restart();
+    assert.ok(await sweptLine(new RegExp(`\\[resume sweep\\] .*stays paused: ${id.bo} has not filled ${owed}`)),
+      'the sweep ran, decided, and named the person and the day');
+    assert.strictEqual(await openSessions(asset.id), 0,
+      'and did not resume into a state the server would refuse');
+
+    // The other half of the claim: the round is still there to pick up.
+    assert.strictEqual((await fill('bo', owed)).status, 201);
+    await restart();
+    for (let i = 0; i < 80 && await openSessions(asset.id) === 0; i += 1) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    assert.strictEqual(await openSessions(asset.id), 1,
+      'filled, and the next sweep picks the paused round up');
+
+    /* Closed here rather than left running: the one-active-task rule is shared
+       state across these cases, and a session left open would refuse a later
+       Start and report a failure that is not about anything. */
+    await sql(cfg, `UPDATE work_sessions SET ended_at = NOW(), seconds = 0,
+                      ended_reason = 'submitted'
+                     WHERE asset_id = '${asset.id}' AND ended_at IS NULL`);
   });
 
   await t.test('a user created today is not asked for a day they were not here', async () => {
