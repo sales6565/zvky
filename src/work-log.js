@@ -941,12 +941,21 @@ function unavailable(err) {
  * change to the figure this returned for the ordinary case.
  *
  * AN OPEN SESSION counts live, up to NOW, for the day that holds now — the same
- * figure the timer on the panel is showing, so the two cannot disagree. For a
- * day that has already ended it is capped at the END OF THAT DAY instead of
- * running up to now: an open row spanning a past day means the pause sweep
- * never closed it (a restart during the evening, usually), and counting it to
- * now would put tomorrow's hours on yesterday's line. Those rows are counted
- * out in `openCapped` so a caller can report them.
+ * figure the timer on the panel is showing, so the two cannot disagree. A day
+ * that has already ended gets that day's own slice and no more: an open row
+ * spanning a past day means the pause sweep never closed it (a restart during
+ * the evening, usually), and running it up to now would otherwise put today's
+ * hours on last week's line. Those rows are counted out in `openCapped` so a
+ * caller can say the figure stops at the end of the day.
+ *
+ * WHAT CONFINES IT IS THE APPORTIONMENT, NOT THE CAP BELOW, and that is worth
+ * being exact about: for an open row the whole is the open-hours figure of the
+ * very span being divided, so each day is handed precisely its own weight
+ * whether the span is cut at the end of the asked day or runs on to now. The
+ * cap is there to bound the walk — an open row from three months ago would
+ * otherwise have workingMsByDay step over every day since, to hand back shares
+ * nobody asked for. A mutation that removes it changes no figure, which was
+ * checked rather than assumed.
  *
  * A DAY THAT HAS NOT STARTED YET returns nothing, which is what makes a future
  * date zero rather than an error at the edge of the route.
@@ -996,8 +1005,8 @@ async function dayTotalFor(db, { assetId, userId, day, now = Date.now() }) {
   for (const row of rows) {
     const startMs = instantFromAge(row.start_age, now);
     const isOpen = Number(row.still_open) === 1 || row.end_age === null;
-    /* An open row is capped at the end of the day being asked about, so a
-       session the sweep failed to close cannot pour into a past day. */
+    /* An open row is cut at the end of the day being asked about. See the note
+       above: this bounds the walk rather than deciding the figure. */
     const endMs = isOpen ? Math.min(now, dayEnd) : instantFromAge(row.end_age, now);
     if (endMs <= startMs) continue;
     if (startMs >= dayEnd || endMs <= dayStart) continue;
