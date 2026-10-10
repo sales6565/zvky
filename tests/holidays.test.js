@@ -423,6 +423,20 @@ test('holidays stop the clock, and only a Super Admin declares one',
   const today = () => holidays.todayISO();
   const tomorrow = () => holidays.tomorrowISO();
   const plusDays = (n) => workingTime.istDateOf(workingTime.istPartsOf(Date.now()).day + n);
+  /* THE NEXT DAY THE TIME SHEET OFFERS A ROW FOR, which is not always tomorrow.
+     The week shows Monday to Friday plus any weekend day that already has hours
+     on it, so a case about a holiday LABELLING a fillable row has to declare
+     its holiday on a weekday. Asked of the same arithmetic the rest of the file
+     uses, so it needs no calendar of its own. */
+  const nextWeekday = () => {
+    const first = workingTime.istPartsOf(Date.now()).day + 1;
+    for (let day = first; day < first + 7; day += 1) {
+      if (workingTime.dowOf(day) <= 5) return workingTime.istDateOf(day);
+    }
+    return workingTime.istDateOf(first);
+  };
+  const daysAhead = (iso) => Math.round(
+    (Date.parse(`${iso}T00:00:00Z`) - Date.parse(`${today()}T00:00:00Z`)) / 86400000);
 
   /* A holiday for TODAY, which the API refuses and rightly. Written straight to
      the table and picked up by the restart that follows — see the suite header.
@@ -955,7 +969,13 @@ test('holidays stop the clock, and only a Super Admin declares one',
   /* --- the other consumers of a closed day -------------------------------- */
 
   await t.test('the Idle Report and the Time Sheet both know about a holiday', async () => {
-    const planned = await as('root', ROOT, { method: 'POST', body: { date: tomorrow(), name: 'Tomorrow Shut' } });
+    /* ON THE NEXT WEEKDAY, not literally tomorrow. This case asserts that the
+       Time Sheet still offers a FILLABLE ROW for a holiday, unlike a weekend —
+       and a Sunday is not offered a row at all, so run on a Saturday the case
+       failed on the calendar rather than on anything it was about. The range
+       below is widened to cover whichever weekday it lands on. */
+    const shut = nextWeekday();
+    const planned = await as('root', ROOT, { method: 'POST', body: { date: shut, name: 'Tomorrow Shut' } });
     assert.strictEqual(planned.status, 201, JSON.stringify(planned.body));
     try {
       /* THE SCHEDULE CARRIES IT, as a JSON-safe array. A Set here would reach
@@ -963,12 +983,12 @@ test('holidays stop the clock, and only a Super Admin declares one',
          better, which is why work-schedule publishes an array. */
       const sched = (await as('root', '/branding/schedule')).body.schedule;
       assert.ok(Array.isArray(sched.holidays), 'holidays survive JSON as a list');
-      assert.ok(sched.holidays.includes(tomorrow()), 'and the declared day is in it');
+      assert.ok(sched.holidays.includes(shut), 'and the declared day is in it');
 
       /* THE REPORT EXPECTS LESS. Asked over a range that contains tomorrow, so
          the holiday is inside the period rather than beside it. */
       const from = today();
-      const to = plusDays(2);
+      const to = plusDays(daysAhead(shut) + 1);
       const report = (await as('root', `/idle/report?from=${from}&to=${to}`)).body;
       assert.strictEqual(report.status, undefined);
       const open = idle.workingDaysBetween(from, to, sched.workingDays);
@@ -986,11 +1006,11 @@ test('holidays stop the clock, and only a Super Admin declares one',
 
       // THE TIME SHEET LABELS THE DAY and still offers the row — see the note
       // in shapeDay for why a holiday parts company with a weekend here.
-      const week = (await as('ana', `/timesheets/week?date=${tomorrow()}`)).body;
-      const day = (week.days || []).find((d) => d.date === tomorrow());
+      const week = (await as('ana', `/timesheets/week?date=${shut}`)).body;
+      const day = (week.days || []).find((d) => d.date === shut);
       assert.ok(day, 'the holiday is still a fillable row, unlike a weekend');
       assert.strictEqual(day.holiday.name, 'Tomorrow Shut');
-      const ordinary = (week.days || []).find((d) => d.date !== tomorrow() && !d.weekend);
+      const ordinary = (week.days || []).find((d) => d.date !== shut && !d.weekend);
       if (ordinary) assert.strictEqual(ordinary.holiday, null, 'and an ordinary day carries no label');
     } finally {
       await as('root', `${ROOT}/${planned.body.entry.id}`, { method: 'DELETE' });
