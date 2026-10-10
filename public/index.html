@@ -5426,7 +5426,7 @@ function openTimesheetLine(day){
   document.getElementById('tl_window').textContent =
     `${days}. A day over ${wd.maxHours} hours is flagged, not refused.`
     + (windowBits.length ? ` Lines can be filed ${windowBits.join(' and ')}.` : '')
-    + ' Pick an asset and its hours are worked out for you; leave, training and time with no asset are typed in.';
+    + ' Pick an asset and this day\u2019s hours on it are worked out for you; leave, training and time with no asset are typed in.';
   document.getElementById('tl_cat').innerHTML =
     (w.nonProjectTypes||[]).map(n=>`<option value="${n.key}">${escapeHTML(n.label)}</option>`).join('');
   document.getElementById('tl_client').innerHTML =
@@ -5467,7 +5467,7 @@ function tlLockHours(locked){
   field.readOnly = Boolean(locked);
   field.classList.toggle('locked', Boolean(locked));
   field.title = locked
-    ? 'Worked out from the asset\u2019s own recorded time. Flag it below if it looks wrong.'
+    ? 'Worked out from what you recorded on this asset on this day. Flag it below if it looks wrong.'
     : '';
   document.getElementById('tl_flagWrap').style.display = locked ? '' : 'none';
   if(!locked){
@@ -5482,65 +5482,106 @@ document.getElementById('tl_flag').addEventListener('change', e=>{
   if(e.target.checked) document.getElementById('tl_flagNote').focus();
 });
 
-/* The Hours field, filled from the asset's own recorded time.
+/* The Hours field, filled from what was recorded ON THE DAY THE LINE IS FOR.
  *
- * The number is what is LEFT: this person's recorded time on the asset, less
- * whatever they have already filed against it on any day. See the endpoint for
- * why it is a subtraction — the short of it is that the values offered across
- * an asset's days add up to the time it recorded, once, instead of to that
- * total repeated per day.
+ * THE DAY, NOT THE ASSET. It used to be the asset's whole recorded time for
+ * this person less everything they had ever filed against it — so three hours
+ * on Thursday and two on Friday put FIVE in the field on Thursday, filed five,
+ * and then refused Friday's line as already claimed. A line is a day; the
+ * figure is that day's.
  *
- * NOT a suggestion any more. Where a line names an asset the figure is
- * calculated, the field is locked, and the server works it out again on save —
- * so nothing typed here would survive. Where a line names no asset there is
- * nothing to calculate from, and the field is typed as it always was. */
+ * NOT a suggestion. Where a line names an asset the figure is calculated, the
+ * field is locked, and the server works it out again on save from the same
+ * function — so nothing typed here would survive. Where a line names no asset
+ * there is nothing to calculate from, and the field is typed as it always was,
+ * which is also the way to file time the timer never saw.
+ *
+ * THE PAGE WORKS NOTHING OUT. It sends the asset and the date and prints what
+ * comes back. The midnight split, the IST boundary and the open-session cap are
+ * all the server's, and a second copy of any of them here is how two figures
+ * for one thing start.
+ *
+ * ONE REQUEST WINS, AND IT IS THE LAST ONE ASKED FOR. Each call takes a ticket;
+ * a reply whose ticket is stale, or whose date and asset are no longer the ones
+ * on screen, is dropped. Without that, picking asset A then asset B shows B and
+ * then — when A's slower reply lands — A's hours under B's name, in a locked
+ * field nobody can correct. The server echoes the date and asset it answered
+ * for so this is checked against the reply itself rather than against a
+ * variable that might have been reassigned twice.
+ */
+let tlSuggestTicket = 0;
 async function tlSuggest(){
   const note = document.getElementById('tl_suggest');
   const field = document.getElementById('tl_hours');
   const assetId = document.getElementById('tl_asset').value;
   note.textContent = '';
   if(!assetId || !tlDay){ return; }
+  const ticket = ++tlSuggestTicket;
+  const askedFor = tlDay;
+  const askedAbout = assetId;
+  /* Cleared while the answer is on its way. A locked field still holding the
+     last asset's hours, for the two hundred milliseconds before the new ones
+     arrive, is a number somebody can read and believe. */
+  field.value = '';
+  tlLockHours(true);
+  note.textContent = 'Reading the clock…';
   try{
     /* No `exclude` here: this form only ever adds a line. The endpoint takes
        one, because PATCH /entries/:id exists and an edit screen built on it
        would have to leave its own line out of the "already logged" sum — but
        passing a parameter from a state key nothing sets would only look like a
        feature that is not there. */
-    const s = await api(`/timesheets/suggest?assetId=${encodeURIComponent(assetId)}&date=${tlDay}`);
+    const s = await api(`/timesheets/suggest?assetId=${encodeURIComponent(assetId)}&date=${askedFor}`);
+    /* Stale on any of the three counts: a newer request has been made, the form
+       has moved to another day, or the asset has changed. The server's echo is
+       what the last two are checked against. */
+    if(ticket !== tlSuggestTicket) return;
+    if(askedFor !== tlDay || askedAbout !== document.getElementById('tl_asset').value) return;
+    if(s.date !== askedFor || (s.assetId && s.assetId !== askedAbout)) return;
 
-    /* Calculated, so locked. The number is the asset's own recorded time less
-       what has already been filed against it, and the server works it out
-       again on save — so a field somebody could type into would only be a
-       field whose contents are thrown away. Non-project time and a line with
-       no asset stay typed by hand: there is nothing to calculate them from.
-       See tlLockHours below. */
     field.value = s.hours ? s.hours : '';
     tlLockHours(true);
     tlRecalc();
 
-    /* What the number is made of. Shown because the arithmetic is not obvious
-       from one figure, and because somebody filling in a past day needs to see
-       the day's own hours to correct it to. */
-    const bits = [];
-    if(s.recorded > 0){
-      bits.push(`${s.recorded}h recorded by you on this asset${s.open ? ' so far' : ''}`);
-      if(s.logged > 0) bits.push(`${s.logged}h already on your timesheet`);
+    /* What the number is, said in a sentence that names the day — so a figure
+       smaller than the asset's whole time is obviously about Thursday rather
+       than looking like a figure that has gone missing. */
+    const on = `on ${tsPretty(askedFor)}`;
+    const bits = [`Recorded on this asset ${on}: ${s.onThisDay}h${s.open ? ' so far' : ''}`];
+    if(s.logged > 0) bits.push(`${s.logged}h of it already on your timesheet`);
+    if(s.crossing){
+      bits.push(`${s.crossing} stretch${s.crossing===1?'':'es'} ran past midnight, so only `
+        + `${s.crossing===1?'its':'their'} part of this day is counted`);
     }
-    if(s.onThisDay !== null && s.onThisDay !== s.recorded){
-      bits.push(`${s.onThisDay}h of it on this day`);
+    if(s.openCapped){
+      bits.push('a session is still open on a day that has ended, counted to the end of that day');
     }
-    if(s.spanning){
-      bits.push(`${s.spanning} stretch${s.spanning===1?'':'es'} ran past midnight, so ${
-        s.spanning===1?'it is':'they are'} in the total but not in the daily figure`);
-    }
-    if(!s.recorded){
-      note.textContent = 'Nothing recorded against this asset by you yet — fill the hours in yourself.';
+
+    if(!s.onThisDay){
+      /* NONE RECORDED ON THIS DAY. The existing rule decides what happens, and
+         it is the one the server will give on save: an asset line is worth what
+         the timer recorded, so there is nothing to file against this asset for
+         this day. The way to file the hours is the same line without an asset,
+         where the figure is typed. Said here rather than only on the refusal,
+         because a locked empty field with no explanation reads as broken. */
+      note.textContent = `None recorded on this asset ${on}. Hours are measured from Accept and `
+        + 'Start — to log time the timer never saw, leave the asset unset and type the hours.';
     }else if(s.hours === null){
-      note.textContent = `${bits.join(' · ')}. All of it is already on your timesheet.`;
+      note.textContent = `${bits.join(' · ')}. All of it is already on your timesheet for this day.`;
     }else{
-      note.textContent = `${bits.join(' · ')}. ${s.hours}h left to log.`;
+      note.textContent = `${bits.join(' · ')}. ${s.hours}h to log.`;
     }
-  }catch{ /* a figure nobody can fetch is simply not offered */ }
+  }catch(err){
+    /* SAID, NOT SWALLOWED. The catch used to be empty, which left the previous
+       asset's hours in the field with nothing on screen to say the lookup had
+       failed — a wrong number presented as a calculated one. */
+    if(ticket !== tlSuggestTicket) return;
+    field.value = '';
+    tlLockHours(false);
+    note.textContent = 'Could not read the clock for this asset and day. '
+      + `Type the hours, or try again. (${err && err.message ? err.message : 'request failed'})`;
+    tlRecalc();
+  }
 }
 
 function syncTimesheetLine(){

@@ -419,20 +419,26 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(row[0].start_min, null, 'and leave nothing behind');
   });
 
-  await t.test('the hours offered are what is left, not what the asset came to', async () => {
-    /* The arithmetic this feature turns on: this person's recorded time on the
-       asset, less whatever they have already filed against it on ANY day.
-       
-       The property being protected is that the values offered across an
-       asset's days ADD UP TO its recorded time, once. Offering the total each
-       day files a three-day asset three times over; offering only that day's
-       stretches drops anything that ran past midnight and never makes it up. */
+  await t.test('the hours offered are what THIS DAY came to, not what the asset came to', async () => {
+    /* THE REVERSAL, AND THE BUG IT FIXES.
+     *
+     * This subtest used to assert the opposite: that a day's line was worth the
+     * asset's whole recorded time for this person, less everything they had
+     * ever filed against it. Three hours on Monday and one on Tuesday therefore
+     * offered FOUR AND A HALF on Monday — and filed it, because the field is
+     * locked and the server recalculates — and then refused Tuesday's line as
+     * "already on your timesheet". A timesheet line is a day, a person and an
+     * asset, so the figure is that day's.
+     *
+     * THE PROPERTY THE OLD RULE BOUGHT IS KEPT, and the last assertion here is
+     * it: what gets filed across the days still equals what was recorded,
+     * exactly once. The old rule needed the whole-asset total to achieve that
+     * because the day figure DROPPED any stretch running past midnight; that is
+     * fixed at the source now — such a stretch is split between the two days —
+     * so the days add up on their own.
+     */
     const day = '2026-03-09';
     const other = '2026-03-10';
-    /* Its own asset, not the suite's shared one. The figure this test is about
-       is "recorded minus already filed", and the shared asset already has hours
-       filed against it by earlier subtests — which would make every number here
-       depend on the order the file happens to run in. */
     const assetId = (await as('root', `/assets/project/${projectId}`, { method: 'POST',
       body: { name: 'Three Day Job', type: 'prop', assigneeId: people.ana } })).body.asset.id;
     const mk = async (startedAt, endedAt, seconds, userId = people.ana) => sql(cfg,
@@ -448,70 +454,89 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     const ask = async (who, date) =>
       (await as(who, `/timesheets/suggest?assetId=${assetId}&date=${date}`)).body;
 
-    let s1 = await ask('ana', day);
-    assert.strictEqual(s1.recorded, 4.5, 'everything Ana has recorded on it, across both days');
+    const s1 = await ask('ana', day);
+    assert.strictEqual(s1.onThisDay, 3.5, 'the two stretches that happened on this day');
     assert.strictEqual(s1.logged, 0, 'none of it filed yet');
-    assert.strictEqual(s1.hours, 4.5, 'so all of it is offered');
-    assert.strictEqual(s1.onThisDay, 3.5, 'with the day\'s own share shown beside it');
+    assert.strictEqual(s1.hours, 3.5, 'so that is what is offered — not the 4.5 the asset came to');
+    assert.strictEqual(s1.date, day, 'and the answer says which day it is for');
+    /* THE WHOLE-ASSET TOTAL IS NOT IN THE ANSWER AT ALL. It was `recorded`, and
+       it was the figure the field was filled from. A timesheet context has no
+       business showing it. */
+    assert.strictEqual(s1.recorded, undefined, 'the asset\'s own total is gone from this payload');
 
-    /* THE NUMBER IS THE SERVER'S. The field is locked, so what the request
-       carries is ignored and the line is worth whatever is outstanding —
-       filing here with a typed 3.5 files all 4.5, because that is what had
-       been recorded and not yet claimed. */
-    const filed = await add('ana', { date: day, hours: 3.5, clientId, projectId, assetId });
+    /* THE NUMBER IS STILL THE SERVER'S. The field is locked, so what the
+       request carries is ignored — filing here with a typed 9 files the three
+       and a half this person recorded that day. */
+    const filed = await add('ana', { date: day, hours: 9, clientId, projectId, assetId });
     assert.strictEqual(filed.status, 201);
-    assert.strictEqual(Number(filed.body.entry.hours), 4.5,
-      'the calculated figure, not the 3.5 the request asked for');
+    assert.strictEqual(Number(filed.body.entry.hours), 3.5,
+      'the day\'s calculated figure, not the 9 the request asked for');
 
-    // Which leaves nothing to offer, rather than offering it twice.
+    // And the next day offers its own hour, where before it was refused outright.
+    const s2 = await ask('ana', other);
+    assert.strictEqual(s2.onThisDay, 1, 'that day\'s own stretch');
+    assert.strictEqual(s2.logged, 0, 'nothing filed against it on that day');
+    assert.strictEqual(s2.hours, 1);
+    const second = await add('ana', { date: other, hours: 1, clientId, projectId, assetId });
+    assert.strictEqual(second.status, 201, JSON.stringify(second.body));
+    assert.strictEqual(Number(second.body.entry.hours), 1);
+
+    // Filed once per day: asking again offers nothing rather than the same hour twice.
     const s3 = await ask('ana', other);
-    assert.strictEqual(s3.logged, 4.5);
-    assert.strictEqual(s3.hours, null, 'nothing left');
-    assert.strictEqual(s3.recorded, 4.5, 'though it still says what was recorded');
-
-    // And a second line against it is refused rather than filed as nought.
+    assert.strictEqual(s3.logged, 1);
+    assert.strictEqual(s3.hours, null, 'nothing left on that day');
     const again = await add('ana', { date: other, hours: 1, clientId, projectId, assetId });
     assert.strictEqual(again.status, 400);
-    assert.match(again.body.error, /already on your timesheet/i);
+    assert.match(again.body.error, /already on your timesheet for that day/i);
 
     /* THE STUDIO'S SIXTH TESTING STEP, as an equation rather than a reading:
-       what was filed equals what was recorded. This is the whole point. */
+       what was filed equals what was recorded. Two lines now instead of one,
+       and the sum is the same. */
     const banked = await sql(cfg,
       'SELECT COALESCE(SUM(hours),0) AS h FROM timesheet_entries WHERE user_id = ? AND asset_id = ?',
       [people.ana, assetId]);
     assert.strictEqual(Number(banked[0].h), 4.5, 'filed hours equal recorded hours, with no double count');
 
-    /* A stretch across midnight is IN the total even though the daily figure
-       cannot claim it — which is exactly what the old per-day rule got wrong,
-       dropping it and never making it up. */
+    /* A STRETCH ACROSS MIDNIGHT IS SPLIT, which is what the old per-day reading
+       got wrong — it dropped the row and left the hours to be picked up by the
+       whole-asset total. 22:30 to 01:30 IST is an hour and a half on each side,
+       and the two halves add up to the stretch. */
     const across = '2026-03-11';
+    const next = '2026-03-12';
     await mk(`${across} 17:00:00`, `${across} 20:00:00`, 10800);  // 22:30 to 01:30 IST
-    const crossed = await ask('ana', across);
-    assert.strictEqual(crossed.recorded, 7.5, 'the midnight stretch counts towards the total');
-    assert.strictEqual(crossed.hours, 3, 'and is offered, where before it was silently lost');
-    assert.strictEqual(crossed.onThisDay, null, 'the daily figure still cannot split it');
-    assert.strictEqual(crossed.spanning, 1, 'and the caller is told why');
+    const first = await ask('ana', across);
+    const after = await ask('ana', next);
+    assert.strictEqual(first.onThisDay, 1.5, 'the part before midnight');
+    assert.strictEqual(after.onThisDay, 1.5, 'and the part after it');
+    assert.strictEqual(first.onThisDay + after.onThisDay, 3, 'which add up to the stretch, exactly');
+    assert.strictEqual(first.crossing, 1, 'and the caller is told the day holds part of a stretch');
+    assert.strictEqual(after.crossing, 1);
 
     /* Somebody else's hours on the same asset are not yours to file. After a
        hand-over the asset's Time Spent includes the previous holder; this
        figure must not, and the two are allowed to differ. */
     await mk(`${day} 16:00:00`, `${day} 18:00:00`, 7200, people.bo);
-    assert.strictEqual((await ask('ana', day)).recorded, 7.5, 'still only Ana\'s own stretches');
-    assert.strictEqual((await ask('bo', day)).recorded, 2);
+    assert.strictEqual((await ask('ana', day)).onThisDay, 3.5, 'still only Ana\'s own stretches');
+    assert.strictEqual((await ask('bo', day)).onThisDay, 2);
     assert.strictEqual((await ask('bo', day)).hours, 2, 'and Bo is offered his own two hours');
 
-    // An asset with nothing recorded offers nothing, which is not an error.
+    // An asset with nothing recorded on that day offers nothing, which is not an error.
     const idle = (await as('root', `/assets/project/${projectId}`, { method: 'POST',
       body: { name: 'Untouched', type: 'prop' } })).body.asset.id;
     const nothing = (await as('ana', `/timesheets/suggest?assetId=${idle}&date=${day}`)).body;
     assert.strictEqual(nothing.hours, null);
-    assert.strictEqual(nothing.recorded, 0);
+    assert.strictEqual(nothing.onThisDay, 0);
+    const refused = await add('ana', { date: day, hours: 1, clientId, projectId, assetId: idle });
+    assert.strictEqual(refused.status, 400);
+    assert.match(refused.body.error, /Nothing was recorded against that asset by you on/,
+      'and the refusal names the day, not the asset\'s whole history');
+    assert.match(refused.body.error, /without naming an asset/,
+      'and says how to file time the timer never saw');
 
     /* More filed than the clock recorded can no longer be TYPED — the field is
        locked — but the rows filed before the lock still exist, and the
        subtraction has to clamp at nothing rather than go negative into an
-       input that would refuse it. So the state is made the way those rows were
-       made: filed at the calculated hour, then raised behind the API's back. */
+       input that would refuse it. */
     const overfilled = (await as('root', `/assets/project/${projectId}`, { method: 'POST',
       body: { name: 'Overfiled', type: 'prop', assigneeId: people.ana } })).body.asset.id;
     await record(overfilled, 3600, { on: '2026-03-12', from: '10:00:00', to: '11:00:00' });
@@ -519,22 +544,33 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(Number(one.body.entry.hours), 1, 'the hour recorded, not the four asked for');
     await sql(cfg, 'UPDATE timesheet_entries SET hours = 4 WHERE id = ?', [one.body.entry.id]);
     const clamped = (await as('ana', `/timesheets/suggest?assetId=${overfilled}&date=2026-03-12`)).body;
-    assert.strictEqual(clamped.recorded, 1);
+    assert.strictEqual(clamped.onThisDay, 1);
     assert.strictEqual(clamped.logged, 4);
     assert.strictEqual(clamped.hours, null, 'nothing left, and never a negative number');
 
-    /* NOT a suggestion any more. A request asking for six hours against an
-       asset gets whatever is outstanding, or a refusal — the studio asked for
-       the figure to be non-negotiable, and a lock the API ignores is not one. */
+    /* NOT a suggestion. A request asking for six hours against an asset gets
+       the day's figure or a refusal — the studio asked for the figure to be
+       non-negotiable, and a lock the API ignores is not one. */
     const overfilled2 = (await as('root', `/assets/project/${projectId}`, { method: 'POST',
       body: { name: 'Six Requested', type: 'prop', assigneeId: people.ana } })).body.asset.id;
-    await record(overfilled2, 7200, { on: '2026-03-13', from: '10:00:00', to: '12:00:00' });
-    const typed = await add('ana', { date: day, hours: 6, clientId, projectId, assetId: overfilled2 });
+    /* Tuesday the 17th, which nothing else in this file touches. The Friday the
+       13th is deliberately left empty: two subtests further down use it for
+       "an empty day is not a submission" and for a day that is still open. */
+    await record(overfilled2, 7200, { on: '2026-03-17', from: '10:00:00', to: '12:00:00' });
+    const typed = await add('ana', { date: '2026-03-17', hours: 6, clientId, projectId, assetId: overfilled2 });
     assert.strictEqual(typed.status, 201);
     assert.strictEqual(Number(typed.body.entry.hours), 2, 'the two hours recorded, not the six asked for');
+    /* And the same six against a day the timer never ran on that asset is
+       refused rather than filed — which is the old rule's loophole closed: it
+       would have offered those two hours on any day at all. A refusal files
+       nothing, so the 18th is left as empty as it was found. */
+    const elsewhere = await add('ana', { date: '2026-03-18', hours: 6, clientId, projectId,
+      assetId: overfilled2 });
+    assert.strictEqual(elsewhere.status, 400);
+    assert.match(elsewhere.body.error, /Nothing was recorded against that asset by you on/);
   });
 
-  await t.test('the calculated figure cannot be edited round either', async () => {
+await t.test('the calculated figure cannot be edited round either', async () => {
     /* The field being locked in the form is a convenience; the lock is the
        API's. A PATCH is the obvious way round a disabled input, so it applies
        the same subtraction — with this row's own hours left out of it, or an
@@ -613,14 +649,22 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.ok(again.body.entry.flaggedAt, 'the reason is what raises the flag');
   });
 
-  await t.test('an asset still in progress offers its live elapsed time', async () => {
+  await t.test('an asset still in progress counts up to now, on today\'s line', async () => {
     /* The studio's third testing step. An open session has no `seconds` yet, so
-       the figure is now-minus-started — the same expression the asset panel and
-       the Efficiency report use, so the three cannot disagree.
-       
+       its figure is the open-hours span from its start to NOW — the same
+       expression the asset panel and the Efficiency report use, so the three
+       cannot disagree.
+
        And the held gap is excluded without any subtraction: a hold CLOSES a row
        and a resume opens another, so the gap between them was never in a row to
-       begin with. */
+       begin with.
+
+       THE ONE CASE THAT CANNOT USE A FIXED DATE, and it is the point of it: a
+       live session is measured against the real now, so the day it belongs to
+       is the real today. The DURATIONS are still fixed, and the assertion is
+       made over today AND yesterday so a suite running in the small hours — when
+       a four-hour-old stretch legitimately began yesterday — measures the same
+       three hours rather than failing on the clock. */
     const live = (await as('root', `/assets/project/${projectId}`, { method: 'POST',
       body: { name: 'Still Going', type: 'prop', assigneeId: people.ana } })).body.asset.id;
 
@@ -634,24 +678,55 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
        VALUES (UUID(), ?, ?, 1, NOW() - INTERVAL 1 HOUR, NULL, NULL, NULL)`,
       [live, people.ana]);
 
-    const s = (await as('ana', `/timesheets/suggest?assetId=${live}&date=2026-03-13`)).body;
-    assert.strictEqual(s.open, true, 'the endpoint says it is still running');
+    const istDay = (offsetDays = 0) => new Date(Date.now() + (5 * 60 + 30) * 60000
+      + offsetDays * 86400000).toISOString().slice(0, 10);
+    const ask = async (date) => (await as('ana', `/timesheets/suggest?assetId=${live}&date=${date}`)).body;
+
+    const today = await ask(istDay(0));
+    const yesterday = await ask(istDay(-1));
+    assert.strictEqual(today.open, true, 'the endpoint says a session is still running today');
     /* Two closed hours plus about one live one. NOT four: the hour held between
        them is the gap between two rows and is in neither. */
-    assert.ok(s.recorded >= 2.9 && s.recorded <= 3.1,
-      `about three hours, not the four that have elapsed — got ${s.recorded}`);
-    assert.strictEqual(s.hours, s.recorded, 'and all of it is offered, none filed yet');
+    const both = today.onThisDay + yesterday.onThisDay;
+    assert.ok(both >= 2.9 && both <= 3.1,
+      `about three hours, not the four that have elapsed — got ${both}`);
+    assert.strictEqual(today.hours, today.onThisDay, 'and today\'s part is offered, none filed yet');
+
+    /* AND NOT ON A PAST DAY. The same open session must not pour its live hours
+       into a line for last week — that is what "count up to now" would mean if
+       the day were not clipped first. */
+    const lastWeek = await ask('2026-03-13');
+    assert.strictEqual(lastWeek.onThisDay, 0, 'nothing of it lands on an unrelated past day');
+    assert.strictEqual(lastWeek.hours, null);
+    assert.strictEqual(lastWeek.open, false, 'and that day is not told a session is open on it');
+
+    // A day that has not begun holds nothing, and says so rather than erroring.
+    const ahead = await ask(istDay(3));
+    assert.strictEqual(ahead.onThisDay, 0);
+    assert.strictEqual(ahead.future, true, 'a future date is zero by construction');
   });
 
-  await t.test('the edge cases the studio named: a weekend, a handover, and repeated holds', async () => {
-    /* Three shapes that break a per-day reading of the timer, checked together
-       because the fix for each is the same one: the figure is the person's
-       whole recorded time on the asset, less what they have already filed. */
+await t.test('the edge cases the studio named: a weekend, a handover, and repeated holds', async () => {
+    /* Three shapes that test a per-day reading of the timer, checked together.
+       The figure is the person's own recorded time on the asset ON THE DAY the
+       line is for, less what they have already filed against it that day. */
 
-    // ---- worked over a weekend the sheet no longer has --------------------
-    /* Somebody comes in on the Saturday. There is no Saturday row to file it
-       on any more, so if the figure were per-day those hours would be
-       unclaimable — which is the way this could have gone wrong quietly. */
+    // ---- worked over a weekend the sheet does not have ---------------------
+    /* THE COST OF THE PER-DAY RULE, PINNED RATHER THAN HIDDEN.
+     *
+     * Somebody comes in on the Saturday. The studio logs hours Monday to Friday
+     * (loggable_days, a Settings value), so there is no Saturday row to file
+     * against — and the Monday's figure is now Monday's own hours, which are
+     * none. So the weekend's two and a half hours CANNOT be filed against this
+     * asset at all.
+     *
+     * That is a real loss and it is the opposite of what this subtest asserted
+     * before, when the Monday carried the whole outstanding total. It is the
+     * arithmetic the studio asked for — a line is worth what was recorded on
+     * its own day — and the two ways out are both existing settings rather than
+     * new rules: a Super Admin turns Saturday on in Settings → Time Sheet, or
+     * the hours go on as project time with no asset, where the figure is typed.
+     * Reported with the change rather than discovered later. */
     const weekender = (await as('root', `/assets/project/${projectId}`, { method: 'POST',
       body: { name: 'Weekend Push', type: 'prop', assigneeId: people.ana } })).body.asset.id;
     await record(weekender, 7200, { on: '2026-03-20', from: '10:00:00', to: '12:00:00' }); // Fri
@@ -659,15 +734,26 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     await record(weekender, 3600, { on: '2026-03-22', from: '11:00:00', to: '12:00:00' }); // Sun
 
     const sat = (await as('ana', `/timesheets/suggest?assetId=${weekender}&date=2026-03-21`)).body;
-    assert.strictEqual(sat.recorded, 4.5, 'the weekend stretches are recorded all the same');
+    assert.strictEqual(sat.onThisDay, 1.5, 'the Saturday stretch is recorded all the same');
     assert.strictEqual((await add('ana', { date: '2026-03-21', hours: 1,
       clientId, projectId, assetId: weekender })).status, 400, 'but no line can be put there');
 
+    const friday = await add('ana', { date: '2026-03-20', hours: 1, clientId, projectId,
+      assetId: weekender });
+    assert.strictEqual(friday.status, 201);
+    assert.strictEqual(Number(friday.body.entry.hours), 2, 'the Friday carries the Friday\'s two hours');
+
     const monday = await add('ana', { date: '2026-03-23', hours: 1, clientId, projectId,
       assetId: weekender });
-    assert.strictEqual(monday.status, 201);
-    assert.strictEqual(Number(monday.body.entry.hours), 4.5,
-      'and the Monday carries all of it, weekend included — none of it is lost');
+    assert.strictEqual(monday.status, 400,
+      'and the Monday carries its own hours, which are none — the weekend\'s are not swept into it');
+    assert.match(monday.body.error, /Nothing was recorded against that asset by you on/);
+    /* The hours are not lost to the studio — the clock still holds them, and
+       Time Spent on the asset still counts all four and a half. What cannot
+       happen any more is one day's line claiming another day's work. */
+    const spent = await sql(cfg,
+      'SELECT COALESCE(SUM(seconds),0) AS s FROM work_sessions WHERE asset_id = ?', [weekender]);
+    assert.strictEqual(Number(spent[0].s), 4.5 * 3600, 'the clock is untouched by any of this');
 
     // ---- held and resumed several times -----------------------------------
     /* Each hold CLOSES a row and each resume opens another, so the gaps are
@@ -684,8 +770,9 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
               (UUID(), ?, ?, 1, '${day} 16:00:00', '${day} 18:00:00', 7200, 'submitted')`,
       [stuttered, people.ana, stuttered, people.ana, stuttered, people.ana]);
     const stutter = (await as('ana', `/timesheets/suggest?assetId=${stuttered}&date=${day}`)).body;
-    assert.strictEqual(stutter.recorded, 5,
+    assert.strictEqual(stutter.onThisDay, 5,
       'five worked hours across a nine-hour span — the four held are in no row');
+    assert.strictEqual(stutter.sessions, undefined, 'the payload says hours, not row counts');
     assert.strictEqual(Number((await add('ana', { date: day, hours: 9, clientId, projectId,
       assetId: stuttered })).body.entry.hours), 5, 'and five is what gets filed');
 
@@ -701,9 +788,9 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     await as('root', `/assets/${handed}`, { method: 'PATCH', body: { assigneeId: people.bo } });
     await record(handed, 5400, { on: over, from: '11:00:00', to: '12:30:00', userId: people.bo });
 
-    assert.strictEqual((await as('ana', `/timesheets/suggest?assetId=${handed}&date=${over}`)).body.recorded, 2,
+    assert.strictEqual((await as('ana', `/timesheets/suggest?assetId=${handed}&date=${over}`)).body.onThisDay, 2,
       'Ana is offered her own two hours');
-    assert.strictEqual((await as('bo', `/timesheets/suggest?assetId=${handed}&date=${over}`)).body.recorded, 1.5,
+    assert.strictEqual((await as('bo', `/timesheets/suggest?assetId=${handed}&date=${over}`)).body.onThisDay, 1.5,
       'and Bo his own hour and a half, not the three and a half the asset came to');
 
     assert.strictEqual(Number((await add('ana', { date: over, hours: 3.5, clientId, projectId,

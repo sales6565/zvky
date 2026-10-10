@@ -316,6 +316,116 @@ function workingSecondsBetween(startMs, endMs, schedule) {
   return Math.round(ms / 1000);
 }
 
+/* THE SAME WALK, KEPT PER DAY — what the Time Sheet needs to split a stretch
+ * that ran past midnight.
+ *
+ * workingSecondsBetween above answers "how much of this span was the studio
+ * open"; this answers "and on which days", which is the question a timesheet
+ * line asks. A session from 22:30 to 01:30 IST is one row in work_sessions and
+ * two days on a timesheet, and the only honest way to divide it is the way the
+ * clock was divided — by the studio's open spans, not by halving the wall time.
+ *
+ * MILLISECONDS, NOT SECONDS, and a total beside the map. Rounding each day and
+ * then adding them up is how a split loses a second: the caller apportions from
+ * these raw figures and rounds once, at the end, so the parts cannot fail to
+ * sum to the whole. The total is returned rather than left to be re-added for
+ * the same reason.
+ *
+ * KEYED BY THE IST CALENDAR DATE, through istDateOf — the one bridge between
+ * this file's day numbers and a date anybody else writes down. A caller holding
+ * '2026-10-09' can look its own day up without converting anything.
+ *
+ * Written beside workingSecondsBetween rather than replacing its loop: that
+ * function is read on every session close and every report, and a refactor of
+ * it to serve this would be a change to the figure every one of them prints.
+ * tests/timesheet-day-hours.test.js pins that the two agree.
+ */
+function workingMsByDay(startMs, endMs, schedule) {
+  const byDay = new Map();
+  const from = Number(startMs);
+  const to = Number(endMs);
+  if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return { total: 0, byDay };
+
+  const first = istPartsOf(from).day;
+  const last = istPartsOf(to).day;
+  let total = 0;
+  for (let day = first; day <= last && day - first <= MAX_DAYS_WALKED; day += 1) {
+    let ms = 0;
+    for (const [a, b] of spansOn(day, schedule)) {
+      const openFrom = Math.max(from, instantAt(day, a));
+      const openTo = Math.min(to, instantAt(day, b));
+      if (openTo > openFrom) ms += openTo - openFrom;
+    }
+    if (ms > 0) { byDay.set(istDateOf(day), ms); total += ms; }
+  }
+  return { total, byDay };
+}
+
+/* The same map with the schedule ignored: wall-clock milliseconds per IST day.
+ *
+ * ONLY A FALLBACK, and only for one case: a row whose stored `seconds` is above
+ * zero although the studio was shut for its whole span. That cannot happen to a
+ * row written now — `seconds` IS the open-hours intersection, so a shut span
+ * stores nought — but it can be true of a row written before that rule existed,
+ * and those rows still hold hours somebody worked. Weighting them by the time
+ * that elapsed puts them on the days they happened rather than nowhere. */
+function elapsedMsByDay(startMs, endMs) {
+  const byDay = new Map();
+  const from = Number(startMs);
+  const to = Number(endMs);
+  if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return { total: 0, byDay };
+  const first = istPartsOf(from).day;
+  const last = istPartsOf(to).day;
+  let total = 0;
+  for (let day = first; day <= last && day - first <= MAX_DAYS_WALKED; day += 1) {
+    const openFrom = Math.max(from, instantAt(day, 0));
+    const openTo = Math.min(to, instantAt(day, MINUTES_PER_DAY));
+    if (openTo > openFrom) { byDay.set(istDateOf(day), openTo - openFrom); total += openTo - openFrom; }
+  }
+  return { total, byDay };
+}
+
+/* Divide a whole number of seconds across days in proportion to a weight map,
+ * losing nothing.
+ *
+ * LARGEST REMAINDER, because the obvious way is wrong in a way nobody notices
+ * until the figures are added up: rounding each day independently can leave the
+ * parts one second short of or over the whole, and a timesheet whose days do not
+ * add up to the session they came from is exactly the drift this feature exists
+ * to remove. Every leftover second is handed out, biggest fraction first, and
+ * ties go to the earlier date so the answer does not depend on map order.
+ *
+ * Deterministic per day: a caller asking only about Thursday gets the same
+ * figure it would have got by asking about every day and reading Thursday's.
+ */
+function allocateSeconds(whole, byDay) {
+  const out = new Map();
+  const entries = [...byDay.entries()].filter(([, ms]) => ms > 0)
+    .sort((a, b) => (a[0] < b[0] ? -1 : 1));
+  const total = entries.reduce((n, [, ms]) => n + ms, 0);
+  const amount = Math.max(0, Math.round(Number(whole) || 0));
+  if (!total || !amount) {
+    for (const [day] of entries) out.set(day, 0);
+    return out;
+  }
+  const remainders = [];
+  let used = 0;
+  for (const [day, ms] of entries) {
+    const exact = (amount * ms) / total;
+    const base = Math.floor(exact);
+    out.set(day, base);
+    used += base;
+    remainders.push([day, exact - base]);
+  }
+  remainders.sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+  let left = amount - used;
+  for (let i = 0; i < remainders.length && left > 0; i += 1, left -= 1) {
+    const day = remainders[i][0];
+    out.set(day, out.get(day) + 1);
+  }
+  return out;
+}
+
 /* The recordable spans of ONE DAY, by day number. Empty on a day the studio
    does not work, which is what makes every walk below skip weekends without
    any of them knowing what a weekend is.
@@ -484,4 +594,6 @@ module.exports = {
   instantAt, openSpans, spansOn, spansFromEntries, workableMinutesPerDay,
   merge, subtract,
   workingSecondsBetween, isRecording, stopsAt, startsAt, resumesAt, lastStoppedAt,
+  // The per-day split behind the Time Sheet's daily figure.
+  workingMsByDay, elapsedMsByDay, allocateSeconds,
 };

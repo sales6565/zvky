@@ -226,6 +226,111 @@ its own current value. And `loggable_days` is deliberately **not** wired to
 would mean widening the timesheet silently changed every utilisation figure in
 the studio.
 
+### What a timesheet line against an asset is worth
+
+**This person, that asset, that day — and nothing else.** A line naming an asset
+is worth the time *this* person recorded on *that* asset on the *selected
+calendar day* in IST, less whatever they have already filed against it on that
+same day. The figure is **calculated and enforced**, not suggested: the Hours
+field is locked in the form and `hoursFor()` works the number out again on save,
+so a request carrying nine files the three the timer recorded.
+
+**The bug this replaced, and its exact shape.** The figure used to be
+`workLog.recordedFor()` — `SELECT SUM(COALESCE(seconds,0)) FROM work_sessions
+WHERE asset_id = $1 AND user_id = $2`, **a query with no date in it** — less
+everything ever filed against the asset. So three hours on Thursday and two on
+Friday put **five** in Thursday's locked field, *filed* five, and then refused
+Friday's line with "all 5h recorded against that asset is already on your
+timesheet". The day's own figure was computed and shown as a footnote beside the
+number actually used. Both the form (`GET /api/timesheets/suggest`) and the save
+(`hoursFor`) now read **one** function, `dayFigure()`, so a form that shows three
+and a save that files five is not expressible.
+
+**Why the day figure had been rejected, and why that reason is gone.**
+`dayTotalFor()` dropped any stretch that ran past midnight — its comment argued
+there was "genuinely no way to know how much of a stretch running from Tuesday
+afternoon to Wednesday morning was Tuesday's" — so a per-day figure would have
+lost those hours for good, and the whole-asset subtraction was how they were
+made up. That premise was wrong: `work_sessions.seconds` is the span
+**intersected with the studio's open hours**, and that intersection is additive,
+so Tuesday's part is exactly computable. A stretch is now split at midnight IST:
+
+- `workingMsByDay()` in `src/working-time.js` is the same per-day walk
+  `workingSecondsBetween()` already does, kept per IST date in **milliseconds**.
+  A test pins that the two agree, because that function is what `close()` stores
+  and what every report reads.
+- `allocateSeconds()` divides the row's stored seconds across those days by
+  **largest remainder**, so every leftover second is handed out and the parts sum
+  to the whole exactly: 22:30–01:30 is 1.5 h and 1.5 h, never 1.49 and 1.5.
+- **Paused and closed time is excluded with nothing subtracted.** A hold *closes*
+  a row and a resume opens another, so a pause is the gap between two rows; and
+  lunch, the evening, a weekend and a holiday are all simply time with no open
+  span over it, in `seconds` and in the weights alike.
+- A row **entirely inside one day** comes out at exactly its stored `seconds` —
+  one day in the map takes the lot — so the ordinary case is unchanged.
+- A legacy row (written before `seconds` became the open-hours intersection)
+  whose whole span falls outside the open hours is apportioned by **elapsed**
+  time instead, so hours somebody really worked land on the days they happened
+  rather than nowhere.
+
+**A running session** counts up to **now** for the day that holds now — the same
+figure the timer on the panel shows. For a day that has already ended it is
+**capped at the end of that day** rather than run up to now, because an open row
+spanning a past day means the sweep never closed it, and the response says so
+(`openCapped`) so the shortfall is explained rather than discovered.
+
+**The date is the server's business.** `GET /api/timesheets/suggest` takes the
+day, validates it (a day that does not exist is a **400** — `toISO` accepts a
+`Date` and an ISO instant on purpose and checks no calendar), and a **future**
+day comes back as zero. The page sends the selected date and prints what comes
+back; it holds no copy of the IST boundary, the split or the cap. Each lookup
+takes a ticket and the reply is checked against the date and asset the server
+echoes, so a slow answer for the asset you just moved off cannot land in a
+locked field. A failed lookup **says so** and hands the field back to be typed —
+it used to be swallowed, leaving the previous asset's number on screen as though
+it had been calculated.
+
+**Whose time it is.** Always the timesheet owner's: `/suggest` has no `userId`
+parameter and `POST /entries` writes `req.user`'s line whatever the body
+carries, so there is no file-on-behalf-of path to get wrong. `dayFigure()` takes
+the owner's id as its first argument, which is the one place a future on-behalf
+path would need to change. Pinned.
+
+**Where the whole-asset total is still the right answer, and untouched:** Time
+Spent on the Assets List (`workLog.totalsFor`), the asset panel and its
+per-round history (`workLog.summary`), the Efficiency and Idle reports, Team
+Capacity, and both P&L tabs. Those are what the *asset* cost across everybody
+who held it. The timesheet no longer calls `workLog.recordedFor()` at all, and
+`recorded` is gone from the `/suggest` payload — a timesheet context showing the
+asset's total is the bug, not a nicety.
+
+**Day and week totals, the week split and both exports needed no change:** they
+sum `timesheet_entries.hours`, so correcting what gets *filed* corrects them all
+at once. The previous-working-day gate counts *lines*, not hours, and is
+likewise unaffected. Outsourced assets have no sessions at all, so the figure is
+zero and the line is refused for the same reason any untimed asset is —
+unchanged.
+
+**The cost of the rule, stated plainly.** A day the studio does not accept lines
+for — a Saturday, with `loggable_days` at Monday–Friday — can hold recorded time
+that now has **nowhere to go**: Saturday takes no line, and Monday's figure is
+Monday's own hours. Before, the Monday swept up the outstanding total. The two
+ways out are both existing settings rather than new rules: turn Saturday on in
+Settings → Time Sheet, or file the hours as project time **without naming an
+asset**, where the figure is typed. The refusal names the day and points at the
+second one. Pinned in `tests/timesheet.test.js` so it is a decision rather than
+a discovery.
+
+**Lines already filed are not rewritten.** `sql/checks/timesheet-lines-over-recorded.sql`
+finds the ones that look affected — a line whose hours exceed what that person
+recorded on that asset that day — with the excess and whether a midnight-crossing
+stretch could explain it. It is read-only on purpose: those hours are somebody's
+own record of their day and pay and utilisation figures have been drawn from
+them. **Recommended: review the list before correcting anything, and do any
+correction as a separate reviewable migration** — the likely population is small
+(it needs an asset worked on across more than one day, filed on the earlier one)
+and the lines it touches may be in approved days.
+
 ### Yesterday's sheet before today's work
 
 **Off by default, and switching it on blocks people straight away** — so the

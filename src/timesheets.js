@@ -98,6 +98,22 @@ function toISO(value) {
   return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
 }
 
+/* Does this day exist?
+ *
+ * toISO above reduces a Date or an ISO instant to its day, deliberately — every
+ * date parameter in the timesheet accepts either. What it does NOT do is check
+ * the calendar: '2026-13-40' and '2026-02-30' both match its pattern and come
+ * back unchanged, and a route that passed one on would answer about a day
+ * nobody can have worked rather than refusing it.
+ *
+ * The round trip IS the check: a real day survives being turned into an instant
+ * and back, and 30 February does not — it comes back as 1 or 2 March. */
+function isRealDate(iso) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso || ''))) return false;
+  const at = new Date(`${iso}T00:00:00Z`);
+  return Number.isFinite(at.getTime()) && at.toISOString().slice(0, 10) === iso;
+}
+
 /* --- the studio's working day ----------------------------------------------
 
    All of it in minutes from midnight, and all of it India Standard Time.
@@ -647,14 +663,19 @@ function dayTotal(entries, win) {
   };
 }
 
-/* How many hours this person has already filed against one asset, ever.
+/* How many hours this person has already filed against one asset ON ONE DAY.
  *
- * The other half of the Hours figure: recorded time minus this, clamped at
- * zero, is what has not been written down yet. Counted across EVERY day rather
- * than the one being filled in, which is the whole point — an asset worked on
- * over three days offers its first day's hours, then only what accrued since,
- * then only what accrued after that. The three add up to the recorded total
- * instead of to three times it.
+ * The other half of the Hours figure: that day's recorded time minus this,
+ * clamped at zero, is what has not been written down yet.
+ *
+ * COUNTED FOR ONE DAY, which is a reversal. It used to count EVERY day, because
+ * the figure it was subtracted from was the asset's whole recorded time — and
+ * that pair is what put five hours on a three-hour Thursday and then refused
+ * Friday's two for being "already on your timesheet". Both halves are the day's
+ * now. The property the old pair bought is kept and no longer needs the whole
+ * total to buy it: a session that runs past midnight is SPLIT between the two
+ * days (see dayTotalFor in src/work-log.js), so the days still add up to the
+ * asset's recorded time exactly once.
  *
  * Drafts count as well as submitted days. A line somebody has filed but not
  * yet submitted is still hours they have claimed; leaving it out would offer
@@ -664,11 +685,18 @@ function dayTotal(entries, win) {
  * re-opening a 3-hour line would subtract its own 3 hours from what is left
  * and offer 3 fewer than it should.
  */
-async function hoursLoggedOn(db, { assetId, userId, exceptId = null }) {
+async function hoursLoggedOn(db, { assetId, userId, day, exceptId = null }) {
   if (!assetId || !userId) return 0;
-  const params = [userId, assetId];
-  let where = 'user_id = $1 AND asset_id = $2';
-  if (exceptId) { where += ' AND id <> $3'; params.push(exceptId); }
+  /* THE DAY IS NOT OPTIONAL, and the throw is deliberate. A caller that forgot
+     it would get the old answer — every day's lines subtracted from one day's
+     hours — which is the half-migrated shape this change removes. A developer
+     error, surfaced as one. */
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(day || ''))) {
+    throw new Error('hoursLoggedOn needs the day the line is for: a timesheet figure is per day.');
+  }
+  const params = [userId, assetId, day];
+  let where = 'user_id = $1 AND asset_id = $2 AND entry_date = $3';
+  if (exceptId) { where += ' AND id <> $4'; params.push(exceptId); }
   const { rows } = await db.query(
     `SELECT COALESCE(SUM(hours), 0) AS hours FROM timesheet_entries WHERE ${where}`,
     params
@@ -757,6 +785,7 @@ module.exports = {
   weekDays,
   workingDays,
   toISO,
+  isRealDate,
   isLocked,
   validateEntry,
   totals,

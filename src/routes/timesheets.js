@@ -11,6 +11,9 @@ const workSchedule = require('../work-schedule');
 const holidays = require('../holidays');
 // For the Hours suggestion: what this person's own work sessions say about one day.
 const workLog = require('../work-log');
+/* "Thursday 9 Oct" — the same formatter the previous-working-day refusal uses,
+   because two date formatters is two ways to write the same day. */
+const { label: dayLabel } = require('../timesheet-gate');
 const xlsx = require('xlsx');
 const branding = require('../branding');
 const exporter = require('../report-export');
@@ -409,14 +412,80 @@ async function updateEntry(id, line, was) {
   }
 }
 
+/* THE ONE FIGURE A TIMESHEET LINE IS WORTH, asked once and read twice — by the
+ * form through GET /suggest, and by the save below through hoursFor().
+ *
+ * WHAT A LINE IS WORTH IS WHAT THIS PERSON RECORDED ON THAT ASSET ON THAT DAY,
+ * less whatever they have already filed against it on THAT SAME DAY. Both
+ * halves are the day's.
+ *
+ * WHAT IT WAS, AND THE BUG. It was the asset's whole recorded time for this
+ * person, less everything they had ever filed against it. Three hours on
+ * Thursday and two on Friday therefore offered FIVE on Thursday — and filed
+ * five, because the field is locked and the server recalculates — and then
+ * refused Friday's line with "all 5h is already on your timesheet". The day
+ * figure existed and was shown as a footnote beside the number that was
+ * actually used.
+ *
+ * THE PROPERTY THE OLD PAIR BOUGHT IS KEPT. Subtracting every day from the
+ * whole total made the days add up to the recorded time exactly once, and the
+ * reason it was done that way is that the day figure DROPPED any stretch
+ * running past midnight. That is fixed at the source: dayTotalFor splits such a
+ * stretch between the two days, so the per-day figures already sum to the
+ * recorded total and the whole-asset number is not needed to make them.
+ *
+ * THE WHOLE-ASSET TOTAL IS NO LONGER READ HERE AT ALL, which is the invariant
+ * worth stating plainly: Time Spent on the asset, the Efficiency report and the
+ * P&L are the asset's whole cost across everybody who held it, and that number
+ * has no business in a line about one person's day. workLog.recordedFor() is
+ * still the reader for those screens; the timesheet does not call it.
+ *
+ * ONE FUNCTION FOR BOTH CALLERS on purpose. A form showing three and a save
+ * filing five is the exact shape this change is undoing, and two call sites
+ * computing "the same" figure is how that happened.
+ */
+async function dayFigure(userId, { assetId, date }, { exceptId = null } = {}) {
+  const day = sheets.toISO(date);
+  if (!assetId || !day) return null;
+  const [recorded, logged] = await Promise.all([
+    workLog.dayTotalFor(db, { assetId, userId, day }),
+    sheets.hoursLoggedOn(db, { assetId, userId, day, exceptId }),
+  ]);
+  const round = (n) => Math.round(n * 100) / 100;
+  /* Hours to two places, which is what the field steps in, what the column
+     stores and what every other hours figure in the timesheet is rounded to.
+     The SPLIT is done in seconds, before this — see dayTotalFor — so no part of
+     a session is lost to rounding and only the figure on screen is rounded, once. */
+  const dayHours = round(recorded.seconds / 3600);
+  const outstanding = round(Math.max(0, dayHours - logged));
+  /* No single line is longer than a day, and that rule predates this one. */
+  const left = Math.min(outstanding, sheets.MAX_LINE_HOURS);
+  if (recorded.openCapped) {
+    /* Reported rather than silently capped: an open row spanning a day that has
+       already ended means the pause sweep never closed it. The figure is capped
+       at the end of that day, which is right, but somebody should know. */
+    console.warn(`[timesheet] ${recorded.openCapped} open session(s) on asset ${assetId} `
+      + `span ${day}, which has ended — capped at the end of that day for ${userId}.`);
+  }
+  return {
+    day,
+    dayHours,
+    logged,
+    left,
+    open: recorded.open,
+    crossing: recorded.crossing,
+    openCapped: recorded.openCapped,
+    future: recorded.future,
+  };
+}
+
 /* The hours a line is worth, decided here rather than taken from the caller.
  *
  * WHEN A LINE NAMES AN ASSET the figure is calculated and the field is locked,
- * so whatever the request carried is ignored: the same subtraction the form
- * shows — this person's recorded time on that asset, less what they have
- * already filed against it — clamped at zero. A locked field that the API will
- * happily overwrite is not locked, it is decorated, and this application has
- * both layers of every other restriction for the same reason.
+ * so whatever the request carried is ignored: the day figure above. A locked
+ * field that the API will happily overwrite is not locked, it is decorated, and
+ * this application has both layers of every other restriction for the same
+ * reason.
  *
  * WHEN IT DOES NOT, the number is typed and kept. Leave, Holiday, Internal
  * Meeting, Training and Admin have no asset to calculate from, and neither does
@@ -424,42 +493,40 @@ async function updateEntry(id, line, was) {
  * possible, so locking them would not make them automatic — it would make them
  * unfileable, and take five categories of time out of the timesheet on the way.
  *
- * Nothing left to log is refused rather than filed as nought: a zero-hour line
- * is not a record of anything, and the message says which case it is.
+ * IT TAKES THE DATE because the figure is now per day. A request with no usable
+ * date falls through to the typed path, where sheets.validateEntry() refuses the
+ * date with its own message — all the date messaging stays in one place, and
+ * nothing is filed either way.
+ *
+ * NOTHING RECORDED ON THAT DAY is refused rather than filed as nought, and the
+ * message says what to do instead: the same line without an asset takes a typed
+ * figure, which is how offline work and a day the timer was never started have
+ * always been filed. That is the existing rule, applied to the day.
  */
-async function hoursFor(userId, { assetId, hours }, { exceptId = null } = {}) {
+async function hoursFor(userId, { assetId, hours, date }, { exceptId = null } = {}) {
   if (!assetId) return { ok: true, hours, calculated: false };
+  const figure = await dayFigure(userId, { assetId, date }, { exceptId });
+  if (!figure) return { ok: true, hours, calculated: false };
 
-  const [recorded, logged] = await Promise.all([
-    workLog.recordedFor(db, { assetId, userId }),
-    sheets.hoursLoggedOn(db, { assetId, userId, exceptId }),
-  ]);
-  const round = (n) => Math.round(n * 100) / 100;
-  const recordedHours = round(recorded.seconds / 3600);
-  const outstanding = round(Math.max(0, recordedHours - logged));
-  /* No single line is longer than a day, and that rule predates this one. A
-     timer left running over a weekend can leave more outstanding than a line
-     can hold, so the excess stays outstanding and is offered again tomorrow —
-     which is a split across two lines, not hours quietly dropped. */
-  const left = Math.min(outstanding, sheets.MAX_LINE_HOURS);
-
-  if (recordedHours === 0) {
+  if (figure.dayHours === 0) {
     return {
       ok: false,
-      error: 'Nothing has been recorded against that asset by you, so there are no hours to log. '
-        + 'Time is measured from Accept and Start; if you worked on it without starting the timer, '
-        + 'there is nothing for the timesheet to read.',
+      error: `Nothing was recorded against that asset by you on ${dayLabel(figure.day)}, so there `
+        + 'are no hours to log against it for that day. Time is measured from Accept and Start — if '
+        + 'you worked on it without the timer, file the hours as project time without naming an '
+        + 'asset and the figure is yours to type.',
       field: 'assetId',
     };
   }
-  if (left < sheets.MIN_LINE_HOURS) {
+  if (figure.left < sheets.MIN_LINE_HOURS) {
     return {
       ok: false,
-      error: `All ${recordedHours}h recorded against that asset is already on your timesheet.`,
+      error: `All ${figure.dayHours}h you recorded against that asset on ${dayLabel(figure.day)} `
+        + 'is already on your timesheet for that day.',
       field: 'assetId',
     };
   }
-  return { ok: true, hours: left, calculated: true };
+  return { ok: true, hours: figure.left, calculated: true };
 }
 
 router.post('/entries', requirePermission('timesheet.own'), async (req, res) => {
@@ -714,60 +781,65 @@ router.post('/reopen', requirePermission('timesheet.own'), async (req, res) => {
 
 /* GET /api/timesheets/suggest?assetId=&date=&exclude= — the hours to fill in.
  *
- * WHAT IS LEFT, not what the asset came to. The figure is this person's own
- * recorded time on the asset minus whatever they have already filed against it
- * on any day, clamped at zero.
+ * WHAT THIS PERSON RECORDED ON THAT ASSET ON THAT DAY, less what they have
+ * already filed against it on that day. dayFigure() above is the whole of it,
+ * and the save uses the same function — the form cannot show one number and the
+ * server file another.
  *
- * That subtraction is the whole design, and the property it buys is worth
- * naming: the values offered across every day of an asset ADD UP TO the time
- * recorded on it, once. Offer the asset's total each day and a three-day asset
- * is filed three times over. Offer only what a given day's stretches came to —
- * which is what this endpoint did before — and any stretch that ran past
- * midnight is dropped and never made up, so the timesheet quietly ends up
- * short. Subtracting what is already filed is self-correcting: whatever one
- * day misses, the next day still offers.
+ * THE ASSET'S WHOLE RECORDED TIME IS NOT IN THIS RESPONSE. It used to be, as
+ * `recorded`, and it was the figure the field was filled from: five hours
+ * offered on a three-hour Thursday. A timesheet line is a day, so the only
+ * figure a timesheet context has any business showing is the day's.
  *
- * IT IS STILL A SUGGESTION. It lands in an editable field, and a person who
- * was interrupted types over it. Nothing here refuses a different number.
+ * THE DATE IS REQUIRED AND VALIDATED HERE. A malformed one is a 400 rather than
+ * a quiet fallback to today — a form that asked about the wrong day would be
+ * harder to notice than an error. A date in the future comes back as zero: the
+ * day has not happened, so nothing can have been recorded on it.
  *
- * The day figure goes back too, unused by the field and shown beside it. Filling
- * Monday in on Wednesday is a real thing people do, and it is the one case this
- * arithmetic answers badly — it would offer everything accrued since Monday.
- * Saying "of which N h was recorded on this day" gives them the number they
- * actually want without the field having to guess which case it is in.
+ * IT IS ONE PERSON'S OWN TIME. There is no userId parameter: the figure is
+ * always req.user's, which is also whose line POST /entries writes. If a
+ * file-on-behalf-of path is ever added, dayFigure() already takes the owner's
+ * id as its first argument and that is the only place it would need to change.
+ *
+ * STILL NOT A SUGGESTION, despite the name the path has carried since before
+ * the field was locked: where a line names an asset this figure is what gets
+ * filed, and hoursFor() works it out again on save.
  */
 router.get('/suggest', requirePermission('timesheet.own'), async (req, res) => {
   const date = sheets.toISO(req.query.date);
-  if (!date) return res.status(400).json({ error: 'Which day?', field: 'date' });
+  /* A DAY THAT DOES NOT EXIST IS A 400, not a quiet zero. toISO accepts a Date
+     and an ISO instant on purpose and checks no calendar, so '2026-13-40'
+     reaches here looking like a date; answering "no hours on the 40th" would be
+     agreeing with the question. */
+  if (!date || !sheets.isRealDate(date)) {
+    return res.status(400).json({ error: 'Which day?', field: 'date' });
+  }
   const assetId = String(req.query.assetId || '').trim();
-  if (!assetId) return res.json({ hours: null, recorded: 0, logged: 0, onThisDay: null, spanning: 0 });
+  if (!assetId) {
+    return res.json({ date, hours: null, onThisDay: 0, logged: 0, open: false, crossing: 0 });
+  }
 
-  /* Your own recorded time, never anybody else's. An asset you hold now may
-     have been worked on by the person who had it last week, and their hours are
-     not yours to file — so this figure and the asset's Time Spent on the
-     Efficiency report are allowed to differ, and do, after a hand-over. */
-  const [recorded, logged, day] = await Promise.all([
-    workLog.recordedFor(db, { assetId, userId: req.user.id }),
-    sheets.hoursLoggedOn(db, { assetId, userId: req.user.id, exceptId: req.query.exclude || null }),
-    workLog.dayTotalFor(db, { assetId, userId: req.user.id, day: date }),
-  ]);
-
-  const round = (n) => Math.round(n * 100) / 100;
-  const recordedHours = round(recorded.seconds / 3600);
-  /* Never below zero. Somebody who filed more hours than the clock recorded —
-     which is allowed, the field is theirs to correct — is offered nothing
-     rather than a negative number the input would refuse anyway. */
-  const left = round(Math.max(0, recordedHours - logged));
+  const figure = await dayFigure(req.user.id, { assetId, date },
+    { exceptId: req.query.exclude || null });
 
   res.json({
+    // The day the figure is for, echoed so the page can throw away a response
+    // that arrived after it had moved on.
+    date: figure.day,
+    assetId,
     // Below the minimum line, there is nothing worth offering.
-    hours: left >= sheets.MIN_LINE_HOURS ? left : null,
-    recorded: recordedHours,
-    logged,
-    open: recorded.open,
-    // Context for the person, not for the field.
-    onThisDay: day.seconds > 0 ? round(day.seconds / 3600) : null,
-    spanning: day.spanning,
+    hours: figure.left >= sheets.MIN_LINE_HOURS ? figure.left : null,
+    // What the day holds, and what of it is already filed.
+    onThisDay: figure.dayHours,
+    logged: figure.logged,
+    open: figure.open,
+    // Stretches that ran past midnight and had this day's part counted. Shown
+    // so a figure smaller than a session somebody remembers is explained.
+    crossing: figure.crossing,
+    // Open sessions spanning a day that has ended — capped at its end, not run
+    // up to now. Reported so the screen can say the figure may be short.
+    openCapped: figure.openCapped,
+    future: figure.future,
   });
 });
 

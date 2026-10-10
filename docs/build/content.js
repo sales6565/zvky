@@ -985,23 +985,34 @@ module.exports = [
     'Save.',
   ]),
   note('Where the filled-in hours come from',
-    'Choosing an asset fills in WHAT IS LEFT: the time you have recorded on that asset, less whatever you have '
-    + 'already logged against it on any day. So a job that took three days offers its first day\u2019s hours, then '
-    + 'only what has accrued since, then only what accrued after that \u2014 the three add up to the time the asset '
-    + 'recorded, once, instead of to that total three times over. The line under the field shows the arithmetic: '
-    + 'what was recorded, what is already on your timesheet, and what is left.'),
+    'Choosing an asset fills in WHAT YOU RECORDED ON THAT ASSET ON THAT DAY, less anything you have already '
+    + 'logged against it on the same day. So three hours on Thursday and two on Friday put three on the '
+    + 'Thursday\u2019s line and two on the Friday\u2019s \u2014 each day\u2019s line is that day\u2019s work, and '
+    + 'across the days they still add up to the time the asset recorded, once. The line under the field says it in '
+    + 'words: "Recorded on this asset on 9 Oct: 3h".\n\n'
+    + 'IT USED TO BE THE WHOLE BALANCE, and that was wrong in a way worth knowing about if you filed hours before '
+    + 'this change: the Thursday was offered all FIVE hours, filed five, and the Friday was then refused as '
+    + 'already claimed. Lines already saved have not been altered.\n\n'
+    + 'A STRETCH THAT RAN PAST MIDNIGHT is divided between the two days \u2014 half past ten at night to half past '
+    + 'one in the morning is an hour and a half on each \u2014 and the halves add up to the stretch exactly. Time '
+    + 'the clock was not running is in neither: a hold, the lunch blackout, the evening and a holiday are all '
+    + 'simply time the studio was not open.'),
   note('The figure is not yours to type',
     'Where a line names an asset the hours are the software\u2019s answer, not a suggestion: the field is locked, '
     + 'and the server works the number out again when the line is saved, so nothing typed into it would survive. '
     + 'The lock is the server\u2019s rather than the field\u2019s \u2014 a request made outside the form is worth '
     + 'the same calculated figure.\n\n'
-    + 'An asset still in progress offers the time elapsed so far, not counting anything it spent on hold. An asset '
-    + 'you have already logged in full offers nothing and says so, and a second line against it is refused rather '
-    + 'than filed as nought. An asset the timer has never run on cannot be logged against at all: time is measured '
-    + 'from Accept and Start, and there is nothing for the sheet to read.\n\n'
-    + 'Because the figure is the whole outstanding balance rather than a part of it, filing a line claims '
-    + 'everything not yet claimed. Skip a day and the next day\u2019s line carries the earlier day\u2019s hours '
-    + 'too \u2014 the total across the asset is right either way, but the hours sit on the day they were filed.'),
+    + 'AN ASSET STILL IN PROGRESS offers the time elapsed so far TODAY, not counting anything it spent on hold \u2014 '
+    + 'the same figure the asset panel is showing. A day you have already logged in full offers nothing and says '
+    + 'so, and a second line against the same asset on the same day is refused rather than filed as nought.\n\n'
+    + 'A DAY THE TIMER NEVER RAN ON THAT ASSET cannot be logged against it: hours are measured from Accept and '
+    + 'Start, and for that day there is nothing for the sheet to read. The form says so rather than leaving an '
+    + 'empty locked box. To record work the timer did not see \u2014 offline, on somebody else\u2019s machine, a '
+    + 'day you forgot to start it \u2014 leave the asset unset and type the hours against the project.\n\n'
+    + 'THAT ALSO MEANS A SATURDAY\u2019S WORK NEEDS SOMEWHERE TO GO. The sheet has no Saturday row unless a Super '
+    + 'Admin turns Saturdays on (13.1b), and the Monday now carries the Monday\u2019s own hours rather than '
+    + 'sweeping up the weekend\u2019s. Either turn the day on, or file the weekend\u2019s hours against the '
+    + 'project without naming the asset.'),
   note('If the number looks wrong, flag it',
     'Nobody can correct a locked figure, so the way to disagree with one is on the record instead of over it. '
     + 'Tick THIS FIGURE LOOKS WRONG under the Hours field and say briefly what is wrong \u2014 a timer left '
@@ -1021,7 +1032,7 @@ module.exports = [
     'A day over 8 hours is FLAGGED, not refused. A long day is a real thing, and a form that refuses one teaches people to log eight and go home late.',
     'A line is either project work or non-project time, never both.',
     'Saturday and Sunday are not days the sheet has. A line dated to one is refused.',
-    'Hours against an asset are calculated and locked; hours with no asset are typed.',
+    'Hours against an asset are calculated and locked, from that day\u2019s own recorded time; hours with no asset are typed.',
   ]),
   note('What the simpler form gives up',
     'A line used to be a stretch of the clock, and three rules went with it. Two are no loss: the 09:30\u201319:00 '
