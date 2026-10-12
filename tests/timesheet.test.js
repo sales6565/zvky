@@ -112,10 +112,15 @@ test('eight hours is a warning, and under eight is silent', () => {
      all nine hours land in `project` and the other two sums are nought. That is
      the assertion that would fail if a line's kind were ever misclassified. */
   assert.deepStrictEqual(sheets.dayTotal([{ hours: 5 }, { hours: 4 }]),
-    { hours: 9, lines: 2, overLong: true, maxHours: 8, project: 9, nonProject: 0, idle: 0 });
-  // And an idle day, to show which sum moves.
+    { hours: 9, lines: 2, overLong: true, maxHours: 8, project: 9, nonProject: 0, idle: 0,
+      idleByRemark: [] });
+  /* And an idle day, to show which sum moves — now with the breakdown by remark
+     beside it. These lines carry none, which is what every Idle line filed
+     before the second dropdown existed looks like, so the hours group under
+     "not stated" rather than being invented an answer. */
   assert.deepStrictEqual(sheets.dayTotal([{ hours: 5, nonProject: 'idle' }, { hours: 4 }]),
-    { hours: 9, lines: 2, overLong: true, maxHours: 8, project: 4, nonProject: 0, idle: 5 });
+    { hours: 9, lines: 2, overLong: true, maxHours: 8, project: 4, nonProject: 0, idle: 5,
+      idleByRemark: [{ key: null, label: 'not stated', stated: false, hours: 5 }] });
   assert.strictEqual(sheets.dayTotal([{ hours: 8 }]).overLong, false, 'exactly eight is not over');
   // A half day is an ordinary thing and worth no words at all.
   assert.strictEqual(sheets.dayTotal([{ hours: 4 }]).overLong, false);
@@ -318,7 +323,10 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     const lines = [
       { date: MON, hours: 2, clientId, projectId, assetId, notes: 'Rough pass' },
       { date: MON, hours: 1, clientId, projectId },
-      { date: '2026-03-03', hours: 3, nonProject: 'training' },
+      /* Training carries a second dropdown now, so a line against it names a
+         type — a category with active sub-options requires one. */
+      { date: '2026-03-03', hours: 3, nonProject: 'training',
+        nonProjectSub: 'training_training_2d_art' },
     ];
     for (const line of lines) {
       const made = await add('ana', line);
@@ -596,7 +604,8 @@ await t.test('the calculated figure cannot be edited round either', async () => 
 
     /* A line with no asset has nothing to calculate from, so it stays typed —
        leave, holidays, meetings and training have no timer to read. */
-    const own = await add('ana', { date: day, hours: 3, nonProject: 'training' });
+    const own = await add('ana', { date: day, hours: 3, nonProject: 'training',
+      nonProjectSub: 'training_training_game_design' });
     assert.strictEqual(Number(own.body.entry.hours), 3);
     const changed = await as('ana', `/timesheets/entries/${own.body.entry.id}`, {
       method: 'PATCH', body: { hours: 4 } });
@@ -1010,9 +1019,19 @@ await t.test('the edge cases the studio named: a weekend, a handover, and repeat
        sheet. */
     const header = text.split('\n').find((l) => l.startsWith('Date,'));
     assert.ok(header, `there is a header row — got ${text.split('\n').slice(0, 6).join(' | ')}`);
+    /* Option sits beside Category, and carries the second dropdown's choice —
+       the Idle remark, the training type, the on-site client. ONE column rather
+       than one per category: the heading differs per category and a spreadsheet
+       gets one column, so it is named for what it holds. Blank on a project
+       line and on a line filed before the dropdown existed. */
     assert.deepStrictEqual(header.trim().split(','),
-      ['Date', 'Client', 'Project', 'Asset', 'Category', 'Hours', 'Notes', 'Status'],
+      ['Date', 'Client', 'Project', 'Asset', 'Category', 'Option', 'Hours', 'Notes', 'Status'],
       'and it is the hours-based shape, with no Start and no End');
+    const trained = text.split('\n').find((l) => l.includes('Training'));
+    if (trained) {
+      assert.match(trained, /Training,Training 2D Art/,
+        'and a training line prints its type beside its category');
+    }
 
     // The hours themselves are on the rows.
     const dataRows = text.split('\n').filter((l) => /^\d{4}-\d{2}-\d{2},/.test(l));

@@ -97,12 +97,19 @@ test('Idle is seeded, is the only system category, and is keyed not named', () =
   assert.strictEqual(idle.isSystem, true, 'and is protected');
   assert.deepStrictEqual(
     defaults.TIMESHEET_CATEGORIES.filter((c) => c.isSystem).map((c) => c.key), ['idle'],
-    'the only one: the other five are protected the ordinary way, by usedBy'
+    'the only one: the others are protected the ordinary way, by usedBy'
   );
-  // The five that were hardcoded are all still there, under the keys existing
-  // lines already hold — the table adopts them rather than migrating anything.
+  /* The five that were hardcoded are all still there, under the keys existing
+     lines already hold — the table adopts them rather than migrating anything.
+     
+     ON SITE JOINED THEM with the second dropdown: the studio asked for three
+     lists of sub-options and the category two of them hang off already existed,
+     while On Site did not. It is NOT is_system — nothing keys on it, so it is
+     renameable and retirable like Training beside it, which is this list's rule
+     for an ordinary category. */
   assert.deepStrictEqual(defaults.TIMESHEET_CATEGORIES.map((c) => c.key),
-    ['leave', 'holiday', 'meeting', 'training', 'admin', 'idle']);
+    ['leave', 'holiday', 'meeting', 'training', 'on_site', 'admin', 'idle']);
+  assert.strictEqual(defaults.TIMESHEET_CATEGORIES.find((c) => c.key === 'on_site').isSystem, false);
 
   /* THE KEY, NOT THE LABEL. src/timesheets.js compares non_project to exactly
      one literal — IDLE — and that constant is the key. A comparison against
@@ -137,8 +144,31 @@ test('the three kinds of time, and which one Idle is', () => {
     { nonProject: 'leave', hours: 8 },
     { nonProject: 'idle', hours: 4.25 },
   ];
+  /* AND THE IDLE HOURS BROKEN DOWN BY REMARK, which is what the second
+     dropdown is for: a week that says six hours idle tells a manager there was
+     slack, and one that says six of them were No Work to Assign tells them
+     whose problem it is. These lines carry no remark — every Idle line filed
+     before the dropdown existed is in that position — so the hours group under
+     "not stated", which is honest rather than invented. */
   assert.deepStrictEqual(sheets.splitHours(week),
-    { project: 8.5, nonProject: 11, idle: 4.25 });
+    { project: 8.5,
+      nonProject: 11,
+      idle: 4.25,
+      idleByRemark: [{ key: null, label: 'not stated', stated: false, hours: 4.25 }] });
+
+  // With remarks, the breakdown names them, heaviest first and the unexplained last.
+  const stated = sheets.splitHours([
+    { nonProject: 'idle', hours: 1, nonProjectSub: 'idle_late_login' },
+    { nonProject: 'idle', hours: 3, nonProjectSub: 'idle_no_work_to_assign' },
+    { nonProject: 'idle', hours: 2 },
+    { nonProject: 'idle', hours: 1.5, nonProjectSub: 'idle_no_work_to_assign' },
+  ]);
+  assert.strictEqual(stated.idle, 7.5, 'the hours are the hours');
+  assert.deepStrictEqual(stated.idleByRemark.map((r) => [r.key, r.hours]),
+    [['idle_no_work_to_assign', 4.5], ['idle_late_login', 1], [null, 2]],
+    'grouped by the stored key, summed, and the unstated hours last');
+  assert.strictEqual(stated.idleByRemark.reduce((n, r) => n + r.hours, 0), stated.idle,
+    'and the breakdown adds up to the figure it breaks down');
   /* IDLE IS IN THE HOURS LOGGED. The three parts add to the whole, which is the
      assertion that fails if somebody later "excludes" it by subtracting it from
      a total rather than naming it beside one. */
@@ -316,11 +346,12 @@ test('Idle, the categories and the policy, end to end',
 
   /* --- the category, and the migration ------------------------------------ */
 
-  await t.test('the six categories are seeded, and seeding twice adds one Idle', async () => {
+  await t.test('the seven categories are seeded, and seeding twice adds one Idle', async () => {
     const list = await as('root', CATS);
     assert.strictEqual(list.status, 200, JSON.stringify(list.body));
+    // On Site arrived with the second dropdown; see the seed test above.
     assert.deepStrictEqual(list.body.entries.map((e) => e.key),
-      ['leave', 'holiday', 'meeting', 'training', 'admin', 'idle']);
+      ['leave', 'holiday', 'meeting', 'training', 'on_site', 'admin', 'idle']);
     const idle = list.body.entries.find((e) => e.key === 'idle');
     assert.strictEqual(idle.label, 'Idle');
     assert.strictEqual(idle.isSystem, true);
@@ -332,8 +363,10 @@ test('Idle, the categories and the policy, end to end',
        and the line is untouched. That is the brief's "running it twice creates
        one row" and "adds Idle to an existing populated database without
        disturbing existing lines" in one case, because they are one risk. */
-    assert.strictEqual((await line('ana', { date: WED, nonProject: 'training', hours: 4 })).status, 201);
-    const before = await sql(cfg, 'SELECT id, non_project, hours FROM timesheet_entries ORDER BY id');
+    assert.strictEqual((await line('ana', { date: WED, nonProject: 'training', hours: 4,
+      nonProjectSub: 'training_training_game_design' })).status, 201);
+    const before = await sql(cfg,
+      'SELECT id, non_project, non_project_sub, hours FROM timesheet_entries ORDER BY id');
 
     await restart();
     await restart();
@@ -341,11 +374,17 @@ test('Idle, the categories and the policy, end to end',
     const rows = await sql(cfg, "SELECT COUNT(*) AS n FROM timesheet_categories WHERE `key` = 'idle'");
     assert.strictEqual(Number(rows[0].n), 1, 'one Idle row after three migrations');
     const all = await sql(cfg, 'SELECT COUNT(*) AS n FROM timesheet_categories');
-    assert.strictEqual(Number(all[0].n), 6, 'and six categories, not twelve');
-    const after = await sql(cfg, 'SELECT id, non_project, hours FROM timesheet_entries ORDER BY id');
-    assert.deepStrictEqual(after.map((r) => `${r.id}:${r.non_project}:${r.hours}`),
-      before.map((r) => `${r.id}:${r.non_project}:${r.hours}`),
-      'and every line exactly as it was');
+    assert.strictEqual(Number(all[0].n), 7, 'and seven categories, not fourteen');
+    /* AND THE SUB-OPTIONS THE SAME WAY, seeded by key through the same function
+       — thirteen rows however many times the migration runs. */
+    const subs = await sql(cfg, 'SELECT COUNT(*) AS n FROM timesheet_sub_options');
+    assert.strictEqual(Number(subs[0].n), 13, 'thirteen sub-options after three migrations');
+    const after = await sql(cfg,
+      'SELECT id, non_project, non_project_sub, hours FROM timesheet_entries ORDER BY id');
+    assert.deepStrictEqual(
+      after.map((r) => `${r.id}:${r.non_project}:${r.non_project_sub}:${r.hours}`),
+      before.map((r) => `${r.id}:${r.non_project}:${r.non_project_sub}:${r.hours}`),
+      'and every line exactly as it was, its remark included');
   });
 
   await t.test('an Idle line is accepted, counted in the hours, and shown apart', async () => {
@@ -354,8 +393,16 @@ test('Idle, the categories and the policy, end to end',
        assertion — so the line was filed as a side effect of describing a
        failure, and the totals below counted an hour nobody could see in the
        test. Written out instead. */
-    for (const [cat, hours] of [['idle', 3], ['idle', 0.5], ['training', 2]]) {
-      const r = await line('ana', { date: THU, nonProject: cat, hours });
+    /* EACH CARRIES ITS SECOND-DROPDOWN CHOICE, which Idle and Training both have
+       one of now: a category with active sub-options requires one, and these
+       lines are filed through the API exactly as the form files them. A line
+       without one is refused, and its own case below asserts that. */
+    for (const [cat, hours, sub] of [
+      ['idle', 3, 'idle_no_work_to_assign'],
+      ['idle', 0.5, 'idle_late_login'],
+      ['training', 2, 'training_training_2d_art'],
+    ]) {
+      const r = await line('ana', { date: THU, nonProject: cat, hours, nonProjectSub: sub });
       assert.strictEqual(r.status, 201, `${cat} ${hours}h: ${JSON.stringify(r.body)}`);
     }
 
@@ -387,8 +434,14 @@ test('Idle, the categories and the policy, end to end',
 
     const w = await week('ana', THU);
     assert.deepStrictEqual((w.nonProjectTypes || []).map((n) => n.key),
-      ['leave', 'holiday', 'meeting', 'training', 'admin', 'idle'],
+      ['leave', 'holiday', 'meeting', 'training', 'on_site', 'admin', 'idle'],
       'the form is built from the same list the server validates against');
+    /* AND EACH CATEGORY CARRIES ITS OWN SECOND DROPDOWN in the same payload, so
+       the form holds no copy of any list. Three of the seven have one. */
+    const withOptions = (w.nonProjectTypes || []).filter((n) => (n.subOptions || []).length);
+    assert.deepStrictEqual(withOptions.map((n) => [n.key, n.subLabel, n.subOptions.length]),
+      [['training', 'Training Type', 3], ['on_site', 'On Site Client', 3], ['idle', 'Idle Remarks', 7]],
+      'the headings and the counts come from the server');
   });
 
   await t.test('Idle can be renamed, and the reports keep working', async () => {
@@ -408,8 +461,10 @@ test('Idle, the categories and the policy, end to end',
       assert.ok((w.nonProjectTypes || []).some((n) => n.key === 'idle' && n.label === 'Bench time'),
         'and the dropdown shows the new name');
       // A new line still files under the key, not the label.
-      assert.strictEqual((await line('ana', { date: THU, nonProject: 'idle', hours: 1 })).status, 201);
-      assert.strictEqual((await line('ana', { date: THU, nonProject: 'Bench time', hours: 1 })).status, 400,
+      assert.strictEqual((await line('ana', { date: THU, nonProject: 'idle', hours: 1,
+        nonProjectSub: 'idle_system_issues' })).status, 201);
+      assert.strictEqual((await line('ana', { date: THU, nonProject: 'Bench time', hours: 1,
+        nonProjectSub: 'idle_system_issues' })).status, 400,
         'the label is not a key');
     } finally {
       await as('root', `${CATS}/idle`, { method: 'PATCH', body: { label: 'Idle' } });

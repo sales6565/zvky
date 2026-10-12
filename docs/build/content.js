@@ -948,6 +948,26 @@ module.exports = [
     + 'weekend’s hours. A weekend day that already carries lines from before this change is still shown, so '
     + 'nothing already filed disappears.'),
 
+  note('The second dropdown, and why some categories have one',
+    'Three categories ask a second question. IDLE asks for an idle remark \u2014 No Work to Assign, '
+    + 'System Issues, Awaiting Client Feedback, Assigned work Completed, Assigned Work Late, Left '
+    + 'Early, Late Login. TRAINING asks which kind. ON SITE asks which client. The line cannot be '
+    + 'saved until the second dropdown is answered, and it starts on "Choose one\u2026" rather than '
+    + 'on the first option so nothing is filed by not noticing.\n\n'
+    + 'CHANGING THE CATEGORY CLEARS IT. An Idle remark cannot end up on a Training line: pick a '
+    + 'different category and the second dropdown starts again.\n\n'
+    + 'THE OTHER CATEGORIES HAVE NONE, and nothing is missing when the second dropdown does not '
+    + 'appear \u2014 Leave, Holiday, Internal Meeting and Admin ask one question only.\n\n'
+    + 'LINES FILED BEFORE THIS have no remark on them and are left exactly as they were. Correcting '
+    + 'the hours or the notes on one does not suddenly demand an answer; moving it to another '
+    + 'category does, because that is a new choice.\n\n'
+    + 'A RETIRED OPTION STAYS READABLE. If a Super Admin retires one, lines already filed against it '
+    + 'keep showing it, marked INACTIVE, and it is no longer offered for anything new.\n\n'
+    + 'WHAT IT IS FOR: the week total already says how many of its hours were idle. With the remarks '
+    + 'it also says what the idle hours were \u2014 "No Work to Assign 6h \u00b7 System Issues 1h" '
+    + '\u2014 which is the difference between knowing there was slack and knowing whose problem it was. '
+    + 'The remark is in both exports too, in a column called Option beside Category.'),
+
   note('If Start is refused and asks for yesterday\u2019s sheet',
     'A studio can switch on a rule that nobody starts today\u2019s work before yesterday\u2019s sheet is '
     + 'filled in (13.1b). If it is on and you are refused, the message names the day \u2014 the last working '
@@ -980,6 +1000,7 @@ module.exports = [
   steps([
     'Press + Add a line on the day.',
     'Choose the project, and the asset if the time was against one.',
+    'If the line is non-project, pick the category \u2014 and, where a second dropdown appears, pick from that too. Idle asks which kind of idle, Training which kind of training, On Site which client.',
     'If the line names an asset, the hours are worked out for you and the field is locked. If it does not \u2014 leave, a meeting, training, or project time with no asset named \u2014 type the hours in.',
     'Say what you did.',
     'Save.',
@@ -1747,6 +1768,29 @@ module.exports = [
     'THE SWITCH TAKES THE SAME PERMISSION as the rest of the panel, because it saves with it. There is no second permission for it to be held without.',
     'EVERY SAVE IS LOGGED, with the whole policy as a sentence before and after.',
   ]),
+
+  h2('13.1c Time Sheet Sub-Options \u2014 Super Admin'),
+  p('Settings \u2192 Time Sheet Sub-Options is the second dropdown that appears under a non-project '
+    + 'category. Pick the category, name the option, and it is in everybody\u2019s Add line form on '
+    + 'their next refresh \u2014 there is nothing to deploy.'),
+  bullets([
+    'ANY CATEGORY CAN HAVE THEM. The three that ship with options are Idle, Training and On Site, but the Category picker offers every one: give Leave a list tomorrow and Leave gets a second dropdown.',
+    'A CATEGORY WITH NO OPTIONS HAS NO SECOND DROPDOWN, which is how most of them stay. Retiring the last option of a category takes its dropdown away again, and the form stops asking.',
+    'RENAME FREELY. An option is stored on a line by a code that never changes, so renaming "Left Early" re-labels every line that ever used it \u2014 last month included \u2014 and breaks nothing.',
+    'MOVE UP AND MOVE DOWN set the order people read in the dropdown. It is the one list in Settings with those buttons, because it is the one people read top to bottom every day.',
+    'DEACTIVATE RATHER THAN DELETE anything in use. The refusal says how many lines hold it and offers to deactivate instead: it leaves the dropdown, and those lines keep showing it marked inactive. An option nothing has used yet can be deleted outright.',
+    'THE HEADING IS YOURS TOO. The Heading button on the Time Sheet Categories panel above renames what people read over the dropdown \u2014 "Idle Remarks" is only the starting word. It appears on a category once it has options.',
+    'IT TAKES Manage Time Sheet Sub-Options, which is the Super Admin by default and can be granted to a designation in Settings \u2192 Permissions. Deliberately SEPARATE from Manage Time Sheet Options: that one decides what the studio may log at all and how far back last month can be corrected, this one curates the words inside a category somebody already has. Nobody needs either to fill in their own hours.',
+    'EVERY CHANGE IS IN THE ACTIVITY LOG, with who made it and what it was before.',
+  ]),
+  note('The names are the studio\u2019s own, including the odd capital',
+    'The Idle list ships as the studio wrote it \u2014 "Assigned work Completed" beside "Assigned '
+    + 'Work Late". The inconsistent capital is deliberate on our part: it is their list, and '
+    + 'tidying it quietly would be deciding something they can decide. Rename either one here and '
+    + 'nothing stored changes.\n\n'
+    + 'ONE NAME TO KNOW ABOUT: "Awaiting Client Feedback" is an Idle remark AND a stage on the '
+    + 'board. They are unrelated and nothing in the software connects them \u2014 an idle hour '
+    + 'spent waiting on a client is not the same thing as an asset sitting in that stage.'),
 
   h2('13.2 Working hours and lunch'),
   shot('12-settings-working-hours', 'The working-hours control.'),

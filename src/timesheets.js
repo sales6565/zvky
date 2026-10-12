@@ -258,15 +258,41 @@ function isWeekend(iso) {
  *
  * NO ROWS is the only case this covers. A studio that has genuinely retired
  * five of the six has one row, which is not empty, and is honoured. */
-const seededCategories = () => require('./reference-defaults').TIMESHEET_CATEGORIES
-  .map((c) => ({ key: c.key, label: c.label, color: c.color || null }));
+const seededCategories = () => {
+  const defaults = require('./reference-defaults');
+  return defaults.TIMESHEET_CATEGORIES.map((c) => ({
+    key: c.key,
+    label: c.label,
+    color: c.color || null,
+    /* The seeded heading and the seeded options, so a deployment reading the
+       fallback gets a form that works rather than a category whose second
+       dropdown is silently missing. */
+    subLabel: defaults.TIMESHEET_SUB_LABELS[c.key] || null,
+    subOptions: defaults.TIMESHEET_SUB_OPTIONS
+      .filter((o) => o.parentKey === c.key)
+      .sort((a, b) => b.position - a.position)
+      .map((o) => ({ key: o.key, label: o.label })),
+  }));
+};
 
 const nonProject = () => {
   const held = referenceData.list('timesheet_categories');
   if (!held.length && !referenceData.list('timesheet_categories', { includeInactive: true }).length) {
     return seededCategories();
   }
-  return held.map((e) => ({ key: e.key, label: e.label, color: e.color || null }));
+  /* EACH CATEGORY CARRIES ITS OWN SECOND DROPDOWN, so the form gets the whole
+     answer in the payload it already fetches and holds no copy of any list.
+     ACTIVE options only: this is what the form offers, and a retired option is
+     resolved for display separately (see subOptionLabel) rather than being
+     offered again. An empty array is a category with no second dropdown, which
+     is most of them. */
+  return held.map((e) => ({
+    key: e.key,
+    label: e.label,
+    color: e.color || null,
+    subLabel: e.subLabel || null,
+    subOptions: subOptionsFor(e.key).map((o) => ({ key: o.key, label: o.label })),
+  }));
 };
 const nonProjectKeys = () => nonProject().map((n) => n.key);
 
@@ -278,6 +304,63 @@ const nonProjectLabel = (key) => {
   const all = referenceData.list('timesheet_categories', { includeInactive: true });
   const found = (all.length ? all : seededCategories()).find((e) => e.key === key);
   return found ? found.label : key;
+};
+
+/* ---------- the second dropdown ----------
+ *
+ * A non-project category can carry a list of SUB-OPTIONS — the Idle remarks,
+ * the training types, the on-site clients — and when it does, the Add line form
+ * shows a second dropdown and the server requires a choice from it.
+ *
+ * ONE MECHANISM. Nothing below names Idle, Training or On Site: a category with
+ * rows in timesheet_sub_options has a second dropdown, one without has none,
+ * and attaching options to Leave tomorrow is three rows in Settings.
+ *
+ * THE DROPDOWN'S HEADING IS DATA TOO — timesheet_categories.sub_label — so
+ * "Idle Remarks" can be renamed in Settings without a deploy. The fallback is
+ * generic rather than invented, because a studio that attaches options to a
+ * category without naming the dropdown should still get a usable form.
+ */
+const subOptionsFor = (parentKey, { includeInactive = false } = {}) => {
+  if (!parentKey) return [];
+  return referenceData.list('timesheet_sub_options', { includeInactive })
+    .filter((o) => o.parentKey === parentKey)
+    .map((o) => ({ key: o.key, label: o.label, isActive: o.isActive, position: o.position }));
+};
+
+/* Does a line in this category have to carry a sub-option?
+ *
+ * ACTIVE ones only, and that is the whole of what deactivating the last option
+ * means: the category goes back to being a plain one, and the form stops asking.
+ * A category whose options are all retired must not demand a choice nobody can
+ * make. */
+const requiresSubOption = (parentKey) => subOptionsFor(parentKey).length > 0;
+
+/* The label to SHOW for a stored sub-option key, including retired ones and
+ * including one whose category has since been retired. Falls back to the key,
+ * which is what a line would otherwise render as nothing — the same rule
+ * nonProjectLabel follows above, for the same reason. */
+const subOptionLabel = (key) => {
+  if (!key) return null;
+  const found = referenceData.list('timesheet_sub_options', { includeInactive: true })
+    .find((o) => o.key === key);
+  return found ? found.label : key;
+};
+
+// Whether a stored key is one of the retired ones, so a screen can mark it.
+const subOptionRetired = (key) => {
+  if (!key) return false;
+  const found = referenceData.list('timesheet_sub_options', { includeInactive: true })
+    .find((o) => o.key === key);
+  return Boolean(found) && !found.isActive;
+};
+
+/* The heading a category's second dropdown carries. */
+const SUB_LABEL_FALLBACK = 'Which one';
+const subLabelFor = (parentKey) => {
+  const found = referenceData.list('timesheet_categories', { includeInactive: true })
+    .find((c) => c.key === parentKey);
+  return (found && found.subLabel) || SUB_LABEL_FALLBACK;
 };
 
 /* THE ONE KEY THE CODE KNOWS BY NAME, and the only one.
@@ -399,7 +482,15 @@ const studioToday = (at = Date.now()) => {
 const daysBefore = (then, today) =>
   Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${then}T00:00:00Z`)) / 86400000);
 
-function validateEntry(raw = {}, win, { now = Date.now() } = {}) {
+/* `was` is the line AS STORED, and only the edit path passes it.
+ *
+ * It is what makes a line filed before the second dropdown existed stay valid
+ * and editable: with the category and the sub-option both unchanged from what
+ * is on the row, the pair is taken as given — no remark is demanded of a legacy
+ * Idle line somebody is only correcting the hours of, and a remark that has
+ * since been RETIRED keeps working on the line that already holds it. Change
+ * the category, or choose a different option, and the full rules apply. */
+function validateEntry(raw = {}, win, { now = Date.now(), was = null } = {}) {
   const { maxHours } = windowOf(win);
   const policy = timesheetSettings.current();
   const date = toISO(raw.date);
@@ -494,6 +585,9 @@ function validateEntry(raw = {}, win, { now = Date.now() } = {}) {
   }
 
   const nonProject = raw.nonProject ? String(raw.nonProject).trim() : null;
+  // The second dropdown's choice, as the stable KEY. Never the label: a rename
+  // has to change how every old line reads without touching what they store.
+  const subOption = raw.nonProjectSub ? String(raw.nonProjectSub).trim() : null;
   const projectId = raw.projectId || null;
   const clientId = raw.clientId || null;
   const assetId = raw.assetId || null;
@@ -526,9 +620,68 @@ function validateEntry(raw = {}, win, { now = Date.now() } = {}) {
         field: 'nonProject',
       };
     }
+
+    /* THE SECOND DROPDOWN, where the category has one.
+     *
+     * GRANDFATHERED WHEN NOTHING ABOUT THE PAIR CHANGED — see the note on
+     * `was` above. Only the edit path passes it, so a new line always meets the
+     * full rules. */
+    const unchanged = Boolean(was)
+      && (was.nonProject || null) === nonProject
+      && (was.nonProjectSub || null) === subOption;
+    const options = subOptionsFor(nonProject, { includeInactive: true });
+    const offered = options.filter((o) => o.isActive);
+    const heading = subLabelFor(nonProject);
+
+    if (subOption) {
+      const chosen = options.find((o) => o.key === subOption);
+      /* UNKNOWN AND CROSS-CATEGORY ARE ONE CASE, deliberately: an Idle remark
+         on a Training line is simply not one of Training's options, and the
+         message says what the category offers rather than explaining that the
+         value exists somewhere else. A category with no options at all lands
+         here too, and its message says there is nothing to choose. */
+      if (!chosen) {
+        return {
+          ok: false,
+          field: 'nonProjectSub',
+          error: offered.length
+            ? `That is not one of the ${heading} options for "${nonProjectLabel(nonProject)}".`
+            : `"${nonProjectLabel(nonProject)}" has no second dropdown, so a line against it cannot carry one.`,
+          allowed: offered.map((o) => o.key),
+        };
+      }
+      if (!chosen.isActive && !unchanged) {
+        return {
+          ok: false,
+          field: 'nonProjectSub',
+          error: `"${chosen.label}" has been retired. Lines already filed against it keep it; new ones cannot use it.`,
+          allowed: offered.map((o) => o.key),
+        };
+      }
+    } else if (offered.length && !unchanged) {
+      return {
+        ok: false,
+        field: 'nonProjectSub',
+        /* The heading as the studio wrote it, not lower-cased: "choose a idle
+           remarks" was the first wording and it reads as broken English for
+           every one of the three headings. */
+        error: `Pick one from ${heading} for this "${nonProjectLabel(nonProject)}" line.`,
+        allowed: offered.map((o) => o.key),
+      };
+    }
   } else {
     if (!clientId) return { ok: false, error: 'Choose a client.', field: 'clientId' };
     if (!projectId) return { ok: false, error: 'Choose a project.', field: 'projectId' };
+    /* PROJECT LINES NEVER CARRY ONE. The dropdown belongs to a category, and a
+       project line has no category — a request carrying one is a page out of
+       step with the server, or somebody poking the API. */
+    if (subOption) {
+      return {
+        ok: false,
+        field: 'nonProjectSub',
+        error: 'Project work carries no category option. That dropdown belongs to non-project time.',
+      };
+    }
   }
 
   const notes = String(raw.notes ?? '').trim();
@@ -562,6 +715,7 @@ function validateEntry(raw = {}, win, { now = Date.now() } = {}) {
       clientId, projectId, assetId,
       flagNote: flagNote || null,
       nonProject,
+      nonProjectSub: subOption,
       notes: notes || null,
     },
   };
@@ -603,9 +757,48 @@ const kindOf = (entry) => {
    so a figure on the grid and the same figure in the export cannot disagree. */
 function splitHours(entries) {
   const out = { project: 0, nonProject: 0, idle: 0 };
-  for (const entry of entries) out[kindOf(entry)] += Number(entry.hours) || 0;
+  /* IDLE BROKEN DOWN BY REMARK, which is the whole purpose of the remarks: a
+   * week that says "incl. 6h idle" tells a manager there was slack; one that
+   * says six hours of it was No Work to Assign tells them whose problem it is.
+   *
+   * ONLY IDLE, and only because Idle is the one kind this file already splits
+   * out on its own. The other categories' options are on the lines and in the
+   * exports; inventing a Training-by-type figure here would be a report nobody
+   * asked for, and the brief says not to.
+   *
+   * KEYED, NEVER LABELLED. The key is what the line holds and what this groups
+   * by; the label is resolved for display, so a renamed remark re-labels every
+   * figure it was ever part of. A line with no remark — every Idle line filed
+   * before the second dropdown existed — is grouped under null and shown as
+   * "not stated", which is honest: those hours are idle and nobody was asked
+   * why. */
+  const idleBy = new Map();
+  for (const entry of entries) {
+    const kind = kindOf(entry);
+    const hours = Number(entry.hours) || 0;
+    out[kind] += hours;
+    if (kind !== 'idle') continue;
+    const key = entry.nonProjectSub || entry.non_project_sub || null;
+    idleBy.set(key, (idleBy.get(key) || 0) + hours);
+  }
   const round = (n) => Math.round(n * 100) / 100;
-  return { project: round(out.project), nonProject: round(out.nonProject), idle: round(out.idle) };
+  return {
+    project: round(out.project),
+    nonProject: round(out.nonProject),
+    idle: round(out.idle),
+    /* Heaviest first, which is the order somebody reads a breakdown in, and
+       the unexplained hours last whatever their size — they are the absence of
+       an answer rather than one of the answers. */
+    idleByRemark: [...idleBy.entries()]
+      .map(([key, hours]) => ({
+        key,
+        label: key ? subOptionLabel(key) : 'not stated',
+        stated: Boolean(key),
+        hours: round(hours),
+      }))
+      .sort((a, b) => Number(b.stated) - Number(a.stated) || b.hours - a.hours
+        || String(a.label).localeCompare(String(b.label))),
+  };
 }
 
 /* The totals the grid shows while somebody types, worked out here so the number
@@ -750,6 +943,13 @@ module.exports = {
   nonProject,
   nonProjectKeys,
   nonProjectLabel,
+  // The second dropdown: its options, its heading, and how a stored key reads.
+  subOptionsFor,
+  requiresSubOption,
+  subOptionLabel,
+  subOptionRetired,
+  subLabelFor,
+  SUB_LABEL_FALLBACK,
   IDLE,
   kindOf,
   splitHours,

@@ -27,6 +27,12 @@ const COLLECTION_BY_PATH = {
      route — list, usage, create, rename, reorder, deactivate and the delete
      that refuses anything in use — serves them with no new endpoint. */
   'timesheet-categories': 'timesheet_categories',
+  /* The second dropdown's options, per category. Served by this route and no
+     other: list, usage, create, rename, reorder, deactivate and the delete that
+     refuses anything in use all work on it unchanged, because it is a reference
+     list like the rest — see the note on the collection in src/reference-data.js
+     for the one thing its parent changes. */
+  'timesheet-sub-options': 'timesheet_sub_options',
   priorities: 'priorities',
   roles: 'roles',
 };
@@ -49,6 +55,16 @@ const PERMISSION_BY_PATH = {
      Time Sheet's editable options" under Settings and half under Time Sheet,
      and a Super Admin granting one would have had to find the other. */
   'timesheet-categories': 'timesheet.options',
+  /* ITS OWN KEY, not a reuse of timesheet.options, and the reason is what each
+     one lets somebody do. timesheet.options changes what the studio may log
+     at all — a category retired there leaves every person's form, and the
+     policy numbers decide whether last month can still be corrected. This one
+     curates the words INSIDE a category somebody has already been given: the
+     Idle remark list is the sort of thing a production manager keeps tidy
+     without being trusted with the window that decides whether last month can
+     be edited. Two keys means a studio can hand out the second without the
+     first; one key would have meant it could not. */
+  'timesheet-sub-options': 'timesheet.sub_options',
   priorities: 'settings.priorities',
   roles: 'settings.roles',
 };

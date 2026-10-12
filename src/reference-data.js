@@ -84,6 +84,31 @@ const COLLECTIONS = {
     extra: ['color'],
     usedBy: { table: 'timesheet_entries', column: 'non_project' },
   },
+  /* THE SECOND DROPDOWN'S OPTIONS, and the one list here that is scoped to a
+   * PARENT rather than unique across itself.
+   *
+   * IT IS A COLLECTION AND NOT A MODULE OF ITS OWN, which was the decision
+   * worth making carefully. Everything this list needs — a key that never
+   * changes, a label people read, a position, an active flag, a usage count
+   * that refuses a delete and offers deactivation instead, one in-memory
+   * mirror, one route, one Settings panel — is already here, and a parallel
+   * module would have been a second kind of reference list with the same
+   * problems solved again slightly differently.
+   *
+   * WHAT THE PARENT CHANGES, and all it changes: the duplicate-label check is
+   * scoped to the parent (see validate), and the key is derived with the parent
+   * in front of it (see create) so it stays unique across the whole table and
+   * every other function here keeps working unaltered.
+   *
+   * `usedBy` points at timesheet_entries.non_project_sub, which is what makes
+   * "Left Early is used by 240 lines — deactivate it instead" the answer.
+   */
+  timesheet_sub_options: {
+    table: 'timesheet_sub_options',
+    singular: 'time sheet sub-option',
+    extra: ['parent_key'],
+    usedBy: { table: 'timesheet_entries', column: 'non_project_sub' },
+  },
   roles: {
     table: 'roles',
     singular: 'role',
@@ -168,6 +193,13 @@ function shape(name, row) {
     isSystem: Boolean(row.is_system),
   };
   if (name === 'asset_types') return { ...base, codePrefix: row.code_prefix };
+  /* The parent is part of what a sub-option IS — an Idle remark is not a
+     Training type — so every consumer gets it without having to look it up. */
+  if (name === 'timesheet_sub_options') return { ...base, parentKey: row.parent_key };
+  /* The heading the category's second dropdown carries, or null for a category
+     that has none. Null and absent read the same to the form, which draws no
+     second dropdown when the category has no options anyway. */
+  if (name === 'timesheet_categories') return { ...base, subLabel: row.sub_label || null };
   if (name === 'roles') {
     const capabilities = capabilitiesForTier(row.tier) || capabilitiesForTier('staff');
     return {
@@ -268,9 +300,19 @@ function validate(name, payload, { existingKey = null } = {}) {
   if (!label) errors.push({ field: 'label', message: 'Name is required.' });
   if (label.length > 100) errors.push({ field: 'label', message: 'Name must be 100 characters or fewer.' });
 
-  // Duplicates are compared case-insensitively and trimmed, against both the
-  // label people see and the key the database stores.
-  const clash = (cache[name] || []).find(
+  /* Duplicates are compared case-insensitively and trimmed, WITHIN THE SCOPE
+     the list is unique in. Every list here is unique across itself; the
+     sub-options are unique within their parent category, so "Awaiting Client
+     Feedback" under Idle must not collide with one somebody adds under Leave.
+     A payload with no parent compares against the whole list, which is what
+     every other collection does and did. */
+  const scope = payload.parentKey === undefined || payload.parentKey === null
+    ? null
+    : String(payload.parentKey).trim();
+  const pool = scope === null
+    ? (cache[name] || [])
+    : (cache[name] || []).filter((e) => e.parentKey === scope);
+  const clash = pool.find(
     (e) => e.key !== existingKey && e.label.trim().toLowerCase() === label.toLowerCase()
   );
   if (label && clash) {
@@ -286,6 +328,30 @@ function validate(name, payload, { existingKey = null } = {}) {
     }
     if (!String(payload.group ?? '').trim()) {
       errors.push({ field: 'group', message: 'Pick or name a group for this role.' });
+    }
+  }
+
+  if (name === 'timesheet_sub_options') {
+    /* A SUB-OPTION WITHOUT A PARENT IS NOT A THING. Refused here rather than
+       inserted against an empty string, which would make an option nothing can
+       ever offer. The parent has to be a category that exists — including a
+       deactivated one, because retiring a category does not orphan its
+       options, it just stops offering the category. */
+    if (!scope) {
+      errors.push({ field: 'parentKey', message: 'Pick which category these options belong to.' });
+    } else if (!(cache.timesheet_categories || []).some((c) => c.key === scope)) {
+      errors.push({ field: 'parentKey', message: 'That is not one of the Time Sheet categories.' });
+    }
+  }
+
+  if (name === 'timesheet_categories') {
+    /* The heading is optional and short. Blank is a category whose dropdown is
+       headed by the generic label, which is what a studio attaching options to
+       Leave gets until it names one. */
+    const heading = payload.subLabel === undefined || payload.subLabel === null
+      ? null : String(payload.subLabel).trim();
+    if (heading && heading.length > 100) {
+      errors.push({ field: 'subLabel', message: 'The dropdown heading must be 100 characters or fewer.' });
     }
   }
 
@@ -328,8 +394,17 @@ async function create(db, name, payload) {
   if (errors.length) return { ok: false, status: 400, errors };
 
   const label = String(payload.label).trim();
-  let key = toKey(label);
-  if (!key) return { ok: false, status: 400, errors: [{ field: 'label', message: 'Name must contain a letter or number.' }] };
+  /* THE KEY, AND WHY A SUB-OPTION'S CARRIES ITS PARENT. The table is unique on
+     (parent, key), but every reader here — get(), the `_2` disambiguation
+     below, the route's :key parameter — addresses a value by key alone. Putting
+     the parent in front makes the key unique across the whole table, so all of
+     that keeps working, and it is the same rule the seed uses, so a seeded
+     option and an added one are indistinguishable afterwards. */
+  const parentKey = name === 'timesheet_sub_options' ? String(payload.parentKey).trim() : null;
+  let key = parentKey ? `${parentKey}_${toKey(label)}` : toKey(label);
+  if (!key || key === `${parentKey}_`) {
+    return { ok: false, status: 400, errors: [{ field: 'label', message: 'Name must contain a letter or number.' }] };
+  }
   // A label that reduces to a key already taken by a different label (renamed
   // since) still needs a key of its own.
   if (get(name, key)) {
@@ -370,6 +445,13 @@ async function create(db, name, payload) {
       `INSERT INTO ${COLLECTIONS[name].table} (id, \`key\`, label, color, position, is_active, is_system) VALUES ($1,$2,$3,$4,$5,1,0)`,
       [id, key, label, color, position]
     );
+  } else if (name === 'timesheet_sub_options') {
+    await db.query(
+      `INSERT INTO timesheet_sub_options
+         (id, parent_key, \`key\`, label, position, is_active, is_system, created_by)
+       VALUES ($1,$2,$3,$4,$5,1,0,$6)`,
+      [id, parentKey, key, label, position, payload.createdBy || null]
+    );
   } else if (name === 'roles') {
     await db.query(
       'INSERT INTO roles (id, `key`, label, group_name, tier, color, position, is_active, is_system) VALUES ($1,$2,$3,$4,$5,$6,$7,1,0)',
@@ -391,6 +473,12 @@ async function update(db, name, key, payload) {
   const merged = {
     label: payload.label !== undefined ? payload.label : current.label,
     color: payload.color !== undefined ? payload.color : current.color,
+    /* NOT FROM THE PAYLOAD. An option cannot be moved to another category —
+       every line already holding it means the time it names, and re-parenting
+       would silently change what those lines say. Carried from the current row
+       so validate() scopes the duplicate check to the right parent. */
+    parentKey: current.parentKey,
+    subLabel: payload.subLabel !== undefined ? payload.subLabel : current.subLabel,
     tier: payload.tier !== undefined ? payload.tier : current.tier,
     group: payload.group !== undefined ? payload.group : current.group,
     codePrefix: payload.codePrefix !== undefined ? payload.codePrefix : current.codePrefix,
@@ -405,23 +493,43 @@ async function update(db, name, key, payload) {
   }
   if (errors.length) return { ok: false, status: 400, errors };
 
-  const sets = ['label = $1', 'color = $2', 'position = $3'];
-  const values = [String(merged.label).trim(), merged.color || null, Number(merged.position) || 0];
+  /* THE COLUMNS, NUMBERED AS THEY ARE ADDED rather than by hand.
+   *
+   * They used to be written out with $1, $2, $3 and a branch pushing $4 — which
+   * was correct exactly while every collection had the same first three
+   * columns. The sub-options have no COLOUR (an option in a dropdown is a word,
+   * not a swatch), so the third column is not the same for every list any more
+   * and a hand-numbered $4 would have addressed the wrong one. One closure,
+   * one place the numbering is decided. */
+  const sets = [];
+  const values = [];
+  const set = (column, value) => { sets.push(`${column} = $${values.length + 1}`); values.push(value); };
+
+  set('label', String(merged.label).trim());
+  // Every list but the sub-options carries a colour.
+  if (name !== 'timesheet_sub_options') set('color', merged.color || null);
+  set('position', Number(merged.position) || 0);
+
   if (name === 'asset_types') {
-    sets.push('code_prefix = $4');
-    values.push(String(
+    set('code_prefix', String(
       merged.codePrefix || uniqueCodePrefix(merged.label, { excludeKey: key }) || current.codePrefix
     ).toUpperCase());
   } else if (name === 'roles') {
-    sets.push('group_name = $4', 'tier = $5');
-    values.push(String(merged.group).trim(), String(merged.tier).trim());
+    set('group_name', String(merged.group).trim());
+    set('tier', String(merged.tier).trim());
+  } else if (name === 'timesheet_categories' && payload.subLabel !== undefined) {
+    /* The dropdown heading, editable so "Idle Remarks" can be renamed without a
+       deploy. Only written when the request mentions it, so a rename of the
+       category itself leaves the heading alone. */
+    const heading = merged.subLabel === null || String(merged.subLabel).trim() === ''
+      ? null : String(merged.subLabel).trim();
+    set('sub_label', heading);
   }
   if (payload.isActive !== undefined) {
     if (current.isSystem && !payload.isActive) {
       return { ok: false, status: 400, errors: [{ field: 'isActive', message: 'A built-in value cannot be deactivated.' }] };
     }
-    sets.push(`is_active = $${values.length + 1}`);
-    values.push(payload.isActive ? 1 : 0);
+    set('is_active', payload.isActive ? 1 : 0);
   }
   values.push(key);
 

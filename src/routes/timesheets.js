@@ -55,18 +55,37 @@ const ENTRY_SELECT_FROM = `
     LEFT JOIN projects p ON p.id = e.project_id
     LEFT JOIN assets   a ON a.id = e.asset_id`;
 
+/* THE COLUMNS ADDED SINCE THE TABLE WAS CREATED, each optional.
+ *
+ * A deployment whose ALTER did not apply — no ALTER permission on shared
+ * hosting is the usual reason — still reads its timesheet, with the fields it
+ * cannot store coming back null. Written as a list of attempts rather than a
+ * nest of catches, which is the shape src/work-log.js close() uses for the same
+ * problem: widest first, and each fallback fills in what it could not ask for.
+ */
+const ENTRY_EXTRAS = [
+  { select: ',\n         e.flagged_at AS flaggedAt, e.flag_note AS flagNote,\n         e.non_project_sub AS nonProjectSub',
+    missing: {} },
+  { select: ',\n         e.flagged_at AS flaggedAt, e.flag_note AS flagNote',
+    missing: { nonProjectSub: null } },
+  { select: '', missing: { flaggedAt: null, flagNote: null, nonProjectSub: null } },
+];
+
 async function selectEntries(tail, params) {
-  try {
-    const { rows } = await db.query(
-      `${ENTRY_SELECT_BASE},\n         e.flagged_at AS flaggedAt, e.flag_note AS flagNote${ENTRY_SELECT_FROM} ${tail}`,
-      params
-    );
-    return rows;
-  } catch (err) {
-    if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
-    const { rows } = await db.query(`${ENTRY_SELECT_BASE}${ENTRY_SELECT_FROM} ${tail}`, params);
-    return rows.map((r) => ({ ...r, flaggedAt: null, flagNote: null }));
+  let last;
+  for (const attempt of ENTRY_EXTRAS) {
+    try {
+      const { rows } = await db.query(
+        `${ENTRY_SELECT_BASE}${attempt.select}${ENTRY_SELECT_FROM} ${tail}`,
+        params
+      );
+      return rows.map((r) => ({ ...attempt.missing, ...r }));
+    } catch (err) {
+      if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
+      last = err;
+    }
   }
+  throw last;
 }
 
 /* Whose sheet may this person open?
@@ -161,11 +180,45 @@ function describeLine(row) {
     /* The label for a key, INCLUDING a category that has since been retired —
        sheets.nonProjectLabel reads the whole list rather than the active one, so
        last month's Training lines keep saying Training. */
-    return sheets.nonProjectLabel(row.nonProject);
+    const category = sheets.nonProjectLabel(row.nonProject);
+    /* And the second dropdown's choice beside it, so the audit trail says
+       "Idle — Left Early" rather than leaving somebody to look the line up. */
+    const chosen = row.nonProjectSub ? sheets.subOptionLabel(row.nonProjectSub) : null;
+    return chosen ? `${category} \u2014 ${chosen}` : category;
   }
   const where = [row.clientName, row.projectName].filter(Boolean).join(' / ') || 'a project';
   return row.assetCode ? `${where} · ${row.assetCode}` : where;
 }
+
+/* ONE SHAPE FOR ONE LINE, wherever a line goes back.
+ *
+ * It was written inline inside the week's day shape, which is how the single
+ * entry POST and PATCH hand back came to be a different thing: the raw row,
+ * without the rendered clock or the resolved sub-option. Two shapes for one
+ * object is two things to keep in step, and the second one was already behind.
+ */
+const shapeEntry = (e) => ({
+  ...e,
+  date: sheets.toISO(e.date),
+  hours: Number(e.hours),
+  startMin: Number(e.startMin),
+  endMin: Number(e.endMin),
+  /* Rendered here so the page never turns a number into a clock itself. Empty
+     on everything filed since a line became a number of hours, and still filled
+     on the older rows so a sheet from before the change reads the way it was
+     written. Rendering a null minute would print "00:00", which reads as
+     midnight rather than as absent. */
+  startLabel: e.startMin === null ? '' : sheets.clockLabel(Number(e.startMin)),
+  endLabel: e.endMin === null ? '' : sheets.clockLabel(Number(e.endMin)),
+  /* THE SECOND DROPDOWN'S CHOICE, resolved here rather than snapshotted on the
+     row. The line stores the KEY; the label is looked up at read time, so
+     renaming "Left Early" changes every line that ever used it and breaks no
+     report — and a RETIRED option still resolves, because the lookup reads the
+     whole list. `subOptionRetired` is what lets a screen mark it as no longer
+     offered without a second request. */
+  subOptionLabel: sheets.subOptionLabel(e.nonProjectSub),
+  subOptionRetired: sheets.subOptionRetired(e.nonProjectSub),
+});
 
 /* One day, in the shape the page and the exports both read.
  *
@@ -185,20 +238,7 @@ const shapeDay = (day, entries, workDate) => {
     decidedBy: day ? day.decider_email : null,
     rejectionReason: day ? day.rejection_reason : null,
     locked: sheets.isLocked(day ? day.status : 'draft'),
-    entries: entries.map((e) => ({
-      ...e,
-      date: sheets.toISO(e.date),
-      hours: Number(e.hours),
-      startMin: Number(e.startMin),
-      endMin: Number(e.endMin),
-      // Rendered here so the page never turns a number into a clock itself.
-      /* Empty on everything filed since a line became a number of hours, and
-         still filled on the older rows so a sheet from before the change reads
-         the way it was written. Rendering a null minute would print "00:00",
-         which reads as midnight rather than as absent. */
-      startLabel: e.startMin === null ? '' : sheets.clockLabel(Number(e.startMin)),
-      endLabel: e.endMin === null ? '' : sheets.clockLabel(Number(e.endMin)),
-    })),
+    entries: entries.map(shapeEntry),
     hours: total.hours,
     overLong: total.overLong,
     /* THE DAY SPLIT THREE WAYS. dayTotal computes it; this is where it reaches
@@ -207,6 +247,10 @@ const shapeDay = (day, entries, workDate) => {
     project: total.project,
     nonProject: total.nonProject,
     idle: total.idle,
+    /* AND WHAT THE IDLE HOURS WERE. The figure says there was slack; the
+       breakdown says whose problem it was, which is the whole purpose of the
+       Idle remarks. Spelled out like the three above it rather than spread. */
+    idleByRemark: total.idleByRemark,
     weekend: sheets.isWeekend(workDate),
     /* THE STUDIO WAS SHUT THAT DAY — a flag, exactly like `weekend` beside it,
      * and for the reason this function's own comment already gives: these are
@@ -359,57 +403,73 @@ router.get('/people', requirePermission('timesheet.own'), async (req, res) => {
  */
 /* One INSERT, tolerant of a deployment whose flag columns did not apply.
  * The flag is a convenience; losing it must not lose the hours. */
-async function insertEntry(id, userId, line) {
-  const base = [id, userId, line.date, line.startMin, line.endMin, line.clientId,
-    line.projectId, line.assetId, line.nonProject, line.hours, line.notes];
-  try {
-    await db.query(
-      `INSERT INTO timesheet_entries
-         (id, user_id, entry_date, start_min, end_min, client_id, project_id, asset_id,
-          non_project, hours, notes, flagged_at, flag_note)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-      [...base, line.flagNote ? new Date() : null, line.flagNote]
-    );
-  } catch (err) {
-    if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
-    await db.query(
-      `INSERT INTO timesheet_entries
-         (id, user_id, entry_date, start_min, end_min, client_id, project_id, asset_id,
-          non_project, hours, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-      base
-    );
+/* ONE LINE WRITTEN, AND THE COLUMNS THAT MAY NOT BE THERE.
+ *
+ * timesheet_entries has gained columns since it was created — the dispute flag,
+ * and now the second dropdown's choice — and each arrived as an ALTER that can
+ * fail on a host where the database user cannot run one. The hours are the
+ * point; a column that could not be added must not take them down with it.
+ *
+ * So the optional columns are listed youngest LAST and dropped from the end on
+ * ER_BAD_FIELD_ERROR: everything, then without the sub-option, then without the
+ * flag either. Declared as column/value pairs rather than written out three
+ * times, because three near-identical statements is where the fourth column
+ * gets added to two of them.
+ */
+const ENTRY_CORE = (line) => [
+  ['entry_date', line.date], ['start_min', line.startMin], ['end_min', line.endMin],
+  ['client_id', line.clientId], ['project_id', line.projectId], ['asset_id', line.assetId],
+  ['non_project', line.nonProject], ['hours', line.hours], ['notes', line.notes],
+];
+const ENTRY_OPTIONAL = (line, stamp) => [
+  [['flagged_at', stamp], ['flag_note', line.flagNote]],
+  [['non_project_sub', line.nonProjectSub || null]],
+];
+
+async function writeEntry(build, line, stamp) {
+  const optional = ENTRY_OPTIONAL(line, stamp);
+  let last;
+  for (let drop = 0; drop <= optional.length; drop += 1) {
+    const pairs = [...ENTRY_CORE(line), ...optional.slice(0, optional.length - drop).flat()];
+    try {
+      const { sql, values } = build(pairs);
+      await db.query(sql, values);
+      return;
+    } catch (err) {
+      if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
+      last = err;
+    }
   }
+  throw last;
+}
+
+async function insertEntry(id, userId, line) {
+  await writeEntry((pairs) => {
+    const columns = ['id', 'user_id', ...pairs.map(([c]) => c)];
+    const values = [id, userId, ...pairs.map(([, v]) => v)];
+    return {
+      sql: `INSERT INTO timesheet_entries (${columns.join(', ')})
+            VALUES (${values.map((_, i) => `$${i + 1}`).join(',')})`,
+      values,
+    };
+  }, line, line.flagNote ? new Date() : null);
 }
 
 /* The same tolerance on the way back out. An unchanged flag keeps its original
  * stamp: re-stamping it on every edit would make the flag look raised at the
  * moment of the last unrelated change. */
 async function updateEntry(id, line, was) {
-  const base = [line.date, line.startMin, line.endMin, line.clientId, line.projectId,
-    line.assetId, line.nonProject, line.hours, line.notes];
   const stamp = line.flagNote
     ? (was.flag_note === line.flagNote && was.flagged_at ? was.flagged_at : new Date())
     : null;
-  try {
-    await db.query(
-      `UPDATE timesheet_entries
-          SET entry_date = $1, start_min = $2, end_min = $3, client_id = $4, project_id = $5,
-              asset_id = $6, non_project = $7, hours = $8, notes = $9,
-              flagged_at = $10, flag_note = $11
-        WHERE id = $12`,
-      [...base, stamp, line.flagNote, id]
-    );
-  } catch (err) {
-    if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
-    await db.query(
-      `UPDATE timesheet_entries
-          SET entry_date = $1, start_min = $2, end_min = $3, client_id = $4, project_id = $5,
-              asset_id = $6, non_project = $7, hours = $8, notes = $9
-        WHERE id = $10`,
-      [...base, id]
-    );
-  }
+  await writeEntry((pairs) => {
+    const sets = pairs.map(([c], i) => `${c} = $${i + 1}`);
+    const values = [...pairs.map(([, v]) => v), id];
+    return {
+      sql: `UPDATE timesheet_entries SET ${sets.join(', ')} WHERE id = $${values.length}`,
+      values,
+    };
+  }, line, stamp);
 }
 
 /* THE ONE FIGURE A TIMESHEET LINE IS WORTH, asked once and read twice — by the
@@ -595,7 +655,7 @@ router.post('/entries', requirePermission('timesheet.own'), async (req, res) => 
   );
   const total = sheets.dayTotal(onDay, workSchedule.timesheetWindow());
   res.status(201).json({
-    entry: { ...rows[0], date: sheets.toISO(rows[0].date), hours: Number(rows[0].hours) },
+    entry: shapeEntry(rows[0]),
     dayHours: total.hours,
     // Allowed and flagged, not refused — the soft cap the studio asked for.
     overLong: total.overLong,
@@ -627,6 +687,11 @@ router.patch('/entries/:id', requirePermission('timesheet.own'), async (req, res
     projectId: 'projectId' in req.body ? req.body.projectId : found[0].project_id,
     assetId: 'assetId' in req.body ? req.body.assetId : found[0].asset_id,
     nonProject: 'nonProject' in req.body ? req.body.nonProject : found[0].non_project,
+    /* The second dropdown's choice, from the request or from the row. Taken
+       from the row when the request is silent, which is what lets an edit that
+       changes only the hours keep a remark — including one that has since been
+       retired. */
+    nonProjectSub: 'nonProjectSub' in req.body ? req.body.nonProjectSub : found[0].non_project_sub,
     notes: 'notes' in req.body ? req.body.notes : found[0].notes,
     flagged: 'flagged' in req.body ? req.body.flagged : Boolean(found[0].flagged_at),
     flagNote: 'flagNote' in req.body ? req.body.flagNote : found[0].flag_note,
@@ -638,8 +703,15 @@ router.patch('/entries/:id', requirePermission('timesheet.own'), async (req, res
   const worth = await hoursFor(req.user.id, merged, { exceptId: req.params.id });
   if (!worth.ok) return res.status(400).json({ error: worth.error, field: worth.field });
 
+  /* THE LINE AS STORED, handed over so a line filed before the second dropdown
+     existed stays editable. With the category and the option both unchanged,
+     validateEntry takes the pair as given — no remark is demanded of a legacy
+     Idle line somebody is only correcting the hours of, and a retired option
+     keeps working on the line that already holds it. Change the category and
+     the full rules apply. See the note on `was` in src/timesheets.js. */
   const verdict = sheets.validateEntry(
-    { ...merged, hours: worth.hours }, workSchedule.timesheetWindow());
+    { ...merged, hours: worth.hours }, workSchedule.timesheetWindow(),
+    { was: { nonProject: found[0].non_project, nonProjectSub: found[0].non_project_sub } });
   if (!verdict.ok) return res.status(400).json(verdict);
   const line = verdict.value;
 
@@ -656,7 +728,7 @@ router.patch('/entries/:id', requirePermission('timesheet.own'), async (req, res
   await record(req.user.id, line.date, 'entry_edited', req.user,
     `now ${line.hours}h — ${describeLine(rows[0])}`);
   res.json({
-    entry: { ...rows[0], date: sheets.toISO(rows[0].date), hours: Number(rows[0].hours) },
+    entry: shapeEntry(rows[0]),
     lunchSubtracted: verdict.lunchSubtracted || 0,
   });
 });
@@ -878,8 +950,15 @@ async function exportRows(req) {
   const from = sheets.toISO(req.query.from) || sheets.weekStart(new Date().toISOString().slice(0, 10));
   const to = sheets.toISO(req.query.to) || from;
 
-  const { rows } = await db.query(
-    `${ENTRY_SELECT_BASE}${ENTRY_SELECT_FROM} WHERE e.user_id = $1 AND e.entry_date BETWEEN $2 AND $3
+  /* THROUGH selectEntries, not a query of its own.
+   *
+   * It built the SELECT by hand, which is how the Option column shipped empty
+   * the first time: the columns added since the table was created live in
+   * ENTRY_EXTRAS, and a second copy of the SELECT does not have them. One
+   * reader, so a column added later reaches the export and the screen
+   * together. */
+  const rows = await selectEntries(
+    `WHERE e.user_id = $1 AND e.entry_date BETWEEN $2 AND $3
       ORDER BY e.entry_date, e.created_at`,
     [userId, from, to]
   );
@@ -912,6 +991,14 @@ async function exportRows(req) {
       Project: r.projectName || '',
       Asset: r.assetCode ? `${r.assetCode} — ${r.assetName}` : '',
       Category: r.nonProject ? nonProjectLabel(r.nonProject) : '',
+      /* THE SECOND DROPDOWN'S CHOICE, resolved to its label here as every other
+         key in this file is — including a RETIRED option, because an export
+         covers filed lines and a line must print the words it was filed
+         against. One column rather than one per category: the heading differs
+         per category ("Idle Remarks", "Training Type") and a spreadsheet gets
+         one column, so it is named for what it holds. Blank on a project line
+         and on a line filed before the dropdown existed. */
+      Option: r.nonProjectSub ? sheets.subOptionLabel(r.nonProjectSub) : '',
       Hours: Number(r.hours),
       Notes: r.notes || '',
       Status: statusOf.get(sheets.toISO(r.date)) || 'draft',
@@ -926,7 +1013,7 @@ async function exportRows(req) {
  * before the change, would make every export worse to read for ever. The span
  * is still on those rows and still in each day's own history — this is the
  * summary, and its shape follows what a line is now. */
-const EXPORT_HEADERS = ['Date', 'Client', 'Project', 'Asset', 'Category',
+const EXPORT_HEADERS = ['Date', 'Client', 'Project', 'Asset', 'Category', 'Option',
   'Hours', 'Notes', 'Status'];
 
 router.get('/export.xlsx', requirePermission('timesheet.own'), async (req, res) => {

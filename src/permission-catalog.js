@@ -610,6 +610,41 @@ const GROUPS = [
         danger: 'These apply to everybody\u2019s Time Sheet at once. Tightening a window stops new lines being filed outside it \u2014 lines already filed are never changed.',
       },
       {
+        /* THE WORDS INSIDE A CATEGORY, which is a different job from deciding
+         * what the categories are.
+         *
+         * What it gates: the second dropdown's options — the Idle remarks, the
+         * training types, the on-site clients — and the heading each of those
+         * dropdowns carries. Add, rename, reorder, deactivate, reactivate, and
+         * the delete that refuses an option any line uses.
+         *
+         * A SEPARATE KEY FROM timesheet.options, and the distinction is what
+         * each one can cost. timesheet.options decides what the studio may log
+         * at all and how far back: retiring a category there takes it out of
+         * every person's form, and the back-dating window decides whether last
+         * month can still be corrected. This one curates a list of words inside
+         * a category somebody has already been given — keeping the Idle remark
+         * list tidy is the sort of thing a production manager does, and a studio
+         * should be able to hand that over without handing over the window.
+         * One key would have made the two inseparable.
+         *
+         * SUPER ADMIN ONLY by default, through managePermissions, exactly like
+         * timesheet.options beside it — so nothing changes for anybody until a
+         * Super Admin grants it. Grantable per designation in Settings.
+         *
+         * NOBODY NEEDS IT TO FILL IN A TIMESHEET. The dropdowns themselves are
+         * part of timesheet.own, which every designation holds: this is about
+         * editing the list, never about using it. */
+        key: 'timesheet.sub_options',
+        label: 'Manage Time Sheet Sub-Options',
+        impliedBy: has('managePermissions'),
+        describe: 'Edit the second dropdown that appears under a non-project category \u2014 the Idle '
+          + 'remarks, the training types, the on-site clients \u2014 and the heading each one carries. '
+          + 'Separate from managing the categories themselves, and from filling in your own hours, '
+          + 'which every designation can do.',
+        danger: 'An option deactivated here leaves everybody\u2019s Add line form. Lines already filed against it keep showing it.',
+      },
+      {
         /* Reading your team's weeks, which is not the same as deciding on
            them: a coordinator may need to see where the hours went without
            being the person who signs them off, and a studio should be able to

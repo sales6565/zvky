@@ -562,6 +562,18 @@ button.chat-status:focus-visible{outline:2px solid var(--brand-accent);outline-o
 
 /* the people picker and group management */
 /* A calculated figure. Still legible, visibly not yours to type in. */
+/* The second dropdown's own error line — a load failure, or a choice not made.
+   Brand accent, like every other refusal in a form on this page. */
+.tl-sub-err{font-size:11.5px;color:var(--brand-accent);margin:2px 0 0;}
+/* The second dropdown's choice on a filed line, and the marker on one whose
+   option has since been retired — quieter than the category it sits beside,
+   because it qualifies the category rather than competing with it. */
+.ts-sub{font-size:11px;color:var(--ink-muted);}
+.ts-sub-off{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-faint);
+  border:1px solid var(--border);border-radius:3px;padding:0 3px;}
+/* The idle breakdown under the week total. One line per remark, smallest type
+   on the screen: it explains a figure rather than being one. */
+.ts-idle-by{font-size:10.5px;color:var(--ink-faint);margin-top:2px;line-height:1.5;}
 #tl_hours.locked{background:var(--surface-3);color:var(--ink-muted);cursor:default;}
 #tl_hours.locked:focus{outline:none;border-color:var(--border);}
 .ts-flagged{font-size:10.5px;color:var(--brand-accent);margin-top:3px;}
@@ -2030,6 +2042,15 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
     <div id="tl_catFields" style="display:none;">
       <label>Category</label>
       <select id="tl_cat"></select>
+      <!-- The second dropdown, for a category that carries one. Its heading and
+           its options are the server's: the page draws what the week payload
+           gives it and holds no copy of any list. Hidden for a category with no
+           options, which is most of them. -->
+      <div id="tl_subWrap" style="display:none;">
+        <label id="tl_subLabel"></label>
+        <select id="tl_sub"></select>
+        <div id="tl_subErr" class="tl-sub-err"></div>
+      </div>
     </div>
     <!-- One number, not a stretch of the clock. What it costs is the overlap
          check and the working-window rules, which needed two times to compare;
@@ -5229,9 +5250,20 @@ async function renderTimesheet(){
            by reading every line. Only when there are any, so an ordinary week is
            not given a figure that says nothing. */
         const sp = week.weekSplit || {};
-        return Number(sp.idle) > 0
-          ? ` <span class="ts-idle" title="Counted in the week total above. Shown separately because it is recorded time that was not work.">incl. ${sp.idle}h idle</span>`
-          : '';
+        if(!(Number(sp.idle) > 0)) return '';
+        /* AND WHAT THE IDLE HOURS WERE, which is the whole purpose of the Idle
+           remarks: the figure says there was slack, the breakdown says whose
+           problem it was. Only where the week has idle hours at all, and only
+           the remarks that week actually used — a list of every remark with
+           nought beside it would bury the one that matters.
+           
+           The hours with no remark are shown as "not stated" rather than
+           dropped: those lines are idle time too, and most of them were filed
+           before the second dropdown existed. */
+        const by = (sp.idleByRemark || []);
+        return ` <span class="ts-idle" title="Counted in the week total above. Shown separately because it is recorded time that was not work.">incl. ${sp.idle}h idle</span>`
+          + (by.length ? `<div class="ts-idle-by">${by.map(r=>
+              `${escapeHTML(r.label)} ${r.hours}h`).join(' · ')}</div>` : '');
       })()}</span>
       ${can('timesheet.own') ? `
         <button class="btn btn-ghost btn-sm" id="ts_xlsx">Excel</button>
@@ -5270,7 +5302,17 @@ async function renderTimesheet(){
                      since is an hours figure, and the Hours column is where it is. -->
                 ${e.startLabel && e.endLabel ? `<div class="ts-clock">${e.startLabel}–${e.endLabel}</div>` : ''}
                 ${e.nonProject
-                ? `<span class="ts-cat">${escapeHTML(tsCategory(week, e.nonProject))}</span>`
+                ? `<span class="ts-cat">${escapeHTML(tsCategory(week, e.nonProject))}</span>${
+                  /* THE SECOND DROPDOWN'S CHOICE, beside the category it belongs
+                     to. The LABEL comes from the server — resolved from the key
+                     the line stores, so a renamed option re-labels every line
+                     that ever used it — and a RETIRED one is marked rather than
+                     hidden: the line has to be readable, and the marker says why
+                     the word is not in the dropdown any more. */
+                  e.subOptionLabel
+                    ? ` <span class="ts-sub">${escapeHTML(e.subOptionLabel)}${
+                        e.subOptionRetired ? ' <span class="ts-sub-off">inactive</span>' : ''}</span>`
+                    : ''}`
                 : `${escapeHTML(e.projectName||'—')}<span class="ts-client"> · ${escapeHTML(e.clientName||'')}</span>${
                     e.assetCode ? `<div class="ts-asset">${escapeHTML(e.assetCode)} ${escapeHTML(e.assetName||'')}</div>` : ''}`}
                 ${e.notes ? `<div class="ts-notes">${escapeHTML(e.notes)}</div>` : ''}
@@ -5429,6 +5471,10 @@ function openTimesheetLine(day){
     + ' Pick an asset and this day\u2019s hours on it are worked out for you; leave, training and time with no asset are typed in.';
   document.getElementById('tl_cat').innerHTML =
     (w.nonProjectTypes||[]).map(n=>`<option value="${n.key}">${escapeHTML(n.label)}</option>`).join('');
+  /* And the second dropdown for whichever category the list opens on. Drawn
+     here as well as on every change, or opening the form on Idle would show no
+     remark picker until somebody touched the category. */
+  tlSyncSubOptions();
   document.getElementById('tl_client').innerHTML =
     '<option value="">Select a client…</option>' +
     state.clients.map(c=>`<option value="${c.id}">${escapeHTML(c.name)}</option>`).join('');
@@ -5588,6 +5634,100 @@ function syncTimesheetLine(){
   const project = document.getElementById('tl_kind').value === 'project';
   document.getElementById('tl_projectFields').style.display = project ? '' : 'none';
   document.getElementById('tl_catFields').style.display = project ? 'none' : '';
+  /* SWITCHING TO PROJECT WORK CLEARS THE REMARK, it does not merely hide it. A
+     hidden select keeps its value, and a value kept here would be posted with a
+     project line — which the server refuses, correctly, with a message about a
+     dropdown the person cannot see. */
+  if(project) tlClearSubOption();
+  else tlSyncSubOptions();
+}
+
+/* ---------- the second dropdown ----------
+ *
+ * A non-project category can carry a list of sub-options — the Idle remarks,
+ * the training types, the on-site clients — and when it does, this is the
+ * dropdown that offers them.
+ *
+ * EVERYTHING COMES FROM THE SERVER. The week payload carries each category's
+ * heading and its ACTIVE options, so an option an admin adds or retires in
+ * Settings is in the form on the next refresh with nothing to redeploy. The
+ * page holds no list of its own: a hard-coded copy here is the half-migrated
+ * shape this project keeps finding, and a test greps for one.
+ *
+ * NOTHING IS SPECIAL-CASED. There is no mention of Idle, Training or On Site
+ * below — a category with options gets the dropdown, one without does not.
+ */
+function tlCategories(){
+  return ((tsState.week || {}).nonProjectTypes) || [];
+}
+function tlCurrentCategory(){
+  const key = document.getElementById('tl_cat').value;
+  return tlCategories().find(c=>c.key===key) || null;
+}
+function tlClearSubOption(){
+  const wrap = document.getElementById('tl_subWrap');
+  const sel = document.getElementById('tl_sub');
+  if(!wrap || !sel) return;
+  wrap.style.display = 'none';
+  sel.innerHTML = '';
+  sel.value = '';
+  document.getElementById('tl_subErr').textContent = '';
+}
+
+/* Redrawn from scratch on every category change, which is what CLEARS the
+   previous choice: an Idle remark must never survive into a Training line, and
+   the surest way to guarantee that is for the old options not to exist any
+   more. Starts on a placeholder rather than on the first option, so a person
+   who meant to pick one cannot file the top of the list by not noticing. */
+function tlSyncSubOptions(){
+  const wrap = document.getElementById('tl_subWrap');
+  const sel = document.getElementById('tl_sub');
+  if(!wrap || !sel) return;
+  const category = tlCurrentCategory();
+  const err = document.getElementById('tl_subErr');
+  err.textContent = '';
+  sel.innerHTML = '';
+  if(!category){ wrap.style.display = 'none'; return; }
+
+  /* A CATEGORY WHOSE OPTIONS DID NOT ARRIVE. The heading says it has a second
+     dropdown and the list is absent — a payload from an older server, or one
+     that came back half-built. The dropdown is shown, empty and explained, and
+     Save refuses: filing the line would mean sending a category the server
+     requires a choice for, and the refusal would arrive after the click with
+     nothing on screen to say why. */
+  if(!Array.isArray(category.subOptions)){
+    wrap.style.display = '';
+    document.getElementById('tl_subLabel').textContent = category.subLabel || 'Which one';
+    err.textContent = 'Could not load the options for this category. Reload the page before filing this line.';
+    return;
+  }
+  if(!category.subOptions.length){ wrap.style.display = 'none'; return; }
+
+  wrap.style.display = '';
+  document.getElementById('tl_subLabel').textContent = category.subLabel || 'Which one';
+  sel.innerHTML = `<option value="">Choose one…</option>`
+    + category.subOptions.map(o=>`<option value="${escapeHTML(o.key)}">${escapeHTML(o.label)}</option>`).join('');
+  /* AND THE SELECTION EXPLICITLY EMPTIED. Replacing the options resets a real
+     <select> on its own, but relying on that leaves the one thing this function
+     exists for — an Idle remark must never survive into a Training line — to a
+     side effect nothing states. One line, and the DOM-stub test can see it. */
+  sel.value = '';
+}
+
+/* Is the form ready to be filed, as far as this dropdown is concerned?
+   Returns an error sentence, or null. The server decides either way — this is
+   so the person is told before the round trip rather than after it. */
+function tlSubOptionProblem(){
+  if(document.getElementById('tl_kind').value === 'project') return null;
+  const category = tlCurrentCategory();
+  if(!category) return null;
+  if(!Array.isArray(category.subOptions)){
+    return 'Could not load the options for this category. Reload the page before filing this line.';
+  }
+  if(!category.subOptions.length) return null;
+  return document.getElementById('tl_sub').value
+    ? null
+    : `Pick one from ${category.subLabel || 'the second dropdown'} for this "${category.label}" line.`;
 }
 
 // The day the open line form is for. Read by the suggestion and by the running
@@ -5595,6 +5735,10 @@ function syncTimesheetLine(){
 let tlDay = null;
 const timesheetLineWrap = document.getElementById('timesheetLineWrap');
 document.getElementById('tl_kind').addEventListener('change', syncTimesheetLine);
+/* CHANGING THE CATEGORY REDRAWS THE SECOND DROPDOWN, which is what clears the
+   previous choice — see tlSyncSubOptions. An Idle remark must never survive
+   into a Training line. */
+document.getElementById('tl_cat').addEventListener('change', tlSyncSubOptions);
 document.getElementById('tl_cancel').addEventListener('click', ()=>timesheetLineWrap.classList.remove('show'));
 timesheetLineWrap.addEventListener('click', e=>{ if(e.target===timesheetLineWrap) timesheetLineWrap.classList.remove('show'); });
 
@@ -5651,12 +5795,26 @@ document.getElementById('tl_save').addEventListener('click', async ()=>{
     flagNote: document.getElementById('tl_flagNote').value,
     notes: document.getElementById('tl_notes').value.trim() || undefined,
   };
+  /* REFUSED HERE AS WELL AS BY THE SERVER, and the server is still the one that
+     decides: this is so somebody who has not chosen is told before the round
+     trip, in the form, beside the dropdown they have to use. */
+  const subProblem = tlSubOptionProblem();
+  if(subProblem){
+    document.getElementById('tl_subErr').textContent = subProblem;
+    err.textContent = subProblem;
+    return;
+  }
   if(project){
     body.clientId = document.getElementById('tl_client').value || null;
     body.projectId = document.getElementById('tl_project').value || null;
     body.assetId = document.getElementById('tl_asset').value || null;
   }else{
     body.nonProject = document.getElementById('tl_cat').value;
+    /* The second dropdown's choice, as the KEY the option carries. Sent only
+       when the category has one — a category without options posts nothing, and
+       the server refuses a line that carries one it should not. */
+    const sub = document.getElementById('tl_sub').value;
+    if(sub) body.nonProjectSub = sub;
   }
   const btn = document.getElementById('tl_save');
   btn.disabled = true;
@@ -11022,6 +11180,38 @@ const REF_SECTIONS = [
     ],
   },
   {
+    /* THE SECOND DROPDOWN'S OPTIONS, per non-project category.
+     *
+     * One entry, like every other list on this screen, and that is the point of
+     * having built it as a reference collection: add, rename, reorder,
+     * deactivate, reactivate and a delete that refuses anything in use all come
+     * from the component. What is new here is the PARENT — an option belongs to
+     * a category — which is one extra input on the Add row and one extra
+     * column in the table.
+     *
+     * ITS OWN PERMISSION, not the one above it. timesheet.options decides what
+     * the studio may log at all; this curates the words inside a category
+     * somebody has already been given. A studio can hand out the second
+     * without the first. */
+    collection: 'timesheet-sub-options',
+    permission: 'timesheet.sub_options',
+    title: 'Time Sheet Sub-Options',
+    note: 'The second dropdown that appears under a non-project category \u2014 the Idle remarks, the '
+      + 'training types, the on-site clients. Pick the category, name the option. An option retired '
+      + 'here leaves the dropdown; lines already filed against it keep showing it, marked inactive. '
+      + 'A category with no options here simply has no second dropdown. Rename the heading each '
+      + 'dropdown carries in the panel above.',
+    columns: [
+      { key:'parentKey', label:'Category', input:'subParent', required:true },
+      { key:'label', label:'Name', input:'text', placeholder:'e.g. Power Cut', required:true },
+    ],
+    /* The only list on this screen whose order is worth setting by hand: these
+       are the words somebody reads top to bottom in a dropdown they use every
+       day. The other lists could have the same two buttons tomorrow — the
+       component now knows how to draw them — but nobody asked. */
+    reorder: true,
+  },
+  {
     /* The stages a project is planned in. Sits after the two category lists
        because it is read the same way — a short list of labels somebody adds
        to — and before Roles, which is the one panel on this screen that changes
@@ -11066,6 +11256,22 @@ async function renderSettings(){
     api('/reference/' + sec.collection + '?includeInactive=1').then(r => r.entries).catch(() => [])
   ));
   lists.forEach((sec,i)=>{ refCache[sec.collection] = loaded[i]; });
+
+  /* THE PARENT LIST, FOR SOMEBODY WHO MANAGES ONLY THE SUB-OPTIONS.
+   *
+   * The loop above fetches a list only where this person manages it, which is
+   * right — the management read includes retired values. But the sub-options
+   * panel needs the CATEGORY names to say which dropdown each option belongs
+   * to, and a studio that grants timesheet.sub_options without
+   * timesheet.options is exactly the case the two keys exist for. The plain
+   * read is open to anyone signed in, as every Add form on this page relies on,
+   * so the active categories are fetched here when they are not already cached.
+   * A retired parent then shows as its key rather than its label, which is the
+   * honest answer for somebody who cannot read the retired half of that list. */
+  if(lists.some(sec=>sec.collection==='timesheet-sub-options') && !refCache['timesheet-categories']){
+    refCache['timesheet-categories'] = await api('/reference/timesheet-categories')
+      .then(r=>r.entries).catch(()=>[]);
+  }
 
   el.innerHTML = `
     ${settingsIndexHTML()}
@@ -11304,11 +11510,31 @@ function renderRefSection(sec){
       <div class="ref-key">${escapeHTML(e.key)}</div>
     </td>`);
     if(sec.collection==='asset-types') cells.push(`<td class="ref-key">${escapeHTML(e.codePrefix||'')}</td>`);
+    /* WHICH CATEGORY, and its heading beside it, so the table reads as the
+       dropdowns do rather than as one flat list of words. The label comes from
+       the category list, so a renamed category renames it here too. */
+    if(sec.collection==='timesheet-sub-options'){
+      const parent = (refCache['timesheet-categories']||[]).find(c=>c.key===e.parentKey);
+      cells.push(`<td>${escapeHTML(parent ? parent.label : e.parentKey)}
+        <div class="ref-key">${escapeHTML((parent && parent.subLabel) || '')}</div></td>`);
+    }
     if(sec.collection==='roles') cells.push(
       `<td>${escapeHTML(e.group||'')}</td>`,
       `<td><span class="ref-pill">${escapeHTML(e.tierLabel||e.tier||'')}</span></td>`
     );
+    /* THE DROPDOWN'S HEADING, editable where the category has a second dropdown
+       to head. Offered only on those rows: a heading on a category with no
+       options is a word nobody would ever see, and the button would be four
+       fifths of this panel doing nothing. It appears as soon as the first
+       option is added. */
+    const headingEditable = sec.collection==='timesheet-categories'
+      && (refCache['timesheet-sub-options']||[]).some(o=>o.parentKey===e.key);
     cells.push(`<td class="ref-actions">
+      ${headingEditable ? `<button class="btn btn-ghost btn-sm ref-heading" data-k="${escapeHTML(e.key)}"
+        title="The heading its second dropdown carries">Heading</button>` : ''}
+      ${sec.reorder ? `
+        <button class="btn btn-ghost btn-sm ref-move" data-c="${sec.collection}" data-k="${escapeHTML(e.key)}" data-dir="up" title="Move up">\u2191</button>
+        <button class="btn btn-ghost btn-sm ref-move" data-c="${sec.collection}" data-k="${escapeHTML(e.key)}" data-dir="down" title="Move down">\u2193</button>` : ''}
       <button class="btn btn-ghost btn-sm ref-rename" data-c="${sec.collection}" data-k="${escapeHTML(e.key)}">Rename</button>
       ${e.isSystem?'':`<button class="btn btn-ghost btn-sm ref-toggle" data-c="${sec.collection}" data-k="${escapeHTML(e.key)}" data-active="${e.isActive?1:0}">${e.isActive?'Deactivate':'Reactivate'}</button>`}
       ${e.isSystem?'':`<button class="btn btn-ghost btn-sm ref-delete" data-c="${sec.collection}" data-k="${escapeHTML(e.key)}" style="color:var(--brand-accent);">Delete</button>`}
@@ -11318,6 +11544,7 @@ function renderRefSection(sec){
 
   const heads = ['Name'];
   if(sec.collection==='asset-types') heads.push('Prefix');
+  if(sec.collection==='timesheet-sub-options') heads.push('Category');
   if(sec.collection==='roles') heads.push('Group','Can do');
   heads.push('');
 
@@ -11339,6 +11566,15 @@ function renderRefSection(sec){
 function refInput(sec, col){
   const id = `new-${sec.collection}-${col.key}`;
   if(col.input==='color') return `<input type="color" id="${id}" value="#4db8ff" style="width:48px;padding:2px;height:34px;">`;
+  /* WHICH CATEGORY AN OPTION BELONGS TO, from the category list this screen has
+     already loaded — so a category an admin adds can carry options without a
+     line of code here. Every category is offered, not only the three that ship
+     with options: that is what makes the mechanism general. */
+  if(col.input==='subParent'){
+    const cats = refCache['timesheet-categories'] || [];
+    return `<select id="${id}">${cats.filter(c=>c.isActive)
+      .map(c=>`<option value="${escapeHTML(c.key)}">${escapeHTML(c.label)}</option>`).join('')}</select>`;
+  }
   if(col.input==='tier') return `<select id="${id}">${ROLE_TIERS.map(t=>`<option value="${t.key}" title="${escapeHTML(t.describe)}">${escapeHTML(t.label)}</option>`).join('')}</select>`;
   if(col.input==='group') return `<input type="text" id="${id}" list="ref-groups" placeholder="e.g. Engineering">
     <datalist id="ref-groups">${ROLE_GROUPS.map(g=>`<option value="${escapeHTML(g)}"></option>`).join('')}</datalist>`;
@@ -11393,6 +11629,54 @@ function wireSettings(){
       await api(`/reference/${collection}/${encodeURIComponent(key)}`, { method:'PATCH', body:{ label } });
       await afterRefChange('Renamed. Records already using it are unaffected.');
     }catch(err){ refError(collection, err.message); }
+  }));
+
+  /* THE HEADING EACH SECOND DROPDOWN CARRIES. Data, not code: "Idle Remarks"
+     is renameable, and the form, the refusals and this table all read whatever
+     it is now. Blank clears it, and the form falls back to a generic heading
+     rather than drawing one with no label. */
+  document.querySelectorAll('.ref-heading').forEach(btn=>btn.addEventListener('click', async ()=>{
+    const key = btn.dataset.k;
+    const current = (refCache['timesheet-categories']||[]).find(e=>e.key===key) || {};
+    const subLabel = prompt(
+      `What should the second dropdown under "${current.label||key}" be headed?\n\n`
+      + 'This is what people read above the options. Leave it blank for a generic heading.',
+      current.subLabel || '');
+    if(subLabel===null) return;
+    try{
+      await api(`/reference/timesheet-categories/${encodeURIComponent(key)}`,
+        { method:'PATCH', body:{ subLabel } });
+      await afterRefChange('Heading saved. The Add line form shows it on the next refresh.');
+    }catch(err){ refError('timesheet-categories', err.message); }
+  }));
+
+  /* UP AND DOWN, by swapping positions with the neighbour IN THE SAME PARENT.
+   *
+   * The list is ordered by position descending, and every other screen in this
+   * application orders the same way, so "up" is a higher number. Swapping
+   * rather than renumbering keeps it to two writes and cannot disturb an option
+   * somebody else is reordering at the same moment.
+   *
+   * Scoped to the parent because the panel is: moving an Idle remark past a
+   * training type would be moving it past something it never appears beside. */
+  document.querySelectorAll('.ref-move').forEach(btn=>btn.addEventListener('click', async ()=>{
+    const { c: collection, k: key, dir } = btn.dataset;
+    const all = refCache[collection] || [];
+    const mine = all.find(e=>e.key===key);
+    if(!mine) return;
+    const siblings = all.filter(e=>e.parentKey===mine.parentKey);
+    const at = siblings.findIndex(e=>e.key===key);
+    const swapWith = siblings[dir==='up' ? at-1 : at+1];
+    if(!swapWith) return;   // already at the end of its own list
+    refError(collection, '');
+    btn.disabled = true;
+    try{
+      await api(`/reference/${collection}/${encodeURIComponent(key)}`,
+        { method:'PATCH', body:{ position: swapWith.position } });
+      await api(`/reference/${collection}/${encodeURIComponent(swapWith.key)}`,
+        { method:'PATCH', body:{ position: mine.position } });
+      await afterRefChange('Moved.');
+    }catch(err){ refError(collection, err.message); btn.disabled = false; }
   }));
 
   document.querySelectorAll('.ref-toggle').forEach(btn=>btn.addEventListener('click', async ()=>{

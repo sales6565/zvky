@@ -388,8 +388,20 @@ test('the rule, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   const mk = async (name, assigneeId = id.ana) => (await as('root', `/assets/project/${id.project}`, {
     method: 'POST', body: { name, type: 'prop', assigneeId, manHours: 4 } })).body.asset;
   const start = (who, assetId) => as(who, `/assets/${assetId}/start`, { method: 'POST' });
-  const fill = (who, date, body = {}) => as(who, '/timesheets/entries', {
-    method: 'POST', body: { date, hours: 2, nonProject: 'idle', ...body } });
+  /* An Idle line with a REMARK, because Idle carries a second dropdown now and a
+     category with active sub-options requires a choice from it. The brief for
+     that change asked explicitly that an Idle line with a remark still count as
+     filled for this rule, and these cases are where that is exercised: the gate
+     counts LINES, so what the line says about itself is none of its business.
+     A caller naming another category gets the default remark only if that
+     category is Idle. */
+  const fill = (who, date, body = {}) => {
+    const line = { date, hours: 2, nonProject: 'idle', ...body };
+    if (line.nonProject === 'idle' && !line.nonProjectSub) {
+      line.nonProjectSub = 'idle_no_work_to_assign';
+    }
+    return as(who, '/timesheets/entries', { method: 'POST', body: line });
+  };
   const statusOf = async (assetId) => (await as('root', `/assets/project/${id.project}`))
     .body.assets.find((a) => a.id === assetId).status;
 

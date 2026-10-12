@@ -173,6 +173,7 @@ somebody grants you. `timesheet.options` is **Super Admin only**, via
 | `timesheet.team` | `manageAccess` | Read your team's weeks |
 | `timesheet.all` | `fullAccess` | Read the studio's |
 | `timesheet.options` | **Super Admin** | Decide what the form offers everybody, and whether yesterday's sheet gates today's work |
+| `timesheet.sub_options` | **Super Admin** | Curate the second dropdown under a category — the Idle remarks, training types, on-site clients — and its heading |
 
 A separate key rather than widening an existing one, because nothing about
 managing the options should narrow anybody's ability to log their own time — and
@@ -400,6 +401,101 @@ form would let somebody hold one half of a screen. Super Admin only by default,
 enforced by `requirePermission` on the server and `can()` on the page, never the
 tier, and grantable in Settings like everything else. Every flip is in the
 Activity Log with the policy as a sentence on both sides.
+
+### The second dropdown: sub-options under a category
+
+A non-project category can carry a list of **sub-options**, and when it does the
+Add line form shows a second dropdown and the server requires a choice from it.
+Seeded with the three lists the studio asked for:
+
+| Category | Dropdown heading | Options |
+| --- | --- | --- |
+| Idle | **Idle Remarks** (theirs) | No Work to Assign · System Issues · Awaiting Client Feedback · Assigned work Completed · Assigned Work Late · Left Early · Late Login |
+| Training | **Training Type** (ours) | Training 2D Art · Training 2D Animation · Training Game Design |
+| On Site | **On Site Client** (ours) | CSR2 On Site · Scopely On Site · Scientific Games On Site |
+
+**One mechanism, three seeded uses.** Nothing in the code names Idle, Training
+or On Site to find their options — a category with rows in
+`timesheet_sub_options` has a second dropdown, one without has none, and
+attaching options to Leave tomorrow is three rows in Settings and no code. A
+test greps the tree to keep it that way.
+
+**It is a reference collection, not a second kind of list.** `timesheet_sub_options`
+is an entry in `COLLECTIONS` in `src/reference-data.js`, so the add, rename,
+reorder, deactivate, reactivate and the delete-that-refuses-anything-in-use all
+come from the machinery Prompt 24 already used, through one route and one
+Settings panel. Two things the parent changes, and only two: a **duplicate label
+is checked within its category** (so "Awaiting Client Feedback" under Idle does
+not block one under Leave), and the **key carries the parent** —
+`idle_left_early` — so it stays unique across the table and every other function
+in that module works unaltered. `training_training_2d_art` is clumsy and
+deliberate: it is what the ordinary key rule produces, so a seeded option and an
+admin-added one are indistinguishable afterwards.
+
+**On Site is new.** Two of the three categories existed; On Site did not, and a
+sub-option with no parent is not a thing. It is seeded as an ordinary category —
+renameable and retirable, **not** `is_system`, because nothing keys on it (Idle
+is protected because the week's totals count it separately).
+
+**The labels are the studio's, spelling and all.** "Assigned work Completed"
+beside "Assigned Work Late" — the inconsistent capital is theirs, and
+normalising it quietly would be deciding something they can decide themselves.
+Renaming either is one click and changes nothing stored. Note also that
+*Awaiting Client Feedback* is **also a workflow status name**; the two are
+unrelated and live in separate namespaces, and nothing matches on label text —
+the line stores `idle_awaiting_client_feedback` and the status is
+`awaiting_client_feedback` in `assets.status`.
+
+**What the server enforces** (`validateEntry`): a category with active
+sub-options requires one; the option must belong to that category (a Training
+line with an Idle remark is refused); a category with none refuses one; a
+project line never carries one; unknown, inactive and cross-category options are
+refused on create *and* on edit.
+
+**Legacy lines stay valid and editable.** Every line filed before this has
+`non_project_sub` NULL. The edit path hands `validateEntry` the line **as
+stored**, and when the category and the option are both unchanged the pair is
+taken as given — so correcting the hours or the notes on an old Idle line demands
+no remark, and a line holding a since-**retired** option keeps working. Change
+the category, or pick a different option, and the full rules apply. A retired
+option still resolves for display (marked *inactive* on the line) and cannot be
+chosen for anything new.
+
+**Storage.** The line stores the **key**, never the label, so a rename changes
+how every old line reads and breaks no report; the label is resolved at read
+time from the in-memory mirror, which is why a retired or renamed option still
+resolves. The dropdown's **heading** is data too —
+`timesheet_categories.sub_label` — so "Idle Remarks" can be renamed in Settings
+without a deploy. The migration follows the idempotent pattern: the table is
+created by the reference-table loop, the options are seeded **by key** through
+`seedReferenceTable` (so a renamed or deactivated seeded option is never
+reverted), and the headings are written only where the column is still NULL.
+Running it twice creates one copy of each and touches no existing line. One
+subtlety: a seeded option an admin **deletes outright** does come back on the
+next boot — deletion is only possible while nothing uses it, and "the studio's
+list, restored" beats "silently gone for ever". Deactivating is the documented
+way to retire one.
+
+**Its own permission,** `timesheet.sub_options`, Super Admin only by default and
+grantable per designation. Separate from `timesheet.options` because the two
+cost different things: that key decides what the studio may log at all and how
+far back, this one curates the words inside a category somebody already has. The
+server enforces it through `PERMISSION_BY_PATH` on every sub-option route; the
+page gates the Settings panel with `can()` on the same key, never the tier.
+Nobody needs it to *use* the dropdowns — those come with `timesheet.own`.
+
+**Consumers changed:** the Add line form (the second dropdown), the filed-line
+display (the remark beside the category, with an *inactive* marker), both
+exports (one `Option` column beside `Category` — the heading differs per
+category and a spreadsheet gets one column), the audit trail (`Idle — Left
+Early`), and the Idle figure, which now carries a breakdown by remark wherever
+it is already shown apart (`idleByRemark`, heaviest first, unexplained hours
+last as *not stated*). **Left alone:** `kindOf` and the three-way split — a
+remark does not change what kind of time a line is; the day and week totals,
+which sum hours; the Efficiency and Idle reports, Team Capacity and both P&L
+tabs, which read `work_sessions` and never saw a category; and the
+previous-working-day gate, which counts *lines* — an Idle line with a remark is
+a line, exactly as before.
 
 ### Idle: counted in the hours, named apart from them
 

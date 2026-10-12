@@ -341,6 +341,30 @@ test('the defaults that are decisions, with the reason for each', () => {
      and never the tier. */
   assert.ok(catalog.grantableKeys().includes('timesheet.options'),
     'including the switch that blocks starting work, so it can be handed on');
+
+  /* AND ITS NEIGHBOUR, WHICH IS A SEPARATE KEY ON PURPOSE.
+   *
+   * timesheet.sub_options manages the second dropdown under a non-project
+   * category — the Idle remarks, the training types, the on-site clients — and
+   * the heading each one carries. It defaults to the Super Admin alone, exactly
+   * like timesheet.options above, so nothing changes for anybody until it is
+   * granted.
+   *
+   * WHY NOT THE SAME KEY. timesheet.options decides what the studio may log at
+   * all and how far back: a category retired there leaves every person's form,
+   * and the back-dating window decides whether last month can still be
+   * corrected. This one curates a list of words inside a category somebody has
+   * already been given — keeping the Idle remark list tidy is the sort of thing
+   * a production manager does, and a studio should be able to hand that over
+   * without handing over the window. One key would have made them inseparable;
+   * two means the pair can diverge, which is the whole point.
+   *
+   * NOBODY NEEDS IT TO FILL IN A TIMESHEET: the dropdowns themselves come with
+   * timesheet.own, which every designation holds. */
+  assert.deepStrictEqual(held('timesheet.sub_options'), ['super_admin'],
+    'the sub-option list is the Super Admin\'s until granted');
+  assert.ok(catalog.grantableKeys().includes('timesheet.sub_options'),
+    'and a studio can hand it to a production manager on its own');
 });
 
 test('every permission the catalogue lists is either checked or declared pending', () => {

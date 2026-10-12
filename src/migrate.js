@@ -213,6 +213,37 @@ const REFERENCE_TABLES = {
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE KEY uq_timesheet_categories_key (\`key\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  /* THE SECOND DROPDOWN'S OPTIONS, per non-project category.
+     
+     One generic table, not three: a category with rows here gets a second
+     dropdown on the Add line form, and a category without them does not.
+     Seeded with the studio's three lists; attaching options to Leave later is
+     three rows in Settings and no code.
+     
+     TWO UNIQUE KEYS, both scoped to the parent. The key one is what makes
+     "idle" and "training" able to hold an option with the same name; the LABEL
+     one is the case-insensitive duplicate check the brief asks for, and it is
+     case-insensitive for free — utf8mb4_general_ci is this schema's collation,
+     so "Left Early" and "left early" are one value to the index. The
+     application refuses the duplicate first, with a sentence; this is the
+     second line of defence if two admins save at once.
+     
+     created_by is nullable because the seeded rows were created by the
+     migration and not by a person. */
+  timesheet_sub_options: `CREATE TABLE IF NOT EXISTS timesheet_sub_options (
+      id CHAR(36) NOT NULL PRIMARY KEY,
+      parent_key VARCHAR(64) NOT NULL,
+      \`key\` VARCHAR(96) NOT NULL,
+      label VARCHAR(100) NOT NULL,
+      position INT NOT NULL DEFAULT 0,
+      is_active TINYINT(1) NOT NULL DEFAULT 1,
+      is_system TINYINT(1) NOT NULL DEFAULT 0,
+      created_by CHAR(36) NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_tso_parent_key (parent_key, \`key\`),
+      UNIQUE KEY uq_tso_parent_label (parent_key, label),
+      KEY idx_tso_parent (parent_key, position)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   roles: `CREATE TABLE IF NOT EXISTS roles (
       id CHAR(36) NOT NULL PRIMARY KEY,
       \`key\` VARCHAR(64) NOT NULL,
@@ -686,6 +717,22 @@ async function ensureReferenceData(db, log) {
   await seedReferenceTable(db, 'timesheet_categories', defaults.TIMESHEET_CATEGORIES, (r) => ({
     columns: ['id', '`key`', 'label', 'color', 'position', 'is_active', 'is_system'],
     values: [uuid(), r.key, r.label, r.color, r.position, 1, r.isSystem ? 1 : 0],
+  }), log);
+
+  /* THE SUB-OPTIONS, seeded by KEY through the same function.
+     
+     That is what makes the brief's requirement hold without any new mechanism:
+     seedReferenceTable reads the keys already present and inserts only what is
+     missing. So running the migration twice creates one copy of each; an option
+     an admin RENAMED keeps its new label, because its key is present; and one
+     an admin DEACTIVATED stays deactivated, because nothing here touches a row
+     that exists. A seeded option an admin DELETED does come back — deletion is
+     only possible while nothing uses it, and "the studio's list, restored" is
+     the better reading of an empty seat than "silently gone for ever". The
+     report says so, and deactivating is the documented way to retire one. */
+  await seedReferenceTable(db, 'timesheet_sub_options', defaults.TIMESHEET_SUB_OPTIONS, (r) => ({
+    columns: ['id', 'parent_key', '`key`', 'label', 'position', 'is_active', 'is_system'],
+    values: [uuid(), r.parentKey, r.key, r.label, r.position, 1, 0],
   }), log);
 
   await seedReferenceTable(db, 'roles', defaults.ROLES, (r) => ({
@@ -3779,6 +3826,74 @@ async function ensureTimesheetFlag(db, log) {
   }
 }
 
+/* The heading a category's second dropdown carries.
+ *
+ * SPLIT FROM THE COLUMN ON A LINE, below, and the split is about ORDER. This
+ * half writes to timesheet_categories, which the reference tables step has just
+ * created, and it has to land BEFORE the reference-data mirror loads — or the
+ * mirror holds rows read before the column existed and every screen reads the
+ * heading as absent until the next restart. The step above it, 'role access
+ * tiers', is placed there for exactly the same reason and says so.
+ *
+ * THE HEADING IS DATA so "Idle Remarks" can be renamed in Settings without a
+ * deploy, and the seeded value is written ONLY where the column is still NULL:
+ * an admin who renamed a heading keeps it on the next boot, which is the same
+ * promise seeding by key makes for the options themselves.
+ */
+async function ensureSubOptionHeadings(db, log) {
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'timesheet_categories'
+        AND COLUMN_NAME = 'sub_label'`
+  ).catch(() => ({ rows: [] }));
+  if (!rows.length) {
+    await db.query('ALTER TABLE timesheet_categories ADD COLUMN sub_label VARCHAR(100) NULL AFTER label');
+    log('Schema: added timesheet_categories.sub_label — the heading its second dropdown carries.');
+  }
+  /* One UPDATE per heading with an IS NULL guard rather than a blanket write,
+     so this is idempotent and cannot revert a rename. */
+  for (const [key, label] of Object.entries(defaults.TIMESHEET_SUB_LABELS)) {
+    await db.query(
+      'UPDATE timesheet_categories SET sub_label = $1 WHERE `key` = $2 AND sub_label IS NULL',
+      [label, key]
+    );
+  }
+}
+
+/* Which second-dropdown option a line carries.
+ *
+ * THE KEY AND NEVER THE LABEL, so a rename changes how every old line reads and
+ * breaks no report. NULL on every line filed before this, which is what makes
+ * those lines stay valid and editable — see the note on `was` in
+ * src/timesheets.js for how the validator honours that.
+ *
+ * Here rather than beside the heading above because it writes to
+ * timesheet_entries, which a later step creates.
+ */
+async function ensureSubOptionColumn(db, log) {
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'timesheet_entries'
+        AND COLUMN_NAME = 'non_project_sub'`
+  ).catch(() => ({ rows: [] }));
+  if (rows.length) return;
+  try {
+    await db.query(
+      'ALTER TABLE timesheet_entries ADD COLUMN non_project_sub VARCHAR(96) NULL AFTER non_project'
+    );
+  } catch (err) {
+    /* A deployment whose timesheet tables could not be created at all still
+       boots, and the route reads and writes the column defensively for the same
+       reason — see ENTRY_EXTRAS in src/routes/timesheets.js. */
+    if (err.code !== 'ER_NO_SUCH_TABLE') throw err;
+    log(`Schema: timesheet_entries is not there, so non_project_sub was skipped (${err.code}).`);
+    return;
+  }
+  await db.query('ALTER TABLE timesheet_entries ADD KEY idx_tse_sub (non_project_sub)')
+    .catch(() => { /* the column is what matters; an index refused is not fatal */ });
+  log('Schema: added timesheet_entries.non_project_sub — which second-dropdown option a line carries.');
+}
+
 /* A password an administrator reset, and the change it forces.
  *
  * Two pieces, both here because both have to survive a deployment that has
@@ -3871,6 +3986,9 @@ const STEPS = [
   // Reads the tables the step above creates and fills.
   // Before the mirror loads, so the change is in what everything else reads.
   ['role access tiers', ensureRoleTiers],
+  /* Also before the mirror, and for the same reason: a heading added after it
+     loads is a heading every screen reads as absent until the next restart. */
+  ['time sheet sub-option headings', ensureSubOptionHeadings],
   ['reference data mirror', (db) => referenceData.load(db)],
   // After the mirror: isTopOfHierarchy reads a role's tier from it.
   ['reporting hierarchy', ensureReportingAndMembership],
@@ -3970,6 +4088,8 @@ const STEPS = [
   ['timesheet hours only', ensureTimesheetHoursOnly],
   // After the table exists, whose columns it adds.
   ['timesheet entry flag', ensureTimesheetFlag],
+  // After the timesheet tables, whose column it adds.
+  ['timesheet sub-option column', ensureSubOptionColumn],
   // After users, whose key every chat table points at.
   ['chat', ensureChat],
   /* Beside the chat tables, though it depends on none of them — one row, no

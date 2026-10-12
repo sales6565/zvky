@@ -71,11 +71,76 @@ const TIMESHEET_CATEGORIES = [
   { key: 'holiday',  label: 'Holiday',          color: '#4fb3ff', position: 50, isSystem: false },
   { key: 'meeting',  label: 'Internal Meeting', color: '#2f6f9f', position: 40, isSystem: false },
   { key: 'training', label: 'Training',         color: '#4c9a75', position: 30, isSystem: false },
+  /* ADDED WITH THE SUB-OPTIONS, because its three sub-options need a parent and
+     it did not exist. The other two the studio asked for — Idle and Training —
+     were already here.
+     
+     NOT isSystem: Idle is protected because the week's totals count it
+     separately and a studio that retired it would leave that figure reading
+     nought while the hours were still logged. Nothing keys on On Site, so it
+     is renameable and retirable like Training beside it, which is Prompt 24's
+     rule for an ordinary category. */
+  { key: 'on_site',  label: 'On Site',          color: '#3f8ea7', position: 25, isSystem: false },
   { key: 'admin',    label: 'Admin',            color: '#6b7a8f', position: 20, isSystem: false },
   /* Last in the dropdown and lowest in the order: it is the one somebody picks
      when there was nothing to pick, and it should not sit above the things they
      might actually have been doing. */
   { key: 'idle',     label: 'Idle',             color: '#d9822b', position: 10, isSystem: true },
+];
+
+/* THE HEADING EACH CATEGORY'S SECOND DROPDOWN CARRIES, seeded into
+ * timesheet_categories.sub_label so a Super Admin can rename "Idle Remarks"
+ * without a deploy. Only a seed: the migration writes one only where the column
+ * is still NULL, so a renamed heading is never reverted.
+ *
+ * The studio named the first; the other two are ours, and the report says so:
+ * "Training Type" and "On Site Client" read as questions the dropdown answers,
+ * which is what "Idle Remarks" does for Idle.
+ */
+const TIMESHEET_SUB_LABELS = {
+  idle: 'Idle Remarks',
+  training: 'Training Type',
+  on_site: 'On Site Client',
+};
+
+/* THE SECOND DROPDOWN'S OPTIONS, per category.
+ *
+ * ONE MECHANISM, THREE SEEDED USES. Nothing here is special-cased: a category
+ * with sub-options gets a second dropdown, a category without one does not, and
+ * attaching options to Leave tomorrow is three rows in Settings and no code.
+ *
+ * THE KEY IS <parent>_<label reduced to a key>, derived by the same rule
+ * src/reference-data.js uses for anything an admin adds later, so a seeded
+ * option and an added one are indistinguishable afterwards. It is what the line
+ * stores, so a rename changes every old line's label and breaks no report.
+ * `training_training_2d_art` is clumsy and deliberate: a hand-tidied key here
+ * would be a key the code could not have produced.
+ *
+ * LABELS EXACTLY AS THE STUDIO WROTE THEM, including "Assigned work Completed"
+ * beside "Assigned Work Late". The inconsistent capital is theirs; normalising
+ * it quietly would be deciding something they can decide for themselves, and
+ * the report asks them to. Renaming either is one click in Settings and changes
+ * nothing stored.
+ *
+ * POSITION DESCENDS, like every other reference list — the loader orders by
+ * position DESC — so the first in each list below is the first in the dropdown.
+ */
+const TIMESHEET_SUB_OPTIONS = [
+  { parentKey: 'idle', key: 'idle_no_work_to_assign',        label: 'No Work to Assign',       position: 70 },
+  { parentKey: 'idle', key: 'idle_system_issues',            label: 'System Issues',           position: 60 },
+  { parentKey: 'idle', key: 'idle_awaiting_client_feedback', label: 'Awaiting Client Feedback', position: 50 },
+  { parentKey: 'idle', key: 'idle_assigned_work_completed',  label: 'Assigned work Completed', position: 40 },
+  { parentKey: 'idle', key: 'idle_assigned_work_late',       label: 'Assigned Work Late',      position: 30 },
+  { parentKey: 'idle', key: 'idle_left_early',               label: 'Left Early',              position: 20 },
+  { parentKey: 'idle', key: 'idle_late_login',               label: 'Late Login',              position: 10 },
+
+  { parentKey: 'training', key: 'training_training_2d_art',       label: 'Training 2D Art',       position: 30 },
+  { parentKey: 'training', key: 'training_training_2d_animation', label: 'Training 2D Animation', position: 20 },
+  { parentKey: 'training', key: 'training_training_game_design',  label: 'Training Game Design',  position: 10 },
+
+  { parentKey: 'on_site', key: 'on_site_csr2_on_site',             label: 'CSR2 On Site',             position: 30 },
+  { parentKey: 'on_site', key: 'on_site_scopely_on_site',          label: 'Scopely On Site',          position: 20 },
+  { parentKey: 'on_site', key: 'on_site_scientific_games_on_site', label: 'Scientific Games On Site', position: 10 },
 ];
 
 const ROLES = [
@@ -621,4 +686,5 @@ const ROLES = [
   }
 ];
 
-module.exports = { ASSET_TYPES, PRIORITIES, MILESTONE_TYPES, TIMESHEET_CATEGORIES, ROLES };
+module.exports = { ASSET_TYPES, PRIORITIES, MILESTONE_TYPES, TIMESHEET_CATEGORIES,
+  TIMESHEET_SUB_OPTIONS, TIMESHEET_SUB_LABELS, ROLES };
