@@ -523,6 +523,10 @@ test('recording against the studio clock', { skip: cfg ? false : SKIP_REASON }, 
     const refused = await as('ana', `/assets/${asset}/resume`, { method: 'POST' });
     assert.strictEqual(refused.status, 409, JSON.stringify(refused.body));
     assert.strictEqual(refused.body.scheduled, true, 'and says why');
+    /* AND CARRIES THE CODE, which is the convention the refusals moved to when the rule
+       was pulled into src/asset-hold.js. `scheduled` is kept beside it rather than
+       replaced: nothing asked for it to go. */
+    assert.strictEqual(refused.body.code, 'HOLD_STUDIO_PAUSED');
     assert.strictEqual((await sessions(asset)).length, 1, 'nothing was opened');
 
     /* Now a hold, which the same endpoint still lifts.

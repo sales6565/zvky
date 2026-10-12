@@ -153,10 +153,39 @@ test('there is no Resume control for a pause the schedule made', () => {
      and click. The button still exists for a deliberate Hold — which is a
      different feature and the only way back from a pause a PERSON made — so
      what is pinned is the gate, not the absence of the word. */
+  /* THE GATE MOVED OFF THE PAGE, and the requirement did not. The page used to carry the
+     term itself — `!held.byStudio` in its own conjunction — and now reads the server's
+     answer, so the rule is pinned in the two places it actually lives:
+     
+       the shared rule   HOLD_STUDIO_PAUSED, refused for exactly this pause and allowed
+                         for a deliberate one;
+       the page          which draws canResume from that answer, and keeps the term in
+                         its own fallback for an undecorated row.
+     
+     Both, because a mutation that dropped either would leave somebody a button for
+     something the schedule does by itself. */
+  const assetHold = require('../src/asset-hold');
+  const paused = assetHold.decide('resume', {
+    user: { id: 'u1' }, asset: { assignee_id: 'u1' }, holdsPermission: true,
+    openSession: false, held: { byStudio: true },
+  });
+  assert.strictEqual(paused.code, assetHold.CODES.STUDIO_PAUSED,
+    'the Resume button is not offered for a pause the schedule made');
+  assert.match(paused.message, /starts it again by itself/);
+  const byHand = assetHold.decide('resume', {
+    user: { id: 'u1' }, asset: { assignee_id: 'u1' }, holdsPermission: true,
+    openSession: false, held: { byStudio: false },
+  });
+  assert.strictEqual(byHand.ok, true, 'and a deliberate hold still has its way back');
+
   const match = PAGE.match(/const canResume = ([^;]+);/);
   assert.ok(match, 'the Resume gate is in the page');
-  assert.match(match[1], /!held\.byStudio/,
-    'the Resume button is not offered for a pause the schedule made');
+  assert.match(match[1], /hs \? hs\.canResume : fallbackResume/,
+    'the page draws the server\'s answer');
+  const fallback = PAGE.match(/const fallbackResume = ([^;]+);/);
+  assert.ok(fallback, 'and keeps a fallback for an undecorated row');
+  assert.match(fallback[1], /!held\.byStudio/,
+    'which still refuses a pause the schedule made');
 
   /* And the panel does not tell anybody to press it either: the two pauses have
      different sentences, and the schedule's says there is nothing to press. */

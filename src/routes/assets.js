@@ -2395,7 +2395,13 @@ async function holdableAsset(req, res, action) {
     res.status(authority ? 403 : 409).json({
       error: verdict.message,
       code: verdict.code,
-      ...(verdict.code === assetHold.CODES.ALREADY_HELD && facts.held ? { held: facts.held } : {}),
+      /* The pause itself travels with the two refusals that are about it, so the panel can
+         say since when. `scheduled: true` is kept beside the code on the schedule's own
+         pause: it predates the codes, nothing asked for it to go, and removing a field a
+         consumer might read is not a tidy-up this change needed to make. */
+      ...(facts.held && [assetHold.CODES.ALREADY_HELD, assetHold.CODES.STUDIO_PAUSED]
+        .includes(verdict.code) ? { held: facts.held } : {}),
+      ...(verdict.code === assetHold.CODES.STUDIO_PAUSED ? { scheduled: true } : {}),
     });
     return null;
   }
