@@ -547,6 +547,36 @@ const GROUPS = [
           + 'production pipeline, what is due next, and what needs attention. Read-only, and scoped '
           + 'to the projects this role can already see.',
       },
+      {
+        key: 'report.follow_up',
+        label: 'View People to Follow Up',
+        /* WHO DID NOT START, AND WHO DID NOT FILL A TIMESHEET, on a day somebody
+           picks. An Admin Dashboard section, and the only part of that screen
+           that is about PEOPLE rather than about work.
+           
+           SUPER ADMIN ONLY BY DEFAULT, through managePermissions, and
+           deliberately NOT implied by report.admin_dashboard. Two names on a
+           list of who did not turn up is the most personal thing this
+           application will tell anybody, and a studio granting an overview of
+           its pipeline has not thereby decided to hand out an attendance
+           register. The same reasoning that keeps report.idle apart from
+           report.view, one step further: this one names individuals rather
+           than totalling them.
+           
+           NOR IS report.idle ENOUGH. The Idle Report answers how much of
+           somebody's week is unaccounted for, which is a figure; this answers
+           whether they showed up, which is a different kind of statement about
+           the same person, and a studio may well want one without the other.
+           
+           It opens the section. It does not widen anybody's reach: who appears
+           is scoped by the role's existing projectScope, like every other
+           number on that screen, and the names a row can be opened into are
+           still behind user.view. */
+        impliedBy: has('managePermissions'),
+        describe: 'The Admin Dashboard\'s "People to follow up" section: who has not started work '
+          + 'on a chosen day, and who has not filled their timesheet for it. Read-only, scoped to '
+          + 'the projects this role can already see.',
+      },
     ],
   },
   {

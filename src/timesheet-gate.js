@@ -99,18 +99,46 @@ const LOOKBACK_DAYS = 28;
  * days, or a holiday run longer than the lookback, has no day to demand.
  */
 function previousWorkingDay(today, { loggableDays, isHoliday } = {}) {
-  const days = Array.isArray(loggableDays) && loggableDays.length
-    ? loggableDays
-    : null;
-  if (!days) return null;
-  const holiday = typeof isHoliday === 'function' ? isHoliday : () => false;
+  if (!loggable(loggableDays)) return null;
   for (let back = 1; back <= LOOKBACK_DAYS; back += 1) {
     const date = shiftDays(today, -back);
-    if (!days.includes(isoDayOf(date))) continue;
-    if (holiday(date)) continue;
-    return date;
+    if (isWorkingDay(date, { loggableDays, isHoliday })) return date;
   }
   return null;
+}
+
+/* The studio's own weekly-off list, or null when there is not one.
+ *
+ * Null is the "we cannot say" answer the walk above turns into "nobody is
+ * blocked", and isWorkingDay() below turns into "not a working day" — which for
+ * a studio with no loggable days at all is the same honest reading: there is no
+ * day the timesheet would accept. */
+function loggable(loggableDays) {
+  return Array.isArray(loggableDays) && loggableDays.length ? loggableDays : null;
+}
+
+/* IS THIS DATE ONE THE STUDIO WORKS AND TAKES A TIMESHEET FOR?
+ *
+ * The predicate previousWorkingDay() walks, lifted out so that nothing else has
+ * to write it again. Prompt 33's follow-up lists ask exactly this question of a
+ * date somebody picked rather than of a date walked back to, and a second copy
+ * of "on loggableDays and not a holiday" is precisely the drift the header of
+ * this file is about: the two would agree until a studio moved its weekly off
+ * or declared a holiday, and then one screen would demand a timesheet for a day
+ * the other said was shut.
+ *
+ * SAME TWO CONDITIONS, SAME ORDER, SAME REASONS — see the header: the weekly-off
+ * list is timesheetSettings.loggableDays and NOT work_schedule.workingDays,
+ * because this question is about a day the TIMESHEET will accept, and
+ * timesheets.validateEntry() refuses anything outside loggableDays outright.
+ */
+function isWorkingDay(date, { loggableDays, isHoliday } = {}) {
+  const days = loggable(loggableDays);
+  if (!days) return false;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) return false;
+  if (!days.includes(isoDayOf(date))) return false;
+  const holiday = typeof isHoliday === 'function' ? isHoliday : () => false;
+  return !holiday(date);
 }
 
 // "Thursday 9 Oct" — the form the refusal names the date in, so somebody can
@@ -218,5 +246,5 @@ const exemptBackdate = (policy) => Boolean(policy && policy.requirePreviousDay);
 
 module.exports = {
   CODE, LOOKBACK_DAYS,
-  istDate, isoDayOf, previousWorkingDay, label, check, exemptBackdate,
+  istDate, isoDayOf, shiftDays, isWorkingDay, previousWorkingDay, label, check, exemptBackdate,
 };

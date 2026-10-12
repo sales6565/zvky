@@ -929,11 +929,72 @@ async function hoursLoggedOn(db, { assetId, userId, day, exceptId = null }) {
  * answers 0 because a missing table genuinely means no hours were offered; here
  * 0 would mean "block them", so the error is left to reach the caller. */
 async function hasLineOn(db, userId, date) {
+  /* ASKED THROUGH filledDays, not alongside it.
+   *
+   * The gate wants one person on one day and the Admin Dashboard's follow-up
+   * lists want everybody over a range, and for a while that was going to be two
+   * queries with two WHERE clauses — which is two places for "filled" to mean
+   * something slightly different. One day and one user is just the smallest
+   * range, so this is that call with a range of one. */
+  const filled = await filledDays(db, [userId], date, date);
+  return filled.has(`${userId}|${date}`);
+}
+
+/* WHO FILLED WHICH DAYS, over a set of people and a range of dates.
+ *
+ * The set-based form of hasLineOn above, and THE definition of "filled" for
+ * every caller — the previous-working-day gate (Prompt 29) through hasLineOn,
+ * and the Admin Dashboard's "Timesheet not filled" list (Prompt 33) through
+ * src/follow-up.js. Everything written beside hasLineOn applies unchanged and
+ * is the reason this is one function rather than two: EVERY LINE COUNTS, Idle
+ * included; drafts count; it is a count of lines and not a sum of hours and not
+ * a category filter.
+ *
+ * Returns a Set of `${userId}|${date}` keys, which is the shape a membership
+ * test wants and the shape that cannot be mistaken for a count.
+ *
+ * ONE QUERY WHATEVER THE SIZE OF EITHER LIST. The follow-up section asserts its
+ * own query count, so a per-user or per-day loop here would fail that test
+ * rather than quietly turning one screen into sixty round trips.
+ *
+ * BACK-FILLED LINES COUNT, and nothing here could exclude them: entry_date is
+ * the day the line is ABOUT, and created_at — the day it was typed — is not
+ * consulted. Somebody who fills Tuesday on Thursday has filled Tuesday. A
+ * follow-up list that ignored that would keep chasing a day already accounted
+ * for.
+ *
+ * MISSING TABLE REACHES THE CALLER, exactly as it does for hasLineOn: 0 here
+ * would read as "nobody filled anything", which on a dashboard is a studio-wide
+ * accusation rather than a gap.
+ */
+async function filledDays(db, userIds, from, to) {
+  const ids = [...new Set((userIds || []).filter(Boolean))];
+  if (!ids.length) return new Set();
   const { rows } = await db.query(
-    'SELECT COUNT(*) AS n FROM timesheet_entries WHERE user_id = $1 AND entry_date = $2',
-    [userId, date]
+    `SELECT user_id AS userId, DATE_FORMAT(entry_date, '%Y-%m-%d') AS day
+       FROM timesheet_entries
+      WHERE user_id IN ($1) AND entry_date >= $2 AND entry_date <= $3
+      GROUP BY user_id, entry_date`,
+    [ids, from, to]
   );
-  return Number(rows[0].n) > 0;
+  return new Set(rows.map((r) => `${r.userId}|${r.day}`));
+}
+
+/* THE OLDEST DAY ANYBODY HAS A TIMESHEET LINE FOR, or null.
+ *
+ * Half of the Admin Dashboard's earliest selectable date — the other half is the
+ * oldest work session, which src/follow-up.js reads for itself. It is here for
+ * the same reason everything else that touches these rows is: nothing outside
+ * this module and its route reads the table.
+ *
+ * Swallows a missing table, unlike the two above. There is no accusation to
+ * make from a MIN: "no timesheet data" is a date picker with a wider floor, and
+ * the sessions half still answers. */
+async function earliestEntryDate(db) {
+  const { rows } = await db.query(
+    "SELECT DATE_FORMAT(MIN(entry_date), '%Y-%m-%d') AS day FROM timesheet_entries"
+  ).catch(() => ({ rows: [{ day: null }] }));
+  return (rows[0] && rows[0].day) || null;
 }
 
 module.exports = {
@@ -992,4 +1053,6 @@ module.exports = {
   dayTotal,
   hoursLoggedOn,
   hasLineOn,
+  filledDays,
+  earliestEntryDate,
 };

@@ -54,6 +54,45 @@ test('View Admin Dashboard is on for Admin and Super Admin, off for the rest', (
   }
 });
 
+/* THE PERMISSION DEFAULT FOR THE FOLLOW-UP SECTION, pinned here beside the
+   screen's own so the two are read together — and because a later change that
+   quietly widened it would be a change to who can read an attendance register.
+
+   SUPER ADMIN ONLY, through managePermissions, which is the convention this
+   codebase uses for "the Super Admin decides" (Role Permissions itself, the
+   permission audit, the timesheet sub-options). Deliberately NOT implied by
+   report.admin_dashboard: two names on a list of who did not turn up is the
+   most personal thing this application will tell anybody, and a studio granting
+   an overview of its PIPELINE has not thereby decided to hand out an attendance
+   register. report.idle is not enough either — that answers how much of
+   somebody's week is unaccounted for, which is a figure, where this says
+   whether they showed up. */
+test('View People to Follow Up is Super Admin only until a Super Admin says otherwise', () => {
+  const entry = catalogue.BY_KEY.get('report.follow_up');
+  assert.ok(entry, 'report.follow_up is in the catalogue');
+  assert.strictEqual(entry.label, 'View People to Follow Up');
+
+  const tiers = require('../src/role-tiers');
+  const TIERS = tiers.TIERS || tiers;
+  const on = Object.entries(TIERS)
+    .filter(([, v]) => catalogue.baselineFor((v && v.capabilities) || {}).has('report.follow_up'))
+    .map(([k]) => k).sort();
+  assert.deepStrictEqual(on, ['super_admin']);
+
+  /* INCLUDING THE TIERS THAT HOLD THE DASHBOARD ITSELF. Leadership and Full
+     Access see every project in the studio and get the Admin Dashboard by
+     default; they do not get this one, and that is the whole point of it being
+     a separate key. */
+  for (const tier of ['admin', 'leadership', 'full_access', 'direction', 'lead',
+    'production', 'contributor', 'staff']) {
+    assert.ok(!on.includes(tier), `${tier} must not hold it by default`);
+  }
+
+  // In the Reports group, where the two it sits beside are.
+  const group = catalogue.GROUPS.find((g) => g.permissions.some((perm) => perm.key === 'report.follow_up'));
+  assert.strictEqual(group.key, 'reports');
+});
+
 test('the pipeline is the app\'s real workflow, not a list of its own', () => {
   /* The brief named Concept/Design/Art/Animation/Dev/QA/Release. This studio's
      pipeline is the asset workflow, and the panel has to move with it — a stage

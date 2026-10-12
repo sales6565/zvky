@@ -1086,6 +1086,53 @@ tr.past-round{opacity:0.62;}
   .cap-fig{display:flex;align-items:baseline;justify-content:space-between;gap:10px;}
   .cap-fig-value{font-size:18px;margin-top:0;}
 }
+/* People to follow up. Two lists of names under one date control.
+   Panel chrome from .ad-panel above; the new pieces are the date row, the two
+   columns, a row per person and the "both" marker. No new palette: --brand-accent
+   is what this app already uses for the urgent, and the marker borrows it. */
+.fu-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:6px;}
+.fu-presets{display:flex;gap:4px;background:var(--surface-2);border:1px solid var(--border);
+  border-radius:9px;padding:3px;}
+.fu-preset{background:none;border:0;color:var(--ink-muted);font-family:'Inter',sans-serif;
+  font-size:11.5px;padding:5px 10px;border-radius:6px;cursor:pointer;}
+.fu-preset:hover{color:var(--ink);}
+.fu-preset.is-on{background:var(--surface-3);color:var(--ink);}
+.fu-preset:focus-visible{outline:2px solid var(--brand-accent);outline-offset:1px;}
+.fu-dates{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-muted);}
+.fu-dates input[type=date]{background:var(--surface-2);border:1px solid var(--border);color:var(--ink);
+  font-family:'IBM Plex Mono';font-size:11.5px;padding:4px 7px;border-radius:7px;}
+.fu-dates input[type=date]:focus-visible{outline:2px solid var(--brand-accent);outline-offset:1px;}
+.fu-lists{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:12px;}
+.fu-list{min-width:0;}
+.fu-list-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+  padding-bottom:7px;border-bottom:1px solid var(--border);margin-bottom:4px;}
+.fu-list-head h3{font-family:'Space Grotesk';font-size:12.5px;margin:0;font-weight:600;}
+.fu-for{font-size:10.5px;color:var(--ink-faint);font-family:'IBM Plex Mono';}
+.fu-row{display:flex;align-items:center;gap:9px;padding:8px 0;border-bottom:1px solid var(--border);}
+.fu-row:last-child{border-bottom:0;}
+.fu-who{flex:1;min-width:0;}
+/* A button, not a div with a click: focusable in order, Enter and Space for
+   free, announced as a button, and the label says where it goes. Drawn as plain
+   text instead wherever the viewer cannot open a user — see renderFollowUp. */
+.fu-name{background:none;border:0;padding:0;text-align:left;font-family:'Inter',sans-serif;
+  font-size:12.5px;color:var(--ink);cursor:pointer;}
+.fu-name:hover{color:var(--brand-accent);text-decoration:underline;}
+.fu-name:focus-visible{outline:2px solid var(--brand-accent);outline-offset:2px;border-radius:4px;}
+.fu-name-plain{font-size:12.5px;color:var(--ink);}
+.fu-role{font-size:10.5px;color:var(--ink-faint);margin-top:1px;}
+.fu-held{font-size:10.5px;color:var(--ink-muted);font-family:'IBM Plex Mono';flex:none;white-space:nowrap;}
+.fu-both{font-size:9.5px;letter-spacing:.5px;text-transform:uppercase;font-family:'IBM Plex Mono';
+  color:var(--brand-accent);border:1px solid var(--brand-accent);border-radius:20px;
+  padding:1px 7px;flex:none;}
+.fu-missed{font-size:10.5px;color:var(--prog);font-family:'IBM Plex Mono';flex:none;white-space:nowrap;}
+.fu-more{font-size:11px;color:var(--ink-faint);background:none;border:0;padding:8px 0 0;cursor:pointer;
+  font-family:'Inter',sans-serif;text-decoration:underline dotted;}
+.fu-more:hover{color:var(--ink);}
+.fu-more:focus-visible{outline:2px solid var(--brand-accent);outline-offset:2px;border-radius:4px;}
+.fu-overlap{font-size:11.5px;color:var(--ink-muted);margin-top:11px;}
+.fu-overlap strong{color:var(--brand-accent);font-family:'IBM Plex Mono';}
+.fu-err{font-size:11.5px;color:var(--brand-accent);margin-top:10px;line-height:1.5;}
+.fu-loading{font-size:11.5px;color:var(--ink-faint);font-family:'IBM Plex Mono';}
 /* Phone width. The label column is a fixed 132px so the bars all start at the
    same x — which is what makes ten of them readable as one shape — but at 390px
    that leaves the track about 110px, and a bar chart squeezed to a third of the
@@ -1104,6 +1151,14 @@ tr.past-round{opacity:0.62;}
   /* The calendar row stops being a two-column split and stacks, so a long date
      and "5 deliveries due" are not fighting over one line. */
   .ad-cal-row{flex-direction:column;align-items:flex-start;gap:3px;}
+  /* Two lists of names side by side in 390px gives each about 180px, which is
+     narrower than a person's name plus a designation. They stack, and the date
+     row wraps rather than scrolling sideways. */
+  .fu-lists{grid-template-columns:1fr;gap:18px;}
+  .fu-presets{width:100%;}
+  .fu-preset{flex:1;padding:5px 4px;}
+  .fu-row{flex-wrap:wrap;gap:4px 9px;}
+  .fu-who{flex-basis:100%;}
 }
 .em-master{display:flex;align-items:center;gap:9px;font-size:13px;margin:0 0 14px;cursor:pointer;}
 .pf-toggle{display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:2px 0;}
@@ -12293,6 +12348,12 @@ async function renderAdminDashboard(){
     return;
   }
   ADMIN_DASH = d;
+  /* The follow-up section's own payload, for the default date. Null — not an
+     empty object — when the server omitted the key, which is what it does for
+     anybody without the permission. See renderFollowUp(). */
+  FOLLOW_UP = d.followUp || null;
+  FOLLOW_UP_SHOWN = null;
+  FOLLOW_UP_ERR = null;
   /* THE CHIPS ARE DECIDED AGAINST A CURRENT PROJECT LIST, not against the one
      this page loaded with. Both lists come from permissions.visibleProjects, so
      a project named here is one the picker holds — but state.projects is a
@@ -12358,10 +12419,16 @@ async function renderAdminDashboard(){
         </div>
         ${renderAttention(d.attention, d.thresholds)}
       </section>
+
+      <!-- People to follow up. Absent entirely without View People to Follow
+           Up: the server omits the key, so there is no slot and nothing on the
+           page to notice. -->
+      <div id="followUpSlot">${renderFollowUp()}</div>
     </div>`;
 
   wireAdminDashboard();
   wireCapacity();
+  wireFollowUp();
 }
 
 /* One stat card. The number is the point, so it is the largest thing on it and
@@ -12649,6 +12716,374 @@ function paintCapacity(){
   if(!slot || !ADMIN_DASH) return;
   slot.innerHTML = renderCapacity(ADMIN_DASH.capacity);
   wireCapacity();
+}
+
+/* ---------- the People to follow up section ----------
+ *
+ * Two lists of names under one date control: who did not start work on the
+ * chosen day, and who has not filled a timesheet for it.
+ *
+ * READ-ONLY like the rest of this screen. The only thing a row does is open the
+ * person's card in the Users tab, which already exists and is already behind
+ * user.view — nothing new was built to land on.
+ *
+ * ABSENT, NOT EMPTY, without the permission. The server omits the `followUp`
+ * key for anybody without report.follow_up, so this draws nothing at all —
+ * rendering "nobody to follow up" would be a statement about the studio, which
+ * is a different untruth from saying nothing.
+ *
+ * THE GATE IS THE PERMISSION, NEVER THE TIER. can('report.follow_up'), which is
+ * the key the endpoint checks, not caps() — see the note on UI_GATES for the
+ * three times that confusion has already shipped.
+ *
+ * NOT ONE DEFINITION LIVES HERE. Which days are working days, what the previous
+ * working day is, what "filled" means, how long the grace period is and which
+ * date each list is about all arrive in the payload from src/follow-up.js. This
+ * file chooses nothing but the layout: a page that worked out the previous
+ * working day for itself would disagree with the server's the first time a
+ * studio moved its weekly off.
+ */
+
+let FOLLOW_UP = null;
+/* WHAT THE READER PICKED, kept OUTSIDE the render.
+ *
+ * Module state, like ATTENTION_OPEN above and for the same reason: this screen
+ * is rebuilt from scratch by innerHTML whenever render() runs — a tab round
+ * trip, a permission poll that changed something — and a chosen date held inside
+ * the markup would snap back to Today under somebody's hands.
+ *
+ * Null means "the default", which is Today. It is module state and not stored,
+ * so a RELOAD starts at Today again: a date somebody picked to look at one
+ * morning is not a preference, and finding the dashboard still on last Tuesday
+ * a week later would be worse than finding it on today.
+ */
+let FOLLOW_UP_ASK = null;
+let FOLLOW_UP_ERR = null;
+let FOLLOW_UP_BUSY = false;
+/* WHICH ASK THE DATA ON SCREEN ANSWERS. Set beside FOLLOW_UP every time, so
+   "is the panel showing what the reader picked" is a comparison rather than a
+   guess at the payload's shape. renderAdminDashboard clears it to null, which
+   is the default ask — Today. */
+let FOLLOW_UP_SHOWN = null;
+/* THE STALE-RESPONSE GUARD. Click Today, then yesterday, and the two requests
+   are in flight together; the first can answer last. Each request takes a
+   ticket and only the newest one is allowed to write — the same shape the Time
+   Sheet's day figure uses (tlSuggestTicket). */
+let FOLLOW_UP_TICKET = 0;
+
+/* "Wed 18 Mar (2026-03-18)" — the named day AND the exact date, always both.
+   The word alone is ambiguous across a midnight and the ISO alone is something
+   a reader has to decode; the lists are about specific days and a reader has to
+   be able to see which without counting. */
+function fuDate(iso){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(String(iso||''))) return '—';
+  const at = new Date(iso + 'T00:00:00');
+  const named = at.toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short' });
+  return `${named} (${iso})`;
+}
+
+/* The range a list covers, as one phrase. A single day prints as the day. */
+function fuSpan(span){
+  if(!span) return '—';
+  return span.from === span.to ? fuDate(span.from) : `${fuDate(span.from)} – ${fuDate(span.to)}`;
+}
+
+/* One ask, as a string to compare. Null is the default ask — Today — and has to
+   compare equal to itself, which is why this is a function and not a template
+   written out at each site. */
+const fuAskKey = (a) => (a
+  ? `${a.mode}|${a.date || a.from || ''}|${a.to || a.date || ''}|${a.all ? 1 : 0}`
+  : 'default');
+
+/* Which preset is lit. Derived from what was asked rather than stored beside
+   it, so the two cannot disagree. */
+function fuPreset(d){
+  if(FOLLOW_UP_ASK && FOLLOW_UP_ASK.mode === 'range') return 'range';
+  const asked = FOLLOW_UP_ASK && FOLLOW_UP_ASK.date;
+  if(!asked) return 'today';
+  if(d && asked === d.today) return 'today';
+  /* THE PREVIOUS WORKING DAY COMES FROM THE SERVER, and this comparison is the
+     only thing the page does with it. Working it out here — yesterday, or
+     Friday if today is Monday — is a second copy of a rule that already knows
+     about the studio's weekly off and its holiday calendar, and the two would
+     part company the first time either changed. */
+  if(d && asked === d.previousWorkingDay) return 'prev';
+  return 'day';
+}
+
+function renderFollowUp(){
+  const d = FOLLOW_UP;
+  if(!d) return '';
+  if(!can('report.follow_up')) return '';
+
+  const preset = fuPreset(d);
+  const ask = FOLLOW_UP_ASK || {};
+  const max = d.today;
+  /* THE PICKER'S FLOOR IS THE EARLIEST DAY WITH DATA. Before that every name in
+     the studio sits in both lists, because there is nothing recorded to clear
+     them — which reads as a catastrophe rather than as an empty database. */
+  const min = d.earliest || d.today;
+
+  const control = `
+    <div class="fu-head">
+      <div class="fu-presets" role="group" aria-label="Which day to follow up on">
+        <button type="button" class="fu-preset${preset==='today'?' is-on':''}" data-fu-preset="today"
+          aria-pressed="${preset==='today'}">Today</button>
+        <button type="button" class="fu-preset${preset==='prev'?' is-on':''}" data-fu-preset="prev"
+          aria-pressed="${preset==='prev'}"
+          ${d.previousWorkingDay ? '' : 'disabled'}>Previous working day</button>
+        <button type="button" class="fu-preset${preset==='day'?' is-on':''}" data-fu-preset="day"
+          aria-pressed="${preset==='day'}">Pick a date</button>
+        <button type="button" class="fu-preset${preset==='range'?' is-on':''}" data-fu-preset="range"
+          aria-pressed="${preset==='range'}">Range</button>
+      </div>
+      ${preset==='range' ? `
+        <div class="fu-dates">
+          <label for="fu_from">From</label>
+          <!-- max is today and min is the earliest day with data, so the picker
+               cannot offer a future date. The server refuses one anyway: a date
+               control is a convenience and a URL is not. -->
+          <input type="date" id="fu_from" value="${escapeHTML(ask.from || d.from)}"
+            min="${escapeHTML(min)}" max="${escapeHTML(max)}">
+          <label for="fu_to">to</label>
+          <input type="date" id="fu_to" value="${escapeHTML(ask.to || d.to)}"
+            min="${escapeHTML(min)}" max="${escapeHTML(max)}">
+          <span class="ref-key">at most ${Number(d.maxRangeDays)||31} days</span>
+        </div>` : `
+        <div class="fu-dates">
+          <label for="fu_day">Day</label>
+          <input type="date" id="fu_day" value="${escapeHTML(ask.date || d.date || d.today)}"
+            min="${escapeHTML(min)}" max="${escapeHTML(max)}">
+          ${FOLLOW_UP_BUSY ? '<span class="fu-loading">reading…</span>' : ''}
+        </div>`}
+    </div>`;
+
+  if(FOLLOW_UP_ERR){
+    return `<section class="ad-panel">
+      <div class="ad-panel-head"><h2>People to follow up</h2></div>
+      ${control}
+      <div class="fu-err">${escapeHTML(FOLLOW_UP_ERR)}</div>
+    </section>`;
+  }
+
+  if(d.unavailable){
+    return `<section class="ad-panel">
+      <div class="ad-panel-head"><h2>People to follow up</h2></div>
+      ${control}
+      <div class="ad-empty">${escapeHTML(d.unavailable)}</div>
+    </section>`;
+  }
+
+  /* NOT A WORKING DAY IS A REAL ANSWER and it is said, not drawn as two empty
+     lists. Nobody owes work or a timesheet for a Sunday or for Diwali, and two
+     blank columns would read as "everybody is fine" — which on a day the studio
+     was shut is a different statement. */
+  const shut = !d.workingDay;
+
+  const body = shut ? `<div class="ad-empty">The studio does not work
+      ${d.mode==='range' ? 'on any day in that range' : `on ${escapeHTML(fuDate(d.from))}`} —
+      it is outside the days a timesheet can be filed for, or on the holiday calendar.
+      Nobody owes work or a timesheet for it.</div>`
+    : `
+    <div class="fu-lists">
+      ${fuList({
+        title: 'Not started',
+        span: d.startedFor,
+        list: d.notStarted,
+        which: 'started',
+        heldLabel: d.heldLabel,
+        empty: 'Everybody expected that day picked something up.',
+        waiting: d.grace && d.grace.holds ? (d.grace.clockShut
+          ? 'The studio’s clock is not open today, so there is nothing to be late for yet.'
+          : `Nobody is listed until the studio has been open ${Number(d.grace.minutes)} minutes. `
+            + 'An hour is the shortest window in which "has not started" means anything other '
+            + 'than "has not arrived yet".') : null,
+      })}
+      ${fuList({
+        title: 'Timesheet not filled',
+        span: d.filledFor,
+        list: d.notFilled,
+        which: 'filled',
+        heldLabel: d.heldLabel,
+        empty: 'Everybody expected that day has filled it in.',
+        waiting: d.filledFor ? null : 'Today’s timesheet is not due yet, and there is no '
+          + 'earlier working day in range to ask about.',
+      })}
+    </div>
+    <div class="fu-overlap">
+      <strong>${Number(d.overlap)||0}</strong> on both lists ·
+      ${Number(d.expected)||0} ${Number(d.expected)===1?'person':'people'} in view
+      ${d.cached ? '· <span class="ref-key">from a moment ago</span>' : ''}
+    </div>`;
+
+  return `<section class="ad-panel">
+    <div class="ad-panel-head">
+      <h2>People to follow up</h2>
+      <span class="ref-key">${d.mode==='range' ? `${escapeHTML(fuSpan({from:d.from,to:d.to}))}` : escapeHTML(fuDate(d.from))}</span>
+    </div>
+    ${control}
+    ${body}
+    ${(d.notes||[]).length ? `<div class="ad-note">${(d.notes||[]).map(n=>escapeHTML(n)).join('<br>')}</div>` : ''}
+  </section>`;
+}
+
+/* One list. Its heading says what it is, and the line under it says EXACTLY
+   which date or range it is about — the two lists are not always about the same
+   day (today's timesheet is not due yet, so list 2 moves to the previous
+   working day) and a reader has to be told rather than left to infer. */
+function fuList({ title, span, list, which, heldLabel, empty, waiting }){
+  const rows = (list && list.rows) || [];
+  const total = (list && list.total) || 0;
+  const more = (list && list.more) || 0;
+  return `<div class="fu-list">
+    <div class="fu-list-head">
+      <h3>${escapeHTML(title)}</h3>
+      <span class="ref-key">${waiting ? '—' : total}</span>
+    </div>
+    <div class="fu-for">for ${escapeHTML(fuSpan(span))}</div>
+    ${waiting ? `<div class="ad-empty">${waiting}</div>`
+      : (!rows.length ? `<div class="ad-empty">${escapeHTML(empty)}</div>`
+        : rows.map(r=>fuRow(r, heldLabel)).join('')
+          + (more > 0 ? `<button type="button" class="fu-more" data-fu-all="1"
+              aria-label="Show all ${total} people on this list">show all ${total}</button>` : ''))}
+  </div>`;
+}
+
+/* One person.
+ *
+ * THE NAME IS A BUTTON WHEN IT CAN BE, and plain text when it cannot. The
+ * destination is the user card the Users tab already opens, which the API
+ * guards with user.view — so without that permission there is nothing to open
+ * and offering a control that would fail is worse than naming the person. A
+ * <span> cannot be tabbed to, so nobody meets a dead control.
+ *
+ * THE HELD COUNT IS LABELLED BY WHAT IT IS, with the word coming from the
+ * server: "waiting on them" for today and "held that day" for a past date, so
+ * a past date's figure can never be read as what is on their desk now. */
+function fuRow(r, heldLabel){
+  const role = r.roleLabel || r.role || '';
+  const name = can('user.view')
+    ? `<button type="button" class="fu-name" data-fu-user="${escapeHTML(r.id)}"
+        aria-label="Open ${escapeHTML(r.name)} in Users">${escapeHTML(r.name)}</button>`
+    : `<span class="fu-name-plain">${escapeHTML(r.name)}</span>`;
+  return `<div class="fu-row">
+    <div class="fu-who">
+      ${name}
+      <div class="fu-role">${escapeHTML(role)}</div>
+    </div>
+    ${r.both ? '<span class="fu-both" title="On both lists">both</span>' : ''}
+    ${r.missed > 1 ? `<span class="fu-missed">${Number(r.missed)} days</span>` : ''}
+    ${r.held ? `<span class="fu-held">${Number(r.held)} ${escapeHTML(heldLabel||'')}</span>` : ''}
+  </div>`;
+}
+
+/* Redraw just this section, leaving the rest of the dashboard alone. */
+function paintFollowUp(){
+  const slot = document.getElementById('followUpSlot');
+  if(!slot) return;
+  slot.innerHTML = renderFollowUp();
+  wireFollowUp();
+}
+
+/* Ask the server for one date, or one range.
+ *
+ * ONE BUILDER, ONE ENDPOINT. The first draw arrives inside the dashboard
+ * payload and every later one comes from here, both out of
+ * src/follow-up.js — so the section cannot say one thing when the screen opens
+ * and another when somebody picks today again.
+ *
+ * TICKETED. Two clicks are two requests in flight, and the first can answer
+ * last; only the newest ticket may write. A guard rather than a cancel, because
+ * fetch has no cancel here and a response that arrives for a date nobody is
+ * looking at any more must not be drawn.
+ */
+async function loadFollowUp(ask){
+  if(ask !== undefined) FOLLOW_UP_ASK = ask;
+  const asked = FOLLOW_UP_ASK;
+  const mine = ++FOLLOW_UP_TICKET;
+  FOLLOW_UP_BUSY = true;
+  FOLLOW_UP_ERR = null;
+  paintFollowUp();
+
+  const params = [];
+  if(asked && asked.mode === 'range'){ params.push('from=' + encodeURIComponent(asked.from), 'to=' + encodeURIComponent(asked.to)); }
+  else if(asked && asked.date){ params.push('date=' + encodeURIComponent(asked.date)); }
+  if(asked && asked.all) params.push('all=1');
+
+  try{
+    const data = await api('/admin-dashboard/follow-up' + (params.length ? '?' + params.join('&') : ''));
+    if(mine !== FOLLOW_UP_TICKET) return;      /* a newer ask is already out */
+    FOLLOW_UP = data;
+    FOLLOW_UP_SHOWN = asked;
+    FOLLOW_UP_BUSY = false;
+    paintFollowUp();
+  }catch(err){
+    if(mine !== FOLLOW_UP_TICKET) return;
+    FOLLOW_UP_BUSY = false;
+    /* SAID, NOT SWALLOWED, and the lists are not left on screen beside it: a
+       stale pair of lists under a new date is the one thing worse than no
+       lists, because it reads as an answer. */
+    FOLLOW_UP_ERR = `That day could not be read — ${err.message}`;
+    paintFollowUp();
+  }
+}
+
+function wireFollowUp(){
+  const d = FOLLOW_UP;
+  if(!d) return;
+
+  /* A DATE SOMEBODY PICKED SURVIVES A REDRAW OF THE SCREEN. renderAdminDashboard
+     refetches /admin-dashboard, whose followUp is always the DEFAULT date, so
+     coming back to this tab with an earlier date chosen would otherwise snap to
+     Today without saying so. The ask is module state, so it is still here: ask
+     again for it. */
+  if(!FOLLOW_UP_BUSY && !FOLLOW_UP_ERR && fuAskKey(FOLLOW_UP_ASK) !== fuAskKey(FOLLOW_UP_SHOWN)){
+    loadFollowUp();
+    return;
+  }
+
+  document.querySelectorAll('#followUpSlot [data-fu-preset]').forEach(b=>b.addEventListener('click', ()=>{
+    const which = b.dataset.fuPreset;
+    if(which === 'today') return loadFollowUp(null);
+    if(which === 'prev') return loadFollowUp({ mode:'day', date: d.previousWorkingDay });
+    if(which === 'range'){
+      const to = d.today;
+      /* A fortnight, which is what the range is for — "who has been missing this
+         fortnight" — and inside the cap whatever the cap is set to. */
+      const back = Math.min(13, Math.max(0, (Number(d.maxRangeDays)||31) - 1));
+      const from = new Date(Date.parse(to + 'T00:00:00Z') - back*86400000).toISOString().slice(0,10);
+      return loadFollowUp({ mode:'range', from, to });
+    }
+    /* "Pick a date" lights the box without changing the day: the reader is
+       about to choose one, and jumping somewhere first would be an answer to a
+       question they have not asked. */
+    return loadFollowUp({ mode:'day', date: (FOLLOW_UP_ASK && FOLLOW_UP_ASK.date) || d.from });
+  }));
+
+  const day = document.getElementById('fu_day');
+  if(day) day.addEventListener('change', ()=>{
+    if(!day.value) return;
+    loadFollowUp({ mode:'day', date: day.value });
+  });
+  const from = document.getElementById('fu_from');
+  const to = document.getElementById('fu_to');
+  const range = ()=>{
+    if(!from || !to || !from.value || !to.value) return;
+    loadFollowUp({ mode:'range', from: from.value, to: to.value });
+  };
+  if(from) from.addEventListener('change', range);
+  if(to) to.addEventListener('change', range);
+
+  document.querySelectorAll('#followUpSlot [data-fu-all]').forEach(b=>b.addEventListener('click', ()=>{
+    loadFollowUp({ ...(FOLLOW_UP_ASK || { mode:'day', date: d.from }), all:true });
+  }));
+
+  /* The person, in the Users tab's own card — the screen that already owns a
+     user and already asks the API for them. Nothing new to land on. */
+  document.querySelectorAll('#followUpSlot [data-fu-user]').forEach(b=>b.addEventListener('click', (ev)=>{
+    ev.stopPropagation();
+    openUserDetail(b.dataset.fuUser);
+  }));
 }
 
 /* ---------- settings: where the studio's email goes out from ---------- */

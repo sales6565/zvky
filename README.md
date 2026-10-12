@@ -2154,6 +2154,106 @@ have handed over the same numbers by another door — so the payload carries the
 absent rather than empty otherwise. An empty capacity block asserts the studio
 has no capacity, and a zeroed one would still disclose the headcount.
 
+### People to follow up
+
+A section under Attention Required with a **date control** and **two lists**:
+
+| List | Question | Which date |
+| --- | --- | --- |
+| **Not started** | No work session was opened by this person on that day | The day picked |
+| **Timesheet not filled** | No timesheet line exists for that day | The day picked — except for **Today**, where it moves to the **previous working day**, because today's timesheet is not due yet |
+
+Both dates are printed above their lists. Somebody on both is marked **both**,
+and the overlap is counted under them.
+
+**It restates none of the definitions it depends on.** Four questions carry the
+section and all four were already answered elsewhere:
+
+| Question | Answered by |
+| --- | --- |
+| Is D a working day | `gate.isWorkingDay()` — `timesheetSettings.loggableDays` and not on the holiday calendar |
+| What is the previous working day | `gate.previousWorkingDay()` — the same walk the start gate uses |
+| Is a day "filled" | `timesheets.filledDays()` — which `hasLineOn()` now calls with a range of one, so the Prompt 29 start gate and this list are one query shape |
+| Which days is the studio shut | `src/holidays.js`, through the two above |
+
+A second reading of any of them would agree until a studio moved its weekly off,
+and then one screen would demand a timesheet for a day another called a holiday.
+`tests/follow-up.test.js` mutates each shared definition and asserts the section
+moved with it.
+
+**"Started on D" is the one definition this section owns**: a `work_sessions`
+row whose `started_at` falls on D **in IST** (`+330 MINUTE` in the query — the
+column is UTC, and a boundary taken off it raw puts the whole Indian working
+evening on the wrong day). Not "ended on D" and not "overlapped D": the question
+is whether somebody picked work up. **The overnight auto-resume counts as a
+start** — `resumeOverdue()` writes a new session stamped at the studio's opening
+for every timer the seven o'clock sweep paused — because the clock really is
+running and because the row is never rewritten, so today's answer and the same
+date read back next week agree.
+
+**A 60-minute grace period, for Today only** (`GRACE_MINUTES`), measured from
+the studio's opening rather than from midnight. A list drawn at 09:31 is the
+whole studio. It is not applied to a past date, which is also what makes
+today's answer and a later reading of the same day match.
+
+**Who was expected on D** is read from the recorded dates, never from today's
+flags: a designation carrying `assignable` (the convention the Assignee
+dropdown, the Idle Report and Team Capacity all use), `created_at` on or before
+D, and `deactivated_at` after D began. Accounts deactivated *before* that column
+existed carry no date; they are **left out and counted in a visible note**
+rather than guessed either way. **Designation is the one thing that cannot be
+reconstructed** — this schema keeps no role history — and the section says so on
+screen instead of letting somebody discover it.
+
+**Freelancers are excluded by the schema, not by a filter.** `freelancers` is
+its own table and a freelancer has no login, so there is no `users` row to omit.
+
+**Scope** is `visibleProjects()`, like every other figure on the screen: in
+scope means named in `project_members` of a visible project, or holding — or
+having held — an asset in one. Somebody attached to **no** project appears only
+for a viewer whose `projectScope` is `all`. "Started" and "filled" are
+**whole-person**, not clipped to visible projects: scope decides who is listed,
+and clipping would print "has not started" beside somebody who spent the day on
+a project this viewer cannot open. `src/routes/idle.js` made the same call.
+
+**The work-held marker is measured over D's own bounds** (`assigned_at` before
+the end of D, `ended_at` after its start), so a past date never shows what is on
+somebody's desk this afternoon — and the server sends the word as well as the
+number ("held that day" / "waiting on them").
+
+**Eight queries per draw**, independent of how many people and how many days:
+the project list, who is in scope, who was expected, who started, who filled,
+how much work they held, and the two halves of the picker's floor. Seven for a
+studio-wide viewer, who needs no narrowing. `tests/follow-up.test.js` asserts
+the count for one person on one day and for forty people over a month.
+`work_sessions` gains `idx_ws_user_started (user_id, started_at)`;
+`timesheet_entries` already had `idx_tse_user_day`.
+
+**Range mode** (from–to, capped at 31 days) falls out of the same queries — both
+reads were already over a range — and gives one row per person with the days
+they missed. **Past dates are cached for a minute; Today never is**, because
+Today changes every second and that is the point of the list. The cache key
+carries the viewer, since two scopes see different names for the same day.
+
+**No future dates**: the picker's `max` is today and its `min` is the earliest
+day with session or timesheet data, and the server refuses a future date, a date
+that is not a calendar day (`2026-02-30` parses as an instant), a backwards
+range and one past the cap — a date control is a convenience and a URL is not.
+
+#### It needs its own permission
+
+*View People to Follow Up* (`report.follow_up`) is **Super Admin only** by
+default, through `managePermissions`, and is deliberately **not** implied by
+`report.admin_dashboard`. Two names on a list of who did not turn up is the most
+personal thing this application will tell anybody, and a studio granting an
+overview of its pipeline has not thereby decided to hand out an attendance
+register. `report.idle` is not enough either: that answers how much of
+somebody's week is unaccounted for, which is a figure, where this says whether
+they showed up. The key is **absent** from the Admin Dashboard payload without
+it — not present and empty — and `GET /api/admin-dashboard/follow-up` carries
+`requirePermission` on top of the screen's own gate. The page gates on `can()`,
+never on the tier. All three are tested.
+
 ### At narrower widths
 
 Three breakpoints, and the panels rearrange rather than shrink:
@@ -2186,6 +2286,9 @@ Admin; the other two are the tiers that already outrank Admin — full access to
 every project — and withholding an overview from Leadership while granting it to
 Admin would be incoherent. Everyone else is off until a Super Admin says
 otherwise, in Settings → Role Permissions.
+
+*View People to Follow Up* (`report.follow_up`) is a **second, separate key**
+for the section above — Super Admin only by default. See its own note there.
 
 **Holding the permission opens the tab. It does not widen anybody's reach.**
 What the screen counts is scoped by the role's existing `projectScope`, the same

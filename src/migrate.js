@@ -3977,6 +3977,33 @@ async function closeStrandedSessions(db, log) {
     + 'whoever held them was blocked from starting anything else.');
 }
 
+/* INDEXES FOR THE ADMIN DASHBOARD'S FOLLOW-UP LISTS.
+ *
+ * "Who started work on this day" is the one question this schema had no index
+ * for. work_sessions was created with idx_ws_asset and idx_ws_open — both keyed
+ * on asset_id, because every reader until now came at it from an asset. The
+ * follow-up section comes at it from a PERSON and a DATE RANGE, which on a
+ * studio's worth of sessions is a full scan of the table once a day for every
+ * reader who leaves the dashboard open.
+ *
+ * (user_id, started_at) in that order: user_id is the equality and started_at
+ * the range, which is the order a composite index has to be in to serve both.
+ *
+ * NOTHING NEEDED FOR THE TIMESHEET HALF. timesheet_entries already carries
+ * idx_tse_user_day (user_id, entry_date) from its own DDL, which is exactly the
+ * shape timesheets.filledDays() asks for. Said here rather than left as an
+ * absence, so a reader of this step does not go looking for the other half.
+ *
+ * IDEMPOTENT through addIndex(), like every other index this file adds after the
+ * fact: a second run finds the key already there and swallows the duplicate.
+ */
+async function ensureFollowUpIndexes(db, log) {
+  const columns = await columnsOf(db, 'work_sessions');
+  if (!columns.size) return;                 // no table yet; its own step makes it
+  await addIndex(db, 'ALTER TABLE work_sessions ADD KEY idx_ws_user_started (user_id, started_at)');
+  log('Schema: work_sessions is indexed on (user_id, started_at) for the follow-up lists.');
+}
+
 const STEPS = [
   ['stale role constraints', dropStaleRoleConstraints],
   ['users.role column width', widenRoleColumn],
@@ -4136,6 +4163,7 @@ const STEPS = [
   ['admin password reset', ensurePasswordReset],
   // Last: it reads assets.status, which every step above may have changed.
   ['stranded work sessions', closeStrandedSessions],
+  ['follow-up indexes', ensureFollowUpIndexes],
 ];
 
 async function run(db, log = console.log) {
