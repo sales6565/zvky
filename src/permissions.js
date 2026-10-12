@@ -1,5 +1,6 @@
 const db = require('./db');
-const { roleDef, assignableRoles, leadRoles, isContributor } = require('./roles');
+const { roleDef, assignableRoles, leadRoles, isContributor, entries } = require('./roles');
+const assetHold = require('./asset-hold');
 
 // Access rules, expressed against the capabilities in src/roles.js rather than
 // against particular job titles. A new designation gets the right access purely
@@ -384,45 +385,40 @@ async function onProjectReviewTeam(user, projectId) {
 
 /* ---------- holding somebody ELSE's task ----------
  *
- * WHAT CHANGED, and it is not a permission. asset.hold is impliedBy: () => true — every
- * designation has always held it — so a lead who could not pause a teammate's timer was
- * never missing a permission. The gate was `mine`: the asset had to be assigned to them.
- * That was deliberate, and the note on the route said why. The studio has now asked for it
- * to be widened, for four designations and inside their own projects only.
+ * THE RULE ITSELF NOW LIVES IN src/asset-hold.js, once, and returns a reason
+ * rather than a boolean. What is left here is the half that needs the database:
+ * which projects does this person lead or supervise.
  *
- * TWO CONDITIONS, AND BOTH ARE REQUIRED:
+ * WHAT CHANGED, AND IT IS STILL NOT A PERMISSION. asset.hold is
+ * impliedBy: () => true — every designation has always held it — so a lead who
+ * could not pause a teammate's timer was never missing a permission. The gate
+ * was `mine`. Prompt 20 widened that to four named designation keys inside their
+ * own projects; the third report found the two the list left out.
  *
- *   the designation   one of the four below
- *   the project       one this person LEADS or SUPERVISES
+ * SO IT IS NOW THE SUPERVISION GROUP rather than a list of keys. The group holds
+ * six designations and the list named four: senior_team_lead and
+ * technical_manager were refused on projects they supervise, while a Team Lead
+ * on the same project was allowed — measured, 403 and no button in every cell of
+ * the matrix. See the note on HOLD_GROUP in src/asset-hold.js for why a group
+ * and not a capability, and for the one designation it deliberately excludes.
  *
- * Without the second it would be "any lead may stop any timer in the studio", which is a
- * different and much larger authority than the one asked for.
- *
- * WHY A LIST OF ROLE KEYS, when hardcoded role-name checks are otherwise avoided here. The
- * set the studio named is not a group: `Supervision` holds six designations and only four
- * of them were asked for — senior_team_lead and technical_manager were not — so
- * `def.group === 'Supervision'` would grant this to two designations nobody asked about.
- * It is therefore one named, exported constant with the reasoning beside it, the same shape
- * as SHIELDED_ROLES and PROJECT_REVIEW_ROLE in src/role-permissions.js, rather than a
- * comparison scattered through the code. Changing who may do this is editing this list.
- *
- * There is no plain `animation_supervisor` in the catalogue — the animation side is
- * `associate_animation_supervisor`, and that is what is named below. Checked, not assumed.
+ * TWO CONDITIONS, AND BOTH ARE STILL REQUIRED: the designation, and a project
+ * this person LEADS or SUPERVISES. Without the second it would be "any lead may
+ * stop any timer in the studio", which is a different and much larger authority
+ * than the one asked for.
  */
-const HOLD_OTHERS_ROLES = [
-  'team_lead',
-  'associate_team_lead',
-  'art_supervisor',
-  'associate_animation_supervisor',
-];
 
 /* LEADS OR SUPERVISES — narrower than the review team on purpose.
  *
- * reviewTeamProjects above unions three tables, project_coordinators among them, because
- * the review GATE is open to all three. This is not that question: the studio asked for
- * the people who lead or supervise the work, so a designation from the list above that
- * happens to be on a project's coordinator list does not get somebody else's timer with it.
- * Same UNION shape, two tables. */
+ * reviewTeamProjects above unions three tables, project_coordinators among them,
+ * because the review GATE is open to all three. This is not that question: the
+ * studio asked for the people who lead or supervise the work, so a designation
+ * from the group above that happens to be on a project's coordinator list does
+ * not get somebody else's timer with it. Same UNION shape, two tables.
+ *
+ * tests/asset-hold-matrix.test.js drives a coordinator through the whole matrix
+ * for exactly this reason — reading the membership from the wrong table is one
+ * of the mutations it has to catch. */
 const HOLD_SCOPE_TABLES = ['project_team_leads', 'project_supervision'];
 
 async function leadOrSupervisorProjects(userId, projectIds) {
@@ -435,21 +431,76 @@ async function leadOrSupervisorProjects(userId, projectIds) {
   return new Set(rows.map((r) => r.project_id));
 }
 
-/* May this person hold a task that is not theirs? The route's authority; the board's flag
-   is decorated from the same two conditions so the button and the endpoint cannot drift. */
+/* Which designations may hold somebody else's work, as keys — for the Settings
+   screens and the tests that want to enumerate them. Derived from the catalogue,
+   so it moves when a Super Admin moves a designation. */
+const holdOthersRoles = () =>
+  entries().filter((r) => assetHold.groupMayHoldOthers(r)).map((r) => r.key);
+
+/* Every fact src/asset-hold.js needs about one person and one task, gathered.
+ *
+ * ONE GATHERER, so the two routes and the board's per-asset flag cannot gather
+ * different facts and then reach different conclusions from the same rule —
+ * which is the failure mode that survived two previous reports of this button.
+ * The board passes `leads` and `outsourcedTo` in, because it has them batched
+ * for the whole page; a route passes neither and they are fetched here.
+ */
+async function holdFactsFor(user, asset, extra = {}) {
+  const holdsPermission = holds(user, 'asset.hold');
+  const def = roleDef(user && user.role);
+  const outsourcedTo = extra.outsourcedTo !== undefined ? extra.outsourcedTo : null;
+  const mine = Boolean(user && asset && asset.assignee_id && asset.assignee_id === user.id);
+
+  /* THE PROJECT QUESTION IS THE ONLY ONE THAT COSTS A QUERY, so it is asked last and only
+   * when it could change the answer.
+   *
+   * DEFENCE IN DEPTH, and tests/hold-lead-scope.test.js pins it by pointing this process at
+   * a database that does not exist: a cheap refusal — no permission, no assignee, your own
+   * task, out with a freelancer, or a designation outside the group — has to come back
+   * without the query, or the assertion fails with a connection error instead of `false`.
+   * The first version of this gatherer asked unconditionally and did exactly that.
+   *
+   * The board passes `leadsProject` in and reaches none of this: it has the answer for the
+   * whole page in one query. */
+  const needsScope = holdsPermission && !mine && !outsourcedTo
+    && Boolean(asset && asset.assignee_id && asset.project_id)
+    && assetHold.groupMayHoldOthers(def);
+  const leadsProject = extra.leadsProject !== undefined
+    ? extra.leadsProject
+    : (needsScope
+      && (await leadOrSupervisorProjects(user && user.id, [asset.project_id])).has(asset.project_id));
+
+  return {
+    user,
+    asset,
+    holdsPermission,
+    roleDef: def,
+    leadsProject: Boolean(leadsProject),
+    outsourcedTo,
+    openSession: Boolean(extra.openSession),
+    held: extra.held || null,
+  };
+}
+
+/* May this person hold a task that is not theirs? Kept as a predicate because
+   two older callers read it that way; it is the shared rule underneath. */
 async function canHoldOthersWork(user, asset) {
   if (!user || !asset || !asset.project_id) return false;
-  if (!HOLD_OTHERS_ROLES.includes(user.role)) return false;
+  if (!assetHold.groupMayHoldOthers(roleDef(user.role))) return false;
   return (await leadOrSupervisorProjects(user.id, [asset.project_id])).has(asset.project_id);
 }
 
-/* The whole question the Hold and Resume routes ask, in one place: the permission is the
-   studio's switch, and then it is your own task or one you lead. */
+/* The authority half of the question, for callers that only want yes or no.
+ *
+ * SESSION STATE IS NOT ASKED HERE, deliberately: this answers "is this task any
+ * of your business", which is what the old canHoldAsset meant, and the routes
+ * now go through src/asset-hold.js for the whole decision including the reason.
+ * Asking with openSession true makes the shared rule skip the there-is-nothing-
+ * to-hold branch and answer only the part this function is about. */
 async function canHoldAsset(user, asset) {
-  if (!user || !asset || !asset.assignee_id) return false;
-  if (!holds(user, 'asset.hold')) return false;
-  if (asset.assignee_id === user.id) return true;
-  return canHoldOthersWork(user, asset);
+  if (!user || !asset) return false;
+  const facts = await holdFactsFor(user, asset, { openSession: true });
+  return assetHold.decide('hold', facts).ok;
 }
 
 /* Whether a project has been staffed at all.
@@ -745,8 +796,10 @@ module.exports = {
   canActAtTlGate,
   canHoldAsset,
   canHoldOthersWork,
+  holdFactsFor,
+  holdOthersRoles,
+  HOLD_SCOPE_TABLES,
   leadOrSupervisorProjects,
-  HOLD_OTHERS_ROLES,
   HOLD_SCOPE_TABLES,
   tlGateAuthority,
   onProjectReviewTeam,

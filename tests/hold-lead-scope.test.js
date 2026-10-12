@@ -1,4 +1,4 @@
-/* Holding a project-mate's task: four designations, their own projects, and nothing wider.
+/* Holding a project-mate's task: the Supervision group, their own projects, nothing wider.
  *
  * WHAT THIS IS NOT. It is not a permission fix. asset.hold is impliedBy: () => true, so
  * every designation has always held it — a lead who could not pause a teammate's timer was
@@ -6,15 +6,29 @@
  * agreed about it. The gate was `mine`: the asset had to be assigned to you. That was
  * deliberate and the route said so. This is the studio widening it.
  *
- * WHICH DESIGNATIONS, read off the catalogue rather than assumed. "All Supervisors" is not a
- * role and not a group: the Supervision group holds six designations, and only four were
- * asked for — senior_team_lead and technical_manager were not. There is also no plain
- * `animation_supervisor`; the animation side is `associate_animation_supervisor`. Both facts
- * are pinned below, so a catalogue change that invalidates them fails here.
+ * THE SET WIDENED FROM FOUR NAMED KEYS TO THE GROUP, and that reverses an assertion this
+ * file used to make in as many words. Worth reading before changing it back:
  *
- * AND THE SCOPE HALF IS THE POINT. Without it this would read "any lead may stop any timer
- * in the studio", which is a much larger authority than the one asked for. The mutation that
- * drops it is the one this file exists to catch.
+ *   Prompt 20 named four designations — team_lead, associate_team_lead, art_supervisor,
+ *   associate_animation_supervisor — because four were asked for, and this file pinned the
+ *   exclusion of the other two in the Supervision group so that widening to the group could
+ *   not happen by a quiet edit. It has now happened by a loud one: the third report of this
+ *   button asked for "anyone in the Supervisor group", and the measured consequence of the
+ *   narrower set was a Senior Team Lead on a project being refused a timer that a Team Lead
+ *   on the same project could stop. That is not a defensible line, and a hardcoded list of
+ *   designation keys is against this project's standing rule anyway.
+ *
+ *   So the rule reads the catalogue's Supervision GROUP, which means a designation a Super
+ *   Admin moves into Supervision carries this authority without a deploy. Creative Direction
+ *   is still excluded, which is the one judgement left in it — see HOLD_GROUP in
+ *   src/asset-hold.js.
+ *
+ * There is no plain `animation_supervisor`; the animation side is
+ * `associate_animation_supervisor`. Pinned below, so a catalogue change fails here.
+ *
+ * AND THE SCOPE HALF IS STILL THE POINT. Without it this would read "any lead may stop any
+ * timer in the studio", which is a much larger authority than the one asked for. The
+ * mutation that drops it is the one this file exists to catch.
  */
 const test = require('node:test');
 const assert = require('node:assert');
@@ -22,6 +36,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const perms = require('../src/permissions');
+const assetHold = require('../src/asset-hold');
 const { ROLES } = require('../src/reference-defaults');
 const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON,
   openStudio } = require('./helpers');
@@ -32,25 +47,39 @@ const PAGE = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'),
 
 // --- the named set, against the catalogue -----------------------------------
 
-test('the four designations exist, and are named rather than inferred from a group', () => {
+test('the set is the Supervision group, read off the catalogue', () => {
   const keys = ROLES.map((r) => r.key);
-  for (const key of perms.HOLD_OTHERS_ROLES) {
-    assert.ok(keys.includes(key), `${key} is a real designation`);
-  }
-  assert.deepStrictEqual([...perms.HOLD_OTHERS_ROLES].sort(),
-    ['art_supervisor', 'associate_animation_supervisor', 'associate_team_lead', 'team_lead'],
-    'the four the studio named');
+  const may = perms.holdOthersRoles();
+  for (const key of may) assert.ok(keys.includes(key), `${key} is a real designation`);
 
-  /* WHY NOT THE GROUP, pinned: Supervision is six designations, and widening to the group
-     would hand this to two nobody asked about. If that ever becomes the intention it should
-     be a decision with this assertion to answer, not a quiet edit. */
+  /* ALL SIX, which is the change. The two that used to be excluded are named here
+     explicitly so that re-narrowing the rule is also a decision with an assertion to
+     answer, in whichever direction it goes next. */
   const supervision = ROLES.filter((r) => r.group === 'Supervision').map((r) => r.key);
   assert.strictEqual(supervision.length, 6, 'the Supervision group holds six');
-  for (const left of ['senior_team_lead', 'technical_manager']) {
-    assert.ok(supervision.includes(left), `${left} is in Supervision`);
-    assert.ok(!perms.HOLD_OTHERS_ROLES.includes(left),
-      `${left} was NOT asked for and must stay on mine-only`);
+  assert.deepStrictEqual([...may].sort(), [...supervision].sort(),
+    'and every one of them may hold a project-mate\'s task');
+  for (const wasExcluded of ['senior_team_lead', 'technical_manager']) {
+    assert.ok(may.includes(wasExcluded),
+      `${wasExcluded} is in Supervision and now holds the same authority as a Team Lead`);
   }
+
+  /* AND NOTHING OUTSIDE THE GROUP, which is what stops the widening creeping. The `lead`
+     TIER would have brought associate_art_director with it — Creative Direction, not
+     Supervision — and an art director is neither a team lead nor a supervisor. */
+  assert.ok(!may.includes('associate_art_director'),
+    'Creative Direction is not Supervision, even where the tier matches');
+  for (const outside of ['game_artist', 'coordinator', 'admin', 'super_admin', 'art_director']) {
+    assert.ok(!may.includes(outside), `${outside} must not hold it`);
+  }
+
+  /* READ FROM THE DEFINITION, so there is no key string to mis-case. The mutation that
+     compares a lower-cased group name has nothing to compare against. */
+  assert.strictEqual(assetHold.HOLD_GROUP, 'Supervision');
+  assert.strictEqual(assetHold.groupMayHoldOthers({ group: 'Supervision' }), true);
+  assert.strictEqual(assetHold.groupMayHoldOthers({ group: 'supervision' }), false,
+    'the catalogue\'s own spelling, and the definitions carry it');
+  assert.strictEqual(assetHold.groupMayHoldOthers(null), false);
 
   // And the catalogue has no plain animation_supervisor, which is why the associate is named.
   assert.ok(!keys.includes('animation_supervisor'),
@@ -64,27 +93,40 @@ test('the four designations exist, and are named rather than inferred from a gro
     'the coordinator list is not "leads or supervises"');
 });
 
-test('both gates read one helper, and the page reads the decorated answer', () => {
-  /* The shape this thread keeps finding: a rule in two places where one copy drifts. The
-     route asks canHoldAsset; the assets list decorates can_hold_others from the same two
-     conditions; the page reads the flag. Nothing works the scope out twice. */
+test('one function decides it, and the page draws the answer it is given', () => {
+  /* THE SHAPE THIS THREAD KEEPS FINDING, and the third report is what it cost: the rule was
+     written out THREE times — canHoldAsset on the routes, mayHoldOthers in the payload
+     decoration, and `(mine || can_hold_others) && work_open && !held.byStudio` on the page.
+     All three agreed. What none of them carried was the REASON, so every refusal reached a
+     person as a button that was not there.
+     
+     src/asset-hold.js is now the only statement of it; the routes and the decoration call
+     it, and the page renders hold_state. */
   const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'assets.js'), 'utf8');
-  assert.match(route, /if \(!\(await canHoldAsset\(req\.user, asset\)\)\) \{/,
-    'the hold route asks the helper');
-  assert.match(route, /can_hold_others: mayHoldOthers\(a\)/,
-    'and every asset row carries the flag');
-  assert.match(route, /HOLD_OTHERS_ROLES\.includes\(viewer\.role\)/,
-    'decorated from the same named set');
-  assert.match(route, /ledByViewer\.has\(a\.project_id\)/,
-    'and from the project scope, not from the role alone');
+  assert.match(route, /assetHold\.decide\(action, facts\)/,
+    'the routes ask the shared rule, with the action they are performing');
+  assert.match(route, /holdableAsset\(req, res, 'hold'\)/, 'hold passes its action');
+  assert.match(route, /holdableAsset\(req, res, 'resume'\)/, 'and so does resume');
+  assert.match(route, /assetHold\.state\(await holdFactsFor\(viewer, a, \{/,
+    'and every asset row carries the same decision for the browser');
+  assert.match(route, /hold_state: holdStates\.get\(a\.id\)/);
+  assert.match(route, /leadsProject: ledByViewer\.has\(a\.project_id\)/,
+    'decorated from the project scope, not from the designation alone');
 
-  assert.match(PAGE, /const mayHold = \(mine \|\| a\.can_hold_others === true\) && can\('asset\.hold'\);/,
-    'the page reads the flag and the studio\'s switch, and nothing else');
-  /* No role list and no project query on the page: if either appears, the browser has
-     acquired a second copy of a rule it cannot answer correctly. */
-  const at = PAGE.indexOf('const mayHold = (mine');
-  const around = PAGE.slice(at - 900, at + 300).replace(/\/\*[\s\S]*?\*\//g, '');
-  for (const leak of ['team_lead', 'art_supervisor', 'project_team_leads', 'HOLD_OTHERS']) {
+  /* NO SECOND COPY ANYWHERE. The old hand-written conditions are gone from both the route
+     and the page; what is left on each side is a call and a render. */
+  assert.ok(!/HOLD_OTHERS_ROLES/.test(route), 'the hardcoded designation list is gone');
+  assert.ok(!/mayHoldOthers/.test(route), 'and so is the second copy it was used by');
+
+  assert.match(PAGE, /const canHold = hs \? hs\.canHold : fallbackHold;/,
+    'the page reads the server\'s answer');
+  assert.match(PAGE, /const canResume = hs \? hs\.canResume : fallbackResume;/);
+  /* No designation list and no project query on the page: if either appears, the browser has
+     acquired a copy of a rule it cannot answer correctly. */
+  const at = PAGE.indexOf('const hs = a.hold_state || null;');
+  assert.ok(at !== -1);
+  const around = PAGE.slice(at - 1400, at + 1200).replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const leak of ['team_lead', 'art_supervisor', 'Supervision', 'project_team_leads']) {
     assert.ok(!around.includes(leak), `the page must not name ${leak}`);
   }
 });
@@ -120,7 +162,9 @@ test('canHoldAsset short-circuits on the things it can answer without a query', 
   const cases = [
     ['no asset', held, null],
     ['unassigned asset', held, { assignee_id: null, project_id: 'p1' }],
-    ['designation outside the set', { id: 'u2', role: 'senior_team_lead', permissions: ['asset.hold'] },
+    /* Outside the group now means outside it: a Game Artist, not a Senior Team Lead, who
+       is in Supervision and is allowed. */
+    ['designation outside the group', { id: 'u2', role: 'game_artist', permissions: ['asset.hold'] },
       { assignee_id: 'x', project_id: 'p1' }],
   ];
   return Promise.all(cases.map(([label, user, asset]) =>
@@ -143,19 +187,22 @@ test('a lead holds a project-mate\'s task; everybody else is unchanged',
   const login = async (email) => (await api(server.base, '/auth/login',
     { method: 'POST', body: { email, password: PASSWORD } })).body.token;
 
-  /* WHAT THE PAGE WOULD DRAW, from the page's own line and the server's own flag. */
+  /* WHAT THE PAGE WOULD DRAW, from the page's own lines and the server's own answer.
+     Lifted rather than restated: the point of the change is that the browser has no rule
+     of its own, so this reads the three lines that turn hold_state into a control. */
   const buttonFor = async (who, assetId, projectId) => {
     const board = await as(who, `/assets/project/${projectId}`);
     assert.strictEqual(board.status, 200, JSON.stringify(board.body));
     const row = (board.body.assets || []).find((x) => x.id === assetId);
     assert.ok(row, `${who} can see the asset at all`);
     const me = await as(who, '/auth/me');
-    const at = PAGE.indexOf('const mayHold = (mine');
-    const line = PAGE.slice(at, PAGE.indexOf(';', at) + 1);
+    const from = PAGE.indexOf('const hs = a.hold_state || null;');
+    const to = PAGE.indexOf('const resumeWhy =', from);
+    const lines = PAGE.slice(from, PAGE.indexOf(';', to) + 1);
     // eslint-disable-next-line no-new-func
-    return new Function('mine', 'a', 'can', `${line} return mayHold;`)(
+    return new Function('mine', 'a', 'can', 'held', `${lines} return canHold;`)(
       row.assignee_id === me.body.user.id, row,
-      (k) => (me.body.user.permissions || []).includes(k));
+      (k) => (me.body.user.permissions || []).includes(k), row.held || null);
   };
   const holdAs = (who, assetId) => as(who, `/assets/${assetId}/hold`, { method: 'POST' });
   const openSession = async (assetId) => (await sql(cfg,
@@ -239,8 +286,10 @@ test('a lead holds a project-mate\'s task; everybody else is unchanged',
     assert.strictEqual((await as('artist', `/assets/${assetId}/resume`, { method: 'POST' })).status, 200);
   });
 
-  await t.test('each of the four holds a project-mate\'s task — button and server', async () => {
-    for (const who of ['lead', 'assocLead', 'artSup', 'animSup']) {
+  await t.test('every Supervision designation holds a project-mate\'s task — button and server', async () => {
+    /* ALL SIX, including the two that used to be refused here. seniorLead and techMgr are
+       the regression: measured at 403 with no button before this change. */
+    for (const who of ['lead', 'assocLead', 'artSup', 'animSup', 'seniorLead', 'techMgr']) {
       const assetId = await running(`For ${who}`);
       assert.strictEqual(await buttonFor(who, assetId, id.project), true,
         `${who} is offered the button on a task they lead`);
@@ -271,17 +320,19 @@ test('a lead holds a project-mate\'s task; everybody else is unchanged',
       'and the clock is still running');
   });
 
-  await t.test('the two designations nobody asked for stay mine-only', async () => {
-    /* Same group, same project, same team-lead list — and still refused, because the set is
-       named rather than inferred from Supervision. This is what stops the widening creeping. */
+  await t.test('the two designations Prompt 20 left out are no longer refused', async () => {
+    /* THE REGRESSION TEST FOR THE THIRD REPORT, in the exact shape it was measured: same
+       group, same project, same team-lead list, and 403 with no button before this change.
+       Kept as its own case rather than folded into the loop above so that the two names
+       appear in the suite's output. */
     for (const who of ['seniorLead', 'techMgr']) {
-      const assetId = await running(`Denied To ${who}`);
-      assert.strictEqual(await buttonFor(who, assetId, id.project), false,
-        `${who} is not offered the button`);
-      const refused = await holdAs(who, assetId);
-      assert.strictEqual(refused.status, 403, `${who}: ${JSON.stringify(refused.body)}`);
-      assert.match(refused.body.error, /somebody else's/);
-      assert.strictEqual((await openSession(assetId)).ended_reason, null);
+      const assetId = await running(`Allowed To ${who}`);
+      assert.strictEqual(await buttonFor(who, assetId, id.project), true,
+        `${who} is offered the button on a project they are on`);
+      const put = await holdAs(who, assetId);
+      assert.strictEqual(put.status, 200, `${who}: ${JSON.stringify(put.body)}`);
+      assert.strictEqual((await openSession(assetId)).ended_reason, 'held',
+        `${who} actually stopped the clock`);
     }
   });
 

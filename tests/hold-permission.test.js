@@ -67,22 +67,33 @@ test('the two gates name the same permission, and the page reads the configured 
 
   /* The page's gate. can() over perms(), which is that list — NOT caps(), which is the
      tier and is what the three bugs the page's own comment describes all reached for. */
-  /* WIDENED SINCE THIS WAS WRITTEN, deliberately: the gate was `mine && can('asset.hold')`
-     and four designations may now hold a task on a project they lead. What this test is
-     about is unchanged — the page and the server ask the SAME permission, and the page reads
-     the configured set rather than the tier — so the pin follows the new line rather than
-     being deleted. tests/hold-lead-scope.test.js owns the widening itself. */
-  assert.match(PAGE, /const mayHold = \(mine \|\| a\.can_hold_others === true\) && can\('asset\.hold'\);/,
-    'the page gates Hold on the permission, plus the server-decorated scope flag');
+  /* WIDENED TWICE SINCE THIS WAS WRITTEN, and the pin follows rather than being deleted.
+     It was `mine && can('asset.hold')`; then `(mine || can_hold_others) && can('asset.hold')`
+     when designations on their own projects were added; and the page now has no rule at all
+     — the server decides both controls and sends the reason, and this file's point is
+     unchanged: the page and the server ask the SAME permission, and the page reads the
+     configured set rather than the tier.
+     
+     SO THE PERMISSION IS ASKED IN THE FALLBACK, which is where the page still has to ask it:
+     an asset that reached the panel undecorated falls back to the old mine-only behaviour,
+     with the server as the authority. tests/asset-hold-matrix.test.js owns the rule itself. */
+  assert.match(PAGE, /const fallbackHold = mine && can\('asset\.hold'\) && a\.work_open;/,
+    'the page gates its fallback on the permission, by the configured set');
+  assert.match(PAGE, /const canHold = hs \? hs\.canHold : fallbackHold;/,
+    'and otherwise draws the answer the server sent');
   assert.match(PAGE, /function perms\(\)\{ return \(state\.currentUser && state\.currentUser\.permissions\) \|\| \[\]; \}/,
     'and perms() is the server\'s own list');
 
   /* ONE GATE, NOT TWO — still the point, and now counted over code rather than over the whole
      file: the widening added prose that names the permission, and a comment is not a gate. */
   const pageCode = PAGE.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '');
-  assert.strictEqual((pageCode.match(/asset\.hold/g) || []).length, 1,
-    'asset.hold is asked about in exactly one place on the page');
-  const holdArea = PAGE.slice(PAGE.indexOf('const mayHold ='), PAGE.indexOf('const mayHold =') + 600);
+  /* TWO NOW, NOT ONE, and both are the same fallback: hold and resume each ask it on the
+     undecorated path. Counted rather than approximated, because the number going UP without
+     a reason is how a second gate gets in. */
+  assert.strictEqual((pageCode.match(/asset\.hold/g) || []).length, 2,
+    'asset.hold is asked about only on the two fallback lines');
+  const at = PAGE.indexOf('const fallbackHold =');
+  const holdArea = PAGE.slice(at, at + 700);
   assert.ok(!/caps\(/.test(holdArea), 'and the tier is not consulted anywhere near it');
 });
 
@@ -125,15 +136,19 @@ test('Hold follows the configured permission, on the page and on the server',
     const me = await as(who, '/auth/me');
     assert.strictEqual(me.status, 200, JSON.stringify(me.body));
     const can = (...keys) => keys.some((k) => (me.body.user.permissions || []).includes(k));
-    const at = PAGE.indexOf('const mayHold = (mine');
-    assert.ok(at !== -1, 'the page still has the gate this test reads');
-    const line = PAGE.slice(at, PAGE.indexOf(';', at) + 1);
-    /* `a` is the asset row as the panel has it, because the gate now also reads the
-       server-decorated can_hold_others flag off it. Passed through rather than stubbed, so
-       this still evaluates the page's real line. */
+    /* THE PAGE'S OWN LINES, lifted rather than re-implemented — and there are four of them
+       now rather than one, because the page no longer has a rule: it reads the server's
+       hold_state and falls back to mine-only on an undecorated row. The permission is
+       asked in that fallback, which is the thing this file is about. */
+    const from = PAGE.indexOf('const hs = a.hold_state || null;');
+    assert.ok(from !== -1, 'the page still has the hold state this test reads');
+    const to = PAGE.indexOf('const canResume = hs ?', from);
+    const lines = PAGE.slice(from, PAGE.indexOf(';', to) + 1);
+    /* `a` is the asset row as the panel has it — decorated by the board, because that is
+       where hold_state comes from. Passed through rather than stubbed. */
     // eslint-disable-next-line no-new-func
-    return new Function('mine', 'a', 'can', `${line} return mayHold;`)(
-      asset.assignee_id === me.body.user.id, asset, can);
+    return new Function('mine', 'a', 'can', 'held', `${lines} return canHold;`)(
+      asset.assignee_id === me.body.user.id, asset, can, asset.held || null);
   };
 
   const setPerms = async (roleKey, keys) => {
@@ -285,12 +300,15 @@ test('Hold follows the configured permission, on the page and on the server',
        it. Root holds every key in the catalogue, is none of the four, and is refused.
        Holding is not an oversight act, which is the distinction the route has always drawn.
        The sentence is now the not-mine one rather than the unassigned one; that the refusal
-       explains which case it is, is itself worth pinning. */
+       explains which case it is, is itself worth pinning — and it now carries a CODE beside
+       it, so the page can tell "none of your business" from "nothing running" without
+       matching on English. */
     assert.ok((await heldBy('super_admin')).includes('asset.hold'), 'root holds the key');
     const refused = await as('root', `/assets/${assetId}/hold`, { method: 'POST' });
     assert.strictEqual(refused.status, 403, JSON.stringify(refused.body));
-    assert.match(refused.body.error, /somebody else's/);
-    assert.match(refused.body.error, /a lead or supervisor on its project/,
+    assert.strictEqual(refused.body.code, 'HOLD_NOT_YOURS');
+    assert.match(refused.body.error, /Only the person this task is assigned to/);
+    assert.match(refused.body.error, /a team lead or supervisor on its project/,
       'and says who it would be for');
     // The button agrees, which is the pairing this whole suite is about.
     assert.strictEqual(await mayHoldOnPage('root', await assetRow('root')), false);

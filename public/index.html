@@ -8776,37 +8776,40 @@ async function openDrawer(id){
      Unless the SCHEDULE paused it, in which case there is no button at all —
      see canResume below.
      
-     Only the assignee sees either. A lead reading the panel sees the badge and
-     the reason, which is what they need; holding somebody else's work is not
-     something this build allows anybody to do. */
+     THE ASSIGNEE IS NO LONGER THE ONLY ONE WHO SEES EITHER — this note said so, and had
+     said so since before Prompt 20 widened the rule to team leads and supervisors on their
+     own projects. Doc rot found while chasing the third report of this button: read the
+     hold state below, not this paragraph. */
   const held = a.held || null;
-  /* HOLD: your own task, or one you lead.
+  /* HOLD AND RESUME: THE SERVER'S ANSWER, DRAWN AS GIVEN.
    *
-   * `mine` alone until now, and that was never a permission gap — asset.hold is held by
-   * every designation (impliedBy: () => true), so the button's absence on a teammate's task
-   * was this line doing exactly what it was written to do. The studio has widened it for
-   * four designations inside their own projects, and the scope half of that is a database
-   * question — which projects do I lead or supervise — so the server decorates each asset
-   * with can_hold_others and this reads the answer rather than working it out again.
+   * THE WHOLE RULE USED TO BE RESTATED HERE — `(mine || a.can_hold_others === true) &&
+   * can('asset.hold')`, then `&& a.work_open`, then `&& !held.byStudio` — which was a
+   * third copy of something src/asset-hold.js and the two routes each said in their own
+   * words. Three copies that happened to agree is what survived two previous reports of
+   * this button; what did NOT survive is the reason. Every refusal became a missing
+   * button, and "the Hold button has gone" is what got reported, three times.
    *
-   * `=== true` rather than a truthy read, so an asset that reached this panel by some route
-   * that did not decorate it falls back to `mine` and lets the server decide, instead of
-   * silently gaining a control. */
-  const mayHold = (mine || a.can_hold_others === true) && can('asset.hold');
-  const canHold = mayHold && a.work_open;
-  /* NO RESUME FOR A PAUSE THE SCHEDULE MADE.
+   * So the server now decides both controls and sends the reason with them
+   * (hold_state, from assetHold.state()). This file chooses where they sit and
+   * nothing else.
    *
-   * The recording schedule stops and starts the clock by itself — at each
-   * break, at the end of the day, and again the next working morning — so a
-   * button offering to do it by hand is not a convenience, it is a lie about
-   * who is in charge. Worse in one direction than the other: somebody who does
-   * NOT press it would believe the time is not being counted when it is.
+   * THE FALLBACK IS `mine`, for an asset that reached this panel by some route that did
+   * not decorate it: the old behaviour, with the server as the authority, rather than a
+   * silently missing control. */
+  const hs = a.hold_state || null;
+  const fallbackHold = mine && can('asset.hold') && a.work_open;
+  const fallbackResume = mine && can('asset.hold') && Boolean(held) && !held.byStudio && !a.work_open;
+  const canHold = hs ? hs.canHold : fallbackHold;
+  const canResume = hs ? hs.canResume : fallbackResume;
+  /* WHY NOT, WHEN IT IS NOT — and whether that is worth a disabled button.
    *
-   * Hold keeps its Resume, and must: that pause is a decision a person made,
-   * the schedule does not undo it, and without the button there would be no way
-   * back from it. The two are one column apart in the record and are told apart
-   * by `byStudio`, exactly as the wording beside them already is. */
-  const canResume = mayHold && Boolean(held) && !held.byStudio && !a.work_open;
+   * `offer` is the server's call, not this file's: a disabled control with the reason is
+   * better wherever somebody would otherwise wonder (they started this task this morning
+   * and the button has gone), and worse where the task is simply none of their business,
+   * which is most cards on most boards. Deciding it here would be a fourth copy. */
+  const holdWhy = hs && !hs.canHold && hs.hold.offer ? hs.hold.message : null;
+  const resumeWhy = hs && !hs.canResume && hs.resume.offer ? hs.resume.message : null;
   const canStart = mayStart && !a.work_open && !held && (mine || a.status!=='assigned') && !blocked && !waiting && !owing;
   /* Offered and refused, rather than absent: somebody looking for the button
      they used yesterday should find it and be told why it is not available,
@@ -8919,8 +8922,14 @@ async function openDrawer(id){
         </div>
         ${canStart ? `<button class="btn btn-brand" id="d_startBtn">Accept and Start</button>` : ''}
         ${canHold ? `<button class="btn btn-ghost" id="d_holdBtn"
-          title="Stop the clock on this task and free yourself to start another">Hold</button>` : ''}
-        ${canResume ? `<button class="btn btn-brand" id="d_resumeBtn">Resume</button>` : ''}
+          title="${escapeHTML(mine
+            ? 'Stop the clock on this task and free yourself to start another'
+            : 'Stop the clock on this task — you lead or supervise its project')}">Hold</button>`
+          : (holdWhy ? `<button class="btn btn-ghost" id="d_holdBtn" disabled
+              title="${escapeHTML(holdWhy)}">Hold</button>` : '')}
+        ${canResume ? `<button class="btn btn-brand" id="d_resumeBtn">Resume</button>`
+          : (resumeWhy ? `<button class="btn btn-brand" id="d_resumeBtn" disabled
+              title="${escapeHTML(resumeWhy)}">Resume</button>` : '')}
         ${held ? `<div class="start-blocked held-note">
           <strong>${escapeHTML(pauseWords(held).title)}</strong> since ${escapeHTML(fmtDate(held.since))}${held.note ? ` — ${escapeHTML(held.note)}` : ''}.
           ${escapeHTML(pauseWords(held).why)}
@@ -9652,6 +9661,11 @@ async function openDrawer(id){
      control that was there a moment ago. */
   const holdAction = (button, path, ask) => {
     if(!button) return;
+    /* A DISABLED CONTROL IS AN EXPLANATION, NOT A BUTTON. It is drawn when the server
+       refused with a reason worth showing (hold_state.*.offer) and carries that reason as
+       its tooltip; wiring a click to it would send a request the server has already said
+       no to. The browser would swallow the click anyway — this makes it deliberate. */
+    if(button.disabled) return;
     button.onclick = async (ev)=>{
       const err = document.getElementById('d_startErr');
       err.textContent = '';

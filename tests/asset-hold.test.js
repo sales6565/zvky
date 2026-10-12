@@ -228,22 +228,31 @@ test('hold and resume', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   await t.test('holding what is not open, and resuming what is not held', async () => {
     const asset = await makeAsset('Untouched');
 
+    /* THE FOUR STATE REFUSALS, each with the code it now carries beside the sentence.
+       The codes are the stronger half of the pin: the wording is allowed to improve — "No
+       running session to hold" replaced "Start the work before putting it on hold" when the
+       refusals were rewritten to explain themselves — and the page tells these apart by
+       code rather than by matching English. */
     const early = await hold('ana', asset.id, null);
     assert.strictEqual(early.status, 409);
-    assert.match(early.body.error, /Start the work before/i);
+    assert.strictEqual(early.body.code, 'HOLD_NO_SESSION');
+    assert.match(early.body.error, /no running session to hold/i);
 
     const notHeld = await resume('ana', asset.id);
     assert.strictEqual(notHeld.status, 409);
+    assert.strictEqual(notHeld.body.code, 'HOLD_NOT_HELD');
     assert.match(notHeld.body.error, /not on hold/i);
 
     await start('ana', asset.id);
     const running = await resume('ana', asset.id);
     assert.strictEqual(running.status, 409);
+    assert.strictEqual(running.body.code, 'HOLD_ALREADY_RUNNING');
     assert.match(running.body.error, /already under way/i);
 
     await hold('ana', asset.id, null);
     const twice = await hold('ana', asset.id, null);
     assert.strictEqual(twice.status, 409, 'holding twice is refused, not silently repeated');
+    assert.strictEqual(twice.body.code, 'HOLD_ALREADY_HELD');
     assert.match(twice.body.error, /already on hold/i);
     assert.ok(twice.body.held, 'and it says since when');
 

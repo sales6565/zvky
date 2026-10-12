@@ -1,4 +1,5 @@
 const { asyncRouter } = require('../async-router');
+const assetHold = require('../asset-hold');
 
 // See src/async-router.js: keeps a failed query from killing the process.
 const router = asyncRouter();
@@ -21,8 +22,8 @@ const {
   isAssignedArtist,
   canActAtTlGate,
   canHoldAsset,
+  holdFactsFor,
   leadOrSupervisorProjects,
-  HOLD_OTHERS_ROLES,
   tlGateAuthority,
   reviewTeamProjects,
   projectsWithReviewTeam,
@@ -206,32 +207,6 @@ async function attachTasksAndNotes(assets, viewer) {
       .then((v) => (v instanceof Set ? v : new Set())),
   ]);
 
-  /* MAY THIS VIEWER HOLD THIS TASK, decorated per asset.
-   *
-   * The same two conditions canHoldAsset applies on the route — the designation, and the
-   * project being one they lead or supervise — plus the studio's own switch. The page reads
-   * this flag rather than working the scope out for itself, because "which projects do I
-   * lead" is a database question and the board has forty cards; and because a second copy
-   * of the rule on the page is the exact shape of gap this codebase keeps finding.
-   *
-   * `mine` is left to the page, which already knows it from the asset it is drawing: this
-   * flag answers only the part the browser cannot. */
-  const mayHoldOthers = (a) => {
-    if (!holds(viewer, 'asset.hold')) return false;
-    /* NOBODY'S WORK TO HOLD. Found by tracing the assignee-based gates for an
-       outsourced asset: this said true for a lead on the project while
-       canHoldAsset() on the server answers false for any asset with no assignee
-       — "if (!asset.assignee_id) return false" — so the page drew a Hold button
-       that could only ever come back 403. Outsourced work is the common case
-       (its assignee is a freelancer, who has no login and so is not an
-       assignee_id at all), and an unassigned task is the other.
-       
-       The server was right and is unchanged; this is the page's copy of the same
-       question catching up. */
-    if (!a.assignee_id) return false;
-    if (!viewer || !HOLD_OTHERS_ROLES.includes(viewer.role)) return false;
-    return ledByViewer.has(a.project_id);
-  };
   const mayReviewTl = (a) => {
     if (!holds(viewer, 'review.tl')) return false;
     if (a.assignee_id && viewer && a.assignee_id === viewer.id) return false;
@@ -258,11 +233,42 @@ async function attachTasksAndNotes(assets, viewer) {
      control the server would refuse, never offer one it would allow. */
   const outsourced = await enrich('outsourced work', () => oversightOutsource.activeByAsset(db, ids))
     .then((m) => (m instanceof Map ? m : new Map()));
+  /* WHAT THE HOLD AND RESUME CONTROLS SHOULD DO, PER ASSET — the whole answer, with its
+   * reason, not a flag the browser then reasons from.
+   *
+   * THIS USED TO BE THE SECOND COPY OF THE RULE. It re-stated the conditions by hand — the
+   * designation list, the project, the missing assignee — beside canHoldAsset() on the
+   * routes doing the same thing in its own words, and the pair happened to agree. Two
+   * hand-written copies of one rule is what survived the two previous reports of this
+   * button. src/asset-hold.js is now the only statement of it; this calls it with the facts
+   * the board already has batched, once per asset and with no further queries.
+   *
+   * THE REASON TRAVELS WITH THE ANSWER, which is the other half of the fix. A refusal the
+   * browser cannot explain becomes a button that is simply not there, and "the Hold button
+   * has gone" is what was reported three times. */
+  const holdStates = new Map(await Promise.all(assets.map(async (a) => [
+    a.id,
+    assetHold.state(await holdFactsFor(viewer, a, {
+      leadsProject: ledByViewer.has(a.project_id),
+      outsourcedTo: outsourced.get(a.id) || null,
+      openSession: Boolean(currentStamps(episodes, timeSpent, a.id).open),
+      held: (timeSpent.get(a.id) || {}).held || null,
+    })),
+  ])));
+
   return assets.map((a) => ({
     ...a,
     can_review_tl: mayReviewTl(a),
-    // Whether a lead or supervisor on this project may hold it — see mayHoldOthers.
-    can_hold_others: mayHoldOthers(a),
+    /* The two controls, decided and explained by src/asset-hold.js. The browser draws
+       this and nothing else — see renderHoldControls on the page. */
+    hold_state: holdStates.get(a.id),
+    /* KEPT, and now derived from the same decision rather than computed again. It means
+       what it has always meant — "a lead or supervisor on this project may hold this" —
+       and is what tells a reader of the payload why a control is offered on somebody
+       else's task. Reading hold_state is what the page does. */
+    can_hold_others: Boolean(viewer && a.assignee_id && a.assignee_id !== viewer.id
+      && holdStates.get(a.id) && holdStates.get(a.id).hold.code !== 'HOLD_NOT_YOURS'
+      && holdStates.get(a.id).hold.code !== 'HOLD_NO_PERMISSION'),
     outsourced_to: outsourced.get(String(a.id)) || null,
     time_spent_seconds: (timeSpent.get(a.id) || {}).seconds || 0,
     // [{ round, seconds, open, who }], oldest round first.
@@ -2336,42 +2342,60 @@ async function recordAssetEvent(req, asset, action, note) {
   }
 }
 
-// Both endpoints answer the same three questions before doing anything, and
-// answer them identically. Written once so Hold and Resume cannot come to
-// different conclusions about whose task it is.
-async function holdableAsset(req, res) {
+/* BOTH ENDPOINTS ASK ONE QUESTION, and src/asset-hold.js answers it.
+ *
+ * IT USED TO BE YOUR OWN TASK AND NOBODY ELSE'S, and the note here said why: a hold on
+ * somebody else's work looks to them exactly like the app losing their session, and a lead
+ * who wanted work stopped could reassign it or move its stage, both of which name who did
+ * it in the history. The studio has since asked for the narrower version of that authority
+ * — the Supervision group, inside the projects they lead or supervise — so the reasoning
+ * above now applies to everybody except them, and the act still lands in asset_events with
+ * their name on it.
+ *
+ * WHAT CHANGED WITH THE THIRD REPORT. This used to decide the authority here and compose
+ * its own refusal from two branches, while the board's per-asset flag decided the same
+ * thing again in its own words. Both now call assetHold.decide(), so the button and the
+ * endpoint cannot answer differently, and the SENTENCE the person reads comes from the
+ * same place as the decision — which is what stops a refusal turning into a button that
+ * silently is not there.
+ *
+ * `action` is 'hold' or 'resume': they differ only in what counts as something to do, and
+ * the shared rule holds that difference rather than this function.
+ */
+async function holdableAsset(req, res, action) {
   const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
   const asset = rows[0];
   if (!asset) { res.status(404).json({ error: 'Asset not found' }); return null; }
   if (await projectClosedResponse(res, asset.project_id)) return null;
-  /* Your own task, or one you lead.
-   *
-   * IT USED TO BE YOUR OWN AND NOBODY ELSE'S, and the note here said why: a hold on
-   * somebody else's work looks to them exactly like the app losing their session, and a
-   * lead who wanted work stopped could reassign it or move its stage, both of which name
-   * who did it in the history. The studio has since asked for the narrower version of that
-   * authority — four designations, inside the projects they lead or supervise — so the
-   * reasoning above now applies to everybody EXCEPT those four on their own projects, and
-   * the act still lands in asset_events with their name on it.
-   *
-   * canHoldAsset is the whole question, asked in src/permissions.js so the board's button
-   * and this endpoint cannot answer it differently. Note it also asks for asset.hold, which
-   * requirePermission on the route has already established — kept inside the helper anyway,
-   * because the helper is what the decoration calls and a flag that skipped the studio's
-   * switch would light a button the route then refuses. */
-  if (!(await canHoldAsset(req.user, asset))) {
-    res.status(403).json({
-      error: asset.assignee_id && asset.assignee_id !== req.user.id
-        ? 'That task is somebody else\'s. Holding it is for the person it is assigned to, '
-          + 'or a lead or supervisor on its project.'
-        : 'Only the person a task is assigned to can put it on hold or resume it.',
-    });
-    return null;
-  }
+
   if (!(await workLog.available(db))) {
     res.status(503).json({
       error: 'Time recording is not available on this deployment yet — its table has not been created. See /api/health.',
       workLogUnavailable: true,
+    });
+    return null;
+  }
+
+  /* Every fact the rule needs, gathered once. The session and the pause are read here
+     rather than later so that "nothing to put down" is answered by the same function as
+     "none of your business", in the order that decides which reason wins. */
+  const facts = await holdFactsFor(req.user, asset, {
+    outsourcedTo: await oversightOutsource.activeForAsset(db, asset.id),
+    openSession: Boolean(await workLog.openSession(db, req.params.id)),
+    held: await workLog.heldFor(db, req.params.id, asset.assignee_id),
+  });
+  const verdict = assetHold.decide(action, facts);
+  if (!verdict.ok) {
+    /* 403 FOR AUTHORITY, 409 FOR STATE, which is the distinction the two previous
+       reports blurred: "this is not yours" and "there is nothing running" are different
+       answers and a page that cannot tell them apart cannot decide whether to draw a
+       disabled control or none at all. The code travels so it does not have to guess. */
+    const authority = [assetHold.CODES.NO_PERMISSION, assetHold.CODES.NOT_YOURS,
+      assetHold.CODES.UNASSIGNED].includes(verdict.code);
+    res.status(authority ? 403 : 409).json({
+      error: verdict.message,
+      code: verdict.code,
+      ...(verdict.code === assetHold.CODES.ALREADY_HELD && facts.held ? { held: facts.held } : {}),
     });
     return null;
   }
@@ -2386,21 +2410,16 @@ async function workStateFor(assetId, asset) {
 
 // POST /api/assets/:id/hold — put the open stretch down, keeping the round.
 router.post('/:id/hold', requirePermission('asset.hold'), async (req, res) => {
-  const asset = await holdableAsset(req, res);
+  /* The whole gate, including "there is nothing running to put down" and "this is out
+     with a freelancer" — both of which this route used to answer itself, one of them
+     correctly and the other not at all. See holdableAsset above.
+     
+     HOLD IS SUBJECT TO NO CLOCK RULE, and that is deliberate and now tested: not the
+     holiday check, not the previous-day timesheet gate, not the one-active-task rule.
+     Putting work down must always be available to somebody entitled to do it — a studio
+     shut for Diwali with a timer still running is exactly when somebody needs this. */
+  const asset = await holdableAsset(req, res, 'hold');
   if (!asset) return undefined;
-
-  const open = await workLog.openSession(db, req.params.id);
-  if (!open) {
-    /* Nothing to put down. Two different situations, and the difference is
-       what the person needs told: already held, or never started. */
-    const held = await workLog.heldFor(db, req.params.id, asset.assignee_id);
-    return res.status(409).json({
-      error: held
-        ? 'This task is already on hold. Resume it to carry on working.'
-        : 'Start the work before putting it on hold.',
-      held: held || undefined,
-    });
-  }
 
   // Optional, and one line. A required reason turns a two-second action into a
   // form, and a studio made to type something types a full stop.
@@ -2413,71 +2432,45 @@ router.post('/:id/hold', requirePermission('asset.hold'), async (req, res) => {
 
 // POST /api/assets/:id/resume — pick it up again, in the same round.
 router.post('/:id/resume', requirePermission('asset.hold'), async (req, res) => {
-  const asset = await holdableAsset(req, res);
-  if (!asset) return undefined;
-
-  /* BEFORE the pause is even looked up, which is the whole point of the
-     placement. Resume has three possible answers below — nothing is on hold,
-     the schedule paused this and resumes it itself, or somebody held it — and
-     on a holiday all three are the wrong thing to read. "Use Accept and Start"
-     is advice that cannot be taken; "it starts again on its own" is true but
-     says nothing about which day. One refusal, naming the holiday. */
+  /* THE STUDIO IS SHUT, which is asked before anything else and is not part of the
+     shared rule: it is about the clock, not about authority. Resume has three possible
+     answers about the pause — nothing is on hold, the schedule paused this and resumes it
+     itself, or somebody held it — and on a holiday all three are the wrong thing to read.
+     "Use Accept and Start" is advice that cannot be taken; "it starts again on its own" is
+     true but says nothing about which day. One refusal, naming the holiday. */
   const shutForResume = holidayRefusal('resumed');
   if (shutForResume) return res.status(409).json(shutForResume);
 
-  /* Resume is starting work too, so it asks the same question. Beside the
-     holiday refusal and before the pause is looked up, for the reason stated
-     there: on a day the clock cannot run, what kind of pause this is does not
-     matter yet. */
-  const owingForResume = await timesheetRefusal(req);
-  if (owingForResume) return res.status(409).json(owingForResume);
+  /* The authority, the freelancer, and whether there is a pause to pick up —
+     src/asset-hold.js, the same call the hold route makes and the same call the board's
+     per-asset flag makes. The outsourced guard moved in there: a task that drifted and
+     still holds a paused round would otherwise set the studio's clock running against a
+     freelancer by the back door, and the refusal somebody read for it used to name an
+     assignee who does not exist. */
+  const asset = await holdableAsset(req, res, 'resume');
+  if (!asset) return undefined;
 
-  /* AND THE SAME GUARD /start NOW CARRIES. A task that drifted and had a session
-     opened on it before that gate existed may still hold a paused round, and
-     resuming it would set the studio's clock running against a freelancer by the
-     back door. Null for ordinary work, which reaches every gate below unchanged. */
-  const outsourcedTo = await oversightOutsource.activeForAsset(db, asset.id);
-  if (outsourcedTo) {
-    return res.status(409).json({
-      error: `${asset.code || 'This task'} is out with ${outsourcedTo.freelancerName}, so there is no `
-        + 'time to record on it here. Record the stage on the Outsource tab, or take the work back from '
-        + 'them first.',
-    });
-  }
-
-  const held = await workLog.heldFor(db, req.params.id, asset.assignee_id);
-  if (!held) {
-    const open = await workLog.openSession(db, req.params.id);
-    return res.status(409).json({
-      error: open
-        ? 'This task is already under way.'
-        : 'This task is not on hold — use Accept and Start to begin work on it.',
-    });
-  }
-
-  /* A PAUSE THE RECORDING SCHEDULE MADE IS NOT RESUMED BY HAND.
+  /* THE PREVIOUS-DAY TIMESHEET GATE, AND ONLY FOR THE PERSON WHOSE CLOCK IS ABOUT TO RUN.
    *
-   * The schedule stops the clock at each break and at the end of the day, and
-   * starts it again by itself — at quarter past eleven, at two, at quarter past
-   * four, and at half past nine the next working morning. The panel offers no
-   * button for it, and this is why that is safe to rely on rather than merely
-   * tidy: without this, the endpoint would still take the request and open a
-   * session in the middle of lunch, which the schedule would then close again
-   * on its next pass. Two rules fighting over one row, with the loser's
-   * behaviour depending on which ran last.
+   * Resume is starting work too, so the person starting it owes yesterday's timesheet
+   * first — but the clock that starts belongs to the ASSIGNEE, not to whoever pressed the
+   * button. Measured before this changed: a Team Lead resuming an artist's held task was
+   * refused with "Fill your timesheet for Friday 9 Oct to start work", naming the LEAD's
+   * own paperwork and stopping the artist's work over it. The gate is about the person
+   * whose hours are being recorded, so it asks only when those are the same person.
    *
-   * A deliberate hold still resumes here, and must — the schedule does not undo
-   * it, so the button is the only way back from it. */
-  if (held.byStudio) {
-    return res.status(409).json({
-      error: held.opensAt
-        ? 'The recording schedule paused this and starts it again on its own — '
-          + 'there is nothing to press. Put it on hold if you will not be working on it.'
-        : 'The recording schedule paused this and starts it again on its own.',
-      held,
-      scheduled: true,
-    });
+   * NOT widened to check the assignee's timesheet instead: that would be a new rule
+   * nobody asked for, and it would let one person's paperwork block another's. */
+  if (asset.assignee_id === req.user.id) {
+    const owingForResume = await timesheetRefusal(req);
+    if (owingForResume) return res.status(409).json(owingForResume);
   }
+
+  /* A PAUSE THE RECORDING SCHEDULE MADE IS NOT RESUMED BY HAND, and src/asset-hold.js
+     has already refused it by the time this line runs — HOLD_STUDIO_PAUSED, with the
+     reasoning written out beside it there. The check used to be here, in its own words,
+     while the page decided the same thing a third time from `held.byStudio`; all three
+     now read one answer. `held` below is therefore a deliberate pause, and not null. */
 
   /* Resuming is starting, so it obeys the rule starting obeys.
    *
@@ -2485,13 +2478,38 @@ router.post('/:id/resume', requirePermission('asset.hold'), async (req, res) => 
    * than a use of it: hold A, start B, resume A, and two tasks are open at
    * once. The refusal names what to finish first, exactly as /start's does, so
    * the two reasons a person can be blocked read the same wherever they meet
-   * them. */
-  const elsewhere = await workLog.openForUser(db, req.user.id, req.params.id);
+   * them.
+   *
+   * ASKED OF THE ASSIGNEE, NOT OF WHOEVER PRESSED IT — and this was wrong in both
+   * directions until the third report. It read req.user, which is correct only while
+   * the two are the same person, and Prompt 20 made them different:
+   *
+   *   FALSE REFUSAL  a Team Lead with their own task open could not resume an
+   *                  artist's held work, over work that was not going to run
+   *                  under the lead at all.
+   *   FALSE ALLOW    and the hole that matters more — measured: a lead resumed a
+   *                  second task for an artist who already had one open, and the
+   *                  artist ended with two. The rule the studio runs on was
+   *                  simply absent for every resume a lead performed.
+   *
+   * The clock about to run belongs to the assignee, so the slot that has to be free
+   * is theirs. The sentence changes with who is reading it. */
+  const forSelf = asset.assignee_id === req.user.id;
+  const elsewhere = await workLog.openForUser(db, asset.assignee_id, req.params.id);
   if (elsewhere) {
+    const what = `${elsewhere.code || 'an asset'}${elsewhere.name ? ` (${elsewhere.name})` : ''}`;
+    /* Named, on the refusal path only. "Somebody already has a task open" is not something
+       a lead can act on; a name is. One row, and only when the answer is no. */
+    const whose = forSelf ? null : (await db.query(
+      'SELECT `name` FROM users WHERE id = $1', [asset.assignee_id]
+    ).catch(() => ({ rows: [] }))).rows[0];
     return res.status(409).json({
-      error: 'Finish your current task before resuming this one — '
-        + `${elsewhere.code || 'an asset'}${elsewhere.name ? ` (${elsewhere.name})` : ''} `
-        + 'is still open. Submit it for review and this one will unlock.',
+      error: forSelf
+        ? `Finish your current task before resuming this one — ${what} is still open. `
+          + 'Submit it for review and this one will unlock.'
+        : `${(whose && whose.name) || 'Whoever this is assigned to'} already has ${what} open, `
+          + 'so resuming this one would put two tasks on them at once. Their current task has to '
+          + 'be submitted or held first.',
       activeWork: {
         assetId: elsewhere.assetId,
         code: elsewhere.code,
@@ -2509,7 +2527,20 @@ router.post('/:id/resume', requirePermission('asset.hold'), async (req, res) => 
    * its holder had already put hours into, with a refusal about the future on
    * work already done. */
   const episode = await assignments.current(db, req.params.id);
-  const started = await workLog.start(db, req.params.id, req.user.id, episode && episode.id);
+  /* THE REOPENED STRETCH BELONGS TO THE ASSIGNEE, not to whoever pressed Resume.
+   *
+   * This read req.user.id, which was right for every resume before Prompt 20 because only
+   * the assignee could press it. Measured on the shipped code after that widening: a Team
+   * Lead resuming an artist's held task opened the new session under the LEAD, and the
+   * round then read "who: ana, tlA" — the artist's hours accruing against their lead, the
+   * lead's own one-active-task slot consumed by work they were not doing, and the Idle
+   * Report crediting the lead with coverage for somebody else's afternoon.
+   *
+   * Hold never had this problem: it closes the row that is already there, whoever's it is.
+   * Only the reopen names a person, and the person it has to name is the one the work is
+   * assigned to. WHO PRESSED IT is still recorded, in asset_events below, which is where
+   * the studio reads who did what. */
+  const started = await workLog.start(db, req.params.id, asset.assignee_id, episode && episode.id);
   if (!started.ok) {
     return res.status(409).json({ error: 'Work has already been started on this asset.', open: true, since: started.since });
   }
