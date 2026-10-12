@@ -118,8 +118,9 @@ caught.
 Two things that suite also records, because they are easy to assume otherwise:
 `asset.hold` is `impliedBy: () => true`, so **every** designation holds it until a Super
 Admin turns it off — there is no role that lacks it by default; and holding the key is
-still not permission to hold somebody *else's* task, which the route refuses separately
-(a cross-person hold would need its own permission and its own audit line).
+still not permission to hold somebody *else's* task, which the rule refuses separately —
+see [Hold: your own task, or one you lead](#hold-your-own-task-or-one-you-lead) for the
+designation and project conditions that do admit it, and for the matrix behind them.
 
 ### What the tier system still does
 
@@ -3501,39 +3502,137 @@ who could not pause a teammate's timer was **never missing a permission**. The g
 somebody else's work looks to them exactly like the app losing their session). The studio has
 since asked for the narrower version of that authority, and this is it.
 
-**Two conditions, both required.** The designation is one of four —
-`team_lead`, `associate_team_lead`, `art_supervisor`, `associate_animation_supervisor` — **and**
-the asset's project is one that person leads or supervises. Without the second it would read
-"any lead may stop any timer in the studio", which is a far larger authority than the one
-asked for; a test mutates that condition away and fails.
+**This button has been reported three times.** The first two reports each checked a narrow
+case and found the gates agreeing, which they were. The third was answered with a matrix —
+every designation against every state of a task, server answer and page control side by side
+— and the matrix found five things. All five are below, and
+[`tests/asset-hold-matrix.test.js`](tests/asset-hold-matrix.test.js) is that table.
 
-**Why a named list of role keys**, when hardcoded role checks are otherwise avoided here: the
-set is not a group. `Supervision` holds six designations and only four were asked for —
-`senior_team_lead` and `technical_manager` were not — so `group === 'Supervision'` would grant
-this to two nobody asked about. It is one exported constant, `HOLD_OTHERS_ROLES`, with the
-reasoning beside it, the same shape as `SHIELDED_ROLES` and `PROJECT_REVIEW_ROLE`. There is
-also no plain `animation_supervisor` in the catalogue; the animation seat is
-`associate_animation_supervisor`, which is what is named.
+#### One function decides it
+
+[`src/asset-hold.js`](src/asset-hold.js) is the only statement of the rule. It is **pure** —
+every fact it needs is passed in — so the two routes can call it one asset at a time while the
+board calls it for forty from batched queries, and so the whole matrix runs with no server.
+It returns an **allowed/refused verdict with a code and a sentence**, not a boolean.
+
+The rule was written out **three** times before: `canHoldAsset()` on the routes,
+`mayHoldOthers()` in the payload decoration, and `(mine || can_hold_others) && work_open &&
+!held.byStudio` on the page. All three agreed. What none of them carried was the **reason**, so
+every refusal reached a person as a button that was not there — which is what got reported.
+
+The checks run in this order, and the order is part of the rule because it decides which
+reason wins when more than one applies:
+
+| | Refusal | Code |
+| --- | --- | --- |
+| 1 | the studio's switch is off | `HOLD_NO_PERMISSION` |
+| 2 | **out with a freelancer** | `HOLD_OUTSOURCED` |
+| 3 | nobody is on it | `HOLD_UNASSIGNED` |
+| 4 | not yours, and not a project you lead | `HOLD_NOT_YOURS` |
+| 5 | nothing to put down / nothing to pick up | `HOLD_NO_SESSION`, `HOLD_ALREADY_HELD`, `HOLD_NOT_HELD`, `HOLD_ALREADY_RUNNING`, `HOLD_STUDIO_PAUSED` |
+
+**The freelancer check is second, and that placement is a fix.** An outsourced task has no
+internal assignee, so the assignee test used to catch it and answer *"Only the person a task
+is assigned to can put it on hold"* — naming somebody who does not exist and hiding the real
+reason. And `hold` had no freelancer check at all while `resume` did.
+
+#### Two conditions, both required
+
+The designation is in the catalogue's **`Supervision` group** — and the asset's project is one
+that person leads or supervises. Without the second it would read "any lead may stop any timer
+in the studio", which is a far larger authority than the one asked for; a test mutates that
+condition away and fails.
+
+**It used to be four named keys, and the group is wider by two.** Prompt 20 named
+`team_lead`, `associate_team_lead`, `art_supervisor`, `associate_animation_supervisor`, because
+four were asked for, and a test pinned the exclusion of the other two so widening could not
+happen quietly. The matrix measured what that cost: a **Senior Team Lead** on a project was
+refused a timer that a **Team Lead** on the same project could stop, and a **Technical
+Manager** likewise. That is not a defensible line, and a hardcoded list of designation keys is
+against this project's standing rule anyway. Reading the group also means a designation a
+Super Admin moves into Supervision carries this authority **without a deploy**.
+
+**Creative Direction is still excluded**, which is the one judgement left in it.
+`associate_art_director` sits in that group and carries the `lead` tier, so a
+capability-based rule (`leadsTeam`) would have picked it up; the studio asked for team leads
+and supervisors, and an art director is neither.
 
 **"Leads or supervises" is narrower than the review team.** `reviewTeamProjects` unions three
 tables including `project_coordinators`, because the review gate is open to all three. This
 is a different question, so `HOLD_SCOPE_TABLES` is `project_team_leads` and
-`project_supervision` only: one of the four who happens to be on a project's coordinator list
-does not get somebody else's timer with it.
+`project_supervision` only: somebody in Supervision who happens to be on a project's
+coordinator list does not get another person's timer with it.
 
-**Both gates, from one helper.** `canHoldAsset()` in
-[`src/permissions.js`](src/permissions.js) is the route's authority, and the assets list
-decorates every row with `can_hold_others` from the same two conditions. The page reads that
-flag (`mine || a.can_hold_others === true`) rather than working the scope out itself — "which
-projects do I lead" is a database question and the board has forty cards, and a second copy of
-the rule in the browser is the exact gap this codebase keeps finding. `=== true` rather than a
-truthy read, so an asset that arrives undecorated falls back to `mine` and lets the server
-decide instead of silently gaining a control.
+**The project question is the only one that costs a query**, so it is asked last and only
+when it could change the answer. A cheap refusal — no permission, your own task, unassigned,
+outsourced, or a designation outside the group — comes back without it, pinned by pointing the
+test process at a database that does not exist.
 
-The widening rides **on** the permission rather than around it: `canHoldAsset` asks for
-`asset.hold` first, so a studio that switches it off for a designation closes this too.
-Everybody outside the four keeps `mine` exactly as before — including full access, because
-holding is not an oversight act.
+#### The page draws the answer, and the reason
+
+Every asset in the board payload carries `hold_state`: `canHold`, `canResume`, and for each a
+code, a sentence, and `offer` — whether a refused control should be drawn **disabled with the
+reason** or not drawn at all. `offer` is the server's call, not the page's: a disabled button
+is better wherever somebody would otherwise wonder (they started this task this morning and
+the button has gone), and worse where the task is simply none of their business, which is most
+cards on most boards.
+
+| Not drawn at all | Drawn, disabled, with the reason |
+| --- | --- |
+| `HOLD_NO_PERMISSION`, `HOLD_NOT_YOURS`, `HOLD_UNASSIGNED` | `HOLD_OUTSOURCED`, `HOLD_NO_SESSION`, `HOLD_ALREADY_HELD`, `HOLD_NOT_HELD`, `HOLD_ALREADY_RUNNING`, `HOLD_STUDIO_PAUSED` |
+
+There is exactly **one** Hold control in the application — the asset detail panel — fed by
+one endpoint (`GET /assets/project/:id`, which is what fills `state.assets`; the board, the
+Assets List and every notification deep-link all open the panel from that same array). An
+asset that arrives undecorated falls back to `mine`-only with the server as the authority,
+rather than silently losing a control.
+
+#### Whose clock it is
+
+**The reopened stretch belongs to the assignee.** `/resume` read `req.user.id`, which was
+right for every resume before the widening because only the assignee could press it. Measured
+afterwards: a lead resuming an artist's held task opened the new session **under the lead**,
+the round read `who: "ana, tlA"`, the artist's hours accrued against their lead, the lead's own
+one-active-task slot was consumed by work they were not doing, and the Idle Report credited
+the lead with coverage for somebody else's afternoon. Hold never had this problem — it closes
+the row that is already there, whoever's it is. Who *pressed* it is still recorded, in
+`asset_events`, which is where the studio reads who did what.
+
+**And the one-active-task rule asks about the assignee too.** It read `req.user`, so a lead's
+resume was checked against the lead's slot and never against the artist's: measured, a lead
+could leave an artist with **two** open stretches. It was wrong in both directions — a lead
+with their own task open was also refused a resume over work that was not going to run under
+them.
+
+**The previous-day timesheet gate asks only when the clock about to run is yours.** With
+`requirePreviousDay` on, a Team Lead resuming an artist's held task was refused with *"Fill
+your timesheet for Friday 9 Oct to start work"* — the lead's own paperwork stopping the
+artist's work. Not widened to check the *assignee's* timesheet instead: that would be a new
+rule nobody asked for, and it would let one person's paperwork block another's.
+
+#### What hold is not subject to
+
+Not the holiday check, not the timesheet gate, not the one-active-task rule. Those are about
+the **clock** rather than about authority, and putting work down must always be available to
+somebody entitled to it — a studio shut for Diwali with a timer still running is exactly when
+somebody needs to stop it. Resume *is* subject to all three, which is the asymmetry, and it is
+asserted rather than assumed.
+
+#### There is no list of eligible statuses
+
+On either side, and that is a finding rather than an omission: measured, a lead was offered
+and granted a hold on an open session in **every one of the nine statuses** an asset can be in,
+`delivered` included. The condition that matters is already exact — hold needs an **open
+stretch**, and a stretch is only ever opened from a status where work runs. A list would be a
+second, weaker statement of a condition already enforced, and the one case where the two could
+differ is a session opened legitimately whose asset has since moved, where refusing would
+strand a running clock nobody could stop. A test asserts neither side has acquired one, so a
+future list has to be added to both or to neither.
+
+The widening rides **on** the permission rather than around it: the switch is the first thing
+asked, so a studio that turns `asset.hold` off for a designation closes this too. Everybody
+outside Supervision keeps `mine` exactly as before — including full access, because holding is
+not an oversight act.
 
 ### Searching the roster
 
