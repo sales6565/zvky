@@ -699,76 +699,297 @@ test('the holiday calendar and an empty week are refusals, not guesses', async (
 // 7. THE PAGE. Lifted out and run on its own, as the other dashboard tests do.
 // ===========================================================================
 
-test('MUTATION 17 — the page gate is the permission, never the tier', () => {
-  const render = PAGE.slice(PAGE.indexOf('function renderFollowUp('));
-  const body = render.slice(0, render.indexOf('\nfunction fuList('));
+// ---------------------------------------------------------------------------
+// The page section, lifted out and run against a stub DOM.
+//
+// RENDERED AND CLICKED, NOT READ. The three risks on this side of the wire —
+// a response for a date nobody is looking at any more, a redraw that quietly
+// snaps back to Today, and a gate asking the wrong question — all look fine in
+// the source and only show up when the thing is used. The grep assertions below
+// stay as evidence of intent; these drive it.
+// ---------------------------------------------------------------------------
 
-  assert.match(body, /can\('report\.follow_up'\)/, 'the key the endpoint checks');
-  assert.ok(!/caps\(\)/.test(body),
-    'caps() is the role\'s TIER and switching a permission on does not move it — '
-    + 'the bug that has shipped three times in this app');
+function pageHarness({ permissions = ['report.follow_up', 'user.view'], payloads = {} } = {}) {
+  /* THE WHOLE SECTION IN ONE SLICE rather than function by function, so a
+     mutation that adds a line anywhere in it is carried into the harness
+     instead of being skipped by a narrower grab. */
+  const from = PAGE.indexOf('let FOLLOW_UP = null;');
+  const to = PAGE.indexOf("/* ---------- settings: where the studio's email goes out from");
+  assert.ok(from !== -1 && to > from, 'the follow-up section is in the page');
+  const section = PAGE.slice(from, to);
 
-  /* THE KEY THE SERVER CHECKS IS THE KEY THE PAGE CHECKS, matched against the
-     catalogue rather than against a string written twice. */
-  const keys = catalog.GROUPS.flatMap((g) => g.permissions.map((p) => p.key));
-  assert.ok(keys.includes('report.follow_up'));
-  assert.match(SRC('routes/admin-dashboard.js'), /requirePermission\('report\.follow_up'\)/);
+  /* AND THE RESET renderAdminDashboard DOES ON EVERY DRAW, taken the same way:
+     whatever it does to this section's module state is what a redraw does. */
+  const resetFrom = PAGE.indexOf('  FOLLOW_UP = d.followUp || null;');
+  const resetTo = PAGE.indexOf('  /* THE CHIPS ARE DECIDED AGAINST A CURRENT PROJECT LIST');
+  assert.ok(resetFrom !== -1 && resetTo > resetFrom);
+  const reset = PAGE.slice(resetFrom, resetTo);
 
-  // And the row's link is behind the permission the user endpoint itself asks for.
-  const row = PAGE.slice(PAGE.indexOf('function fuRow('));
-  assert.match(row.slice(0, row.indexOf('\n}\n')), /can\('user\.view'\)/);
-  assert.match(SRC('routes/users.js'), /router\.get\('\/:id', requirePermission\('user\.view'\)/);
-});
+  const calls = { api: [], users: [] };
+  const captured = { html: '' };
+  let nodes = [];
+  let byId = {};
 
-test('MUTATION 14 — a stale response never overwrites a newer one', () => {
-  const load = PAGE.slice(PAGE.indexOf('async function loadFollowUp('));
-  const body = load.slice(0, load.indexOf('\nfunction wireFollowUp('));
+  /* Only what the wiring looks for. A <button> is focusable, takes Enter and
+     Space for free and is announced as a button; an <input type=date> fires
+     change. Both are modelled with their dataset and their listeners. */
+  function parse(html) {
+    const out = [];
+    const ids = {};
+    const re = /<(button|input|span)\b([^>]*)>/g;
+    let m;
+    while ((m = re.exec(html))) {
+      const [, tag, attrsText] = m;
+      const attrs = {};
+      const attrRe = /([a-zA-Z-]+)="([^"]*)"/g;
+      let a;
+      while ((a = attrRe.exec(attrsText))) attrs[a[1]] = a[2];
+      const dataset = {};
+      for (const [k, v] of Object.entries(attrs)) {
+        if (!k.startsWith('data-')) continue;
+        dataset[k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = v;
+      }
+      const node = {
+        tagName: tag.toUpperCase(),
+        attrs, dataset,
+        classes: (attrs.class || '').split(/\s+/).filter(Boolean),
+        value: attrs.value || '',
+        listeners: {},
+        addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
+        fire(type) {
+          const ev = { stopPropagation() { this.stopped = true; }, stopped: false };
+          for (const fn of this.listeners[type] || []) fn(ev);
+          return ev;
+        },
+        click() { return this.fire('click'); },
+      };
+      out.push(node);
+      if (attrs.id) ids[attrs.id] = node;
+    }
+    nodes = out;
+    byId = ids;
+    return out;
+  }
 
-  /* TWO CLICKS ARE TWO REQUESTS IN FLIGHT and the first can answer last. A
-     ticket taken before the request and checked after it is the only thing
-     between that and a panel showing Tuesday's names under Wednesday's date. */
-  assert.match(body, /const mine = \+\+FOLLOW_UP_TICKET;/);
-  const guards = body.match(/if\(mine !== FOLLOW_UP_TICKET\) return;/g) || [];
-  assert.strictEqual(guards.length, 2,
-    'checked on the way out of both the success and the failure path — an '
-    + 'error from an abandoned request must not blank a good panel either');
+  const slot = {
+    set innerHTML(v) { captured.html = v; parse(v); },
+    get innerHTML() { return captured.html; },
+  };
+  const document = {
+    getElementById: (id) => (id === 'followUpSlot' ? slot : (byId[id] || null)),
+    querySelectorAll: (sel) => {
+      const m = sel.match(/\[([a-z-]+)\]/);
+      if (!m) return [];
+      const key = m[1].slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+      return nodes.filter((n) => key in n.dataset);
+    },
+  };
 
-  // The guard is checked BEFORE anything is written, not after.
-  const write = body.indexOf('FOLLOW_UP = data;');
-  const check = body.indexOf('if(mine !== FOLLOW_UP_TICKET) return;');
-  assert.ok(check !== -1 && check < write, 'the ticket is checked before the write');
-});
+  const api = async (url) => {
+    calls.api.push(url);
+    const q = url.split('?')[1] || '';
+    const params = new URLSearchParams(q);
+    const key = params.get('from') ? `${params.get('from')}..${params.get('to')}` : (params.get('date') || 'today');
+    if (payloads[key] === 'fail') throw new Error('the server said no');
+    return payloads[key] || payloadFor(key === 'today' ? WED : key);
+  };
 
-test('MUTATION 15 — a chosen date survives a redraw of the screen', () => {
-  /* THE ADMIN DASHBOARD HAS NO REFRESH TIMER — the only setInterval on this page
-     are the Idle Now panel and the notification poll — but it IS rebuilt from
-     scratch by innerHTML whenever render() runs: a tab round trip, or anything
-     else that redraws it. The payload that arrives then is always the DEFAULT
-     date, so a chosen date held inside the markup would snap back to Today
-     without saying so.
-     
-     The ask is module state, outside the render, exactly as ATTENTION_OPEN is;
-     and the wiring notices that what is on screen is not what was asked for and
-     asks again. */
-  assert.match(PAGE, /^let FOLLOW_UP_ASK = null;$/m, 'module state, not render state');
-  assert.match(PAGE, /^let FOLLOW_UP_SHOWN = null;$/m);
+  const built = new Function(
+    'document', 'escapeHTML', 'can', 'caps', 'api', 'openUserDetail',
+    `${section}
+     ${'function __redraw(d){\n' + reset + '\n}'}
+     return {
+       renderFollowUp, wireFollowUp, loadFollowUp, paintFollowUp, fuAskKey,
+       redraw: __redraw,
+       ask: () => FOLLOW_UP_ASK, shown: () => FOLLOW_UP_SHOWN,
+       err: () => FOLLOW_UP_ERR, busy: () => FOLLOW_UP_BUSY,
+       setAsk: (a) => { FOLLOW_UP_ASK = a; },
+     };`
+  )(
+    document,
+    (s) => String(s === null || s === undefined ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'),
+    (...keys) => keys.some((k) => permissions.includes(k)),
+    /* caps() answers the TIER, and the section must never ask it. Given a
+       generous answer on purpose: a gate that reads it would pass rather than
+       fail, which is exactly the shape of the bug. */
+    () => ({ projectScope: 'all', manageUsers: true }),
+    api,
+    (id) => calls.users.push(id),
+  );
 
-  const wire = PAGE.slice(PAGE.indexOf('function wireFollowUp('));
-  const body = wire.slice(0, wire.indexOf('\n}\n'));
-  assert.match(body, /fuAskKey\(FOLLOW_UP_ASK\) !== fuAskKey\(FOLLOW_UP_SHOWN\)/);
-  assert.match(body, /loadFollowUp\(\);/);
+  return { ...built, calls, captured, document, nodes: () => nodes, byId: () => byId, slot };
+}
 
-  /* AND A RELOAD STARTS AT TODAY. The ask is module state and nothing persists
-     it — no localStorage, no saveContext — so the picker is back on Today next
-     time the page is opened. A date somebody looked at one morning is not a
-     preference, and finding the dashboard still on last Tuesday a week later
-     would be worse than finding it on today. */
+/* A payload of the shape src/follow-up.js builds, for one past date. */
+function payloadFor(date) {
+  return {
+    ok: true, unavailable: null, mode: 'day', date, from: date, to: date,
+    today: WED, previousWorkingDay: TUE,
+    startedFor: { from: date, to: date, days: [date] },
+    filledFor: { from: date, to: date, days: [date] },
+    workingDay: true,
+    grace: { minutes: 60, holds: false, until: null, opensAt: null, clockShut: false },
+    notStarted: { rows: [{ id: 'u-1', name: 'Ana', role: 'game_artist', roleLabel: 'Game Artist', held: 2, missed: 1, both: false }], total: 1, more: 0 },
+    notFilled: { rows: [], total: 0, more: 0 },
+    overlap: 0, expected: 3, heldLabel: 'held that day',
+    earliest: '2026-01-05', cap: 25, maxRangeDays: 31,
+    notes: [], scope: { projects: 1, studioWide: false, roles: 9 }, cached: false,
+  };
+}
+
+test('MUTATION 15 — a date somebody picked survives a redraw of the screen', async () => {
+  const h = pageHarness();
+  h.redraw({ followUp: payloadFor(WED) });
+  h.paintFollowUp();
+  assert.strictEqual(h.calls.api.length, 0, 'the first draw needs no request of its own');
+
+  // Somebody picks the day before.
+  await h.loadFollowUp({ mode: 'day', date: TUE });
+  assert.deepStrictEqual(h.calls.api, [`/admin-dashboard/follow-up?date=${TUE}`]);
+  assert.strictEqual(h.ask().date, TUE);
+
+  /* THE SCREEN IS REDRAWN. renderAdminDashboard refetches /admin-dashboard,
+     whose followUp is always the DEFAULT date, and rebuilds the panel. The
+     chosen date must still be the one on show — not silently Today. */
+  h.redraw({ followUp: payloadFor(WED) });
+  h.paintFollowUp();
+  await new Promise((r) => setImmediate(r));
+
+  assert.deepStrictEqual(h.calls.api, [
+    `/admin-dashboard/follow-up?date=${TUE}`,
+    `/admin-dashboard/follow-up?date=${TUE}`,
+  ], 'the redraw asked again for the day somebody chose');
+  assert.strictEqual(h.ask().date, TUE);
+  assert.ok(h.captured.html.includes(`value="${TUE}"`), 'and the picker still shows it');
+
+  /* AND A RELOAD STARTS AT TODAY, because the ask is module state and nothing
+     persists it. A date somebody looked at one morning is not a preference. */
+  const fresh = pageHarness();
+  fresh.redraw({ followUp: payloadFor(WED) });
+  fresh.paintFollowUp();
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(fresh.ask(), null);
+  assert.strictEqual(fresh.calls.api.length, 0, 'a fresh page is already on Today');
+
   const section = PAGE.slice(PAGE.indexOf('let FOLLOW_UP = null;'),
     PAGE.indexOf("/* ---------- settings: where the studio's email goes out from"));
   assert.ok(!/localStorage|sessionStorage|saveContext/.test(section),
     'the chosen date is not persisted anywhere');
-  assert.match(PAGE, /FOLLOW_UP_SHOWN = null;\n  FOLLOW_UP_ERR = null;/,
-    'and a fresh dashboard payload resets what is on show to the default');
+});
+
+test('MUTATION 14 — a stale response never overwrites a newer one', async () => {
+  /* TWO ASKS IN FLIGHT, answered in the wrong order. The first request is held
+     open until the second has answered; without the ticket, the panel ends up
+     showing Tuesday's names under Wednesday's date. */
+  let releaseFirst;
+  const slow = new Promise((r) => { releaseFirst = r; });
+  const h = pageHarness({
+    payloads: {
+      [TUE]: slow.then(() => payloadFor(TUE)),
+      [MON]: payloadFor(MON),
+    },
+  });
+  h.redraw({ followUp: payloadFor(WED) });
+
+  const first = h.loadFollowUp({ mode: 'day', date: TUE });
+  const second = h.loadFollowUp({ mode: 'day', date: MON });
+  await second;
+  assert.strictEqual(h.shown().date, MON, 'the newer ask is on screen');
+
+  releaseFirst();
+  await first;
+  assert.strictEqual(h.shown().date, MON,
+    'and the older response, arriving late, did not take it back');
+
+  const load = PAGE.slice(PAGE.indexOf('async function loadFollowUp('));
+  const body = load.slice(0, load.indexOf('\nfunction wireFollowUp('));
+  const guards = body.match(/if\(mine !== FOLLOW_UP_TICKET\) return;/g) || [];
+  assert.strictEqual(guards.length, 2,
+    'checked on both the success and the failure path — an error from an '
+    + 'abandoned request must not blank a good panel either');
+});
+
+test('MUTATION 17 — the page gate is the permission, never the tier', () => {
+  /* caps() in the harness answers generously, so a gate reading the TIER would
+     draw the section for somebody who does not hold the key — which is the bug
+     that has shipped three times in this application. */
+  const without = pageHarness({ permissions: [] });
+  without.redraw({ followUp: payloadFor(WED) });
+  assert.strictEqual(without.renderFollowUp(), '',
+    'nothing is drawn without report.follow_up, whatever the tier says');
+
+  const with_ = pageHarness({ permissions: ['report.follow_up'] });
+  with_.redraw({ followUp: payloadFor(WED) });
+  assert.ok(with_.renderFollowUp().includes('People to follow up'));
+
+  /* AND THE SECTION IS ABSENT, NOT EMPTY, when the server omitted the key —
+     which is what it does for anybody without the permission. */
+  const absent = pageHarness();
+  absent.redraw({});
+  assert.strictEqual(absent.renderFollowUp(), '');
+
+  // The same key the endpoint checks, matched against the catalogue.
+  const keys = catalog.GROUPS.flatMap((g) => g.permissions.map((p) => p.key));
+  assert.ok(keys.includes('report.follow_up'));
+  assert.match(SRC('routes/admin-dashboard.js'), /requirePermission\('report\.follow_up'\)/);
+});
+
+test('a row opens the person where the Users tab already opens them', async () => {
+  const h = pageHarness();
+  h.redraw({ followUp: payloadFor(TUE) });
+  h.paintFollowUp();
+  const name = h.nodes().find((n) => 'fuUser' in n.dataset);
+  assert.ok(name, 'the name is a control');
+  assert.strictEqual(name.tagName, 'BUTTON', 'a button, so Enter and Space work');
+  const ev = name.click();
+  assert.deepStrictEqual(h.calls.users, ['u-1']);
+  assert.ok(ev.stopped, 'and the row around it is not also clicked');
+
+  /* WITHOUT user.view THERE IS NOTHING TO OPEN — GET /users/:id refuses it — so
+     the name is plain text rather than a control that would fail. A <span>
+     cannot be tabbed to, so nobody meets a dead button. */
+  const narrow = pageHarness({ permissions: ['report.follow_up'] });
+  narrow.redraw({ followUp: payloadFor(TUE) });
+  narrow.paintFollowUp();
+  assert.ok(!narrow.nodes().some((n) => 'fuUser' in n.dataset));
+  assert.ok(narrow.captured.html.includes('fu-name-plain'));
+});
+
+test('the presets ask for the day they name, and the server supplies the previous one', async () => {
+  const h = pageHarness();
+  h.redraw({ followUp: payloadFor(WED) });
+  h.paintFollowUp();
+
+  const preset = (which) => h.nodes().find((n) => n.dataset.fuPreset === which);
+  preset('prev').click();
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(h.calls.api, [`/admin-dashboard/follow-up?date=${TUE}`],
+    'the previous working day is the server\'s answer, carried back unchanged');
+
+  preset('today').click();
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(h.calls.api[1], '/admin-dashboard/follow-up',
+    'Today asks for the default rather than naming a date');
+  assert.strictEqual(h.ask(), null);
+
+  // A range preset stays inside the cap the server quoted.
+  preset('range').click();
+  await new Promise((r) => setImmediate(r));
+  const ranged = h.calls.api[2];
+  assert.match(ranged, /from=\d{4}-\d{2}-\d{2}&to=2026-03-18/);
+});
+
+test('a failed read says so, and does not leave the old lists under the new date', async () => {
+  const h = pageHarness({ payloads: { [TUE]: 'fail' } });
+  h.redraw({ followUp: payloadFor(WED) });
+  h.paintFollowUp();
+  await h.loadFollowUp({ mode: 'day', date: TUE });
+
+  assert.match(h.err(), /could not be read/);
+  assert.ok(h.captured.html.includes('fu-err'));
+  assert.ok(!h.captured.html.includes('fu-row'),
+    'a stale pair of lists under a new date reads as an answer, which is worse than none');
 });
 
 test('the page draws the states that are not a pair of lists', () => {
