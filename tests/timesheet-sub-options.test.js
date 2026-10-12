@@ -763,9 +763,27 @@ test('sub-options, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) =
     const gate = fs.readFileSync(path.join(__dirname, '..', 'src', 'timesheet-gate.js'), 'utf8');
     assert.ok(!/non_project_sub|nonProjectSub/.test(gate),
       'the gate does not look at the second dropdown at all');
+    /* IT COUNTS LINES, and a line with a remark is a line.
+     *
+     * THE SHAPE OF THE ANSWER MOVED and the property did not. hasLineOn() was a
+     * SELECT COUNT(*) of its own; it is now filledDays() with a range of one,
+     * because the Admin Dashboard's "Timesheet not filled" list (Prompt 33)
+     * asks the same question of everybody over a range and two queries would be
+     * two places for "filled" to mean something slightly different. So this
+     * pins the property where the query now is: the rows are read with NO
+     * filter on what the line says about itself — no category, no second
+     * dropdown, no hours floor, no draft/submitted test. Any of those appearing
+     * here would mean a quiet day honestly reported as Idle With A Remark
+     * stopped satisfying the rule. */
     const hasLine = fs.readFileSync(path.join(__dirname, '..', 'src', 'timesheets.js'), 'utf8');
-    const at = hasLine.indexOf('async function hasLineOn');
-    assert.match(hasLine.slice(at, at + 400), /SELECT COUNT\(\*\)/,
+    const gateAt = hasLine.indexOf('async function hasLineOn');
+    assert.match(hasLine.slice(gateAt, gateAt + 600), /filledDays\(db, \[userId\], date, date\)/,
+      'the gate asks the one definition, with a range of one day');
+
+    const at = hasLine.indexOf('async function filledDays');
+    const body = hasLine.slice(at, hasLine.indexOf('\n}\n', at));
+    assert.match(body, /FROM timesheet_entries/);
+    assert.ok(!/non_project|non_project_sub|hours|status/.test(body),
       'it counts lines, and a line with a remark is a line');
   });
 });
