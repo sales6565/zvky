@@ -273,8 +273,19 @@ test('Hold, with every native dialog throwing', { skip: cfg ? false : SKIP_REASO
     assert.strictEqual(s.status, 200, JSON.stringify(s.body));
     return assetId;
   };
+  /* THE CURRENT SESSION: the open row if there is one, else the last to start.
+   *
+   * The open row FIRST, and that ordering is the whole of a flake this suite
+   * failed twice on under a loaded full run and never alone. started_at is a
+   * DATETIME — one-second resolution — and a case that starts a clock, holds it
+   * and resumes it runs in about 130 ms, so the held row and the row the resume
+   * opened share a started_at and `ORDER BY started_at DESC LIMIT 1` was free to
+   * return either. It returned the held one, and the assertion read a clock that
+   * was in fact running. Production never had this ambiguity: openSession()
+   * filters on ended_at IS NULL rather than ordering by time. */
   const session = async (assetId) => (await sql(cfg,
-    'SELECT ended_reason, hold_note FROM work_sessions WHERE asset_id = ? ORDER BY started_at DESC LIMIT 1',
+    'SELECT ended_reason, hold_note FROM work_sessions WHERE asset_id = ? '
+    + 'ORDER BY (ended_at IS NULL) DESC, started_at DESC LIMIT 1',
     [assetId]))[0];
 
   /* The page's own api(), pointed at the real server with ana's real token —
