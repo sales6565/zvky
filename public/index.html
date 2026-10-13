@@ -4,29 +4,20 @@
 <meta charset="UTF-8">
 <title>Zvky — Pipeline</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style id="themeDefaults">
+/* GENERATED from src/theme-tokens.js by scripts/build-theme-defaults.js.
+   Do not edit by hand: tests/theme.test.js fails if this and the catalogue disagree.
+   Every value here is the colour this application shipped with, and the server
+   injects a saved theme AFTER this block, so an untouched studio sees exactly this. */
+:root{--bg:#14161B;--surface:#1D2027;--surface-2:#262A33;--surface-3:#30343E;--border:#363B46;--surface-sunk:#7F7F7F;--surface-sunk-t10:rgba(127,127,127,.1);--code-bg:#15171D;--dragover:#231A15;--overlay:#0A0B0E;--overlay-t60:rgba(10,11,14,.6);--overlay-t65:rgba(10,11,14,.65);--overlay-tour:#08090C;--overlay-tour-t72:rgba(8,9,12,.72);--shadow:#000000;--shadow-t28:rgba(0,0,0,.28);--shadow-t30:rgba(0,0,0,.3);--shadow-t32:rgba(0,0,0,.32);--shadow-t42:rgba(0,0,0,.42);--shadow-t45:rgba(0,0,0,.45);--shadow-t55:rgba(0,0,0,.55);--scrim:#12121A;--scrim-t72:rgba(18,18,26,.72);--scrim-t92:rgba(18,18,26,.92);--hairline:#FFFFFF;--hairline-t05:rgba(255,255,255,.05);--hairline-t10:rgba(255,255,255,.1);--hairline-t14:rgba(255,255,255,.14);--toast:#262A33;--ink:#EDEFF2;--ink-muted:#8B909C;--ink-faint:#5B606C;--brand-accent:#EF6B6F;--brand-accent-hover:#F58B8E;--brand-ink:#FFFFFF;--accent-ink:#12080A;--tabbar-bg:#262A33;--tabbar-border:#363B46;--tab-ink:#8B909C;--tab-bg:#00000000;--tab-active-ink:#EDEFF2;--tab-active-bg:#30343E;--tab-hover-ink:#EDEFF2;--tab-hover-bg:#30343E80;--tab-indicator:#EF6B6F;--tab-badge-dot:#EF6B6F;--tab-badge-dot-t1f:#EF6B6F1F;--tab-badge-dot-t66:#EF6B6F66;--focus-ring:#EF6B6F;--subtab-ink:#8B909C;--subtab-bg:#00000000;--subtab-hover-ink:#EDEFF2;--subtab-hover-bg:#262A33;--subtab-active-ink:#EDEFF2;--subtab-active-bg:#262A33;--subtab-active-border:#363B46;--subtab-indicator:#EF6B6F;--subtab-count-ink:#5B606C;--subtab-count-bg:#30343E;--brand:#7F1416;--brand-t10:rgba(127,20,22,.1);--brand-t20:rgba(127,20,22,.2);--brand-t22:rgba(127,20,22,.22);--brand-t26:rgba(127,20,22,.26);--brand-t28:rgba(127,20,22,.28);--brand-t44:rgba(127,20,22,.44);--brand-hover:#96181B;--btn-ghost-bg:#262A33;--btn-ghost-ink:#EDEFF2;--btn-ghost-hover:#30343E;--danger-ink:#E8402C;--danger-ink-t14:#E8402C14;--danger-ink-t22:#E8402C22;--danger-ink-t44:#E8402C44;--danger-ink-t66:#E8402C66;--input-bg:#262A33;--input-border:#363B46;--input-focus-border:#EF6B6F;--placeholder-ink:#5B606C;--form-accent:#EF6B6F;--row-selected:#7F141629;--thead-bg:#00000000;--thead-ink:#8B909C;--row-bg:#00000000;--row-hover:#262A33;--table-border:#363B46;--approved:#3DDC97;--approved-t14:#3DDC9714;--approved-t44:#3DDC9744;--success-ink:#7FDCB0;--prog:#F2B33D;--prog-t14:#F2B33D14;--prog-t55:#F2B33D55;--prog-t16:rgba(242,179,61,.16);--warning-ink:#FFCC70;--error:#E8402C;--error-t14:#E8402C14;--error-t22:#E8402C22;--error-t44:#E8402C44;--error-t66:#E8402C66;--error-ink:#FF9B80;--info:#4DB8FF;--info-t10:rgba(77,184,255,.1);--info-t14:rgba(77,184,255,.14);--info-t30:rgba(77,184,255,.3);--info-t50:rgba(77,184,255,.5);--info-ink:#8ECDFF;--at-risk:#E8A33D;--at-risk-t14:#E8A33D14;--at-risk-t1f:#E8A33D1F;--at-risk-t33:#E8A33D33;--at-risk-t44:#E8A33D44;--at-risk-t66:#E8A33D66;--overdue:#FF5A36;--overdue-t08:rgba(255,90,54,.08);--overdue-t09:rgba(255,90,54,.09);--overdue-t10:rgba(255,90,54,.1);--overdue-t12:rgba(255,90,54,.12);--overdue-t15:rgba(255,90,54,.15);--overdue-t16:rgba(255,90,54,.16);--overdue-t30:rgba(255,90,54,.3);--overdue-t32:rgba(255,90,54,.32);--overdue-t45:rgba(255,90,54,.45);--not:#6B7280;--neutral:#6B7A8F;--paused:#3B4252;--paused-ink:#C6CCD8;--paused-border:#4C566A;--read-tick:#3AA3FF;--success-wash:#40C88C;--success-wash-t07:rgba(64,200,140,.07);--success-wash-t10:rgba(64,200,140,.1);--success-wash-t16:rgba(64,200,140,.16);--success-wash-t30:rgba(64,200,140,.3);--success-wash-t45:rgba(64,200,140,.45);--success-wash-t70:rgba(64,200,140,.7);--warning-wash:#FFB020;--warning-wash-t10:rgba(255,176,32,.1);--warning-wash-t12:rgba(255,176,32,.12);--warning-wash-t13:rgba(255,176,32,.13);--warning-wash-t28:rgba(255,176,32,.28);--warning-wash-t30:rgba(255,176,32,.3);--warning-wash-t32:rgba(255,176,32,.32);--warning-strong:#E0A800;--warning-strong-t08:rgba(224,168,0,.08);--warning-pale:#FFD98A;--at-risk-ink:#E0A458;--error-strong:#D9534F;--error-heading:#FF7A55;--error-body:#FFB9A5;--error-code:#FFD3C6;--outsourced:#2E7D5B;--outsourced-ink:#8FD3B0;--archived:#6B6B6B;--archived-t33:#6B6B6B33;--archived-ink:#A8A8A8;--closed:#C9A227;--closed-t22:#C9A22722;--closed-ink:#D8B53F;--paused-muted:#9AA4B8;--stage-working:#2F6F9F;--stage-completed:#5A4FBF;--stage-revision:#B8860B;--accent-ink-deep:#1A0E0E;--artist-blue:#4FB3FF;--review:#9B7EF0;--review-t14:#9B7EF014;--review-t44:#9B7EF044;--review-t55:#9B7EF055;--review-taa:#9B7EF0AA;--final:#D4FF3D;--client:#22C1C3;--series-5:#5B8DEF;--series-6:#D9822B;--series-6-t08:rgba(217,130,43,.08);--series-6-t14:#D9822B14;--series-6-t44:#D9822B44;--series-7:#4C9A75;--tile-border:#363B46;--leadership:#FFD23D;--leadership-t10:rgba(255,210,61,.1);--leadership-t30:rgba(255,210,61,.3);--login-bg:#14161B;--login-card:#1D2027;--login-card-border:#363B46;--login-err:#EF6B6F;--status-not-started:#6B7280;--status-not-started-t22:#6B728022;--status-assigned:#5B8DEF;--status-assigned-t22:#5B8DEF22;--status-in-progress:#F2B33D;--status-in-progress-t22:#F2B33D22;--status-pending-tl-review:#9B7EF0;--status-pending-tl-review-t22:#9B7EF022;--status-tl-changes-requested:#E8402C;--status-tl-changes-requested-t22:#E8402C22;--status-tl-approved:#4C9A75;--status-tl-approved-t22:#4C9A7522;--status-pending-cd-review:#9B7EF0;--status-pending-cd-review-t22:#9B7EF022;--status-cd-changes-requested:#E8402C;--status-cd-changes-requested-t22:#E8402C22;--status-game-feedback:#D9822B;--status-game-feedback-t22:#D9822B22;--status-approved-for-client:#3DDC97;--status-approved-for-client-t22:#3DDC9722;--status-awaiting-client-feedback:#22C1C3;--status-awaiting-client-feedback-t22:#22C1C322;--status-delivered:#D4FF3D;--status-delivered-t22:#D4FF3D22;}
+</style>
+<!-- THEME:INJECT — the server replaces this comment with the saved theme.
+     A <style> block in the served HTML rather than a fetch after load: a
+     theme applied after first paint is a visible flash of the studio's old
+     colours on every page view. See src/theme-delivery.js. -->
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap');
-:root{
-  --bg:#14161b; --surface:#1d2027; --surface-2:#262a33; --surface-3:#30343e; --border:#363b46;
-  --ink:#edeff2; --ink-muted:#8b909c; --ink-faint:#5b606c;
-  /* The brand, in two tones, because one cannot do both jobs on a dark UI.
-     
-     --brand is the studio red. It is a FILL: white on it measures 10.4:1, well
-     past AA. As TEXT on this app's background it measures 1.74:1 — invisible —
-     so links and accents cannot use it.
-     
-     --brand-accent is the same hue lifted until it can be read: 6.0:1 on the
-     page background. It is also kept clear of the workflow colours, which carry
-     meaning and are not touched by any of this: its nearest neighbour is TL/CD
-     Changes at ΔE 30, where anything under about 25 starts to read as the same
-     colour at a glance. */
-  --brand:#7f1416; --brand-ink:#ffffff; --brand-accent:#ef6b6f; --brand-hover:#96181b;
-  --not:#6b7280; --prog:#f2b33d; --review:#9b7ef0; --approved:#3ddc97; --final:#d4ff3d; --artist-blue:#4fb3ff;
-  /* Out with the client. Its own hue rather than the brand red: a status
-     colour says where work is, and one wearing the brand would read as the
-     application rather than as a stage. */
-  --client:#22c1c3;
-}
+
 *{box-sizing:border-box;} html,body{margin:0;padding:0;}
 body{background:var(--bg);color:var(--ink);font-family:'Inter',sans-serif;min-height:100vh;}
 .mono{font-family:'IBM Plex Mono',monospace;} .display{font-family:'Space Grotesk',sans-serif;}
@@ -49,14 +40,14 @@ header.top{display:flex;align-items:center;justify-content:space-between;gap:16p
 .brand-form{display:flex;flex-direction:column;gap:10px;max-width:520px;}
 .brand-form label{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--ink-faint);
   font-family:'IBM Plex Mono';}
-.brand-form input[type=text]{background:var(--surface-2);border:1px solid var(--border);color:var(--ink);
+.brand-form input[type=text]{background:var(--input-bg);border:1px solid var(--input-border);color:var(--ink);
   padding:8px 10px;border-radius:8px;font-family:'Inter';font-size:13px;width:100%;}
 .brand-logo-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
 .brand-logo-preview{height:44px;max-width:200px;background:var(--surface-2);border:1px solid var(--border);
   border-radius:8px;padding:5px 9px;display:flex;align-items:center;justify-content:center;}
 .brand-logo-preview img{max-height:34px;max-width:180px;object-fit:contain;display:block;}
 .brand-logo-preview .none{font-size:11px;color:var(--ink-faint);font-family:'IBM Plex Mono';}
-.proj-select{background:var(--surface-2);border:1px solid var(--border);color:var(--ink);padding:8px 12px;border-radius:8px;font-family:'IBM Plex Mono';font-size:12px;}
+.proj-select{background:var(--input-bg);border:1px solid var(--input-border);color:var(--ink);padding:8px 12px;border-radius:8px;font-family:'IBM Plex Mono';font-size:12px;}
 .user-badge{display:flex;align-items:center;gap:8px;background:var(--surface-2);border:1px solid var(--border);border-radius:20px;padding:5px 6px 5px 5px;}
 .user-badge .avatar{width:26px;height:26px;border-radius:50%;background:var(--surface-3);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;font-family:'Space Grotesk';}
 .user-badge .who{font-size:12px;} .user-badge .who .name{font-weight:600;}
@@ -69,20 +60,30 @@ header.top{display:flex;align-items:center;justify-content:space-between;gap:16p
 .btn:disabled{opacity:.45;cursor:not-allowed;filter:grayscale(1);}
 .btn:disabled:hover{transform:none;}
 .btn:active{transform:scale(.97);} .btn-brand{background:var(--brand);color:var(--brand-ink);} .btn-brand:hover{background:var(--brand-hover);}
-.btn-ghost{background:var(--surface-2);color:var(--ink);border:1px solid var(--border);} .btn-ghost:hover{background:var(--surface-3);}
+.btn-ghost{background:var(--btn-ghost-bg);color:var(--btn-ghost-ink);border:1px solid var(--border);} .btn-ghost:hover{background:var(--btn-ghost-hover);}
 .btn-sm{padding:6px 10px;font-size:12px;}
 .stats{display:flex;gap:0;margin:18px 0 16px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface);flex-wrap:wrap;}
 .stat{flex:1;min-width:90px;padding:12px 16px;border-right:1px solid var(--border);} .stat:last-child{border-right:none;}
 .stat .num{font-family:'Space Grotesk';font-weight:700;font-size:22px;} .stat .lbl{font-size:11px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.6px;margin-top:2px;}
 .toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;}
-.toolbar input[type=text]{background:var(--surface-2);border:1px solid var(--border);color:var(--ink);padding:8px 12px;border-radius:8px;font-size:13px;min-width:180px;font-family:'Inter';}
-.toolbar select{background:var(--surface-2);border:1px solid var(--border);color:var(--ink);padding:8px 10px;border-radius:8px;font-size:13px;font-family:'Inter';}
-.tabs{display:flex;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;overflow:hidden;}
-.tabs button{background:transparent;border:none;color:var(--ink-muted);padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Inter';}
-.tabs button.active{background:var(--surface-3);color:var(--ink);} .spacer{margin-left:auto;}
+.toolbar input[type=text]{background:var(--input-bg);border:1px solid var(--input-border);color:var(--ink);padding:8px 12px;border-radius:8px;font-size:13px;min-width:180px;font-family:'Inter';}
+.toolbar select{background:var(--input-bg);border:1px solid var(--input-border);color:var(--ink);padding:8px 10px;border-radius:8px;font-size:13px;font-family:'Inter';}
+.tabs{display:flex;background:var(--tabbar-bg);border:1px solid var(--tabbar-border);border-radius:8px;overflow:hidden;}
+.tabs button{background:var(--tab-bg);border:none;color:var(--tab-ink);padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Inter';}
+/* HOVER AND THE ACTIVE INDICATOR, both of which default to no change at all.
+   The shipped stylesheet had no hover rule on a main tab and no indicator beyond
+   the background, so --tab-hover-bg and --tab-bg default to fully transparent and
+   --tab-hover-ink to the same grey as --tab-ink: an untouched studio sees exactly
+   what it saw before, and one that sets them gets a hover state and an underline
+   without a deploy. The indicator is an inset box-shadow rather than a border so
+   it cannot move anything by a pixel. */
+.tabs button:hover{background:var(--tab-hover-bg);color:var(--tab-hover-ink);}
+.tabs button:focus-visible{outline:2px solid var(--focus-ring);outline-offset:-2px;}
+.tabs button.active{background:var(--tab-active-bg);color:var(--tab-active-ink);
+  box-shadow:inset 2px 0 0 0 var(--tab-indicator);} .spacer{margin-left:auto;}
 .board{display:flex;gap:14px;align-items:flex-start;overflow-x:auto;padding-bottom:20px;}
 .column{background:var(--surface);border:1px solid var(--border);border-radius:12px;min-width:250px;flex:1;padding:10px;min-height:200px;}
-.column.dragover{border-color:var(--brand-accent);background:#231a15;}
+.column.dragover{border-color:var(--brand-accent);background:var(--dragover);}
 .col-head{display:flex;align-items:center;gap:8px;padding:6px 6px 12px;}
 .col-head .chip{width:9px;height:9px;border-radius:2px;} .col-head .title{font-family:'Space Grotesk';font-weight:700;font-size:13px;text-transform:uppercase;letter-spacing:.5px;}
 .col-head .count{margin-left:auto;font-family:'IBM Plex Mono';font-size:11px;color:var(--ink-muted);background:var(--surface-2);padding:1px 7px;border-radius:20px;}
@@ -119,26 +120,32 @@ img.avatar{display:block;object-fit:cover;padding:0;}
 .photo-preview-side{display:flex;flex-direction:column;gap:9px;flex:1;min-width:150px;}
 .photo-zoom{display:flex;align-items:center;gap:8px;font-size:10.5px;text-transform:uppercase;
   letter-spacing:.5px;color:var(--ink-muted);font-family:'IBM Plex Mono';}
-.photo-zoom input[type=range]{flex:1;accent-color:var(--brand-accent);padding:0;background:none;border:0;}
+.photo-zoom input[type=range]{flex:1;accent-color:var(--form-accent);padding:0;background:none;border:0;}
 .who-line>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .priority-flag{width:0;height:0;border-style:solid;position:absolute;top:0;left:10px;}
 .priority-high .priority-flag{border-width:0 8px 12px 8px;border-color:transparent transparent var(--brand-accent) transparent;}
 .priority-med .priority-flag{border-width:0 8px 12px 8px;border-color:transparent transparent var(--prog) transparent;}
 table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;}
-th,td{padding:10px 12px;text-align:left;font-size:13px;border-bottom:1px solid var(--border);}
-th{font-family:'IBM Plex Mono';font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink-muted);background:var(--surface-2);}
-tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-bottom:none;}
+th,td{padding:10px 12px;text-align:left;font-size:13px;border-bottom:1px solid var(--table-border);}
+th{font-family:'IBM Plex Mono';font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--thead-ink);background:var(--surface-2);}
+/* A STRIPED ROW AND A ROW BACKGROUND ARE BOTH TRANSPARENT BY DEFAULT, which is
+   what this stylesheet has always drawn: rows take the panel behind them. Setting
+   either gives the studio banding without a deploy and changes nothing until it
+   does. There is no striped-row token because there were never two row colours to
+   tell apart — one background on every row is what banding means here. */
+tbody tr{background:var(--row-bg);}
+tbody tr:hover{background:var(--row-hover);} tbody tr:last-child td{border-bottom:none;}
 .status-pill{font-size:11px;padding:3px 9px;border-radius:20px;font-weight:600;display:inline-flex;align-items:center;gap:5px;} .status-pill .d{width:6px;height:6px;border-radius:50%;}
-.overlay{position:fixed;inset:0;background:rgba(10,11,14,.6);opacity:0;pointer-events:none;transition:opacity .18s;z-index:40;} .overlay.show{opacity:1;pointer-events:auto;}
+.overlay{position:fixed;inset:0;background:var(--overlay-t60);opacity:0;pointer-events:none;transition:opacity .18s;z-index:40;} .overlay.show{opacity:1;pointer-events:auto;}
 .drawer{position:fixed;top:0;right:0;height:100%;width:420px;max-width:92vw;background:var(--surface);border-left:1px solid var(--border);transform:translateX(100%);transition:transform .22s ease;z-index:41;overflow-y:auto;padding:20px;}
 .drawer.show{transform:translateX(0);}
 .drawer .close{background:none;border:none;color:var(--ink-muted);font-size:20px;cursor:pointer;position:absolute;top:16px;right:16px;}
 .drawer .thumb-big{height:140px;border-radius:10px;margin-bottom:14px;}
 .field-lbl{font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink-muted);font-family:'IBM Plex Mono';margin:14px 0 6px;}
-.drawer select,.drawer textarea,.drawer input[type=text],.drawer input[type=date]{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--ink);padding:8px 10px;border-radius:8px;font-family:'Inter';font-size:13px;resize:vertical;}
+.drawer select,.drawer textarea,.drawer input[type=text],.drawer input[type=date]{width:100%;background:var(--input-bg);border:1px solid var(--input-border);color:var(--ink);padding:8px 10px;border-radius:8px;font-family:'Inter';font-size:13px;resize:vertical;}
 .drawer select:disabled,.drawer input:disabled,.drawer textarea:disabled{opacity:.55;cursor:not-allowed;}
 .task-row{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;border-bottom:1px dashed var(--border);}
-.task-row input[type=checkbox]{accent-color:var(--brand-accent);}
+.task-row input[type=checkbox]{accent-color:var(--form-accent);}
 .task-row.done .task-text{text-decoration:line-through;color:var(--ink-faint);}
 .task-text{flex:1;}
 .task-who{font-size:9px;color:var(--ink-faint);background:var(--surface-3);padding:1px 5px;border-radius:8px;}
@@ -148,7 +155,7 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .task-add input{margin:0;}
 
 /* The boot-failure banner: the one thing on screen when the app cannot load. */
-.boot-error{background:#e8402c14;border:1px solid #e8402c66;border-radius:10px;padding:16px 18px;margin:14px 0;}
+.boot-error{background:var(--error-t14);border:1px solid var(--error-t66);border-radius:10px;padding:16px 18px;margin:14px 0;}
 .be-title{font-family:'Space Grotesk';font-weight:600;font-size:15px;margin-bottom:4px;}
 .be-detail{font-size:12.5px;color:var(--ink-muted);word-break:break-word;}
 .be-hint{font-size:11.5px;color:var(--ink-faint);margin:8px 0 12px;}
@@ -165,14 +172,14 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 /* Sub-tabs inside a view. Deliberately lighter than the main nav: these filter
    what a screen shows, they do not change which screen you are on. */
 .sub-tabs{display:flex;gap:4px;margin-bottom:12px;flex-wrap:wrap;}
-.sub-tab{background:none;border:1px solid transparent;border-radius:8px;padding:6px 12px;
-  font-family:'Inter';font-size:12.5px;font-weight:600;color:var(--ink-muted);cursor:pointer;
+.sub-tab{background:var(--subtab-bg);border:1px solid transparent;border-radius:8px;padding:6px 12px;
+  font-family:'Inter';font-size:12.5px;font-weight:600;color:var(--subtab-ink);cursor:pointer;
   display:inline-flex;align-items:center;gap:7px;transition:background .15s ease,color .15s ease;}
-.sub-tab:hover{background:var(--surface-2);color:var(--ink);}
-.sub-tab.active{background:var(--surface-2);border-color:var(--border);color:var(--ink);}
-.sub-tab-count{font-family:'IBM Plex Mono';font-size:11px;color:var(--ink-faint);
-  background:var(--surface-3);border-radius:20px;padding:1px 7px;min-width:20px;text-align:center;}
-.sub-tab.active .sub-tab-count{color:var(--brand-accent);}
+.sub-tab:hover{background:var(--subtab-hover-bg);color:var(--subtab-hover-ink);}
+.sub-tab.active{background:var(--subtab-active-bg);border-color:var(--subtab-active-border);color:var(--subtab-active-ink);}
+.sub-tab-count{font-family:'IBM Plex Mono';font-size:11px;color:var(--subtab-count-ink);
+  background:var(--subtab-count-bg);border-radius:20px;padding:1px 7px;min-width:20px;text-align:center;}
+.sub-tab.active .sub-tab-count{color:var(--subtab-indicator);}
 /* --- Reports --- */
 .rep-head{display:flex;align-items:flex-start;gap:16px;margin-bottom:14px;}
 .rep-sub{font-size:12px;color:var(--ink-muted);margin-top:5px;max-width:760px;line-height:1.5;}
@@ -201,7 +208,7 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .notif-badge[hidden]{display:none;}
 .notif-panel{position:absolute;top:calc(100% + 8px);right:0;width:340px;max-width:calc(100vw - 32px);
   background:var(--surface);border:1px solid var(--border);border-radius:12px;z-index:70;
-  box-shadow:0 12px 32px rgba(0,0,0,.45);overflow:hidden;}
+  box-shadow:0 12px 32px var(--shadow-t45);overflow:hidden;}
 .notif-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
   padding:11px 14px;border-bottom:1px solid var(--border);font-size:13px;}
 .notif-head .u-link{font-size:11.5px;color:var(--ink-muted);font-weight:500;}
@@ -214,7 +221,7 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 .notif-item:hover{background:var(--surface-2);}
 /* Unread is marked on the row, not only by weight: a list where the only
    difference is boldness is hard to scan at a glance. */
-.notif-item.unread{background:rgba(127,20,22,.10);border-left:2px solid var(--brand);padding-left:12px;}
+.notif-item.unread{background:var(--brand-t10);border-left:2px solid var(--brand);padding-left:12px;}
 .notif-item .body{flex:1;min-width:0;}
 .notif-item .msg{font-size:12.5px;line-height:1.4;}
 .notif-item.unread .msg{font-weight:600;}
@@ -223,7 +230,7 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 /* The live pop-up. Sits above the toast so the two can coexist. */
 .notif-toast{position:fixed;right:20px;bottom:20px;width:320px;max-width:calc(100vw - 40px);
   background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--brand);
-  border-radius:10px;padding:12px 14px;box-shadow:0 12px 32px rgba(0,0,0,.45);
+  border-radius:10px;padding:12px 14px;box-shadow:0 12px 32px var(--shadow-t45);
   z-index:80;cursor:pointer;opacity:0;transform:translateY(10px);transition:opacity .2s, transform .2s;}
 .notif-toast.show{opacity:1;transform:translateY(0);}
 .notif-toast .t-title{font-size:10px;text-transform:uppercase;letter-spacing:.6px;
@@ -253,17 +260,17 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 
 /* The launcher: a circle in the bottom-left corner, on every tab. */
 .chat-btn{position:fixed;left:20px;bottom:20px;width:46px;height:46px;border-radius:50%;
-  background:var(--brand);color:var(--brand-ink);border:1px solid rgba(255,255,255,.10);
+  background:var(--brand);color:var(--brand-ink);border:1px solid var(--hairline-t10);
   font-size:19px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;
-  box-shadow:0 6px 20px rgba(0,0,0,.45);z-index:47;
+  box-shadow:0 6px 20px var(--shadow-t45);z-index:47;
   transition:transform .24s ease, filter .15s ease;}
 .chat-btn:hover{filter:brightness(1.15);}
-.chat-btn:focus-visible{outline:2px solid var(--brand-accent);outline-offset:2px;}
+.chat-btn:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px;}
 /* Open: step out from behind the panel and sit against its edge. */
 .chat-wrap.open .chat-btn{transform:translateX(var(--chat-w));}
 
 .chat-badge{position:absolute;top:-2px;right:-2px;min-width:18px;height:18px;padding:0 5px;
-  border-radius:20px;background:var(--brand-accent);color:#12080a;font-size:10px;font-weight:700;
+  border-radius:20px;background:var(--brand-accent);color:var(--accent-ink);font-size:10px;font-weight:700;
   font-family:'IBM Plex Mono';display:flex;align-items:center;justify-content:center;
   border:2px solid var(--bg);}
 /* See the note on .notif-badge: display:flex would otherwise override the
@@ -273,7 +280,7 @@ tbody tr:hover{background:var(--surface-2);} tbody tr:last-child td{border-botto
 /* The panel itself: full height against the left edge, parked off-screen. */
 .chat-panel{position:fixed;left:0;top:0;height:100%;width:var(--chat-w);
   background:var(--surface);border-right:1px solid var(--border);z-index:46;
-  box-shadow:8px 0 32px rgba(0,0,0,.45);overflow:hidden;display:flex;flex-direction:column;
+  box-shadow:8px 0 32px var(--shadow-t45);overflow:hidden;display:flex;flex-direction:column;
   transform:translateX(-100%);transition:transform .24s ease;}
 .chat-wrap.open .chat-panel{transform:translateX(0);}
 /* Parked means unreachable: without this, everything inside the closed panel
@@ -370,7 +377,7 @@ body.chat-open #app{padding-left:calc(var(--chat-w, 380px) + 24px);}
   color:var(--ink);font:inherit;cursor:pointer;}
 .chat-conv:last-child{border-bottom:0;}
 .chat-conv:hover{background:var(--surface-2);}
-.chat-conv.unread{background:rgba(127,20,22,.10);border-left:2px solid var(--brand);padding-left:10px;}
+.chat-conv.unread{background:var(--brand-t10);border-left:2px solid var(--brand);padding-left:10px;}
 .chat-conv .body{flex:1;min-width:0;}
 .chat-conv .who{font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .chat-conv.unread .who{font-weight:600;}
@@ -390,7 +397,7 @@ body.chat-open #app{padding-left:calc(var(--chat-w, 380px) + 24px);}
 .chat-msg.mine{flex-direction:row-reverse;}
 .chat-bubble{background:var(--surface-2);border-radius:12px;padding:7px 10px;max-width:78%;
   font-size:12.5px;line-height:1.45;word-wrap:break-word;overflow-wrap:anywhere;}
-.chat-msg.mine .chat-bubble{background:rgba(127,20,22,.20);}
+.chat-msg.mine .chat-bubble{background:var(--brand-t20);}
 .chat-bubble .from{font-size:10px;color:var(--brand-accent);font-family:'IBM Plex Mono';
   margin-bottom:3px;letter-spacing:.3px;}
 .chat-bubble .when{font-size:9.5px;color:var(--ink-faint);font-family:'IBM Plex Mono';margin-top:4px;}
@@ -409,7 +416,7 @@ body.chat-open #app{padding-left:calc(var(--chat-w, 380px) + 24px);}
   display:inline-flex;align-items:center;}
 button.chat-status{cursor:pointer;}
 button.chat-status:hover .chat-tick{filter:brightness(1.35);}
-button.chat-status:focus-visible{outline:2px solid var(--brand-accent);outline-offset:2px;border-radius:3px;}
+button.chat-status:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px;border-radius:3px;}
 /* The two ticks are drawn as two characters with the second pulled back over
    the first, which is what gives WhatsApp's overlapping pair without an icon
    font or an inline SVG on every message. */
@@ -418,7 +425,7 @@ button.chat-status:focus-visible{outline:2px solid var(--brand-accent);outline-o
 /* Blue, and deliberately not the brand red: this is the one mark in the
    application whose colour IS its meaning, and everybody already reads blue
    ticks as "they have seen it". A red pair would be read as an error. */
-.chat-tick.read{color:#3aa3ff;}
+.chat-tick.read{color:var(--read-tick);}
 /* Screen-reader text for the plain mark in a one-to-one, which has no button
    to carry an aria-label. */
 .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
@@ -434,7 +441,7 @@ button.chat-status:focus-visible{outline:2px solid var(--brand-accent);outline-o
 .ci-row{display:flex;align-items:center;gap:9px;padding:7px 14px;}
 .ci-who{font-size:12.5px;font-weight:600;}
 .ci-when{margin-left:auto;font-size:11px;text-align:right;}
-.ci-read{color:#3aa3ff;}
+.ci-read{color:var(--read-tick);}
 .ci-del{color:var(--ink-muted);}
 .ci-wait{color:var(--ink-faint);font-style:italic;}
 
@@ -449,7 +456,7 @@ button.chat-status:focus-visible{outline:2px solid var(--brand-accent);outline-o
 .ts-of{font-size:10.5px;color:var(--ink-faint);font-family:'IBM Plex Mono';margin-top:2px;}
 .ts-pop{position:fixed;z-index:70;min-width:250px;max-height:60vh;overflow-y:auto;padding:2px 0 4px;
   background:var(--surface-2);border:1px solid var(--border);border-radius:8px;
-  box-shadow:0 8px 24px rgba(0,0,0,.30);text-align:left;cursor:default;}
+  box-shadow:0 8px 24px var(--shadow-t30);text-align:left;cursor:default;}
 .rb-head{display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12px;
   border-bottom:1px solid var(--border);}
 .rb-head strong{font-weight:600;}
@@ -479,13 +486,13 @@ button.chat-status:focus-visible{outline:2px solid var(--brand-accent);outline-o
   /* Its own dark chip rather than a surface colour: it sits on top of somebody
      else's photograph, which may be any colour at all, so it carries its own
      contrast instead of hoping the picture provides it. */
-  background:rgba(18,18,26,.72);color:#fff;
+  background:var(--scrim-t72);color:var(--hairline);
   opacity:0;transition:opacity .12s ease, background .12s ease;}
 .chat-media:hover .chat-dl{opacity:1;}
-.chat-dl:hover{background:rgba(18,18,26,.92);}
+.chat-dl:hover{background:var(--scrim-t92);}
 /* Reachable without a mouse: the button shows whenever it is focused, so
    tabbing through a thread does not tab onto something invisible. */
-.chat-dl:focus-visible{opacity:1;outline:2px solid var(--brand-accent);outline-offset:1px;}
+.chat-dl:focus-visible{opacity:1;outline:2px solid var(--focus-ring);outline-offset:1px;}
 /* Where there is no hover there is no hover reveal. A phone would otherwise
    have a control it can never see. */
 @media (hover: none){ .chat-dl{opacity:1;} }
@@ -521,21 +528,21 @@ button.chat-status:focus-visible{outline:2px solid var(--brand-accent);outline-o
 /* A flat fallback first, then the mixed one for browsers that have
    color-mix — an unsupported declaration is dropped and the line above it
    stands, so nothing is left unhighlighted on an older browser. */
-.chat-mention{background:rgba(127,20,22,.26);color:var(--brand-accent);
+.chat-mention{background:var(--brand-t26);color:var(--brand-accent);
   border-radius:3px;font-weight:600;padding:0 1px;}
 .chat-mention{background:color-mix(in srgb, var(--brand-accent) 22%, transparent);}
 /* In a sent message it is text rather than a layer, so it carries its own
    colour. `me` is a mention OF THE READER — the one line in a busy group they
    most need to find. */
-.chat-bubble .chat-mention{background:rgba(127,20,22,.22);}
+.chat-bubble .chat-mention{background:var(--brand-t22);}
 .chat-bubble .chat-mention{background:color-mix(in srgb, var(--brand-accent) 18%, transparent);}
-.chat-bubble .chat-mention.me{background:rgba(127,20,22,.44);color:var(--ink);}
+.chat-bubble .chat-mention.me{background:var(--brand-t44);color:var(--ink);}
 .chat-bubble .chat-mention.me{background:color-mix(in srgb, var(--brand-accent) 38%, transparent);}
 /* The picker. Above the composer and over the thread, so opening it does not
    shove the conversation up the screen. */
 .chat-mentions{position:absolute;left:10px;right:10px;bottom:100%;margin-bottom:6px;z-index:6;
   background:var(--surface-2);border:1px solid var(--border);border-radius:10px;
-  box-shadow:0 10px 26px rgba(0,0,0,.42);overflow:hidden;max-height:210px;overflow-y:auto;}
+  box-shadow:0 10px 26px var(--shadow-t42);overflow:hidden;max-height:210px;overflow-y:auto;}
 .chat-mention-row{display:flex;align-items:center;gap:8px;width:100%;text-align:left;
   background:none;border:0;cursor:pointer;padding:6px 10px;font:inherit;color:var(--ink);}
 .chat-mention-row .who{font-size:12.5px;font-weight:600;}
@@ -586,7 +593,7 @@ button.chat-status:focus-visible{outline:2px solid var(--brand-accent);outline-o
 .chat-person .body{flex:1;min-width:0;}
 .chat-person .nm{font-size:12.5px;}
 .chat-person .rl{font-size:10.5px;color:var(--ink-faint);}
-.chat-person input[type=checkbox]{accent-color:var(--brand-accent);}
+.chat-person input[type=checkbox]{accent-color:var(--form-accent);}
 /* The row's own actions — Remove, Add — sized to the row rather than to the
    body text they inherit from, which left them looming over the name. */
 .chat-person .u-link{font-size:11.5px;font-weight:500;white-space:nowrap;}
@@ -601,8 +608,8 @@ button.chat-status:focus-visible{outline:2px solid var(--brand-accent);outline-o
 /* A stage that was skipped rather than failed. Amber, not red: going straight
    to the client is a decision somebody with the permission was entitled to
    make, not a fault — the column exists so it can be counted, not accused. */
-.rep-skip{font-size:10.5px;padding:1px 7px;border-radius:20px;background:rgba(242,179,61,.16);
-  color:#f2b33d;font-family:'IBM Plex Mono';letter-spacing:.2px;}
+.rep-skip{font-size:10.5px;padding:1px 7px;border-radius:20px;background:var(--prog-t16);
+  color:var(--prog);font-family:'IBM Plex Mono';letter-spacing:.2px;}
 
 /* Where the meaning of the recorded hours changes. Not an error state, so not
    red: a plain aside above the numbers it qualifies. */
@@ -632,11 +639,11 @@ tr.past-round{opacity:0.62;}
 .gf-round.gf-open{background:var(--surface-3);}
 .gf-src{font-size:10px;font-family:'IBM Plex Mono';padding:1px 6px;border-radius:20px;margin-right:4px;}
 .gf-meta{font-size:11px;color:var(--ink-muted);font-family:'IBM Plex Mono';margin-top:3px;}
-.modal-wrap{position:fixed;inset:0;background:rgba(10,11,14,.65);display:none;align-items:center;justify-content:center;z-index:50;padding:20px;} .modal-wrap.show{display:flex;}
+.modal-wrap{position:fixed;inset:0;background:var(--overlay-t65);display:none;align-items:center;justify-content:center;z-index:50;padding:20px;} .modal-wrap.show{display:flex;}
 .modal{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:22px;width:440px;max-width:100%;max-height:90vh;overflow-y:auto;}
 .modal h2{font-family:'Space Grotesk';margin:0 0 14px;font-size:18px;}
 .modal label{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--ink-muted);font-family:'IBM Plex Mono';margin:12px 0 6px;}
-.modal input,.modal select,.modal textarea{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--ink);padding:9px 10px;border-radius:8px;font-family:'Inter';font-size:13px;}
+.modal input,.modal select,.modal textarea{width:100%;background:var(--input-bg);border:1px solid var(--input-border);color:var(--ink);padding:9px 10px;border-radius:8px;font-family:'Inter';font-size:13px;}
 /* ...except the ones you don't type into. The rule above dresses every input in
    a modal as a text field: full width, padding, a border, a background. On a
    checkbox that is wrong twice over — it stops looking like a checkbox, and at
@@ -668,10 +675,10 @@ tr.past-round{opacity:0.62;}
 .os-head h2{font-family:'Space Grotesk';font-size:19px;margin:0 0 4px;}
 .os-note{font-size:11.5px;color:var(--ink-faint);max-width:760px;line-height:1.5;}
 .os-subtabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:14px;}
-.os-subtab{background:none;border:0;border-bottom:2px solid transparent;color:var(--ink-faint);
+.os-subtab{background:var(--subtab-bg);border:0;border-bottom:2px solid transparent;color:var(--subtab-ink);
   font-size:12.5px;padding:7px 12px;cursor:pointer;display:flex;align-items:center;gap:6px;}
-.os-subtab:hover{color:var(--ink);}
-.os-subtab.active{color:var(--brand-accent);border-bottom-color:var(--brand-accent);font-weight:600;}
+.os-subtab:hover{color:var(--subtab-hover-ink);}
+.os-subtab.active{color:var(--subtab-indicator);border-bottom-color:var(--subtab-indicator);font-weight:600;}
 .os-count{font-size:10px;border:1px solid var(--border);border-radius:999px;padding:0 6px;line-height:15px;}
 .os-bar{margin-bottom:10px;}
 .os-table{width:100%;border-collapse:collapse;font-size:12.5px;}
@@ -682,14 +689,14 @@ tr.past-round{opacity:0.62;}
 .os-table th.num,.os-table td.num{text-align:right;white-space:nowrap;}
 .os-table tr.os-off{opacity:.55;}
 .os-sub{font-size:10.5px;color:var(--ink-faint);margin-top:2px;}
-.card-fl{align-items:center;color:#8fd3b0;display:flex;font-size:10px;gap:4px;
+.card-fl{align-items:center;color:var(--outsourced-ink);display:flex;font-size:10px;gap:4px;
   margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.card-fl-dot{background:#2e7d5b;border-radius:50%;flex:0 0 auto;height:5px;width:5px;}
+.card-fl-dot{background:var(--outsourced);border-radius:50%;flex:0 0 auto;height:5px;width:5px;}
 .os-stagebar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;}
 .os-stagechip{background:var(--surface-2);border:1px solid var(--border);border-radius:999px;
   color:var(--ink-muted);cursor:pointer;font-size:11.5px;padding:4px 11px;}
 .os-stagechip:hover:not(:disabled){color:var(--ink);}
-.os-stagechip.active{background:var(--brand-accent);border-color:var(--brand-accent);color:#fff;font-weight:600;}
+.os-stagechip.active{background:var(--brand-accent);border-color:var(--brand-accent);color:var(--hairline);font-weight:600;}
 .os-stagechip:disabled{cursor:default;opacity:.45;}
 .os-stagen{opacity:.7;font-variant-numeric:tabular-nums;}
 .os-grouphead td{background:var(--surface-2);color:var(--ink-muted);font-size:10.5px;
@@ -722,7 +729,7 @@ tr.past-round{opacity:0.62;}
    screen and a table cell will not. The row is the unit throughout: its
    errors sit under it, and its Save touches nothing else. */
 .rh-badge{font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;font-weight:700;
-  padding:2px 7px;border-radius:999px;background:var(--brand-soft,rgba(127,20,22,.1));
+  padding:2px 7px;border-radius:999px;background:var(--brand-t10);
   color:var(--brand-accent);border:1px solid var(--border);white-space:nowrap;}
 .rh-list{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:14px;
   background:var(--surface);}
@@ -743,17 +750,17 @@ tr.past-round{opacity:0.62;}
 .rh-day input{position:absolute;opacity:0;width:0;height:0;}
 .rh-day span{display:inline-block;font-size:10.5px;padding:4px 6px;border:1px solid var(--border);
   border-radius:5px;color:var(--ink-faint);user-select:none;min-width:30px;text-align:center;}
-.rh-day input:checked + span{background:var(--brand-accent);border-color:var(--brand-accent);color:#fff;}
-.rh-day input:focus-visible + span{outline:2px solid var(--brand-accent);outline-offset:2px;}
+.rh-day input:checked + span{background:var(--brand-accent);border-color:var(--brand-accent);color:var(--hairline);}
+.rh-day input:focus-visible + span{outline:2px solid var(--focus-ring);outline-offset:2px;}
 .rh-toggles{gap:4px;}
 .rh-check{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ink-muted);cursor:pointer;white-space:nowrap;}
 .rh-check input{width:auto;margin:0;padding:0;background:none;border:0;flex:none;}
 .rh-act{flex-direction:row;align-items:center;gap:6px;}
 /* The one thing a validation error changes about a field, so a row reads as
    wrong at a glance without the message having to be found first. */
-.rh-bad,input.rh-bad{border-color:#d9534f !important;}
+.rh-bad,input.rh-bad{border-color:var(--error-strong) !important;}
 .rh-errs{margin-top:7px;display:flex;flex-direction:column;gap:3px;}
-.rh-err{font-size:11px;color:#d9534f;}
+.rh-err{font-size:11px;color:var(--error-strong);}
 .rh-meta{margin-top:6px;font-size:10px;color:var(--ink-faint);}
 .rh-empty{font-size:11.5px;color:var(--ink-faint);padding:6px 0 10px;}
 /* --- Holidays: the days the clock does not run -----------------------------
@@ -763,7 +770,7 @@ tr.past-round{opacity:0.62;}
    and every holiday for a designation that may look and not change.
 
    DELIBERATELY NOT the brand colour. The studio's workflow colours are kept
-   distinct from #7f1416, and a closed day is a state rather than an action. */
+   distinct from var(--brand), and a closed day is a state rather than an action. */
 .hol-read{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;}
 .hol-date{font-family:'Space Grotesk';font-size:12.5px;font-variant-numeric:tabular-nums;}
 .hol-name{font-size:12.5px;font-weight:600;}
@@ -794,7 +801,7 @@ tr.past-round{opacity:0.62;}
 .mis-actions{display:flex;align-items:center;gap:8px;padding:2px 12px 11px;}
 .mis-by{font-size:10.5px;color:var(--ink-faint);}
 @media (max-width:640px){ .mis-pick{grid-template-columns:1fr;} }
-.rh-warn{border:1px solid #e0a800;background:rgba(224,168,0,.08);border-radius:8px;
+.rh-warn{border:1px solid var(--warning-strong);background:var(--warning-strong-t08);border-radius:8px;
   padding:8px 10px;margin-bottom:12px;font-size:11.5px;color:var(--ink);}
 .rh-warn > div{margin-bottom:2px;}
 .rh-warn-note{color:var(--ink-faint);font-size:10.5px;margin-top:4px;}
@@ -808,7 +815,7 @@ tr.past-round{opacity:0.62;}
   background:var(--surface);}
 .ref-section.acc > .ref-head{cursor:pointer;margin-bottom:0;user-select:none;align-items:center;}
 .ref-section.acc > .ref-head:hover h3{color:var(--brand-accent);}
-.ref-section.acc > .ref-head:focus-visible{outline:2px solid var(--brand-accent);outline-offset:3px;border-radius:6px;}
+.ref-section.acc > .ref-head:focus-visible{outline:2px solid var(--focus-ring);outline-offset:3px;border-radius:6px;}
 /* Everything but the heading is hidden while closed. The sections all have the
    same shape — a .ref-head first, then their content as siblings — so this one
    rule collapses all fifteen without any of them knowing about it. */
@@ -824,7 +831,7 @@ tr.past-round{opacity:0.62;}
 .ref-table th{text-align:left;padding:7px 10px;font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink-muted);font-family:'IBM Plex Mono';border-bottom:1px solid var(--border);}
 .ref-table td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:middle;}
 .ref-table tr.inactive td{opacity:.45;}
-.ref-swatch{width:13px;height:13px;border-radius:4px;display:inline-block;vertical-align:-2px;margin-right:8px;border:1px solid rgba(255,255,255,.14);}
+.ref-swatch{width:13px;height:13px;border-radius:4px;display:inline-block;vertical-align:-2px;margin-right:8px;border:1px solid var(--hairline-t14);}
 .ref-key{font-family:'IBM Plex Mono';font-size:11px;color:var(--ink-faint);}
 .ref-pill{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;padding:2px 7px;border-radius:20px;font-family:'IBM Plex Mono';background:var(--surface-3);color:var(--ink-muted);}
 .ref-actions{text-align:right;white-space:nowrap;}
@@ -865,15 +872,15 @@ tr.past-round{opacity:0.62;}
    row — squeezed in beside the button it took a third of a narrow drawer and
    wrapped "Accept and Start" over three lines. */
 .worklog-box{flex-wrap:wrap;}
-.start-blocked{flex-basis:100%;font-size:11.5px;line-height:1.5;color:#e8a33d;
-  background:#e8a33d14;border:1px solid #e8a33d33;border-radius:8px;padding:8px 10px;margin-top:4px;}
+.start-blocked{flex-basis:100%;font-size:11.5px;line-height:1.5;color:var(--at-risk);
+  background:var(--at-risk-t14);border:1px solid var(--at-risk-t33);border-radius:8px;padding:8px 10px;margin-top:4px;}
 .start-blocked strong{font-family:'IBM Plex Mono';font-size:11px;}
 /* And the button keeps its shape rather than collapsing to fit. */
 .worklog-box #d_startBtn{white-space:nowrap;}
 /* --- Activity Log ---------------------------------------------------------- */
 /* Chat Activity. Its own colours for the two things the Activity Log has no
    equivalent of: the words somebody typed, and a file that has since gone. */
-.ca-warn{border:1px solid #f2b33d55;background:#f2b33d14;border-radius:9px;padding:10px 12px;
+.ca-warn{border:1px solid var(--prog-t55);background:var(--prog-t14);border-radius:9px;padding:10px 12px;
   margin:10px 0 14px;font-size:11.5px;line-height:1.6;color:var(--ink-muted);}
 .ca-warn strong{color:var(--ink);}
 .ca-body{white-space:pre-wrap;word-break:break-word;color:var(--ink);line-height:1.5;}
@@ -892,7 +899,7 @@ tr.past-round{opacity:0.62;}
 .al-table{width:100%;border-collapse:collapse;font-size:12px;}
 .al-table th{text-align:left;font-size:10px;letter-spacing:.06em;text-transform:uppercase;
   color:var(--ink-faint);font-weight:600;padding:6px 8px;border-bottom:1px solid var(--line);}
-.al-table td{padding:8px;border-bottom:1px solid var(--line-soft,rgba(255,255,255,.05));vertical-align:top;}
+.al-table td{padding:8px;border-bottom:1px solid var(--hairline-t05);vertical-align:top;}
 .al-when{font-family:'IBM Plex Mono';font-size:11px;color:var(--ink-muted);white-space:nowrap;}
 .al-name{font-weight:600;}
 .al-role{font-size:10.5px;color:var(--ink-faint);}
@@ -904,8 +911,8 @@ tr.past-round{opacity:0.62;}
 .al-entity{font-size:11px;color:var(--ink-faint);margin-top:2px;}
 .al-changes{font-family:'IBM Plex Mono';font-size:10.5px;color:var(--ink-muted);max-width:280px;}
 .al-field{color:var(--ink-faint);}
-.al-from{color:#e8402c;}
-.al-to{color:var(--approved,#3fa66a);}
+.al-from{color:var(--danger-ink);}
+.al-to{color:var(--approved);}
 .al-pager{display:flex;align-items:center;gap:8px;padding-top:10px;font-size:11.5px;color:var(--ink-faint);}
 .al-pager .spacer{flex:1;}
 /* --- Quick Tour -------------------------------------------------------------
@@ -914,14 +921,14 @@ tr.past-round{opacity:0.62;}
    hole in it: a hole needs either an SVG mask or box-shadow tricks that stop
    working the moment the target is near an edge, and four rectangles are
    exactly as dark and never wrong. */
-.tour-veil{position:fixed;background:rgba(8,9,12,.72);z-index:9000;
+.tour-veil{position:fixed;background:var(--overlay-tour-t72);z-index:9000;
   transition:all .18s ease;}
 .tour-ring{position:fixed;z-index:9001;border-radius:8px;pointer-events:none;
-  box-shadow:0 0 0 2px var(--brand), 0 0 0 6px rgba(127,20,22,.28);
+  box-shadow:0 0 0 2px var(--brand), 0 0 0 6px var(--brand-t28);
   transition:all .18s ease;}
 .tour-pop{position:fixed;z-index:9002;width:330px;max-width:calc(100vw - 24px);
   background:var(--surface-2);border:1px solid var(--line);border-radius:12px;
-  padding:15px 16px 13px;box-shadow:0 18px 48px rgba(0,0,0,.55);
+  padding:15px 16px 13px;box-shadow:0 18px 48px var(--shadow-t55);
   transition:top .18s ease,left .18s ease;}
 .tour-pop h4{margin:0 0 6px;font-size:14px;color:var(--ink);}
 .tour-pop p{margin:0 0 12px;font-size:12.5px;line-height:1.55;color:var(--ink-muted);}
@@ -945,16 +952,16 @@ tr.past-round{opacity:0.62;}
    screen where a careless change locks someone out. */
 .ip-banner{font-size:12px;line-height:1.5;padding:11px 14px;border-radius:10px;margin-bottom:14px;border:1px solid transparent;}
 .ip-banner strong{font-family:'IBM Plex Mono';}
-.ip-banner.open{background:rgba(255,176,32,.10);border-color:rgba(255,176,32,.32);color:#ffcc70;}
-.ip-banner.live{background:rgba(64,200,140,.10);border-color:rgba(64,200,140,.30);color:#7fdcb0;}
-.ip-banner.monitor{background:rgba(77,184,255,.10);border-color:rgba(77,184,255,.30);color:#8ecdff;}
+.ip-banner.open{background:var(--warning-wash-t10);border-color:var(--warning-wash-t32);color:var(--warning-ink);}
+.ip-banner.live{background:var(--success-wash-t10);border-color:var(--success-wash-t30);color:var(--success-ink);}
+.ip-banner.monitor{background:var(--info-t10);border-color:var(--info-t30);color:var(--info-ink);}
 /* The storage-fault banner. Louder than the rest on purpose: it means the app
    is not restricting access while looking as though it is. */
-.ip-banner.fault{background:rgba(255,90,54,.12);border-color:rgba(255,90,54,.45);color:#ff9b80;}
+.ip-banner.fault{background:var(--overdue-t12);border-color:var(--overdue-t45);color:var(--error-ink);}
 /* The blocklist's own tone. Deliberately not the brand colour and not the
    allowlist's green: a bar here means somebody is being refused, and it has
    to read as that at a glance from across the same screen. */
-.ip-banner.blocked{background:rgba(255,90,54,.09);border-color:rgba(255,90,54,.30);color:#ff9b80;}
+.ip-banner.blocked{background:var(--overdue-t09);border-color:var(--overdue-t30);color:var(--error-ink);}
 .ip-expiry{font-size:10.5px;font-family:'IBM Plex Mono';color:var(--ink-muted);}
 /* ---- the Admin Dashboard ------------------------------------------------
    Built from the same tokens as everything else: --surface for a panel,
@@ -1043,7 +1050,7 @@ tr.past-round{opacity:0.62;}
    (.cap-period in this very panel, the chat buttons, the Settings headings). A
    chip that can be tabbed to and gives no sign of it is a control only a mouse
    can find. */
-.ad-chip:focus-visible{outline:2px solid var(--brand-accent);outline-offset:2px;border-color:var(--brand-accent);color:var(--ink);}
+.ad-chip:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px;border-color:var(--brand-accent);color:var(--ink);}
 /* The same chip, for a project this page cannot open — a <span>, so it is not
    in the tab order and nothing about it invites a click. */
 .ad-chip-plain{cursor:default;opacity:.72;}
@@ -1052,7 +1059,7 @@ tr.past-round{opacity:0.62;}
 .ad-chip-more{font-size:11px;color:var(--ink-faint);align-self:center;background:none;border:0;
   padding:3px 4px;cursor:pointer;font-family:'Inter',sans-serif;text-decoration:underline dotted;}
 .ad-chip-more:hover{color:var(--ink);}
-.ad-chip-more:focus-visible{outline:2px solid var(--brand-accent);outline-offset:2px;border-radius:4px;}
+.ad-chip-more:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px;border-radius:4px;}
 .ad-note{font-size:10.5px;color:var(--ink-faint);margin-top:12px;line-height:1.5;}
 /* Team Capacity. Borrows the panel chrome above; the only new pieces are the
    period switch, the three figures and the utilisation bar. */
@@ -1060,9 +1067,9 @@ tr.past-round{opacity:0.62;}
   border-radius:9px;padding:3px;margin-bottom:9px;}
 .cap-period{flex:1;background:none;border:0;color:var(--ink-muted);font-family:'Inter',sans-serif;
   font-size:11.5px;padding:5px 6px;border-radius:6px;cursor:pointer;}
-.cap-period:hover{color:var(--ink);}
-.cap-period.is-on{background:var(--surface-3);color:var(--ink);}
-.cap-period:focus-visible{outline:2px solid var(--brand-accent);outline-offset:1px;}
+.cap-period:hover{color:var(--subtab-hover-ink);}
+.cap-period.is-on{background:var(--subtab-active-bg);color:var(--subtab-active-ink);}
+.cap-period:focus-visible{outline:2px solid var(--focus-ring);outline-offset:1px;}
 .cap-range{font-size:10.5px;color:var(--ink-faint);font-family:'IBM Plex Mono';margin-bottom:13px;}
 .cap-figures{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px;}
 .cap-fig-label{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--ink-muted);
@@ -1095,13 +1102,13 @@ tr.past-round{opacity:0.62;}
   border-radius:9px;padding:3px;}
 .fu-preset{background:none;border:0;color:var(--ink-muted);font-family:'Inter',sans-serif;
   font-size:11.5px;padding:5px 10px;border-radius:6px;cursor:pointer;}
-.fu-preset:hover{color:var(--ink);}
-.fu-preset.is-on{background:var(--surface-3);color:var(--ink);}
-.fu-preset:focus-visible{outline:2px solid var(--brand-accent);outline-offset:1px;}
+.fu-preset:hover{color:var(--subtab-hover-ink);}
+.fu-preset.is-on{background:var(--subtab-active-bg);color:var(--subtab-active-ink);}
+.fu-preset:focus-visible{outline:2px solid var(--focus-ring);outline-offset:1px;}
 .fu-dates{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-muted);}
-.fu-dates input[type=date]{background:var(--surface-2);border:1px solid var(--border);color:var(--ink);
+.fu-dates input[type=date]{background:var(--input-bg);border:1px solid var(--input-border);color:var(--ink);
   font-family:'IBM Plex Mono';font-size:11.5px;padding:4px 7px;border-radius:7px;}
-.fu-dates input[type=date]:focus-visible{outline:2px solid var(--brand-accent);outline-offset:1px;}
+.fu-dates input[type=date]:focus-visible{outline:2px solid var(--focus-ring);outline-offset:1px;}
 .fu-lists{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:12px;}
 .fu-list{min-width:0;}
 .fu-list-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
@@ -1117,7 +1124,7 @@ tr.past-round{opacity:0.62;}
 .fu-name{background:none;border:0;padding:0;text-align:left;font-family:'Inter',sans-serif;
   font-size:12.5px;color:var(--ink);cursor:pointer;}
 .fu-name:hover{color:var(--brand-accent);text-decoration:underline;}
-.fu-name:focus-visible{outline:2px solid var(--brand-accent);outline-offset:2px;border-radius:4px;}
+.fu-name:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px;border-radius:4px;}
 .fu-name-plain{font-size:12.5px;color:var(--ink);}
 .fu-role{font-size:10.5px;color:var(--ink-faint);margin-top:1px;}
 .fu-held{font-size:10.5px;color:var(--ink-muted);font-family:'IBM Plex Mono';flex:none;white-space:nowrap;}
@@ -1128,7 +1135,7 @@ tr.past-round{opacity:0.62;}
 .fu-more{font-size:11px;color:var(--ink-faint);background:none;border:0;padding:8px 0 0;cursor:pointer;
   font-family:'Inter',sans-serif;text-decoration:underline dotted;}
 .fu-more:hover{color:var(--ink);}
-.fu-more:focus-visible{outline:2px solid var(--brand-accent);outline-offset:2px;border-radius:4px;}
+.fu-more:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px;border-radius:4px;}
 .fu-overlap{font-size:11.5px;color:var(--ink-muted);margin-top:11px;}
 .fu-overlap strong{color:var(--brand-accent);font-family:'IBM Plex Mono';}
 .fu-err{font-size:11.5px;color:var(--brand-accent);margin-top:10px;line-height:1.5;}
@@ -1170,22 +1177,22 @@ tr.past-round{opacity:0.62;}
 .em-hint{font-size:10.5px;color:var(--ink-faint);margin-top:4px;max-width:210px;line-height:1.45;}
 .em-result{font-size:12px;line-height:1.5;padding:10px 13px;border-radius:9px;margin-top:12px;}
 .em-result.pending{background:var(--surface-2);border:1px solid var(--border);color:var(--ink-muted);}
-.em-result.ok{background:rgba(64,200,140,.10);border:1px solid rgba(64,200,140,.30);color:#7fdcb0;}
-.em-result.bad{background:rgba(255,90,54,.10);border:1px solid rgba(255,90,54,.32);color:#ff9b80;}
+.em-result.ok{background:var(--success-wash-t10);border:1px solid var(--success-wash-t30);color:var(--success-ink);}
+.em-result.bad{background:var(--overdue-t10);border:1px solid var(--overdue-t32);color:var(--error-ink);}
 .em-result div{margin-top:5px;}
 .ip-expiry.past{color:var(--ink-faint);}
-.ip-yours{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;padding:2px 7px;border-radius:20px;font-family:'IBM Plex Mono';background:rgba(255,90,54,.16);color:#ff9b80;margin-left:8px;}
+.ip-yours{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;padding:2px 7px;border-radius:20px;font-family:'IBM Plex Mono';background:var(--overdue-t16);color:var(--error-ink);margin-left:8px;}
 /* The rollout panel: who the gate has seen, and who enforcing would turn away. */
 .ip-obs{margin-top:16px;padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);}
 .ip-obs h4{margin:0 0 3px;font-family:'Space Grotesk';font-size:13px;}
 .ip-obs .ref-note{margin-bottom:10px;}
 .ip-obs .verdict{font-size:12px;line-height:1.5;padding:9px 12px;border-radius:8px;margin-bottom:12px;}
-.ip-obs .verdict.ready{background:rgba(64,200,140,.10);border:1px solid rgba(64,200,140,.30);color:#7fdcb0;}
-.ip-obs .verdict.wait{background:rgba(255,176,32,.10);border:1px solid rgba(255,176,32,.32);color:#ffcc70;}
+.ip-obs .verdict.ready{background:var(--success-wash-t10);border:1px solid var(--success-wash-t30);color:var(--success-ink);}
+.ip-obs .verdict.wait{background:var(--warning-wash-t10);border:1px solid var(--warning-wash-t32);color:var(--warning-ink);}
 .ip-obs-scope{font-size:10.5px;color:var(--ink-faint);margin-top:10px;line-height:1.5;}
 .ip-add-seen{white-space:nowrap;}
 /* ---- Profit & Loss ------------------------------------------------------
-   Deliberately NOT reusing the brand red for a figure. #7f1416 is the studio's
+   Deliberately NOT reusing the brand red for a figure. var(--brand) is the studio's
    own colour and appears on buttons and the header; a number painted in it
    would read as branding rather than as a loss. Profit and loss get green and
    the workflow's own red-orange, which are already what "good" and "wrong"
@@ -1193,7 +1200,7 @@ tr.past-round{opacity:0.62;}
 .pnl-head{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap;margin-bottom:14px;}
 .pnl-title{margin:0 0 4px;font-family:'Space Grotesk';font-size:20px;}
 .pnl-sub{font-size:12px;color:var(--ink-muted);line-height:1.55;max-width:720px;}
-.pnl-ro{font-size:11.5px;color:#ffcc70;background:rgba(255,176,32,.10);border:1px solid rgba(255,176,32,.30);
+.pnl-ro{font-size:11.5px;color:var(--warning-ink);background:var(--warning-wash-t10);border:1px solid var(--warning-wash-t30);
   border-radius:8px;padding:8px 12px;line-height:1.45;max-width:300px;}
 .pnl-filters{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:18px;padding:12px 14px;
   background:var(--surface-2);border-radius:10px;}
@@ -1213,7 +1220,7 @@ tr.past-round{opacity:0.62;}
 .pnl-card .ad-card-value{font-size:26px;}
 /* A negative figure is coloured, a positive one is not. Colouring both would
    make the page a traffic light and stop the losses standing out. */
-.pnl-card .ad-card-value.neg,.pnl-table td.num.neg,.pnl-bar-foot.neg,.pnl-detail-figs b.neg{color:#ff9b80;}
+.pnl-card .ad-card-value.neg,.pnl-table td.num.neg,.pnl-bar-foot.neg,.pnl-detail-figs b.neg{color:var(--error-ink);}
 .pnl-nil{color:var(--ink-faint);}
 .pnl-panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:18px;}
 .pnl-panel h3{margin:0 0 4px;font-family:'Space Grotesk';font-size:14px;}
@@ -1235,7 +1242,7 @@ tr.past-round{opacity:0.62;}
 .pnl-projects tbody tr.open{background:var(--surface-2);}
 .pnl-code{font-family:'IBM Plex Mono';font-size:10.5px;color:var(--ink-faint);}
 .pnl-off{margin-left:8px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;font-family:'IBM Plex Mono';
-  color:#ffcc70;background:rgba(255,176,32,.12);border:1px solid rgba(255,176,32,.28);border-radius:5px;padding:1px 6px;}
+  color:var(--warning-ink);background:var(--warning-wash-t12);border:1px solid var(--warning-wash-t28);border-radius:5px;padding:1px 6px;}
 .pnl-empty,.pnl-empty-cell{font-size:12px;color:var(--ink-faint);line-height:1.55;padding:10px 0;}
 .pnl-empty-cell{text-align:center;font-style:italic;}
 /* Revenue vs cost: one shared scale, set by the larger of the two. */
@@ -1251,12 +1258,12 @@ tr.past-round{opacity:0.62;}
 .pnl-trend{display:flex;gap:8px;align-items:flex-end;overflow-x:auto;padding-top:6px;}
 .pnl-trend-col{flex:1 0 54px;text-align:center;}
 .pnl-trend-val{font-size:11px;font-family:'IBM Plex Mono';margin-bottom:5px;}
-.pnl-trend-val.neg{color:#ff9b80;}
+.pnl-trend-val.neg{color:var(--error-ink);}
 .pnl-trend-val.nil{color:var(--ink-faint);}
 .pnl-trend-bar-wrap{height:110px;display:flex;align-items:flex-end;justify-content:center;
   background:var(--surface-2);border-radius:5px;}
 .pnl-trend-bar{width:60%;border-radius:5px 5px 0 0;background:var(--approved);min-height:2px;}
-.pnl-trend-bar.neg{background:#ff5a36;}
+.pnl-trend-bar.neg{background:var(--overdue);}
 .pnl-trend-bar.nil{background:var(--border);}
 .pnl-trend-month{font-size:10px;color:var(--ink-faint);margin-top:6px;font-family:'IBM Plex Mono';}
 /* The two P&L tabs, and the budget dimension the Fixed one adds. */
@@ -1267,8 +1274,8 @@ tr.past-round{opacity:0.62;}
 .pnl-costcur{font-size:15px;color:var(--ink-muted);}
 .pnl-costrow input{width:180px;margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
 .pnl-costlive{font-size:12px;color:var(--ink-muted);}
-.pnl-unpriced{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:#e0a458;
-  border:1px solid #e0a458;border-radius:3px;padding:0 4px;margin-left:6px;}
+.pnl-unpriced{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--at-risk-ink);
+  border:1px solid var(--at-risk-ink);border-radius:3px;padding:0 4px;margin-left:6px;}
 .rr-table input{width:120px;margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
 .rr-unpriced td{opacity:.62;}
 .rr-actions{display:flex;gap:6px;}
@@ -1279,14 +1286,14 @@ tr.past-round{opacity:0.62;}
 .link-ref-kind{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-faint);
   border:1px solid var(--border);border-radius:3px;padding:1px 5px;white-space:nowrap;}
 .link-ref-path{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;
-  word-break:break-all;color:var(--ink);background:var(--surface-sunk,rgba(127,127,127,.10));
+  word-break:break-all;color:var(--ink);background:var(--surface-sunk,var(--surface-sunk-t10));
   border-radius:3px;padding:1px 5px;}
 .link-copy{font-size:11px;padding:2px 8px;border:1px solid var(--border);border-radius:3px;
   background:transparent;color:var(--ink-muted);cursor:pointer;white-space:nowrap;}
 .link-copy:hover{color:var(--ink);border-color:var(--ink-faint);}
 /* Settings -> Mobile Apps. */
-.md-warn{border:1px solid #ff5a36;border-radius:4px;padding:10px 12px;margin-bottom:12px;
-  font-size:12.5px;line-height:1.5;color:var(--ink);background:rgba(255,90,54,.08);}
+.md-warn{border:1px solid var(--overdue);border-radius:4px;padding:10px 12px;margin-bottom:12px;
+  font-size:12.5px;line-height:1.5;color:var(--ink);background:var(--overdue-t08);}
 .md-warn div + div{margin-top:8px;}
 .md-link{border:1px solid var(--border);border-radius:4px;padding:12px;}
 .md-link label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;
@@ -1300,16 +1307,16 @@ tr.past-round{opacity:0.62;}
 .md-missing td{color:var(--ink-muted);font-style:italic;}
 .pnl-cards-6{grid-template-columns:repeat(6,1fr);}
 .pnl-bud{border-top-color:var(--review);}
-.pnl-over{border-top-color:#ff5a36;}
+.pnl-over{border-top-color:var(--overdue);}
 .pnl-under{border-top-color:var(--approved);}
 .pnl-bar.bud{background:var(--review);}
-.pnl-bar.over{background:#ff5a36;}
+.pnl-bar.over{background:var(--overdue);}
 .pnl-bar-aside{font-weight:400;font-size:11px;color:var(--ink-faint);margin-left:8px;}
-/* Deliberately not the brand red: a status flag painted in #7f1416 reads as
+/* Deliberately not the brand red: a status flag painted in var(--brand) reads as
    branding rather than as a warning. */
 .pnl-over-flag{margin-left:8px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;
-  font-family:'IBM Plex Mono';color:#ff9b80;background:rgba(255,90,54,.12);
-  border:1px solid rgba(255,90,54,.32);border-radius:5px;padding:1px 6px;white-space:nowrap;}
+  font-family:'IBM Plex Mono';color:var(--error-ink);background:var(--overdue-t12);
+  border:1px solid var(--overdue-t32);border-radius:5px;padding:1px 6px;white-space:nowrap;}
 @media (max-width:1500px){ .pnl-cards-6{grid-template-columns:repeat(3,1fr);} }
 @media (max-width:900px){ .pnl-cards-6{grid-template-columns:repeat(2,1fr);} }
 @media (max-width:620px){ .pnl-cards-6{grid-template-columns:1fr;} }
@@ -1336,15 +1343,15 @@ tr.past-round{opacity:0.62;}
 .u-status{background:var(--surface-2);border:0;border-right:1px solid var(--border);color:var(--ink-muted);
   padding:8px 12px;font-size:12px;cursor:pointer;font-family:inherit;}
 .u-status:last-child{border-right:0;}
-.u-status.on{background:var(--brand);color:#fff;}
+.u-status.on{background:var(--brand);color:var(--hairline);}
 .u-status-n{opacity:.65;font-family:'IBM Plex Mono';font-size:10.5px;margin-left:3px;}
 /* Dimmed, not hidden: the row is still readable, because somebody looking at
    the inactive list is looking for a person, not for an absence. */
 .u-inactive td{opacity:.6;}
 .u-inactive td .u-badge-inactive{opacity:1;}
 .u-badge-inactive{margin-left:8px;font-size:10px;text-transform:uppercase;letter-spacing:.6px;
-  font-family:'IBM Plex Mono';color:#ff9b80;background:rgba(255,90,54,.12);
-  border:1px solid rgba(255,90,54,.32);border-radius:5px;padding:2px 6px;white-space:nowrap;}
+  font-family:'IBM Plex Mono';color:var(--error-ink);background:var(--overdue-t12);
+  border:1px solid var(--overdue-t32);border-radius:5px;padding:2px 6px;white-space:nowrap;}
 .dz-chip{display:inline-block;background:var(--surface-3,var(--surface-2));border:1px solid var(--border);
   border-radius:6px;padding:2px 8px;margin:0 5px 5px 0;font-size:11.5px;color:var(--ink);}
 .dz-block{margin:12px 0;border:1px solid var(--border);border-radius:10px;padding:11px 13px;background:var(--surface-2);}
@@ -1365,7 +1372,7 @@ tr.past-round{opacity:0.62;}
 /* An unpriced row says so. A 0 that reads as a price is the one mistake on
    this screen that quietly inflates every margin computed from it. */
 .rc-flag{margin-left:9px;font-size:10px;text-transform:uppercase;letter-spacing:.6px;font-family:'IBM Plex Mono';
-  color:#ffcc70;background:rgba(255,176,32,.12);border:1px solid rgba(255,176,32,.30);border-radius:5px;padding:2px 6px;}
+  color:var(--warning-ink);background:var(--warning-wash-t12);border:1px solid var(--warning-wash-t30);border-radius:5px;padding:2px 6px;}
 .rc-actions{white-space:nowrap;text-align:right;}
 .rc-actions .btn{margin-left:6px;}
 .rc-empty{color:var(--ink-faint);font-style:italic;}
@@ -1383,44 +1390,44 @@ tr.past-round{opacity:0.62;}
 .pm-row.inherited label{text-decoration:underline dotted var(--ink-faint);text-underline-offset:3px;}
 /* Granted to this person alone: marked on the row itself, so a screen full of
    ticks reads as "role" against "individual" without inspecting each one. */
-.pm-row.own{background:rgba(64,200,140,.07);border-left:2px solid rgba(64,200,140,.45);
+.pm-row.own{background:var(--success-wash-t07);border-left:2px solid var(--success-wash-t45);
   margin-left:-8px;padding-left:8px;border-radius:0 4px 4px 0;}
 .pm-legend{display:flex;flex-wrap:wrap;gap:16px;font-size:11.5px;color:var(--ink-muted);
   margin-bottom:12px;line-height:1.5;}
 .pm-legend b{color:var(--ink);}
 .pm-swatch{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;}
-.pm-swatch.role{background:rgba(77,184,255,.5);}
-.pm-swatch.own{background:rgba(64,200,140,.7);}
+.pm-swatch.role{background:var(--info-t50);}
+.pm-swatch.own{background:var(--success-wash-t70);}
 .pm-tag{font-size:9px;text-transform:uppercase;letter-spacing:.5px;font-family:'IBM Plex Mono';
   padding:1px 5px;border-radius:20px;background:var(--surface-3);color:var(--ink-muted);margin-left:5px;}
-.pm-tag.role{background:rgba(77,184,255,.14);color:#8ecdff;}
-.pm-tag.own{background:rgba(64,200,140,.16);color:#7fdcb0;}
-.pm-tag.pending{background:rgba(255,176,32,.13);color:#ffcc70;}
-.pm-tag.danger{background:rgba(255,90,54,.15);color:#ff9b80;}
+.pm-tag.role{background:var(--info-t14);color:var(--info-ink);}
+.pm-tag.own{background:var(--success-wash-t16);color:var(--success-ink);}
+.pm-tag.pending{background:var(--warning-wash-t13);color:var(--warning-ink);}
+.pm-tag.danger{background:var(--overdue-t15);color:var(--error-ink);}
 .pm-note{font-size:10.5px;color:var(--ink-faint);margin-top:2px;line-height:1.4;}
 .pm-bar{display:flex;gap:10px;align-items:center;margin-top:14px;}
 .pm-msg{font-size:12px;}
-.pm-msg.ok{color:#7fdcb0;} .pm-msg.err{color:var(--brand-accent);}
+.pm-msg.ok{color:var(--success-ink);} .pm-msg.err{color:var(--brand-accent);}
 .eu-hint{font-size:11px;color:var(--ink-faint);margin-top:5px;line-height:1.45;}
 .eu-top{font-size:12px;line-height:1.5;padding:10px 12px;border-radius:9px;margin-top:12px;
-  background:rgba(255,210,61,.10);border:1px solid rgba(255,210,61,.30);color:#ffd98a;}
+  background:var(--leadership-t10);border:1px solid var(--leadership-t30);color:var(--warning-pale);}
 .ud-row{display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--border);font-size:13px;}
 .ud-row:last-child{border-bottom:0;}
 .ud-key{min-width:130px;font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink-muted);
   font-family:'IBM Plex Mono';padding-top:3px;}
 .ud-val{flex:1;}
 .ud-none{color:var(--ink-faint);font-style:italic;}
-.ud-top{color:#ffd23d;font-weight:600;}
+.ud-top{color:var(--leadership);font-weight:600;}
 .u-link{background:none;border:0;padding:0;color:var(--ink);font-weight:600;cursor:pointer;font-size:inherit;
   font-family:inherit;text-align:left;}
 .u-link:hover{color:var(--brand-accent);text-decoration:underline;}
-.ip-banner.fault h4{margin:0 0 7px;font-size:13px;color:#ff7a55;font-family:'Space Grotesk';letter-spacing:.2px;}
-.ip-banner.fault p{margin:0 0 8px;color:#ffb9a5;}
-.ip-banner.fault code{font-family:'IBM Plex Mono';font-size:11px;background:rgba(0,0,0,.32);
-  padding:3px 6px;border-radius:5px;display:inline-block;word-break:break-word;color:#ffd3c6;}
+.ip-banner.fault h4{margin:0 0 7px;font-size:13px;color:var(--error-heading);font-family:'Space Grotesk';letter-spacing:.2px;}
+.ip-banner.fault p{margin:0 0 8px;color:var(--error-body);}
+.ip-banner.fault code{font-family:'IBM Plex Mono';font-size:11px;background:var(--shadow-t32);
+  padding:3px 6px;border-radius:5px;display:inline-block;word-break:break-word;color:var(--error-code);}
 .ip-you{font-family:'IBM Plex Mono';font-size:12px;color:var(--ink);background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 11px;display:inline-block;margin-bottom:14px;}
-.ip-you b{color:var(--brand-2,#4db8ff);}
-.ip-mine{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;padding:2px 7px;border-radius:20px;font-family:'IBM Plex Mono';background:rgba(64,200,140,.16);color:#7fdcb0;margin-left:8px;}
+.ip-you b{color:var(--info);}
+.ip-mine{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;padding:2px 7px;border-radius:20px;font-family:'IBM Plex Mono';background:var(--success-wash-t16);color:var(--success-ink);margin-left:8px;}
 .ip-audit{margin-top:14px;}
 .ip-audit summary{cursor:pointer;font-size:11.5px;color:var(--ink-muted);font-family:'IBM Plex Mono';}
 .ip-audit table{margin-top:10px;}
@@ -1451,7 +1458,7 @@ tr.past-round{opacity:0.62;}
    no other way of finding out why nothing is arriving. */
 .perm-bar{position:fixed;top:0;left:0;right:0;z-index:70;display:flex;align-items:center;gap:12px;
   padding:9px 16px;background:var(--surface-3);border-bottom:1px solid var(--border);
-  font-size:12.5px;color:var(--ink-muted);box-shadow:0 2px 12px rgba(0,0,0,.28);}
+  font-size:12.5px;color:var(--ink-muted);box-shadow:0 2px 12px var(--shadow-t28);}
 .perm-bar[hidden]{display:none;}
 .perm-bar .pb-icon{font-size:14px;line-height:1;}
 .perm-bar .pb-msg{flex:1;line-height:1.5;}
@@ -1460,7 +1467,7 @@ tr.past-round{opacity:0.62;}
   cursor:pointer;padding:2px 6px;line-height:1;}
 .perm-bar .pb-close:hover{color:var(--ink);}
 body.perm-bar-on{padding-top:38px;}
-.pw-forced{border:1px solid #f2b33d55;background:#f2b33d14;border-radius:9px;
+.pw-forced{border:1px solid var(--prog-t55);background:var(--prog-t14);border-radius:9px;
   padding:10px 12px;margin-bottom:14px;font-size:12px;line-height:1.55;color:var(--ink-muted);display:block;}
 .pw-forced[hidden]{display:none;}
 .pw-forced strong{display:block;color:var(--ink);font-size:12.5px;margin-bottom:4px;}
@@ -1478,7 +1485,7 @@ body.perm-bar-on{padding-top:38px;}
    long enough to wrap keeps its box against the first line instead of drifting
    halfway down the row — and so the row below it is unaffected either way. */
 .checklist label{display:flex;align-items:flex-start;gap:7px;font-family:'Inter';font-size:12.5px;text-transform:none;letter-spacing:0;color:var(--ink);margin:0;padding:4px 0;line-height:1.35;}
-.checklist label input[type=checkbox]{flex:none;width:auto;margin:1px 0 0;accent-color:var(--brand-accent);}
+.checklist label input[type=checkbox]{flex:none;width:auto;margin:1px 0 0;accent-color:var(--form-accent);}
 /* A list with a cap on it. The unticked rows go quiet once the cap is reached,
    so the list reads as full rather than as broken — the ticked rows stay at
    full strength, because they are still the answer and can still be unticked. */
@@ -1493,11 +1500,11 @@ body.perm-bar-on{padding-top:38px;}
    field, so the size is pinned here rather than inherited. */
 table th.pick-col, table td.pick-col{width:34px;padding-left:12px;padding-right:0;}
 table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
-  width:auto;flex:none;margin:0;accent-color:var(--brand-accent);cursor:pointer;}
+  width:auto;flex:none;margin:0;accent-color:var(--form-accent);cursor:pointer;}
 /* The count on the Pending Actions tab. Sits inside the button so it moves with
    it, and is hidden rather than shown as 0 — a nought is not news. */
 .tab-count{display:inline-block;min-width:17px;padding:1px 5px;margin-left:5px;border-radius:9px;
-  background:var(--brand-accent);color:#1a0e0e;font-family:'IBM Plex Mono';font-size:10px;
+  background:var(--brand-accent);color:var(--accent-ink-deep);font-family:'IBM Plex Mono';font-size:10px;
   font-weight:700;line-height:15px;text-align:center;vertical-align:middle;}
 /* Setting .hidden alone was not enough: the display above is an author rule and
    beats the browser's own [hidden] one, so the badge went on showing a nought
@@ -1511,15 +1518,15 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
    Both this and the count come from one number in one function, so the tab
    cannot glow above a nought or sit quiet above a three. No animation: a
    pulsing tab in the corner of the eye all day is a cost, not a signal. */
-#mainTabs button.has-pending{background:#ef6b6f1f;border-color:#ef6b6f66;color:var(--ink);}
+#mainTabs button.has-pending{background:var(--tab-badge-dot-t1f);border-color:var(--tab-badge-dot-t66);color:var(--ink);}
 #mainTabs button.has-pending::before{content:'';display:inline-block;width:6px;height:6px;
   margin-right:6px;border-radius:50%;background:var(--brand-accent);vertical-align:middle;}
 .pending-empty{padding:26px 20px;text-align:center;color:var(--ink-muted);font-size:13px;}
 /* The project review queue's banner. Its own accent — the CD's review colour —
    rather than the brand, so it reads as a queue rather than as the app talking
    about itself, and so it is not mistaken at a glance for an alert. */
-.pr-banner{border:1px solid #9b7ef055;border-left:3px solid #9b7ef0;border-radius:10px;
-  background:linear-gradient(90deg,#9b7ef014,transparent);padding:11px 14px;margin:0 0 14px;}
+.pr-banner{border:1px solid var(--review-t55);border-left:3px solid var(--review);border-radius:10px;
+  background:linear-gradient(90deg,var(--review-t14),transparent);padding:11px 14px;margin:0 0 14px;}
 .pr-banner h4{margin:0 0 2px;font-family:'Inter';font-size:13px;color:var(--ink);letter-spacing:0;}
 .pr-banner .pr-sub{font-size:11.5px;color:var(--ink-muted);margin-bottom:8px;}
 .pr-item{display:flex;align-items:flex-start;gap:10px;padding:7px 0;border-top:1px solid var(--border);}
@@ -1534,14 +1541,14 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
 .ts-total strong{color:var(--ink);font-family:'IBM Plex Mono';font-size:14px;margin-left:4px;}
 .ts-locked{font-size:12px;color:var(--ink-muted);background:var(--surface-2);border:1px solid var(--border);
   border-radius:8px;padding:8px 12px;margin-bottom:12px;}
-.ts-warn{font-size:12px;color:#e8a33d;background:#e8a33d14;border:1px solid #e8a33d44;
+.ts-warn{font-size:12px;color:var(--at-risk);background:var(--at-risk-t14);border:1px solid var(--at-risk-t44);
   border-radius:8px;padding:8px 12px;margin-bottom:12px;}
 /* Seven days across on a wide screen, stacking down on a narrow one — the grid
    is for filling a week in at once, which is the whole reason it is weekly. */
 .ts-week{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;}
 .ts-day{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px;
   display:flex;flex-direction:column;gap:8px;}
-.ts-day.over{border-color:#e8a33d66;}
+.ts-day.over{border-color:var(--at-risk-t66);}
 .ts-day-head{display:flex;align-items:baseline;gap:6px;}
 .ts-day-name{font-weight:700;font-size:12.5px;color:var(--ink);}
 .ts-day-date{font-size:11px;color:var(--ink-faint);}
@@ -1569,19 +1576,19 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
    "look at this", not "this is wrong". */
 .ts-flag{font-size:10px;font-family:'IBM Plex Mono';padding:1px 6px;border-radius:9px;
   background:var(--surface-3);color:var(--ink-muted);}
-.ts-flag.over{background:#e8a33d1f;color:#e8a33d;}
+.ts-flag.over{background:var(--at-risk-t1f);color:var(--at-risk);}
 /* Idle hours, named beside the week total rather than taken out of it. Amber,
    the same family the long-day flag uses and the same family the Idle category's
    own seeded colour uses — it says "look at this", not "this is wrong", because
    idle time is a fact about the week and not a mistake in it. Deliberately not
    the brand red: a figure wearing the application's own colour would read as the
    product rather than as a number. */
-.ts-idle{font-size:10.5px;font-family:'IBM Plex Mono';font-weight:400;color:#d9822b;
+.ts-idle{font-size:10.5px;font-family:'IBM Plex Mono';font-weight:400;color:var(--series-6);
   margin-left:4px;white-space:nowrap;}
 .ts-day.weekend{background:var(--surface-1);}
-.ts-sentback{font-size:11.5px;background:#e8402c14;border:1px solid #e8402c44;border-radius:8px;
+.ts-sentback{font-size:11.5px;background:var(--error-t14);border:1px solid var(--error-t44);border-radius:8px;
   padding:7px 9px;color:var(--ink);}
-.ts-sentback strong{display:block;color:#e8402c;font-size:11px;margin-bottom:2px;}
+.ts-sentback strong{display:block;color:var(--danger-ink);font-size:11px;margin-bottom:2px;}
 /* The Creative Director's feedback box. It had no rule of its own and so drew
    as a browser-default white box in a dark app — tolerable when it sat beside
    two buttons that carried the meaning, and not now that it IS the meaning:
@@ -1592,7 +1599,7 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
   color:var(--ink);padding:8px 10px;border-radius:8px;font-family:'Inter';font-size:13px;
   resize:vertical;display:block;}
 .pr-feedback::placeholder{color:var(--ink-faint);}
-.pr-feedback:focus{outline:none;border-color:#9b7ef0aa;}
+.pr-feedback:focus{outline:none;border-color:var(--review-taa);}
 .pr-item a{color:var(--brand-accent);word-break:break-all;}
 .bulk-bar{display:flex;align-items:center;gap:10px;padding:8px 12px;margin-bottom:10px;
   border:1px solid var(--border);border-radius:8px;background:var(--surface-2);}
@@ -1639,7 +1646,7 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
 .alf-caret{font-size:9px;color:var(--ink-faint);}
 .alf-menu{position:absolute;top:calc(100% + 4px);left:0;z-index:30;min-width:190px;max-height:260px;
   overflow:auto;padding:6px;background:var(--surface-2);border:1px solid var(--border);
-  border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.28);display:flex;flex-direction:column;gap:2px;}
+  border-radius:8px;box-shadow:0 8px 24px var(--shadow-t28);display:flex;flex-direction:column;gap:2px;}
 .alf-menu[hidden]{display:none;}
 .alf-menu label{display:flex;align-items:center;gap:7px;padding:4px 6px;font-size:12px;
   border-radius:6px;cursor:pointer;white-space:nowrap;}
@@ -1660,12 +1667,12 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
    is a person being honest about an interruption, not a fault, and it must also
    stay clear of the brand red and of every workflow status colour so a card
    badge is never mistaken for a stage. */
-.hold-badge{background:#3b4252;color:#c6ccd8;border:1px solid #4c566a;}
-.worklog-held{color:#9aa4b8;font-weight:600;}
-.held-note{color:#9aa4b8;}
-.badge-archived{background:#6b6b6b33;color:#a8a8a8;}
-.badge-deal{background:#e8402c22;color:#e8402c;}
-.badge-closed{background:#c9a22722;color:#d8b53f;}
+.hold-badge{background:var(--paused);color:var(--paused-ink);border:1px solid var(--paused-border);}
+.worklog-held{color:var(--paused-muted);font-weight:600;}
+.held-note{color:var(--paused-muted);}
+.badge-archived{background:var(--archived-t33);color:var(--archived-ink);}
+.badge-deal{background:var(--error-t22);color:var(--danger-ink);}
+.badge-closed{background:var(--closed-t22);color:var(--closed-ink);}
 .badge-system{background:var(--surface-3);color:var(--ink-faint);}
 .row-muted{opacity:.55;}
 .lifecycle-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;}
@@ -1690,7 +1697,7 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
 .proj-row{display:grid;grid-template-columns:1fr auto;gap:6px;margin-bottom:6px;align-items:center;}
 .proj-row .pr-name{margin:0;}
 .proj-row .pr-remove{padding:6px 10px;line-height:1;}
-.proj-row .pr-err{grid-column:1 / -1;color:#e8402c;font-size:11px;}
+.proj-row .pr-err{grid-column:1 / -1;color:var(--danger-ink);font-size:11px;}
 .cm-existing-lbl{font-size:11px;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.06em;margin-top:12px;}
 .cm-existing{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px;}
 .pill{font-size:11.5px;background:var(--surface-3);color:var(--ink-muted);padding:3px 8px;border-radius:10px;}
@@ -1707,7 +1714,7 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
 .ms-empty{font-size:11.5px;color:var(--ink-faint);margin-bottom:7px;}
 /* The soft one. Amber rather than the refusal red used by .ref-err, because
    nothing here is being refused — the save goes through either way. */
-.ms-warn{font-size:11.5px;color:#f2b33d;margin-top:7px;line-height:1.45;}
+.ms-warn{font-size:11.5px;color:var(--prog);margin-top:7px;line-height:1.45;}
 .ms-warn:empty{display:none;}
 .new-client-row input{margin:0;}
 #p_fields{border:none;padding:0;margin:0;}
@@ -1724,12 +1731,13 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
 .sii-name{font-size:12.5px;font-weight:600;color:var(--ink);}
 .sii-note{font-size:11px;color:var(--ink-faint);line-height:1.35;}
 ::-webkit-scrollbar{width:8px;height:8px;} ::-webkit-scrollbar-thumb{background:var(--surface-3);border-radius:4px;}
-#loginScreen{position:fixed;inset:0;background:var(--bg);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px;}
+#loginScreen{position:fixed;inset:0;background:var(--login-bg);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px;}
 .login-box{width:380px;max-width:100%;} .login-box .wordmark{justify-content:center;margin-bottom:22px;}
-.login-panel{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;}
+.login-panel{background:var(--login-card);border:1px solid var(--login-card-border);border-radius:14px;padding:24px;}
 .login-panel label{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--ink-muted);font-family:'IBM Plex Mono';margin:12px 0 6px;}
-.login-panel input{width:100%;background:var(--surface-2);border:1px solid var(--border);color:var(--ink);padding:10px 12px;border-radius:8px;font-family:'Inter';font-size:13px;}
-.login-err{color:var(--brand-accent);font-size:12px;margin-top:10px;min-height:16px;}
+.login-panel input{width:100%;background:var(--input-bg);border:1px solid var(--input-border);color:var(--ink);padding:10px 12px;border-radius:8px;font-family:'Inter';font-size:13px;}
+.login-panel input:focus{outline:none;border-color:var(--input-focus-border);}
+.login-err{color:var(--login-err);font-size:12px;margin-top:10px;min-height:16px;}
 .demo-note{font-size:11px;color:var(--ink-faint);margin-top:14px;line-height:1.5;}
 #appRoot{display:none;}
 @media (max-width:720px){ .drawer{width:100%;} .stats{flex-wrap:wrap;} }
@@ -1977,7 +1985,7 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
     <label>Supervision and Creative Direction <span class="count-note" id="ep_supervisionCount">(0/2 selected)</span></label>
     <div class="checklist" id="ep_supervision"></div>
     <div style="font-size:11px;color:var(--ink-faint);margin-top:8px;">Assets already in this project keep their assignees and their place in the pipeline.</div>
-    <div class="err" id="ep_err" style="color:#e8402c;font-size:12px;margin-top:8px;"></div>
+    <div class="err" id="ep_err" style="color:var(--danger-ink);font-size:12px;margin-top:8px;"></div>
     <div class="modal-actions"><button class="btn btn-ghost" id="cancelEditProject">Cancel</button><button class="btn btn-brand" id="saveEditProject">Save changes</button></div>
   </div>
 </div>
@@ -2123,7 +2131,7 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
     <div id="tl_flagWrap" style="display:none;margin:2px 0 6px;">
       <label style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--ink-muted);
         text-transform:none;letter-spacing:0;cursor:pointer;">
-        <input type="checkbox" id="tl_flag" style="accent-color:var(--brand-accent);">
+        <input type="checkbox" id="tl_flag" style="accent-color:var(--form-accent);">
         <span>This figure looks wrong</span>
       </label>
       <div id="tl_flagNoteWrap" style="display:none;margin-top:6px;">
@@ -2554,19 +2562,31 @@ function priorityOptions(selected){
  * would keep working until somebody changed a word, and then fail silently
  * somewhere nobody was looking. tests/asset-workflow.test.js fails if one
  * appears, and if these two lists ever drift apart. */
+/* A STATUS BADGE IS ITS OWN COLOUR ON ITS OWN COLOUR AT 0x22 — see .status-pill.
+ *
+ * The page used to build that by concatenating '22' onto the hex. That stopped
+ * working the moment a status colour became a custom property, so the tint is a
+ * property of its own (src/theme-tokens.js generates one per status) and this
+ * turns a token reference into its tint. Anything that is NOT a token reference
+ * is handed back unchanged and the old concatenation still applies to it, which
+ * is what keeps a colour coming from reference data working. */
+function statusTint(colour){
+  const ref = String(colour||'').match(/^var\(--([a-z0-9-]+)\)$/);
+  return ref ? `var(--${ref[1]}-t22)` : `${colour}22`;
+}
 const STATUSES = [
-  {id:'not_started', label:'Not Assigned', color:'var(--not)'},
-  {id:'assigned', label:'Assigned', color:'#5b8def'},
-  {id:'in_progress', label:'In Progress', color:'var(--prog)'},
-  {id:'pending_tl_review', label:'TL Review', color:'var(--review)'},
-  {id:'tl_changes_requested', label:'TL Feedbacks', color:'#e8402c'},
-  {id:'tl_approved', label:'TL Approved', color:'#4c9a75'},
-  {id:'pending_cd_review', label:'CD Review', color:'#9b7ef0'},
-  {id:'cd_changes_requested', label:'CD Feedbacks', color:'#e8402c'},
-  {id:'game_feedback', label:'Game Feedback', color:'#d9822b'},
-  {id:'approved_for_client', label:'Approved for Client', color:'var(--approved)'},
-  {id:'awaiting_client_feedback', label:'Awaiting Client Feedback', color:'var(--client)'},
-  {id:'delivered', label:'Delivered', color:'var(--final)'},
+  {id:'not_started', label:'Not Assigned', color:'var(--status-not-started)'},
+  {id:'assigned', label:'Assigned', color:'var(--status-assigned)'},
+  {id:'in_progress', label:'In Progress', color:'var(--status-in-progress)'},
+  {id:'pending_tl_review', label:'TL Review', color:'var(--status-pending-tl-review)'},
+  {id:'tl_changes_requested', label:'TL Feedbacks', color:'var(--status-tl-changes-requested)'},
+  {id:'tl_approved', label:'TL Approved', color:'var(--status-tl-approved)'},
+  {id:'pending_cd_review', label:'CD Review', color:'var(--status-pending-cd-review)'},
+  {id:'cd_changes_requested', label:'CD Feedbacks', color:'var(--status-cd-changes-requested)'},
+  {id:'game_feedback', label:'Game Feedback', color:'var(--status-game-feedback)'},
+  {id:'approved_for_client', label:'Approved for Client', color:'var(--status-approved-for-client)'},
+  {id:'awaiting_client_feedback', label:'Awaiting Client Feedback', color:'var(--status-awaiting-client-feedback)'},
+  {id:'delivered', label:'Delivered', color:'var(--status-delivered)'},
 ];
 /* WHO RAISED A GAME BUG, and it changes what the row means rather than only what
  * it says. The four the integration accepts (SOURCES in src/routes/integration.js);
@@ -2582,9 +2602,9 @@ const STATUSES = [
  * Colours are the pipeline's own, and none of them is the brand red: a bug from the
  * build is not a ZVKY colour event. */
 const FEEDBACK_SOURCES = {
-  qa:       { label: 'QA',          color:'#d9822b', ref:'Bug' },
-  dev:      { label: 'Dev',         color:'#5b8def', ref:'Issue' },
-  tech_art: { label: 'Tech Art',    color:'#9b7ef0', ref:'Pass' },
+  qa:       { label: 'QA',          color:'var(--series-6)', ref:'Bug' },
+  dev:      { label: 'Dev',         color:'var(--series-5)', ref:'Issue' },
+  tech_art: { label: 'Tech Art',    color:'var(--review)', ref:'Pass' },
   client:   { label: 'Client',      color:'var(--client)', ref:null },
 };
 function feedbackSource(key){
@@ -2595,7 +2615,7 @@ function feedbackSource(key){
 const ENGINE_STATES = {
   not_in:  { label:'Not in the build', color:'var(--ink-faint)' },
   in:      { label:'In the build',     color:'var(--approved)' },
-  broken:  { label:'Broken',           color:'#e8402c' },
+  broken:  { label:'Broken',           color:'var(--danger-ink)' },
   removed: { label:'Removed',          color:'var(--not)' },
 };
 function engineState(key){
@@ -4878,7 +4898,7 @@ const PR_STATUS = {
   /* Written by earlier versions of this: two decision buttons, and before them
      one generic "mark as reviewed". Kept so an older row still reads as what it
      was rather than as a blank — the studio's own history, not a live state. */
-  changes_requested:   { label: 'Changes requested',                color: '#e8402c' },
+  changes_requested:   { label: 'Changes requested',                color: 'var(--danger-ink)' },
   approved_for_client: { label: 'Approved for client',              color: 'var(--approved)' },
   reviewed:            { label: 'Reviewed',                         color: 'var(--ink-muted)' },
 };
@@ -4987,15 +5007,15 @@ async function renderPending(){
        none     what you sent — read-only, no control of any kind on it
      Drawn quieter than the other two on purpose: nothing here is asking. */
   const TONE = {
-    close: ' style="border-left-color:var(--approved);background:linear-gradient(90deg,#3ddc9714,transparent);border-color:#3ddc9744;"',
+    close: ' style="border-left-color:var(--approved);background:linear-gradient(90deg,var(--approved-t14),transparent);border-color:var(--approved-t44);"',
     /* The submitter's answer has arrived — the one thing in their half of this
        tab that is asking them for something, so it is drawn like the other two
        things that ask rather than like their record. */
-    acknowledge: ' style="border-left-color:var(--review);background:linear-gradient(90deg,#9b7ef014,transparent);border-color:#9b7ef044;"',
+    acknowledge: ' style="border-left-color:var(--review);background:linear-gradient(90deg,var(--review-t14),transparent);border-color:var(--review-t44);"',
     none:  ' style="border-left-color:var(--ink-faint);background:none;border-color:var(--border);"',
     /* A bug from the build. The Game Feedback status colour, so the banner here and the
        column on the board are recognisably the same thing. */
-    open:  ' style="border-left-color:#d9822b;background:linear-gradient(90deg,#d9822b14,transparent);border-color:#d9822b44;"',
+    open:  ' style="border-left-color:var(--series-6);background:linear-gradient(90deg,var(--series-6-t14),transparent);border-color:var(--series-6-t44);"',
   };
   /* The feedback box is drawn for a group whose act is 'respond'. That is the
      server's answer to "what may this person do", and it has been right — but
@@ -5032,7 +5052,7 @@ async function renderPending(){
                 r.clientName?` · ${escapeHTML(r.clientName)}`:''}${
                 r.raisedAt?` · raised ${fmtDate(r.raisedAt)}`:''}</div>
               <div style="margin-top:6px;">
-                <span class="status-pill" style="background:${src.color}22;color:${src.color};"><span class="d" style="background:${src.color}"></span>${escapeHTML(src.label)}</span>
+                <span class="status-pill" style="background:${statusTint(src.color)};color:${src.color};"><span class="d" style="background:${src.color}"></span>${escapeHTML(src.label)}</span>
                 ${r.senderName?`<span class="pr-meta" style="margin-left:6px;">${escapeHTML(r.senderName)}${
                   r.senderRole?` (${escapeHTML(r.senderRole)})`:''}</span>`:''}
                 ${meta.length?`<span class="pr-meta" style="margin-left:6px;">· ${meta.join(' · ')}</span>`:''}
@@ -5064,7 +5084,7 @@ async function renderPending(){
                    have to do is read, and asking them to type something to
                    prove it would be asking for the wrong thing. -->
               <div style="margin-top:6px;">
-                <span class="status-pill" style="background:${st.color}22;color:${st.color};"><span class="d" style="background:${st.color}"></span>${st.label}</span>
+                <span class="status-pill" style="background:${statusTint(st.color)};color:${st.color};"><span class="d" style="background:${st.color}"></span>${st.label}</span>
                 <span class="pr-meta" style="margin-left:6px;">${escapeHTML(r.reviewedByName || r.reviewerEmail || '')}${r.reviewedAt?` · ${fmtDate(r.reviewedAt)}`:''}</span>
               </div>
               ${r.feedback ? `<div class="note" style="margin-top:6px;border-left-color:${st.color};"><p>${escapeHTML(r.feedback)}</p></div>` : ''}
@@ -5083,7 +5103,7 @@ async function renderPending(){
                    much — and for the person who sent it, the answer is the
                    thing they were waiting for. -->
               <div style="margin-top:6px;">
-                <span class="status-pill" style="background:${st.color}22;color:${st.color};"><span class="d" style="background:${st.color}"></span>${st.label}</span>
+                <span class="status-pill" style="background:${statusTint(st.color)};color:${st.color};"><span class="d" style="background:${st.color}"></span>${st.label}</span>
                 <span class="pr-meta" style="margin-left:6px;">${
                   r.reviewedAt ? `answered ${fmtDate(r.reviewedAt)}` : 'not answered yet'}${
                   r.reviewedByName || r.reviewerEmail ? ` · ${escapeHTML(r.reviewedByName || r.reviewerEmail)}` : ''}</span>
@@ -5094,7 +5114,7 @@ async function renderPending(){
               </div>
               ${r.feedback ? `<div class="note" style="margin-top:6px;border-left-color:${st.color};"><p>${escapeHTML(r.feedback)}</p></div>` : ''}` : `
               <div style="margin-top:6px;">
-                <span class="status-pill" style="background:${st.color}22;color:${st.color};"><span class="d" style="background:${st.color}"></span>${st.label}</span>
+                <span class="status-pill" style="background:${statusTint(st.color)};color:${st.color};"><span class="d" style="background:${st.color}"></span>${st.label}</span>
                 <span class="pr-meta" style="margin-left:6px;">${escapeHTML(r.reviewedByName || r.reviewerEmail || '')}${r.reviewedAt?` · ${fmtDate(r.reviewedAt)}`:''}</span>
               </div>
               ${r.feedback ? `<div class="note" style="margin-top:6px;border-left-color:${st.color};"><p>${escapeHTML(r.feedback)}</p></div>` : ''}
@@ -5340,7 +5360,7 @@ async function renderTimesheet(){
             <span class="ts-day-total${day.hours?'':' zero'}">${day.hours}h</span>
           </div>
           <div class="ts-day-status">
-            <span class="status-pill" style="background:${pill.color}22;color:${pill.color};"><span class="d" style="background:${pill.color}"></span>${pill.label}</span>
+            <span class="status-pill" style="background:${statusTint(pill.color)};color:${pill.color};"><span class="d" style="background:${pill.color}"></span>${pill.label}</span>
             ${day.weekend && day.hours ? '<span class="ts-flag">Weekend</span>' : ''}
             ${day.holiday ? `<span class="ts-flag">${escapeHTML(day.holiday.name)}</span>` : ''}
             ${day.overLong ? `<span class="ts-flag over">Over ${wd.maxHours}h</span>` : ''}
@@ -5402,7 +5422,7 @@ const TS_STATUS = {
   draft:     { label: 'Draft',              color: 'var(--ink-muted)' },
   submitted: { label: 'Submitted',          color: 'var(--approved)' },
   approved:  { label: 'Approved',           color: 'var(--approved)' },
-  rejected:  { label: 'Sent back for correction', color: '#e8402c' },
+  rejected:  { label: 'Sent back for correction', color: 'var(--danger-ink)' },
 };
 const tsCategory = (week, key) =>
   ((week.nonProjectTypes||[]).find(n=>n.key===key)||{}).label || key;
@@ -6867,7 +6887,7 @@ function renderList(){
  * normal mixed selection look like something went wrong. */
 function bulkResultsHTML(results){
   return results.map(r=>{
-    const tone = r.ok ? 'var(--approved)' : (r.skipped ? 'var(--ink-muted)' : '#e8402c');
+    const tone = r.ok ? 'var(--approved)' : (r.skipped ? 'var(--ink-muted)' : 'var(--danger-ink)');
     const word = r.ok ? 'ok' : (r.skipped ? 'skipped' : 'refused');
     return `<label style="align-items:flex-start;">
        <span class="mono" style="min-width:74px;color:${tone};">${word}</span>
@@ -7138,8 +7158,8 @@ const REPORT_VIEWS = [
    everywhere, so a reader learns them once. */
 function effColor(v){
   if(v === null || v === undefined) return 'var(--ink-faint)';
-  if(v < 80)  return '#e8402c';
-  if(v < 100) return '#f2b33d';
+  if(v < 80)  return 'var(--danger-ink)';
+  if(v < 100) return 'var(--prog)';
   return 'var(--approved)';
 }
 function effCell(v){
@@ -7243,8 +7263,8 @@ async function loadIdle(){
    is the thing you are looking for. */
 function idleColor(v){
   if(v === null || v === undefined) return 'var(--ink-faint)';
-  if(v >= 50) return '#e8402c';
-  if(v >= 20) return '#f2b33d';
+  if(v >= 50) return 'var(--danger-ink)';
+  if(v >= 20) return 'var(--prog)';
   return 'var(--approved)';
 }
 
@@ -7427,7 +7447,7 @@ async function renderReports(sections = reportSections()){
       <div class="stat"><div class="num" style="color:${effColor(s.total)}">${s.total===null?'N/A':s.total+'%'}</div><div class="lbl">Total efficiency</div></div>
       <div class="stat"><div class="num">${s.manHours}</div><div class="lbl">Man Hours estimated</div></div>
       <div class="stat"><div class="num">${s.timeSpentHours}</div><div class="lbl">Time Spent (h)</div></div>
-      <div class="stat" title="Assets a team lead sent straight to the client, skipping Creative Director review."><div class="num"${s.skippedCd?' style="color:#f2b33d;"':''}>${s.skippedCd}</div><div class="lbl">Skipped CD review</div></div>
+      <div class="stat" title="Assets a team lead sent straight to the client, skipping Creative Director review."><div class="num"${s.skippedCd?' style="color:var(--prog);"':''}>${s.skippedCd}</div><div class="lbl">Skipped CD review</div></div>
       <div class="stat"><div class="num" style="color:var(--ink-faint)">${s.excluded}</div><div class="lbl">Excluded</div></div>
     </div>`;
 
@@ -7707,7 +7727,7 @@ async function renderIdleNow(sections = userSections()){
     ? '<div class="empty">Everybody in scope has something in progress.</div>'
     : `<table><thead><tr><th>Person</th><th>Idle for</th><th>Last handed in</th><th>Assigned, not started</th></tr></thead><tbody>
        ${d.idle.map(r=>person(r, `
-         <td class="mono" style="color:${r.neverStarted?'#e8402c':'var(--ink)'};">${r.neverStarted?'never started anything':escapeHTML(humanDuration(r.idleForSeconds)||'—')}</td>
+         <td class="mono" style="color:${r.neverStarted?'var(--danger-ink)':'var(--ink)'};">${r.neverStarted?'never started anything':escapeHTML(humanDuration(r.idleForSeconds)||'—')}</td>
          <td style="font-size:11.5px;color:var(--ink-muted);">${r.lastActiveAt?escapeHTML(fmtDate(r.lastActiveAt)):'—'}</td>
          ${waitingCell(r)}`)).join('')}
        </tbody></table>`;
@@ -7762,7 +7782,7 @@ async function renderUsers(sections = userSections()){
   el.innerHTML = `
     ${userSectionTabs(sections)}
     <div style="display:flex;gap:10px;margin-bottom:12px;align-items:center;">
-      <input type="text" id="userSearch" placeholder="Search users…" style="background:var(--surface-2);border:1px solid var(--border);color:var(--ink);padding:8px 12px;border-radius:8px;font-size:13px;min-width:220px;">
+      <input type="text" id="userSearch" placeholder="Search users…" style="background:var(--input-bg);border:1px solid var(--input-border);color:var(--ink);padding:8px 12px;border-radius:8px;font-size:13px;min-width:220px;">
       ${can('user.add') ? `<button class="btn btn-brand" id="addUserBtn">+ Add User</button>` : ''}
       ${can('user.bulk_upload') ? `<button class="btn btn-ghost" id="bulkUserBtn">Bulk Upload Users</button>
       <button class="btn btn-ghost" id="downloadUserSampleBtn" title="Download a CSV with the user columns and example rows">Sample format</button>` : ''}
@@ -8604,10 +8624,10 @@ function inGameLineHTML(g){
   if(g.cpStage) bits.push(escapeHTML(g.cpStage));
   /* Only when there ARE any. "0 open bugs" on an asset nobody has filed anything
      against is a reassurance nobody asked for; a number greater than nought is news. */
-  if(g.openBugs > 0) bits.push(`<strong style="color:#e8402c;">${g.openBugs} open bug${g.openBugs===1?'':'s'}</strong>`);
+  if(g.openBugs > 0) bits.push(`<strong style="color:var(--danger-ink);">${g.openBugs} open bug${g.openBugs===1?'':'s'}</strong>`);
   return `<div class="field-lbl" style="margin-top:16px;">In game</div>
     <div class="ingame-line">
-      <span class="status-pill" style="background:${st.color}22;color:${st.color};"><span class="d" style="background:${st.color}"></span>${escapeHTML(st.label)}</span>
+      <span class="status-pill" style="background:${statusTint(st.color)};color:${st.color};"><span class="d" style="background:${st.color}"></span>${escapeHTML(st.label)}</span>
       ${bits.length ? `<span class="ingame-bits">${bits.join(' · ')}</span>` : ''}
       ${g.at ? `<span class="when">${fmtDate(g.at)}</span>` : ''}
     </div>
@@ -8630,7 +8650,7 @@ function feedbackRoundHTML(r){
     ? `${escapeHTML(r.senderName)}${r.senderRole?` (${escapeHTML(r.senderRole)})`:''}`
     : src.label;
   return `<div class="note gf-round${r.open?' gf-open':''}" data-fid="${escapeHTML(r.id)}" style="border-left-color:${src.color};">
-    <span class="who"><span class="gf-src" style="background:${src.color}22;color:${src.color};">${escapeHTML(src.label)}</span>
+    <span class="who"><span class="gf-src" style="background:${statusTint(src.color)};color:${src.color};">${escapeHTML(src.label)}</span>
       ${who} · round ${r.round}${r.open?' · <strong>open</strong>':''}</span>
     <span class="when">${fmtDate(r.at)}</span>
     ${meta.length?`<div class="gf-meta">${meta.join(' · ')}</div>`:''}
@@ -8672,7 +8692,7 @@ async function renderGameFeedbackBlock(id){
       </div>
       <textarea id="gfReason" rows="2" placeholder="Why this is being declined (required to decline)…"></textarea>
       <div style="display:flex;gap:8px;margin-top:8px;">
-        ${may('game_feedback_decline')?`<button class="btn btn-ghost" id="gfDeclineBtn" style="flex:1;color:#e8402c;">Decline with reason</button>`:''}
+        ${may('game_feedback_decline')?`<button class="btn btn-ghost" id="gfDeclineBtn" style="flex:1;color:var(--danger-ink);">Decline with reason</button>`:''}
         ${may('game_feedback_pass')?`<button class="btn btn-brand" id="gfPassBtn" style="flex:1;">Pass to artist</button>`:''}
       </div>
       <div class="ref-err" id="gfErr"></div>` : '');
@@ -9035,13 +9055,13 @@ async function openDrawer(id){
     </div><div class="ref-err" id="d_taskErr"></div>` : ''}
 
     ${(canSubmit && latestFeedback && a.status.endsWith('_changes_requested')) ? `
-      <div class="note" style="margin-top:14px;border-left-color:#e8402c;">
+      <div class="note" style="margin-top:14px;border-left-color:var(--danger-ink);">
         <span class="who">Feedback to address (${latestFeedback.stage==='tl'?'Team Lead':'Creative Director'})</span>
         <p>${escapeHTML(latestFeedback.text||'(no written note)')}</p>
       </div>` : ''}
 
     ${waitingOnRelay ? `
-      <div class="note" style="margin-top:14px;border-left-color:#ffd23d;">
+      <div class="note" style="margin-top:14px;border-left-color:var(--leadership);">
         <span class="who">Waiting on your team lead</span>
         <p>The Creative Director asked for changes. Your team lead will pass the notes on before you pick this up.</p>
       </div>` : ''}
@@ -9072,7 +9092,7 @@ async function openDrawer(id){
       <div class="field-lbl">Team lead review</div>
       <textarea id="tlReviewNote" rows="2" placeholder="Feedback for the artist (required if requesting changes)…"></textarea>
       <div style="display:flex;gap:8px;margin-top:8px;">
-        <button class="btn btn-ghost" id="tlReqChangesBtn" style="flex:1;color:#e8402c;">Request Changes</button>
+        <button class="btn btn-ghost" id="tlReqChangesBtn" style="flex:1;color:var(--danger-ink);">Request Changes</button>
         <button class="btn btn-brand" id="tlApproveBtn" style="flex:1;">TL Approved</button>
       </div>
       <div style="font-size:11px;color:var(--ink-faint);margin-top:6px;">
@@ -9106,7 +9126,7 @@ async function openDrawer(id){
       <div class="field-lbl">Creative director review</div>
       <textarea id="cdReviewNote" rows="2" placeholder="Feedback for the artist (required if requesting changes)…"></textarea>
       <div style="display:flex;gap:8px;margin-top:8px;">
-        <button class="btn btn-ghost" id="cdReqChangesBtn" style="flex:1;color:#e8402c;">Request changes</button>
+        <button class="btn btn-ghost" id="cdReqChangesBtn" style="flex:1;color:var(--danger-ink);">Request changes</button>
         ${canApproveForClient ? `<button class="btn btn-brand" id="cdApproveBtn" style="flex:1;">Approve for client</button>` : ''}
       </div>
       ${canApproveForClient ? '' : `<div style="font-size:11px;color:var(--ink-faint);margin-top:6px;">Your role reviews at this stage but does not sign work off for the client.</div>`}
@@ -9138,7 +9158,7 @@ async function openDrawer(id){
         </div>
         <textarea id="clientNote" rows="2" placeholder="What the client asked for (required if sending it back)…"></textarea>
         <div style="display:flex;gap:8px;margin-top:8px;">
-          ${canReturnFromClient ? `<button class="btn btn-ghost" id="clientChangesBtn" style="flex:1;color:#e8402c;">Send to TL Feedbacks</button>` : ''}
+          ${canReturnFromClient ? `<button class="btn btn-ghost" id="clientChangesBtn" style="flex:1;color:var(--danger-ink);">Send to TL Feedbacks</button>` : ''}
           ${canDeliverFromClient ? `<button class="btn btn-brand" id="clientApprovedBtn" style="flex:1;">Mark as Delivered</button>` : ''}
         </div>
         ${(canDeliverFromClient && canReturnFromClient) ? '' : `<div style="font-size:11px;color:var(--ink-faint);margin-top:6px;">
@@ -9260,7 +9280,7 @@ async function openDrawer(id){
 
     <div class="field-lbl">Submissions</div>
     <div id="d_versions">${(a.versions&&a.versions.length) ? a.versions.map(v=>`
-      <div class="note" style="border-left-color:${v.stage==='tl'?'var(--review)':'#9b7ef0'};">
+      <div class="note" style="border-left-color:${v.stage==='tl'?'var(--review)':'var(--review)'};">
         <span class="who">v${v.version_number} · ${avatarHTML({ id:v.uploaded_by, name:v.uploaded_by_name, photoAt:v.uploaded_by_photo_at }, { size:16, title:false })} ${escapeHTML(v.uploaded_by_name||'Someone')} · ${v.stage==='tl'?'Team Lead review':'Creative Director review'}</span> <span class="when">${fmtDate(v.created_at)}</span>
         ${v.link?`<p>${renderLink(v.link, {style:'color:var(--brand-accent);word-break:break-all;'})}</p>`:''}
         ${v.description?`<p>${escapeHTML(v.description)}</p>`:''}
@@ -9272,7 +9292,7 @@ async function openDrawer(id){
 
     <div class="field-lbl">Review feedback</div>
     <div id="d_feedback">${(a.feedback&&a.feedback.length) ? a.feedback.map(f=>`
-      <div class="note" style="border-left-color:${f.decision==='approved'?'var(--approved)':'#e8402c'};">
+      <div class="note" style="border-left-color:${f.decision==='approved'?'var(--approved)':'var(--danger-ink)'};">
         <span class="who">${escapeHTML(f.given_by_name||'Reviewer')} · ${f.stage==='tl'?'Team Lead':'Art Director'} · ${f.decision==='approved'?'Approved':'Changes requested'}</span> <span class="when">${fmtDate(f.created_at)}</span>
         ${f.text?`<p>${escapeHTML(f.text)}</p>`:''}
       </div>`).join('') : '<div style="font-size:12px;color:var(--ink-faint);">No review feedback yet.</div>'}</div>
@@ -9917,22 +9937,22 @@ async function openDrawer(id){
 const HISTORY_ACTIONS = {
   assign:             { label: 'Assigned',          color: 'var(--prog)' },
   accept:             { label: 'Accepted — started', color: 'var(--prog)' },
-  reassign_review:    { label: 'Handed to somebody else', color: '#ffd23d' },
+  reassign_review:    { label: 'Handed to somebody else', color: 'var(--leadership)' },
   submit:             { label: 'Submitted',         color: 'var(--review)' },
-  tl_approve:         { label: 'TL approved',       color: '#4c9a75' },
+  tl_approve:         { label: 'TL approved',       color: 'var(--series-7)' },
   /* The routing decision, named apart from the approval above it. They used to
      be one click and now are two, and a history that called both "TL approved"
      could not answer "who decided the Creative Director should see this". */
-  tl_to_cd:           { label: 'TL sent to CD review', color: '#9b7ef0' },
-  tl_request_changes: { label: 'TL asked for changes', color: '#e8402c' },
+  tl_to_cd:           { label: 'TL sent to CD review', color: 'var(--review)' },
+  tl_request_changes: { label: 'TL asked for changes', color: 'var(--danger-ink)' },
   /* Named for what it skipped, not just for where it went. "Approved for
      client" beside a team lead's avatar would read as the ordinary CD sign-off
      to anybody scanning the history, which is the one thing this line exists to
      distinguish. */
   tl_send_to_client:  { label: 'TL sent to client — CD review skipped', color: 'var(--approved)' },
   cd_approve:         { label: 'CD approved',       color: 'var(--approved)' },
-  cd_request_changes: { label: 'CD asked for changes', color: '#e8402c' },
-  relay:              { label: 'Passed to assignee', color: '#ffd23d' },
+  cd_request_changes: { label: 'CD asked for changes', color: 'var(--danger-ink)' },
+  relay:              { label: 'Passed to assignee', color: 'var(--leadership)' },
   deliver:            { label: 'Delivered',         color: 'var(--final)' },
   /* THE OTHER DELIVERED, and it must not read as the one above it. "Delivered"
      on its own beside a producer's avatar would say the client has the work;
@@ -9947,28 +9967,28 @@ const HISTORY_ACTIONS = {
   /* The freelancer says it is finished; we do not have it yet. Amber, because it
      is a wait rather than an arrival — the same family the Game Feedback state
      uses and deliberately not the green of work landing. */
-  outsource_completed: { label: 'Outsourced work completed', color: '#d9822b' },
+  outsource_completed: { label: 'Outsourced work completed', color: 'var(--series-6)' },
   /* Undoing one of the two above. Named for what it did rather than for where it
      landed: "Not Assigned" beside somebody's avatar would read as an unassignment. */
-  outsource_reopen: { label: 'Reopened — back to the freelancer', color: '#ffd23d' },
+  outsource_reopen: { label: 'Reopened — back to the freelancer', color: 'var(--leadership)' },
   /* The client's round. Named for what happened rather than for the state it
      landed in: "Delivered" beside a client's approval and "Delivered" beside a
      direct sign-off are different events, and the history is where somebody
      works out which one this was. */
   client_sent:        { label: 'Sent to the client',  color: 'var(--client)' },
   client_approved:    { label: 'Client approved — delivered', color: 'var(--final)' },
-  client_changes:     { label: 'Client asked for changes', color: '#e8402c' },
+  client_changes:     { label: 'Client asked for changes', color: 'var(--danger-ink)' },
   /* Not workflow transitions — PATCH /assets/:id writes these two itself — but
      they land in the same history and were showing as the bare ids "reassign"
      and "unassign" beside properly worded lines. The check above is one-way
      (every workflow action must be here), so extra entries are welcome. */
-  reassign:           { label: 'Reassigned',        color: '#ffd23d' },
+  reassign:           { label: 'Reassigned',        color: 'var(--leadership)' },
   unassign:           { label: 'Unassigned',        color: 'var(--not)' },
   /* A bug from the build. Amber, the Game Feedback status colour, so a line in the
      history and the stage on the board read as the same thing. */
-  game_feedback_raised:   { label: 'Game bug raised',     color: '#d9822b' },
-  game_feedback_note:     { label: 'Game bug noted',      color: '#d9822b' },
-  game_feedback_pass:     { label: 'Passed to artist',    color: '#d9822b' },
+  game_feedback_raised:   { label: 'Game bug raised',     color: 'var(--series-6)' },
+  game_feedback_note:     { label: 'Game bug noted',      color: 'var(--series-6)' },
+  game_feedback_pass:     { label: 'Passed to artist',    color: 'var(--series-6)' },
   game_feedback_decline:  { label: 'Game bug declined',   color: 'var(--not)' },
 };
 
@@ -10049,7 +10069,7 @@ function openRound(assetId, roundId){
 
     <div class="field-lbl">Submitted in this round</div>
     ${(ep.submissions && ep.submissions.length) ? ep.submissions.map(v=>`
-      <div class="note" style="border-left-color:${v.stage==='tl'?'var(--review)':'#9b7ef0'};">
+      <div class="note" style="border-left-color:${v.stage==='tl'?'var(--review)':'var(--review)'};">
         <span class="who">v${v.versionNumber} · ${v.stage==='tl'?'Team Lead review':'Creative Director review'}</span>
         <span class="when">${fmtDate(v.at)}</span>
         ${v.link?`<p>${renderLink(v.link, {style:'color:var(--brand-accent);word-break:break-all;'})}</p>`:''}
@@ -10212,7 +10232,7 @@ function showImportResult(data, ok, entity){
     <div class="import-summary">
       <div><strong>${data.totalRows ?? (data.created + errors.length)}</strong>rows in file</div>
       <div><strong style="color:var(--approved);">${data.created}</strong>imported</div>
-      ${data.assigned ? `<div><strong style="color:var(--assigned,var(--ink));">${data.assigned}</strong>assigned</div>` : ''}
+      ${data.assigned ? `<div><strong style="color:var(--ink);">${data.assigned}</strong>assigned</div>` : ''}
       <div class="bad"><strong>${errors.length}</strong>skipped</div>
     </div>
     ${addedNote({one:'category', many:'categories'}, newCats, 'Categories')}
@@ -11634,7 +11654,14 @@ function renderRefSection(sec){
 
 function refInput(sec, col){
   const id = `new-${sec.collection}-${col.key}`;
-  if(col.input==='color') return `<input type="color" id="${id}" value="#4db8ff" style="width:48px;padding:2px;height:34px;">`;
+  /* THE ONE COLOUR LITERAL LEFT IN THIS PAGE, and it has to be one.
+     <input type="color"> takes a hex in its value attribute and nothing else:
+     a custom property there is not a colour the control can show, and the
+     browser falls back to black. This is also not a theme colour — it is the
+     starting point for a value a Super Admin picks for a REFERENCE row (an
+     asset type, a priority), which is stored per row and not part of the theme
+     at all. tests/theme-literals.test.js allow-lists this line by name. */
+  if(col.input==='color') return `<input type="color" id="${id}" value="#4DB8FF" style="width:48px;padding:2px;height:34px;">`;
   /* WHICH CATEGORY AN OPTION BELONGS TO, from the category list this screen has
      already loaded — so a category an admin adds can carry options without a
      line of code here. Every category is offered, not only the three that ship
@@ -13157,11 +13184,11 @@ async function renderIntegrationSettings(){
   /* THE ONE-TIME KEY, at the top where it cannot be scrolled past. Shown only for the
      credential just created or rotated, and gone from memory the moment it is dismissed. */
   const freshBlock = intState.fresh ? `
-    <div class="ref-note" style="border-left:3px solid var(--warn,#d9822b);background:rgba(217,130,43,.08)">
+    <div class="ref-note" style="border-left:3px solid var(--series-6);background:var(--series-6-t08)">
       <strong>Copy this key now — it will not be shown again.</strong>
       <div style="margin:8px 0 6px">Only a one-way hash of it is stored, so nobody can look it
         up later, including you. If it is lost, rotate the credential and configure the new one.</div>
-      <code style="display:block;padding:9px 11px;background:var(--panel,#15171d);border-radius:7px;
+      <code style="display:block;padding:9px 11px;background:var(--code-bg);border-radius:7px;
         word-break:break-all;user-select:all">${escapeHTML(intState.fresh.key)}</code>
       <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
         <span class="muted">for <strong>${escapeHTML(intState.fresh.name)}</strong></span>
@@ -15129,16 +15156,16 @@ let osState = { tab:'assignments', data:null, people:null, targets:null,
      under them. */
   stage:'all' };
 
-const OS_STATUS_TONE = { assigned:'#6b7a8f', in_progress:'#2f6f9f',
-  completed:'#5a4fbf', delivered:'#2e7d5b', revision_requested:'#b8860b' };
+const OS_STATUS_TONE = { assigned:'var(--neutral)', in_progress:'var(--stage-working)',
+  completed:'var(--stage-completed)', delivered:'var(--outsourced)', revision_requested:'var(--stage-revision)' };
 
-/* The stage badge's colours. Four tones, none of them the brand red (#7f1416):
+/* The stage badge's colours. Four tones, none of them the brand red (var(--brand)):
    a status that looked like the brand would read as chrome rather than as a
    state, which is the rule the asset statuses follow too. With the freelancer is
    the blue of work in progress, Completed the violet of done-but-not-handed-on,
    Delivered the same green a delivery is already shown in, Cancelled grey. */
-const OS_STAGE_TONE = { with_freelancer:'#2f6f9f', completed:'#5a4fbf',
-  delivered:'#2e7d5b', cancelled:'#6b7a8f' };
+const OS_STAGE_TONE = { with_freelancer:'var(--stage-working)', completed:'var(--stage-completed)',
+  delivered:'var(--outsourced)', cancelled:'var(--neutral)' };
 
 function osMoney(n){
   if(n === null || n === undefined) return '—';
@@ -15292,7 +15319,7 @@ function osRenderAssignments(body, canManage, canSeeRates){
             <td class="num"><strong>${osHours(a.decidedManHours)}</strong></td>
             ${canSeeRates?`<td class="num">${osMoney(osCostOf(a))}</td>`:''}
             <td>${osStageBadge(a)}</td>
-            <td><span class="os-pill" style="--tone:${OS_STATUS_TONE[a.status]||'#6b7a8f'}">${escapeHTML(a.statusLabel)}</span></td>
+            <td><span class="os-pill" style="--tone:${OS_STATUS_TONE[a.status]||'var(--neutral)'}">${escapeHTML(a.statusLabel)}</span></td>
             <td>${a.dueDate ? escapeHTML(a.dueDate) : '—'}</td>
             ${hasActions?`<td class="os-actions">${osStageButtons(a, mayRecord, mayReopen)}${
               canManage?`<button class="btn btn-sm btn-ghost" data-edit="${escapeHTML(a.id)}">Edit</button>`:''}</td>`:''}
@@ -15401,7 +15428,7 @@ function osRenderAssignments(body, canManage, canSeeRates){
  * asking about it later needs. Null on everything recorded before the columns
  * existed, which reads as "we do not know" rather than as a wrong name. */
 function osStageBadge(a){
-  const tone = OS_STAGE_TONE[a.stage] || '#6b7a8f';
+  const tone = OS_STAGE_TONE[a.stage] || 'var(--neutral)';
   const stamp = a.stage === 'delivered' ? { by:a.deliveredByName, at:a.deliveredAt, verb:'delivered' }
     : a.stage === 'completed' ? { by:a.completedByName, at:a.completedAt, verb:'completed' }
       : a.stage === 'cancelled' ? { by:a.cancelledByName, at:a.cancelledAt, verb:'cancelled' }
@@ -15641,7 +15668,7 @@ function osRenderPeople(body, canManage, canSeeRates){
             <td>${escapeHTML(p.discipline||'—')}</td>
             <td>${escapeHTML(p.email||p.phone||'—')}</td>
             ${canSeeRates?`<td class="num">${osMoney(p.ratePerHour)}</td>`:''}
-            <td><span class="os-pill" style="--tone:${p.active?'#2e7d5b':'#6b7a8f'}">${p.active?'Active':'Inactive'}</span></td>
+            <td><span class="os-pill" style="--tone:${p.active?'var(--outsourced)':'var(--neutral)'}">${p.active?'Active':'Inactive'}</span></td>
             ${canManage?`<td><button class="btn btn-sm btn-ghost" data-person="${escapeHTML(p.id)}">Edit</button></td>`:''}
           </tr>`).join('')}
       </tbody>
@@ -15960,7 +15987,7 @@ async function renderChatActivity(){
           <input type="text" id="ca_q" placeholder="Message text, sender or group name" value="${escapeHTML(f.q||'')}"></div>
         <div style="min-width:auto;"><label>&nbsp;</label>
           <label style="flex-direction:row;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:11.5px;color:var(--ink-muted);cursor:pointer;">
-            <input type="checkbox" id="ca_files" style="accent-color:var(--brand-accent);"${f.withFiles?' checked':''}> With a file
+            <input type="checkbox" id="ca_files" style="accent-color:var(--form-accent);"${f.withFiles?' checked':''}> With a file
           </label></div>
         <button class="btn btn-brand btn-sm" id="ca_apply">Filter</button>
         <button class="btn btn-ghost btn-sm" id="ca_clear">Clear</button>

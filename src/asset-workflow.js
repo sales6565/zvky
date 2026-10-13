@@ -49,11 +49,11 @@ const { roleDef } = require('./roles');
 
 // The eleven states, in pipeline order. Labels and colours match the dashboard.
 const STATES = [
-  { id: 'not_started', label: 'Not Assigned', color: 'var(--not)' },
-  { id: 'assigned', label: 'Assigned', color: '#5b8def' },
-  { id: 'in_progress', label: 'In Progress', color: 'var(--prog)' },
-  { id: 'pending_tl_review', label: 'TL Review', color: 'var(--review)' },
-  { id: 'tl_changes_requested', label: 'TL Feedbacks', color: '#e8402c' },
+  { id: 'not_started', label: 'Not Assigned', color: 'var(--status-not-started)' },
+  { id: 'assigned', label: 'Assigned', color: 'var(--status-assigned)' },
+  { id: 'in_progress', label: 'In Progress', color: 'var(--status-in-progress)' },
+  { id: 'pending_tl_review', label: 'TL Review', color: 'var(--status-pending-tl-review)' },
+  { id: 'tl_changes_requested', label: 'TL Feedbacks', color: 'var(--status-tl-changes-requested)' },
   /* Past the first gate, waiting on the lead to say where it goes next.
    *
    * A MUTED GREEN, and the shade is the point. Approved for Client is the
@@ -62,9 +62,9 @@ const STATES = [
    * glance on a board. Distinct from the brand red, as every status colour
    * must be: a stage colour that matched the application's own would make one
    * stage look like the product rather than like a place work sits. */
-  { id: 'tl_approved', label: 'TL Approved', color: '#4c9a75' },
-  { id: 'pending_cd_review', label: 'CD Review', color: '#9b7ef0' },
-  { id: 'cd_changes_requested', label: 'CD Feedbacks', color: '#e8402c' },
+  { id: 'tl_approved', label: 'TL Approved', color: 'var(--status-tl-approved)' },
+  { id: 'pending_cd_review', label: 'CD Review', color: 'var(--status-pending-cd-review)' },
+  { id: 'cd_changes_requested', label: 'CD Feedbacks', color: 'var(--status-cd-changes-requested)' },
   /* A bug raised against the asset from the build — QA, Dev, Tech Art or the client
    * playing it. Work coming back, like the two feedback states above it, which is why
    * it sits with them rather than after Delivered: the list is grouped by WHAT a
@@ -76,15 +76,15 @@ const STATES = [
    * them look alike. Distinct from the brand red #7f1416, as every status colour must
    * be — a stage wearing the application's own colour would read as the product
    * rather than as a place work sits. */
-  { id: 'game_feedback', label: 'Game Feedback', color: '#d9822b' },
-  { id: 'approved_for_client', label: 'Approved for Client', color: 'var(--approved)' },
+  { id: 'game_feedback', label: 'Game Feedback', color: 'var(--status-game-feedback)' },
+  { id: 'approved_for_client', label: 'Approved for Client', color: 'var(--status-approved-for-client)' },
   /* Sent out and waiting on the client's word. Its own colour, and deliberately
      not the brand red: a status colour says where work is, and reusing the
      brand for one of them would make that state look like the application
      rather than like a stage. Teal, so it reads as "waiting on somebody
      outside" beside the green of approved and the lime of delivered. */
-  { id: 'awaiting_client_feedback', label: 'Awaiting Client Feedback', color: 'var(--client)' },
-  { id: 'delivered', label: 'Delivered', color: 'var(--final)' },
+  { id: 'awaiting_client_feedback', label: 'Awaiting Client Feedback', color: 'var(--status-awaiting-client-feedback)' },
+  { id: 'delivered', label: 'Delivered', color: 'var(--status-delivered)' },
 ];
 
 const STATE_IDS = STATES.map((s) => s.id);
@@ -229,7 +229,7 @@ const OUTSOURCE_DELIVERED_TO = 'delivered';
 const OUTSOURCE_DELIVERED_COLUMN = {
   id: 'outsource_delivered',
   label: 'Back from Freelancer',
-  color: '#2e7d5b',
+  color: 'var(--outsourced)',
   after: 'pending_tl_review',
   // The status the delivery leaves the task in, which is also the status this
   // column takes its cards out of. One place, so the two cannot disagree.
