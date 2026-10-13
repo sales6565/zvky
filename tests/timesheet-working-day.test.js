@@ -230,6 +230,47 @@ test('the figure is read from the configured schedule, never from a number in th
     'and a day starting at 10:00 makes day 2 one hour');
 });
 
+test('a running session counts to NOW, never to the close of the day', async () => {
+  /* THE CLOCK, HELD STILL. dayTotalFor takes `now`, and a fake db hands it the
+     one row, so the live case can be pinned exactly rather than as a pair of
+     bounds — which is what the live suite has to settle for, since a session
+     running now is worth whatever the moment makes it.
+
+     The schedule here is the one src/work-schedule.js falls back to with
+     nothing loaded, and it is the studio's own shipped shape: 09:30 to 19:00,
+     Monday to Friday, with THREE breaks — 11:00–11:15, 13:00–14:00 and
+     16:00–16:15. Asserted first, because every figure below is read off it. */
+  const sched = require('../src/work-schedule').trackingWindow();
+  assert.deepStrictEqual([sched.dayStart, sched.dayEnd], [570, 1140]);
+  assert.deepStrictEqual(sched.breaks.map((b) => [b.start, b.end]),
+    [[660, 675], [780, 840], [960, 975]]);
+
+  const started = at(DAY2, 9, 30);
+  const openRow = (now) => ({
+    query: async () => ({ rows: [{ start_age: (now - started) / 1000,
+      end_age: null, still_open: 1 }] }),
+  });
+
+  /* Read at half past two: the morning, less the morning break and lunch.
+     09:30–11:00, 11:15–13:00, 14:00–14:30 — 3 h 45 m. If an open row were run
+     to the CLOSE of the day instead of to now, it would read 8 h, which is the
+     whole day and four and a quarter hours this person has not worked yet. */
+  const now = at(DAY2, 14, 30);
+  const mid = await workLog.dayTotalFor(openRow(now),
+    { assetId: 'a', userId: 'u', day: DAY2, now });
+  assert.strictEqual(mid.seconds / 3600, 3.75, 'counted to now, not to 19:00');
+  assert.strictEqual(mid.open, true, 'and the caller is told it is still running');
+  assert.strictEqual(mid.openCapped, 0, 'nothing was capped: the day has not ended');
+
+  /* And the other side of the same rule: read the next week, that day is over
+     and the figure is the day's own open time — 8 h — with the cap reported. */
+  const later = at(MON, 11, 0) + (7 * 86400000);
+  const done = await workLog.dayTotalFor(openRow(later),
+    { assetId: 'a', userId: 'u', day: DAY2, now: later });
+  assert.strictEqual(done.seconds / 3600, 8, "a past day's open row is that day's own hours");
+  assert.strictEqual(done.openCapped, 1, 'and the shortfall is reported, not discovered');
+});
+
 // ===========================================================================
 // 2. AGAINST A LIVE SERVER, with the studio's real shape in place.
 // ===========================================================================
