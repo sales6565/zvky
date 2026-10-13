@@ -14,7 +14,8 @@
     "build:mac": "node scripts/build.js --mac",
     "build:all": "node scripts/build.js --win --mac",
     "check": "node scripts/check.js && node scripts/feed-check.js",
-    "smoke": "xvfb-run -a electron --no-sandbox scripts/smoke.js"
+    "smoke": "xvfb-run -a electron --no-sandbox scripts/smoke.js",
+    "smoke:timesheet": "xvfb-run -a electron --no-sandbox scripts/timesheet-day.js"
   },
   "devDependencies": {
     "electron": "^33.2.0",

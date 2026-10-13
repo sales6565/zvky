@@ -233,11 +233,12 @@ the studio.
 
 ### What a timesheet line against an asset is worth
 
-**This person, that asset, that day — and nothing else.** A line naming an asset
-is worth the time *this* person recorded on *that* asset on the *selected
-calendar day* in IST, less whatever they have already filed against it on that
-same day. The figure is **calculated and enforced**, not suggested: the Hours
-field is locked in the form and `hoursFor()` works the number out again on save,
+**This person, that asset, that day's working hours — and nothing else.** A line
+naming an asset is worth the time *this* person worked on *that* asset on the
+*selected day* in IST **inside that day's working hours**, less whatever they
+have already filed against it on that same day. The figure is **calculated and
+enforced**, not suggested: the Hours field is locked in the form and
+`hoursFor()` works the number out again on save,
 so a request carrying nine files the three the timer recorded.
 
 **The bug this replaced, and its exact shape.** The figure used to be
@@ -252,54 +253,122 @@ number actually used. Both the form (`GET /api/timesheets/suggest`) and the save
 and a save that files five is not expressible.
 
 **Why the day figure had been rejected, and why that reason is gone.**
-`dayTotalFor()` dropped any stretch that ran past midnight — its comment argued
-there was "genuinely no way to know how much of a stretch running from Tuesday
-afternoon to Wednesday morning was Tuesday's" — so a per-day figure would have
-lost those hours for good, and the whole-asset subtraction was how they were
-made up. That premise was wrong: `work_sessions.seconds` is the span
+`dayTotalFor()` originally dropped any stretch that ran past midnight — its
+comment argued there was "genuinely no way to know how much of a stretch running
+from Tuesday afternoon to Wednesday morning was Tuesday's" — so a per-day figure
+would have lost those hours for good, and the whole-asset subtraction was how
+they were made up. That premise was wrong: a session's worth is the span
 **intersected with the studio's open hours**, and that intersection is additive,
-so Tuesday's part is exactly computable. A stretch is now split at midnight IST:
+so Tuesday's part is exactly computable.
 
-- `workingMsByDay()` in `src/working-time.js` is the same per-day walk
-  `workingSecondsBetween()` already does, kept per IST date in **milliseconds**.
-  A test pins that the two agree, because that function is what `close()` stores
-  and what every report reads.
-- `allocateSeconds()` divides the row's stored seconds across those days by
-  **largest remainder**, so every leftover second is handed out and the parts sum
-  to the whole exactly: 22:30–01:30 is 1.5 h and 1.5 h, never 1.49 and 1.5.
-- **Paused and closed time is excluded with nothing subtracted.** A hold *closes*
-  a row and a resume opens another, so a pause is the gap between two rows; and
-  lunch, the evening, a weekend and a holiday are all simply time with no open
-  span over it, in `seconds` and in the weights alike.
-- A row **entirely inside one day** comes out at exactly its stored `seconds` —
-  one day in the map takes the lot — so the ordinary case is unchanged.
-- A legacy row (written before `seconds` became the open-hours intersection)
-  whose whole span falls outside the open hours is apportioned by **elapsed**
-  time instead, so hours somebody really worked land on the days they happened
-  rather than nowhere.
+**Midnight is not the boundary either, and that was the second wrong answer.**
+The fix that replaced the whole-asset total split a stretch at **midnight IST**
+and divided the row's stored `seconds` across the days on either side. For the
+studio's actual shape — an artist who starts at 6:00 PM and finishes at 11:00 AM
+the next morning — midnight gives about **6 h** and **11 h** of a seventeen-hour
+night, when the answer is **1 h** (6:00 PM to the 7:00 PM close) and **1 h 30 m**
+(the 9:30 AM open to 11:00 AM). The boundary is the **working day**, not the
+calendar day.
+
+**So the figure is an overlap, computed from the stamps.** `dayTotalFor(userId,
+assetId, day)` in `src/work-log.js`:
+
+- reads this person's sessions on this asset as **stamps** — `started_at`,
+  `ended_at` — and never reads `work_sessions.seconds` at all;
+- **clips** each one to the requested IST day, then hands the clipped span to
+  `workingMsByDay()` in `src/working-time.js`, the same per-day walk
+  `workingSecondsBetween()` does and therefore the same schedule the timer, the
+  reports and `close()` are measured against;
+- sums the overlaps. Time outside the open hours, inside a break, on a weekly
+  off or on a holiday contributes **zero** — not because it is subtracted, but
+  because there is no open window over it.
+
+Four things follow, and each is pinned:
+
+- **The sweep cannot change the answer.** Whether that night is one open row from
+  6:00 PM to 11:00 AM, or the two rows the end-of-day sweep and the overnight
+  auto-resume leave behind, both give 1 h and 1 h 30 m. Nothing in the
+  calculation depends on where a row begins or ends.
+- **The days add up to the session exactly.** The per-day figures for one stretch
+  sum to that stretch's own working-hours total, because they are overlaps of
+  the same windows rather than shares of a rounded number. Rounding happens
+  **once, at display**; there is no per-day rounding to drift.
+- **Paused time is excluded with nothing subtracted.** A hold *closes* a row and
+  a resume opens another, so a pause is simply the gap between two rows.
+- **A row entirely inside one open day** comes out at the working time it
+  actually covers, which for an ordinary day's work is the ordinary answer.
+
+Dividing a stored total by anything is gone, and with it the one case it existed
+for: a **pre-cutover** row, written before `seconds` meant the open-hours
+intersection, used to be apportioned by elapsed time. Those rows now go through
+the same overlap as every other row, so a stored number that means something
+else can no longer leak into a timesheet. That apportioning is the shape that
+reproduces the figures this change was reported for: the same overnight example
+on a pre-cutover row read **6.8 h** and **10.2 h**, because the stored seconds
+were a wall clock being shared out rather than working time being measured.
+
+**The hours it uses are the studio's own, read from settings.** No minute is
+written into this code. `schedule()` is `workSchedule.trackingWindow()` — the
+same cached read the timer, the pause sweep and the overnight resume take their
+whole picture of the studio from: the named recording windows in
+`recording_hour_configs` when there are any (and the `work_schedule` row when
+there are not), `working_days` for the weekly off, `studio_holidays` for the
+closures. As configured today that is
+**09:30 to 19:00, Monday to Friday**, with **three** non-recording blocks, not
+one: **lunch 13:00–14:00**, a **morning break 11:00–11:15** and an **evening
+break 16:00–16:15**. All three are excluded, so a day worked straight through
+from 09:30 to 19:00 is worth **8 h**, not the 9.5 h on the clock — which is the
+`hours_per_day` the schedule also carries, and a useful check that the breaks
+are being read. Change any of them in Settings and
+every figure here changes with it; `tests/timesheet-working-day.test.js` sets a
+deliberately odd schedule and asserts the figures follow it rather than the
+studio's own.
+
+**There is no history of the schedule, and a past day is recomputed under
+today's hours.** `work_schedule` is a single row with an `updated_at` and no
+validity dates, and `recording_hour_configs` has none either, so moving the
+close from 19:00 to 20:00 tomorrow changes what last Tuesday was worth. The help
+text under the figure says so in one line, because a person who notices a number
+move deserves the reason. **Recommended, and not built:** record the schedule in
+effect on each session as it closes — a small JSON column on `work_sessions`
+written by `close()` — so a recalculation years later is stable. It is left out
+because it is a migration plus a second read path on every consumer, which is
+more than this change should carry; `src/holidays.js` already refuses a holiday
+dated today or earlier for exactly this reason, so the schedule's past is
+partly protected already.
 
 **A running session** counts up to **now** for the day that holds now — the same
-figure the timer on the panel shows. For a day that has already ended it is
-**capped at the end of that day** rather than run up to now, because an open row
-spanning a past day means the sweep never closed it, and the response says so
-(`openCapped`) so the shortfall is explained rather than discovered.
+figure the timer on the panel shows — and never past the end of that working
+day. For a day that has already ended it is **capped at the close of that day**
+rather than run up to now, because an open row spanning a past day means the
+sweep never closed it, and the response says so (`openCapped`) so the shortfall
+is explained rather than discovered.
 
 **The date is the server's business.** `GET /api/timesheets/suggest` takes the
 day, validates it (a day that does not exist is a **400** — `toISO` accepts a
 `Date` and an ISO instant on purpose and checks no calendar), and a **future**
 day comes back as zero. The page sends the selected date and prints what comes
-back; it holds no copy of the IST boundary, the split or the cap. Each lookup
+back; it holds no copy of the IST boundary, the working hours, the breaks or
+the cap, and does no date arithmetic of its own. Each lookup
 takes a ticket and the reply is checked against the date and asset the server
 echoes, so a slow answer for the asset you just moved off cannot land in a
 locked field. A failed lookup **says so** and hands the field back to be typed —
 it used to be swallowed, leaving the previous asset's number on screen as though
-it had been calculated.
+it had been calculated. What it prints is the server's own sentence: *"Recorded
+on this asset on 9 Oct: 1 h 30 m"*, in hours and minutes rather than the 1.5 the
+field has to hold, with a second clause when a stretch ran outside the day
+explaining that only the part inside the working hours is counted, and a third
+when the answer is zero **because** everything that person did on that asset
+that day fell outside them.
 
-**Whose time it is.** Always the timesheet owner's: `/suggest` has no `userId`
-parameter and `POST /entries` writes `req.user`'s line whatever the body
-carries, so there is no file-on-behalf-of path to get wrong. `dayFigure()` takes
-the owner's id as its first argument, which is the one place a future on-behalf
-path would need to change. Pinned.
+**Whose time it is.** Always the timesheet **owner's**, never the person looking.
+`POST /entries` still writes `req.user`'s line whatever the body carries, so
+nobody can file into somebody else's sheet; `/suggest` now takes an optional
+`userId` so a lead reading a team member's week sees **that member's** figure
+rather than their own, guarded by the same `mayRead` check the week itself goes
+through — a `userId` you may not read is a **403**, not a quiet fallback to your
+own hours. `dayFigure()` takes the owner's id as its first argument. Both halves
+are pinned, including the refusal.
 
 **Where the whole-asset total is still the right answer, and untouched:** Time
 Spent on the Assets List (`workLog.totalsFor`), the asset panel and its
@@ -326,10 +395,16 @@ asset**, where the figure is typed. The refusal names the day and points at the
 second one. Pinned in `tests/timesheet.test.js` so it is a decision rather than
 a discovery.
 
-**Lines already filed are not rewritten.** `sql/checks/timesheet-lines-over-recorded.sql`
-finds the ones that look affected — a line whose hours exceed what that person
-recorded on that asset that day — with the excess and whether a midnight-crossing
-stretch could explain it. It is read-only on purpose: those hours are somebody's
+**Lines already filed are not rewritten.** Two read-only ways to see which ones
+look affected. `npm run timesheet:check` recalculates every filed line against
+an asset with **this** rule and reports the ones that differ, narrowing first to
+the two shapes that can differ at all — a line whose sessions are pre-cutover, or
+whose sessions cross an IST day — and `--lines` prints each one with the stored
+hours, the recalculated figure and which shape explains it. It needs the
+database, so it is run on the server rather than from here;
+`sql/checks/timesheet-lines-over-recorded.sql` answers the weaker question — a
+line whose hours exceed what that person recorded on that asset that day — in
+plain SQL for when it cannot be. It is read-only on purpose: those hours are somebody's
 own record of their day and pay and utilisation figures have been drawn from
 them. **Recommended: review the list before correcting anything, and do any
 correction as a separate reviewable migration** — the likely population is small
@@ -4235,6 +4310,27 @@ it, that an unreadable list is never mistaken for an empty one, that the screen
 explains the fault instead of returning a database error, that Repair recreates
 the tables and enforcement resumes, and that fail-closed keeps the emergency
 door open and is ignored when there is none.
+
+`tests/timesheet-working-day.test.js` covers the day figure: the brief's own
+example as arithmetic and then through the live `/suggest`, the same night as one
+open row and as the two rows the sweep leaves, a stretch across the lunch block,
+Friday evening to Monday morning, a holiday, a stretch wholly outside the hours,
+one starting before the open, the four instants either side of 09:30 and 19:00,
+a running session's two bounds, another person's time excluded and a lead reading
+a member's figure (and the 403 when they may not), an empty day, a future day,
+the per-day figures summing to the stretch exactly, a changed schedule
+recomputing a past day, and that the asset's own total is left alone. Three of
+its cases drive the page itself and assert it does no date arithmetic.
+
+`npm run smoke:timesheet` in `desktop/` runs the same acceptance example in a
+**real Electron window**, because the two reports before this one were both "it
+works in a browser but not in the application". It builds its own studio through
+the real API (`desktop/scripts/timesheet-day-fixture.js`, as plain Node — see the
+comment there for why the window cannot do it), signs in, opens the Add line form
+through the page's own functions, walks the client → project → asset pickers with
+real `change` events, and reads 1 h on day 1 and 1 h 30 m on day 2 out of the
+form. Its last case holds day 1's reply open past day 2's and releases it, to see
+a stale answer refused by the live page rather than by a stub.
 
 ### Suites that place a window relative to now
 
