@@ -3997,6 +3997,65 @@ async function closeStrandedSessions(db, log) {
  * IDEMPOTENT through addIndex(), like every other index this file adds after the
  * fact: a second run finds the key already there and swallows the duplicate.
  */
+/* THE SAVED THEME: one row, its version, the last twenty saves, and the presets.
+ *
+ * A TABLE RATHER THAN A SETTINGS COLUMN, for the same reason branding has one:
+ * the sign-in screen needs it before anybody has authenticated, so it has to be
+ * readable without a session and cheap enough to read on every page load. The
+ * values are JSON because the catalogue they key into changes with a deploy and
+ * a column per colour would be a migration per token.
+ *
+ * `version` is the whole cache story. It increases on every save, rides on
+ * /auth/me so an open screen repaints itself, and keys the ETag on the public
+ * stylesheet so a browser revalidates exactly once per change.
+ */
+const themeTableExists = async (db, name) => (await db.query(
+  `SELECT TABLE_NAME AS n FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '${name}'`
+).catch(() => ({ rows: [] }))).rows.length > 0;
+
+async function ensureTheme(db, log) {
+  if (!(await themeTableExists(db, 'studio_theme'))) {
+    await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS studio_theme (
+        id          TINYINT      NOT NULL PRIMARY KEY,
+        /* Nought means "nothing saved", which is a real state and the one every
+           deployment starts in: the page falls back to the generated defaults. */
+        version     INT          NOT NULL DEFAULT 0,
+        values_json TEXT         NULL,
+        updated_at  DATETIME     NULL,
+        updated_by  CHAR(36)     NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+    await db.query('INSERT IGNORE INTO studio_theme (id, version) VALUES (1, 0)');
+    log('Schema: added studio_theme.');
+  }
+  if (!(await themeTableExists(db, 'studio_theme_history'))) {
+    await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS studio_theme_history (
+        id             CHAR(36)  NOT NULL PRIMARY KEY,
+        seq            BIGINT    NOT NULL AUTO_INCREMENT UNIQUE,
+        version        INT       NOT NULL,
+        values_json    TEXT      NULL,
+        saved_at       DATETIME  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        saved_by       CHAR(36)  NULL,
+        /* The email as well as the id, because the point of this table is to be
+           readable after the account that made the change has gone. */
+        saved_by_email VARCHAR(191) NULL,
+        KEY idx_theme_history_version (version)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+    log('Schema: added studio_theme_history.');
+  }
+  if (!(await themeTableExists(db, 'studio_theme_presets'))) {
+    await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS studio_theme_presets (
+        id          CHAR(36)     NOT NULL PRIMARY KEY,
+        \`name\`      VARCHAR(60)  NOT NULL,
+        values_json TEXT         NULL,
+        created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        created_by  CHAR(36)     NULL,
+        UNIQUE KEY uq_theme_preset_name (\`name\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+    log('Schema: added studio_theme_presets.');
+  }
+}
+
 async function ensureFollowUpIndexes(db, log) {
   const columns = await columnsOf(db, 'work_sessions');
   if (!columns.size) return;                 // no table yet; its own step makes it
@@ -4164,6 +4223,8 @@ const STEPS = [
   // Last: it reads assets.status, which every step above may have changed.
   ['stranded work sessions', closeStrandedSessions],
   ['follow-up indexes', ensureFollowUpIndexes],
+  ['studio theme', ensureTheme],
+  ['studio theme mirror', (db) => require('./theme').load(db)],
 ];
 
 async function run(db, log = console.log) {

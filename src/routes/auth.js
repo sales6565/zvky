@@ -9,6 +9,7 @@ const db = require('../db');
 // The previous-working-day rule's answer, which /me hands to the page so the
 // browser never recomputes a date rule the server owns.
 const timesheetGate = require('../timesheet-gate');
+const theme = require('../theme');
 const { userFields } = require('../user-fields');
 const { authenticate } = require('../middleware/auth');
 const { capabilitiesFor, catalogue } = require('../roles');
@@ -127,6 +128,13 @@ router.get('/me', authenticate, async (req, res) => {
   const gate = await timesheetGate.check(db, req.user);
   res.json({
     user: req.user,
+    /* THE THEME'S VERSION, so a colour change reaches an open screen without
+       anybody reloading. A number and not the colours: this endpoint is polled
+       every twenty seconds by every signed-in browser, and sending a hundred hex
+       values on each poll to say "nothing changed" would be the most wasteful
+       field in the application. The page compares it with what it has and asks
+       GET /api/theme only when it differs. */
+    themeVersion: theme.version(),
     timesheetGate: {
       blocked: gate.blocked,
       date: gate.date,

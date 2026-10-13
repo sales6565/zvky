@@ -1183,6 +1183,30 @@ const GROUPS = [
           + 'particular project is a separate permission, under Project Management.',
       },
       {
+        key: 'settings.theme',
+        label: 'Manage Theme',
+        /* THE STUDIO'S COLOURS, every one of them, on every screen including the
+           sign-in page before anybody has authenticated.
+           
+           SUPER ADMIN ONLY BY DEFAULT, through managePermissions, and NOT through
+           manageSettings like the branding key beside it. The difference is the
+           blast radius: a bad logo is embarrassing, and a theme saved with the
+           text the same colour as the page makes the application unusable for
+           everybody at once — including for whoever would have to put it back.
+           The revert is built to survive exactly that, and the default is still
+           the narrowest one.
+           
+           IT CAN BE DELEGATED, and should be able to be: this is the same
+           permission model as everything else, so a studio that wants its art
+           director to own the palette grants the key in Settings → Role
+           Permissions and nothing else changes. Super Admin only is the DEFAULT,
+           not a ceiling. */
+        impliedBy: has('managePermissions'),
+        describe: 'The Theme section: every colour the application draws, with a live '
+          + 'contrast check, named presets and a one-click revert. Read access needs no '
+          + 'permission \u2014 the sign-in screen wears the theme too.',
+      },
+      {
         key: 'settings.branding',
         label: 'Manage Branding',
         // The application's own name, tagline and logo. Everyone sees the

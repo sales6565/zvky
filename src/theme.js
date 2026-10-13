@@ -27,6 +27,7 @@ const tokens = require('./theme-tokens');
 const workflow = require('./asset-workflow');
 
 const TABLE = 'studio_theme';
+const HISTORY_TABLE = 'studio_theme_history';
 const PRESET_TABLE = 'studio_theme_presets';
 
 /* ---------------------------------------------------------------------------
@@ -295,10 +296,252 @@ const warningsFor = (values) => [
 ];
 
 module.exports = {
-  TABLE, PRESET_TABLE,
+  TABLE, HISTORY_TABLE, PRESET_TABLE,
   all, byKey, isToken, defaults,
   cssFor, declarationsFor, rgbaOf,
   validate,
   contrast, ratios, focusRingWarnings, warningsFor, PAIRS, statusPairs,
   AA_NORMAL, AA_LARGE,
 };
+
+/* ===========================================================================
+ * STORAGE: one saved theme, its version, the last twenty saves, and the presets.
+ *
+ * MIRRORED IN MEMORY like branding and the reference lists, and for the same
+ * reason: every page load needs the theme and it changes a handful of times in
+ * the life of a deployment. The mirror is loaded at startup and reloaded on
+ * every write, so a save is visible on the next request rather than on the next
+ * restart.
+ */
+const ONE = 1;
+
+let cache = { values: {}, version: 0, updatedAt: null, updatedBy: null };
+let loaded = false;
+
+const parse = (json) => {
+  try {
+    const raw = JSON.parse(json || '{}');
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+    /* RE-VALIDATED ON THE WAY OUT OF THE DATABASE. A row restored from a backup
+       taken before this validation existed, or edited by hand, must not be able
+       to put anything into a stylesheet — so what comes back is filtered to
+       known tokens with canonical values and nothing else. */
+    const out = {};
+    for (const [key, value] of Object.entries(raw)) {
+      const tok = byKey().get(key);
+      if (!tok) continue;
+      const checked = tokens.canonical(value);
+      if (checked.error) continue;
+      if (checked.alpha && !tok.alpha) continue;
+      out[key] = checked.value;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+};
+
+async function load(db) {
+  const { rows } = await db.query(
+    `SELECT version, values_json, updated_at, updated_by FROM ${TABLE} WHERE id = ${ONE}`
+  ).catch(() => ({ rows: [] }));
+  const row = rows[0];
+  cache = {
+    values: parse(row && row.values_json),
+    version: Number(row && row.version) || 0,
+    updatedAt: (row && row.updated_at) || null,
+    updatedBy: (row && row.updated_by) || null,
+  };
+  loaded = true;
+  return cache;
+}
+
+const isLoaded = () => loaded;
+const current = () => ({ ...cache, values: { ...cache.values } });
+
+/* THE VERSION IS WHAT MAKES A CHANGE TRAVEL. It rides on /auth/me — already
+   polled every twenty seconds — and keys the ETag on the public endpoint, so a
+   logged-in screen repaints itself and a cached stylesheet is revalidated
+   without anybody being told to reload. */
+const version = () => cache.version;
+
+/* THE CSS FOR WHAT IS SAVED, from the mirror. Falls all the way back to the
+   defaults when the mirror could not load, which is the one behaviour this must
+   never get wrong: a database that is down has to produce the palette the
+   application shipped with, not an unstyled page. */
+const currentCss = () => cssFor(loaded ? cache.values : {});
+
+async function save(db, input, actor) {
+  const checked = validate(input);
+  if (!checked.ok) return checked;
+
+  const before = { ...cache.values };
+  const next = checked.values;
+  const nextVersion = cache.version + 1;
+  const json = JSON.stringify(next);
+
+  await db.query(
+    `INSERT INTO ${TABLE} (id, version, values_json, updated_at, updated_by)
+     VALUES (${ONE}, $1, $2, NOW(), $3)
+     ON DUPLICATE KEY UPDATE version = VALUES(version), values_json = VALUES(values_json),
+       updated_at = VALUES(updated_at), updated_by = VALUES(updated_by)`,
+    [nextVersion, json, (actor && actor.id) || null]
+  );
+
+  /* THE LAST TWENTY, so a bad save can be undone in one click. Written before
+     the mirror is refreshed, because the thing worth keeping is the state that
+     is being replaced as well as the one replacing it. */
+  await db.query(
+    `INSERT INTO ${HISTORY_TABLE} (id, version, values_json, saved_at, saved_by, saved_by_email)
+     VALUES (UUID(), $1, $2, NOW(), $3, $4)`,
+    [nextVersion, json, (actor && actor.id) || null, (actor && actor.email) || null]
+  ).catch(() => {});
+  await db.query(
+    `DELETE FROM ${HISTORY_TABLE} WHERE seq <= (
+       SELECT MIN(seq) FROM (
+         SELECT seq FROM ${HISTORY_TABLE} ORDER BY seq DESC LIMIT ${tokens.HISTORY_LIMIT}
+       ) AS keep
+     ) - 1`
+  ).catch(() => {});
+
+  await load(db);
+  return {
+    ok: true,
+    version: cache.version,
+    values: { ...cache.values },
+    changed: changedBetween(before, next),
+    contrast: ratios(cache.values),
+    warnings: warningsFor(cache.values),
+  };
+}
+
+/* WHAT MOVED, for the audit line. Old and new for every token that is different,
+   with the DEFAULT standing in for "not set" on either side — because "unset to
+   #FF0000" is what happened, and recording it as "(none) to #FF0000" would make
+   the log unreadable for the common case of a first save. */
+function changedBetween(before, after) {
+  const base = defaults();
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  const out = [];
+  for (const key of [...keys].sort()) {
+    const from = before[key] || base[key];
+    const to = after[key] || base[key];
+    if (from === to) continue;
+    const tok = byKey().get(key);
+    out.push({ token: key, label: tok ? tok.label : key, from, to });
+  }
+  return out;
+}
+
+async function history(db) {
+  const { rows } = await db.query(
+    `SELECT h.version, h.values_json, h.saved_at, h.saved_by_email, u.\`name\` AS saved_by_name
+       FROM ${HISTORY_TABLE} h
+       LEFT JOIN users u ON u.id = h.saved_by
+      ORDER BY h.seq DESC LIMIT ${tokens.HISTORY_LIMIT}`
+  ).catch(() => ({ rows: [] }));
+  return rows.map((r) => ({
+    version: Number(r.version),
+    savedAt: r.saved_at,
+    savedBy: r.saved_by_name || r.saved_by_email || null,
+    /* The token COUNT rather than the values: the list is for choosing which
+       save to go back to, and a hundred hex strings per row would make it
+       unreadable. The revert reads the row itself. */
+    tokens: Object.keys(parse(r.values_json)).length,
+  }));
+}
+
+async function revert(db, toVersion, actor) {
+  const { rows } = await db.query(
+    `SELECT values_json FROM ${HISTORY_TABLE} WHERE version = $1 ORDER BY seq DESC LIMIT 1`,
+    [Number(toVersion) || 0]
+  ).catch(() => ({ rows: [] }));
+  if (!rows.length) {
+    return { ok: false, status: 404, errors: [{ message: `There is no saved theme at version ${toVersion}.` }] };
+  }
+  /* SAVED AS A NEW VERSION rather than rewound. The version only ever goes up,
+     which is what lets every cache and every open browser notice; a version that
+     went backwards would leave a stale ETag looking current. */
+  return save(db, parse(rows[0].values_json), actor);
+}
+
+/* --- presets ---------------------------------------------------------------
+ *
+ * BOUNDED, because this is a settings table and not a document store: twelve is
+ * more named themes than a studio will keep and few enough that the list is a
+ * list rather than a search.
+ */
+const cleanPresetName = (raw) => {
+  const text = String(raw === undefined || raw === null ? '' : raw).trim().replace(/\s+/g, ' ');
+  if (!text) return { error: 'Give the preset a name.' };
+  if (text.length > 60) return { error: `That name is ${text.length} characters; the limit is 60.` };
+  return { value: text };
+};
+
+async function presets(db) {
+  const { rows } = await db.query(
+    `SELECT p.id, p.\`name\`, p.values_json, p.created_at, u.\`name\` AS created_by_name
+       FROM ${PRESET_TABLE} p LEFT JOIN users u ON u.id = p.created_by
+      ORDER BY p.\`name\``
+  ).catch(() => ({ rows: [] }));
+  return rows.map((r) => ({
+    id: r.id, name: r.name, createdAt: r.created_at,
+    createdBy: r.created_by_name || null,
+    values: parse(r.values_json),
+  }));
+}
+
+async function savePreset(db, { name, values }, actor) {
+  const clean = cleanPresetName(name);
+  if (clean.error) return { ok: false, status: 400, errors: [{ field: 'name', message: clean.error }] };
+  // THE SAME VALIDATION AS A SAVE. A preset is a theme; there is no second rule.
+  const checked = validate(values);
+  if (!checked.ok) return checked;
+
+  const existing = await presets(db);
+  const already = existing.find((p) => p.name.toLowerCase() === clean.value.toLowerCase());
+  if (!already && existing.length >= tokens.MAX_PRESETS) {
+    return {
+      ok: false,
+      status: 400,
+      errors: [{
+        field: 'name',
+        message: `There are already ${tokens.MAX_PRESETS} presets, which is the limit. `
+          + 'Delete one first.',
+      }],
+    };
+  }
+  const json = JSON.stringify(checked.values);
+  if (already) {
+    await db.query(`UPDATE ${PRESET_TABLE} SET values_json = $1 WHERE id = $2`, [json, already.id]);
+  } else {
+    await db.query(
+      `INSERT INTO ${PRESET_TABLE} (id, \`name\`, values_json, created_at, created_by)
+       VALUES (UUID(), $1, $2, NOW(), $3)`,
+      [clean.value, json, (actor && actor.id) || null]
+    );
+  }
+  return { ok: true, replaced: Boolean(already), name: clean.value, presets: await presets(db) };
+}
+
+async function deletePreset(db, id) {
+  const { result } = await db.query(`DELETE FROM ${PRESET_TABLE} WHERE id = $1`, [id]);
+  if (!result || !result.affectedRows) {
+    return { ok: false, status: 404, errors: [{ message: 'That preset no longer exists.' }] };
+  }
+  return { ok: true, presets: await presets(db) };
+}
+
+module.exports.load = load;
+module.exports.isLoaded = isLoaded;
+module.exports.current = current;
+module.exports.currentCss = currentCss;
+module.exports.version = version;
+module.exports.save = save;
+module.exports.revert = revert;
+module.exports.history = history;
+module.exports.presets = presets;
+module.exports.savePreset = savePreset;
+module.exports.deletePreset = deletePreset;
+module.exports.changedBetween = changedBetween;
+module.exports.parse = parse;

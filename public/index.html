@@ -1140,6 +1140,60 @@ tr.past-round{opacity:0.62;}
 .fu-overlap strong{color:var(--brand-accent);font-family:'IBM Plex Mono';}
 .fu-err{font-size:11.5px;color:var(--brand-accent);margin-top:10px;line-height:1.5;}
 .fu-loading{font-size:11.5px;color:var(--ink-faint);font-family:'IBM Plex Mono';}
+/* ---- the Theme section -------------------------------------------------
+ *
+ * THE ONLY PART OF THIS APPLICATION THAT IGNORES THE THEME, and that is the
+ * whole point of it. A theme saved with the text the same colour as the page
+ * makes every screen unreadable — including the screen you would use to put it
+ * back. So the Theme section's own chrome, its rows, its buttons and the
+ * unsaved-preview banner are drawn on a FIXED palette written out here as
+ * literals, which no token can reach. tests/theme-literals.test.js allow-lists
+ * this block by name, with that reason.
+ *
+ * Dark, because the application is dark and a white panel in the middle of it
+ * would read as a rendering fault rather than as a safety feature. High
+ * contrast, because this is the one surface that has to stay legible when
+ * everything around it does not. */
+.theme-safe{background:#1B1D23;color:#F2F4F7;border:1px solid #4A505C;border-radius:12px;}
+.theme-safe *{color:inherit;}
+.theme-safe .theme-muted{color:#A7AEBB;}
+.theme-safe-btn{background:#2E333D;color:#F2F4F7;border:1px solid #5A616F;border-radius:8px;
+  padding:7px 13px;font-family:'Inter';font-size:12.5px;font-weight:600;cursor:pointer;}
+.theme-safe-btn:hover{background:#3A404C;}
+.theme-safe-btn:focus-visible{outline:2px solid #8AB4F8;outline-offset:2px;}
+.theme-safe-btn.primary{background:#8AB4F8;color:#10131A;border-color:#8AB4F8;}
+.theme-safe-btn.primary:hover{background:#A6C8FA;}
+.theme-safe-btn.danger{border-color:#F28B82;color:#F28B82;}
+.theme-row{display:grid;grid-template-columns:200px 34px 118px 1fr 28px;gap:10px;align-items:center;
+  padding:7px 0;border-bottom:1px solid #2E333D;}
+.theme-row:last-child{border-bottom:0;}
+.theme-row-label{font-size:12.5px;}
+.theme-row-label small{display:block;font-size:10.5px;color:#A7AEBB;line-height:1.4;margin-top:2px;}
+.theme-swatch{width:30px;height:26px;border-radius:6px;border:1px solid #5A616F;padding:0;cursor:pointer;
+  background:none;}
+.theme-hex{background:#13161B;border:1px solid #5A616F;color:#F2F4F7;border-radius:6px;padding:5px 7px;
+  font-family:'IBM Plex Mono';font-size:11.5px;width:100%;text-transform:uppercase;}
+.theme-hex:focus-visible{outline:2px solid #8AB4F8;outline-offset:1px;}
+.theme-hex.bad{border-color:#F28B82;}
+.theme-msg{font-size:11px;color:#F28B82;line-height:1.4;}
+.theme-reset{background:none;border:0;color:#A7AEBB;cursor:pointer;font-size:14px;line-height:1;padding:2px 4px;}
+.theme-reset:hover{color:#F2F4F7;}
+.theme-group-head{font-family:'Space Grotesk';font-size:13px;font-weight:600;margin:16px 0 4px;}
+.theme-warn{background:#3A2F1C;border:1px solid #8A6D2F;border-radius:8px;padding:9px 11px;
+  font-size:11.5px;line-height:1.5;margin:10px 0;}
+.theme-warn.severe{background:#3B2222;border-color:#8A3A34;}
+.theme-banner{position:fixed;left:16px;bottom:16px;z-index:9500;display:flex;align-items:center;gap:12px;
+  padding:10px 13px;font-size:12px;box-shadow:0 10px 30px rgba(0,0,0,.5);}
+.theme-sample{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 2px;}
+.theme-sample-tab{font-size:12px;font-weight:600;padding:8px 14px;border-radius:6px;border:1px solid transparent;}
+.theme-pairs{width:100%;border-collapse:collapse;font-size:11.5px;margin-top:6px;}
+.theme-pairs td,.theme-pairs th{padding:4px 8px;border-bottom:1px solid #2E333D;text-align:left;}
+.theme-pairs .ratio{font-family:'IBM Plex Mono';}
+.theme-pairs .fail{color:#F28B82;}
+@media (max-width:720px){
+  .theme-row{grid-template-columns:1fr 34px 110px;grid-template-areas:'label swatch hex' 'msg msg msg' 'reset reset reset';}
+  .theme-row-label{grid-area:label;} .theme-msg{grid-area:msg;} .theme-reset{grid-area:reset;justify-self:start;}
+}
 /* Phone width. The label column is a fixed 132px so the bars all start at the
    same x — which is what makes ten of them readable as one shape — but at 390px
    that leaves the track about 110px, and a bar chart squeezed to a third of the
@@ -2670,8 +2724,13 @@ async function refreshPermissions(){
   permissionsCheckedAt = Date.now();
   const before = perms().join(',');
   try{
-    const { user, timesheetGate } = await api('/auth/me');
+    const { user, timesheetGate, themeVersion } = await api('/auth/me');
     state.currentUser = user;
+    /* A COLOUR CHANGE REACHES AN OPEN SCREEN ON THIS POLL. The version is a
+       number on every /auth/me; when it moves, the theme is fetched once and
+       applied. Nobody is asked to reload, and an unchanged version costs
+       nothing. */
+    applyThemeVersion(themeVersion);
     /* THE SERVER'S ANSWER, STORED AS GIVEN. Not the inputs — see the note on
        timesheetBlock() — and refreshed on this same twenty-second poll, which
        is what makes the Start button unlock after a line is saved without
@@ -3111,6 +3170,11 @@ const SETTINGS_SECTIONS = [
      omission: canOpenSettings() is built from it, so a designation granted
      Working Hours and nothing else held a permission whose screen it could not
      reach — the Settings tab was not there to open. */
+  /* Super Admin only by default, through managePermissions — see the catalogue
+     entry for why this one is narrower than Branding beside it. Listed here like
+     any other section so a designation explicitly granted it can reach the
+     Settings tab at all. */
+  { permission:'settings.theme', label:'Theme', heading:'Theme', note:'Every colour the application draws, with a contrast check and a one-click revert.' },
   { permission:'settings.working_hours', label:'Working Hours',   heading:'Working Hours',    note:'The working day, and the lunch and break windows excluded from tracked hours.' },
   /* Super Admin only, by way of a permission implied by managePermissions —
      see the catalogue entry. Listed here like any other section so that a
@@ -4159,6 +4223,11 @@ async function api(path, options={}){
    * "nothing to say", and telling somebody their server is stale because a
    * response had no content would be its own false alarm. */
   const raw = await res.text();
+  /* A CALLER MAY ASK FOR THE TEXT. One endpoint in this application answers with
+     a stylesheet rather than JSON — GET /api/theme.css — and the "answered with
+     a web page" guard below would otherwise refuse it as a stale backend. The
+     opt-in is per call, so every other caller keeps the guard. */
+  if(options.text && res.ok) return raw;
   let data = {};
   let notJson = false;
   if(raw){
@@ -4739,6 +4808,16 @@ function openProjectBoard(projectId, statuses){
 
 /* ---------- tabs ---------- */
 function setTab(tab){
+  /* UNSAVED COLOURS WARN BEFORE THE TAB CHANGES. The Theme editor's draft lives
+     in module state, so leaving Settings would silently discard it — and the
+     preview would stay on the page with the editor gone, which is the worst of
+     both. Asked here rather than in the editor because this is the one function
+     every route out of Settings goes through. */
+  if(tab !== 'settings' && typeof themeDirty === 'function' && themeDirty()){
+    if(!window.confirm('The Theme section has unsaved colours. Leave and discard them?')) return;
+    THEME_DRAFT = {}; THEME_ERRORS = {};
+    themeCancelPreview();
+  }
   state.view = tab;
   document.querySelectorAll('#mainTabs button').forEach(b=>b.classList.toggle('active', b.dataset.tab===tab));
   /* Keep the chosen tab visible. On a narrow screen the strip scrolls (see the
@@ -11369,6 +11448,7 @@ async function renderSettings(){
       A value in use can't be deleted; deactivate it instead and it disappears from the dropdowns.
     </div>` : ''}
     ${lists.map(sec=>renderRefSection(sec)).join('')}
+    ${can('settings.theme') ? '<div id="themeSection"></div>' : ''}
     ${can('settings.branding') ? '<div id="brandingSection"></div>' : ''}
     ${can('settings.recording_hours') ? '<div id="recordingHoursSection"></div>' : ''}
     ${can('settings.holidays_view') ? '<div id="holidaysSection"></div>' : ''}
@@ -11388,6 +11468,7 @@ async function renderSettings(){
   `;
   el.querySelectorAll('.sii-link').forEach(b=>b.addEventListener('click', ()=>setTab(b.dataset.tab)));
   wireSettings();
+  if(can('settings.theme')) renderThemeSection();
   if(can('settings.branding')) renderBranding();
   if(can('settings.recording_hours')) renderRecordingHours();
   if(can('settings.holidays_view')) renderHolidays();
@@ -13126,6 +13207,652 @@ function wireFollowUp(){
     openUserDetail(b.dataset.fuUser);
   }));
 }
+
+/* ---------- the saved theme, at runtime ----------
+ *
+ * THE PAGE ARRIVES ALREADY WEARING THE THEME. The server injects a
+ * <style id="themeSaved"> block into the HTML it sends — see
+ * src/theme-delivery.js — so there is no flash of the shipped colours on load
+ * and nothing here runs before the first paint. This file's job is only the two
+ * things that happen AFTER it: picking up a change somebody else saved, and
+ * previewing one that is not saved yet.
+ *
+ * THE DEFAULTS ARE NEVER LOST. public/index.html carries the whole default
+ * palette in <style id="themeDefaults">, which is a separate block and is never
+ * touched by any of this. Whatever goes wrong — a failed fetch, a theme with
+ * three tokens in it, a server that has forgotten its database — the page falls
+ * back to the colours the application shipped with rather than to nothing.
+ */
+let THEME_VERSION = null;
+let THEME_SAVED = null;      // the values the server last told us about
+let THEME_PREVIEW = null;    // unsaved values being tried on, or null
+
+/* The <style> element the saved theme lives in, created if the server did not
+   inject one (which happens only when the page was loaded from a build that
+   could not read its own file — see the fall-through in theme-delivery). */
+function themeStyleEl(){
+  let el = document.getElementById('themeSaved');
+  if(!el){
+    el = document.createElement('style');
+    el.id = 'themeSaved';
+    document.head.appendChild(el);
+  }
+  return el;
+}
+
+/* The preview block, which is a THIRD block rather than an edit of the saved one.
+   Cancel then means removing an element instead of reconstructing what was
+   there, which is the difference between a Cancel that always works and one
+   that works until somebody saves while the preview is open. */
+function themePreviewEl(){
+  let el = document.getElementById('themePreview');
+  if(!el){
+    el = document.createElement('style');
+    el.id = 'themePreview';
+    document.head.appendChild(el);
+  }
+  return el;
+}
+
+/* VALUES -> CSS, and the one place the browser builds any of it.
+ *
+ * SAME VALIDATION AS THE SERVER'S, not instead of it: the server has already
+ * refused anything that is not a hex, and this refuses it again so that a value
+ * which somehow reached the browser cannot be written into a style element.
+ * Anything that does not match is dropped, which leaves that token on its
+ * default. */
+function themeCss(values){
+  const out = [];
+  for(const [key, value] of Object.entries(values || {})){
+    const token = (THEME_TOKENS_BY_KEY || {})[key];
+    if(!token) continue;
+    const hex = String(value||'').trim().toUpperCase();
+    if(!/^#(?:[0-9A-F]{3}|[0-9A-F]{6}|[0-9A-F]{8})$/.test(hex)) continue;
+    if(hex.length === 9 && !token.alpha) continue;
+    out.push(`--${token.css}:${hex};`);
+    /* THE DERIVED ALPHAS ARE NOT REBUILT HERE. The server's block already
+       carries them, and recomputing them in the browser would be a second
+       implementation of the arithmetic. A preview therefore changes the solid
+       colour immediately and its tints on save, which the banner says. */
+  }
+  return out.length ? `:root{${out.join('')}}` : '';
+}
+
+/* The catalogue, as the browser needs it: key -> { css, alpha }. Filled from
+   GET /api/theme/editor when the Theme section opens, and from the generated
+   defaults block otherwise — which is what lets a theme be APPLIED by anybody,
+   including somebody who cannot open Settings at all. */
+let THEME_TOKENS_BY_KEY = null;
+
+/* Learn the catalogue from the editor payload, which carries both halves — the
+   token key the API speaks in, and the custom property the stylesheet reads. */
+function themeLearnCatalogue(list){
+  THEME_TOKENS_BY_KEY = {};
+  for(const t of list || []) THEME_TOKENS_BY_KEY[t.key] = { css: t.css, alpha: Boolean(t.alpha) };
+}
+
+/* Apply the saved theme the server reports, when the version has moved. */
+async function applyThemeVersion(version){
+  if(version === undefined || version === null) return;
+  if(THEME_VERSION === version) return;
+  const was = THEME_VERSION;
+  THEME_VERSION = version;
+  if(was === null) return;        /* the injected block is already this version */
+  await refreshTheme();
+}
+
+/* Fetch and apply. FALLS BACK TO THE DEFAULTS rather than to nothing: on any
+   failure the saved block is emptied, which leaves the generated defaults block
+   as the only one in play — the colours the application shipped with. */
+async function refreshTheme(){
+  try{
+    /* THE SERVER BUILDS THE STYLESHEET, not this. The page only has the token
+       catalogue once Settings has been opened, and applying a theme must work
+       for everybody — so the saved block is replaced with what GET
+       /api/theme.css returns, which is the same string the HTML was injected
+       with. The values come back too, for the editor. */
+    const [css, data] = await Promise.all([
+      api('/theme.css', { text:true }),
+      api('/theme'),
+    ]);
+    THEME_SAVED = data.values || {};
+    THEME_VERSION = data.version;
+    themeStyleEl().textContent = typeof css === 'string' ? css : '';
+    return true;
+  }catch(err){
+    /* FALLS BACK TO THE DEFAULTS, never to nothing: emptying this block leaves
+       the generated defaults block as the only one in play, which is the palette
+       the application shipped with. A failed fetch must not leave anybody
+       looking at an unstyled page. */
+    themeStyleEl().textContent = '';
+    return false;
+  }
+}
+
+/* --- the preview ---------------------------------------------------------- */
+function themeShowPreview(values){
+  THEME_PREVIEW = { ...values };
+  themePreviewEl().textContent = themeCss(THEME_PREVIEW);
+  themeBannerSync();
+}
+function themeCancelPreview(){
+  THEME_PREVIEW = null;
+  const el = document.getElementById('themePreview');
+  if(el) el.textContent = '';
+  themeBannerSync();
+}
+
+/* THE BANNER, because a preview applies to the REAL page chrome rather than to a
+   swatch in a panel — which is the only way to see what a tab bar actually looks
+   like — and a page quietly wearing unsaved colours is a trap. It is fixed, it
+   says the colours are not saved, and it carries the way out. */
+function themeBannerSync(){
+  let el = document.getElementById('themeBanner');
+  if(!THEME_PREVIEW){ if(el) el.remove(); return; }
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'themeBanner';
+    el.className = 'theme-safe theme-banner';
+    el.innerHTML = `<span>Unsaved colours are being previewed on this page.</span>
+      <button type="button" class="theme-safe-btn" id="themeBannerCancel">Cancel preview</button>`;
+    document.body.appendChild(el);
+    document.getElementById('themeBannerCancel').addEventListener('click', ()=>{
+      themeCancelPreview();
+      if(state.view === 'settings') renderThemeSection();
+    });
+  }
+}
+
+
+/* ---------- settings: the Theme section ----------
+ *
+ * BUILT FROM THE CATALOGUE, so a token added to src/theme-tokens.js appears here
+ * with no change to this file: the groups, the rows and the contrast pairs all
+ * come down from GET /api/theme/editor. That is the point of the catalogue being
+ * data rather than a hundred hand-written rows.
+ *
+ * DRAWN ON A FIXED PALETTE THAT IGNORES THE THEME (.theme-safe), which is the
+ * one deliberate exception to everything else in this change. A theme saved with
+ * the text the same colour as the page makes every screen unreadable, and the
+ * screen you would use to put it back has to be the one that still works.
+ *
+ * THE PREVIEW APPLIES TO THE REAL PAGE, not to a swatch in a panel. A tab bar is
+ * the only way to see what a tab bar looks like, and the alternative — a scaled
+ * mock-up of the chrome — is a second implementation of the chrome that would
+ * drift from it. The banner says the colours are not saved and carries the way
+ * out; Cancel removes the preview block rather than reconstructing what was
+ * there, so it always works.
+ */
+let THEME_EDITOR = null;     // the payload
+let THEME_DRAFT = {};        // key -> value, only what differs from saved
+let THEME_ERRORS = {};       // key -> message
+
+const themeValueOf = (key) => {
+  if(Object.prototype.hasOwnProperty.call(THEME_DRAFT, key)) return THEME_DRAFT[key];
+  if(THEME_EDITOR && Object.prototype.hasOwnProperty.call(THEME_EDITOR.values, key)) return THEME_EDITOR.values[key];
+  return themeTokenOf(key) ? themeTokenOf(key).default : '';
+};
+const themeTokenOf = (key) => (THEME_EDITOR ? THEME_EDITOR.tokens.find(t=>t.key===key) : null);
+const themeDirty = () => Object.keys(THEME_DRAFT).length > 0;
+
+/* The values a save would send: everything saved, with the draft on top. */
+function themePending(){
+  const base = THEME_EDITOR ? { ...THEME_EDITOR.values } : {};
+  return { ...base, ...THEME_DRAFT };
+}
+
+async function renderThemeSection(){
+  const slot = document.getElementById('themeSection');
+  if(!slot) return;
+  if(!can('settings.theme')){ slot.innerHTML = ''; return; }
+  if(!THEME_EDITOR){
+    slot.innerHTML = `<div class="theme-safe" style="padding:16px 18px;margin-bottom:22px;">
+      <div class="theme-muted" style="font-size:12px;">Loading the colours…</div></div>`;
+    try{ THEME_EDITOR = await api('/theme/editor'); themeLearnCatalogue(THEME_EDITOR.tokens); }
+    catch(err){
+      slot.innerHTML = `<div class="theme-safe" style="padding:16px 18px;margin-bottom:22px;">
+        <div class="theme-msg">The colours could not be read — ${escapeHTML(err.message)}</div></div>`;
+      return;
+    }
+  }
+  slot.innerHTML = themeSectionHTML();
+  wireThemeSection();
+}
+
+function themeSectionHTML(){
+  const d = THEME_EDITOR;
+  const pending = themePending();
+  const warnings = themeWarnings(pending);
+  const severe = warnings.filter(w=>w.severe && !(d.severeByDefault||[]).includes(w.label));
+  const groups = d.groups.filter(g => d.tokens.some(t=>t.group===g));
+
+  return `<section class="theme-safe" id="themePanel" style="padding:18px 20px;margin-bottom:22px;">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+      <h2 style="font-family:'Space Grotesk';font-size:15px;margin:0;">Theme</h2>
+      <span class="theme-muted" style="font-size:11px;font-family:'IBM Plex Mono';">
+        ${d.version ? `version ${d.version}` : 'nothing saved — showing the shipped colours'}
+      </span>
+    </div>
+    <p class="theme-muted" style="font-size:12px;line-height:1.55;margin:7px 0 0;max-width:640px;">
+      Every colour the application draws, including the sign-in screen before anybody has
+      signed in. Typing a hex is the primary input; the swatch beside it opens the operating
+      system's picker. This panel is deliberately drawn in fixed colours that the theme
+      cannot change, so it stays readable whatever is saved.
+    </p>
+
+    ${themeSampleHTML(pending)}
+
+    ${severe.length ? `<div class="theme-warn severe">
+      <strong>${severe.length} pair${severe.length===1?'':'s'} below 3:1.</strong>
+      That is unreadable for everybody, not only for people with low vision, and saving it is
+      recommended against. Saving will ask you to confirm.
+      <div style="margin-top:5px;">${severe.map(w=>escapeHTML(w.label)+' — '+w.ratio+':1').join('<br>')}</div>
+    </div>` : ''}
+    ${warnings.filter(w=>!w.severe).length ? `<div class="theme-warn">
+      <strong>${warnings.filter(w=>!w.severe).length} pair${warnings.filter(w=>!w.severe).length===1?'':'s'}
+      below the 4.5:1 WCAG AA level for normal text.</strong>
+      Readable for most people and harder for some. The full list is under Contrast below.
+    </div>` : ''}
+
+    ${groups.map(g=>themeGroupHTML(g, d.tokens.filter(t=>t.group===g))).join('')}
+
+    ${themeContrastHTML(pending)}
+    ${themePresetHTML()}
+    ${themeHistoryHTML()}
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:16px;
+      border-top:1px solid #2E333D;padding-top:14px;">
+      <button type="button" class="theme-safe-btn primary" id="themeSave"
+        ${themeDirty()?'':'disabled'}>Save</button>
+      <button type="button" class="theme-safe-btn" id="themeCancel"
+        ${themeDirty()?'':'disabled'}>Cancel</button>
+      <button type="button" class="theme-safe-btn" id="themePreviewBtn"
+        ${themeDirty()?'':'disabled'}>${THEME_PREVIEW?'Stop previewing':'Preview on this page'}</button>
+      <span class="spacer" style="margin-left:auto;"></span>
+      <button type="button" class="theme-safe-btn danger" id="themeResetAll">Reset all to defaults</button>
+      <button type="button" class="theme-safe-btn" id="themeExport">Export</button>
+      <button type="button" class="theme-safe-btn" id="themeImport">Import</button>
+      <input type="file" id="themeImportFile" accept="application/json,.json" style="display:none;">
+    </div>
+    <div class="theme-msg" id="themeSaveErr" style="margin-top:8px;"></div>
+  </section>`;
+}
+
+/* EVERY TAB STATE AT ONCE, so an admin sees the hover and the disabled look
+   without having to hover anything — which for a disabled control is impossible
+   anyway. Drawn from the pending values rather than from the live page, so it
+   shows what Save would do. */
+function themeSampleHTML(pending){
+  const v = (key) => {
+    const token = themeTokenOf(key);
+    const value = pending[key] !== undefined ? pending[key] : (token ? token.default : '#000000');
+    return escapeHTML(value);
+  };
+  const tab = (label, bg, ink, extra='') =>
+    `<span class="theme-sample-tab" style="background:${v(bg)};color:${v(ink)};${extra}">${label}</span>`;
+  return `<div style="margin-top:12px;">
+    <div class="theme-muted" style="font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;
+      font-family:'IBM Plex Mono';">Tab states</div>
+    <div class="theme-sample" style="background:${v('nav.bar.background')};border:1px solid ${v('nav.bar.border')};
+      border-radius:8px;padding:5px;">
+      ${tab('Active','nav.tab.active.background','nav.tab.active.text',`box-shadow:inset 2px 0 0 0 ${v('nav.tab.indicator')};`)}
+      ${tab('Inactive','nav.bar.background','nav.tab.text')}
+      ${tab('Hover','nav.tab.hover.background','nav.tab.hover.text')}
+      ${tab('Disabled','nav.bar.background','nav.tab.text','opacity:.45;filter:grayscale(1);')}
+      ${tab('Waiting','nav.bar.background','nav.tab.active.text',
+        `background:${v('nav.tab.badge.dot')}1F;border-color:${v('nav.tab.badge.dot')}66;`)}
+    </div>
+    <div class="theme-muted" style="font-size:10.5px;line-height:1.5;margin-top:3px;">
+      Disabled is <strong>not a colour</strong> in this application — it is the inactive
+      state at 45% with the colour taken out — so there is nothing to set for it and
+      nothing here can change it.
+    </div>
+  </div>`;
+}
+
+function themeGroupHTML(group, list){
+  return `<div class="theme-group-head">${escapeHTML(group)}</div>
+    <div>${list.map(t=>themeRowHTML(t)).join('')}</div>`;
+}
+
+function themeRowHTML(t){
+  const value = themeValueOf(t.key);
+  const err = THEME_ERRORS[t.key];
+  const changed = Object.prototype.hasOwnProperty.call(THEME_DRAFT, t.key);
+  /* The swatch is an <input type=color>, which cannot show an eight-digit value
+     — so for a token that allows transparency it shows the opaque part and the
+     text field stays the authority. Said in the row's own title rather than
+     left to be discovered. */
+  const forPicker = /^#[0-9A-Fa-f]{8}$/.test(value) ? value.slice(0,7) : value;
+  return `<div class="theme-row" data-theme-row="${escapeHTML(t.key)}">
+    <div class="theme-row-label">${escapeHTML(t.label)}${changed?' <span class="theme-muted">• changed</span>':''}
+      <small>${escapeHTML(t.describe||'')}</small></div>
+    <input type="color" class="theme-swatch" data-theme-pick="${escapeHTML(t.key)}"
+      value="${escapeHTML(forPicker)}" aria-label="Pick ${escapeHTML(t.label)}"
+      ${t.alpha?'title="This colour may be transparent; the text field holds the eight-digit value."':''}>
+    <input type="text" class="theme-hex${err?' bad':''}" data-theme-hex="${escapeHTML(t.key)}"
+      value="${escapeHTML(value)}" spellcheck="false"
+      aria-label="${escapeHTML(t.label)} as a hex colour">
+    <div class="theme-msg">${err?escapeHTML(err):''}</div>
+    <button type="button" class="theme-reset" data-theme-reset="${escapeHTML(t.key)}"
+      title="Back to ${escapeHTML(t.default)}" aria-label="Reset ${escapeHTML(t.label)} to its default">↺</button>
+  </div>`;
+}
+
+/* THE RATIOS, COMPUTED IN THE BROWSER AS YOU TYPE and computed again by the
+   server on save. Neither is decorative: a round trip per keystroke would be
+   absurd, and a check that lived only here could be skipped by anybody posting
+   to the endpoint directly. The server's figures are what the save response
+   carries, and tests/theme.test.js asserts the two agree. */
+function themeRelLum(hex){
+  const n = (i)=>parseInt(hex.slice(i,i+2),16)/255;
+  const ch = (c)=> c <= 0.03928 ? c/12.92 : Math.pow((c+0.055)/1.055, 2.4);
+  return 0.2126*ch(n(1)) + 0.7152*ch(n(3)) + 0.0722*ch(n(5));
+}
+function themeFlatten(hex, over){
+  if(hex.length !== 9) return hex;
+  const a = parseInt(hex.slice(7,9),16)/255;
+  const mix = (i)=>{
+    const f = parseInt(hex.slice(i,i+2),16);
+    const b = parseInt((over.length===9?over.slice(0,7):over).slice(i,i+2),16);
+    return Math.round(f*a + b*(1-a)).toString(16).padStart(2,'0');
+  };
+  return `#${mix(1)}${mix(3)}${mix(5)}`;
+}
+function themeRatio(fg, bg, over){
+  const a = themeRelLum(themeFlatten(fg, over));
+  const b = themeRelLum(themeFlatten(bg, over));
+  const hi = Math.max(a,b), lo = Math.min(a,b);
+  return Math.floor(((hi+0.05)/(lo+0.05))*100)/100;
+}
+function themeWarnings(pending){
+  if(!THEME_EDITOR) return [];
+  const page = pending['surface.page'] || '#14161B';
+  const out = [];
+  for(const pair of THEME_EDITOR.contrast){
+    const fg = pending[pair.foreground];
+    let bg = pending[pair.background];
+    if(!fg || !bg) continue;
+    /* A status badge's background is its own colour at the pill's own alpha, and
+       the server says so by sending the pair with the same token on both sides. */
+    if(pair.foreground === pair.background) bg = bg.slice(0,7) + '22';
+    const ratio = themeRatio(fg, bg, page);
+    if(ratio < pair.required) out.push({ ...pair, ratio, passes:false, severe: ratio < 3 });
+  }
+  return out;
+}
+
+function themeContrastHTML(pending){
+  const rows = (THEME_EDITOR.contrast||[]).map(pair=>{
+    const fg = pending[pair.foreground], bg0 = pending[pair.background];
+    if(!fg || !bg0) return null;
+    const bg = pair.foreground === pair.background ? bg0.slice(0,7)+'22' : bg0;
+    const ratio = themeRatio(fg, bg, pending['surface.page'] || '#14161B');
+    return { label: pair.label, ratio, required: pair.required };
+  }).filter(Boolean);
+  return `<details style="margin-top:14px;">
+    <summary class="theme-muted" style="cursor:pointer;font-size:11.5px;font-family:'IBM Plex Mono';">
+      Contrast — ${rows.filter(r=>r.ratio<r.required).length} of ${rows.length} pairs below their level</summary>
+    <table class="theme-pairs"><tbody>
+      ${rows.map(r=>`<tr><td>${escapeHTML(r.label)}</td>
+        <td class="ratio${r.ratio<r.required?' fail':''}">${r.ratio}:1</td>
+        <td class="theme-muted">needs ${r.required}:1</td></tr>`).join('')}
+    </tbody></table>
+    <div class="theme-muted" style="font-size:10.5px;line-height:1.5;margin-top:5px;">
+      A translucent colour is measured over the page background before the ratio is taken —
+      a ratio against something see-through is a ratio against nothing anybody sees. The
+      figure is rounded down, so 4.49 is never reported as 4.5.
+    </div>
+  </details>`;
+}
+
+function themePresetHTML(){
+  const list = THEME_EDITOR.presets || [];
+  const max = (THEME_EDITOR.limits||{}).maxPresets || 12;
+  return `<details style="margin-top:10px;">
+    <summary class="theme-muted" style="cursor:pointer;font-size:11.5px;font-family:'IBM Plex Mono';">
+      Presets — ${list.length} of ${max}</summary>
+    ${list.length ? list.map(p=>`<div class="theme-row" style="grid-template-columns:1fr auto auto;">
+      <div class="theme-row-label">${escapeHTML(p.name)}
+        <small>${Object.keys(p.values||{}).length} colours${p.createdBy?' — '+escapeHTML(p.createdBy):''}</small></div>
+      <button type="button" class="theme-safe-btn" data-theme-apply="${escapeHTML(p.id)}">Apply</button>
+      <button type="button" class="theme-safe-btn danger" data-theme-delpreset="${escapeHTML(p.id)}">Delete</button>
+    </div>`).join('') : '<div class="theme-muted" style="font-size:11.5px;padding:7px 0;">No presets saved.</div>'}
+    <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
+      <input type="text" class="theme-hex" id="themePresetName" placeholder="Name this theme"
+        style="text-transform:none;max-width:220px;" maxlength="60">
+      <button type="button" class="theme-safe-btn" id="themePresetSave">Save current as a preset</button>
+    </div>
+  </details>`;
+}
+
+function themeHistoryHTML(){
+  const list = THEME_EDITOR.history || [];
+  return `<details style="margin-top:10px;">
+    <summary class="theme-muted" style="cursor:pointer;font-size:11.5px;font-family:'IBM Plex Mono';">
+      History — the last ${(THEME_EDITOR.limits||{}).historyLimit||20} saves</summary>
+    <div class="theme-muted" style="font-size:10.5px;line-height:1.5;margin:5px 0 3px;">
+      Reverting saves the older theme as a NEW version, so the version only ever goes up and
+      every cached copy notices. These controls are on the fixed palette above, so they stay
+      readable even if the saved theme does not.
+    </div>
+    ${list.length ? list.map(h=>`<div class="theme-row" style="grid-template-columns:1fr auto;">
+      <div class="theme-row-label">Version ${h.version}
+        <small>${escapeHTML(String(h.savedAt||'').slice(0,16).replace('T',' '))}${h.savedBy?' — '+escapeHTML(h.savedBy):''} — ${h.tokens} colours</small></div>
+      <button type="button" class="theme-safe-btn" data-theme-revert="${h.version}">Revert to this</button>
+    </div>`).join('') : '<div class="theme-muted" style="font-size:11.5px;padding:7px 0;">Nothing saved yet.</div>'}
+  </details>`;
+}
+
+/* --- wiring --------------------------------------------------------------- */
+function wireThemeSection(){
+  const slot = document.getElementById('themeSection');
+  if(!slot) return;
+
+  const setValue = (key, raw)=>{
+    const hex = String(raw||'').trim().toUpperCase();
+    const token = themeTokenOf(key);
+    const ok = /^#(?:[0-9A-F]{3}|[0-9A-F]{6}|[0-9A-F]{8})$/.test(hex)
+      && !(hex.length === 9 && !token.alpha);
+    if(!ok){
+      THEME_ERRORS[key] = hex.length === 9 && !token.alpha
+        ? 'Six digits here — transparency is only allowed on overlays and shadows.'
+        : 'A colour like #1D2027.';
+    }else{
+      delete THEME_ERRORS[key];
+      const expanded = hex.length === 4
+        ? `#${hex[1]}${hex[1]}${hex[2]}${hex[2]}${hex[3]}${hex[3]}` : hex;
+      const saved = THEME_EDITOR.values[key];
+      const fallback = saved === undefined ? token.default : saved;
+      if(expanded === fallback) delete THEME_DRAFT[key]; else THEME_DRAFT[key] = expanded;
+    }
+    if(THEME_PREVIEW) themeShowPreview(themePending());
+    renderThemeSection();
+  };
+
+  slot.querySelectorAll('[data-theme-hex]').forEach(input=>{
+    input.addEventListener('change', ()=>setValue(input.dataset.themeHex, input.value));
+  });
+  slot.querySelectorAll('[data-theme-pick]').forEach(input=>{
+    input.addEventListener('change', ()=>setValue(input.dataset.themePick, input.value));
+  });
+  slot.querySelectorAll('[data-theme-reset]').forEach(btn=>{
+    btn.addEventListener('click', ()=>setValue(btn.dataset.themeReset, themeTokenOf(btn.dataset.themeReset).default));
+  });
+
+  const err = (text)=>{ const box = document.getElementById('themeSaveErr'); if(box) box.textContent = text || ''; };
+
+  const preview = document.getElementById('themePreviewBtn');
+  if(preview) preview.addEventListener('click', ()=>{
+    if(THEME_PREVIEW) themeCancelPreview(); else themeShowPreview(themePending());
+    renderThemeSection();
+  });
+
+  const cancel = document.getElementById('themeCancel');
+  if(cancel) cancel.addEventListener('click', ()=>{
+    THEME_DRAFT = {}; THEME_ERRORS = {};
+    themeCancelPreview();
+    renderThemeSection();
+  });
+
+  const save = document.getElementById('themeSave');
+  if(save) save.addEventListener('click', ()=>themeSave(false));
+
+  const resetAll = document.getElementById('themeResetAll');
+  if(resetAll) resetAll.addEventListener('click', ()=>{
+    const pending = themePending();
+    const count = THEME_EDITOR.tokens.filter(t=>{
+      const v = pending[t.key];
+      return v !== undefined && v !== t.default;
+    }).length;
+    if(!count){ err('Every colour is already on its default.'); return; }
+    if(!window.confirm(`Reset ${count} colour${count===1?'':'s'} to the shipped defaults? `
+      + 'This is saved straight away and can be reverted from the History below.')) return;
+    THEME_DRAFT = {};
+    THEME_ERRORS = {};
+    themeCancelPreview();
+    themePut({}, false);
+  });
+
+  slot.querySelectorAll('[data-theme-revert]').forEach(btn=>btn.addEventListener('click', async ()=>{
+    err('');
+    try{
+      const r = await api('/theme/revert', { method:'POST', body:{ version:Number(btn.dataset.themeRevert) } });
+      await themeAfterWrite(r);
+    }catch(e2){ err(e2.message); }
+  }));
+
+  slot.querySelectorAll('[data-theme-apply]').forEach(btn=>btn.addEventListener('click', ()=>{
+    const preset = (THEME_EDITOR.presets||[]).find(p=>p.id===btn.dataset.themeApply);
+    if(!preset) return;
+    /* APPLIED AS A DRAFT, not written. A preset somebody saved months ago is a
+       proposal: it goes into the editor, where it can be previewed and Cancelled
+       like anything else, rather than straight onto everybody's screen. */
+    THEME_DRAFT = {};
+    for(const t of THEME_EDITOR.tokens){
+      const want = preset.values[t.key];
+      const saved = THEME_EDITOR.values[t.key];
+      const now = saved === undefined ? t.default : saved;
+      if(want !== undefined && want !== now) THEME_DRAFT[t.key] = want;
+    }
+    THEME_ERRORS = {};
+    if(THEME_PREVIEW) themeShowPreview(themePending());
+    renderThemeSection();
+  }));
+
+  slot.querySelectorAll('[data-theme-delpreset]').forEach(btn=>btn.addEventListener('click', async ()=>{
+    if(!window.confirm('Delete this preset?')) return;
+    try{
+      const r = await api('/theme/presets/'+encodeURIComponent(btn.dataset.themeDelpreset), { method:'DELETE' });
+      THEME_EDITOR.presets = r.presets || [];
+      renderThemeSection();
+    }catch(e2){ err(e2.message); }
+  }));
+
+  const presetSave = document.getElementById('themePresetSave');
+  if(presetSave) presetSave.addEventListener('click', async ()=>{
+    const name = (document.getElementById('themePresetName')||{}).value || '';
+    err('');
+    try{
+      const r = await api('/theme/presets', { method:'POST', body:{ name, values: themePending() } });
+      THEME_EDITOR.presets = r.presets || [];
+      renderThemeSection();
+    }catch(e2){ err(e2.message); }
+  });
+
+  const exportBtn = document.getElementById('themeExport');
+  if(exportBtn) exportBtn.addEventListener('click', ()=>{
+    const blob = new Blob([JSON.stringify({ theme: themePending() }, null, 2)], { type:'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'zvky-theme.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+
+  const importBtn = document.getElementById('themeImport');
+  const importFile = document.getElementById('themeImportFile');
+  if(importBtn && importFile){
+    importBtn.addEventListener('click', ()=>importFile.click());
+    importFile.addEventListener('change', async ()=>{
+      const file = importFile.files && importFile.files[0];
+      importFile.value = '';
+      if(!file) return;
+      err('');
+      try{
+        const parsed = JSON.parse(await file.text());
+        const values = parsed && parsed.theme ? parsed.theme : parsed;
+        /* VALIDATED BY THE SERVER, by the same rules a save uses. The file came
+           off somebody's disk; nothing about it is trusted, and the contrast
+           endpoint is what says whether it is even a theme. */
+        await api('/theme/contrast', { method:'POST', body:{ values } });
+        THEME_DRAFT = {};
+        for(const t of THEME_EDITOR.tokens){
+          const want = values[t.key];
+          const saved = THEME_EDITOR.values[t.key];
+          const now = saved === undefined ? t.default : saved;
+          if(want !== undefined && want !== now) THEME_DRAFT[t.key] = want;
+        }
+        THEME_ERRORS = {};
+        renderThemeSection();
+      }catch(e2){
+        err(e2 && e2.message ? `That file was not a theme this application can read — ${e2.message}` : 'That file could not be read.');
+      }
+    });
+  }
+}
+
+async function themeSave(confirmed){
+  const box = document.getElementById('themeSaveErr');
+  if(Object.keys(THEME_ERRORS).length){
+    if(box) box.textContent = 'Fix the colours marked above first.';
+    return;
+  }
+  await themePut(themePending(), confirmed);
+}
+
+async function themePut(values, confirmed){
+  const box = document.getElementById('themeSaveErr');
+  try{
+    const r = await api('/theme', { method:'PUT', body:{ values, confirmLowContrast: confirmed === true } });
+    await themeAfterWrite(r);
+  }catch(e2){
+    if(e2.status === 409 && e2.body && e2.body.requiresConfirmation){
+      const lines = (e2.body.severe||[]).map(w=>`${w.label} — ${w.ratio}:1`).join('\n');
+      if(window.confirm(`${e2.body.error}\n\n${lines}`)) return themePut(values, true);
+      if(box) box.textContent = 'Not saved.';
+      return;
+    }
+    if(box) box.textContent = e2.message;
+  }
+}
+
+async function themeAfterWrite(result){
+  THEME_DRAFT = {};
+  THEME_ERRORS = {};
+  themeCancelPreview();
+  /* The page wears the new colours immediately rather than on the next poll:
+     the save response carries the version, and refreshTheme() fetches the
+     stylesheet the server just built. */
+  THEME_VERSION = result && result.version;
+  await refreshTheme();
+  THEME_EDITOR = null;
+  await renderThemeSection();
+  showToast('Theme saved.');
+}
+
+/* UNSAVED CHANGES WARN BEFORE LEAVING, which here means two different things.
+ *
+ * Leaving the PAGE is the browser's own dialog, and it is the only one available
+ * — a custom message has not been allowed for a decade. Leaving the TAB is this
+ * application's own navigation, so it asks properly and names what would be
+ * lost. */
+window.addEventListener('beforeunload', (ev)=>{
+  if(!themeDirty()) return undefined;
+  ev.preventDefault();
+  ev.returnValue = '';
+  return '';
+});
 
 /* ---------- settings: where the studio's email goes out from ---------- */
 /* Two things make this screen unlike every other Settings section, and both are

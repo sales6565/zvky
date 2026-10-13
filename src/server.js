@@ -26,6 +26,8 @@ const pnlRoutes = require('./routes/pnl');
 const permissionRoutes = require('./routes/permissions');
 const reportRoutes = require('./routes/reports');
 const brandingRoutes = require('./routes/branding');
+const themeRoutes = require('./routes/theme');
+const themeDelivery = require('./theme-delivery');
 const recordingHoursRoutes = require('./routes/recording-hours');
 const holidayRoutes = require('./routes/holidays');
 const timesheetOptionRoutes = require('./routes/timesheet-options');
@@ -161,6 +163,12 @@ app.use('/api/chat', chatRoutes);
    somebody may send their own. Separate mount, separate permission. */
 app.use('/api/chat-activity', chatActivityRoutes);
 app.use('/api/branding', brandingRoutes);
+/* The theme stylesheet gets its own mount: app.use() matches whole path
+   segments, so /api/theme.css would never reach the router mounted at
+   /api/theme and would fall through to the SPA catch-all — answering a request
+   for CSS with a page of HTML and a 200. */
+app.get('/api/theme.css', themeRoutes.cssHandler);
+app.use('/api/theme', themeRoutes);
 app.use('/api/admin/settings/recording-hours', recordingHoursRoutes);
 app.use('/api/admin/settings/holidays', holidayRoutes);
 app.use('/api/admin/settings/timesheet', timesheetOptionRoutes);
@@ -305,9 +313,18 @@ app.get('/api/health/errors', require('./middleware/auth').authenticate, (req, r
  * src/mobile-dist.js. */
 app.use('/m', mobileDistRoutes.publicRouter);
 
-// Serve the bundled frontend
+/* Serve the bundled frontend.
+ *
+ * THE PAGE GOES THROUGH THE THEME FIRST, which is what stops a flash of the
+ * colours the application shipped with on every load — see src/theme-delivery.js
+ * for why that is done in the HTML rather than by fetching JSON after load. It
+ * is mounted AHEAD of express.static so that /index.html gets the theme too,
+ * and it falls through on anything it cannot build, which leaves the page served
+ * exactly as it was before any of this existed.
+ */
+app.get(['/', '/index.html'], themeDelivery.middleware);
 app.use(express.static(path.join(__dirname, '..', 'public')));
-app.get('*', (req, res) => {
+app.get('*', themeDelivery.middleware, (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
 });
 
