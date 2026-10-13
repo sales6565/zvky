@@ -1064,6 +1064,12 @@ async function dayTotalFor(db, { assetId, userId, day, now = Date.now() }) {
        This is the rule, not an approximation of it: the stored `seconds` column
        is deliberately not read. */
     const from = Math.max(startMs, dayStart);
+    /* THE CLIP AT THE END OF THE DAY IS DEFENCE IN DEPTH, not the cap itself:
+       workingMsByDay buckets per IST day, so this day takes the same
+       milliseconds whether the walk stops at midnight or runs on to now. Kept
+       because an open row left by a failed sweep can span years, and walking
+       them is work for an answer already decided. Removing it changes no figure
+       — it was run as a mutation and survived, which is why this says so. */
     const to = Math.min(endMs, dayEnd);
     const mine = workingTime.workingMsByDay(from, to, schedule()).byDay.get(day) || 0;
 
