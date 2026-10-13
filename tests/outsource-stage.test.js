@@ -266,13 +266,22 @@ test('the assignee gates are exactly what they were', () => {
   assert.ok(!/canOverride|projectScope|managePermissions|tier/.test(assignee),
     'the assignee actor has no tier bypass');
 
-  /* STARTABLE, where it lives: the /start route, not the table. Pinned as source
-     for the same reason — an outsourced task is in not_started, which is NOT in
-     this list, and that 409 is what stops a clock being opened on a freelancer. */
-  const route = ROUTE.slice(ROUTE.indexOf('const STARTABLE = ['));
-  assert.strictEqual(route.slice(0, route.indexOf('];') + 2),
-    "const STARTABLE = ['assigned', 'in_progress', 'tl_changes_requested', 'cd_changes_requested',\n  'game_feedback'];",
+  /* STARTABLE MOVED OUT OF THE ROUTE, and the claim is unchanged: an outsourced
+     task is in not_started, which is NOT in this list, and that 409 is what stops
+     a clock being opened on a freelancer.
+     
+     It is now workflow.WORKING_STATUSES — the same array the hold rule reads,
+     because "a stage where the clock can run" is one idea asked from two ends.
+     So the VALUE is pinned against its source rather than scraped out of the
+     route, which is the stronger half anyway, and the route is pinned to be
+     reading that source rather than a copy. */
+  assert.match(ROUTE, /const STARTABLE = workflow\.WORKING_STATUSES;/,
+    'the /start gate reads the one status list');
+  assert.deepStrictEqual(workflow.WORKING_STATUSES,
+    ['assigned', 'in_progress', 'tl_changes_requested', 'cd_changes_requested', 'game_feedback'],
     'the statuses a round starts from, unchanged — not_started is not among them');
+  assert.ok(!workflow.WORKING_STATUSES.includes('not_started'),
+    'which is what keeps a freelancer\'s task out of the studio\'s clock');
 
   // The submit transition still stands where it stood.
   const submit = workflow.TRANSITIONS.find((x) => x.action === 'submit');

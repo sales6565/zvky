@@ -178,14 +178,20 @@ test('there is no Resume control for a pause the schedule made', () => {
   });
   assert.strictEqual(byHand.ok, true, 'and a deliberate hold still has its way back');
 
+  /* THE PAGE'S HALF, AND THE FALLBACK IS GONE FROM IT. This used to read
+     `hs ? hs.canResume : fallbackResume`, and to pin the fallback's own
+     `!held.byStudio` term — which was a second statement of the rule asserted
+     above, right for the assignee and silently wrong for their lead. The fourth
+     report of the Hold button removed it: the server always sends an answer now,
+     including an explicit "unknown", so the page has nothing to fall back to and
+     no `byStudio` of its own. The claim this file makes is unchanged and is
+     entirely in the decide() assertions above. */
   const match = PAGE.match(/const canResume = ([^;]+);/);
   assert.ok(match, 'the Resume gate is in the page');
-  assert.match(match[1], /hs \? hs\.canResume : fallbackResume/,
-    'the page draws the server\'s answer');
-  const fallback = PAGE.match(/const fallbackResume = ([^;]+);/);
-  assert.ok(fallback, 'and keeps a fallback for an undecorated row');
-  assert.match(fallback[1], /!held\.byStudio/,
-    'which still refuses a pause the schedule made');
+  assert.match(match[1], /^hs\.canResume$/,
+    'the page draws the server\'s answer and nothing else');
+  assert.ok(!/fallbackResume/.test(PAGE),
+    'and has no local rule left to disagree with it about byStudio');
 
   /* And the panel does not tell anybody to press it either: the two pauses have
      different sentences, and the schedule's says there is nothing to press. */

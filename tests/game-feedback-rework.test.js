@@ -126,10 +126,15 @@ test('the clock may run on a game bug, on the page and on the server alike', () 
      under-reporting exactly the work Game Feedback tracks.
      
      Both lists are read off their sources and compared, so neither can move alone. */
+  /* STARTABLE MOVED, AND THE CLAIM IS UNCHANGED. It used to be a literal array in
+     src/routes/assets.js; it is now workflow.WORKING_STATUSES — the same array the
+     hold rule reads, because "a stage where the clock can run" is one idea asked
+     from two ends. So the list is read from its source rather than scraped out of
+     the route, and the route is asserted to be reading that source. */
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'assets.js'), 'utf8');
-  const server = src.match(/const STARTABLE = \[([\s\S]*?)\];/);
-  assert.ok(server, 'src/routes/assets.js has no STARTABLE');
-  const onServer = [...server[1].matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+  assert.match(src, /const STARTABLE = workflow\.WORKING_STATUSES;/,
+    'the /start gate reads the one status list');
+  const onServer = require('../src/asset-workflow').WORKING_STATUSES;
   assert.ok(onServer.includes('game_feedback'), `a session cannot be opened on a game bug: ${onServer}`);
 
   const list = PAGE.match(/const mayStart = [\s\S]*?\[([\s\S]*?)\]\.includes\(a\.status\)/);

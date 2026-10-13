@@ -698,6 +698,45 @@ test('what the dashboard shows, the dashboard can hold', { skip: cfg ? false : S
     await as('artist', `/assets/${id.aNamed}/resume`, { method: 'POST' });
   });
 
+  await t.test('an archived project refuses before visibility is ever asked', async () => {
+    /* THE ONE PLACE THE BOARD'S VISIBILITY AND canViewAsset DISAGREE, found while
+     * checking this change and reported because it is not what the brief
+     * expected.
+     *
+     * visibleProjects() filters `is_active = 1` in every branch; canViewAsset
+     * returns true for projectScope 'all' before it asks anything, and returns
+     * true for a lead whose report holds the asset without asking about the
+     * project either. So for an ARCHIVED project, GET /assets/:id answers 200
+     * while GET /assets/project/:id answers 403 — measured, both.
+     *
+     * IT CANNOT AFFECT A HOLD, which is why nothing was changed for it:
+     * projectClosedResponse runs at the top of holdableAsset and refuses an
+     * archived project with 409 projectClosed before the rule is consulted at
+     * all. So the divergence is real, is in the read path, and is somebody
+     * else's to decide about. Pinned here so that a later change which moves the
+     * project-closed gate finds out that this was load-bearing. */
+    await runClock('aNamed');
+    await sql(cfg, 'UPDATE projects SET is_active = 0 WHERE id = ?', [id.pNamed]);
+    try {
+      const board = await as('named', `/assets/project/${id.pNamed}`);
+      assert.strictEqual(board.status, 403, 'the board drops an archived project');
+      const one = await as('named', `/assets/${id.aNamed}`);
+      assert.strictEqual(one.status, 200,
+        'while the single-asset read still allows it — the divergence, measured');
+
+      for (const who of ['named', 'artist', 'root']) {
+        const refused = await as(who, `/assets/${id.aNamed}/hold`, { method: 'POST' });
+        assert.strictEqual(refused.status, 409, `${who}: ${JSON.stringify(refused.body)}`);
+        assert.strictEqual(refused.body.projectClosed, true,
+          `${who} is refused by the project gate, not by the hold rule`);
+        assert.strictEqual(refused.body.code, undefined,
+          'so no hold reason code is reached, which is how we know the order');
+      }
+    } finally {
+      await sql(cfg, 'UPDATE projects SET is_active = 1 WHERE id = ?', [id.pNamed]);
+    }
+  });
+
   await t.test('the explain endpoint answers for somebody who is not pressing the button',
     async () => {
     await runClock('aNamed');
