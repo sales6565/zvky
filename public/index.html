@@ -649,6 +649,15 @@ tr.past-round{opacity:0.62;}
 .gf-meta{font-size:11px;color:var(--ink-muted);font-family:'IBM Plex Mono';margin-top:3px;}
 .modal-wrap{position:fixed;inset:0;background:var(--overlay-t65);display:none;align-items:center;justify-content:center;z-index:50;padding:20px;} .modal-wrap.show{display:flex;}
 .modal{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:22px;width:440px;max-width:100%;max-height:90vh;overflow-y:auto;}
+/* The shared question's body. pre-line, so a message written with the \n\n the
+   old confirm() calls used keeps its paragraphs without any of it being markup —
+   it is set with textContent. */
+.ask-message{font-size:12.5px;color:var(--ink-muted);line-height:1.5;white-space:pre-line;margin-bottom:12px;}
+/* Destructive confirmations. The same shape as the brand button so nothing
+   moves, in the colour this application already uses to mean a refusal or a
+   deletion — and never the brand red, which is a fill and not a warning. */
+.btn-danger-solid{background:var(--error);color:var(--brand-ink);}
+.btn-danger-solid:hover{background:var(--error-strong);}
 .modal h2{font-family:'Space Grotesk';margin:0 0 14px;font-size:18px;}
 .modal label{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--ink-muted);font-family:'IBM Plex Mono';margin:12px 0 6px;}
 .modal input,.modal select,.modal textarea{width:100%;background:var(--input-bg);border:1px solid var(--input-border);color:var(--ink);padding:9px 10px;border-radius:8px;font-family:'Inter';font-size:13px;}
@@ -1936,6 +1945,26 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
 
 <div class="overlay" id="overlay"></div>
 <div class="drawer" id="drawer"></div>
+
+<!-- THE QUESTION THE PAGE ASKS, wherever it used to ask one with prompt() or
+     confirm(). One element for all of them: see openAsk() for why there are no
+     native dialogs left in this file, and what Electron did with the one Hold
+     used. Markup only — every label, button and input is set when it opens. -->
+<div class="modal-wrap" id="askWrap">
+  <div class="modal" style="width:420px;" role="dialog" aria-modal="true" aria-labelledby="ask_title">
+    <h2 id="ask_title"></h2>
+    <div id="ask_message" class="ask-message"></div>
+    <div id="ask_field">
+      <label id="ask_label"></label>
+      <input type="text" id="ask_input" autocomplete="off">
+    </div>
+    <div class="ref-err" id="ask_err"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="ask_cancel" type="button">Cancel</button>
+      <button class="btn btn-brand" id="ask_confirm" type="button"></button>
+    </div>
+  </div>
+</div>
 
 <div class="modal-wrap" id="modalWrap">
   <div class="modal">
@@ -4336,6 +4365,198 @@ async function api(path, options={}){
 }
 function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2200); }
 
+/* ---------- asking a question, in the page ----------
+ *
+ * THIS EXISTS BECAUSE HOLD DID NOTHING IN THE DESKTOP APPLICATION. The handler
+ * asked for an optional note with `window.prompt()`, and Electron does not
+ * implement it: `typeof window.prompt` is "function", and calling it throws
+ * `Error: prompt() is not supported.` (measured on Electron 33.4.11 / Chromium
+ * 130). The throw happened before the handler's own try block, inside an async
+ * onclick whose returned promise nobody reads — so it became an unhandled
+ * rejection, the request was never sent, the button never even went busy, and
+ * nothing at all reached the person. Measured: requestsSent 0, buttonDisabled
+ * false, error box empty, console "Uncaught (in promise) Error: prompt() is not
+ * supported."
+ *
+ * AND confirm() IS NOT SAFE EITHER, for a different reason: Electron implements
+ * it as a NATIVE MODAL that blocks the renderer until it is answered. Measured
+ * against a window that was not visible, the renderer never came back at all.
+ * The whole application freezes while one is up, which is why the thirty
+ * confirm() calls went with the prompts rather than being left as "the ones
+ * that work".
+ *
+ * SO EVERY QUESTION THE PAGE ASKS IS ASKED IN THE PAGE. The two functions below
+ * are the only way to ask one, they reuse the existing .modal-wrap/.modal
+ * component and its colour tokens, and tests/no-native-dialogs.test.js fails the
+ * build if a native dialog reappears anywhere in the served page.
+ *
+ *   await askConfirm({ title, message })          -> true / false
+ *   await askText({ title, label, value })        -> string / null (cancelled)
+ *
+ * BOTH TAKE AN OPTIONAL `run`, and Hold uses it: with one, the modal stays open
+ * while the work happens, the button reads its busy label, a failure is shown
+ * INSIDE the modal with the button live again, and only a success closes it. A
+ * person who presses Hold therefore sees one of three things and never nothing:
+ * the task held, the reason it was not, or the question still on screen.
+ */
+const askWrap = document.getElementById('askWrap');
+let askActive = null;          // { resolve, cancel } while a question is open
+
+function askClose(){
+  if(!askWrap) return;
+  askWrap.classList.remove('show');
+  askActive = null;
+}
+
+/* ENTER CONFIRMS, ESCAPE CANCELS, and it is bound once on the document rather
+   than per dialog: a listener added each time a question is asked is a listener
+   left behind each time one is answered. Enter is ignored inside a textarea,
+   where it means a new line. */
+document.addEventListener('keydown', (e)=>{
+  if(!askActive) return;
+  if(e.key === 'Escape'){ e.preventDefault(); askActive.cancel(); return; }
+  if(e.key === 'Enter' && !e.shiftKey){
+    const inTextarea = e.target && e.target.tagName === 'TEXTAREA';
+    if(inTextarea) return;
+    e.preventDefault();
+    askActive.confirm();
+  }
+});
+
+function openAsk({ title, message = '', input = null, confirmLabel = 'OK',
+                   cancelLabel = 'Cancel', danger = false, busyLabel = 'Working…', run = null }){
+  if(!askWrap){
+    /* NOT A SILENT FALSE. If the markup is missing the page is broken, and
+       answering "cancelled" would make every destructive action quietly do
+       nothing — which is the shape of the bug this whole file is a fix for. */
+    showToast('This page could not open its dialog. Reload and try again.');
+    return Promise.reject(new Error('askWrap is missing from the page'));
+  }
+  document.getElementById('ask_title').textContent = title || 'Are you sure?';
+  /* textContent, then the newlines turned into breaks by the stylesheet
+     (white-space:pre-line) — so a message can never carry markup. */
+  document.getElementById('ask_message').textContent = message || '';
+  document.getElementById('ask_message').style.display = message ? '' : 'none';
+  document.getElementById('ask_err').textContent = '';
+
+  const field = document.getElementById('ask_field');
+  const box = document.getElementById('ask_input');
+  field.style.display = input ? '' : 'none';
+  if(input){
+    document.getElementById('ask_label').textContent = input.label || '';
+    document.getElementById('ask_label').style.display = input.label ? '' : 'none';
+    box.value = input.value === undefined || input.value === null ? '' : String(input.value);
+    box.placeholder = input.placeholder || '';
+  }
+
+  const confirmBtn = document.getElementById('ask_confirm');
+  const cancelBtn = document.getElementById('ask_cancel');
+  confirmBtn.textContent = confirmLabel;
+  confirmBtn.className = `btn ${danger ? 'btn-danger-solid' : 'btn-brand'}`;
+  confirmBtn.disabled = false;
+  cancelBtn.textContent = cancelLabel;
+  cancelBtn.disabled = false;
+
+  askWrap.classList.add('show');
+  /* The input if there is one, the confirm button if there is not — so Enter
+     does the obvious thing without anybody reaching for the mouse first. */
+  setTimeout(()=>{ try{ (input ? box : confirmBtn).focus(); if(input) box.select(); }catch{} }, 0);
+
+  return new Promise((resolve, reject)=>{
+    const value = () => (input ? box.value : true);
+    const finish = (v)=>{ askClose(); resolve(v); };
+
+    const doConfirm = async ()=>{
+      if(confirmBtn.disabled) return;
+      if(!run){ finish(value()); return; }
+      confirmBtn.disabled = true; cancelBtn.disabled = true;
+      const was = confirmBtn.textContent;
+      confirmBtn.textContent = busyLabel;
+      document.getElementById('ask_err').textContent = '';
+      try{
+        await run(value());
+        finish(true);
+      }catch(err){
+        /* THE FAILURE IS SHOWN WHERE THE QUESTION WAS ASKED, and the question
+           stays on screen so the answer is not lost. This is the branch whose
+           absence was the reported bug. */
+        confirmBtn.disabled = false; cancelBtn.disabled = false;
+        confirmBtn.textContent = was;
+        document.getElementById('ask_err').textContent =
+          (err && err.message) || 'That did not work. Try again.';
+      }
+    };
+    const doCancel = ()=>{ askClose(); resolve(input ? null : false); };
+
+    askActive = { resolve, reject, confirm: doConfirm, cancel: doCancel };
+    confirmBtn.onclick = doConfirm;
+    cancelBtn.onclick = doCancel;
+    /* Clicking the backdrop is a cancel, which is what every other modal on
+       this page does NOT do — but a question with no visible way out is worse,
+       and the two buttons are still the stated ones. Only the backdrop itself,
+       not the panel on top of it. */
+    askWrap.onclick = (e)=>{ if(e.target === askWrap && !confirmBtn.disabled) doCancel(); };
+  });
+}
+
+const askConfirm = (opts) => openAsk({ confirmLabel:'Yes, continue', ...opts, input:null });
+const askText = (opts) => openAsk({ confirmLabel:'Save', ...opts,
+  input:{ label:opts.label, value:opts.value, placeholder:opts.placeholder } });
+
+/* AND ON window, for native-bridge.js — the only other file served onto this
+   document. It runs the Android hardware back button, which has to ask "Close
+   Zvky?" before leaving, and `const` at script scope is not reachable from a
+   second <script>. Two names, explicitly, rather than the whole page: the bridge
+   already reads this page's markup to close an open layer, so asking the same
+   way is the consistent thing and a native dialog there would be the same bug in
+   the one place nobody looks. */
+window.askConfirm = askConfirm;
+window.askText = askText;
+
+/* ---------- nothing fails silently ----------
+ *
+ * THE PAGE-LEVEL GUARD, and the reason it is worth having even now that the
+ * native dialogs are gone: the bug was not really prompt(), it was that a click
+ * handler could throw and the person be told nothing. Any handler can throw —
+ * a missing element, a renamed field, a wrapper that does not implement
+ * something — and the browser's own answer is a console line nobody is looking
+ * at. These two turn that into something on screen.
+ *
+ * DELIBERATELY NOISY. A visible toast for an error nobody expected is a
+ * complaint we can act on; silence is four reports of a button that "does
+ * nothing".
+ */
+let lastGuardAt = 0;
+function reportUnexpected(what, err){
+  const message = (err && err.message) || String(err || 'Something went wrong');
+  /* Rate-limited, because a handler that throws on every mousemove would
+     otherwise bury the screen in toasts. */
+  const now = Date.now();
+  if(now - lastGuardAt > 1500){
+    lastGuardAt = now;
+    showToast(`Something went wrong: ${message}`);
+  }
+  try{ console.error(`[guard] ${what}`, err); }catch{}
+}
+window.addEventListener('error', (e)=>{
+  /* A failed image or stylesheet raises this too, with no .error — those are
+     not click handlers throwing and must not shout at anybody. */
+  if(!e || !e.error) return;
+  reportUnexpected('uncaught error', e.error);
+});
+window.addEventListener('unhandledrejection', (e)=>{
+  reportUnexpected('unhandled rejection', e && e.reason);
+});
+
+/* Wrap a handler so a throw inside it is reported rather than swallowed. Used
+   where the handler is the only thing between a click and nothing happening. */
+function guarded(what, fn){
+  return async (...args)=>{
+    try{ return await fn(...args); }
+    catch(err){ reportUnexpected(what, err); return undefined; }
+  };
+}
+
 /* ---------- login/session ---------- */
 /* True until boot has decided whether there is a session. While it is set, a
    401 must not reload the page: boot is already on its way to the login screen
@@ -4863,9 +5084,23 @@ function setTab(tab){
      both. Asked here rather than in the editor because this is the one function
      every route out of Settings goes through. */
   if(tab !== 'settings' && typeof themeDirty === 'function' && themeDirty()){
-    if(!window.confirm('The Theme section has unsaved colours. Leave and discard them?')) return;
-    THEME_DRAFT = {}; THEME_ERRORS = {};
-    themeCancelPreview();
+    /* ASKED IN THE PAGE, WHICH MEANS ASKED ASYNCHRONOUSLY — and setTab is
+       synchronous and called from a dozen places, two of which read what it
+       does next. So the tab change is DEFERRED rather than setTab being made
+       async: the question goes up, and on "discard" the same call is made again
+       with the draft already cleared, which takes the branch that does not ask.
+       The recursion terminates because themeDirty() is then false. */
+    askConfirm({
+      title: 'Leave the Theme section?',
+      message: 'It has unsaved colours. Leaving discards them.',
+      confirmLabel: 'Discard and leave', danger: true,
+    }).then((ok)=>{
+      if(!ok) return;
+      THEME_DRAFT = {}; THEME_ERRORS = {};
+      themeCancelPreview();
+      setTab(tab);
+    }, ()=>{});
+    return;
   }
   state.view = tab;
   document.querySelectorAll('#mainTabs button').forEach(b=>b.classList.toggle('active', b.dataset.tab===tab));
@@ -7171,11 +7406,16 @@ function openSendToDev(chosen){
   confirm.style.display = projects.length > 1 ? 'none' : '';
   confirm.disabled = false;
   confirm.textContent = 'Send';
-  sendToDevWrap.classList.add('open');
+  /* `show`, NOT `open`. This read `classList.add('open')` and there is no
+     `.modal-wrap.open` rule anywhere in this stylesheet — only `.modal-wrap.show`
+     — so the Send to Dev & QA modal never appeared at all, in any browser. Found
+     while surveying the modal component for the native-dialog work; every other
+     modal on the page uses `show`. */
+  sendToDevWrap.classList.add('show');
 }
 
 if(sendToDevWrap){
-  document.getElementById('sd_cancel').onclick = ()=> sendToDevWrap.classList.remove('open');
+  document.getElementById('sd_cancel').onclick = ()=> sendToDevWrap.classList.remove('show');
   document.getElementById('sd_confirm').onclick = async ()=>{
     const btn = document.getElementById('sd_confirm');
     btn.disabled = true; btn.textContent = 'Sending…';
@@ -8026,14 +8266,18 @@ async function renderUsers(sections = userSections()){
   });
   el.querySelectorAll('.reactivateBtn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
-      if(!confirm(`Reactivate ${btn.dataset.name}?\n\nThey will be able to sign in again. Work that was unassigned when they were deactivated is NOT given back — somebody else may be doing it now.`)) return;
+      if(!await askConfirm({ title:`Reactivate ${btn.dataset.name}?`,
+        message:'They will be able to sign in again. Work that was unassigned when they were '
+          + 'deactivated is NOT given back — somebody else may be doing it now.',
+        confirmLabel:'Reactivate' })) return;
       try{ await api('/users/'+btn.dataset.id+'/reactivate', { method:'POST' }); renderUsersTab(); showToast(`${btn.dataset.name} can sign in again.`); }
       catch(err){ showToast(err.message); }
     });
   });
   el.querySelectorAll('.delUserBtn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
-      if(!confirm(`Remove ${btn.dataset.name} from the studio?`)) return;
+      if(!await askConfirm({ title:`Remove ${btn.dataset.name} from the studio?`,
+        confirmLabel:'Remove', danger:true })) return;
       try{ await api('/users/'+btn.dataset.id, { method:'DELETE' }); renderUsersTab(); showToast(`${btn.dataset.name} removed.`); }
       catch(err){ showToast(err.message); }
     });
@@ -8415,7 +8659,8 @@ function wireProjects(){
     }catch(err){
       const detail = err.body || {};
       if(err.status === 409 && detail.requiresConfirmation){
-        if(!confirm(err.message + '\n\nGo ahead?')) return false;
+        if(!await askConfirm({ title:'Go ahead?', message: err.message,
+          confirmLabel:'Go ahead', danger:true })) return false;
         const again = method === 'DELETE'
           ? `${path}${path.includes('?')?'&':'?'}${confirmParam}=1`
           : path;
@@ -8435,7 +8680,10 @@ function wireProjects(){
 
   on('closeDealBtn', async ()=>{
     const c = clientOf(document.getElementById('closeDealBtn'));
-    if(!confirm(`Mark ${c.name} as closed?\n\nNo new projects can be added under it. Projects already running are left alone — close those separately if the work is finished too.`)) return;
+    if(!await askConfirm({ title:`Mark ${c.name} as closed?`,
+      message:'No new projects can be added under it. Projects already running are left alone — '
+        + 'close those separately if the work is finished too.',
+      confirmLabel:'Mark as closed' })) return;
     try{
       const res = await api(`/clients/${c.id}/close-deal`, { method:'POST' });
       await bootApp(); await renderProjects();
@@ -8457,7 +8705,9 @@ function wireProjects(){
   on('restoreClientBtn', ()=>act(`/clients/${clientOf(document.getElementById('restoreClientBtn')).id}/restore`, {}, 'Restored.'));
   on('purgeClientBtn', async ()=>{
     const c = clientOf(document.getElementById('purgeClientBtn'));
-    if(!confirm(`Delete ${c.name} permanently?\n\nIt holds nothing, so nothing is lost — but this cannot be undone.`)) return;
+    if(!await askConfirm({ title:`Delete ${c.name} permanently?`,
+      message:'It holds nothing, so nothing is lost — but this cannot be undone.',
+      confirmLabel:'Delete', danger:true })) return;
     try{ await api(`/clients/${c.id}?purge=1`, { method:'DELETE' }); state.clientId=null; await bootApp(); await renderProjects(); showToast(`${c.name} deleted.`); }
     catch(err){ showToast(err.message); }
   });
@@ -8475,7 +8725,9 @@ function wireProjects(){
      through act(): it is the one action on this screen with nothing to
      restore afterwards. */
   document.querySelectorAll('.projPurgeBtn').forEach(b=>b.addEventListener('click', async ()=>{
-    if(!confirm(`Delete ${b.dataset.name} permanently?\n\nIt holds no assets, so nothing is lost — but this cannot be undone.`)) return;
+    if(!await askConfirm({ title:`Delete ${b.dataset.name} permanently?`,
+      message:'It holds no assets, so nothing is lost — but this cannot be undone.',
+      confirmLabel:'Delete', danger:true })) return;
     try{
       await api(`/projects/${b.dataset.id}?purge=1`, { method:'DELETE' });
       await bootApp(); await renderProjects();
@@ -9649,10 +9901,11 @@ async function openDrawer(id){
     const un = document.getElementById('d_osUnassign');
     const ferr = document.getElementById('d_osErr');
     if(un) un.onclick = async ()=>{
-      if(!confirm(`Unassign ${a.outsourced_to.freelancerName}?\n\n`
-        + `The ${a.outsourced_to.decidedManHours}h agreed with them is kept on the record as `
-        + 'cancelled rather than deleted, and stops costing the project. The task can then be '
-        + 'given to somebody in the studio.')) return;
+      if(!await askConfirm({ title:`Unassign ${a.outsourced_to.freelancerName}?`,
+        message:`The ${a.outsourced_to.decidedManHours}h agreed with them is kept on the record as `
+          + 'cancelled rather than deleted, and stops costing the project. The task can then be '
+          + 'given to somebody in the studio.',
+        confirmLabel:'Unassign' })) return;
       un.disabled = true;
       try{
         await api(`/outsource/assignments/${a.outsourced_to.id}/cancel`, { method:'POST' });
@@ -9688,7 +9941,8 @@ async function openDrawer(id){
       const edit = row.querySelector('.task-edit');
       if(edit) edit.onclick = async ()=>{
         const current = a.tasks.find(t=>t.id===tid);
-        const next = prompt('Rename this task:', current ? current.name : '');
+        const next = await askText({ title:'Rename this task',
+          label:'Name', value: current ? current.name : '', confirmLabel:'Rename' });
         if(next===null || !next.trim() || (current && next.trim()===current.name)) return;
         if(err) err.textContent = '';
         try{ await api(`/assets/tasks/${tid}/text`, { method:'PATCH', body:{ name: next.trim() } }); await refreshTasks(); }
@@ -9697,7 +9951,8 @@ async function openDrawer(id){
       const del = row.querySelector('.task-del');
       if(del) del.onclick = async ()=>{
         const current = a.tasks.find(t=>t.id===tid);
-        if(!confirm(`Delete "${current ? current.name : 'this task'}"?`)) return;
+        if(!await askConfirm({ title:`Delete "${current ? current.name : 'this task'}"?`,
+          confirmLabel:'Delete', danger:true })) return;
         if(err) err.textContent = '';
         try{ await api('/assets/tasks/'+tid, { method:'DELETE' }); await refreshTasks(); }
         catch(e2){ if(err) err.textContent = e2.message; }
@@ -9851,6 +10106,26 @@ async function openDrawer(id){
      Accept and Start does: the buttons a person sees next depend on state the
      server has just changed, and a panel drawn from the old copy offers the
      control that was there a moment ago. */
+  /* HOLD AND RESUME — and this handler is what the FIFTH report of this button
+   * was about, after four about the permission rule.
+   *
+   * Hold works in a browser and did nothing at all in the installed desktop
+   * application. The line that asked for the optional note was
+   * `window.prompt(...)`, and Electron does not implement it: `typeof
+   * window.prompt` is "function" and calling it throws `Error: prompt() is not
+   * supported.` That throw happened HERE — before the try below, inside an async
+   * onclick whose returned promise nobody reads — so it became an unhandled
+   * rejection. Measured in Electron 33.4.11: no request sent, the button not even
+   * disabled, the error box empty, and one console line nobody was looking at.
+   *
+   * Resume was unaffected because it passed `ask: false` and never reached the
+   * prompt, which is exactly why the report named Hold alone.
+   *
+   * SO THE QUESTION IS ASKED IN THE PAGE, by the shared openAsk() — and Hold
+   * uses its `run` form, which means the modal owns the whole act: it stays open
+   * while the request is in flight with the button reading "Holding…", a failure
+   * is shown inside it with the button live again, and only a success closes it.
+   * There is no path through this that shows nothing. */
   const holdAction = (button, path, ask) => {
     if(!button) return;
     /* A DISABLED CONTROL IS AN EXPLANATION, NOT A BUTTON. It is drawn when the server
@@ -9858,24 +10133,16 @@ async function openDrawer(id){
        its tooltip; wiring a click to it would send a request the server has already said
        no to. The browser would swallow the click anyway — this makes it deliberate. */
     if(button.disabled) return;
-    button.onclick = async (ev)=>{
-      const err = document.getElementById('d_startErr');
-      err.textContent = '';
-      let body;
-      if(ask){
-        /* One line, optional, and cancelling means cancel the hold — not hold
-           without a reason. A person who hits Escape here meant to stop. */
-        const note = window.prompt('Why is this going on hold? (optional — leave blank if you would rather not say)');
-        if(note === null) return;
-        body = { note: note.trim() };
-      }
-      ev.target.disabled = true;
+
+    /* The request, and the two kinds of 409. Shared by both routes into it so the
+       error handling cannot differ between the asked and unasked verb. */
+    const send = async (body)=>{
       try{
         await api(`/assets/${id}${path}`, { method:'POST', body });
         await render();
         openDrawer(id);
+        showToast(ask ? 'Put on hold.' : 'Back under way.');
       }catch(e2){
-        ev.target.disabled = false;
         /* Two kinds of 409, and they need opposite handling.
            
            "Finish your current task first" means the panel was RIGHT — this task
@@ -9892,8 +10159,35 @@ async function openDrawer(id){
         if(stale){ await render(); openDrawer(id); }
         const box = document.getElementById('d_startErr');
         if(box) box.textContent = e2.message;
+        /* RETHROWN ON PURPOSE when a modal is driving this: openAsk shows the
+           message inside the question and leaves it on screen, which is the only
+           place a person asked for a note is still looking. The panel's own
+           error box is filled above as well, for the redrawn case. */
+        throw e2;
       }
     };
+
+    button.onclick = guarded(`${path} on ${id}`, async (ev)=>{
+      const err = document.getElementById('d_startErr');
+      if(err) err.textContent = '';
+      if(ask){
+        /* One line, optional, and cancelling means cancel the hold — not hold
+           without a reason. A person who presses Escape here meant to stop. */
+        await openAsk({
+          title: 'Put this task on hold',
+          message: 'The clock stops now. You can pick it up again with Resume.',
+          input: { label: 'Why? (optional — leave blank if you would rather not say)',
+            value: '', placeholder: 'Waiting on feedback' },
+          confirmLabel: 'Hold', busyLabel: 'Holding…',
+          run: (note)=> send({ note: String(note || '').trim() }),
+        });
+        return;
+      }
+      /* Resume asks nothing, so it keeps the button's own busy state. */
+      ev.target.disabled = true;
+      try{ await send(undefined); }
+      catch{ ev.target.disabled = false; }
+    });
   };
   holdAction(document.getElementById('d_holdBtn'), '/hold', true);
   holdAction(document.getElementById('d_resumeBtn'), '/resume', false);
@@ -9990,7 +10284,9 @@ async function openDrawer(id){
        step from Delivered. */
     const sendClientBtn = document.getElementById('tlSendClientBtn');
     if(sendClientBtn) sendClientBtn.onclick = async ()=>{
-      if(!confirm('Send this straight to the client?\n\nThe Creative Director will not review it. This cannot be undone from here.')) return;
+      if(!await askConfirm({ title:'Send this straight to the client?',
+        message:'The Creative Director will not review it. This cannot be undone from here.',
+        confirmLabel:'Send to client' })) return;
       sendClientBtn.disabled = true;
       try{
         await api('/assets/'+id+'/send-to-client', { method:'POST', body:{ text: note() } });
@@ -10098,7 +10394,8 @@ async function openDrawer(id){
   };
   const delBtn = document.getElementById('deleteAssetBtn');
   if(delBtn) delBtn.onclick = async ()=>{
-    if(!confirm(`Delete "${a.name}"? This can't be undone.`)) return;
+    if(!await askConfirm({ title:`Delete "${a.name}"?`,
+      message:"This can't be undone.", confirmLabel:'Delete', danger:true })) return;
     try{ await api('/assets/'+id, { method:'DELETE' }); state.assets = state.assets.filter(x=>x.id!==id); closeDrawer(); render(); showToast('Asset deleted.'); }
     catch(err){ showToast(err.message); }
   };
@@ -11893,7 +12190,8 @@ function wireSettings(){
   document.querySelectorAll('.ref-rename').forEach(btn=>btn.addEventListener('click', async ()=>{
     const { c: collection, k: key } = btn.dataset;
     const current = (refCache[collection]||[]).find(e=>e.key===key);
-    const label = prompt(`Rename "${current.label}" to:`, current.label);
+    const label = await askText({ title:`Rename "${current.label}"`,
+      label:'New name', value: current.label, confirmLabel:'Rename' });
     if(label===null || label.trim()===current.label) return;
     try{
       await api(`/reference/${collection}/${encodeURIComponent(key)}`, { method:'PATCH', body:{ label } });
@@ -11908,10 +12206,10 @@ function wireSettings(){
   document.querySelectorAll('.ref-heading').forEach(btn=>btn.addEventListener('click', async ()=>{
     const key = btn.dataset.k;
     const current = (refCache['timesheet-categories']||[]).find(e=>e.key===key) || {};
-    const subLabel = prompt(
-      `What should the second dropdown under "${current.label||key}" be headed?\n\n`
-      + 'This is what people read above the options. Leave it blank for a generic heading.',
-      current.subLabel || '');
+    const subLabel = await askText({
+      title:`Heading under "${current.label||key}"`,
+      message:'This is what people read above the options. Leave it blank for a generic heading.',
+      label:'Heading', value: current.subLabel || '', confirmLabel:'Save heading' });
     if(subLabel===null) return;
     try{
       await api(`/reference/timesheet-categories/${encodeURIComponent(key)}`,
@@ -11969,10 +12267,13 @@ function wireSettings(){
     catch(err){ refError(collection, err.message); return; }
 
     if(usage.inUse > 0){
-      const deactivate = confirm(
-        `"${current.label}" is used by ${usage.inUse} record${usage.inUse===1?'':'s'}, so it can't be deleted.\n\n` +
-        `Deactivate it instead? It will disappear from the dropdowns and those ${usage.inUse} record${usage.inUse===1?'':'s'} will keep working.`
-      );
+      const deactivate = await askConfirm({
+        title:`"${current.label}" is in use`,
+        message: `It is used by ${usage.inUse} record${usage.inUse===1?'':'s'}, so it can't be deleted.\n\n`
+          + `Deactivate it instead? It will disappear from the dropdowns and those `
+          + `${usage.inUse} record${usage.inUse===1?'':'s'} will keep working.`,
+        confirmLabel:'Deactivate',
+      });
       if(!deactivate) return;
       try{
         await api(`/reference/${collection}/${encodeURIComponent(key)}`, { method:'PATCH', body:{ isActive:false } });
@@ -11981,7 +12282,8 @@ function wireSettings(){
       return;
     }
 
-    if(!confirm(`Delete "${current.label}"? Nothing uses it, so this is safe.`)) return;
+    if(!await askConfirm({ title:`Delete "${current.label}"?`,
+      message:'Nothing uses it, so this is safe.', confirmLabel:'Delete', danger:true })) return;
     try{
       await api(`/reference/${collection}/${encodeURIComponent(key)}`, { method:'DELETE' });
       await afterRefChange(`"${current.label}" deleted.`);
@@ -12143,9 +12445,14 @@ function wireIpAllowlist(){
   document.querySelectorAll('.ip-edit').forEach(btn=>btn.addEventListener('click', async ()=>{
     const entry = (ipCache.entries||[]).find(e=>e.id===btn.dataset.id);
     if(!entry) return;
-    const address = prompt('Address or CIDR range:', entry.address);
+    /* TWO QUESTIONS IN A ROW used to be two prompt() dialogs; they are two
+       modals now, and cancelling either still cancels the whole edit. */
+    const address = await askText({ title:'Edit this entry',
+      label:'Address or CIDR range', value: entry.address, confirmLabel:'Next' });
     if(address===null) return;
-    const label = prompt('Note (optional):', entry.label||'');
+    const label = await askText({ title:'Edit this entry',
+      message:`Address: ${address}`,
+      label:'Note (optional)', value: entry.label||'', confirmLabel:'Save' });
     if(label===null) return;
     ipError('');
     try{
@@ -12162,7 +12469,10 @@ function wireIpAllowlist(){
     /* Deactivating is a removal in everything but name, so it gets the same
        warning when it is the entry letting you in. */
     if(!makeActive && entry.coversYou && ipCache.enforcement.effective){
-      if(!confirm(`${entry.address} is the entry letting you in from ${ipCache.yourAddress}.\n\nDeactivating it will lock you out of this application. Continue?`)) return;
+      if(!await askConfirm({ title:'This will lock you out',
+        message:`${entry.address} is the entry letting you in from ${ipCache.yourAddress}.\n\n`
+          + 'Deactivating it will lock you out of this application.',
+        confirmLabel:'Deactivate anyway', danger:true })) return;
     }
     ipError('');
     try{
@@ -12184,8 +12494,10 @@ function wireIpAllowlist(){
       const message = others.length
         ? `${entry.address} covers your own address (${ipCache.yourAddress}), but another entry still does too, so you will keep your access.\n\nRemove it?`
         : `${entry.address} is what is letting you in from ${ipCache.yourAddress}.\n\nRemoving it will lock you out of this application immediately. You would need someone with access to the server's environment settings to get back in.\n\nRemove it anyway?`;
-      if(!confirm(message)) return;
-    }else if(!confirm(`Remove ${entry.address} from the allowlist?`)){
+      if(!await askConfirm({ title:`Remove ${entry.address}?`, message,
+        confirmLabel:'Remove', danger:true })) return;
+    }else if(!await askConfirm({ title:`Remove ${entry.address} from the allowlist?`,
+      confirmLabel:'Remove', danger:true })){
       return;
     }
     try{
@@ -12282,7 +12594,8 @@ async function renderIpObserved(){
 
   el.querySelectorAll('.ip-add-seen').forEach(btn=>btn.addEventListener('click', async ()=>{
     const address = btn.dataset.ip;
-    if(!confirm(`Add ${address} to the allowlist?`)) return;
+    if(!await askConfirm({ title:`Add ${address} to the allowlist?`,
+      confirmLabel:'Add' })) return;
     btn.disabled = true;
     try{
       await api('/ip-allowlist', { method:'POST', body:{ address, label:'Added during rollout' } });
@@ -12471,7 +12784,9 @@ function wireIpBlocklist(){
     if(!entry) return;
     /* One confirmation, and it says what letting them back in means. Unblocking
        cannot lock anybody out, so it does not get the allowlist's second gate. */
-    if(!confirm(`Unblock ${entry.address}?\n\nIt will be able to reach the app again, subject to the allowlist.`)) return;
+    if(!await askConfirm({ title:`Unblock ${entry.address}?`,
+      message:'It will be able to reach the app again, subject to the allowlist.',
+      confirmLabel:'Unblock' })) return;
     ipbError('');
     try{
       await api('/ip-blocklist/'+encodeURIComponent(entry.id), { method:'DELETE' });
@@ -12491,7 +12806,9 @@ function wireIpBlocklist(){
  * a reason rather than writing a generic one: an entry nobody can explain in
  * six months is an entry nobody dares remove. */
 async function ipbBlockObserved(address, btn){
-  const reason = prompt(`Block ${address}?\n\nIt will be refused immediately, and permanently until somebody unblocks it.\n\nReason (optional):`, '');
+  const reason = await askText({ title:`Block ${address}?`,
+    message:'It will be refused immediately, and permanently until somebody unblocks it.',
+    label:'Reason (optional)', value:'', confirmLabel:'Block', danger:true });
   if(reason===null) return;
   if(btn) btn.disabled = true;
   try{
@@ -13806,15 +14123,17 @@ function wireThemeSection(){
   if(save) save.addEventListener('click', ()=>themeSave(false));
 
   const resetAll = document.getElementById('themeResetAll');
-  if(resetAll) resetAll.addEventListener('click', ()=>{
+  if(resetAll) resetAll.addEventListener('click', async ()=>{
     const pending = themePending();
     const count = THEME_EDITOR.tokens.filter(t=>{
       const v = pending[t.key];
       return v !== undefined && v !== t.default;
     }).length;
     if(!count){ err('Every colour is already on its default.'); return; }
-    if(!window.confirm(`Reset ${count} colour${count===1?'':'s'} to the shipped defaults? `
-      + 'This is saved straight away and can be reverted from the History below.')) return;
+    if(!await askConfirm({
+      title:`Reset ${count} colour${count===1?'':'s'} to the shipped defaults?`,
+      message:'This is saved straight away and can be reverted from the History below.',
+      confirmLabel:'Reset to defaults', danger:true })) return;
     THEME_DRAFT = {};
     THEME_ERRORS = {};
     themeCancelPreview();
@@ -13848,7 +14167,8 @@ function wireThemeSection(){
   }));
 
   slot.querySelectorAll('[data-theme-delpreset]').forEach(btn=>btn.addEventListener('click', async ()=>{
-    if(!window.confirm('Delete this preset?')) return;
+    if(!await askConfirm({ title:'Delete this preset?',
+      confirmLabel:'Delete', danger:true })) return;
     try{
       const r = await api('/theme/presets/'+encodeURIComponent(btn.dataset.themeDelpreset), { method:'DELETE' });
       THEME_EDITOR.presets = r.presets || [];
@@ -13926,7 +14246,9 @@ async function themePut(values, confirmed){
   }catch(e2){
     if(e2.status === 409 && e2.body && e2.body.requiresConfirmation){
       const lines = (e2.body.severe||[]).map(w=>`${w.label} — ${w.ratio}:1`).join('\n');
-      if(window.confirm(`${e2.body.error}\n\n${lines}`)) return themePut(values, true);
+      if(await askConfirm({ title:'Save these colours anyway?',
+        message: `${e2.body.error}\n\n${lines}`,
+        confirmLabel:'Save anyway', danger:true })) return themePut(values, true);
       if(box) box.textContent = 'Not saved.';
       return;
     }
@@ -15416,8 +15738,9 @@ async function renderRecordingHours(){
         rhState.errors = {}; rhState.typed = {};
         return renderRecordingHours();
       }
-      if(!confirm('Delete this window?\n\nThe clock stops using it immediately. '
-        + 'Hours already recorded are not changed.')) return;
+      if(!await askConfirm({ title:'Delete this window?',
+        message:'The clock stops using it immediately. Hours already recorded are not changed.',
+        confirmLabel:'Delete', danger:true })) return;
       try{
         rhState.data = await api(`/admin/settings/recording-hours/${id}`, { method:'DELETE' });
         rhScheduleChanged();
@@ -15602,8 +15925,9 @@ async function renderHolidays(){
     rowEl.querySelector('.hol-del').onclick = async ()=>{
       const id = rowEl.dataset.id;
       if(!id){ holState.draft = null; holState.errors = {}; holState.typed = {}; return renderHolidays(); }
-      if(!confirm('Delete this holiday?\n\nThe clock will run on that day again. '
-        + 'Hours already recorded are not changed.')) return;
+      if(!await askConfirm({ title:'Delete this holiday?',
+        message:'The clock will run on that day again. Hours already recorded are not changed.',
+        confirmLabel:'Delete', danger:true })) return;
       try{
         holState.data = await api(`/admin/settings/holidays/${id}`, { method:'DELETE' });
         holScheduleChanged();
@@ -16331,8 +16655,10 @@ async function osRunStage(stage, rows, button){
         + 'Who recorded it and when is kept.'
       : 'The recorded stage is cleared and the work goes back to being with them.\n'
         + 'The task returns to Not Started, and the reversal is kept in the history.';
-  if(!confirm(`${words.title} ${ids.length} assignment${ids.length===1?'':'s'} as ${words.verb}?\n\n`
-    + `On behalf of: ${who}\n\n` + consequence)) return;
+  if(!await askConfirm({
+    title:`${words.title} ${ids.length} assignment${ids.length===1?'':'s'} as ${words.verb}?`,
+    message:`On behalf of: ${who}\n\n${consequence}`,
+    confirmLabel: words.title })) return;
 
   osState.busy = true;
   if(button) button.disabled = true;
@@ -16982,7 +17308,9 @@ function renderBranding(){
 
   const clear = document.getElementById('br_clear');
   if(clear) clear.onclick = async ()=>{
-    if(!confirm('Remove the logo? The header goes back to the first letter of the name.')) return;
+    if(!await askConfirm({ title:'Remove the logo?',
+      message:'The header goes back to the first letter of the name.',
+      confirmLabel:'Remove', danger:true })) return;
     try{
       const { branding } = await api('/branding/logo', { method:'DELETE' });
       BRANDING = branding; paintBranding(); renderBranding();
@@ -17085,10 +17413,15 @@ async function showRolePermissions(roleKey){
 
   /* The warning travels with the permission, so the screen does not have to
      remember which ones are dangerous. */
-  body.querySelectorAll('input[data-danger]').forEach(box=>box.addEventListener('change', ()=>{
+  /* ASYNC NOW, because the question is asked in the page. The box stays ticked
+     while the modal is up and is un-ticked on cancel, which reads better than it
+     did with a native dialog: the tick follows the answer rather than the click. */
+  body.querySelectorAll('input[data-danger]').forEach(box=>box.addEventListener('change', async ()=>{
     if(!box.checked) return;
     const label = box.closest('.pm-row').querySelector('label').textContent;
-    if(!confirm(`Enable "${label}" for every user with the ${roleLabel} role?\n\n${box.dataset.danger}`)){
+    if(!await askConfirm({ title:`Enable "${label}" for the ${roleLabel} role?`,
+      message: `Everyone with this role is affected.\n\n${box.dataset.danger}`,
+      confirmLabel:'Enable', danger:true })){
       box.checked = false;
     }
   }));
@@ -17101,10 +17434,14 @@ async function showRolePermissions(roleKey){
     const on = wanted.filter(k=>!before.includes(k));
     const off = before.filter(k=>!wanted.includes(k));
     if(!on.length && !off.length){ rpMessage('Nothing changed.', ''); return; }
-    if(!confirm(`Apply to the ${roleLabel} role?\n\n${on.length} to enable, ${off.length} to disable.\nEveryone with this role is affected.`)) return;
+    if(!await askConfirm({ title:`Apply to the ${roleLabel} role?`,
+      message:`${on.length} to enable, ${off.length} to disable.\nEveryone with this role is affected.`,
+      confirmLabel:'Apply' })) return;
     /* The Super Admin role asks twice — the API demands it too, so a script
        cannot skip the step the screen enforces. */
-    if(data.role.isSuperAdmin && !confirm(`This is the ${roleLabel} role.\n\nIf you disable something it needs, the screen that would put it back may stop working. Continue?`)) return;
+    if(data.role.isSuperAdmin && !await askConfirm({ title:`This is the ${roleLabel} role`,
+      message:'If you disable something it needs, the screen that would put it back may stop working.',
+      confirmLabel:'Continue', danger:true })) return;
 
     save.disabled = true;
     rpMessage('Saving…', '');
@@ -17118,7 +17455,8 @@ async function showRolePermissions(roleKey){
   });
 
   document.getElementById('rp_reset').addEventListener('click', async ()=>{
-    if(!confirm(`Reset ${roleLabel} to the permissions its tier implies?`)) return;
+    if(!await askConfirm({ title:`Reset ${roleLabel} to the permissions its tier implies?`,
+      confirmLabel:'Reset', danger:true })) return;
     try{
       const res = await api('/permissions/roles/' + encodeURIComponent(rpRole.key) + '/reset',
         { method:'POST', body:{ confirm: true } });
@@ -19578,7 +19916,9 @@ document.addEventListener('click', async e=>{
     return;
   }
   if(e.target.closest('#chatLeave')){
-    if(!confirm('Leave this group? You will stop receiving its messages.')) return;
+    if(!await askConfirm({ title:'Leave this group?',
+      message:'You will stop receiving its messages.',
+      confirmLabel:'Leave', danger:true })) return;
     try{
       await api(`/chat/${encodeURIComponent(chatState.conversationId)}/leave`, { method:'POST' });
       chatState.view = 'list'; chatState.conversationId = null; releaseChatBlobs();

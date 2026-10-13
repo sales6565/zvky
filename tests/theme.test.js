@@ -661,7 +661,13 @@ test('the contrast warning and the below-3:1 confirmation are both in the page',
   const put = PAGE.slice(PAGE.indexOf('async function themePut('));
   const body = put.slice(0, put.indexOf('\nasync function themeAfterWrite('));
   assert.match(body, /requiresConfirmation/, 'the 409 is handled');
-  assert.match(body, /window\.confirm/, 'by asking');
+  /* ASKED IN THE PAGE NOW, not with window.confirm. Electron throws on prompt()
+     and blocks the renderer on confirm(), so every native dialog in this file was
+     replaced by the shared openAsk() modal — see tests/no-native-dialogs.test.js,
+     which fails the build if one comes back. The claim here is unchanged: the
+     severe-contrast 409 is answered by ASKING rather than by giving up. */
+  assert.match(body, /await askConfirm\(/, 'by asking');
+  assert.match(body, /Save anyway/, 'and the question says what saying yes does');
   assert.match(body, /themePut\(values, true\)/, 'and re-sending with the confirmation');
 });
 

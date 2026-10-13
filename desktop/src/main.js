@@ -127,7 +127,29 @@ function createWindow() {
  * browser-level permission the web application checks is answered here, once,
  * without a dialog the person has to understand.
  */
-const ALLOWED_PERMISSIONS = new Set(['notifications']);
+const ALLOWED_PERMISSIONS = new Set([
+  'notifications',
+  /* COPYING A PATH, which this window refused and a browser does not.
+   *
+   * MEASURED while chasing the Hold button's fifth report: with this set holding
+   * `notifications` alone, navigator.permissions.query({name:'clipboard-write'})
+   * reads "denied" in this window and navigator.clipboard.writeText() rejects.
+   * The page's Copy buttons — the UNC paths a studio pastes into a file browser —
+   * then fall through to document.execCommand('copy'), which is deprecated and
+   * also failed here, so the person got "Could not copy — select it and copy it
+   * by hand." where a browser copies silently.
+   *
+   * `clipboard-sanitized-write` IS THE STRING ELECTRON CHECKS, not the web
+   * platform's `clipboard-write`. Measured by logging what the handler was
+   * handed: a writeText() produces a CHECK for `clipboard-sanitized-write`.
+   * Allowing the web name would have looked like a fix and changed nothing.
+   *
+   * WRITE ONLY. `clipboard-read` is deliberately not here — it is what Electron
+   * ASKS for when a page reads the clipboard, the application never reads it,
+   * and granting it would let the page see whatever the person last copied
+   * anywhere else on their machine. */
+  'clipboard-sanitized-write',
+]);
 
 /* Is this the studio's own page asking?
  *

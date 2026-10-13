@@ -76,6 +76,15 @@ group('Permissions granted to the page', () => {
   ok('a permission CHECK handler is installed', /setPermissionCheckHandler/.test(main),
     'without it, a page that checks before asking is refused and never prompts');
   ok('notifications are granted', /'notifications'/.test(main));
+  /* AND WRITING TO THE CLIPBOARD, which this window refused until the Hold
+     button's fifth report turned it up: the page's Copy buttons rejected and
+     fell through to a deprecated execCommand that also failed. The string is
+     Electron's, not the web platform's — measured by logging what the handler
+     is handed. */
+  ok('writing to the clipboard is granted', /'clipboard-sanitized-write'/.test(main),
+    'the Copy-path buttons reject without it');
+  ok('READING the clipboard is not', !/'clipboard-read'/.test(main),
+    'the app never reads it, and reading would expose whatever was last copied');
   ok('nothing else is', !/(['"])(media|geolocation|midi|camera|microphone)\1/.test(main),
     'this app needs the network and nothing else');
   ok('the grant is scoped to the studio origin', /appOrigin\(\)/.test(main));

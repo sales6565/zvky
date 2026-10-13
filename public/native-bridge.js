@@ -79,7 +79,24 @@
         return;
       }
       if ((ev && ev.canGoBack) || window.history.length > 1) { window.history.back(); return; }
-      if (window.confirm('Close Zvky?') && P.App.exitApp) P.App.exitApp();
+      /* ASKED IN THE PAGE, like every other question this application asks.
+       *
+       * This was window.confirm('Close Zvky?'), and it is the thirty-eighth and
+       * last native dialog in the served files — found by the test that forbids
+       * them rather than by reading, because this file is the one nobody looks
+       * at. It is reached through window.askConfirm, which index.html exposes
+       * for exactly this: the two scripts share a document but not a scope.
+       *
+       * ANDROID'S WEBVIEW DOES implement confirm(), so this one was not broken
+       * the way Hold was. It goes anyway: a native dialog here is an unthemed
+       * grey box in the middle of a themed application, and leaving one behind
+       * is how the next one gets added. The fallback keeps the button working
+       * if the page has not finished loading its own. */
+      const ask = window.askConfirm;
+      if (typeof ask !== 'function') { if (P.App.exitApp) P.App.exitApp(); return; }
+      ask({ title: 'Close Zvky?', confirmLabel: 'Close' }).then(function (yes) {
+        if (yes && P.App.exitApp) P.App.exitApp();
+      }, function () { /* the dialog could not open; stay in the app */ });
     });
   }
 

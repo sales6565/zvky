@@ -425,7 +425,15 @@ test('the confirmation names the count and the freelancers', () => {
     'the freelancers are named');
   assert.match(fn, /On behalf of: \$\{who\}/, 'and said to be acted for');
   assert.match(fn, /\$\{ids\.length\} assignment\$\{ids\.length===1\?'':'s'\}/, 'with the count');
-  assert.match(fn, /if\(!confirm\(/, 'before anything is sent');
+  /* ASKED IN THE PAGE NOW, not with confirm(). The installed desktop
+     application is Electron, which throws on prompt() and blocks the renderer
+     on confirm(), so every native dialog in the page was replaced by the shared
+     openAsk() modal — tests/no-native-dialogs.test.js fails the build if one
+     comes back. The claim is unchanged and is the one that matters: the question
+     is asked BEFORE anything is sent, and `await` is what makes that true. */
+  assert.match(fn, /if\(!await askConfirm\(/, 'before anything is sent');
+  assert.ok(fn.indexOf('await askConfirm(') < fn.indexOf("api('/assets/bulk/outsource-stage'"),
+    'and the asking is literally above the sending');
   /* ONE REQUEST for the whole selection, not one per row — so a batch is one
      audit entry and one answer, and a partial failure is reported per row. */
   assert.match(fn, /api\('\/assets\/bulk\/outsource-stage', \{ method:'POST', body:\{ assignmentIds: ids, stage \} \}\)/);
