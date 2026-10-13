@@ -208,6 +208,67 @@ const GROUPS = [
           + 'out of its Time Spent, and holding frees you to start another task.',
       },
       {
+        /* HOLDING SOMEBODY ELSE'S TASK — the key the note above said would be
+         * needed "if the studio asks for it". It asked, four times.
+         *
+         * WHAT IT GRANTS: hold and resume on any task the holder's OWN DASHBOARD
+         * SHOWS THEM. Not the studio; not a project list kept separately from
+         * the one they look at. src/permissions.js assetOnDashboard() answers it
+         * by calling canAccessProject(), which is visibleProjects() — the same
+         * function the board and the Assets List are scoped by. That identity is
+         * the whole point of the key, and it is what the three previous attempts
+         * got wrong: each scoped the lead rule to project MEMBERSHIP, which for a
+         * lead is a strict subset of what their dashboard shows, so a Team Lead
+         * with a report working in a project they are not NAMED on saw the work
+         * and could not hold it.
+         *
+         * WHY IT IS A KEY AND NOT A TIER TEST. Three reasons, and the fourth
+         * report named the first two:
+         *
+         *   1. A designation called "Team Lead - Art", or a renamed one, must
+         *      not fall out of the rule because a string stopped matching. The
+         *      previous version compared a role's GROUP to 'Supervision'.
+         *   2. A Super Admin has to be able to grant it to a designation nobody
+         *      anticipated, and revoke it from one that should not have it,
+         *      without a deploy. Settings → Role Permissions, like every other
+         *      key.
+         *   3. The page gates on the answer the server sends, and the server
+         *      gates on this key through requirePermission and the shared rule.
+         *      Neither consults the tier, so there is nothing for the two to
+         *      disagree about.
+         *
+         * ON BY DEFAULT FOR THE DESIGNATIONS THAT RUN A TEAM, found through
+         * `leadsTeam` — the capability src/role-tiers.js already uses to mean
+         * exactly that, and the same one src/role-permissions.js reads in
+         * fillsAProjectTeamList(). On the shipped catalogue that is the seven
+         * `lead`-tier designations: the six in Supervision (Team Lead, Associate
+         * Team Lead, Senior Team Lead, Art Supervisor, Associate Animation
+         * Supervisor, Technical Manager) and Associate Art Director. The Super
+         * Admin holds the whole catalogue, as always.
+         *
+         * NOT ON FOR FULL ACCESS, and that is the one judgement here worth
+         * confirming. A full-access or Leadership designation has projectScope
+         * 'all', so under "what you can see, you can hold" this key would hand
+         * them every timer in the studio. That is a real authority and should be
+         * an explicit grant rather than a side effect of a tier — so it is off,
+         * and a studio that wants its Head of Production able to stop a timer
+         * switches it on in Settings.
+         *
+         * asset.hold STAYS THE BASE PERMISSION. This one is additive: a
+         * designation holding hold_any and not hold cannot hold anything at
+         * all, which is checked first in src/asset-hold.js so the reason given
+         * is the true one.
+         */
+        key: 'asset.hold_any',
+        label: 'Hold / Resume Any Visible Task',
+        impliedBy: has('leadsTeam'),
+        describe: 'Put any task on the holder\'s own dashboard on hold, or resume it — not only '
+          + 'their own. The reach is exactly what their dashboard shows them, so it narrows and '
+          + 'widens with their projects. Needs Hold / Resume Own Task as well.',
+        danger: 'Lets this designation stop and start other people\'s timers wherever their '
+          + 'dashboard reaches.',
+      },
+      {
         /* Assigning and scheduling several assets in one action.
          *
          * Its own key rather than a reuse of asset.assign, because it is a

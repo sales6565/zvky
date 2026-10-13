@@ -238,6 +238,30 @@ app.use('/api/activity', activityRoutes);
 // a deployment ends up serving code against a schema it does not have.
 let lastMigration = null;
 
+/* GET /api/version — WHAT IS RUNNING, answerable without a session.
+ *
+ * ADDED ON THE FOURTH REPORT OF THE HOLD BUTTON, because the first question on
+ * that report — is the earlier fix even deployed? — could not be answered from
+ * anything the users or we could see. package.json has read 1.0.0 since the
+ * first commit and nothing surfaced it anyway.
+ *
+ * UNAUTHENTICATED, deliberately. A build identifier is not a secret: it is a
+ * hash of a file every visitor already downloads in full and a version string
+ * from package.json. Putting it behind a login would make it useless for the one
+ * case it is for — somebody on a stale page, which is a page that may not be
+ * able to log in. It names no table, no column and no path, unlike
+ * /api/health/errors next door, which is authenticated for exactly that reason.
+ *
+ * `page` IS THE STAMP THAT MATTERS. The browser's own copy of it arrives in a
+ * <meta> that src/theme-delivery.js injects as the HTML is served, so the page
+ * can compare the two and say "you are running an older page, reload" rather
+ * than leaving somebody to describe behaviour from a build nobody is looking
+ * at. */
+app.get('/api/version', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(require('./build-info').current());
+});
+
 app.get('/api/health', async (req, res) => {
   const db = require('./db');
   try {
@@ -250,6 +274,9 @@ app.get('/api/health', async (req, res) => {
     const gaps = await require('./schema-check').gaps(db).catch(() => null);
     res.json({
       ok: repairsFailed.length === 0 && (gaps ? gaps.length === 0 : true),
+      // What is running, so one URL answers both "is it healthy" and "is it the
+      // build we think it is". Same object as GET /api/version.
+      build: require('./build-info').current(),
       database: 'connected',
       accounts: seeded ? 'present' : 'none',
       schemaRepairs: repairsFailed.length
@@ -323,7 +350,27 @@ app.use('/m', mobileDistRoutes.publicRouter);
  * exactly as it was before any of this existed.
  */
 app.get(['/', '/index.html'], themeDelivery.middleware);
-app.use(express.static(path.join(__dirname, '..', 'public')));
+/* REVALIDATED ON EVERY LOAD, said out loud rather than left to a default.
+ *
+ * MEASURED ON THE FOURTH REPORT OF THE HOLD BUTTON: express.static's own default
+ * for these two files is `public, max-age=0`, which does revalidate — but
+ * `public` lets any proxy between the studio and this process keep a copy, and
+ * this application is deployed behind cPanel on shared hosting whose caching is
+ * not ours to inspect. A lead on a page cached by something in the middle would
+ * go on seeing the previous build's behaviour however many times we fixed it,
+ * which is one of the three explanations the fourth report had to rule out.
+ *
+ * `no-cache` is not "do not store": the copy is kept and revalidated, so the
+ * common answer is still a 304 with no body. It is the strongest header that
+ * costs nothing, and it is set for the HTML and the scripts — the two kinds of
+ * file whose staleness changes behaviour. Images and fonts, if any are ever
+ * added here, keep the default. */
+const REVALIDATE = /\.(?:html|js|mjs|css|webmanifest)$/i;
+app.use(express.static(path.join(__dirname, '..', 'public'), {
+  setHeaders(res, filePath) {
+    if (REVALIDATE.test(filePath)) res.setHeader('Cache-Control', 'no-cache');
+  },
+}));
 app.get('*', themeDelivery.middleware, (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
 });

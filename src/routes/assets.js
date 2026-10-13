@@ -23,7 +23,7 @@ const {
   canActAtTlGate,
   canHoldAsset,
   holdFactsFor,
-  leadOrSupervisorProjects,
+  dashboardProjects,
   tlGateAuthority,
   reviewTeamProjects,
   projectsWithReviewTeam,
@@ -53,6 +53,10 @@ const timesheetGate = require('../timesheet-gate');
 const assignments = require('../assignments');
 const assetImport = require('../asset-import');
 const workflow = require('../asset-workflow');
+const holdLog = require('../hold-log');
+// For the explain endpoint, which resolves ANOTHER user's permissions the way
+// authenticate() resolves the caller's.
+const rolePermissions = require('../role-permissions');
 const submissionLink = require('../submission-link');
 const referenceData = require('../reference-data');
 const integrationEvents = require('../integration-events');
@@ -193,18 +197,29 @@ async function attachTasksAndNotes(assets, viewer) {
    * flag can hide a control the server would refuse; it cannot hide one the
    * server would allow. */
   const projectIds = assets.map((a) => a.project_id);
-  const [onTeam, staffed, ledByViewer] = await Promise.all([
+  const [onTeam, staffed, visibleToViewer] = await Promise.all([
     enrich('project review team', () => reviewTeamProjects(viewer && viewer.id, projectIds))
       .then((v) => (v instanceof Set ? v : new Set())),
     enrich('project staffing', () => projectsWithReviewTeam(projectIds))
       .then((v) => (v instanceof Set ? v : new Set())),
-    /* WHICH OF THESE PROJECTS THIS VIEWER LEADS OR SUPERVISES, for the Hold button below.
-       Batched beside the two above and for the same reason: the board asks it once per card,
-       and one query for the lot beats forty. Narrower than the review team on purpose — the
-       coordinator list is not "leads or supervises"; see leadOrSupervisorProjects. */
-    enrich('projects led or supervised',
-      () => leadOrSupervisorProjects(viewer && viewer.id, projectIds))
-      .then((v) => (v instanceof Set ? v : new Set())),
+    /* WHICH PROJECTS THIS VIEWER'S OWN DASHBOARD SHOWS, for the Hold button below.
+     *
+     * THIS USED TO BE leadOrSupervisorProjects — the two project MEMBERSHIP
+     * tables — and that was the fourth report of the Hold button. A lead's
+     * dashboard is scoped by visibleProjects(), which also matches being a
+     * production coordinator, owning the project, and having a direct report with
+     * work in it; so the Hold button was missing on most of what a lead could
+     * see. It is the same function now, asked once for the whole page.
+     *
+     * NOT THROUGH enrich(), which answers a failure with an empty array — and an
+     * empty array of visible projects is a perfectly ordinary answer, so it
+     * cannot also mean "the query failed". This catches to `null`, which is the
+     * only value that means the second thing. See CODES.UNKNOWN in
+     * src/asset-hold.js. */
+    dashboardProjects(viewer).catch((err) => {
+      console.warn(`[hold] dashboard visibility unavailable (${err.code || err.message}) — see /api/health.`);
+      return null;
+    }),
   ]);
 
   const mayReviewTl = (a) => {
@@ -246,15 +261,26 @@ async function attachTasksAndNotes(assets, viewer) {
    * THE REASON TRAVELS WITH THE ANSWER, which is the other half of the fix. A refusal the
    * browser cannot explain becomes a button that is simply not there, and "the Hold button
    * has gone" is what was reported three times. */
-  const holdStates = new Map(await Promise.all(assets.map(async (a) => [
-    a.id,
-    assetHold.state(await holdFactsFor(viewer, a, {
-      leadsProject: ledByViewer.has(a.project_id),
-      outsourcedTo: outsourced.get(a.id) || null,
-      openSession: Boolean(currentStamps(episodes, timeSpent, a.id).open),
-      held: (timeSpent.get(a.id) || {}).held || null,
-    })),
-  ])));
+  const holdStates = new Map(await Promise.all(assets.map(async (a) => {
+    /* NO UNDECORATED ROW, EVER. The page used to fall back to working the rule
+       out for itself when hold_state was missing, which was a fourth copy of it;
+       so a failure here produces an answer that says "unknown" rather than no
+       answer. See assetHold.unavailableState(). */
+    try {
+      return [a.id, assetHold.state(await holdFactsFor(viewer, a, {
+        onDashboard: visibleToViewer === null
+          ? undefined
+          : visibleToViewer.some((p) => p.id === a.project_id),
+        unavailable: visibleToViewer === null,
+        outsourcedTo: outsourced.get(a.id) || null,
+        openSession: Boolean(currentStamps(episodes, timeSpent, a.id).open),
+        held: (timeSpent.get(a.id) || {}).held || null,
+      }))];
+    } catch (err) {
+      console.warn(`[hold] per-asset decision unavailable (${err.code || err.message}).`);
+      return [a.id, assetHold.unavailableState()];
+    }
+  })));
 
   return assets.map((a) => ({
     ...a,
@@ -267,8 +293,9 @@ async function attachTasksAndNotes(assets, viewer) {
        and is what tells a reader of the payload why a control is offered on somebody
        else's task. Reading hold_state is what the page does. */
     can_hold_others: Boolean(viewer && a.assignee_id && a.assignee_id !== viewer.id
-      && holdStates.get(a.id) && holdStates.get(a.id).hold.code !== 'HOLD_NOT_YOURS'
-      && holdStates.get(a.id).hold.code !== 'HOLD_NO_PERMISSION'),
+      && holdStates.get(a.id)
+      && !['HOLD_NOT_YOURS', 'HOLD_NO_PERMISSION', 'HOLD_NOT_VISIBLE', 'HOLD_UNKNOWN']
+        .includes(holdStates.get(a.id).hold.code)),
     outsourced_to: outsourced.get(String(a.id)) || null,
     time_spent_seconds: (timeSpent.get(a.id) || {}).seconds || 0,
     // [{ round, seconds, open, who }], oldest round first.
@@ -2062,8 +2089,12 @@ router.delete('/:id/thumbnail', async (req, res) => {
  * counts with no hours in it — under-reporting exactly the work Game Feedback exists to
  * track. The guard below is what keeps it honest: like CD Feedbacks, a game bug is only
  * startable once it has been passed to the person holding it. */
-const STARTABLE = ['assigned', 'in_progress', 'tl_changes_requested', 'cd_changes_requested',
-  'game_feedback'];
+/* The statuses work can be STARTED from — which is the same list as the statuses
+   it can be HELD in, so it is read from the one place rather than typed twice.
+   See WORKING_STATUSES in src/asset-workflow.js for why each status is in or out,
+   and tests/hold-visibility.test.js for the assertion that keeps the three
+   readers equal. */
+const STARTABLE = workflow.WORKING_STATUSES;
 
 /* The two stages that sit with somebody else until they are handed over, and the sentence
    each needs. CD Feedbacks waits on the lead relaying the director's notes; a game bug
@@ -2386,12 +2417,23 @@ async function holdableAsset(req, res, action) {
   });
   const verdict = assetHold.decide(action, facts);
   if (!verdict.ok) {
+    /* WRITTEN DOWN BEFORE IT IS ANSWERED. Three reports of this button were
+       diagnosed by building a fixture and guessing which gate had fired, because
+       nothing in the log said. See src/hold-log.js. */
+    holdLog.refusal({ action, verdict, facts, user: req.user, asset });
     /* 403 FOR AUTHORITY, 409 FOR STATE, which is the distinction the two previous
        reports blurred: "this is not yours" and "there is nothing running" are different
        answers and a page that cannot tell them apart cannot decide whether to draw a
        disabled control or none at all. The code travels so it does not have to guess. */
     const authority = [assetHold.CODES.NO_PERMISSION, assetHold.CODES.NOT_YOURS,
-      assetHold.CODES.UNASSIGNED].includes(verdict.code);
+      assetHold.CODES.NOT_VISIBLE, assetHold.CODES.UNASSIGNED].includes(verdict.code);
+    /* AND 503 FOR "WE COULD NOT FIND OUT", which is neither. A refusal because the
+       visibility query failed is not the caller's fault and is not a state of the task —
+       answering 403 would tell somebody they lack an authority they may well have, and
+       4xx would have them stop asking. See CODES.UNKNOWN in src/asset-hold.js. */
+    if (verdict.code === assetHold.CODES.UNKNOWN) {
+      return res.status(503).json({ error: verdict.message, code: verdict.code, gate: verdict.gate });
+    }
     res.status(authority ? 403 : 409).json({
       error: verdict.message,
       code: verdict.code,
@@ -2402,6 +2444,11 @@ async function holdableAsset(req, res, action) {
       ...(facts.held && [assetHold.CODES.ALREADY_HELD, assetHold.CODES.STUDIO_PAUSED]
         .includes(verdict.code) ? { held: facts.held } : {}),
       ...(verdict.code === assetHold.CODES.STUDIO_PAUSED ? { scheduled: true } : {}),
+      /* THE GATE TRAVELS TOO, so a refusal can be diagnosed from what the user
+         can see — a screenshot of the response — and not only from our log. It
+         names the CHECK rather than the reason: "visibility" and "authority"
+         both end in "not your task" and are two different investigations. */
+      gate: verdict.gate,
     });
     return null;
   }
@@ -2415,6 +2462,83 @@ async function workStateFor(assetId, asset) {
 }
 
 // POST /api/assets/:id/hold — put the open stretch down, keeping the round.
+/* GET /api/assets/:id/hold-explain — WHY, FOR AN ASSET AND A PERSON.
+ *
+ * READ-ONLY, and the fourth report of the Hold button asked for it in as many
+ * words: a way to see the decision and its reason without reproducing it. The
+ * refusals already carry a code and a gate, and src/hold-log.js writes every one
+ * to the log; this is the third way in, for the case neither covers — "why can
+ * Priya not hold this?", asked by somebody who is not Priya and does not want to
+ * press her buttons to find out.
+ *
+ * WHO MAY ASK. Yourself, always. Anybody else only with settings.permissions,
+ * which is the key that decides who holds what in the first place — so the
+ * person who can change the answer is the person who can read it. Not
+ * asset.hold_any: holding a task is not a reason to be told about other people's
+ * authority over it.
+ *
+ * IT DECIDES NOTHING. It calls the same decide() the routes call with the same
+ * facts and returns what it said. A separate explanation that could disagree
+ * with the decision would be worse than none — the whole subject of these four
+ * reports is two statements of one rule drifting apart.
+ */
+router.get('/:id/hold-explain', requirePermission('asset.hold'), async (req, res) => {
+  const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
+  const asset = rows[0];
+  if (!asset) return res.status(404).json({ error: 'Asset not found' });
+
+  const askedFor = String(req.query.userId || '') || req.user.id;
+  const self = askedFor === req.user.id;
+  if (!self && !holds(req.user, 'settings.permissions')) {
+    return res.status(403).json({
+      error: 'You can ask why YOU may or may not hold a task. Asking about somebody else '
+        + 'needs the permission that manages permissions.',
+    });
+  }
+
+  /* THE SUBJECT'S OWN PERMISSIONS, resolved the way authenticate() resolves
+     them for a request — not the asker's. Asking about somebody else and being
+     told the answer for yourself would be worse than a 403. */
+  let subject = req.user;
+  if (!self) {
+    const { rows: users } = await db.query(
+      'SELECT id, name, email, `role` FROM users WHERE id = $1', [askedFor]
+    );
+    if (!users[0]) return res.status(404).json({ error: 'No such user' });
+    subject = {
+      ...users[0],
+      permissions: [...await rolePermissions.effectiveFor(db, users[0].role)],
+    };
+  }
+
+  const facts = await holdFactsFor(subject, asset, {
+    outsourcedTo: await oversightOutsource.activeForAsset(db, asset.id),
+    openSession: Boolean(await workLog.openSession(db, asset.id)),
+    held: await workLog.heldFor(db, asset.id, asset.assignee_id),
+  });
+  const hold = assetHold.decide('hold', facts);
+  const resume = assetHold.decide('resume', facts);
+
+  return res.json({
+    asset: { id: asset.id, code: asset.code, status: asset.status, project_id: asset.project_id,
+      assignee_id: asset.assignee_id },
+    user: { id: subject.id, role: subject.role },
+    /* The facts the decision was made from, so an answer that looks wrong can be
+       argued with. These are what the four reports were each missing. */
+    facts: {
+      mine: asset.assignee_id === subject.id,
+      holdsPermission: facts.holdsPermission,
+      holdsAny: facts.holdsAny,
+      onDashboard: facts.onDashboard,
+      outsourced: Boolean(facts.outsourcedTo),
+      workingStatus: assetHold.isWorkingStatus(asset.status),
+      session: holdLog.sessionWord(facts),
+    },
+    hold: { allowed: hold.ok, code: hold.code, gate: hold.gate, reason: hold.message },
+    resume: { allowed: resume.ok, code: resume.code, gate: resume.gate, reason: resume.message },
+  });
+});
+
 router.post('/:id/hold', requirePermission('asset.hold'), async (req, res) => {
   /* The whole gate, including "there is nothing running to put down" and "this is out
      with a freelancer" — both of which this route used to answer itself, one of them

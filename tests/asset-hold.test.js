@@ -212,15 +212,31 @@ test('hold and resume', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(byColleague.status, 403);
     assert.match(byColleague.body.error, /assigned to/i);
 
-    /* Not even a Super Admin, who may stamp a START on somebody else's asset
-       for oversight. Holding is a different kind of act — to the person doing
-       the work it is indistinguishable from the app losing their session — so
-       it is stricter on purpose. A lead who wants the work stopped reassigns it
-       or moves its stage, both of which name who did it in the history. */
+    /* THE SUPER ADMIN NOW CAN, and this assertion is the reverse of the one it
+       replaces. The note it replaces read: "Not even a Super Admin, who may stamp
+       a START on somebody else's asset for oversight. Holding is a different kind
+       of act — to the person doing the work it is indistinguishable from the app
+       losing their session — so it is stricter on purpose."
+     *
+     * WHAT CHANGED. The fourth report of the Hold button made the rule "what your
+     * own dashboard shows you, you can hold", carried by a new permission
+     * asset.hold_any. The Super Admin role holds the whole catalogue
+     * unconditionally and has a studio-wide project scope, so both halves are
+     * true of them. Withholding it would mean special-casing a designation out of
+     * a permission it holds, which this codebase does not do.
+     *
+     * THE OLD REASONING IS NOT WRONG, it is just no longer load-bearing: the
+     * objection was "holding is not an oversight act", and the answer is that a
+     * hold is now recorded against whoever pressed it in the asset history and
+     * logged with its gate in the server log, so it is not an invisible act. The
+     * colleague above is still refused, which is the part of this case that is
+     * about the rule rather than about Super Admins — tests/hold-lead-scope.test.js
+     * pins a full-access designation being refused for the same reason. */
     const byRoot = await hold('root', asset.id, 'oversight');
-    assert.strictEqual(byRoot.status, 403, JSON.stringify(byRoot.body));
+    assert.strictEqual(byRoot.status, 200, JSON.stringify(byRoot.body));
+    await resume('root', asset.id);
 
-    assert.strictEqual((await hold('ana', asset.id, null)).status, 200, 'but its owner can');
+    assert.strictEqual((await hold('ana', asset.id, null)).status, 200, 'and its owner can');
     await resume('ana', asset.id);
     await submit('ana', asset.id);
   });

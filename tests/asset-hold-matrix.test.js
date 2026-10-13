@@ -39,6 +39,8 @@ const path = require('node:path');
 const assetHold = require('../src/asset-hold');
 const perms = require('../src/permissions');
 const { ROLES } = require('../src/reference-defaults');
+const catalogue = require('../src/permission-catalog');
+const { capabilitiesForTier } = require('../src/role-tiers');
 const { config, resetSchema, startServer, stopServer, api, sql, openStudio,
   SKIP_REASON } = require('./helpers');
 
@@ -68,13 +70,26 @@ const WHO = {
   root: { id: 'u-root', role: 'super_admin' },
   stranger: { id: 'u-x', role: 'game_artist' },
 };
-// Everyone in the Supervision group, by the catalogue rather than by this list.
-const SUPERVISION = Object.keys(WHO).filter((k) => (defOf(WHO[k].role) || {}).group === 'Supervision');
+/* WHICH DESIGNATIONS START WITH THE LEAD-LEVEL KEY — from the catalogue, not
+ * from a list here.
+ *
+ * THIS USED TO BE `group === 'Supervision'`, and the fourth report of the Hold
+ * button replaced the group test with a permission, asset.hold_any, so that a
+ * designation named "Team Lead - Art" or a renamed one does not fall out of the
+ * rule because a string stopped matching. It is impliedBy has('leadsTeam'), so
+ * on the shipped catalogue it is the seven lead-tier designations — the six in
+ * Supervision plus Associate Art Director. */
+const LEADS = Object.keys(WHO).filter((k) =>
+  catalogue.baselineFor(capabilitiesForTier((defOf(WHO[k].role) || {}).tier) || {})
+    .has('asset.hold_any'));
 
 // ---------------------------------------------------------------------------
 // WHAT. One task, in each state the matrix needs.
 // ---------------------------------------------------------------------------
-const ASSET = { id: 'a1', project_id: 'p1', code: 'CHR-001', assignee_id: WHO.artist.id };
+const ASSET = { id: 'a1', project_id: 'p1', code: 'CHR-001', assignee_id: WHO.artist.id,
+  // A working status, so the matrix below is about authority. The status gate has
+  // its own table in tests/hold-visibility.test.js.
+  status: 'in_progress' };
 const STATES = {
   running: { openSession: true, held: null },
   paused: { openSession: false, held: { byStudio: true, since: 'x' } },
@@ -82,12 +97,19 @@ const STATES = {
   neverStarted: { openSession: false, held: null },
 };
 
+/* `onDashboard` replaced `leadsProject`, and `holdsAny` replaced the role
+   definition. Both are facts the caller establishes — see the header. The key is
+   derived from the designation's own defaults so that a row saying "this
+   designation is allowed" is saying something about the catalogue rather than
+   about this file. */
 const facts = (who, state, extra = {}) => ({
   user: WHO[who],
   asset: ASSET,
   holdsPermission: true,
-  roleDef: defOf(WHO[who].role),
-  leadsProject: false,
+  holdsAny: catalogue.baselineFor(
+    capabilitiesForTier((defOf(WHO[who].role) || {}).tier) || {}).has('asset.hold_any')
+    || WHO[who].role === 'super_admin',
+  onDashboard: false,
   ...STATES[state],
   ...extra,
 });
@@ -114,13 +136,20 @@ test('the matrix: who may hold, and the reason when they may not', () => {
     ['lead', 'neverStarted', true, C.NO_SESSION, C.NOT_HELD],
     ['lead', 'paused', true, C.ALREADY_HELD, C.STUDIO_PAUSED],
 
-    // --- a lead NOT on the project: no extra rights at all ------------------
-    ['lead', 'running', false, C.NOT_YOURS, C.NOT_YOURS],
-    ['lead', 'heldByHand', false, C.NOT_YOURS, C.NOT_YOURS],
+    /* --- a lead whose own dashboard does not show it: no extra rights ------
+     *
+     * AND THE CODE MOVED, which is the fourth report's doing and is an
+     * improvement worth pinning: this lead HOLDS the key and is looking outside
+     * their dashboard, which is a different fact from a designation that does
+     * not hold the key at all. The two refusals point at two different fixes —
+     * "put them on the project" and "grant the permission" — so they are two
+     * codes and two gates. */
+    ['lead', 'running', false, C.NOT_VISIBLE, C.NOT_VISIBLE],
+    ['lead', 'heldByHand', false, C.NOT_VISIBLE, C.NOT_VISIBLE],
     /* AND THE REASON IS THE SCOPE ONE even where the state would also refuse:
-       "this is not yours" outranks "there is nothing running", because the
-       second would tell somebody to go and start work they may not touch. */
-    ['lead', 'neverStarted', false, C.NOT_YOURS, C.NOT_YOURS],
+       "this is not yours to see" outranks "there is nothing running", because
+       the second would tell somebody to go and start work they may not touch. */
+    ['lead', 'neverStarted', false, C.NOT_VISIBLE, C.NOT_VISIBLE],
 
     // --- the rest of the Supervision group, on their own project ------------
     ['assocLead', 'running', true, null, C.ALREADY_RUNNING],
@@ -133,19 +162,37 @@ test('the matrix: who may hold, and the reason when they may not', () => {
     ['seniorLead', 'heldByHand', true, C.ALREADY_HELD, null],
     ['techMgr', 'heldByHand', true, C.ALREADY_HELD, null],
 
-    // --- and nobody else, however senior ------------------------------------
+    /* --- and nobody without the key, however senior and however much they see
+     *
+     * ALL FOUR SEE THIS TASK in this row (onDashboard: true) and all four are
+     * refused, which is the half of the rule that stops "what you can see you
+     * can hold" becoming "whoever can see everything can hold everything". A
+     * Creative Director sees every project in the studio; the key is what
+     * decides, not the reach. */
     ['coordinator', 'running', true, C.NOT_YOURS, C.NOT_YOURS],
     ['artDirector', 'running', true, C.NOT_YOURS, C.NOT_YOURS],
-    ['root', 'running', true, C.NOT_YOURS, C.NOT_YOURS],
-    ['animator', 'running', false, C.NOT_YOURS, C.NOT_YOURS],
-    ['stranger', 'running', false, C.NOT_YOURS, C.NOT_YOURS],
+    ['animator', 'running', true, C.NOT_YOURS, C.NOT_YOURS],
+    ['stranger', 'running', true, C.NOT_YOURS, C.NOT_YOURS],
+
+    /* --- THE SUPER ADMIN, WHICH IS A CHANGE AND IS STATED AS ONE ------------
+     *
+     * This row read C.NOT_YOURS before the fourth report. The Super Admin role
+     * holds the whole catalogue unconditionally — rolePermissions.effectiveFor
+     * short-circuits for it — so adding asset.hold_any added it to them, and
+     * their projectScope is 'all', so every task is on their dashboard.
+     * Withholding it would mean special-casing a designation out of a
+     * permission it holds. See the live case in tests/hold-lead-scope.test.js
+     * for the full reasoning, and note that no OTHER full-access designation
+     * gets it by default: the key follows leadsTeam, which they do not carry. */
+    ['root', 'running', true, null, C.ALREADY_RUNNING],
+    ['root', 'running', false, C.NOT_VISIBLE, C.NOT_VISIBLE],
   ];
 
-  for (const [who, state, leads, holdCode, resumeCode] of rows) {
-    const f = facts(who, state, { leadsProject: leads });
+  for (const [who, state, visible, holdCode, resumeCode] of rows) {
+    const f = facts(who, state, { onDashboard: visible });
     const h = assetHold.decide('hold', f);
     const r = assetHold.decide('resume', f);
-    const label = `${who} / ${state} / ${leads ? 'leads it' : 'does not lead it'}`;
+    const label = `${who} / ${state} / ${visible ? 'on their board' : 'not on their board'}`;
     assert.strictEqual(h.code, holdCode, `HOLD ${label}: ${h.message || 'allowed'}`);
     assert.strictEqual(h.ok, holdCode === null, `HOLD ${label} ok flag`);
     assert.strictEqual(r.code, resumeCode, `RESUME ${label}: ${r.message || 'allowed'}`);
@@ -156,24 +203,38 @@ test('the matrix: who may hold, and the reason when they may not', () => {
   }
 });
 
-test('the whole Supervision group is allowed, and nothing outside it is', () => {
+test('every designation holding the key is allowed, and nobody without it is', () => {
   /* DERIVED FROM THE CATALOGUE rather than from the row list above, so a
-     designation a Super Admin adds to Supervision is covered without this test
-     being edited — and one added anywhere else is not. */
-  for (const who of SUPERVISION) {
+     designation a Super Admin grants the key to is covered without this test
+     being edited — and one that is not granted it is not. */
+  for (const who of LEADS) {
     assert.strictEqual(
-      assetHold.decide('hold', facts(who, 'running', { leadsProject: true })).ok, true,
-      `${WHO[who].role} is in Supervision and leads this project`);
+      assetHold.decide('hold', facts(who, 'running', { onDashboard: true })).ok, true,
+      `${WHO[who].role} holds asset.hold_any and this task is on its dashboard`);
   }
-  assert.ok(SUPERVISION.includes('seniorLead') && SUPERVISION.includes('techMgr'),
+  assert.ok(LEADS.includes('seniorLead') && LEADS.includes('techMgr'),
     'including the two Prompt 20 left out');
+  assert.ok(LEADS.includes('artDirector') === false,
+    'and a Creative Director, who runs no team, is not among them');
+
   /* `artist` is left out of this loop on purpose: they are the assignee in this
      fixture, so they are allowed for the other reason, and including them would
-     be testing the wrong thing. `stranger` holds the same designation. */
-  for (const who of ['animator', 'coordinator', 'artDirector', 'root', 'stranger']) {
+     be testing the wrong thing. `stranger` holds the same designation.
+     `root` is left out because they DO hold the key — see the matrix row. */
+  for (const who of ['animator', 'coordinator', 'artDirector', 'stranger']) {
     assert.strictEqual(
-      assetHold.decide('hold', facts(who, 'running', { leadsProject: true })).code, C.NOT_YOURS,
-      `${WHO[who].role} is not in Supervision, so leading the project is not enough`);
+      assetHold.decide('hold', facts(who, 'running', { onDashboard: true })).code, C.NOT_YOURS,
+      `${WHO[who].role} holds no hold_any, so seeing the task is not enough`);
+  }
+
+  /* AND THE OTHER HALF, which is what keeps the rule from reading "whoever can
+     see everything can hold everything": the key alone, with the task off their
+     dashboard, is refused on visibility. */
+  for (const who of LEADS) {
+    assert.strictEqual(
+      assetHold.decide('hold', facts(who, 'running', { onDashboard: false })).code,
+      C.NOT_VISIBLE,
+      `${WHO[who].role} has no rights over a task its dashboard does not show`);
   }
 });
 
@@ -190,7 +251,7 @@ test('an outsourced task refuses with the freelancer, on BOTH verbs', () => {
   for (const who of ['artist', 'lead', 'seniorLead', 'root']) {
     for (const verb of ['hold', 'resume']) {
       const v = assetHold.decide(verb, facts(who, 'running', {
-        leadsProject: true, outsourcedTo: outsourced, asset: { ...ASSET, assignee_id: null },
+        onDashboard: true, outsourcedTo: outsourced, asset: { ...ASSET, assignee_id: null },
       }));
       assert.strictEqual(v.code, C.OUTSOURCED, `${verb} as ${who}`);
       assert.match(v.message, /out with Fran Freelance/);
@@ -213,7 +274,7 @@ test('an outsourced task refuses with the freelancer, on BOTH verbs', () => {
 
 test('an unassigned task has no clock to hold, and says so', () => {
   const v = assetHold.decide('hold', facts('lead', 'running', {
-    leadsProject: true, asset: { ...ASSET, assignee_id: null },
+    onDashboard: true, asset: { ...ASSET, assignee_id: null },
   }));
   assert.strictEqual(v.code, C.UNASSIGNED);
   assert.match(v.message, /Nobody in the studio is on this task/);
@@ -242,12 +303,19 @@ test('which refusals are drawn as a disabled control, and which are not', () => 
   const shown = Object.entries(assetHold.OFFER).filter(([, v]) => v).map(([k]) => k).sort();
   const hidden = Object.entries(assetHold.OFFER).filter(([, v]) => !v).map(([k]) => k).sort();
   assert.deepStrictEqual(hidden,
-    [C.NO_PERMISSION, C.NOT_YOURS, C.UNASSIGNED].sort(),
-    'the three that mean "this is not your business"');
+    [C.NO_PERMISSION, C.NOT_YOURS, C.NOT_VISIBLE, C.UNASSIGNED].sort(),
+    'the four that mean "this is not your business"');
   assert.deepStrictEqual(shown,
     [C.ALREADY_HELD, C.ALREADY_RUNNING, C.NOT_HELD, C.NO_SESSION, C.OUTSOURCED,
-      C.STUDIO_PAUSED].sort(),
+      C.STUDIO_PAUSED, C.WRONG_STATUS, C.UNKNOWN].sort(),
     'and every state refusal is explained in place');
+  /* WRONG_STATUS IS SHOWN, which is a judgement: the person CAN see this task —
+     they opened its panel — so a control that is simply absent reads as the bug
+     that has been reported four times. UNKNOWN is shown for a stronger reason:
+     it is us admitting we could not work the answer out, and hiding that would
+     leave somebody looking at a panel with no explanation at all. */
+  assert.strictEqual(assetHold.OFFER[C.WRONG_STATUS], true);
+  assert.strictEqual(assetHold.OFFER[C.UNKNOWN], true);
   // Every code in the module has an answer, so a new one cannot default silently.
   for (const code of Object.values(C)) {
     assert.ok(code in assetHold.OFFER, `${code} says whether it is drawn`);
@@ -268,9 +336,15 @@ test('the routes, the payload and the page all read one answer', () => {
 
   /* THE PAGE HAS NO CONJUNCTION OF ITS OWN any more. It had three terms — the
      flag, work_open, and held.byStudio — each of which the server also knew. */
-  assert.match(PAGE, /const canHold = hs \? hs\.canHold : fallbackHold;/);
-  assert.match(PAGE, /const canResume = hs \? hs\.canResume : fallbackResume;/);
-  assert.match(PAGE, /const holdWhy = hs && !hs\.canHold && hs\.hold\.offer \? hs\.hold\.message : null;/);
+  /* AND THE FALLBACK IS GONE TOO, which the fourth report asked for: the page
+     used to decide the rule itself for an undecorated row. It cannot any more —
+     the server always sends an answer, including an explicit "unknown". */
+  assert.match(PAGE, /const hs = a\.hold_state \|\| UNKNOWN_HOLD_STATE;/);
+  assert.match(PAGE, /const canHold = hs\.canHold;/);
+  assert.match(PAGE, /const canResume = hs\.canResume;/);
+  assert.match(PAGE, /const holdWhy = !hs\.canHold && hs\.hold\.offer \? hs\.hold\.message : null;/);
+  assert.ok(!/fallbackHold|fallbackResume/.test(PAGE),
+    'the page has no local recomputation left to disagree with the server');
   /* Counted over CODE, not over the file: the note above the new lines quotes the
      old conjunction, and a comment is not a rule. */
   const pageCode = PAGE.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '');
@@ -278,60 +352,67 @@ test('the routes, the payload and the page all read one answer', () => {
     'the old flag is no longer a term in a page-side rule');
 });
 
-test('neither side has a list of eligible statuses, so there is none to diverge', () => {
-  /* MEASURED, NOT ASSUMED: a lead was offered and granted a hold on an open
-     session in every one of the nine statuses an asset can be in, delivered
-     included. There is no status condition on either side.
-     
-     AND THAT IS RIGHT, because the condition that matters is already exact —
-     hold needs an OPEN STRETCH, and a stretch is only ever opened from a status
-     where work runs. A list here would be a second, weaker statement of a
-     condition already enforced, and the one case where the two could differ is
-     a session opened legitimately whose asset has since moved, where refusing
-     would strand a running clock nobody could stop.
-     
-     This test is the brief's "hold the two lists equal" in the form the code
-     actually takes: equal by both being absent. A future list has to be added
-     to both sides or to neither. */
-  assert.strictEqual(assetHold.STATUS_GATE, null);
-  const module = SRC('asset-hold.js');
-  const body = module.slice(module.indexOf('function decide('));
-  assert.ok(!/asset\.status/.test(body), 'the shared rule never reads a status');
+test('there is ONE status list, and all three readers are the same array', () => {
+  /* THIS TEST USED TO ASSERT THERE WAS NO LIST AT ALL, and the reasoning is
+   * worth keeping because it is still half right:
+   *
+   *   Measured in Prompt 34: a lead was offered and granted a hold on an open
+   *   session in every one of the statuses an asset can be in, delivered
+   *   included. There was no status condition on either side, and that was
+   *   defensible — hold needs an OPEN STRETCH, and a stretch is only ever opened
+   *   from a status where work runs, so a list would have been a second and
+   *   weaker statement of a condition already enforced.
+   *
+   * THE FOURTH REPORT ASKED FOR THE LIST ANYWAY, and for a per-status decision,
+   * on the grounds that "whatever is shown must not be silently narrowed" cuts
+   * both ways: a Delivered asset with no session offers a Hold button that
+   * cannot do anything, and silence about why is what gets reported.
+   *
+   * SO THE LIST EXISTS, AND THE OLD REASONING IS WHAT KEEPS IT SAFE: it governs
+   * whether the control is OFFERED and never refuses a session that is actually
+   * open or actually held. A stretch opened legitimately whose asset has since
+   * moved on is still stoppable — asserted below, because stranding a running
+   * clock nobody can stop is worse than anything the list prevents.
+   *
+   * ONE LIST, THREE READERS. Not three lists that agree: the route's STARTABLE
+   * and the rule's WORKING_STATUSES are the same array object, and the page's
+   * copy is checked against it by value — the same arrangement FREE_STATUSES has
+   * with the dashboard's drag range, and for the same reason. */
+  const workflow = require('../src/asset-workflow');
+  assert.deepStrictEqual(workflow.WORKING_STATUSES,
+    ['assigned', 'in_progress', 'tl_changes_requested', 'cd_changes_requested', 'game_feedback'],
+    'the five stages where somebody is working');
+  assert.strictEqual(assetHold.WORKING_STATUSES, workflow.WORKING_STATUSES,
+    'the rule reads the workflow\'s array, it does not copy it');
+
   const route = SRC('routes/assets.js');
-  const holdRoute = route.slice(route.indexOf("router.post('/:id/hold'"));
-  assert.ok(!/asset\.status/.test(holdRoute.slice(0, holdRoute.indexOf('\n});'))),
-    'and neither does the hold route');
-  const at = PAGE.indexOf('const hs = a.hold_state || null;');
-  assert.ok(!/a\.status/.test(PAGE.slice(at, at + 900)), 'and neither does the page');
-});
+  assert.match(route, /const STARTABLE = workflow\.WORKING_STATUSES;/,
+    'and so does the /start gate, which is the same question from the other end');
 
-test('the shared rule asks nothing of the database', () => {
-  /* WHAT MAKES THE TABLE ABOVE A TABLE. If this module ever reaches for a
-     connection, the matrix becomes an integration suite and stops being run. */
-  const module = SRC('asset-hold.js');
-  for (const leak of ["require('./db')", 'db.query', 'await ']) {
-    assert.ok(!module.includes(leak), `src/asset-hold.js must not contain ${leak}`);
+  const page = PAGE.match(/const HOLD_STATUSES = \[([^\]]*)\]/);
+  assert.ok(page, 'the page has no HOLD_STATUSES list');
+  assert.deepStrictEqual(
+    page[1].split(',').map((v) => v.trim().replace(/'/g, '')),
+    workflow.WORKING_STATUSES,
+    'the page\'s list and WORKING_STATUSES have drifted apart');
+
+  /* AND THE OVERRIDE. A running or held clock is stoppable in any status,
+     including one that is not on the list — which is the case the absent list
+     used to protect and the list must not take away. */
+  for (const status of ['delivered', 'approved_for_client', 'pending_tl_review']) {
+    const open = facts('artist', 'running', { asset: { ...ASSET, status } });
+    assert.strictEqual(assetHold.decide('hold', open).ok, true,
+      `a running clock on a ${status} task can still be stopped`);
+    const paused = facts('artist', 'heldByHand', { asset: { ...ASSET, status } });
+    assert.strictEqual(assetHold.decide('resume', paused).ok, true,
+      `and a held one on a ${status} task can still be resumed`);
+    /* With NOTHING running, the same status refuses — with the stage named. */
+    const idle = facts('artist', 'neverStarted', { asset: { ...ASSET, status } });
+    const v = assetHold.decide('hold', idle);
+    assert.strictEqual(v.code, C.WRONG_STATUS, `and an idle ${status} task says why`);
+    assert.match(v.message, /Assigned, In Progress, TL Feedbacks, CD Feedbacks or Game Feedback/,
+      'naming the stages where it is available, built from the one list');
   }
-});
-
-test('the cheap refusals are answered without a query', () => {
-  /* DEFENCE IN DEPTH, pinned by pointing this process at a database that does
-     not exist: a refusal that could be decided from the role and the row has to
-     come back without asking which projects anybody leads. The first version of
-     holdFactsFor asked unconditionally and turned every one of these into a
-     connection error. */
-  const cases = [
-    ['no permission', { id: 'u1', role: 'team_lead', permissions: [] }, { assignee_id: 'x', project_id: 'p1' }],
-    ['your own task', { id: 'u1', role: 'team_lead', permissions: ['asset.hold'] }, { assignee_id: 'u1', project_id: 'p1' }],
-    ['unassigned', { id: 'u1', role: 'team_lead', permissions: ['asset.hold'] }, { assignee_id: null, project_id: 'p1' }],
-    ['outside Supervision', { id: 'u1', role: 'game_artist', permissions: ['asset.hold'] }, { assignee_id: 'x', project_id: 'p1' }],
-  ];
-  return Promise.all(cases.map(([label, user, asset]) =>
-    perms.holdFactsFor(user, asset, { openSession: true }).then((f) => {
-      assert.strictEqual(f.leadsProject, false, `${label}: answered without the query`);
-    }, (err) => {
-      assert.fail(`${label} reached the database: ${err && err.message}`);
-    })));
 });
 
 // ===========================================================================
@@ -342,7 +423,7 @@ function panelFor(assetRow, viewerId, held = ['asset.hold']) {
   /* The page's own lines, lifted — the four that turn hold_state into two
      controls, and the markup that draws them. Nothing is re-implemented: the
      point of the change is that the browser has no rule to re-implement. */
-  const from = PAGE.indexOf('const hs = a.hold_state || null;');
+  const from = PAGE.indexOf('const hs = a.hold_state || UNKNOWN_HOLD_STATE;');
   assert.ok(from !== -1, 'the page still reads hold_state');
   const to = PAGE.indexOf('const resumeWhy =', from);
   const decide = PAGE.slice(from, PAGE.indexOf(';', to) + 1);
@@ -360,8 +441,12 @@ function panelFor(assetRow, viewerId, held = ['asset.hold']) {
   /* `held` is the panel's own earlier line (`const held = a.held || null`), which the
      fallback and the held badge both read. Supplied rather than included in the slice,
      because the lines in between are about three other controls. */
+  /* UNKNOWN_HOLD_STATE and HOLD_STATUSES are the page's own constants; supplied
+     rather than included in the slice because they live at the top of the file,
+     a long way from these lines. holdStatusWords is the page's own too. */
   // eslint-disable-next-line no-new-func
-  const html = new Function('a', 'mine', 'can', 'escapeHTML', 'held', `
+  const html = new Function('a', 'mine', 'can', 'escapeHTML', 'held',
+    'UNKNOWN_HOLD_STATE', 'HOLD_STATUSES', 'holdStatusWords', `
     ${decide}
     return \`${markup}\`;`)(
     assetRow,
@@ -370,6 +455,13 @@ function panelFor(assetRow, viewerId, held = ['asset.hold']) {
     (s) => String(s === null || s === undefined ? '' : s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'),
     assetRow.held || null,
+    /* The page's own constant, verbatim in shape: reaching it means the payload
+       carried no answer, which is a server bug and not a decision. */
+    { canHold: false, canResume: false,
+      hold: { code: 'HOLD_UNKNOWN', offer: true, message: 'Could not be read from the server.' },
+      resume: { code: 'HOLD_UNKNOWN', offer: true, message: 'Could not be read from the server.' } },
+    require('../src/asset-workflow').WORKING_STATUSES,
+    () => 'Assigned, In Progress, TL Feedbacks, CD Feedbacks or Game Feedback',
   );
 
   const one = (id) => {
@@ -428,7 +520,7 @@ test('every offered refusal reaches the page as a disabled button with its sente
 test('a task that is none of your business draws nothing at all', () => {
   for (const code of ['NOT_YOURS', 'UNASSIGNED', 'NO_PERMISSION']) {
     const f = code === 'NOT_YOURS' ? facts('stranger', 'running')
-      : code === 'UNASSIGNED' ? facts('lead', 'running', { leadsProject: true, asset: { ...ASSET, assignee_id: null } })
+      : code === 'UNASSIGNED' ? facts('lead', 'running', { onDashboard: true, asset: { ...ASSET, assignee_id: null } })
         : facts('artist', 'running', { holdsPermission: false });
     const row = rowFor({ hold_state: assetHold.state(f), assignee_id: 'somebody-else' });
     const panel = panelFor(row, WHO.stranger.id, code === 'NO_PERMISSION' ? [] : ['asset.hold']);
@@ -441,20 +533,35 @@ test('a lead sees the control on a task that is not theirs, and is told what it 
   /* THE REPORTED SCENARIO, on the page: an assigned Team Lead opening a normal
      artist's In Progress asset. The tooltip differs from the assignee's, because
      the two are doing different things. */
-  const row = rowFor({ hold_state: assetHold.state(facts('lead', 'running', { leadsProject: true })) });
+  const row = rowFor({ hold_state: assetHold.state(facts('lead', 'running', { onDashboard: true })) });
   const panel = panelFor(row, WHO.lead.id);
   assert.ok(panel.hold.drawn && !panel.hold.disabled);
-  assert.match(panel.hold.title, /you lead or supervise its project/);
+  assert.match(panel.hold.title, /it is on your dashboard/,
+    'and the wording follows the rule: the dashboard, not the project team list');
 });
 
-test('an undecorated row falls back to mine-only, not to a silent absence', () => {
-  /* An asset that reached the panel by some route that did not decorate it. The
-     old behaviour, with the server as the authority — rather than a control that
-     vanishes because a key is missing. */
-  const mine = panelFor(rowFor({ hold_state: undefined }), WHO.artist.id);
-  assert.ok(mine.hold.drawn && !mine.hold.disabled, 'the assignee keeps their button');
-  const theirs = panelFor(rowFor({ hold_state: undefined }), WHO.lead.id);
-  assert.strictEqual(theirs.hold.drawn, false, 'and nobody else gains one');
+test('an undecorated row says so, rather than being guessed at', () => {
+  /* THIS TEST USED TO ASSERT THE OPPOSITE, and the reversal is the fourth
+   * report's doing. It read: "an undecorated row falls back to mine-only, not to
+   * a silent absence", and the fallback was `mine && can('asset.hold') &&
+   * a.work_open` on the page.
+   *
+   * THAT FALLBACK WAS A FOURTH COPY OF THE RULE — right for the assignee, and
+   * silently wrong for their lead, which is the exact failure these four reports
+   * are about. It is gone. The server now always sends an answer, including an
+   * explicit "unknown" when its own visibility query failed
+   * (assetHold.unavailableState), so an absent hold_state means the payload is
+   * malformed rather than un-decorated.
+   *
+   * AND THE HONEST CONTROL FOR THAT is a disabled one that says so — the same
+   * for the assignee as for anybody else, because the page genuinely does not
+   * know, and guessing right for one of them is what hid the problem. */
+  for (const [label, viewer] of [['the assignee', WHO.artist.id], ['their lead', WHO.lead.id]]) {
+    const panel = panelFor(rowFor({ hold_state: undefined }), viewer);
+    assert.ok(panel.hold.drawn, `${label}: a control is drawn`);
+    assert.ok(panel.hold.disabled, `${label}: and it is disabled`);
+    assert.match(panel.hold.title, /server/i, `${label}: and it says the answer is missing`);
+  }
 });
 
 test('a disabled control is an explanation, and is never wired to a request', () => {
@@ -573,7 +680,10 @@ test('hold and resume, end to end', { skip: cfg ? false : SKIP_REASON }, async (
     const assetId = await running('Not Their Project');
     const refused = await as('otherLead', `/assets/${assetId}/hold`, { method: 'POST' });
     assert.strictEqual(refused.status, 403, JSON.stringify(refused.body));
-    assert.strictEqual(refused.body.code, C.NOT_YOURS);
+    /* NOT_VISIBLE, not NOT_YOURS: this lead holds the key and is looking outside
+       their own dashboard, which is a different fact and a different fix. */
+    assert.strictEqual(refused.body.code, C.NOT_VISIBLE);
+    assert.strictEqual(refused.body.gate, 'visibility');
     const still = (await sql(cfg,
       'SELECT ended_reason FROM work_sessions WHERE asset_id = ? ORDER BY started_at DESC LIMIT 1',
       [assetId]))[0];

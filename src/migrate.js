@@ -1,5 +1,6 @@
 const { v4: uuid } = require('uuid');
 const { roleKeys, roleDef } = require('./roles');
+const { capabilitiesForTier } = require('./role-tiers');
 const referenceData = require('./reference-data');
 const ipAllowlist = require('./ip-allowlist');
 const ipBlocklist = require('./ip-blocklist');
@@ -1686,6 +1687,65 @@ async function ensureReviewGateDefaults(db, log) {
   log(`         ${rows.map((r) => r.role_key).join(', ')}.`);
 }
 
+
+/* THE LEAD-LEVEL HOLD KEY, ON EXISTING INSTALLS.
+ *
+ * asset.hold_any arrived with the FOURTH report of the Hold button. Its default
+ * is `impliedBy: has('leadsTeam')` in the catalogue, which is what a NEW studio
+ * gets; a studio that already has role_permissions rows has a row per key per
+ * designation, written when that designation was first seeded, and a key added
+ * to the catalogue afterwards is filled in at its default by topUpRole — as
+ * ENABLED where the default says so. So on most installs this step finds nothing
+ * to do, which is correct and is why it is quiet.
+ *
+ * WHAT IT IS ACTUALLY FOR: the install where a row already exists and is off.
+ * That happens when a designation was seeded, the key was added, topUpRole wrote
+ * it, and then it was turned off — or where a studio's roles table carries a
+ * lead-tier designation added in Settings after the catalogue grew. Either way
+ * the question is the same one ensureReviewGateDefaults next door answers for
+ * review.tl, and the answer is the same:
+ *
+ * ONLY ROWS STILL MARKED AS SEEDED BY THE SYSTEM ARE TOUCHED. If an
+ * administrator has turned this off for a designation, that is a decision, and a
+ * migration must not quietly reverse it on the next deploy — updated_by_email is
+ * what tells the two apart, and tests/hold-migration.test.js pins it by
+ * revoking as a named admin and running the migration twice.
+ *
+ * AND ONLY DESIGNATIONS THE CATALOGUE ITSELF WOULD GIVE IT TO. Not "lead-like",
+ * not a name match: baselineFor(capabilitiesForTier(tier)) — the same function
+ * the seed uses. A studio's own designation that nobody marked as leading a team
+ * is not granted, because nothing has decided that it should be.
+ */
+async function ensureHoldAnyDefaults(db, log) {
+  const KEY = 'asset.hold_any';
+  const keys = roleKeys().filter((k) => {
+    const def = roleDef(k);
+    if (!def) return false;
+    const caps = capabilitiesForTier(def.tier);
+    return Boolean(caps) && catalog.baselineFor(caps).has(KEY);
+  });
+  if (!keys.length) return;
+
+  const holes = keys.map((_, i) => `$${i + 2}`).join(',');
+  const { rows } = await db.query(
+    `SELECT role_key FROM role_permissions
+      WHERE permission_key = $1 AND enabled = 0
+        AND (updated_by_email IS NULL OR updated_by_email = 'system')
+        AND role_key IN (${holes})`,
+    [KEY, ...keys]
+  );
+  if (!rows.length) return;
+
+  await db.query(
+    `UPDATE role_permissions SET enabled = 1, updated_by_email = 'system'
+      WHERE permission_key = $1 AND enabled = 0
+        AND (updated_by_email IS NULL OR updated_by_email = 'system')
+        AND role_key IN (${holes})`,
+    [KEY, ...keys]
+  );
+  log(`Schema: Hold / Resume Any Visible Task granted to ${rows.length} designation(s) that run a team:`);
+  log(`         ${rows.map((r) => r.role_key).join(', ')}.`);
+}
 
 // The category each asset belongs to. Deliberately no seed: the list starts
 // empty and a Super Admin fills it in Settings, so nobody inherits a taxonomy
@@ -4109,6 +4169,10 @@ const STEPS = [
   ['permission catalogue top-up', ensurePermissionCatalogueComplete],
   // After the catalogue top-up, so every role has a row to correct.
   ['review gate departments', ensureReviewGateDefaults],
+  /* AFTER the review-gate step and after role_permissions exists, for the same
+     reason that one is where it is: it reads and writes rows the permission
+     seeding has already created. */
+  ['lead hold key', ensureHoldAnyDefaults],
   ['IP allowlist', ensureIpAllowlist],
   // After it, and independent of it: the blocklist is checked by the same gate
   // but neither list's storage depends on the other's.

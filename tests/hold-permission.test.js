@@ -67,33 +67,32 @@ test('the two gates name the same permission, and the page reads the configured 
 
   /* The page's gate. can() over perms(), which is that list — NOT caps(), which is the
      tier and is what the three bugs the page's own comment describes all reached for. */
-  /* WIDENED TWICE SINCE THIS WAS WRITTEN, and the pin follows rather than being deleted.
-     It was `mine && can('asset.hold')`; then `(mine || can_hold_others) && can('asset.hold')`
-     when designations on their own projects were added; and the page now has no rule at all
-     — the server decides both controls and sends the reason, and this file's point is
-     unchanged: the page and the server ask the SAME permission, and the page reads the
-     configured set rather than the tier.
-     
-     SO THE PERMISSION IS ASKED IN THE FALLBACK, which is where the page still has to ask it:
-     an asset that reached the panel undecorated falls back to the old mine-only behaviour,
-     with the server as the authority. tests/asset-hold-matrix.test.js owns the rule itself. */
-  assert.match(PAGE, /const fallbackHold = mine && can\('asset\.hold'\) && a\.work_open;/,
-    'the page gates its fallback on the permission, by the configured set');
-  assert.match(PAGE, /const canHold = hs \? hs\.canHold : fallbackHold;/,
-    'and otherwise draws the answer the server sent');
-  assert.match(PAGE, /function perms\(\)\{ return \(state\.currentUser && state\.currentUser\.permissions\) \|\| \[\]; \}/,
-    'and perms() is the server\'s own list');
+  /* WIDENED THREE TIMES SINCE THIS WAS WRITTEN, and the pin follows rather than being
+     deleted. It was `mine && can('asset.hold')`; then `(mine || can_hold_others) &&
+     can('asset.hold')` when designations on their own projects were added; then the server
+     decided both controls and the page kept a mine-only FALLBACK for an undecorated row.
 
-  /* ONE GATE, NOT TWO — still the point, and now counted over code rather than over the whole
-     file: the widening added prose that names the permission, and a comment is not a gate. */
+     THE FALLBACK IS NOW GONE TOO, which is the fourth report's doing: it was a fourth copy
+     of the rule, right for the assignee and silently wrong for their lead. So the page asks
+     asset.hold NOWHERE — which is the strongest form of this file's point rather than a
+     weakening of it. The two gates cannot disagree about a permission only one of them
+     consults, and the page cannot be the one that is wrong. */
+  assert.match(PAGE, /const hs = a\.hold_state \|\| UNKNOWN_HOLD_STATE;/,
+    'the page reads the server\'s answer, or says it has none');
+  assert.match(PAGE, /const canHold = hs\.canHold;/, 'and never computes one');
+  assert.match(PAGE, /function perms\(\)\{ return \(state\.currentUser && state\.currentUser\.permissions\) \|\| \[\]; \}/,
+    'and perms() is still the server\'s own list, for every other gate on the page');
+
+  /* NO GATE AT ALL, counted over code rather than over the whole file: the history above
+     names the permission in prose, and a comment is not a gate. ZERO is the number that
+     matters — it going UP is how a page-side copy of this rule gets back in. */
   const pageCode = PAGE.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '');
-  /* TWO NOW, NOT ONE, and both are the same fallback: hold and resume each ask it on the
-     undecorated path. Counted rather than approximated, because the number going UP without
-     a reason is how a second gate gets in. */
-  assert.strictEqual((pageCode.match(/asset\.hold/g) || []).length, 2,
-    'asset.hold is asked about only on the two fallback lines');
-  const at = PAGE.indexOf('const fallbackHold =');
-  const holdArea = PAGE.slice(at, at + 700);
+  assert.strictEqual((pageCode.match(/asset\.hold/g) || []).length, 0,
+    'the page asks about asset.hold nowhere — the server decides and sends the answer');
+  assert.ok(!/asset\.hold_any/.test(pageCode),
+    'and it does not ask about the lead-level key either');
+  const at = PAGE.indexOf('const hs = a.hold_state || UNKNOWN_HOLD_STATE;');
+  const holdArea = PAGE.slice(at, at + 900);
   assert.ok(!/caps\(/.test(holdArea), 'and the tier is not consulted anywhere near it');
 });
 
@@ -136,19 +135,22 @@ test('Hold follows the configured permission, on the page and on the server',
     const me = await as(who, '/auth/me');
     assert.strictEqual(me.status, 200, JSON.stringify(me.body));
     const can = (...keys) => keys.some((k) => (me.body.user.permissions || []).includes(k));
-    /* THE PAGE'S OWN LINES, lifted rather than re-implemented — and there are four of them
-       now rather than one, because the page no longer has a rule: it reads the server's
-       hold_state and falls back to mine-only on an undecorated row. The permission is
-       asked in that fallback, which is the thing this file is about. */
-    const from = PAGE.indexOf('const hs = a.hold_state || null;');
+    /* THE PAGE'S OWN LINES, lifted rather than re-implemented. There are two of them now:
+       the page reads the server's hold_state and has no rule of its own at all, which is
+       why `can` below goes unused by them — kept in the signature because the point of
+       this file is that the page reads the configured set, and an unused parameter proving
+       it is never consulted here is a stronger statement than removing it. */
+    const from = PAGE.indexOf('const hs = a.hold_state || UNKNOWN_HOLD_STATE;');
     assert.ok(from !== -1, 'the page still has the hold state this test reads');
-    const to = PAGE.indexOf('const canResume = hs ?', from);
+    const to = PAGE.indexOf('const canResume = hs.canResume;', from);
     const lines = PAGE.slice(from, PAGE.indexOf(';', to) + 1);
     /* `a` is the asset row as the panel has it — decorated by the board, because that is
        where hold_state comes from. Passed through rather than stubbed. */
     // eslint-disable-next-line no-new-func
-    return new Function('mine', 'a', 'can', 'held', `${lines} return canHold;`)(
-      asset.assignee_id === me.body.user.id, asset, can, asset.held || null);
+    return new Function('mine', 'a', 'can', 'held', 'UNKNOWN_HOLD_STATE',
+      `${lines} return canHold;`)(
+      asset.assignee_id === me.body.user.id, asset, can, asset.held || null,
+      { canHold: false, canResume: false, hold: { offer: true }, resume: { offer: true } });
   };
 
   const setPerms = async (roleKey, keys) => {
@@ -293,24 +295,54 @@ test('Hold follows the configured permission, on the page and on the server',
 
   /* --- and the rule the permission does NOT carry -------------------------- */
 
-  await t.test('holding the permission is still not permission to hold somebody else\'s work', async () => {
-    /* THE KEY ALONE STILL DOES NOT GRANT A CROSS-PERSON HOLD, which is the claim, and it
-       survives the widening: four designations may now hold a project-mate's task, and the
-       permission is not what admits them — the designation and the project are, on top of
-       it. Root holds every key in the catalogue, is none of the four, and is refused.
-       Holding is not an oversight act, which is the distinction the route has always drawn.
-       The sentence is now the not-mine one rather than the unassigned one; that the refusal
-       explains which case it is, is itself worth pinning — and it now carries a CODE beside
-       it, so the page can tell "none of your business" from "nothing running" without
-       matching on English. */
-    assert.ok((await heldBy('super_admin')).includes('asset.hold'), 'root holds the key');
-    const refused = await as('root', `/assets/${assetId}/hold`, { method: 'POST' });
+  await t.test('the key alone is not a cross-person hold — a second key is', async () => {
+    /* THE CLAIM HAS SURVIVED FOUR WIDENINGS AND IS NOW SHARPER THAN EVER: asset.hold, which
+       every designation holds, does not admit anybody to somebody else's timer. What used
+       to carry that was the designation and its project; what carries it now is a SECOND
+       permission, asset.hold_any, plus the task being on the holder's own dashboard.
+
+       SO THE SUBJECT OF THIS CASE HAD TO CHANGE. It used to be root, who held every key in
+       the catalogue and was still refused — and root now holds asset.hold_any too, with a
+       studio-wide project scope, so root can hold anything. That is a real change and
+       tests/hold-lead-scope.test.js argues it out in full.
+
+       A FULL-ACCESS DESIGNATION IS THE CASE THAT STILL MAKES THE POINT, and makes it
+       better: Head of Production holds asset.hold and sees every project in the studio, and
+       is refused — because the tier does not carry leadsTeam, so it does not get the
+       lead-level key by default. Reach is not authority, which is exactly what this file
+       has always been about. */
+    const hop = await as('root', '/users', { method: 'POST',
+      body: { name: 'hop', email: 'hop@holdperm.test', role: 'head_of_production',
+        password: PASSWORD } });
+    assert.strictEqual(hop.status, 201, JSON.stringify(hop.body));
+    tokens.hop = await login('hop@holdperm.test');
+
+    const held = await heldBy('head_of_production');
+    assert.ok(held.includes('asset.hold'), 'full access holds the base key');
+    assert.ok(!held.includes('asset.hold_any'),
+      'and not the lead-level one, which follows leadsTeam');
+
+    const refused = await as('hop', `/assets/${assetId}/hold`, { method: 'POST' });
     assert.strictEqual(refused.status, 403, JSON.stringify(refused.body));
     assert.strictEqual(refused.body.code, 'HOLD_NOT_YOURS');
+    assert.strictEqual(refused.body.gate, 'authority');
     assert.match(refused.body.error, /Only the person this task is assigned to/);
-    assert.match(refused.body.error, /a team lead or supervisor on its project/,
-      'and says who it would be for');
+    assert.match(refused.body.error, /Hold \/ Resume Any Visible Task/,
+      'and names the permission that would grant it, which is the fix');
     // The button agrees, which is the pairing this whole suite is about.
-    assert.strictEqual(await mayHoldOnPage('root', await assetRow('root')), false);
+    assert.strictEqual(await mayHoldOnPage('hop', await assetRow('hop')), false);
+
+    /* AND GRANTING IT IS ALL IT TAKES — no sign-out, because authenticate() resolves the
+       set on every request and the page re-reads it on its twenty-second poll. */
+    await setPerms('head_of_production', [...held, 'asset.hold_any']);
+    try {
+      const allowed = await as('hop', `/assets/${assetId}/hold`, { method: 'POST' });
+      assert.strictEqual(allowed.status, 200, JSON.stringify(allowed.body));
+      await as('hop', `/assets/${assetId}/resume`, { method: 'POST' });
+      assert.strictEqual(await mayHoldOnPage('hop', await assetRow('hop')), true,
+        'and the button is there on the same token');
+    } finally {
+      await setPerms('head_of_production', held);
+    }
   });
 });

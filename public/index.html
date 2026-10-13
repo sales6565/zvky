@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <title>Zvky — Pipeline</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- BUILD:STAMP -->
 <style id="themeDefaults">
 /* GENERATED from src/theme-tokens.js by scripts/build-theme-defaults.js.
    Do not edit by hand: tests/theme.test.js fails if this and the catalogue disagree.
@@ -21,6 +22,13 @@
 *{box-sizing:border-box;} html,body{margin:0;padding:0;}
 body{background:var(--bg);color:var(--ink);font-family:'Inter',sans-serif;min-height:100vh;}
 .mono{font-family:'IBM Plex Mono',monospace;} .display{font-family:'Space Grotesk',sans-serif;}
+/* The build stamp, bottom of the page. Quiet until it has something urgent to
+   say, which is a page that is out of date. */
+.build-stamp{margin:28px 0 0;padding-top:10px;border-top:1px solid var(--hairline-t05);
+  font-family:'IBM Plex Mono';font-size:10.5px;color:var(--ink-faint);letter-spacing:.3px;}
+.build-stamp:empty{display:none;}
+.build-stamp strong{color:var(--at-risk);}
+.build-stamp .btn{margin-left:6px;}
 .sprockets{height:14px;background-image:repeating-linear-gradient(90deg, var(--border) 0 6px, transparent 6px 20px);background-position:6px 50%;background-repeat:repeat-x;background-size:20px 6px;opacity:.55;margin:0 0 2px 0;}
 #app{max-width:1400px;margin:0 auto;padding:20px 24px 60px;}
 header.top{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:6px;}
@@ -1920,6 +1928,10 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
   <div id="reportsView" style="display:none;"></div>
   <div id="settingsView" style="display:none;"></div>
 </div>
+<!-- WHICH BUILD THIS PAGE IS. Filled by paintBuildStamp(); see the note beside
+     it for why the stamp comes out of a <meta> in this document rather than from
+     the server, and what makes it say "out of date". -->
+<div class="build-stamp" id="buildStamp"></div>
 </div>
 
 <div class="overlay" id="overlay"></div>
@@ -2646,6 +2658,39 @@ const STATUSES = [
   {id:'awaiting_client_feedback', label:'Awaiting Client Feedback', color:'var(--status-awaiting-client-feedback)'},
   {id:'delivered', label:'Delivered', color:'var(--status-delivered)'},
 ];
+/* THE STAGES WHERE WORK CAN BE HELD, named so a refusal can say which they are.
+ *
+ * MUST MATCH WORKING_STATUSES in src/asset-workflow.js, and
+ * tests/hold-visibility.test.js fails if it does not — the same arrangement
+ * FREE_STATUSES has with the dashboard's drag range, and for the same reason:
+ * two copies of a status list have already drifted apart once in this file and
+ * made the Assigned column a place no card could be dragged into.
+ *
+ * IT DECIDES NOTHING. The decision is hold_state, which the server sends per
+ * asset; this list only supplies the words for the sentence that names the
+ * stages. The server's own refusal already carries that sentence, so this is
+ * what the page says when it has to explain BEFORE asking — in the panel's own
+ * note, not in place of the answer. */
+const HOLD_STATUSES = ['assigned','in_progress','tl_changes_requested','cd_changes_requested','game_feedback'];
+const holdStatusWords = () => {
+  const names = HOLD_STATUSES.map(id=>(STATUSES.find(s=>s.id===id)||{}).label||id);
+  return names.length<2 ? (names[0]||'') : `${names.slice(0,-1).join(', ')} or ${names[names.length-1]}`;
+};
+/* WHAT THE PANEL DRAWS WHEN THE PAYLOAD CARRIED NO ANSWER AT ALL.
+ *
+ * Not a guess, and not silence. The page used to fall back to deciding the rule
+ * itself here, which was a fourth copy of it; the server now always sends an
+ * answer, including an explicit "unknown" when its own visibility query failed
+ * (assetHold.unavailableState in src/asset-hold.js). So reaching this constant
+ * means the payload is malformed, and the honest control for that is a disabled
+ * one that says so. */
+const UNKNOWN_HOLD_STATE = {
+  canHold:false, canResume:false,
+  hold:{code:'HOLD_UNKNOWN', gate:'unavailable', offer:true,
+    message:'Whether you may hold this task could not be read from the server. Reload the page.'},
+  resume:{code:'HOLD_UNKNOWN', gate:'unavailable', offer:true,
+    message:'Whether you may resume this task could not be read from the server. Reload the page.'},
+};
 /* WHO RAISED A GAME BUG, and it changes what the row means rather than only what
  * it says. The four the integration accepts (SOURCES in src/routes/integration.js);
  * a fifth there is a row's value, so an unknown one is shown as itself rather than
@@ -4860,10 +4905,37 @@ document.getElementById('search').addEventListener('input', e=>{ state.search=e.
 document.getElementById('filterType').addEventListener('change', e=>{ state.filterType=e.target.value; render(); });
 
 /* ---------- data + render ---------- */
+/* THE OPEN PANEL'S HOLD ANSWER, AS A STRING, so a reload can tell whether it
+ * moved. Four fields, which is the whole of what the two controls are drawn from.
+ *
+ * WHY THIS EXISTS. The fourth report of the Hold button asked that a control not
+ * remain after the task leaves the lead's dashboard, and not be missing for one
+ * that has just appeared. The board is re-fetched on every render() — so the
+ * CARDS are always current — but a drawer that is already open keeps the markup
+ * it was built with, and until now it was rebuilt only when PERMISSIONS changed.
+ * A reassignment moves what a lead can see without moving a single permission,
+ * which is the commonest way the two come apart.
+ *
+ * NOT an unconditional rebuild: the drawer carries text fields and a checklist,
+ * and redrawing it under somebody mid-sentence is the reason the permissions
+ * branch was written narrowly in the first place. It is rebuilt only when this
+ * string changes, which is to say only when the answer it is showing is wrong. */
+const holdSignature = (a)=>{
+  const hs = a && a.hold_state;
+  if(!hs) return 'none';
+  return [hs.canHold, hs.canResume, (hs.hold||{}).code, (hs.resume||{}).code].join('|');
+};
+
 async function loadAssets(){
   if(!state.currentProjectId){ state.assets=[]; state.activeWork=null; return; }
+  const before = holdSignature((state.assets||[]).find(a=>a.id===state.openAssetId));
   const { assets, activeWork } = await api('/assets/project/'+state.currentProjectId);
   state.assets = assets;
+  const after = holdSignature(assets.find(a=>a.id===state.openAssetId));
+  if(state.openAssetId && before !== after
+     && document.getElementById('drawer').classList.contains('show')){
+    openDrawer(state.openAssetId);
+  }
   /* The one task this person already has open, anywhere in the studio —
      including in a project that is not the one on screen, which is why it
      comes from the server rather than being worked out from state.assets. */
@@ -8897,22 +8969,26 @@ async function openDrawer(id){
    * (hold_state, from assetHold.state()). This file chooses where they sit and
    * nothing else.
    *
-   * THE FALLBACK IS `mine`, for an asset that reached this panel by some route that did
-   * not decorate it: the old behaviour, with the server as the authority, rather than a
-   * silently missing control. */
-  const hs = a.hold_state || null;
-  const fallbackHold = mine && can('asset.hold') && a.work_open;
-  const fallbackResume = mine && can('asset.hold') && Boolean(held) && !held.byStudio && !a.work_open;
-  const canHold = hs ? hs.canHold : fallbackHold;
-  const canResume = hs ? hs.canResume : fallbackResume;
+   * AND THERE IS NO LOCAL FALLBACK ANY MORE. There was one — `mine && can('asset.hold')
+   * && a.work_open` — for an asset that reached this panel undecorated. It was a fourth
+   * copy of the rule, and the fourth report of this button asked for the page to stop
+   * recomputing it. The server now always sends an answer: a failure on its side produces
+   * assetHold.unavailableState(), which says "unknown" and offers the control disabled
+   * with that reason, rather than nothing at all. An absent hold_state here therefore
+   * means the payload itself is malformed, and the honest thing to draw for that is a
+   * disabled control saying so — not a guess that happens to be right for the assignee
+   * and silently wrong for their lead. */
+  const hs = a.hold_state || UNKNOWN_HOLD_STATE;
   /* WHY NOT, WHEN IT IS NOT — and whether that is worth a disabled button.
    *
    * `offer` is the server's call, not this file's: a disabled control with the reason is
    * better wherever somebody would otherwise wonder (they started this task this morning
    * and the button has gone), and worse where the task is simply none of their business,
    * which is most cards on most boards. Deciding it here would be a fourth copy. */
-  const holdWhy = hs && !hs.canHold && hs.hold.offer ? hs.hold.message : null;
-  const resumeWhy = hs && !hs.canResume && hs.resume.offer ? hs.resume.message : null;
+  const canHold = hs.canHold;
+  const canResume = hs.canResume;
+  const holdWhy = !hs.canHold && hs.hold.offer ? hs.hold.message : null;
+  const resumeWhy = !hs.canResume && hs.resume.offer ? hs.resume.message : null;
   const canStart = mayStart && !a.work_open && !held && (mine || a.status!=='assigned') && !blocked && !waiting && !owing;
   /* Offered and refused, rather than absent: somebody looking for the button
      they used yesterday should find it and be told why it is not available,
@@ -9027,12 +9103,25 @@ async function openDrawer(id){
         ${canHold ? `<button class="btn btn-ghost" id="d_holdBtn"
           title="${escapeHTML(mine
             ? 'Stop the clock on this task and free yourself to start another'
-            : 'Stop the clock on this task — you lead or supervise its project')}">Hold</button>`
+            : 'Stop the clock on this task — it is on your dashboard')}">Hold</button>`
           : (holdWhy ? `<button class="btn btn-ghost" id="d_holdBtn" disabled
               title="${escapeHTML(holdWhy)}">Hold</button>` : '')}
         ${canResume ? `<button class="btn btn-brand" id="d_resumeBtn">Resume</button>`
           : (resumeWhy ? `<button class="btn btn-brand" id="d_resumeBtn" disabled
               title="${escapeHTML(resumeWhy)}">Resume</button>` : '')}
+        ${/* AND THE REASON IN WORDS, not only in a tooltip.
+             A disabled button whose explanation lives in title= is an explanation
+             nobody on a touchscreen can reach, and "the Hold button does not work"
+             is what got reported four times. The sentence is the server's own —
+             hold_state carries it — so this adds no rule and no second wording.
+             The stage list is the one case the page says BEFORE being asked: see
+             HOLD_STATUSES, which must match WORKING_STATUSES on the server. */
+          (holdWhy || resumeWhy) ? `<div class="start-blocked" id="d_holdWhy">
+            ${escapeHTML(holdWhy || resumeWhy)}
+            ${!HOLD_STATUSES.includes(a.status) && !a.work_open && !held
+              ? `<br><span class="worklog-note">Work is held while a task is ${escapeHTML(holdStatusWords())}.</span>`
+              : ''}
+          </div>` : ''}
         ${held ? `<div class="start-blocked held-note">
           <strong>${escapeHTML(pauseWords(held).title)}</strong> since ${escapeHTML(fmtDate(held.since))}${held.note ? ` — ${escapeHTML(held.note)}` : ''}.
           ${escapeHTML(pauseWords(held).why)}
@@ -19845,7 +19934,67 @@ async function submitPasswordChange(){
 document.getElementById('savePasswordBtn').addEventListener('click', submitPasswordChange);
 document.getElementById('pf_confirm').addEventListener('keydown', e=>{ if(e.key==='Enter') submitPasswordChange(); });
 
+/* ---------- which build is this ----------
+ *
+ * ADDED ON THE FOURTH REPORT OF THE HOLD BUTTON, where the first question — is
+ * the earlier fix even deployed? — could not be answered from anything on the
+ * screen. package.json has read 1.0.0 since the first commit and nothing
+ * surfaced it anyway, so every report carried an unknown: somebody describing
+ * the old behaviour might be describing a bug, an un-deployed fix, or a browser
+ * running yesterday's HTML.
+ *
+ * THE PAGE REPORTS ITS OWN STAMP, NOT THE SERVER'S. This is the whole point and
+ * the easy thing to get wrong: fetching the version and printing it would print
+ * what the server would send NOW, which on a stale page is exactly the number
+ * that is not running. The stamp in the <meta> was injected into this HTML as it
+ * was served (src/theme-delivery.js), so it travels with the page. Comparing the
+ * two is what detects a stale page, and nothing else can.
+ */
+const BUILD = (()=>{
+  const read = (n)=>{
+    const el = document.querySelector(`meta[name="${n}"]`);
+    return el ? String(el.getAttribute('content')||'') : '';
+  };
+  return { page: read('zvky-build'), version: read('zvky-version') };
+})();
+let BUILD_SERVER = null;
+
+function paintBuildStamp(){
+  const el = document.getElementById('buildStamp');
+  if(!el) return;
+  const stale = Boolean(BUILD_SERVER && BUILD.page && BUILD_SERVER.page
+    && BUILD_SERVER.page !== BUILD.page);
+  const bits = [];
+  if(BUILD.version) bits.push(`v${BUILD.version}`);
+  if(BUILD.page) bits.push(`build ${BUILD.page}`);
+  if(BUILD_SERVER && BUILD_SERVER.commit) bits.push(BUILD_SERVER.commit.slice(0,7));
+  el.innerHTML = bits.length ? escapeHTML(bits.join(' · ')) : '';
+  /* SAID OUT LOUD, with the way out beside it. A person on a stale page is the
+     one person who cannot be told "it is fixed, try again" — their browser will
+     keep running the old code until something reloads it. */
+  if(stale){
+    el.innerHTML += ` — <strong>this page is out of date</strong>
+      (server has ${escapeHTML(BUILD_SERVER.page)}).
+      <button type="button" class="btn btn-ghost btn-sm" id="buildReload">Reload</button>`;
+    const btn = document.getElementById('buildReload');
+    if(btn) btn.addEventListener('click', ()=>location.reload());
+  }
+}
+
+async function refreshBuildStamp(){
+  try{
+    /* NO api() HERE. That helper prefixes /api, attaches the token and treats a
+       non-JSON answer as a dead backend — and this call has to work with no
+       session at all, which is the state a stale page may well be in. */
+    const res = await fetch('/api/version', { cache:'no-store' });
+    if(!res.ok) return;
+    BUILD_SERVER = await res.json();
+  }catch{ /* offline, or the endpoint predates this build. Say nothing. */ }
+  paintBuildStamp();
+}
+
 boot();
+refreshBuildStamp();
 </script>
 <!-- The mobile shells' native half. Inert in a browser: everything in it
      is behind a check for the Capacitor bridge. Served rather than bundled

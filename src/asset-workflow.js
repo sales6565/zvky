@@ -256,6 +256,47 @@ function allowedStatuses(ids = OUTSOURCE_STAGE_FROM) {
 // by a test.
 const FREE_STATUSES = ['not_started', 'assigned', 'in_progress'];
 
+/* THE STATUSES WHERE SOMEBODY IS ACTUALLY WORKING — where the clock can run.
+ *
+ * It lives here, beside FREE_STATUSES and for the same reason: more than one
+ * place has to agree on it, and when two copies of a status list drifted apart
+ * the Assigned column became a place no card could be dragged into. Three
+ * readers now:
+ *
+ *   src/routes/assets.js   STARTABLE, the /start gate — whether work can BEGIN
+ *   src/asset-hold.js      whether holding means anything at this stage
+ *   public/index.html      HOLD_STATUSES, for the sentence that names them
+ *
+ * ONE IDEA, NOT TWO. "A stage where the clock can run" is the same question
+ * whichever end of it you ask from: a task whose clock can be started is exactly
+ * a task whose clock can be stopped. Writing the hold list separately would have
+ * been a second, weaker statement of this one — which the fourth report of the
+ * Hold button explicitly asked us not to do.
+ *
+ * WHY EACH ONE IS IN OR OUT:
+ *
+ *   not_started               OUT. Nobody has accepted it. /start refuses it too
+ *                                  — the asset moves to `assigned` first.
+ *   assigned                  IN.  On somebody's desk, waiting to be begun.
+ *   in_progress               IN.  The ordinary case.
+ *   pending_tl_review         OUT. Handed in; it is on the lead's desk, and
+ *                                  submitting closed the artist's stretch.
+ *   tl_changes_requested      IN.  Back with the artist to redo.
+ *   tl_approved               OUT. Past the first gate, between desks.
+ *   pending_cd_review         OUT. On the director's desk.
+ *   cd_changes_requested      IN.  Back for rework once the lead relays it.
+ *   game_feedback             IN.  A bug to answer, once the lead passes it on.
+ *   approved_for_client       OUT. Finished work, waiting to go out.
+ *   awaiting_client_feedback  OUT. Outside the studio.
+ *   delivered                 OUT. Done.
+ *
+ * A clock that IS running is a separate matter and is never refused on this
+ * list — see the note in src/asset-hold.js. Stranding a running stretch nobody
+ * can stop would be worse than anything the list prevents.
+ */
+const WORKING_STATUSES = ['assigned', 'in_progress', 'tl_changes_requested',
+  'cd_changes_requested', 'game_feedback'];
+
 /* IS THIS TASK STILL THE FREELANCER'S TO ACT ON?
  *
  * THE HALF THE STATUS CANNOT ANSWER, and the reason this exists: widening the
@@ -1147,6 +1188,7 @@ module.exports = {
   OUTSOURCE_DELIVERED_TO,
   OUTSOURCE_NORMALISE_FROM,
   FREE_STATUSES,
+  WORKING_STATUSES,
   STATE_IDS,
   TRANSITIONS,
   label,
