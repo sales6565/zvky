@@ -77,6 +77,13 @@ const pageDeps = () => {
       `${PAGE.slice(PAGE.indexOf('const ENGINE_STATES = {')).slice(0, PAGE.slice(PAGE.indexOf('const ENGINE_STATES = {')).indexOf('\n};') + 3)}; return ENGINE_STATES;`
     )(),
   });
+  /* THE PILL'S OWN TINT. Both renderers draw a status pill, whose background is
+     the status colour at the pill's alpha. That used to be `${colour}22` written
+     out at each call site; colours are tokens now, so a status colour is
+     `var(--status-x)` and the tint is `var(--status-x-t22)`, which string
+     concatenation cannot produce. The page's own helper is lifted rather than
+     reimplemented here, for the same reason escapeHTML is. */
+  deps.statusTint = pageFunction('statusTint');
   return deps;
 };
 

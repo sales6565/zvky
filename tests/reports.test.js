@@ -691,21 +691,43 @@ test('the workflow colours are untouched and still tell each other apart', () =>
   const path = require('path');
   const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
 
+  /* WHAT MOVED, AND WHY THIS STILL PINS THE SAME THING. These used to be nine
+     literals and legacy variable names in the page — `#5b8def` for Assigned,
+     `var(--not)` for Not Assigned. Colours are tokens now, so the page names
+     `var(--status-<id>)` for every status and the catalogue holds the hex. The
+     claim is unchanged and the check is wider: all TWELVE statuses, each one
+     still drawing the exact colour it drew before. If a token default moves,
+     this fails here as well as in tests/theme.test.js. */
   const STATUS = {
-    not_started: 'var(--not)', assigned: '#5b8def', in_progress: 'var(--prog)',
-    pending_tl_review: 'var(--review)', tl_changes_requested: '#e8402c',
-    pending_cd_review: '#9b7ef0', cd_changes_requested: '#e8402c',
-    approved_for_client: 'var(--approved)', delivered: 'var(--final)',
+    not_started: '#6B7280', assigned: '#5B8DEF', in_progress: '#F2B33D',
+    pending_tl_review: '#9B7EF0', tl_changes_requested: '#E8402C',
+    tl_approved: '#4C9A75', pending_cd_review: '#9B7EF0',
+    cd_changes_requested: '#E8402C', game_feedback: '#D9822B',
+    approved_for_client: '#3DDC97', awaiting_client_feedback: '#22C1C3',
+    delivered: '#D4FF3D',
   };
+  const themeTokens = require('../src/theme');
   for (const [id, colour] of Object.entries(STATUS)) {
-    const row = new RegExp(`id:\\s*'${id}'[^}]*color:\\s*'${colour.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`);
-    assert.match(page, row, `${id} should still be ${colour}`);
+    const css = `--status-${id.replace(/_/g, '-')}`;
+    const row = new RegExp(`id:\\s*'${id}'[^}]*color:\\s*'var\\(${css}\\)'`);
+    assert.match(page, row, `${id} should draw ${css}`);
+    const tok = themeTokens.all().find((t) => t.css === css.slice(2));
+    assert.ok(tok, `${css} should be a token a studio can edit`);
+    assert.strictEqual(tok.default, colour, `${id} should still default to ${colour}`);
   }
+  // And the pipeline agrees, so a status cannot be coloured in one place only.
+  const states = require('../src/asset-workflow').STATES;
+  assert.deepStrictEqual(states.map((st) => st.id).sort(), Object.keys(STATUS).sort(),
+    'every status is named here — a new one needs a colour and a line above');
 
-  // The tokens behind them, unchanged.
+  /* The older semantic names behind them, unchanged. They are kept as palette
+     tokens rather than renamed, because `var(--prog)` and its five siblings are
+     spread across the stylesheet and a rename would have been a rewrite dressed
+     up as a theme. Case-insensitive: the defaults block is generated, and the
+     generator writes canonical uppercase. */
   for (const [name, value] of [['not', '#6b7280'], ['prog', '#f2b33d'], ['review', '#9b7ef0'],
     ['approved', '#3ddc97'], ['final', '#d4ff3d']]) {
-    assert.match(page, new RegExp(`--${name}:\\s*${value}`), `--${name} should still be ${value}`);
+    assert.match(page, new RegExp(`--${name}:\\s*${value}`, 'i'), `--${name} should still be ${value}`);
   }
 
   // And the accent keeps its distance from the nearest of them.

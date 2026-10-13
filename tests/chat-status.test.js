@@ -46,8 +46,15 @@ test('the page draws one tick, two grey and two blue, and nothing else', () => {
   assert.ok(fn, 'public/index.html has no chatTickHTML');
   assert.match(fn[1], /mark\.status === 'sent' \? '&#10003;' : '&#10003;&#10003;'/,
     'one check for sent, two for anything past it');
-  assert.match(PAGE, /\.chat-tick\.read\{color:#3aa3ff;\}/, 'and read is blue');
+  /* THE COLOURS ARE TOKENS NOW, so the rule names a custom property rather than
+     a hex — and the hex lives in src/theme-tokens.js where a studio can change
+     it. The claim is the same one: read is blue and delivered is grey, which is
+     the convention every messaging app has trained people to read. */
+  assert.match(PAGE, /\.chat-tick\.read\{color:var\(--read-tick\);\}/, 'and read is its own colour');
   assert.match(PAGE, /\.chat-tick\.delivered\{color:var\(--ink-muted\);\}/, 'delivered is grey');
+  const readTick = require('../src/theme').byKey().get('meaning.read');
+  assert.ok(readTick, 'the read tick is a token a studio can recolour');
+  assert.strictEqual(readTick.default, '#3AA3FF', 'and it is still blue by default');
 });
 
 test('a tick is only ever drawn on your own message', () => {

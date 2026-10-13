@@ -714,7 +714,13 @@ function pageHarness({ permissions = ['report.follow_up', 'user.view'], payloads
      mutation that adds a line anywhere in it is carried into the harness
      instead of being skipped by a narrower grab. */
   const from = PAGE.indexOf('let FOLLOW_UP = null;');
-  const to = PAGE.indexOf("/* ---------- settings: where the studio's email goes out from");
+  /* ENDS WHERE THE NEXT SECTION BEGINS, which used to be the email settings and
+     is now the theme runtime that was added in front of them. Taking everything
+     up to the email comment would hand this harness a second section it has no
+     stubs for — the theme block reads window and showToast — and the failure
+     would look like a bug in this one. tests/theme.test.js lifts that block
+     with the stubs it needs. */
+  const to = PAGE.indexOf('let THEME_VERSION = null;');
   assert.ok(from !== -1 && to > from, 'the follow-up section is in the page');
   const section = PAGE.slice(from, to);
 

@@ -341,7 +341,17 @@ test('a chip is a real button, labelled with where it goes', () => {
      against the sheet because a control a keyboard can reach and cannot see is
      only half built. */
   assert.match(PAGE, /\.ad-chip:hover\{/);
-  assert.match(PAGE, /\.ad-chip:focus-visible\{outline:2px solid var\(--brand-accent\)/);
+  /* THE RING IS ONE TOKEN NOW. It used to name --brand-accent, which is also
+     what the accent happened to be; every focus ring in the application reads
+     --focus-ring instead, so a studio recolouring the brand does not silently
+     recolour keyboard focus, and one that cannot see the ring can fix all of
+     them in one field. Same colour by default, same 2px, same offset. */
+  assert.match(PAGE, /\.ad-chip:focus-visible\{outline:2px solid var\(--focus-ring\)/);
+  /* src/theme-tokens.js rather than src/theme: the catalogue is a pure module
+     with no requires at all, and this file does not start a server or load the
+     helpers, so pulling in anything that reaches src/db would end the process. */
+  const ring = require('../src/theme-tokens').TOKENS.find((t) => t.css === 'focus-ring');
+  assert.ok(ring && ring.default === '#EF6B6F', 'and it still defaults to the accent');
 });
 
 test('a project this page cannot open is named, not linked', () => {
