@@ -514,8 +514,10 @@ async function dayFigure(userId, { assetId, date }, { exceptId = null } = {}) {
   const round = (n) => Math.round(n * 100) / 100;
   /* Hours to two places, which is what the field steps in, what the column
      stores and what every other hours figure in the timesheet is rounded to.
-     The SPLIT is done in seconds, before this — see dayTotalFor — so no part of
-     a session is lost to rounding and only the figure on screen is rounded, once. */
+     ROUNDED ONCE, HERE. dayTotalFor returns the exact overlap in milliseconds
+     and an unrounded seconds figure beside it, so a session split across two
+     days is not rounded twice and the days still sum to the session's own
+     working time. */
   const dayHours = round(recorded.seconds / 3600);
   const outstanding = round(Math.max(0, dayHours - logged));
   /* No single line is longer than a day, and that rule predates this one. */
@@ -530,13 +532,34 @@ async function dayFigure(userId, { assetId, date }, { exceptId = null } = {}) {
   return {
     day,
     dayHours,
+    /* READABLE, AND BUILT HERE. The field is decimal hours because that is what
+       the column stores and what the step is; the sentence beside it reads
+       "1 h 30 m", which is what somebody checking their own day actually
+       thinks in. Formatted on the server so the page shows what it is given and
+       the two cannot disagree about 1.5. */
+    label: hoursLabel(dayHours),
     logged,
     left,
     open: recorded.open,
     crossing: recorded.crossing,
     openCapped: recorded.openCapped,
+    /* Sessions that overlapped the day and were worth nothing — outside the
+       hours, inside the lunch blackout, or on a day the studio is shut. The
+       difference between "you recorded nothing" and "what you recorded was not
+       in working hours", which are different things to be told. */
+    outside: recorded.outside,
     future: recorded.future,
   };
+}
+
+/* "1 h 30 m", "45 m", "0 m". The unit the form reads in, from the figure the
+   column stores. Minutes only below an hour, and never "1 h 0 m". */
+function hoursLabel(hours) {
+  const total = Math.max(0, Math.round(Number(hours || 0) * 60));
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  if (!h) return `${m} m`;
+  return m ? `${h} h ${m} m` : `${h} h`;
 }
 
 /* The hours a line is worth, decided here rather than taken from the caller.
@@ -878,6 +901,22 @@ router.post('/reopen', requirePermission('timesheet.own'), async (req, res) => {
  * filed, and hoursFor() works it out again on save.
  */
 router.get('/suggest', requirePermission('timesheet.own'), async (req, res) => {
+  /* WHOSE TIME, and it is the SHEET'S OWNER rather than whoever is looking.
+   *
+   * There is no fill-on-behalf-of write path today — POST /entries always files
+   * for req.user.id — so for every request the application currently makes these
+   * are the same person. The parameter is here because GET /week already takes
+   * one and a lead can read a report's sheet, so the figure beside it has to be
+   * theirs; and because when an on-behalf write does arrive, the figure is
+   * already right rather than quietly the lead's own hours.
+   *
+   * GUARDED BY mayRead, the same check /week and /history use. Without it this
+   * would be a way to read anybody's clock by guessing a user id. */
+  const userId = String(req.query.userId || '') || req.user.id;
+  if (userId !== req.user.id) {
+    const verdict = await mayRead(req.user, userId);
+    if (!verdict.ok) return res.status(403).json({ error: 'That is not your timesheet.' });
+  }
   const date = sheets.toISO(req.query.date);
   /* A DAY THAT DOES NOT EXIST IS A 400, not a quiet zero. toISO accepts a Date
      and an ISO instant on purpose and checks no calendar, so '2026-13-40'
@@ -888,10 +927,11 @@ router.get('/suggest', requirePermission('timesheet.own'), async (req, res) => {
   }
   const assetId = String(req.query.assetId || '').trim();
   if (!assetId) {
-    return res.json({ date, hours: null, onThisDay: 0, logged: 0, open: false, crossing: 0 });
+    return res.json({ date, hours: null, onThisDay: 0, onThisDayLabel: '0 m',
+      logged: 0, open: false, crossing: 0, outside: 0 });
   }
 
-  const figure = await dayFigure(req.user.id, { assetId, date },
+  const figure = await dayFigure(userId, { assetId, date },
     { exceptId: req.query.exclude || null });
 
   res.json({
@@ -903,6 +943,8 @@ router.get('/suggest', requirePermission('timesheet.own'), async (req, res) => {
     hours: figure.left >= sheets.MIN_LINE_HOURS ? figure.left : null,
     // What the day holds, and what of it is already filed.
     onThisDay: figure.dayHours,
+    // The same figure in the words the form prints — see hoursLabel().
+    onThisDayLabel: figure.label,
     logged: figure.logged,
     open: figure.open,
     // Stretches that ran past midnight and had this day's part counted. Shown
@@ -911,6 +953,10 @@ router.get('/suggest', requirePermission('timesheet.own'), async (req, res) => {
     // Open sessions spanning a day that has ended — capped at its end, not run
     // up to now. Reported so the screen can say the figure may be short.
     openCapped: figure.openCapped,
+    /* Stretches that touched this day and were worth nothing: outside the
+       studio's hours, inside the lunch blackout, or on a day it was shut. Told
+       apart from "nothing recorded" because the two need different answers. */
+    outside: figure.outside,
     future: figure.future,
   });
 });

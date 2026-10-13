@@ -363,12 +363,24 @@ function workingMsByDay(startMs, endMs, schedule) {
 
 /* The same map with the schedule ignored: wall-clock milliseconds per IST day.
  *
- * ONLY A FALLBACK, and only for one case: a row whose stored `seconds` is above
- * zero although the studio was shut for its whole span. That cannot happen to a
- * row written now — `seconds` IS the open-hours intersection, so a shut span
- * stores nought — but it can be true of a row written before that rule existed,
- * and those rows still hold hours somebody worked. Weighting them by the time
- * that elapsed puts them on the days they happened rather than nowhere. */
+ * NOTHING IN PRODUCTION READS THIS ANY MORE, and that is worth saying rather
+ * than leaving somebody to assume the apportionment it served is still live.
+ *
+ * It was the fallback for one case: a row whose stored `seconds` is above zero
+ * although the studio was shut for its whole span — a row written before
+ * `seconds` became the open-hours intersection. dayTotalFor() used to apportion
+ * the stored column across days and needed a weighting for those rows;
+ * weighting them by elapsed time put their hours on the days they happened
+ * rather than nowhere.
+ *
+ * dayTotalFor() no longer reads the stored column at all: it intersects the two
+ * stamps with the day's working windows, which is the definition rather than a
+ * proxy for it. So a pre-cutover row for work done outside the hours is now
+ * worth nought on a timesheet — stated in that function's header, because it is
+ * a decision and not an accident. Kept here, and exported, because
+ * tests/timesheet-day-hours.test.js pins its arithmetic and because it is the
+ * honest answer to "wall-clock milliseconds per day" if anything ever needs
+ * one. */
 function elapsedMsByDay(startMs, endMs) {
   const byDay = new Map();
   const from = Number(startMs);

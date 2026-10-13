@@ -906,59 +906,108 @@ function unavailable(err) {
 
 /* How much of this person's work on an asset happened on ONE calendar day.
  *
- * THE FIGURE A TIMESHEET LINE IS WORTH. A line is a day, a person and an asset,
- * so this is the only reading of the clock that belongs in a timesheet: what
- * THIS person recorded on THAT asset on THAT day, and nothing else.
+ * THE FIGURE A TIMESHEET LINE IS WORTH, and the only reading of the clock that
+ * belongs in a timesheet: what THIS person recorded on THAT asset on THAT day,
+ * inside THAT day's working hours, and nothing else.
  *
- * WHAT IT USED TO DO AND WHY THAT WAS WRONG. It summed work_sessions.seconds
- * for rows whose start and end fell on the same IST date and DROPPED every row
- * that crossed midnight, returning a count of them so the screen could explain
- * itself. The comment here argued there was "genuinely no way to know how much
- * of a stretch running from Tuesday afternoon to Wednesday morning was
- * Tuesday's" — which is not true, and the proof is three lines below: the stored
- * figure is the span intersected with the studio's open hours, and that
- * intersection is additive, so the part of it that fell on Tuesday is exactly
- * computable. Dropping those rows is what pushed the Time Sheet onto the
- * whole-asset total in the first place, and the whole-asset total is what put
+ * ---------------------------------------------------------------------------
+ * THE RULE, in one line: intersect this person's sessions on this asset with
+ * day D's working windows, and sum the overlaps.
+ *
+ * The worked example the studio gave, which is the acceptance test: a task
+ * started at 18:00 on day 1 and finished at 11:00 on day 2, against a studio
+ * open 09:30 to 19:00 with lunch 13:00 to 14:00.
+ *
+ *     day 1    18:00 → 19:00          1 h
+ *     day 2    09:30 → 11:00          1 h 30 m
+ *     asset    the two, added         2 h 30 m
+ *
+ * Never the asset's total, never a midnight split (which gives about 6 h and
+ * 11 h), and never the wall clock between the first start and the last end
+ * (17 h).
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT THIS DID BEFORE, AND WHY IT WAS WRONG. Twice.
+ *
+ * FIRST it summed work_sessions.seconds for rows whose start and end fell on
+ * the same IST date and DROPPED every row that crossed midnight. Dropping those
+ * is what pushed the Time Sheet onto the whole-asset total, which is what put
  * five hours on a three-hour day.
  *
- * SO A SESSION IS SPLIT AT MIDNIGHT IST, by apportioning its stored seconds
- * across the days it touches in proportion to the open-hours MILLISECONDS in
- * each — workingMsByDay() and allocateSeconds() in src/working-time.js, the
- * module that owns every other piece of span arithmetic in this application.
- * Two properties fall out of that and both matter:
+ * THEN it split a crossing row by APPORTIONING its stored `seconds` across the
+ * days in proportion to each day's working milliseconds. That looks right, and
+ * on a row written by today's close() it IS right — because `seconds` is itself
+ * the working-hours intersection of the same span, so dividing it by the
+ * per-day working weights hands each day back exactly its own overlap.
  *
- *   THE PARTS SUM TO THE WHOLE. allocateSeconds hands out every leftover
- *      second, so 22:30 to 01:30 is 1.5h and 1.5h and never 1.49 and 1.5.
+ * IT IS ONLY RIGHT WHILE THAT HOLDS, and it does not hold:
+ *
+ *   A PRE-CUTOVER ROW holds a different figure. src/migrate.js says so in as
+ *      many words — rows written before `seconds` became the intersection hold
+ *      active or elapsed time and were deliberately not backfilled, because
+ *      backfilling would destroy the distinction. Apportioning a 17-hour wall
+ *      clock by a 40/60 weighting gives 6.8 h and 10.2 h. MEASURED: that is
+ *      exactly the "about 6 h and 11 h" the studio reported.
+ *   A SCHEDULE CHANGE breaks it too. `seconds` was computed under the schedule
+ *      that applied when the row closed; the weights are computed now. Change
+ *      the day end from 19:00 to 18:00 and the stored whole no longer matches
+ *      the weights it is being divided by, so neither day gets its own figure.
+ *
+ * SO THE STORED COLUMN IS NOT READ HERE AT ALL ANY MORE. The overlap is
+ * computed from the two stamps and the schedule, which is the definition rather
+ * than a proxy for it. Four properties fall out, and each was a test before it
+ * was a sentence:
+ *
+ *   THE SWEEP CANNOT CHANGE THE ANSWER. Overlap is additive, so one row from
+ *      18:00 to 11:00 and two rows — 18:00→19:00 closed by the evening sweep,
+ *      09:30→11:00 opened by the overnight resume — give the identical figure
+ *      on both days. The old apportionment got the split right only because the
+ *      stored whole happened to agree with it; this needs no agreement.
+ *   THE PARTS SUM TO THE WHOLE, EXACTLY. Both this and
+ *      workingSecondsBetween() are the same walk over the same spans, so the
+ *      per-day milliseconds add up to the session's working milliseconds by
+ *      construction — not by handing out leftover seconds. Rounding happens
+ *      once, at display, which is why this returns `ms` as well as seconds.
  *   PAUSED TIME IS STILL EXCLUDED, with nothing subtracted. A hold CLOSES a row
  *      and a resume opens another, so a pause is the gap between two rows and
- *      was never inside one; and the lunch blackout and the hours the studio is
- *      shut are already out of `seconds` and out of the weights, because both
- *      come from the same open-spans walk.
+ *      was never inside one.
+ *   LUNCH, THE EVENING, A WEEKEND AND A HOLIDAY ALL CONTRIBUTE NOUGHT, with no
+ *      clause here for any of them: spansOn() in src/working-time.js returns no
+ *      spans for a closed day and leaves the breaks out of an open one. Nothing
+ *      in this file knows the words lunch, weekend or holiday, and that is the
+ *      point — there is one place to change the studio's hours.
  *
- * A ROW ENTIRELY INSIDE ONE DAY comes out at exactly its stored `seconds` —
- * there is one day in the map, so it takes the lot. No special case, and no
- * change to the figure this returned for the ordinary case.
+ * WHAT IS LOST, AND IT IS A REAL DECISION: a pre-cutover row for work done
+ * entirely outside the configured hours now contributes NOTHING to a timesheet
+ * figure, where the apportionment put its hours on the days they elapsed. The
+ * hours are not destroyed — Time Spent, the Efficiency report and the P&L all
+ * read `seconds` and are untouched — but the timesheet will not offer them. It
+ * is reported rather than hidden: `outside` counts sessions that overlap the day
+ * and contribute no working time, so the form can say that instead of "nothing
+ * recorded".
  *
- * AN OPEN SESSION counts live, up to NOW, for the day that holds now — the same
- * figure the timer on the panel is showing, so the two cannot disagree. A day
- * that has already ended gets that day's own slice and no more: an open row
- * spanning a past day means the pause sweep never closed it (a restart during
- * the evening, usually), and running it up to now would otherwise put today's
- * hours on last week's line. Those rows are counted out in `openCapped` so a
- * caller can say the figure stops at the end of the day.
+ * AN OPEN SESSION counts up to NOW, and only for the day that holds now: the
+ * same figure the timer on the panel is showing, so the two cannot disagree. A
+ * day that has already ended gets that day's own overlap and no more — an open
+ * row spanning a past day means the pause sweep never closed it, and running it
+ * to now would put today's hours on last week's line. Those are counted in
+ * `openCapped` so a caller can say the figure stops at the end of that day. The
+ * end of the working day is enforced by the schedule, not by a number here.
  *
- * WHAT CONFINES IT IS THE APPORTIONMENT, NOT THE CAP BELOW, and that is worth
- * being exact about: for an open row the whole is the open-hours figure of the
- * very span being divided, so each day is handed precisely its own weight
- * whether the span is cut at the end of the asked day or runs on to now. The
- * cap is there to bound the walk — an open row from three months ago would
- * otherwise have workingMsByDay step over every day since, to hand back shares
- * nobody asked for. A mutation that removes it changes no figure, which was
- * checked rather than assumed.
+ * THE SPAN IS CLIPPED TO THE DAY BEFORE THE WALK, which is both the right
+ * answer and the cheap one: an open row from three months ago would otherwise
+ * have the walk step over every day since to produce shares nobody asked for.
+ * Clipped, the walk is one day.
  *
  * A DAY THAT HAS NOT STARTED YET returns nothing, which is what makes a future
  * date zero rather than an error at the edge of the route.
+ *
+ * THE SCHEDULE KEEPS NO HISTORY, and that is worth knowing here because this
+ * function is where it bites: work_schedule is one row and
+ * recording_hour_configs has no validity dates, so a past day is recomputed
+ * under whatever the hours are TODAY. An admin who shortens the working day
+ * changes what last Tuesday was worth. Said on the form's help text too, and
+ * see the README for the recommendation.
  *
  * NO STAMP IS CONVERTED. Ages from the database's own NOW(), anchored to this
  * process's clock, exactly as every other query in this file does — see the
@@ -972,7 +1021,8 @@ const MS_PER_DAY_LOG = 24 * 60 * 60 * 1000;
 const IST_OFFSET_MS_LOG = workingTime.IST_OFFSET_MINUTES * 60 * 1000;
 
 async function dayTotalFor(db, { assetId, userId, day, now = Date.now() }) {
-  const nothing = { seconds: 0, sessions: 0, crossing: 0, openCapped: 0, open: false, future: false };
+  const nothing = { ms: 0, seconds: 0, sessions: 0, crossing: 0, openCapped: 0,
+    outside: 0, open: false, future: false };
   if (!assetId || !userId || !/^\d{4}-\d{2}-\d{2}$/.test(String(day || ''))) return { ...nothing };
   const dayStart = Date.parse(`${day}T00:00:00Z`) - IST_OFFSET_MS_LOG;
   if (!Number.isFinite(dayStart)) return { ...nothing };
@@ -983,7 +1033,6 @@ async function dayTotalFor(db, { assetId, userId, day, now = Date.now() }) {
   const { rows } = await db.query(
     `SELECT ${AGE('started_at')} AS start_age,
             ${AGE('ended_at')} AS end_age,
-            seconds,
             ended_at IS NULL AS still_open
        FROM work_sessions
       WHERE asset_id = $1 AND user_id = $2`,
@@ -996,48 +1045,47 @@ async function dayTotalFor(db, { assetId, userId, day, now = Date.now() }) {
     return { rows: [] };
   });
 
-  let seconds = 0;
+  let ms = 0;
   let sessions = 0;
   let crossing = 0;
   let openCapped = 0;
+  let outside = 0;
   let open = false;
 
   for (const row of rows) {
     const startMs = instantFromAge(row.start_age, now);
     const isOpen = Number(row.still_open) === 1 || row.end_age === null;
-    /* An open row is cut at the end of the day being asked about. See the note
-       above: this bounds the walk rather than deciding the figure. */
-    const endMs = isOpen ? Math.min(now, dayEnd) : instantFromAge(row.end_age, now);
+    const endMs = isOpen ? now : instantFromAge(row.end_age, now);
     if (endMs <= startMs) continue;
+    // Does this session touch the day at all?
     if (startMs >= dayEnd || endMs <= dayStart) continue;
 
-    const weights = workingTime.workingMsByDay(startMs, endMs, schedule());
-    /* The whole this row is worth. A closed row carries it; an open one has
-       none stored yet, so it is the same open-hours figure liveSeconds() shows
-       on the panel, measured to the cap. */
-    const whole = isOpen
-      ? workingTime.workingSecondsBetween(startMs, endMs, schedule())
-      : Math.max(0, Number(row.seconds) || 0);
-    const share = weights.total > 0
-      ? workingTime.allocateSeconds(whole, weights.byDay)
-      /* The studio was shut for the whole stretch and yet the row holds hours:
-         only possible for a row written before `seconds` became the open-hours
-         intersection. Those hours are real, so they are put on the days they
-         elapsed rather than nowhere. */
-      : workingTime.allocateSeconds(whole, workingTime.elapsedMsByDay(startMs, endMs).byDay);
+    /* CLIPPED TO THE DAY, then intersected with the day's own working windows.
+       This is the rule, not an approximation of it: the stored `seconds` column
+       is deliberately not read. */
+    const from = Math.max(startMs, dayStart);
+    const to = Math.min(endMs, dayEnd);
+    const mine = workingTime.workingMsByDay(from, to, schedule()).byDay.get(day) || 0;
 
-    const mine = share.get(day) || 0;
-    if (mine <= 0) continue;
-    seconds += mine;
-    sessions += 1;
-    if (share.size > 1) crossing += 1;
+    if (startMs < dayStart || endMs > dayEnd) crossing += 1;
     if (isOpen) {
       open = true;
       if (now > dayEnd) openCapped += 1;
     }
+    if (mine <= 0) {
+      /* It overlapped the day and was worth nothing: outside the hours, inside
+         the lunch blackout, or on a day the studio is shut. Counted so the form
+         can say which rather than "nothing recorded". */
+      outside += 1;
+      continue;
+    }
+    ms += mine;
+    sessions += 1;
   }
 
-  return { seconds, sessions, crossing, openCapped, open, future: false };
+  /* MILLISECONDS AND SECONDS. The caller rounds once, for display; the exact
+     figure is what makes the days sum to the session total. */
+  return { ms, seconds: ms / 1000, sessions, crossing, openCapped, outside, open, future: false };
 }
 
 /* Everything THIS PERSON has recorded against ONE asset, whenever it happened.

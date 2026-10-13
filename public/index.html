@@ -2221,6 +2221,20 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
     <label>Hours</label>
     <input type="number" id="tl_hours" step="0.25" min="0.25" max="24" placeholder="e.g. 3.5">
     <div id="tl_suggest" style="font-size:11.5px;color:var(--ink-faint);margin:2px 0 0;"></div>
+    <!-- WHAT THE FIGURE IS, AND THE ONE CAVEAT IT CARRIES.
+         The hours are this person's time on this asset inside THAT DAY's working
+         windows — not the asset's total, and not the wall clock between the first
+         start and the last end. The second sentence is there because the schedule
+         keeps no history: work_schedule is one row and recording_hour_configs has
+         no validity dates, so changing the studio's hours changes what a past day
+         is worth. Said on the screen rather than only in the README, because the
+         person reading a figure is the person who needs to know. -->
+    <div id="tl_help" style="font-size:11px;color:var(--ink-faint);margin:3px 0 0;line-height:1.5;">
+      Calculated from the clock: your time on this asset on the selected day, inside that day's
+      working hours. Breaks, evenings, weekly offs and holidays are not counted.
+      <span style="color:var(--ink-muted);">The studio's working hours are not kept with a history,
+      so changing them later changes what past days are worth.</span>
+    </div>
     <div id="tl_calc" style="font-size:11.5px;color:var(--ink-muted);margin:2px 0 4px;"></div>
     <!-- The way to disagree with a number nobody can edit, below the figure and
          its running total so it reads as a response to them. Shown only when
@@ -6058,17 +6072,33 @@ async function tlSuggest(){
        smaller than the asset's whole time is obviously about Thursday rather
        than looking like a figure that has gone missing. */
     const on = `on ${tsPretty(askedFor)}`;
-    const bits = [`Recorded on this asset ${on}: ${s.onThisDay}h${s.open ? ' so far' : ''}`];
+    /* THE SERVER'S OWN WORDS FOR THE FIGURE. onThisDayLabel is "1 h 30 m",
+       built by hoursLabel() beside the number it came from, so the sentence and
+       the locked field cannot disagree about what 1.5 means. The decimal is
+       kept in brackets because that is what the field shows and what somebody
+       checking the two against each other needs to see. */
+    const shown = s.onThisDayLabel || `${s.onThisDay}h`;
+    const bits = [`Recorded on this asset ${on}: ${shown}${s.open ? ' so far' : ''}`];
     if(s.logged > 0) bits.push(`${s.logged}h of it already on your timesheet`);
     if(s.crossing){
-      bits.push(`${s.crossing} stretch${s.crossing===1?'':'es'} ran past midnight, so only `
-        + `${s.crossing===1?'its':'their'} part of this day is counted`);
+      /* NOT "past midnight" any more, which was the old rule's wording and the
+         old rule's mistake. A stretch that ran overnight is counted for the part
+         of it that fell inside THIS day's working hours — see dayTotalFor. */
+      bits.push(`${s.crossing} stretch${s.crossing===1?'':'es'} ran outside this day, so only `
+        + `the part inside this day's working hours is counted`);
     }
     if(s.openCapped){
       bits.push('a session is still open on a day that has ended, counted to the end of that day');
     }
 
-    if(!s.onThisDay){
+    if(!s.onThisDay && s.outside){
+      /* IT TOUCHED THE DAY AND WAS WORTH NOTHING, which is a different thing
+         from nothing having been recorded — and the one a person will argue
+         with, so it says which of the three reasons it is. */
+      note.textContent = `A stretch on this asset touched ${tsPretty(askedFor)} but none of it fell `
+        + 'inside the studio\'s working hours — outside the day, inside a break, or on a day the '
+        + 'studio was shut. To log time the clock did not see, leave the asset unset and type the hours.';
+    }else if(!s.onThisDay){
       /* NONE RECORDED ON THIS DAY. The existing rule decides what happens, and
          it is the one the server will give on save: an asset line is worth what
          the timer recorded, so there is nothing to file against this asset for
