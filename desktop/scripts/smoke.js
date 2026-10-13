@@ -165,11 +165,62 @@ async function run() {
   `);
   ok('a notification can be raised from the page', raised === 'ok', raised);
 
+  /* ---------------------------------------------------------------------
+     THE DIALOG THE HOLD BUTTON USED, and the whole of the fifth report of it.
+
+     Hold worked in a browser and did nothing here. It asked for its optional
+     note with window.prompt(), which Electron does not implement: typeof is
+     "function" and calling it THROWS. The throw happened inside an async
+     onclick and before that handler's try, so it became an unhandled rejection
+     — no request, no busy state, nothing on screen.
+
+     Two checks, and they are different claims. The first measures Electron so
+     this file states the fact rather than citing it; the second is that the
+     page no longer depends on it. tests/no-native-dialogs.test.js fails the
+     build if one comes back, but that reads the source — this runs it in the
+     window that broke. */
+  log('\nNative dialogs, and the page not needing them');
+  const dialogs = await win.webContents.executeJavaScript(`
+    (() => {
+      const out = {};
+      out.promptType = typeof window.prompt;
+      try { window.prompt('x'); out.prompt = 'returned'; }
+      catch (e) { out.prompt = 'threw: ' + e.message; }
+      out.hasSharedDialog = Boolean(document.getElementById('askWrap'));
+      out.sharedDialogIsHidden = Boolean(document.getElementById('askWrap'))
+        && !document.getElementById('askWrap').classList.contains('show');
+      out.exposed = typeof window.askConfirm + '/' + typeof window.askText;
+      return out;
+    })()
+  `);
+  ok('window.prompt throws in this window, as it always has',
+    /^threw:/.test(dialogs.prompt), JSON.stringify(dialogs));
+  ok('the page carries its own question instead', dialogs.hasSharedDialog === true,
+    'public/index.html should have #askWrap — see openAsk()');
+  ok('and it is not on screen until something asks', dialogs.sharedDialogIsHidden === true);
+  ok('native-bridge.js can reach it', dialogs.exposed === 'function/function',
+    `window.askConfirm/askText were ${dialogs.exposed}`);
+
+  /* COPYING A PATH, which this window refused until the same report turned it
+     up. The permission string Electron checks is clipboard-sanitized-write, not
+     the web platform's clipboard-write — so this asserts the OUTCOME the page
+     sees rather than the name in the source. */
+  log('\nCopying a path');
+  const clip = await win.webContents.executeJavaScript(`
+    (async () => {
+      const out = {};
+      try { out.perm = (await navigator.permissions.query({ name: 'clipboard-write' })).state; }
+      catch (e) { out.perm = 'unqueryable'; }
+      return out;
+    })()
+  `);
+  ok('writing to the clipboard is permitted', clip.perm === 'granted', JSON.stringify(clip));
+
   log('\nEverything else is refused');
   const denied = await win.webContents.executeJavaScript(`
     (async () => {
       const out = {};
-      for (const name of ['geolocation', 'camera', 'microphone']) {
+      for (const name of ['geolocation', 'camera', 'microphone', 'clipboard-read']) {
         try { out[name] = (await navigator.permissions.query({ name })).state; }
         catch (e) { out[name] = 'unqueryable'; }
       }
@@ -179,6 +230,11 @@ async function run() {
   ok('the camera is not granted', denied.camera !== 'granted', JSON.stringify(denied));
   ok('the microphone is not granted', denied.microphone !== 'granted', JSON.stringify(denied));
   ok('location is not granted', denied.geolocation !== 'granted', JSON.stringify(denied));
+  /* READING the clipboard, which is a different permission from writing to it
+     and is deliberately not granted: the application never reads it, and
+     reading would expose whatever the person last copied anywhere else. */
+  ok('READING the clipboard is not granted',
+    denied['clipboard-read'] !== 'granted', JSON.stringify(denied));
 
   log(`  → ${await shoot(win, 'studio')}`);
 

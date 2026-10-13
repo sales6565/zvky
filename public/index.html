@@ -10186,7 +10186,17 @@ async function openDrawer(id){
       /* Resume asks nothing, so it keeps the button's own busy state. */
       ev.target.disabled = true;
       try{ await send(undefined); }
-      catch{ ev.target.disabled = false; }
+      catch(e2){
+        ev.target.disabled = false;
+        /* A REFUSAL IS ALREADY ON SCREEN — send() fills the panel's error line
+           with the server's message — so it stops here rather than also
+           toasting. ANYTHING ELSE is rethrown into guarded(): a redraw that
+           threw, a renamed element, a wrapper that does not implement
+           something. `catch{}` with nothing in it was how the original bug
+           looked, and leaving one here would be the same mistake one level
+           down. */
+        if(!(e2 && e2.status)) throw e2;
+      }
     });
   };
   holdAction(document.getElementById('d_holdBtn'), '/hold', true);
