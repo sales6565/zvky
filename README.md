@@ -2837,6 +2837,133 @@ rotates it.
 `mobile.distribute` gates that screen because **the response contains the
 token**. Everything else on it is a file size and a date.
 
+## The page asks its own questions
+
+**No `prompt()`, no `confirm()`, no `alert()` anywhere in the served files.**
+[`tests/no-native-dialogs.test.js`](tests/no-native-dialogs.test.js) fails the build if one
+comes back, and its allow-list is empty on purpose — there is no reason that survives the
+question *"what does this do in Electron?"*.
+
+### Why: the fifth report of the Hold button
+
+The first four were about the permission rule. The fifth was not: **Hold worked in a browser
+and did nothing at all in the installed desktop application.**
+
+That application is [`desktop/`](desktop) — Electron, which loads the studio's own URL in a
+`BrowserWindow`. There is no bundled copy of the web app in it, so it cannot be running old
+assets of its own; it gets whatever the server serves, over the same HTTPS, revalidated on
+every load.
+
+**Electron does not implement `window.prompt()`.** `typeof window.prompt` is `"function"` —
+so a feature check passes — and calling it throws `Error: prompt() is not supported.` Hold
+asked for its optional note there, from inside an `async` onclick and **before** that
+handler's own `try`, so the throw became an unhandled promise rejection. Measured on
+Electron 33.4.11 / Chromium 130, running the shipped handler's own shape:
+
+```
+{ requestsSent: 0, buttonDisabled: false, errorBoxText: "",
+  pageSaw: ["unhandledrejection: prompt() is not supported."] }
+renderer console: Uncaught (in promise) Error: prompt() is not supported.
+```
+
+No request, no busy state, nothing on screen, one console line nobody was looking at.
+**Resume passed `ask: false`**, never reached the prompt, and worked — which is exactly why
+the report named Hold alone.
+
+**And `confirm()` is not safe either**, for a different reason: Electron implements it as a
+native modal that **blocks the renderer** until it is answered. Measured against a window
+that was not visible, the renderer never came back at all. The whole application freezes
+while one is up. That is why the thirty `confirm()` calls went with the seven prompts rather
+than being left as "the ones that work".
+
+### What replaced them
+
+**38 call sites** — 7 `prompt()`, 30 `confirm()` in `public/index.html`, and one `confirm()`
+in `public/native-bridge.js` that the test found rather than reading did. Zero `alert()`
+existed.
+
+One shared `openAsk()`, reusing the existing `.modal-wrap` / `.modal` component and its
+colour tokens, with two forms over it:
+
+```js
+await askConfirm({ title, message, confirmLabel, danger })   // -> true / false
+await askText({ title, label, value, placeholder })          // -> string / null
+```
+
+* **Enter confirms, Escape cancels.** The `keydown` listener is bound **once** on the
+  document rather than per dialog — one added each time a question opens is one left behind
+  each time it is answered, and after a dozen questions an Escape cancels something that is
+  not on screen. Enter is ignored inside a `<textarea>`, where it means a new line.
+* **Cancel is `null`, not an empty string**, for a text question. Every call site tells them
+  apart; conflating them would turn a cancelled rename into a rename to nothing.
+* **A missing dialog rejects loudly.** If `#askWrap` were gone, answering "cancelled" would
+  make every destructive action in the application quietly do nothing — the exact shape of
+  the bug this is a fix for.
+* **`window.askConfirm` and `window.askText` are exposed**, for `native-bridge.js`: it runs
+  the Android hardware back button, which asks before leaving, and `const` at script scope
+  is not reachable from a second `<script>`.
+
+### Hold specifically
+
+It uses `openAsk`'s **`run`** form, so the modal owns the whole act:
+
+| | |
+| --- | --- |
+| before confirming | the question is on screen; **nothing has been sent** |
+| while sending | the button reads **"Holding…"**, both buttons dead |
+| on failure | the reason is shown **inside the question**, which stays up, with the button live again |
+| on success | the question closes, the card is redrawn, a toast says so |
+
+There is no path through that handler that shows nothing.
+[`tests/dialog-flow.test.js`](tests/dialog-flow.test.js) drives all five against a real
+server with `prompt`, `confirm` and `alert` passed in as functions that **throw**, and
+asserts the `work_sessions` row read back out of the database — "the request was sent" is
+not a spy count, it is a clock that actually stopped.
+
+### Nothing fails silently
+
+**The real lesson of this report.** The bug was not really `prompt()`; it was that a click
+handler could throw and the person be told nothing.
+
+* `window.onerror` and `unhandledrejection` reach the screen as a toast — rate-limited, and
+  ignoring the no-`.error` events a failed image raises.
+* Hold's and Resume's handlers go through `guarded()` as well.
+* Resume's `catch` tells two failures apart: a **refusal** carries a status and `send()` has
+  already put the server's sentence in the panel, so it stops there; **anything else** is
+  rethrown into the guard. A bare `catch{}` was how the original bug looked.
+
+### Two things found while surveying
+
+**The Send to Dev & QA modal never appeared, in any browser.** `openSendToDev()` added
+`.open` to its wrap and there is no `.modal-wrap.open` rule anywhere in the stylesheet —
+only `.show`, which every other modal uses. Fixed.
+
+**The wrapper refused clipboard writes.** With `ALLOWED_PERMISSIONS` holding `notifications`
+alone, `navigator.permissions.query({name:'clipboard-write'})` read `"denied"` in that window
+and `writeText()` rejected, so the Copy-path buttons fell through to a deprecated
+`execCommand` that also failed — a person got *"Could not copy — select it and copy it by
+hand"* where a browser copies silently. **The string Electron checks is
+`clipboard-sanitized-write`**, not the web platform's name; measured by logging what the
+handler was handed, because allowing the web name would have looked like a fix and changed
+nothing. **Write only** — `clipboard-read` is deliberately still refused: the application
+never reads the clipboard, and reading would expose whatever the person last copied anywhere
+else.
+
+### What the wrapper does and does not block
+
+Measured with the shipped permission handlers, against a real page in a real window:
+
+| | |
+| --- | --- |
+| **notifications** | granted to the studio origin, and only it. The web app's own `new Notification(...)` is routed to the OS |
+| **clipboard write** | granted (above). **Read** refused |
+| **downloads** | work. A blob with `a.download` and a server `Content-Disposition` both reach Electron's `will-download` |
+| **new windows / popups** | `window.open` returns `null`; the URL is opened in the person's real browser instead, so this window can never become an address-bar-less browser. The page never calls it |
+| **camera, microphone, location** | refused, from every origin |
+
+`npm run smoke` in `desktop/` asserts all of it in a real window, including that
+`window.prompt` still throws there and that the page carries `#askWrap` instead.
+
 ## Restricting access by IP address
 
 The whole application can be limited to a set of addresses. The check runs on
