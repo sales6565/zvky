@@ -129,8 +129,8 @@ const TOKENS = [
     'The faintest rules in the application \u2014 a swatch edge, the Activity '
     + 'Log\u2019s row lines, the primary button\u2019s inner edge. Used only at '
     + 'very low opacity.', { alphas: { t05: 0.05, t10: 0.10, t14: 0.14 } }),
-  t('surface.toast', 'toast', 'Toast background', 'Surfaces', '#262A33',
-    'The short-lived message that appears bottom-left after an action.'),
+  t('surface.toast', 'toast', 'Toast background', 'Surfaces', '#30343E',
+    'The short-lived message that appears along the bottom after an action.'),
 
   // --- Text -----------------------------------------------------------------
   t('text.primary', 'ink', 'Primary text', 'Text', '#EDEFF2',

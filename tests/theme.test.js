@@ -192,6 +192,38 @@ test('every old :root variable that survives still holds its old value', () => {
 // 2. THE CATALOGUE, AND THE STATUS FALLBACK.
 // ===========================================================================
 
+/* A TOKEN NOTHING READS IS A CONTROL THAT DOES NOTHING, which is worse than a
+   missing one: an admin changes the Toast background, saves, sees no difference
+   and concludes the whole screen is broken. Three shipped that way on the first
+   pass — the placeholder, the toast and the stat-tile border all had a token
+   whose default matched the colour on screen while the rule went on reading the
+   property next door — and one of the three had a default that was not even the
+   right colour, which nothing else could have caught: --toast said #262A33
+   while .toast drew var(--surface-3), #30343E. */
+test('every token actually controls something on the page', () => {
+  const at = PAGE.indexOf('<style id="themeDefaults">');
+  const end = PAGE.indexOf('</style>', at);
+  const body = PAGE.slice(0, at) + PAGE.slice(end);   // everything but the defaults
+  const read = new Set([...body.matchAll(/var\(\s*--([a-z0-9-]+)/g)].map((m) => m[1]));
+
+  const dead = [];
+  for (const tok of theme.all()) {
+    /* A DERIVATION BASE COUNTS AS READ through its alphas: --shadow is never
+       drawn opaque, only as --shadow-t28 and its five siblings, and editing the
+       base moves all six. */
+    if (read.has(tok.css)) continue;
+    if (Object.keys(tok.alphas || {}).some((suffix) => read.has(`${tok.css}-${suffix}`))) continue;
+    dead.push(`${tok.key} (--${tok.css})`);
+  }
+  assert.deepStrictEqual(dead, [],
+    'a token is offered in Settings that no rule reads — either wire it up or drop it');
+
+  /* And the status tints, which no rule can name because statusTint() builds the
+     property name at render time. Asserted through the helper instead. */
+  assert.match(PAGE, /function statusTint\(colour\)\{[\s\S]*?var\(--\$\{ref\[1\]\}-t22\)/,
+    'the status pill tint is derived from the status token, not concatenated');
+});
+
 test('the catalogue is complete and internally consistent', () => {
   const all = theme.all();
   assert.ok(all.length > 100, `${all.length} tokens`);
