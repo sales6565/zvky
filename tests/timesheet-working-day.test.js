@@ -560,6 +560,38 @@ test('the figure, end to end, against the real schedule', { skip: cfg ? false : 
     assert.match(again.body.error, /already on your timesheet/i);
   });
 
+  await t.test('an awkward span is rounded ONCE, at the end', async () => {
+    /* ROUNDING IS A DISPLAY STEP, and this is the case that tells the two apart.
+       18:17:23 to 10:41:07 the next morning is 42 m 37 s of day 1 and 71 m 7 s
+       of day 2 — neither a whole minute nor a whole hundredth. The figures below
+       are the exact overlaps rounded to the two places the column stores:
+
+         day 1   2557 s = 0.710277…h -> 0.71
+         day 2   4267 s = 1.185277…h -> 1.19
+         whole   6824 s = 1.895555…h -> 1.90
+
+       Round inside the calculation instead — to the nearest minute, say, which
+       is the plausible mistake — and day 1 becomes 0.72 and the parts stop being
+       the whole. Asserted on both days and on their sum. */
+    const a = await asset('Awkward Seconds');
+    const start = at(DAY1, 18, 17, 23);
+    const end = at(DAY2, 10, 41, 7);
+    await stretch(a, start, end);
+
+    const one = await ask('ana', a, DAY1);
+    const two = await ask('ana', a, DAY2);
+    assert.strictEqual(one.onThisDay, 0.71, 'day 1 is the exact overlap, rounded once');
+    assert.strictEqual(two.onThisDay, 1.19, 'and so is day 2');
+    assert.strictEqual(one.onThisDayLabel, '43 m');
+    assert.strictEqual(two.onThisDayLabel, '1 h 11 m');
+
+    const whole = wt.workingSecondsBetween(start, end, STUDIO);
+    assert.strictEqual(whole, 6824, 'the stretch is worth this many working seconds');
+    assert.strictEqual(Math.round((one.onThisDay + two.onThisDay) * 100) / 100,
+      Math.round((whole / 3600) * 100) / 100,
+      'and the days are the stretch, to the place the column keeps');
+  });
+
   await t.test('changing the schedule changes future calculations, as stated', async () => {
     /* THE SCHEDULE KEEPS NO HISTORY — work_schedule is one row and
        recording_hour_configs has no validity dates — so a past day is recomputed
