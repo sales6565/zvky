@@ -261,7 +261,24 @@ const GROUPS = [
          */
         key: 'asset.hold_any',
         label: 'Hold / Resume Any Visible Task',
-        impliedBy: has('leadsTeam'),
+        /* AND managePermissions, which is the Super Admin and nobody else.
+         *
+         * NOT A SECOND DEFAULT, a consequence of one this project already has:
+         * every new permission reaches the Super Admin automatically, and
+         * rolePermissions.effectiveFor short-circuits to the whole catalogue for
+         * that role at request time. Saying it HERE as well is what keeps the
+         * baseline honest — tests/role-permissions.test.js asserts that
+         * baselineFor(super_admin) is the entire catalogue, and a key that
+         * reached them only through the short-circuit would quietly break that
+         * invariant for every key added after it.
+         *
+         * The practical effect is that a Super Admin can stop any timer in the
+         * studio, since their project scope is 'all'. That is a widening, and it
+         * is argued out in tests/hold-lead-scope.test.js — in short: withholding
+         * it would mean special-casing a designation out of a permission it
+         * holds, and a hold is recorded against whoever pressed it in the asset
+         * history and logged with its gate, so it is not an invisible act. */
+        impliedBy: anyOf(has('leadsTeam'), has('managePermissions')),
         describe: 'Put any task on the holder\'s own dashboard on hold, or resume it — not only '
           + 'their own. The reach is exactly what their dashboard shows them, so it narrows and '
           + 'widens with their projects. Needs Hold / Resume Own Task as well.',

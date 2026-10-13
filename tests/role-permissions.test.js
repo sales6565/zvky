@@ -230,6 +230,61 @@ test('the defaults that are decisions, with the reason for each', () => {
   assert.strictEqual(held('asset.hold').length, ROLES.length,
     'every designation can hold its own work');
 
+  /* AND ITS NEIGHBOUR, WHICH IS A SEPARATE KEY AND A DIFFERENT KIND OF THING.
+   *
+   * asset.hold_any is holding SOMEBODY ELSE'S task — any task the holder's own
+   * dashboard shows them. The note on asset.hold above used to end "a
+   * cross-person hold would need its own permission and its own audit line
+   * rather than quietly riding on this one, so it is out of scope until the
+   * studio asks for it". The studio asked, four times, and this is that
+   * permission.
+   *
+   * ON FOR THE DESIGNATIONS THAT RUN A TEAM, found through `leadsTeam` — the
+   * capability src/role-tiers.js already uses to mean exactly that, and the one
+   * fillsAProjectTeamList reads above. Three choices are worth the words:
+   *
+   *   WHY A KEY AND NOT A TIER OR GROUP TEST. The version this replaces compared
+   *   a designation's GROUP to the string 'Supervision'. A studio with a
+   *   designation called "Team Lead - Art", or one that renames an existing one,
+   *   fell straight out of the rule — and the fourth report of the Hold button
+   *   asked for leads to be identified by permission for exactly that reason. A
+   *   key is also the only form a Super Admin can grant to a designation nobody
+   *   anticipated, which is where this decision belongs.
+   *
+   *   WHY THE ASSOCIATE ART DIRECTOR IS IN IT. The group test excluded them on
+   *   the grounds that "an art director is neither a team lead nor a supervisor"
+   *   — true of the title, and beside the point now that the rule is about what
+   *   somebody's own dashboard shows them. They carry the lead tier, review at
+   *   the TL stage and have a `team` project scope, so their dashboard IS a
+   *   lead's dashboard.
+   *
+   *   WHY FULL ACCESS IS NOT. Head of Production, CTO, General Manager and the
+   *   two Leadership designations all have projectScope 'all' — they see every
+   *   project in the studio — so this key would hand them every timer in the
+   *   building. That is a real authority and should be an explicit grant in
+   *   Settings rather than a side effect of a tier. The eight below are the
+   *   whole default; a studio that wants its Head of Production able to stop a
+   *   timer switches it on, and nothing in the code needs to change.
+   *
+   * THE SUPER ADMIN IS IN IT, and is named in the catalogue's implication rather
+   * than arriving through the request-time short-circuit in effectiveFor. That
+   * keeps baselineFor(super_admin) the complete catalogue, which the test above
+   * asserts and which a key reaching them only through the short-circuit would
+   * quietly break for every key added after it. The consequence — a Super Admin
+   * can stop any timer in the studio — is argued out in
+   * tests/hold-lead-scope.test.js.
+   *
+   * asset.hold STAYS THE BASE PERMISSION and is checked first, so a designation
+   * holding hold_any without it is told the true reason: the studio's switch is
+   * off for them. */
+  assert.deepStrictEqual(held('asset.hold_any').sort(), [
+    'art_supervisor', 'associate_animation_supervisor', 'associate_art_director',
+    'associate_team_lead', 'senior_team_lead', 'super_admin', 'team_lead',
+    'technical_manager',
+  ], 'holding somebody else\'s task starts with the designations that run a team');
+  assert.ok(catalog.grantableKeys().includes('asset.hold_any'),
+    'and a studio can hand it to a designation nobody anticipated, or take it away');
+
   /* ON FOR EVERY DESIGNATION, and the newest of this shape. Knowing which days
      the studio is closed is something anybody needs to plan their own work, and
      withholding it would only send them to ask somebody who can see it.

@@ -105,22 +105,25 @@ Both sides then read one source. `authenticate()` resolves
 `requirePermission(...)`, and ships the same list to the browser as `user.permissions`,
 which the page's `perms()` reads and re-polls every twenty seconds.
 
-**Hold / Resume is audited and pinned.** It is gated in both places —
-`requirePermission('asset.hold')` on `POST /:id/hold` and `/:id/resume`, and
-`can('asset.hold')` on the page — and `tests/hold-permission.test.js` drives the permission
-off and on in Settings, asserting after each change that the server's answer and the list
-the page gates on move together. The page's own gate line is lifted out of
-`public/index.html` and evaluated by that test, so it checks the real gate rather than a
-copy of it. Mutation-tested: removing the page's check, swapping it for a `caps()` tier
-read, pointing it at another key, and dropping the server's `requirePermission` are all
-caught.
+**Hold / Resume is the exception that proves the rule, and it is worth reading.** It is
+gated on the server with `requirePermission('asset.hold')` on `POST /:id/hold` and
+`/:id/resume` — and on the page with **nothing at all**. The page asks about `asset.hold`
+nowhere: the server decides both controls per asset, sends the answer with its reason, and
+the page draws what it is given. That is the end point of four reports of this button, each
+of which found another hand-written copy of the rule that happened to agree with the others
+while carrying none of their reasoning. `tests/hold-permission.test.js` drives the
+permission off and on in Settings, asserting after each change that the server's answer and
+what the page would draw move together — with the page's own lines lifted out of
+`public/index.html` rather than reimplemented — and counts the page's mentions of the key at
+**zero**, because that number going up is how a page-side copy gets back in.
 
 Two things that suite also records, because they are easy to assume otherwise:
 `asset.hold` is `impliedBy: () => true`, so **every** designation holds it until a Super
-Admin turns it off — there is no role that lacks it by default; and holding the key is
-still not permission to hold somebody *else's* task, which the rule refuses separately —
-see [Hold: your own task, or one you lead](#hold-your-own-task-or-one-you-lead) for the
-designation and project conditions that do admit it, and for the matrix behind them.
+Admin turns it off — there is no role that lacks it by default; and holding that key is
+still not permission to hold somebody *else's* task. A second key, `asset.hold_any`, is
+what admits that, and its reach is exactly what the holder's own dashboard shows them — see
+[Hold: your own task, or anything on your dashboard](#hold-your-own-task-or-anything-on-your-dashboard)
+for the per-status table, the matrix, and why project membership was the wrong scope.
 
 ### What the tier system still does
 
@@ -1600,6 +1603,8 @@ Setup Node.js App → Restart, or touching `tmp/restart.txt`.
 | PUT | `/api/pnl/projects/:id/billing` | `pnl.manage` alone — contract value, billing type, invoiced to date |
 | POST, PATCH, DELETE | `/api/pnl/projects/:id/other-costs[/:costId]` | `pnl.manage` alone |
 | GET | `/api/pnl/report` | either tab permission — summary, breakdown, hours rollup, trend and client rollup, filterable by `clientId`, `projectId`, `from`, `to` |
+| GET | `/api/version` | anyone — which build is running: the page hash, the version and the commit |
+| GET | `/api/assets/:id/hold-explain` | yourself always; `?userId=` needs `settings.permissions` — the hold decision, its gate and the facts behind it |
 | GET | `/api/theme` | anyone — the saved token values and the version, for the sign-in screen |
 | GET | `/api/theme.css` | anyone — the same thing as a `:root{}` block, with an ETag on the version |
 | GET | `/api/theme/editor` | `settings.theme` — the catalogue, the saved values, the ratios, the history and the presets |
@@ -1656,6 +1661,58 @@ That is intended, and it is why the section's note says *read-only unless you
 manage holidays*: somebody arriving at Settings for the first time because of
 this entry should see at once that reading the calendar is all they can do
 there.
+
+## Which build is running
+
+There was no version anywhere until the fourth report of the Hold button, on which the first
+question — *is the earlier fix even deployed?* — could not be answered from anything on the
+screen. `package.json` has read `1.0.0` since the first commit and nothing surfaced it, so
+every report carried an unknown: somebody describing old behaviour might be describing a bug,
+an un-deployed fix, or a browser running yesterday's HTML.
+
+**The stamp is computed, never written down.** This project has no build step — `package.json`
+says so in as many words — so anything a human or a script has to remember to bump is a stamp
+that is wrong exactly when it matters. [`src/build-info.js`](src/build-info.js) gives three
+fields:
+
+| | What it is | Where it comes from |
+| --- | --- | --- |
+| `page` | the first twelve hex digits of a SHA-256 over `public/index.html`'s own bytes | computed, memoised on the file's mtime **and** size |
+| `commit` | `BUILD_COMMIT` if the host sets it, else read out of `.git` | `null` on a cPanel deployment made from a zip, which is this project's documented path — hence the hash above, which works there |
+| `version` | `package.json` | for the humans |
+
+**The page reports its own stamp, not the server's**, and that is the whole design. Fetching
+the version and printing it would print what the server would send *now*, which on a stale
+page is the one number that is not running. [`src/theme-delivery.js`](src/theme-delivery.js)
+injects the stamp into the HTML as it is served — a `<meta>` in the head, so nothing has to
+run for it to be readable and it survives a JavaScript error early in the page. The footer
+compares its own value with `GET /api/version` and, when they differ, says **"this page is out
+of date"** with a Reload beside it. That comparison is the only thing that can detect a stale
+page.
+
+`GET /api/version` is **unauthenticated**: a build identifier is not a secret — it is a hash of
+a file every visitor already downloads in full — and behind a login it would be useless for the
+one case it is for, somebody on a stale page, which is a page that may not be able to log in.
+It names no table, no column and no path, unlike `/api/health/errors` next door.
+`/api/health` carries the same object, so one URL answers both "is it well" and "is it the
+build we think it is".
+
+### Caching
+
+`/`, `/index.html` and the SPA catch-all go out `Cache-Control: no-cache` with an ETag, which
+the theme middleware has always set; **the page's own hash is now in that ETag**, because
+without it a deploy that changes the HTML but not the theme keeps the old tag and a browser
+holding the previous page is told 304 and goes on running it.
+
+`express.static`'s own default for the served files is `public, max-age=0`. That does
+revalidate — but `public` lets any proxy between the studio and this process keep a copy, and
+this application is deployed behind cPanel on shared hosting whose caching is not ours to
+inspect. HTML, JS, CSS and the web manifest are `no-cache` now. **`no-cache` is not "do not
+store"**: the copy is kept and revalidated, so the common answer is still a 304 with no body.
+It is the strongest header that costs nothing.
+
+There is **no service worker** and nothing registers one, so no copy is held outside the HTTP
+cache.
 
 ## The studio's colours
 
@@ -3646,98 +3703,221 @@ must be one `reassign_review` accepts.
 same bug adds to the first rather than replacing it, and that the fix goes on through the
 first gate like any other submission.
 
-### Hold: your own task, or one you lead
+### Hold: your own task, or anything on your dashboard
 
 `asset.hold` is `impliedBy: () => true` — every designation has always held it — so a lead
 who could not pause a teammate's timer was **never missing a permission**. The gate was
-`mine`: the asset had to be assigned to you, deliberately, and the route said why (a hold on
-somebody else's work looks to them exactly like the app losing their session). The studio has
-since asked for the narrower version of that authority, and this is it.
+`mine`: the asset had to be assigned to you. The studio asked for leads to be able to hold
+their team's work, and this is the fourth attempt at it.
 
-**This button has been reported three times.** The first two reports each checked a narrow
-case and found the gates agreeing, which they were. The third was answered with a matrix —
-every designation against every state of a task, server answer and page control side by side
-— and the matrix found five things. All five are below, and
-[`tests/asset-hold-matrix.test.js`](tests/asset-hold-matrix.test.js) is that table.
+**This button has been reported four times, and the fourth report is the interesting one**,
+because the first three were all answered correctly within a wrong premise:
 
-#### One function decides it
+| | What it found | What it missed |
+| --- | --- | --- |
+| 18 | the permission key and the two gates agreed | it only tried the assignee's own task |
+| 20 | widened the rule to four named designation keys, on their own projects | two designations in the same group were left out |
+| 36 | the rule was written out three times and carried no reason | **the scope itself** was project membership, not what a lead sees |
+| 37 | project membership and the dashboard are different sets | — |
 
-[`src/asset-hold.js`](src/asset-hold.js) is the only statement of the rule. It is **pure** —
-every fact it needs is passed in — so the two routes can call it one asset at a time while the
-board calls it for forty from batched queries, and so the whole matrix runs with no server.
-It returns an **allowed/refused verdict with a code and a sentence**, not a boolean.
+#### The cause, in one sentence
 
-The rule was written out **three** times before: `canHoldAsset()` on the routes,
-`mayHoldOthers()` in the payload decoration, and `(mine || can_hold_others) && work_open &&
-!held.byStudio` on the page. All three agreed. What none of them carried was the **reason**, so
-every refusal reached a person as a button that was not there — which is what got reported.
+Prompt 36 scoped a lead's right to hold to `leadOrSupervisorProjects()`, which reads the
+`project_team_leads` and `project_supervision` membership tables, while the dashboard and the
+board are scoped to `visibleProjects()`, which for a lead's `team` scope **also** matches
+being a production coordinator, owning the project, or simply having a direct report with an
+asset in it — so every project a lead reaches by one of those three routes showed work they
+could not hold.
+
+**Measured, on a Team Lead built the way production builds one** — designation `team_lead`,
+two artists reporting to them, named on one project out of three:
+
+| Project reaches their dashboard because… | On the board | Hold button | `POST /hold` |
+| --- | --- | --- | --- |
+| they are on its **Team Leads** list | yes | yes | 200 |
+| a **direct report** has an asset in it | yes | **no** | **403 `HOLD_NOT_YOURS`** |
+| they are on its **coordinators** list | yes | **no** | **403 `HOLD_NOT_YOURS`** |
+| nothing — not theirs | no (403) | — | 403 |
+
+The third route is the one nobody had tested and the commonest in a real studio: having a
+report with work in a project is the ordinary way a Team Lead comes to see it, while being
+*named* on its Team Leads field is a separate administrative act with a cap on how many
+people it takes. Every earlier fixture named the lead on the project, so every earlier
+fixture agreed that everything was fine.
+
+#### Can hold follows can see
+
+**[`src/asset-hold.js`](src/asset-hold.js) is the only statement of the rule**, and it is
+**pure** — every fact it needs is passed in — so the two routes can call it one asset at a
+time while the board calls it for forty from batched queries, and so the whole matrix runs
+with no server. It returns an **allowed/refused verdict with a code, a gate and a sentence**,
+not a boolean.
+
+`onDashboard` is a fact it is *given*. It is answered by `permissions.assetOnDashboard()`,
+which calls `canAccessProject()` — which **is** `visibleProjects()` — plus the board's one
+narrowing for contributors. There is deliberately no SQL anywhere in the hold path that
+reimplements visibility: a second query meaning to say the same thing is the defect this is a
+fix for, one level down, and it would drift the same way.
 
 The checks run in this order, and the order is part of the rule because it decides which
 reason wins when more than one applies:
 
-| | Refusal | Code |
-| --- | --- | --- |
-| 1 | the studio's switch is off | `HOLD_NO_PERMISSION` |
-| 2 | **out with a freelancer** | `HOLD_OUTSOURCED` |
-| 3 | nobody is on it | `HOLD_UNASSIGNED` |
-| 4 | not yours, and not a project you lead | `HOLD_NOT_YOURS` |
-| 5 | nothing to put down / nothing to pick up | `HOLD_NO_SESSION`, `HOLD_ALREADY_HELD`, `HOLD_NOT_HELD`, `HOLD_ALREADY_RUNNING`, `HOLD_STUDIO_PAUSED` |
+| | Refusal | Code | Gate |
+| --- | --- | --- | --- |
+| 1 | we could not find out | `HOLD_UNKNOWN` | `unavailable` |
+| 2 | the studio's switch is off | `HOLD_NO_PERMISSION` | `permission` |
+| 3 | **out with a freelancer** | `HOLD_OUTSOURCED` | `outsourced` |
+| 4 | nobody is on it | `HOLD_UNASSIGNED` | `assignee` |
+| 5 | not yours, and you do not hold the lead key | `HOLD_NOT_YOURS` | `authority` |
+| 6 | you hold the key, and it is not on your dashboard | `HOLD_NOT_VISIBLE` | `visibility` |
+| 7 | nobody is working on it at this stage | `HOLD_WRONG_STATUS` | `status` |
+| 8 | nothing to put down / nothing to pick up | `HOLD_NO_SESSION`, `HOLD_ALREADY_HELD`, `HOLD_NOT_HELD`, `HOLD_ALREADY_RUNNING` | `session` |
+| | the schedule stopped it, and restarts it itself | `HOLD_STUDIO_PAUSED` | `schedule` |
 
-**The freelancer check is second, and that placement is a fix.** An outsourced task has no
+**Five and six are two codes on purpose.** They read almost the same and point at two
+different fixes — *grant the permission* and *put them on the project* — so they carry two
+codes, two gates and two sentences. The gate travels in the refusal body as well as to the
+log, because "authority" and "visibility" are two different investigations.
+
+**`HOLD_UNKNOWN` is us admitting something, not refusing somebody.** The board's decoration
+degrades rather than throwing, and when the visibility query is what failed, answering "not on
+your dashboard" would be a lie about the studio. It answers **503**, not 403.
+
+**The freelancer check is third, and that placement is a fix.** An outsourced task has no
 internal assignee, so the assignee test used to catch it and answer *"Only the person a task
 is assigned to can put it on hold"* — naming somebody who does not exist and hiding the real
 reason. And `hold` had no freelancer check at all while `resume` did.
 
-#### Two conditions, both required
+#### Leads are identified by permission, never by name
 
-The designation is in the catalogue's **`Supervision` group** — and the asset's project is one
-that person leads or supervises. Without the second it would read "any lead may stop any timer
-in the studio", which is a far larger authority than the one asked for; a test mutates that
-condition away and fails.
+**`asset.hold_any`** — *Hold / Resume Any Visible Task* — `impliedBy anyOf(has('leadsTeam'),
+has('managePermissions'))`.
 
-**It used to be four named keys, and the group is wider by two.** Prompt 20 named
-`team_lead`, `associate_team_lead`, `art_supervisor`, `associate_animation_supervisor`, because
-four were asked for, and a test pinned the exclusion of the other two so widening could not
-happen quietly. The matrix measured what that cost: a **Senior Team Lead** on a project was
-refused a timer that a **Team Lead** on the same project could stop, and a **Technical
-Manager** likewise. That is not a defensible line, and a hardcoded list of designation keys is
-against this project's standing rule anyway. Reading the group also means a designation a
-Super Admin moves into Supervision carries this authority **without a deploy**.
+The version this replaces compared a designation's **group** to the string `'Supervision'`. A
+studio with a designation called "Team Lead - Art", or one that renames an existing one, fell
+straight out of the rule because a string stopped matching. `leadsTeam` is the capability
+`src/role-tiers.js` already uses to mean "runs a team" and the one `defaultsFor()` reads in
+`fillsAProjectTeamList()`.
 
-**Creative Direction is still excluded**, which is the one judgement left in it.
-`associate_art_director` sits in that group and carries the `lead` tier, so a
-capability-based rule (`leadsTeam`) would have picked it up; the studio asked for team leads
-and supervisors, and an art director is neither.
+**On by default for eight designations**: the six in Supervision (Team Lead, Associate Team
+Lead, Senior Team Lead, Art Supervisor, Associate Animation Supervisor, Technical Manager),
+the **Associate Art Director** — who carries the `lead` tier and runs a team, and whom the
+group test excluded on the grounds that an art director is neither a team lead nor a
+supervisor; true of the title, and beside the point now that the rule is about what somebody's
+dashboard shows them — and the **Super Admin**.
 
-**"Leads or supervises" is narrower than the review team.** `reviewTeamProjects` unions three
-tables including `project_coordinators`, because the review gate is open to all three. This
-is a different question, so `HOLD_SCOPE_TABLES` is `project_team_leads` and
-`project_supervision` only: somebody in Supervision who happens to be on a project's
-coordinator list does not get another person's timer with it.
+**Not full access.** Head of Production, CTO, General Manager and the two Leadership
+designations have `projectScope: 'all'`, so this key would hand them every timer in the
+studio. That is a real authority and should be an explicit grant in Settings rather than a
+side effect of a tier. A studio that wants it switches it on; nothing in the code changes.
 
-**The project question is the only one that costs a query**, so it is asked last and only
-when it could change the answer. A cheap refusal — no permission, your own task, unassigned,
-outsourced, or a designation outside the group — comes back without it, pinned by pointing the
-test process at a database that does not exist.
+**The Super Admin is named in the implication** rather than arriving through the request-time
+short-circuit in `effectiveFor`, so that `baselineFor(super_admin)` stays the complete
+catalogue — an invariant a test asserts and which a key reaching them only through the
+short-circuit would quietly break for every key added after it. The consequence is that a
+Super Admin can stop any timer in the studio. Withholding it would mean special-casing a
+designation out of a permission it holds, which this codebase does not do, and a hold is
+recorded against whoever pressed it in `asset_events` and logged with its gate — so it is not
+an invisible act.
 
-#### The page draws the answer, and the reason
+**`asset.hold` stays the base permission** and is checked first, so a designation holding
+`hold_any` without it is told the true reason: the studio's switch is off for them.
+
+**Seeded idempotently.** `ensureHoldAnyDefaults` in [`src/migrate.js`](src/migrate.js) grants
+it on existing installs, and touches **only rows still marked as written by the system**. An
+administrator who turns it off for a designation stays off after this deploy and every one
+after it — `updated_by_email` is what tells a seeded row from a decision, the same mechanism
+`ensureReviewGateDefaults` next door uses for `review.tl`. A studio's own designation that
+nobody marked as running a team is not granted, because nothing has decided that it should be.
+[`tests/hold-migration.test.js`](tests/hold-migration.test.js) pins all of it, including two
+re-runs after a named admin's revoke.
+
+#### Which statuses, and the one case the list must not break
+
+`WORKING_STATUSES` lives in [`src/asset-workflow.js`](src/asset-workflow.js), beside
+`FREE_STATUSES` and for the same reason: more than one place has to agree on it. **Three
+readers, one array** — `STARTABLE` on the `/start` route *is* that array rather than a copy of
+it, because "a stage where the clock can run" is one idea and a task whose clock can start is
+a task whose clock can stop.
+
+| Status | Hold offered | Why |
+| --- | --- | --- |
+| Not Assigned | no | nobody has accepted it; `/start` refuses it too |
+| **Assigned** | **yes** | on somebody's desk, waiting to be begun |
+| **In Progress** | **yes** | the ordinary case |
+| TL Review | no | handed in — on the lead's desk, and submitting closed the stretch |
+| **TL Feedbacks** | **yes** | back with the artist to redo |
+| TL Approved | no | past the first gate, between desks |
+| CD Review | no | on the director's desk |
+| **CD Feedbacks** | **yes** | back for rework once the lead relays it |
+| **Game Feedback** | **yes** | a bug to answer, once the lead passes it on |
+| Approved for Client | no | finished work, waiting to go out |
+| Awaiting Client Feedback | no | outside the studio |
+| Delivered | no | done |
+
+**A running or held clock is stoppable in every one of them.** The list governs whether the
+control is *offered*; it never refuses a session that is actually open or actually held. A
+stretch opened legitimately whose asset has since moved on would otherwise be a clock nobody
+could stop — which is worse than anything the list prevents, and is why the previous version
+of this rule had no list at all. The previous reasoning is what keeps the list safe.
+
+The page carries its own copy of the list — for the **sentence** that names the stages, not
+for the decision — and a test holds the two equal, the same arrangement `FREE_STATUSES` has
+with the dashboard's drag range.
+
+#### The page draws the answer, and never computes one
 
 Every asset in the board payload carries `hold_state`: `canHold`, `canResume`, and for each a
-code, a sentence, and `offer` — whether a refused control should be drawn **disabled with the
-reason** or not drawn at all. `offer` is the server's call, not the page's: a disabled button
-is better wherever somebody would otherwise wonder (they started this task this morning and
-the button has gone), and worse where the task is simply none of their business, which is most
-cards on most boards.
+code, a gate, a sentence, and `offer` — whether a refused control should be drawn **disabled
+with the reason** or not drawn at all. `offer` is the server's call, not the page's.
 
 | Not drawn at all | Drawn, disabled, with the reason |
 | --- | --- |
-| `HOLD_NO_PERMISSION`, `HOLD_NOT_YOURS`, `HOLD_UNASSIGNED` | `HOLD_OUTSOURCED`, `HOLD_NO_SESSION`, `HOLD_ALREADY_HELD`, `HOLD_NOT_HELD`, `HOLD_ALREADY_RUNNING`, `HOLD_STUDIO_PAUSED` |
+| `HOLD_NO_PERMISSION`, `HOLD_NOT_YOURS`, `HOLD_NOT_VISIBLE`, `HOLD_UNASSIGNED` | `HOLD_OUTSOURCED`, `HOLD_WRONG_STATUS`, `HOLD_NO_SESSION`, `HOLD_ALREADY_HELD`, `HOLD_NOT_HELD`, `HOLD_ALREADY_RUNNING`, `HOLD_STUDIO_PAUSED`, `HOLD_UNKNOWN` |
 
-There is exactly **one** Hold control in the application — the asset detail panel — fed by
-one endpoint (`GET /assets/project/:id`, which is what fills `state.assets`; the board, the
-Assets List and every notification deep-link all open the panel from that same array). An
-asset that arrives undecorated falls back to `mine`-only with the server as the authority,
-rather than silently losing a control.
+There is exactly **one** Hold control in the application — the asset detail panel — fed by one
+endpoint (`GET /assets/project/:id`, which is what fills `state.assets`; the board, the Assets
+List and every notification deep-link all open the panel from that same array).
+
+**The local fallback is gone.** The page used to fall back to `mine && can('asset.hold') &&
+a.work_open` for an undecorated row. That was a fourth copy of the rule — right for the
+assignee and silently wrong for their lead, which is the exact failure all four reports are
+about. The server now always sends an answer, including an explicit `HOLD_UNKNOWN`, so there
+is no such thing as an undecorated row and nothing for the browser to guess at. The page asks
+about `asset.hold` **nowhere**, which a test counts.
+
+**The reason is drawn in words, not only in a `title=` tooltip** — an explanation nobody on a
+touchscreen can reach. *"The Hold button does not work"* is what got reported four times.
+
+#### Freshness, without a sign-out
+
+A change in what a lead sees reaches an open screen on the normal cycle. `render()` re-fetches
+the board on every pass, so the cards are always current; `refreshPermissions()` re-reads
+`/auth/me` every 20 seconds, so a granted or revoked key takes effect on the next request with
+no sign-out.
+
+**An already-open panel is rebuilt when, and only when, the server's answer changes.** It used
+to be rebuilt only when *permissions* changed — and a reassignment moves what a lead can see
+without moving a single permission, which is the commonest way the two come apart. A
+four-field signature (`canHold`, `canResume`, and each code) is compared on every board fetch.
+Not an unconditional rebuild: the drawer carries text fields and a checklist, and redrawing it
+under somebody mid-sentence is why the permissions branch was narrow to begin with.
+
+#### Why, without reproducing it
+
+**Every refusal is one line in the server log** —
+[`src/hold-log.js`](src/hold-log.js) — with the gate, the reason code, the user, the
+**designation**, the asset, its code, the project, the status, the session state, and whether
+the task was theirs and visible. No names and no email: ids and the designation key are enough
+to reproduce, and a log that discloses is a log somebody turns off. Three reports were
+diagnosed by building a fixture and guessing which gate had fired.
+
+**`GET /api/assets/:id/hold-explain`** answers the same question for somebody who is not
+pressing the button. `?userId=` asks about another person and needs `settings.permissions` —
+the key that decides who holds what, so the person who can change the answer is the person who
+can read it. It returns the decision, the code, the gate and **the facts it was made from**,
+and it calls the same `decide()` the routes call: an explanation that could disagree with the
+decision would be worse than none.
 
 #### Whose clock it is
 
@@ -3752,9 +3932,7 @@ the row that is already there, whoever's it is. Who *pressed* it is still record
 
 **And the one-active-task rule asks about the assignee too.** It read `req.user`, so a lead's
 resume was checked against the lead's slot and never against the artist's: measured, a lead
-could leave an artist with **two** open stretches. It was wrong in both directions — a lead
-with their own task open was also refused a resume over work that was not going to run under
-them.
+could leave an artist with **two** open stretches.
 
 **The previous-day timesheet gate asks only when the clock about to run is yours.** With
 `requirePreviousDay` on, a Team Lead resuming an artist's held task was refused with *"Fill
@@ -3770,21 +3948,14 @@ somebody entitled to it — a studio shut for Diwali with a timer still running 
 somebody needs to stop it. Resume *is* subject to all three, which is the asymmetry, and it is
 asserted rather than assumed.
 
-#### There is no list of eligible statuses
+#### The query budget
 
-On either side, and that is a finding rather than an omission: measured, a lead was offered
-and granted a hold on an open session in **every one of the nine statuses** an asset can be in,
-`delivered` included. The condition that matters is already exact — hold needs an **open
-stretch**, and a stretch is only ever opened from a status where work runs. A list would be a
-second, weaker statement of a condition already enforced, and the one case where the two could
-differ is a session opened legitimately whose asset has since moved, where refusing would
-strand a running clock nobody could stop. A test asserts neither side has acquired one, so a
-future list has to be added to both or to neither.
-
-The widening rides **on** the permission rather than around it: the switch is the first thing
-asked, so a studio that turns `asset.hold` off for a designation closes this too. Everybody
-outside Supervision keeps `mine` exactly as before — including full access, because holding is
-not an oversight act.
+**Visibility is the only question that costs a query**, so it is asked last and only when it
+could change the answer. A cheap refusal — no permission, your own task, unassigned,
+outsourced, or a designation without the lead key — comes back without it, pinned by pointing
+the test process at a database that does not exist. The board asks it **once for the whole
+page** and passes the answer into each row's decision, which is the same shape the membership
+query had before it.
 
 ### Searching the roster
 

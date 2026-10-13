@@ -77,9 +77,13 @@ test('the set is a permission on the designations that run a team', () => {
 
   /* FOUND THROUGH `leadsTeam`, which is the capability src/role-tiers.js already uses to
      mean "runs a team" and the one src/role-permissions.js reads in fillsAProjectTeamList.
-     On the shipped catalogue that is the seven lead-tier designations. */
+     On the shipped catalogue that is the seven lead-tier designations — plus the Super
+     Admin, who holds the whole catalogue and is named in the implication rather than
+     arriving through the request-time short-circuit, so that
+     baselineFor(super_admin) stays the complete catalogue for every key added after
+     this one. */
   const leadTier = ROLES.filter((r) => r.tier === 'lead').map((r) => r.key);
-  assert.deepStrictEqual([...may].sort(), [...leadTier].sort(),
+  assert.deepStrictEqual([...may].sort(), [...leadTier, 'super_admin'].sort(),
     'every designation that runs a team starts with the key, and nobody else does');
 
   /* THE SIX IN SUPERVISION, named so that re-narrowing the rule is also a decision with an
