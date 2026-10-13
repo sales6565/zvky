@@ -54,7 +54,7 @@ async function resetSchema(cfg) {
 
 // Start the real server as a child process, exactly as production runs it,
 // rather than importing the app and stubbing pieces of it.
-async function startServer(cfg, extraEnv = {}) {
+async function startServer(cfg, extraEnv = {}, attempt = 0) {
   const port = 20000 + Math.floor(Math.random() * 20000);
   const child = spawn(process.execPath, [path.join(ROOT, 'app.js')], {
     cwd: ROOT,
@@ -126,10 +126,29 @@ async function startServer(cfg, extraEnv = {}) {
   const deadline = Date.now() + Number(process.env.TEST_SERVER_BOOT_MS || 300000);
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(`${base}/health`);
+      /* A TWO-SECOND LIMIT, because this poll can meet something that is not
+         the server: whatever else has that port may accept the connection and
+         then never answer, and an unbounded fetch waits undici's five minutes
+         for its headers — the whole deadline, spent on one request. Measured:
+         with a socket squatting on the port and saying nothing, the loop took
+         303s to get to its second attempt and 3s afterwards. */
+      const res = await fetch(`${base}/health`, { signal: AbortSignal.timeout(2000) });
       if (res.ok) return { base, child, output: () => output, port };
     } catch {
       /* not listening yet */
+    }
+    /* A PORT COLLISION IS NOT A SLOW BOOT, and waiting out the deadline for one
+       is five minutes spent on an answer already known. The port above is
+       random, so two servers in one run can pick the same one — and
+       src/server.js keeps the process alive through the failure deliberately,
+       which means nothing ever answers /health and the loop runs to the end.
+       Seen once in a full run, as tests/reference-data.test.js failing on a
+       300s boot with EADDRINUSE in its captured log and passing alone
+       immediately afterwards. Another port instead, up to three tries. */
+    if (/EADDRINUSE/.test(output)) {
+      child.kill();
+      if (attempt < 2) return startServer(cfg, extraEnv, attempt + 1);
+      throw new Error(`Port in use on all three attempts (last ${port}).\n${output}`);
     }
     await new Promise((r) => setTimeout(r, 250));
   }

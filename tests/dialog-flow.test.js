@@ -413,8 +413,14 @@ test('Hold, with every native dialog throwing', { skip: cfg ? false : SKIP_REASO
       'Resume asks nothing');
     assert.deepStrictEqual(back.calls.map((c) => `${c.method} ${c.path}`),
       [`POST /assets/${assetId}/resume`]);
+    /* AND IF IT DID NOT RESUME, SAY WHY. The handler puts a refusal in the
+       panel, so a failure here reads "the server said: …" rather than leaving
+       the next person to guess — this case failed once in a loaded full run
+       and passed standalone, and a message is how that gets diagnosed rather
+       than re-run. */
+    const refusal = back.dom.nodes.get('d_startErr').textContent;
     assert.strictEqual((await session(assetId)).ended_reason, null,
-      'and the clock is running again');
+      `and the clock is running again${refusal ? ` (the server said: ${refusal})` : ''}`);
     assert.ok(back.toast.some((m) => /under way/i.test(m)));
   });
 
