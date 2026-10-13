@@ -269,7 +269,7 @@
     const style = document.createElement('style');
     style.textContent = '.native-pick { display:flex; gap:8px; margin-top:8px; }'
       + '.native-pick button { flex:1; padding:10px; font-size:13px; border-radius:6px;'
-      + ' border:1px solid var(--border, #444); background:transparent; color:inherit; }';
+      + ' border:1px solid var(--border); background:transparent; color:inherit; }';
     document.head.appendChild(style);
 
     const scan = function () {
@@ -299,7 +299,7 @@
     style.textContent = '.native-ptr { position:fixed; top:var(--safe-top,0px); left:0; right:0;'
       + ' text-align:center; font-size:12px; padding:8px; opacity:0; pointer-events:none;'
       + ' transform:translateY(-8px); transition:opacity .15s, transform .15s;'
-      + ' background:var(--surface,#1b1b1f); color:var(--ink-muted,#aaa); z-index:9999; }'
+      + ' background:var(--surface); color:var(--ink-muted); z-index:9999; }'
       + '.native-ptr.on { opacity:1; transform:translateY(0); }';
     document.head.appendChild(style);
 

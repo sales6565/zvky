@@ -365,6 +365,32 @@ test('the defaults that are decisions, with the reason for each', () => {
     'the sub-option list is the Super Admin\'s until granted');
   assert.ok(catalog.grantableKeys().includes('timesheet.sub_options'),
     'and a studio can hand it to a production manager on its own');
+
+  /* THE THEME, AND WHY IT IS THE SUPER ADMIN'S ALONE BY DEFAULT.
+   *
+   * settings.theme writes the colours of every screen for every person in the
+   * studio, including the sign-in page people who are not logged in see. That
+   * is the widest blast radius of any key in the catalogue: a bad save does not
+   * affect the saver's own work, it affects everybody at once, and the worst
+   * version of it — text the same colour as its background — makes the screen
+   * that would undo it unreadable. (Which is why the Theme section's own
+   * controls are on a fixed palette that ignores the theme, and why the last
+   * twenty saves are kept for a one-click revert. tests/theme.test.js owns
+   * both.) So it starts off for everybody but the Super Admin.
+   *
+   * IT IS STILL GRANTABLE, deliberately. A studio with an art director who owns
+   * how the tool looks should be able to hand this over in Settings →
+   * Permissions like any other key, and nothing about the key needs the tier —
+   * the write routes check settings.theme with requirePermission and the page
+   * checks it with can(). The default is a starting position, not a ceiling.
+   *
+   * READING THE THEME NEEDS NOTHING AT ALL: GET /api/theme and
+   * GET /api/theme.css are unauthenticated, because the login screen has to
+   * arrive wearing the studio's colours before anybody has a session. */
+  assert.deepStrictEqual(held('settings.theme'), ['super_admin'],
+    'the studio colours are the Super Admin\'s until granted');
+  assert.ok(catalog.grantableKeys().includes('settings.theme'),
+    'and a studio can hand them to whoever owns how the tool looks');
 });
 
 test('every permission the catalogue lists is either checked or declared pending', () => {

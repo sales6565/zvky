@@ -135,7 +135,9 @@ function validate(input) {
     if (checked.error) {
       errors.push({
         token: key,
-        message: `${tok.label} must be a colour like #1D2027.`
+        /* The example is the token's OWN DEFAULT — always valid for that field,
+           always the right number of digits, and it cannot go stale. */
+        message: `${tok.label} must be a colour like ${tok.default}.`
           + (tok.alpha ? ' Eight digits are allowed here for transparency.' : ''),
       });
       continue;
@@ -187,9 +189,13 @@ function luminance(rgb) {
 
 /* The ratio, to two decimals. Rounded DOWN, so a pair that computes to 4.4999
    is never reported as 4.5 — the figure is a floor on what the viewer gets. */
-function contrast(foreground, background, over = '#000000') {
-  const a = luminance(flatten(foreground, over));
-  const b = luminance(flatten(background, over));
+function contrast(foreground, background, over = null) {
+  /* The backdrop a translucent colour is flattened against. Defaults to the page
+     background FROM THE CATALOGUE rather than to a literal: there is one place in
+     this application that states a colour and it is not this function. */
+  const backdrop = over || tokens.canonical(byKey().get('surface.page').default).value;
+  const a = luminance(flatten(foreground, backdrop));
+  const b = luminance(flatten(background, backdrop));
   const hi = Math.max(a, b);
   const lo = Math.min(a, b);
   return Math.floor(((hi + 0.05) / (lo + 0.05)) * 100) / 100;

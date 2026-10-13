@@ -1600,6 +1600,13 @@ Setup Node.js App → Restart, or touching `tmp/restart.txt`.
 | PUT | `/api/pnl/projects/:id/billing` | `pnl.manage` alone — contract value, billing type, invoiced to date |
 | POST, PATCH, DELETE | `/api/pnl/projects/:id/other-costs[/:costId]` | `pnl.manage` alone |
 | GET | `/api/pnl/report` | either tab permission — summary, breakdown, hours rollup, trend and client rollup, filterable by `clientId`, `projectId`, `from`, `to` |
+| GET | `/api/theme` | anyone — the saved token values and the version, for the sign-in screen |
+| GET | `/api/theme.css` | anyone — the same thing as a `:root{}` block, with an ETag on the version |
+| GET | `/api/theme/editor` | `settings.theme` — the catalogue, the saved values, the ratios, the history and the presets |
+| PUT | `/api/theme` | `settings.theme` — save; 400 names the token, 409 asks for `confirmLowContrast` |
+| POST | `/api/theme/revert` | `settings.theme` — re-save an earlier version as a new one |
+| POST | `/api/theme/contrast` | `settings.theme` — the ratios for values not saved yet |
+| POST, DELETE | `/api/theme/presets[/:id]` | `settings.theme` — named palettes, same validation, bounded |
 | GET, POST, PUT | `/api/integration/v1/*` | not a person at all — a signed request from an active integration credential that lists the action. See [The integration API](#the-integration-api) |
 
 Every route re-checks permissions against the database on each request — a
@@ -1649,6 +1656,151 @@ That is intended, and it is why the section's note says *read-only unless you
 manage holidays*: somebody arriving at Settings for the first time because of
 this entry should see at once that reading the calendar is all they can do
 there.
+
+## The studio's colours
+
+Every colour the application draws is a **design token**: a named entry in
+`src/theme-tokens.js` with a key, a label, a group, a default and a sentence
+saying where it is used. The stylesheet never names a colour — it reads
+`var(--token)` — and a theme saved in Settings redefines those custom
+properties for everybody.
+
+**The defaults are the colours the application shipped with.** That is not a
+claim, it is a test: `tests/fixtures/colours-before-theme.json` is every colour
+literal and every `:root` variable in `public/index.html` at the last commit
+before tokens existed, and `tests/theme.test.js` asserts that every token
+default, and every translucent value derived from one, is one of them. With no
+theme saved the screen is identical to what it was.
+
+### The catalogue
+
+118 tokens in eleven groups: **Navigation tabs**, **Sub-tabs**, **Surfaces**,
+**Text**, **Buttons**, **Forms**, **Tables**, **Meaning** (success, warning,
+error, info, At Risk, Overdue), **Charts and tiles**, **Sign-in**, and
+**Workflow statuses**.
+
+A few things about its shape are worth knowing before adding to it.
+
+* **The custom property names are the ones the page already used.** The page
+  background token is `surface.page` and writes `--bg`, because `var(--bg)`
+  appears 791 times and renaming it would have been a rewrite dressed up as a
+  theme. The seven older semantic names — `--not`, `--prog`, `--review`,
+  `--approved`, `--final`, `--client`, `--artist-blue` — are kept for the same
+  reason, as palette tokens.
+* **Translucent variants are derived, not edited.** The old stylesheet drew the
+  same colour at up to nine alphas — Overdue appears at `.08`, `.09`, `.10`,
+  `.12`, `.15`, `.16`, `.30`, `.32` and `.45`. A token declares `alphas`, and
+  each entry generates a second property `--<name>-t<alpha>`. One colour to
+  pick, nine that follow it.
+* **Eight-digit hex, not `color-mix()`.** Alpha is accepted only on tokens that
+  are overlays, shadows, scrims or hairline rules — the places where a
+  see-through colour is the point. Everywhere else an alpha value is refused,
+  because a semi-transparent body text is a bug nobody chose.
+* **A colour that is not a colour today gets no token.** A disabled control is
+  `opacity:.45;filter:grayscale(1)`, there are no striped table rows, the
+  danger button has no background of its own, and links do not change colour on
+  hover. Adding tokens for those would have meant inventing four appearances,
+  which is the one thing a theme must not do.
+* **Workflow statuses are generated from the status list**, not listed by hand:
+  `statusTokens()` reads `STATES` in `src/asset-workflow.js` and emits
+  `status.<id>` for each. A status added later gets a defined grey
+  (`STATUS_FALLBACK`) rather than no colour at all, and a test covers exactly
+  that. The pipeline owns the ids, the labels and the transitions; the theme
+  owns the colour.
+
+### Storage, and why nothing from the box reaches the CSS
+
+One saved theme at a time, in `studio_theme`, as token-to-value pairs plus a
+version number that increases on every change. `studio_theme_history` keeps the
+last twenty saves and `studio_theme_presets` holds named palettes.
+
+A value goes from a text field into a `:root{}` block on every page in the
+application, which is as direct a path as that gets. **The defence is not
+escaping.** `canonical()` matches `#RGB` or `#RRGGBB` (or `#RRGGBBAA` where the
+token allows alpha) and rebuilds the value from the matched hex digits, so the
+output contains nothing of the input — `red; } body { display:none` is not
+sanitised, it is refused by name with a 400. Unknown token keys are refused the
+same way, and the whole body is capped.
+
+`cssFor()` **re-validates on the way out of the database too**, falling back
+per token to the default. A row edited by hand, or restored from a backup taken
+before the validation existed, still cannot put anything into a stylesheet.
+
+### Arriving already wearing it
+
+`src/theme-delivery.js` is middleware in front of `/`, `/index.html` and the
+SPA catch-all. It replaces a marker comment in the served HTML with
+`<style id="themeSaved">…</style>`, memoised on the theme version and the
+file's mtime and size.
+
+**That is the whole answer to the first-paint flash**: the colours are in the
+first byte of the document, so there is no moment where the page is wearing the
+defaults and then changes. Fetching a stylesheet or JSON after load would have
+shown the old palette for one frame on every navigation, and a blocking
+`<link>` would have added a round trip to every page load for a few hundred
+bytes. Nothing is stored per user.
+
+`GET /api/theme` and `GET /api/theme.css` are **unauthenticated** — the sign-in
+screen has to arrive in the studio's colours before anybody has a session — and
+carry an ETag keyed on the version. `GET /auth/me`, which the page already
+polls every 20 seconds, returns `themeVersion`; when it moves, the page fetches
+the stylesheet and swaps the block. A fetch that fails empties that block,
+which hands the page back to the built-in defaults. It never leaves anybody
+looking at an unstyled page.
+
+### Contrast
+
+The editor shows a live WCAG ratio for the pairs that matter — tab label on tab
+background in each state, button text on button background, body text on each
+surface, a link on the page, each status badge's text on its own tint — and the
+**server computes the same ratios and returns them with the save**, so the
+check does not depend on the browser having run it. Below 4.5:1 warns. Below
+3:1 needs `confirmLowContrast`, and only for pairs the save would *introduce*:
+the shipped palette already has three below 3:1 (muted text on a panel, a
+placeholder inside a field, the sub-tab counter), and refusing to let anybody
+save anything until those are fixed would be a lock, not a safeguard. A focus
+ring saved equal to the background it sits on warns separately. Translucent
+values are composited over the page background before measuring, because a
+ratio against something see-through is a ratio against nothing anybody sees.
+
+### The permission, and getting back out of a bad save
+
+`settings.theme`, `impliedBy: has('managePermissions')` — the Super Admin
+alone, and **grantable** like any other key, so a studio with an art director
+who owns how the tool looks can hand it over in Settings → Permissions. Every
+write route is behind `requirePermission('settings.theme')` and the page gates
+the section with `can('settings.theme')`, never on the tier. Reading the theme
+needs no permission at all. Every save is in the Activity Log with who, when,
+which tokens and the old and new value of each.
+
+The worst save possible is text the same colour as its background, which makes
+the screen that would undo it unreadable. Two things answer that:
+
+* **The Theme section's own controls are on a fixed palette that ignores the
+  theme.** The block between `/* THEME-SAFE-BLOCK:START */` and `END` in
+  `public/index.html` is the only place in the file that still names colours,
+  and a test asserts both that it is the only one and that every literal in it
+  belongs to a `.theme-` selector.
+* **The last twenty saves are listed with a one-click revert**, which saves the
+  old palette as a *new* version rather than rewinding the counter — so an open
+  screen elsewhere notices it the same way it notices any other change.
+
+### Adding a token
+
+Add the entry to `TOKENS` in `src/theme-tokens.js`, use `var(--name)` wherever
+it belongs, and run `node scripts/build-theme-defaults.js` to rewrite the
+`<style id="themeDefaults">` block in the page. The Settings UI is built from
+the catalogue, so the new row appears on its own. `tests/theme-literals.test.js`
+is what stops a colour being typed into a template instead: it scans the served
+page and every other served file and fails on any hex, `rgb()` or `hsl()`
+outside the generated block, the safe block and a one-entry allow-list.
+
+**There is no dark mode** — the application has one palette, and nothing in it
+reads `prefers-color-scheme` — so tokens are defined once rather than per mode.
+Adding a second mode was not in scope and would have doubled the catalogue for
+a feature nobody asked for. There are no print styles either, and no chart or
+canvas that draws a colour: the two canvases crop images, and the bars and stat
+tiles are DOM and CSS, so they pick up `var()` like everything else.
 
 ## Settings: the value lists behind the dropdowns
 

@@ -142,8 +142,6 @@ const TOKENS = [
   t('text.link', 'brand-accent', 'Link and accent', 'Text', '#EF6B6F',
     'Links, the active sub-tab, the focus ring, the accent on every screen. '
     + 'The brand red lifted until it can be read on the page background.'),
-  t('text.link.hover', 'brand-accent-hover', 'Link hover', 'Text', '#F58B8E',
-    'A link or accent control under the pointer.'),
   t('text.on.brand', 'brand-ink', 'Text on the brand colour', 'Text', '#FFFFFF',
     'The wordmark letter, the primary button’s label, a filled chip.'),
   t('text.on.accent', 'accent-ink', 'Text on the accent colour', 'Text', '#12080A',
@@ -163,13 +161,22 @@ const TOKENS = [
     'The tab you are on.'),
   t('nav.tab.active.background', 'tab-active-bg', 'Active tab background', 'Navigation tabs', '#30343E',
     'Behind the tab you are on.'),
-  t('nav.tab.hover.text', 'tab-hover-ink', 'Tab text on hover', 'Navigation tabs', '#EDEFF2',
-    'A tab under the pointer.'),
-  t('nav.tab.hover.background', 'tab-hover-bg', 'Tab background on hover', 'Navigation tabs', '#30343E80',
-    'Behind a tab under the pointer.', { alpha: true }),
-  t('nav.tab.indicator', 'tab-indicator', 'Active tab indicator', 'Navigation tabs', '#EF6B6F',
-    'The mark on the tab you are on. Shown as a left border inside the active '
-    + 'tab’s block.'),
+  /* THE MAIN TABS HAD NO HOVER STATE AT ALL, and these two defaults say so: the
+     background is fully transparent and the text is the same grey an inactive
+     tab already is, so an untouched studio sees exactly what it saw before. The
+     :hover rule now exists and reads them, so a studio that sets either gets a
+     hover state without a deploy. Reported rather than quietly invented. */
+  t('nav.tab.hover.text', 'tab-hover-ink', 'Tab text on hover', 'Navigation tabs', '#8B909C',
+    'A tab under the pointer. Defaults to the inactive colour \u2014 this '
+    + 'application had no tab hover state before.'),
+  t('nav.tab.hover.background', 'tab-hover-bg', 'Tab background on hover', 'Navigation tabs', '#00000000',
+    'Behind a tab under the pointer. Transparent by default, for the same '
+    + 'reason.', { alpha: true }),
+  t('nav.tab.indicator', 'tab-indicator', 'Active tab indicator', 'Navigation tabs', '#00000000',
+    'A mark down the inside edge of the tab you are on. Transparent by default: '
+    + 'this application marks the active tab by its background, and a 2px bar '
+    + 'nobody asked for is a change of appearance, not a theme. Set it to make '
+    + 'the mark appear.', { alpha: true }),
   /* THE BADGE IS THE DOT COLOUR AT TWO ALPHAS, derived rather than three tokens a
      studio would have to keep in step with each other by hand. */
   t('nav.tab.badge.dot', 'tab-badge-dot', 'Tab badge', 'Navigation tabs', '#EF6B6F',
@@ -232,12 +239,14 @@ const TOKENS = [
     'The hint inside an empty field.'),
   t('form.accent', 'form-accent', 'Checkbox and selection accent', 'Forms', '#EF6B6F',
     'Checkboxes, radio buttons, the colour a text selection is drawn in.'),
-  t('form.row.selected', 'row-selected', 'Selected row highlight', 'Forms', '#7F141629',
-    'A row you have ticked in the Assets List.', { alpha: true }),
+  /* THERE IS NO SELECTED-ROW COLOUR IN THIS APPLICATION and so there is no token
+     for one: a ticked row in the Assets List is marked by its checkbox and
+     nothing else. Adding a highlight would be a new appearance, which this
+     change must not invent. Reported instead. */
 
   // --- Tables ---------------------------------------------------------------
-  t('table.header.background', 'thead-bg', 'Table heading background', 'Tables', '#00000000',
-    'Transparent today, so the panel shows through.', { alpha: true }),
+  t('table.header.background', 'thead-bg', 'Table heading background', 'Tables', '#262A33',
+    'Behind a column heading.'),
   t('table.header.text', 'thead-ink', 'Table heading text', 'Tables', '#8B909C',
     'Column headings.'),
   t('table.row.background', 'row-bg', 'Table row background', 'Tables', '#00000000',
