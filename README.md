@@ -71,9 +71,20 @@ permissions come from their role — there are no per-user grants. Change a role
 and everyone holding it changes together.
 
 The catalogue lives in
-[`src/permission-catalog.js`](src/permission-catalog.js) — 90 permissions in
+[`src/permission-catalog.js`](src/permission-catalog.js) — 97 permissions in
 twelve groups — and the settings live in `role_permissions` as
 `(role_key, permission_key, enabled)`.
+
+**"Off" is a row, not an absence**, and that matters more than it looks.
+`role_permissions` holds one row per role per catalogue key, and `setForRole()`
+writes **all** of them on every save. So a role that has been saved once carries
+an explicit `enabled = 0` for every permission it does not hold — including the
+ninety the administrator never looked at. `forRole()` reads `enabled = 1`; a role
+with **no rows at all** is a different thing again (never seeded, so it is seeded
+from its tier), and `topUpRole()` fills in keys added to the catalogue since the
+role was last written. `updated_by_email` is the only hint at intent — `'system'`
+for a seeded row, an address for one an administrator saved — and that is what
+migrations use when they must not reverse somebody's decision.
 
 Every key sits in the group its prefix names, and
 `tests/role-permissions.test.js` checks that: a `settings.*` key in another
@@ -85,6 +96,93 @@ and `holiday.manage`.
 request in `authenticate()` from the user's freshly-read role, so nobody signs
 out and in again, and no session has to be refreshed. Moving somebody to another
 role takes effect the same way.
+
+### Role groups: an additive layer
+
+**Settings → Role Groups** makes a named bag of permissions and puts roles in it.
+Every member role inherits the bag. A role's effective permissions are **its own
+plus the grants of every group it is in** — the union, computed in one place,
+[`effectiveFor()`](src/role-permissions.js).
+
+| | |
+| --- | --- |
+| **Groups only grant** | There is no group-level deny. A permission a group does not grant is one it has no opinion about, so nothing is ever *reduced* by a group — including Super Admin, which short-circuits above the group query and always holds the whole catalogue |
+| **No nesting** | A group contains roles, never groups. One hop, so the answer is a single join and cannot cycle |
+| **No capabilities** | Groups grant catalogue keys. `projectScope`, `reviewStage` and `deleteAsset` are values rather than booleans and stay with the tier |
+| **Three kinds** | `department`, `level`, `custom` — a fixed vocabulary, because a free-text field becomes all three plus typos |
+
+**Nothing changed when this shipped, and that is asserted rather than asserted-ish.**
+`effectiveFor()` was recorded for all sixty designations *before* the feature was
+written — `tests/fixtures/role-permissions-before-groups.json`, taken through the
+real seeding path against a fresh schema — and the first test in
+`tests/role-groups.test.js` demands it back key for key. The migration seeds no
+groups at all, so an install that upgrades and never opens the screen has three
+empty tables and identical access. The one permitted difference is the new
+management key, and it is pinned too: `settings.role_groups` reaches Super Admin
+and nobody else.
+
+#### How an explicit role-level "off" interacts with a group grant
+
+**A group grant is additive and is not blocked by `enabled = 0`.** A group can
+re-grant a permission an administrator unticked on the role.
+
+**This conflicts with the existing model, and the conflict is in the storage
+rather than in the decision.** As above, "off" is a row that `setForRole()`
+writes for every unticked key — so the data cannot tell "deliberately revoked"
+from "never granted". Reading `enabled = 0` as a *deny* would therefore make
+group grants useless for every role a studio has ever saved in Settings, which
+is every role. The alternative — "role-level off wins" — needs a third state in
+`role_permissions` (granted / silent / revoked) to be expressible at all: a
+change to the storage and to what a save means, and the hard constraint on this
+feature was that existing role permissions do not change.
+
+So the behaviour is made **visible** instead of silent:
+
+- each role's permission view marks every inherited key **from a group: *name***,
+  and a key held only by inheritance says so;
+- the checkbox stays bound to the role's **own** answer (`ownFor()`), so
+  unticking it does not remove an inherited grant — and, just as important,
+  saving the screen does not bake the group's grant into the role;
+- deleting a group lists, per role and by name, what each one will actually
+  lose — a role that holds a permission in its own right is not reported as
+  losing it;
+- every change is in `role_group_audit` and in the Activity Log.
+
+#### What `impliedBy` does here, and what it does not
+
+`impliedBy` maps a role's **tier capabilities** to its default permissions
+(`baselineFor`). It is not a permission-to-permission implication, and granted
+keys — a role's or a group's — are never expanded transitively: `effectiveFor`
+in the catalogue is *baseline ∪ granted*. So group grants go through the same
+path a role grant does — validated by `catalog.isPermission`, unioned by the same
+code — and there is no extra expansion to mirror. The one derivation that exists
+(`project.review_send` implies `project.review_mine`) lives in `defaultsFor()`,
+which is about **defaults**, so neither a role grant made in Settings nor a group
+grant triggers it. Same rule, same place, both layers.
+
+#### The escalation rules
+
+| | |
+| --- | --- |
+| `settings.role_groups` | Super Admin only by default, enforced with `requirePermission` on every route and `can()` on the page — never a tier check |
+| Two keys no group may grant | `settings.permissions` and `settings.role_groups`. A group that could grant either could add its own members to a group granting everything. Swept by the migration as well as refused on the write |
+| Your own ceiling | Nobody grants through a group a permission they do not hold themselves — read from `req.permissions`, which the server resolved for that session. So the screen **can** be delegated: a delegate's reach is their own permissions |
+| Nobody is reduced | Groups only add, so no role loses anything by being in one, and Super Admin is untouched either way |
+
+**Clean-up.** `role_group_members` and `role_group_permissions` both cascade from
+`role_groups`, so deleting a group cannot leave an orphan — that is a property of
+the schema rather than of a function remembering. Deleting a **designation**
+clears its memberships (`roleGroups.forgetRole()`, called from the reference-data
+delete path), because there is no foreign key to reference data — a designation
+lives in a table that loads into memory, and `role_permissions` has never had one
+either. The migration sweeps anything an older install left behind, guarded so
+that an unloaded roles list does nothing rather than reading as "every membership
+is an orphan".
+
+**Cost per request: one more query, and it does not grow.** `grantsForRole()` is
+a single join keyed on `role_key`, so forty groups cost what one costs. A missing
+table reads as "no groups", because a feature arriving must never be the reason
+somebody cannot sign in.
 
 ### A gate written twice: `can()`, never `caps()`
 
@@ -122,6 +220,7 @@ Two things that suite also records, because they are easy to assume otherwise:
 Admin turns it off — there is no role that lacks it by default; and holding that key is
 still not permission to hold somebody *else's* task. A second key, `asset.hold_any`, is
 what admits that, and its reach is exactly what the holder's own dashboard shows them — see
+[Role groups: an additive layer](#role-groups-an-additive-layer)
 [Hold: your own task, or anything on your dashboard](#hold-your-own-task-or-anything-on-your-dashboard)
 [TL Approved has three ways out, and one of them goes back](#tl-approved-has-three-ways-out-and-one-of-them-goes-back)
 for the per-status table, the matrix, and why project membership was the wrong scope.

@@ -220,6 +220,26 @@ test('the defaults that are decisions, with the reason for each', () => {
   const { ROLES } = defaults;
   const held = (key) => ROLES.filter((r) => rolePermissions.defaultsFor(r.key).has(key)).map((r) => r.key);
 
+  /* ROLE GROUPS: SUPER ADMIN ALONE, and that is the whole default.
+   *
+   * settings.role_groups creates the additive layer — a group grants its
+   * permissions to every member role — so whoever holds it can hand out, in one
+   * action, anything they themselves hold to a whole department. That is the
+   * same KIND of act as deciding what one role may do, so it starts in the same
+   * hands: implied by managePermissions, which only the Super Admin tier
+   * carries.
+   *
+   * GRANTABLE, UNLIKE settings.permissions BESIDE IT, and the difference is what
+   * the escalation rules buy. The role screen cannot be delegated at all — a
+   * role holding it could give itself every other key. The group screen can,
+   * because a group may never grant settings.permissions or settings.role_groups
+   * itself, and nobody can grant through a group a permission they do not hold:
+   * a delegate's ceiling is their own permissions. See src/role-groups.js. */
+  assert.deepStrictEqual(held('settings.role_groups'), ['super_admin'],
+    'Manage Role Groups starts with Super Admin and nobody else');
+  assert.ok(catalog.grantableKeys().includes('settings.role_groups'),
+    'but it CAN be granted, unlike the role screen it sits beside');
+
   /* ON FOR EVERY DESIGNATION. `impliedBy: () => true`. Putting a task down and
      picking it up again is not a privilege, it is how the clock is used
      honestly — a person who cannot say "I have stopped" will leave the timer
