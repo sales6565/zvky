@@ -220,6 +220,25 @@ test('the defaults that are decisions, with the reason for each', () => {
   const { ROLES } = defaults;
   const held = (key) => ROLES.filter((r) => rolePermissions.defaultsFor(r.key).has(key)).map((r) => r.key);
 
+  /* EMAIL DELIVERY: SUPER ADMIN ALONE, and its own key beside the mail-server one.
+   *
+   * settings.email_delivery shows whether the studio's mail is going out — the
+   * connection, the queue, the failures, today's count against the daily cap —
+   * and sends a test message to the holder's OWN address. settings.email_config
+   * beside it edits the mail server and holds a live password.
+   *
+   * THE SPLIT IS THE POINT, and it is the same one settings.holidays_view has
+   * from settings.holidays: a studio can let a producer answer "is the mail
+   * going out" without also letting them point every notification the studio
+   * sends at a server of their choosing. Both default to the Super Admin tier
+   * alone through managePermissions, so delegating either is a decision. */
+  assert.deepStrictEqual(held('settings.email_delivery'), ['super_admin'],
+    'Email Delivery Status starts with Super Admin and nobody else');
+  assert.deepStrictEqual(held('settings.email_delivery'), held('settings.email_config'),
+    'the same starting position as the mail-server screen — what differs is that they can diverge');
+  assert.ok(catalog.grantableKeys().includes('settings.email_delivery'),
+    'and it can be granted, unlike the two keys that cannot be');
+
   /* ROLE GROUPS: SUPER ADMIN ALONE, and that is the whole default.
    *
    * settings.role_groups creates the additive layer — a group grants its

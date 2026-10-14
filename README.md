@@ -221,6 +221,8 @@ Admin turns it off — there is no role that lacks it by default; and holding th
 still not permission to hold somebody *else's* task. A second key, `asset.hold_any`, is
 what admits that, and its reach is exactly what the holder's own dashboard shows them — see
 [Role groups: an additive layer](#role-groups-an-additive-layer)
+[Secrets, and what must be rotated](#secrets-and-what-must-be-rotated)
+[Sending email through Gmail](#sending-email-through-gmail)
 [Hold: your own task, or anything on your dashboard](#hold-your-own-task-or-anything-on-your-dashboard)
 [TL Approved has three ways out, and one of them goes back](#tl-approved-has-three-ways-out-and-one-of-them-goes-back)
 for the per-status table, the matrix, and why project membership was the wrong scope.
@@ -3003,6 +3005,218 @@ happens after the response has gone; every path swallows its own errors; and the
 failure is recorded on the Settings screen rather than thrown. The worst case is
 an email that does not arrive, which is a much smaller problem than a
 reassignment that refuses to happen.
+
+### Secrets, and what must be rotated
+
+**No secret for this feature is in any tracked file**, and `.env.example` carries
+the three Gmail names commented and empty. A test asserts both: that the only
+tracked `.env*` file is the template, that `.env` is git-ignored, and that none of
+`GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` or `GMAIL_REFRESH_TOKEN` carries a value
+in it.
+
+**The refresh token is an environment variable, not a database row** — the brief
+allowed either on condition that a stored one is encrypted at rest, and this is
+the choice with its reason. There is already one reversibly-stored secret here
+(the SMTP password, encrypted by `src/email-secret.js`), and **that module falls
+back to `JWT_SECRET` when `EMAIL_ENCRYPTION_KEY` is unset**, which on this
+deployment it is — with `JWT_SECRET` still the shipped placeholder. Storing a
+Gmail refresh token under that arrangement would mean encrypting a credential
+that grants send-as rights to the studio's sales mailbox with a key published in
+this repository's own example file. A refresh token is set once in the life of a
+deployment; the environment has no such problem.
+
+#### `.env` was already untracked — and the values are still in history
+
+The brief asked for this to be fixed in this change. **It was already done**, in
+commit `2e5c73b` ("Settings from the host's environment: remove the tracked
+.env, validate at start-up"): `.env` is out of the index, `.gitignore` carries
+both `.env` and `*.env` with `!.env.example`, and the template exists. Nothing
+needed changing and nothing was.
+
+**What is NOT fixed, and cannot be fixed by a commit:** `.env` was *added* in
+commit `c01af8d` and its contents are still in the reachable history. Removing a
+file from the index does not remove it from the commits that contain it.
+
+**So these must be rotated, by name — they were committed with real values:**
+
+| Variable | What to do |
+| --- | --- |
+| `DB_PASSWORD` | **Rotate now.** cPanel → MySQL Databases → change the user's password, then set the new value in the environment |
+| `JWT_SECRET` | **Rotate now.** It also still holds the shipped placeholder, which is a second and worse problem — anybody with the repository can mint a session token. Changing it signs everybody out, which is the intended cost |
+| `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `PORT`, `CORS_ORIGIN`, `TRUST_PROXY`, `LOGIN_RATE_MAX`, `LOGIN_RATE_WINDOW_MINUTES` | Not credentials. No action, listed so the set is complete |
+
+**And set `EMAIL_ENCRYPTION_KEY`** to its own long random value, so the stored
+SMTP password stops depending on `JWT_SECRET` — otherwise rotating `JWT_SECRET`
+makes that password undecryptable, which is why `src/email-secret.js` has the
+fallback at all.
+
+**Rewriting history would also be needed to remove the values** (a filter or a
+fresh repository), and that is a decision about a shared remote rather than
+something to do unasked. Rotation makes the leaked values worthless, which is the
+part that actually protects the studio.
+
+### Sending email through Gmail
+
+**Which way mail leaves is one variable**, `EMAIL_TRANSPORT`:
+
+| | |
+| --- | --- |
+| `gmail_api` | The Gmail API over HTTPS on port 443. What this studio uses, because its host blocks outbound SMTP ports — `src/mailer.js` has three paragraphs about that and `scripts/check-outbound.js` exists to prove it |
+| `smtp` | The mail server configured in Settings, through nodemailer. **Still supported**, not deprecated: a studio that moves to a host without the port restriction changes one variable back |
+| `log` | Writes a line and claims success. Development and the test suite, which therefore need no credential and no network |
+
+**The default is `smtp`** — what this application did before the Gmail transport
+existed. An upgrade that silently re-routed a studio's mail through an
+unconfigured Gmail account would be a studio whose email stopped.
+
+**No new dependency.** Two POSTs and Node 22's global `fetch`, rather than
+`googleapis` (tens of megabytes of generated clients) or `google-auth-library`
+(which pulls `gtoken`, `gaxios` and `jws`). Nothing to audit, nothing to keep
+current, and nothing that breaks on a Node upgrade — which matters on a host
+where upgrading means a support ticket.
+
+#### Setting it up in Google Cloud
+
+A non-developer can follow this. It is done once.
+
+1. **Google Cloud Console** → create a project (or use an existing one).
+2. **APIs & Services → Library** → search *Gmail API* → **Enable**.
+3. **APIs & Services → OAuth consent screen**. This is the step that differs by
+   domain — see the two cases below.
+4. **Scopes**: add exactly one, `https://www.googleapis.com/auth/gmail.send`.
+   Nothing else. It can send as the mailbox and **cannot read it**, which is what
+   makes this safe to approve for a live sales inbox.
+5. **APIs & Services → Credentials → Create credentials → OAuth client ID**,
+   application type **Desktop app**. That type offers the redirect this script
+   uses, so no web server or spare port is needed.
+6. Copy the **client ID** and **client secret**. Do not put them in a file in
+   this repository — see *Secrets* below.
+7. On the server, once:
+
+   ```bash
+   export GMAIL_CLIENT_ID="…apps.googleusercontent.com"
+   export GMAIL_CLIENT_SECRET="…"
+   node scripts/gmail-authorize.js
+   ```
+
+   It prints a URL. **Open it in a normal browser** — Chrome, Safari, Edge.
+   **Not inside the ZVKY FORGE desktop application**: Google refuses OAuth
+   sign-in in an embedded web view and answers `disallowed_useragent`, so a
+   "Connect Gmail" button in the app would be refused by Google and would look
+   like our own bug. Sign in **as the sender mailbox itself**, approve the one
+   permission, paste the code back.
+8. Set what it prints as environment variables (on cPanel: *Setup Node.js App →
+   Environment variables*), restart, then **Settings → Email (Gmail) → Send test
+   email**.
+
+#### The two domain cases, and nothing depends on which
+
+It is **not yet confirmed** whether `zvky.com` is a Google Workspace domain. Both
+cases work with the same code and the same variables; only step 3 differs.
+
+**If it IS a Google Workspace domain.** Choose **Internal** on the consent
+screen. There is no verification, no review, no warning screen, and — the part
+that matters — **no expiry on the refresh token**. It keeps working until
+somebody revokes it or changes the mailbox's password. This is the case to want.
+
+**If it is a free Gmail account** (or any non-Workspace address). Internal is not
+offered; the app must be **External**, and a new External app starts in
+**Testing**. In Testing:
+
+- the mailbox must be added under **Test users**, or consent is refused outright;
+- **refresh tokens expire after seven days.** On the eighth day sending stops
+  with `invalid_grant`, and the only fix is to run the authorisation script
+  again. That is not a bug in this application and the Settings banner says so.
+
+**So publish the app.** On the consent screen press **Publish app**. For a
+single sensitive scope used by its own owner this moves it to *In production*
+without a verification review, and the seven-day expiry goes away. Until it is
+published, expect to re-authorise weekly.
+
+**The application copes with either** without being told which: an expired or
+revoked token is an `invalid_grant`, which is treated as a *connection* failure —
+the queue pauses, messages are held, every Super Admin gets an in-app notice and
+the Settings banner reads *"The Gmail connection needs to be re-authorised"*.
+Nothing is lost and no message burns its retries. Re-authorise, restart, and the
+queue drains itself.
+
+#### The queue, and how a failure is counted
+
+Every notification is written to `email_outbox` and sent by a worker afterwards.
+**This is new**: before it, `src/email-notifications.js` batched in memory,
+retried once after 250 ms and swallowed the error — which loses every email
+raised during an outage. The retry schedule is **imported** from
+`src/integration-outbox.js` rather than restated: 1 minute, 5, 30, 2 hours, 6,
+24, then failed. Six retries, seven attempts, a little over a day.
+
+The three ways a send can fail are counted differently, and that is the whole
+design:
+
+| | |
+| --- | --- |
+| **Temporary** — network, 5xx, 429 | One attempt counted, backed off on the schedule, failed after six. A `Retry-After` longer than the backoff **wins**: overruling a rate limit is how the next answer becomes a block |
+| **Permanent** — bad address, injected header, oversized | Failed **at once**. Spending six attempts over a day on an address that will never be valid is how a queue fills with work that cannot succeed |
+| **Connection** — `invalid_grant`, revoked token, 401 after a refresh, missing scope | **Nothing is written to the row** — not the attempt, not the error. The queue pauses, a Super Admin is told, and when the connection returns every held message still has all seven attempts |
+
+**The permanent-failure alert cannot loop.** It is itself an email, so if the
+transport is what is broken it cannot go through the transport. The in-app notice
+is raised *always*; the email is queued only when the transport is healthy, and
+the connection alert is **in-app only** by construction. One notice per outage,
+not one per pass.
+
+#### Throttling, and the defaults
+
+**The sender mailbox is a real one**, read by people and used for customer
+correspondence; this application is a guest in it. Gmail's own ceiling is 2,000
+recipients a day on Workspace and 500 on a free account, and hitting either would
+stop the studio's **sales** email, not just its notifications. So:
+
+| | | |
+| --- | --- | --- |
+| `EMAIL_DAILY_CAP` | **300** | Well under the lower of the two ceilings, and about ten times the busiest day this application could plausibly produce |
+| `EMAIL_MAX_PER_MINUTE` | **10** | Forty notifications raised in one second by a bulk assignment look like a burst to a spam filter; ten a minute spreads it over four minutes |
+| `EMAIL_DAILY_WARN_FRACTION` | **0.8** | A Super Admin is told once a day at 240 sent |
+
+At the cap, sending **stops and resumes tomorrow** — messages are held, not
+failed.
+
+#### Delivery is at least once
+
+**A send can succeed at Google and the response be lost on the way back.** The
+message is then retried and somebody gets two copies of a notification. This is
+recorded rather than hidden, because the fix is worse than the problem: knowing
+for certain would mean searching the mailbox for our own `Message-ID`, which
+needs `gmail.readonly` — **read access to a live sales mailbox** — added to the
+consent screen, to suppress a rare duplicate *"you have been assigned FX-014"*.
+What is done instead is free: every message carries a stable `Message-ID` of our
+own, Gmail's returned id is stored on the row, so a duplicate is identifiable
+afterwards.
+
+#### Reply-To
+
+`GMAIL_REPLY_TO` is optional. Set it when replies should go somewhere other than
+the sender mailbox — a shared inbox, say, when the sender is a shared sales
+address nobody watches for replies to notifications. **From is always the
+authenticated mailbox**: Gmail rewrites any other address, so accepting one would
+mean building a message whose From we know will be replaced.
+
+#### Watching it
+
+**Settings → Email (Gmail)**, behind *Email Delivery Status*
+(`settings.email_delivery`) — **Super Admin only by default**, enforced with
+`requirePermission` on every route and `can()` on the page, never a tier. It is
+its own key beside *Manage Email Configuration*, the same split
+`settings.holidays_view` has from `settings.holidays`: this one answers "is the
+mail going out" and sends a test to **your own address**; that one edits the mail
+server and holds a live password.
+
+**No endpoint returns a secret.** What a missing credential produces is the
+**name** of the unset variable — `GMAIL_REFRESH_TOKEN is not set` is actionable;
+the value would be a credential in a browser's network tab. Errors carry the
+credential **masked** (`refr…(23 chars)`), which is enough to tell a stale token
+from a mistyped one and useless to anybody who reads it. A test asserts the
+status payload against every secret the server holds, and against field *names*
+containing `secret`, `token`, `password` or `refresh`.
 
 ### Configuring it
 
