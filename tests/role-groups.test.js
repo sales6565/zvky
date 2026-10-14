@@ -44,22 +44,36 @@ const MANAGE = 'settings.role_groups';
 // 1. THE CONSTRAINT: nothing changed.
 // ===========================================================================
 
-test('the catalogue grew by exactly one key, and only Super Admin holds it', () => {
-  /* THE ONE PERMITTED DIFFERENCE from the snapshot, named here so the test
-     below can subtract it honestly rather than loosening its comparison. */
-  const added = catalog.KEYS.filter((k) => !SNAPSHOT.roles.super_admin.includes(k));
-  assert.deepStrictEqual(added, [MANAGE],
-    'role groups must add one catalogue key and no others');
-  assert.strictEqual(catalog.KEYS.length, SNAPSHOT.catalogueSize + 1);
+/* EVERY KEY ADDED SINCE THE SNAPSHOT WAS TAKEN, named one by one.
+ *
+ * The fixture was recorded before role groups existed, and the catalogue has
+ * grown twice since: settings.role_groups with that feature, and
+ * settings.email_delivery with the Gmail transport. The list is EXACT rather
+ * than a count, so a third key added later has to come past this line and be
+ * accounted for — which is the whole point of pinning a snapshot.
+ *
+ * Each one must reach Super Admin and nobody else, which is this studio's
+ * standing rule for a new permission; the snapshot comparison below subtracts
+ * exactly these. */
+const SINCE_SNAPSHOT = [MANAGE, 'settings.email_delivery'];
 
-  const entry = catalog.BY_KEY.get(MANAGE);
-  assert.strictEqual(entry.label, 'Manage Role Groups');
-  const holders = roles.roleKeys().filter((k) => {
-    const def = roles.roleDef(k);
-    return def && entry.impliedBy(def);
-  });
-  assert.deepStrictEqual(holders, ['super_admin'],
-    'Manage Role Groups starts with the Super Admin tier alone');
+test('every key added since the snapshot is Super Admin only', () => {
+  const added = catalog.KEYS.filter((k) => !SNAPSHOT.roles.super_admin.includes(k));
+  assert.deepStrictEqual(added.sort(), [...SINCE_SNAPSHOT].sort(),
+    'a catalogue key was added without being accounted for here');
+  assert.strictEqual(catalog.KEYS.length, SNAPSHOT.catalogueSize + SINCE_SNAPSHOT.length);
+
+  for (const key of SINCE_SNAPSHOT) {
+    const entry = catalog.BY_KEY.get(key);
+    assert.ok(entry, `${key} is in the catalogue`);
+    const holders = roles.roleKeys().filter((k) => {
+      const def = roles.roleDef(k);
+      return def && entry.impliedBy(def);
+    });
+    assert.deepStrictEqual(holders, ['super_admin'],
+      `${key} must start with the Super Admin tier alone`);
+  }
+  assert.strictEqual(catalog.BY_KEY.get(MANAGE).label, 'Manage Role Groups');
 });
 
 test('THE SNAPSHOT: with no groups defined, every role is unchanged',
@@ -76,7 +90,7 @@ test('THE SNAPSHOT: with no groups defined, every role is unchanged',
 
     for (const [roleKey, expected] of Object.entries(SNAPSHOT.roles)) {
       const held = await rolePermissions.effectiveFor(db, roleKey);
-      const now = [...held].filter((k) => k !== MANAGE).sort();
+      const now = [...held].filter((k) => !SINCE_SNAPSHOT.includes(k)).sort();
       assert.deepStrictEqual(now, expected,
         `${roleKey} changed: +${now.filter((k) => !expected.includes(k))} `
         + `-${expected.filter((k) => !now.includes(k))}`);

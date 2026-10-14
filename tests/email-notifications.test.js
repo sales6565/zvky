@@ -31,6 +31,34 @@ const mailer = require('../src/mailer');
 const smtp = require('./smtp-server');
 const { config, resetSchema, startServer, stopServer, api, sql, SKIP_REASON, systemClientId } = require('./helpers');
 
+/* WAIT FOR THE QUEUE TO BE QUIET, then clear the inbox.
+ *
+ * WHY THIS IS NEEDED NOW AND WAS NOT BEFORE. Mail used to be put on the wire
+ * inside the request, so inbox.reset() was a clean boundary between cases: once
+ * the request had answered, everything it was going to send had been sent. It is
+ * now written to email_outbox and delivered by a worker, so a message raised by
+ * one case can land a moment AFTER the next case has reset the inbox — and which
+ * case then fails moves from run to run, which is exactly the shape of flake
+ * worth killing rather than re-running.
+ *
+ * So the boundary is made real: no pending rows, THEN clear. Polled rather than
+ * slept, so the suite is not paced by its slowest guess. */
+async function quietInbox(cfg, inbox, ms = 5000) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    const [{ n }] = await sql(cfg,
+      "SELECT COUNT(*) AS n FROM email_outbox WHERE `status` = 'pending'");
+    if (Number(n) === 0) break;
+    if (Date.now() > deadline) {
+      const rows = await sql(cfg,
+        "SELECT recipient, subject, `status`, attempts, last_error FROM email_outbox WHERE `status` = 'pending'");
+      throw new Error(`the email queue did not drain in ${ms}ms: ${JSON.stringify(rows)}`);
+    }
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  inbox.reset();
+}
+
 const cfg = config('email');
 
 // --- the encryption, on its own ----------------------------------------------
@@ -154,6 +182,14 @@ test('a bulk assign is one email, not one per task', { skip: batchCfg ? false : 
       EMAIL_ENCRYPTION_KEY: 'a-test-key-for-the-email-suite',
       // Open, and long enough that a loop of assignments lands inside it.
       EMAIL_BATCH_MS: '400',
+      /* THE QUEUE'S WORKER, TURNED UP. Mail is no longer sent inside the batch
+         flush — it is written to email_outbox and a worker delivers it, which is
+         what holds a studio's notifications through an outage instead of losing
+         them. The default sweep is five seconds; these cases wait about one, so
+         without this they would be asserting on an inbox the worker has not got
+         to yet. Everything below is otherwise unchanged, and now proves rather
+         more than it did: the batching, the queue AND the delivery. */
+      EMAIL_SWEEP_MS: '200',
     });
     await call('/auth/bootstrap', { method: 'POST',
       body: { token: 'batch-token', name: 'Root', email: 'root@zvky.test', password: PASSWORD } });
@@ -186,7 +222,7 @@ test('a bulk assign is one email, not one per task', { skip: batchCfg ? false : 
       })).body.asset;
       ids.push(asset.id);
     }
-    inbox.reset();
+    await quietInbox(batchCfg, inbox);
 
     const res = await as('root', '/assets/bulk/assign', {
       method: 'POST', body: { assetIds: ids, assigneeId: people.ana },
@@ -208,7 +244,7 @@ test('a bulk assign is one email, not one per task', { skip: batchCfg ? false : 
   });
 
   await t.test('a single assignment is still a single-task email, not a digest of one', async () => {
-    inbox.reset();
+    await quietInbox(batchCfg, inbox);
     await as('root', `/assets/project/${projectId}`, {
       method: 'POST', body: { name: 'Just one', type: 'prop', assigneeId: people.ana },
     });
@@ -279,7 +315,10 @@ test('email notifications', { skip: cfg ? false : SKIP_REASON }, async (t) => {
          an assertion follows the request rather than a timer. The batching
          itself is tested separately, with the window switched back on. */
       EMAIL_BATCH_MS: '0',
-    });
+      // See the note on the batch server above: the queue's worker delivers
+      // these now, so it has to run inside the window these cases wait.
+      EMAIL_SWEEP_MS: '200',
+});
     await call('/auth/bootstrap', { method: 'POST',
       body: { token: 'email-token', name: 'Root Admin', email: 'root@zvky.test', password: PASSWORD } });
     const login = async (email) => (await call('/auth/login', { method: 'POST',
@@ -327,7 +366,7 @@ test('email notifications', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   // --- step 1: configure a real SMTP account and send a test -----------------
 
   await t.test('a test email is sent using the values on the form, before they are saved', async () => {
-    inbox.reset();
+    await quietInbox(cfg, inbox);
     /* The point of the button. Nothing has been saved at this stage — the
        configuration is still empty — and the test must still go out, or
        somebody would have to commit a setting to find out whether it works. */
@@ -412,7 +451,7 @@ test('email notifications', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(res.body.config.fromName, 'ZVKY FORGE Studio');
 
     // And it still works, which is the assertion that matters.
-    inbox.reset();
+    await quietInbox(cfg, inbox);
     const test2 = await as('root', '/email-config/test', { method: 'POST', body: { to: 'root@zvky.test' } });
     assert.strictEqual(test2.status, 200, JSON.stringify(test2.body));
     assert.strictEqual(inbox.messages.length, 1);
@@ -421,7 +460,7 @@ test('email notifications', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   // --- step 2: assignment ----------------------------------------------------
 
   await t.test('assigning a task emails the person it was assigned to', async () => {
-    inbox.reset();
+    await quietInbox(cfg, inbox);
     const asset = await makeAsset('Dragon idle loop', people.ana, { due: '2026-10-02' });
 
     await settle(() => sentTo('ana@zvky.test').length === 1, 'expected one email to Ana');
@@ -440,7 +479,7 @@ test('email notifications', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   });
 
   await t.test('assigning to yourself sends nothing', async () => {
-    inbox.reset();
+    await quietInbox(cfg, inbox);
     /* Root assigns Root. The bell already drops this case; the email follows
        the same rule, because being told what you just did is noise. */
     await makeAsset('Self assigned', null);
@@ -452,9 +491,9 @@ test('email notifications', { skip: cfg ? false : SKIP_REASON }, async (t) => {
   });
 
   await t.test('a reassignment emails the new holder and not the old one', async () => {
-    inbox.reset();
+    await quietInbox(cfg, inbox);
     const asset = await makeAsset('Coin burst', people.ana);
-    inbox.reset();
+    await quietInbox(cfg, inbox);
 
     await as('root', `/assets/${asset.id}`, { method: 'PATCH', body: { assigneeId: people.bo } });
     await settle(() => sentTo('bo@zvky.test').length === 1, 'the new holder should be emailed');
@@ -471,11 +510,11 @@ test('email notifications', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     /* Cleared before the action, not after: a settle() satisfied by an earlier
        subtest's message would return early and the reset below would then throw
        away the message this test is about. */
-    inbox.reset();
+    await quietInbox(cfg, inbox);
     const asset = await makeAsset('Reel spin', people.ana);
     await settle(() => sentTo('ana@zvky.test').length === 1, 'the assignment email should arrive first');
     assert.strictEqual((await start('ana', asset.id)).status, 200);
-    inbox.reset();
+    await quietInbox(cfg, inbox);
 
     const done = await submit('ana', asset.id);
     assert.strictEqual(done.status, 201, JSON.stringify(done.body));
@@ -506,7 +545,7 @@ test('email notifications', { skip: cfg ? false : SKIP_REASON }, async (t) => {
        person the task is assigned to. The rule is about the DATA, so the data
        is what this arranges: an episode whose assigned_by_id is the same person
        it is assigned to. */
-    inbox.reset();
+    await quietInbox(cfg, inbox);
     const asset = await makeAsset('Assigned by Ana to Ana', people.ana);
     await settle(() => sentTo('ana@zvky.test').length === 1, 'the assignment email should arrive first');
 
@@ -515,7 +554,7 @@ test('email notifications', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       [people.ana, asset.id]);
 
     assert.strictEqual((await start('ana', asset.id)).status, 200);
-    inbox.reset();
+    await quietInbox(cfg, inbox);
     const done = await submit('ana', asset.id);
     assert.strictEqual(done.status, 201, JSON.stringify(done.body));
 
@@ -540,7 +579,7 @@ test('email notifications', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.strictEqual(off.body.emailNotifications, false);
 
     // 1. no assignment email
-    inbox.reset();
+    await quietInbox(cfg, inbox);
     const asset = await makeAsset('Silent assignment', people.ana);
     await quiet();
     assert.strictEqual(sentTo('ana@zvky.test').length, 0, 'no assignment email after opting out');
@@ -552,7 +591,7 @@ test('email notifications', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     const theirs = await makeAsset('Bo does this', people.bo);
     await as('root', `/assets/${theirs.id}`, { method: 'PATCH', body: { assigneeId: people.bo } });
     await start('bo', theirs.id);
-    inbox.reset();
+    await quietInbox(cfg, inbox);
     await submit('bo', theirs.id);
     await quiet();
     assert.strictEqual(sentTo('ana@zvky.test').length, 0);
@@ -566,7 +605,7 @@ test('email notifications', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     // Back on, and mail resumes — an opt-out that could not be undone would be
     // a worse bug than one that never worked.
     await as('ana', '/auth/email-preference', { method: 'POST', body: { emailNotifications: true } });
-    inbox.reset();
+    await quietInbox(cfg, inbox);
     await makeAsset('Audible again', people.ana);
     await settle(() => sentTo('ana@zvky.test').length === 1, 'mail should resume after opting back in');
   });
@@ -592,7 +631,7 @@ test('email notifications', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       enabled: false, host: '127.0.0.1', port: inbox.port, encryption: 'none',
       username: SMTP_USER, fromName: 'ZVKY FORGE', fromAddress: 'noreply@zvkydesign.com',
     } });
-    inbox.reset();
+    await quietInbox(cfg, inbox);
     const asset = await makeAsset('Nothing sent', people.ana);
     await start('ana', asset.id);
     await submit('ana', asset.id);
@@ -649,7 +688,7 @@ test('email notifications', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     await setEnabled(false);
     const withoutEmail = await run();
     await setEnabled(true);
-    inbox.reset();
+    await quietInbox(cfg, inbox);
     const withEmail = await run();
 
     assert.deepStrictEqual(withEmail, withoutEmail,
