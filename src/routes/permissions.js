@@ -2,6 +2,7 @@ const { asyncRouter } = require('../async-router');
 const { authenticate, requirePermission } = require('../middleware/auth');
 const catalog = require('../permission-catalog');
 const rolePermissions = require('../role-permissions');
+const roleGroups = require('../role-groups');
 const { activeRoles, roleDef, entries: roleEntries } = require('../roles');
 const db = require('../db');
 
@@ -40,12 +41,37 @@ router.get('/roles', async (req, res) => {
   });
 });
 
-// One role's checklist, plus which of its permissions cannot be switched off.
+/* One role's checklist, plus which of its permissions cannot be switched off,
+ * plus what it INHERITS and from where.
+ *
+ * `enabled` IS THE ROLE'S OWN ANSWER, not its effective one, and that
+ * distinction is load-bearing: these are the checkboxes, and a save writes back
+ * exactly what is ticked. Showing an inherited permission as ticked would bake
+ * every group grant into the role the first time anybody pressed Save — the
+ * group would then be granting something the role already had, and removing the
+ * role from the group would change nothing. So ownFor() fills the boxes and
+ * `inheritedFrom` sits beside them.
+ *
+ * WITH NO GROUPS, ownFor() and effectiveFor() are the same set, so this
+ * endpoint answers exactly what it answered before role groups existed.
+ */
 async function describeRole(roleKey) {
   const def = roleDef(roleKey);
-  const held = await rolePermissions.effectiveFor(db, roleKey);
+  const own = await rolePermissions.ownFor(db, roleKey);
   const defaults = rolePermissions.defaultsFor(roleKey);
   const locked = rolePermissions.lockedFor(roleKey);
+  const groups = await roleGroups.inheritanceForRole(db, roleKey).catch(() => []);
+
+  /* Which groups grant each key. A list rather than a flag, because two groups
+     granting the same permission is ordinary and "where did this come from"
+     has two answers. */
+  const from = new Map();
+  for (const group of groups) {
+    for (const key of group.permissions) {
+      if (!from.has(key)) from.set(key, []);
+      from.get(key).push({ id: group.id, name: group.name, kind: group.kind });
+    }
+  }
 
   return {
     key: roleKey,
@@ -56,13 +82,22 @@ async function describeRole(roleKey) {
     // permission off here turns it off for everyone holding this role.
     isSuperAdmin: Boolean(def && def.tier === 'super_admin'),
     lockedKeys: locked,
+    /* The groups this role is in, named, so the view can say "from Supervision"
+       rather than only "inherited". */
+    groups: groups.map((g) => ({ id: g.id, name: g.name, kind: g.kind,
+      grants: g.permissions.length })),
     permissions: catalog.KEYS.map((key) => ({
       key,
-      enabled: held.has(key),
+      enabled: own.has(key),
       // What the role's tier would give it, so "changed from the default" is
       // visible without remembering what the default was.
-      isDefault: defaults.has(key) === held.has(key),
+      isDefault: defaults.has(key) === own.has(key),
       locked: locked.includes(key),
+      /* INHERITED, AND FROM WHERE. Empty for every role in no group, which is
+         every role on an install with no groups. A key that is inherited AND
+         held in its own right says both — taking the role out of the group
+         would change nothing for it, and that is worth being able to see. */
+      inheritedFrom: from.get(key) || [],
     })),
   };
 }

@@ -20,6 +20,7 @@ const { v4: uuid } = require('uuid');
 const catalog = require('./permission-catalog');
 const { capabilitiesForTier } = require('./role-tiers');
 const { roleDef } = require('./roles');
+const roleGroups = require('./role-groups');
 
 // Permissions a role holds, as a Set. Null when the role is unknown.
 async function forRole(db, roleKey) {
@@ -175,9 +176,19 @@ async function seedRole(db, roleKey, { actor } = {}) {
   return defaults;
 }
 
-// The permission set to judge a request by. Seeds on first use so a role added
-// in Settings works immediately.
-async function effectiveFor(db, roleKey) {
+/* THE ROLE'S OWN SET — what this table says, and nothing inherited.
+ *
+ * This was effectiveFor() until role groups arrived, unchanged line for line.
+ * It is split out because two callers now want different questions answered:
+ * the request path wants everything this person may do (effectiveFor, below),
+ * while the Settings editor wants what is stored AGAINST THE ROLE, because its
+ * checkboxes are what a save writes back. An editor whose boxes showed
+ * inherited permissions would bake every group grant into the role the first
+ * time anybody pressed Save.
+ *
+ * Seeds on first use, so a role added in Settings works immediately.
+ */
+async function ownFor(db, roleKey) {
   // The Super Admin role holds the whole catalogue, always, without consulting
   // the table. Anything else is how the role that fixes everyone's access ends
   // up unable to reach a feature — see topUpRole below for how that happened.
@@ -194,6 +205,50 @@ async function effectiveFor(db, roleKey) {
   await seedRole(db, roleKey);
   return defaultsFor(roleKey);
 }
+
+/* THE PERMISSION SET TO JUDGE A REQUEST BY: the role's own, plus every group's.
+ *
+ * ADDITIVE, AND ONLY ADDITIVE. A group grant is added; nothing a group says can
+ * remove a permission the role holds, because a group has no way to say "not
+ * this". The union is in this one place, so there is no second answer anywhere
+ * in the application to what somebody may do.
+ *
+ * AN EXPLICIT enabled = 0 DOES NOT BLOCK A GROUP GRANT, and that is a decision
+ * rather than an oversight — the long note at the top of src/role-groups.js
+ * says why the storage cannot express the alternative. The role's permission
+ * view marks every inherited key with the group it came from, so the behaviour
+ * is visible where somebody would otherwise be surprised by it.
+ *
+ * SUPER ADMIN IS UNTOUCHED BY GROUPS. The short-circuit is above the group
+ * query, so that tier holds the whole catalogue whatever any group says, and a
+ * group can neither add to it nor — since groups cannot take anything away —
+ * reduce it. The same is true of every role: groups only grant, so no role is
+ * ever reduced by one.
+ *
+ * ONE EXTRA QUERY PER REQUEST, and it does not grow with the number of groups:
+ * grantsForRole() is a single join keyed on role_key. A failure answers "no
+ * groups" rather than throwing, because a broken group table must not take
+ * everybody's own permissions down with it — authenticate() would then read an
+ * empty set and refuse the whole studio.
+ */
+async function effectiveFor(db, roleKey) {
+  if (isSuperAdmin(roleKey)) return new Set(catalog.KEYS);
+
+  const own = await ownFor(db, roleKey);
+  const inherited = await roleGroups.grantsForRole(db, roleKey).catch((err) => {
+    if (!missingTable(err)) throw err;
+    return new Set();
+  });
+  if (!inherited.size) return own;
+  for (const key of inherited) own.add(key);
+  return own;
+}
+
+/* A deployment whose migration has not run yet. Treated as "no groups", which
+   is exactly what an install with no groups behaves like — so the feature
+   arriving is never the reason somebody cannot sign in. */
+const missingTable = (err) => Boolean(err)
+  && (err.code === 'ER_NO_SUCH_TABLE' || /doesn't exist/i.test(err.message || ''));
 
 function isSuperAdmin(roleKey) {
   const def = roleDef(roleKey);
@@ -332,6 +387,6 @@ async function audit(db, roleKey, limit = 100) {
 
 module.exports = {
   TL_REVIEW_GROUPS,
-  forRole, defaultsFor, seedRole, topUpRole, effectiveFor, all, setForRole, audit,
+  forRole, defaultsFor, seedRole, topUpRole, ownFor, effectiveFor, all, setForRole, audit,
   lockedFor, isSuperAdmin, SUPER_ADMIN_LOCKED,
 };

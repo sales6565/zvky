@@ -1463,6 +1463,16 @@ tr.past-round{opacity:0.62;}
 .pm-row input{margin:2px 0 0;flex:none;}
 .pm-row.inherited{opacity:.62;}
 .pm-row.inherited label{text-decoration:underline dotted var(--ink-faint);text-underline-offset:3px;}
+/* HELD THROUGH A GROUP. Marked like .own below — a left border and a wash —
+   rather than with the .inherited rules above it, and the difference matters:
+   those fade the row to 62% and dot-underline the label, which reads as
+   "disabled". An inherited permission is HELD; the checkbox beside it is
+   unticked only because the box is what is stored against the role. Fading it
+   would say the opposite of what is true.
+   (.pm-row.inherited itself is left alone: it belongs to the per-user grant
+   screen that was removed, and nothing sets it today.) */
+.pm-row.from-group{background:var(--info-t10);border-left:2px solid var(--info-t50);
+  margin-left:-8px;padding-left:8px;border-radius:0 4px 4px 0;}
 /* Granted to this person alone: marked on the row itself, so a screen full of
    ticks reads as "role" against "individual" without inspecting each one. */
 .pm-row.own{background:var(--success-wash-t07);border-left:2px solid var(--success-wash-t45);
@@ -3282,6 +3292,10 @@ function applyGate(id, also){
    index entry from the section it is supposed to open. */
 const SETTINGS_SECTIONS = [
   { permission:'settings.permissions',  label:'Role Permissions', heading:'Role Permissions', note:'What each role may do, across all six permission groups.' },
+  /* Listed beside Role Permissions because it is the other half of the same
+     question, and it has its own key: a studio can hand out the group screen
+     without handing out the role screen. Super Admin only by default. */
+  { permission:'settings.role_groups',  label:'Role Groups',      heading:'Role Groups',      note:'Departments, levels and sets of roles that inherit permissions together.' },
   { permission:'settings.asset_types',  label:'Scope of Work',    heading:'Scope of Work',    note:'The Scope of Work dropdown and the code prefix each asset gets.' },
   { permission:'settings.branding',     label:'Branding',         heading:'Branding',         note:'The name, tagline and logo shown in the header and on the sign-in screen.' },
   /* Was missing from this list entirely, which is a bug rather than an
@@ -12083,6 +12097,7 @@ async function renderSettings(){
     ${can('settings.integrations') ? '<div id="integrationSection"></div>' : ''}
     ${can('pnl.manage') ? '<div id="roleRatesSection"></div>' : ''}
     ${can('settings.permissions') ? '<div id="rolePermissionsSection"></div>' : ''}
+    ${can('settings.role_groups') ? '<div id="roleGroupsSection"></div>' : ''}
     ${can('settings.activity_log') ? '<div id="activityLogSection"></div>' : ''}
     ${can('settings.chat_activity') ? '<div id="chatActivitySection"></div>' : ''}
     ${can('mobile.distribute') ? '<div id="mobileDistSection"></div>' : ''}
@@ -12098,6 +12113,7 @@ async function renderSettings(){
   if(can('settings.mis_access')) renderMisAccess();
   if(can('settings.working_hours')) renderSchedule();
   if(can('settings.permissions')) await renderRolePermissions();
+  if(can('settings.role_groups')) await renderRoleGroups();
   if(can('settings.activity_log')) renderActivityLog();
   /* Drawn, not LOADED. renderChatActivity paints the header, the notice and a
      button; nothing is fetched until somebody presses it. That is deliberate:
@@ -17598,6 +17614,10 @@ async function showRolePermissions(roleKey){
   rpRole = data.role;
   const held = new Map(data.role.permissions.map(p=>[p.key, p]));
   const roleLabel = data.role.label;
+  /* How many of this role's permissions arrive through a group rather than
+     through the boxes below. Nought for every role in no group, which is every
+     role on an install with no groups. */
+  const inheritedCount = data.role.permissions.filter(p=>(p.inheritedFrom||[]).length).length;
 
   body.innerHTML = `
     <div class="pm-who">Editing the <b>${escapeHTML(roleLabel)}</b> role · everyone holding it is affected</div>
@@ -17608,7 +17628,14 @@ async function showRolePermissions(roleKey){
     <div class="pm-legend">
       <span><span class="pm-swatch own"></span>${data.role.permissions.filter(p=>p.enabled).length} of ${data.role.permissions.length} enabled</span>
       <span><span class="pm-swatch role"></span>${data.role.permissions.filter(p=>!p.isDefault).length} changed from this role's defaults</span>
+      ${inheritedCount ? `<span><span class="pm-swatch role"></span>${inheritedCount} inherited from ${(data.role.groups||[]).length} group${(data.role.groups||[]).length===1?'':'s'}</span>` : ''}
     </div>
+    ${(data.role.groups||[]).length ? `<div class="ref-note" style="margin:0 0 10px;">
+      <b>${escapeHTML(roleLabel)}</b> is in ${(data.role.groups||[]).map(g=>`${escapeHTML(g.name)}`).join(', ')}.
+      Permissions marked <span class="pm-tag role">from a group</span> are inherited: they are not stored
+      against this role, so unticking a box here will not take one away. Change the group, or take this
+      role out of it, in <b>Role Groups</b>.
+    </div>` : ''}
     <div class="pm-groups">
       ${rpCatalog.map(group=>`
         <div class="pm-group">
@@ -17618,12 +17645,20 @@ async function showRolePermissions(roleKey){
             /* settings.permissions is only ever on for the Super Admin role —
                a role holding it could give itself everything else. */
             const locked = state.locked || (!p.grantable && !data.role.isSuperAdmin);
-            return `<div class="pm-row ${state.enabled?'own':''}">
+            /* INHERITED FROM A GROUP, named. The checkbox stays bound to what is
+               stored against the ROLE — the server sends the role's own answer
+               for exactly this reason — so the tag is the whole of the
+               difference: this permission is held, and unticking the box will
+               not take it away. */
+            const from = state.inheritedFrom || [];
+            return `<div class="pm-row ${state.enabled?'own':''}${from.length?' from-group':''}">
               <input type="checkbox" data-key="${escapeHTML(p.key)}"
                 ${state.enabled?'checked':''} ${locked?'disabled':''}
                 ${p.danger?`data-danger="${escapeHTML(p.danger)}"`:''}>
               <div>
                 <label>${escapeHTML(p.label)}</label>
+                ${from.length?`<span class="pm-tag role" title="Granted by ${escapeHTML(from.map(x=>x.name).join(', '))}">from a group: ${escapeHTML(from.map(x=>x.name).join(', '))}</span>`:''}
+                ${from.length && !state.enabled?'<span class="pm-tag own">held by inheritance only</span>':''}
                 ${state.locked?'<span class="pm-tag role">cannot be switched off</span>':''}
                 ${(!p.grantable && !data.role.isSuperAdmin)?'<span class="pm-tag">super admin role only</span>':''}
                 ${p.pending?'<span class="pm-tag pending">no action yet</span>':''}
@@ -17694,6 +17729,231 @@ async function showRolePermissions(roleKey){
       await showRolePermissions(rpRole.key);
       rpMessage(res.summary, 'ok');
     }catch(err){ rpMessage(err.message, 'err'); }
+  });
+}
+
+/* ---------- role groups: the additive layer ---------- */
+/*
+ * A group is a named bag of permissions with a list of member roles, and every
+ * member inherits the bag. Groups only ever ADD — there is no group-level deny
+ * and no nesting — which is what makes this screen safe to use without first
+ * working out what it might take away.
+ *
+ * THE PAGE DECIDES NOTHING. Which permissions may be offered comes from the
+ * server as `grantable` (the catalogue, less the two no group may grant, less
+ * anything this editor does not hold); the gate is can('settings.role_groups')
+ * for drawing and requirePermission on every route for enforcing. Both halves,
+ * as everywhere else: the hidden section is a courtesy, the route is the lock.
+ */
+let rgState = null;       // the whole screen's data, as the server sent it
+let rgOpenId = null;      // which group is expanded
+
+async function renderRoleGroups(){
+  const el = document.getElementById('roleGroupsSection');
+  if(!el) return;
+  try{ rgState = await api('/role-groups'); }
+  catch(err){
+    el.innerHTML = `<div class="ref-section"><div class="ref-head"><h3>Role Groups</h3></div>
+      <div class="ref-err">${escapeHTML(err.message)}</div></div>`;
+    return;
+  }
+  if(!rpCatalog){
+    try{ rpCatalog = (await api('/permissions/catalog')).groups; }catch{ rpCatalog = []; }
+  }
+
+  const groups = rgState.groups || [];
+  el.innerHTML = `
+    <div class="ref-section" data-section="role-groups">
+      <div class="ref-head"><h3>Role Groups</h3>
+        <span class="ref-key">${groups.length} group${groups.length===1?'':'s'}</span>
+      </div>
+      <div class="ref-note">
+        A group grants permissions to every role in it, on top of whatever those roles already have.
+        Groups only add — they never take a permission away. A change here reaches everyone holding a
+        member role on their next request.
+      </div>
+      <div class="pm-pick" style="gap:6px;flex-wrap:wrap;">
+        <input type="text" id="rg_name" placeholder="New group name…" maxlength="${rgState.limits.nameMax}"
+          style="flex:1;min-width:180px;">
+        <select id="rg_kind">${rgState.kinds.map(k=>`<option value="${escapeHTML(k.key)}">${escapeHTML(k.label)}</option>`).join('')}</select>
+        <button class="btn btn-brand btn-sm" id="rg_create">Create group</button>
+      </div>
+      <div class="ref-err" id="rg_err"></div>
+      ${groups.length ? `<div class="pm-groups" style="grid-template-columns:1fr;">
+        ${groups.map(g=>rgCardHTML(g)).join('')}
+      </div>` : `<div class="ref-note" style="margin-top:10px;">
+        No groups yet. With none, every role has exactly the permissions set against it — which is
+        how this studio worked before groups existed.
+      </div>`}
+    </div>`;
+
+  document.getElementById('rg_create').onclick = guarded('create a role group', async ()=>{
+    const name = document.getElementById('rg_name').value.trim();
+    const kind = document.getElementById('rg_kind').value;
+    rgMessage('');
+    if(!name){ rgMessage('Give the group a name.'); return; }
+    const res = await api('/role-groups', { method:'POST', body:{ name, kind } })
+      .catch(err=>{ rgMessage(err.message); return null; });
+    if(!res) return;
+    rgOpenId = res.group.id;
+    showToast(`Created "${res.group.name}".`);
+    await renderRoleGroups();
+  });
+
+  el.querySelectorAll('[data-rg-open]').forEach(b=>b.onclick = ()=>{
+    rgOpenId = rgOpenId === b.dataset.rgOpen ? null : b.dataset.rgOpen;
+    renderRoleGroups();
+  });
+  groups.forEach(g=>{ if(g.id === rgOpenId) wireRoleGroup(g); });
+}
+
+function rgMessage(text){
+  const el = document.getElementById('rg_err');
+  if(el) el.textContent = text || '';
+}
+
+function rgCardHTML(g){
+  const open = g.id === rgOpenId;
+  return `<div class="pm-group" data-group="${escapeHTML(g.id)}">
+    <h4 style="display:flex;align-items:center;gap:8px;">
+      <button class="u-link" data-rg-open="${escapeHTML(g.id)}" style="font:inherit;">${escapeHTML(g.name)}</button>
+      <span class="pm-tag">${escapeHTML(g.kindLabel)}</span>
+      <span class="pm-tag own">${g.roles.length} role${g.roles.length===1?'':'s'}</span>
+      <span class="pm-tag role">${g.permissions.length} permission${g.permissions.length===1?'':'s'}</span>
+    </h4>
+    ${g.description ? `<div class="pm-note">${escapeHTML(g.description)}</div>` : ''}
+    ${!open ? `<div class="pm-note">${g.roles.length
+      ? escapeHTML(g.roles.map(r=>r.label).join(', '))
+      : 'No roles in this group yet — it grants nothing until one joins.'}</div>` : `
+      <div class="pm-who" style="margin-top:8px;">Editing <b>${escapeHTML(g.name)}</b> · every role below inherits every permission ticked below</div>
+      <div class="row2" style="margin-top:8px;">
+        <div><label>Name</label><input type="text" id="rg_rename" value="${escapeHTML(g.name)}" maxlength="${rgState.limits.nameMax}"></div>
+        <div><label>Kind</label><select id="rg_rekind">${rgState.kinds.map(k=>`<option value="${escapeHTML(k.key)}"${k.key===g.kind?' selected':''}>${escapeHTML(k.label)}</option>`).join('')}</select></div>
+      </div>
+      <label>Description</label>
+      <input type="text" id="rg_redesc" value="${escapeHTML(g.description||'')}" maxlength="${rgState.limits.descriptionMax}"
+        placeholder="What this group is for (optional)…">
+      <div class="pm-bar" style="margin:8px 0 0;">
+        <button class="btn btn-ghost btn-sm" id="rg_save_meta">Save name</button>
+        <span class="pm-msg" id="rg_meta_msg"></span>
+      </div>
+
+      <div class="field-lbl">Roles in this group</div>
+      <div class="pm-groups" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr));">
+        ${(rgState.roles||[]).map(r=>`<div class="pm-row ${g.roles.some(x=>x.key===r.key)?'own':''}">
+          <input type="checkbox" data-rg-role="${escapeHTML(r.key)}" ${g.roles.some(x=>x.key===r.key)?'checked':''}>
+          <div><label>${escapeHTML(r.label)}</label>
+            ${r.isActive?'':'<span class="pm-tag">inactive</span>'}
+          </div>
+        </div>`).join('')}
+      </div>
+      <div class="pm-bar">
+        <button class="btn btn-brand btn-sm" id="rg_save_roles">Save roles</button>
+        <span class="pm-msg" id="rg_roles_msg"></span>
+      </div>
+
+      <div class="field-lbl">Permissions this group grants</div>
+      <div class="pm-note">Only permissions you hold yourself can be granted through a group, and no group
+        may grant ${escapeHTML((rgState.neverGrantable||[]).join(' or '))}.</div>
+      <div class="pm-groups">
+        ${(rpCatalog||[]).map(cg=>`<div class="pm-group">
+          <h4>${escapeHTML(cg.label)}</h4>
+          ${cg.permissions.map(p=>{
+            const allowed = (rgState.grantable||[]).includes(p.key);
+            const on = g.permissions.includes(p.key);
+            return `<div class="pm-row ${on?'own':''}">
+              <input type="checkbox" data-rg-perm="${escapeHTML(p.key)}" ${on?'checked':''} ${allowed?'':'disabled'}>
+              <div><label>${escapeHTML(p.label)}</label>
+                ${allowed?'':'<span class="pm-tag">cannot be granted through a group</span>'}
+                ${p.danger?'<span class="pm-tag danger">high risk</span>':''}
+                ${p.describe?`<div class="pm-note">${escapeHTML(p.describe)}</div>`:''}
+              </div>
+            </div>`;
+          }).join('')}
+        </div>`).join('')}
+      </div>
+      <div class="pm-bar">
+        <button class="btn btn-brand btn-sm" id="rg_save_perms">Save permissions</button>
+        <button class="btn btn-ghost btn-sm" id="rg_delete" style="color:var(--brand-accent);">Delete group</button>
+        <span class="pm-msg" id="rg_perms_msg"></span>
+      </div>`}
+  </div>`;
+}
+
+function wireRoleGroup(g){
+  const card = document.querySelector(`[data-group="${g.id}"]`);
+  if(!card) return;
+  const say = (id, text, cls='')=>{
+    const el = document.getElementById(id);
+    if(el){ el.textContent = text; el.className = `pm-msg ${cls}`; }
+  };
+
+  document.getElementById('rg_save_meta').onclick = guarded('rename a role group', async ()=>{
+    const body = {
+      name: document.getElementById('rg_rename').value.trim(),
+      kind: document.getElementById('rg_rekind').value,
+      description: document.getElementById('rg_redesc').value.trim(),
+    };
+    say('rg_meta_msg', 'Saving…');
+    try{
+      const res = await api(`/role-groups/${encodeURIComponent(g.id)}`, { method:'PATCH', body });
+      showToast(`Saved "${res.group.name}".`);
+      await renderRoleGroups();
+    }catch(err){ say('rg_meta_msg', err.message, 'err'); }
+  });
+
+  document.getElementById('rg_save_roles').onclick = guarded('set a role group\'s roles', async ()=>{
+    const roles = [...card.querySelectorAll('input[data-rg-role]')]
+      .filter(b=>b.checked).map(b=>b.dataset.rgRole);
+    say('rg_roles_msg', 'Saving…');
+    try{
+      const res = await api(`/role-groups/${encodeURIComponent(g.id)}/roles`,
+        { method:'PUT', body:{ roles } });
+      say('rg_roles_msg', res.summary, 'ok');
+      await renderRoleGroups();
+      /* The role screen, if it is showing a role whose inheritance just moved. */
+      if(rpRole && can('settings.permissions')) await showRolePermissions(rpRole.key);
+    }catch(err){ say('rg_roles_msg', err.message, 'err'); }
+  });
+
+  document.getElementById('rg_save_perms').onclick = guarded('set a role group\'s permissions', async ()=>{
+    const permissions = [...card.querySelectorAll('input[data-rg-perm]')]
+      .filter(b=>b.checked).map(b=>b.dataset.rgPerm);
+    say('rg_perms_msg', 'Saving…');
+    try{
+      const res = await api(`/role-groups/${encodeURIComponent(g.id)}/permissions`,
+        { method:'PUT', body:{ permissions } });
+      say('rg_perms_msg', res.summary, 'ok');
+      await renderRoleGroups();
+      if(rpRole && can('settings.permissions')) await showRolePermissions(rpRole.key);
+    }catch(err){ say('rg_perms_msg', err.message, 'err'); }
+  });
+
+  /* DELETING SHOWS WHAT WILL BE LOST FIRST, per role and by name — and it asks
+     the SERVER what that is rather than working it out here: a role that holds
+     one of these permissions in its own right loses nothing, and only the
+     server knows that. */
+  document.getElementById('rg_delete').onclick = guarded('delete a role group', async ()=>{
+    let impact;
+    try{ impact = await api(`/role-groups/${encodeURIComponent(g.id)}/impact`); }
+    catch(err){ say('rg_perms_msg', err.message, 'err'); return; }
+
+    const lines = impact.losses.length
+      ? impact.losses.map(l=>`${l.label} loses ${l.lostLabels.join(', ')}`).join('\n')
+      : 'No role loses anything — every member already holds these permissions in its own right.';
+    const ok = await askConfirm({
+      title: `Delete the group "${g.name}"?`,
+      message: `${impact.group.roles.length} role(s) stop inheriting `
+        + `${impact.group.permissions.length} permission(s).\n\n${lines}`,
+      confirmLabel: 'Delete group', danger: true });
+    if(!ok) return;
+    try{
+      const res = await api(`/role-groups/${encodeURIComponent(g.id)}`, { method:'DELETE' });
+      rgOpenId = null;
+      showToast(res.summary);
+      await renderRoleGroups();
+      if(rpRole && can('settings.permissions')) await showRolePermissions(rpRole.key);
+    }catch(err){ say('rg_perms_msg', err.message, 'err'); }
   });
 }
 

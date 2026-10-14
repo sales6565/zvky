@@ -10,6 +10,7 @@ const { applyTableOptions } = require('./db-collation');
 const reporting = require('./reporting');
 const catalog = require('./permission-catalog');
 const rolePermissions = require('./role-permissions');
+const roleGroups = require('./role-groups');
 const defaults = require('./reference-defaults');
 const branding = require('./branding');
 const workSchedule = require('./work-schedule');
@@ -615,6 +616,106 @@ async function ensureRoleTiers(db, log) {
     if (!rows.length || rows[0].tier !== from) continue;
     await db.query('UPDATE roles SET tier = $1 WHERE `key` = $2 AND tier = $3', [to, key, from]);
     log(`Schema: "${key}" moved from the ${from} tier to ${to}.`);
+  }
+}
+
+/* ROLE GROUPS: the additive layer, and the three tables it needs.
+ *
+ * IDEMPOTENT, like every step in this file: CREATE TABLE IF NOT EXISTS, and a
+ * sweep that only ever deletes rows pointing at things that no longer exist. It
+ * seeds NOTHING — no default groups, no memberships — because the hard
+ * constraint on the feature is that no role's permissions change until somebody
+ * deliberately makes a group. A studio that upgrades and never opens the screen
+ * has three empty tables and identical access.
+ *
+ * THE FOREIGN KEYS ARE THE CLEAN-UP. Members and grants both cascade from
+ * role_groups, so deleting a group cannot leave an orphan — that is a property
+ * of the schema rather than of a function remembering to tidy up.
+ *
+ * ROLES HAVE NO FOREIGN KEY, and that is not an oversight: a designation lives
+ * in reference data that is loaded into memory, and role_permissions has never
+ * had one either. src/role-groups.js forgetRole() is called when a designation
+ * is deleted; the sweep below is for installs that deleted one before this
+ * existed, and it is guarded — with no roles loaded it does nothing rather than
+ * reading an empty list as "every membership is an orphan".
+ */
+async function ensureRoleGroupTables(db, log) {
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS role_groups (
+      id               CHAR(36)     NOT NULL PRIMARY KEY,
+      name             VARCHAR(80)  NOT NULL,
+      kind             VARCHAR(16)  NOT NULL DEFAULT 'custom',
+      description      VARCHAR(300) NULL,
+      created_by_email VARCHAR(191) NULL,
+      created_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_role_groups_name (name),
+      KEY idx_role_groups_kind (kind)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS role_group_members (
+      group_id       CHAR(36)     NOT NULL,
+      role_key       VARCHAR(64)  NOT NULL,
+      added_by_email VARCHAR(191) NULL,
+      added_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (group_id, role_key),
+      KEY idx_role_group_members_role (role_key),
+      CONSTRAINT fk_rgm_group FOREIGN KEY (group_id) REFERENCES role_groups(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS role_group_permissions (
+      group_id       CHAR(36)     NOT NULL,
+      permission_key VARCHAR(64)  NOT NULL,
+      added_by_email VARCHAR(191) NULL,
+      added_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (group_id, permission_key),
+      CONSTRAINT fk_rgp_group FOREIGN KEY (group_id) REFERENCES role_groups(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS role_group_audit (
+      id          CHAR(36)     NOT NULL PRIMARY KEY,
+      seq         BIGINT       NOT NULL AUTO_INCREMENT UNIQUE,
+      group_id    CHAR(36)     NULL,
+      group_name  VARCHAR(80)  NULL,
+      action      VARCHAR(16)  NOT NULL,
+      detail      VARCHAR(500) NULL,
+      actor_id    CHAR(36)     NULL,
+      actor_email VARCHAR(191) NULL,
+      created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_role_group_audit (seq)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+
+  /* A grant the catalogue no longer has is dead weight — the same sweep
+     ensurePermissionTables does for role_permissions, for the same reason. */
+  const { rows: granted } = await db.query('SELECT DISTINCT permission_key FROM role_group_permissions');
+  for (const key of granted.map((r) => r.permission_key).filter((k) => !catalog.isPermission(k))) {
+    await db.query('DELETE FROM role_group_permissions WHERE permission_key = $1', [key]);
+    log(`Schema: dropped group grants of "${key}", which is not a permission any more.`);
+  }
+
+  /* And the two keys a group may never grant, in case one was granted before
+     that rule existed or the catalogue's own marking changed. */
+  for (const key of roleGroups.NEVER_GRANTABLE) {
+    const { result } = await db.query(
+      'DELETE FROM role_group_permissions WHERE permission_key = $1', [key]);
+    if (result && result.affectedRows) {
+      log(`Schema: revoked group grants of "${key}" — no group may grant it.`);
+    }
+  }
+
+  /* Memberships pointing at a designation that no longer exists. GUARDED: an
+     empty roles list means reference data has not loaded, not that every
+     membership is an orphan. */
+  const known = referenceData.list('roles', { includeInactive: true }).map((r) => r.key);
+  if (known.length) {
+    const holes = known.map((_, i) => `$${i + 1}`).join(',');
+    const { rows: orphans } = await db.query(
+      `SELECT DISTINCT role_key FROM role_group_members WHERE role_key NOT IN (${holes})`, known);
+    if (orphans.length) {
+      await db.query(
+        `DELETE FROM role_group_members WHERE role_key NOT IN (${holes})`, known);
+      log(`Schema: dropped group membership for ${orphans.length} deleted designation(s): `
+        + `${orphans.map((r) => r.role_key).join(', ')}.`);
+    }
   }
 }
 
@@ -4140,6 +4241,7 @@ const STEPS = [
   ['reporting hierarchy', ensureReportingAndMembership],
   ['review pipeline', ensureReviewWorkflow],
   ['role permissions', ensurePermissionTables],
+  ['role groups', ensureRoleGroupTables],
   ['asset ownership', ensureAssetOwnership],
   /* Before the client hierarchy, and before anything else adds a foreign key.
      A key cannot be created between two columns whose collations disagree, so

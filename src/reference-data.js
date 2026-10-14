@@ -564,6 +564,23 @@ async function remove(db, name, key) {
   }
 
   await db.query(`DELETE FROM ${COLLECTIONS[name].table} WHERE \`key\` = $1`, [key]);
+  /* A DELETED DESIGNATION IS FORGOTTEN BY THE PERMISSION LAYER TOO.
+   *
+   * There is no foreign key from either permission table to this one — a
+   * designation lives here, in reference data that loads into memory, and
+   * role_permissions has never had one. So a membership row would otherwise
+   * outlive the role it names, and a designation later recreated under the same
+   * key would silently arrive already in a group. Only the group MEMBERSHIP is
+   * cleared: role_permissions rows are left exactly as they were, because they
+   * are a studio's configuration and this function is also the path a
+   * mistaken delete takes.
+   *
+   * Tolerant of a database whose migration has not created the table yet, for
+   * the same reason effectiveFor() is: a new feature must not be the reason an
+   * old screen stops working. */
+  if (name === 'roles') {
+    await require('./role-groups').forgetRole(db, key).catch(() => {});
+  }
   await load(db);
   return { ok: true, status: 200, deleted: current };
 }

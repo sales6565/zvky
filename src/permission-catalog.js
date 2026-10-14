@@ -1598,6 +1598,29 @@ const GROUPS = [
           + 'It also shows each key once, at creation, and never again.',
       },
       {
+        key: 'settings.role_groups',
+        label: 'Manage Role Groups',
+        /* Role groups: a named bag of permissions that every member role
+         * inherits. See src/role-groups.js.
+         *
+         * SUPER ADMIN ONLY BY DEFAULT, through the same implication
+         * settings.permissions uses — managePermissions is carried by that tier
+         * and no other. Deciding that a whole department inherits a permission
+         * is the same kind of act as deciding what one role may do, so it starts
+         * in the same hands.
+         *
+         * GRANTABLE, unlike settings.permissions beside it. A studio can hand
+         * this to somebody without handing them the role screen, and the
+         * escalation rules make that safe to do: a group can never grant this
+         * key or settings.permissions, and nobody can grant through a group a
+         * permission they do not hold themselves. */
+        impliedBy: has('managePermissions'),
+        describe: 'Create role groups and decide which permissions their member roles inherit. '
+          + 'Groups only ever add permissions — they cannot take one away.',
+        danger: 'Whoever holds this can grant any permission they themselves hold to every role '
+          + 'in a group, in one action.',
+      },
+      {
         key: 'settings.permissions',
         label: 'Manage Role Permissions',
         // This screen itself. Held by the Super Admin role and not switchable
