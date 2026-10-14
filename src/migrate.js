@@ -11,6 +11,7 @@ const reporting = require('./reporting');
 const catalog = require('./permission-catalog');
 const rolePermissions = require('./role-permissions');
 const roleGroups = require('./role-groups');
+const emailOutbox = require('./email-outbox');
 const defaults = require('./reference-defaults');
 const branding = require('./branding');
 const workSchedule = require('./work-schedule');
@@ -716,6 +717,30 @@ async function ensureRoleGroupTables(db, log) {
       log(`Schema: dropped group membership for ${orphans.length} deleted designation(s): `
         + `${orphans.map((r) => r.role_key).join(', ')}.`);
     }
+  }
+}
+
+/* The email queue and the transport's health flag.
+ *
+ * IDEMPOTENT and seeding nothing: CREATE TABLE IF NOT EXISTS, plus one
+ * INSERT IGNORE for the single state row. No message is invented, no transport
+ * is switched on — EMAIL_TRANSPORT defaults to smtp, which is what this
+ * application did before, so an upgrade changes nobody's mail.
+ *
+ * The tables are created even on a deployment that never configures Gmail,
+ * because the queue serves whichever transport is chosen — including smtp,
+ * which gains durable retries by being behind it.
+ */
+async function ensureEmailOutboxTables(db, log) {
+  await emailOutbox.ensureTables(db);
+  /* Rows from a previous life of this table whose kind the code no longer
+     knows. Left alone deliberately rather than deleted: an unrecognised kind
+     still sends, and deleting somebody's queued mail to tidy a column is not a
+     migration's business. Counted, so it is visible. */
+  const { rows } = await db.query(
+    `SELECT COUNT(*) AS n FROM email_outbox WHERE kind NOT IN ('notification','alert','test')`);
+  if (Number(rows[0].n) > 0) {
+    log(`Schema: the email outbox holds ${rows[0].n} message(s) of an unknown kind — left queued.`);
   }
 }
 
@@ -4242,6 +4267,7 @@ const STEPS = [
   ['review pipeline', ensureReviewWorkflow],
   ['role permissions', ensurePermissionTables],
   ['role groups', ensureRoleGroupTables],
+  ['email outbox', ensureEmailOutboxTables],
   ['asset ownership', ensureAssetOwnership],
   /* Before the client hierarchy, and before anything else adds a foreign key.
      A key cannot be created between two columns whose collations disagree, so

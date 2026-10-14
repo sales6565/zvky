@@ -26,7 +26,19 @@
 // unreachable would be a much worse bug than a missing email.
 
 const emailConfig = require('./email-config');
-const mailer = require('./mailer');
+/* THE QUEUE, not the wire.
+ *
+ * This file used to call mailer.sendWithSavedConfig() directly, which opened an
+ * SMTP connection inside the 1.5-second batch window. It now puts the message on
+ * a durable queue and returns; src/email-outbox.js sends it, retries it on the
+ * studio's existing six-retry schedule, and holds it rather than losing it when
+ * the transport is down.
+ *
+ * NOTHING ELSE IN THIS FILE CHANGED. The batching window, the opt-out lookup,
+ * the message builders, the swallow-everything error handling and both entry
+ * points are exactly as they were — the two lines below are the whole diff, and
+ * they take the same arguments they always did. */
+const emailOutbox = require('./email-outbox');
 const branding = require('./branding');
 
 /* How long to wait for more assignments to the same person before sending.
@@ -338,7 +350,7 @@ async function flushOne(key) {
     }
     const assignedBy = await personName(db, entry.actorId);
     const message = assignedMessage({ tasks: found, assignedBy });
-    await mailer.sendWithSavedConfig(db, { to: to.email, ...message });
+    await emailOutbox.enqueue(db, { to: to.email, ...message });
   } catch (err) {
     console.warn(`[email] assignment notice to ${entry.recipientId} failed: ${err.message}`);
   }
@@ -400,7 +412,7 @@ async function taskSubmitted(db, { assetId, actorId, at, recipientIds }) {
       const to = await recipient(db, id);
       if (!to) continue;                    // no address, or opted out
       const message = submittedMessage({ task: t, completedBy, at });
-      await mailer.sendWithSavedConfig(db, { to: to.email, ...message });
+      await emailOutbox.enqueue(db, { to: to.email, ...message });
     }
   } catch (err) {
     console.warn(`[email] submission notice for ${assetId} failed: ${err.message}`);

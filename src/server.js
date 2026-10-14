@@ -620,6 +620,10 @@ async function start() {
        above: a restarted process comes back holding rows that came due while it
        was down. */
     outbox.schedule(db);
+    /* The email queue's own worker, on the same footing as the webhook outbox
+       above it: one timer, unref'd, and a no-op when EMAIL_SWEEP_MS is 0 (which
+       is what the test suite sets, so a suite never races a background send). */
+    require('./email-outbox').schedule(db);
   } catch (err) {
     // Start anyway: a server that is up can report through /api/health why the
     // database is unreachable, where one that exited says nothing at all.

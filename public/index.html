@@ -18917,6 +18917,10 @@ const NOTIF_TITLES = {
      you have been given and `submitted` is work you gave out returning for
      review. This is work you had finished arriving again. */
   changes_requested: 'Changes requested — back with you',
+  /* Not about work at all — the studio's own plumbing. Raised for Super Admins
+     when email cannot be sent, and worded so the one action it wants is in the
+     title: go and look. */
+  email_trouble: 'Email needs attention',
 };
 const notifTitle = (n) => (n && NOTIF_TITLES[n.kind]) || 'Something needs your attention';
 

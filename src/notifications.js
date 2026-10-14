@@ -106,6 +106,22 @@ const KINDS = {
      them is what makes that a decision the studio took rather than something
      that happened to them. */
   work_resumed: 'work_resumed',
+  /* SOMETHING IS WRONG WITH THE STUDIO'S EMAIL, told to the Super Admins.
+   *
+     THE ONE NOTIFICATION KIND THAT EXISTS BECAUSE AN EMAIL COULD NOT BE SENT,
+     and that is the whole point of it: the alert about a broken mail connection
+     cannot itself be an email. src/email-outbox.js raises this and queues the
+     email too, so a Super Admin hears once immediately and once more when
+     sending recovers — never a loop, because the in-app half cannot fail the way
+     the email half can.
+     
+     IT CARRIES NO DETAIL, and that is deliberate rather than a limitation of
+     raise(): the specifics belong on the Settings screen, where the person can
+     act on them, and a notification row is read back into a bell and pushed to a
+     phone. "What is wrong with the mail" is not something to put on a lock
+     screen, and a reason string is exactly where a token or an address would
+     eventually be pasted by somebody adding a line. */
+  email_trouble: 'email_trouble',
   /* A reviewer sent work back to the artist with changes required, and routed it
      to them.
    *
@@ -185,6 +201,10 @@ function describe(row) {
     const where = row.project_name ? ` in ${row.project_name}` : '';
     const who = row.other_name || 'Somebody';
     return `${who} submitted ${code}${name}${where} for review.`;
+  }
+  if (row.kind === KINDS.email_trouble) {
+    return 'The studio\'s email needs attention — sending may be paused. '
+      + 'Open Settings → Email to see what is waiting and why.';
   }
   if (row.kind === KINDS.changes_requested) {
     /* Names the project for the same reason `submitted` does: an artist with
