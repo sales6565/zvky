@@ -838,7 +838,23 @@ test('assigned, accepted, stamped', { skip: cfg ? false : SKIP_REASON }, async (
     const bosStart = await start('bo', asset.id);
     assert.strictEqual(bosStart.status, 200);
     assert.ok(bosStart.body.work.startedAt, 'a fresh start stamp, recorded on their click');
-    assert.strictEqual((await workOf(asset.id)).currentSeconds, 0, 'their round begins at nothing');
+    /* A FRESH ROUND, not a figure of exactly nought.
+     *
+     * This is the only one of this file's currentSeconds assertions taken while
+     * a clock is RUNNING — the others follow a hand-over with no session open,
+     * where nought is exact. Here the stretch opened a moment ago and
+     * currentSeconds is measured from the database's NOW() at second precision,
+     * so whether it reads 0 or 1 depends on which side of a second boundary the
+     * two requests landed. It read 1 in a loaded full run and 0 every time this
+     * file was run alone.
+     *
+     * What the case is about is that BO'S round starts from nothing rather than
+     * inheriting ana's seconds — ana's stretch was over a second long and is a
+     * whole round of its own, so a bound of two seconds separates the two
+     * answers with room to spare. */
+    const fresh = (await workOf(asset.id)).currentSeconds;
+    assert.ok(fresh <= 2,
+      `their round begins at nothing rather than inheriting the previous one (${fresh}s)`);
     assert.strictEqual((await submit('bo', asset.id, 'https://example.test/bo-v1')).status, 201);
   });
 
