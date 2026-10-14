@@ -98,15 +98,32 @@ test('TL Review has exactly two ways out, and one of them is the new stage', () 
   assert.strictEqual(workflow.transitionFor('outsource_reopen').to, 'not_started');
 });
 
-test('TL Approved has exactly two ways out', () => {
+test('TL Approved has exactly three ways out, and two of them are the originals', () => {
+  /* THIS SAID TWO, AND WAS RIGHT WHEN IT WAS WRITTEN. Submit Feedback added the
+   * third — back to the artist with the changes required — and the number here
+   * is deliberately kept exact rather than loosened to "at least two": the
+   * whole value of this assertion is that a FOURTH exit has to come past it.
+   *
+   * The two originals are pinned by destination as well as by name, so the
+   * addition is visibly an addition: nothing that left this stage before leaves
+   * it differently now. The new one is covered in full by
+   * tests/tl-feedback.test.js.
+   */
   const out = workflow.TRANSITIONS
     .filter((t) => t.from.includes('tl_approved'))
     .map((t) => [t.action, t.to])
     .sort((a, b) => a[0].localeCompare(b[0]));
   assert.deepStrictEqual(out, [
     ['tl_send_to_client', 'approved_for_client'],
+    ['tl_submit_feedback', 'tl_changes_requested'],
     ['tl_to_cd', 'pending_cd_review'],
   ]);
+
+  /* AND THE THIRD GOES BACKWARDS, into the stage a decline at TL Review already
+     reaches — not to a new one. That is what let every status list in the
+     application stay as it was. */
+  assert.strictEqual(workflow.transitionFor('tl_submit_feedback').to,
+    workflow.transitionFor('tl_request_changes').to);
 });
 
 test('Send to Client still lands where the CD route lands', () => {

@@ -49,7 +49,7 @@ function makeDom({ without = [] } = {}) {
     const el = {
       id,
       textContent: '', value: '', placeholder: '', className: '', type: '',
-      disabled: false, tagName: 'DIV',
+      disabled: false, tagName: id === 'ask_textarea' ? 'TEXTAREA' : 'DIV',
       style: {},
       _classes: new Set(),
       classList: {
@@ -61,14 +61,19 @@ function makeDom({ without = [] } = {}) {
       select() { el._selected = true; },
       onclick: null,
       click() { if (el.onclick) return el.onclick({ target: el }); return undefined; },
-      setAttribute() {}, getAttribute: () => null,
+      setAttribute() {}, getAttribute: () => null, removeAttribute() {},
       querySelector: () => null, querySelectorAll: () => [],
       appendChild() {}, remove() {},
     };
     return el;
   };
+  /* ask_textarea and ask_count arrived with Submit Feedback, which gave openAsk
+     a multi-line field, a live character count and "disabled until it is valid".
+     This stub stands in for the page's markup, so it has to carry what the
+     markup carries: without them openAsk reads style off null and every case
+     here fails inside the dialog rather than on its own assertion. */
   for (const id of ['askWrap', 'ask_title', 'ask_message', 'ask_field', 'ask_label',
-    'ask_input', 'ask_err', 'ask_confirm', 'ask_cancel',
+    'ask_input', 'ask_textarea', 'ask_count', 'ask_err', 'ask_confirm', 'ask_cancel',
     'd_holdBtn', 'd_resumeBtn', 'd_startErr', 'toast']) {
     if (without.includes(id)) continue;
     nodes.set(id, make(id));
