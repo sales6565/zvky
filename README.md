@@ -123,6 +123,7 @@ Admin turns it off — there is no role that lacks it by default; and holding th
 still not permission to hold somebody *else's* task. A second key, `asset.hold_any`, is
 what admits that, and its reach is exactly what the holder's own dashboard shows them — see
 [Hold: your own task, or anything on your dashboard](#hold-your-own-task-or-anything-on-your-dashboard)
+[TL Approved has three ways out, and one of them goes back](#tl-approved-has-three-ways-out-and-one-of-them-goes-back)
 for the per-status table, the matrix, and why project membership was the wrong scope.
 
 ### What the tier system still does
@@ -1120,6 +1121,10 @@ Not Assigned --assign--> Assigned --accept--> In Progress --submit--> TL Review
                                                       +-- (assignee reworks) <-- relay -- CD Feedbacks   |
                                                                                                          |
              TL Review --tl_send_to_client (needs review.tl_send_client)-------------------------------- +
+
+   TL Approved --tl_to_cd--> CD Review                 (the ordinary route on)
+   TL Approved --tl_send_to_client--> Approved for Client   (needs review.tl_send_client)
+   TL Approved --tl_submit_feedback--> TL Feedbacks    (needs review.tl_feedback — back to the artist)
 ```
 
 **Approved for Client is reachable two ways.** The ordinary route runs through
@@ -1133,6 +1138,123 @@ The permission is deliberately separate from `review.tl`, and off for every role
 except the full-access tier: a lead needs the standing to act at the TL gate
 *and* the authority to walk around the next one. `review.approve_client` is a
 third, different thing — signing off while standing *in* the CD gate.
+
+### TL Approved has three ways out, and one of them goes back
+
+**Two of them send the work on** — to the Creative Director (`tl_to_cd`), or past
+them to the client (`tl_send_to_client`, which needs `review.tl_send_client`).
+**The third sends it back:** *Submit Feedback* moves the asset to **TL Feedbacks**
+with the changes required, and the artist reworks it.
+
+**Why it had to exist.** `tl_request_changes` is defined `from:
+['pending_tl_review']`, so once a lead has approved the work that move is used
+up. A lead who approved and then spotted something had nothing to click: the
+fault went on with the work, or somebody reassigned the asset to fake a round.
+
+**It lands in the stage that already existed, and that is the whole design.**
+`tl_changes_requested` is already in `ASSIGNEE_STATUSES`, `REWORK_STATUSES`,
+`WORKING_STATUSES` (so the clock runs on the rework), `HAND_OVER_STATUSES`, the
+page's hold list, its start list and its Assets List groups. A second
+"feedback-after-approval" status would have been a stage every one of those lists
+had to learn about, for a difference nobody acts on.
+
+**And it writes the feedback row the review route already writes** — `feedback`,
+`stage` `tl`, `decision` `changes_requested`, `given_by`, `text` — so the
+artist's "Feedback to address" box and the Review feedback list render it with no
+change to either. There is **no attachment system here because there is none
+there**: the `feedback` table has no attachments column, and the one table that
+does (`external_feedback`, for a bug from the build) belongs to the Dev & QA
+integration and is a different mechanism. Nothing new was invented to avoid
+inventing a second one.
+
+**The loop, end to end.** Lead approves → *Submit Feedback* → **TL Feedbacks**,
+routed to the artist whose work it was (`routeTo: 'assignee'`, the same resolver
+the decline at TL Review uses) → the artist starts the clock and submits → **TL
+Review** → approve → **TL Approved** again, where all three buttons apply. The
+second pass is the first pass, which is what makes the button safe to offer more
+than once. `tests/tl-feedback.test.js` walks exactly that against a live server
+and asserts the rework's seconds were recorded, because a round that could be
+handed in but not clocked would be a round the Efficiency report counts with no
+hours in it.
+
+**No round is created by asking.** A round in this application is a
+*submission* — the reports count `asset_versions` rows — so neither way of asking
+for changes creates one, and the artist's resubmission creates exactly one
+whichever asked. Double counting is not prevented, it is **not expressible**.
+
+**Two cases are refused rather than routed, and the order matters:**
+
+| | |
+| --- | --- |
+| **Out with a freelancer** | A freelancer has no login, cannot read the note, cannot run the clock and cannot submit. Refused, naming them, and pointing at the Outsource tab's reopen — which is the right action for sending a freelancer's round back |
+| **Nobody assigned** | TL Feedbacks sits on a **desk**. Routing it to nobody is how work disappears, so it is refused and says to assign it first |
+
+Outsourced is asked **first**, and that is a lesson taken whole from
+`src/asset-hold.js`: an outsourced task has no internal assignee, so the
+unassigned check would catch it and answer *"nobody is assigned"* — naming a
+person who does not exist and hiding the real reason.
+
+**The rule is stated once.** [`src/tl-feedback.js`](src/tl-feedback.js) is the
+Hold button's arrangement adopted from the start rather than after four reports:
+one pure function, returning a **reason** rather than a boolean, asked by the
+route with its own facts and by the board with the facts it already has batched,
+and sent per asset as `feedback_state` beside `hold_state`. The page reads that
+one property — `fbState.canSubmit === true` — and a test asserts the button's
+code contains no `can(`, no `mayActAtTlGate`, no `assignee_id` and no
+`outsourced_to`. The two older buttons at this stage still mirror their actor by
+hand; this one does not, and that is deliberate.
+
+**The feedback is required, with a floor and a ceiling.** 12 characters at least
+(*"fix it"* is not changes required, and a rework round costs an artist a day) and
+2000 at most (what stays readable in the drawer and the history panel — the
+column is `TEXT`, so this is a judgement, not storage). Both numbers are
+exported, travel to the page inside `feedback_state`, and are what the modal's
+counter and the server's validator both read, so "too short" means the same thing
+in both. Whitespace is trimmed **before** measuring, and the trimmed text is what
+is stored.
+
+**The modal is the page's own**, never `prompt()`/`confirm()`/`alert()` — those
+throw in the desktop application, which is how the Hold button came to "do
+nothing" there. `openAsk()` gained a text area, a live character count and
+"disabled until it is valid" for this, so every future question can have them;
+Enter inside the box is a new line and Escape cancels. On success the card moves
+to TL Feedbacks **from the server's own copy of the asset** (`applyAssetUpdate`)
+with no reload and no second fetch; on failure the question stays up with the
+server's reason inside it and the typed feedback still there. `npm run
+smoke:feedback` in `desktop/` asserts all twelve of those claims in a real
+Electron window.
+
+**The history line is its own.** `tl_submit_feedback` is a separate action from
+`tl_request_changes` because the question *"was this spotted before or after we
+approved it"* has to stay answerable from history already written. The server's
+sentence names the person and quotes the feedback — *"Feedback submitted by
+Priya: The rim light reads flat…"* — and the whole text is on the `asset_events`
+row as `note`, which the history panel renders under the line.
+
+**And the artist is told.** Nothing in this application raised a notification
+when a reviewer asked for changes — the only asset notification from the review
+routes was `submitted`, travelling the other way. `changes_requested` is one kind,
+one row, raised to the id the transition actually routed the work to, after the
+commit (the bell is a courtesy; the feedback is the record) and with **no feedback
+text in it**, for the same reason a chat mention carries no message body: it is
+rendered on a lock screen. The existing decline at TL Review still raises nothing
+— widening that was not asked for and is a behaviour change to an existing path,
+so it is flagged here rather than made quietly.
+
+### Permissions: `review.tl_feedback`
+
+Its own key, **on by default for exactly the designations that hold
+`review.tl`** — asserted designation by designation in
+`tests/asset-workflow.test.js`, so on the day it ships every lead who can approve
+work can also send it back and nobody gains or loses an action. What the separate
+key buys is the **switch**: a studio that wants coordinators to pass work on but
+not to unsay an approval has somewhere to say so. Deliberately *not*
+`review.tl_send_client`'s default of full access alone — skipping the Creative
+Director sends work out of the review path irreversibly, while this sends it back
+to the artist who did it and their next submission returns it to the same gate.
+The actor needs **both halves**, exactly as `tlClientSender` does: standing at the
+gate (`review.tl`, through `canActAtTlGate`, which carries the project scope) and
+this key.
 
 ### Status is not the same as whose desk it is on
 
