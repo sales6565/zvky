@@ -361,6 +361,35 @@ const GROUPS = [
         describe: 'Send work in TL Review straight to Approved for Client, skipping CD Review. '
           + 'Requires TL Review Actions as well.',
       },
+      {
+        key: 'review.tl_feedback',
+        label: 'TL Submit Feedback',
+        /* Sending APPROVED work back to the artist with changes — the third way
+           out of TL Approved, beside the two that send it forwards.
+         *
+         * ITS OWN KEY, AND ON BY DEFAULT FOR THE SAME DESIGNATIONS AS
+         * review.tl. The implication below is review.tl's own, character for
+         * character, which is the whole intent: on the day this ships every
+         * designation that can approve work at this gate can also send it back,
+         * so nobody gains or loses an action. What the separate key buys is the
+         * switch — a studio that wants its coordinators to pass work on but not
+         * to unsay an approval now has somewhere to say so, which it would not
+         * have if this rode on review.tl.
+         *
+         * NOT fullAccess-only like review.tl_send_client beside it, and the
+         * difference is which direction the work goes. Skipping the Creative
+         * Director sends work OUT of the studio's review path and cannot be
+         * taken back, so it defaults to the top tier alone. This sends work
+         * back IN, to the artist who did it, and the artist's next submission
+         * returns it to the same gate — the reversible half of a lead's job,
+         * which is what review.tl already describes.
+         *
+         * Requires review.tl as well: the actor is both halves, exactly as
+         * tlClientSender is. See tlFeedbackSubmitter in src/asset-workflow.js. */
+        impliedBy: anyOf(reviewsAt('tl'), has('leadsTeam'), fullAccess),
+        describe: 'Send work in TL Approved back to the artist with the changes required, which '
+          + 'moves it to TL Feedbacks. Requires TL Review Actions as well.',
+      },
       { key: 'review.deliver',        label: 'Mark as Delivered',    impliedBy: has('deliver') },
 
       /* --- the client's own round -----------------------------------------

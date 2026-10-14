@@ -377,6 +377,18 @@ const actors = {
    * than pass work through it. A lead with review.tl and not this one reviews
    * exactly as before and never sees the button. */
   tlClientSender: (ctx) => Boolean(ctx.canSendToClient && (ctx.isTeamLead || ctx.canOverride)),
+  /* The lead who sends APPROVED work back for changes.
+   *
+   * Both halves, exactly as tlClientSender above: the standing to act at this
+   * gate at all (isTeamLead, which already asks for review.tl and for project
+   * reach), AND its own key. The key is review.tl_feedback, and it defaults to
+   * the same designations review.tl itself defaults to — so on the day this
+   * ships every lead who can approve work can also send it back, and a Super
+   * Admin who wants to take ONLY this away now has a switch for it. That is why
+   * it is a second key rather than a reuse of review.tl: the two existing
+   * buttons at this stage are "where does it go next", and this one unsays the
+   * approval, which a studio may well want to hold more narrowly. */
+  tlFeedbackSubmitter: (ctx) => Boolean(ctx.canSubmitTlFeedback && (ctx.isTeamLead || ctx.canOverride)),
   // Anyone who may set up work on the asset: assign it, or edit it.
   //
   // Both halves, and the second one used to be missing. Assigning is its own
@@ -652,6 +664,61 @@ const TRANSITIONS = [
     who: 'tlClientSender',
     routeTo: 'reviewQueue',
     describe: 'Team lead sent straight to the client, skipping Creative Director review',
+  },
+  {
+    /* THE THIRD WAY OUT OF TL APPROVED: back to the artist, with changes.
+     *
+     * The stage had two exits and both were forwards — on to the Creative
+     * Director, or past them to the client. A lead who approved the work and
+     * then spotted something had nothing to click: the only route back was
+     * tl_request_changes, which is defined from pending_tl_review and had
+     * already been used up by the approval. So the work either went on with the
+     * fault in it or somebody reassigned the asset to fake a round.
+     *
+     * THE DESTINATION IS THE STAGE THAT ALREADY EXISTS, and that is the whole
+     * design: tl_changes_requested is in ASSIGNEE_STATUSES, in REWORK_STATUSES,
+     * in WORKING_STATUSES (so the clock runs on the rework), in
+     * HAND_OVER_STATUSES and in every status list on the page. Nothing about
+     * the artist's side of this is new — they see the feedback, start the
+     * clock, and submit, exactly as they do after a decline at TL Review. A
+     * second "feedback from an approval" status would have been a stage every
+     * one of those lists had to learn about, for no difference anybody acts on.
+     *
+     * ROUTED TO THE ASSIGNEE, which is the same `routeTo` tl_request_changes
+     * uses — so the person who gets it is the artist whose work was approved,
+     * read off the asset rather than chosen here. An asset with nobody on it,
+     * or one out with a freelancer, cannot be routed at all: src/tl-feedback.js
+     * refuses both with their own sentence BEFORE this is reached, because
+     * "routed to nobody" in a rework state is work that would sit on no desk.
+     *
+     * requiresNote, and more than that: evaluate() only checks the note is not
+     * blank, while src/tl-feedback.js holds it to a minimum and a maximum. The
+     * two layers are deliberate — this table's check is the one every caller
+     * passes through, and the module's is the studio's rule about what counts
+     * as feedback.
+     *
+     * NO ROUND IS CREATED, here or anywhere on this path. A round in this
+     * application is a submission — reports count asset_versions rows — so the
+     * round appears when the artist hands the rework in, once, exactly as it
+     * does after a decline. Asking for changes twice cannot inflate it. */
+    action: 'tl_submit_feedback',
+    from: ['tl_approved'],
+    to: 'tl_changes_requested',
+    who: 'tlFeedbackSubmitter',
+    routeTo: 'assignee',
+    requiresNote: true,
+    /* NAMES THE PERSON AND QUOTES THE FEEDBACK, which no other describe in this
+       table does — and it is what the studio asked for: a history line that
+       reads as the sentence somebody said rather than as a state change. The
+       quote is trimmed to one line's worth, because the whole text is on the
+       event row as `note` and in the feedback table, and this is the summary. */
+    describe: (ctx, { note } = {}) => {
+      const who = ctx && ctx.user && ctx.user.name ? String(ctx.user.name).trim() : '';
+      const said = String(note || '').replace(/\s+/g, ' ').trim();
+      const quote = said.length > 140 ? `${said.slice(0, 139)}…` : said;
+      const by = who ? `Feedback submitted by ${who}` : 'Feedback submitted';
+      return quote ? `${by}: ${quote}` : by;
+    },
   },
   {
     action: 'tl_request_changes',
@@ -949,8 +1016,11 @@ const TRANSITIONS = [
   },
 ];
 
-function resolve(value, ctx) {
-  return typeof value === 'function' ? value(ctx) : value;
+/* `extra` carries what is NOT on the context: today only the note, for the one
+   describe that quotes it. Every other describe is a string or takes ctx alone,
+   and a second argument neither of those reads is why this is safe to add. */
+function resolve(value, ctx, extra = {}) {
+  return typeof value === 'function' ? value(ctx, extra) : value;
 }
 
 // Find the transition for this action from this status, if there is one.
@@ -1016,6 +1086,12 @@ function evaluate(action, ctx, { note } = {}) {
       cd_request_changes: 'sent back by the director',
       tl_to_cd: 'sent to the Creative Director — that is only possible once a team lead has approved it',
       tl_send_to_client: 'sent straight to the client — that is only possible once a team lead has approved it',
+      /* NAMES THE STAGE IT CAME FROM, because this is the refusal a second lead
+         meets when somebody else has already acted: the asset was in TL
+         Approved when they opened the panel and is not any more. The route
+         answers that case with its own sentence before reaching here; this is
+         what every other caller gets. */
+      tl_submit_feedback: 'sent back with feedback — feedback is submitted from TL Approved, and this asset is no longer there',
       relay: 'passed on to the assignee — the director\'s notes are only relayed once, from CD Feedbacks',
       deliver: 'marked delivered — only work the client has approved can be delivered',
       /* THE THREE OUTSOURCED STAGES SAY WHICH STATUSES THEY ALLOW, and the list
@@ -1061,7 +1137,7 @@ function evaluate(action, ctx, { note } = {}) {
     ok: true,
     to: resolve(transition.to, ctx),
     routedTo: routes[transition.routeTo](ctx),
-    describe: resolve(transition.describe, ctx),
+    describe: resolve(transition.describe, ctx, { note }),
     action,
   };
 }
@@ -1108,6 +1184,16 @@ function refusal(transition, ctx) {
           + 'That is the "TL Send to Client" permission, granted per role in Settings.';
       }
       return 'Only this artist\'s own team lead can send their work straight to the client.';
+    /* The same two-refusals-one-actor shape as tlClientSender above, and told
+       apart for the same reason: a missing key is a Settings question for a
+       Super Admin, and not being on this project is not. */
+    case 'tlFeedbackSubmitter':
+      if (!ctx.canSubmitTlFeedback) {
+        return 'You do not have permission to send approved work back with feedback. '
+          + 'That is the "TL Submit Feedback" permission, granted per role in Settings.';
+      }
+      return 'Only somebody on this project\'s review team can send its approved work back '
+        + 'with feedback.';
     case 'planner':
       return 'You cannot assign this asset — that is for whoever added it, or a role with Asset Assign.';
     case 'assignee':

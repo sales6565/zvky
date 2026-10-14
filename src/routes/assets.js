@@ -1,5 +1,6 @@
 const { asyncRouter } = require('../async-router');
 const assetHold = require('../asset-hold');
+const tlFeedback = require('../tl-feedback');
 
 // See src/async-router.js: keeps a failed query from killing the process.
 const router = asyncRouter();
@@ -282,9 +283,41 @@ async function attachTasksAndNotes(assets, viewer) {
     }
   })));
 
+  /* WHETHER SUBMIT FEEDBACK SHOULD BE OFFERED, PER ASSET — the whole answer with
+   * its reason, not a flag the browser then reasons from.
+   *
+   * THE HOLD BUTTON'S ARRANGEMENT, ADOPTED FROM THE START. src/tl-feedback.js is
+   * the only statement of the rule; the route asks it with the facts it has one
+   * asset at a time, and this asks it with the facts the board already has
+   * batched. Neither re-states a condition, and the page draws what it is given.
+   *
+   * `onGate` is mayReviewTl(a) — the batched form of canActAtTlGate that
+   * can_review_tl already carries — rather than a second reading of the project
+   * tables. A per-asset query here would be forty queries and a second opinion.
+   *
+   * A failure answers "unknown" rather than nothing, for the reason spelled out
+   * on hold_state above: an undecorated row is what sent the page back to
+   * deciding the rule locally. */
+  const feedbackStates = new Map(assets.map((a) => {
+    try {
+      return [a.id, tlFeedback.state({
+        asset: a,
+        holdsPermission: holds(viewer, 'review.tl_feedback'),
+        onGate: mayReviewTl(a),
+        outsourcedTo: outsourced.get(a.id) || outsourced.get(String(a.id)) || null,
+      })];
+    } catch (err) {
+      console.warn(`[tl-feedback] per-asset decision unavailable (${err.code || err.message}).`);
+      return [a.id, tlFeedback.unavailableState()];
+    }
+  }));
+
   return assets.map((a) => ({
     ...a,
     can_review_tl: mayReviewTl(a),
+    /* The third control on TL Approved, decided and explained by
+       src/tl-feedback.js. The browser draws this and nothing else. */
+    feedback_state: feedbackStates.get(a.id),
     /* The two controls, decided and explained by src/asset-hold.js. The browser draws
        this and nothing else — see renderHoldControls on the page. */
     hold_state: holdStates.get(a.id),
@@ -1134,6 +1167,10 @@ async function contextFor(req, asset) {
     // from review.tl, which is the standing to act at the TL gate at all — a
     // lead needs both to send work straight to the client.
     canSendToClient: holds(req.user, 'review.tl_send_client'),
+    /* Sending APPROVED work back with changes. Its own key beside the one
+       above, and paired with isTeamLead by the actor — see tlFeedbackSubmitter
+       in src/asset-workflow.js. */
+    canSubmitTlFeedback: holds(req.user, 'review.tl_feedback'),
     /* The client's round. Three separate permissions, because they are three
        separate decisions — see the catalogue. Scope still comes from the role,
        the same way canMarkDelivered pairs review.deliver with project reach. */
@@ -3226,6 +3263,127 @@ router.post('/:id/send-to-cd', async (req, res) => {
 
   const withDetails = await applyTransition(req, res, asset, verdict, { note: req.body && req.body.text });
   res.json({ asset: withDetails });
+});
+
+/* POST /api/assets/:id/submit-feedback — the third way out of TL Approved.
+ *
+ * A lead approved the work, then spotted something. Before this there was no
+ * button for that: tl_request_changes is defined from pending_tl_review and the
+ * approval had already consumed it, so the only ways on were to let the fault
+ * through or to fake a round by reassigning the asset.
+ *
+ * ITS OWN ENDPOINT rather than a third `decision` on /review, for exactly the
+ * reason /send-to-cd and /send-to-client are their own: /review maps a verdict
+ * onto whichever gate the asset is SITTING at, and this asset is not sitting at
+ * a gate — it is past one. Folding it in would have meant /review accepting an
+ * asset in TL Approved, which is the guard that stops a second verdict being
+ * recorded on work already judged.
+ *
+ * IT DOES WRITE THE SAME FEEDBACK ROW /review writes, and that is the reuse that
+ * matters: stage 'tl', decision 'changes_requested', the text, against the
+ * latest version. The artist's drawer already reads that row ("Feedback to
+ * address"), the Review feedback list already renders it, and the artist's side
+ * of this feature therefore needed no new storage and no new screen.
+ *
+ * ONE TRANSACTION for the move, the feedback row and the notification's
+ * intention, so a lead cannot be told their feedback was sent while the row that
+ * holds its text is missing.
+ */
+router.post('/:id/submit-feedback', async (req, res) => {
+  const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
+  const asset = rows[0];
+  if (!asset) return res.status(404).json({ error: 'Asset not found' });
+  if (await projectClosedResponse(res, asset.project_id)) return undefined;
+
+  /* THE SHARED DECISION, asked with this route's own facts. The same function
+     the board asked to decide whether to draw the button — so a control that was
+     offered is a request that is allowed, and a refusal here carries the same
+     sentence the tooltip would have shown. */
+  const facts = {
+    asset,
+    holdsPermission: holds(req.user, 'review.tl_feedback'),
+    onGate: await canActAtTlGate(req.user, asset),
+    outsourcedTo: await oversightOutsource.activeForAsset(db, asset.id).catch(() => null),
+  };
+  const verdict = tlFeedback.decide(facts);
+  if (!verdict.ok) {
+    /* THE STAGE IS A CONFLICT, everything else is a refusal about the person or
+       the task. 409 is what tells the page to go and refresh the card rather
+       than to show the message and leave a stale status on screen. */
+    const status = verdict.code === tlFeedback.CODES.WRONG_STATUS ? 409
+      : verdict.code === tlFeedback.CODES.UNKNOWN ? 503
+        : verdict.code === tlFeedback.CODES.NO_PERMISSION
+          || verdict.code === tlFeedback.CODES.NOT_ON_GATE ? 403 : 409;
+    console.warn(`[tl-feedback] refused ${verdict.gate}/${verdict.code} `
+      + `user=${req.user.id} role=${req.user.role} asset=${asset.code || asset.id} `
+      + `status=${asset.status}`);
+    return res.status(status).json({ error: verdict.message, code: verdict.code, gate: verdict.gate });
+  }
+
+  /* WHAT THEY TYPED, held to the studio's rule — length as well as presence.
+     The workflow table's requiresNote only refuses blank; this is the module
+     that owns what counts as feedback, and the page's counter reads its limits
+     off the same numbers. */
+  const said = tlFeedback.validate(req.body && req.body.text);
+  if (!said.ok) return res.status(said.status).json({ error: said.error, field: said.field });
+
+  const ctx = await contextFor(req, asset);
+  const moved = workflow.evaluate('tl_submit_feedback', ctx, { note: said.text });
+  /* BOTH GATES, and this one is not redundant. tlFeedback.decide() answers the
+     question the button asks; this is the transition table answering whether the
+     move is legal at all, which is the check every other status change in this
+     application passes through. A disagreement between them is a bug, and a
+     test pins them to the same answer across the whole status list. */
+  if (!moved.ok) {
+    return res.status(moved.status).json({ error: moved.error, field: moved.field });
+  }
+
+  const { rows: latestVersion } = await db.query(
+    'SELECT id FROM asset_versions WHERE asset_id = $1 ORDER BY version_number DESC LIMIT 1',
+    [req.params.id]
+  );
+  const versionId = latestVersion.length ? latestVersion[0].id : null;
+
+  let withDetails;
+  const conn = await db.connect();
+  try {
+    await conn.query('BEGIN');
+    /* THE SAME ROW /review WRITES. Not a new table and not a new shape: the
+       artist's "Feedback to address" box and the Review feedback list both read
+       this, which is why neither needed changing. */
+    await conn.query(
+      'INSERT INTO feedback (id, asset_id, version_id, stage, decision, given_by, `text`) '
+      + 'VALUES ($1,$2,$3,$4,$5,$6,$7)',
+      [uuid(), req.params.id, versionId, 'tl', 'changes_requested', req.user.id, said.text]
+    );
+    withDetails = await applyTransition(req, res, asset, moved,
+      { note: said.text, versionId, conn });
+    await conn.query('COMMIT');
+  } catch (err) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    conn.release();
+  }
+
+  /* AND THE ARTIST IS TOLD, once.
+   *
+   * AFTER the commit, not inside it, and that is deliberate: the bell is a
+   * courtesy and the feedback is the record. A notification table that is
+   * missing or broken must not roll back a lead's feedback — raise() already
+   * swallows an unavailable table, and this catch is the second guard.
+   *
+   * ROUTED, NOT ASSIGNED: the recipient is moved.routedTo, the id the transition
+   * actually put the work on. raise() drops a recipient who is also the actor,
+   * so a lead sending their own work back is not told by themselves. */
+  await notifications.changesRequested(db, {
+    assetId: asset.id, actorId: req.user.id, recipientId: moved.routedTo,
+  }).catch((err) => {
+    console.warn(`[tl-feedback] could not raise the notification (${err.code || err.message}).`);
+  });
+
+  console.log(`${req.user.email} sent ${asset.code} back with feedback from TL Approved.`);
+  res.json({ asset: withDetails, describe: moved.describe });
 });
 
 /* POST /api/assets/:id/send-to-client — the team lead skips the CD gate.

@@ -106,6 +106,22 @@ const KINDS = {
      them is what makes that a decision the studio took rather than something
      that happened to them. */
   work_resumed: 'work_resumed',
+  /* A reviewer sent work back to the artist with changes required, and routed it
+     to them.
+   *
+     THE FIRST NOTIFICATION ON THE WAY BACK DOWN. `assigned` says work is yours,
+     `submitted` says work you gave out has come back; this says work you had
+     FINISHED is yours again, which is the one of the three somebody is least
+     expecting and most needs told. Before it, a lead's feedback reached the
+     artist only if they happened to open the asset — the review decision raised
+     nothing at all.
+     
+     NO FEEDBACK TEXT, like `mention` and for the same reason: this is rendered
+     in a bell and pushed to a lock screen, and a lead's unvarnished notes on
+     somebody's work are not something to show whoever is standing nearby. Who
+     asked and which asset is enough to decide to go and read it; the text is on
+     the asset, where the artist has to go anyway to act on it. */
+  changes_requested: 'changes_requested',
 };
 
 const unavailable = (err) => err && (err.code === 'ER_NO_SUCH_TABLE' || /doesn't exist/i.test(err.message || ''));
@@ -169,6 +185,14 @@ function describe(row) {
     const where = row.project_name ? ` in ${row.project_name}` : '';
     const who = row.other_name || 'Somebody';
     return `${who} submitted ${code}${name}${where} for review.`;
+  }
+  if (row.kind === KINDS.changes_requested) {
+    /* Names the project for the same reason `submitted` does: an artist with
+       work in three jobs is being told one of them has come back, and "which
+       job is this" is the first thing they ask. */
+    const where = row.project_name ? ` in ${row.project_name}` : '';
+    const who = row.other_name || 'A reviewer';
+    return `${who} sent ${code}${name}${where} back with changes. Open it to read the feedback.`;
   }
   if (row.kind === KINDS.work_paused) {
     return `${code}${name} was paused at the end of the working day. `
@@ -402,6 +426,29 @@ async function taskSubmitted(db, { assetId, actorId, recipientIds }) {
   return raised;
 }
 
+/* WORK SENT BACK WITH CHANGES, told to the artist it was routed to.
+ *
+ * ONE PERSON, not a list: unlike a submission — which several people may be
+ * waiting on — feedback goes to the one desk the transition routed it to, and
+ * that is the argument. The caller passes the id the workflow decided
+ * (verdict.routedTo), so the notification cannot reach somebody the asset was
+ * not actually given to.
+ *
+ * EXACTLY ONCE PER TRANSITION, which is raise()'s own doing rather than a count
+ * kept here: one call, one row. The guards that make it fewer are also raise()'s
+ * — a null recipient and a recipient who is also the actor are both dropped, so
+ * a lead sending their own work back is not told about it by themselves.
+ *
+ * `actorId` is also `otherUserId`, which is what lets describe() name the
+ * reviewer off the same join every other kind uses.
+ */
+async function changesRequested(db, { assetId, actorId, recipientId }) {
+  const id = await raise(db, {
+    recipientId, actorId, kind: KINDS.changes_requested, assetId, otherUserId: actorId,
+  });
+  return id ? 1 : 0;
+}
+
 /* Somebody was tagged in a chat message.
  *
  * WHO. Only people the caller has already established are in the conversation
@@ -566,6 +613,6 @@ module.exports = {
   passwordReset,
   projectReviewRequested,
   projectReviewAnswered,
-  KINDS, describe, raise, assignmentChanged, taskSubmitted, chatMention,
+  KINDS, describe, raise, assignmentChanged, taskSubmitted, changesRequested, chatMention,
   listFor, unreadCount, since, highWater, markRead, markAllRead,
 };

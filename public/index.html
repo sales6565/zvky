@@ -1957,6 +1957,15 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
     <div id="ask_field">
       <label id="ask_label"></label>
       <input type="text" id="ask_input" autocomplete="off">
+      <!-- The same field, for a question that wants more than a line. One of
+           the two is shown; openAsk picks by `input.multiline`. The keyboard
+           handler has always known about this case — Enter inside a TEXTAREA is
+           a new line rather than a submit — and this is the markup it was
+           waiting for. -->
+      <textarea id="ask_textarea" rows="5" style="display:none;"></textarea>
+      <!-- How much has been typed, and the limit. Shown only for a question
+           that sets one: a counter under a one-line name field is noise. -->
+      <div id="ask_count" style="display:none;font-size:11px;color:var(--ink-faint);margin:3px 0 0;text-align:right;"></div>
     </div>
     <div class="ref-err" id="ask_err"></div>
     <div class="modal-actions">
@@ -2715,6 +2724,23 @@ const STATUSES = [
  * what the page says when it has to explain BEFORE asking — in the panel's own
  * note, not in place of the answer. */
 const HOLD_STATUSES = ['assigned','in_progress','tl_changes_requested','cd_changes_requested','game_feedback'];
+/* WHAT SUBMIT FEEDBACK SHOULD DO ON THIS CARD — the server's answer, and the
+ * page's answer when there is none.
+ *
+ * THE SAME ARRANGEMENT AS UNKNOWN_HOLD_STATE below, for the reason the fourth
+ * report of the Hold button established: a row with no decision on it must not
+ * send the page back to working the rule out locally. So an undecorated asset
+ * gets this — "we do not know" — and the control is drawn disabled with a
+ * sentence rather than silently vanishing.
+ *
+ * THE STAGE IS NAMED ONCE, here, and a test pins it to FROM_STATUSES in
+ * src/tl-feedback.js, which reads it off the transition table. The page says it
+ * at all only for the sentence under the button; every decision comes from
+ * feedback_state. */
+const FEEDBACK_FROM_STATUSES = ['tl_approved'];
+const UNKNOWN_FEEDBACK_STATE = { canSubmit:false, minLength:12, maxLength:2000,
+  submit:{ code:'TLFB_UNKNOWN', gate:'unavailable', offer:true,
+    message:'Whether this can be sent back could not be checked just now. Reload the page.' } };
 const holdStatusWords = () => {
   const names = HOLD_STATUSES.map(id=>(STATUSES.find(s=>s.id===id)||{}).label||id);
   return names.length<2 ? (names[0]||'') : `${names.slice(0,-1).join(', ')} or ${names[names.length-1]}`;
@@ -4454,22 +4480,73 @@ function openAsk({ title, message = '', input = null, confirmLabel = 'OK',
   document.getElementById('ask_err').textContent = '';
 
   const field = document.getElementById('ask_field');
-  const box = document.getElementById('ask_input');
+  /* ONE FIELD OR THE OTHER, never both: a line for a name, a box for feedback.
+     The unused one is hidden AND cleared, because a stale value in a hidden
+     field is a value some future reader of this function will find. */
+  const line = document.getElementById('ask_input');
+  const area = document.getElementById('ask_textarea');
+  const count = document.getElementById('ask_count');
+  const multiline = Boolean(input && input.multiline);
+  const box = multiline ? area : line;
+  const other = multiline ? line : area;
   field.style.display = input ? '' : 'none';
   if(input){
     document.getElementById('ask_label').textContent = input.label || '';
     document.getElementById('ask_label').style.display = input.label ? '' : 'none';
+    box.style.display = '';
+    other.style.display = 'none';
+    other.value = '';
     box.value = input.value === undefined || input.value === null ? '' : String(input.value);
     box.placeholder = input.placeholder || '';
+    /* THE LIMIT IS THE BROWSER'S TOO, not only ours: maxlength stops the typing
+       rather than scolding afterwards, which is the kinder half of a maximum. The
+       check below still runs, because a paste into a field without maxlength —
+       or a value set by code — must not slip past. */
+    if(input.maxLength) box.setAttribute('maxlength', String(input.maxLength));
+    else box.removeAttribute('maxlength');
+  }
+
+  /* IS WHAT IS TYPED ENOUGH TO SEND?
+   *
+   * Only asked when a question sets a minimum. Without one every existing
+   * caller keeps exactly what it had: a confirm button that is live from the
+   * moment the question opens.
+   *
+   * The counter says the same thing in words. It turns into the shortfall while
+   * the text is too short — "12 characters at least" is a rule, "4 more" is an
+   * instruction — and counts up to the limit once it is valid. */
+  const checkLength = () => {
+    if(!input || !(input.minLength || input.maxLength)) return true;
+    const typed = String(box.value || '').trim();
+    const min = input.minLength || 0;
+    const max = input.maxLength || 0;
+    const ok = typed.length >= min && (!max || typed.length <= max);
+    count.style.display = '';
+    count.textContent = typed.length < min
+      ? `${min - typed.length} more character${min - typed.length === 1 ? '' : 's'} needed`
+      : `${typed.length}${max ? ` / ${max}` : ''}`;
+    count.style.color = ok ? 'var(--ink-faint)' : 'var(--danger-ink)';
+    return ok;
+  };
+  if(!input || !(input.minLength || input.maxLength)){
+    count.style.display = 'none';
+    count.textContent = '';
   }
 
   const confirmBtn = document.getElementById('ask_confirm');
   const cancelBtn = document.getElementById('ask_cancel');
   confirmBtn.textContent = confirmLabel;
   confirmBtn.className = `btn ${danger ? 'btn-danger-solid' : 'btn-brand'}`;
-  confirmBtn.disabled = false;
+  /* DISABLED UNTIL IT IS VALID, for a question with a minimum — and live from
+     the start for every other question, which is every existing caller. */
+  confirmBtn.disabled = !checkLength();
   cancelBtn.textContent = cancelLabel;
   cancelBtn.disabled = false;
+  if(input && (input.minLength || input.maxLength)){
+    box.oninput = ()=>{ confirmBtn.disabled = !checkLength(); };
+  }else if(input){
+    box.oninput = null;
+  }
 
   askWrap.classList.add('show');
   /* The input if there is one, the confirm button if there is not — so Enter
@@ -5189,6 +5266,31 @@ async function loadAssets(){
      including in a project that is not the one on screen, which is why it
      comes from the server rather than being worked out from state.assets. */
   state.activeWork = activeWork || null;
+}
+
+/* ONE ASSET HAS MOVED — redraw what shows it, without going back to the server.
+ *
+ * The transition routes all return the asset as the API describes it everywhere
+ * else (ASSET_SELECT plus its decorations, including the per-asset decisions), so
+ * the response is a drop-in replacement for the row already in state. Swapping it
+ * and redrawing is both faster and more honest than a reload: the card a person
+ * is looking at moves as they watch, rather than blinking through a refetch of
+ * the whole board.
+ *
+ * Only the two views that draw assets are redrawn; the counts beside the tabs
+ * are their own pollers and the stats band is cheap. Returns false when the
+ * asset was not in state — a drawer opened from a link, say — so a caller can
+ * fall back to render() rather than assume the screen is right.
+ */
+function applyAssetUpdate(updated){
+  if(!updated || !updated.id) return false;
+  const at = (state.assets||[]).findIndex(x=>x.id===updated.id);
+  if(at === -1) return false;
+  state.assets[at] = { ...state.assets[at], ...updated };
+  if(state.view==='board') renderBoard();
+  else if(state.view==='list') renderList();
+  renderStats();
+  return true;
 }
 
 /* Is another task holding this person up?
@@ -9328,6 +9430,24 @@ async function openDrawer(id){
      rather than to pass it, and it defaults to the full-access tier alone. A
      lead without it sees only the ordinary route on. */
   const canSendToClient = canRouteApproved && can('review.tl_send_client');
+  /* THE THIRD WAY OUT: back to the artist, with changes.
+   *
+   * THE PAGE DECIDES NOTHING HERE, and that is the difference between this
+   * button and the two beside it. They mirror their actor — `mayActAtTlGate(a)
+   * && status==='tl_approved'` is a second statement of the rule that happens
+   * to agree with the server's — which is exactly the shape that had the Hold
+   * button reported four times. This reads the server's own answer, with its
+   * own reason, decided by src/tl-feedback.js and sent per asset as
+   * feedback_state. If the key is taken away in Settings, or the asset moves,
+   * or it goes out to a freelancer, the sentence under the button is the
+   * server's sentence and not one written here. */
+  const fbState = a.feedback_state || UNKNOWN_FEEDBACK_STATE;
+  const canSubmitFeedback = fbState.canSubmit === true;
+  /* Offered-but-inert, for the refusals worth explaining — see OFFER in
+     src/tl-feedback.js. Only on the stage itself: a greyed button on Delivered
+     work is clutter, which is why WRONG_STATUS is not offered. */
+  const feedbackWhy = !canSubmitFeedback && fbState.submit && fbState.submit.offer
+    && FEEDBACK_FROM_STATUSES.includes(a.status) ? (fbState.submit.message || '') : '';
   const canCdReview = can('review.cd') && a.status==='pending_cd_review';
   /* Signing off for the client is the half of the CD gate that cannot be taken
      back, and is its own permission. A role can review without holding it — it
@@ -9571,6 +9691,21 @@ async function openDrawer(id){
           title="Send straight to the client. The Creative Director will not see this asset.">Send to Client</button>` : ''}
         <button class="btn btn-brand" id="tlToCdBtn" style="flex:1;">Approve &rarr; Send to CD Review</button>
       </div>
+      <!-- And back, which is the other thing a lead may want after approving.
+           Its own row rather than a third button squeezed beside the two above:
+           those send the work ON, this sends it BACK, and a row of three where
+           one undoes the others reads as a choice of equals. Coloured with the
+           same token the other "work goes back" controls use. -->
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        ${canSubmitFeedback ? `<button class="btn btn-ghost" id="tlFeedbackBtn" style="flex:1;color:var(--danger-ink);"
+          title="Send this back to the artist with the changes required. It moves to TL Feedbacks.">Submit Feedback</button>`
+          : (feedbackWhy ? `<button class="btn btn-ghost" id="tlFeedbackBtn" style="flex:1;color:var(--danger-ink);" disabled
+              title="${escapeHTML(feedbackWhy)}">Submit Feedback</button>` : '')}
+      </div>
+      ${feedbackWhy ? `<div id="d_feedbackWhy" style="font-size:11px;color:var(--ink-faint);margin-top:6px;">${escapeHTML(feedbackWhy)}</div>` : ''}
+      ${canSubmitFeedback ? `<div style="font-size:11px;color:var(--ink-faint);margin-top:6px;">
+        <strong>Submit Feedback</strong> sends it back to the artist as ${escapeHTML(statusOf('tl_changes_requested').label)} with your notes — they rework it and resubmit for review.
+      </div>` : ''}
       ${canSendToClient ? `<div style="font-size:11px;color:var(--ink-faint);margin-top:6px;">
         <strong>Send to Client</strong> skips Creative Director review — the asset goes straight to Approved for Client.
       </div>` : ''}
@@ -10319,6 +10454,53 @@ async function openDrawer(id){
       }catch(err){ showToast(err.message); toCdBtn.disabled = false; }
     };
 
+    /* SENDING IT BACK. The modal, then the request, then the card moves.
+     *
+     * NO NATIVE DIALOG, here or anywhere: openAsk() is the page's own modal and
+     * window.prompt() is not implemented in the desktop application at all —
+     * calling it throws, which is how the Hold button came to "do nothing" in
+     * the installed app. See the dialogs section of the README.
+     *
+     * THE ORDER IS THE POINT. `run` is handed to openAsk, so the request is
+     * sent only after the lead has confirmed, the button goes busy while it is
+     * in flight (and both buttons are dead, so a double click is one request),
+     * a failure leaves the question on screen WITH THE TYPED TEXT and the
+     * server's reason inside it, and only a success closes anything. Every one
+     * of those is openAsk's, not re-implemented here. */
+    const feedbackBtn = document.getElementById('tlFeedbackBtn');
+    if(feedbackBtn && !feedbackBtn.disabled) feedbackBtn.onclick = guarded('submit feedback', async ()=>{
+      const limits = a.feedback_state || UNKNOWN_FEEDBACK_STATE;
+      await openAsk({
+        title: 'Send this back with feedback',
+        message: `${a.code} goes back to the artist as ${statusOf('tl_changes_requested').label}. `
+          + 'Say what has to change — they will see this when they pick it up.',
+        confirmLabel: 'Submit Feedback',
+        busyLabel: 'Sending…',
+        input: {
+          label: 'Changes required',
+          placeholder: 'e.g. The rim light on the hero reads flat — raise it and re-render the turntable.',
+          multiline: true,
+          /* THE SERVER'S OWN LIMITS, travelling with the per-asset answer. The
+             counter and the disabled button are drawn from these rather than
+             from numbers typed here, so "too short" means the same thing in the
+             modal and in the validator. */
+          minLength: limits.minLength,
+          maxLength: limits.maxLength,
+        },
+        run: async (text)=>{
+          const { asset: updated } = await api('/assets/'+id+'/submit-feedback',
+            { method:'POST', body:{ text } });
+          /* THE CARD MOVES NOW, from the server's own copy of the asset — no
+             reload and no second fetch. The drawer is closed after, so the
+             board the lead is left looking at already shows the card in TL
+             Feedbacks. */
+          applyAssetUpdate(updated);
+          closeDrawer();
+          showToast(`Sent back to the artist as ${statusOf('tl_changes_requested').label}.`);
+        },
+      });
+    });
+
     /* Skipping the CD gate. Confirmed first because there is no way back: the
        Creative Director never sees the asset, and Approved for Client is one
        step from Delivered. */
@@ -10454,6 +10636,15 @@ const HISTORY_ACTIONS = {
      could not answer "who decided the Creative Director should see this". */
   tl_to_cd:           { label: 'TL sent to CD review', color: 'var(--review)' },
   tl_request_changes: { label: 'TL asked for changes', color: 'var(--danger-ink)' },
+  /* Named apart from the line above it, and the distinction is the one the
+     studio asked for: tl_request_changes is a verdict AT the gate, this is
+     feedback on work that had already passed it. A history calling both "TL
+     asked for changes" could not answer "was this spotted before or after we
+     approved it" — which is the question a lead reading the round asks. The
+     server's own sentence for it names the person and quotes the feedback (see
+     the describe on tl_submit_feedback); the note under this line is the whole
+     text. */
+  tl_submit_feedback: { label: 'Feedback submitted after approval', color: 'var(--danger-ink)' },
   /* Named for what it skipped, not just for where it went. "Approved for
      client" beside a team lead's avatar would read as the ordinary CD sign-off
      to anybody scanning the history, which is the one thing this line exists to
@@ -18462,6 +18653,10 @@ const NOTIF_TITLES = {
   password_reset: 'Your password was reset',
   work_paused: 'Timer paused — outside working hours',
   work_resumed: 'Timer resumed — the working day has started',
+  /* Work coming BACK, which is neither of the two above it: `assigned` is work
+     you have been given and `submitted` is work you gave out returning for
+     review. This is work you had finished arriving again. */
+  changes_requested: 'Changes requested — back with you',
 };
 const notifTitle = (n) => (n && NOTIF_TITLES[n.kind]) || 'Something needs your attention';
 

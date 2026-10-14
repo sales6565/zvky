@@ -1664,6 +1664,57 @@ test('the TL Send to Client permission is its own key, off by default', () => {
     'the skip permission reaches strictly fewer roles than the review one');
 });
 
+test('TL Submit Feedback is its own key, ON by default wherever TL Review is', () => {
+  /* THE THIRD BUTTON ON TL APPROVED, and the one decision this pins is its
+   * DEFAULT — because the brief for it allowed either answer and the one chosen
+   * has to be the one that ships.
+   *
+   * ITS OWN KEY so a Super Admin can switch it off per designation, which
+   * riding on review.tl would not have allowed. ON for exactly the designations
+   * that hold review.tl, so on the day it ships nobody gains or loses an
+   * action: every lead who can approve work can send it back, which is how the
+   * studio described the stage.
+   *
+   * DELIBERATELY NOT review.tl_send_client's default (full access alone), and
+   * the difference is direction. Skipping the Creative Director sends work OUT
+   * of the review path and cannot be undone. This sends it BACK to the artist
+   * who did it, and their next submission returns it to the same gate — the
+   * reversible half of a lead's job, which is what review.tl already covers.
+   */
+  const catalog = require('../src/permission-catalog');
+  const { activeRoles, roleDef } = require('../src/roles');
+  const all = catalog.GROUPS.flatMap((g) => g.permissions);
+
+  const perm = all.find((p) => p.key === 'review.tl_feedback');
+  assert.ok(perm, 'the permission exists');
+  assert.strictEqual(perm.label, 'TL Submit Feedback');
+  const group = catalog.GROUPS.find((g) => g.permissions.some((p) => p.key === 'review.tl_feedback'));
+  assert.strictEqual(group.label, 'Review Workflow', 'beside the keys it relates to');
+
+  const holders = (key) => {
+    const p = all.find((x) => x.key === key);
+    return activeRoles().map((r) => r.key).filter((k) => {
+      const def = roleDef(k);
+      return def && p.impliedBy(def);
+    });
+  };
+  const feedback = holders('review.tl_feedback');
+  const tl = holders('review.tl');
+  const skip = holders('review.tl_send_client');
+
+  assert.deepStrictEqual(feedback, tl,
+    'TL Submit Feedback defaults to exactly the designations that hold TL Review Actions');
+  assert.ok(feedback.includes('team_lead'), 'so an ordinary Team Lead has it');
+  assert.ok(feedback.includes('super_admin'), 'and so does Super Admin, as every new key must');
+  assert.ok(feedback.length > skip.length,
+    'and it reaches more designations than the one that skips the CD gate');
+
+  /* AND IT IS A REAL SWITCH: the whole catalogue is what a Super Admin gets, so
+     a key that defaulted on everywhere would be indistinguishable from no key. */
+  const artist = roleDef('game_artist');
+  assert.ok(!perm.impliedBy(artist), 'an artist does not hold it');
+});
+
 test('every workflow action has a name the history can show', () => {
   /* An action missing from HISTORY_ACTIONS falls back to its raw id, so the
      asset's history showed "accept" and "reassign_review" as bare code names
