@@ -554,6 +554,42 @@ test('the queue, against a fake Google', { skip: cfg ? false : SKIP_REASON }, as
     assert.ok(back.sent >= 1, 'and the held message goes when the connection returns');
   });
 
+  await t.test('an alert can be raised in-app WITHOUT touching the transport', async () => {
+    /* THE MECHANISM THE LOOP-BREAKER RELIES ON, pinned on its own.
+     *
+     * alertSuperAdmins(inAppOnly: true) must raise the notice and queue NO mail;
+     * with it false it must do both. The connection alert passes true, which is
+     * why a dead transport cannot be alerted about through itself.
+     *
+     * Asserted here rather than only through drain() because the one OTHER
+     * caller of this guard — notePermanentFailure — cannot currently reach its
+     * false branch: a pass that starts unhealthy returns at the probe and one
+     * that becomes unhealthy returns at the reauthorise branch. That makes the
+     * guard there unreachable (and a mutation of it an equivalent mutant), so
+     * the behaviour is pinned where it IS reachable. */
+    await clear(); await reset();
+    const notices = async () => Number((await sql(cfg,
+      "SELECT COUNT(*) AS n FROM notifications WHERE kind = 'email_trouble'"))[0].n);
+    const before = await notices();
+
+    await outbox.alertSuperAdmins(db, { subject: 'In-app only', text: 'x', inAppOnly: true });
+    assert.strictEqual(await notices(), before + 1, 'the notice is raised');
+    assert.strictEqual((await queue()).length, 0, 'and nothing is queued for sending');
+
+    await outbox.alertSuperAdmins(db, { subject: 'And by mail', text: 'x' });
+    assert.strictEqual(await notices(), before + 2);
+    const mailed = await queue();
+    assert.strictEqual(mailed.length, 1, 'with it false, the email is queued too');
+    assert.strictEqual(mailed[0].kind, 'alert');
+
+    /* AND AN ALERT THAT ITSELF FAILS IS NOT ALERTED ABOUT, which is the other
+       half of not looping. */
+    const src = require('node:fs').readFileSync(
+      require('node:path').join(__dirname, '..', 'src', 'email-outbox.js'), 'utf8');
+    assert.match(src, /if \(row\.kind === KIND\.alert\) \{/,
+      'notePermanentFailure returns early for an alert row');
+  });
+
   await t.test('throttling: a pass sends at most the per-minute allowance', async () => {
     await clear(); await reset();
     google.onToken(() => ({ status: 200, body: { access_token: 'at-ok', expires_in: 3600 } }));

@@ -444,6 +444,21 @@ async function notePermanentFailure(db, row, error) {
     console.warn(`[email] an alert message failed permanently and was not alerted about: ${error}`);
     return;
   }
+  /* DEFENCE IN DEPTH, AND UNREACHABLE TODAY — which is worth saying rather than
+   * leaving as a branch nobody can explain.
+   *
+   * A pass that STARTS unhealthy returns at the probe above without looking at a
+   * single row; a pass that BECOMES unhealthy returns at the reauthorise branch.
+   * So by the time this function runs, the transport is healthy, and `healthy`
+   * is always true. It was run as a mutation — forced to true — and survived,
+   * because nothing can tell the difference.
+   *
+   * KEPT because the ordering it depends on is not a property of this function:
+   * a future change that let a pass continue past a connection failure would
+   * make this live, and the version of it that queued an alert into a dead
+   * transport is the one the brief specifically asked not to have. The
+   * mechanism it relies on is pinned on its own — see the alertSuperAdmins
+   * cases in tests/gmail-email.test.js. */
   const st = await state(db);
   const healthy = Number(st.healthy) !== 0;
   await alertSuperAdmins(db, {
