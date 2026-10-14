@@ -142,12 +142,23 @@ test('its own key, Super Admin only, grantable, and in the Time Sheet group', ()
   assert.deepStrictEqual(held('timesheet.sub_options'), held('timesheet.options'),
     'both default to the Super Admin alone; what differs is that they can diverge');
 
-  /* ROLE GROUPS (Prompt 31) DO NOT EXIST in this codebase — there is no group
-     grant mechanism, only the per-designation lists in Settings → Permissions
-     and the `group` a role is filed under for display. So there is nothing to
-     verify a group grant against, and the report says so. */
-  assert.ok(!fs.existsSync(path.join(__dirname, '..', 'src', 'role-groups.js')),
-    'no role-group mechanism to grant through');
+  /* ROLE GROUPS NOW EXIST, and this assertion is the inverse of what it was.
+   *
+   * It used to pin their ABSENCE — "there is no group grant mechanism, only the
+   * per-designation lists in Settings → Permissions" — which was true when it
+   * was written and was the honest way to report that the prompt asking for
+   * groups had not been built. src/role-groups.js is that mechanism, so the
+   * claim worth holding now is the one the key's own brief implies: a Super
+   * Admin can hand this key to a whole department in one action, and nothing
+   * about the key's shape prevents it.
+   *
+   * tests/role-groups.test.js proves it for the WHOLE catalogue; this is the
+   * one key this file is about. */
+  const roleGroups = require('../src/role-groups');
+  assert.ok(roleGroups.grantable('timesheet.sub_options'),
+    'it can be granted through a role group');
+  assert.ok(!roleGroups.NEVER_GRANTABLE.includes('timesheet.sub_options'),
+    'and it is not one of the two keys no group may grant');
 
   // The server gates every sub-option route with it, through the same map.
   const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'reference.js'), 'utf8');

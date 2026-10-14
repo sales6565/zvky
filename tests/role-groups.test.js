@@ -599,3 +599,69 @@ test('the role view marks an inherited permission without untickable boxes', () 
   assert.match(PAGE, /\.pm-row\.from-group\{background:var\(--info-t10\)/,
     'and its style is tokens, like every other colour in the page');
 });
+
+// ===========================================================================
+// 5. THE COST: one query, and it does not grow.
+// ===========================================================================
+
+test('the group layer adds exactly one query per request, whatever the group count', () => {
+  /* MEASURED, not asserted in prose. A counting db stands in for the pool and
+   * reports how many statements effectiveFor() issues — which is what runs on
+   * every authenticated request.
+   *
+   * THE STEADY STATE is what is being measured: role_permissions already holds
+   * a row for every catalogue key, so topUpRole() finds nothing missing and
+   * writes nothing. A role seeded before the catalogue grew costs its INSERTs
+   * once and never again, which is the existing behaviour and not this layer's.
+   */
+  const fakeDb = (groups) => {
+    const log = [];
+    return {
+      log,
+      query: async (statement) => {
+        log.push(statement.replace(/\s+/g, ' ').trim());
+        if (/FROM role_permissions WHERE role_key = \$1 AND enabled = 1/.test(statement)) {
+          return { rows: [{ permission_key: 'asset.add' }] };
+        }
+        if (/SELECT permission_key FROM role_permissions WHERE role_key/.test(statement)) {
+          return { rows: catalog.KEYS.map((k) => ({ permission_key: k })) };
+        }
+        if (/FROM role_group_members gm/.test(statement)) {
+          const rows = [];
+          for (let g = 0; g < groups; g += 1) {
+            for (let i = 0; i < 3; i += 1) {
+              rows.push({ permission_key: catalog.KEYS[(g + i) % catalog.KEYS.length] });
+            }
+          }
+          return { rows };
+        }
+        return { rows: [] };
+      },
+    };
+  };
+  const rolePermissions = require('../src/role-permissions');
+
+  const counts = [];
+  for (const groups of [0, 1, 2, 40]) {
+    const db = fakeDb(groups);
+    counts.push(rolePermissions.effectiveFor(db, 'team_lead')
+      .then((held) => ({ log: db.log, held })));
+  }
+  return Promise.all(counts).then((runs) => {
+    const logs = runs.map((r) => r.log);
+    const sizes = logs.map((l) => l.length);
+    assert.deepStrictEqual(sizes, [3, 3, 3, 3],
+      `the query count moved with the number of groups: ${sizes.join(', ')}`);
+    /* And exactly one of the three is this layer's: the other two are
+       forRole() and topUpRole()'s read, both of which predate it. */
+    const groupQueries = logs[3].filter((q) => /role_group_members/.test(q));
+    assert.strictEqual(groupQueries.length, 1, 'one group query, not one per group');
+    assert.match(groupQueries[0], /SELECT DISTINCT gp\.permission_key/,
+      'and it is the single join, not a per-group lookup');
+    assert.ok(runs[3].held.size > runs[0].held.size,
+      'and the forty groups really did grant something through that one query');
+    /* NOT A QUERY PER PERMISSION EITHER, which is the other way this could have
+       grown: forty groups granting three keys each is still the one statement
+       counted above, and the held set proves the answer really came back. */
+  });
+});
