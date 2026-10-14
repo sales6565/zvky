@@ -79,10 +79,14 @@ const STATUS = {
  * Both are environment variables, because the right numbers depend on a mailbox
  * this code cannot see.
  */
-const PER_MINUTE = Math.max(1, Number(process.env.EMAIL_MAX_PER_MINUTE || 10));
-const DAILY_CAP = Math.max(1, Number(process.env.EMAIL_DAILY_CAP || 300));
-const WARN_AT = Number(process.env.EMAIL_DAILY_WARN_FRACTION || 0.8);
-const SWEEP_MS = Number(process.env.EMAIL_SWEEP_MS || 5000);
+/* FUNCTIONS, not constants — see the note in src/gmail-transport.js. A cap read
+   at require time is a cap that depends on which file was loaded first, and one
+   that cannot be changed without a restart even though everything else here
+   can. */
+const perMinute = () => Math.max(1, Number(process.env.EMAIL_MAX_PER_MINUTE || 10));
+const dailyCap = () => Math.max(1, Number(process.env.EMAIL_DAILY_CAP || 300));
+const warnAt = () => Number(process.env.EMAIL_DAILY_WARN_FRACTION || 0.8);
+const sweepMs = () => Number(process.env.EMAIL_SWEEP_MS === undefined ? 5000 : process.env.EMAIL_SWEEP_MS);
 
 /* The kinds of mail in the queue. `kind` is stored so the Settings screen can
    say what is waiting, and so the permanent-failure alert can be recognised —
@@ -230,8 +234,8 @@ async function stats(db) {
       failedLast24h: Number(row.failed24) || 0,
       sentToday: Number(row.today) || 0,
       lastSuccessAt: row.lastSuccess || st.last_success_at || null,
-      dailyCap: DAILY_CAP,
-      perMinute: PER_MINUTE,
+      dailyCap: dailyCap(),
+      perMinute: perMinute(),
       healthy: Number(st.healthy) !== 0,
       reason: st.reason || null,
       unhealthySince: st.unhealthy_since || null,
@@ -240,7 +244,7 @@ async function stats(db) {
     if (!unavailable(err)) throw err;
     return {
       pending: 0, failedLast24h: 0, sentToday: 0, lastSuccessAt: null,
-      dailyCap: DAILY_CAP, perMinute: PER_MINUTE, healthy: true, reason: null,
+      dailyCap: dailyCap(), perMinute: perMinute(), healthy: true, reason: null,
       unhealthySince: null, missing: true,
     };
   }
@@ -304,7 +308,7 @@ function backoffFor(attempts) {
  * happened. Returns a summary so the tests can drive it directly rather than
  * waiting on a timer — which is also how the throttle is asserted.
  */
-async function drain(db, { limit = PER_MINUTE, now = () => new Date() } = {}) {
+async function drain(db, { limit = perMinute() } = {}) {
   const summary = { sent: 0, temporary: 0, permanent: 0, paused: false, skipped: 0, capped: false };
 
   const st = await state(db);
@@ -324,12 +328,13 @@ async function drain(db, { limit = PER_MINUTE, now = () => new Date() } = {}) {
     }).catch(() => {});
   }
 
+  const cap = dailyCap();
   const already = await sentToday(db);
-  if (already >= DAILY_CAP) {
+  if (already >= cap) {
     summary.capped = true;
     return summary;
   }
-  const room = Math.min(limit, DAILY_CAP - already);
+  const room = Math.min(limit, cap - already);
 
   const { rows } = await db.query(
     `SELECT id, kind, recipient, subject, body_text, body_html, reply_to, message_id, attempts
@@ -453,7 +458,8 @@ async function notePermanentFailure(db, row, error) {
 }
 
 async function warnIfNearCap(db, used) {
-  if (used < Math.floor(DAILY_CAP * WARN_AT)) return;
+  const cap = dailyCap();
+  if (used < Math.floor(cap * warnAt())) return;
   const { rows } = await db.query(
     'SELECT cap_alerted_on FROM email_transport_state WHERE id = 1');
   const stamped = rows[0] && rows[0].cap_alerted_on;
@@ -461,12 +467,12 @@ async function warnIfNearCap(db, used) {
   if (stamped && String(stamped).slice(0, 10) === today) return;
   await db.query('UPDATE email_transport_state SET cap_alerted_on = CURRENT_DATE() WHERE id = 1');
   await alertSuperAdmins(db, {
-    subject: `Email: ${used} of today's ${DAILY_CAP} sends used`,
-    text: `The studio has used ${used} of its daily email cap of ${DAILY_CAP}. `
+    subject: `Email: ${used} of today's ${cap} sends used`,
+    text: `The studio has used ${used} of its daily email cap of ${cap}. `
       + 'Sending stops at the cap and resumes tomorrow; messages are held, not lost. '
       + 'The cap is EMAIL_DAILY_CAP and is set below Gmail\'s own limit because the sender '
       + 'mailbox is shared with ordinary mail.',
-    html: `<p>The studio has used <b>${used}</b> of its daily email cap of <b>${DAILY_CAP}</b>.</p>`
+    html: `<p>The studio has used <b>${used}</b> of its daily email cap of <b>${cap}</b>.</p>`
       + '<p>Sending stops at the cap and resumes tomorrow; messages are held, not lost.</p>',
   }).catch(() => {});
 }
@@ -478,7 +484,8 @@ const escapeHtml = (v) => String(v === undefined || v === null ? '' : v)
 /* The timer. Off when EMAIL_SWEEP_MS is 0, which is what the tests use so they
    can drive drain() themselves and assert on the result. */
 function schedule(db, log = console.log) {
-  if (!SWEEP_MS) return { stop: () => {} };
+  const every = sweepMs();
+  if (!every) return { stop: () => {} };
   let running = false;
   const tick = async () => {
     if (running) return;
@@ -492,7 +499,7 @@ function schedule(db, log = console.log) {
       log(`[email] the outbox pass failed: ${err.message}`);
     } finally { running = false; }
   };
-  const timer = setInterval(tick, SWEEP_MS);
+  const timer = setInterval(tick, every);
   if (timer.unref) timer.unref();
   return { stop: () => clearInterval(timer), tick };
 }
@@ -500,5 +507,5 @@ function schedule(db, log = console.log) {
 module.exports = {
   ensureTables, enqueue, drain, schedule, stats, state, markHealthy, markUnhealthy,
   alertSuperAdmins, sentToday, BACKOFF_SECONDS, MAX_ATTEMPTS, STATUS, KIND,
-  PER_MINUTE, DAILY_CAP, WARN_AT, escapeHtml,
+  perMinute, dailyCap, warnAt, escapeHtml,
 };

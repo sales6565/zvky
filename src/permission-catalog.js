@@ -1484,6 +1484,31 @@ const GROUPS = [
           + 'address is refused; blocking the range you sit in is not, and would lock out everyone on it.',
       },
       {
+        key: 'settings.email_delivery',
+        label: 'Email Delivery Status',
+        /* OPERATING the studio's email, as opposed to configuring it.
+         *
+         * A SEPARATE KEY FROM settings.email_config BESIDE IT, and the split is
+         * the same one settings.holidays_view has from settings.holidays: this
+         * one shows whether mail is flowing — connection state, what is queued,
+         * what failed, how much of the daily cap is used — and sends a test
+         * message to the holder's OWN address. The other one edits the mail
+         * server and holds a live password.
+         *
+         * So a studio can let a producer check "is the mail going out" and press
+         * Send test email on a quiet morning, without also letting them point
+         * every notification the studio sends at a server of their choosing.
+         * Nothing on this screen shows a credential: the status endpoint returns
+         * names of missing variables, never values.
+         *
+         * SUPER ADMIN ONLY BY DEFAULT all the same, through the same
+         * implication the other email key uses — managePermissions, which no
+         * other tier carries. Delegating it is a decision, not a default. */
+        impliedBy: has('managePermissions'),
+        describe: 'See whether the studio\'s email is being delivered — the connection, the queue, '
+          + 'failures, today\'s count against the daily cap — and send a test message to yourself.',
+      },
+      {
         key: 'settings.email_config',
         label: 'Manage Email Configuration',
         /* The mail server the studio sends from, and the credentials for it.

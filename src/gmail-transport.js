@@ -45,13 +45,19 @@
  */
 const emailMessage = require('./email-message');
 
-const TOKEN_URL = process.env.GMAIL_TOKEN_URL || 'https://oauth2.googleapis.com/token';
-const SEND_URL = process.env.GMAIL_SEND_URL
+/* READ AT CALL TIME, NOT AT REQUIRE TIME, and that is not a test convenience.
+ *
+ * A module-level `process.env` read makes the value depend on REQUIRE ORDER:
+ * whichever file pulled this one in first decides what the URL is for the rest
+ * of the process. Its own test suite caught it — the fake Google was ignored and
+ * the sends went to the real endpoint, because an earlier line in the same file
+ * had already required this module. In production the same shape means a
+ * variable set after boot is silently ignored.
+ *
+ * So these are functions. The overhead is a property lookup per send. */
+const tokenUrl = () => process.env.GMAIL_TOKEN_URL || 'https://oauth2.googleapis.com/token';
+const sendUrl = () => process.env.GMAIL_SEND_URL
   || 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send';
-/* Listing is used for ONE thing: deciding whether a send whose response was lost
-   actually arrived. See `alreadySent` below. */
-const LIST_URL = process.env.GMAIL_LIST_URL
-  || 'https://gmail.googleapis.com/gmail/v1/users/me/messages';
 
 /* THE ONE SCOPE. gmail.send and nothing else: it cannot read a mailbox, cannot
    list messages a human sent, cannot delete anything. The consent screen says
@@ -68,7 +74,7 @@ const SCOPE = 'https://www.googleapis.com/auth/gmail.send';
    401 and burn an attempt for no reason. */
 const EXPIRY_MARGIN_MS = 60 * 1000;
 
-const HTTP_TIMEOUT_MS = Number(process.env.GMAIL_HTTP_TIMEOUT_MS || 20000);
+const httpTimeoutMs = () => Number(process.env.GMAIL_HTTP_TIMEOUT_MS || 20000);
 
 function settings() {
   return {
@@ -117,7 +123,7 @@ function mask(value) {
 
 async function post(url, body, { headers = {}, signal } = {}) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), httpTimeoutMs());
   try {
     return await fetch(url, {
       method: 'POST',
@@ -143,7 +149,7 @@ async function fetchToken() {
   refreshCount += 1;
   let res;
   try {
-    res = await post(TOKEN_URL, form.toString(),
+    res = await post(tokenUrl(), form.toString(),
       { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
   } catch (err) {
     /* A network failure is temporary and says nothing about the credential. */
@@ -299,7 +305,7 @@ async function send(message) {
   const attempt = async (bearer) => {
     let res;
     try {
-      res = await post(SEND_URL, { raw: emailMessage.toBase64Url(built.raw) },
+      res = await post(sendUrl(), { raw: emailMessage.toBase64Url(built.raw) },
         { headers: { Authorization: `Bearer ${bearer}` } });
     } catch (err) {
       /* ABORTED OR DROPPED. Temporary, and flagged as a timeout so the queue
@@ -369,5 +375,5 @@ function _reset() { cached = null; inFlight = null; refreshCount = 0; }
 
 module.exports = {
   send, checkConnection, accessToken, forgetToken, classify, missing, isConfigured,
-  settings, mask, SCOPE, TOKEN_URL, SEND_URL, LIST_URL, EXPIRY_MARGIN_MS, _stats, _reset,
+  settings, mask, SCOPE, tokenUrl, sendUrl, EXPIRY_MARGIN_MS, _stats, _reset,
 };

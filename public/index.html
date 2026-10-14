@@ -3296,6 +3296,10 @@ const SETTINGS_SECTIONS = [
      question, and it has its own key: a studio can hand out the group screen
      without handing out the role screen. Super Admin only by default. */
   { permission:'settings.role_groups',  label:'Role Groups',      heading:'Role Groups',      note:'Departments, levels and sets of roles that inherit permissions together.' },
+  /* Its own key, beside the mail-server screen rather than part of it: this one
+     shows whether mail is going out and sends a test to yourself; that one holds
+     a live password. See the catalogue entry. */
+  { permission:'settings.email_delivery', label:'Email (Gmail)',   heading:'Email (Gmail)',    note:'Whether the studio\'s email is being delivered, what is queued, and a test send.' },
   { permission:'settings.asset_types',  label:'Scope of Work',    heading:'Scope of Work',    note:'The Scope of Work dropdown and the code prefix each asset gets.' },
   { permission:'settings.branding',     label:'Branding',         heading:'Branding',         note:'The name, tagline and logo shown in the header and on the sign-in screen.' },
   /* Was missing from this list entirely, which is a bug rather than an
@@ -12098,6 +12102,7 @@ async function renderSettings(){
     ${can('pnl.manage') ? '<div id="roleRatesSection"></div>' : ''}
     ${can('settings.permissions') ? '<div id="rolePermissionsSection"></div>' : ''}
     ${can('settings.role_groups') ? '<div id="roleGroupsSection"></div>' : ''}
+    ${can('settings.email_delivery') ? '<div id="emailDeliverySection"></div>' : ''}
     ${can('settings.activity_log') ? '<div id="activityLogSection"></div>' : ''}
     ${can('settings.chat_activity') ? '<div id="chatActivitySection"></div>' : ''}
     ${can('mobile.distribute') ? '<div id="mobileDistSection"></div>' : ''}
@@ -12114,6 +12119,7 @@ async function renderSettings(){
   if(can('settings.working_hours')) renderSchedule();
   if(can('settings.permissions')) await renderRolePermissions();
   if(can('settings.role_groups')) await renderRoleGroups();
+  if(can('settings.email_delivery')) await renderEmailDelivery();
   if(can('settings.activity_log')) renderActivityLog();
   /* Drawn, not LOADED. renderChatActivity paints the header, the notice and a
      button; nothing is fetched until somebody presses it. That is deliberate:
@@ -17729,6 +17735,134 @@ async function showRolePermissions(roleKey){
       await showRolePermissions(rpRole.key);
       rpMessage(res.summary, 'ok');
     }catch(err){ rpMessage(err.message, 'err'); }
+  });
+}
+
+/* ---------- email delivery: is the studio's mail going out ---------- */
+/*
+ * READS THE SERVER AND DECIDES NOTHING. The connection state, the queue, the
+ * cap and the 80% line all come from GET /api/email-delivery; this draws them.
+ * The gate is can('settings.email_delivery') for drawing and requirePermission
+ * on every route for enforcing — both halves, as everywhere else.
+ *
+ * NO SECRET IS ON THIS SCREEN because none is in the response. What a missing
+ * credential produces is the NAME of the variable that is unset.
+ */
+let edState = null;
+
+const ED_STATES = {
+  connected:             { label:'Connected',               tone:'ok' },
+  needs_reauthorisation: { label:'Needs re-authorisation',  tone:'bad' },
+  not_configured:        { label:'Not configured',          tone:'warn' },
+  unreachable:           { label:'Cannot reach Google',     tone:'warn' },
+};
+
+async function renderEmailDelivery(){
+  const el = document.getElementById('emailDeliverySection');
+  if(!el) return;
+  try{ edState = await api('/email-delivery'); }
+  catch(err){
+    el.innerHTML = `<div class="ref-section"><div class="ref-head"><h3>Email (Gmail)</h3></div>
+      <div class="ref-err">${escapeHTML(err.message)}</div></div>`;
+    return;
+  }
+  const d = edState;
+  const state = ED_STATES[d.connection.state] || { label:d.connection.state, tone:'warn' };
+  const used = d.queue.sentToday;
+  const nearCap = used >= d.queue.warnAt;
+  const paused = d.queue.healthy === false;
+
+  el.innerHTML = `
+    <div class="ref-section" data-section="email-delivery">
+      <div class="ref-head"><h3>Email (Gmail)</h3>
+        <span class="ref-key">${escapeHTML(d.transport)}</span>
+      </div>
+      ${paused ? `<div class="ip-banner fault" style="margin-bottom:12px;">
+        <h4>The Gmail connection needs to be re-authorised</h4>
+        <p>Sending is paused and ${d.queue.pending} message${d.queue.pending===1?'':'s'} ${d.queue.pending===1?'is':'are'}
+        waiting — nothing has been lost. Run <code>${escapeHTML(d.authorizeCommand)}</code> on the server,
+        set the new <code>GMAIL_REFRESH_TOKEN</code>, restart, then press Check again.</p>
+        ${d.connection.error ? `<p style="font-size:11px;">${escapeHTML(d.connection.error)}</p>` : ''}
+      </div>` : ''}
+      <div class="ref-note">
+        Notifications are queued and sent in the background. A failure is retried on the studio's
+        schedule — a minute, five, thirty, two hours, six, then a day — and held rather than lost if
+        the connection goes down.
+      </div>
+
+      <div class="pm-legend" style="margin-bottom:10px;">
+        <span><span class="pm-swatch ${state.tone==='ok'?'own':'role'}"></span><b>${escapeHTML(state.label)}</b>${d.connection.assumed?' (assumed — this transport cannot be checked without sending)':''}</span>
+        <span>Master switch: <b>${d.enabled?'on':'off'}</b></span>
+      </div>
+
+      ${d.sender ? `<div class="row2">
+        <div><label>Sender (read-only — set in the environment)</label>
+          <input type="text" value="${escapeHTML(d.sender.address||'')}" readonly></div>
+        <div><label>Display name</label>
+          <input type="text" value="${escapeHTML(d.sender.name||'')}" readonly></div>
+      </div>
+      <label>Reply-To${d.sender.replyTo?'':' (not set — replies go to the sender)'}</label>
+      <input type="text" value="${escapeHTML(d.sender.replyTo||'')}" readonly>` : ''}
+
+      ${d.connection.missing.length ? `<div class="ref-note" style="margin-top:8px;">
+        Not set yet: ${d.connection.missing.map(m=>`<code>${escapeHTML(m)}</code>`).join(', ')}.
+        These are environment variables on the server, never values typed here.
+      </div>` : ''}
+
+      <div class="field-lbl">Delivery</div>
+      <div class="pm-groups" style="grid-template-columns:repeat(auto-fill,minmax(180px,1fr));">
+        <div class="pm-group"><h4>Waiting</h4><div class="worklog-total">${d.queue.pending}</div>
+          <div class="pm-note">in the queue now</div></div>
+        <div class="pm-group"><h4>Sent today</h4>
+          <div class="worklog-total" ${nearCap?'style="color:var(--warning-ink);"':''}>${used} / ${d.queue.dailyCap}</div>
+          <div class="pm-note">${nearCap?'past the 80% line — a Super Admin has been told':`cap is ${d.queue.dailyCap} a day, ${d.queue.perMinute} a minute`}</div></div>
+        <div class="pm-group"><h4>Failed</h4><div class="worklog-total">${d.queue.failedLast24h}</div>
+          <div class="pm-note">in the last 24 hours</div></div>
+        <div class="pm-group"><h4>Last sent</h4>
+          <div class="pm-note" style="margin-top:6px;">${d.queue.lastSuccessAt?escapeHTML(fmtDate(d.queue.lastSuccessAt)):'nothing yet'}</div></div>
+      </div>
+
+      <div class="pm-bar">
+        <button class="btn btn-brand btn-sm" id="ed_test">Send test email</button>
+        <button class="btn btn-ghost btn-sm" id="ed_check">Check connection</button>
+        <span class="pm-msg" id="ed_msg"></span>
+      </div>
+      <div class="ref-note" style="margin-top:4px;">
+        The test goes to your own address and nowhere else. The scope this studio asked Google for is
+        <code>${escapeHTML(d.scope)}</code> — send only; it cannot read the mailbox.
+      </div>
+    </div>`;
+
+  const say = (text, cls='')=>{
+    const m = document.getElementById('ed_msg');
+    if(m){ m.textContent = text; m.className = `pm-msg ${cls}`; }
+  };
+
+  document.getElementById('ed_test').onclick = guarded('send a test email', async ()=>{
+    const btn = document.getElementById('ed_test');
+    btn.disabled = true;
+    say('Sending…');
+    try{
+      const res = await api('/email-delivery/test', { method:'POST' });
+      say(res.summary, 'ok');
+    }catch(err){
+      /* THE REAL ERROR, shown as the server gave it. A tidied "check your
+         settings" is what makes a support thread take three days. */
+      say(err.message, 'err');
+    }finally{ btn.disabled = false; }
+  });
+
+  document.getElementById('ed_check').onclick = guarded('check the email connection', async ()=>{
+    const btn = document.getElementById('ed_check');
+    btn.disabled = true;
+    say('Checking…');
+    try{
+      const res = await api('/email-delivery/resume', { method:'POST' });
+      say(res.resumed
+        ? `Working again — ${res.sent} sent, ${res.pending} still queued.`
+        : `The connection is working. ${res.pending} queued.`, 'ok');
+      await renderEmailDelivery();
+    }catch(err){ say(err.message, 'err'); btn.disabled = false; }
   });
 }
 

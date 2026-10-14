@@ -41,7 +41,9 @@ const crypto = require('node:crypto');
  * notification is already a bug, and failing it with a sentence beats a 413 from
  * Google with no context. Configurable so a studio that one day attaches a PDF
  * is not editing code. */
-const MAX_BYTES = Number(process.env.EMAIL_MAX_BYTES || 1024 * 1024);
+/* A FUNCTION, not a constant, for the reason gmail-transport.js spells out: a
+   module-level env read depends on require order. */
+const maxBytes = () => Number(process.env.EMAIL_MAX_BYTES || 1024 * 1024);
 
 /* An address, as strictly as is useful.
  *
@@ -242,8 +244,9 @@ function build({ from, fromName, to, subject, text, html, replyTo, inReplyTo } =
 
   const raw = headers.join('\r\n') + body;
   const bytes = Buffer.byteLength(raw, 'utf8');
-  if (bytes > MAX_BYTES) {
-    const err = new Error(`That message is ${bytes} bytes; the limit is ${MAX_BYTES}.`);
+  const limit = maxBytes();
+  if (bytes > limit) {
+    const err = new Error(`That message is ${bytes} bytes; the limit is ${limit}.`);
     err.permanent = true;
     err.field = 'body';
     throw err;
@@ -264,5 +267,5 @@ const fromBase64Url = (value) => Buffer.from(
 
 module.exports = {
   build, toBase64Url, fromBase64Url, messageId, encodedWord, addressHeader,
-  isAddress, hasBreak, header, MAX_BYTES,
+  isAddress, hasBreak, header, maxBytes,
 };
