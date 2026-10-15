@@ -578,14 +578,45 @@ test('the Server tab, end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     const empty = await as('lead', '/server/deletion-requests', { method: 'POST', body: { path: 'Alpha/other.psd', reason: '  ' } });
     assert.strictEqual(empty.status, 400);
 
-    // RESOLVING DELETES NOTHING. There is nothing on this server to delete and
-    // no code to do it; what changes is a status and a notification.
-    const before = await q('SELECT COUNT(*) AS n FROM asset_versions');
+    /* RESOLVING DELETES NOTHING. There is nothing on this server to delete and
+       no code to do it; what changes is a status and a notification.
+       
+       A SENTINEL FIRST, because a count of an empty table proves nothing — and
+       the first version of this assertion did exactly that, which is how a
+       mutation that added a DELETE to the resolve handler passed it. There is
+       now a row to lose. */
+    const sentinelAsset = await as('root', `/assets/project/${id.alpha}`, { method: 'POST',
+      body: { name: 'Sentinel', type: 'character' } });
+    assert.strictEqual(sentinelAsset.status, 201, JSON.stringify(sentinelAsset.body));
+    id.sentinelVersion = crypto.randomUUID();
+    await q('INSERT INTO asset_versions (id, asset_id, version_number, stage, link, uploaded_by) '
+      + 'VALUES (?,?,?,?,?,?)',
+      [id.sentinelVersion, sentinelAsset.body.asset.id, 1, 'tl', 'https://example.test/sentinel', id.root]);
+
+    const counts = async () => {
+      const out = {};
+      for (const table of ['asset_versions', 'assets', 'projects', 'users', 'server_events', 'notifications']) {
+        const rows = await q(`SELECT COUNT(*) AS n FROM ${table}`);
+        out[table] = Number(rows[0].n);
+      }
+      return out;
+    };
+    const before = await counts();
+    assert.ok(before.asset_versions >= 1, 'there is a submission row for a resolve to fail to delete');
+
     const done = await as('root', `/server/deletion-requests/${id.request}/resolve`, { method: 'POST',
       body: { status: 'done', note: 'Removed on the file server' } });
     assert.strictEqual(done.status, 200, JSON.stringify(done.body));
-    const after = await q('SELECT COUNT(*) AS n FROM asset_versions');
-    assert.strictEqual(Number(after[0].n), Number(before[0].n), 'nothing was deleted');
+
+    const after = await counts();
+    assert.strictEqual(after.asset_versions, before.asset_versions, 'no submission was deleted');
+    assert.strictEqual(after.assets, before.assets, 'no asset was deleted');
+    assert.strictEqual(after.projects, before.projects, 'no project was deleted');
+    assert.strictEqual(after.users, before.users, 'no account was deleted');
+    assert.strictEqual(after.server_events, before.server_events, 'resolving is not an action on a file');
+    assert.ok(after.notifications > before.notifications, 'the only thing added is the notice to the requester');
+    const sentinel = await q('SELECT id FROM asset_versions WHERE id = ?', [id.sentinelVersion]);
+    assert.strictEqual(sentinel.length, 1, 'and the row that was there before is still there');
     const stillThere = await q('SELECT status, admin_note FROM deletion_requests WHERE id = ?', [id.request]);
     assert.strictEqual(stillThere[0].status, 'done');
     assert.strictEqual(stillThere[0].admin_note, 'Removed on the file server');
