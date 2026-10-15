@@ -6,6 +6,8 @@ const followUp = require('../follow-up');
 const reminders = require('../reminders');
 const waitingWork = require('../waiting-work');
 const timesheetGate = require('../timesheet-gate');
+const dayStatus = require('../day-status');
+const leaveSettings = require('../leave-settings');
 const permissions = require('../permissions');
 const { roleDef } = require('../roles');
 const { holds } = require('../permissions');
@@ -183,8 +185,22 @@ router.get('/follow-up/waiting/:userId', requirePermission('report.follow_up'), 
     elsewhere = (whole.get(userId) || 0) > panel.count;
   }
 
+  /* LEAVE DOES NOT PAUSE THE WAITING CLOCK, and the panel says so rather than
+   * quietly hiding the fact.
+   *
+   * The time an asset has been waiting is a fact about the ASSET — how long the
+   * studio has not moved it — and a reviewer's or an artist's absence does not
+   * make the client's wait shorter. Subtracting leave from it would be this
+   * application deciding that a deadline moves because somebody took a morning
+   * off. So the figures are untouched and the panel is annotated: "(on leave)"
+   * beside the name, so a reader knows why nothing is moving. */
+  const mark = await dayStatus.userDayStatus(db, userId, today).catch(() => null);
+
   return res.json({
     ...panel,
+    onLeave: mark && mark.kind === dayStatus.KINDS.leave
+      ? { label: dayStatus.describe(mark), inWindow: !dayStatus.expectedToWorkFromRow(mark, Date.now()) }
+      : null,
     userId,
     elsewhere,
     studioWide,
@@ -375,6 +391,354 @@ router.post('/follow-up/remind',
       channels: result.channels,
       emailReason: result.emailReason,
       row: again.row || null,
+    });
+  });
+
+/* ---------------------------------------------------------------------------
+ * LEAVE AND IDLE.
+ *
+ * POST /api/admin-dashboard/follow-up/day-status   { userId, date, kind, portion, note }
+ * POST /api/admin-dashboard/follow-up/day-status/clear  { userId, date }
+ *
+ * TWO ENDPOINTS AND NOT ONE, because they are not the same action: marking is
+ * gated on the feature switch and on the kind's own permission, and UNDOING IS
+ * ALWAYS ALLOWED to somebody who holds the permission — including when the
+ * feature has since been switched off. A mark that could be made and not undone
+ * is a mark that is stuck, which is the one outcome the brief rules out by
+ * name.
+ *
+ * THE SCOPE RULE IS THE SECTION'S OWN. followUp.inScope() is what decides who
+ * this viewer may see, and marking somebody is a thing done to a person, so it
+ * is the same question the list already answers — asked of the same function,
+ * never restated here.
+ */
+const DAY_STATUS_PERMISSION = {
+  leave: 'followup.mark_leave',
+  idle: 'followup.mark_idle',
+};
+
+/* WHO THIS VIEWER MAY ACT ON, answered once per request.
+ *
+ * Returns null when the viewer is studio-wide (everybody), and otherwise the
+ * set of ids they can reach. The refusal that follows discloses nothing: whether
+ * that id is a person at all is not a thing this answer may reveal. */
+async function reachable(req) {
+  const projects = await permissions.visibleProjects(req.user);
+  const projectIds = projects.map((p) => p.id);
+  const def = roleDef(req.user.role) || {};
+  if (def.projectScope === 'all') return { ok: true, ids: null };
+  if (!projectIds.length) {
+    return { ok: false, status: 403, error: 'You have no projects in view, so there is nobody to mark.' };
+  }
+  const reach = await followUp.inScope(db, { projectIds, studioWide: false });
+  return { ok: true, ids: reach };
+}
+
+/* GET .../day-status/preview?userId&date&kind&portion
+ *
+ * WHAT MARKING THIS WOULD COST, asked before the question is put so the
+ * confirmation can say it. The number comes from the same arithmetic that will
+ * do the removing — src/day-status.js's recordedInside() walks the sessions
+ * with the same working-time intersection countedMs() uses — so the figure
+ * shown and the figure lost cannot differ.
+ *
+ * READ-ONLY, and gated on the marking permission rather than on report.remind:
+ * "how many hours has this person recorded this afternoon" is not something to
+ * hand to somebody who may not act on it.
+ */
+router.get('/follow-up/day-status/preview',
+  requirePermission('report.follow_up'),
+  async (req, res) => {
+    const userId = String(req.query.userId || '');
+    const kind = String(req.query.kind || '');
+    const portion = String(req.query.portion || '') || null;
+    const today = timesheetGate.istDate(Date.now());
+    const day = String(req.query.date || today);
+    if (!userId || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return res.status(400).json({ error: 'Which person, and which date?' });
+    const key = DAY_STATUS_PERMISSION[kind];
+    if (!key || !permissions.holds(req.user, key)) {
+      return res.status(403).json({ error: 'You do not have permission to do that.' });
+    }
+    const reach = await reachable(req);
+    if (!reach.ok) return res.status(reach.status).json({ error: reach.error });
+    if (reach.ids && !reach.ids.has(userId)) {
+      return res.status(403).json({ error: 'That person is not in the projects you can see.' });
+    }
+
+    /* IDLE REMOVES NOTHING, so there is nothing to preview for it beyond what
+       the button already knows. Said rather than computed, so the answer cannot
+       drift into implying otherwise. */
+    if (kind === dayStatus.KINDS.idle) {
+      return res.json({ seconds: 0, recordedLabel: null, warning: null });
+    }
+    const inside = await dayStatus.recordedInside(db, { userId, date: day, portion })
+      .catch(() => ({ seconds: 0, sessions: 0 }));
+    return res.json({
+      seconds: inside.seconds,
+      sessions: inside.sessions,
+      recordedLabel: inside.seconds > 0 ? dayStatus.durationLabel(inside.seconds) : null,
+      /* A past date is excluded at READ time: nothing is rewritten in place
+         beyond the derived seconds column, and the note says so because the
+         figures somebody is looking at are about to move. */
+      warning: day < today
+        ? 'This is a past date. Figures that have already been reported on will change.'
+        : null,
+    });
+  });
+
+router.post('/follow-up/day-status',
+  requirePermission('report.follow_up'),
+  async (req, res) => {
+    const { userId, date, kind, portion, note } = req.body || {};
+    if (!userId || typeof userId !== 'string') return res.status(400).json({ error: 'Which person?' });
+    if (kind !== dayStatus.KINDS.leave && kind !== dayStatus.KINDS.idle) {
+      return res.status(400).json({ error: 'That is not something this section records.' });
+    }
+
+    /* THE PERMISSION FOR THE KIND, checked here rather than as middleware
+       because which key is needed depends on the body. requirePermission is
+       still what answers it — holds() reads the same resolved list — so this is
+       the same gate and not a weaker one beside it. */
+    const key = DAY_STATUS_PERMISSION[kind];
+    if (!permissions.holds(req.user, key)) {
+      return res.status(403).json({ error: 'You do not have permission to do that.', code: 'forbidden' });
+    }
+
+    /* THE FEATURE SWITCH, ON THE SERVER. The page hides the buttons when it is
+       off; this is what makes that a rule rather than a decoration. */
+    if (!leaveSettings.leaveIdleEnabled()) {
+      return res.status(409).json({
+        error: 'Leave & Idle is switched off in Settings → Leave.',
+        code: 'feature_disabled',
+      });
+    }
+
+    const today = timesheetGate.istDate(Date.now());
+    const day = String(date || today);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return res.status(400).json({ error: 'Which date?' });
+    if (day > today) return res.status(400).json({ error: 'That date has not happened yet.' });
+
+    /* A PAST DATE IS ITS OWN PERMISSION. Marking last Tuesday changes a figure
+       somebody may already have acted on, which is a different act from marking
+       today and is gated separately. */
+    if (day < today && !permissions.holds(req.user, 'followup.mark_past_dates')) {
+      return res.status(403).json({
+        error: 'You can only mark today. Marking a past date needs a further permission.',
+        code: 'past_date',
+      });
+    }
+
+    /* ONLY A SUPER ADMIN MAY MARK THEMSELVES. Everybody else's own leave is
+       somebody else's to record — which is the ordinary separation between
+       asking for leave and granting it. */
+    /* "Super Admin" IS A TIER AND NOT A PERMISSION, so this one check is the one
+       place in this feature that asks the tier — hasFullAccess() is the same
+       predicate every other "this account administers the studio" rule in
+       src/permissions.js uses. Everything else here is a catalogue key, which
+       is why this is called out rather than left to look like an oversight:
+       marking your own day is not a power a studio delegates, it is the absence
+       of a separation, and the tier that can grant itself every key anyway is
+       the only one for whom that separation would be theatre. */
+    if (userId === req.user.id && !permissions.hasFullAccess(req.user)) {
+      return res.status(403).json({
+        error: 'You cannot mark your own day. Ask somebody who can.',
+        code: 'self',
+      });
+    }
+
+    const reach = await reachable(req);
+    if (!reach.ok) return res.status(reach.status).json({ error: reach.error });
+    if (reach.ids && !reach.ids.has(userId)) {
+      return res.status(403).json({ error: 'That person is not in the projects you can see.' });
+    }
+
+    const { rows: people } = await db.query(
+      'SELECT id, `name`, is_active AS isActive FROM users WHERE id = $1', [userId]
+    );
+    const person = people[0];
+    if (!person) return res.status(404).json({ error: 'That person is no longer on the books.' });
+    if (!Number(person.isActive)) {
+      return res.status(409).json({ error: `${person.name} is not an active account.` });
+    }
+
+    /* A DAY THE STUDIO IS ALREADY SHUT FOR. Leave on a Sunday is a mark with no
+       effect that would read on the strip as something somebody decided — and
+       the holiday calendar from Prompt 22 is where that is already recorded. */
+    const policy = require('../timesheet-settings').current() || {};
+    const isWorking = timesheetGate.isWorkingDay(day, {
+      loggableDays: policy.loggableDays,
+      isHoliday: (d) => Boolean(require('../holidays').on(d)),
+    });
+    if (!isWorking) {
+      return res.status(409).json({
+        error: `${day} is already a non-working day — a weekly off or a holiday.`,
+        code: 'non_working_day',
+      });
+    }
+
+    if (kind === dayStatus.KINDS.idle) {
+      if (day !== today) {
+        return res.status(409).json({
+          error: 'Idle can only be marked for today.', code: 'idle_not_today',
+        });
+      }
+      /* THE SERVER RE-CHECKS WHAT THE BUTTON ASSERTED. The page disables Idle
+         when somebody has work; this is what makes it true, and it is asked of
+         the shared status list rather than of a number the browser sent. */
+      const n = await dayStatus.actionableCount(db, userId);
+      if (n > 0) {
+        return res.status(409).json({
+          error: `${person.name} has ${n} asset${n === 1 ? '' : 's'} assigned, so there is `
+            + 'something for them to do.',
+          code: 'has_assets',
+        });
+      }
+    } else if (!dayStatus.PORTIONS[portion]) {
+      return res.status(400).json({ error: 'Which part of the day — first half, second half or full day?' });
+    }
+
+    const marked = await dayStatus.mark(db, {
+      userId, date: day, kind, portion: kind === dayStatus.KINDS.leave ? portion : null,
+      note: note || null, setBy: req.user.id,
+    });
+    if (!marked.ok) {
+      const status = marked.code === 'race' ? 409 : 400;
+      return res.status(status).json({
+        error: marked.code === 'race'
+          ? 'Somebody marked that person a moment ago. Refresh to see what was recorded.'
+          : 'That could not be recorded.',
+        code: marked.code,
+      });
+    }
+
+    let stopped = [];
+    if (!marked.unchanged) {
+      /* THE TIMERS, AND THE CACHED FIGURES, both brought up to date before this
+         request returns — so the person who clicked sees the truth rather than
+         the state a sweep will reach a minute later. The sweep still runs, for
+         the windows that open later in the day. */
+      stopped = await dayStatus.sweepLeave(db).catch(() => []);
+      await dayStatus.recount(db, { userId, date: day }).catch(() => {});
+
+      /* THE PERSON IS TOLD, through the existing mechanism. No email in this
+         prompt — the brief says so, and an attendance mark leaving the building
+         through a shared mailbox is the decision reminder-settings already
+         declined to make by default. */
+      await require('../notifications').raise(db, {
+        recipientId: userId,
+        actorId: req.user.id,
+        kind: require('../notifications').KINDS.day_status,
+        detail: `You were marked ${dayStatus.describe(marked.row).toLowerCase()} for ${day} `
+          + `by ${req.user.name}.`,
+      }).catch(() => {});
+
+      req.activity({
+        module: 'users',
+        action: `day_status.${kind}`,
+        entityType: 'user',
+        entityId: userId,
+        entityLabel: person.name,
+        summary: `Marked ${person.name} — ${dayStatus.describe(marked.row)} — for ${day}`,
+        changes: marked.replaced
+          ? `${dayStatus.describe(marked.replaced)} → ${dayStatus.describe(marked.row)}`
+          : null,
+      });
+    }
+
+    /* WHAT IS STILL ON THEIR DESK, offered after a FULL DAY recorded for TODAY
+     * and in no other case.
+     *
+     * NOT FOR A HALF-DAY, because they are back this afternoon and handing
+     * their work to somebody else for the morning would be the wrong answer to
+     * a question nobody asked. NOT FOR A PAST DATE, because the day is over.
+     *
+     * THE LIST ONLY. The handover itself goes through /assets/:id/reassign and
+     * /assets/:id/reassign-options — the existing flow, with its own
+     * permissions, its own exclusivity rule and its own history sentence — so
+     * nothing here decides who may receive work. */
+    const offerReassign = kind === dayStatus.KINDS.leave
+      && portion === dayStatus.PORTIONS.full && day === today && !marked.unchanged;
+
+    const after = await freshLists(req.user, day);
+    return res.json({
+      ok: true,
+      unchanged: Boolean(marked.unchanged),
+      status: marked.row,
+      label: dayStatus.describe(marked.row),
+      stoppedTimers: stopped.filter((t) => t.userId === userId).length,
+      reassign: offerReassign
+        ? { name: person.name, assets: await dayStatus.actionableAssets(db, userId) }
+        : null,
+      leave: after.leave || null,
+      notStarted: after.notStarted,
+      notFilled: after.notFilled,
+      overlap: after.overlap,
+      expected: after.expected,
+    });
+  });
+
+/* UNDO. Never gated on the feature switch — see the note above the pair. */
+router.post('/follow-up/day-status/clear',
+  requirePermission('report.follow_up'),
+  async (req, res) => {
+    const { userId, date } = req.body || {};
+    if (!userId || typeof userId !== 'string') return res.status(400).json({ error: 'Which person?' });
+    const today = timesheetGate.istDate(Date.now());
+    const day = String(date || today);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return res.status(400).json({ error: 'Which date?' });
+
+    const existing = await dayStatus.userDayStatus(db, userId, day);
+    if (!existing) return res.status(404).json({ error: 'There is no mark on that day to undo.' });
+
+    const key = DAY_STATUS_PERMISSION[existing.kind];
+    if (!permissions.holds(req.user, key)) {
+      return res.status(403).json({ error: 'You do not have permission to do that.', code: 'forbidden' });
+    }
+    if (day < today && !permissions.holds(req.user, 'followup.mark_past_dates')) {
+      return res.status(403).json({
+        error: 'Undoing a past date needs a further permission.', code: 'past_date',
+      });
+    }
+
+    const reach = await reachable(req);
+    if (!reach.ok) return res.status(reach.status).json({ error: reach.error });
+    if (reach.ids && !reach.ids.has(userId)) {
+      return res.status(403).json({ error: 'That person is not in the projects you can see.' });
+    }
+
+    await dayStatus.clear(db, { userId, date: day, clearedBy: req.user.id, reason: 'undone' });
+    /* THE FIGURES COME BACK EXACTLY AS THEY WERE, and they come back because
+       they are derived again rather than remembered — see recount(). */
+    await dayStatus.recount(db, { userId, date: day }).catch(() => {});
+
+    const { rows: people } = await db.query('SELECT `name` FROM users WHERE id = $1', [userId]);
+    const name = (people[0] && people[0].name) || 'that person';
+    await require('../notifications').raise(db, {
+      recipientId: userId,
+      actorId: req.user.id,
+      kind: require('../notifications').KINDS.day_status,
+      detail: `The ${existing.kind === dayStatus.KINDS.idle ? 'idle mark' : 'leave'} recorded `
+        + `for you on ${day} was undone by ${req.user.name}.`,
+    }).catch(() => {});
+
+    req.activity({
+      module: 'users',
+      action: `day_status.clear.${existing.kind}`,
+      entityType: 'user',
+      entityId: userId,
+      entityLabel: name,
+      summary: `Undid ${name}'s ${dayStatus.describe(existing)} for ${day}`,
+    });
+
+    const after = await freshLists(req.user, day);
+    return res.json({
+      ok: true,
+      cleared: existing,
+      leave: after.leave || null,
+      notStarted: after.notStarted,
+      notFilled: after.notFilled,
+      overlap: after.overlap,
+      expected: after.expected,
     });
   });
 

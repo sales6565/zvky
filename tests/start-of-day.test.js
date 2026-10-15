@@ -453,19 +453,20 @@ test('MUTATION 9 — what the state costs on the poll', async () => {
   const running = stubDb(answersFor({ open: [{ id: 's-1', assetId: 'a-1',
     since: '2026-03-18 04:00:00', age_seconds: 600, code: 'C', name: 'N', status: 'in_progress' }] }));
   await dayState.forUser(running, ARTIST, { now: ist(`${WED}T11:45:00`), settings: SETTINGS, schedule: SCHEDULE });
-  assert.strictEqual(running.calls.length, 1,
-    'a running timer is one query — the rest is not needed and is not asked');
+  assert.strictEqual(running.calls.length, 2,
+    'a running timer is two: the session, and what kind of day this person is having');
 
   const idle = stubDb(answersFor({ waiting: [waitingRow()] }));
   await dayState.forUser(idle, ARTIST, { now: ist(`${WED}T11:45:00`), settings: SETTINGS, schedule: SCHEDULE });
-  assert.strictEqual(idle.calls.length, 4,
-    'an idle morning is four: the session, the hold, started-today and what is waiting');
-  /* FIXED, NOT PER TASK. Forty waiting assets are the same four queries. */
+  assert.strictEqual(idle.calls.length, 5,
+    'an idle morning is five: the session, the day mark, the hold, started-today and what is '
+    + 'waiting');
+  /* FIXED, NOT PER TASK. Forty waiting assets are the same five queries. */
   const many = stubDb(answersFor({
     waiting: Array.from({ length: 40 }, (_, i) => waitingRow({ id: `a-${i}`, name: `A${i}` })),
   }));
   const out = await dayState.forUser(many, ARTIST, { now: ist(`${WED}T11:45:00`), settings: SETTINGS, schedule: SCHEDULE });
-  assert.strictEqual(many.calls.length, 4);
+  assert.strictEqual(many.calls.length, 5);
   assert.strictEqual(out.assignedCount, 40);
   assert.strictEqual(out.tasks.length, dayState.BANNER_TASKS, 'and three of them are offered');
   assert.strictEqual(out.moreTasks, 37);
@@ -854,7 +855,13 @@ test('MUTATION 18 — the dismissal is per user, per day, in the browser, and ne
   /* THE KEY CARRIES THE SERVER'S IST DATE, so it expires twice over: when the
      snooze runs out, and when the date changes. */
   assert.match(PAGE, /localStorage\.setItem\(daySnoozeKey\(d\), String\(Date\.now\(\) \+ minutes\*60000\)\)/);
-  assert.match(PAGE, /if\(Date\.now\(\) < daySnoozedUntil\(d\)\) return '';/);
+  /* THE SNOOZE RETURNS EARLY AND THE LEAVE MARK SURVIVES IT. The guard used to
+     read `return ''`; it now returns markBanner, because a dismissal is about
+     the start-of-day PROMPT and a leave mark is a statement of fact on
+     somebody's own screen — snoozing a fact is not a thing. Repinned to the
+     guard itself rather than to the word that followed it. */
+  assert.match(PAGE, /if\(Date\.now\(\) < daySnoozedUntil\(d\)\) return markBanner;/);
+  assert.match(PAGE, /if\(!d\.banner \|\| !d\.banner\.show\) return markBanner;/);
   /* AN UNREADABLE VALUE READS AS "NOT DISMISSED", which is the safe direction —
      the worst case is a banner somebody dismisses again. */
   assert.match(PAGE, /return Number\.isFinite\(at\) \? at : 0;/);

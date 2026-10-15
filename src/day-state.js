@@ -64,6 +64,7 @@ const workingTime = require('./working-time');
 const workSchedule = require('./work-schedule');
 const followUp = require('./follow-up');
 const waitingWork = require('./waiting-work');
+const dayStatus = require('./day-status');
 const reminderSettings = require('./reminder-settings');
 const timesheetGate = require('./timesheet-gate');
 const holidays = require('./holidays');
@@ -194,6 +195,7 @@ async function forUser(db, user, { now = Date.now(), gate = null, settings = nul
       running: null, held: null, expected: false, startedToday: null,
       assignedCount: null, tasks: [], blocked: null,
       banner: { show: false, variant: null, why: 'switched off' },
+      dayMark: null,
       indicator: { show: false },
       today, serverNow, clock: null,
       settings: publicSettings(set),
@@ -208,6 +210,21 @@ async function forUser(db, user, { now = Date.now(), gate = null, settings = nul
      and the one that short-circuits the rest: with a timer running there is no
      banner to draw and no count to show. */
   const open = await workLog.openForUser(db, user.id).catch(() => null);
+
+  /* WHAT KIND OF DAY THIS PERSON IS HAVING, read before the branch so that both
+     halves carry it. Their own screen is the one place a mark is shown to the
+     person it is about, and somebody on second-half leave with a timer still
+     running at one o'clock needs the banner that says when it stops. */
+  const mark = await dayStatus.userDayStatus(db, user.id, today).catch(() => null);
+  const onLeaveNow = !dayStatus.expectedToWorkFromRow(mark, now);
+  const markFor = (m) => (m ? {
+    kind: m.kind,
+    portion: m.portion,
+    label: dayStatus.describe(m, { schedule: workSchedule.current() }),
+    inWindow: onLeaveNow,
+    setByName: m.setByName,
+    note: m.note,
+  } : null);
 
   if (open) {
     /* THE ELAPSED FIGURE IS WORKING SECONDS, not wall seconds, and it comes
@@ -246,6 +263,7 @@ async function forUser(db, user, { now = Date.now(), gate = null, settings = nul
       tasks: [],
       blocked: null,
       banner: { show: false, variant: null, why: 'a timer is running' },
+      dayMark: markFor(mark),
       indicator: { show: Boolean(set.indicatorEnabled) },
       today, serverNow, clock,
       settings: publicSettings(set),
@@ -293,11 +311,23 @@ async function forUser(db, user, { now = Date.now(), gate = null, settings = nul
    * switch off. */
   const graceMinutes = Number(set.graceMinutes) || reminderSettings.DEFAULTS.graceMinutes;
   const pastGrace = clock.openMinute !== null && clock.minute >= clock.openMinute + graceMinutes;
+  /* AND NOT WHILE THEY ARE ON LEAVE, nor while they are marked idle.
+   *
+   * Two conditions, not one, because they are two sentences: somebody on leave
+   * is not here, and somebody idle is here with nothing to start. Both make
+   * "You haven't started work today. You have N tasks assigned." untrue — in
+   * the second case N is zero, which is why the idle half also reads as "there
+   * is nothing to start" rather than as an excuse.
+   *
+   * ASKED OF THE ROW through the shared judgements, so the banner, the two
+   * automatic reminders, the manual Remind and list 1 are all one rule. */
   const show = Boolean(set.bannerEnabled)
     && expected
     && clock.openToday
     && clock.recording
     && !startedToday
+    && !onLeaveNow
+    && !dayStatus.nothingToStart(mark)
     && pastGrace;
 
   return {
@@ -319,6 +349,12 @@ async function forUser(db, user, { now = Date.now(), gate = null, settings = nul
       dueDate: a.dueDate, overdue: a.overdue,
     })),
     moreTasks: Math.max(0, assets.length - BANNER_TASKS),
+    /* THE MARK, ON THEIR OWN SCREEN. The timesheet and the timer screens draw a
+       banner from this — "On leave — First Half (until 13:00)" — and the
+       indicator reads it for the neutral state it shows instead of "No timer
+       running". The page is told the sentence; it never works out which half of
+       the day it is in. */
+    dayMark: markFor(mark),
     blocked,
     banner: {
       show,

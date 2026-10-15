@@ -8,6 +8,7 @@ const { authenticate, requirePermission } = require('../middleware/auth');
 const { holds } = require('../permissions');
 const sheets = require('../timesheets');
 const workSchedule = require('../work-schedule');
+const dayStatus = require('../day-status');
 const holidays = require('../holidays');
 // For the Hours suggestion: what this person's own work sessions say about one day.
 const workLog = require('../work-log');
@@ -228,10 +229,31 @@ const shapeEntry = (e) => ({
  * it. Everything to do with the clock is minutes past midnight IST, which is
  * what makes the times identical for a reader in any timezone.
  */
-const shapeDay = (day, entries, workDate) => {
+const shapeDay = (day, entries, workDate, mark = null) => {
   const total = sheets.dayTotal(entries, workSchedule.timesheetWindow());
   return {
     date: workDate,
+    /* WHAT KIND OF DAY THIS WAS, and the marker the brief asks for on lines
+     * that overlap it.
+     *
+     * NOTHING IS DELETED AND NOTHING IS REFUSED. A line filed before somebody
+     * was marked on leave stays exactly as it was typed; what changes is that
+     * the hours inside the window stop counting towards the figures the app
+     * calculates, and the day says so. A sheet that silently dropped a line
+     * would be a sheet nobody could reconcile.
+     *
+     * STILL REQUIRED ON A HALF DAY AND ON AN IDLE DAY, which is why this is a
+     * marker and not an exemption — src/day-status.js's timesheetRequiredFromRow
+     * is the one place that is decided. */
+    dayMark: mark ? {
+      kind: mark.kind,
+      portion: mark.portion,
+      label: dayStatus.describe(mark),
+      /* The half the window covers, so the banner on the person's own sheet can
+         say "until 13:00" without the page doing clock arithmetic. */
+      overlapsLeave: mark.kind === dayStatus.KINDS.leave,
+      required: dayStatus.timesheetRequiredFromRow(mark),
+    } : null,
     status: day ? day.status : 'draft',
     submittedAt: day ? day.submitted_at : null,
     decidedAt: day ? day.decided_at : null,
@@ -342,8 +364,12 @@ router.get('/week', requirePermission('timesheet.own'), async (req, res) => {
     const filledWeekend = entries.map((e) => sheets.toISO(e.date)).filter((d) => sheets.isWeekend(d));
     const shownDays = sheets.workingDays(anchor, { alsoShow: filledWeekend });
 
+    /* THE WEEK'S MARKS, in one query for seven days — never one per day. */
+    const marks = await dayStatus.statusesFor(db, [userId], days[0], days[6]).catch(() => new Map());
+
     const shaped = shownDays.map((d) =>
-      shapeDay(byDate.get(d) || null, entries.filter((e) => sheets.toISO(e.date) === d), d));
+      shapeDay(byDate.get(d) || null, entries.filter((e) => sheets.toISO(e.date) === d), d,
+        marks.get(`${userId}|${d}`) || null));
 
     res.json({
       user: who[0] || null,

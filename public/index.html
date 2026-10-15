@@ -1218,6 +1218,84 @@ tr.past-round{opacity:0.62;}
   overflow-wrap:break-word;}
 .fu-sent{font-size:10px;color:var(--success-ink);font-family:'IBM Plex Mono';}
 .fu-sent.is-err{color:var(--danger-ink);}
+/* ---------- leave and idle ----------
+   EVERYTHING HERE LIVES INSIDE .fu-side, which may not shrink and is capped at
+   the row's width (see the note on .fu-row). So the two buttons and the menu
+   wrap onto a second line when they do not fit rather than overflowing onto the
+   name — which is the overlap Prompt 47 was raised for, and the reason these
+   are flex:none items in that block rather than anything positioned. */
+.fu-day-wrap{display:inline-flex;align-items:center;gap:6px;flex:none;position:relative;}
+.fu-day-btn{font-family:'Inter',sans-serif;font-size:10.5px;padding:3px 9px;border-radius:7px;
+  background:var(--surface-2);border:1px solid var(--border);color:var(--ink);cursor:pointer;
+  display:inline-flex;align-items:center;gap:3px;white-space:nowrap;}
+.fu-day-btn:hover:not(:disabled){border-color:var(--brand-accent);color:var(--brand-accent);}
+.fu-day-btn:focus-visible{outline:2px solid var(--focus-ring);outline-offset:1px;}
+.fu-day-btn:disabled{opacity:.5;cursor:not-allowed;}
+.fu-day-btn.is-open{border-color:var(--brand-accent);color:var(--brand-accent);}
+.fu-day-btn.is-undo{color:var(--ink-muted);}
+.fu-day-caret{font-size:8px;}
+/* THE MENU IS ANCHORED TO ITS BUTTON and drawn above the rows below it. It is
+   the one positioned thing in this section, because three choices in the flow
+   would push every row under it down and back up again as it opens and closes —
+   a layout jump on a list somebody is reading. */
+.fu-leave-menu{position:absolute;top:100%;right:0;z-index:30;margin-top:4px;
+  background:var(--surface-2);border:1px solid var(--border);border-radius:8px;
+  box-shadow:0 6px 18px var(--shadow-t30);padding:4px;min-width:170px;
+  display:flex;flex-direction:column;gap:2px;}
+.fu-leave-item{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+  background:none;border:0;cursor:pointer;text-align:left;padding:6px 9px;border-radius:6px;
+  font-family:'Inter',sans-serif;font-size:11.5px;color:var(--ink);}
+.fu-leave-item:hover{background:var(--surface-3);color:var(--brand-accent);}
+.fu-leave-item:focus-visible{outline:2px solid var(--focus-ring);outline-offset:-2px;}
+.fu-leave-when{font-family:'IBM Plex Mono';font-size:10px;color:var(--ink-faint);}
+/* THE CHIP on a row that is still listed — a half-day whose window has passed.
+   Words, never colour alone, like every other marker in this section. */
+.fu-mark{font-size:10px;font-family:'IBM Plex Mono';flex:none;white-space:nowrap;cursor:help;
+  color:var(--info-ink);border:1px solid var(--info-t30);border-radius:20px;padding:1px 7px;}
+.fu-mark.is-now{color:var(--warning-ink);border-color:var(--warning-wash-t30);
+  background:var(--warning-wash-t12);}
+/* THE STRIP under the two lists. */
+.fu-leave-strip{margin-top:10px;padding-top:8px;border-top:1px solid var(--border);}
+.fu-leave-toggle{background:none;border:0;cursor:pointer;padding:0;display:inline-flex;
+  align-items:center;gap:4px;font-family:'IBM Plex Mono';font-size:11px;color:var(--ink-muted);}
+.fu-leave-toggle:hover{color:var(--brand-accent);}
+.fu-leave-toggle:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px;border-radius:4px;}
+.fu-leave-toggle.is-open{color:var(--brand-accent);}
+.fu-leave-none{font-family:'IBM Plex Mono';font-size:11px;color:var(--ink-faint);}
+.fu-leave-list{display:flex;flex-direction:column;gap:5px;margin-top:7px;}
+.fu-leave-row{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;font-size:11px;}
+.fu-leave-name{color:var(--ink);min-width:0;word-break:normal;overflow-wrap:break-word;}
+.fu-leave-chip{font-family:'IBM Plex Mono';font-size:10px;color:var(--info-ink);
+  border:1px solid var(--info-t30);border-radius:20px;padding:1px 7px;flex:none;}
+.fu-leave-chip.is-now{color:var(--warning-ink);border-color:var(--warning-wash-t30);
+  background:var(--warning-wash-t12);}
+.fu-leave-planned{font-family:'IBM Plex Mono';font-size:10px;color:var(--ink-faint);
+  border:1px solid var(--border);border-radius:20px;padding:1px 7px;flex:none;}
+.fu-leave-by{font-family:'IBM Plex Mono';font-size:10px;color:var(--ink-faint);flex:none;}
+.fu-leave-note{font-size:10.5px;color:var(--ink-muted);flex-basis:100%;}
+/* THE BANNER that says the feature is off while marks are still in force. It is
+   a sentence and not a colour: a reader who cannot tell the ambers apart reads
+   the same thing. */
+.fu-leave-off{font-size:11px;color:var(--warning-ink);background:var(--warning-wash-t12);
+  border:1px solid var(--warning-wash-t30);border-radius:7px;padding:6px 9px;margin-top:10px;}
+/* THE OPTIONAL HANDOVER OFFER. A panel, not a modal: the mark is already
+   recorded and the hours are already excluded, so this blocks nothing and can
+   be skipped. */
+.fu-reassign{margin-top:10px;border:1px solid var(--border);border-left:3px solid var(--brand-accent);
+  border-radius:8px;background:var(--surface-2);padding:9px 11px;}
+.fu-reassign-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 10px;
+  font-size:11.5px;color:var(--ink-muted);margin-bottom:7px;}
+.fu-reassign-head strong{color:var(--ink);}
+.fu-reassign-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 9px;
+  padding:5px 0;border-top:1px solid var(--border);}
+.fu-reassign-name{font-size:11.5px;color:var(--ink);min-width:0;
+  word-break:normal;overflow-wrap:break-word;}
+.fu-reassign-meta{font-size:10px;color:var(--ink-faint);font-family:'IBM Plex Mono';}
+.fu-reassign-pick{flex:1 1 180px;min-width:0;background:var(--input-bg);
+  border:1px solid var(--input-border);color:var(--ink);border-radius:7px;
+  font-family:'Inter',sans-serif;font-size:11px;padding:4px 7px;}
+.fu-reassign-pick:focus-visible{outline:2px solid var(--focus-ring);outline-offset:1px;}
+.fu-reassign-err{font-size:11px;color:var(--brand-accent);margin-top:6px;}
 .fu-list-actions{display:flex;align-items:center;gap:8px;padding:6px 0 2px;}
 .fu-remind-all{font-family:'Inter',sans-serif;font-size:10.5px;padding:3px 9px;border-radius:7px;
   background:var(--surface-2);border:1px solid var(--border);color:var(--ink);cursor:pointer;}
@@ -1264,6 +1342,17 @@ tr.past-round{opacity:0.62;}
 .db-blocked{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .db-why{font-size:11.5px;color:var(--warning-ink);max-width:460px;line-height:1.5;}
 .db-err{flex-basis:100%;font-size:11.5px;color:var(--brand-accent);line-height:1.5;}
+/* THE LEAVE / IDLE BANNER ON SOMEBODY'S OWN SCREEN. Not dismissible: it is a
+   statement of fact rather than a prompt, and the icon-plus-words rule every
+   other state on this screen follows applies — the border is a colour, the
+   words are the meaning. */
+.db-mark{display:flex;flex-direction:column;gap:3px;background:var(--surface-2);
+  border:1px solid var(--info-t30);border-left:3px solid var(--info-ink);border-radius:8px;
+  padding:9px 12px;margin-bottom:8px;font-size:12px;color:var(--ink);}
+.db-mark.is-now{border-color:var(--warning-wash-t30);border-left-color:var(--warning-ink);
+  background:var(--warning-wash-t12);}
+.db-mark span{color:var(--ink-muted);font-size:11.5px;line-height:1.5;}
+.db-mark-by{font-family:'IBM Plex Mono';font-size:10.5px;color:var(--ink-faint);}
 .db-close{position:absolute;top:6px;right:8px;background:none;border:0;cursor:pointer;
   color:var(--ink-faint);font-size:16px;line-height:1;padding:2px 5px;border-radius:6px;}
 .db-close:hover{color:var(--ink);}
@@ -3539,6 +3628,7 @@ const SETTINGS_SECTIONS = [
      feature, and a fifth key to grant beside the one a studio actually meant is
      a key somebody will forget. See src/routes/nudges.js. */
   { permission:'settings.nudges', label:'Start-of-day nudges', heading:'Start-of-day Nudges', note:'The start-of-day banner, the top-bar timer indicator, the two automatic reminders and their channels, the grace period, and the reminders a lead can send from "People to follow up".' },
+  { permission:'settings.leave.manage', label:'Leave', heading:'Leave', note:'Whether Leave & Idle is available at all, and the two times that divide a half-day. Switching it off hides the buttons and refuses new marks; existing marks keep their full effect.' },
   /* Super Admin only, like Recording Hours above and by the same route: a
      permission implied by managePermissions. */
   { permission:'chat.settings', label:'Chat', heading:'Chat', note:'The largest number of people a chat group may hold, studio-wide \u2014 or no limit at all.' },
@@ -5062,8 +5152,33 @@ async function openTimerTarget(){
  */
 function renderDayBanner(){
   const d = DAY_STATE;
-  if(!d || !d.banner || !d.banner.show) return '';
-  if(Date.now() < daySnoozedUntil(d)) return '';
+  if(!d) return '';
+  /* THE MARK COMES FIRST AND IS NOT THE START-OF-DAY BANNER.
+   *
+   * Somebody's own screen is the one place a leave or idle mark is shown to the
+   * person it is about, and it is shown whether or not there is anything to
+   * nudge them about — including while a timer of theirs is still running
+   * before a second-half window opens, which is exactly when they need to know
+   * when it stops. It is NOT dismissible, because it is a statement of fact
+   * rather than a prompt, and snoozing a fact is not a thing.
+   *
+   * The sentence is the SERVER'S (dayMark.label), so the page never works out
+   * which half of the day it is in — the same rule the indicator follows. */
+  const markBanner = d.dayMark
+    ? `<div class="db-mark${d.dayMark.inWindow ? ' is-now' : ''}" role="status">
+        <strong>${escapeHTML(d.dayMark.label)}</strong>
+        <span>${escapeHTML(d.dayMark.kind === 'idle'
+          ? 'Nothing is assigned to you right now. The mark clears itself as soon as something is — and your timesheet is still due.'
+          : (d.dayMark.inWindow
+            ? 'Work cannot be started until that window ends. Your timesheet is still due for the half you work.'
+            : 'That window has passed — you can start work as usual.'))}</span>
+        ${d.dayMark.setByName ? `<span class="db-mark-by">Marked by ${escapeHTML(d.dayMark.setByName)}</span>` : ''}
+        ${d.dayMark.note ? `<span class="db-mark-by">${escapeHTML(d.dayMark.note)}</span>` : ''}
+      </div>`
+    : '';
+
+  if(!d.banner || !d.banner.show) return markBanner;
+  if(Date.now() < daySnoozedUntil(d)) return markBanner;
 
   const n = Number(d.assignedCount) || 0;
   const head = n
@@ -5098,7 +5213,7 @@ function renderDayBanner(){
     </div>`;
   }
 
-  return `<div class="day-banner" role="status">
+  return `${markBanner}<div class="day-banner" role="status">
     <div class="db-main">
       <span class="db-icon" aria-hidden="true">\u25CB</span>
       <span class="db-head">${escapeHTML(head)}</span>
@@ -12617,6 +12732,7 @@ async function renderSettings(){
     ${can('settings.holidays_view') ? '<div id="holidaysSection"></div>' : ''}
     ${can('timesheet.options') ? '<div id="timesheetOptionsSection"></div>' : ''}
     ${can('settings.nudges') ? '<div id="nudgeSettingsSection"></div>' : ''}
+    ${can('settings.leave.manage') ? '<div id="leaveSettingsSection"></div>' : ''}
     ${can('chat.settings') ? '<div id="chatSettingsSection"></div>' : ''}
     ${can('settings.mis_access') ? '<div id="misAccessSection"></div>' : ''}
     ${can('settings.working_hours') ? '<div id="scheduleSection"></div>' : ''}
@@ -12640,6 +12756,7 @@ async function renderSettings(){
   if(can('settings.holidays_view')) renderHolidays();
   if(can('timesheet.options')) renderTimesheetOptions();
   if(can('settings.nudges')) renderNudgeSettings();
+  if(can('settings.leave.manage')) renderLeaveSettings();
   if(can('chat.settings')) renderChatSettings();
   if(can('settings.mis_access')) renderMisAccess();
   if(can('settings.working_hours')) renderSchedule();
@@ -14121,6 +14238,27 @@ let FU_PANEL_TICKET = 0;
 
 const FU_SENDING = new Set();
 const FU_ROW_MSG = new Map();          // key -> { kind: 'err' | 'ok', text }
+
+/* ---------- leave and idle ----------
+ *
+ * FOUR PIECES OF STATE AND NOT ONE BOOLEAN PER BUTTON, for the reason the
+ * waiting panel's FU_OPEN gives: one menu is open at a time, and remembering
+ * WHICH is what lets a redraw put it back where it was instead of closing it
+ * under somebody's cursor.
+ *
+ * NOTHING HERE DECIDES ANYTHING. Whether the buttons exist at all
+ * (d.leave.enabled), what the half-day times are (d.leave.firstHalfEnd), who is
+ * inside a window right now (row.dayStatus.inWindow) and whether Idle may be
+ * pressed are all the SERVER'S answers, carried in the payload and redrawn on
+ * every refresh. The page holds which menu is open and which row is busy, and
+ * that is the whole of it. */
+let FU_LEAVE_MENU = null;              // userId whose Leave menu is open, or null
+const FU_MARKING = new Set();          // userIds with a mark or an undo in flight
+const FU_MARK_MSG = new Map();         // userId -> { kind: 'err' | 'ok', text }
+let FU_STRIP_OPEN = false;             // is the "On leave / Idle" strip expanded
+/* THE OPTIONAL HANDOVER OFFER, after a full day recorded for today. Null is
+   "not offered"; it is cleared by Skip and by the next draw of the section. */
+let FU_REASSIGN = null;                // { name, assets:[...], busy, err } or null
 const fuKey = (kind, id) => `${kind}|${id}`;
 
 /* "Wed 18 Mar (2026-03-18)" — the named day AND the exact date, always both.
@@ -14272,6 +14410,8 @@ function renderFollowUp(){
           + 'earlier working day in range to ask about.',
       })}
     </div>
+    ${fuLeaveStrip(d)}
+    ${fuReassignOffer()}
     <div class="fu-overlap">
       <strong>${Number(d.overlap)||0}</strong> on both lists ·
       ${Number(d.expected)||0} ${Number(d.expected)===1?'person':'people'} in view
@@ -14372,9 +14512,11 @@ function fuRow(r, heldLabel, d){
     <div class="fu-side">
       ${r.both ? '<span class="fu-both" title="On both lists">both</span>' : ''}
       ${r.missed > 1 ? `<span class="fu-missed">${Number(r.missed)} days</span>` : ''}
+      ${fuMarkChip(r)}
       ${fuHeld(r, heldLabel, kind)}
       ${fuStreak(r, d)}
       ${fuRemind(r, d)}
+      ${fuDayButtons(r, d)}
     </div>
   </div>
   ${fuWaitingPanel(r, d, kind)}`;
@@ -14662,6 +14804,265 @@ function fuRemind(r, d){
   </span>`;
 }
 
+/* WHAT KIND OF DAY THIS PERSON IS HAVING, as a chip beside the other markers.
+ *
+ * ONLY DRAWN FOR SOMEBODY STILL ON THE LIST, which is the whole of its job: a
+ * full-day leave and an idle mark take somebody OFF these lists, so the only
+ * marks that reach a row are half-days whose window has passed — "Leave: first
+ * half" on a row at three o'clock means "they were off this morning, they are
+ * here now, and they still have not started". That is the sentence the brief
+ * asks for, and it is one the reader cannot get anywhere else.
+ *
+ * NEVER COLOUR ALONE, like every other marker in this section: the chip carries
+ * the words. */
+function fuMarkChip(r){
+  const m = r.dayStatus;
+  if(!m) return '';
+  const title = [m.label,
+    m.setByName ? `Marked by ${m.setByName}` : null,
+    m.note || null,
+    m.planned ? 'Planned in advance' : null].filter(Boolean).join('\n');
+  return `<span class="fu-mark${m.inWindow ? ' is-now' : ''}" title="${escapeHTML(title)}"
+    >${escapeHTML(m.chip)}</span>`;
+}
+
+/* THE TWO BUTTONS, AND THE MENU BEHIND ONE OF THEM.
+ *
+ * HIDDEN, NOT DISABLED, when the feature is off or the permission is missing.
+ * Those are not reasons a reader can act on — "this studio does not use Leave"
+ * is not a thing to be told once per row, 116 times — and the strip below the
+ * lists carries the one sentence that does need saying when existing marks are
+ * still in force. A disabled button with no explanation is worse than no
+ * button, which is the rule the Remind control already follows for `permitted`.
+ *
+ * d.leave.enabled IS THE SERVER'S ANSWER, delivered in the payload on every
+ * draw. The page never caches it and never infers it: an admin flipping the
+ * switch in Settings makes these appear or vanish on the next refresh of an
+ * open browser, with no redeploy and no sign-out.
+ *
+ * IDLE IS DISABLED WITH A REASON rather than hidden, because its reason IS
+ * actionable and specific to the row: "Has 3 assets assigned" tells a lead why
+ * the button is dead and what would change it. The server re-checks both the
+ * count and the date, so this is a courtesy and not the rule. */
+function fuDayButtons(r, d){
+  const leave = (d && d.leave) || null;
+  if(!leave || !leave.enabled) return '';
+  const mayLeave = can('followup.mark_leave');
+  const mayIdle = can('followup.mark_idle');
+  if(!mayLeave && !mayIdle) return '';
+
+  const busy = FU_MARKING.has(r.id);
+  const msg = FU_MARK_MSG.get(r.id) || null;
+  const marked = r.dayStatus || null;
+
+  /* ALREADY MARKED -> UNDO. One control, because the row has one state: a
+     person is on leave or they are not, and offering "First Half" beside an
+     existing mark would be offering to replace it without saying so. */
+  const undo = marked
+    ? `<button type="button" class="fu-day-btn is-undo" data-fu-undo="${escapeHTML(r.id)}"
+        ${busy ? 'disabled' : ''}
+        title="${escapeHTML(`${marked.label}${marked.setByName ? ` — marked by ${marked.setByName}` : ''}`)}"
+        aria-label="Undo ${escapeHTML(marked.label)} for ${escapeHTML(r.name)}"
+        >${busy ? 'Undoing…' : 'Undo'}</button>`
+    : '';
+
+  const open = FU_LEAVE_MENU === r.id;
+  const leaveBtn = (mayLeave && !marked)
+    ? `<button type="button" class="fu-day-btn${open ? ' is-open' : ''}" data-fu-leave="${escapeHTML(r.id)}"
+        ${busy ? 'disabled' : ''} aria-expanded="${open}" aria-haspopup="true"
+        aria-label="Record leave for ${escapeHTML(r.name)}"
+        >Leave<span class="fu-day-caret" aria-hidden="true">${open ? '▾' : '▸'}</span></button>`
+    : '';
+
+  /* WHY IDLE CANNOT BE PRESSED, in the server's own terms. `held` is the
+     "waiting on them" figure the row already carries — the same predicate — so
+     a lead is not told two different numbers about the same desk. */
+  const idleWhy = !leave.today
+    ? 'Idle can only be marked for today.'
+    : (Number(r.held) > 0
+      ? `Has ${Number(r.held)} asset${Number(r.held) === 1 ? '' : 's'} assigned.`
+      : '');
+  const idleBtn = (mayIdle && !marked)
+    ? `<button type="button" class="fu-day-btn" data-fu-idle="${escapeHTML(r.id)}"
+        ${busy || idleWhy ? 'disabled' : ''}
+        ${idleWhy ? `title="${escapeHTML(idleWhy)}"` : ''}
+        aria-label="Mark ${escapeHTML(r.name)} idle for today">Idle</button>`
+    : '';
+
+  return `<span class="fu-day-wrap">
+    ${leaveBtn}${idleBtn}${undo}
+    ${msg ? `<span class="fu-sent ${msg.kind === 'err' ? 'is-err' : ''}" role="status">${escapeHTML(msg.text)}</span>` : ''}
+    ${open ? fuLeaveMenu(r, d) : ''}
+  </span>`;
+}
+
+/* THE MENU: three portions, with the times the SERVER says the split is at.
+ *
+ * NOT A <select> AND NOT A NATIVE MENU. The desktop application's web view
+ * supports neither a prompt nor a confirm (Prompt 39), and a <select> on a
+ * narrow screen opens the platform's own picker — so this is three buttons in a
+ * box, which behave the same everywhere and are reachable by keyboard without
+ * anything being bound here.
+ *
+ * THE TIMES COME FROM THE PAYLOAD. "until 13:00" is d.leave.firstHalfEnd, which
+ * is leaveSettings.clock() of the split in force. A page that formatted the
+ * split itself would be a second copy of a Settings value, and the first thing
+ * it would do is disagree with the window actually snapshotted on the row. */
+function fuLeaveMenu(r, d){
+  const leave = d.leave;
+  const item = (portion, label, when) => `<button type="button" class="fu-leave-item"
+      data-fu-portion="${escapeHTML(portion)}" data-fu-portion-user="${escapeHTML(r.id)}"
+      >${escapeHTML(label)}${when ? `<span class="fu-leave-when">${escapeHTML(when)}</span>` : ''}</button>`;
+  return `<div class="fu-leave-menu" role="group" aria-label="Which part of the day">
+    ${item('first_half', 'First Half', `until ${leave.firstHalfEnd}`)}
+    ${item('second_half', 'Second Half', `from ${leave.secondHalfStart}`)}
+    ${item('full', 'Full Day', '')}
+  </div>`;
+}
+
+/* THE OPTIONAL HANDOVER, after a full day's leave recorded for today.
+ *
+ * OPTIONAL MEANS OPTIONAL. It is a panel under the lists with a Skip button,
+ * not a modal that has to be dealt with before anything else can happen — the
+ * mark is already recorded and the work is already excluded; this is a
+ * convenience, and a convenience that blocks the screen is not one.
+ *
+ * NOT OFFERED FOR A HALF-DAY. They are back this afternoon, and handing their
+ * work to somebody else for the morning would be the wrong answer to a question
+ * nobody asked. The server decides that, not this function.
+ *
+ * THE HANDOVER IS THE EXISTING FLOW AND NOTHING ELSE. The candidates come from
+ * /assets/:id/reassign-options and the move from /assets/:id/reassign — the
+ * same endpoints the asset panel's own picker uses, with the same permissions,
+ * the same exclusivity rule and the same history sentence. Nothing here decides
+ * who may receive work, which is why the picker cannot offer somebody the
+ * server would refuse. "(on leave)" is added to the note so the trail says why.
+ */
+function fuReassignOffer(){
+  const r = FU_REASSIGN;
+  if(!r) return '';
+  const left = r.assets.filter(a=>!r.done[a.id]);
+  if(!left.length){
+    return `<div class="fu-reassign"><div class="fu-reassign-head">
+      <strong>Everything on ${escapeHTML(r.name)}'s desk has been handed over.</strong>
+      <button type="button" class="fu-day-btn" data-fu-reassign-skip="1">Close</button>
+    </div></div>`;
+  }
+  return `<div class="fu-reassign">
+    <div class="fu-reassign-head">
+      <strong>${escapeHTML(r.name)} is on leave for the whole day.</strong>
+      <span>${left.length} asset${left.length===1?' is':'s are'} still on their desk. Hand any of them
+        over now, or skip — the leave is already recorded either way.</span>
+      <button type="button" class="fu-day-btn" data-fu-reassign-skip="1">Skip</button>
+    </div>
+    ${left.map(a=>{
+      const opts = r.options[a.id];
+      const busy = r.busy === a.id;
+      return `<div class="fu-reassign-row">
+        <span class="fu-reassign-name">${escapeHTML(a.code ? `${a.code} · ${a.name}` : a.name)}</span>
+        <span class="fu-reassign-meta">${escapeHTML(a.projectName||'')} · ${escapeHTML(a.statusLabel||'')}</span>
+        <select class="fu-reassign-pick" data-fu-reassign-pick="${escapeHTML(a.id)}" ${busy?'disabled':''}>
+          ${opts === undefined ? '<option value="">Loading…</option>'
+            : (opts.length
+              ? `<option value="">Reassign to…</option>${opts.map(o=>
+                `<option value="${escapeHTML(o.id)}"${r.picked && r.picked[a.id]===o.id?' selected':''}
+                  >${escapeHTML(o.name)} · ${escapeHTML(o.roleLabel||'')}</option>`).join('')}`
+              : '<option value="">There is nobody else to hand this to</option>')}
+        </select>
+        <button type="button" class="fu-day-btn" data-fu-reassign-do="${escapeHTML(a.id)}"
+          ${busy || !(opts && opts.length) ? 'disabled' : ''}>${busy?'Handing over…':'Hand over'}</button>
+      </div>`;
+    }).join('')}
+    ${r.err ? `<div class="fu-reassign-err" role="alert">${escapeHTML(r.err)}</div>` : ''}
+  </div>`;
+}
+
+/* The candidates, one request per asset and only once the offer is on screen —
+   never as part of the mark, which must not wait on a list nobody may use. */
+async function fuLoadReassignOptions(){
+  const r = FU_REASSIGN;
+  if(!r) return;
+  for(const a of r.assets){
+    if(r.options[a.id] !== undefined || r.done[a.id]) continue;
+    r.options[a.id] = undefined;
+    try{
+      const { options } = await api(`/assets/${encodeURIComponent(a.id)}/reassign-options`);
+      if(FU_REASSIGN !== r) return;                    // skipped while in flight
+      r.options[a.id] = options || [];
+    }catch(err){
+      if(FU_REASSIGN !== r) return;
+      r.options[a.id] = [];
+      r.err = err.message;
+    }
+    paintFollowUp();
+  }
+}
+
+async function fuHandOver(assetId){
+  const r = FU_REASSIGN;
+  if(!r || r.busy) return;
+  const to = (r.picked || {})[assetId];
+  if(!to){ r.err = 'Choose who should pick this up.'; paintFollowUp(); return; }
+  r.busy = assetId; r.err = null;
+  paintFollowUp();
+  try{
+    await api(`/assets/${encodeURIComponent(assetId)}/reassign`, { method:'POST', body:{
+      assigneeId: to,
+      /* THE SENTENCE THE BRIEF ASKS FOR, on the existing history line rather
+         than on a second trail of our own. */
+      note: `Handed over — ${r.name} is on leave`,
+    } });
+    if(FU_REASSIGN !== r) return;
+    r.done[assetId] = true;
+  }catch(err){
+    if(FU_REASSIGN !== r) return;
+    r.err = err.message;
+  }finally{
+    if(FU_REASSIGN === r){ r.busy = null; paintFollowUp(); }
+  }
+}
+
+/* THE STRIP UNDER THE LISTS: who is marked, on the date in view.
+ *
+ * DRAWN WHATEVER THE SWITCH SAYS, and that is the point of it. Switching the
+ * feature off hides the buttons and refuses new marks, but an existing mark
+ * keeps its full effect — see the header of src/leave-settings.js — so a mark
+ * nobody could see would be a mark nobody could undo. The banner says exactly
+ * that, in the one place where it matters. */
+function fuLeaveStrip(d){
+  const leave = (d && d.leave) || null;
+  if(!leave) return '';
+  if(!leave.enabled && !leave.rows.length) return '';
+  const total = leave.rows.length;
+  const summary = `On leave (${leave.onLeave}) · Idle (${leave.idle})`;
+  const banner = !leave.enabled && total
+    ? '<div class="fu-leave-off">Leave &amp; Idle is disabled — existing marks still count.</div>'
+    : '';
+  if(!total){
+    return `${banner}<div class="fu-leave-strip"><span class="fu-leave-none">Nobody is marked on leave or idle for ${escapeHTML(fuDate(leave.date))}.</span></div>`;
+  }
+  const open = FU_STRIP_OPEN;
+  const mayUndo = can('followup.mark_leave') || can('followup.mark_idle');
+  return `${banner}<div class="fu-leave-strip">
+    <button type="button" class="fu-leave-toggle${open ? ' is-open' : ''}" data-fu-strip="1"
+      aria-expanded="${open}">${escapeHTML(summary)}<span class="fu-day-caret" aria-hidden="true">${open ? '▾' : '▸'}</span></button>
+    ${open ? `<div class="fu-leave-list">${leave.rows.map((row) => {
+      const busy = FU_MARKING.has(row.userId);
+      return `<div class="fu-leave-row">
+        <span class="fu-leave-name">${escapeHTML(row.name)}</span>
+        <span class="fu-leave-chip${row.inWindow ? ' is-now' : ''}">${escapeHTML(row.portionLabel)}</span>
+        ${row.planned ? '<span class="fu-leave-planned">Planned</span>' : ''}
+        <span class="fu-leave-by">${escapeHTML(row.setByName ? `by ${row.setByName}` : 'by the studio')}${
+          row.setAt ? ` · ${escapeHTML(fuClock(row.setAt))}` : ''}</span>
+        ${row.note ? `<span class="fu-leave-note">${escapeHTML(row.note)}</span>` : ''}
+        ${mayUndo ? `<button type="button" class="fu-day-btn is-undo" data-fu-undo="${escapeHTML(row.userId)}"
+          ${busy ? 'disabled' : ''} aria-label="Undo ${escapeHTML(row.name)}'s mark"
+          >${busy ? 'Undoing…' : 'Undo'}</button>` : ''}
+      </div>`;
+    }).join('')}</div>` : ''}
+  </div>`;
+}
+
 /* An ISO instant as the IST wall clock, which is the only part of it a row has
    room for. The exact date and time is in the tooltip beside it, from the
    server. Computed here rather than carried because this is a format and not a
@@ -14852,6 +15253,189 @@ function wireFollowUp(){
     ev.stopPropagation();
     openWaitingAsset(b.dataset.fuAssetProject, b.dataset.fuAsset, b.dataset.fuAssetStatus);
   }));
+
+  /* ---------- leave and idle ----------
+     Every one of these is a <button>, so Enter, Space, the tab order and the
+     focus ring come for free and nothing is bound here for them. */
+  document.querySelectorAll('#followUpSlot [data-fu-leave]').forEach(b=>b.addEventListener('click', ()=>{
+    FU_LEAVE_MENU = FU_LEAVE_MENU === b.dataset.fuLeave ? null : b.dataset.fuLeave;
+    paintFollowUp();
+  }));
+  document.querySelectorAll('#followUpSlot [data-fu-portion]').forEach(b=>b.addEventListener('click', ()=>{
+    markDay(b.dataset.fuPortionUser, 'leave', b.dataset.fuPortion);
+  }));
+  document.querySelectorAll('#followUpSlot [data-fu-idle]').forEach(b=>b.addEventListener('click', ()=>{
+    markDay(b.dataset.fuIdle, 'idle', null);
+  }));
+  document.querySelectorAll('#followUpSlot [data-fu-undo]').forEach(b=>b.addEventListener('click', ()=>{
+    undoDay(b.dataset.fuUndo);
+  }));
+  document.querySelectorAll('#followUpSlot [data-fu-strip]').forEach(b=>b.addEventListener('click', ()=>{
+    FU_STRIP_OPEN = !FU_STRIP_OPEN;
+    paintFollowUp();
+  }));
+
+  /* The optional handover offer. */
+  document.querySelectorAll('#followUpSlot [data-fu-reassign-skip]').forEach(b=>b.addEventListener('click', ()=>{
+    FU_REASSIGN = null;
+    paintFollowUp();
+  }));
+  document.querySelectorAll('#followUpSlot [data-fu-reassign-pick]').forEach(sel=>sel.addEventListener('change', ()=>{
+    if(!FU_REASSIGN) return;
+    FU_REASSIGN.picked = { ...(FU_REASSIGN.picked||{}), [sel.dataset.fuReassignPick]: sel.value };
+  }));
+  document.querySelectorAll('#followUpSlot [data-fu-reassign-do]').forEach(b=>b.addEventListener('click', ()=>{
+    fuHandOver(b.dataset.fuReassignDo);
+  }));
+  if(FU_REASSIGN) fuLoadReassignOptions();
+}
+
+/* ---------- marking a day ----------
+ *
+ * ONE FUNCTION FOR BOTH KINDS, because they differ in two sentences and in
+ * nothing else: what the confirmation says, and whether a note is offered.
+ *
+ * EVERY DIALOG IS THE PAGE'S OWN. openAsk is the only way this application asks
+ * a question — the desktop web view supports no alert, confirm or prompt
+ * (Prompt 39), and tests/no-native-dialogs.test.js fails the build if one
+ * reappears. The note is the modal's own optional field.
+ *
+ * WHAT IS ALREADY RECORDED IN THE WINDOW is asked of the server BEFORE the
+ * question is put, so the confirmation can say "1 h 30 m already recorded in
+ * this period will not be counted" — the number shown and the number that stops
+ * counting are the same arithmetic, because the same function produces both.
+ */
+async function markDay(userId, kind, portion){
+  const d = FOLLOW_UP;
+  if(!d || FU_MARKING.has(userId)) return;
+  const row = fuFindRow(userId);
+  const name = (row && row.name) || 'that person';
+  const leave = d.leave || {};
+  FU_LEAVE_MENU = null;
+
+  const what = kind === 'idle' ? 'Idle'
+    : (portion === 'first_half' ? `First Half — until ${leave.firstHalfEnd}`
+      : (portion === 'second_half' ? `Second Half — from ${leave.secondHalfStart}` : 'Full Day'));
+
+  /* THE PREVIEW: what this will stop counting, and what it will stop. Asked of
+     the server, which is the only thing that knows — and never guessed from the
+     row, whose figures are about assets and not about hours. */
+  let preview = null;
+  try{
+    preview = await api(`/admin-dashboard/follow-up/day-status/preview?userId=${encodeURIComponent(userId)}`
+      + `&date=${encodeURIComponent(fuShownDate() || leave.date)}&kind=${encodeURIComponent(kind)}`
+      + `&portion=${encodeURIComponent(portion || '')}`);
+  }catch(err){ preview = null; }
+
+  const lines = [`${name} will be recorded as ${what} for ${fuDate(fuShownDate() || leave.date)}.`];
+  if(kind === 'idle'){
+    lines.push('Idle removes no hours and blocks nothing. It clears itself the moment an asset '
+      + 'is assigned to them, and it expires at the end of the day.');
+  } else {
+    lines.push('No hours inside that window will count, and any timer they have running will be '
+      + 'stopped. Their asset statuses do not change.');
+  }
+  if(preview && preview.recordedLabel){
+    lines.push(`${preview.recordedLabel} already recorded in this period will not be counted. `
+      + 'Nothing is deleted — the sessions and timesheet lines stay, marked as overlapping leave, '
+      + 'and Undo puts the figures back exactly as they were.');
+  }
+  if(preview && preview.warning) lines.push(preview.warning);
+
+  const ok = await openAsk({
+    title: `Mark ${name} — ${what}?`,
+    message: lines.join('\n\n'),
+    confirmLabel: 'Yes, record it',
+    input: { label: 'Note (optional)', placeholder: 'Why, if it is worth saying', maxLength: 500 },
+    run: async (note) => {
+      FU_MARKING.add(userId);
+      FU_MARK_MSG.delete(userId);
+      paintFollowUp();
+      try{
+        const out = await api('/admin-dashboard/follow-up/day-status', { method:'POST', body:{
+          userId, kind, portion: kind === 'leave' ? portion : null,
+          date: fuShownDate() || leave.date,
+          note: String(note || '').trim() || null,
+        } });
+        applyDayStatusResult(out);
+        FU_MARK_MSG.set(userId, { kind:'ok', text: out.unchanged ? 'Already recorded' : 'Recorded' });
+        /* THE OPTIONAL OFFER. Only when the server sent one — a full day for
+           today with something still on their desk — and never as a dialog that
+           has to be dismissed before anything else can happen. */
+        FU_REASSIGN = (out.reassign && out.reassign.assets.length)
+          ? { ...out.reassign, options:{}, busy:null, err:null, done:{} } : null;
+      } finally {
+        FU_MARKING.delete(userId);
+        paintFollowUp();
+      }
+    },
+  }).catch(()=>false);
+  if(ok === false && !FU_MARK_MSG.has(userId)) paintFollowUp();
+}
+
+/* UNDO. No note, and no preview: it puts back what was there, which is a thing
+   the reader can already see. The confirmation still exists, because the figures
+   it restores are figures somebody may have acted on. */
+async function undoDay(userId){
+  const d = FOLLOW_UP;
+  if(!d || FU_MARKING.has(userId)) return;
+  const name = fuMarkedName(userId) || 'that person';
+  await openAsk({
+    title: `Undo the mark on ${name}?`,
+    message: 'The hours that stopped counting start counting again, exactly as they were '
+      + 'before — the figures are worked out from the sessions again rather than remembered.',
+    confirmLabel: 'Yes, undo it',
+    run: async () => {
+      FU_MARKING.add(userId);
+      FU_MARK_MSG.delete(userId);
+      paintFollowUp();
+      try{
+        const out = await api('/admin-dashboard/follow-up/day-status/clear', { method:'POST', body:{
+          userId, date: fuShownDate() || (d.leave && d.leave.date),
+        } });
+        applyDayStatusResult(out);
+        FU_MARK_MSG.set(userId, { kind:'ok', text:'Undone' });
+      } finally {
+        FU_MARKING.delete(userId);
+        paintFollowUp();
+      }
+    },
+  }).catch(()=>false);
+}
+
+/* THE SERVER'S ANSWER, APPLIED IN PLACE.
+ *
+ * Both endpoints return the two lists and the strip as they now stand, so the
+ * section updates without a second round trip AND without an optimistic guess
+ * the next refresh would contradict — the same rule the Remind button follows
+ * for its row. */
+function applyDayStatusResult(out){
+  if(!out || !FOLLOW_UP) return;
+  if(out.notStarted) FOLLOW_UP.notStarted = out.notStarted;
+  if(out.notFilled) FOLLOW_UP.notFilled = out.notFilled;
+  if(out.leave) FOLLOW_UP.leave = out.leave;
+  if(typeof out.overlap === 'number') FOLLOW_UP.overlap = out.overlap;
+  if(typeof out.expected === 'number') FOLLOW_UP.expected = out.expected;
+}
+
+/* A person on either list, by id — the rows are two arrays and a lookup that
+   searched only one would miss somebody who is on the other. */
+function fuFindRow(userId){
+  const d = FOLLOW_UP;
+  if(!d) return null;
+  return ((d.notStarted && d.notStarted.rows) || []).find(r=>r.id===userId)
+    || ((d.notFilled && d.notFilled.rows) || []).find(r=>r.id===userId)
+    || null;
+}
+
+/* And a name for somebody who is NOT on either list, which is the ordinary case
+   for an undo: a full day's leave took them off both. The strip knows them. */
+function fuMarkedName(userId){
+  const d = FOLLOW_UP;
+  const row = fuFindRow(userId);
+  if(row) return row.name;
+  const marked = ((d && d.leave && d.leave.rows) || []).find(r=>r.userId===userId);
+  return marked ? marked.name : null;
 }
 
 /* ---------- the "waiting on them" panel ----------
@@ -17640,6 +18224,132 @@ async function renderChatSettings(){
  */
 let nudgeState = { data:null, errors:[], busy:false };
 
+/* ---------- Settings -> Leave ----------
+ *
+ * THE MASTER SWITCH AND THE HALF-DAY SPLIT, and nothing else. Prompt 49 adds
+ * further fields to this same group behind this same key.
+ *
+ * THE SWITCH SHIPS OFF, and the note says why rather than leaving an admin to
+ * guess: marking somebody on leave changes what their hours add up to, so the
+ * feature arrives inert and a studio turns it on having decided to.
+ *
+ * THE PREFILL IS SHOWN AS A PREFILL. While nothing is saved the two time fields
+ * carry the studio's own lunch break and the note says where they came from —
+ * so an admin can see what they are about to agree to. Once saved they are
+ * values somebody chose, and "Reset to lunch times" puts the suggestion back.
+ * The server keeps the same distinction (a NULL column, not a default), which
+ * is what makes the link able to restore anything at all.
+ */
+const leaveState = { data:null, errors:[], warnings:[], busy:false, msg:null };
+
+async function renderLeaveSettings(){
+  const el = document.getElementById('leaveSettingsSection');
+  if(!el) return;
+  if(!leaveState.data){
+    try{ leaveState.data = await api('/admin/settings/leave'); }
+    catch(err){ el.innerHTML = `<div class="ref-section"><div class="ref-err">${escapeHTML(err.message)}</div></div>`; return; }
+  }
+  const d = leaveState.data;
+  const s = d.settings;
+  const errFor = (f)=>{ const e = leaveState.errors.find(x=>x.field===f); return e ? e.message : ''; };
+  const shown = leaveState.typed || {
+    firstHalfEnd: d.split.firstHalfEnd,
+    secondHalfStart: d.split.secondHalfStart,
+  };
+  el.innerHTML = `
+    <div class="ref-section">
+      <div class="ref-head"><h3>Leave</h3><span class="rh-badge">Super Admin</span></div>
+      <div class="ref-note"><strong>Leave and Idle are marked from the Admin Dashboard's "People to
+        follow up" lists.</strong> Leave removes a window of somebody's day from every figure that
+        counts hours and stops any timer they have running; Idle records that they have nothing to
+        pick up, removes nothing, and clears itself the moment an asset is assigned to them.</div>
+      <div class="ref-note">Switching this <strong>off hides the buttons and refuses new marks, and
+        leaves existing ones exactly as they are</strong> — their hours stay excluded and they can
+        still be undone. A switch that rewrote last month's totals would not be a switch.</div>
+      <div class="ref-add">
+        <div style="align-self:end;">
+          <label class="rh-check"><input type="checkbox" id="lv_enabled"${s.enabled?' checked':''}>
+            <strong>Enable Leave &amp; Idle</strong></label>
+        </div>
+        <div class="rh-f">
+          <label for="lv_first">First Half ends at</label>
+          <input type="time" id="lv_first" class="narrow${errFor('firstHalfEndMinutes')?' bad':''}"
+                 value="${escapeHTML(shown.firstHalfEnd)}">
+          ${errFor('firstHalfEndMinutes') ? `<div class="rh-err">${escapeHTML(errFor('firstHalfEndMinutes'))}</div>` : ''}
+        </div>
+        <div class="rh-f">
+          <label for="lv_second">Second Half starts at</label>
+          <input type="time" id="lv_second" class="narrow${errFor('secondHalfStartMinutes')?' bad':''}"
+                 value="${escapeHTML(shown.secondHalfStart)}">
+          ${errFor('secondHalfStartMinutes') ? `<div class="rh-err">${escapeHTML(errFor('secondHalfStartMinutes'))}</div>` : ''}
+        </div>
+        <div class="rh-f rh-act">
+          <button class="btn btn-sm" id="lv_save"${leaveState.busy?' disabled':''}>${leaveState.busy?'Saving…':'Save'}</button>
+        </div>
+      </div>
+      <div class="ref-note">
+        ${d.split.source === 'saved'
+          ? `The split is set. Working hours are ${escapeHTML(d.workingDay.from)} to ${escapeHTML(d.workingDay.to)}.`
+          : `<strong>Not set yet</strong> — these are prefilled from the studio's
+             ${d.prefill.from === 'lunch' ? 'lunch break' : 'working day'}
+             (${escapeHTML(d.prefill.firstHalfEnd)} to ${escapeHTML(d.prefill.secondHalfStart)}).
+             They become values somebody chose once you save.`}
+        <button type="button" class="fu-preset" id="lv_reset">Reset to lunch times</button>
+      </div>
+      ${(leaveState.warnings||[]).length ? `<div class="rh-warn"><div>${
+        leaveState.warnings.map(w=>escapeHTML(w.message)).join('<br>')}</div></div>` : ''}
+      ${leaveState.msg ? `<div class="pm-msg ${leaveState.msg.kind==='err'?'err':'ok'}">${escapeHTML(leaveState.msg.text)}</div>` : ''}
+      <div class="ref-note">Idle can only be marked for somebody with no actionable assets:
+        ${escapeHTML((d.actionableStatuses||[]).join(', '))}.
+        ${s.updatedByName ? `Last changed by ${escapeHTML(s.updatedByName)}.` : ''}</div>
+    </div>`;
+
+  const first = document.getElementById('lv_first');
+  const second = document.getElementById('lv_second');
+  /* WHAT WAS TYPED WINS OVER WHAT IS STORED, so a refused save keeps the edits
+     rather than showing an error about values no longer on screen — the same
+     rule the Holidays rows follow. */
+  const keep = ()=>{ leaveState.typed = { firstHalfEnd:first.value, secondHalfStart:second.value }; };
+  first.addEventListener('input', keep);
+  second.addEventListener('input', keep);
+
+  document.getElementById('lv_reset').onclick = ()=>{
+    leaveState.typed = { firstHalfEnd:d.prefill.firstHalfEnd, secondHalfStart:d.prefill.secondHalfStart };
+    leaveState.errors = [];
+    renderLeaveSettings();
+  };
+
+  document.getElementById('lv_save').onclick = async ()=>{
+    if(leaveState.busy) return;
+    leaveState.busy = true; leaveState.msg = null; renderLeaveSettings();
+    try{
+      const out = await api('/admin/settings/leave', { method:'PUT', body:{
+        enabled: document.getElementById('lv_enabled').checked,
+        firstHalfEndMinutes: first.value,
+        secondHalfStartMinutes: second.value,
+      } });
+      leaveState.data = out;
+      leaveState.errors = [];
+      leaveState.warnings = out.warnings || [];
+      leaveState.typed = null;
+      leaveState.msg = { kind:'ok', text: out.resnapshotted
+        ? `Saved. ${out.resnapshotted} future half-day${out.resnapshotted===1?'':'s'} moved with the split; today's and every past one keep theirs.`
+        : 'Saved.' };
+      /* THE DASHBOARD PICKS THIS UP ON ITS NEXT DRAW, because the switch travels
+         in the follow-up payload rather than being baked into the page. Nothing
+         is reloaded here and nothing has to be. */
+      FOLLOW_UP_SHOWN = null;
+    }catch(err){
+      leaveState.errors = (err.body && err.body.errors) || [];
+      leaveState.warnings = (err.body && err.body.warnings) || [];
+      leaveState.msg = leaveState.errors.length ? null : { kind:'err', text: err.message };
+    }finally{
+      leaveState.busy = false;
+      renderLeaveSettings();
+    }
+  };
+}
+
 async function renderNudgeSettings(){
   const el = document.getElementById('nudgeSettingsSection');
   if(!el) return;
@@ -20417,6 +21127,10 @@ const NOTIF_TITLES = {
      sender's reminder was composed with, stored on the row. */
   start_reminder: 'A reminder to start your day',
   timesheet_reminder: 'A reminder about your timesheet',
+  /* Somebody recorded a leave or an idle mark against your day, or undid one.
+     One title for both directions, because the sentence underneath says which
+     and the title's job is to say what it is about. */
+  day_status: 'Your day was marked',
 };
 const notifTitle = (n) => (n && NOTIF_TITLES[n.kind]) || 'Something needs your attention';
 

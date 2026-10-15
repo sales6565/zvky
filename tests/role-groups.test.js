@@ -47,18 +47,26 @@ const MANAGE = 'settings.role_groups';
 /* EVERY KEY ADDED SINCE THE SNAPSHOT WAS TAKEN, named one by one.
  *
  * The fixture was recorded before role groups existed, and the catalogue has
- * grown four times since: settings.role_groups with that feature,
+ * grown five times since: settings.role_groups with that feature,
  * settings.email_delivery with the Gmail transport, report.remind with the
- * reminders a lead can send from the follow-up lists, and settings.nudges with
+ * reminders a lead can send from the follow-up lists, settings.nudges with
  * the start-of-day banner and the top-bar timer — which split the nudge
- * SETTINGS screen away from the key that SENDS reminders. The list is EXACT
- * rather than a count, so a fifth key added later has to come past this line and
- * be accounted for — which is the whole point of pinning a snapshot.
+ * SETTINGS screen away from the key that SENDS reminders — and now the four
+ * Leave and Idle keys. The list is EXACT rather than a count, so a key added
+ * later has to come past this line and be accounted for, which is the whole
+ * point of pinning a snapshot.
+ *
+ * THE FOUR LEAVE KEYS ARE FOUR AND NOT ONE, and the split is the same kind this
+ * file has pinned before: marking somebody's absence removes hours from totals,
+ * marking them idle removes nothing, marking a PAST date changes a figure
+ * somebody may already have reported on, and deciding the studio has the
+ * feature at all moves every future half-day at once. Four powers, four keys.
  *
  * Each one must reach Super Admin and nobody else, which is this studio's
  * standing rule for a new permission; the snapshot comparison below subtracts
  * exactly these. */
-const SINCE_SNAPSHOT = [MANAGE, 'settings.email_delivery', 'report.remind', 'settings.nudges'];
+const SINCE_SNAPSHOT = [MANAGE, 'settings.email_delivery', 'report.remind', 'settings.nudges',
+  'followup.mark_leave', 'followup.mark_idle', 'followup.mark_past_dates', 'settings.leave.manage'];
 
 test('every key added since the snapshot is Super Admin only', () => {
   const added = catalog.KEYS.filter((k) => !SNAPSHOT.roles.super_admin.includes(k));

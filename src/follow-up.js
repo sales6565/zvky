@@ -80,6 +80,8 @@ const permissions = require('./permissions');
  * owns the predicate; heldCounts() below keeps the reconstruction a past date
  * needs. See the header of that file for the difference and why there are two. */
 const waitingWork = require('./waiting-work');
+const dayStatus = require('./day-status');
+const leaveSettings = require('./leave-settings');
 const lastActivity = require('./last-activity');
 const reminders = require('./reminders');
 const reminderSettings = require('./reminder-settings');
@@ -560,6 +562,11 @@ async function applyReminderState(db, payload, { now, today, user }) {
      fact about the studio's clock at this instant, identical for everybody. */
   const win = reminders.windowState(now, { schedule });
 
+  /* WHO IS AWAY RIGHT NOW, for every row in both lists, in ONE query. A
+     reminder may not land on somebody inside a leave window — see decide() —
+     and asking that per row would be 116 round trips for a fact about today. */
+  const todayMarks = await dayStatus.statusesFor(db, ids, today);
+
   const decorate = (rows, kind) => rows.map((row) => {
     /* WHICH DAY THE REMINDER IS ABOUT.
        A start reminder is about today and only today — see decide(). A timesheet
@@ -584,6 +591,10 @@ async function applyReminderState(db, payload, { now, today, user }) {
       backdateClosed: kind === reminders.KINDS.timesheet
         ? reminders.backdateState(subjectDate, { today, policy }) : null,
       actorId: user ? user.id : null,
+      /* TODAY'S MARK — whether this person is away at this moment, which is
+         where the message would land. One query for the whole payload. */
+      dayStatus: todayMarks.get(`${row.id}|${today}`) || null,
+      now,
     });
     const last = forKind.manual[forKind.manual.length - 1] || null;
     const auto = forKind.auto[forKind.auto.length - 1] || null;
@@ -848,6 +859,11 @@ async function build(db, user, options = {}) {
   const held = nowFigure
     ? await waitingWork.countsFor(db, ids, { projectIds, studioWide })
     : await heldCounts(db, ids, { ...widest, projectIds, studioWide });
+  /* WHAT KIND OF DAY EACH OF THESE PEOPLE WAS HAVING, for every day in view,
+     in ONE query. 116 people and a fortnight of days is one round trip, which
+     is the budget this section has always kept — see MUTATION 13. */
+  const marks = await dayStatus.statusesFor(db, ids, widest.from, widest.to);
+
   const earliest = await earliestDay(db);
 
   /* THE LAST-ACTIVITY MARKER, for every person in view, in two more queries —
@@ -868,8 +884,39 @@ async function build(db, user, options = {}) {
   const graceUntil = opensAt === null ? null : opensAt + graceMinutes() * 60000;
   const graceHolds = startDays.includes(today) && (graceUntil === null || now < graceUntil);
 
-  const missedStart = (person, day) => !started.has(`${person.id}|${day}`);
-  const missedFill = (person, day) => !filled.has(`${person.id}|${day}`);
+  /* LEAVE AND IDLE, APPLIED TO THE TWO LISTS — and applied differently,
+   * because the two lists ask different questions.
+   *
+   * LIST 1 asks "should they have started?". Full-day leave and idle answer no
+   * outright; a half day answers no WHILE THE WINDOW COVERS THE MOMENT BEING
+   * JUDGED and yes otherwise. So somebody on first-half leave is off the list
+   * all morning and back on it at two o'clock if they still have not started —
+   * which is the behaviour the brief asks for, and it falls out of the window
+   * rather than being written as three cases.
+   *
+   * A PAST DATE'S HALF DAY IS NOT AN EXCUSE. They worked the other half; a day
+   * on which they started nothing at all is a day to ask about. Only a full day
+   * clears a past date.
+   *
+   * LIST 2 asks "do they owe a timesheet?". Only a full day excuses that:
+   * src/day-status.js's timesheetRequiredFromRow is the rule, and it is the
+   * same function isTimesheetRequired() calls for one person.
+   *
+   * THE JUDGEMENTS ARE THE SHARED ONES, called with rows already in hand rather
+   * than restated here. A test asserts the pair agree with the per-person
+   * versions on every portion. */
+  const markOf = (person, day) => marks.get(`${person.id}|${day}`) || null;
+  const excusedFromStart = (person, day) => {
+    const row = markOf(person, day);
+    if (!row) return false;
+    if (dayStatus.nothingToStart(row)) return true;
+    if (row.portion === dayStatus.PORTIONS.full) return true;
+    return day >= today && !dayStatus.expectedToWorkFromRow(row, now);
+  };
+  const excusedFromFill = (person, day) => !dayStatus.timesheetRequiredFromRow(markOf(person, day));
+
+  const missedStart = (person, day) => !started.has(`${person.id}|${day}`) && !excusedFromStart(person, day);
+  const missedFill = (person, day) => !filled.has(`${person.id}|${day}`) && !excusedFromFill(person, day);
 
   const gather = (days, missed) => {
     const out = [];
@@ -900,6 +947,25 @@ async function build(db, user, options = {}) {
            facts and the streak, computed as of the date in view — never from
            after it. src/last-activity.js owns the whole of it. */
         activity: activity.markers.get(person.id) || null,
+        /* THE MARK FOR THE DAY IN VIEW, so the row can carry a "Leave: first
+           half" chip and the Remind button can be disabled while the window
+           covers now. The page never works out which window it is in. */
+        dayStatus: (() => {
+          const row = markOf(person, asked.to);
+          if (!row) return null;
+          return {
+            kind: row.kind,
+            portion: row.portion,
+            label: dayStatus.describe(row, { schedule: workSchedule.current() }),
+            chip: row.kind === dayStatus.KINDS.idle ? 'Idle'
+              : `Leave: ${(dayStatus.PORTION_LABELS[row.portion] || 'full day').toLowerCase()}`,
+            inWindow: !dayStatus.expectedToWorkFromRow(row, now),
+            planned: row.planned,
+            setByName: row.setByName,
+            setAt: row.setAt,
+            note: row.note,
+          };
+        })(),
       });
     }
     return out;
@@ -1024,6 +1090,53 @@ async function build(db, user, options = {}) {
       opensAt: opensAt === null ? null : new Date(opensAt).toISOString(),
       clockShut: startDays.includes(today) && opensAt === null,
     },
+    /* THE STRIP UNDER THE LISTS: everybody marked on the date in view, scoped
+       to the people this viewer can see — a count drawn from outside the scope
+       would be a headcount leak dressed as a summary, which is the same rule
+       the deactivated-accounts note above follows.
+       SHOWN WHATEVER THE SWITCH SAYS, because an existing mark keeps its effect
+       when the feature is switched off and a mark nobody can see is a mark
+       nobody can undo. */
+    leave: (() => {
+      const inView = new Map(visible.map((p) => [p.id, p]));
+      const rows = [];
+      for (const [key, row] of marks) {
+        if (!key.endsWith(`|${asked.to}`)) continue;
+        const person = inView.get(row.userId);
+        if (!person) continue;
+        rows.push({
+          userId: row.userId,
+          name: person.name,
+          kind: row.kind,
+          portion: row.portion,
+          portionLabel: row.kind === dayStatus.KINDS.idle
+            ? 'Idle' : (dayStatus.PORTION_LABELS[row.portion] || 'Full day'),
+          label: dayStatus.describe(row, { schedule: workSchedule.current() }),
+          note: row.note,
+          setByName: row.setByName,
+          setAt: row.setAt,
+          planned: row.planned,
+          inWindow: !dayStatus.expectedToWorkFromRow(row, now),
+        });
+      }
+      rows.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      const split = leaveSettings.split({ schedule: workSchedule.current() });
+      return {
+        /* THE SWITCH, DELIVERED BY THE SERVER. The page never decides this and
+           never caches it: it arrives on every draw, so an admin flipping it in
+           Settings makes the buttons appear or vanish on the next refresh with
+           no redeploy and no sign-out. */
+        enabled: leaveSettings.leaveIdleEnabled(),
+        date: asked.to,
+        today: asked.to === today,
+        rows,
+        onLeave: rows.filter((r) => r.kind === dayStatus.KINDS.leave).length,
+        idle: rows.filter((r) => r.kind === dayStatus.KINDS.idle).length,
+        firstHalfEnd: leaveSettings.clock(split.firstHalfEndMinutes),
+        secondHalfStart: leaveSettings.clock(split.secondHalfStartMinutes),
+        actionableStatuses: dayStatus.ACTIONABLE_STATUSES,
+      };
+    })(),
     notStarted: capped(notStartedRows),
     notFilled: capped(notFilledRows),
     overlap: bothIds.size,

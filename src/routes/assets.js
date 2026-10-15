@@ -52,6 +52,8 @@ const holidays = require('../holidays');
 // Yesterday's timesheet as a condition of starting today's — see timesheetRefusal.
 const timesheetGate = require('../timesheet-gate');
 const assignments = require('../assignments');
+const dayStatus = require('../day-status');
+const leaveSettings = require('../leave-settings');
 const assetImport = require('../asset-import');
 const workflow = require('../asset-workflow');
 const holdLog = require('../hold-log');
@@ -2285,6 +2287,28 @@ router.post('/:id/start', async (req, res) => {
      nothing has happened yet, so a refusal here leaves no half-done state. */
   const owingForStart = await timesheetRefusal(req);
   if (owingForStart) return res.status(409).json(owingForStart);
+
+  /* And not while they are on leave for this part of the day.
+   *
+   * FIFTH IN THE SAME ROW of independent reasons this one button is refused,
+   * and placed beside the other four rather than merged with any of them —
+   * which is the point the file already makes twice above. It is ALSO why
+   * nothing about leave touches mayStartWork, STARTABLE, the schedule or the
+   * timesheet rule: those gates are unchanged, and this is one more of them.
+   *
+   * Asked of the row rather than of the setting, so the refusal still holds for
+   * an existing mark after an admin switches the feature off — see the header
+   * of src/leave-settings.js for why that is deliberate. */
+  const leaveRow = await dayStatus.userDayStatus(db, req.user.id, timesheetGate.istDate()).catch(() => null);
+  const leaveUntil = dayStatus.leaveEndsAt(leaveRow, Date.now());
+  if (leaveUntil !== null) {
+    return res.status(409).json({
+      error: `You are on leave until ${leaveSettings.clock(
+        Math.round((leaveUntil - dayStatus.startOfDay(timesheetGate.istDate())) / 60000))}. `
+        + 'Work cannot be started inside a leave window.',
+      code: 'on_leave',
+    });
+  }
 
   /* One active task at a time.
    *

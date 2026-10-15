@@ -262,6 +262,41 @@ test('the defaults that are decisions, with the reason for each', () => {
   assert.strictEqual(catalog.BY_KEY.get('settings.nudges').group, 'settings',
     'and it is filed with the other Settings keys, not with the reports');
 
+  /* LEAVE AND IDLE: FOUR KEYS, ALL SUPER ADMIN ALONE, and the split is the
+   * point rather than the defaults.
+   *
+   *   followup.mark_leave      removes hours from every total that reads them
+   *   followup.mark_idle       removes nothing and blocks nothing
+   *   followup.mark_past_dates changes a figure somebody may already have
+   *                            reported on
+   *   settings.leave.manage    decides the studio has the feature at all, and
+   *                            where the day divides for every future half-day
+   *
+   * Four different powers, so four keys a studio can hand out separately. All
+   * four arrive with the Super Admin tier alone, which is this studio's
+   * standing rule for a new permission, and all four are grantable — a studio
+   * that wants its producers recording attendance says so by designation or
+   * through a role group.
+   *
+   * THE SETTINGS KEY IS NOT THE MARKING KEY, and that is pinned here rather
+   * than only in the README: delegating the daily act of marking somebody on
+   * leave does not thereby delegate the decision to switch the feature on or to
+   * move the half-day split. */
+  for (const key of ['followup.mark_leave', 'followup.mark_idle', 'followup.mark_past_dates']) {
+    assert.deepStrictEqual(held(key), ['super_admin'], `${key} starts with Super Admin and nobody else`);
+    assert.ok(catalog.grantableKeys().includes(key), `${key} can be granted`);
+    assert.strictEqual(catalog.BY_KEY.get(key).group, 'reports',
+      `${key} is filed with the section it acts from`);
+  }
+  assert.deepStrictEqual(held('settings.leave.manage'), ['super_admin'],
+    'Manage Leave Settings starts with Super Admin and nobody else');
+  assert.ok(catalog.grantableKeys().includes('settings.leave.manage'));
+  assert.strictEqual(catalog.BY_KEY.get('settings.leave.manage').group, 'settings',
+    'and the settings key is filed with the other Settings keys, not with the marking');
+  assert.notStrictEqual(catalog.BY_KEY.get('settings.leave.manage').group,
+    catalog.BY_KEY.get('followup.mark_leave').group,
+    'deciding the policy and doing the marking are not the same power');
+
   /* SENDING REMINDERS: SUPER ADMIN ALONE, and its own key beside the one that
    * merely SHOWS the list.
    *

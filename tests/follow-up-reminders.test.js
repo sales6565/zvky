@@ -1084,7 +1084,7 @@ test('MUTATION 3b — the marker costs two queries for one person and for forty'
      every query the section issues and asserts it does not move with the number
      of people or days. Named here so the two cannot be changed apart. */
   const budget = fs.readFileSync(path.join(__dirname, 'follow-up.test.js'), 'utf8');
-  assert.match(budget, /const QUERIES_SCOPED = 11;/);
+  assert.match(budget, /const QUERIES_SCOPED = 13;/);
   assert.match(budget, /the query count does not grow with people or days/);
 });
 

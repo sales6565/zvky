@@ -64,6 +64,7 @@ const reminderSettings = require('./reminder-settings');
 const dayState = require('./day-state');
 const followUp = require('./follow-up');
 const waitingWork = require('./waiting-work');
+const dayStatus = require('./day-status');
 const reminders = require('./reminders');
 const notifications = require('./notifications');
 const emailNotifications = require('./email-notifications');
@@ -199,9 +200,30 @@ async function sweep(db, { now = Date.now(), settings = null,
      the banner and the follow-up figure share. */
   const waiting = await waitingWork.countsFor(db, ids, { studioWide: true })
     .catch(() => new Map());
+  /* AND WHAT KIND OF DAY EACH OF THEM IS HAVING, in one more query. Leave and
+     idle are read here rather than in expectedToday() because they are facts
+     about a DAY and not about an account — src/day-state.js's isExpected() is
+     the shared "is this a person who clocks time at all", and widening it to
+     mean "and is at the desk this afternoon" would make the banner, the
+     indicator and this sweep answer a question none of them asked. */
+  const marks = await dayStatus.statusesFor(db, ids, today).catch(() => new Map());
 
   for (const person of people) {
     if (started.has(`${person.id}|${today}`)) { note('started'); continue; }
+    /* NOBODY ON LEAVE IS NUDGED, and nobody marked idle is nudged to START.
+     *
+     * The two are separate skips because they are separate facts: leave says
+     * "not here", idle says "here, with nothing to do". A first-half person is
+     * skipped all morning and reminded normally in the afternoon if the second
+     * reminder's hour has not passed — which falls out of the window rather
+     * than being written as a case.
+     *
+     * NEITHER SKIPS THE TIMESHEET REMINDER, which is a different sweep and a
+     * different sentence: a day with no work in it still has to be written
+     * down, and src/day-status.js's isTimesheetRequired() says so. */
+    const mark = marks.get(`${person.id}|${today}`) || null;
+    if (!dayStatus.expectedToWorkFromRow(mark, now)) { note('on_leave'); continue; }
+    if (dayStatus.nothingToStart(mark)) { note('idle'); continue; }
     /* NO TASKS, NO REMINDER — the brief asked for a decision and this is it,
        with the reasoning: a nudge to start work when there is nothing to start
        is a message whose only possible action is to ignore it, and the studio

@@ -82,6 +82,8 @@ const CODES = {
   backdate_closed: 'backdate_closed',
   capped: 'capped',
   no_email: 'no_email',
+  on_leave: 'on_leave',
+  nothing_to_start: 'nothing_to_start',
 };
 
 const MS_PER_DAY = 86400000;
@@ -174,6 +176,8 @@ function decide(facts = {}) {
   const {
     kind, settings, person, inScope, listed, subjectDate, today,
     workingDay, window: win, manualCount, backdateClosed, actorId,
+    /* WHAT KIND OF DAY THEY ARE HAVING, as the row from src/day-status.js. */
+    dayStatus: mark = null, now = Date.now(),
   } = facts;
 
   const refuse = (code, message) => ({ ok: false, code, message });
@@ -199,6 +203,26 @@ function decide(facts = {}) {
       `${person.name} is not in the projects you can see, so they are not yours to nudge.`);
   }
 
+  /* NOBODY IS NUDGED WHILE THEY ARE AWAY, whichever reminder it is.
+   *
+   * Above the kind split on purpose: "fill Tuesday's timesheet" reaching
+   * somebody who is on leave this afternoon is the same intrusion as "you have
+   * not started today", and the brief asks for the button to be dead while the
+   * window covers now. `mark` is TODAY's row — whether they are away at this
+   * moment — and not the subject date's, because the question is where the
+   * message lands and not what it is about.
+   *
+   * The judgement is the SHARED one, asked of the row rather than restated: a
+   * first-half person is refused all morning and reachable at two o'clock,
+   * because that is when the window ends, not because this file knows anything
+   * about halves. */
+  if (mark && !require('./day-status').expectedToWorkFromRow(mark, now)) {
+    const ds = require('./day-status');
+    return refuse(CODES.on_leave,
+      `${person.name} is on ${ds.describe(mark).toLowerCase().replace(/^leave — /, 'leave — ')} `
+      + 'and cannot be reminded until that window ends.');
+  }
+
   if (kind === KINDS.start) {
     /* A START REMINDER IS ABOUT TODAY, and only about today.
        "You haven't started work today" is the sentence; sending it on Thursday
@@ -215,6 +239,17 @@ function decide(facts = {}) {
         + 'there is no work to have started.');
     }
     if (win && !win.ok) return refuse(win.code, win.message);
+
+    /* MARKED IDLE: a refusal the `listed` check below would answer with the
+     * wrong sentence. src/follow-up.js takes an idle person off list 1, so
+     * `listed` is already false for them and the next check would say "has
+     * started work since this list loaded" — which is not true, and is exactly
+     * the kind of sentence this section exists to avoid. */
+    if (require('./day-status').nothingToStart(mark)) {
+      return refuse(CODES.nothing_to_start,
+        `${person.name} is marked idle today: there is nothing assigned for them to start. `
+        + 'Assign them something, and the mark clears itself.');
+    }
   } else if (!workingDay) {
     /* THE DAY THE TIMESHEET IS FOR has to be a day a timesheet can exist for.
        The day it is SENT on need not be — the brief allows a past date on any

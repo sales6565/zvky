@@ -3376,6 +3376,194 @@ a studio-wide total shown to an Admin would be full of projects they could not
 open. A Super Admin sees the whole studio; an Admin sees their own; the subtitle
 says which. Nobody is shown a number they cannot click into.
 
+## Leave and Idle
+
+Two marks a lead can make against somebody's day, from the "People to follow up"
+lists: **Leave** (First Half, Second Half or Full Day) and **Idle**. They are
+not the same kind of thing and the difference is the whole design.
+
+**Leave changes what somebody's hours add up to.** No time inside the window
+counts for them, a running timer is stopped at the moment the window opened,
+and work cannot be started until it ends. **Idle changes nothing at all**: it
+records that there is nothing on their desk, removes no hours, blocks no
+assignment and no start, and clears itself the instant anybody assigns them
+something.
+
+### "Idle" already meant something else, and still does
+
+`src/idle.js` is a **report**: measured coverage — the working hours in a period
+during which somebody had nothing open — computed from sessions and recorded
+nowhere. This feature's idle is a **mark** somebody makes. Two ideas, one word.
+Nothing was renamed and nothing was merged: the module is `src/day-status.js`,
+the report is untouched, and a test asserts neither reads the other. A report
+quietly treating a lead's opinion as a measurement is the one bug nobody would
+notice.
+
+### The switch ships off, and "off" does not mean "ignore"
+
+Settings → **Leave** has one master switch, **off by default**. Until an admin
+turns it on there are no buttons, the endpoint answers `409 feature_disabled`,
+and no mark can be made.
+
+**Switching it off later does not undo anything.** An existing mark keeps its
+full effect — the hours stay excluded, the timesheet rule stays, the timer stays
+blocked — and can still be undone. The alternative would mean that flipping a
+switch changed last month's totals, twice, in opposite directions. A setting
+that rewrites history is not a setting. So the switch is read at the point a row
+would be **created** and nowhere else: `src/day-status.js` never asks it, and a
+test asserts that the word does not appear in the hour arithmetic, the timesheet
+gate or either reminder path. While marks are in force and the switch is off,
+the strip stays visible with Undo and a banner says so — nothing is ever stuck.
+
+### The half-day split is a snapshot
+
+Settings → Leave holds two times, **First Half ends at** and **Second Half
+starts at**. Until somebody saves them they are **prefilled from the studio's
+lunch break** (13:00 and 14:00 as seeded), or from the midpoint of the working
+day if there is no lunch; a "Reset to lunch times" link restores the suggestion.
+Prefilled and saved are different states in the column — `NULL` versus a number
+— which is what lets the screen say "not set yet" and lets Reset have something
+to restore.
+
+When a half-day is recorded, the window in force is **copied onto the row**. The
+windows are deliberately wide — first half is midnight to the split, second half
+is the split to midnight — because time outside working hours is already removed
+by the working-time helper, and narrowing them here would be a second, weaker
+copy of that rule.
+
+**Moving the split re-snapshots only rows dated strictly after today.** Today's
+and every past one keep theirs, so a figure somebody has already signed off
+cannot move because an admin changed a setting this afternoon. (The future rows
+are Prompt 49's planned leaves; the column and the re-snapshot exist now so that
+prompt adds rows rather than rules.)
+
+Validation refuses a split outside working hours and a second half that begins
+before the first ends. A **gap of ordinary working time** between the two halves
+is a warning and not a refusal: it is a legitimate thing to want and a
+surprising thing to do by accident, and blocking it would be this code deciding
+a studio's hours for it.
+
+### One function counts the hours
+
+```
+countedMsByDay(span) = workingMsByDay(span) − workingMsByDay(span ∩ leave)
+```
+
+Written as a subtraction over the **same** function rather than as a second walk
+that knows about both, so there is exactly one piece of code that decides what
+"inside working hours" means and leave is a thing removed from its answer. Every
+figure in the application comes through it:
+
+| Where | What it is |
+| --- | --- |
+| `close()` | the `seconds` a session stores when it ends |
+| `dayTotalFor()` | the Time Sheet's per-day figure, recomputed at read time |
+| `liveSeconds()` | what a session still running has accrued so far |
+
+`work_sessions.seconds` is a **cache** of that function over the session's span,
+not a second opinion about it — which is what lets the four reports that sum the
+column go on summing it. Marking or undoing a leave **recomputes** the rows the
+date touches, so a mark made after the sessions closed reaches those totals too.
+**Undo restores exactly the previous numbers** because it derives them again
+rather than remembering them. Nothing is deleted: the sessions stay, the
+timesheet lines stay, and the day carries an "overlaps leave" marker.
+
+### What each mark means for the rest of the app
+
+| Question | Full day | Half day | Idle |
+| --- | --- | --- | --- |
+| Do the hours in the window count? | no (whole day) | no (that half) | yes — idle removes nothing |
+| Is a timesheet required? | no | **yes** | **yes** |
+| Does the previous-day timesheet rule block them? | no | yes | yes |
+| On the "not started" list? | no | only once the window has passed | no |
+| Start-of-day banner, automatic reminders, Remind? | no | not inside the window | no start nudge; the timesheet one still applies |
+| Can work be started? | no | not inside the window | **yes** |
+| Can they be assigned work? | yes | yes | **yes — and it clears the mark** |
+
+A half-day person who is back and still has not started **stays on the list**
+with a "Leave: first half" chip. That is the one case where a mark reaches a row
+at all, and it is the sentence a lead cannot get anywhere else.
+
+**Prompt 46's waiting time is not paused by leave.** How long an asset has been
+waiting is a fact about the asset; an absence does not shorten the wait it
+caused. The panel is annotated "(on leave)" instead.
+
+### The timers
+
+A mark stops the person's running timers **at the moment the window opened** —
+not at the moment the sweep gets round to it, which is the same mechanism the
+seven o'clock cutoff uses and is what makes the figure right however late the
+sweep is. A timer left running from yesterday is stopped too, and its earlier
+portion counts under the ordinary rules.
+
+The pause reason is **`on_leave`**, a third `PAUSE_REASON` beside `held` and
+`off_hours`. It is a pause in every sense — the round stays open, the
+one-active-task slot is freed, Resume works — but it is **never auto-resumed**:
+`resumeOverdue()` picks up `off_hours` and only `off_hours`, so a leave pause
+falls out of that sweep by being a different word rather than by a special case
+somebody could delete. The person starts again themselves.
+
+Windows that open later in the day are settled by the **existing** work-hours
+sweep (`WORK_HOURS_SWEEP_MINUTES`), which now runs the leave pass first. No
+second scheduler was added.
+
+### Idle, and the auto-clear that cannot be forgotten
+
+Idle can be marked only for **today** and only when the person has **no
+actionable assets** — the union of `ASSIGNEE_STATUSES` and `WORKING_STATUSES`,
+derived from `src/asset-workflow.js` rather than written out a third time. The
+page disables the button with the reason on it; the server re-checks both and
+answers `409 has_assets` or `409 idle_not_today`.
+
+The mark clears itself from **`assignments.open()`**, which is the one function
+every assign path in the application goes through — the panel dropdown, bulk
+assign, reassign, create-with-assignee and the history repair. A test asserts
+that nothing else in `src/` writes `asset_assignments`, so the sixth path
+somebody adds later is covered without them having to remember. The clear runs
+in the same transaction, never throws and never refuses: an assignment that
+failed because a cosmetic mark could not be cleared would be a far worse bug
+than a stale mark.
+
+### Permissions: four keys, because four different powers
+
+| Key | What it is |
+| --- | --- |
+| `followup.mark_leave` | record and undo leave — **this changes recorded hours** |
+| `followup.mark_idle` | record and undo idle — this changes nothing |
+| `followup.mark_past_dates` | do either on a date that has already passed |
+| `settings.leave.manage` | Settings → Leave: the switch and the split |
+
+All four are **Super Admin only** by default, through `managePermissions`, and
+all four are grantable per designation and through role groups. The settings key
+is deliberately **not** the marking key: delegating the daily act of recording
+somebody's absence does not thereby delegate the decision to switch the feature
+on or to move every future half-day in the studio at once.
+
+Every endpoint uses `requirePermission` and the page uses `can()`, **never the
+tier** — with one stated exception: *marking your own day* is refused to
+everybody but the Super Admin tier, because that is the absence of a separation
+rather than a power to delegate, and the tier that can grant itself every key
+anyway is the only one for whom the separation would be theatre.
+
+The actor can only mark people inside their own `visibleProjects()` scope — the
+section's own rule, asked of the same function the lists ask — and the refusal
+names nobody, so it cannot be used to discover whether an id is a person.
+
+### What is recorded
+
+`user_day_status` holds one row per mark: the kind, the portion, the window
+snapshot, a note, who set it and when, and who cleared it and why. **At most one
+active row per person per day**, enforced by a unique key over a generated
+column that is the date while the row is live and `NULL` once it is cleared — so
+cleared rows fall out of the index and stay in the table as history. Marking
+something else clears what was there and keeps it. Two leads marking one person
+in the same second are arbitrated by the key, not by a check, and the duplicate
+comes back as a refusal rather than as a second row.
+
+The person is told through the existing notification mechanism when they are
+marked or unmarked. **No email** — an attendance mark leaving the building
+through a shared mailbox is a decision a studio should make deliberately.
+
 ## Profit & Loss
 
 The first money in this application. Its own tab, **Profit & Loss**, carrying two
@@ -5305,6 +5493,15 @@ The webfonts are not loaded (the stylesheet `@import`s them from Google and the 
 blocks every outbound request), which makes it stricter rather than weaker: nothing in
 it asserts a pixel width, only that boxes clear each other in whatever font the engine
 falls back to.
+
+`tests/day-status.test.js` covers Leave and Idle. Most of it is arithmetic over a
+frozen clock rather than clicks, and deliberately: marking somebody on leave
+changes what their hours add up to, and a figure that is wrong by an afternoon
+looks exactly like a figure that is right, on every screen, until somebody
+reconciles a month and cannot. The live half drives the real routes against a
+real database — the switch, the timers, the scope rule, the idle auto-clear
+through a real assignment, the re-snapshot, and that switching the feature off
+changes no total.
 
 The policy tests are pure and always run. The endpoint tests need a database and
 are skipped unless you name one, which is **dropped and recreated** on every

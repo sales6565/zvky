@@ -371,18 +371,27 @@ test('MUTATION 8 — freelancers are excluded by the schema, not by a filter', a
  *  10 the last recorded action         (the same, from activity_log)
  *  11 what has been reminded today     (src/reminders.js)
  *
- * ELEVEN, for a narrower viewer; ten for a studio-wide one, which needs no
+ * AND TWO MORE SINCE LEAVE AND IDLE:
+ *
+ *  12 what kind of day each person was having, over every day in view
+ *                                      (src/day-status.js's statusesFor)
+ *  13 and who is away RIGHT NOW, which is a different question from 12 and is
+ *     about today whatever date is being read
+ *                                      (the same, for the Remind button)
+ *
+ * THIRTEEN, for a narrower viewer; twelve for a studio-wide one, which needs no
  * scope narrowing. THE NUMBER IS NOT THE PROPERTY — it is fixed, which is —
  * and the streak is the case worth naming: it costs NO query at all, because
  * src/last-activity.js walks the started-days set query 4 already fetched
  * rather than asking again per person. Forty people over a month still cost
- * eleven. */
-const QUERIES_SCOPED = 11;
+ * thirteen, and so does a studio where everybody is on leave: 12 and 13 are set
+ * reads over the whole list, never a lookup per row. */
+const QUERIES_SCOPED = 13;
 
 test('MUTATION 13 — the query count does not grow with people or days', async () => {
   const one = await build({ query: { date: WED } });
   assert.strictEqual(one.db.calls.length, QUERIES_SCOPED,
-    'one person, one day: eight queries');
+    'one person, one day: the fixed budget');
 
   const many = Array.from({ length: 40 }, (_, i) => ({
     id: `u-${i}`, name: `P${i}`, email: `p${i}@x`, role: 'game_artist',
@@ -394,7 +403,7 @@ test('MUTATION 13 — the query count does not grow with people or days', async 
     now: ist(`${SUN}T11:00:00`),
   });
   assert.strictEqual(wide.db.calls.length, QUERIES_SCOPED,
-    'forty people over a month: the same eight queries');
+    'forty people over a month: the same fixed budget');
   assert.strictEqual(wide.out.notStarted.total, 40, 'and all forty are answered for');
 
   // A studio-wide viewer needs no narrowing, so it is one fewer and not one more.
@@ -686,14 +695,19 @@ test('a past date may be reused for a moment; today never is', async () => {
   assert.strictEqual(first.out.cached, false);
   const second = await build(past);
   assert.strictEqual(second.out.cached, true, 'the same past day comes back from the cache');
-  /* ONE QUERY, AND IT IS THE REMINDER STATE — which moved in this change and is
-     the whole of what moved. The lists, the markers and the streaks are a day
-     that is over and come back free; "has this person been reminded today" is
-     about today, changes every time somebody clicks, and a cached answer to it
-     is the "two leads both nudge the same person" the button exists to prevent.
-     So it is asked again, and nothing else is. */
-  assert.strictEqual(second.db.calls.length, 1, 'and costs only the reminder state');
-  assert.match(second.db.calls[0].sql, /FROM reminder_log/);
+  /* TWO QUERIES, AND BOTH OF THEM ARE ABOUT TODAY — which is the property, and
+     it is the same property it was when there was one.
+     
+     The lists, the markers and the streaks are a day that is over and come back
+     free. What is asked again is exactly what a minute-old answer would get
+     wrong: "has this person been reminded today", which changes every time
+     somebody clicks and whose stale answer is the "two leads both nudge the
+     same person" the button exists to prevent — and "is this person away right
+     now", which decides whether the button may be pressed at all and turns over
+     at the half-day split. Caching either would be caching today. */
+  assert.strictEqual(second.db.calls.length, 2, 'and costs only what is about today');
+  assert.match(second.db.calls.map((c) => c.sql).join('\n'), /FROM reminder_log/);
+  assert.match(second.db.calls.map((c) => c.sql).join('\n'), /FROM user_day_status/);
 
   /* TODAY IS THE ONE DATE THAT MUST NOT BE CACHED: it changes every second, and
      that is the entire point of the list. A cached Today keeps naming somebody

@@ -44,6 +44,7 @@ const REASONS = {
   moved: 'moved',             // the asset was put in a status nobody works in
   held: 'held',               // put down on purpose, to be picked up again
   off_hours: 'off_hours',     // the studio shut with this still running
+  on_leave: 'on_leave',       // the person is on leave for this part of the day
 };
 
 /* The two reasons that are a PAUSE rather than a hand-in.
@@ -56,7 +57,16 @@ const REASONS = {
  * cannot drift apart — a new pause reason is one entry here rather than a grep
  * for the word 'held' across three files.
  */
-const PAUSE_REASONS = [REASONS.held, REASONS.off_hours];
+/* 'on_leave' JOINS THEM, AND IS THE ONE THAT IS NEVER RESUMED AUTOMATICALLY.
+ * It is a pause in every sense the two above are — the round stays open, the
+ * one-active-task slot is freed, Resume picks it up — which is why it is on
+ * this list rather than being a close. What it is not is a thing the studio can
+ * undo on the person's behalf: resumeOverdue() reopens sessions whose reason is
+ * off_hours and only those, so a leave pause falls out of that sweep by being a
+ * different word, and the person starts again themselves when their window
+ * ends. That is what the brief asked for, and it is also the honest reading —
+ * the studio closing is the studio's doing, somebody being away is not. */
+const PAUSE_REASONS = [REASONS.held, REASONS.off_hours, REASONS.on_leave];
 const PAUSED_SQL = `IN (${PAUSE_REASONS.map((r) => `'${r}'`).join(', ')})`;
 
 /* When the studio is open, read fresh on every call.
@@ -223,9 +233,62 @@ const instantFromAge = (ageSeconds, now) => now - (Number(ageSeconds) || 0) * 10
  * Takes the age from the database rather than a stamp, for the reason given
  * above AGE. Null — no open session in this group — is nothing to add.
  */
-function liveSeconds(ageSeconds, now = Date.now()) {
+function liveSeconds(ageSeconds, now = Date.now(), windows = []) {
   if (ageSeconds === null || ageSeconds === undefined) return 0;
-  return workingTime.workingSecondsBetween(instantFromAge(ageSeconds, now), now, schedule());
+  const from = instantFromAge(ageSeconds, now);
+  /* THE SAME SUBTRACTION A CLOSED SESSION GETS, so the number on screen does
+     not jump when the sweep catches up. src/day-status.js's countedSeconds IS
+     workingSecondsBetween with the leave windows removed, and with no windows
+     it is exactly workingSecondsBetween — which is what makes this safe to put
+     on the path every open session takes. */
+  if (!windows.length) return workingTime.workingSecondsBetween(from, now, schedule());
+  return require('./day-status').countedSeconds(from, now, { schedule: schedule(), windows });
+}
+
+/* WHO IS ON LEAVE RIGHT NOW, FOR EVERY OPEN SESSION ON SCREEN, in one query.
+ *
+ * The figures above are drawn for four hundred assets at a time, so this cannot
+ * be a lookup per row — and it is not one per user either: leave is rare, so
+ * the whole of the studio's recent leave is a handful of rows and is fetched
+ * without a user filter at all. The window below is why that stays small, and
+ * why it is a window rather than "everything": an open session older than this
+ * is one the pause sweep failed to close for a week, which is a different fault
+ * and not one a longer scan would fix.
+ *
+ * Returns a Map userId -> intervals, ready for liveSeconds above. An empty Map
+ * — no leave anywhere, which is every studio until somebody switches the
+ * feature on — costs one indexed read and changes nothing. */
+const LIVE_LEAVE_LOOKBACK_DAYS = 14;
+async function liveLeaveIndex(db, now = Date.now()) {
+  const dayStatus = require('./day-status');
+  const today = workingTime.istDateOf(workingTime.istPartsOf(now).day);
+  const from = workingTime.istDateOf(workingTime.istPartsOf(now).day - LIVE_LEAVE_LOOKBACK_DAYS);
+  const index = new Map();
+  let rows = [];
+  try {
+    const got = await db.query(
+      `SELECT user_id AS userId, DATE_FORMAT(\`date\`, '%Y-%m-%d') AS \`date\`,
+              kind, \`portion\` AS \`portion\`, window_start_time AS windowStart, window_end_time AS windowEnd
+         FROM user_day_status
+        WHERE cleared_at IS NULL AND kind = 'leave' AND \`date\` >= $1 AND \`date\` <= $2`,
+      [from, today]
+    );
+    rows = got.rows;
+  } catch (err) {
+    /* No table — an unmigrated deployment, which has no leave and therefore
+       nothing to subtract. Never a reason to refuse to draw a figure. */
+    return index;
+  }
+  for (const row of rows) {
+    const wins = dayStatus.windowsFromRow({
+      ...row,
+      windowStart: row.windowStart === null ? null : Number(row.windowStart),
+      windowEnd: row.windowEnd === null ? null : Number(row.windowEnd),
+    });
+    if (!wins.length) continue;
+    index.set(row.userId, (index.get(row.userId) || []).concat(wins));
+  }
+  return index;
 }
 
 async function openSession(db, assetId) {
@@ -670,7 +733,19 @@ async function close(db, assetId, reason, note = null, { at = null } = {}) {
      span; the intersection would return zero anyway, but the ended_at stamp
      would read as before the started_at one and no report expects that. */
   const endedAt = Math.min(now, Math.max(startedAt, at === null ? now : Number(at)));
-  const seconds = workingTime.workingSecondsBetween(startedAt, endedAt, schedule());
+  /* LEAVE IS TAKEN OUT HERE, at the one point the figure is written.
+   *
+   * `seconds` is a CACHE of countedSeconds() over this session's span, not a
+   * second opinion about it — which is what lets the four reports that sum this
+   * column go on summing it. The cache is rewritten whenever a leave is marked
+   * or undone over a span it covers (see src/day-status.js's recount), so a
+   * mark made after the session closed reaches these totals too, and an undo
+   * puts back exactly the number that was there before. */
+  const windows = await require('./day-status')
+    .windowsForSpan(db, running.user_id, startedAt, endedAt)
+    .catch(() => []);
+  const seconds = require('./day-status')
+    .countedSeconds(startedAt, endedAt, { schedule: schedule(), windows });
 
   /* The end stamp as an offset from the database's own NOW(), for the same
      reason the age above is read that way: it lands in the database's clock
@@ -1077,6 +1152,12 @@ async function dayTotalFor(db, { assetId, userId, day, now = Date.now() }) {
   let outside = 0;
   let open = false;
 
+  /* THE DAY'S LEAVE, FETCHED ONCE. This is the figure the Time Sheet compares a
+     line against, so it is the one place where "the hours do not count" has to
+     be true even for a session that closed before anybody marked the leave. */
+  const leaveWindows = await require('./day-status')
+    .windowsForSpan(db, userId, dayStart, dayEnd).catch(() => []);
+
   for (const row of rows) {
     const startMs = instantFromAge(row.start_age, now);
     const isOpen = Number(row.still_open) === 1 || row.end_age === null;
@@ -1096,7 +1177,8 @@ async function dayTotalFor(db, { assetId, userId, day, now = Date.now() }) {
        them is work for an answer already decided. Removing it changes no figure
        — it was run as a mutation and survived, which is why this says so. */
     const to = Math.min(endMs, dayEnd);
-    const mine = workingTime.workingMsByDay(from, to, schedule()).byDay.get(day) || 0;
+    const mine = require('./day-status')
+      .countedMsByDay(from, to, { schedule: schedule(), windows: leaveWindows }).byDay.get(day) || 0;
 
     if (startMs < dayStart || endMs > dayEnd) crossing += 1;
     if (isOpen) {
@@ -1158,8 +1240,10 @@ async function recordedFor(db, { assetId, userId }) {
     if (!unavailable(err)) throw err;
     return { rows: [{ seconds: 0, sessions: 0, still_open: 0, open_age: null }] };
   });
+  const live = await liveLeaveIndex(db);
   return {
-    seconds: (Number(rows[0].seconds) || 0) + liveSeconds(rows[0].open_age),
+    seconds: (Number(rows[0].seconds) || 0)
+      + liveSeconds(rows[0].open_age, Date.now(), live.get(userId) || []),
     sessions: Number(rows[0].sessions) || 0,
     open: Number(rows[0].still_open) > 0,
   };
@@ -1203,18 +1287,23 @@ async function cutover(db) {
 // breakdown. A round still open counts up to now — that is elapsed-so-far, not
 // a clock, and nothing on screen ticks it.
 async function summary(db, assetId, assignmentId, assigneeId) {
+  /* Fetched once for the whole panel, and used for every live figure below —
+     see liveLeaveIndex. */
+  const liveIdx = await liveLeaveIndex(db);
   const { rows } = await askStamped(db, (stamp) =>
     `SELECT round,
             SUM(COALESCE(seconds, 0)) AS seconds,
             MIN(started_at) AS started_at,
             MAX(${stamp()}) AS ended_at,
             SUM(ended_at IS NULL) AS still_open,
-            MIN(CASE WHEN ended_at IS NULL THEN ${AGE()} END) AS open_age
+            MIN(CASE WHEN ended_at IS NULL THEN ${AGE()} END) AS open_age,
+            MIN(CASE WHEN ended_at IS NULL THEN user_id END) AS open_user_id
        FROM work_sessions WHERE asset_id = $1 GROUP BY round ORDER BY round`,
   [assetId], { rows: [] });
   const rounds = rows.map((r) => ({
     round: Number(r.round),
-    seconds: (Number(r.seconds) || 0) + liveSeconds(r.open_age),
+    seconds: (Number(r.seconds) || 0)
+      + liveSeconds(r.open_age, Date.now(), liveIdx.get(r.open_user_id) || []),
     startedAt: r.started_at || null,
     // An open round has no submit stamp yet. Reporting MAX(ended_at) there
     // would hand back the end of some earlier closed row in the same round,
@@ -1260,7 +1349,8 @@ async function summary(db, assetId, assignmentId, assigneeId) {
          FROM work_sessions WHERE asset_id = $2 AND ${scope.sql}`,
     [scope.value, assetId],
     { rows: [{ seconds: null, started_at: null, ended_at: null, still_open: 0, open_age: null }] });
-    currentSeconds = (Number(mine[0].seconds) || 0) + liveSeconds(mine[0].open_age);
+    currentSeconds = (Number(mine[0].seconds) || 0)
+      + liveSeconds(mine[0].open_age, Date.now(), assigneeId ? (liveIdx.get(assigneeId) || []) : []);
     currentStamps = {
       startedAt: mine[0].started_at || null,
       submittedAt: Number(mine[0].still_open) > 0 ? null : (mine[0].ended_at || null),
@@ -1303,6 +1393,7 @@ async function totalsFor(db, assetIds) {
             SUM(CASE WHEN w.user_id = a.assignee_id THEN COALESCE(w.seconds, 0) ELSE 0 END)
               AS current_seconds,
             MIN(CASE WHEN w.ended_at IS NULL THEN ${AGE('w.started_at')} END) AS open_age,
+            MIN(CASE WHEN w.ended_at IS NULL THEN w.user_id END) AS open_user_id,
             MIN(CASE WHEN w.ended_at IS NULL AND w.user_id = a.assignee_id
                      THEN ${AGE('w.started_at')} END) AS current_open_age
        FROM work_sessions w
@@ -1323,10 +1414,15 @@ async function totalsFor(db, assetIds) {
     [assetIds]
   );
   const heldBy = new Map(heldRows.map((r) => [r.asset_id, describePause(r)]));
+  /* One query for the whole list, not one per asset — see liveLeaveIndex. */
+  const liveIdx = await liveLeaveIndex(db);
+  const now = Date.now();
 
   return new Map(rows.map((r) => [r.asset_id, {
-    seconds: (Number(r.seconds) || 0) + liveSeconds(r.open_age),
-    currentSeconds: (Number(r.current_seconds) || 0) + liveSeconds(r.current_open_age),
+    seconds: (Number(r.seconds) || 0)
+      + liveSeconds(r.open_age, now, liveIdx.get(r.open_user_id) || []),
+    currentSeconds: (Number(r.current_seconds) || 0)
+      + liveSeconds(r.current_open_age, now, liveIdx.get(r.open_user_id) || []),
     open: Number(r.still_open) > 0,
     startedAt: r.started_at || null,
     submittedAt: Number(r.still_open) > 0 ? null : (r.ended_at || null),
@@ -1362,6 +1458,7 @@ async function roundsFor(db, assetIds) {
             SUM(COALESCE(w.seconds, 0)) AS seconds,
             SUM(w.ended_at IS NULL) AS still_open,
             MIN(CASE WHEN w.ended_at IS NULL THEN ${AGE('w.started_at')} END) AS open_age,
+            MIN(CASE WHEN w.ended_at IS NULL THEN w.user_id END) AS open_user_id,
             GROUP_CONCAT(DISTINCT u.\`name\` ORDER BY u.\`name\` SEPARATOR ', ') AS who
        FROM work_sessions w
        LEFT JOIN users u ON u.id = w.user_id
@@ -1376,12 +1473,15 @@ async function roundsFor(db, assetIds) {
     return { rows: [] };
   });
 
+  const liveIdx = await liveLeaveIndex(db);
+  const now = Date.now();
   const byAsset = new Map();
   for (const r of rows) {
     if (!byAsset.has(r.asset_id)) byAsset.set(r.asset_id, []);
     byAsset.get(r.asset_id).push({
       round: Number(r.round) || 0,
-      seconds: (Number(r.seconds) || 0) + liveSeconds(r.open_age),
+      seconds: (Number(r.seconds) || 0)
+        + liveSeconds(r.open_age, now, liveIdx.get(r.open_user_id) || []),
       open: Number(r.still_open) > 0,
       who: r.who || null,
     });
@@ -1427,6 +1527,16 @@ function scheduleAutoPause(db, log = console.log) {
   };
 
   const run = async () => {
+    /* LEAVE FIRST, and the order matters for the same reason pausing comes
+       before resuming below: a session put down because its owner is on leave
+       must not be a candidate for anything else this tick, and a second-half
+       window that opened at two o'clock is the one stop that nobody has called
+       a route to ask for. This is the "evaluate it server-side" half of the
+       brief; the timer endpoints and /auth/me are the lazy half. */
+    const onLeave = await require('./day-status').sweepLeave(db, { log })
+      .catch((err) => { log(`[leave] sweep failed: ${err.sqlMessage || err.message}`); return []; });
+    await tell(onLeave, notifications.KINDS.work_paused);
+
     const paused = await pauseOverdue(db);
     await tell(paused, notifications.KINDS.work_paused);
     if (paused.length) {
@@ -1454,6 +1564,7 @@ function scheduleAutoPause(db, log = console.log) {
 
 module.exports = {
   REASONS, PAUSE_REASONS, WORK_CONTINUES, start, close, closeIfWorkStopped, hold, heldFor,
+  liveLeaveIndex,
   heldAnyFor,
   summary, totalsFor, roundsFor, pauseOverdue, resumeOverdue, scheduleAutoPause, nextOpening,
   openSession, openForUser, currentRound, available, cutover, dayTotalFor, recordedFor,

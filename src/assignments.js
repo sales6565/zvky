@@ -110,6 +110,20 @@ async function open(db, { assetId, userId, assignedById, status, reason }) {
        VALUES ($1,$2,$3,$4,$5)`,
       [id, assetId, userId, assignedById || null, status || 'not_started']
     );
+    /* THE IDLE MARK CLEARS ITSELF HERE, in this transaction, for every assign
+       path there is.
+     *
+     * Raised from open() for exactly the reason notify() is raised from open():
+     * five routes change who holds an asset — the panel dropdown, bulk assign,
+     * reassign, create-with-assignee and the history repair — and all five come
+     * through this function, so the sixth somebody adds later is covered
+     * without them having to remember. A test asserts there is no other writer
+     * of asset_assignments.
+     *
+     * NOTHING IS BLOCKED BY IT. onAssigned never throws and never refuses: an
+     * assignment that failed because a cosmetic mark could not be cleared would
+     * be a far worse bug than a stale mark. */
+    await require('./day-status').onAssigned(db, userId, assetId);
     await notify(db, { assetId, from: previousUserId, to: userId, actorId: assignedById, reason });
     return id;
   } catch (err) {

@@ -161,6 +161,11 @@ const KINDS = {
      asked and which asset is enough to decide to go and read it; the text is on
      the asset, where the artist has to go anyway to act on it. */
   changes_requested: 'changes_requested',
+  /* Somebody recorded a leave or an idle mark against your day, or undid one.
+     Its own kind rather than a detail on another, because it is addressed to
+     one person and it is telling them something about their own attendance —
+     which nothing else in this list does. */
+  day_status: 'day_status',
 };
 
 const unavailable = (err) => err && (err.code === 'ER_NO_SUCH_TABLE' || /doesn't exist/i.test(err.message || ''));
@@ -182,6 +187,9 @@ function describe(row) {
   }
   if (row.kind === KINDS.timesheet_reminder) {
     return row.detail || 'Please fill your timesheet for the day that is missing.';
+  }
+  if (row.kind === KINDS.day_status) {
+    return row.detail || 'Your day was marked as leave or idle.';
   }
   if (row.kind === KINDS.project_review) {
     const project = row.project_name || 'A project';

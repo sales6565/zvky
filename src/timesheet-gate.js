@@ -220,6 +220,16 @@ async function check(db, user, { now = Date.now(), settings = null } = {}) {
     const timesheets = require('./timesheets');
     if (await timesheets.hasLineOn(db, user.id, date)) return free('filled');
 
+    /* AND NOT BLOCKED FOR A DAY THEY WERE ON FULL LEAVE. The obligation is
+       "write down what you did"; a full day away has nothing to write down, and
+       src/day-status.js's timesheetRequiredFromRow() is the one place that is
+       decided — a half day and an idle day both still owe a sheet, and both
+       still block here, which is the point of asking the shared rule rather
+       than testing for "any mark". */
+    const dayStatus = require('./day-status');
+    const mark = await dayStatus.userDayStatus(db, user.id, date).catch(() => null);
+    if (!dayStatus.timesheetRequiredFromRow(mark)) return free('full day leave');
+
     return {
       blocked: true,
       reason: 'not filled',

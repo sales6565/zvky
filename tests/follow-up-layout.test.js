@@ -169,7 +169,36 @@ const NEW_JOINER = row({
     streakSince: null, streakStrong: false, quietDays: 0, everActive: false },
 });
 
-const ROWS = [WORST, REFUSED, PLAIN, NEW_JOINER];
+/* A row already marked — a half-day whose window has passed, which is the only
+   mark that stays on a list (a full day and an idle take somebody off it). */
+const MARKED = row({
+  id: 'u-marked',
+  name: 'Aditi Soumitra Mulay',
+  roleLabel: 'Game Artist',
+  held: 2,
+  dayStatus: {
+    kind: 'leave', portion: 'first_half', label: 'Leave — First Half (until 13:00)',
+    chip: 'Leave: first half', inWindow: false, planned: false,
+    setByName: 'Priya Narayanan', setAt: '2026-03-18T04:00:00.000Z', note: 'dentist',
+  },
+});
+
+const ROWS = [WORST, REFUSED, MARKED, PLAIN, NEW_JOINER];
+
+/* THE LEAVE BLOCK, as src/follow-up.js sends it. `enabled` is what makes the
+   two buttons exist at all, and the two clock labels are what the menu prints —
+   both the server's, never the page's. */
+const LEAVE = {
+  enabled: true, date: WED, today: true,
+  rows: [{ userId: 'u-marked', name: 'Aditi Soumitra Mulay', kind: 'leave',
+    portion: 'first_half', portionLabel: 'First half',
+    label: 'Leave — First Half (until 13:00)', note: 'dentist',
+    setByName: 'Priya Narayanan', setAt: '2026-03-18T04:00:00.000Z',
+    planned: false, inWindow: false }],
+  onLeave: 1, idle: 0,
+  firstHalfEnd: '13:00', secondHalfStart: '14:00',
+  actionableStatuses: ['not_started', 'assigned', 'in_progress'],
+};
 
 const PAYLOAD = {
   ok: true, unavailable: null, mode: 'day', date: WED, from: WED, to: WED,
@@ -191,6 +220,7 @@ const PAYLOAD = {
   waitingFigure: 'waiting on them',
   reminders: { permitted: true, manualEnabled: true, emailEnabled: true, cap: 1,
     logged: true, window: { ok: true, code: 'ok', message: null } },
+  leave: LEAVE,
 };
 
 /* ---------------------------------------------------------------------------
@@ -318,7 +348,7 @@ async function open() {
 test.after(async () => { if (browser) await browser.close(); browser = null; });
 
 /* Draw the section at one width and measure it. */
-async function measure(width, { mutate = null } = {}) {
+async function measure(width, { mutate = null, payload = PAYLOAD, act = null } = {}) {
   const b = await open();
   const context = await b.newContext({ viewport: { width, height: 1000 }, deviceScaleFactor: 1 });
   /* NOTHING LEAVES THIS PAGE. The stylesheet's webfont @import is already
@@ -336,24 +366,57 @@ async function measure(width, { mutate = null } = {}) {
     await page.evaluate(({ section, payload }) => {
       const escapeHTML = (s) => String(s === null || s === undefined ? '' : s)
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-      const can = (...keys) => ['report.follow_up', 'report.remind', 'user.view']
-        .some((k) => keys.includes(k));
+      const can = (...keys) => ['report.follow_up', 'report.remind', 'user.view',
+        'followup.mark_leave', 'followup.mark_idle'].some((k) => keys.includes(k));
       const caps = () => ({ projectScope: 'all' });
       const api = async () => payload;
+      /* NO NATIVE DIALOG MAY FIRE. Replaced rather than spied on: a real
+         alert/confirm/prompt in a headless browser BLOCKS, so a page that
+         called one would hang this test rather than failing it. These throw and
+         record instead, and the assertions read window.__native afterwards. */
+      window.__native = [];
+      for (const name of ['alert', 'confirm', 'prompt']) {
+        window[name] = (...args) => {
+          window.__native.push({ name, args: args.map(String) });
+          throw new Error(`native ${name}() was called`);
+        };
+      }
       const built = new Function(
-        'document', 'escapeHTML', 'can', 'caps', 'api', 'openUserDetail', 'showToast', 'askConfirm',
+        'document', 'escapeHTML', 'can', 'caps', 'api', 'openUserDetail', 'showToast', 'askConfirm', 'openAsk',
         `${section}
-         return { paintFollowUp,
+         return { paintFollowUp, markDay, undoDay,
                   set: (d) => { FOLLOW_UP = d; },
                   setAsk: (a) => { FOLLOW_UP_ASK = a; FOLLOW_UP_SHOWN = a; } };`
-      )(document, escapeHTML, can, caps, api, () => {}, () => {}, async () => true);
+      )(document, escapeHTML, can, caps, api, () => {}, () => {}, async () => true,
+        async (opts) => { window.__asked = (window.__asked || []).concat([opts.title]); return true; });
+      window.__fu = built;
       built.set(payload);
       built.setAsk({ mode: 'day', date: payload.date });
       built.paintFollowUp();
-    }, { section: f.section, payload: PAYLOAD });
+    }, { section: f.section, payload });
     /* One frame, so the engine has laid out what was just written. */
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-    return await page.evaluate(MEASURE);
+    /* An interaction, if the case wants one — a click, by selector, then
+       another frame so what it opened has been laid out. */
+    if (act) {
+      await page.evaluate((sel) => {
+        const el = document.querySelector(sel);
+        if (!el) throw new Error(`nothing matched ${sel}`);
+        el.click();
+      }, act);
+      await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    }
+    const out = await page.evaluate(MEASURE);
+    out.native = await page.evaluate(() => window.__native || []);
+    /* DISTINCT, because the same person is on both lists in this fixture and the
+       menu is keyed by person: opening it opens it in both columns, which is
+       the behaviour a redraw has to preserve and not a duplicate to hide. */
+    out.menu = await page.evaluate(() => [...new Set(
+      Array.from(document.querySelectorAll('.fu-leave-item')).map((b) => b.textContent.trim()))]);
+    out.menuCount = await page.evaluate(() => document.querySelectorAll('.fu-leave-menu').length);
+    out.dayButtons = await page.evaluate(() => Array.from(document.querySelectorAll('.fu-day-btn'))
+      .map((b) => ({ text: b.textContent.trim(), disabled: b.disabled, title: b.getAttribute('title') || '' })));
+    return out;
   } finally {
     await context.close();
   }
@@ -524,3 +587,96 @@ test('MUTATION F — the dashboard column is widened past what the page can hold
     assert.ok(out.scroll.length,
       `the column outgrew the page and nothing caught it: ${JSON.stringify(out)}`);
   });
+
+// ===========================================================================
+// 3. LEAVE AND IDLE, in the same engine and the same stylesheet.
+//
+// The brief for Prompt 48 asks that the new buttons "use the 47 layout and not
+// bring back the overlap". The three width cases above already prove that —
+// every row in their fixture carries [Remind] [Leave] [Idle] and the marked row
+// carries a chip as well — so what is left is the behaviour a layout cannot
+// show: the menu, the two disabled states, the switch, and the dialogs.
+//
+// WHAT IS NOT HERE AND WHY. Idle clearing itself on an assignment, Undo through
+// the endpoint, and a settings save are SERVER behaviour; they are driven end
+// to end against a real database in tests/day-status.test.js. Re-testing them
+// through a browser would be the same assertions through a slower lens, and
+// would pass or fail for reasons that had nothing to do with the browser.
+// ===========================================================================
+
+test('the Leave menu opens over the rows below it and lands on nothing',
+  { skip: SKIP }, async () => {
+    for (const width of WIDTHS) {
+      const out = await measure(width, { act: '[data-fu-leave]' });
+      assert.deepStrictEqual(out.menu,
+        ['First Halfuntil 13:00', 'Second Halffrom 14:00', 'Full Day'],
+        `the three portions, with the server's times, at ${width}px`);
+      assert.strictEqual(out.menuCount, 2,
+        'the same person is on both lists, so the menu opens in both columns');
+      /* THE MENU IS POSITIONED, so it is allowed to cover the rows beneath it —
+         that is the point of it. What may not happen is the Remind button
+         landing on text, which is the assertion the width cases make and which
+         is re-made here with the menu open. */
+      assert.deepStrictEqual(out.buttonHits, [],
+        `the Remind button is drawn over text with the menu open at ${width}px`);
+      assert.deepStrictEqual(out.brokenWords, []);
+      assert.ok(out.scrollWidth <= out.innerWidth + 1,
+        `the open menu made the page scroll sideways at ${width}px`);
+    }
+  });
+
+test('MUTATION G — the menu prints the split the server sent, not one of its own',
+  { skip: SKIP }, async () => {
+    const moved = { ...PAYLOAD, leave: { ...LEAVE, firstHalfEnd: '11:30', secondHalfStart: '12:30' } };
+    const out = await measure(1440, { act: '[data-fu-leave]', payload: moved });
+    assert.deepStrictEqual(out.menu,
+      ['First Halfuntil 11:30', 'Second Halffrom 12:30', 'Full Day'],
+      'moving the split in Settings moves the menu, with no redeploy');
+  });
+
+test('Idle is dead with assets and alive without, in the browser', { skip: SKIP }, async () => {
+  const out = await measure(1440);
+  const idle = out.dayButtons.filter((b) => b.text === 'Idle');
+  assert.ok(idle.length >= 2, `found ${idle.length} Idle buttons`);
+  /* WORST holds three assets and PLAIN holds two, so both are dead; NEW_JOINER
+     holds none and is live. The reason is on the button, in the server's own
+     terms, so a lead is not told two different numbers about one desk. */
+  assert.ok(idle.some((b) => b.disabled && /Has 3 assets assigned/.test(b.title)));
+  assert.ok(idle.some((b) => !b.disabled), 'somebody with an empty desk can be marked');
+});
+
+test('the switch hides the two buttons and leaves the rest of the row alone',
+  { skip: SKIP }, async () => {
+    const off = { ...PAYLOAD, leave: { ...LEAVE, enabled: false } };
+    const out = await measure(1440, { payload: off });
+    assert.deepStrictEqual(out.dayButtons.filter((b) => b.text !== 'Undo'), [],
+      'no Leave and no Idle');
+    /* AND THE REMIND BUTTONS ARE UNTOUCHED — the switch governs two controls,
+       not the section. */
+    assert.ok(out.buttons.length > 0, 'Remind is still drawn');
+    assert.deepStrictEqual(out.overlaps, [], 'and nothing moved into anything');
+    assert.deepStrictEqual(out.buttonHits, []);
+  });
+
+test('MUTATION H — no native dialog fires, at any width, in any state',
+  { skip: SKIP }, async () => {
+    /* alert/confirm/prompt are replaced with recorders that THROW — a real one
+       in a headless browser blocks, so a page that called it would hang this
+       test rather than fail it. The desktop application's web view supports
+       none of the three (Prompt 39), which is why this is checked in an engine
+       rather than by grepping. */
+    for (const act of [null, '[data-fu-leave]', '[data-fu-strip]']) {
+      const out = await measure(1440, { act });
+      assert.deepStrictEqual(out.native, [],
+        `a native dialog fired after ${act || 'the first draw'}`);
+    }
+  });
+
+test('the strip expands under the lists without disturbing them', { skip: SKIP }, async () => {
+  for (const width of WIDTHS) {
+    const out = await measure(width, { act: '[data-fu-strip]' });
+    assert.deepStrictEqual(out.overlaps, [], `the open strip overlaps something at ${width}px`);
+    assert.deepStrictEqual(out.buttonHits, []);
+    assert.ok(out.scrollWidth <= out.innerWidth + 1);
+  }
+});

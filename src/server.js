@@ -35,6 +35,7 @@ const holidayRoutes = require('./routes/holidays');
 const timesheetOptionRoutes = require('./routes/timesheet-options');
 const chatSettingsRoutes = require('./routes/chat-settings');
 const nudgeRoutes = require('./routes/nudges');
+const leaveSettingsRoutes = require('./routes/leave-settings');
 const misAccessRoutes = require('./routes/mis-access');
 const outsourceRoutes = require('./routes/outsource');
 const activityRoutes = require('./routes/activity');
@@ -181,6 +182,9 @@ app.use('/api/admin/settings/chat-group-limit', chatSettingsRoutes);
 /* Settings -> Start-of-day nudges: the four switches that govern the reminders
    sent from the Admin Dashboard's follow-up lists. */
 app.use('/api/admin/settings/nudges', nudgeRoutes);
+/* Settings -> Leave: the master switch over Leave & Idle and the two times that
+   divide a half-day. Its own key, settings.leave.manage — see the route. */
+app.use('/api/admin/settings/leave', leaveSettingsRoutes);
 /* The integration's management screen. Its own mount under /api/admin, and every route
    in it behind settings.integrations — which is not grantable to anybody but the Super
    Admin, because issuing a key grants data access no designation limits. */

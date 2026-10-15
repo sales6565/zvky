@@ -722,6 +722,55 @@ const GROUPS = [
           + 'reminders on. Needs "View People to Follow Up" as well — there is nothing to send '
           + 'from without it.',
       },
+      {
+        key: 'followup.mark_leave',
+        label: 'Mark Leave',
+        /* RECORDING SOMEBODY'S ABSENCE CHANGES WHAT THEIR HOURS ADD UP TO, and
+           that is the whole reason this is a key of its own rather than part of
+           report.remind beside it. A reminder is a message; this removes a
+           window of a person's day from every figure that counts it — the Time
+           Sheet's suggested hours, Time Spent, the Efficiency report and the
+           P&L — and excuses them from the timesheet on a full day.
+           
+           SUPER ADMIN ONLY BY DEFAULT, through managePermissions, and
+           grantable per designation and through role groups like any other key.
+           A studio that wants its producers to record attendance hands it to
+           them having decided to. */
+        impliedBy: has('managePermissions'),
+        describe: 'Record First Half, Second Half or Full Day leave against a person from the '
+          + '"People to follow up" lists, and undo it. Hours inside the window stop counting, '
+          + 'running timers are stopped, and work cannot be started until it ends.',
+        danger: 'This changes recorded hours. Time inside a leave window is removed from every '
+          + 'total that reads it, including ones somebody may already have signed off.',
+      },
+      {
+        key: 'followup.mark_idle',
+        label: 'Mark Idle',
+        /* A SEPARATE KEY FROM LEAVE, because it is a far smaller act: idle
+           removes no hours, excuses no timesheet and blocks nothing. It says
+           "this person has nothing to pick up", and it clears itself the moment
+           anybody assigns them something. A studio may reasonably let a lead
+           record that without letting them record absences. */
+        impliedBy: has('managePermissions'),
+        describe: 'Mark somebody idle for today when they have no actionable assets assigned, and '
+          + 'undo it. It clears itself as soon as an asset is assigned to them, removes no hours '
+          + 'and never blocks assigning or starting work.',
+      },
+      {
+        key: 'followup.mark_past_dates',
+        label: 'Mark Leave On Past Dates',
+        /* MARKING LAST TUESDAY IS NOT MARKING TODAY. Today's mark changes a
+           figure nobody has acted on yet; a past date's changes one that may
+           already be in a report somebody sent out. So it is gated separately
+           and is useless on its own — the two keys above are what say which
+           kind of mark may be made at all. */
+        impliedBy: has('managePermissions'),
+        describe: 'Record or undo a leave mark on a date that has already passed. Needs "Mark '
+          + 'Leave" or "Mark Idle" as well. Idle is today-only whatever this says, because it '
+          + 'is a statement about what is on somebody\'s desk right now.',
+        danger: 'A past date\'s hours may already have been reported on. Changing them changes '
+          + 'figures somebody has seen.',
+      },
     ],
   },
   {
@@ -1572,6 +1621,29 @@ const GROUPS = [
         describe: 'Settings → Start-of-day Nudges: the master switch, the banner, the top-bar '
           + 'timer indicator, the two automatic reminders and their channels, the grace period, '
           + 'the second reminder\'s time and the banner snooze.',
+      },
+      {
+        key: 'settings.leave.manage',
+        label: 'Manage Leave Settings',
+        /* SETTINGS -> LEAVE: the master switch and the half-day split.
+           
+           ITS OWN KEY, NOT followup.mark_leave. Recording one person's absence
+           and deciding that the studio has the feature at all — and where its
+           day divides — are different powers: the second one moves every future
+           half-day in the studio at once, and the first one is a daily act a
+           producer does. A studio that delegates the marking has not thereby
+           delegated the policy.
+           
+           SUPER ADMIN ONLY by default, through managePermissions, for the same
+           reason settings.nudges is: the switch governs something every person
+           in the studio can be subjected to.
+           
+           requirePermission AND can(), NEVER THE TIER — see the note on
+           settings.nudges. Prompt 49 adds further fields to this same group and
+           they sit behind this same key. */
+        impliedBy: has('managePermissions'),
+        describe: 'Settings → Leave: whether Leave & Idle is available at all, and the two times '
+          + 'that divide a half-day.',
       },
       {
         key: 'settings.email_config',

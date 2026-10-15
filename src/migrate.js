@@ -4317,6 +4317,95 @@ async function ensureNotificationDetail(db, log) {
  * cancel each other: the studio's own nudge at half past nine must not stop a
  * lead adding a word at eleven, and the lead can see the first one went out.
  */
+/* LEAVE AND IDLE.
+ *
+ * ONE TABLE FOR BOTH, and it is `user_day_status` rather than `leave` because
+ * the thing being recorded is "what was this person's day", of which leave is
+ * one answer and idle another. Prompt 49 adds planned leave with a different
+ * `source`, so the shape is generic on purpose: a kind, an optional portion, a
+ * snapshot of the window, who set it and who cleared it.
+ *
+ * AT MOST ONE ACTIVE ROW PER (user, date), enforced by a unique key rather than
+ * by a check — the same reasoning as reminder_log's cap. Two leads marking one
+ * person in the same second both read "nothing recorded" and both insert, and
+ * no amount of checking first closes the gap between the check and the insert.
+ * MySQL treats NULLs as distinct in a unique index, so the key is on a
+ * generated column that is the date while the row is active and NULL once it is
+ * cleared: cleared rows fall out of the index and stay in the table as history.
+ *
+ * THE WINDOW IS A SNAPSHOT. window_start_time/window_end_time are copied from
+ * the half-day split in force when the row was made, so moving the split later
+ * cannot change what a past half-day meant — which is the whole reason a
+ * studio's hours can be edited at all without rewriting history.
+ */
+async function ensureDayStatus(db, log) {
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS leave_settings (
+      id                      TINYINT     NOT NULL PRIMARY KEY,
+      -- THE MASTER SWITCH, OFF. Nothing changes for anybody until an admin
+      -- turns it on; see src/leave-settings.js for why this one ships inert
+      -- where the nudges switch ships on.
+      enabled                 TINYINT(1)  NOT NULL DEFAULT 0,
+      -- The half-day split, as minutes past midnight IST — the frame
+      -- work_schedule already stores its day and its breaks in. NULL until an
+      -- admin saves, which is what makes "prefill from the lunch break" a
+      -- first-run behaviour rather than a value nobody chose.
+      first_half_end_minutes  SMALLINT    NULL,
+      second_half_start_minutes SMALLINT  NULL,
+      updated_by              CHAR(36)    NULL,
+      updated_at              DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )`));
+
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS user_day_status (
+      id            CHAR(36)     NOT NULL PRIMARY KEY,
+      seq           BIGINT       NOT NULL AUTO_INCREMENT UNIQUE,
+      user_id       CHAR(36)     NOT NULL,
+      -- An IST calendar date, like every other date in this schema.
+      \`date\`        DATE         NOT NULL,
+      -- leave | idle
+      kind          VARCHAR(16)  NOT NULL,
+      -- full | first_half | second_half. Required for leave, NULL for idle.
+      -- BACK-TICKED BECAUSE THE COLUMN NAME IS RESERVED in MariaDB 10.4 and later —
+      -- it is a keyword in FOR PORTION OF, for application-time period tables.
+      -- Unquoted it fails the whole CREATE with a syntax error pointing at the
+      -- line, which is how this was found.
+      \`portion\`     VARCHAR(16)  NULL,
+      -- THE SNAPSHOT of the half-day window, in minutes past midnight IST.
+      -- NULL for a full day and for idle, both of which are the whole date.
+      window_start_time SMALLINT NULL,
+      window_end_time   SMALLINT NULL,
+      note          VARCHAR(500) NULL,
+      set_by        CHAR(36)     NULL,
+      set_at        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      cleared_by    CHAR(36)     NULL,
+      cleared_at    DATETIME     NULL,
+      clear_reason  VARCHAR(255) NULL,
+      -- manual today; Prompt 49 adds planned/imported sources.
+      source        VARCHAR(16)  NOT NULL DEFAULT 'manual',
+      -- The date while the row is live, NULL once it is cleared. A unique key
+      -- over it is what makes "one active row per person per day" a fact about
+      -- the schema instead of a race between two requests.
+      active_date   DATE AS (CASE WHEN cleared_at IS NULL THEN \`date\` END) STORED,
+      UNIQUE KEY uq_day_status_active (user_id, active_date),
+      KEY idx_day_status_date (\`date\`, kind),
+      KEY idx_day_status_user (user_id, \`date\`)
+    )`));
+
+  /* An install made before the generated column existed keeps its rows and
+     gains the key. Both are tolerated failures: a schema that already has them
+     says so, and one that cannot have them is still readable. */
+  const cols = await columnsOf(db, 'user_day_status');
+  if (cols.size && !cols.has('active_date')) {
+    try {
+      await db.query('ALTER TABLE user_day_status '
+        + 'ADD COLUMN active_date DATE AS (CASE WHEN cleared_at IS NULL THEN `date` END) STORED, '
+        + 'ADD UNIQUE KEY uq_day_status_active (user_id, active_date)');
+      log('  + user_day_status.active_date and its unique key');
+    } catch (err) { /* already there, or a server without generated columns */ }
+  }
+
+  await db.query('INSERT IGNORE INTO leave_settings (id) VALUES (1)');
+}
+
 async function ensureReminderTables(db, log) {
   await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS reminder_settings (
       id              TINYINT      NOT NULL PRIMARY KEY,
@@ -4616,6 +4705,11 @@ const STEPS = [
   ['notifications.detail', ensureNotificationDetail],
   ['start-of-day nudges', ensureReminderTables],
   ['nudge settings mirror', (db) => reminderSettings.load(db)],
+  /* After users, which user_day_status points at three times, and after the
+     work schedule, whose break windows the settings mirror prefills the
+     half-day split from on a first run. */
+  ['leave and idle', ensureDayStatus],
+  ['leave settings mirror', (db) => require('./leave-settings').load(db)],
   ['studio theme', ensureTheme],
   ['studio theme mirror', (db) => require('./theme').load(db)],
 ];

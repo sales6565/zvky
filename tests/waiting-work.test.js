@@ -864,8 +864,10 @@ test('MUTATION 3 — the panel is one query, for one asset and for two hundred',
   const handler = route.slice(route.indexOf("router.get('/follow-up/waiting/:userId'"),
     route.indexOf('THE TWO REMINDER ENDPOINTS'));
   assert.ok(!/for \(|forEach|\.map\(async/.test(handler), 'the handler has no loop in it');
-  assert.strictEqual((handler.match(/await /g) || []).length, 4,
-    'four awaits: the projects, the reach check, the panel, and the out-of-reach count');
+  assert.strictEqual((handler.match(/await /g) || []).length, 5,
+    'five awaits: the projects, the reach check, the panel, the out-of-reach count, and '
+    + 'whether this person is on leave — which annotates the panel and never changes its '
+    + 'figures, because an absence does not shorten the wait it caused');
 });
 
 // ===========================================================================
