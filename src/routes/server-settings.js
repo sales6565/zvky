@@ -1,0 +1,178 @@
+/* SETTINGS -> SERVER. The Super Admin's screen for the office file gateway.
+ *
+ * ONE KEY, settings.server.manage, and requirePermission rather than
+ * requireSuperAdmin for the reason src/routes/nudges.js sets out: the tier
+ * passes requireSuperAdmin while the browser's can() knows nothing about
+ * tiers, and a page written against one with a route written against the other
+ * is a divergence this application has already been bitten by. The Super Admin
+ * still passes, because every permission is implied for that tier.
+ *
+ * NOTHING HERE EVER RETURNS A SECRET. The private signing key and the gateway
+ * secret are write-only: generated here, stored encrypted, and afterwards
+ * readable only as a fingerprint and a date. The one exception is the moment of
+ * creation — a generated gateway secret is returned ONCE, because it has to be
+ * pasted into the gateway machine's GATEWAY_SECRET and there is nowhere else it
+ * could come from. That is the same bargain src/routes/integration-admin.js
+ * already makes for an integration key, and the page says "copy it now" in as
+ * many words. A test asserts no other response can carry either value.
+ */
+const { asyncRouter } = require('../async-router');
+
+const router = asyncRouter();
+const db = require('../db');
+const { authenticate, requirePermission } = require('../middleware/auth');
+const activity = require('../activity');
+const serverSettings = require('../server-settings');
+const serverFolders = require('../server-folders');
+const serverTokens = require('../server-tokens');
+
+router.use(authenticate);
+router.use(requirePermission('settings.server.manage'));
+
+async function state() {
+  const { rows } = await db.query('SELECT * FROM gateway_state WHERE id = 1').catch(() => ({ rows: [] }));
+  const row = rows[0] || {};
+  const lastSeen = row.last_seen ? new Date(row.last_seen) : null;
+  return {
+    lastSeen: lastSeen ? lastSeen.toISOString() : null,
+    ageSeconds: lastSeen ? Math.floor((Date.now() - lastSeen.getTime()) / 1000) : null,
+    version: row.version || null,
+    freeBytes: row.free_bytes === null || row.free_bytes === undefined ? null : Number(row.free_bytes),
+    configVersion: row.config_version === null || row.config_version === undefined ? null : Number(row.config_version),
+    queued: row.queued === null || row.queued === undefined ? null : Number(row.queued),
+    remoteIp: row.remote_ip || null,
+    staleAfterSeconds: 120,
+  };
+}
+
+router.get('/', async (req, res) => {
+  const gateway = await state();
+  res.json({
+    settings: serverSettings.summarise({ state: gateway }),
+    gateway,
+    mapping: await serverFolders.mapping(db),
+  });
+});
+
+router.patch('/', async (req, res) => {
+  const result = await serverSettings.save(db, req.body || {}, req.user);
+  if (!result.ok) return res.status(result.status || 400).json({ error: result.errors.join(' '), errors: result.errors });
+  const lines = serverSettings.describeChange(result.before, result.settings);
+  if (lines.length) {
+    activity.record(db, {
+      req, module: 'settings', action: 'server.settings.save',
+      summary: `Changed the office file server settings: ${lines.join('; ')}`,
+      // Secrets are not in either side of this: describeChange never names one.
+      before: null, after: { changes: lines },
+    }).catch(() => {});
+    console.log(`${req.user.email} changed the office file server settings — ${lines.join('; ')}`);
+  }
+  const gateway = await state();
+  res.json({ settings: serverSettings.summarise({ state: gateway }), gateway, changes: lines });
+});
+
+/* Generate or rotate the token signing key pair. The public half and its id
+   come back so IT can see which key a gateway should be verifying with; the
+   private half is encrypted into the row and never leaves this process. */
+router.post('/keys', async (req, res) => {
+  const out = await serverSettings.generateKeyPair(db, req.user);
+  if (!out.ok) return res.status(out.status || 409).json({ error: out.error });
+  activity.record(db, {
+    req, module: 'settings', action: out.rotated ? 'server.key.rotate' : 'server.key.generate',
+    summary: out.rotated
+      ? `Rotated the office file server signing key (new key ${out.kid}; ${out.previousKid} stays valid until ${out.previousUntil})`
+      : `Generated the office file server signing key (${out.kid})`,
+    after: { kid: out.kid, previousKid: out.previousKid },
+  }).catch(() => {});
+  const gateway = await state();
+  res.json({ ...out, settings: serverSettings.summarise({ state: gateway }) });
+});
+
+/* Generate or regenerate the gateway secret. SHOWN ONCE. */
+router.post('/secret', async (req, res) => {
+  const out = await serverSettings.generateSecret(db, req.user);
+  if (!out.ok) return res.status(out.status || 409).json({ error: out.error });
+  activity.record(db, {
+    req, module: 'settings', action: out.regenerated ? 'server.secret.rotate' : 'server.secret.generate',
+    summary: out.regenerated
+      ? `Regenerated the office file gateway secret (the previous one stays valid until ${out.previousUntil})`
+      : 'Generated the office file gateway secret',
+    // The fingerprint, never the secret.
+    after: { fingerprint: out.fingerprint },
+  }).catch(() => {});
+  const gateway = await state();
+  res.json({
+    ok: true,
+    secret: out.secret,
+    shownOnce: true,
+    regenerated: out.regenerated,
+    previousUntil: out.previousUntil,
+    settings: serverSettings.summarise({ state: gateway }),
+  });
+});
+
+/* The project → folder mapping. Editable because the common case on day one is
+   a share that already has folders with months of work in them. */
+router.patch('/mapping/:projectId', async (req, res) => {
+  const out = await serverFolders.setMapping(db, req.params.projectId, (req.body || {}).folder);
+  if (!out.ok) return res.status(out.status || 400).json({ error: out.error });
+  activity.record(db, {
+    req, module: 'settings', action: 'server.mapping.set', entityId: req.params.projectId,
+    summary: out.folder
+      ? `Mapped a project to the office server folder "${out.folder}"`
+      : 'Cleared a project\'s office server folder',
+    after: { folder: out.folder },
+  }).catch(() => {});
+  res.json({ ok: true, folder: out.folder, mapping: await serverFolders.mapping(db) });
+});
+
+/* THE SELF-TEST. Forge cannot reach the gateway — that is the whole shape of
+ * this feature — so this endpoint does the half it CAN do and hands the browser
+ * everything it needs to do the rest from the office network.
+ *
+ * Forge's half: is the feature configured, is a key and a secret stored, is the
+ * heartbeat fresh, how much disk is left, does the gateway's applied
+ * configuration match the saved one. The browser's half: reach the gateway's
+ * /health over TLS, then write a kilobyte into .incoming/selftest and read it
+ * back with the two self-test tokens minted below. Each step is reported on its
+ * own so a failure says WHICH thing is wrong.
+ */
+router.post('/self-test', async (req, res) => {
+  const settings = serverSettings.current();
+  const gateway = await state();
+  const ready = serverSettings.readiness(gateway);
+  const steps = [
+    { key: 'configured', ok: ready.gatewayUrl && ready.gatewayId,
+      detail: ready.gatewayUrl && ready.gatewayId ? settings.gatewayUrl : 'Set the gateway address and id.' },
+    { key: 'encryption', ok: ready.encryptionAvailable,
+      detail: ready.encryptionAvailable ? 'Secrets can be encrypted at rest.' : 'Set EMAIL_ENCRYPTION_KEY (or JWT_SECRET) and restart.' },
+    { key: 'signing_key', ok: ready.keyGenerated, detail: ready.keyGenerated ? `Key ${settings.signingKid}` : 'Generate a key pair.' },
+    { key: 'gateway_secret', ok: ready.secretGenerated, detail: ready.secretGenerated ? 'Stored.' : 'Generate a secret and put it in the gateway\'s GATEWAY_SECRET.' },
+    { key: 'heartbeat', ok: ready.heartbeatFresh,
+      detail: gateway.lastSeen
+        ? `Last heard ${gateway.ageSeconds}s ago${gateway.version ? ` (version ${gateway.version})` : ''}`
+        : 'No heartbeat has ever arrived. Is the gateway running, and is FORGE_URL right?' },
+    { key: 'config_applied', ok: ready.configApplied,
+      detail: ready.configApplied
+        ? `The gateway is running configuration version ${gateway.configVersion}.`
+        : `Saved version ${settings.configVersion}; the gateway reports ${gateway.configVersion === null ? 'nothing yet' : gateway.configVersion}.` },
+    { key: 'disk', ok: gateway.freeBytes === null ? false : gateway.freeBytes > 1024 ** 3,
+      detail: gateway.freeBytes === null ? 'Not reported yet.' : `${(gateway.freeBytes / (1024 ** 3)).toFixed(1)} GB free on the share.` },
+  ];
+
+  /* The browser's half needs tokens. Minted only if there is a key — and for
+     the selftest operation only, which the gateway will let nowhere near the
+     studio's folders. */
+  let probe = null;
+  if (ready.keyGenerated && ready.gatewayId) {
+    const key = serverSettings.signingKey();
+    if (key.ok) {
+      const put = serverTokens.mint({ privateKey: key.privateKey, kid: key.kid, audience: settings.gatewayId, userId: req.user.id, op: 'selftest', path: '' });
+      const get = serverTokens.mint({ privateKey: key.privateKey, kid: key.kid, audience: settings.gatewayId, userId: req.user.id, op: 'selftest', path: '' });
+      probe = { gatewayUrl: settings.gatewayUrl, putToken: put.token, getToken: get.token, bytes: 1024 };
+    }
+  }
+  res.json({ steps, gateway, readiness: ready, probe, checklist: ready });
+});
+
+module.exports = router;

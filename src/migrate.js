@@ -4429,6 +4429,184 @@ async function ensureDayStatus(db, log) {
   await db.query('INSERT IGNORE INTO leave_settings (id) VALUES (1)');
 }
 
+/* The Server tab: settings, the audit trail, deletion requests, and the one
+ * column on projects that maps a project to a folder.
+ *
+ * WHAT IS DELIBERATELY NOT HERE. There is no table of files. No name, no size,
+ * no tree, no content, no thumbnail, no checksum index — nothing that would
+ * make this database a second, stale copy of the share. The tab lists what the
+ * office server actually has, every time, because the alternative is a page
+ * that confidently shows a file somebody deleted on the server last Tuesday.
+ *
+ * server_events is an audit trail, which is a different thing: it records that
+ * somebody downloaded a path at a time, the way activity_log records that
+ * somebody approved an asset. It is never read to answer "what is in this
+ * folder" — a test pins that.
+ */
+async function ensureServerTab(db, log) {
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS server_settings (
+      id                TINYINT      NOT NULL PRIMARY KEY,
+      -- THE MASTER SWITCH, OFF. The tab is hidden and every Server endpoint
+      -- answers 409 until a Super Admin turns it on, because a half-configured
+      -- gateway should look absent rather than broken.
+      enabled           TINYINT(1)   NOT NULL DEFAULT 0,
+      -- https://files.office.example — the browser goes here, not this server.
+      gateway_url       VARCHAR(500) NULL,
+      -- The audience every token is minted for. A token for one gateway is
+      -- refused by another, which is what stops a second office's gateway
+      -- accepting tokens minted for the first.
+      gateway_id        VARCHAR(64)  NULL,
+
+      /* THE TOKEN SIGNING KEY. The private half is ciphertext from
+         src/email-secret.js and is never selected into any response; the public
+         half is public by definition and is shown in Settings so IT can see
+         which key a gateway is verifying with. key_fp records WHICH encryption
+         key encrypted the private half, so a rotated EMAIL_ENCRYPTION_KEY
+         produces "generate a new key pair" instead of silence. */
+      signing_private   TEXT         NULL,
+      signing_public    TEXT         NULL,
+      signing_kid       VARCHAR(32)  NULL,
+      signing_key_fp    VARCHAR(16)  NULL,
+      signing_made_at   DATETIME     NULL,
+      /* The key being rotated out. Both are published to the gateway until
+         prev_until passes, so a token minted a second before the rotation is
+         still verifiable a second after it. */
+      prev_public       TEXT         NULL,
+      prev_kid          VARCHAR(32)  NULL,
+      prev_until        DATETIME     NULL,
+
+      /* THE GATEWAY SECRET, which signs the gateway's own calls to Forge.
+         Shown once when generated and never again — only its fingerprint is
+         readable afterwards, which is enough to tell "the same secret" from
+         "a different one" when a heartbeat stops arriving. */
+      gateway_secret        TEXT        NULL,
+      gateway_secret_fp     VARCHAR(16) NULL,
+      gateway_secret_at     DATETIME    NULL,
+      gateway_secret_prev   TEXT        NULL,
+      gateway_secret_prev_until DATETIME NULL,
+      rotation_overlap_minutes INT      NOT NULL DEFAULT 60,
+
+      -- Limits and rules, pulled by the gateway. The defaults are the ones in
+      -- the brief: 50 GB, 32 MB chunks, three at a time.
+      max_file_bytes    BIGINT       NOT NULL DEFAULT 53687091200,
+      chunk_bytes       INT          NOT NULL DEFAULT 33554432,
+      parallel_chunks   TINYINT      NOT NULL DEFAULT 3,
+      denied_extensions TEXT         NULL,
+      allowed_extensions TEXT        NULL,
+      shared_folders    TEXT         NULL,
+      incoming_max_age_minutes INT   NOT NULL DEFAULT 1440,
+
+      -- Who hears about a deletion request, and whether by email as well as
+      -- in-app. In-app is always on; this is the email half.
+      email_on_delete_requests TINYINT(1) NOT NULL DEFAULT 1,
+      -- Legacy files already on this server stay downloadable until this is
+      -- turned off. Removing them from the host is an owner's manual job.
+      serve_legacy      TINYINT(1)   NOT NULL DEFAULT 1,
+
+      -- Bumped on every save. The gateway reports the version it has applied,
+      -- so Settings can say "the gateway is running an older configuration"
+      -- instead of leaving somebody to wonder whether a change took.
+      config_version    INT          NOT NULL DEFAULT 0,
+      updated_by        CHAR(36)     NULL,
+      updated_at        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )`));
+  await db.query('INSERT IGNORE INTO server_settings (id) VALUES (1)');
+
+  /* What the gateway last said about itself. One row, overwritten — this is a
+     liveness fact, not a history, and a table of thirty-second heartbeats would
+     be the largest table in the database inside a month. */
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS gateway_state (
+      id             TINYINT     NOT NULL PRIMARY KEY,
+      last_seen      DATETIME    NULL,
+      version        VARCHAR(32) NULL,
+      free_bytes     BIGINT      NULL,
+      config_version INT         NULL,
+      queued         INT         NULL,
+      remote_ip      VARCHAR(64) NULL
+    )`));
+  await db.query('INSERT IGNORE INTO gateway_state (id) VALUES (1)');
+
+  /* The audit trail. Not a file index: see the header. */
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS server_events (
+      id          CHAR(36)      NOT NULL PRIMARY KEY,
+      user_id     CHAR(36)      NULL,
+      -- Kept beside the id so the record survives the account going, the same
+      -- bargain asset_events and ip_allowlist_audit make.
+      user_email  VARCHAR(191)  NULL,
+      -- list | download_issued | upload_started | upload_completed |
+      -- folder_created | selftest | checksum
+      action      VARCHAR(24)   NOT NULL,
+      path        VARCHAR(1000) NULL,
+      size        BIGINT        NULL,
+      sha256      CHAR(64)      NULL,
+      ip          VARCHAR(64)   NULL,
+      -- The gateway's own id for a callback, so the same callback arriving
+      -- twice — which it will, because the queue is at-least-once — is one row.
+      external_id VARCHAR(64)   NULL,
+      at          DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_server_events_external (external_id),
+      KEY idx_server_events_at (at),
+      KEY idx_server_events_user (user_id, at),
+      KEY idx_server_events_action (action, at)
+    )`));
+
+  /* Deletion requests. Forge never deletes anything: this is a message to IT
+     with a status on it, and "done" means somebody removed the file on the
+     server itself. A test proves resolving one leaves every file in place. */
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS deletion_requests (
+      id            CHAR(36)      NOT NULL PRIMARY KEY,
+      path          VARCHAR(1000) NOT NULL,
+      -- file | folder
+      \`type\`        VARCHAR(8)    NOT NULL,
+      requested_by  CHAR(36)      NULL,
+      requester_email VARCHAR(191) NULL,
+      reason        VARCHAR(1000) NOT NULL,
+      -- open | done | declined
+      status        VARCHAR(16)   NOT NULL DEFAULT 'open',
+      resolved_by   CHAR(36)      NULL,
+      resolver_email VARCHAR(191) NULL,
+      resolved_at   DATETIME      NULL,
+      admin_note    VARCHAR(1000) NULL,
+      created_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      /* "One open request per path" as a fact about the schema rather than a
+         check two simultaneous requests can both pass. Hashed because the path
+         is a thousand characters and an index key is limited; SHA2 of the
+         lower-cased path, so Alpha/a.psd and alpha/A.PSD are one request on a
+         share that does not distinguish them either. */
+      open_path_hash CHAR(64) AS (CASE WHEN status = 'open' THEN SHA2(LOWER(path), 256) END) STORED,
+      UNIQUE KEY uq_deletion_open (open_path_hash),
+      KEY idx_deletion_status (status, created_at),
+      KEY idx_deletion_requester (requested_by, created_at)
+    )`));
+
+  const dr = await columnsOf(db, 'deletion_requests');
+  if (dr.size && !dr.has('open_path_hash')) {
+    try {
+      await db.query('ALTER TABLE deletion_requests '
+        + 'ADD COLUMN open_path_hash CHAR(64) AS (CASE WHEN status = \'open\' THEN SHA2(LOWER(path), 256) END) STORED, '
+        + 'ADD UNIQUE KEY uq_deletion_open (open_path_hash)');
+      log('  + deletion_requests.open_path_hash and its unique key');
+    } catch { /* already there, or a server without generated columns */ }
+  }
+
+  /* THE FOLDER A PROJECT OWNS, snapshotted at first use and then fixed.
+   *
+   * Derived from the project code when it is first needed and written here, so
+   * renaming the project — or changing its code — never orphans the folder that
+   * already has a fortnight of renders in it. Unique, because two projects
+   * pointing at one folder would make the scoping rules lie: a person on one
+   * project would see the other's work. Nullable, and MySQL allows many NULLs
+   * in a unique index, so projects that have never used the tab cost nothing.
+   */
+  const projects = await columnsOf(db, 'projects');
+  if (projects.size && !projects.has('server_folder')) {
+    await db.query('ALTER TABLE projects ADD COLUMN server_folder VARCHAR(255) NULL');
+    try { await db.query('ALTER TABLE projects ADD UNIQUE KEY uq_projects_server_folder (server_folder)'); }
+    catch { /* an install that somehow already has it */ }
+    log('  + projects.server_folder');
+  }
+}
+
 async function ensureReminderTables(db, log) {
   await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS reminder_settings (
       id              TINYINT      NOT NULL PRIMARY KEY,
@@ -4735,6 +4913,12 @@ const STEPS = [
   ['acting team leads', ensureActingTeamLeads],
   ['leave and idle', ensureDayStatus],
   ['leave settings mirror', (db) => require('./leave-settings').load(db)],
+  /* After projects (whose server_folder column it adds) and users (which
+     server_events and deletion_requests point at). The mirror loads straight
+     after, like every other settings mirror, so the first request already
+     knows whether the tab is switched on. */
+  ['office file server', ensureServerTab],
+  ['server settings mirror', (db) => require('./server-settings').load(db)],
   ['studio theme', ensureTheme],
   ['studio theme mirror', (db) => require('./theme').load(db)],
 ];

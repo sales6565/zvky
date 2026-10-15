@@ -11,6 +11,7 @@ const db = require('../db');
 const timesheetGate = require('../timesheet-gate');
 const dayStateFor = require('../day-state');
 const theme = require('../theme');
+const serverSettings = require('../server-settings');
 const { userFields } = require('../user-fields');
 const { authenticate } = require('../middleware/auth');
 const { capabilitiesFor, catalogue } = require('../roles');
@@ -163,6 +164,18 @@ router.get('/me', authenticate, async (req, res) => {
        field in the application. The page compares it with what it has and asks
        GET /api/theme only when it differs. */
     themeVersion: theme.version(),
+    /* WHETHER THE OFFICE FILE SERVER IS SWITCHED ON, for the same reason
+       themeVersion is here: the Server tab's nav button is decided by a
+       permission AND by this switch, and this endpoint is what every signed-in
+       browser already re-polls every twenty seconds. So a Super Admin turning
+       the feature on makes the tab appear on everybody's open page inside that
+       cycle, with no reload and no sign-out — and turning it off takes it away
+       the same way.
+       
+       A boolean, not the settings: the gateway address and the limits are
+       fetched by the tab itself when somebody opens it, and sending them on
+       every poll would be the themeVersion mistake in a different field. */
+    serverEnabled: serverSettings.serverEnabled(),
     timesheetGate: {
       blocked: gate.blocked,
       date: gate.date,

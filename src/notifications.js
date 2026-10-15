@@ -166,6 +166,20 @@ const KINDS = {
      one person and it is telling them something about their own attendance —
      which nothing else in this list does. */
   day_status: 'day_status',
+  /* Somebody asked for a file on the office server to be deleted, told to
+     whoever answers those asks; and the answer, told back to whoever asked.
+     
+     TWO KINDS, NOT ONE, because they travel in opposite directions and say
+     different things — the first is a job arriving, the second is a job
+     finished. The same split `assigned` and `submitted` already make.
+     
+     THE REASON AND THE NOTE ARE CARRIED IN `detail`, like the reminder kinds
+     above: they are typed by a person about a specific file, and rebuilding the
+     sentence later from ids would lose the words that explain WHY. The path is
+     in there too, because a deletion request is about a path and nothing in
+     this schema holds one — there is deliberately no table of files. */
+  server_delete_request: 'server_delete_request',
+  server_delete_resolved: 'server_delete_resolved',
 };
 
 const unavailable = (err) => err && (err.code === 'ER_NO_SUCH_TABLE' || /doesn't exist/i.test(err.message || ''));
@@ -190,6 +204,12 @@ function describe(row) {
   }
   if (row.kind === KINDS.day_status) {
     return row.detail || 'Your day was marked as leave or idle.';
+  }
+  if (row.kind === KINDS.server_delete_request) {
+    return row.detail || `${row.other_name || 'Somebody'} asked for a file on the office server to be deleted.`;
+  }
+  if (row.kind === KINDS.server_delete_resolved) {
+    return row.detail || 'Your deletion request on the office server was answered.';
   }
   if (row.kind === KINDS.project_review) {
     const project = row.project_name || 'A project';

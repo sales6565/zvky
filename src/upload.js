@@ -40,12 +40,22 @@ function extensionFilter(allowed) {
   };
 }
 
-// For artist submissions on the review workflow
-const upload = multer({
-  storage,
-  limits: { fileSize: 200 * 1024 * 1024 }, // 200MB — animation/art files can be large
-  fileFilter: extensionFilter(REVIEW_EXTENSIONS),
-});
+/* THE WORK-FILE PARSER IS GONE.
+ *
+ * There used to be a second multer here — 200 MB, the REVIEW_EXTENSIONS list —
+ * for artist submissions arriving as multipart bodies and landing in ./uploads
+ * on this server. The office file server replaced it: the bytes go from the
+ * person's browser to a machine in the studio and never reach this host.
+ *
+ * It is DELETED rather than left unused, because an unused parser is one
+ * require away from being used again. The route that had it now refuses a
+ * multipart body with 410 (src/middleware/no-file-bodies.js), and a test
+ * asserts no route in this application mounts a file parser for work files.
+ *
+ * REVIEW_EXTENSIONS stays: it is still the studio's list of what counts as a
+ * reviewable file and it is read by the Server tab's own rules and by the
+ * legacy download path.
+ */
 
 // For bulk asset-list imports (CSV / Excel)
 const uploadImport = multer({
@@ -54,4 +64,4 @@ const uploadImport = multer({
   fileFilter: extensionFilter(IMPORT_EXTENSIONS),
 });
 
-module.exports = { upload, uploadImport, UPLOAD_DIR, REVIEW_EXTENSIONS, IMPORT_EXTENSIONS };
+module.exports = { uploadImport, UPLOAD_DIR, REVIEW_EXTENSIONS, IMPORT_EXTENSIONS };

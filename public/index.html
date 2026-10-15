@@ -1299,6 +1299,70 @@ tr.past-round{opacity:0.62;}
 /* The capacity somebody acted in, beside their name in the history — "(Acting
    TL)". Muted, because it qualifies the name rather than competing with it. */
 .hist-via{color:var(--ink-faint);font-style:italic;}
+
+/* ---------- the Server tab (the office file server) ---------- */
+.srv-card{max-width:1320px;}
+.srv-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+.srv-actions{display:flex;gap:8px;flex-wrap:wrap;}
+/* Two banners, two meanings, and they must not read alike: "you are not in the
+   office" is a fact about where the person is sitting, and "the gateway is not
+   answering" is something for IT. */
+.srv-banner{margin:10px 0;padding:9px 12px;border-radius:8px;font-size:13px;border:1px solid var(--border);}
+.srv-off{background:var(--surface-2);color:var(--ink-muted);}
+.srv-stale{background:var(--warning-wash);color:var(--warning-ink);border-color:var(--warning-ink);}
+.srv-crumbs{display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin:10px 0 6px;font-size:13px;}
+.srv-crumb{background:none;border:0;padding:2px 4px;color:var(--info-ink);cursor:pointer;font:inherit;border-radius:5px;}
+.srv-crumb:hover{background:var(--surface-2);}
+.srv-crumb.current{color:var(--ink);padding:2px 4px;}
+.srv-sep{color:var(--ink-faint);}
+.srv-tools{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px;}
+.srv-filter{background:var(--input-bg);border:1px solid var(--input-border);color:var(--ink);
+  border-radius:7px;padding:6px 9px;min-width:220px;max-width:100%;}
+.srv-count{font-size:12px;}
+.srv-drop{border:1px dashed var(--border);border-radius:10px;padding:8px;transition:background .12s;}
+.srv-drop.is-over{background:var(--dragover);border-color:var(--brand);}
+.srv-drop.is-off{border-style:solid;}
+.srv-table{width:100%;border-collapse:collapse;}
+.srv-table th{text-align:left;font-size:11px;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--thead-ink);background:var(--thead-bg);padding:7px 8px;border-bottom:1px solid var(--table-border);}
+.srv-table td{padding:7px 8px;border-bottom:1px solid var(--table-border);font-size:13px;vertical-align:top;}
+.srv-table tbody tr:hover{background:var(--row-hover);}
+.srv-right{text-align:right;}
+.srv-sort{background:none;border:0;color:inherit;font:inherit;cursor:pointer;padding:0;text-transform:inherit;letter-spacing:inherit;}
+/* min-width:0 on the name cell and a wrapping name, for the same reason the
+   follow-up rows carry it: a long file name must push nothing out of the row
+   and must never be broken mid-word. */
+.srv-name{min-width:0;max-width:520px;overflow-wrap:break-word;word-break:normal;}
+.srv-link{background:none;border:0;padding:0;font:inherit;color:var(--info-ink);cursor:pointer;text-align:left;}
+.srv-link:hover{text-decoration:underline;}
+.srv-sub{display:block;font-size:11px;color:var(--ink-faint);}
+.srv-tag{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:999px;font-size:11px;
+  background:var(--warning-wash);color:var(--warning-ink);}
+.srv-hint{font-size:12px;color:var(--ink-faint);margin:8px 2px 2px;}
+.srv-uploads{margin-top:14px;}
+.srv-uploads h4{margin:0 0 6px;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-muted);}
+.srv-up{display:grid;grid-template-columns:minmax(0,1fr) auto 140px 46px auto;align-items:center;gap:8px;
+  padding:5px 2px;border-bottom:1px solid var(--table-border);font-size:12px;}
+.srv-up-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.srv-up-state{color:var(--ink-faint);}
+.srv-up-pct{text-align:right;color:var(--ink-muted);}
+.srv-up progress{width:100%;height:8px;}
+@media (max-width:720px){
+  .srv-up{grid-template-columns:minmax(0,1fr) auto;row-gap:4px;}
+  .srv-up progress{grid-column:1 / -1;}
+}
+/* Settings → Server */
+.srv-set-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px 16px;}
+.srv-check{display:flex;flex-direction:column;gap:4px;margin:10px 0;}
+.srv-check-row{display:flex;align-items:center;gap:8px;font-size:13px;}
+.srv-tick{width:16px;display:inline-block;text-align:center;}
+.srv-tick.yes{color:var(--success-ink);}
+.srv-tick.no{color:var(--warning-ink);}
+.srv-once{background:var(--code-bg);border:1px solid var(--border);border-radius:7px;padding:8px 10px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;word-break:break-all;}
+.srv-key{background:var(--code-bg);border:1px solid var(--border);border-radius:7px;padding:8px 10px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;white-space:pre-wrap;word-break:break-all;
+  max-height:140px;overflow:auto;}
 /* The one-line helper under a project section's heading. */
 .checklist-note{font-size:11px;color:var(--ink-faint);margin:-2px 0 5px;line-height:1.5;}
 /* A box the overlap rule has closed. The reason is the label's title. */
@@ -2215,6 +2279,7 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
            the payroll — and because nothing about it belongs under a project
            board, which only shows work the pipeline is tracking. -->
       <button data-tab="outsource" id="outsourceTabBtn" style="display:none;">Outsource</button>
+      <button data-tab="server" id="serverTabBtn" style="display:none;">Server</button>
       <button data-tab="users" id="usersTabBtn" style="display:none;">Users</button>
       <button data-tab="settings" id="settingsTabBtn" style="display:none;">Settings</button>
     </div>
@@ -2237,6 +2302,7 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
   <div id="teamView" style="display:none;"></div>
   <div id="timesheetView" style="display:none;"></div>
   <div id="outsourceView" style="display:none;"></div>
+  <div id="serverView" style="display:none;"></div>
   <div id="usersView" style="display:none;"></div>
   <div id="reportsView" style="display:none;"></div>
   <div id="settingsView" style="display:none;"></div>
@@ -3152,7 +3218,7 @@ async function refreshPermissions(){
   permissionsCheckedAt = Date.now();
   const before = perms().join(',');
   try{
-    const { user, timesheetGate, themeVersion, dayState } = await api('/auth/me');
+    const { user, timesheetGate, themeVersion, dayState, serverEnabled } = await api('/auth/me');
     state.currentUser = user;
     /* WHERE THE DAY STANDS, on the poll the indicator's "normal refresh cycle"
        already is. A timer started in another tab, a Settings change, lunch
@@ -3169,6 +3235,19 @@ async function refreshPermissions(){
        is what makes the Start button unlock after a line is saved without
        anybody reloading. */
     state.timesheetGate = timesheetGate || null;
+    /* THE SERVER TAB'S OTHER CONDITION, on the same poll. serverTabBtn in
+       UI_GATES reads SRV.enabled as well as the permission, so a Super Admin
+       switching the feature on in Settings makes the tab appear on everybody's
+       open page within twenty seconds — and switching it off removes it. The
+       nav buttons are re-applied by render() whenever this function reports a
+       change, so the switch moving is reported as one. */
+    const switchMoved = serverEnabled !== undefined && Boolean(serverEnabled) !== SRV.enabled;
+    if(serverEnabled !== undefined){
+      SRV.enabled = Boolean(serverEnabled);
+      // The tab's own cached state is about to be wrong if the switch moved.
+      if(switchMoved) SRV.loaded = false;
+    }
+    if(switchMoved) return true;
   }catch(e){ return false; }          /* a blip must not blank the screen */
   return perms().join(',') !== before;
 }
@@ -3202,6 +3281,98 @@ function canAnyIn(group){
    projectScope (how much of the studio somebody sees) and assignable (whether
    this designation is one that does the work). Those are values, not switches,
    and nothing in Settings changes them. */
+
+/* =========================================================================
+   THE SERVER TAB — the office file server, from the browser.
+
+   WHAT IS ACTUALLY HAPPENING HERE, because it is not what it looks like.
+
+   The files are on a machine in the studio. This page is served from GoDaddy.
+   Every byte travels from this browser STRAIGHT to the office machine and back
+   — Forge hands out a signed, short-lived token for one operation on one path,
+   and the browser then talks to the gateway itself. Nothing is proxied, nothing
+   is buffered on the hosting, and this code never sends a file body to our own
+   server.
+
+   AND THERE IS NO WAY TO DELETE, RENAME, MOVE OR OVERWRITE. Not here, not in
+   the gateway, not in the API. A name that is taken becomes "name (2).ext". The
+   only deletion in the feature is a REQUEST: a row with a reason on it that
+   somebody with the right permission marks done once they have removed the file
+   on the server themselves.
+
+   =========================================================================
+   TWO TRANSPORTS, AND WHY.
+
+   A browser spike done before any of this was written found that current
+   Chromium (141 measured; Chrome and Edge share the engine) refuses a fetch
+   from a page on a PUBLIC address — which this page, on GoDaddy, always is —
+   to a server on a PRIVATE address, until the user answers a Local Network
+   Access permission prompt. It refuses it by HANGING: no error, no console
+   line, nothing on the wire. An iframe is gated the same way. A TOP-LEVEL
+   navigation is not gated at all, and a page talking to its OWN origin is not
+   either.
+
+   So:
+
+     DIRECT     fetch straight to the gateway with CORS. Used when the engine
+                has no such gate (the desktop app, Electron 33 / Chromium 130)
+                or when the permission is already granted — which IT can do
+                fleet-wide with the LocalNetworkAccessAllowedForUrls policy.
+
+     LINK       a small page served BY the gateway, opened as a top-level
+                window. Its own fetches are same-origin and private-to-private,
+                which nothing gates. This page talks to it over postMessage,
+                passing File and Blob slices by structured clone, and the bytes
+                go from this JavaScript into that window's JavaScript and out to
+                the LAN. Still never near GoDaddy.
+
+   WHICH ONE IS DECIDED WITHOUT TOUCHING THE NETWORK, so no permission bubble is
+   ever triggered by a page simply being opened:
+
+     navigator.permissions.query({ name: 'local-network-access' })
+       throws TypeError  -> the engine has no gate      -> DIRECT
+       state 'granted'   -> already allowed             -> DIRECT
+       'prompt'/'denied' -> would hang or ask           -> LINK
+
+   Downloads always use a top-level link with a single-use token, in both
+   transports: it is the only mechanism that survives a 40 GB file and hands the
+   work to the browser's own download manager.
+   ========================================================================= */
+
+const SRV = {
+  enabled: false,
+  loaded: false,
+  gatewayUrl: null,
+  chunkBytes: 32 * 1024 * 1024,
+  parallelChunks: 3,
+  maxFileBytes: 50 * 1024 * 1024 * 1024,
+  deniedExtensions: [],
+  allowedExtensions: [],
+  gateway: null,
+  may: {},
+  roots: null,
+  openRequests: [],
+  // where we are
+  path: '',
+  entries: [],
+  total: 0,
+  filter: '',
+  sort: { key: 'name', dir: 1 },
+  loading: false,
+  error: null,
+  // transport
+  transport: null,        // 'direct' | 'link' | null (undecided)
+  linkWindow: null,
+  linkReady: false,
+  pending: new Map(),
+  nextMessageId: 1,
+  reachable: null,        // null unknown, true/false measured
+  // uploads
+  uploads: [],
+  requestsOpen: false,
+  requests: [],
+};
+
 const UI_GATES = {
   teamTabBtn:            () => can('user.view_team'),
   usersTabBtn:           () => canAnyIn('user'),
@@ -3223,6 +3394,20 @@ const UI_GATES = {
      authority from reading what the rates produce, and somebody trusted with
      the price list is not thereby shown every project's margin. */
   pnlTabBtn:             () => can('pnl.actual','pnl.fixed'),
+  /* TWO CONDITIONS, and the second is not a permission.
+     
+     server.view is the permission, and SRV.enabled is the studio's master
+     switch — the tab is hidden until a Super Admin has turned the feature on,
+     because until a gateway exists in the office every click in it can only
+     fail. The switch arrives with /api/server/state and again inside
+     /auth/me's poll, so turning it on makes the tab appear on an open browser
+     without a reload, and turning it off takes it away the same way.
+     
+     It is the one gate in this table that reads anything but can(), which is
+     why it says so here. The server enforces both independently: every Server
+     endpoint checks the permission AND answers 409 feature_disabled when the
+     switch is off. */
+  serverTabBtn:          () => can('server.view') && SRV.enabled,
   projectsTabBtn:        () => can('client.view'),
   /* Its own grant, so the tab can be given or withheld independently of the
      workflow behind it. What the tab LISTS is still whatever this role may act
@@ -3641,6 +3826,7 @@ const SETTINGS_SECTIONS = [
      feature, and a fifth key to grant beside the one a studio actually meant is
      a key somebody will forget. See src/routes/nudges.js. */
   { permission:'settings.nudges', label:'Start-of-day nudges', heading:'Start-of-day Nudges', note:'The start-of-day banner, the top-bar timer indicator, the two automatic reminders and their channels, the grace period, and the reminders a lead can send from "People to follow up".' },
+  { permission:'settings.server.manage', label:'Server', heading:'Server', note:'The office file server: where the gateway is, its two secrets, the size and extension rules, which folders are shared, and which folder each project owns. The Server tab is hidden until this is switched on.' },
   { permission:'settings.leave.manage', label:'Leave', heading:'Leave', note:'Whether Leave & Idle is available at all, and the two times that divide a half-day. Switching it off hides the buttons and refuses new marks; existing marks keep their full effect.' },
   /* Super Admin only, like Recording Hours above and by the same route: a
      permission implied by managePermissions. */
@@ -5311,9 +5497,11 @@ async function boot(){
   if(saved){
     state.token = saved;
     try{
-      const { user, timesheetGate, dayState } = await api('/auth/me');
+      const { user, timesheetGate, dayState, serverEnabled } = await api('/auth/me');
       state.currentUser = user;
       state.timesheetGate = timesheetGate || null;
+      // Read by bootApp() before it applies the nav gates; see the note there.
+      state.serverEnabled = Boolean(serverEnabled);
       /* BEFORE THE FRAME IS DRAWN, which is what keeps the banner from shoving
          the page down a moment after it settles: showApp() below paints with the
          state already in hand, so the first paint either has a banner in it or
@@ -5520,8 +5708,17 @@ async function bootApp(){
   /* Every tab and toolbar button, from the one table. The asset buttons are
      turned on again by render(), which knows whether there is a board and a
      project to add to. */
+  /* THE SERVER SWITCH BEFORE THE GATES ARE APPLIED, because serverTabBtn reads
+     it: /auth/me carries it, sign-in has just returned it, and applying the
+     gates first would hide the tab for one poll cycle on every page load. */
+  if(state.serverEnabled !== undefined) SRV.enabled = Boolean(state.serverEnabled);
   [...TAB_GATE_IDS,'newProjectBtn','chatWrap'].forEach(id=>applyGate(id));
   ['newAssetBtn','bulkImportBtn','downloadSampleBtn'].forEach(id=>applyGate(id, false));
+  /* An upload that a reload interrupted. Offered, not resumed: a browser will
+     not hand back a File across a page load and nothing is stored on this
+     server to read it from, so what is kept is the fact and the office server
+     is asked what it already has when the same file is chosen again. */
+  srvResumeNotice();
 
   const { projects } = await api('/projects');
   state.projects = projects;
@@ -5881,6 +6078,7 @@ function setTab(tab){
   document.getElementById('teamView').style.display = tab==='team' ? '' : 'none';
   document.getElementById('timesheetView').style.display = tab==='timesheet' ? '' : 'none';
   document.getElementById('outsourceView').style.display = tab==='outsource' ? '' : 'none';
+  document.getElementById('serverView').style.display = tab==='server' ? '' : 'none';
   document.getElementById('usersView').style.display = tab==='users' ? '' : 'none';
   document.getElementById('reportsView').style.display = tab==='reports' ? '' : 'none';
   document.getElementById('settingsView').style.display = tab==='settings' ? '' : 'none';
@@ -9082,7 +9280,7 @@ async function renderUsers(sections = userSections()){
 async function render(){
   const viewIds = { admin:'adminDashView', board:'boardView', list:'listView', team:'teamView',
     users:'usersView', projects:'projectsView', reports:'reportsView', settings:'settingsView',
-    pnl:'pnlView', outsource:'outsourceView' };
+    pnl:'pnlView', outsource:'outsourceView', server:'serverView' };
   try{
   /* If the role gained or lost something since this page loaded, the tabs and
      toolbar buttons have to be re-decided too — they are applied once at boot
@@ -9111,6 +9309,7 @@ async function render(){
   else if(state.view==='pnl') await renderPnl();
   else if(state.view==='team') await renderTeam();
   else if(state.view==='outsource') await renderOutsource();
+  else if(state.view==='server') await renderServer();
   else if(state.view==='users') await renderUsersTab();
   else if(state.view==='projects') await renderProjects();
   else if(state.view==='settings') await renderSettings();
@@ -12811,6 +13010,7 @@ async function renderSettings(){
     ${can('timesheet.options') ? '<div id="timesheetOptionsSection"></div>' : ''}
     ${can('settings.nudges') ? '<div id="nudgeSettingsSection"></div>' : ''}
     ${can('settings.leave.manage') ? '<div id="leaveSettingsSection"></div>' : ''}
+    ${can('settings.server.manage') ? '<div id="serverSettingsSection"></div>' : ''}
     ${can('chat.settings') ? '<div id="chatSettingsSection"></div>' : ''}
     ${can('settings.mis_access') ? '<div id="misAccessSection"></div>' : ''}
     ${can('settings.working_hours') ? '<div id="scheduleSection"></div>' : ''}
@@ -12835,6 +13035,7 @@ async function renderSettings(){
   if(can('timesheet.options')) renderTimesheetOptions();
   if(can('settings.nudges')) renderNudgeSettings();
   if(can('settings.leave.manage')) renderLeaveSettings();
+  if(can('settings.server.manage')) renderServerSettings();
   if(can('chat.settings')) renderChatSettings();
   if(can('settings.mis_access')) renderMisAccess();
   if(can('settings.working_hours')) renderSchedule();
@@ -21209,6 +21410,13 @@ const NOTIF_TITLES = {
      One title for both directions, because the sentence underneath says which
      and the title's job is to say what it is about. */
   day_status: 'Your day was marked',
+  /* The office file server. Two titles, because the two directions are two
+     different things to be told: a job has arrived for whoever looks after the
+     share, and a job you asked for has been answered. The path and the reason
+     are in the sentence underneath, which is the one typed by the person who
+     asked — there is deliberately no table of files to rebuild it from. */
+  server_delete_request: 'Deletion requested on the office server',
+  server_delete_resolved: 'Your deletion request was answered',
 };
 const notifTitle = (n) => (n && NOTIF_TITLES[n.kind]) || 'Something needs your attention';
 
@@ -23126,6 +23334,890 @@ async function refreshBuildStamp(){
 
 boot();
 refreshBuildStamp();
+const SRV_RESUME_KEY = 'zvkyServerUploads';
+
+/* Which transport this browser can use, decided without a request. */
+async function srvDecideTransport(){
+  if(SRV.transport) return SRV.transport;
+  let state = null;
+  try{
+    const q = await navigator.permissions.query({ name:'local-network-access' });
+    state = q && q.state;
+  }catch(err){
+    /* The permission name is unknown to this engine, which means the engine has
+       no Local Network Access gate at all — the desktop app's Chromium 130 is
+       exactly this case. A direct fetch works and asks nothing. */
+    SRV.transport = 'direct';
+    return SRV.transport;
+  }
+  SRV.transport = state === 'granted' ? 'direct' : 'link';
+  return SRV.transport;
+}
+
+/* ---- the gateway call, through whichever transport ---------------------- */
+
+function srvLinkOrigin(){
+  try{ return new URL(SRV.gatewayUrl).origin; }catch{ return null; }
+}
+
+/* Open (or re-use) the office link window. A top-level window, because that is
+   the one thing no browser gates. It is the user's window: if they close it the
+   next call opens it again. */
+function srvOpenLink(){
+  const origin = srvLinkOrigin();
+  if(!origin) return null;
+  if(SRV.linkWindow && !SRV.linkWindow.closed) return SRV.linkWindow;
+  SRV.linkReady = false;
+  SRV.linkWindow = window.open(`${origin}/v1/app`, 'zvkyOfficeLink',
+    'width=460,height=320,noopener=no,noreferrer=no');
+  return SRV.linkWindow;
+}
+
+window.addEventListener('message', (e)=>{
+  const origin = srvLinkOrigin();
+  if(!origin || e.origin !== origin) return;          // only the configured gateway
+  const msg = e.data;
+  if(!msg || typeof msg !== 'object' || msg.channel !== 'forge-gateway') return;
+  if(msg.ready){ SRV.linkReady = true; return; }
+  if(msg.closing){ SRV.linkReady = false; return; }
+  if(!msg.reply) return;
+  const waiting = SRV.pending.get(msg.id);
+  if(!waiting) return;
+  SRV.pending.delete(msg.id);
+  waiting.resolve({ status: msg.status, ok: msg.ok, data: msg.data });
+});
+
+function srvViaLink(path, { method='GET', token, body, timeout=120000 } = {}){
+  const win = srvOpenLink();
+  if(!win) return Promise.resolve({ status:0, ok:false, data:{ error:'no_gateway' } });
+  const id = SRV.nextMessageId++;
+  const origin = srvLinkOrigin();
+  return new Promise((resolve)=>{
+    SRV.pending.set(id, { resolve });
+    const send = ()=>{
+      try{ win.postMessage({ channel:'forge-gateway', id, path, method, token, body }, origin); }
+      catch(err){ SRV.pending.delete(id); resolve({ status:0, ok:false, data:{ error:String(err && err.message || err) } }); }
+    };
+    /* The window has to have loaded before it can listen. Rather than guessing
+       a delay, the message is re-sent on a short interval until it answers or
+       the timeout runs out — a window the user has not yet allowed to open, or
+       a slow LAN, then costs a second rather than a failure. */
+    let tries = 0;
+    const tick = setInterval(()=>{
+      tries += 1;
+      if(!SRV.pending.has(id)){ clearInterval(tick); return; }
+      if(tries * 300 > timeout){
+        clearInterval(tick);
+        SRV.pending.delete(id);
+        resolve({ status:0, ok:false, data:{ error:'The office link window did not answer.' } });
+        return;
+      }
+      if(SRV.linkReady || tries > 1) send();
+    }, 300);
+    if(SRV.linkReady) send();
+  });
+}
+
+async function srvViaDirect(path, { method='GET', token, body } = {}){
+  const headers = {};
+  if(token) headers.Authorization = `Bearer ${token}`;
+  let payload;
+  if(body instanceof Blob || body instanceof ArrayBuffer){ payload = body; headers['Content-Type'] = 'application/octet-stream'; }
+  else if(body !== undefined && body !== null){ payload = JSON.stringify(body); headers['Content-Type'] = 'application/json'; }
+  try{
+    const res = await fetch(`${srvLinkOrigin()}${path}`, { method, headers, body: payload, mode:'cors' });
+    const text = await res.text();
+    let data = null;
+    try{ data = text ? JSON.parse(text) : null; }catch{ data = null; }
+    return { status: res.status, ok: res.ok, data };
+  }catch(err){
+    return { status:0, ok:false, data:{ error:String(err && err.message || err) } };
+  }
+}
+
+async function srvCall(path, opts){
+  const transport = await srvDecideTransport();
+  const out = transport === 'direct' ? await srvViaDirect(path, opts) : await srvViaLink(path, opts);
+  SRV.reachable = out.status !== 0;
+  return out;
+}
+
+/* A token from Forge. Every call that touches the gateway asks for one first,
+   because a token is one operation on one path and lives sixty seconds. */
+async function srvToken(op, path){
+  try{
+    return await api('/server/token', { method:'POST', body:{ op, path } });
+  }catch(err){
+    SRV.error = err && err.message ? err.message : 'Forge would not issue a token.';
+    return null;
+  }
+}
+
+/* ---- loading and drawing ------------------------------------------------ */
+
+async function srvLoadState(){
+  const state = await api('/server/state');
+  SRV.enabled = Boolean(state.enabled);
+  SRV.loaded = true;
+  SRV.gatewayUrl = state.gatewayUrl;
+  SRV.chunkBytes = Number(state.chunkBytes) || SRV.chunkBytes;
+  SRV.parallelChunks = Number(state.parallelChunks) || 3;
+  SRV.maxFileBytes = Number(state.maxFileBytes) || SRV.maxFileBytes;
+  SRV.deniedExtensions = state.deniedExtensions || [];
+  SRV.allowedExtensions = state.allowedExtensions || [];
+  SRV.gateway = state.gateway || null;
+  SRV.may = state.may || {};
+  SRV.roots = state.roots || null;
+  SRV.openRequests = state.openRequests || [];
+  return state;
+}
+
+async function srvListCurrent(){
+  SRV.loading = true; SRV.error = null;
+  try{
+    /* THE TOP LEVEL IS ANSWERED BY FORGE, not by the share.
+       A non-admin may not read the root at all — they hold prefixes, not the
+       root — so the first screen is the set of entry points their permissions
+       give them. Everything below it comes from the office server. */
+    if(!SRV.path && SRV.roots && !SRV.roots.all){
+      SRV.entries = (SRV.roots.entries || []).map(e=>({ ...e, size:null, modified:null }));
+      SRV.total = SRV.entries.length;
+      return;
+    }
+    const minted = await srvToken('list', SRV.path);
+    if(!minted) return;
+    const out = await srvCall(`/v1/list?path=${encodeURIComponent(SRV.path)}&limit=500`, { token: minted.token });
+    if(out.status === 0){
+      SRV.entries = []; SRV.total = 0;
+      SRV.error = 'offline';
+      return;
+    }
+    if(!out.ok){
+      SRV.entries = []; SRV.total = 0;
+      SRV.error = (out.data && out.data.error) || `The office server answered ${out.status}.`;
+      return;
+    }
+    SRV.entries = (out.data.entries || []);
+    SRV.total = Number(out.data.total || SRV.entries.length);
+  } finally {
+    SRV.loading = false;
+  }
+}
+
+const srvBytes = (n)=>{
+  if(n === null || n === undefined) return '';
+  const u = ['B','KB','MB','GB','TB'];
+  let v = Number(n); let i = 0;
+  while(v >= 1024 && i < u.length-1){ v /= 1024; i += 1; }
+  return `${i === 0 ? v : v.toFixed(v < 10 ? 1 : 0)} ${u[i]}`;
+};
+
+const srvCrumbs = ()=>{
+  const parts = String(SRV.path || '').split('/').filter(Boolean);
+  return [{ label:'Office server', path:'' }, ...parts.map((p,i)=>({ label:p, path: parts.slice(0,i+1).join('/') }))];
+};
+
+function srvRequestedSet(){
+  return new Set((SRV.openRequests || []).map(r=>String(r.path).toLowerCase()));
+}
+
+function srvVisibleRows(){
+  const needle = String(SRV.filter || '').trim().toLowerCase();
+  const rows = (SRV.entries || []).filter(e=>!needle || String(e.name).toLowerCase().includes(needle));
+  const { key, dir } = SRV.sort;
+  return rows.sort((a,b)=>{
+    if(a.type !== b.type) return a.type === 'folder' ? -1 : 1;     // folders first, always
+    if(key === 'size') return dir * ((a.size||0) - (b.size||0));
+    if(key === 'modified') return dir * (String(a.modified||'').localeCompare(String(b.modified||'')));
+    return dir * String(a.name).localeCompare(String(b.name), undefined, { numeric:true, sensitivity:'base' });
+  });
+}
+
+async function renderServer(){
+  const el = document.getElementById('serverView');
+  if(!SRV.loaded){
+    el.innerHTML = '<div class="card"><p class="muted">Loading…</p></div>';
+    try{ await srvLoadState(); }
+    catch(err){
+      el.innerHTML = `<div class="card"><p class="err-line">${escapeHTML(err && err.message || 'The Server tab could not be loaded.')}</p></div>`;
+      return;
+    }
+    await srvListCurrent();
+  }
+  if(!SRV.enabled){
+    el.innerHTML = `<div class="card"><h3>Server</h3>
+      <p class="muted">The office file server is switched off. A Super Admin can turn it on in
+      Settings → Server.</p></div>`;
+    return;
+  }
+  const requested = srvRequestedSet();
+  const rows = srvVisibleRows();
+  const gw = SRV.gateway || {};
+  const offline = SRV.error === 'offline';
+
+  const banner = offline
+    /* THE OFF-NETWORK MESSAGE. Not an error: the person is working from home and
+       the files are in the building. Said in one sentence with no data behind it. */
+    ? `<div class="srv-banner srv-off">Open Forge from the office network to use Server files.</div>`
+    : (!gw.online && gw.lastSeen !== undefined
+      ? `<div class="srv-banner srv-stale">Office file gateway looks offline — contact IT.${
+        gw.ageSeconds !== null && gw.ageSeconds !== undefined ? ` Last heard ${gw.ageSeconds}s ago.` : ''}</div>`
+      : '');
+
+  el.innerHTML = `
+    <div class="card srv-card">
+      <div class="srv-head">
+        <h3>Server</h3>
+        <div class="srv-actions">
+          ${SRV.may.upload ? `<button class="btn" id="srvNewFolder">New folder</button>` : ''}
+          ${SRV.may.upload ? `<button class="btn primary" id="srvPick">Upload files</button>` : ''}
+          ${SRV.may.upload ? `<button class="btn" id="srvPickFolder">Upload a folder</button>` : ''}
+          ${SRV.may.manageRequests || SRV.may.requestDelete ? `<button class="btn" id="srvRequests">Deletion requests</button>` : ''}
+        </div>
+      </div>
+      ${banner}
+      <nav class="srv-crumbs">${srvCrumbs().map((c,i,all)=>
+        i === all.length-1
+          ? `<span class="srv-crumb current">${escapeHTML(c.label)}</span>`
+          : `<button class="srv-crumb" data-path="${escapeHTML(c.path)}">${escapeHTML(c.label)}</button><span class="srv-sep">/</span>`
+      ).join('')}</nav>
+      <div class="srv-tools">
+        <input id="srvFilter" class="srv-filter" type="search" placeholder="Filter this folder"
+               value="${escapeHTML(SRV.filter)}" aria-label="Filter this folder">
+        <span class="muted srv-count">${rows.length} of ${SRV.total} item${SRV.total === 1 ? '' : 's'}</span>
+      </div>
+      <div id="srvDrop" class="srv-drop${SRV.may.upload ? '' : ' is-off'}">
+        ${SRV.error && !offline ? `<p class="err-line">${escapeHTML(SRV.error)}</p>` : ''}
+        <table class="srv-table">
+          <thead><tr>
+            <th><button class="srv-sort" data-key="name">Name</button></th>
+            <th><button class="srv-sort" data-key="size">Size</button></th>
+            <th><button class="srv-sort" data-key="modified">Modified</button></th>
+            <th class="srv-right">Uploaded by</th>
+            <th></th>
+          </tr></thead>
+          <tbody>
+            ${rows.length ? rows.map(e=>{
+              const full = [SRV.path, e.name].filter(Boolean).join('/');
+              const tagged = requested.has(full.toLowerCase());
+              return `<tr class="srv-row">
+                <td class="srv-name">
+                  ${e.type === 'folder'
+                    ? `<button class="srv-link" data-open="${escapeHTML(full)}">${escapeHTML(e.name)}</button>`
+                    : `<span>${escapeHTML(e.name)}</span>`}
+                  ${e.label && e.label !== e.name ? `<span class="srv-sub">${escapeHTML(e.label)}</span>` : ''}
+                  ${tagged ? `<span class="srv-tag">Deletion requested</span>` : ''}
+                </td>
+                <td>${escapeHTML(srvBytes(e.size))}</td>
+                <td>${e.modified ? escapeHTML(new Date(e.modified).toLocaleString()) : ''}</td>
+                <td class="srv-right">${escapeHTML(e.uploadedBy || '')}</td>
+                <td class="srv-right">
+                  ${e.type === 'file' && SRV.may.download ? `<button class="btn tiny" data-dl="${escapeHTML(full)}">Download</button>` : ''}
+                  ${SRV.may.requestDelete && !tagged ? `<button class="btn tiny" data-del="${escapeHTML(full)}" data-kind="${e.type}">Request deletion</button>` : ''}
+                </td>
+              </tr>`;
+            }).join('') : `<tr><td colspan="5" class="muted">${offline ? '' : (SRV.loading ? 'Loading…' : 'Nothing here.')}</td></tr>`}
+          </tbody>
+        </table>
+        ${SRV.may.upload && !offline ? `<p class="srv-hint">Drag files or folders here to copy them to the office server.</p>` : ''}
+      </div>
+      ${SRV.uploads.length ? `<div class="srv-uploads">
+        <h4>Transfers</h4>
+        ${SRV.uploads.map(u=>`<div class="srv-up" data-up="${escapeHTML(u.id)}">
+          <span class="srv-up-name">${escapeHTML(u.name)}</span>
+          <span class="srv-up-state">${escapeHTML(u.note || u.state)}</span>
+          <progress max="100" value="${Math.round(u.progress || 0)}"></progress>
+          <span class="srv-up-pct">${Math.round(u.progress || 0)}%</span>
+          ${u.state === 'running' ? `<button class="btn tiny" data-pause="${escapeHTML(u.id)}">Pause</button>` : ''}
+          ${u.state === 'paused' || u.state === 'failed' ? `<button class="btn tiny" data-resume="${escapeHTML(u.id)}">${u.state === 'failed' ? 'Retry' : 'Resume'}</button>` : ''}
+        </div>`).join('')}
+      </div>` : ''}
+      <input type="file" id="srvFileInput" multiple hidden>
+      <input type="file" id="srvFolderInput" webkitdirectory multiple hidden>
+    </div>
+    ${SRV.requestsOpen ? srvRequestsPanel() : ''}`;
+
+  srvWire();
+}
+
+function srvRequestsPanel(){
+  const rows = SRV.requests || [];
+  return `<div class="card srv-card">
+    <div class="srv-head"><h3>Deletion requests</h3>
+      <div class="srv-actions"><button class="btn" id="srvRequestsClose">Hide</button></div></div>
+    <p class="muted">Forge never deletes anything. Marking a request done records that somebody
+      removed the file on the office server itself.</p>
+    <table class="srv-table"><thead><tr>
+      <th>Path</th><th>Asked by</th><th>Reason</th><th>When</th><th>Status</th><th></th>
+    </tr></thead><tbody>
+      ${rows.length ? rows.map(r=>`<tr>
+        <td class="srv-name">${escapeHTML(r.path)}</td>
+        <td>${escapeHTML(r.requesterName || '')}</td>
+        <td>${escapeHTML(r.reason)}</td>
+        <td>${escapeHTML(new Date(r.createdAt).toLocaleString())}</td>
+        <td>${escapeHTML(r.status)}${r.adminNote ? `<span class="srv-sub">${escapeHTML(r.adminNote)}</span>` : ''}</td>
+        <td class="srv-right">${r.status === 'open' && SRV.may.manageRequests
+          ? `<button class="btn tiny" data-done="${escapeHTML(r.id)}">Mark done</button>
+             <button class="btn tiny" data-decline="${escapeHTML(r.id)}">Decline</button>` : ''}</td>
+      </tr>`).join('') : '<tr><td colspan="6" class="muted">No requests.</td></tr>'}
+    </tbody></table></div>`;
+}
+
+function srvWire(){
+  const el = document.getElementById('serverView');
+  const on = (sel, ev, fn)=>el.querySelectorAll(sel).forEach(n=>n.addEventListener(ev, fn));
+
+  on('.srv-crumb[data-path]', 'click', (e)=>{ SRV.path = e.currentTarget.dataset.path; SRV.filter=''; srvGo(); });
+  on('[data-open]', 'click', (e)=>{ SRV.path = e.currentTarget.dataset.open; SRV.filter=''; srvGo(); });
+  on('.srv-sort', 'click', (e)=>{
+    const key = e.currentTarget.dataset.key;
+    SRV.sort = SRV.sort.key === key ? { key, dir: -SRV.sort.dir } : { key, dir: 1 };
+    renderServer();
+  });
+  const filter = el.querySelector('#srvFilter');
+  if(filter) filter.addEventListener('input', (e)=>{
+    SRV.filter = e.target.value;
+    // Redrawn in place rather than re-listed: filtering is a client-side view
+    // of the folder already fetched, so it costs no request.
+    renderServer();
+    const again = document.getElementById('srvFilter');
+    if(again){ again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
+  });
+
+  on('[data-dl]', 'click', (e)=>srvDownload(e.currentTarget.dataset.dl));
+  on('[data-del]', 'click', (e)=>srvRequestDeletion(e.currentTarget.dataset.del, e.currentTarget.dataset.kind));
+  on('[data-done]', 'click', (e)=>srvResolve(e.currentTarget.dataset.done, 'done'));
+  on('[data-decline]', 'click', (e)=>srvResolve(e.currentTarget.dataset.decline, 'declined'));
+  on('[data-pause]', 'click', (e)=>srvPause(e.currentTarget.dataset.pause));
+  on('[data-resume]', 'click', (e)=>srvResume(e.currentTarget.dataset.resume));
+
+  const newFolder = el.querySelector('#srvNewFolder');
+  if(newFolder) newFolder.addEventListener('click', srvNewFolder);
+  const requests = el.querySelector('#srvRequests');
+  if(requests) requests.addEventListener('click', srvToggleRequests);
+  const close = el.querySelector('#srvRequestsClose');
+  if(close) close.addEventListener('click', ()=>{ SRV.requestsOpen = false; renderServer(); });
+
+  const pick = el.querySelector('#srvPick');
+  const input = el.querySelector('#srvFileInput');
+  if(pick && input){
+    pick.addEventListener('click', ()=>input.click());
+    input.addEventListener('change', ()=>{ srvQueue([...input.files]); input.value = ''; });
+  }
+  const pickFolder = el.querySelector('#srvPickFolder');
+  const folderInput = el.querySelector('#srvFolderInput');
+  if(pickFolder && folderInput){
+    pickFolder.addEventListener('click', ()=>folderInput.click());
+    folderInput.addEventListener('change', ()=>{ srvQueue([...folderInput.files]); folderInput.value = ''; });
+  }
+
+  const drop = el.querySelector('#srvDrop');
+  if(drop && SRV.may.upload){
+    ['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev, (e)=>{ e.preventDefault(); drop.classList.add('is-over'); }));
+    ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev, ()=>drop.classList.remove('is-over')));
+    drop.addEventListener('drop', (e)=>{
+      e.preventDefault();
+      const files = [...(e.dataTransfer && e.dataTransfer.files ? e.dataTransfer.files : [])];
+      if(files.length) srvQueue(files);
+    });
+  }
+}
+
+async function srvGo(){
+  await srvListCurrent();
+  renderServer();
+}
+
+/* ---- download: always a top-level link --------------------------------- */
+async function srvDownload(path){
+  const minted = await srvToken('download', path);
+  if(!minted){ renderServer(); return; }
+  const url = `${srvLinkOrigin()}/v1/download?path=${encodeURIComponent(path)}&token=${encodeURIComponent(minted.token)}`;
+  /* A real link, clicked. Not fetch-then-blob: a 40 GB file must not be read
+     into memory to be saved, and a top-level navigation is also the one thing
+     every browser allows to a private address. */
+  const a = document.createElement('a');
+  a.href = url;
+  a.rel = 'noopener';
+  a.download = String(path).split('/').pop();
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+/* ---- new folder --------------------------------------------------------- */
+async function srvNewFolder(){
+  const name = await askText({
+    title:'New folder',
+    message:`Inside ${SRV.path || 'the office server'}.`,
+    placeholder:'Folder name',
+    confirmLabel:'Create',
+  });
+  if(!name) return;
+  const minted = await srvToken('mkdir', SRV.path);
+  if(!minted){ renderServer(); return; }
+  const out = await srvCall('/v1/folder', { method:'POST', token: minted.token, body:{ path: SRV.path, name } });
+  if(!out.ok){
+    showToast((out.data && out.data.error) || 'That folder could not be created.');
+    return;
+  }
+  showToast(`Created ${out.data.name}.`);
+  await srvGo();
+}
+
+/* ---- deletion requests -------------------------------------------------- */
+async function srvRequestDeletion(path, kind){
+  const reason = await askText({
+    title:'Request deletion',
+    message:`${path}\n\nForge cannot delete anything. This asks whoever looks after the office server to remove it.`,
+    placeholder:'Why should it be deleted?',
+    confirmLabel:'Send request',
+    /* Required, and said as a minimum rather than as a refusal after the fact:
+       openAsk keeps the confirm button disabled until it is met. */
+    minLength: 3, maxLength: 1000,
+  });
+  if(!reason) return;
+  try{
+    await api('/server/deletion-requests', { method:'POST', body:{ path, type: kind === 'folder' ? 'folder' : 'file', reason } });
+    showToast('Request sent.');
+    await srvLoadState();
+    renderServer();
+  }catch(err){
+    showToast(err && err.message ? err.message : 'That request could not be sent.');
+  }
+}
+
+async function srvToggleRequests(){
+  SRV.requestsOpen = !SRV.requestsOpen;
+  if(SRV.requestsOpen){
+    try{
+      const out = await api('/server/deletion-requests');
+      SRV.requests = out.requests || [];
+      SRV.may.manageRequests = Boolean(out.mayManage);
+    }catch(err){ showToast(err && err.message ? err.message : 'Could not load the requests.'); }
+  }
+  renderServer();
+}
+
+async function srvResolve(id, status){
+  const note = await askText({
+    title: status === 'done' ? 'Mark as done' : 'Decline the request',
+    message: status === 'done'
+      ? 'Confirming that the file has been removed on the office server itself. Forge deletes nothing.'
+      : 'The requester is told, with your note.',
+    placeholder:'Note (optional)',
+    confirmLabel: status === 'done' ? 'Mark done' : 'Decline',
+  });
+  if(note === null || note === undefined) return;
+  try{
+    await api(`/server/deletion-requests/${id}/resolve`, { method:'POST', body:{ status, note } });
+    const out = await api('/server/deletion-requests');
+    SRV.requests = out.requests || [];
+    await srvLoadState();
+    renderServer();
+  }catch(err){ showToast(err && err.message ? err.message : 'That could not be saved.'); }
+}
+
+/* ---- uploads ------------------------------------------------------------
+   Chunked, resumable, and never holding a whole file in memory: each chunk is
+   a File.slice(), which is a view on the file on disk rather than a copy of it.
+   The upload id and the folder are remembered in localStorage, so a reload asks
+   the gateway what it already has and carries on from there. */
+
+function srvRemember(){
+  try{
+    const keep = SRV.uploads.filter(u=>u.state !== 'done').map(u=>({
+      id:u.id, name:u.name, size:u.size, path:u.path, at:Date.now(),
+    }));
+    localStorage.setItem(SRV_RESUME_KEY, JSON.stringify(keep));
+  }catch{ /* a private window refuses storage; resume is a convenience */ }
+}
+
+function srvExtensionProblem(name){
+  const ext = (String(name).match(/\.[^.]*$/) || [''])[0].toLowerCase();
+  if((SRV.deniedExtensions || []).includes(ext)) return `${ext || 'That kind of file'} may not be uploaded.`;
+  if((SRV.allowedExtensions || []).length && !SRV.allowedExtensions.includes(ext)){
+    return `Only ${SRV.allowedExtensions.join(', ')} may be uploaded.`;
+  }
+  return null;
+}
+
+function srvQueue(files){
+  if(!SRV.may.upload) return;
+  for(const file of files){
+    const problem = srvExtensionProblem(file.name)
+      || (file.size > SRV.maxFileBytes ? `${file.name} is ${srvBytes(file.size)}; the limit is ${srvBytes(SRV.maxFileBytes)}.` : null);
+    if(problem){ showToast(problem); continue; }
+    /* A folder dropped or picked arrives as files with a relative path on them;
+       the path is used so the shape of the folder is kept rather than flattened. */
+    const rel = String(file.webkitRelativePath || '').split('/').slice(0, -1).join('/');
+    SRV.uploads.push({
+      id:null, file, name:file.name, size:file.size,
+      path:[SRV.path, rel].filter(Boolean).join('/'),
+      state:'queued', progress:0, note:null, sent:0, paused:false,
+    });
+  }
+  renderServer();
+  srvPump();
+}
+
+async function srvPump(){
+  const next = SRV.uploads.find(u=>u.state === 'queued');
+  if(!next) return;
+  await srvRunUpload(next);
+  srvRemember();
+  srvPump();
+}
+
+async function srvRunUpload(job){
+  job.state = 'running'; job.note = null; renderServer();
+  let session;
+  try{
+    session = await api('/server/upload-session', { method:'POST', body:{ path: job.path, name: job.name, size: job.size } });
+  }catch(err){
+    job.state = 'failed'; job.note = err && err.message ? err.message : 'Forge refused the upload.';
+    renderServer(); return;
+  }
+  job.id = session.uploadId;
+  job.token = session.token;
+  job.chunk = Number(session.chunkBytes) || SRV.chunkBytes;
+  srvRemember();
+
+  // What the gateway already has, so a resumed job sends only the gaps.
+  let have = [];
+  const status = await srvCall(`/v1/upload/${job.id}/status`, { token: job.token });
+  if(status.ok && status.data && Array.isArray(status.data.received)) have = status.data.received;
+
+  const covered = (from, to)=>have.some(([s,e])=>s <= from && e >= to);
+  for(let offset = 0; offset < job.size; offset += job.chunk){
+    if(job.paused){ job.state = 'paused'; renderServer(); return; }
+    const end = Math.min(offset + job.chunk, job.size);
+    if(covered(offset, end)){
+      job.sent = Math.max(job.sent, end);
+      job.progress = (job.sent / job.size) * 100;
+      continue;
+    }
+    const slice = job.file.slice(offset, end);
+    let out = await srvCall(`/v1/upload/${job.id}/chunk?offset=${offset}`, { method:'PUT', token: job.token, body: slice });
+    if(out.status === 401 || out.status === 403){
+      /* The token has run out mid-file, which on a very large one it will.
+         Renewed through Forge — which re-decides the whole thing, so somebody
+         whose access was removed stops here — and the chunk is retried once. */
+      try{
+        const renewed = await api(`/server/upload-session/${job.id}/renew`, { method:'POST', body:{ path: job.path, name: job.name, size: job.size } });
+        job.token = renewed.token;
+        out = await srvCall(`/v1/upload/${job.id}/chunk?offset=${offset}`, { method:'PUT', token: job.token, body: slice });
+      }catch(err){
+        job.state = 'failed'; job.note = err && err.message ? err.message : 'The upload token could not be renewed.';
+        renderServer(); return;
+      }
+    }
+    if(!out.ok){
+      job.state = 'failed';
+      job.note = (out.data && out.data.error) || (out.status === 0 ? 'The office server could not be reached.' : `The office server answered ${out.status}.`);
+      renderServer(); return;
+    }
+    job.sent = end;
+    job.progress = (end / job.size) * 100;
+    renderServer();
+  }
+
+  const done = await srvCall(`/v1/upload/${job.id}/complete`, { method:'POST', token: job.token, body:{} });
+  if(!done.ok){
+    job.state = 'failed';
+    job.note = (done.data && done.data.error) || 'The office server could not finish the file.';
+    renderServer(); return;
+  }
+  job.state = 'done';
+  job.progress = 100;
+  job.note = done.data.renamed
+    ? `Saved as ${done.data.name} — a file with that name was already there.`
+    : 'Verifying…';
+  renderServer();
+  srvRemember();
+  await srvGo();
+}
+
+function srvPause(id){
+  const job = SRV.uploads.find(u=>u.id === id || u.name === id);
+  if(!job) return;
+  job.paused = true;
+  renderServer();
+}
+
+function srvResume(id){
+  const job = SRV.uploads.find(u=>u.id === id || u.name === id);
+  if(!job) return;
+  job.paused = false;
+  job.state = 'queued';
+  renderServer();
+  srvPump();
+}
+
+/* A reload while a file was going up. The FILE cannot be remembered — a browser
+   will not hand back a File object across a page load, and nothing is stored on
+   this server to read it from — so what is offered is the fact: this upload was
+   in progress, pick the same file and it will carry on from the bytes the
+   office server already has. */
+function srvResumeNotice(){
+  let kept = [];
+  try{ kept = JSON.parse(localStorage.getItem(SRV_RESUME_KEY) || '[]'); }catch{ kept = []; }
+  const fresh = kept.filter(k=>Date.now() - Number(k.at || 0) < 24 * 60 * 60 * 1000);
+  if(!fresh.length) return;
+  SRV.uploads = fresh.map(k=>({
+    id:k.id, file:null, name:k.name, size:k.size, path:k.path,
+    state:'paused', progress:0, sent:0, paused:true,
+    note:'Interrupted by a reload — choose the same file to carry on.',
+  }));
+}
+
+/* ---------- Settings → Server (the office file gateway) ----------
+ *
+ * Everything about this feature is set here: where the gateway is, the two
+ * secrets, the limits, which folders are shared, and which folder each project
+ * owns. The tab itself is hidden until the switch at the top is on, which is
+ * why the checklist is the first thing on the screen — it says what is still
+ * missing, in the order it has to be done.
+ *
+ * NEITHER SECRET IS EVER SHOWN AGAIN. The signing key's PUBLIC half is shown
+ * and is meant to be copied; its private half is encrypted into the database
+ * and never leaves the server. The gateway secret is shown once, at the moment
+ * it is generated, because it has to be pasted into the gateway machine's
+ * GATEWAY_SECRET — and then only its fingerprint is readable. */
+let SRVSET = null;
+let SRVSET_ONCE = null;          // the secret, in memory, until this screen is left
+
+async function renderServerSettings(){
+  const host = document.getElementById('serverSettingsSection');
+  if(!host) return;
+  if(!SRVSET){
+    host.innerHTML = '<div class="card"><h3>Server</h3><p class="muted">Loading…</p></div>';
+    try{ SRVSET = await api('/admin/settings/server'); }
+    catch(err){
+      host.innerHTML = `<div class="card"><h3>Server</h3><p class="err-line">${escapeHTML(err && err.message || 'Could not load the Server settings.')}</p></div>`;
+      return;
+    }
+  }
+  const s = SRVSET.settings;
+  const gw = SRVSET.gateway || {};
+  const r = s.readiness || {};
+  const tick = (ok, text)=>`<div class="srv-check-row"><span class="srv-tick ${ok ? 'yes' : 'no'}">${ok ? '✓' : '•'}</span>${escapeHTML(text)}</div>`;
+  const mb = (n)=>Math.round(Number(n) / (1024*1024));
+  const gb = (n)=>Number(n) / (1024*1024*1024);
+
+  host.innerHTML = `<div class="card">
+    <h3>Server</h3>
+    <p class="muted">The office file server. Files live on a machine in the studio and are
+      reachable only from the office network — nothing is stored on this host, and nothing
+      here can delete, rename, move or overwrite a file.</p>
+
+    <div class="srv-check">
+      ${tick(r.encryptionAvailable, r.encryptionAvailable ? 'Secrets can be encrypted at rest' : 'Set EMAIL_ENCRYPTION_KEY (or JWT_SECRET) on the host and restart')}
+      ${tick(r.keyGenerated, r.keyGenerated ? `Token signing key generated (${s.signing.kid || ''})` : 'Generate the token signing key')}
+      ${tick(r.secretGenerated, r.secretGenerated ? 'Gateway secret generated' : "Generate the gateway secret and put it in the gateway's GATEWAY_SECRET")}
+      ${tick(r.gatewayUrl && r.gatewayId, r.gatewayUrl && r.gatewayId ? `Gateway at ${s.gatewayUrl}` : 'Set the gateway address and id')}
+      ${tick(r.heartbeatReceived, r.heartbeatReceived ? `Heartbeat received${gw.version ? ` (version ${gw.version})` : ''}` : 'No heartbeat yet — is the gateway running?')}
+      ${tick(r.configApplied, r.configApplied ? `The gateway is running configuration version ${gw.configVersion}` : `Saved version ${s.configVersion}; the gateway reports ${gw.configVersion === null || gw.configVersion === undefined ? 'nothing yet' : gw.configVersion}`)}
+    </div>
+
+    <label class="srv-check-row"><input type="checkbox" id="srvsEnabled" ${s.enabled ? 'checked' : ''}>
+      Enable the Server tab</label>
+    <p class="muted">Off hides the tab and refuses every Server request. Existing deletion
+      requests stay viewable and resolvable either way.</p>
+
+    <div class="srv-set-grid">
+      <label>Gateway address<input id="srvsUrl" type="url" value="${escapeHTML(s.gatewayUrl || '')}" placeholder="https://files.office.example"></label>
+      <label>Gateway id<input id="srvsId" type="text" value="${escapeHTML(s.gatewayId || '')}" placeholder="GW-OFFICE"></label>
+      <label>Maximum file size (GB)<input id="srvsMax" type="number" min="1" step="1" value="${gb(s.limits.maxFileBytes)}"></label>
+      <label>Chunk size (MB)<input id="srvsChunk" type="number" min="1" step="1" value="${mb(s.limits.chunkBytes)}"></label>
+      <label>Parallel chunks<input id="srvsParallel" type="number" min="1" max="8" step="1" value="${Number(s.limits.parallelChunks)}"></label>
+      <label>Abandoned uploads kept (minutes)<input id="srvsIncoming" type="number" min="60" step="30" value="${Number(s.limits.incomingMaxAgeMinutes)}"></label>
+      <label>Rotation overlap (minutes)<input id="srvsOverlap" type="number" min="5" step="5" value="${Number(s.limits.rotationOverlapMinutes)}"></label>
+    </div>
+    <label>Denied extensions<input id="srvsDenied" type="text" value="${escapeHTML((s.limits.deniedExtensions || []).join(', '))}"></label>
+    <label>Allowed extensions (blank means everything not denied)<input id="srvsAllowed" type="text" value="${escapeHTML((s.limits.allowedExtensions || []).join(', '))}"></label>
+    <label>Shared folders, visible to everyone with Server access<input id="srvsShared" type="text" value="${escapeHTML((s.sharedFolders || []).join(', '))}"></label>
+    <label class="srv-check-row"><input type="checkbox" id="srvsEmail" ${s.emailOnDeleteRequests ? 'checked' : ''}>
+      Email on deletion requests (in-app is always on)</label>
+    <label class="srv-check-row"><input type="checkbox" id="srvsLegacy" ${s.serveLegacy ? 'checked' : ''}>
+      Serve legacy files already on this host</label>
+    <div class="srv-actions"><button class="btn primary" id="srvsSave">Save</button></div>
+
+    <h4>Token signing key</h4>
+    <p class="muted">The gateway holds the public half only, so a compromised gateway cannot
+      mint a token. ${s.signing.previousActive ? `The previous key (${escapeHTML(s.signing.previousKid || '')}) stays valid until ${escapeHTML(new Date(s.signing.previousUntil).toLocaleString())}.` : ''}</p>
+    ${s.signing.publicKey ? `<div class="srv-key" id="srvsPublic">${escapeHTML(s.signing.publicKey)}</div>
+      <p class="muted">Key id <code>${escapeHTML(s.signing.kid || '')}</code></p>` : '<p class="muted">No key yet.</p>'}
+    <div class="srv-actions">
+      <button class="btn" id="srvsKeys">${s.signing.publicKey ? 'Rotate key pair' : 'Generate key pair'}</button>
+      ${s.signing.publicKey ? `<button class="btn link-copy" data-copy="${escapeHTML(s.signing.publicKey)}">Copy public key</button>` : ''}
+    </div>
+
+    <h4>Gateway secret</h4>
+    <p class="muted">Signs the gateway's own calls to this server. Shown once when generated.
+      ${s.secret.set ? `Stored, encrypted with ${escapeHTML(s.secret.fingerprint || 'the server key')}, set ${escapeHTML(s.secret.setAt ? new Date(s.secret.setAt).toLocaleString() : '')}.` : 'Not generated yet.'}
+      ${s.secret.previousActive ? `The previous secret is accepted until ${escapeHTML(new Date(s.secret.previousUntil).toLocaleString())}.` : ''}</p>
+    ${SRVSET_ONCE ? `<div class="srv-once" id="srvsOnce">${escapeHTML(SRVSET_ONCE)}</div>
+      <p class="err-line">Copy this into the gateway's GATEWAY_SECRET now — it cannot be shown again.</p>` : ''}
+    <div class="srv-actions">
+      <button class="btn" id="srvsSecret">${s.secret.set ? 'Regenerate secret' : 'Generate secret'}</button>
+      ${SRVSET_ONCE ? `<button class="btn link-copy" data-copy="${escapeHTML(SRVSET_ONCE)}">Copy</button>` : ''}
+    </div>
+
+    <h4>Gateway status</h4>
+    <p class="muted">
+      ${gw.lastSeen
+        ? `${gw.ageSeconds < (gw.staleAfterSeconds || 120) ? 'Online' : 'Not answering'} — last heard ${gw.ageSeconds}s ago${gw.version ? `, version ${gw.version}` : ''}${gw.freeBytes !== null && gw.freeBytes !== undefined ? `, ${(gw.freeBytes/(1024**3)).toFixed(1)} GB free` : ''}${gw.queued ? `, ${gw.queued} callback(s) queued` : ''}.`
+        : 'No heartbeat has ever arrived.'}
+    </p>
+    <div class="srv-actions"><button class="btn" id="srvsSelfTest">Run self-test</button></div>
+    <div id="srvsTestOut"></div>
+
+    <h4>Project folders</h4>
+    <p class="muted">Each project owns one folder, named from its code the first time it is
+      needed and then fixed — so renaming a project never orphans its folder. Edit one to point
+      a project at a folder that already exists on the share.</p>
+    <table class="srv-table"><thead><tr><th>Project</th><th>Client</th><th>Code</th><th>Folder</th><th></th></tr></thead>
+      <tbody>${(SRVSET.mapping || []).slice(0, 300).map(m=>`<tr>
+        <td class="srv-name">${escapeHTML(m.name)}${m.active ? '' : '<span class="srv-sub">archived</span>'}</td>
+        <td>${escapeHTML(m.client || '')}</td>
+        <td>${escapeHTML(m.code || '')}</td>
+        <td><input class="srvs-folder" data-project="${escapeHTML(m.projectId)}" type="text"
+             value="${escapeHTML(m.folder || '')}" placeholder="${escapeHTML(m.wouldBe || '')}"></td>
+        <td class="srv-right"><button class="btn tiny srvs-map" data-project="${escapeHTML(m.projectId)}">Set</button></td>
+      </tr>`).join('')}</tbody></table>
+  </div>`;
+
+  wireServerSettings();
+}
+
+function wireServerSettings(){
+  const host = document.getElementById('serverSettingsSection');
+  if(!host) return;
+  const val = (id)=>{ const el = document.getElementById(id); return el ? el.value : undefined; };
+  const checked = (id)=>{ const el = document.getElementById(id); return el ? el.checked : undefined; };
+
+  const save = document.getElementById('srvsSave');
+  if(save) save.addEventListener('click', async ()=>{
+    const body = {
+      enabled: checked('srvsEnabled'),
+      gatewayUrl: val('srvsUrl'),
+      gatewayId: val('srvsId'),
+      maxFileBytes: Math.round(Number(val('srvsMax')) * 1024 * 1024 * 1024),
+      chunkBytes: Math.round(Number(val('srvsChunk')) * 1024 * 1024),
+      parallelChunks: Number(val('srvsParallel')),
+      incomingMaxAgeMinutes: Number(val('srvsIncoming')),
+      rotationOverlapMinutes: Number(val('srvsOverlap')),
+      deniedExtensions: val('srvsDenied'),
+      allowedExtensions: val('srvsAllowed'),
+      sharedFolders: val('srvsShared'),
+      emailOnDeleteRequests: checked('srvsEmail'),
+      serveLegacy: checked('srvsLegacy'),
+    };
+    try{
+      const out = await api('/admin/settings/server', { method:'PATCH', body });
+      SRVSET = { ...SRVSET, settings: out.settings, gateway: out.gateway };
+      showToast(out.changes && out.changes.length ? 'Saved.' : 'Nothing changed.');
+      /* The tab's own state is stale the moment this saves — the switch is one
+         of these fields — so it is dropped and re-fetched on the next visit,
+         and the nav button is re-decided now. */
+      SRV.loaded = false; SRV.enabled = Boolean(out.settings.enabled);
+      applyGate('serverTabBtn');
+      renderServerSettings();
+    }catch(err){ showToast(err && err.message ? err.message : 'That could not be saved.'); }
+  });
+
+  const keys = document.getElementById('srvsKeys');
+  if(keys) keys.addEventListener('click', async ()=>{
+    const first = !(SRVSET.settings.signing && SRVSET.settings.signing.publicKey);
+    const ok = first ? true : await askConfirm({
+      title:'Rotate the signing key?',
+      message:'A new key pair is generated and the current one keeps working for the overlap '
+        + 'window, so tokens already issued are not broken. The gateway picks up both keys on '
+        + 'its next configuration fetch.',
+      confirmLabel:'Rotate',
+    });
+    if(!ok) return;
+    try{
+      const out = await api('/admin/settings/server/keys', { method:'POST' });
+      SRVSET = { ...SRVSET, settings: out.settings };
+      showToast(out.rotated ? `Rotated. New key ${out.kid}.` : `Generated key ${out.kid}.`);
+      renderServerSettings();
+    }catch(err){ showToast(err && err.message ? err.message : 'The key could not be generated.'); }
+  });
+
+  const secret = document.getElementById('srvsSecret');
+  if(secret) secret.addEventListener('click', async ()=>{
+    const first = !(SRVSET.settings.secret && SRVSET.settings.secret.set);
+    const ok = first ? true : await askConfirm({
+      title:'Regenerate the gateway secret?',
+      message:'The new secret is shown once. The old one keeps working for the overlap window, '
+        + 'so the gateway can be updated without a gap.',
+      confirmLabel:'Regenerate',
+    });
+    if(!ok) return;
+    try{
+      const out = await api('/admin/settings/server/secret', { method:'POST' });
+      SRVSET = { ...SRVSET, settings: out.settings };
+      SRVSET_ONCE = out.secret;
+      renderServerSettings();
+    }catch(err){ showToast(err && err.message ? err.message : 'The secret could not be generated.'); }
+  });
+
+  const test = document.getElementById('srvsSelfTest');
+  if(test) test.addEventListener('click', runServerSelfTest);
+
+  host.querySelectorAll('.srvs-map').forEach(b=>b.addEventListener('click', async ()=>{
+    const id = b.dataset.project;
+    const input = host.querySelector(`.srvs-folder[data-project="${id}"]`);
+    try{
+      const out = await api(`/admin/settings/server/mapping/${id}`, { method:'PATCH', body:{ folder: input ? input.value : '' } });
+      SRVSET = { ...SRVSET, mapping: out.mapping };
+      showToast(out.folder ? `Mapped to ${out.folder}.` : 'Cleared.');
+      renderServerSettings();
+    }catch(err){ showToast(err && err.message ? err.message : 'That folder could not be set.'); }
+  }));
+}
+
+/* The self-test. Forge answers the half it can see; the browser then does the
+   half only it can — reach the gateway over TLS, write a kilobyte into
+   .incoming/selftest and read it back. Each step says which thing is wrong. */
+async function runServerSelfTest(){
+  const out = document.getElementById('srvsTestOut');
+  if(out) out.innerHTML = '<p class="muted">Running…</p>';
+  let report;
+  try{ report = await api('/admin/settings/server/self-test', { method:'POST' }); }
+  catch(err){
+    if(out) out.innerHTML = `<p class="err-line">${escapeHTML(err && err.message || 'The self-test could not run.')}</p>`;
+    return;
+  }
+  const steps = [...report.steps];
+
+  if(report.probe && report.probe.gatewayUrl){
+    const origin = (()=>{ try{ return new URL(report.probe.gatewayUrl).origin; }catch{ return null; } })();
+    const transport = await srvDecideTransport();
+    steps.push({ key:'transport', ok:true,
+      detail: transport === 'direct'
+        ? 'This browser can reach the office server directly.'
+        : 'This browser needs the office link window (Chrome\'s local network permission).' });
+    const health = await srvCall('/health', {});
+    steps.push({ key:'reachable', ok: health.ok,
+      detail: health.ok ? `${origin} answered.` : 'The gateway could not be reached from this browser. Are you on the office network, and is the certificate trusted?' });
+    if(health.ok){
+      const body = new Blob([new Uint8Array(report.probe.bytes || 1024)]);
+      const put = await srvCall('/v1/selftest', { method:'PUT', token: report.probe.putToken, body });
+      steps.push({ key:'write', ok: put.ok, detail: put.ok ? `${put.data.bytes} bytes written into .incoming/selftest.` : ((put.data && put.data.error) || `The gateway answered ${put.status}.`) });
+      if(put.ok){
+        const got = await srvCall('/v1/selftest', { token: report.probe.getToken });
+        steps.push({ key:'read_back', ok: got.ok && got.data && got.data.bytes === put.data.bytes,
+          detail: got.ok ? `Read back ${got.data.bytes} bytes, checksum ${String(got.data.sha256 || '').slice(0,12)}…${got.data.cleaned ? ', and cleaned up.' : ''}` : ((got.data && got.data.error) || `The gateway answered ${got.status}.`) });
+      }
+    }
+  }
+  if(out) out.innerHTML = `<div class="srv-check">${steps.map(st=>
+    `<div class="srv-check-row"><span class="srv-tick ${st.ok ? 'yes' : 'no'}">${st.ok ? '✓' : '×'}</span>
+      <strong>${escapeHTML(st.key.replace(/_/g,' '))}</strong> — ${escapeHTML(st.detail || '')}</div>`).join('')}</div>`;
+}
 </script>
 <!-- The mobile shells' native half. Inert in a browser: everything in it
      is behind a check for the Capacitor bridge. Served rather than bundled

@@ -19,7 +19,7 @@
 const { v4: uuid } = require('uuid');
 const catalog = require('./permission-catalog');
 const { capabilitiesForTier } = require('./role-tiers');
-const { roleDef } = require('./roles');
+const { roleDef, roleKeys } = require('./roles');
 const roleGroups = require('./role-groups');
 
 // Permissions a role holds, as a Set. Null when the role is unknown.
@@ -385,7 +385,39 @@ async function audit(db, roleKey, limit = 100) {
   }));
 }
 
+/* EVERYBODY WHO HOLDS A KEY, as user rows.
+ *
+ * Worked out from the permission rather than from a role name, so granting the
+ * key to a second designation in Settings is the whole of adding somebody to
+ * whatever rota is being computed — no recipient list to maintain, nothing to
+ * keep in step. Reads effectiveFor() per role, which is the same answer
+ * authenticate() computes per request, so this cannot disagree with what the
+ * person's own session would say.
+ *
+ * src/routes/project-reviews.js has an older, local copy of this idea
+ * (queueWatchers). It is deliberately left where it is: it works, it is
+ * covered, and rewriting a notification path in a feature that has nothing to
+ * do with project reviews is how unrelated things break together. New callers
+ * come here.
+ */
+async function usersWithPermission(db, key, { activeOnly = true } = {}) {
+  const holding = [];
+  for (const role of roleKeys()) {
+    const held = await effectiveFor(db, role).catch(() => null);
+    if (held && held.has(key)) holding.push(role);
+  }
+  if (!holding.length) return [];
+  const { rows } = await db.query(
+    `SELECT id, \`name\`, email, \`role\` FROM users
+      WHERE \`role\` IN ($1) ${activeOnly ? 'AND is_active = 1' : ''}
+      ORDER BY \`name\``,
+    [holding]
+  );
+  return rows;
+}
+
 module.exports = {
+  usersWithPermission,
   TL_REVIEW_GROUPS,
   forRole, defaultsFor, seedRole, topUpRole, ownFor, effectiveFor, all, setForRole, audit,
   lockedFor, isSuperAdmin, SUPER_ADMIN_LOCKED,

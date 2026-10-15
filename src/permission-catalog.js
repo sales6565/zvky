@@ -1264,6 +1264,87 @@ const GROUPS = [
     ],
   },
   {
+    /* THE OFFICE FILE SERVER.
+     *
+     * Its own group because it is its own place: the Server tab browses a share
+     * in the studio's building, which no other permission in this catalogue
+     * touches. The keys are split the way the actions differ in consequence —
+     * reading a folder, taking a copy out, putting one in, and asking for
+     * something to be deleted are four different decisions, and a studio will
+     * want to give the third to artists and the fourth to nobody.
+     *
+     * EVERY ONE DEFAULTS TO SUPER ADMIN, through managePermissions, and that is
+     * unusual in this catalogue — most keys ride in on manageSettings or
+     * manageUsers. The reason is that on the day this ships nobody has
+     * installed a gateway yet: a studio that upgrades finds the tab hidden and
+     * the feature inert, and grants the keys when the office machine is
+     * actually there. Defaulting server.download to every lead would hand out
+     * access to a file share on the strength of a role somebody set up for a
+     * different purpose last year.
+     *
+     * They are all grantable per role and through role groups, like everything
+     * else here. Super Admin only is the default, not a ceiling. */
+    key: 'server',
+    label: 'Office File Server',
+    permissions: [
+      {
+        key: 'server.view',
+        label: 'Open the Server Tab',
+        impliedBy: has('managePermissions'),
+        describe: 'See the Server tab and browse the folders of projects this role can already see, '
+          + 'plus any shared folders. Scoped by the same project rules as the rest of the app.',
+      },
+      {
+        key: 'server.download',
+        label: 'Download Files',
+        impliedBy: has('managePermissions'),
+        describe: 'Take a copy of a file from the office server. The file is served by the office '
+          + 'machine straight to the browser — it never passes through this server.',
+      },
+      {
+        key: 'server.upload',
+        label: 'Upload Files and Create Folders',
+        impliedBy: has('managePermissions'),
+        /* One key for both because they are one action in practice: an upload
+           into a folder that does not exist yet creates it, and a studio that
+           wanted uploads without folders would get an upload that fails on the
+           first new scene. */
+        describe: 'Copy files to the office server and create folders there. Nothing can be '
+          + 'overwritten, renamed or moved — a file whose name is taken is stored as '
+          + '"name (2).ext" instead.',
+      },
+      {
+        key: 'server.request_delete',
+        label: 'Request a Deletion',
+        impliedBy: has('managePermissions'),
+        describe: 'Ask for a file or folder to be deleted, with a reason. Nothing is deleted by '
+          + 'Forge — the request is a message to whoever looks after the server.',
+      },
+      {
+        key: 'server.manage_requests',
+        label: 'Resolve Deletion Requests',
+        impliedBy: has('managePermissions'),
+        describe: 'See every deletion request and mark it done or declined. Marking one done '
+          + 'records that somebody removed the file on the server; it deletes nothing here.',
+      },
+      {
+        key: 'server.browse_all',
+        label: 'Browse the Whole Share',
+        impliedBy: has('managePermissions'),
+        danger: true,
+        describe: 'Browse every folder on the office server, not only the ones for this role\'s '
+          + 'projects. Intended for whoever administers the share.',
+      },
+      {
+        key: 'server.view_audit',
+        label: 'View the Server Audit Trail',
+        impliedBy: has('managePermissions'),
+        describe: 'Who listed, downloaded or uploaded what, and when. The trail records actions '
+          + 'on paths; it is not a copy of what is on the server.',
+      },
+    ],
+  },
+  {
     /* The Dev & QA integration.
      *
      * ITS OWN GROUP, not a corner of Settings / Admin, for the same reason Chat and
@@ -1399,6 +1480,19 @@ const GROUPS = [
         describe: 'The Theme section: every colour the application draws, with a live '
           + 'contrast check, named presets and a one-click revert. Read access needs no '
           + 'permission \u2014 the sign-in screen wears the theme too.',
+      },
+      {
+        key: 'settings.server.manage',
+        label: 'Manage the Office File Server',
+        /* Super Admin only, through managePermissions rather than
+           manageSettings, and deliberately the narrowest default in this group.
+           This screen holds the gateway's address, the token signing key and
+           the gateway secret: somebody who can edit it can point the studio's
+           file traffic at a machine of their choosing. That is a different
+           order of thing from renaming a priority. */
+        impliedBy: has('managePermissions'),
+        describe: 'The Server section: the gateway address, the signing key and secret, the size '
+          + 'and extension rules, the project\u2011to\u2011folder mapping, and the self\u2011test.',
       },
       {
         key: 'settings.branding',

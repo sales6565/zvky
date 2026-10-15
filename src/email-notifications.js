@@ -459,6 +459,91 @@ async function reminder(db, { recipientId, kind, subjectDate, sentence, origin }
   }
 }
 
+/* THE OFFICE FILE SERVER: a deletion request, and its answer.
+ *
+ * Email as well as in-app because of what the request is: a file somebody
+ * wants gone, which somebody else has to walk over to a machine and delete.
+ * That is not a bell notification, it is a job, and it can wait a day in a bell
+ * without anybody noticing. In-app is always raised; this half is the switch an
+ * admin can turn off in Settings → Server.
+ *
+ * NO PATH IS A SECRET HERE but no CONTENT is included either: the mail names the
+ * path, the reason and who asked, and nothing from inside the file. Nothing is
+ * attached — there is no file on this server to attach.
+ */
+async function deletionRequested(db, { recipients, actor, path: target, type, reason, requestId, origin }) {
+  try {
+    if (!emailConfig.isUsable()) return { queued: 0, reason: 'email_off' };
+    let queued = 0;
+    for (const person of recipients || []) {
+      if (!person || !person.id || (actor && person.id === actor.id)) continue;
+      const to = await recipient(db, person.id);
+      if (!to) continue;
+      const message = deletionRequestedMessage({ actor, path: target, type, reason, origin });
+      const result = await emailOutbox.enqueue(db, { to: to.email, ...message });
+      if (result && result.ok) queued += 1;
+    }
+    return { queued, reason: null, requestId };
+  } catch (err) {
+    console.warn(`[email] deletion request mail failed: ${err.message}`);
+    return { queued: 0, reason: 'error' };
+  }
+}
+
+async function deletionResolved(db, { requesterId, actor, path: target, status, note, origin }) {
+  try {
+    if (!emailConfig.isUsable()) return { queued: false, reason: 'email_off' };
+    const to = await recipient(db, requesterId);
+    if (!to) return { queued: false, reason: 'no_mailable_address' };
+    const result = await emailOutbox.enqueue(db, { to: to.email, ...deletionResolvedMessage({ actor, path: target, status, note, origin }) });
+    return result && result.ok ? { queued: true, id: result.id } : { queued: false, reason: (result && result.error) || 'not_queued' };
+  } catch (err) {
+    console.warn(`[email] deletion resolution mail failed: ${err.message}`);
+    return { queued: false, reason: 'error' };
+  }
+}
+
+function deletionRequestedMessage({ actor, path: target, type, reason, origin }) {
+  const name = appName();
+  return {
+    subject: `${name}: deletion requested on the office file server`,
+    ...shell({
+      heading: 'Somebody asked for a file to be deleted',
+      lead: `${(actor && actor.name) || 'Somebody'} asked for a ${type === 'folder' ? 'folder' : 'file'} on the office `
+        + 'file server to be deleted. Nothing has been deleted — this is a request.',
+      rows: [
+        { label: type === 'folder' ? 'Folder' : 'File', value: target },
+        { label: 'Reason', value: reason },
+        { label: 'Asked by', value: (actor && actor.name) || null },
+        { label: 'Open', value: origin ? String(origin) : null },
+      ],
+      footer: footerLine(),
+    }),
+  };
+}
+
+function deletionResolvedMessage({ actor, path: target, status, note, origin }) {
+  const name = appName();
+  const done = status === 'done';
+  return {
+    subject: done
+      ? `${name}: your deletion request was carried out`
+      : `${name}: your deletion request was declined`,
+    ...shell({
+      heading: done ? 'The file was removed on the office server' : 'Your deletion request was declined',
+      lead: done
+        ? `${(actor && actor.name) || 'An admin'} removed it on the office server itself.`
+        : `${(actor && actor.name) || 'An admin'} decided not to delete it.`,
+      rows: [
+        { label: 'Path', value: target },
+        { label: 'Note', value: note || null },
+        { label: 'Open', value: origin ? String(origin) : null },
+      ],
+      footer: footerLine(),
+    }),
+  };
+}
+
 /* The two reminder messages.
  *
  * ONE SHELL, TWO SUBJECTS, and the body's first line is the sentence that was
@@ -514,6 +599,7 @@ function testMessage({ to, byName }) {
 
 module.exports = {
   queueAssignment, flushAll, taskSubmitted, testMessage, reminder,
+  deletionRequested, deletionResolved, deletionRequestedMessage, deletionResolvedMessage,
   // exported for the tests, which assert on the rendered strings
   assignedMessage, submittedMessage, reminderMessage, submissionRecipients, recipient, BATCH_MS,
 };

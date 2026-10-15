@@ -36,6 +36,9 @@ const timesheetOptionRoutes = require('./routes/timesheet-options');
 const chatSettingsRoutes = require('./routes/chat-settings');
 const nudgeRoutes = require('./routes/nudges');
 const leaveSettingsRoutes = require('./routes/leave-settings');
+const serverTabRoutes = require('./routes/server');
+const serverSettingsRoutes = require('./routes/server-settings');
+const gatewayRoutes = require('./routes/gateway');
 const misAccessRoutes = require('./routes/mis-access');
 const outsourceRoutes = require('./routes/outsource');
 const activityRoutes = require('./routes/activity');
@@ -97,6 +100,11 @@ app.use(ipGate.middleware);
    route's parsing is byte-for-byte what it was. See
    src/middleware/integration-body.js. */
 app.use('/api/integration', integrationBody.capture, integrationBody.parse);
+/* The office file gateway signs its calls over the bytes that arrived, exactly
+   as the integration API does, so it needs the same raw capture ahead of the
+   global parser. Same middleware, same scoping, same reason — see the note
+   above and src/middleware/integration-body.js. */
+app.use('/api/gateway', integrationBody.capture, integrationBody.parse);
 
 app.use(express.json());
 
@@ -185,6 +193,15 @@ app.use('/api/admin/settings/nudges', nudgeRoutes);
 /* Settings -> Leave: the master switch over Leave & Idle and the two times that
    divide a half-day. Its own key, settings.leave.manage — see the route. */
 app.use('/api/admin/settings/leave', leaveSettingsRoutes);
+app.use('/api/admin/settings/server', serverSettingsRoutes);
+/* The Server tab, and the gateway's own channel. Two routers rather than one
+   because they are authenticated in completely different ways: /api/server is
+   a signed-in person with server.* permissions, /api/gateway is a machine with
+   an HMAC and no session at all. Mounting them together would have meant one
+   router deciding per-route which kind of caller it had, which is exactly the
+   mistake that leaves one route checking neither. */
+app.use('/api/server', serverTabRoutes);
+app.use('/api/gateway', gatewayRoutes);
 /* The integration's management screen. Its own mount under /api/admin, and every route
    in it behind settings.integrations — which is not grantable to anybody but the Super
    Admin, because issuing a key grants data access no designation limits. */

@@ -81,10 +81,18 @@ test('the catalogue covers the groups that were asked for', () => {
      it — settings.integrations sits in Settings / Admin, because every key here lives in
      the group its prefix names and a settings.* key elsewhere would be the first
      exception. */
+  /* Office File Server is its own group, and on the same reasoning again: it
+     governs a share in the studio's building, which nothing else in this
+     catalogue touches, and the four everyday powers over it — look, take a copy
+     out, put one in, ask for a deletion — differ enough in consequence that a
+     studio will hand them out separately. Its SCREEN permission is not in it
+     either: settings.server.manage sits in Settings / Admin, beside the other
+     screens, exactly as settings.integrations does. */
   assert.deepStrictEqual(catalog.GROUPS.map((g) => g.label), [
     'User Management', 'Asset Management', 'Review Workflow',
     'Project Management', 'Client Management', 'Reports', 'Time Sheet',
-    'Chat', 'Profit & Loss', 'Outsourcing', 'Dev & QA Integration', 'Settings / Admin',
+    'Chat', 'Profit & Loss', 'Outsourcing', 'Office File Server',
+    'Dev & QA Integration', 'Settings / Admin',
   ]);
 
   // Every key sits in the group its prefix names. Asserted rather than assumed, because

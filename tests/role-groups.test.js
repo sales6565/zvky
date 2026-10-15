@@ -62,11 +62,23 @@ const MANAGE = 'settings.role_groups';
  * somebody may already have reported on, and deciding the studio has the
  * feature at all moves every future half-day at once. Four powers, four keys.
  *
+ * AND NOW THE EIGHT OFFICE FILE SERVER KEYS. Seven for the tab and one for the
+ * screen that configures it, and they are eight rather than one for the reason
+ * this file keeps pinning: reading a folder, taking a copy of a file out,
+ * putting one in, asking for a deletion, answering those asks, browsing the
+ * whole share, reading the audit trail, and holding the gateway's keys are
+ * eight different powers over a file server in the studio's building. They all
+ * start at Super Admin for a reason specific to this feature: on the day it
+ * ships no gateway exists, so the tab is hidden and the keys are granted once
+ * the office machine is actually there.
+ *
  * Each one must reach Super Admin and nobody else, which is this studio's
  * standing rule for a new permission; the snapshot comparison below subtracts
  * exactly these. */
 const SINCE_SNAPSHOT = [MANAGE, 'settings.email_delivery', 'report.remind', 'settings.nudges',
-  'followup.mark_leave', 'followup.mark_idle', 'followup.mark_past_dates', 'settings.leave.manage'];
+  'followup.mark_leave', 'followup.mark_idle', 'followup.mark_past_dates', 'settings.leave.manage',
+  'server.view', 'server.download', 'server.upload', 'server.request_delete',
+  'server.manage_requests', 'server.browse_all', 'server.view_audit', 'settings.server.manage'];
 
 test('every key added since the snapshot is Super Admin only', () => {
   const added = catalog.KEYS.filter((k) => !SNAPSHOT.roles.super_admin.includes(k));
