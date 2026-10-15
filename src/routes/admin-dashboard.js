@@ -178,6 +178,23 @@ function locate(payload, { kind, userId }) {
   const list = kind === reminders.KINDS.start ? payload.notStarted : payload.notFilled;
   const row = (list.rows || []).find((r) => r.id === userId);
   if (row) return { row };
+
+  /* THE GRACE PERIOD EMPTIES LIST 1 WITHOUT CLEARING ANYBODY, which is the one
+     case where "not on the list" means neither of the two below. A list drawn at
+     09:31 is the whole studio, so src/follow-up.js holds it back for the first
+     hour — and somebody asking at 09:45 deserves that sentence rather than being
+     told they are out of scope. No button is drawn during the hour, so only a
+     hand-made request arrives here; it is answered honestly all the same. */
+  if (kind === reminders.KINDS.start && payload.grace && payload.grace.holds) {
+    return {
+      code: reminders.CODES.clock_shut,
+      message: payload.grace.clockShut
+        ? 'The studio’s clock is not open today, so there is nothing to have started yet.'
+        : `Nobody is listed until the studio has been open ${payload.grace.minutes} minutes — `
+          + 'before that, "has not started" only means "has not arrived yet".',
+    };
+  }
+
   const cleared = ((payload.cleared || {})[kind] || []).find((p) => p.id === userId);
   if (cleared) {
     return {

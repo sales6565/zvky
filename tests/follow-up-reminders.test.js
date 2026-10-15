@@ -538,6 +538,28 @@ test('the notice travels on the existing notification path, with two new kinds',
   assert.match(PAGE, /timesheet_reminder: *'[^']+'/);
 });
 
+test('a role group can grant the sending key, like any other grantable one', () => {
+  /* ROLE GROUPS ARE AN ADDITIVE LAYER (src/role-groups.js), so a studio with a
+     "Leads" group hands this out once rather than designation by designation.
+     Only two keys in the catalogue may never travel that way — the two that
+     would let a group widen its own reach — and this is not one of them. */
+  const roleGroups = require('../src/role-groups');
+  assert.ok(!roleGroups.NEVER_GRANTABLE.includes('report.remind'));
+  assert.deepStrictEqual(roleGroups.NEVER_GRANTABLE, ['settings.permissions', 'settings.role_groups']);
+  assert.ok(catalog.grantableKeys().includes('report.remind'));
+});
+
+test('the grace period is its own answer, not a scope refusal', () => {
+  /* A list held back for the studio's first hour is empty without anybody
+     having been cleared, which is the one case where "not on the list" means
+     neither "they have started" nor "they are not yours". */
+  const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'admin-dashboard.js'), 'utf8');
+  assert.match(route, /THE GRACE PERIOD EMPTIES LIST 1 WITHOUT CLEARING ANYBODY/);
+  const graceAt = route.indexOf('payload.grace && payload.grace.holds');
+  const clearedAt = route.indexOf('const cleared = ((payload.cleared');
+  assert.ok(graceAt > 0 && clearedAt > graceAt, 'and it is answered before either of those');
+});
+
 test('the daily cap is enforced by a key, and the key spans the slot', () => {
   /* WHY A KEY AND NOT A COUNT: two leads clicking in the same instant both read
      "nobody has been reminded" and both send. The gap between the check and the
