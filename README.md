@@ -3096,11 +3096,28 @@ reminder does **not** spend the manual cap — the studio's own nudge must not
 stop a lead adding a word at eleven — and the lead can see it went out before
 deciding.
 
-**The row says who sent it, to every lead who can see the list** ("Reminded
-today 11:05 by Priya"), with the button disabled and the reason on it — as a
-tooltip, as visible text, and through `aria-describedby`, because a tooltip is
-not reachable by keyboard. That is the whole point of putting it on the row
-rather than in the clicker's own session.
+**The row says it has been reminded, to every lead who can see the list** — and
+it says so on the button itself, which reads **"Reminded 11:05am"** and is
+disabled. Who sent it is in the button's tooltip and in its accessible name
+("Reminded today 11:05am by Priya."). That is the whole point of putting it on
+the row rather than in the clicker's own session.
+
+It used to be a sentence of its own, beside the button, and it was moved onto the
+button because a row is not elastic: the badges, the figure, the streak chip, that
+sentence, the button and the server's refusal were six things on one strip, and
+the only one that could give was the block holding the person's name — so the
+name shrank to a few characters wide, overflowed its box and was drawn
+underneath the badges. The state is *about* the button, so it is now the
+button's label, and the right-hand side of a row is the same width whether or
+not anybody has been reminded.
+
+Every other refusal — out of scope, outside hours, the day is not over — is
+still printed in words beside the button, as a tooltip and through
+`aria-describedby`, because a tooltip is not reachable by keyboard. **One is
+not**: "… has already been reminded today" is the same fact the button is
+already showing, so it stays in the DOM for `aria-describedby` but is hidden
+(class `sr`) rather than drawn a second time. `tests/follow-up-layout.test.js`
+measures all of this in a real browser; see **Tests**.
 
 **Remind all** asks in the page — this application has no native dialogs — and
 states the exact number who will be reminded and how many will be skipped, by
@@ -5272,6 +5289,22 @@ of 1797 passing, about 16 minutes.** That is the honest cost of the cap, and it 
 trade — a boot timeout is a capacity problem, and capping concurrency is the remedy for it,
 whereas raising a deadline only hides which suite is starving. Override with
 `TEST_CONCURRENCY=4 npm test` on a bigger machine.
+
+**One file needs a browser rather than a database.** `tests/follow-up-layout.test.js`
+measures the "People to follow up" row in Chromium: an overlap is a fact about a layout,
+so the only honest test of one is a layout. It drives the page's real stylesheet and the
+real row markup through `playwright-core` (a devDependency — no browser is downloaded)
+and asserts from bounding boxes that no two non-nested elements in a row intersect at
+1280, 1440 or 1920 px, that the Remind button is drawn over nothing anywhere on the
+page, that no name or designation is broken mid-word, and that the page never scrolls
+sideways. It needs a Chromium binary and looks for one at `$CHROMIUM_PATH`,
+`$PLAYWRIGHT_BROWSERS_PATH/chromium`, `/opt/pw-browsers/chromium`, `/usr/bin/chromium`,
+`/usr/bin/chromium-browser` and `/usr/bin/google-chrome`; without one — or on a
+production install made with `--omit=dev` — it skips with a reason instead of failing.
+The webfonts are not loaded (the stylesheet `@import`s them from Google and the test
+blocks every outbound request), which makes it stricter rather than weaker: nothing in
+it asserts a pixel width, only that boxes clear each other in whatever font the engine
+falls back to.
 
 The policy tests are pure and always run. The endpoint tests need a database and
 are skipped unless you name one, which is **dropped and recreated** on every

@@ -831,19 +831,49 @@ test('a refused reminder is disabled WITH the server\'s reason, reachable by key
 
   const button = h.nodes().find((n) => 'fuRemind' in n.dataset);
   assert.ok(button.disabled, 'the button is out of the tab order');
-  /* THE REASON IS IN THREE PLACES and that is deliberate: the title for a
-     mouse, a real element for a screen reader through aria-describedby, and
-     visible text for everybody else. A tooltip alone is not reachable by
-     keyboard. */
-  assert.strictEqual(button.attrs.title, 'Ana has already been reminded today.');
-  assert.match(html, /aria-describedby="fu_rd_timesheet_u-1"/);
-  assert.match(html, /<span class="fu-reason" id="fu_rd_timesheet_u-1">Ana has already been reminded today\./);
 
-  /* WHO SENT IT AND WHEN, visible to every lead who can see the list — which is
-     the whole reason it is on the row rather than in the clicker's own session. */
-  assert.match(html, /Reminded today 11:05am by Priya/);
+  /* THE BUTTON IS THE STATE. "Reminded 11:05am", so every lead who can see the
+     list can see that somebody has already nudged this person — which is the
+     whole reason it is on the row rather than in the clicker's own session. */
+  assert.match(html, />Reminded 11:05am</);
+
+  /* WHO SENT IT IS IN THE TOOLTIP AND IN THE ACCESSIBLE NAME, which is where
+     the brief for Prompt 47 put it: on the row it was a fifth thing competing
+     for one strip of space and it pushed the name into the badges. */
+  assert.strictEqual(button.attrs.title,
+    'Reminded today 11:05am by Priya. Ana has already been reminded today.');
+  assert.match(button.attrs['aria-label'], /Reminded today 11:05am by Priya\./);
+
+  /* THE REASON IS STILL A REAL ELEMENT for aria-describedby — a tooltip alone
+     is not reachable by keyboard — but it is HIDDEN (class "sr"), because the
+     button beside it is already saying the same thing in fewer words. */
+  assert.match(html, /aria-describedby="fu_rd_timesheet_u-1"/);
+  assert.match(html, /<span class="fu-reason sr" id="fu_rd_timesheet_u-1">Ana has already been reminded today\./);
+  assert.ok(!/<span class="fu-reason" id="fu_rd_timesheet_u-1">/.test(html),
+    'and it is never drawn as a second visible sentence');
+  assert.ok(!/Reminded today 11:05am by Priya<\/span>/.test(html),
+    'nor is the reminded sentence drawn inline on the row');
+
   /* AND WHETHER THE STUDIO'S OWN REMINDER HAS ALREADY GONE OUT TODAY. */
   assert.match(html, /Auto reminder sent 10:30am/);
+});
+
+test('a refusal that is NOT the cap keeps its visible sentence', () => {
+  /* The cap is the one refusal the button itself announces. Every other one —
+     out of scope, outside hours, the day is not over — is a sentence the reader
+     has no other way to get, so it stays on the row in words. */
+  const row = remindRow({ remind: {
+    kind: 'timesheet', subjectDate: TUE, permitted: true, may: false,
+    code: 'out_of_scope', reason: 'Ana is not on any project you can see.',
+    sent: 0, cap: 1, last: null, auto: null,
+  } });
+  const h = pageHarness({ payload: remindPayload([row]) });
+  h.paintFollowUp();
+  assert.match(h.captured.html,
+    /<span class="fu-reason" id="fu_rd_timesheet_u-1">Ana is not on any project you can see\./);
+  const button = h.nodes().find((n) => 'fuRemind' in n.dataset);
+  assert.ok(button.disabled);
+  assert.match(h.captured.html, />Remind</, 'and the button still reads "Remind", not "Reminded"');
 });
 
 test('MUTATION 6b — one click, one request: the button cannot be submitted twice', async () => {
@@ -891,16 +921,17 @@ test('after a send the row carries what the server returned, and survives a redr
   await h.sendReminder('timesheet', 'u-1');
 
   assert.match(h.captured.html, /Reminded · emailed/, 'the result is said on the row');
-  assert.match(h.captured.html, /Reminded today 11:05am by Priya/);
+  assert.match(h.captured.html, />Reminded 11:05am</, 'and the button has taken the sent state');
   const button = h.nodes().find((n) => 'fuRemind' in n.dataset);
   assert.ok(button.disabled, 'and the button is disabled with the reason on it');
+  assert.match(button.attrs.title, /by Priya/);
 
   /* IT SURVIVES THE TIMED REFRESH because it is not a guess: the row in module
      state IS the server's row, so the next draw — from the cache or from a new
      payload — says the same thing. Painted again here with nothing else
      touched. */
   h.paintFollowUp();
-  assert.match(h.captured.html, /Reminded today 11:05am by Priya/);
+  assert.match(h.captured.html, />Reminded 11:05am</);
   assert.strictEqual(h.get().notFilled.rows[0].remind.code, 'capped');
 });
 

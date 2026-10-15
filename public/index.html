@@ -984,7 +984,11 @@ tr.past-round{opacity:0.62;}
    Built from the same tokens as everything else: --surface for a panel,
    --border for its edge, the workflow colours for the pipeline bars, and the
    three severity tones below. Nothing here introduces a new palette. */
-.ad-wrap{max-width:1180px;padding:4px 0 40px;}
+/* The dashboard column. 1320px, not 1180: #app is capped at 1400 with 24px of
+   padding on each side, so 1352px is the widest a child can be before the
+   page itself would scroll sideways — this sits inside that with room, and
+   the two follow-up lists get ~650px each instead of ~580. */
+.ad-wrap{max-width:1320px;padding:4px 0 40px;}
 .ad-head{margin-bottom:22px;}
 .ad-head h1{font-size:27px;margin:0 0 5px;letter-spacing:-.3px;font-weight:600;}
 .ad-sub{font-size:13px;color:var(--ink-muted);}
@@ -1132,18 +1136,44 @@ tr.past-round{opacity:0.62;}
   padding-bottom:7px;border-bottom:1px solid var(--border);margin-bottom:4px;}
 .fu-list-head h3{font-family:'Space Grotesk';font-size:12.5px;margin:0;font-weight:600;}
 .fu-for{font-size:10.5px;color:var(--ink-faint);font-family:'IBM Plex Mono';}
-.fu-row{display:flex;align-items:center;gap:9px;padding:8px 0;border-bottom:1px solid var(--border);}
+/* THE ROW IS TWO BLOCKS, and the reason is an overlap this layout used to have.
+   Every badge, figure, chip and button was once a direct child of the row with
+   flex:none, so when their total outgrew the row the only thing that could give
+   was .fu-who — and a div that shrinks does not take its text with it, so a
+   name wrapped onto three lines and a designation ran underneath the badges.
+   Now: ONE left block that may shrink (min-width:0, and the one line inside it
+   that must not wrap is clipped with an ellipsis) and ONE right block that may
+   not (flex:0 0 auto). The row wraps, so when the two cannot share a line the
+   right block drops to the next one and the row grows taller. Nothing overlaps
+   at any width because nothing is ever asked to occupy space it does not have. */
+.fu-row{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;
+  padding:8px 0;border-bottom:1px solid var(--border);}
 .fu-row:last-child{border-bottom:0;}
-.fu-who{flex:1;min-width:0;}
+.fu-who{flex:1 1 210px;min-width:0;}
+.fu-side{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;
+  flex:0 0 auto;gap:7px;margin-left:auto;max-width:100%;}
 /* A button, not a div with a click: focusable in order, Enter and Space for
    free, announced as a button, and the label says where it goes. Drawn as plain
    text instead wherever the viewer cannot open a user — see renderFollowUp. */
+/* A NAME WRAPS AT ITS SPACES. "Siddhartha Venkataraghavan Mandal" becomes two
+   lines and the row grows taller; it never becomes "Siddhar / tha".
+   word-break:normal says a word that fits on a line is never cut. overflow-wrap
+   is the safety valve under it, and it is break-word rather than normal on
+   purpose: a single token too long for the column has to go SOMEWHERE, and
+   inside its own box on two lines is the one choice that cannot end up drawn
+   over the badges beside it. Both are stated rather than left to the default
+   because a <button> is a control whose wrapping the engines have not always
+   agreed on, and because .ca-body further up this sheet sets
+   word-break:break-word — one careless selector away from reaching here. */
 .fu-name{background:none;border:0;padding:0;text-align:left;font-family:'Inter',sans-serif;
-  font-size:12.5px;color:var(--ink);cursor:pointer;}
+  font-size:12.5px;color:var(--ink);cursor:pointer;display:block;max-width:100%;
+  white-space:normal;word-break:normal;overflow-wrap:break-word;line-height:1.35;}
 .fu-name:hover{color:var(--brand-accent);text-decoration:underline;}
 .fu-name:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px;border-radius:4px;}
-.fu-name-plain{font-size:12.5px;color:var(--ink);}
-.fu-role{font-size:10.5px;color:var(--ink-faint);margin-top:1px;}
+.fu-name-plain{font-size:12.5px;color:var(--ink);display:block;max-width:100%;
+  white-space:normal;word-break:normal;overflow-wrap:break-word;line-height:1.35;}
+.fu-role{font-size:10.5px;color:var(--ink-faint);margin-top:1px;
+  word-break:normal;overflow-wrap:break-word;}
 .fu-held{font-size:10.5px;color:var(--ink-muted);font-family:'IBM Plex Mono';flex:none;white-space:nowrap;}
 .fu-both{font-size:9.5px;letter-spacing:.5px;text-transform:uppercase;font-family:'IBM Plex Mono';
   color:var(--brand-accent);border:1px solid var(--brand-accent);border-radius:20px;
@@ -1171,11 +1201,21 @@ tr.past-round{opacity:0.62;}
 .fu-remind:hover:not(:disabled){border-color:var(--brand-accent);color:var(--brand-accent);}
 .fu-remind:focus-visible{outline:2px solid var(--focus-ring);outline-offset:1px;}
 .fu-remind:disabled{opacity:.5;cursor:not-allowed;}
-.fu-reminded{font-size:10px;color:var(--success-ink);font-family:'IBM Plex Mono';white-space:nowrap;}
+/* "Reminded 11:59am" IS THE BUTTON NOW, not a sentence beside it — see
+   fuRemind. The state belongs to the control it is about, it cannot collide
+   with the control it used to sit next to, and the row keeps one line of
+   right-hand furniture whether or not anybody has been reminded. */
+.fu-remind.is-done{color:var(--success-ink);border-color:var(--success-wash-t30);}
+.fu-remind.is-done:disabled{opacity:.85;}
 .fu-auto{font-size:10px;color:var(--info-ink);font-family:'IBM Plex Mono';white-space:nowrap;cursor:help;}
 /* The refusal, in words, beside the disabled button — because a title is not
-   reachable by keyboard and this is also the button's aria-describedby. */
-.fu-reason{font-size:10px;color:var(--ink-faint);max-width:200px;line-height:1.4;}
+   reachable by keyboard and this is also the button's aria-describedby.
+   ONE REFUSAL IS NEVER DRAWN: "has already been reminded today" is the same
+   fact the button itself is now showing, so it is carried only as the title
+   and the aria description (class "sr" alongside this one) and never as a
+   second sentence competing with the button for the same strip of row. */
+.fu-reason{font-size:10px;color:var(--ink-faint);max-width:200px;line-height:1.4;
+  overflow-wrap:break-word;}
 .fu-sent{font-size:10px;color:var(--success-ink);font-family:'IBM Plex Mono';}
 .fu-sent.is-err{color:var(--danger-ink);}
 .fu-list-actions{display:flex;align-items:center;gap:8px;padding:6px 0 2px;}
@@ -1366,8 +1406,10 @@ tr.past-round{opacity:0.62;}
   .fu-lists{grid-template-columns:1fr;gap:18px;}
   .fu-presets{width:100%;}
   .fu-preset{flex:1;padding:5px 4px;}
-  .fu-row{flex-wrap:wrap;gap:4px 9px;}
+  /* The row already wraps at every width; on a phone the two blocks are given
+     the whole width each rather than being left to share one. */
   .fu-who{flex-basis:100%;}
+  .fu-side{flex-basis:100%;justify-content:flex-start;margin-left:0;}
   /* The control and its explanation get the full width rather than being
      squeezed into a corner — a disabled button whose reason has been clipped is
      a button with no reason at all. */
@@ -14317,17 +14359,23 @@ function fuRow(r, heldLabel, d){
         aria-label="Open ${escapeHTML(r.name)} in Users">${escapeHTML(r.name)}</button>`
     : `<span class="fu-name-plain">${escapeHTML(r.name)}</span>`;
   const kind = (r.remind && r.remind.kind) || 'start';
+  /* TWO BLOCKS AND NOT NINE SIBLINGS. Everything that identifies the person is
+     in .fu-who, which may shrink; everything that is furniture is in .fu-side,
+     which may not. See the note on .fu-row: as nine siblings the badges could
+     only be fitted by squeezing the name until its text ran underneath them. */
   return `<div class="fu-row" data-fu-row="${escapeHTML(r.id)}">
     <div class="fu-who">
       ${name}
       <div class="fu-role">${escapeHTML(role)}</div>
       ${fuActivity(r, d)}
     </div>
-    ${r.both ? '<span class="fu-both" title="On both lists">both</span>' : ''}
-    ${r.missed > 1 ? `<span class="fu-missed">${Number(r.missed)} days</span>` : ''}
-    ${fuHeld(r, heldLabel, kind)}
-    ${fuStreak(r, d)}
-    ${fuRemind(r, d)}
+    <div class="fu-side">
+      ${r.both ? '<span class="fu-both" title="On both lists">both</span>' : ''}
+      ${r.missed > 1 ? `<span class="fu-missed">${Number(r.missed)} days</span>` : ''}
+      ${fuHeld(r, heldLabel, kind)}
+      ${fuStreak(r, d)}
+      ${fuRemind(r, d)}
+    </div>
   </div>
   ${fuWaitingPanel(r, d, kind)}`;
 }
@@ -14543,15 +14591,27 @@ function fuStreak(r, d){
  *                     server's own `permitted` — the page gate is the
  *                     permission, never the tier, and the server has already
  *                     resolved the same key off the same list.
- *   already reminded  "Reminded 11:05 by Priya", visible to EVERY lead who can
- *                     see the list, with the button disabled and the reason on
- *                     it — so two leads do not both nudge one person.
+ *   already reminded  THE BUTTON ITSELF READS "Reminded 11:05am", disabled, with
+ *                     "by Priya" in its tooltip and in its accessible name.
+ *                     Visible to EVERY lead who can see the list, so two leads
+ *                     do not both nudge one person.
  *   refused           disabled, with the SERVER'S sentence as the tooltip and
  *                     as the aria description. Never a guess made here.
  *   sendable          a live button.
  *
- * THE DISABLED REASON IS ON THE BUTTON ITSELF, not only in a tooltip: title is
- * not reachable by keyboard and aria-describedby is, so both are set. */
+ * WHY THE STATE IS ON THE BUTTON AND NOT BESIDE IT. It used to be a sentence of
+ * its own — "Reminded today 11:59am by Akilesh K" — sitting inline between the
+ * streak chip and the button, with the server's "…has already been reminded
+ * today." printed after the button as well. Two sentences and a control on one
+ * strip of row is more than the strip holds: the name was squeezed until it
+ * wrapped and the refusal ran under the button. The fact is ABOUT the button,
+ * so it is now the button's label, and the row's right-hand side is the same
+ * width whether or not anybody has been reminded.
+ *
+ * THE DISABLED REASON IS STILL ON THE BUTTON ITSELF, not only in a tooltip:
+ * title is not reachable by keyboard and aria-describedby is, so both are set.
+ * The one refusal that is NOT also drawn as visible text is "already reminded
+ * today", because that is the sentence the button is already saying. */
 function fuRemind(r, d){
   const m = r.remind;
   if(!m) return '';
@@ -14564,22 +14624,40 @@ function fuRemind(r, d){
   const auto = m.auto
     ? `<span class="fu-auto" title="The studio's own reminder, not a person's">Auto reminder sent ${escapeHTML(fuClock(m.auto.at))}</span>`
     : '';
-  const already = m.last
-    ? `<span class="fu-reminded">Reminded today ${escapeHTML(fuClock(m.last.at))}`
-      + `${m.last.by ? ` by ${escapeHTML(m.last.by)}` : ''}</span>`
+
+  /* WHAT THE SERVER SAID HAPPENED TODAY, as one sentence, used as the tooltip
+     and as the accessible name — never as a line of its own on the row. */
+  const at = m.last ? fuClock(m.last.at) : '';
+  const sentence = m.last
+    ? `Reminded today ${at}${m.last.by ? ` by ${m.last.by}` : ''}.`
     : '';
 
   const disabled = sending || !m.may;
-  const label = sending ? 'Sending…' : 'Remind';
+  /* "Reminded 11:05am" ONLY WHEN THAT IS WHY THE BUTTON IS DEAD. With a daily
+     cap above one a second reminder is still allowed, and a button that said
+     "Reminded" while remaining clickable would be lying about its own state —
+     so that case reads "Remind again" and keeps the sentence in the tooltip. */
+  const done = Boolean(m.last) && !m.may && !sending;
+  const label = sending ? 'Sending…' : (done ? `Reminded ${at}` : (m.last ? 'Remind again' : 'Remind'));
   const reason = sending ? 'Sending the reminder.' : (m.may ? '' : (m.reason || ''));
+  /* THE CAP'S OWN SENTENCE IS NEVER VISIBLE TEXT — it is what the button is
+     already saying. It stays in the DOM, hidden the way every other
+     screen-reader-only string on this page is hidden (class "sr"), because
+     aria-describedby needs a real element to point at. */
+  const reasonHidden = Boolean(reason) && !sending && m.code === 'capped';
+  const title = [sentence, reason].filter(Boolean).join(' ') || '';
+  const aria = done
+    ? `${sentence} ${r.name} cannot be reminded again today.`
+    : `Remind ${r.name}`;
   return `<span class="fu-remind-wrap">
-    ${auto}${already}
-    <button type="button" class="fu-remind" data-fu-remind="${escapeHTML(r.id)}"
+    ${auto}
+    <button type="button" class="fu-remind${done ? ' is-done' : ''}" data-fu-remind="${escapeHTML(r.id)}"
       data-fu-kind="${escapeHTML(m.kind)}"
       ${disabled ? 'disabled' : ''}
-      ${reason ? `title="${escapeHTML(reason)}" aria-describedby="${descId}"` : ''}
-      aria-label="Remind ${escapeHTML(r.name)}">${label}</button>
-    ${reason ? `<span class="fu-reason" id="${descId}">${escapeHTML(reason)}</span>` : ''}
+      ${title ? `title="${escapeHTML(title)}"` : ''}
+      ${reason ? `aria-describedby="${descId}"` : ''}
+      aria-label="${escapeHTML(aria)}">${escapeHTML(label)}</button>
+    ${reason ? `<span class="fu-reason${reasonHidden ? ' sr' : ''}" id="${descId}">${escapeHTML(reason)}</span>` : ''}
     ${msg ? `<span class="fu-sent ${msg.kind === 'err' ? 'is-err' : ''}" role="status">${escapeHTML(msg.text)}</span>` : ''}
   </span>`;
 }
