@@ -217,8 +217,16 @@ test('the figure is read from the configured schedule, never from a number in th
   const body = fn.slice(0, fn.indexOf('\n}\n'));
   assert.ok(!/\b(?:570|1140|780|840)\b/.test(body),
     'dayTotalFor holds no clock minute of its own');
-  assert.match(body, /workingTime\.workingMsByDay\(from, to, schedule\(\)\)/,
+  /* IT ASKS THE SCHEDULE, ONCE — through src/day-status.js's countedMsByDay,
+     which IS workingMsByDay with the day's leave windows removed and is exactly
+     workingMsByDay when there are none. The call moved when leave arrived; the
+     property did not, and the property is what this line is for: one source for
+     the hours, the studio's own schedule handed to it, and no clock minute of
+     its own anywhere in the function. */
+  assert.match(body, /countedMsByDay\(from, to, \{ schedule: schedule\(\), windows: leaveWindows \}\)/,
     'it asks the schedule, once');
+  assert.match(body, /windowsForSpan\(db, userId, dayStart, dayEnd\)/,
+    'and the windows it subtracts are this person\'s, for this day');
   assert.ok(!/row\.seconds|Number\(row\.seconds\)/.test(body),
     'and never reads the stored seconds column');
 
