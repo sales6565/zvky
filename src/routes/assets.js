@@ -1208,20 +1208,50 @@ async function applyTransition(req, res, asset, verdict, { note, versionId, conn
      and additionally says which act it was part of. Falls back to the older
      INSERT on a deployment whose migration has not added the column, so a
      missing repair costs the batch link rather than the delivery. */
+  /* IN WHAT CAPACITY, for the transitions where the answer is not obvious.
+   *
+   * acted_via has been written since Prompt 36 on exactly one path — the
+   * game-feedback decision — and left null on every other, including the
+   * ordinary review. That was harmless while the only two answers were "the
+   * team" and "a Super Admin override", because the history showed neither.
+   * It stops being harmless with Acting Team Leads: "approved by Ravi" means
+   * something different when Ravi was standing in for the lead that fortnight,
+   * and the column is where that is recorded.
+   *
+   * ASKED ONLY FOR THE GATES IT IS ABOUT. tlGateAuthority answers "what got
+   * this person through the FIRST review gate", so asking it of a transition
+   * nobody reviews — an assignment, a delivery — would attach an answer to a
+   * question that was not asked. TL_GATED is the set of actions whose actor
+   * predicate is that gate; everything else keeps the null it has always had.
+   *
+   * NEVER FAILS THE MOVE. A label is worth less than the transition it
+   * describes, so a failure here leaves the column null and the work proceeds. */
+  let actedVia = null;
+  if (TL_GATED.has(verdict.action)) {
+    actedVia = await tlGateAuthority(req.user, asset).catch(() => null);
+  }
   const columns = 'id, asset_id, action, from_status, to_status, actor_id, actor_email, note, version_id, routed_to_id';
   const values = [uuid(), asset.id, verdict.action, asset.status, verdict.to, req.user.id, req.user.email,
     String(note || '').trim() || null, versionId || null, verdict.routedTo];
   try {
     await run.query(
-      `INSERT INTO asset_events (${columns}, batch_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-      [...values, batchId || null]
+      `INSERT INTO asset_events (${columns}, batch_id, acted_via) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [...values, batchId || null, actedVia]
     );
   } catch (err) {
     if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
-    await run.query(
-      `INSERT INTO asset_events (${columns}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-      values
-    );
+    try {
+      await run.query(
+        `INSERT INTO asset_events (${columns}, batch_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [...values, batchId || null]
+      );
+    } catch (err2) {
+      if (err2.code !== 'ER_BAD_FIELD_ERROR') throw err2;
+      await run.query(
+        `INSERT INTO asset_events (${columns}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        values
+      );
+    }
   }
 
   /* A game bug from Dev & QA moves with the asset: a fix submitted, sent back, or
@@ -2134,6 +2164,22 @@ router.delete('/:id/thumbnail', async (req, res) => {
    and tests/hold-visibility.test.js for the assertion that keeps the three
    readers equal. */
 const STARTABLE = workflow.WORKING_STATUSES;
+
+/* The authorities tlGateAuthority can record, as the words a reader sees.
+ * 'team_lead' has no label on purpose: it is the ordinary case and the history
+ * has never annotated it, so saying "(Team Lead)" on every approval the studio
+ * has ever made would be new noise on old rows. Only the two capacities that
+ * are NOT the ordinary case are named. */
+/* The transitions whose actor predicate IS the first review gate — see the
+   `teamLead` and `gameFeedbackLead` entries in src/asset-workflow.js. Only
+   these record what got somebody through it. */
+const TL_GATED = new Set(['tl_approve', 'tl_request_changes', 'tl_to_cd', 'relay',
+  'game_feedback_pass', 'game_feedback_decline']);
+
+const ACTED_VIA_LABELS = {
+  acting_team_lead: 'Acting TL',
+  full_access_override: 'Super Admin override',
+};
 
 /* The two stages that sit with somebody else until they are handed over, and the sentence
    each needs. CD Feedbacks waits on the lead relaying the director's notes; a game bug
@@ -3790,6 +3836,16 @@ router.get('/:id/history', async (req, res) => {
       note: e.note,
       link: e.link,
       versionNumber: e.version_number,
+      /* IN WHAT CAPACITY THEY ACTED, for the history sentence.
+       *
+       * acted_via has been stored since Prompt 36 and read by nothing: the
+       * screen showed who acted and never on what authority. It is surfaced now
+       * because an Acting Team Lead is a capacity a reader has to be able to
+       * see — "approved by Ravi" means something different when Ravi was
+       * standing in for the lead that fortnight. One label, from the column,
+       * so the record and the screen cannot disagree about it. */
+      actedVia: e.acted_via || null,
+      actedViaLabel: ACTED_VIA_LABELS[e.acted_via] || null,
       at: e.created_at,
     })),
   });

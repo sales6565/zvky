@@ -143,11 +143,16 @@ router.get('/', async (req, res) => {
 
 // POST /api/projects — anyone whose role can create projects. The creator becomes the owner.
 router.post('/', requirePermission('project.add'), async (req, res) => {
-  const { name, clientId, teamLeadIds = [], coordinatorIds = [], supervisionIds = [] } = req.body || {};
+  const { name, clientId, teamLeadIds = [], coordinatorIds = [], supervisionIds = [],
+    actingTeamLeadIds = [] } = req.body || {};
   const verdict = checkName(name);
   if (!verdict.ok) return res.status(400).json({ error: verdict.error, field: verdict.field });
   const supervision = await checkSupervision(supervisionIds);
   if (!supervision.ok) return res.status(400).json({ error: supervision.error, field: 'supervisionIds' });
+  const acting = await checkActingLeads(actingTeamLeadIds, { teamLeadIds });
+  if (!acting.ok) {
+    return res.status(acting.status || 400).json({ error: acting.error, field: 'actingTeamLeadIds' });
+  }
   const extras = checkProjectFields(req.body);
   if (!extras.ok) return res.status(400).json({ error: extras.error, field: extras.field });
   /* Checked before anything is written, against the dates this same request is
@@ -190,6 +195,12 @@ router.post('/', requirePermission('project.add'), async (req, res) => {
       await client.query(
         'INSERT IGNORE INTO project_team_leads (project_id, user_id) VALUES ($1,$2)',
         [id, leadId]
+      );
+    }
+    for (const actingId of (acting.value || [])) {
+      await client.query(
+        'INSERT IGNORE INTO project_acting_team_leads (project_id, user_id) VALUES ($1,$2)',
+        [id, actingId]
       );
     }
     for (const coordId of coordinatorIds) {
@@ -290,6 +301,72 @@ async function checkSupervision(ids) {
   return { ok: true, value: unique };
 }
 
+/* ACTING TEAM LEADS: every id a real, ACTIVE account, de-duplicated, and nobody
+ * who is already a Team Lead on the same project.
+ *
+ * ALL ACTIVE USERS ARE ELIGIBLE, and that is a deliberate departure from the
+ * three sections beside it, each of which offers only the designations its name
+ * implies. The point of an acting lead is to hand the job to whoever can do it
+ * this fortnight — a senior artist, a coordinator, the producer — without
+ * changing what anybody IS. A designation filter here would re-impose the exact
+ * constraint the section exists to relieve. So the only filter is "is this a
+ * real person who still works here", which is the one rule that cannot be
+ * relieved.
+ *
+ * THE ONE OVERLAP RULE IN THE APPLICATION. There is none between the three
+ * existing sections — somebody can be a lead and a coordinator and supervision
+ * on one project, and the gate unions them, so it is harmless. This pair is
+ * different because it is not two jobs, it is one job recorded twice: an Acting
+ * Team Lead who is already the Team Lead is acting for nobody. Refused rather
+ * than silently de-duplicated, so the form says so instead of quietly dropping
+ * a tick somebody made.
+ */
+async function checkActingLeads(ids, { teamLeadIds = [], projectId = null } = {}) {
+  if (ids === undefined) return { ok: true, value: undefined };
+  if (!Array.isArray(ids)) {
+    return { ok: false, error: 'actingTeamLeadIds must be a list of user ids' };
+  }
+  const unique = [...new Set(ids.filter((id) => typeof id === 'string' && id))];
+  if (!unique.length) return { ok: true, value: unique };
+
+  const { rows } = await db.query(
+    'SELECT id, `name`, is_active AS isActive FROM users WHERE id IN ($1)', [unique]
+  );
+  const found = new Map(rows.map((r) => [r.id, r]));
+  const missing = unique.filter((id) => !found.has(id));
+  if (missing.length) return { ok: false, error: 'One of those people no longer exists.' };
+  const inactive = rows.filter((r) => !Number(r.isActive));
+  if (inactive.length) {
+    return { ok: false, error: `${inactive[0].name} is not an active account.` };
+  }
+
+  /* WHICH TEAM LEADS TO COMPARE AGAINST. The ones this same request is setting
+     when it names them — a create, or an edit that sends both lists — and the
+     ones already stored when it does not. Reading the stored list for a request
+     that is replacing it would refuse a swap: taking somebody out of Team Leads
+     and putting them in Acting in one save is a legitimate edit. */
+  let leads = teamLeadIds;
+  if (leads === undefined) {
+    if (!projectId) leads = [];
+    else {
+      const { rows: stored } = await db.query(
+        'SELECT user_id FROM project_team_leads WHERE project_id = $1', [projectId]
+      );
+      leads = stored.map((r) => r.user_id);
+    }
+  }
+  const clash = unique.filter((id) => (leads || []).includes(id));
+  if (clash.length) {
+    return {
+      ok: false,
+      status: 409,
+      error: `${found.get(clash[0]).name} is already a Team Lead on this project, `
+        + 'so they cannot also be an Acting Team Lead.',
+    };
+  }
+  return { ok: true, value: unique };
+}
+
 // The code is derived from the name and referenced by nothing else — asset
 // codes are built from the asset type's prefix, not from this. Rederiving it on
 // rename keeps the column meaning one thing.
@@ -322,7 +399,17 @@ router.patch('/:id', requirePermission('project.edit'), async (req, res) => {
   const shut = lifecycle.projectRefusal(project);
   if (shut) return res.status(409).json({ error: shut, projectClosed: true });
 
-  const { name, clientId, teamLeadIds, coordinatorIds, supervisionIds } = req.body || {};
+  const { name, clientId, teamLeadIds, coordinatorIds, supervisionIds,
+    actingTeamLeadIds } = req.body || {};
+
+  /* Validated against the Team Leads this same request is setting when it names
+     them, and against the stored ones when it does not — see checkActingLeads.
+     Above the transaction, like every other refusal in this handler, so a
+     rejected save leaves nothing half-written. */
+  const acting = await checkActingLeads(actingTeamLeadIds, { teamLeadIds, projectId: project.id });
+  if (!acting.ok) {
+    return res.status(acting.status || 400).json({ error: acting.error, field: 'actingTeamLeadIds' });
+  }
 
   // Every field is optional; only what was sent is written. Sending nothing is
   // not an error, it just changes nothing.
@@ -378,7 +465,9 @@ router.patch('/:id', requirePermission('project.edit'), async (req, res) => {
     }
     // Replaced wholesale rather than diffed: the form sends the complete list
     // it is showing, so anything missing from it was unticked.
-    for (const [ids, table] of [[teamLeadIds, 'project_team_leads'], [coordinatorIds, 'project_coordinators'],
+    for (const [ids, table] of [[teamLeadIds, 'project_team_leads'],
+      [acting.value, 'project_acting_team_leads'],
+      [coordinatorIds, 'project_coordinators'],
       [supervision.value, 'project_supervision']]) {
       if (ids === undefined) continue;
       await client.query(`DELETE FROM ${table} WHERE project_id = $1`, [project.id]);
@@ -418,8 +507,14 @@ router.get('/:id', async (req, res) => {
 // A project plus the ids attached to it, which is what the edit form needs to
 // tick the right boxes.
 async function withMembers(project) {
-  const [leads, coords, supervision, milestones] = await Promise.all([
+  const [leads, acting, coords, supervision, milestones] = await Promise.all([
     db.query('SELECT user_id FROM project_team_leads WHERE project_id = $1', [project.id]),
+    db.query('SELECT user_id FROM project_acting_team_leads WHERE project_id = $1', [project.id])
+      /* Tolerated, unlike its three siblings: an install part-way through its
+         migration has the other tables and not this one, and a project form
+         that refused to open because the newest section could not be read
+         would take the whole screen down with it. */
+      .catch(() => ({ rows: [] })),
     db.query('SELECT user_id FROM project_coordinators WHERE project_id = $1', [project.id]),
     db.query('SELECT user_id FROM project_supervision WHERE project_id = $1', [project.id]),
     projectMilestones.forProjects(db, [project.id]),
@@ -427,6 +522,7 @@ async function withMembers(project) {
   return {
     ...project,
     teamLeadIds: leads.rows.map((r) => r.user_id),
+    actingTeamLeadIds: acting.rows.map((r) => r.user_id),
     coordinatorIds: coords.rows.map((r) => r.user_id),
     supervisionIds: supervision.rows.map((r) => r.user_id),
     milestones: milestones.get(project.id) || [],

@@ -28,12 +28,44 @@ async function visibleProjects(user) {
     return rows;
   }
 
+  /* ---------------------------------------------------------------------
+   * ACTING TEAM LEADS SEE THE PROJECT THEY ARE ACTING ON, WHATEVER THEIR SCOPE.
+   *
+   * Added as a UNION around the four scope queries rather than as a fifth JOIN
+   * inside two of them, and that is the whole point of it: "being named Acting
+   * TL on this project makes this project visible" is ONE rule, and writing it
+   * into the 'assigned' and 'team' queries would have left the two narrower
+   * scopes — 'owned' and 'own_work' — unable to see a project they had been
+   * put in charge of. Those are exactly the designations a studio reaches for
+   * when it wants somebody to stand in without promoting them, so they are the
+   * case that matters most.
+   *
+   * IT WIDENS NOTHING ELSE. The union adds the projects this person is acting
+   * on and no others, so a narrow-scope user named on one project sees that
+   * project and whatever their own scope already gave them — never the studio.
+   * A test pins exactly that with the narrowest scope there is.
+   *
+   * One extra indexed read per call, on a table that is empty on every install
+   * until somebody uses the feature. */
+  const withActing = async (rows) => {
+    const { rows: acting } = await db.query(
+      `SELECT p.* FROM projects p
+         JOIN project_acting_team_leads patl ON patl.project_id = p.id
+        WHERE patl.user_id = $1 AND p.is_active = 1
+        ORDER BY p.created_at`,
+      [user.id]
+    ).catch(() => ({ rows: [] }));
+    if (!acting.length) return rows;
+    const seen = new Set(rows.map((p) => p.id));
+    return rows.concat(acting.filter((p) => !seen.has(p.id)));
+  };
+
   if (def.projectScope === 'owned') {
     const { rows } = await db.query(
       'SELECT * FROM projects WHERE owner_id = $1 AND is_active = 1 ORDER BY created_at',
       [user.id]
     );
-    return rows;
+    return withActing(rows);
   }
 
   // The three narrower scopes below each add "…or you created it".
@@ -55,7 +87,7 @@ async function visibleProjects(user) {
        ORDER BY p.created_at`,
       [user.id]
     );
-    return rows;
+    return withActing(rows);
   }
 
   if (def.projectScope === 'team') {
@@ -84,7 +116,7 @@ async function visibleProjects(user) {
        ORDER BY p.created_at`,
       [user.id]
     );
-    return rows;
+    return withActing(rows);
   }
 
   // 'own_work': the projects they have work in, and the one they are attached
@@ -104,7 +136,7 @@ async function visibleProjects(user) {
      ORDER BY p.created_at`,
     [user.id]
   );
-  return rows;
+  return withActing(rows);
 }
 
 async function canAccessProject(user, projectId) {
@@ -342,6 +374,12 @@ function isAwaitingRework(asset) {
  * they carry the four categories the studio names:
  *
  *   project_team_leads     Team Lead
+ *   project_acting_team_leads  Acting Team Lead — somebody standing in as a
+ *                          lead on THIS project and nowhere else. Their
+ *                          designation is untouched: being on this list is what
+ *                          qualifies them, exactly as it is for the three
+ *                          beside it, and being on it for one project says
+ *                          nothing about any other.
  *   project_coordinators   Production Coordinator
  *   project_supervision    Supervision AND Creative Direction (one list, because
  *                          that is the section the project form already has)
@@ -364,7 +402,59 @@ function isAwaitingRework(asset) {
  * designations — so asking again here would be a second copy of that rule, free
  * to drift from the first.
  */
-const PROJECT_TEAM_TABLES = ['project_team_leads', 'project_coordinators', 'project_supervision'];
+const PROJECT_TEAM_TABLES = ['project_team_leads', 'project_acting_team_leads',
+  'project_coordinators', 'project_supervision'];
+
+/* THE TABLES THAT MAKE SOMEBODY A LEAD OF A PROJECT, which is the same list.
+ *
+ * Named separately from PROJECT_TEAM_TABLES so the two ideas can be read apart
+ * even though they are the same set today: "who may act at the TL gate" and
+ * "who is a lead of this project" have always been one question in this
+ * application, and writing them as one constant twice would be the first step
+ * to them answering differently. */
+const PROJECT_LEAD_TABLES = PROJECT_TEAM_TABLES;
+
+/* The one list whose membership stands in for the review.tl permission, for the
+   project it names and for nothing else — see canActAtTlGate. */
+const ACTING_TABLE = 'project_acting_team_leads';
+
+/* WHO THE LEADS OF A PROJECT ARE, as ids. One query over the four lists.
+ *
+ * The shared function Prompt 50 asks for. Every caller that needs "the people
+ * who can act as a lead here" comes through this or through
+ * reviewTeamProjects() below — nothing reads the membership tables itself, and
+ * tests/acting-team-leads.test.js fails if anything outside a named allowlist
+ * reads the acting table at all. */
+async function projectLeadIds(projectId) {
+  if (!projectId) return [];
+  const sql = PROJECT_LEAD_TABLES
+    .map((t) => `SELECT user_id FROM ${t} WHERE project_id = $1`)
+    .join(' UNION ');
+  const { rows } = await db.query(sql, [projectId]).catch(() => ({ rows: [] }));
+  return [...new Set(rows.map((r) => r.user_id).filter(Boolean))];
+}
+
+/* Is this person a lead of this project? The single-question form, and it is
+   onProjectReviewTeam under another name — kept as its own export because that
+   is the name the rest of the codebase will reach for, and an alias is cheaper
+   than two implementations. */
+async function isProjectLead(user, project) {
+  const projectId = project && typeof project === 'object' ? project.id : project;
+  return onProjectReviewTeam(user, projectId);
+}
+
+/* WHICH of the lists matched, for one person on one project. Used by
+   tlGateAuthority to tell an Acting TL apart from a Team Lead — and ONLY for
+   that: the decision about whether they may act is the union above, and this
+   never narrows it. */
+async function leadTablesFor(userId, projectId) {
+  if (!userId || !projectId) return [];
+  const sql = PROJECT_LEAD_TABLES
+    .map((t) => `SELECT '${t}' AS src FROM ${t} WHERE user_id = $1 AND project_id = $2`)
+    .join(' UNION ');
+  const { rows } = await db.query(sql, [userId, projectId]).catch(() => ({ rows: [] }));
+  return rows.map((r) => r.src);
+}
 
 // Which of these projects this user is on the team of. One query for the lot,
 // because the board asks this for every asset on screen.
@@ -644,7 +734,37 @@ function isAssignedArtist(user, asset) {
  * (3) is the change. See PROJECT_TEAM_TABLES above.
  */
 async function canActAtTlGate(user, asset) {
-  if (!holds(user, 'review.tl') || !asset) return false;
+  if (!asset) return false;
+
+  /* ---------------------------------------------------------------------
+   * review.tl, OR BEING THE ACTING LEAD OF THIS PROJECT.
+   *
+   * THE ONE PLACE THIS FEATURE HAD TO CHANGE SOMETHING REAL, so it is written
+   * out rather than folded into the union below.
+   *
+   * review.tl is a ROLE-LEVEL key. Until now, failing it ended the question
+   * before any project was consulted — which is right, because every list that
+   * could put somebody at this gate was already filtered to designations that
+   * hold it. The acting list is not: it offers every active user, because the
+   * point of a stand-in is that it can be whoever can do the job this
+   * fortnight. A senior artist named Acting Team Lead who was then refused here
+   * would be a section that records a decision and does not act on it.
+   *
+   * SO THE GRANT IS PROJECT-SCOPED AND NOTHING ELSE. It is not a permission:
+   * it does not appear in the person's effective list, /auth/me is byte-for-byte
+   * what it was, their designation is untouched, and it reaches exactly the one
+   * project they were named on. On every other project — and on every other
+   * gate — they are the artist they were this morning. A test compares their
+   * whole permission set against another artist's and asserts they are equal.
+   *
+   * ASKED OF THE ACTING TABLE ALONE, not of the four-table union: the other
+   * three lists are already role-filtered where they are written, so letting
+   * membership of one of them stand in for review.tl would widen a gate nobody
+   * asked to widen. */
+  if (!holds(user, 'review.tl')) {
+    const via = await leadTablesFor(user.id, asset.project_id);
+    if (!via.includes(ACTING_TABLE)) return false;
+  }
 
   /* NOBODY REVIEWS THEIR OWN WORK, whatever their designation and whoever they
    * are on the project.
@@ -701,6 +821,23 @@ async function canActAtTlGate(user, asset) {
  */
 async function tlGateAuthority(user, asset) {
   if (!(await canActAtTlGate(user, asset))) return null;
+
+  /* ACTING TEAM LEAD, AND ONLY WHEN NOTHING ELSE PUT THEM THERE.
+   *
+   * The record says in what capacity somebody acted, so the label has to be the
+   * capacity that actually applied. Somebody who is on the acting list AND is a
+   * Team Lead, a coordinator or supervision on the same project did not act as
+   * a stand-in — they would have passed this gate without the acting row — so
+   * they keep the label they had. Only the person whose sole qualification is
+   * the acting list is recorded as one.
+   *
+   * ASKED BEFORE THE FULL-ACCESS BRANCH, because a Super Admin who was also
+   * named Acting TL on the project acted as a member of its team, and the
+   * existing code already makes exactly that distinction one line further
+   * down. */
+  const via = await leadTablesFor(user.id, asset.project_id);
+  if (via.length === 1 && via[0] === ACTING_TABLE) return 'acting_team_lead';
+
   if (!hasFullAccess(user)) return 'team_lead';
   if (await projectHasReviewTeam(asset.project_id)) {
     // AWAITED. Without it this is a Promise, which is always truthy, so every
@@ -868,6 +1005,8 @@ module.exports = {
   dashboardProjects,
   tlGateAuthority,
   onProjectReviewTeam,
+  PROJECT_TEAM_TABLES, PROJECT_LEAD_TABLES, ACTING_TABLE,
+  projectLeadIds, isProjectLead, leadTablesFor,
   reviewTeamProjects,
   projectHasReviewTeam,
   projectsWithReviewTeam,

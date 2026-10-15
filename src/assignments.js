@@ -194,6 +194,35 @@ async function submissionAudience(db, { assetId, actorId }) {
       if (rows[0] && rows[0].createdBy) ids.add(rows[0].createdBy);
     } catch { return []; }
   }
+  /* ---------------------------------------------------------------------
+   * ACTING TEAM LEADS ARE ADDED, AND NOBODY IS REPLACED.
+   *
+   * The audience above is the reporting line — who assigned it, who created it,
+   * and the submitter's own team lead. It has never read project membership,
+   * which means a Team Lead NAMED ON THE PROJECT does not get a submission
+   * notice today unless they are also one of those three. That is existing
+   * behaviour and it is deliberately not changed here: widening it would change
+   * who gets mailed for every Team Lead in the studio, which is a different
+   * decision from adding a stand-in.
+   *
+   * So this is strictly additive. Whoever was in the audience before is in it
+   * now; the acting leads of the asset's project join them, de-duplicated by
+   * the Set, for the same in-app notice and the same email, on exactly the
+   * events this function already covers. An acting lead who is also the
+   * assigner is one recipient, not two.
+   *
+   * SWALLOWED ON FAILURE, like the block above it: an unmigrated install has no
+   * acting table, and telling three people instead of four is worth more than
+   * failing the submission that asked. */
+  try {
+    const { rows: acting } = await db.query(
+      `SELECT patl.user_id AS userId
+         FROM project_acting_team_leads patl
+         JOIN assets a ON a.project_id = patl.project_id
+        WHERE a.id = $1`, [assetId]);
+    for (const row of acting) if (row.userId) ids.add(row.userId);
+  } catch (err) { /* no table, or no project: the audience above still stands */ }
+
   /* The submitter is never in their own audience, and a Set is what makes the
      assigner-who-is-also-your-lead one recipient rather than two. */
   ids.delete(actorId);

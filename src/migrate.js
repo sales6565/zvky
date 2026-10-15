@@ -4338,6 +4338,29 @@ async function ensureNotificationDetail(db, log) {
  * cannot change what a past half-day meant — which is the whole reason a
  * studio's hours can be edited at all without rewriting history.
  */
+/* ACTING TEAM LEADS. A fourth project membership list, the same shape as the
+ * three that already exist — two columns, a composite primary key and cascades
+ * both ways. No added_by/added_at, because none of its siblings has them and a
+ * fourth list that recorded more than the others would make "who put this
+ * person here" answerable for one section and not the rest.
+ *
+ * NEW INSTALLS GET IT FROM sql/schema.sql; this is the repair for everything
+ * already deployed, and it leaves existing projects with no Acting TLs — which
+ * is the only correct starting point, since nobody has been asked yet.
+ */
+async function ensureActingTeamLeads(db, log) {
+  const before = await columnsOf(db, 'project_acting_team_leads');
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS project_acting_team_leads (
+      project_id CHAR(36) NOT NULL,
+      user_id    CHAR(36) NOT NULL,
+      PRIMARY KEY (project_id, user_id),
+      KEY idx_patl_user (user_id),
+      CONSTRAINT fk_patl_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      CONSTRAINT fk_patl_user    FOREIGN KEY (user_id)    REFERENCES users(id)    ON DELETE CASCADE
+    )`));
+  if (!before.size) log('Schema: project_acting_team_leads created (empty — existing projects have none).');
+}
+
 async function ensureDayStatus(db, log) {
   await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS leave_settings (
       id                      TINYINT     NOT NULL PRIMARY KEY,
@@ -4708,6 +4731,8 @@ const STEPS = [
   /* After users, which user_day_status points at three times, and after the
      work schedule, whose break windows the settings mirror prefills the
      half-day split from on a first run. */
+  /* After projects and users, which it points at with a cascade each. */
+  ['acting team leads', ensureActingTeamLeads],
   ['leave and idle', ensureDayStatus],
   ['leave settings mirror', (db) => require('./leave-settings').load(db)],
   ['studio theme', ensureTheme],

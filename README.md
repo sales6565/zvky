@@ -3376,6 +3376,106 @@ a studio-wide total shown to an Admin would be full of projects they could not
 open. A Super Admin sees the whole studio; an Admin sees their own; the subtitle
 says which. Nobody is shown a number they cannot click into.
 
+## Acting Team Leads
+
+A fourth section on Add/Edit Project, after Team Leads: people standing in as a
+lead on **one project**, without being a Team Lead by designation and without it
+meaning anything anywhere else.
+
+**The picker lists every active user**, which the three sections beside it
+deliberately do not — each of those offers only the designations its name
+implies. The point of a stand-in is that it can be whoever can do the job this
+fortnight, and a designation filter here would re-impose the constraint the
+section exists to relieve. The only filter is "still works here".
+
+### What it does, and what it carefully does not
+
+| | |
+| --- | --- |
+| Sees the project | **yes** — whatever their role's scope, including the narrowest |
+| Acts at TL Review / TL Feedbacks / Submit Feedback | **yes**, on that project |
+| Can Hold | **yes**, under the existing "visible ⇒ can hold" rule |
+| Gets the submission notification and email | **yes**, added to the existing audience |
+| Role, designation, permission list | **unchanged** — byte for byte |
+| Any of the above on another project | **no** |
+
+### Storage
+
+`project_acting_team_leads (project_id, user_id)`: a composite primary key and
+cascades both ways, the same two columns as `project_team_leads`,
+`project_coordinators` and `project_supervision`. No `added_by`/`added_at`,
+because none of those has them and a fourth list that recorded more than its
+siblings would make "who put this person here" answerable for one section and
+not the rest. Existing projects start with none. Membership rides on the same
+`project.update` activity entry as every other section.
+
+### One list, four tables
+
+`PROJECT_TEAM_TABLES` in `src/permissions.js` was already the single definition
+of "may act as a lead here" — and it already unioned in coordinators and
+supervision, so the gate has never been Team Leads alone. Acting leads are a
+fourth entry in it, which is most of the feature: the review gate, the board
+enrichment and the history authority all follow from that one edit.
+`projectLeadIds()` and `isProjectLead()` are the named shared functions; nothing
+else may read the new table, and `tests/acting-team-leads.test.js` fails on the
+first file outside a short allowlist that does.
+
+### Visibility is a union, not a clause
+
+Being an Acting TL makes that project visible **regardless of role scope**. It
+is applied as one union around all four scope queries rather than as a JOIN
+inside two of them — written the other way it would have left the two *narrowest*
+scopes, `owned` and `own_work`, unable to see a project they had been put in
+charge of, and `own_work` is exactly the designation a studio names a stand-in
+from. It adds the projects they are acting on and nothing else.
+
+### The one thing that is not just membership
+
+`canActAtTlGate()` begins `holds(user, 'review.tl')` — a **role-level** key a
+game artist does not have. Every list that could previously reach that gate was
+already filtered to designations that hold it; the acting list is not. So
+membership of the acting list — **and only that list** — stands in for
+`review.tl`, for the project it names and nowhere else.
+
+This is a project-scoped grant, not a permission: it is absent from the person's
+effective list, `/auth/me` is unchanged, their designation is untouched, and on
+every other project they are the artist they were this morning. A test compares
+their whole permission set against another artist's and asserts equality.
+
+### "(Acting TL)" in the history
+
+`asset_events.acted_via` has existed since Prompt 36 and was read by nothing —
+the screen showed who acted and never on what authority. It is now written for
+every transition the review gate guards (derived from the workflow table, with a
+test holding the two equal) and surfaced beside the actor's name.
+
+The label is `acting_team_lead` **only when the acting list is the person's sole
+qualification**. Somebody who is also a Team Lead, a coordinator or supervision
+on the same project would have passed the gate without the acting row, so they
+keep the label they had. The ordinary `team_lead` case stays unannotated —
+labelling every approval the studio has ever made would be new noise on old rows.
+
+### Overlap
+
+There is **no overlap rule between the three existing sections** and none was
+added: somebody can be a lead and a coordinator and supervision at once, and the
+gate unions them. The one new rule is that the same person cannot be both Team
+Lead and Acting Team Lead on one project — that is not two jobs, it is one job
+recorded twice. The picker disables them with "Already a Team Lead on this
+project" and the server answers **409**. Swapping somebody from one section to
+the other in a single save is allowed, because it is a legitimate edit.
+
+### Removal, and nobody left
+
+Removal is structural. Nothing is ever stored as waiting on a *particular* lead:
+a review stage routes to `null` — "a review queue, picked up by whoever holds
+that gate" — so taking somebody off the list removes them from a set-membership
+test and no work moves, because none of it pointed at them. With no lead left at
+all, `projectHasReviewTeam()` goes false and the gate falls back to the
+pre-team path, exactly as it does for a project whose Team Leads are removed
+today. Deactivation is unchanged: the row stays, and the person stops qualifying
+because every picker filters on `is_active`.
+
 ## Leave and Idle
 
 Two marks a lead can make against somebody's day, from the "People to follow up"

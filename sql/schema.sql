@@ -306,6 +306,22 @@ CREATE TABLE IF NOT EXISTS project_team_leads (
   CONSTRAINT fk_ptl_user    FOREIGN KEY (user_id)    REFERENCES users(id)    ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Acting Team Leads: people standing in as a lead on ONE project, without
+-- being a Team Lead by designation and without it meaning anything on any
+-- other project. Its own table rather than a flag or a new role value, for the
+-- same reason the three beside it are their own tables: the permission checks
+-- ask "which of this project's lists is this person on", and a fourth list is
+-- a fourth table. Same two columns and the same cascades as its siblings — no
+-- added_by/added_at, because none of them has them.
+CREATE TABLE IF NOT EXISTS project_acting_team_leads (
+  project_id CHAR(36) NOT NULL,
+  user_id    CHAR(36) NOT NULL,
+  PRIMARY KEY (project_id, user_id),
+  KEY idx_patl_user (user_id),
+  CONSTRAINT fk_patl_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  CONSTRAINT fk_patl_user    FOREIGN KEY (user_id)    REFERENCES users(id)    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS project_coordinators (
   project_id CHAR(36) NOT NULL,
   user_id    CHAR(36) NOT NULL,

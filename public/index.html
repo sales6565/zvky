@@ -1296,6 +1296,13 @@ tr.past-round{opacity:0.62;}
   font-family:'Inter',sans-serif;font-size:11px;padding:4px 7px;}
 .fu-reassign-pick:focus-visible{outline:2px solid var(--focus-ring);outline-offset:1px;}
 .fu-reassign-err{font-size:11px;color:var(--brand-accent);margin-top:6px;}
+/* The capacity somebody acted in, beside their name in the history — "(Acting
+   TL)". Muted, because it qualifies the name rather than competing with it. */
+.hist-via{color:var(--ink-faint);font-style:italic;}
+/* The one-line helper under a project section's heading. */
+.checklist-note{font-size:11px;color:var(--ink-faint);margin:-2px 0 5px;line-height:1.5;}
+/* A box the overlap rule has closed. The reason is the label's title. */
+.checklist label.is-disabled{opacity:.5;cursor:not-allowed;}
 .fu-list-actions{display:flex;align-items:center;gap:8px;padding:6px 0 2px;}
 .fu-remind-all{font-family:'Inter',sans-serif;font-size:10.5px;padding:3px 9px;border-radius:7px;
   background:var(--surface-2);border:1px solid var(--border);color:var(--ink);cursor:pointer;}
@@ -2331,6 +2338,9 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
         <div class="ms-warn" id="p_milestoneWarn"></div>
       </div>
       <label>Team leads on this project</label><div class="checklist" id="p_leads"></div>
+      <label>Acting Team Leads</label>
+      <div class="checklist-note">Any active user can be selected. They act as a lead on this project only.</div>
+      <div class="checklist" id="p_acting"></div>
       <label>Production coordinators on this project</label><div class="checklist" id="p_coords"></div>
       <label>Supervision and Creative Direction <span class="count-note" id="p_supervisionCount">(0/2 selected)</span></label>
       <div class="checklist" id="p_supervision"></div>
@@ -2386,6 +2396,9 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
       <div class="ms-warn" id="ep_milestoneWarn"></div>
     </div>
     <label>Team leads on this project</label><div class="checklist" id="ep_leads"></div>
+    <label>Acting Team Leads</label>
+    <div class="checklist-note">Any active user can be selected. They act as a lead on this project only.</div>
+    <div class="checklist" id="ep_acting"></div>
     <label>Production coordinators on this project</label><div class="checklist" id="ep_coords"></div>
     <label>Supervision and Creative Direction <span class="count-note" id="ep_supervisionCount">(0/2 selected)</span></label>
     <div class="checklist" id="ep_supervision"></div>
@@ -11362,7 +11375,10 @@ async function loadAssetHistory(id){
     const meta = HISTORY_ACTIONS[e.action] || { label: e.action, color: 'var(--ink-muted)' };
     return `<div class="note" style="border-left-color:${meta.color};">
       <span class="who" style="color:${meta.color};">${escapeHTML(meta.label)}</span>
-      <span class="when who-line">${avatarHTML({ id:e.actorId, name:e.actor, photoAt:e.actorPhotoAt }, { size:16, title:false })}<span>${escapeHTML(e.actor)} · ${fmtDate(e.at)}</span></span>
+      <span class="when who-line">${avatarHTML({ id:e.actorId, name:e.actor, photoAt:e.actorPhotoAt }, { size:16, title:false })}<span>${escapeHTML(e.actor)}${
+        /* IN WHAT CAPACITY, when it was not the ordinary one. The server sends
+           the words; the page never maps a stored value to a label itself. */
+        e.actedViaLabel ? ` <span class="hist-via">(${escapeHTML(e.actedViaLabel)})</span>` : ''} · ${fmtDate(e.at)}</span></span>
       <p style="font-size:11px;color:var(--ink-faint);margin:2px 0 0;">
         ${e.fromLabel && e.fromLabel!==e.toLabel ? escapeHTML(e.fromLabel)+' → '+escapeHTML(e.toLabel) : escapeHTML(e.toLabel)}
         ${e.versionNumber?` · v${e.versionNumber}`:''}
@@ -11809,14 +11825,22 @@ document.getElementById('newProjectBtn').addEventListener('click', async ()=>{
   fillProjectClientOptions(state.clientContextId);
   syncProjectForm();
   try{
-    const [{ users: leads }, { users: coords }, { users: supervisors }] = await Promise.all([
-      api('/users?role='+encodeURIComponent(roleKeys(r=>r.leadsTeam))+'&limit=500'),
-      api('/users?role='+encodeURIComponent(roleKeys(r=>r.projectScope==='assigned'))+'&limit=500'),
-      supervisionUsers(),
-    ]);
-    document.getElementById('p_leads').innerHTML = leads.map(u=>`<label><input type="checkbox" value="${u.id}">${escapeHTML(u.name)}</label>`).join('') || '<div style="font-size:12px;color:var(--ink-faint);">No leads or supervisors visible to you.</div>';
-    document.getElementById('p_coords').innerHTML = coords.map(u=>`<label><input type="checkbox" value="${u.id}">${escapeHTML(u.name)}</label>`).join('') || '<div style="font-size:12px;color:var(--ink-faint);">No coordinators visible to you.</div>';
+    /* FOUR LISTS, AND THE FOURTH IS EVERYBODY. The three above it are filtered
+       by designation — that is what each section means — and Acting Team Leads
+       deliberately is not: the point of a stand-in is that it can be whoever
+       can do the job this fortnight. The only filter is the one /api/users
+       already applies by default, which is "still works here". */
+    const [{ users: leads }, { users: coords }, { users: supervisors }, { users: everyone }] =
+      await Promise.all([
+        api('/users?role='+encodeURIComponent(roleKeys(r=>r.leadsTeam))+'&limit=500'),
+        api('/users?role='+encodeURIComponent(roleKeys(r=>r.projectScope==='assigned'))+'&limit=500'),
+        supervisionUsers(),
+        api('/users?limit=500'),
+      ]);
+    epChecklist('p_leads', leads, [], { empty: 'No leads or supervisors visible to you.' });
+    epChecklist('p_coords', coords, [], { empty: 'No coordinators visible to you.' });
     supervisionChecklist('p_supervision', 'p_supervisionCount', supervisors, []);
+    wireActingSync('p_leads', 'p_acting', everyone);
   }catch(err){ showToast(err.message); }
   // A new project starts with none. Nothing is assumed about which stages it
   // is planned in — that is the point of picking them per project.
@@ -11897,11 +11921,13 @@ document.getElementById('saveProjectModal').addEventListener('click', async ()=>
   const leadIds = [...document.querySelectorAll('#p_leads input:checked')].map(i=>i.value);
   const coordIds = [...document.querySelectorAll('#p_coords input:checked')].map(i=>i.value);
   const supervisionIds = [...document.querySelectorAll('#p_supervision input:checked')].map(i=>i.value);
+  const actingIds = [...document.querySelectorAll('#p_acting input:checked')].map(i=>i.value);
   try{
     /* Only what was filled in. An untouched date is absent rather than sent as
        an empty string, which keeps "leave it alone" and "clear it" distinct on
        the edit route that shares this endpoint's validator. */
-    const body = { clientId, name, teamLeadIds:leadIds, coordinatorIds:coordIds, supervisionIds };
+    const body = { clientId, name, teamLeadIds:leadIds, coordinatorIds:coordIds, supervisionIds,
+      actingTeamLeadIds: actingIds };
     const category = projectFormCategory();
     const startDate = document.getElementById('p_start').value;
     const endDate = document.getElementById('p_end').value;
@@ -11943,24 +11969,70 @@ let editingProject = null;
 function epError(message){ document.getElementById('ep_err').textContent = message || ''; }
 
 /* One checklist, ticked from what the project already has. */
-function epChecklist(elId, people, chosen){
+/* ONE CHECKLIST RENDERER FOR EVERY PROJECT SECTION, in both forms.
+ *
+ * Add Project used to inline this markup twice by hand while Edit Project
+ * called this function — the same list drawn two ways, which is how a fifth
+ * variant gets written. Both now come through here, and a regression test
+ * pins that the three existing sections render and save exactly as they did.
+ *
+ * `disabled` is a Map of id -> why, for the one rule in the application that
+ * stops a person being in two sections at once: an Acting Team Lead cannot
+ * also be the Team Lead on the same project. The box is drawn disabled with
+ * the reason as its tooltip, and the server refuses it anyway — this is the
+ * courtesy half. `empty` names what is missing, because "nobody eligible" is a
+ * different sentence for a list of leads and a list of everybody. */
+function epChecklist(elId, people, chosen, { disabled = null, empty = null } = {}){
   const el = document.getElementById(elId);
+  if(!el) return;
   el.innerHTML = people.length
-    ? people.map(u=>`<label><input type="checkbox" value="${u.id}"${chosen.includes(u.id)?' checked':''}>${escapeHTML(u.name)}</label>`).join('')
-    : '<div style="font-size:12px;color:var(--ink-faint);">Nobody eligible is visible to you.</div>';
+    ? people.map(u=>{
+        const why = disabled ? disabled.get(u.id) : null;
+        return `<label${why?' class="is-disabled" title="'+escapeHTML(why)+'"':''}><input type="checkbox" value="${u.id}"${
+          chosen.includes(u.id)?' checked':''}${why?' disabled':''}>${escapeHTML(u.name)}</label>`;
+      }).join('')
+    : `<div style="font-size:12px;color:var(--ink-faint);">${escapeHTML(empty || 'Nobody eligible is visible to you.')}</div>`;
+}
+
+/* WHO MAY BE AN ACTING TEAM LEAD, from the boxes ticked in the Team Leads
+   section of the SAME form — so unticking somebody there frees them here
+   without a save in between. Redrawn on every change to that list. */
+function actingDisabledMap(leadsElId){
+  const map = new Map();
+  document.querySelectorAll(`#${leadsElId} input:checked`).forEach((i)=>{
+    map.set(i.value, 'Already a Team Lead on this project');
+  });
+  return map;
+}
+
+/* Keep the Acting list in step with the Team Leads list while the form is open.
+   The ticks already made in the acting list are preserved, except for anybody
+   who has just become a Team Lead — whom the server would refuse anyway. */
+function wireActingSync(leadsElId, actingElId, people){
+  const redraw = ()=>{
+    const disabled = actingDisabledMap(leadsElId);
+    const chosen = [...document.querySelectorAll(`#${actingElId} input:checked`)]
+      .map(i=>i.value).filter(id=>!disabled.has(id));
+    epChecklist(actingElId, people, chosen, { disabled,
+      empty: 'No active users to choose from.' });
+  };
+  document.querySelectorAll(`#${leadsElId} input`).forEach(i=>i.addEventListener('change', redraw));
+  redraw();
 }
 
 async function openEditProject(){
   if(!state.currentProjectId) return;
   epError('');
-  let project, leads, coords, supervisors;
+  let project, leads, coords, supervisors, everyone;
   try{
-    [project, { users: leads }, { users: coords }, { users: supervisors }] = await Promise.all([
-      api('/projects/' + state.currentProjectId).then(r=>r.project),
-      api('/users?role='+encodeURIComponent(roleKeys(r=>r.leadsTeam))+'&limit=500'),
-      api('/users?role='+encodeURIComponent(roleKeys(r=>r.projectScope==='assigned'))+'&limit=500'),
-      supervisionUsers(),
-    ]);
+    [project, { users: leads }, { users: coords }, { users: supervisors }, { users: everyone }] =
+      await Promise.all([
+        api('/projects/' + state.currentProjectId).then(r=>r.project),
+        api('/users?role='+encodeURIComponent(roleKeys(r=>r.leadsTeam))+'&limit=500'),
+        api('/users?role='+encodeURIComponent(roleKeys(r=>r.projectScope==='assigned'))+'&limit=500'),
+        supervisionUsers(),
+        api('/users?limit=500'),
+      ]);
   }catch(err){ showToast(err.message); return; }
 
   editingProject = project;
@@ -11974,9 +12046,14 @@ async function openEditProject(){
   document.getElementById('ep_category').innerHTML = projectCategoryOptions(project.category || null);
   document.getElementById('ep_start').value = project.start_date ? String(project.start_date).slice(0,10) : '';
   document.getElementById('ep_end').value = project.end_date ? String(project.end_date).slice(0,10) : '';
-  epChecklist('ep_leads', leads, project.teamLeadIds || []);
-  epChecklist('ep_coords', coords, project.coordinatorIds || []);
+  epChecklist('ep_leads', leads, project.teamLeadIds || [], { empty: 'No leads or supervisors visible to you.' });
+  epChecklist('ep_coords', coords, project.coordinatorIds || [], { empty: 'No coordinators visible to you.' });
   supervisionChecklist('ep_supervision', 'ep_supervisionCount', supervisors, project.supervisionIds || []);
+  /* Drawn from the project's stored list, then kept in step with whatever the
+     Team Leads boxes do while the form is open. */
+  epChecklist('ep_acting', everyone, project.actingTeamLeadIds || [],
+    { disabled: actingDisabledMap('ep_leads'), empty: 'No active users to choose from.' });
+  wireActingSync('ep_leads', 'ep_acting', everyone);
   loadMilestones('ep', project.milestones || []);
   editProjectModalWrap.classList.add('show');
 }
@@ -12012,6 +12089,7 @@ document.getElementById('saveEditProject').addEventListener('click', async ()=>{
       teamLeadIds: [...document.querySelectorAll('#ep_leads input:checked')].map(i=>i.value),
       coordinatorIds: [...document.querySelectorAll('#ep_coords input:checked')].map(i=>i.value),
       supervisionIds: [...document.querySelectorAll('#ep_supervision input:checked')].map(i=>i.value),
+      actingTeamLeadIds: [...document.querySelectorAll('#ep_acting input:checked')].map(i=>i.value),
       /* Sent only by somebody who may set them. Without this the field would
          travel as an empty list for everybody else and wipe the milestones on
          every save — the permission would read as "cannot add" while quietly
