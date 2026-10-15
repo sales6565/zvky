@@ -16,7 +16,8 @@
     "check": "node scripts/check.js && node scripts/feed-check.js",
     "smoke": "xvfb-run -a electron --no-sandbox scripts/smoke.js",
     "smoke:timesheet": "xvfb-run -a electron --no-sandbox scripts/timesheet-day.js",
-    "smoke:feedback": "xvfb-run -a electron --no-sandbox scripts/tl-feedback.js"
+    "smoke:feedback": "xvfb-run -a electron --no-sandbox scripts/tl-feedback.js",
+    "smoke:startday": "xvfb-run -a electron --no-sandbox scripts/start-of-day.js"
   },
   "devDependencies": {
     "electron": "^33.2.0",

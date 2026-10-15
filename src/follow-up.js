@@ -106,6 +106,21 @@ const reminderSettings = require('./reminder-settings');
  */
 const GRACE_MINUTES = 60;
 
+/* AND IT IS NOW A SETTING, with the constant above as its default.
+ *
+ * The start-of-day banner and the two automatic reminders are measured from the
+ * same grace period this section is, so a studio that moves it has to move all
+ * three — which means there can only be one number. It lives in
+ * reminder_settings (Settings -> Start-of-day Nudges) and is read through here
+ * so that every reader of "the grace period" reads this function.
+ *
+ * Falls back to the constant on a database that has not migrated, which is the
+ * behaviour this section had before the setting existed. */
+const graceMinutes = () => {
+  const n = Number((reminderSettings.current() || {}).graceMinutes);
+  return Number.isFinite(n) && n > 0 ? n : GRACE_MINUTES;
+};
+
 /* How many names each list hands over before the page has to ask for the rest.
  *
  * Twenty-five is about a screenful. The payload says the total, so the heading
@@ -850,7 +865,7 @@ async function build(db, user, options = {}) {
   /* THE GRACE PERIOD, applied to list 1 and to Today alone. */
   const schedule = workSchedule.trackingWindow();
   const opensAt = startDays.includes(today) ? opensAtMs(today, schedule) : null;
-  const graceUntil = opensAt === null ? null : opensAt + GRACE_MINUTES * 60000;
+  const graceUntil = opensAt === null ? null : opensAt + graceMinutes() * 60000;
   const graceHolds = startDays.includes(today) && (graceUntil === null || now < graceUntil);
 
   const missedStart = (person, day) => !started.has(`${person.id}|${day}`);
@@ -1003,7 +1018,7 @@ async function build(db, user, options = {}) {
     previousWorkingDay: previousWorkingDay(today),
     workingDay: asked.mode === 'day' ? isWorkingDay(asked.date) : startDays.length > 0,
     grace: {
-      minutes: GRACE_MINUTES,
+      minutes: graceMinutes(),
       holds: graceHolds,
       until: graceUntil === null ? null : new Date(graceUntil).toISOString(),
       opensAt: opensAt === null ? null : new Date(opensAt).toISOString(),
@@ -1062,5 +1077,5 @@ module.exports = {
   isWorkingDay, previousWorkingDay, workingDaysIn, opensAtMs,
   expectedPeople, onBooksOn, unreconstructable, inScope,
   startedDays, heldCounts, earliestDay, stampMs,
-  GRACE_MINUTES, ROW_CAP, MAX_RANGE_DAYS, CACHE_MS,
+  GRACE_MINUTES, graceMinutes, ROW_CAP, MAX_RANGE_DAYS, CACHE_MS,
 };

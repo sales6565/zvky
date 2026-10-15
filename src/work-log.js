@@ -165,8 +165,15 @@ async function currentRound(db, assetId) {
  */
 async function openForUser(db, userId, exceptAssetId = null) {
   const params = [userId];
+  /* AGE IN SECONDS, FROM THE DATABASE'S OWN CLOCK, alongside the stamp.
+   *
+   * Added for the top-bar indicator, which has to show a live elapsed time and
+   * must not be the first screen in this application to parse a DATETIME — see
+   * the note above AGE on why no stamp is ever converted. Every existing caller
+   * ignores the extra column, and nothing else about this function moved. */
   let sql = `SELECT s.id, s.asset_id AS assetId, s.started_at AS since,
-                    a.\`code\`, a.\`name\`, a.status
+                    ${AGE('s.started_at')} AS age_seconds,
+                    a.\`code\`, a.\`name\`, a.status, a.project_id AS projectId
                FROM work_sessions s
                JOIN assets a ON a.id = s.asset_id
               WHERE s.user_id = $1 AND s.ended_at IS NULL`;
@@ -723,6 +730,24 @@ async function heldFor(db, assetId, userId) {
   if (!userId) return null;
   const { rows } = await selectHeld(db, 'w.asset_id = $1 AND w.user_id = $2', [assetId, userId]);
   return rows[0] ? describePause(rows[0]) : null;
+}
+
+/* THE SAME QUESTION ASKED OF A PERSON RATHER THAN OF AN ASSET.
+ *
+ * "Has this person got a task on hold" — which the top-bar indicator needs and
+ * heldFor() above cannot answer, because it takes an asset. One query, through
+ * the same selectHeld() and the same describePause(), so the indicator's held
+ * state and the asset panel's are the same state and cannot drift.
+ *
+ * NEWEST FIRST, and one of them: somebody with two held rounds is told about
+ * the one they put down last, which is the one they would resume.
+ */
+async function heldAnyFor(db, userId) {
+  if (!userId) return null;
+  const { rows } = await selectHeld(db, 'w.user_id = $1', [userId]);
+  if (!rows.length) return null;
+  const newest = rows.slice().sort((a, b) => String(b.ended_at).localeCompare(String(a.ended_at)))[0];
+  return { ...describePause(newest), assetId: newest.asset_id };
 }
 
 /* A paused row, as a screen needs it.
@@ -1429,9 +1454,15 @@ function scheduleAutoPause(db, log = console.log) {
 
 module.exports = {
   REASONS, PAUSE_REASONS, WORK_CONTINUES, start, close, closeIfWorkStopped, hold, heldFor,
+  heldAnyFor,
   summary, totalsFor, roundsFor, pauseOverdue, resumeOverdue, scheduleAutoPause, nextOpening,
   openSession, openForUser, currentRound, available, cutover, dayTotalFor, recordedFor,
   // Exported so every reader of a submit stamp uses the same expression. There
   // are three, and the third was found by a test rather than by reading.
   submitStamp, askStamped,
+  /* And the expression that turns a stored age into WORKING seconds, for the
+     same reason: src/day-state.js shows a live elapsed figure in the top bar,
+     and a second conversion there would be a number beside the timesheet's that
+     disagreed with it over every lunch hour. */
+  liveSeconds, instantFromAge,
 };

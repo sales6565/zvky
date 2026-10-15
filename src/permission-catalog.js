@@ -1547,6 +1547,33 @@ const GROUPS = [
           + 'failures, today\'s count against the daily cap — and send a test message to yourself.',
       },
       {
+        key: 'settings.nudges',
+        label: 'Manage Start-of-day Nudges',
+        /* THE SETTINGS SECTION, WHICH NOW GOVERNS THREE FEATURES AND NOT ONE.
+           
+           It began as four switches over the reminders report.remind sends, and
+           was gated on that key for exactly that reason. It now also governs the
+           start-of-day BANNER and the top-bar timer INDICATOR, which are not
+           reminders and which every signed-in person sees — so the key that
+           sends messages is no longer the right thing to be holding in order to
+           switch them off.
+           
+           ITS OWN KEY, THEN, and the practical consequence is stated rather than
+           hidden: a studio that had delegated report.remind to its leads has not
+           thereby delegated this screen. Both default to the Super Admin tier
+           alone, so nothing moves on an install that has not changed either.
+           
+           SUPER ADMIN ONLY BY DEFAULT, through managePermissions, like every
+           other Settings key in this group. Enforced with requirePermission on
+           both handlers and with can() on the page, never the tier — see the
+           note at the top of src/routes/timesheet-options.js for why that
+           distinction has already cost this application a bug. */
+        impliedBy: has('managePermissions'),
+        describe: 'Settings → Start-of-day Nudges: the master switch, the banner, the top-bar '
+          + 'timer indicator, the two automatic reminders and their channels, the grace period, '
+          + 'the second reminder\'s time and the banner snooze.',
+      },
+      {
         key: 'settings.email_config',
         label: 'Manage Email Configuration',
         /* The mail server the studio sends from, and the credentials for it.

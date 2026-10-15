@@ -1403,8 +1403,13 @@ test('the marker, the button and the cap, end to end', { skip: cfg ? false : SKI
       const res = await as('lead', path, { method: 'POST', body: { userId: id.ana, kind: 'timesheet' } });
       assert.strictEqual(res.status, 403, path);
     }
-    // And the settings section behind the same key.
-    assert.strictEqual((await as('lead', '/admin/settings/nudges')).status, 403);
+    /* THE SETTINGS SECTION IS BEHIND ITS OWN KEY NOW, and that is the point of
+       the split: it governs the start-of-day banner and the top-bar timer as
+       well as these reminders, so "may send messages" is no longer the right
+       thing to hold in order to switch them off. A lead with report.remind and
+       without settings.nudges is refused the screen. */
+    assert.strictEqual((await as('lead', '/admin/settings/nudges')).status, 403,
+      'the nudge SETTINGS screen is settings.nudges, not report.remind');
 
     /* THE PAYLOAD SAYS SO TOO, so the page draws no button it cannot use. */
     const list = await ask(`date=${TUE}`, 'lead');
@@ -1415,8 +1420,11 @@ test('the marker, the button and the cap, end to end', { skip: cfg ? false : SKI
        resolves permissions per request, so the next call is allowed. */
     await as('root', '/permissions/roles/team_lead', { method: 'PUT',
       body: { permissions: [...new Set([...held, 'report.remind'])] } });
-    assert.strictEqual((await as('lead', '/admin/settings/nudges')).status, 200,
-      'the same token now passes');
+    /* AND GRANTING report.remind DOES NOT OPEN IT — the two keys are separate
+       powers. The settings screen's own grant is tested in
+       tests/start-of-day.test.js, on the same token and with no sign-out. */
+    assert.strictEqual((await as('lead', '/admin/settings/nudges')).status, 403,
+      'granting the sending key does not hand over the settings screen');
     const after = await ask(`date=${TUE}`, 'lead');
     assert.strictEqual(after.body.reminders.permitted, true);
 
@@ -1432,10 +1440,11 @@ test('the marker, the button and the cap, end to end', { skip: cfg ? false : SKI
 
   await t.test('the automatic reminder\'s status is shown beside the button', async () => {
     await clearLog();
-    /* NOTHING WRITES THESE YET — there is no automatic reminder in this
-       application (see src/reminders.js). The row is inserted here to pin the
-       SHAPE the screen reads, so the automatic sender, when it is built, lights
-       this line up by writing to the same table with the same key. */
+    /* WRITTEN BY HAND HERE, AND BY src/start-reminders.js IN LIFE. This case
+       pins the SHAPE the screen reads — one 'auto' row in the same table, under
+       the same unique key — which is what let the automatic sender be built
+       afterwards without touching either. tests/start-of-day.test.js drives the
+       sweep that writes them. */
     const today = gate.istDate(Date.now());
     await sql(cfg,
       'INSERT INTO reminder_log (id, recipient_id, sender_id, sender_name, kind, source, '
@@ -1634,9 +1643,17 @@ test('the marker, the button and the cap, end to end', { skip: cfg ? false : SKI
     const entry = audit.body.entries.find((e) => e.action === 'nudges_updated');
     assert.ok(entry, 'the save is in the Activity Log');
     assert.match(entry.summary, /Changed the Start-of-day nudges/);
-    assert.match(entry.summary, /at most 1 per person per kind per day.*→.*at most 2 per person/,
-      'the policy as a sentence on both sides of the change');
-    assert.match(entry.summary, /inactivity marker at 3 working days.*→.*inactivity marker at 4/);
+    /* ONLY WHAT MOVED, which is what this line says now and did not at first.
+       activity_log.summary is VARCHAR(500); with eleven settings the whole
+       policy either side of an arrow no longer fits and the entry was cut off
+       mid-word. See describeChange() in src/reminder-settings.js. The full
+       before and after are in `changes`, which is TEXT. */
+    assert.match(entry.summary, /at most 1 per person per kind per day → at most 2 per person/,
+      'the clause that changed, on both sides');
+    assert.match(entry.summary, /inactivity marker at 3 working days → inactivity marker at 4/);
+    assert.ok(entry.summary.length < 500, 'and it fits in the column');
+    assert.ok(!/banner on → banner on/.test(entry.summary),
+      'with no unchanged clause in it');
 
     // And switching manual reminders off refuses everything, on the next request.
     await as('root', '/admin/settings/nudges', { method: 'PUT',
@@ -1650,11 +1667,15 @@ test('the marker, the button and the cap, end to end', { skip: cfg ? false : SKI
       body: { manualEnabled: true, emailEnabled: false, dailyCap: 1, streakThreshold: 3 } });
   });
 
-  await t.test('the status endpoint returns no secret, and says the automatic half is absent', async () => {
+  await t.test('the status endpoint returns no secret, and the automatic half now exists', async () => {
     const r = await as('root', '/admin/settings/nudges');
     assert.strictEqual(r.status, 200);
-    assert.strictEqual(r.body.automatic, false,
-      'nothing sends on its own, and the screen is told so rather than implying otherwise');
+    /* THIS FLAG WAS false AND IS NOW true, which is the one assertion in this
+       file that moved on purpose: there was no start-of-day sweep when the
+       section shipped and there is one now. The sentence the screen drew from
+       `false` is gone with it. */
+    assert.strictEqual(r.body.automatic, true,
+      'the sweep exists, so the screen no longer says nothing is sent automatically');
     assert.match(r.body.activityExplainer, /no per-request heartbeat/);
     assert.strictEqual(r.body.lookBack, lastActivity.LOOKBACK_WORKING_DAYS);
     assert.strictEqual(r.body.blackoutMinutes, reminders.BLACKOUT_MIN_BREAK_MINUTES);

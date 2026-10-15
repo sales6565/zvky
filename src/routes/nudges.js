@@ -6,18 +6,22 @@
  * See the header of src/reminder-settings.js for what that means and what was
  * and was not built because of it.
  *
- * requirePermission, NOT requireSuperAdmin, and the key is the one that sends
- * reminders rather than a settings key of its own.
+ * ITS OWN KEY NOW, AND IT USED TO BE report.remind. The section began as four
+ * switches over the reminders that key sends, and was gated on it for exactly
+ * that reason. It now also governs the start-of-day BANNER and the top-bar
+ * timer INDICATOR, which are not reminders and which every signed-in person
+ * sees — so "may send messages to people" is no longer the right thing to be
+ * holding in order to switch them off. The practical consequence is stated
+ * rather than hidden: a studio that had delegated report.remind to its leads has
+ * not thereby delegated this screen. Both default to the Super Admin tier alone,
+ * so nothing moves on an install that has changed neither.
  *
- * TWO DECISIONS THERE, both worth stating. It is report.remind because these
- * four values govern exactly one thing — the reminders that key sends — and a
- * fifth settings key for four switches would be a key a studio has to remember
- * to grant alongside the one it actually meant. And it is requirePermission
- * because the tier passes requireSuperAdmin while the browser's can() knows
- * nothing about tiers, so a page written against one and a route against the
- * other is the divergence this application has been bitten by before — see the
- * note at the top of src/routes/timesheet-options.js. The Super Admin still
- * passes, because every permission is implied for that tier.
+ * requirePermission, NOT requireSuperAdmin, because the tier passes
+ * requireSuperAdmin while the browser's can() knows nothing about tiers, so a
+ * page written against one and a route against the other is the divergence this
+ * application has been bitten by before — see the note at the top of
+ * src/routes/timesheet-options.js. The Super Admin still passes, because every
+ * permission is implied for that tier.
  *
  * EVERY SAVE IS LOGGED, with the policy as a sentence on both sides. One of
  * these switches decides whether email leaves the building, and "who turned
@@ -38,9 +42,12 @@ const { authenticate, requirePermission } = require('../middleware/auth');
 const reminderSettings = require('../reminder-settings');
 const lastActivity = require('../last-activity');
 const reminders = require('../reminders');
+const startReminders = require('../start-reminders');
+const dayState = require('../day-state');
+const workSchedule = require('../work-schedule');
 const activity = require('../activity');
 
-const PERMISSION = 'report.remind';
+const PERMISSION = 'settings.nudges';
 
 router.use(authenticate);
 router.use(requirePermission(PERMISSION));
@@ -60,9 +67,40 @@ async function payload() {
     activityExplainer: lastActivity.EXPLAINER,
     lookBack: lastActivity.LOOKBACK_WORKING_DAYS,
     blackoutMinutes: reminders.BLACKOUT_MIN_BREAK_MINUTES,
-    /* STATED ON THE SCREEN, because a settings section for a feature half of
-       which does not exist would otherwise be read as a promise. */
-    automatic: false,
+    /* THE AUTOMATIC HALF EXISTS NOW, which this field said it did not. It was
+       false from the day the section shipped because there was no sweep; there
+       is one, so the sentence it drove is gone and the screen says what the two
+       reminders are instead. */
+    automatic: true,
+    /* WHEN EACH REMINDER IS DUE, worked out from the studio's own schedule and
+       the saved settings — so the screen quotes the times the sweep will
+       actually use rather than restating the rule. Null where the studio has no
+       recording windows at all. */
+    occasions: occasionsFor(),
+    /* The ranges the validator holds the numbers to, and the clock format, so
+       the form's inputs and the server's refusals agree. */
+    ranges: {
+      grace: { min: reminderSettings.GRACE_MIN, max: reminderSettings.GRACE_MAX },
+      snooze: { min: reminderSettings.SNOOZE_MIN, max: reminderSettings.SNOOZE_MAX },
+    },
+    secondReminderLabel: reminderSettings.clock(reminderSettings.current().secondReminderMinutes),
+    indicatorStates: Object.values(dayState.STATES),
+  };
+}
+
+/* The two reminder times as the screen shows them. Asked of
+   src/start-reminders.js, which owns the window arithmetic, so a change to how
+   the first one is derived moves this line with it. */
+function occasionsFor(now = Date.now()) {
+  const schedule = workSchedule.trackingWindow();
+  const w = startReminders.windowsFor({ now, settings: reminderSettings.current(), schedule });
+  if (!w) return null;
+  const label = reminderSettings.clock;
+  return {
+    opensAt: label(w.open),
+    closesAt: label(w.close),
+    first: label(w.windows[startReminders.FIRST].from),
+    second: label(w.windows[startReminders.SECOND].from),
   };
 }
 
@@ -73,7 +111,25 @@ router.get('/', async (req, res) => {
 
 // PUT /api/admin/settings/nudges
 router.put('/', async (req, res) => {
-  const result = await reminderSettings.save(db, req.body || {}, req.user.id);
+  /* THE STUDIO'S OWN SCHEDULE IS HANDED TO THE VALIDATOR, which is what lets it
+     refuse a second reminder before the first or outside working hours without
+     reading the schedule itself. The two rules are then one comparison each
+     against numbers the studio set in Recording Hours. */
+  const spans = (() => {
+    const schedule = workSchedule.trackingWindow();
+    const { day } = require('../working-time').istPartsOf(Date.now());
+    const s2 = require('../working-time').spansOn(day, schedule);
+    /* A DAY THE STUDIO IS SHUT would answer "no hours", and validating against
+       that would refuse every save made on a Sunday. Asked of the longest day
+       the week holds instead, through the same schedule the clock uses. */
+    if (s2.length) return { openMinute: s2[0][0], closeMinute: s2[s2.length - 1][1] };
+    for (let d = 0; d < 7; d += 1) {
+      const week = require('../working-time').spansOn(day + d, schedule);
+      if (week.length) return { openMinute: week[0][0], closeMinute: week[week.length - 1][1] };
+    }
+    return null;
+  })();
+  const result = await reminderSettings.save(db, req.body || {}, req.user.id, { schedule: spans });
   if (!result.ok) {
     return res.status(result.status).json({ errors: result.errors, error: result.errors[0].message });
   }
@@ -85,8 +141,11 @@ router.put('/', async (req, res) => {
     entityType: 'setting',
     entityId: 'reminder_settings',
     entityLabel: 'Start-of-day nudges',
-    summary: was === now ? 'Saved the Start-of-day nudge settings with no change'
-      : `Changed the Start-of-day nudges: ${was} → ${now}`,
+    /* ONLY THE CLAUSES THAT MOVED — see describeChange() on why: the whole
+       policy no longer fits in activity_log.summary, and the clauses that did
+       not change are not what anybody came looking for. The full before and
+       after are in `changes` below, which is TEXT. */
+    summary: reminderSettings.describeChange(result.before, result.settings),
     changes: activity.diff({ nudges: was }, { nudges: now }),
   });
   res.json(await payload());

@@ -239,6 +239,29 @@ test('the defaults that are decisions, with the reason for each', () => {
   assert.ok(catalog.grantableKeys().includes('settings.email_delivery'),
     'and it can be granted, unlike the two keys that cannot be');
 
+  /* THE START-OF-DAY NUDGE SETTINGS: SUPER ADMIN ALONE, and its own key — which
+   * it did not have at first and that change is the point.
+   *
+   * settings.nudges gates Settings → Start-of-day Nudges, which began as four
+   * switches over the reminders report.remind sends and was gated on THAT key.
+   * The section now also governs the start-of-day banner and the top-bar timer
+   * indicator, which are not reminders and which every signed-in person sees —
+   * so "may send messages to people" is no longer the right thing to hold in
+   * order to switch them off.
+   *
+   * THE CONSEQUENCE IS PINNED HERE, not just in the README: a studio that had
+   * delegated report.remind has not thereby delegated this screen. Both start
+   * with the Super Admin tier alone, so an install that changed neither sees no
+   * difference — which is what makes the split safe to make. */
+  assert.deepStrictEqual(held('settings.nudges'), ['super_admin'],
+    'Manage Start-of-day Nudges starts with Super Admin and nobody else');
+  assert.deepStrictEqual(held('settings.nudges'), held('report.remind'),
+    'the same starting position as the key it was split from — what differs is that they can diverge');
+  assert.ok(catalog.grantableKeys().includes('settings.nudges'),
+    'and a studio can delegate the screen without delegating the sending');
+  assert.strictEqual(catalog.BY_KEY.get('settings.nudges').group, 'settings',
+    'and it is filed with the other Settings keys, not with the reports');
+
   /* SENDING REMINDERS: SUPER ADMIN ALONE, and its own key beside the one that
    * merely SHOWS the list.
    *

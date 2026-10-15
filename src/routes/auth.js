@@ -9,6 +9,7 @@ const db = require('../db');
 // The previous-working-day rule's answer, which /me hands to the page so the
 // browser never recomputes a date rule the server owns.
 const timesheetGate = require('../timesheet-gate');
+const dayStateFor = require('../day-state');
 const theme = require('../theme');
 const { userFields } = require('../user-fields');
 const { authenticate } = require('../middleware/auth');
@@ -126,8 +127,35 @@ router.get('/me', authenticate, async (req, res) => {
    * Its own field rather than folded into `user`, because it is a fact about
    * this moment and not about the account. */
   const gate = await timesheetGate.check(db, req.user);
+
+  /* WHERE THIS PERSON'S DAY STANDS, for the start-of-day banner and the
+   * top-bar timer indicator. See src/day-state.js.
+   *
+   * ON THIS ENDPOINT rather than one of its own, and that is the decision. The
+   * page already re-polls this every twenty seconds for permissions and the
+   * theme version, and "within the normal refresh cycle" is exactly what the
+   * indicator has to reflect — a timer started in another tab, a Settings
+   * change, a lunch break beginning. A second endpoint would be a second poll
+   * on the same interval for an answer that belongs with this one.
+   *
+   * THE GATE IS HANDED IN rather than asked again. It is the banner's "blocked"
+   * reason, and it has just been computed above; running it twice would be the
+   * same query twice on the most-polled endpoint in the application, and worse,
+   * two answers that could differ inside one response.
+   *
+   * NEVER FAILS THIS ENDPOINT. Signing in and knowing what you may do must not
+   * depend on a banner: a failure here is logged and the field comes back null,
+   * which the page reads as "draw neither". */
+  let dayState = null;
+  try {
+    dayState = await dayStateFor.forUser(db, req.user, { gate });
+  } catch (err) {
+    console.warn(`[day state] failing quiet for ${req.user && req.user.id}: ${err.message}`);
+  }
+
   res.json({
     user: req.user,
+    dayState,
     /* THE THEME'S VERSION, so a colour change reaches an open screen without
        anybody reloading. A number and not the colours: this endpoint is polled
        every twenty seconds by every signed-in browser, and sending a hundred hex

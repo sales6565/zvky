@@ -277,6 +277,30 @@ const TOKENS = [
     { alphas: { t10: 0.10, t14: 0.14, t30: 0.30, t50: 0.5 } }),
   t('meaning.info.text', 'info-ink', 'Information text', 'Meaning', '#8ECDFF',
     'The words inside an information banner.'),
+  /* --- The top-bar timer indicator ----------------------------------------
+   *
+   * FOUR STATES AND FOUR TOKENS, so a Super Admin can restyle the one piece of
+   * chrome that is on every screen for every person. Each DEFAULT is an
+   * existing colour from the family that already means that thing — running is
+   * the success green, paused the warning amber, on hold the slate the
+   * application already uses for work somebody put down, and not-running the
+   * muted ink. They are separate tokens rather than aliases because this is the
+   * one indicator a studio is most likely to want louder or quieter, and
+   * changing `approved` to do it would move every Approved for Client tag on
+   * the board with it.
+   *
+   * NONE OF THEM CARRIES THE MEANING ON ITS OWN: the indicator draws an icon
+   * and words beside the colour — see the note on .tmr- in public/index.html —
+   * so a reader who cannot tell amber from green reads the same state. */
+  t('indicator.running', 'tmr-running', 'Timer running', 'Meaning', '#3DDC97',
+    'The top-bar indicator while a timer is running.'),
+  t('indicator.idle', 'tmr-idle', 'No timer running', 'Meaning', '#8B909C',
+    'The top-bar indicator during working hours with nothing running.'),
+  t('indicator.paused', 'tmr-paused', 'Timer paused', 'Meaning', '#F2B33D',
+    'The top-bar indicator during a break, outside working hours, or on a day '
+    + 'the studio is closed.'),
+  t('indicator.held', 'tmr-held', 'Task on hold', 'Meaning', '#C6CCD8',
+    'The top-bar indicator when this person has put a task down.'),
   t('meaning.at_risk', 'at-risk', 'At Risk', 'Meaning', '#E8A33D',
     'Work due soon and unfinished — the Admin Dashboard card, the timesheet '
     + 'over-hours flag, the one-active-task notice.',

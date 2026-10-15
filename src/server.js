@@ -615,6 +615,11 @@ async function start() {
        same reason as the line above: a process restarted overnight comes back
        holding sessions that ran past seven while nothing was listening. */
     workLog.scheduleAutoPause(db);
+    /* AND THE START-OF-DAY REMINDERS, beside the hours sweep because they are
+       the same kind of job and share its shape: an immediate pass so a restart
+       catches up, then an interval that only decides how soon after the due
+       minute a reminder lands. See src/start-reminders.js. */
+    require('./start-reminders').schedule(db);
     /* And forget integration idempotency keys older than a week. Same reasoning
        as the two sweeps above: the pass that runs now is the one that clears
        what expired while this process was not running. */

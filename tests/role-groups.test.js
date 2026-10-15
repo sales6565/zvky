@@ -47,16 +47,18 @@ const MANAGE = 'settings.role_groups';
 /* EVERY KEY ADDED SINCE THE SNAPSHOT WAS TAKEN, named one by one.
  *
  * The fixture was recorded before role groups existed, and the catalogue has
- * grown three times since: settings.role_groups with that feature,
- * settings.email_delivery with the Gmail transport, and report.remind with the
- * reminders a lead can send from the follow-up lists. The list is EXACT rather
- * than a count, so a fourth key added later has to come past this line and be
- * accounted for — which is the whole point of pinning a snapshot.
+ * grown four times since: settings.role_groups with that feature,
+ * settings.email_delivery with the Gmail transport, report.remind with the
+ * reminders a lead can send from the follow-up lists, and settings.nudges with
+ * the start-of-day banner and the top-bar timer — which split the nudge
+ * SETTINGS screen away from the key that SENDS reminders. The list is EXACT
+ * rather than a count, so a fifth key added later has to come past this line and
+ * be accounted for — which is the whole point of pinning a snapshot.
  *
  * Each one must reach Super Admin and nobody else, which is this studio's
  * standing rule for a new permission; the snapshot comparison below subtracts
  * exactly these. */
-const SINCE_SNAPSHOT = [MANAGE, 'settings.email_delivery', 'report.remind'];
+const SINCE_SNAPSHOT = [MANAGE, 'settings.email_delivery', 'report.remind', 'settings.nudges'];
 
 test('every key added since the snapshot is Super Admin only', () => {
   const added = catalog.KEYS.filter((k) => !SNAPSHOT.roles.super_admin.includes(k));

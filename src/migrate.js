@@ -4333,6 +4333,24 @@ async function ensureReminderTables(db, log) {
       -- How many working days in a row without a start before the row carries
       -- the stronger marker.
       streak_threshold TINYINT     NOT NULL DEFAULT 3,
+      -- THE MASTER SWITCH over the whole start-of-day feature: the banner, the
+      -- top-bar indicator and both automatic reminders. On.
+      enabled         TINYINT(1)   NOT NULL DEFAULT 1,
+      banner_enabled  TINYINT(1)   NOT NULL DEFAULT 1,
+      indicator_enabled TINYINT(1) NOT NULL DEFAULT 1,
+      -- The automatic reminders' two channels. In-app on, email off, for the
+      -- reason email_enabled above is off.
+      in_app_enabled  TINYINT(1)   NOT NULL DEFAULT 1,
+      -- How long after the studio opens before somebody counts as not started.
+      -- src/follow-up.js's GRACE_MINUTES is the default and that module reads
+      -- this value, so there is one number in one place.
+      grace_minutes   SMALLINT     NOT NULL DEFAULT 60,
+      -- The second reminder, as minutes past midnight IST — the frame
+      -- work_schedule.day_start_min and the recording windows already use.
+      -- 690 is 11:30.
+      second_reminder_minutes SMALLINT NOT NULL DEFAULT 690,
+      -- How long a dismissed banner stays dismissed, in the browser.
+      snooze_minutes  SMALLINT     NOT NULL DEFAULT 30,
       updated_by      CHAR(36)     NULL,
       updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )`));
@@ -4381,6 +4399,37 @@ async function ensureReminderTables(db, log) {
     + 'FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE SET NULL');
   await fk('ALTER TABLE reminder_settings ADD CONSTRAINT fk_reminder_settings_user '
     + 'FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL');
+
+  /* THE COLUMNS THE START-OF-DAY HALF ADDED, for a database whose table
+   * predates them. Idempotent by asking information_schema, the same way
+   * ensureTimesheetSettings does for require_previous_day — and each DEFAULT is
+   * the shipped default, so a row that existed before the column keeps the
+   * behaviour the code has without anybody visiting Settings.
+   *
+   * THE DEFAULTS ARE THE DECISION, AND THEY DIFFER. The banner, the indicator
+   * and the in-app reminders arrive ON: they are screen furniture on a screen
+   * the person is already looking at, and a studio that dislikes them switches
+   * them off having seen them. email_enabled already existed, OFF. */
+  const columns = await columnsOf(db, 'reminder_settings');
+  const add = async (name, ddl, note) => {
+    if (columns.has(name)) return;
+    await db.query(`ALTER TABLE reminder_settings ADD COLUMN ${ddl}`);
+    log(`Schema: reminder_settings.${name} added — ${note}`);
+  };
+  await add('enabled', 'enabled TINYINT(1) NOT NULL DEFAULT 1',
+    'the master switch, on.');
+  await add('banner_enabled', 'banner_enabled TINYINT(1) NOT NULL DEFAULT 1',
+    'the start-of-day banner, on.');
+  await add('indicator_enabled', 'indicator_enabled TINYINT(1) NOT NULL DEFAULT 1',
+    'the top-bar timer indicator, on.');
+  await add('in_app_enabled', 'in_app_enabled TINYINT(1) NOT NULL DEFAULT 1',
+    'in-app start reminders, on. Email stays off.');
+  await add('grace_minutes', 'grace_minutes SMALLINT NOT NULL DEFAULT 60',
+    'the grace period after the studio opens, which src/follow-up.js now reads.');
+  await add('second_reminder_minutes', 'second_reminder_minutes SMALLINT NOT NULL DEFAULT 690',
+    'the second reminder at 11:30 IST, as minutes past midnight.');
+  await add('snooze_minutes', 'snooze_minutes SMALLINT NOT NULL DEFAULT 30',
+    'how long a dismissed banner stays dismissed.');
 
   const { rows } = await db.query('SELECT id FROM reminder_settings WHERE id = 1');
   if (rows.length) return;

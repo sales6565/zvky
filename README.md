@@ -3129,21 +3129,191 @@ the default is pinned in `tests/role-permissions.test.js`.
 
 #### Settings → Start-of-day Nudges
 
-Four switches, behind `report.remind`.
+Eleven switches now, behind **`settings.nudges`** — and that key is new. The
+section began as four values governing the reminders `report.remind` sends and
+was gated on it; it now also governs the start-of-day **banner** and the
+top-bar **timer indicator**, which are not reminders and which every signed-in
+person sees. "May send messages to people" is no longer the right thing to be
+holding in order to switch them off. The practical consequence, stated rather
+than hidden: **a studio that had delegated `report.remind` to its leads has not
+thereby delegated this screen.** Both default to the Super Admin tier alone, so
+nothing moves on an install that has changed neither.
 
 | Setting | Default | Why |
 | --- | --- | --- |
-| Manual reminders on | **on** | a feature that ships switched off is one nobody finds |
-| Also send an email | **off** | an in-app notice reaches somebody inside the tool; an email leaves the building and cannot be recalled, and no studio has yet decided it wants its staff mailed about attendance |
-| Most per person, per kind, per day | **1** | the brief's number, and what the unique key enforces |
-| Mark repeated absence at | **3** working days | one would mean "mark every row", which is no marker at all — so the validator's floor is 2 |
+| **Start-of-day nudges on** (master) | **on** | with it off, no banner, no indicator and no reminder of either sort |
+| Show the banner | **on** | screen furniture on a screen the person is already looking at; a studio that dislikes it switches it off having seen it |
+| Show the top-bar timer | **on** | as above |
+| In-app reminders | **on** | reaches somebody inside the tool |
+| Email reminders | **off** | an email leaves the building through a shared mailbox and cannot be recalled — the same reasoning `requirePreviousDay` ships inert for |
+| Grace period | **60** minutes (10–240) | Prompt 34's `GRACE_MINUTES`, which is now this value's default; `src/follow-up.js` reads it, so the follow-up list, the banner and the first reminder cannot disagree |
+| Second reminder at | **11:30** IST | stored as minutes past midnight (690), the frame `work_schedule.day_start_min` already uses; accepted as `HH:MM` or as minutes |
+| Banner snooze | **30** minutes (5–240) | |
+| Manual reminders on | **on** | |
+| Most manual per person, per kind, per day | **1** | |
+| Mark repeated absence at | **3** working days | floor of 2 — one would mean "mark every row" |
 
-Validated on the server (every mistake reported, not the first), audited with
-the policy as a sentence on both sides, and **applied without a redeploy**:
-`save()` reloads the in-memory mirror every reader reads, and the threshold and
-the cap travel in the follow-up payload, so an open browser picks them up on its
-next draw. The section says plainly that **nothing is sent automatically**, so
-that switching these on is not read as a promise the application does not keep.
+Validated on the server — every mistake reported, not the first — including two
+rules that need the studio's own schedule: **the second reminder must come after
+the first** (the studio's opening plus the grace period, so moving the grace
+moves the comparison) and **inside working hours**. A studio with no recording
+windows at all is not refused, or a Super Admin could not fix the schedule and
+the reminder in either order. Audited with the policy as a sentence on both
+sides. **Applied without a redeploy or a sign-out**: `save()` reloads the mirror
+every reader reads, the banner and indicator state travel on `/auth/me`, and
+saving forces that poll once so the person who changed it sees it immediately.
+
+### The start-of-day banner, the reminders, and the top-bar timer
+
+Three pieces of one feature, all of them reading state the **server** computes.
+
+#### One place decides, and the page draws it
+
+`src/day-state.js` answers, on `/auth/me`: is a timer running and for how long,
+if not then why not, did they start anything today, how many tasks are waiting
+and which three, and is starting blocked and by what. The page holds **no**
+working-hours rule, no holiday rule, no grace period and no "started today"
+rule.
+
+That is the point rather than tidiness. The studio's clock spans a weekly off, a
+holiday calendar, three break windows and a timezone, and two copies of a date
+rule have drifted apart in this application before — which is why `/auth/me`
+already hands over the timesheet gate's **answer** instead of its inputs. A
+banner that decided for itself whether it was lunch would be the fourth copy.
+
+Everything is asked of whatever already owns it:
+
+| Question | Asked of |
+| --- | --- |
+| is a timer running | `workLog.openForUser()` |
+| how long has it run | `workLog.liveSeconds()`, from the database's own clock — **working** seconds, so a session through lunch does not count lunch |
+| on hold, and why | `workLog.heldAnyFor()`, which carries the studio-pause reason the hours sweep wrote |
+| is the clock recording | `workingTime.isRecording()` / `spansOn()` — where the weekly off and the holiday calendar already meet |
+| when does it start again | `workingTime.resumesAt()` |
+| did they start today | `followUp.startedDays()` — the one definition of "started on D" |
+| what is waiting on them | `waitingWork.countsFor()` / `listFor()` — the same predicate as the follow-up figure |
+| may they start at all | `timesheetGate.check()`, **handed in** by the route that already ran it |
+| are they expected | Prompt 34's rule: assignable designations, on the books, and not created today |
+
+**On `/auth/me` rather than an endpoint of its own**, because the page already
+polls it every twenty seconds for permissions and the theme version, and "within
+the normal refresh cycle" is exactly what the indicator has to reflect. What it
+costs on that poll: **one** query with a timer running, **four** when idle, and
+**nothing** with the master switch off or both pieces switched off.
+
+#### The banner
+
+Shown only when **all** of: the master switch and the banner switch are on, the
+person is expected to be working, it is a working day, the clock is recording
+(which is one predicate for "inside hours **and** not at lunch" — there is no
+separate blackout rule to forget), no timer is running, nothing was started
+today, and the grace period has passed.
+
+| Variant | What it shows |
+| --- | --- |
+| **start** | "You haven't started work today. You have N tasks assigned." One Start for one task; for several, up to three with their status and due date, plus "See all my tasks" |
+| **blocked** | the gate's own sentence and a link to the Time Sheet, **instead** of the buttons — offering Start would be a button the server refuses |
+| **none** | "You have no tasks assigned today", and no button |
+
+**Start goes through `POST /api/assets/:id/start` and nothing else** — the only
+way a session opens in this application, carrying all seven of its independent
+gates (the outsource check, `mayStartWork`, `STARTABLE`, the awaiting-handover
+stages, the start date, the holiday, the previous-day timesheet rule and the
+one-active-task rule). No second endpoint and no flag. A refusal is the server's
+sentence, shown on the banner rather than as a toast that is gone before anybody
+reads it.
+
+**Dismissal is 30 minutes, in the browser, per user and per day.** Not on the
+server: a dismissal is "not now", which is a fact about this browser in this
+hour, and in the server it would also follow somebody to their phone. The stored
+value is an instant to come back at and the key carries the server's IST date,
+so it expires twice over; an unreadable value reads as "not dismissed". The
+banner's container is always in the document, so the first paint either has it
+or does not — it never shoves the page down after it has settled.
+
+#### The two reminders
+
+The automatic half of a table that was built for it. `reminder_log` already had
+a `source` column whose second value, `'auto'`, nothing wrote — and a unique key
+that already spanned it:
+
+```sql
+UNIQUE KEY uq_reminder_slot (recipient_id, kind, source, sent_on, slot)
+```
+
+`slot` is which of the day's sends this is, so **the first reminder takes slot 0
+and the second takes slot 1**. "The first reminder, for Ana, today" is therefore
+one row the database accepts once and refuses for ever after — against a
+restart, a sweep running every minute, two workers racing and a catch-up pass
+hours later. **The INSERT is the check**; there is no read-then-write for a
+second process to slip between. The follow-up section's "Auto reminder sent
+10:30" line, which had been drawing nothing since it shipped, now lights up.
+
+| | |
+| --- | --- |
+| First | the studio's opening **plus the grace period** — 10:30 by default |
+| Second | the configured time, 11:30 by default |
+| First's window | ends when the second's begins, so **the first is never sent after the second's time has passed** |
+| Second's window | ends at the close of the working day |
+
+**A missed occasion is sent late by the same code path**, which is why there is
+no scheduler: every pass asks "is this occasion's window open, is the slot free,
+and does this person still need it". The pass at 10:31 after a server that was
+down at 10:30 sends it; the pass at 10:32 does not. Nothing is stored about when
+the sweep last ran. That is the argument `scheduleAutoPause()` already makes for
+the work-hours sweep — "the interval is about the screen, not the number" — and
+this sweep is wired beside it, with the same shape: an immediate pass, then an
+unref'd interval (`START_REMINDER_SWEEP_MINUTES`, default 1).
+
+Never sent: on a weekend, a holiday, during a break or outside working hours
+(all one question, asked of `isRecording`); to somebody who has started or has a
+timer running; to somebody who is not expected today; **or to somebody with no
+tasks**. That last one the brief asked to be decided and stated: a nudge to start
+work when there is nothing to start is a message whose only possible action is to
+ignore it, and the studio has other screens for "somebody has nothing to do".
+The banner says it on their own screen, where it costs nothing; a notice and an
+email do not.
+
+The message names the count, because that is what makes it actionable, and the
+second says it is the second. In-app goes through `notifications.raise()` with no
+actor — the studio did this, not a person — so it reaches the bell, the desktop
+notice and the phone push without this file knowing any of them exist. Email
+goes through `emailNotifications.reminder()` onto the existing outbox, inheriting
+the `60s / 5m / 30m / 2h / 6h / 24h` backoff, the seven attempts and the
+permanent-failure behaviour unchanged. Nobody without an email address is
+mailed, and the opt-out is the same gate every other email in the file uses.
+
+#### The top-bar indicator
+
+On every screen, because the header is. A `<button>`, so Enter, Space, the tab
+order and a focus ring come for free.
+
+| State | What it says | Token |
+| --- | --- | --- |
+| running | the asset and a live `h:mm:ss` | `indicator.running` |
+| not running, in hours | "No timer running" | `indicator.idle` |
+| paused (break) | "Paused – break" and why | `indicator.paused` |
+| outside hours / closed day | "Outside hours" / "Holiday" / "Studio closed", with the reason | `indicator.paused` |
+| on hold | "On hold" | `indicator.held` |
+
+**Never colour alone**: each state draws an icon and the words as well, so a
+reader who cannot tell the amber from the green reads the same state. The four
+colours are Super Admin editable tokens with defaults taken from the family that
+already means that thing.
+
+**The live second cannot drift or lie.** The figure is working seconds from the
+database's own clock; while the studio is recording they advance one per wall
+second, so adding one per second is exactly right, and every twenty-second poll
+replaces the whole figure with the server's again — so a sleeping laptop, a
+suspended tab or a second browser cannot accumulate an error. It **stops when
+the studio stops**: `ticking` is the server's answer to "is the clock recording
+right now", so a tab left open through lunch does not count lunch. Clicking it
+opens the running asset through the navigation the rest of the application uses,
+or the board when nothing is running. A timer started in another tab appears on
+the next poll, because that is where the state comes from.
+
+No native dialogs anywhere in any of this, and nothing uses the browser
+Notification API: in-app and email are the channels.
 
 ### At narrower widths
 
