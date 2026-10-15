@@ -1190,6 +1190,31 @@ test('leave, idle and the settings, end to end', { skip: cfg ? false : SKIP_REAS
   t.after(() => stopServer(server));
 
   const today = () => require('../src/timesheet-gate').istDate(Date.now());
+
+  /* ---------------------------------------------------------------------
+   * A DATABASE HANDLE FOR THE TWO SWEEPS THIS SUITE DRIVES ITSELF, over the
+   * helper's own connection rather than over src/db.
+   *
+   * NEVER require('../src/db') AND QUERY IT IN A TEST PROCESS. Requiring is
+   * harmless; querying builds a connection pool that outlives the test, and
+   * node:test then sits with a live handle and never exits — which is exactly
+   * what happened here, after every assertion in this file had already passed.
+   * It also points at TEST_DB_NAME rather than at this suite's own database,
+   * so what it reads is the wrong schema.
+   *
+   * So: the same $n -> ? translation src/db.js does, over sql(cfg, …), and the
+   * same { rows, result } shape the modules expect back. */
+  const handle = {
+    async query(text, params = []) {
+      const values = [];
+      const translated = String(text).replace(/\$(\d+)/g, (_, n) => {
+        values.push(params[Number(n) - 1]);
+        return '?';
+      });
+      const rows = await sql(cfg, translated, values.length ? values : params);
+      return { rows: Array.isArray(rows) ? rows : [], result: rows };
+    },
+  };
   const mark = (body, who = 'root') => as(who, '/admin-dashboard/follow-up/day-status',
     { method: 'POST', body });
   const undo = (body, who = 'root') => as(who, '/admin-dashboard/follow-up/day-status/clear',
@@ -1302,7 +1327,7 @@ test('leave, idle and the settings, end to end', { skip: cfg ? false : SKIP_REAS
     /* AND IT IS NOT AUTO-RESUMED. resumeOverdue picks up off_hours and only
        off_hours, so a leave pause is invisible to it. */
     const workLog = require('../src/work-log');
-    const resumed = await workLog.resumeOverdue(require('../src/db')).catch(() => []);
+    const resumed = await workLog.resumeOverdue(handle).catch(() => []);
     assert.strictEqual(resumed.length, 0);
   });
 
@@ -1335,7 +1360,7 @@ test('leave, idle and the settings, end to end', { skip: cfg ? false : SKIP_REAS
     const [open] = await sql(cfg, 'SELECT id FROM work_sessions WHERE user_id = ? AND ended_at IS NULL', [id.bo]);
     assert.ok(open, 'Bo\'s clock runs normally');
     /* AND THE SWEEP LEAVES IT ALONE: it is Ana who is away. */
-    const stopped = await dayStatus.sweepLeave(require('../src/db'));
+    const stopped = await dayStatus.sweepLeave(handle);
     assert.ok(!stopped.some((s) => s.userId === id.bo), 'Bo is not stopped');
     await as('bo', `/assets/${id.asset}/hold`, { method: 'POST', body: { note: 'done' } }).catch(() => {});
   });
