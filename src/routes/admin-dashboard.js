@@ -4,6 +4,10 @@ const adminDashboard = require('../admin-dashboard');
 const teamCapacity = require('../team-capacity');
 const followUp = require('../follow-up');
 const reminders = require('../reminders');
+const waitingWork = require('../waiting-work');
+const timesheetGate = require('../timesheet-gate');
+const permissions = require('../permissions');
+const { roleDef } = require('../roles');
 const { holds } = require('../permissions');
 const db = require('../db');
 
@@ -101,6 +105,93 @@ router.get('/follow-up', requirePermission('report.follow_up'), async (req, res)
   const data = await followUp.build(db, req.user, { query: req.query });
   if (data.ok === false) return res.status(data.status || 400).json({ error: data.error });
   return res.json(data);
+});
+
+/* GET /api/admin-dashboard/follow-up/waiting/:userId?all=1
+ *
+ * WHAT IS WAITING ON ONE PERSON, grouped Client -> Project -> assets. The list
+ * behind the "N waiting on them" button on a follow-up row.
+ *
+ * THE SECTION'S OWN KEY AND NOTHING MORE. report.follow_up, the same key that
+ * draws the lists — the panel is the figure the row already prints, expanded.
+ * Giving it a key of its own would mean a studio could grant the number and
+ * withhold the names, which is a distinction nobody asked for and which the
+ * number already breaks (four waiting is four names to anybody with the Users
+ * tab). router.use() above adds report.admin_dashboard, as for every other
+ * endpoint on this screen.
+ *
+ * THE SAME SCOPING, ASKED OF THE SAME FUNCTION. permissions.visibleProjects()
+ * decides which projects, and src/follow-up.js's own inScope() decides whether
+ * this is even a person the viewer may ask about — because without that check
+ * the endpoint is a probe: a narrower viewer could name any user id and be told
+ * whether that person has work, which is the disclosure the section's scope rule
+ * exists to prevent.
+ *
+ * TODAY ONLY. The figure is clickable only where it is the "waiting now" one;
+ * see nowFigure in src/follow-up.js for why a past date cannot answer this.
+ */
+router.get('/follow-up/waiting/:userId', requirePermission('report.follow_up'), async (req, res) => {
+  const userId = String(req.params.userId || '');
+  if (!userId) return res.status(400).json({ error: 'Which person?' });
+
+  let projects;
+  try {
+    projects = await permissions.visibleProjects(req.user);
+  } catch (err) {
+    return res.status(503).json({ error: `The project list could not be read (${err.code || 'error'}).` });
+  }
+  const projectIds = projects.map((p) => p.id);
+  const def = roleDef(req.user.role) || {};
+  const studioWide = def.projectScope === 'all';
+
+  if (!studioWide) {
+    if (!projectIds.length) {
+      return res.status(403).json({ error: 'You have no projects in view, so there is nothing to open.' });
+    }
+    const reach = await followUp.inScope(db, { projectIds, studioWide });
+    if (reach && !reach.has(userId)) {
+      /* NOT 404, AND THE WORDING DISCLOSES NOTHING. Whether that id is a person
+         at all, and whether they hold any work, are both things this answer must
+         not reveal to somebody outside their reach. */
+      return res.status(403).json({ error: 'That person is not in the projects you can see.' });
+    }
+  }
+
+  const today = timesheetGate.istDate(Date.now());
+  const panel = await waitingWork.panelFor(db, userId, {
+    projectIds,
+    studioWide,
+    today,
+    all: req.query.all === '1' || req.query.all === 'true',
+  });
+
+  /* IS ANY OF THEIR WORK OUTSIDE THIS VIEWER'S REACH?
+   *
+   * A BOOLEAN AND NOT A NUMBER, deliberately. The brief asked for a note
+   * "without revealing details", and a count is a detail: "4 more elsewhere"
+   * tells an Admin how busy somebody is on projects they are not on, which is
+   * most of what the scope rule withholds. The note says that there is some, so
+   * the reader knows the panel is a view and not the whole truth, and stops
+   * there.
+   *
+   * One query, and only for a viewer who is narrowed at all — a studio-wide
+   * viewer has nothing outside their reach by definition. It returns a count
+   * and is reduced to a boolean before it leaves this handler. */
+  let elsewhere = false;
+  if (!studioWide) {
+    const whole = await waitingWork.countsFor(db, [userId], { studioWide: true });
+    elsewhere = (whole.get(userId) || 0) > panel.count;
+  }
+
+  return res.json({
+    ...panel,
+    userId,
+    elsewhere,
+    studioWide,
+    /* The sentence that says what "waiting" means, from the module that decides
+       it — the panel prints it as its help line. */
+    explainer: waitingWork.EXPLAINER,
+  });
 });
 
 /* ===========================================================================

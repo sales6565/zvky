@@ -1185,6 +1185,54 @@ tr.past-round{opacity:0.62;}
 .fu-remind-all:focus-visible{outline:2px solid var(--focus-ring);outline-offset:1px;}
 .fu-remind-all:disabled{opacity:.5;cursor:not-allowed;}
 .fu-skip-note{font-size:10px;color:var(--ink-faint);font-family:'IBM Plex Mono';}
+/* The figure, as a button. Drawn as the text it replaces plus a caret, so a row
+   does not change shape when the same number becomes openable. */
+.fu-held-btn{background:none;border:0;padding:0 2px;cursor:pointer;font-family:'IBM Plex Mono';
+  font-size:10.5px;color:var(--ink-muted);display:inline-flex;align-items:center;gap:3px;}
+.fu-held-btn:hover{color:var(--brand-accent);}
+.fu-held-btn:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px;border-radius:4px;}
+.fu-held-btn.is-open{color:var(--brand-accent);}
+.fu-held-caret{font-size:8px;}
+/* The panel, under the row it belongs to and inside the same list column. */
+.fu-panel{border-left:2px solid var(--brand-accent);background:var(--surface-2);
+  border-radius:0 7px 7px 0;margin:0 0 8px 6px;padding:8px 10px;}
+.fu-panel-head{font-size:11.5px;color:var(--ink-muted);display:flex;flex-wrap:wrap;
+  align-items:baseline;gap:8px;margin-bottom:6px;}
+.fu-panel-head strong{color:var(--brand-accent);font-family:'IBM Plex Mono';}
+.fu-panel-od{font-size:10px;font-family:'IBM Plex Mono';color:var(--overdue);
+  background:var(--overdue-t12);border:1px solid var(--overdue-t30);border-radius:20px;padding:1px 7px;}
+.fu-panel-loading,.fu-panel-empty{font-size:11.5px;color:var(--ink-faint);padding:4px 0;}
+.fu-panel-err{font-size:11.5px;color:var(--brand-accent);display:flex;flex-wrap:wrap;
+  align-items:center;gap:8px;}
+.fu-retry{font-family:'Inter',sans-serif;font-size:10.5px;padding:3px 9px;border-radius:7px;
+  background:var(--surface-3);border:1px solid var(--border);color:var(--ink);cursor:pointer;}
+.fu-retry:hover{border-color:var(--brand-accent);color:var(--brand-accent);}
+.fu-retry:focus-visible{outline:2px solid var(--focus-ring);outline-offset:1px;}
+.fu-panel-note{font-size:10.5px;color:var(--warning-ink);background:var(--warning-wash-t12);
+  border:1px solid var(--warning-wash-t30);border-radius:6px;padding:4px 7px;margin-top:7px;line-height:1.5;}
+.fu-panel-help{font-size:10px;color:var(--ink-faint);line-height:1.5;margin-top:7px;
+  border-top:1px solid var(--border);padding-top:6px;}
+/* Client, then project, then assets — each heading carrying its own total. */
+.fu-cg{margin-bottom:7px;}
+.fu-cg-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;
+  border-bottom:1px solid var(--border);padding-bottom:3px;}
+.fu-cg-name{font-family:'Space Grotesk';font-size:11.5px;font-weight:600;color:var(--ink);}
+.fu-cg-name.is-unknown{color:var(--ink-faint);font-style:italic;}
+.fu-cg-n{font-size:10px;font-family:'IBM Plex Mono';color:var(--ink-muted);white-space:nowrap;}
+.fu-pg{margin:4px 0 4px 8px;}
+.fu-pg-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;}
+.fu-pg-name{font-size:11px;color:var(--ink-muted);}
+.fu-pg-n{font-size:10px;font-family:'IBM Plex Mono';color:var(--ink-faint);white-space:nowrap;}
+.fu-asset{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;padding:3px 0 3px 8px;}
+.fu-asset.is-overdue{border-left:2px solid var(--overdue);padding-left:6px;}
+.fu-asset-name{background:none;border:0;padding:0;text-align:left;font-family:'Inter',sans-serif;
+  font-size:11.5px;color:var(--ink);cursor:pointer;}
+.fu-asset-name:hover{color:var(--brand-accent);text-decoration:underline;}
+.fu-asset-name:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px;border-radius:4px;}
+.fu-asset-meta{display:flex;flex-wrap:wrap;gap:4px 8px;font-size:10px;font-family:'IBM Plex Mono';
+  color:var(--ink-faint);}
+.fu-asset-status{color:var(--ink-muted);}
+.fu-asset-due.is-overdue{color:var(--overdue);font-weight:600;}
 .fu-more{font-size:11px;color:var(--ink-faint);background:none;border:0;padding:8px 0 0;cursor:pointer;
   font-family:'Inter',sans-serif;text-decoration:underline dotted;}
 .fu-more:hover{color:var(--ink);}
@@ -1282,6 +1330,10 @@ tr.past-round{opacity:0.62;}
      a button with no reason at all. */
   .fu-remind-wrap{flex-basis:100%;justify-content:flex-start;}
   .fu-reason{max-width:none;}
+  /* The panel is already one column wide on a phone; its asset rows stack so a
+     long name and its four pieces of metadata do not fight for one line. */
+  .fu-panel{margin-left:0;border-radius:7px;}
+  .fu-asset{flex-direction:column;align-items:flex-start;gap:2px;}
 }
 .em-master{display:flex;align-items:center;gap:9px;font-size:13px;margin:0 0 14px;cursor:pointer;}
 .pf-toggle{display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:2px 0;}
@@ -13615,6 +13667,32 @@ let FOLLOW_UP_TICKET = 0;
  * THE ERROR IS KEPT PER ROW TOO, with the SERVER'S OWN SENTENCE in it. A toast
  * would be gone before somebody reads it and would not say which row it was
  * about; the message belongs where the button is. */
+/* WHICH PERSON'S "WAITING ON THEM" PANEL IS OPEN, and what is in it.
+ *
+ * ONE AT A TIME, which is a choice rather than a limitation. The panel opens
+ * UNDER a row inside a two-column section on a dashboard; two or three of them
+ * open at once would push the second list off the screen and turn a glance into
+ * a scroll. Opening another person closes the first, which is also what makes
+ * the stale-response guard below simple enough to be obviously right.
+ *
+ * MODULE STATE, WHICH IS WHAT MAKES IT SURVIVE THE TIMED REFRESH.
+ * renderAdminDashboard() clears FOLLOW_UP, FOLLOW_UP_SHOWN and FOLLOW_UP_ERR on
+ * every draw — it does NOT clear these, exactly as it does not clear
+ * FOLLOW_UP_ASK, which is what already keeps a chosen date across a redraw. So
+ * a panel somebody opened is still open and still filled after the twenty-second
+ * permission poll redraws the screen, with no second request.
+ *
+ * TICKETED, like loadFollowUp(). Two clicks are two requests in flight and the
+ * first can answer last; only the newest ticket may write. A guard rather than a
+ * cancel, because fetch has no cancel here and a response for a person nobody is
+ * looking at any more must not be drawn under somebody else's name. */
+let FU_OPEN = null;            // `${kind}|${userId}`, or null
+let FU_PANEL = null;           // the server's answer for FU_OPEN
+let FU_PANEL_BUSY = false;
+let FU_PANEL_ERR = null;
+let FU_PANEL_ALL = false;      // has "show all" been asked for
+let FU_PANEL_TICKET = 0;
+
 const FU_SENDING = new Set();
 const FU_ROW_MSG = new Map();          // key -> { kind: 'err' | 'ok', text }
 const fuKey = (kind, id) => `${kind}|${id}`;
@@ -13854,6 +13932,7 @@ function fuRow(r, heldLabel, d){
     ? `<button type="button" class="fu-name" data-fu-user="${escapeHTML(r.id)}"
         aria-label="Open ${escapeHTML(r.name)} in Users">${escapeHTML(r.name)}</button>`
     : `<span class="fu-name-plain">${escapeHTML(r.name)}</span>`;
+  const kind = (r.remind && r.remind.kind) || 'start';
   return `<div class="fu-row" data-fu-row="${escapeHTML(r.id)}">
     <div class="fu-who">
       ${name}
@@ -13862,10 +13941,36 @@ function fuRow(r, heldLabel, d){
     </div>
     ${r.both ? '<span class="fu-both" title="On both lists">both</span>' : ''}
     ${r.missed > 1 ? `<span class="fu-missed">${Number(r.missed)} days</span>` : ''}
-    ${r.held ? `<span class="fu-held">${Number(r.held)} ${escapeHTML(heldLabel||'')}</span>` : ''}
+    ${fuHeld(r, heldLabel, kind)}
     ${fuStreak(r, d)}
     ${fuRemind(r, d)}
-  </div>`;
+  </div>
+  ${fuWaitingPanel(r, d, kind)}`;
+}
+
+/* THE FIGURE, AS A BUTTON WHERE IT CAN BE OPENED and as plain text where it
+ * cannot — the same rule the person's name follows for user.view, and for the
+ * same reason: offering a control the server would refuse is worse than not
+ * offering one.
+ *
+ * `expandable` is the SERVER'S answer, not a date comparison made here. It is
+ * true only for the "waiting on them" figure; a past date's row prints "held
+ * that day", which is a reconstruction from assignment history with no list
+ * behind it (see nowFigure in src/follow-up.js).
+ *
+ * A <button> gets Enter, Space, the tab order and a focus ring for free.
+ * aria-expanded is what tells a screen reader this is a disclosure rather than
+ * a link, and it is kept in step with FU_OPEN rather than with a class. */
+function fuHeld(r, heldLabel, kind){
+  if(!r.held) return '';
+  const text = `${Number(r.held)} ${heldLabel||''}`;
+  if(!r.expandable) return `<span class="fu-held">${escapeHTML(text)}</span>`;
+  const open = FU_OPEN === fuKey(kind, r.id);
+  return `<button type="button" class="fu-held fu-held-btn${open?' is-open':''}"
+    data-fu-waiting="${escapeHTML(r.id)}" data-fu-waiting-kind="${escapeHTML(kind)}"
+    aria-expanded="${open}"
+    aria-label="${open?'Hide':'Show'} the ${Number(r.held)} assets waiting on ${escapeHTML(r.name)}"
+    >${escapeHTML(text)}<span class="fu-held-caret" aria-hidden="true">${open?'▾':'▸'}</span></button>`;
 }
 
 /* WHEN THIS PERSON WAS LAST ACTIVE, as its own line under the name.
@@ -13904,6 +14009,122 @@ function fuActivity(r, d){
     explain,
   ].filter((l) => l !== null).join('\n');
   return `<div class="fu-act" title="${escapeHTML(title)}">${escapeHTML(bits.join(' · '))}</div>`;
+}
+
+/* THE PANEL: what is waiting on this person, Client then Project then assets.
+ *
+ * DRAWN FROM THE SERVER'S ANSWER AND NOTHING ELSE. The groups, the totals, the
+ * overdue flags and the waiting durations are all in the payload, computed by
+ * src/waiting-work.js from the same predicate that produced the number on the
+ * button. Nothing here counts, groups, or decides what is overdue — a second
+ * opinion about any of those is the one way the figure and the list could come
+ * apart.
+ *
+ * FOUR STATES: closed (nothing drawn), loading, failed with a retry, and the
+ * list. The failed state keeps the panel open, because a panel that closed
+ * itself on an error would look like a figure that had nothing behind it.
+ */
+function fuWaitingPanel(r, d, kind){
+  if(FU_OPEN !== fuKey(kind, r.id)) return '';
+  /* AND NEVER UNDER A FIGURE THAT CANNOT BE OPENED. Picking a past date turns
+     every figure back into plain text; a panel left under one would be showing
+     today's work beside yesterday's number. loadFollowUp closes it as well —
+     this is the latch that does not depend on that happening first. */
+  if(!r.expandable) return '';
+  const id = `fu_wp_${escapeHTML(kind)}_${escapeHTML(r.id)}`;
+
+  if(FU_PANEL_BUSY){
+    return `<div class="fu-panel" id="${id}" role="region"
+      aria-label="Work waiting on ${escapeHTML(r.name)}">
+      <div class="fu-panel-loading">Reading what is waiting on ${escapeHTML(r.name)}…</div>
+    </div>`;
+  }
+  if(FU_PANEL_ERR){
+    return `<div class="fu-panel" id="${id}" role="region"
+      aria-label="Work waiting on ${escapeHTML(r.name)}">
+      <div class="fu-panel-err">${escapeHTML(FU_PANEL_ERR)}
+        <button type="button" class="fu-retry" data-fu-waiting-retry="1">Try again</button>
+      </div>
+    </div>`;
+  }
+  const p = FU_PANEL;
+  if(!p) return '';
+
+  const clients = p.clients || [];
+  if(!clients.length){
+    return `<div class="fu-panel" id="${id}" role="region"
+      aria-label="Work waiting on ${escapeHTML(r.name)}">
+      <div class="fu-panel-empty">Nothing is waiting on ${escapeHTML(r.name)} any more — the
+        figure beside their name is a moment old. Close this and the next refresh will agree.</div>
+    </div>`;
+  }
+
+  return `<div class="fu-panel" id="${id}" role="region"
+    aria-label="Work waiting on ${escapeHTML(r.name)}">
+    <div class="fu-panel-head">
+      <strong>${Number(p.count)}</strong> waiting on ${escapeHTML(r.name)}
+      ${p.overdue ? `<span class="fu-panel-od">${Number(p.overdue)} overdue</span>` : ''}
+      ${p.shownCount < p.count ? `<span class="ref-key">showing ${Number(p.shownCount)}</span>` : ''}
+    </div>
+    ${clients.map(c=>fuClientGroup(c)).join('')}
+    ${p.more > 0 ? `<button type="button" class="fu-more" data-fu-waiting-all="1"
+        aria-label="Show all ${Number(p.count)} assets waiting on ${escapeHTML(r.name)}"
+        >show all ${Number(p.count)}</button>` : ''}
+    ${p.elsewhere ? `<div class="fu-panel-note">Some of this person\u2019s work is in projects you
+      cannot see. This panel, and the number beside their name, count only what is in your
+      reach.</div>` : ''}
+    <div class="fu-panel-help">${escapeHTML(p.explainer || (d && d.waitingExplainer) || '')}</div>
+  </div>`;
+}
+
+/* One client, with its total and its projects under it. The totals are the
+   server's; a count taken here of the rows that happen to have been drawn would
+   disagree with the heading the moment the cap bit. */
+function fuClientGroup(c){
+  return `<div class="fu-cg">
+    <div class="fu-cg-head">
+      <span class="fu-cg-name${c.unknown?' is-unknown':''}">${escapeHTML(c.name||'')}</span>
+      <span class="fu-cg-n">${Number(c.total)}${c.overdue?` · ${Number(c.overdue)} overdue`:''}</span>
+    </div>
+    ${(c.projects||[]).map(pr=>`
+      <div class="fu-pg">
+        <div class="fu-pg-head">
+          <span class="fu-pg-name">${escapeHTML(pr.name||'')}${pr.code?` <span class="ref-key">${escapeHTML(pr.code)}</span>`:''}</span>
+          <span class="fu-pg-n">${Number(pr.total)}${pr.overdue?` · ${Number(pr.overdue)} overdue`:''}</span>
+        </div>
+        ${(pr.assets||[]).map(a=>fuAssetRow(a, pr)).join('')}
+      </div>`).join('')}
+  </div>`;
+}
+
+/* One asset.
+ *
+ * THE NAME IS A BUTTON THAT NAVIGATES, through the same function the Attention
+ * Required chips use — see openProjectBoard and the note above it. The asset's
+ * own status rides along so the board opens on the Art or Animation lens that
+ * actually holds it, and the header's search and scope-of-work are cleared, or
+ * the link would land on a board narrowed to something else.
+ *
+ * WHY IT COUNTS IS ON THE ROW, not only in the help line: the status label is
+ * the answer to "why is this waiting", and a panel that showed four names
+ * without it would send somebody to the asset to find out. */
+function fuAssetRow(a, pr){
+  const wait = a.waitingDays === null ? 'waiting, since when is not recorded'
+    : `${a.waitingDays === 0 ? 'today' : `${a.waitingDays} day${a.waitingDays===1?'':'s'}`}`
+      + (a.waitingFrom === 'status' ? ` in ${a.statusLabel}` : ' since assigned');
+  return `<div class="fu-asset${a.overdue?' is-overdue':''}">
+    <button type="button" class="fu-asset-name" data-fu-asset="${escapeHTML(a.id)}"
+      data-fu-asset-project="${escapeHTML(a.projectId)}" data-fu-asset-status="${escapeHTML(a.status)}"
+      aria-label="Open ${escapeHTML(a.name)} in ${escapeHTML(pr.name||'its project')}"
+      >${escapeHTML(a.code ? `${a.code} · ${a.name}` : a.name)}</button>
+    <span class="fu-asset-meta">
+      <span class="fu-asset-type">${escapeHTML(a.typeLabel||'')}</span>
+      <span class="fu-asset-status">${escapeHTML(a.statusLabel||'')}</span>
+      ${a.dueDate ? `<span class="fu-asset-due${a.overdue?' is-overdue':''}">${
+        a.overdue ? `Overdue \u2014 due ${escapeHTML(a.dueDate)}` : `due ${escapeHTML(a.dueDate)}`}</span>` : ''}
+      <span class="fu-asset-wait" title="How long this has been waiting on them">${escapeHTML(wait)}</span>
+    </span>
+  </div>`;
 }
 
 /* THE STREAK BADGE: not started for N working days in a row.
@@ -14033,6 +14254,14 @@ function paintFollowUp(){
  * looking at any more must not be drawn.
  */
 async function loadFollowUp(ask){
+  /* A NEW ASK CLOSES AN OPEN PANEL. The figure it hung under is about TODAY, and
+     a different date — or a different order, which moves the rows — makes it a
+     panel under somebody else's number. Not cleared on a REDRAW, which is the
+     opposite case and the one the panel is meant to survive. */
+  if(ask !== undefined && fuAskKey(ask) !== fuAskKey(FOLLOW_UP_ASK)){
+    FU_OPEN = null; FU_PANEL = null; FU_PANEL_ERR = null; FU_PANEL_BUSY = false;
+    FU_PANEL_TICKET += 1;
+  }
   if(ask !== undefined) FOLLOW_UP_ASK = ask;
   const asked = FOLLOW_UP_ASK;
   const mine = ++FOLLOW_UP_TICKET;
@@ -14144,6 +14373,99 @@ function wireFollowUp(){
   document.querySelectorAll('#followUpSlot [data-fu-remind-all]').forEach(b=>b.addEventListener('click', ()=>{
     remindEveryone(b.dataset.fuRemindAll);
   }));
+
+  /* THE FIGURE. A <button>, so Enter and Space already work and the focus ring
+     is the one every other control on this screen has. */
+  document.querySelectorAll('#followUpSlot [data-fu-waiting]').forEach(b=>b.addEventListener('click', ()=>{
+    toggleWaiting(b.dataset.fuWaitingKind, b.dataset.fuWaiting);
+  }));
+  document.querySelectorAll('#followUpSlot [data-fu-waiting-retry]').forEach(b=>b.addEventListener('click', ()=>{
+    if(FU_OPEN) loadWaiting(FU_OPEN);
+  }));
+  document.querySelectorAll('#followUpSlot [data-fu-waiting-all]').forEach(b=>b.addEventListener('click', ()=>{
+    FU_PANEL_ALL = true;
+    if(FU_OPEN) loadWaiting(FU_OPEN);
+  }));
+  document.querySelectorAll('#followUpSlot [data-fu-asset]').forEach(b=>b.addEventListener('click', (ev)=>{
+    ev.stopPropagation();
+    openWaitingAsset(b.dataset.fuAssetProject, b.dataset.fuAsset, b.dataset.fuAssetStatus);
+  }));
+}
+
+/* ---------- the "waiting on them" panel ----------
+ *
+ * OPEN, CLOSE, AND OPENING SOMEBODY ELSE are one function, because they are one
+ * decision: there is one panel (see FU_OPEN) and clicking a figure either opens
+ * it on that person or shuts it. */
+function toggleWaiting(kind, userId){
+  const key = fuKey(kind, userId);
+  if(FU_OPEN === key){
+    FU_OPEN = null; FU_PANEL = null; FU_PANEL_ERR = null; FU_PANEL_BUSY = false;
+    /* THE TICKET MOVES ON A CLOSE TOO. Without it, a response still in flight
+       for the panel somebody has just shut would arrive and reopen it. */
+    FU_PANEL_TICKET += 1;
+    paintFollowUp();
+    return;
+  }
+  FU_PANEL_ALL = false;
+  loadWaiting(key);
+}
+
+/* Ask the server for one person's waiting work.
+ *
+ * ONE CALL PER PERSON, and the whole panel comes back in it: the groups, the
+ * totals, the statuses, the due dates and the waiting durations. Nothing here
+ * asks a second time per project or per asset — see the budget test.
+ *
+ * A SLOWER EARLIER RESPONSE NEVER WINS. The ticket is taken before the request
+ * leaves and checked after it returns, so clicking Ana and then Bo shows Bo
+ * even if Ana's answer arrives last. */
+async function loadWaiting(key){
+  const [, userId] = String(key).split('|');
+  FU_OPEN = key;
+  FU_PANEL = null;
+  FU_PANEL_ERR = null;
+  FU_PANEL_BUSY = true;
+  const mine = ++FU_PANEL_TICKET;
+  paintFollowUp();
+  try{
+    const data = await api(`/admin-dashboard/follow-up/waiting/${encodeURIComponent(userId)}`
+      + (FU_PANEL_ALL ? '?all=1' : ''));
+    if(mine !== FU_PANEL_TICKET) return;      /* a newer ask is already out */
+    FU_PANEL = data;
+    FU_PANEL_BUSY = false;
+    paintFollowUp();
+  }catch(err){
+    if(mine !== FU_PANEL_TICKET) return;
+    FU_PANEL_BUSY = false;
+    /* SAID, WITH A RETRY, AND THE PANEL STAYS OPEN. A panel that closed itself
+       on a failed read would look like a figure with nothing behind it. */
+    FU_PANEL_ERR = `That could not be read — ${(err && err.message) || 'the server did not answer'}.`;
+    paintFollowUp();
+  }
+}
+
+/* ONE ASSET, ON ITS OWN PROJECT'S BOARD, WITH THE ASSET OPEN.
+ *
+ * BOTH HALVES ARE THE APPLICATION'S OWN. openProjectBoard() is what the
+ * Attention Required chips use — it moves the project and the client, clears
+ * the header's search and scope-of-work, and hands the asset's status to the
+ * board so the Art / Animation lens opens on the half that holds it.
+ * revealAsset() is the half openNotification uses to open a drawer for an asset
+ * that may not be in the current snapshot. Neither is reimplemented here.
+ *
+ * THE PROJECT LIST IS RE-READ FIRST when the snapshot does not hold the
+ * project, which on this screen is the normal case rather than an edge one:
+ * state.projects is loaded at boot and this panel is about work that has moved
+ * since. */
+async function openWaitingAsset(projectId, assetId, status){
+  if(!projectId || !assetId) return;
+  if(!projectReachable(projectId)) await refreshProjects();
+  if(!openProjectBoard(projectId, status ? [status] : [])){
+    showToast('That project is no longer available to you.');
+    return;
+  }
+  await revealAsset(assetId);
 }
 
 /* ---------- sending one ----------
@@ -19445,24 +19767,36 @@ async function openNotification({ id, asset, project, conversation }){
       if(selectProject(project)) await render();
     }
 
-    /* openDrawer reads state.assets and returns silently when the asset is not
-       in it — which is right for a click on a card already on screen, and wrong
-       here. The whole point of this notification is that something changed
-       since this page loaded, so the asset being absent is the NORMAL case, not
-       an edge one. Reload the board before opening. */
-    if(!state.assets.some(a=>a.id === asset)){
-      await loadAssets();
-      if(state.view==='board') renderBoard(); else if(state.view==='list') renderList();
-    }
-    if(!state.assets.some(a=>a.id === asset)){
-      /* Still missing: the asset was deleted, or it has moved somewhere this
-         person can no longer see. Say so — a click that does nothing at all
-         reads as a broken link. */
-      showToast('That asset is no longer available to you.');
-      return;
-    }
-    await openDrawer(asset);
+    await revealAsset(asset);
   }catch(err){ showToast(err.message); }
+}
+
+/* OPEN ONE ASSET'S DRAWER, RELOADING THE BOARD FIRST IF IT IS NOT THERE.
+ *
+ * Extracted from openNotification, which is the only thing that changed about
+ * it, because a second caller arrived: the follow-up section's "waiting on
+ * them" panel. Two copies of this would be two answers to "what if the asset
+ * has gone", and the honest one is the toast below.
+ *
+ * openDrawer reads state.assets and returns silently when the asset is not in
+ * it — which is right for a click on a card already on screen, and wrong for
+ * both callers here. Both exist BECAUSE something changed since this page
+ * loaded, so the asset being absent from the snapshot is the NORMAL case rather
+ * than an edge one. */
+async function revealAsset(assetId){
+  if(!state.assets.some(a=>a.id === assetId)){
+    await loadAssets();
+    if(state.view==='board') renderBoard(); else if(state.view==='list') renderList();
+  }
+  if(!state.assets.some(a=>a.id === assetId)){
+    /* Still missing: the asset was deleted, or it has moved somewhere this
+       person can no longer see. Say so — a click that does nothing at all reads
+       as a broken link. */
+    showToast('That asset is no longer available to you.');
+    return false;
+  }
+  await openDrawer(assetId);
+  return true;
 }
 
 async function markNotificationsRead(ids){

@@ -75,6 +75,11 @@ const permissions = require('./permissions');
  * knows how a list is drawn and this file knows nothing about either's rules —
  * the division is the same one the four shared definitions above have, and for
  * the same reason. */
+/* WHAT IS WAITING ON ONE PERSON, which is the figure this section's rows have
+ * always printed and — until this change — not quite been. src/waiting-work.js
+ * owns the predicate; heldCounts() below keeps the reconstruction a past date
+ * needs. See the header of that file for the difference and why there are two. */
+const waitingWork = require('./waiting-work');
 const lastActivity = require('./last-activity');
 const reminders = require('./reminders');
 const reminderSettings = require('./reminder-settings');
@@ -809,7 +814,25 @@ async function build(db, user, options = {}) {
   const filled = fillDays.length
     ? await timesheets.filledDays(db, ids, fillDays[0], fillDays[fillDays.length - 1])
     : new Set();
-  const held = await heldCounts(db, ids, { ...widest, projectIds, studioWide });
+  /* TWO FIGURES, ONE SLOT, AND THE LABEL ALREADY SAID WHICH.
+   *
+   * For TODAY the row prints what is WAITING on this person — assigned and not
+   * started, or sent back to them — from src/waiting-work.js, which is the
+   * predicate the panel behind the button lists. The two cannot disagree.
+   *
+   * For a PAST DATE that question cannot be answered: "waiting" is a statement
+   * about an asset's status and its routing NOW, and this schema records no
+   * status-at-an-instant to replay (see the header of this file). So a past
+   * date keeps heldCounts() — assets whose assignment episode overlapped the
+   * day, which IS reconstructible from assigned_at and ended_at — and the row
+   * says "held that day" rather than "waiting on them", exactly as it always
+   * has. The button is not offered there, because there is no list to open.
+   *
+   * ONE QUERY EITHER WAY, so the budget does not move. */
+  const nowFigure = asked.to >= today;
+  const held = nowFigure
+    ? await waitingWork.countsFor(db, ids, { projectIds, studioWide })
+    : await heldCounts(db, ids, { ...widest, projectIds, studioWide });
   const earliest = await earliestDay(db);
 
   /* THE LAST-ACTIVITY MARKER, for every person in view, in two more queries —
@@ -850,6 +873,11 @@ async function build(db, user, options = {}) {
            about — the page is given the word as well as the number so it cannot
            print "waiting" over a past date's figure. */
         held: held.get(person.id) || 0,
+        /* MAY THE FIGURE BE OPENED? Only when it is the "waiting" one — see
+           nowFigure above. The page draws plain text otherwise rather than a
+           control the server would refuse, which is the same rule the row's
+           name follows for user.view. */
+        expandable: nowFigure && (held.get(person.id) || 0) > 0,
         days: bad,
         missed: bad.length,
         expectedDays: owed.length,
@@ -995,6 +1023,12 @@ async function build(db, user, options = {}) {
        from the server rather than from a constant in the browser that would go
        on saying three after somebody changed it. */
     activityExplainer: lastActivity.EXPLAINER,
+    /* WHAT "WAITING" MEANS, in one sentence, from the module that decides it —
+       so the panel's help line and the predicate cannot drift apart. */
+    waitingExplainer: waitingWork.EXPLAINER,
+    /* Whether the figure on these rows is the "waiting now" one at all. The
+       page reads this rather than comparing dates a second time. */
+    waitingFigure: nowFigure,
     streakThreshold: Number(nudges.streakThreshold) || 3,
     streakLookBack: lastActivity.LOOKBACK_WORKING_DAYS,
     /* Whether the Activity Log could be read at all — so "not recorded" and

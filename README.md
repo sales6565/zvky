@@ -2762,6 +2762,166 @@ it — not present and empty — and `GET /api/admin-dashboard/follow-up` carrie
 `requirePermission` on top of the screen's own gate. The page gates on `can()`,
 never on the tier. All three are tested.
 
+#### The "waiting on them" figure, and what it used to count
+
+The marker on a follow-up row — "3 waiting on them" — is now a **button** that
+opens the list behind it. Making it openable meant first making it true.
+
+**What it counted before.** `heldCounts()` counts assets whose **assignment
+episode** overlaps the day — `assigned_at < end AND (ended_at IS NULL OR
+ended_at > start)` — with **no status filter at all**. An episode ends only on
+reassignment, unassignment or delivery, so an asset the person submitted three
+days ago and which is now sitting in TL Review still counted. That is a true
+statement about what is on their desk in the ledger sense, and a false one under
+the words the row prints for today: work in TL Review is waiting on a
+**reviewer**.
+
+**The definition now, and it restates nothing.** Two questions, both already
+answered in this application:
+
+| Question | Answered by |
+| --- | --- |
+| Is it on this person's desk? | `src/asset-workflow.js`'s `assignee` actor: `assignee_id = them AND (routed_to_id = them OR (routed_to_id IS NULL AND status IN ASSIGNEE_STATUSES))` |
+| Is it theirs to act on now? | `assigned` — given and not started — plus `src/permissions.js`'s `REWORK_STATUSES`: **TL Feedbacks, CD Feedbacks, Game Feedback** |
+
+Both lists are **imported**, never retyped, and a test asserts the three rework
+status keys appear nowhere in `src/waiting-work.js`. The second branch of the
+desk test is the **CD Feedbacks relay**: that state is routed to *nobody* until
+the lead passes it on, and without the status list "routed to nobody" would read
+as "routed to anybody" — which is how an artist could once resubmit past the lead
+who was supposed to brief them.
+
+What falls out of that, rather than being filtered for:
+
+| | Why |
+| --- | --- |
+| **In Progress** | They have started it; the clock is running and nothing is waiting. Per **asset**, so somebody with a timer on one still has the others waiting. |
+| **Not Assigned** | Assignment moves an asset to `assigned`; nobody has been given it. |
+| every review state | TL Review, TL Approved, CD Review, Approved for Client, Awaiting Client Feedback, Delivered — waiting on somebody else, or on nobody. |
+| **outsourced work** | A property of the schema, not a filter. The two assignment routes are mutually exclusive — `outsourceBlocked()` refuses while `assignee_id` is set, `internalAssignBlocked()` refuses while a live outsource assignment exists — so an asset out with a freelancer has `assignee_id` NULL and matches nothing. The test asserts the premise, so relaxing exclusivity has to come past it. |
+
+**How much the row changed.** On the test fixture, where ten assets had been
+given to one artist and none reassigned, unassigned or delivered: the old figure
+counted **10**, the new one counts **6**. The four it drops are the one on the
+clock, two sitting with reviewers, and a CD Feedbacks note the lead has not
+relayed yet.
+
+**For a past date nothing changed, and the figure is not clickable.** "Waiting"
+is a statement about an asset's status and routing **now**, and this schema
+records no status-at-an-instant to replay — `src/follow-up.js`'s own header says
+so. So a past date keeps `heldCounts()`, which *is* reconstructible from
+`assigned_at` and `ended_at`, and the row goes on saying **"held that day"**
+rather than "waiting on them". The section has switched that word on the date
+since it shipped; now the numbers agree with the words. One query either way, so
+the budget does not move.
+
+#### The panel: what is waiting, Client then Project then assets
+
+Clicking the figure opens an in-page panel under that person's row — the pattern
+this section already uses, and no drawer, because the row is inside a
+two-column list on a dashboard and a drawer would cover the other list. **One
+panel at a time**: two or three open at once would push the second list off the
+screen, and it is what makes the stale-response guard simple enough to be
+obviously right.
+
+Each asset shows its name and code, type, **current status** (so it is clear why
+it counts), due date with an **Overdue** marker, and **how long it has been
+waiting on this person** — which is two facts, not one:
+
+| Measured from | Why |
+| --- | --- |
+| the open assignment episode's `assigned_at` | a reassignment mid-rework restarts the wait, because for the new person it is new work |
+| the `asset_events` row that moved it into its current status | a lead sending it back restarts the wait for the same person, because what they are waiting to do has changed |
+
+The **later of the two** is the answer, and the row says which — "2 days in TL
+Feedbacks" or "1 day since assigned". Measured from the assignment alone a
+sent-back asset would make the studio look slower than it is; from the status
+alone a long-held asset would reset the moment anybody touched it. Neither
+recorded reads "waiting, since when is not recorded" rather than a wait of
+fifty-six years.
+
+**The number and the list cannot disagree.** `whereFor()` in
+`src/waiting-work.js` writes the predicate once and both the grouped count and
+the panel's read build their query around it; a test compares the two generated
+WHERE clauses string for string. The panel's own `count` is the length of the
+rows it grouped, not a second read.
+
+**Totals are on every heading** — per client and per project, with the overdue
+count beside them — and they are the server's. Sorted **overdue first, then
+longest waiting, then by name** at every level, so the order is stable between
+draws. The cap is **50 assets**, applied to the flat list in that order and then
+grouped, because capping per group would show a few of each client and call it
+fifty; "show all" lifts it on the next request. A project whose client cannot be
+read lands in a group called **"No client"**, pinned last and flagged, so it
+reads as a gap in the data rather than a client called nothing.
+
+**The link uses the navigation the Attention Required chips use.**
+`openProjectBoard()` moves the project and the client, clears the header's
+search and scope-of-work — a search typed last week would otherwise hide the
+very asset the panel was about — and hands the asset's status to the board so the
+**Art / Animation lens** opens on the half that holds it. Then `revealAsset()`
+opens the drawer, reloading the board first if the asset is not in the page's
+snapshot, which on this panel is the normal case. That second function is the
+one change made to `openNotification`: it was extracted from it, because two
+copies would be two answers to "what if the asset has gone".
+
+**Scope and permission are the section's own.** `report.follow_up` — the panel is
+the figure the row already prints, expanded, and a key of its own would let a
+studio grant the number and withhold the names, which the number already breaks.
+`permissions.visibleProjects()` decides the projects, and
+`src/follow-up.js`'s own `inScope()` decides whether this is even a person the
+viewer may ask about: without that check the endpoint is a probe, where a
+narrower viewer could name any user id and learn whether that person has work.
+A viewer with no projects at all is refused rather than shown the studio.
+
+**Work outside the viewer's reach is reported as a boolean, not a count.** The
+figure and the panel both count only what that viewer can see; when there is
+more elsewhere the panel says so in one sentence and stops there. "4 more
+elsewhere" would tell an Admin how busy somebody is on projects they are not on,
+which is most of what the scope rule withholds.
+
+**One call per person, and one query inside it.** The grouping is done in
+JavaScript from one flat read; the two "waiting since" facts are correlated
+subqueries in the *same* statement, so they are one round trip however many
+assets come back. Two hundred assets across forty projects and eight clients
+cost the same one query as one asset, and the handler has no loop in it. The
+figure itself stays inside the section's existing set-based draw, so page load
+costs nothing extra per row.
+
+**The control is a `<button>`** with `aria-expanded`, so Enter, Space, the tab
+order and the focus ring come for free; the panel is a `role="region"` with the
+person's name. It survives the dashboard's timed redraw with no second request,
+because the open panel lives in module state that `renderAdminDashboard()` does
+not clear — the same mechanism that already keeps a chosen date. Picking another
+date closes it, since the figure it hung under is about today. A slower earlier
+response never overwrites a newer one: the ticket is taken before the request
+leaves and checked after it returns, so clicking Ana and then Bo shows Bo.
+
+#### Where the client is stored
+
+| | |
+| --- | --- |
+| The table | `clients` — `name` unique, `is_system`, `is_active`/`archived_at`, `deal_closed_at` |
+| The link | `projects.client_id`, **NOT NULL**, `FOREIGN KEY … ON DELETE RESTRICT` |
+| Assets | `assets.project_id` only. An asset reaches its client through its project, which is why the panel joins `assets → projects → clients`. |
+
+**So no project is without a client, strictly** — the column is NOT NULL and
+every project is created with one. What exists instead is the **system
+"Unassigned" client** (`is_system = 1`), created by `ensureClients()` for
+projects that existed before clients did and used by anything that has no real
+client yet; it can be renamed but not deleted. Its projects group under
+"Unassigned", which is a real client row, not the "No client" group.
+
+**"No client" is still a real case, on one kind of deployment.**
+`ensureClients()` ends with `Schema: the projects -> clients foreign key is
+still missing — …` for a database whose earlier boot could not create it — most
+often a collation mismatch between the two tables. On such a database a dangling
+`client_id` is reachable, and the panel's join is a `LEFT JOIN` for exactly that
+reason: an inner join would silently drop that project's assets out of a list
+whose own heading counted them, which is the one failure the panel exists to
+make impossible. The live test drops the key to reach that state, and puts it
+back.
+
 #### The last-activity marker
 
 Every row on both lists carries **when that person was last active** and, from

@@ -471,8 +471,22 @@ test('MUTATION 6 — the work-held marker is measured over the day asked about',
   assert.strictEqual(past.out.heldLabel, 'held that day');
   const today = await build({ query: {}, now: ist(`${WED}T11:00:00`) });
   assert.strictEqual(today.out.heldLabel, 'waiting on them');
-  assert.match(PAGE, /\$\{Number\(r\.held\)\} \$\{escapeHTML\(heldLabel\|\|''\)\}/,
-    'the page uses the server\'s word rather than one of its own');
+  /* THE PAGE PRINTS THE SERVER'S WORD, and that is the property. It was pinned
+     to one spelling of the template literal, which moved when the figure became
+     a button: the number and the label are now composed in fuHeld() so that the
+     same text is used for the button and for the plain span. Pinned to the
+     property instead — heldLabel is read and no word of its own is written. */
+  assert.match(PAGE, /const text = `\$\{Number\(r\.held\)\} \$\{heldLabel\|\|''\}`;/,
+    'the number and the server\'s word are composed once, from heldLabel');
+  /* AND THE ONLY FALL-BACK IS THE EMPTY STRING. A default of either word here
+     would be the page deciding which question the figure answered — which, on
+     the one draw where the server had not said, is exactly when it would be
+     wrong. Asserted as a count so a second reader of heldLabel has to come
+     past this line. */
+  const reads = PAGE.match(/heldLabel\s*\|\|\s*''/g) || [];
+  assert.strictEqual(reads.length, 1, 'heldLabel is read in one place, with no word of its own');
+  assert.ok(!/heldLabel\s*\|\|\s*['"][a-z]/i.test(PAGE),
+    'and never defaulted to a word the page chose');
 });
 
 test('MUTATION 9 — the lists are scoped to the projects the viewer can see', async () => {
