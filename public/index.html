@@ -1149,6 +1149,42 @@ tr.past-round{opacity:0.62;}
   color:var(--brand-accent);border:1px solid var(--brand-accent);border-radius:20px;
   padding:1px 7px;flex:none;}
 .fu-missed{font-size:10.5px;color:var(--prog);font-family:'IBM Plex Mono';flex:none;white-space:nowrap;}
+/* The last-activity marker: its own line under the name, so a row stays one
+   line of names on a narrow screen and the two facts sit together. */
+.fu-act{font-size:10px;color:var(--ink-faint);font-family:'IBM Plex Mono';margin-top:2px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:help;}
+.fu-act.is-none{color:var(--ink-muted);font-style:italic;}
+/* The streak. Two forms, and NEITHER IS COLOUR ALONE: the badge carries the
+   number and the words "working days", and the strong one adds "!" and
+   "repeated" so the distinction survives a reader who cannot tell the two
+   ambers apart, a greyscale print and a high-contrast mode. */
+.fu-streak{font-size:10px;font-family:'IBM Plex Mono';flex:none;white-space:nowrap;
+  color:var(--ink-muted);border:1px solid var(--border);border-radius:20px;padding:1px 7px;cursor:help;}
+/* The same wash/ink/border trio every other warning in this page uses — see
+   .pm-tag.pending and .ip-banner.open — rather than a fourth amber of its own. */
+.fu-streak.is-strong{color:var(--warning-ink);border-color:var(--warning-wash-t30);
+  background:var(--warning-wash-t12);font-weight:600;}
+/* The remind control, and everything that goes beside it. */
+.fu-remind-wrap{display:flex;align-items:center;gap:7px;flex:none;flex-wrap:wrap;justify-content:flex-end;}
+.fu-remind{font-family:'Inter',sans-serif;font-size:10.5px;padding:3px 9px;border-radius:7px;
+  background:var(--surface-2);border:1px solid var(--border);color:var(--ink);cursor:pointer;}
+.fu-remind:hover:not(:disabled){border-color:var(--brand-accent);color:var(--brand-accent);}
+.fu-remind:focus-visible{outline:2px solid var(--focus-ring);outline-offset:1px;}
+.fu-remind:disabled{opacity:.5;cursor:not-allowed;}
+.fu-reminded{font-size:10px;color:var(--success-ink);font-family:'IBM Plex Mono';white-space:nowrap;}
+.fu-auto{font-size:10px;color:var(--info-ink);font-family:'IBM Plex Mono';white-space:nowrap;cursor:help;}
+/* The refusal, in words, beside the disabled button — because a title is not
+   reachable by keyboard and this is also the button's aria-describedby. */
+.fu-reason{font-size:10px;color:var(--ink-faint);max-width:200px;line-height:1.4;}
+.fu-sent{font-size:10px;color:var(--success-ink);font-family:'IBM Plex Mono';}
+.fu-sent.is-err{color:var(--danger-ink);}
+.fu-list-actions{display:flex;align-items:center;gap:8px;padding:6px 0 2px;}
+.fu-remind-all{font-family:'Inter',sans-serif;font-size:10.5px;padding:3px 9px;border-radius:7px;
+  background:var(--surface-2);border:1px solid var(--border);color:var(--ink);cursor:pointer;}
+.fu-remind-all:hover:not(:disabled){border-color:var(--brand-accent);color:var(--brand-accent);}
+.fu-remind-all:focus-visible{outline:2px solid var(--focus-ring);outline-offset:1px;}
+.fu-remind-all:disabled{opacity:.5;cursor:not-allowed;}
+.fu-skip-note{font-size:10px;color:var(--ink-faint);font-family:'IBM Plex Mono';}
 .fu-more{font-size:11px;color:var(--ink-faint);background:none;border:0;padding:8px 0 0;cursor:pointer;
   font-family:'Inter',sans-serif;text-decoration:underline dotted;}
 .fu-more:hover{color:var(--ink);}
@@ -1241,6 +1277,11 @@ tr.past-round{opacity:0.62;}
   .fu-preset{flex:1;padding:5px 4px;}
   .fu-row{flex-wrap:wrap;gap:4px 9px;}
   .fu-who{flex-basis:100%;}
+  /* The control and its explanation get the full width rather than being
+     squeezed into a corner — a disabled button whose reason has been clipped is
+     a button with no reason at all. */
+  .fu-remind-wrap{flex-basis:100%;justify-content:flex-start;}
+  .fu-reason{max-width:none;}
 }
 .em-master{display:flex;align-items:center;gap:9px;font-size:13px;margin:0 0 14px;cursor:pointer;}
 .pf-toggle{display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:2px 0;}
@@ -3331,6 +3372,11 @@ const SETTINGS_SECTIONS = [
      category list and the policy numbers share the key. */
   { permission:'timesheet.options', label:'Time Sheet', heading:'Time Sheet Options', note:'What a non-project line can be, how long a day is, and how far back hours can be filed.' },
   { permission:'settings.holidays_view', label:'Holidays', heading:'Holidays', note:'The days the studio is closed \u2014 no work can be started or resumed, and running timers are put down. Read-only unless you manage holidays.' },
+  /* THE REMINDERS THE ADMIN DASHBOARD SENDS, under the key that sends them
+     rather than a settings key of its own — four switches governing exactly one
+     feature, and a fifth key to grant beside the one a studio actually meant is
+     a key somebody will forget. See src/routes/nudges.js. */
+  { permission:'report.remind', label:'Start-of-day nudges', heading:'Start-of-day Nudges', note:'The reminders a lead can send from "People to follow up" \u2014 whether they are on, whether they also go by email, how many a person may get, and when repeated absence is marked.' },
   /* Super Admin only, like Recording Hours above and by the same route: a
      permission implied by managePermissions. */
   { permission:'chat.settings', label:'Chat', heading:'Chat', note:'The largest number of people a chat group may hold, studio-wide \u2014 or no limit at all.' },
@@ -12092,6 +12138,7 @@ async function renderSettings(){
     ${can('settings.recording_hours') ? '<div id="recordingHoursSection"></div>' : ''}
     ${can('settings.holidays_view') ? '<div id="holidaysSection"></div>' : ''}
     ${can('timesheet.options') ? '<div id="timesheetOptionsSection"></div>' : ''}
+    ${can('report.remind') ? '<div id="nudgeSettingsSection"></div>' : ''}
     ${can('chat.settings') ? '<div id="chatSettingsSection"></div>' : ''}
     ${can('settings.mis_access') ? '<div id="misAccessSection"></div>' : ''}
     ${can('settings.working_hours') ? '<div id="scheduleSection"></div>' : ''}
@@ -12114,6 +12161,7 @@ async function renderSettings(){
   if(can('settings.recording_hours')) renderRecordingHours();
   if(can('settings.holidays_view')) renderHolidays();
   if(can('timesheet.options')) renderTimesheetOptions();
+  if(can('report.remind')) renderNudgeSettings();
   if(can('chat.settings')) renderChatSettings();
   if(can('settings.mis_access')) renderMisAccess();
   if(can('settings.working_hours')) renderSchedule();
@@ -13556,6 +13604,21 @@ let FOLLOW_UP_SHOWN = null;
    Sheet's day figure uses (tlSuggestTicket). */
 let FOLLOW_UP_TICKET = 0;
 
+/* WHICH REMINDERS ARE IN FLIGHT, and what the server said about the last one.
+ *
+ * PER ROW, KEYED BY KIND AND PERSON, because two rows on two lists can be the
+ * same person and a single "sending…" flag would disable both. The set is what
+ * makes a double submit impossible: the button is disabled from the moment the
+ * click is accepted until the answer is drawn, and the key is removed in a
+ * finally so a failure cannot leave a row stuck.
+ *
+ * THE ERROR IS KEPT PER ROW TOO, with the SERVER'S OWN SENTENCE in it. A toast
+ * would be gone before somebody reads it and would not say which row it was
+ * about; the message belongs where the button is. */
+const FU_SENDING = new Set();
+const FU_ROW_MSG = new Map();          // key -> { kind: 'err' | 'ok', text }
+const fuKey = (kind, id) => `${kind}|${id}`;
+
 /* "Wed 18 Mar (2026-03-18)" — the named day AND the exact date, always both.
    The word alone is ambiguous across a midnight and the ISO alone is something
    a reader has to decode; the lists are about specific days and a reader has to
@@ -13577,7 +13640,7 @@ function fuSpan(span){
    compare equal to itself, which is why this is a function and not a template
    written out at each site. */
 const fuAskKey = (a) => (a
-  ? `${a.mode}|${a.date || a.from || ''}|${a.to || a.date || ''}|${a.all ? 1 : 0}`
+  ? `${a.mode}|${a.date || a.from || ''}|${a.to || a.date || ''}|${a.all ? 1 : 0}|${a.sort || ''}`
   : 'default');
 
 /* Which preset is lit. Derived from what was asked rather than stored beside
@@ -13641,6 +13704,12 @@ function renderFollowUp(){
             min="${escapeHTML(min)}" max="${escapeHTML(max)}">
           ${FOLLOW_UP_BUSY ? '<span class="fu-loading">reading…</span>' : ''}
         </div>`}
+      <div class="fu-presets" role="group" aria-label="How to order the lists">
+        <button type="button" class="fu-preset${(ask.sort||'urgency')==='urgency'?' is-on':''}"
+          data-fu-sort="urgency" aria-pressed="${(ask.sort||'urgency')==='urgency'}">Most urgent</button>
+        <button type="button" class="fu-preset${ask.sort==='inactive'?' is-on':''}"
+          data-fu-sort="inactive" aria-pressed="${ask.sort==='inactive'}">Longest inactive</button>
+      </div>
     </div>`;
 
   if(FOLLOW_UP_ERR){
@@ -13676,6 +13745,8 @@ function renderFollowUp(){
         span: d.startedFor,
         list: d.notStarted,
         which: 'started',
+        kind: 'start',
+        d,
         heldLabel: d.heldLabel,
         empty: 'Everybody expected that day picked something up.',
         waiting: d.grace && d.grace.holds ? (d.grace.clockShut
@@ -13689,6 +13760,8 @@ function renderFollowUp(){
         span: d.filledFor,
         list: d.notFilled,
         which: 'filled',
+        kind: 'timesheet',
+        d,
         heldLabel: d.heldLabel,
         empty: 'Everybody expected that day has filled it in.',
         waiting: d.filledFor ? null : 'Today’s timesheet is not due yet, and there is no '
@@ -13716,7 +13789,7 @@ function renderFollowUp(){
    which date or range it is about — the two lists are not always about the same
    day (today's timesheet is not due yet, so list 2 moves to the previous
    working day) and a reader has to be told rather than left to infer. */
-function fuList({ title, span, list, which, heldLabel, empty, waiting }){
+function fuList({ title, span, list, which, heldLabel, empty, waiting, d, kind }){
   const rows = (list && list.rows) || [];
   const total = (list && list.total) || 0;
   const more = (list && list.more) || 0;
@@ -13726,11 +13799,41 @@ function fuList({ title, span, list, which, heldLabel, empty, waiting }){
       <span class="ref-key">${waiting ? '—' : total}</span>
     </div>
     <div class="fu-for">for ${escapeHTML(fuSpan(span))}</div>
+    ${fuRemindAll(rows, d, kind)}
     ${waiting ? `<div class="ad-empty">${waiting}</div>`
       : (!rows.length ? `<div class="ad-empty">${escapeHTML(empty)}</div>`
-        : rows.map(r=>fuRow(r, heldLabel)).join('')
+        : rows.map(r=>fuRow(r, heldLabel, d)).join('')
           + (more > 0 ? `<button type="button" class="fu-more" data-fu-all="1"
               aria-label="Show all ${total} people on this list">show all ${total}</button>` : ''))}
+  </div>`;
+}
+
+/* "REMIND ALL", at the top of each list.
+ *
+ * DRAWN ONLY WHEN IT WOULD DO SOMETHING. With nobody sendable the button would
+ * open a confirmation that said "0 people will be reminded", which is a dialog
+ * asking permission to do nothing — so the line says what is in the way
+ * instead.
+ *
+ * THE COUNTS COME OFF THE ROWS the server just sent, each carrying its own
+ * decision, so the confirmation can state the exact number without a second
+ * round trip and without the page deciding anything. The server applies the
+ * same rules again per person when it runs, and may well skip one more — which
+ * is why the result is per-person and the dialog says "will be reminded" rather
+ * than promising. */
+function fuRemindAll(rows, d, kind){
+  if(!can('report.remind')) return '';
+  if(!d || !d.reminders || !d.reminders.permitted) return '';
+  if(!rows.length) return '';
+  const mine = rows.filter(r=>r.remind && r.remind.kind === kind);
+  const ready = mine.filter(r=>r.remind.may);
+  const skip = mine.length - ready.length;
+  if(!mine.length) return '';
+  return `<div class="fu-list-actions">
+    <button type="button" class="fu-remind-all" data-fu-remind-all="${escapeHTML(kind)}"
+      ${ready.length ? '' : 'disabled'}
+      aria-label="Remind all ${ready.length} people on this list">Remind all${ready.length ? ` (${ready.length})` : ''}</button>
+    ${skip ? `<span class="fu-skip-note">${skip} will be skipped</span>` : ''}
   </div>`;
 }
 
@@ -13745,21 +13848,168 @@ function fuList({ title, span, list, which, heldLabel, empty, waiting }){
  * THE HELD COUNT IS LABELLED BY WHAT IT IS, with the word coming from the
  * server: "waiting on them" for today and "held that day" for a past date, so
  * a past date's figure can never be read as what is on their desk now. */
-function fuRow(r, heldLabel){
+function fuRow(r, heldLabel, d){
   const role = r.roleLabel || r.role || '';
   const name = can('user.view')
     ? `<button type="button" class="fu-name" data-fu-user="${escapeHTML(r.id)}"
         aria-label="Open ${escapeHTML(r.name)} in Users">${escapeHTML(r.name)}</button>`
     : `<span class="fu-name-plain">${escapeHTML(r.name)}</span>`;
-  return `<div class="fu-row">
+  return `<div class="fu-row" data-fu-row="${escapeHTML(r.id)}">
     <div class="fu-who">
       ${name}
       <div class="fu-role">${escapeHTML(role)}</div>
+      ${fuActivity(r, d)}
     </div>
     ${r.both ? '<span class="fu-both" title="On both lists">both</span>' : ''}
     ${r.missed > 1 ? `<span class="fu-missed">${Number(r.missed)} days</span>` : ''}
     ${r.held ? `<span class="fu-held">${Number(r.held)} ${escapeHTML(heldLabel||'')}</span>` : ''}
+    ${fuStreak(r, d)}
+    ${fuRemind(r, d)}
   </div>`;
+}
+
+/* WHEN THIS PERSON WAS LAST ACTIVE, as its own line under the name.
+ *
+ * TWO FACTS, LABELLED, NEVER ADDED TOGETHER. "Timer" is the clock the studio
+ * bills from; "seen" is the last thing they did that the Activity Log records.
+ * A single "last active" would be the later of the two, which is the one a
+ * reader would trust least — see the header of src/last-activity.js.
+ *
+ * THE RELATIVE WORDS AND THE EXACT STAMP BOTH COME FROM THE SERVER, and the
+ * page prints them. Working out "3 days ago" here would compute it against the
+ * BROWSER'S clock, so a past date's row would say "3 days ago" because somebody
+ * opened the screen on Friday; the server counts from the date being viewed.
+ *
+ * "NOT RECORDED" IS NOT "NEVER". lastSeenRecorded says whether the Activity Log
+ * could be read at all, so a deployment part-way through its migration reads as
+ * unknown rather than as a studio where nobody has ever done anything. */
+function fuActivity(r, d){
+  const a = r.activity;
+  if(!a) return '';
+  const explain = (d && d.activityExplainer) || '';
+  if(!a.everActive){
+    return `<div class="fu-act is-none" title="${escapeHTML(explain)}">No activity yet</div>`;
+  }
+  const bits = [];
+  if(a.timer) bits.push(`timer ${a.timer.relative}`);
+  else bits.push('no timer yet');
+  if(a.seen) bits.push(`seen ${a.seen.relative}`);
+  else if(a.seenAvailable === false) bits.push('last seen not recorded');
+  /* The tooltip carries the EXACT IST stamps and the definition, which is the
+     half that does not fit on a dashboard row. */
+  const title = [
+    a.timer ? `Last timer activity: ${a.timer.exact}` : 'No work session recorded yet',
+    a.seen ? `Last seen: ${a.seen.exact}` : null,
+    '',
+    explain,
+  ].filter((l) => l !== null).join('\n');
+  return `<div class="fu-act" title="${escapeHTML(title)}">${escapeHTML(bits.join(' · '))}</div>`;
+}
+
+/* THE STREAK BADGE: not started for N working days in a row.
+ *
+ * DRAWN FROM TWO UPWARDS, because one is every row on the list and therefore no
+ * marker at all. The stronger form is the server's streakStrong — the threshold
+ * is a Settings value and comparing to a constant here would be a second copy of
+ * it that disagreed the moment somebody changed it.
+ *
+ * NEVER COLOUR ALONE. The badge carries the number and the word "working days";
+ * the strong form adds the word "repeated" and a "!" so it reads the same to
+ * somebody who cannot tell the two ambers apart. */
+function fuStreak(r, d){
+  const a = r.activity;
+  if(!a || !a.streak || a.streak < 2) return '';
+  const n = Number(a.streak);
+  const capped = a.streakCapped ? '+' : '';
+  const since = a.streakSince ? `\nThe run starts on ${a.streakSince}.` : '';
+  const title = `Not started for ${n}${capped} working days in a row — weekends, holidays and days `
+    + `before they joined are skipped.${since}`
+    + (a.streakStrong ? `\nMarked because the studio's threshold is ${Number((d&&d.streakThreshold)||3)} `
+      + 'working days.' : '');
+  return `<span class="fu-streak${a.streakStrong ? ' is-strong' : ''}" title="${escapeHTML(title)}">`
+    + `${a.streakStrong ? '! ' : ''}${n}${capped} working days${a.streakStrong ? ' · repeated' : ''}</span>`;
+}
+
+/* THE REMIND CONTROL.
+ *
+ * FOUR STATES AND NOTHING ELSE CAN HAPPEN:
+ *
+ *   no permission     nothing is drawn at all. can('report.remind') AND the
+ *                     server's own `permitted` — the page gate is the
+ *                     permission, never the tier, and the server has already
+ *                     resolved the same key off the same list.
+ *   already reminded  "Reminded 11:05 by Priya", visible to EVERY lead who can
+ *                     see the list, with the button disabled and the reason on
+ *                     it — so two leads do not both nudge one person.
+ *   refused           disabled, with the SERVER'S sentence as the tooltip and
+ *                     as the aria description. Never a guess made here.
+ *   sendable          a live button.
+ *
+ * THE DISABLED REASON IS ON THE BUTTON ITSELF, not only in a tooltip: title is
+ * not reachable by keyboard and aria-describedby is, so both are set. */
+function fuRemind(r, d){
+  const m = r.remind;
+  if(!m) return '';
+  if(!can('report.remind') || !m.permitted) return '';
+  const key = fuKey(m.kind, r.id);
+  const sending = FU_SENDING.has(key);
+  const msg = FU_ROW_MSG.get(key) || null;
+  const descId = `fu_rd_${escapeHTML(m.kind)}_${escapeHTML(r.id)}`;
+
+  const auto = m.auto
+    ? `<span class="fu-auto" title="The studio's own reminder, not a person's">Auto reminder sent ${escapeHTML(fuClock(m.auto.at))}</span>`
+    : '';
+  const already = m.last
+    ? `<span class="fu-reminded">Reminded today ${escapeHTML(fuClock(m.last.at))}`
+      + `${m.last.by ? ` by ${escapeHTML(m.last.by)}` : ''}</span>`
+    : '';
+
+  const disabled = sending || !m.may;
+  const label = sending ? 'Sending…' : 'Remind';
+  const reason = sending ? 'Sending the reminder.' : (m.may ? '' : (m.reason || ''));
+  return `<span class="fu-remind-wrap">
+    ${auto}${already}
+    <button type="button" class="fu-remind" data-fu-remind="${escapeHTML(r.id)}"
+      data-fu-kind="${escapeHTML(m.kind)}"
+      ${disabled ? 'disabled' : ''}
+      ${reason ? `title="${escapeHTML(reason)}" aria-describedby="${descId}"` : ''}
+      aria-label="Remind ${escapeHTML(r.name)}">${label}</button>
+    ${reason ? `<span class="fu-reason" id="${descId}">${escapeHTML(reason)}</span>` : ''}
+    ${msg ? `<span class="fu-sent ${msg.kind === 'err' ? 'is-err' : ''}" role="status">${escapeHTML(msg.text)}</span>` : ''}
+  </span>`;
+}
+
+/* An ISO instant as the IST wall clock, which is the only part of it a row has
+   room for. The exact date and time is in the tooltip beside it, from the
+   server. Computed here rather than carried because this is a format and not a
+   fact — and it is IST explicitly, with a fixed offset, so a browser in another
+   zone shows the studio's clock and not its own. */
+/* THE DATE THE SECTION IS SHOWING, which is what a reminder is sent against.
+ *
+ * NOT A DATE THE SENDER PICKS. Which day a reminder is ABOUT is worked out by
+ * the server from the list the person is on; this only tells the server which
+ * list to rebuild, so that it rebuilds the one that was clicked.
+ *
+ * FROM THE PAYLOAD, not only from the ask. The first draw of this section
+ * arrives inside the dashboard payload with no ask recorded at all (see
+ * renderAdminDashboard), so reading the ask alone would send nothing for the
+ * one case that happens every time somebody opens the tab. The payload always
+ * knows which day it is about. */
+function fuShownDate(){
+  const asked = FOLLOW_UP_ASK;
+  if(asked && asked.mode === 'range') return asked.to;
+  if(asked && asked.date) return asked.date;
+  const d = FOLLOW_UP;
+  return (d && (d.date || d.to)) || null;
+}
+
+function fuClock(iso){
+  const at = Date.parse(iso);
+  if(!Number.isFinite(at)) return '';
+  const d = new Date(at + 330*60000);
+  const h = d.getUTCHours();
+  return `${h % 12 === 0 ? 12 : h % 12}:${String(d.getUTCMinutes()).padStart(2,'0')}`
+    + `${h < 12 ? 'am' : 'pm'}`;
 }
 
 /* Redraw just this section, leaving the rest of the dashboard alone. */
@@ -13794,6 +14044,11 @@ async function loadFollowUp(ask){
   if(asked && asked.mode === 'range'){ params.push('from=' + encodeURIComponent(asked.from), 'to=' + encodeURIComponent(asked.to)); }
   else if(asked && asked.date){ params.push('date=' + encodeURIComponent(asked.date)); }
   if(asked && asked.all) params.push('all=1');
+  /* THE ORDER IS THE SERVER'S. Sorting the rows here would be a second copy of
+     a rule computed from numbers the server already holds — and the capped list
+     is the first twenty-five of the server's order, so re-sorting in the page
+     would reorder a page rather than the list. */
+  if(asked && asked.sort === 'inactive') params.push('sort=inactive');
 
   try{
     const data = await api('/admin-dashboard/follow-up' + (params.length ? '?' + params.join('&') : ''));
@@ -13827,34 +14082,44 @@ function wireFollowUp(){
     return;
   }
 
+  /* A CHOSEN ORDER SURVIVES A CHANGE OF DATE. Somebody who asked for "longest
+     inactive" and then picked yesterday asked two things, not one. */
+  const sort = (FOLLOW_UP_ASK && FOLLOW_UP_ASK.sort) || undefined;
   document.querySelectorAll('#followUpSlot [data-fu-preset]').forEach(b=>b.addEventListener('click', ()=>{
     const which = b.dataset.fuPreset;
-    if(which === 'today') return loadFollowUp(null);
-    if(which === 'prev') return loadFollowUp({ mode:'day', date: d.previousWorkingDay });
+    if(which === 'today') return loadFollowUp(sort ? { mode:'day', date: d.today, sort } : null);
+    if(which === 'prev') return loadFollowUp({ mode:'day', date: d.previousWorkingDay, sort });
     if(which === 'range'){
       const to = d.today;
       /* A fortnight, which is what the range is for — "who has been missing this
          fortnight" — and inside the cap whatever the cap is set to. */
       const back = Math.min(13, Math.max(0, (Number(d.maxRangeDays)||31) - 1));
       const from = new Date(Date.parse(to + 'T00:00:00Z') - back*86400000).toISOString().slice(0,10);
-      return loadFollowUp({ mode:'range', from, to });
+      return loadFollowUp({ mode:'range', from, to, sort });
     }
     /* "Pick a date" lights the box without changing the day: the reader is
        about to choose one, and jumping somewhere first would be an answer to a
        question they have not asked. */
-    return loadFollowUp({ mode:'day', date: (FOLLOW_UP_ASK && FOLLOW_UP_ASK.date) || d.from });
+    return loadFollowUp({ mode:'day', date: (FOLLOW_UP_ASK && FOLLOW_UP_ASK.date) || d.from, sort });
+  }));
+
+  /* THE ORDER. Asked of the server, like the date — see loadFollowUp. */
+  document.querySelectorAll('#followUpSlot [data-fu-sort]').forEach(b=>b.addEventListener('click', ()=>{
+    const want = b.dataset.fuSort === 'inactive' ? 'inactive' : undefined;
+    const base = FOLLOW_UP_ASK || { mode:'day', date: d.today };
+    loadFollowUp({ ...base, sort: want });
   }));
 
   const day = document.getElementById('fu_day');
   if(day) day.addEventListener('change', ()=>{
     if(!day.value) return;
-    loadFollowUp({ mode:'day', date: day.value });
+    loadFollowUp({ mode:'day', date: day.value, sort });
   });
   const from = document.getElementById('fu_from');
   const to = document.getElementById('fu_to');
   const range = ()=>{
     if(!from || !to || !from.value || !to.value) return;
-    loadFollowUp({ mode:'range', from: from.value, to: to.value });
+    loadFollowUp({ mode:'range', from: from.value, to: to.value, sort });
   };
   if(from) from.addEventListener('change', range);
   if(to) to.addEventListener('change', range);
@@ -13869,6 +14134,144 @@ function wireFollowUp(){
     ev.stopPropagation();
     openUserDetail(b.dataset.fuUser);
   }));
+
+  /* ONE REMINDER. The button is a <button>, so Enter and Space already work and
+     the disabled attribute already takes it out of the tab order. */
+  document.querySelectorAll('#followUpSlot [data-fu-remind]').forEach(b=>b.addEventListener('click', ()=>{
+    sendReminder(b.dataset.fuKind, b.dataset.fuRemind);
+  }));
+
+  document.querySelectorAll('#followUpSlot [data-fu-remind-all]').forEach(b=>b.addEventListener('click', ()=>{
+    remindEveryone(b.dataset.fuRemindAll);
+  }));
+}
+
+/* ---------- sending one ----------
+ *
+ * NO DOUBLE SUBMIT, and it is held in two places on purpose: the key goes into
+ * FU_SENDING before the request leaves — which disables the button on the next
+ * paint — and the handler returns immediately if the key is already there, so a
+ * second click landing inside the same tick is dropped rather than queued.
+ *
+ * THE ROW IS UPDATED FROM THE SERVER'S ANSWER, not from an optimistic guess.
+ * The response carries the row as the server now sees it, so what is drawn is
+ * what the next refresh will draw — which is the whole of "survives the timed
+ * refresh". A guess would be contradicted sixty seconds later.
+ */
+async function sendReminder(kind, userId){
+  const key = fuKey(kind, userId);
+  if(FU_SENDING.has(key)) return;
+  FU_SENDING.add(key);
+  FU_ROW_MSG.delete(key);
+  paintFollowUp();
+  try{
+    const body = { userId, kind, date: fuShownDate() };
+    if(!body.date) delete body.date;
+    const res = await api('/admin-dashboard/follow-up/remind', { method:'POST', body });
+    FU_ROW_MSG.set(key, { kind:'ok',
+      text: res.channels && res.channels.includes('email') ? 'Reminded · emailed' : 'Reminded' });
+    applyRemindedRow(kind, userId, res.row);
+  }catch(err){
+    /* THE SERVER'S OWN SENTENCE, shown on the row and nowhere else. It is the
+       one that knows why — "Priya has started work since this list loaded" is
+       not something the page could have worked out. */
+    FU_ROW_MSG.set(key, { kind:'err', text: (err && err.message) || 'That did not send.' });
+  }finally{
+    FU_SENDING.delete(key);
+    paintFollowUp();
+  }
+}
+
+/* The one row, replaced in place with what the server returned.
+ *
+ * Only the matching row and only on the matching list, so a person who appears
+ * on both lists does not have the other one quietly rewritten by a reminder
+ * about this one. */
+function applyRemindedRow(kind, userId, row){
+  if(!FOLLOW_UP || !row) return;
+  const list = kind === 'start' ? FOLLOW_UP.notStarted : FOLLOW_UP.notFilled;
+  if(!list || !Array.isArray(list.rows)) return;
+  const at = list.rows.findIndex(r=>r.id === userId);
+  if(at < 0) return;
+  list.rows[at] = row;
+}
+
+/* ---------- reminding everybody on one list ----------
+ *
+ * AN IN-PAGE CONFIRMATION, with the EXACT numbers in it and the reasons for the
+ * skips. askConfirm is the page's own modal (see the note above openAsk): this
+ * application asks no native dialog anywhere, and
+ * tests/no-native-dialogs.test.js fails the build if one reappears.
+ *
+ * THE MODAL STAYS OPEN WHILE IT RUNS, through askConfirm's `run`, so a failure
+ * is shown where the question was asked rather than behind a dialog that has
+ * already closed.
+ */
+async function remindEveryone(kind){
+  const d = FOLLOW_UP;
+  if(!d) return;
+  const list = kind === 'start' ? d.notStarted : d.notFilled;
+  const rows = ((list && list.rows) || []).filter(r=>r.remind && r.remind.kind === kind);
+  const ready = rows.filter(r=>r.remind.may);
+  const skipped = rows.filter(r=>!r.remind.may);
+  if(!ready.length) return;
+
+  /* WHY EACH ONE IS SKIPPED, counted by reason rather than listed by name: a
+     list of forty names in a dialog is one nobody reads, and "12 already
+     reminded today, 3 have started since" is the sentence that decides it. */
+  const byReason = new Map();
+  for(const r of skipped){
+    const label = fuSkipLabel(r.remind.code);
+    byReason.set(label, (byReason.get(label) || 0) + 1);
+  }
+  const reasons = [...byReason.entries()].map(([label, n])=>`${n} ${label}`).join(', ');
+  const what = kind === 'start' ? 'have not started work today'
+    : 'have not filled their timesheet';
+
+  const ok = await askConfirm({
+    title: `Remind ${ready.length} ${ready.length === 1 ? 'person' : 'people'}?`,
+    message: `${ready.length} ${ready.length === 1 ? 'person' : 'people'} ${what} and will be `
+      + `reminded — an in-app notice${d.reminders && d.reminders.emailEnabled ? ' and an email' : ''}`
+      + ` each, with your name on it.`
+      + (skipped.length ? `\n\n${skipped.length} will be skipped: ${reasons}.` : '')
+      + `\n\nAt most ${Number((d.reminders&&d.reminders.cap)||1)} per person per kind per day.`,
+    confirmLabel: `Remind ${ready.length}`,
+    busyLabel: 'Sending…',
+    run: async ()=>{
+      const body = { kind, date: fuShownDate() };
+      if(!body.date) delete body.date;
+      const res = await api('/admin-dashboard/follow-up/remind-all', { method:'POST', body });
+      /* THE WHOLE SECTION, AS THE SERVER NOW SEES IT. A bulk send changes every
+         row it touched, so replacing them one at a time would be forty guesses
+         where one answer will do. */
+      if(res.section) FOLLOW_UP = res.section;
+      const sent = (res.sent || []).length;
+      const miss = (res.skipped || []).length;
+      showToast(`Reminded ${sent} ${sent === 1 ? 'person' : 'people'}`
+        + (miss ? `, skipped ${miss}` : ''));
+      paintFollowUp();
+    },
+  });
+  if(ok === false) return;
+}
+
+/* A refusal code as the few words a count can be put in front of. The server's
+   own sentence names the person, which is right on a row and wrong in a tally. */
+function fuSkipLabel(code){
+  switch(code){
+    case 'capped': return 'already reminded today';
+    case 'already_started': return 'have started since';
+    case 'already_filled': return 'have filled it since';
+    case 'out_of_scope': return 'out of scope';
+    case 'blackout': return 'the studio is on a break';
+    case 'clock_shut': return 'the studio\'s clock is shut';
+    case 'not_working_day': return 'not a working day';
+    case 'start_not_today': return 'not today\'s list';
+    case 'backdate_closed': return 'too old to be filled';
+    case 'manual_off': return 'reminders are switched off';
+    case 'self': return 'you';
+    default: return 'cannot be reminded';
+  }
 }
 
 /* ---------- the saved theme, at runtime ----------
@@ -16436,6 +16839,109 @@ async function renderChatSettings(){
   };
 }
 
+
+/* ---------- Start-of-day nudges ----------
+ *
+ * THE FOUR SWITCHES THAT GOVERN THE REMINDERS sent from the Admin Dashboard's
+ * "People to follow up" lists.
+ *
+ * WHAT THIS SECTION IS HONEST ABOUT. The studio has no AUTOMATIC start-of-day
+ * reminder — there is no sweep and nothing sends anything on its own — and the
+ * panel says so rather than leaving a reader to assume that switching these on
+ * makes the application nag anybody by itself. `automatic` comes from the
+ * server so the sentence cannot go on saying it after one is built.
+ *
+ * ONE GATE, ONE KEY: report.remind, which is the key that sends reminders.
+ * can() here and requirePermission on both handlers, never the tier.
+ */
+let nudgeState = { data:null, errors:[], busy:false };
+
+async function renderNudgeSettings(){
+  const el = document.getElementById('nudgeSettingsSection');
+  if(!el) return;
+  if(!nudgeState.data){
+    try{ nudgeState.data = await api('/admin/settings/nudges'); }
+    catch(err){ el.innerHTML = `<div class="ref-section"><div class="ref-err">${escapeHTML(err.message)}</div></div>`; return; }
+  }
+  const d = nudgeState.data;
+  const s = d.settings;
+  const errFor = (f)=>{ const e = nudgeState.errors.find(x=>x.field===f); return e ? e.message : ''; };
+  el.innerHTML = `
+    <div class="ref-section">
+      <div class="ref-head"><h3>Start-of-day Nudges</h3><span class="rh-badge">Super Admin</span></div>
+      <div class="ref-note">A lead reading the "People to follow up" lists on the Admin Dashboard can
+        send one person — or everybody on a list — a reminder. These four values govern it. Every one
+        is checked on the server each time a reminder is sent, so a browser left open on an old value
+        cannot get past them.</div>
+      ${d.automatic ? '' : `<div class="rh-warn" style="border-color:var(--border);background:var(--surface);">
+        <div><strong>Nothing is sent automatically.</strong> This application has no start-of-day
+        sweep: every reminder is one a person chose to send, with their name on it. These settings
+        govern those.</div></div>`}
+      <div class="ref-add">
+        <div style="align-self:end;">
+          <label class="rh-check"><input type="checkbox" id="nu_manual"${s.manualEnabled?' checked':''}>
+            Manual reminders on</label>
+        </div>
+        <div style="align-self:end;">
+          <label class="rh-check"><input type="checkbox" id="nu_email"${s.emailEnabled?' checked':''}>
+            Also send an email</label>
+        </div>
+        <div>
+          <label>Most reminders per person, per kind, per day</label>
+          <input type="number" id="nu_cap" class="narrow${errFor('dailyCap')?' rh-bad':''}"
+                 min="1" max="${Number(d.limits.cap)}" step="1" value="${escapeHTML(String(s.dailyCap))}">
+        </div>
+        <div>
+          <label>Mark repeated absence at</label>
+          <input type="number" id="nu_streak" class="narrow${errFor('streakThreshold')?' rh-bad':''}"
+                 min="2" max="${Number(d.limits.streak)}" step="1" value="${escapeHTML(String(s.streakThreshold))}">
+        </div>
+        <div style="align-self:end;">
+          <button class="btn btn-brand" id="nu_save">Save</button>
+        </div>
+      </div>
+      ${nudgeState.errors.length ? `<div class="rh-errs">${nudgeState.errors.map(e=>`<div class="rh-err">${escapeHTML(e.message)}</div>`).join('')}</div>` : ''}
+      <div class="ref-note">
+        <strong>Email is off by default and that is deliberate.</strong> A notice in the bell reaches
+        somebody inside the tool; an email leaves the building and cannot be recalled. With it on, a
+        reminder also goes out through the studio's mail queue — subject to the same retries and the
+        same daily cap as every other message, and never to somebody who has switched email
+        notifications off in their Profile.
+        <br><strong>The cap is enforced by the database, not by a check.</strong> Two leads clicking at
+        the same second send one reminder between them, not two.
+        <br>The marker appears on a row from two working days upwards and becomes the stronger one at
+        <strong>${Number(s.streakThreshold)}</strong>. Weekends, holidays and days before somebody
+        joined are skipped, and the count looks back at most ${Number(d.lookBack)} working days.
+        <br>A start reminder is held while the studio is shut and during any break of
+        ${Number(d.blackoutMinutes)} minutes or more — lunch, in other words, read off Recording Hours
+        rather than fixed here.
+        ${s.updatedByName ? `<br>Last changed by ${escapeHTML(s.updatedByName)}.` : ''}
+      </div>
+      <div class="ref-note" style="margin-top:8px;">${escapeHTML(d.activityExplainer || '')}</div>
+    </div>`;
+
+  document.getElementById('nu_save').onclick = async ()=>{
+    if(nudgeState.busy) return;
+    nudgeState.busy = true;
+    try{
+      nudgeState.data = await api('/admin/settings/nudges', { method:'PUT', body: {
+        manualEnabled: document.getElementById('nu_manual').checked,
+        emailEnabled: document.getElementById('nu_email').checked,
+        dailyCap: Number(document.getElementById('nu_cap').value),
+        streakThreshold: Number(document.getElementById('nu_streak').value),
+      }});
+      nudgeState.errors = [];
+      /* NOTHING HERE REACHES INTO THE DASHBOARD, and it does not have to: the
+         threshold, the cap and both switches travel in the follow-up payload, so
+         the next draw of that section — on opening the tab, or on its next
+         refresh — reads the new values from the server. A poke from here would
+         be a second path for the same change to arrive by. */
+      showToast('Start-of-day nudge settings saved.');
+    }catch(e){
+      nudgeState.errors = (e.body && e.body.errors) ? e.body.errors : [{ field:null, message:e.message }];
+    }finally{ nudgeState.busy = false; renderNudgeSettings(); }
+  };
+}
 
 /* ---------- MIS Project Access (Super Admin) ----------
 
@@ -19055,6 +19561,12 @@ const NOTIF_TITLES = {
      when email cannot be sent, and worded so the one action it wants is in the
      title: go and look. */
   email_trouble: 'Email needs attention',
+  /* A LEAD NUDGED YOU. Two titles rather than one, because they are two
+     different requests — pick something up today, and the paperwork for a day
+     that is over is missing — and the sentence underneath each is the one the
+     sender's reminder was composed with, stored on the row. */
+  start_reminder: 'A reminder to start your day',
+  timesheet_reminder: 'A reminder about your timesheet',
 };
 const notifTitle = (n) => (n && NOTIF_TITLES[n.kind]) || 'Something needs your attention';
 

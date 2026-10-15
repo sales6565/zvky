@@ -2762,6 +2762,229 @@ it — not present and empty — and `GET /api/admin-dashboard/follow-up` carrie
 `requirePermission` on top of the screen's own gate. The page gates on `can()`,
 never on the tier. All three are tested.
 
+#### The last-activity marker
+
+Every row on both lists carries **when that person was last active** and, from
+two working days upwards, **how long they have been absent**.
+
+**Two facts, labelled, never added together.** A single "last active" column
+would be the later of the two, which is the one a reader would trust least.
+
+| Fact | What it reads | Where from |
+| --- | --- | --- |
+| **Timer** | The most recent moment a work session **started or ended** — which in this schema is the whole of "start, stop, pause and resume", because `work_sessions` has exactly two stamps and each of those four actions writes one of them | `work_sessions` |
+| **Last seen** | The most recent row this person wrote in the Activity Log — every successful state-changing request, **plus their sign-in** (`auth.login` is recorded there) | `activity_log` |
+
+**What "last seen" is not, and the screen says so too.** This application
+records **no per-request heartbeat**. `activity_log` deliberately excludes GET
+and HEAD — "reads… the reason the log stays legible" — so somebody who signs in
+at nine and spends the day reading boards reads as nine o'clock, not five. There
+is no last-authenticated-request stamp in this schema and none was invented.
+
+**A throttled `users.last_seen` was considered and declined.** The sign-in is
+already recorded, so the marker is never emptier than "signed in today"; the gap
+it would close is "signed in but idle since", which the **timer** fact already
+answers better, because a clock running is activity and a page open is not. And
+it would put a write on the one path every request in the application goes
+through, to improve one column on one dashboard section. If the studio wants
+presence, presence is a feature, not a column.
+
+Both come back with **relative words** ("yesterday 5:40 PM", "3 days ago") and
+the **exact IST stamp** on hover, and **both are composed on the server** —
+"3 days ago" worked out in the browser would be counted against the reader's
+clock, so a past date's row would say "3 days ago" because somebody opened the
+screen on Friday. Somebody with no history reads **"No activity yet"**, never a
+zero and never 1 Jan 1970.
+
+**The streak: not started for N working days in a row.** Counted backwards from
+the most recent working day that is **over**:
+
+| Walking back onto… | What happens |
+| --- | --- |
+| a non-working day | **skipped**, and the run is not broken — weekends and holidays come from the shared working-day rule, never a second reading of the calendar |
+| a day they started | the run **ends** there |
+| a day before they joined | the run **ends**, and that day is not counted |
+| the look-back cap (**30 working days**) | the run **stops** and the row reads `30+` — a floor, not a figure |
+
+It **ends at the last completed day**: for a past date, that date; for Today,
+the **previous** working day, because today is not finished and the fact that
+they have not started today is already the list they are on. The badge is drawn
+from **two** upwards and becomes the stronger form at the **configured
+threshold** (default 3) — which comes from the server, so the page never
+compares the number to a constant of its own. It is **never colour alone**: the
+badge carries the number and the words "working days", and the strong form adds
+`!` and "repeated".
+
+**As of the date being viewed.** Both queries are bounded above by the end of
+that day and the streak walks back from it, so a past date's row can never show
+activity from after the date, nor a streak today's data would have broken. A
+session that opened on the day in view and closed the following week
+contributes its **open** — the only one of its two moments that had happened by
+then.
+
+**"Longest inactive" is an order the server applies**, on the streak, then the
+calendar days since the last timer event, then the list's own urgency. The
+capped list is the first twenty-five of the server's order, so re-sorting in the
+page would reorder a page rather than the list.
+
+**What it costs: two more queries, both grouped, for any number of people.** The
+streak costs **nothing** — it walks the started-days set the lists already
+fetched, which is also why there is still exactly one definition of "started".
+A whole draw is **eleven** queries for a scoped viewer and ten for a studio-wide
+one, and `tests/follow-up.test.js` asserts that forty people over a month cost
+the same.
+
+**One index was added, because the plan asked for it.** The marker's last-seen
+query is `MAX(created_at)` per actor. Measured on 30,000 rows across 50 actors,
+asked about three:
+
+| | Key | Rows examined |
+| --- | --- | --- |
+| before | `idx_activity_actor (actor_id, seq)` | 1,765 — every row those three people ever wrote |
+| after | `idx_activity_actor_when (actor_id, created_at)` | **6**, "Using index for group-by" |
+
+`activity_log` is, by its own comment, the table that grows without limit, so a
+marker that read a person's whole history on every draw would get slower with
+it. Nothing else needed one: the timer half already has
+`idx_ws_user_started`, and `reminder_log`'s own key covers the one read the
+screen makes of it.
+
+#### Remind: one click, and at most one a day
+
+A lead or admin can nudge one person, or everybody on a list.
+
+| List | What is sent |
+| --- | --- |
+| **Not started** | "&lt;Name&gt; (&lt;role&gt;) is checking in: you haven't started work today. You have N tasks waiting." |
+| **Timesheet not filled** | "Please fill your timesheet for &lt;date&gt;." |
+
+The sentence is composed **once**, in `src/reminders.js`, and the in-app notice,
+the email and the history row all read it — three copies of one sentence is
+three places for the date inside it to come out formatted differently.
+
+**One notification path.** `notifications.raise()` is the choke point the bell,
+the desktop notification and the phone push all hang off, so a reminder reaches
+all three without `src/reminders.js` knowing any of them exist. Two new kinds,
+`start_reminder` and `timesheet_reminder`, because they are two different
+requests. They are the **first kinds whose wording is stored** rather than
+rebuilt: `notifications.detail` holds the sentence, because "you have 4 tasks
+waiting" and "the day that is missing" are facts that are not links, and
+recomputing them when the bell is opened next week would quietly rewrite the
+message somebody was sent. The column is nullable, no other kind writes it, and
+a database that has not reached the migration still delivers the notice without
+it.
+
+**Email goes through the existing queue, and only when the studio says so.**
+`src/email-notifications.js` builds the message and `src/email-outbox.js`
+carries it, on the same `60s / 5m / 30m / 2h / 6h / 24h` schedule, the same
+seven attempts and the same permanent-failure behaviour as every other message —
+asserted by identity, so a second schedule typed anywhere would fail the test.
+Somebody who switched email notifications off in their Profile is not mailed
+one; their bell still rings, which is the channel they did not switch off. The
+link in the email is the application's own origin, taken from the request:
+there is no configured public URL here and no route for a date, so the exact day
+is named in the words instead.
+
+**The server re-checks at send time, by rebuilding the list.** Not a second
+opinion: the endpoint calls `followUp.build()` — the same function that drew the
+list the sender clicked on — with the cache bypassed, so "started", "filled",
+"expected" and "in scope" are asked rather than restated.
+
+| Refused when | Status | What it says |
+| --- | --- | --- |
+| Manual reminders are off in Settings | 409 | the studio-wide answer, before any personal one |
+| Not in the sender's `visibleProjects()` | **403** | and the refusal says nothing about that person's day — naming them, even to say they have started, would answer the question the scope rule exists to withhold |
+| They started / filled since the list loaded | 409 | "Priya has started work since this list loaded." |
+| A start reminder about any day but today | 409 | "use the timesheet reminder for a past day" |
+| A weekend or a holiday (start reminders) | 409 | "a weekly off or a holiday" |
+| The studio's clock is shut, or on a break (start reminders) | 409 | "The studio is on a break until 2:00pm" |
+| The day is past the back-dating limit | 409 | names the limit — a reminder **is** the asking, so a notice with a caveat attached would be a message whose second sentence withdraws its first |
+| The daily cap is spent | 409 | "Priya has already been reminded today." |
+
+**The lunch blackout is derived, not written down.** There is no lunch constant
+to read: Settings → Recording Hours is a list of named windows, and lunch is the
+gap between two of them. So the blackout is **any gap of 30 minutes or more**
+between the day's recording windows — which catches lunch in every studio that
+has one, skips the fifteen-minute tea breaks, and moves on its own the day
+somebody moves the window. A timesheet reminder is not subject to any of it: it
+is paperwork about a day that is over.
+
+**The daily cap is a unique key, not a check.** Two leads clicking in the same
+second both read "nobody has been reminded" and both send — and no amount of
+checking first can fix that, because the gap between the check and the insert is
+where the second one lives. So `reminder_log` carries a **slot**: the number of
+manual reminders already sent to that person for that kind today, and
+
+```sql
+UNIQUE KEY uq_reminder_slot (recipient_id, kind, source, sent_on, slot)
+```
+
+makes the database decide. The first click takes slot 0, the second slot 1, two
+simultaneous clicks both aim at the same slot and exactly one lands; the loser
+is told the cap. The row is **claimed before anything is sent**: a notice
+delivered and then recorded could be delivered twice, where a row recorded and
+then not delivered shows on the screen as a reminder that went nowhere, which
+somebody can see and resend tomorrow.
+
+**`source` has a second value before anything writes it.** There are **no
+automatic reminders in this application** — no start-of-day sweep, nothing that
+sends on its own. The column, and the unique key spanning it, are how the one
+that is eventually built shares this table and this once-a-day rule instead of
+growing a second set. The screen reads `auto` rows to show "Auto reminder sent
+10:30"; until something writes them that line is simply absent. An automatic
+reminder does **not** spend the manual cap — the studio's own nudge must not
+stop a lead adding a word at eleven — and the lead can see it went out before
+deciding.
+
+**The row says who sent it, to every lead who can see the list** ("Reminded
+today 11:05 by Priya"), with the button disabled and the reason on it — as a
+tooltip, as visible text, and through `aria-describedby`, because a tooltip is
+not reachable by keyboard. That is the whole point of putting it on the row
+rather than in the clicker's own session.
+
+**Remind all** asks in the page — this application has no native dialogs — and
+states the exact number who will be reminded and how many will be skipped, by
+reason: "3 will be skipped: 2 already reminded today, 1 have filled it since."
+It applies the same rules per person, returns a per-person result, and **one
+refusal stops nothing**: each person is caught on their own. It reads **every**
+row rather than the screen's first twenty-five, because the row cap is a drawing
+decision.
+
+**Every reminder is recorded** in `reminder_log` — sender, recipient, kind, the
+day it was about, the day it was sent, the channels and the result — and audited
+through the mechanism every other action uses.
+
+#### Two keys, because seeing and messaging are two powers
+
+*Send Follow-Up Reminders* (`report.remind`) is **Super Admin only** by default,
+through `managePermissions`, and is its own key beside *View People to Follow
+Up*. Seeing who is behind is a report; messaging them is an act that arrives in
+somebody's bell, on their phone and in their inbox with the sender's name on it.
+A studio may well want a producer to have the first without the second.
+
+Both endpoints demand **both** keys — there is nothing to send from without the
+list — enforced with `requirePermission` on the server and `can()` on the page,
+**never** the tier. It is grantable, by designation or through a role group, and
+the default is pinned in `tests/role-permissions.test.js`.
+
+#### Settings → Start-of-day Nudges
+
+Four switches, behind `report.remind`.
+
+| Setting | Default | Why |
+| --- | --- | --- |
+| Manual reminders on | **on** | a feature that ships switched off is one nobody finds |
+| Also send an email | **off** | an in-app notice reaches somebody inside the tool; an email leaves the building and cannot be recalled, and no studio has yet decided it wants its staff mailed about attendance |
+| Most per person, per kind, per day | **1** | the brief's number, and what the unique key enforces |
+| Mark repeated absence at | **3** working days | one would mean "mark every row", which is no marker at all — so the validator's floor is 2 |
+
+Validated on the server (every mistake reported, not the first), audited with
+the policy as a sentence on both sides, and **applied without a redeploy**:
+`save()` reloads the in-memory mirror every reader reads, and the threshold and
+the cap travel in the follow-up payload, so an open browser picks them up on its
+next draw. The section says plainly that **nothing is sent automatically**, so
+that switching these on is not read as a promise the application does not keep.
+
 ### At narrower widths
 
 Three breakpoints, and the panels rearrange rather than shrink:

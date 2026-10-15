@@ -122,6 +122,29 @@ const KINDS = {
      screen, and a reason string is exactly where a token or an address would
      eventually be pasted by somebody adding a line. */
   email_trouble: 'email_trouble',
+  /* A LEAD NUDGED SOMEBODY, from the Admin Dashboard's "People to follow up".
+   *
+     TWO KINDS AND NOT ONE, because they are two different requests: one says
+     "pick something up today", the other says "the paperwork for a day that is
+     over is missing". A studio that wanted the first and not the second would
+     have no way to tell them apart if they shared a kind, and neither would the
+     person receiving them.
+
+     THE SENTENCE IS STORED, which is new for this table and is the one thing
+     about these two kinds worth reading twice. Every other kind's wording is
+     rebuilt by describe() from the row's LINKS — the asset, the project, the
+     other person — because the wording is a function of them. These two carry
+     facts that are not links and are not reconstructable later: how many tasks
+     were waiting at the moment of the nudge, and which day's timesheet was
+     missing. Recomputing "you have 4 tasks waiting" when the bell is opened
+     next week would quietly rewrite the message somebody was sent.
+
+     So notifications.detail holds the sentence, and describe() prints it. The
+     column is nullable and no other kind writes it; a deployment whose
+     migration has not reached it still delivers the notice, without the detail,
+     through the same fall-back raise() already had for project_id. */
+  start_reminder: 'start_reminder',
+  timesheet_reminder: 'timesheet_reminder',
   /* A reviewer sent work back to the artist with changes required, and routed it
      to them.
    *
@@ -149,6 +172,17 @@ const unavailable = (err) => err && (err.code === 'ER_NO_SUCH_TABLE' || /doesn't
  * are edited after the fact — the row keeps ids, the sentence is made from
  * them. */
 function describe(row) {
+  /* THE STORED SENTENCE, FIRST AND WITHOUT A FALL-THROUGH. These two kinds are
+     the only ones whose words were written at the moment they were raised; see
+     KINDS above. The fall-back is a true sentence rather than an empty one,
+     because a row from a database without the column must still read as
+     something. */
+  if (row.kind === KINDS.start_reminder) {
+    return row.detail || `${row.other_name || 'A lead'} is checking in: you have not started work today.`;
+  }
+  if (row.kind === KINDS.timesheet_reminder) {
+    return row.detail || 'Please fill your timesheet for the day that is missing.';
+  }
   if (row.kind === KINDS.project_review) {
     const project = row.project_name || 'A project';
     return row.other_name
@@ -259,10 +293,10 @@ function pushFor(db, { notificationId, recipientId, actorId, kind, assetId, proj
          sentence on the phone is built from the same row the panel builds it
          from and the two cannot drift apart. It is declared below this
          function; JavaScript hoists the const's binding, and this runs inside a
-         promise long after the module has finished loading. */
-      const { rows } = await db.query(
-        `${SELECT} WHERE n.id = $1`, [notificationId]
-      );
+         promise long after the module has finished loading. Through
+         selectRows() for the same reason the panel is: a database without the
+         detail column must still push. */
+      const { rows } = await selectRows(db, 'WHERE n.id = $1', [notificationId]);
       const row = rows[0];
       /* describe() returns the ONE SENTENCE the bell shows — a string, not a
          title/body pair. It becomes the push body, under a fixed title, so the
@@ -278,22 +312,28 @@ function pushFor(db, { notificationId, recipientId, actorId, kind, assetId, proj
     .catch(() => { /* see the note above: a push never fails the action */ });
 }
 
-async function raise(db, { recipientId, actorId, kind, assetId, projectId, otherUserId, conversationId }) {
+async function raise(db, { recipientId, actorId, kind, assetId, projectId, otherUserId,
+  conversationId, detail }) {
   if (!recipientId || recipientId === actorId) return null;
   const id = uuid();
   try {
     await db.query(
-      `INSERT INTO notifications (id, recipient_id, actor_id, kind, asset_id, project_id, other_user_id, conversation_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      `INSERT INTO notifications (id, recipient_id, actor_id, kind, asset_id, project_id, other_user_id, conversation_id, detail)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
       [id, recipientId, actorId || null, kind, assetId || null, projectId || null,
-        otherUserId || null, conversationId || null]
+        otherUserId || null, conversationId || null,
+        /* THE ONLY KINDS THAT WRITE THIS, and the slice is the column's width.
+           A sentence longer than the column would fail the insert and lose the
+           notice, which is a worse outcome than a sentence that ends early. */
+        detail === undefined || detail === null ? null : String(detail).slice(0, 500)]
     );
     pushFor(db, { notificationId: id, recipientId, actorId, kind, assetId, projectId });
     return id;
   } catch (err) {
-    /* A deployment whose migration has not added project_id or conversation_id
-       still notifies — without the link back, which is worth more than
-       silence. */
+    /* A deployment whose migration has not added project_id, conversation_id or
+       detail still notifies — without the link back or the stored sentence,
+       which is worth more than silence. describe() has a true fall-back
+       sentence for the two kinds that would otherwise have no words at all. */
     if (err.code === 'ER_BAD_FIELD_ERROR') {
       try {
         await db.query(
@@ -497,6 +537,7 @@ async function chatMention(db, { conversationId, actorId, recipientIds }) {
 /* COALESCE, because a row points at one or the other: an asset notification
    carries the project through the asset, a project one carries it directly. */
 const SELECT = `SELECT n.id, n.seq, n.kind, n.asset_id AS assetId, n.read_at AS readAt, n.created_at AS createdAt,
+       n.detail,
        a.\`code\` AS asset_code, a.\`name\` AS asset_name,
        COALESCE(a.project_id, n.project_id) AS projectId,
        p.\`name\` AS project_name,
@@ -517,6 +558,28 @@ const SELECT = `SELECT n.id, n.seq, n.kind, n.asset_id AS assetId, n.read_at AS 
      costs the sentence its "in <group>" clause and nothing else. */
   LEFT JOIN chat_conversations c ON c.id = n.conversation_id
   LEFT JOIN users o ON o.id = n.other_user_id`;
+
+/* THE SAME SELECT WITHOUT THE NEW COLUMN, for a database whose migration has
+   not reached it. Derived from the one above by removing that one line rather
+   than written out again, so the two cannot drift apart. */
+const SELECT_NO_DETAIL = SELECT.replace('\n       n.detail,', '');
+
+/* Run one of the two, whichever the database has.
+ *
+ * The bell is the single most-polled endpoint in this application, so the
+ * fall-back is tried once and remembered rather than attempted on every poll. */
+let detailColumn = true;
+async function selectRows(db, tail, params) {
+  if (detailColumn) {
+    try {
+      return await db.query(`${SELECT} ${tail}`, params);
+    } catch (err) {
+      if (!err || err.code !== 'ER_BAD_FIELD_ERROR') throw err;
+      detailColumn = false;
+    }
+  }
+  return db.query(`${SELECT_NO_DETAIL} ${tail}`, params);
+}
 
 const shape = (row) => ({
   id: row.id,
@@ -540,8 +603,8 @@ const shape = (row) => ({
 /* Newest first. Read and unread together, because a list that hid what you had
    already seen would lose the thread of what happened this morning. */
 async function listFor(db, userId, { limit = 30 } = {}) {
-  const { rows } = await db.query(
-    `${SELECT} WHERE n.recipient_id = $1 ORDER BY n.seq DESC LIMIT ${Number(limit) || 30}`,
+  const { rows } = await selectRows(db,
+    `WHERE n.recipient_id = $1 ORDER BY n.seq DESC LIMIT ${Number(limit) || 30}`,
     [userId]
   ).catch((err) => { if (unavailable(err)) return { rows: [] }; throw err; });
   return rows.map(shape);
@@ -568,8 +631,8 @@ async function unreadCount(db, userId) {
 async function since(db, userId, cursor) {
   const from = Number(cursor);
   if (!Number.isFinite(from)) return [];
-  const { rows } = await db.query(
-    `${SELECT} WHERE n.recipient_id = $1 AND n.seq > $2 ORDER BY n.seq ASC LIMIT 20`,
+  const { rows } = await selectRows(db,
+    `WHERE n.recipient_id = $1 AND n.seq > $2 ORDER BY n.seq ASC LIMIT 20`,
     [userId, from]
   ).catch((err) => { if (unavailable(err)) return { rows: [] }; throw err; });
   return rows.map(shape);

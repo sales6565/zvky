@@ -239,6 +239,28 @@ test('the defaults that are decisions, with the reason for each', () => {
   assert.ok(catalog.grantableKeys().includes('settings.email_delivery'),
     'and it can be granted, unlike the two keys that cannot be');
 
+  /* SENDING REMINDERS: SUPER ADMIN ALONE, and its own key beside the one that
+   * merely SHOWS the list.
+   *
+   * report.follow_up draws "People to follow up"; report.remind sends a message
+   * to the people on it — an in-app notice, a phone push, and an email when the
+   * studio has switched that on, with the sender's name attached.
+   *
+   * THE SPLIT IS THE POINT. Seeing who is behind is a report; messaging them is
+   * an act, and a studio may well want a producer to have the first without the
+   * second. Both start with the Super Admin tier alone, through
+   * managePermissions, so delegating either is a decision somebody takes.
+   *
+   * AND THE PAIR IS REQUIRED, not merely recommended: both endpoints demand
+   * report.follow_up as well, because there is nothing to send from without it.
+   * tests/follow-up-reminders.test.js asserts that. */
+  assert.deepStrictEqual(held('report.remind'), ['super_admin'],
+    'Send Follow-Up Reminders starts with Super Admin and nobody else');
+  assert.deepStrictEqual(held('report.remind'), held('report.follow_up'),
+    'the same starting position as the list it sends from — what differs is that they can diverge');
+  assert.ok(catalog.grantableKeys().includes('report.remind'),
+    'and a studio can hand it to its leads, by designation or through a role group');
+
   /* ROLE GROUPS: SUPER ADMIN ALONE, and that is the whole default.
    *
    * settings.role_groups creates the additive layer — a group grants its

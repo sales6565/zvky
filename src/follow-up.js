@@ -68,6 +68,16 @@ const workSchedule = require('./work-schedule');
 const workingTime = require('./working-time');
 const { assignableRoles, roleDef } = require('./roles');
 const permissions = require('./permissions');
+/* THE MARKER AND THE BUTTON, both of which hang off the rows this file builds.
+ *
+ * src/last-activity.js owns "when was this person last active" and the streak;
+ * src/reminders.js owns whether a reminder may be sent and why not. Neither
+ * knows how a list is drawn and this file knows nothing about either's rules —
+ * the division is the same one the four shared definitions above have, and for
+ * the same reason. */
+const lastActivity = require('./last-activity');
+const reminders = require('./reminders');
+const reminderSettings = require('./reminder-settings');
 
 /* HOW LONG AFTER THE STUDIO OPENS BEFORE SOMEBODY IS "NOT STARTED".
  *
@@ -170,6 +180,23 @@ function workingDaysIn(from, to) {
     if (days.length > MAX_RANGE_DAYS) break;
   }
   return days;
+}
+
+/* THE LATEST WORKING DAY AT OR BEFORE A DATE.
+ *
+ * The streak's starting point. Usually the date itself — the section's lists are
+ * empty on a day the studio was shut — but a holiday declared after the fact
+ * leaves a past date that was a working day when somebody looked at it and is
+ * not one now, and a walk that started on a day the gate calls shut would count
+ * it as a miss. Bounded, so a studio with a very long declared shutdown cannot
+ * turn this into a loop. */
+function lastWorkingDayTo(date) {
+  let day = date;
+  for (let i = 0; i <= MAX_RANGE_DAYS; i += 1) {
+    if (isWorkingDay(day)) return day;
+    day = gate.shiftDays(day, -1);
+  }
+  return null;
 }
 
 /* WHEN THE STUDIO'S CLOCK OPENS ON AN IST DAY, or null if it does not.
@@ -472,6 +499,114 @@ async function earliestDay(db) {
 }
 
 /* ---------------------------------------------------------------------------
+ * WHAT HAS ALREADY BEEN SENT, AND WHAT MAY STILL BE — laid over the rows.
+ *
+ * SEPARATE FROM THE REST OF THE DRAW, AND DELIBERATELY SO: the cache above
+ * keeps a past date's lists for a minute, and reminder state is about TODAY. A
+ * row cached at 11:04 saying nobody has been nudged, served at 11:05 after
+ * somebody was, is exactly the "two leads both nudge the same person" this is
+ * meant to prevent. So the lists are cached and this is not — one query on a
+ * cache hit, which is the price of the screen being right about it.
+ *
+ * ONE QUERY FOR BOTH LISTS AND EVERY ROW. Grouped in src/reminders.js; a query
+ * per row is the N+1 the section's own budget test forbids.
+ *
+ * THE DECISION IS THE SERVER'S, per row, through the same decide() the send
+ * endpoint runs. The button is drawn disabled with the server's own sentence
+ * rather than the page working out for itself what is allowed — which is the
+ * other half of "the page never recomputes a permission".
+ */
+async function applyReminderState(db, payload, { now, today, user }) {
+  if (!payload || payload.ok === false || payload.unavailable) return payload;
+
+  const nudges = reminderSettings.current();
+  const policy = timesheetSettings.current() || {};
+  const schedule = workSchedule.trackingWindow();
+  /* THE PERMISSION, FROM THE SERVER'S OWN RESOLVED LIST, not from a tier and not
+     from the browser. The page gates the button on can('report.remind') as well;
+     both read the same key off the same list. */
+  const mayRemind = Boolean(user && permissions.holds(user, 'report.remind'));
+
+  const ids = [...new Set([
+    ...payload.notStarted.rows.map((r) => r.id),
+    ...payload.notFilled.rows.map((r) => r.id),
+  ])];
+  /* SENT TODAY, whatever date is being viewed. The cap is "per person per kind
+     per day" and the day in question is the day somebody is clicking on, not
+     the day they are reading about. */
+  const sent = await reminders.sentOnDay(db, ids, { day: today });
+
+  /* The window is asked once for the whole draw rather than per row: it is a
+     fact about the studio's clock at this instant, identical for everybody. */
+  const win = reminders.windowState(now, { schedule });
+
+  const decorate = (rows, kind) => rows.map((row) => {
+    /* WHICH DAY THE REMINDER IS ABOUT.
+       A start reminder is about today and only today — see decide(). A timesheet
+       reminder is about the MOST RECENT day this person missed, which in day mode
+       is the one day on the list and over a range is the one they are most likely
+       to still be able to file for. */
+    const subjectDate = kind === reminders.KINDS.start
+      ? payload.to
+      : row.days[row.days.length - 1];
+    const forKind = (sent.byUser.get(row.id) || {})[kind] || { manual: [], auto: [] };
+    const verdict = reminders.decide({
+      kind,
+      settings: nudges,
+      person: { id: row.id, name: row.name },
+      inScope: true,          // they are on a list this viewer was served
+      listed: true,           // and they are on it because the condition holds
+      subjectDate,
+      today,
+      workingDay: isWorkingDay(subjectDate),
+      window: kind === reminders.KINDS.start ? win : null,
+      manualCount: forKind.manual.length,
+      backdateClosed: kind === reminders.KINDS.timesheet
+        ? reminders.backdateState(subjectDate, { today, policy }) : null,
+      actorId: user ? user.id : null,
+    });
+    const last = forKind.manual[forKind.manual.length - 1] || null;
+    const auto = forKind.auto[forKind.auto.length - 1] || null;
+    return {
+      ...row,
+      remind: {
+        kind,
+        subjectDate,
+        /* BOTH HALVES, SEPARATELY. The page needs to know the difference between
+           "you may not send reminders" (no button at all) and "this one cannot
+           be sent" (a disabled button with the reason on it). */
+        permitted: mayRemind,
+        may: mayRemind && verdict.ok,
+        code: verdict.code,
+        reason: verdict.message,
+        sent: forKind.manual.length,
+        cap: Number(nudges.dailyCap) || 1,
+        /* "Reminded today 11:05 by Priya", for every lead who can see the list
+           and not only for the one who clicked. */
+        last: last ? { at: last.at, by: last.senderName, channels: last.channels } : null,
+        /* "Auto reminder sent 10:30" — absent until something writes an 'auto'
+           row, which nothing does yet. See src/reminders.js. */
+        auto: auto ? { at: auto.at, channels: auto.channels } : null,
+      },
+    };
+  });
+
+  return {
+    ...payload,
+    notStarted: { ...payload.notStarted, rows: decorate(payload.notStarted.rows, reminders.KINDS.start) },
+    notFilled: { ...payload.notFilled, rows: decorate(payload.notFilled.rows, reminders.KINDS.timesheet) },
+    reminders: {
+      permitted: mayRemind,
+      manualEnabled: Boolean(nudges.manualEnabled),
+      emailEnabled: Boolean(nudges.emailEnabled),
+      cap: Number(nudges.dailyCap) || 1,
+      logged: sent.available,
+      window: win,
+    },
+  };
+}
+
+/* ---------------------------------------------------------------------------
  * VALIDATION, which is the server's and not the page's.
  *
  * The picker disables a future date; this refuses one. A date control is a
@@ -514,6 +649,13 @@ function validate(query = {}, { now = Date.now() } = {}) {
     asked.to = date;
   }
   asked.all = query.all === '1' || query.all === true || query.all === 'true';
+  /* HOW THE LISTS ARE ORDERED. Urgency by default — see the note on urgency()
+     below — and "longest inactive" when somebody asks for it, which is the one
+     other order the rows carry a number for. Anything else is the default
+     rather than a 400: a sort is a view preference, and refusing to draw a
+     screen because a query string had a typo in it is a worse answer than
+     drawing it the usual way round. */
+  asked.sort = query.sort === 'inactive' ? 'inactive' : 'urgency';
   return { ok: true, asked, today };
 }
 
@@ -525,6 +667,27 @@ async function build(db, user, options = {}) {
     now = Date.now(),
     query = {},
     visibleProjects = permissions.visibleProjects,
+    /* FRESH SKIPS THE CACHE, both reading it and writing it.
+     *
+     * One caller asks for it: the reminder endpoints, which call this builder to
+     * RE-CHECK that the person is still on the list before sending. A minute of
+     * staleness is nothing on a screen and everything on a send — "Priya has
+     * started work since this list loaded" is the whole point of the re-check,
+     * and a cached answer could not tell. */
+    fresh = false,
+    /* WHO IS IN VIEW AND *NOT* ON THE LIST, asked for only by the reminder
+     * endpoints and never by the browser.
+     *
+     * It is what lets a refusal say "Priya has started work since this list
+     * loaded" rather than the vaguer truth. Without it the server cannot tell
+     * "in scope, and has since started" from "not in your projects at all", and
+     * those two must not share a sentence: naming somebody outside your scope,
+     * even to say they have started, answers the question the scope rule exists
+     * to withhold.
+     *
+     * It costs no query — these are rows gather() has already walked past — and
+     * it is off by default so the names cannot reach a page that did not ask. */
+    withCleared = false,
   } = options;
 
   const checked = validate(query, { now });
@@ -583,11 +746,24 @@ async function build(db, user, options = {}) {
      THE COST OF CHECKING IT THIS EARLY is that a project created in the last
      minute is not reflected for a past date. A minute, on a date that is over:
      the alternative is spending a query to discover that nothing changed. */
-  const pastOnly = asked.to < today;
-  const key = `${user.id}|${user.role}|${asked.mode}|${asked.from}|${asked.to}|${asked.all ? 'all' : 'cap'}`;
+  const pastOnly = asked.to < today && !fresh;
+  /* THE NUDGE SETTINGS ARE READ BEFORE THE CACHE because one of them is baked
+     into the cached half: the streak threshold decides the stronger marker on
+     every row, so a cached payload keyed without it would go on marking at
+     three for a minute after a Super Admin moved it to four. The cap and the two
+     switches are NOT here — they live in the reminder overlay, which is never
+     cached. */
+  const nudges = reminderSettings.current();
+  const key = `${user.id}|${user.role}|${asked.mode}|${asked.from}|${asked.to}`
+    + `|${asked.all ? 'all' : 'cap'}|${asked.sort}|${nudges.streakThreshold}`;
   if (pastOnly) {
     const hit = cache.get(key);
-    if (hit && hit.at + CACHE_MS > now) return { ...hit.value, cached: true };
+    if (hit && hit.at + CACHE_MS > now) {
+      /* THE LISTS FROM THE CACHE, THE REMINDER STATE FRESH. See
+         applyReminderState: a cached "nobody has been nudged" is the one thing
+         this section must not say. */
+      return applyReminderState(db, { ...hit.value, cached: true }, { now, today, user });
+    }
   }
 
   let projects;
@@ -611,12 +787,42 @@ async function build(db, user, options = {}) {
     from: fillWindow && fillWindow.from < asked.from ? fillWindow.from : asked.from,
     to: fillWindow && fillWindow.to > asked.to ? fillWindow.to : asked.to,
   };
-  const started = await startedDays(db, ids, widest);
+  /* THE DAY THE INACTIVITY STREAK IS COUNTED BACK FROM: the most recent working
+     day that is OVER. For a past date that is the date itself; for today it is
+     the previous working day, because today is not finished and a streak that
+     counted it would print "two working days" at half past nine about somebody
+     who is about to start — which is also the row they are already on. See the
+     header of src/last-activity.js. */
+  const streakEnd = asked.to < today ? lastWorkingDayTo(asked.to) : previousWorkingDay(today);
+
+  /* AND THE STARTED WINDOW IS WIDENED TO COVER THE WALK, which is what keeps
+     the streak free. src/last-activity.js walks a set of started days rather
+     than issuing a query of its own, so one query answers both the lists and
+     every row's streak — and there is still exactly one definition of
+     "started", in startedDays() above, however far back the walk goes. */
+  const lookFrom = streakEnd
+    ? gate.shiftDays(streakEnd, -lastActivity.LOOKBACK_CALENDAR_DAYS) : widest.from;
+  const started = await startedDays(db, ids, {
+    from: lookFrom < widest.from ? lookFrom : widest.from,
+    to: widest.to,
+  });
   const filled = fillDays.length
     ? await timesheets.filledDays(db, ids, fillDays[0], fillDays[fillDays.length - 1])
     : new Set();
   const held = await heldCounts(db, ids, { ...widest, projectIds, studioWide });
   const earliest = await earliestDay(db);
+
+  /* THE LAST-ACTIVITY MARKER, for every person in view, in two more queries —
+     not two per person. See MUTATION 13's budget in tests/follow-up.test.js and
+     the one this change adds beside it. */
+  const activity = await lastActivity.markersFor(db, visible, {
+    asOfDay: asked.to,
+    endDay: streakEnd,
+    startedSet: started,
+    isWorkingDay,
+    shiftDays: gate.shiftDays,
+    threshold: Number(nudges.streakThreshold) || 3,
+  });
 
   /* THE GRACE PERIOD, applied to list 1 and to Today alone. */
   const schedule = workSchedule.trackingWindow();
@@ -647,6 +853,10 @@ async function build(db, user, options = {}) {
         days: bad,
         missed: bad.length,
         expectedDays: owed.length,
+        /* WHEN THEY WERE LAST ACTIVE, and how long the silence has run. Both
+           facts and the streak, computed as of the date in view — never from
+           after it. src/last-activity.js owns the whole of it. */
+        activity: activity.markers.get(person.id) || null,
       });
     }
     return out;
@@ -654,6 +864,12 @@ async function build(db, user, options = {}) {
 
   const notStartedRows = graceHolds ? [] : gather(startDays, missedStart);
   const notFilledRows = gather(fillDays, missedFill);
+
+  /* The same walk, inverted: expected on at least one of the days, and on none
+     of them missing. Only built when a caller asks. */
+  const clearedFor = (days, missed) => visible
+    .filter((p) => days.some((d) => onBooksOn(p, d)) && !days.some((d) => onBooksOn(p, d) && missed(p, d)))
+    .map((p) => ({ id: p.id, name: p.name }));
 
   const bothIds = new Set(
     notStartedRows.map((r) => r.id).filter((id) => notFilledRows.some((r) => r.id === id))
@@ -677,8 +893,37 @@ async function build(db, user, options = {}) {
     || (b.held - a.held)
     || String(a.name).localeCompare(String(b.name));
 
+  /* LONGEST INACTIVE FIRST, which is the other order worth offering.
+   *
+   *   the streak first      the number the marker is drawn from, and the one a
+   *                         reader asked for when they chose this order
+   *   then the quiet days   calendar days since the last timer event, which
+   *                         separates two people on the same streak; -1 is
+   *                         "nothing ever recorded", which sorts first because
+   *                         it is the longest silence there is
+   *   then urgency          so the tie-break is the list's own order rather than
+   *                         an arbitrary one, and the rows are still stable
+   *                         between draws
+   *
+   * COMPUTED ON THE SERVER from the same numbers the marker is drawn from, so
+   * the order and the badge can never disagree. */
+  const inactivity = (a, b) => {
+    const sa = (a.activity && a.activity.streak) || 0;
+    const sb = (b.activity && b.activity.streak) || 0;
+    if (sb !== sa) return sb - sa;
+    const qa = a.activity ? a.activity.quietDays : 0;
+    const qb = b.activity ? b.activity.quietDays : 0;
+    /* -1 means never active. It is the longest inactivity, so it leads. */
+    if (qa === -1 || qb === -1) {
+      if (qa !== qb) return (qa === -1 ? 1 : 0) - (qb === -1 ? 1 : 0) > 0 ? -1 : 1;
+    } else if (qb !== qa) return qb - qa;
+    return urgency(a, b);
+  };
+
+  const order = asked.sort === 'inactive' ? inactivity : urgency;
+
   const capped = (rows) => {
-    const sorted = mark(rows).sort(urgency);
+    const sorted = mark(rows).sort(order);
     const shown = asked.all ? sorted : sorted.slice(0, ROW_CAP);
     return { rows: shown, total: sorted.length, more: sorted.length - shown.length };
   };
@@ -746,21 +991,40 @@ async function build(db, user, options = {}) {
     maxRangeDays: MAX_RANGE_DAYS,
     notes,
     scope: { projects: projectIds.length, studioWide, roles: roles.length },
+    /* THE MARKER'S OWN TERMS, so the screen's tooltip and its threshold come
+       from the server rather than from a constant in the browser that would go
+       on saying three after somebody changed it. */
+    activityExplainer: lastActivity.EXPLAINER,
+    streakThreshold: Number(nudges.streakThreshold) || 3,
+    streakLookBack: lastActivity.LOOKBACK_WORKING_DAYS,
+    /* Whether the Activity Log could be read at all — so "not recorded" and
+       "never" are different words on the screen. */
+    lastSeenRecorded: activity.seenAvailable,
+    sort: asked.sort,
     cached: false,
+    ...(withCleared ? {
+      cleared: {
+        start: clearedFor(startDays, missedStart),
+        timesheet: clearedFor(fillDays, missedFill),
+      },
+    } : {}),
   };
 
   if (pastOnly) {
     if (cache.size >= CACHE_CAP) cache.clear();
+    /* CACHED WITHOUT THE REMINDER STATE, which is applied after. The cached
+       value is the expensive half — the lists, the markers, the streaks — and
+       all of it is about a day that is over. */
     cache.set(key, { at: now, value });
   }
-  return value;
+  return applyReminderState(db, value, { now, today, user });
 }
 
 // Tests and a Super Admin changing the schedule both need the cache gone.
 const forget = () => cache.clear();
 
 module.exports = {
-  build, validate, forget,
+  build, validate, forget, applyReminderState, lastWorkingDayTo,
   isWorkingDay, previousWorkingDay, workingDaysIn, opensAtMs,
   expectedPeople, onBooksOn, unreconstructable, inScope,
   startedDays, heldCounts, earliestDay, stampMs,

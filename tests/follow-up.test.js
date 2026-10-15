@@ -40,6 +40,7 @@ const gate = require('../src/timesheet-gate');
 const timesheets = require('../src/timesheets');
 const timesheetSettings = require('../src/timesheet-settings');
 const holidays = require('../src/holidays');
+const lastActivity = require('../src/last-activity');
 const catalog = require('../src/permission-catalog');
 const rolePermissions = require('../src/role-permissions');
 
@@ -360,14 +361,23 @@ test('MUTATION 8 — freelancers are excluded by the schema, not by a filter', a
 /* WHAT A DRAW COSTS, and it is a number rather than "a few".
  *
  *   1 the viewer's projects        2 who is in scope
- *   3 who was expected             4 who started
- *   5 who filled                   6 how much work they held
- *   7 the oldest session           8 the oldest timesheet line
+ *   3 who was expected            4 who started
+ *   5 who filled                  6 how much work they held
+ *   7 the oldest session          8 the oldest timesheet line
  *
- * Eight, for a narrower viewer; seven for a studio-wide one, which needs no
- * scope narrowing. Independent of how many people and how many days are asked
- * about, which is the property that matters and the one asserted below. */
-const QUERIES_SCOPED = 8;
+ * AND THREE MORE SINCE THE LAST-ACTIVITY MARKER AND THE REMINDER BUTTON:
+ *
+ *   9 the last timer event per person  (src/last-activity.js)
+ *  10 the last recorded action         (the same, from activity_log)
+ *  11 what has been reminded today     (src/reminders.js)
+ *
+ * ELEVEN, for a narrower viewer; ten for a studio-wide one, which needs no
+ * scope narrowing. THE NUMBER IS NOT THE PROPERTY — it is fixed, which is —
+ * and the streak is the case worth naming: it costs NO query at all, because
+ * src/last-activity.js walks the started-days set query 4 already fetched
+ * rather than asking again per person. Forty people over a month still cost
+ * eleven. */
+const QUERIES_SCOPED = 11;
 
 test('MUTATION 13 — the query count does not grow with people or days', async () => {
   const one = await build({ query: { date: WED } });
@@ -398,10 +408,22 @@ test('MUTATION 1 — the date asked for is the date queried', async () => {
   const { db } = await build({ query: { date: TUE }, now: ist(`${FRI}T11:00:00`) });
 
   const sessions = db.paramsFor(/FROM work_sessions w/);
-  /* 17 March 00:00 IST is 16 March 18:30 UTC, and the far end is 17 March
-     18:30 UTC. A handler that ignored the date would be asking about Friday. */
-  assert.strictEqual(sessions[1], '2026-03-16 18:30:00', 'the day begins at 18:30 UTC the day before');
-  assert.strictEqual(sessions[2], '2026-03-17 18:30:00');
+  /* THE FAR END IS THE PROPERTY, and it is the one that guards the date: 17
+     March in IST ends at 17 March 18:30 UTC, so a handler that ignored the date
+     would be asking about Friday — and, more to the point, a row written after
+     the date being viewed can never reach the answer.
+     
+     THE NEAR END DELIBERATELY REACHES FURTHER BACK, and that moved in this
+     change. The inactivity streak walks the same set of started days rather than
+     issuing a query of its own (see src/last-activity.js), so the window opens
+     at the look-back floor — which is what keeps the streak free of charge.
+     Pinned to the constant rather than to a date, so the two cannot drift. */
+  assert.strictEqual(sessions[2], '2026-03-17 18:30:00', 'the window ends when the day does');
+  const floor = new Date(Date.parse(`${TUE}T00:00:00Z`)
+    - lastActivity.LOOKBACK_CALENDAR_DAYS * 86400000 - 330 * 60000)
+    .toISOString().slice(0, 19).replace('T', ' ');
+  assert.strictEqual(sessions[1], floor,
+    'and opens at the streak look-back floor, in the column\'s own UTC frame');
 
   const lines = db.paramsFor(/FROM timesheet_entries/);
   assert.strictEqual(lines[1], TUE, 'and the timesheet half asks about the same day');
@@ -420,11 +442,13 @@ test('MUTATION 2 — the day boundary is IST, drawn by the query', async () => {
   assert.match(sql, /INTERVAL 330 MINUTE/, 'the IST offset is applied in the query');
   assert.match(sql, /DATE_FORMAT\(DATE_ADD\(w\.started_at, INTERVAL 330 MINUTE\)/);
 
-  // And the window handed to it is in the column's own frame, not the day's:
-  // 17 March in IST runs from 16 March 18:30 UTC to 17 March 18:30 UTC.
+  /* And the window handed to it is in the column's own frame, not the day's: 17
+     March in IST ENDS at 17 March 18:30 UTC. Only the far end is pinned here —
+     the near end is the streak's look-back floor, which MUTATION 1 above pins
+     to the constant it comes from. */
   const params = db.paramsFor(/FROM work_sessions w/);
-  assert.strictEqual(params[1], '2026-03-16 18:30:00');
   assert.strictEqual(params[2], '2026-03-17 18:30:00');
+  assert.match(String(params[1]), /18:30:00$/, 'both ends are IST midnights read in UTC');
 });
 
 test('MUTATION 6 — the work-held marker is measured over the day asked about', async () => {
@@ -648,7 +672,14 @@ test('a past date may be reused for a moment; today never is', async () => {
   assert.strictEqual(first.out.cached, false);
   const second = await build(past);
   assert.strictEqual(second.out.cached, true, 'the same past day comes back from the cache');
-  assert.strictEqual(second.db.calls.length, 0, 'and costs no queries');
+  /* ONE QUERY, AND IT IS THE REMINDER STATE — which moved in this change and is
+     the whole of what moved. The lists, the markers and the streaks are a day
+     that is over and come back free; "has this person been reminded today" is
+     about today, changes every time somebody clicks, and a cached answer to it
+     is the "two leads both nudge the same person" the button exists to prevent.
+     So it is asked again, and nothing else is. */
+  assert.strictEqual(second.db.calls.length, 1, 'and costs only the reminder state');
+  assert.match(second.db.calls[0].sql, /FROM reminder_log/);
 
   /* TODAY IS THE ONE DATE THAT MUST NOT BE CACHED: it changes every second, and
      that is the entire point of the list. A cached Today keeps naming somebody

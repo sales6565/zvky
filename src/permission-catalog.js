@@ -684,6 +684,44 @@ const GROUPS = [
           + 'on a chosen day, and who has not filled their timesheet for it. Read-only, scoped to '
           + 'the projects this role can already see.',
       },
+      {
+        key: 'report.remind',
+        label: 'Send Follow-Up Reminders',
+        /* THE ONLY CONTROL ON THE ADMIN DASHBOARD THAT SENDS A MESSAGE TO A
+           PERSON, and the reason it is its own key rather than part of
+           report.follow_up above.
+           
+           SEEING A LIST AND MESSAGING THE PEOPLE ON IT ARE TWO POWERS. The
+           first is a report; the second arrives in somebody's bell, on their
+           phone and — when the studio switches email on — in their inbox, with
+           the sender's name on it. A studio may well want a producer to be able
+           to see who is behind without also letting them nudge the floor, and
+           the reverse is incoherent, which is why this key is useless without
+           the other one: both the endpoint and the button demand the pair.
+           
+           SUPER ADMIN ONLY BY DEFAULT, through managePermissions — the same
+           default report.follow_up has, one step further along. The brief asked
+           for exactly this, and it is the right default for a reason worth
+           writing down: a reminder is attributed, so granting this hands
+           somebody the ability to send attendance messages signed by them, and
+           that is a decision rather than a consequence of another one.
+           
+           GRANTABLE, and the Settings screen is where a studio hands it to its
+           leads by designation. Role groups (src/role-groups.js) can grant it
+           too, like any other grantable key, so a studio with a "Leads" group
+           gives it once.
+           
+           ENFORCED WITH requirePermission AND can(), NEVER THE TIER. The tier
+           passes requireSuperAdmin and the browser's can() knows nothing about
+           tiers, so a page written against one and a route against the other is
+           the divergence this application has already been bitten by — see the
+           note at the top of src/routes/timesheet-options.js. */
+        impliedBy: has('managePermissions'),
+        describe: 'Send a one-click reminder, or remind everybody at once, from the "People to '
+          + 'follow up" lists: an in-app notice, and an email when the studio has switched email '
+          + 'reminders on. Needs "View People to Follow Up" as well — there is nothing to send '
+          + 'from without it.',
+      },
     ],
   },
   {

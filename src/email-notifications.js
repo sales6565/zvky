@@ -419,6 +419,75 @@ async function taskSubmitted(db, { assetId, actorId, at, recipientIds }) {
   }
 }
 
+/* --- 3. a lead nudged somebody ------------------------------------------------
+ *
+ * THE THIRD THING THE STUDIO GETS EMAIL ABOUT, and the first one a person
+ * chooses to send rather than a side effect of work moving.
+ *
+ * THE SENTENCE IS NOT WRITTEN HERE. src/reminders.js composes it once and hands
+ * it in, because the same words go into the in-app notice, this email and the
+ * history row — and three copies of one sentence is three places for the date
+ * inside it to come out formatted differently.
+ *
+ * THE OPT-OUT AND THE MISSING ADDRESS ARE ONE GATE, recipient() above, which is
+ * where every other email in this file is gated. A reminder is a courtesy
+ * notice like the other two, so somebody who switched email notifications off in
+ * their Profile is not mailed one — their bell still rings, which is the channel
+ * they did not switch off.
+ *
+ * RETURNS, UNLIKE ITS TWO NEIGHBOURS, and that is the one structural difference.
+ * queueAssignment and taskSubmitted are fire-and-forget; a reminder is an action
+ * somebody took and is waiting on, and the row that records it has to say which
+ * channels actually carried it. So this reports rather than swallowing — but it
+ * still never throws, because a mail queue must not fail the click.
+ */
+async function reminder(db, { recipientId, kind, subjectDate, sentence, origin }) {
+  try {
+    if (!emailConfig.isUsable()) {
+      return { queued: false, reason: 'email_off' };
+    }
+    const to = await recipient(db, recipientId);
+    if (!to) return { queued: false, reason: 'no_mailable_address' };
+    const message = reminderMessage({ kind, subjectDate, sentence, origin });
+    const result = await emailOutbox.enqueue(db, { to: to.email, ...message });
+    return result && result.ok
+      ? { queued: true, reason: null, id: result.id }
+      : { queued: false, reason: (result && result.error) || 'not_queued' };
+  } catch (err) {
+    console.warn(`[email] reminder for ${recipientId} failed: ${err.message}`);
+    return { queued: false, reason: 'error' };
+  }
+}
+
+/* The two reminder messages.
+ *
+ * ONE SHELL, TWO SUBJECTS, and the body's first line is the sentence that was
+ * already composed. The link is the application's own origin, taken from the
+ * request that sent the reminder — there is no configured public URL in this
+ * deployment and this single-page application has no route for a date, so a
+ * "/timesheet?date=" link would land on the dashboard and look broken. The
+ * exact day is named in the words instead, which is what somebody actually
+ * needs in order to act.
+ */
+function reminderMessage({ kind, subjectDate, sentence, origin }) {
+  const name = appName();
+  const start = kind === 'start';
+  const link = origin ? String(origin) : null;
+  return {
+    subject: start ? `${name}: you have not started work today`
+      : `${name}: your timesheet for ${subjectDate} is missing`,
+    ...shell({
+      heading: start ? 'A reminder to start your day' : 'A reminder to fill your timesheet',
+      lead: sentence,
+      rows: [
+        { label: start ? 'Day' : 'Timesheet for', value: subjectDate },
+        { label: 'Open', value: link },
+      ],
+      footer: footerLine(),
+    }),
+  };
+}
+
 /* The message the Test button sends.
  *
  * Deliberately says what it proves and what it does not: a delivered test says
@@ -444,7 +513,7 @@ function testMessage({ to, byName }) {
 }
 
 module.exports = {
-  queueAssignment, flushAll, taskSubmitted, testMessage,
+  queueAssignment, flushAll, taskSubmitted, testMessage, reminder,
   // exported for the tests, which assert on the rendered strings
-  assignedMessage, submittedMessage, submissionRecipients, recipient, BATCH_MS,
+  assignedMessage, submittedMessage, reminderMessage, submissionRecipients, recipient, BATCH_MS,
 };

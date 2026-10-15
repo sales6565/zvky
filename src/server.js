@@ -34,6 +34,7 @@ const recordingHoursRoutes = require('./routes/recording-hours');
 const holidayRoutes = require('./routes/holidays');
 const timesheetOptionRoutes = require('./routes/timesheet-options');
 const chatSettingsRoutes = require('./routes/chat-settings');
+const nudgeRoutes = require('./routes/nudges');
 const misAccessRoutes = require('./routes/mis-access');
 const outsourceRoutes = require('./routes/outsource');
 const activityRoutes = require('./routes/activity');
@@ -177,6 +178,9 @@ app.use('/api/admin/settings/recording-hours', recordingHoursRoutes);
 app.use('/api/admin/settings/holidays', holidayRoutes);
 app.use('/api/admin/settings/timesheet', timesheetOptionRoutes);
 app.use('/api/admin/settings/chat-group-limit', chatSettingsRoutes);
+/* Settings -> Start-of-day nudges: the four switches that govern the reminders
+   sent from the Admin Dashboard's follow-up lists. */
+app.use('/api/admin/settings/nudges', nudgeRoutes);
 /* The integration's management screen. Its own mount under /api/admin, and every route
    in it behind settings.integrations — which is not grantable to anybody but the Super
    Admin, because issuing a key grants data access no designation limits. */

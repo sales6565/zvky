@@ -18,6 +18,7 @@ const workSchedule = require('./work-schedule');
 const recordingHours = require('./recording-hours');
 const chatSettings = require('./chat-settings');
 const timesheetSettings = require('./timesheet-settings');
+const reminderSettings = require('./reminder-settings');
 const holidays = require('./holidays');
 const integrationIpAllowlist = require('./integration-ip-allowlist');
 const workLog = require('./work-log');
@@ -4247,6 +4248,151 @@ async function ensureFollowUpIndexes(db, log) {
   if (!columns.size) return;                 // no table yet; its own step makes it
   await addIndex(db, 'ALTER TABLE work_sessions ADD KEY idx_ws_user_started (user_id, started_at)');
   log('Schema: work_sessions is indexed on (user_id, started_at) for the follow-up lists.');
+
+  /* AND ONE FOR THE LAST-SEEN MARKER, because the plan asked for it.
+   *
+   * MEASURED, NOT ASSUMED, which is the only reason it is here. The marker's
+   * query is MAX(created_at) per actor, bounded above by the day in view. On a
+   * table of 30,000 rows across 50 actors, asked about three of them:
+   *
+   *   without it   key idx_activity_actor (actor_id, seq), rows 1,765 — every
+   *                row those three people ever wrote, read and filtered
+   *   with it      key idx_activity_actor_when, rows 6, "Using index for
+   *                group-by" — the maximum read off the end of each range
+   *
+   * activity_log is, by its own comment, "the table that grows without limit
+   * and the only one whose queries will get slower every month", so a marker
+   * that read a person's whole history on every draw of the dashboard would get
+   * slower with it. Nothing else in this change needed an index: the timer half
+   * already has idx_ws_user_started above, and reminder_log's own key covers
+   * the one read the screen makes of it.
+   */
+  const log1 = await columnsOf(db, 'activity_log');
+  if (!log1.size) return;
+  await addIndex(db, 'ALTER TABLE activity_log ADD KEY idx_activity_actor_when (actor_id, created_at)');
+  log('Schema: activity_log is indexed on (actor_id, created_at) for the last-seen marker.');
+}
+
+/* THE SENTENCE A REMINDER WAS SENT WITH, on the notifications table.
+ *
+ * The first column this table has ever had for words. Every other kind's
+ * wording is rebuilt by notifications.describe() from the row's links, because
+ * for every other kind the wording is a function of them; the two reminder
+ * kinds carry facts that are not links and cannot be recomputed later — how
+ * many tasks were waiting at the moment of the nudge, and which day's timesheet
+ * was missing. Recomputing those when the bell is opened next week would
+ * quietly rewrite the message somebody was sent.
+ *
+ * NULLABLE, and written by nothing else. Every existing row and every existing
+ * kind is untouched. */
+async function ensureNotificationDetail(db, log) {
+  const columns = await columnsOf(db, 'notifications');
+  if (!columns.size) return;                 // its own step makes the table
+  if (columns.has('detail')) return;
+  await db.query('ALTER TABLE notifications ADD COLUMN detail VARCHAR(500) NULL');
+  log('Schema: notifications.detail added, for the two reminder kinds that store their sentence.');
+}
+
+/* START-OF-DAY NUDGES: the settings row, and the log that makes the daily cap
+ * a rule rather than a check.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THE UNIQUE KEY SPANS A SLOT NUMBER. The rule is "at most N manual
+ * reminders per person per kind per day", and N is a Settings value. A unique
+ * key enforces "exactly one", so the row carries the count of reminders already
+ * sent: the first click takes slot 0, the second slot 1, and two clicks landing
+ * in the same instant both aim at the same slot and exactly one of them lands.
+ * The cap is then the database's answer and not a read-then-write race. See the
+ * header of src/reminders.js.
+ *
+ * ---------------------------------------------------------------------------
+ * `source` EXISTS BEFORE ITS SECOND VALUE DOES. There are no automatic
+ * reminders in this application — see src/reminders.js on what the brief for
+ * this change assumed — and this column is how the one that is eventually built
+ * shares this table, this key and this once-a-day rule rather than growing a
+ * second set. The screen reads 'auto' rows to show "Auto reminder sent 10:30";
+ * until something writes them, that line is simply absent.
+ *
+ * It is INSIDE the unique key, so an automatic reminder and a manual one do not
+ * cancel each other: the studio's own nudge at half past nine must not stop a
+ * lead adding a word at eleven, and the lead can see the first one went out.
+ */
+async function ensureReminderTables(db, log) {
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS reminder_settings (
+      id              TINYINT      NOT NULL PRIMARY KEY,
+      -- May a lead send a reminder at all. ON, because a feature that ships
+      -- switched off is one nobody finds.
+      manual_enabled  TINYINT(1)   NOT NULL DEFAULT 1,
+      -- Does a reminder also go out by email. OFF: an email leaves the building
+      -- through a shared mailbox and cannot be recalled, and no studio has yet
+      -- decided it wants its staff mailed about attendance. See
+      -- src/reminder-settings.js.
+      email_enabled   TINYINT(1)   NOT NULL DEFAULT 0,
+      -- How many manual reminders one person may get, per kind, per day.
+      daily_cap       TINYINT      NOT NULL DEFAULT 1,
+      -- How many working days in a row without a start before the row carries
+      -- the stronger marker.
+      streak_threshold TINYINT     NOT NULL DEFAULT 3,
+      updated_by      CHAR(36)     NULL,
+      updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )`));
+
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS reminder_log (
+      id            CHAR(36)     NOT NULL PRIMARY KEY,
+      seq           BIGINT       NOT NULL AUTO_INCREMENT UNIQUE,
+      recipient_id  CHAR(36)     NOT NULL,
+      -- NULL for the automatic sender, which is nobody. sender_name is copied
+      -- rather than joined, for the same reason activity_log copies the actor's:
+      -- the row has to read as something after the account is gone.
+      sender_id     CHAR(36)     NULL,
+      sender_name   VARCHAR(255) NULL,
+      -- start | timesheet
+      kind          VARCHAR(16)  NOT NULL,
+      -- manual | auto
+      source        VARCHAR(16)  NOT NULL DEFAULT 'manual',
+      -- The day the reminder is ABOUT: today for a start reminder, the missing
+      -- day for a timesheet one.
+      subject_date  DATE         NOT NULL,
+      -- The IST day it was SENT on, which is what the cap counts. Separate from
+      -- the above because a timesheet reminder about Tuesday sent on Thursday is
+      -- one reminder on Thursday.
+      sent_on       DATE         NOT NULL,
+      -- 0-based: how many had already gone out when this one was claimed.
+      slot          TINYINT      NOT NULL DEFAULT 0,
+      -- Which channels carried it: in_app, email, or both. Empty means nothing
+      -- went out, which is a row somebody can see and act on.
+      channels      VARCHAR(32)  NOT NULL DEFAULT '',
+      -- claimed -> sent | nothing_sent. Claimed is what a row looks like if the
+      -- process died between taking the slot and delivering.
+      \`result\`      VARCHAR(16)  NOT NULL DEFAULT 'claimed',
+      created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_reminder_slot (recipient_id, kind, source, sent_on, slot),
+      -- The one read the screen makes: everything sent to these people today.
+      KEY idx_reminder_day (sent_on, recipient_id),
+      KEY idx_reminder_recipient (recipient_id, created_at)
+    )`));
+
+  const fk = async (sql) => { await db.query(sql).catch(() => {}); };
+  await fk('ALTER TABLE reminder_log ADD CONSTRAINT fk_reminder_recipient '
+    + 'FOREIGN KEY (recipient_id) REFERENCES users(id) ON DELETE CASCADE');
+  /* SET NULL, not CASCADE: deleting the lead who sent a reminder must not erase
+     the fact that the reminder was sent. sender_name keeps it readable. */
+  await fk('ALTER TABLE reminder_log ADD CONSTRAINT fk_reminder_sender '
+    + 'FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE SET NULL');
+  await fk('ALTER TABLE reminder_settings ADD CONSTRAINT fk_reminder_settings_user '
+    + 'FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL');
+
+  const { rows } = await db.query('SELECT id FROM reminder_settings WHERE id = 1');
+  if (rows.length) return;
+  await db.query(
+    `INSERT INTO reminder_settings (id, manual_enabled, email_enabled, daily_cap, streak_threshold)
+     VALUES (1, $1, $2, $3, $4)`,
+    [reminderSettings.DEFAULTS.manualEnabled ? 1 : 0,
+      reminderSettings.DEFAULTS.emailEnabled ? 1 : 0,
+      reminderSettings.DEFAULTS.dailyCap,
+      reminderSettings.DEFAULTS.streakThreshold]
+  );
+  log('Schema: reminder_settings created — manual reminders on, email off, one a day, marker at three.');
 }
 
 const STEPS = [
@@ -4415,6 +4561,12 @@ const STEPS = [
   // Last: it reads assets.status, which every step above may have changed.
   ['stranded work sessions', closeStrandedSessions],
   ['follow-up indexes', ensureFollowUpIndexes],
+  /* After the notifications table, whose column it adds, and after users, which
+     reminder_log points at twice. The mirror loads straight after, like every
+     other settings mirror, so the first request already reads the row. */
+  ['notifications.detail', ensureNotificationDetail],
+  ['start-of-day nudges', ensureReminderTables],
+  ['nudge settings mirror', (db) => reminderSettings.load(db)],
   ['studio theme', ensureTheme],
   ['studio theme mirror', (db) => require('./theme').load(db)],
 ];
