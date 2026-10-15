@@ -197,14 +197,17 @@ test('the checklist stays a fixed-height scroller', () => {
 });
 
 test('both project forms render their pickers the same way', () => {
-  // Six lists — leads, coordinators, and supervision and creative direction, on
-  // New Project and Edit Project. They share one class precisely so a fix
-  // cannot land on some of them.
+  // Eight lists — leads, acting leads, coordinators, and supervision and
+  // creative direction, on New Project and Edit Project. They share one class
+  // precisely so a fix cannot land on some of them. The acting pair arrived
+  // with the Acting Team Leads section and is held to the same bargain: it
+  // borrows this class rather than carrying a private one, so the scroller,
+  // the row alignment and every later fix reach it too.
   const containers = HTML.match(/<div class="checklist" id="(\w+)"/g) || [];
   assert.deepStrictEqual(
     containers.map((c) => c.match(/id="(\w+)"/)[1]).sort(),
-    ['ba_list', 'bd_list', 'ep_coords', 'ep_leads', 'ep_supervision',
-     'p_coords', 'p_leads', 'p_supervision'],
+    ['ba_list', 'bd_list', 'ep_acting', 'ep_coords', 'ep_leads', 'ep_supervision',
+     'p_acting', 'p_coords', 'p_leads', 'p_supervision'],
     'every checklist should use the .checklist class'
   );
   /* bd_list and ba_list are the odd ones out and are listed here deliberately:
@@ -218,12 +221,21 @@ test('both project forms render their pickers the same way', () => {
   // And each is filled with bare <label><input type=checkbox>Name</label> rows,
   // with no per-row wrapper or inline style to drift apart from the CSS.
   //
-  // This count is the point of the test, not bookkeeping: a section added with
-  // its own markup would leave it unchanged and fail here, which is what stops
-  // the staircase coming back one picker at a time.
+  /* This count is the point of the test, not bookkeeping: a section added with
+     its own markup would leave it unchanged and fail here, which is what stops
+     the staircase coming back one picker at a time.
+     
+     It was four render sites — New Project x3, Edit Project x2 through two
+     helpers — and is now ONE. The Acting Team Leads section is why: adding a
+     fourth section to both forms meant either a fifth and sixth copy of this
+     row, or routing every picker through the one helper. The second was done,
+     so New Project's inline copy is gone and all eight lists render from
+     epChecklist. The assertion is stronger at 1 than it was at 4: anything
+     that emits this row anywhere else now fails here, where before only the
+     fifth copy would have. */
   const rowTemplates = HTML.match(/<label><input type="checkbox"[^>]*>\$\{escapeHTML\(u\.name\)\}<\/label>/g) || [];
-  assert.strictEqual(rowTemplates.length, 4,
-    'the four render sites should emit the same row markup (New Project x3, Edit Project x2 through two helpers)');
+  assert.strictEqual(rowTemplates.length, 1,
+    'every picker should render its rows from the one helper (epChecklist)');
 });
 
 test('the capped picker greys out its rows without indenting them', () => {

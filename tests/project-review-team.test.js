@@ -77,7 +77,7 @@ test('the gate reads the project team, and reads team_lead_id nowhere', () => {
     'the staffed path must not read the reporting line at all');
 });
 
-test('the three tables are the four categories, and nothing else', () => {
+test('the four tables are the four categories, and nothing else', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'permissions.js'), 'utf8');
@@ -85,10 +85,18 @@ test('the three tables are the four categories, and nothing else', () => {
   assert.ok(line, 'the list is named once');
   const tables = line[1].split(',').map((t) => t.trim().replace(/'/g, '')).filter(Boolean);
   assert.deepStrictEqual(tables,
-    ['project_team_leads', 'project_coordinators', 'project_supervision'],
-    'team leads, production coordinators, and the combined supervision and '
-    + 'creative direction list — project_members is deliberately NOT here, '
-    + 'because being on a project is not the same as being on its team');
+    ['project_team_leads', 'project_acting_team_leads', 'project_coordinators',
+     'project_supervision'],
+    'team leads, acting team leads, production coordinators, and the combined '
+    + 'supervision and creative direction list — project_members is deliberately '
+    + 'NOT here, because being on a project is not the same as being on its team');
+  /* project_acting_team_leads is second on purpose, directly after the list it
+     stands in for: an Acting Team Lead is given the Team Lead's authority on
+     one project and nothing else, so it belongs beside it rather than at the
+     end. Adding it HERE is the whole of the feature's reach into the review
+     gates — every one of them goes through this list — which is why this
+     assertion is the one that has to be edited for it, and why it names each
+     table rather than counting them. */
 });
 
 test('every designation the project form can name arrives able to act', () => {
