@@ -290,7 +290,13 @@ test('browse, filter and sort a real share', { skip: SKIP }, async () => {
 
     // Into a folder, by clicking it.
     await h.page.click('.srv-link[data-open="Alpha"]');
-    await h.page.waitForFunction("document.querySelectorAll('.srv-row').length === 2");
+    /* NOT a row count: the root has two rows as well, so "length === 2" was
+       satisfied by the table that was already on screen and this passed or
+       failed depending on how loaded the machine was. Waited on something only
+       the new listing has. */
+    await h.page.waitForFunction(
+      "SRV.path === 'Alpha' && [...document.querySelectorAll('.srv-row .srv-name')]"
+      + ".some((e) => e.textContent.includes('render.psd'))");
     const inside = await h.page.$$eval('.srv-row .srv-name', (els) => els.map((e) => e.textContent.trim()));
     assert.deepStrictEqual(inside.sort(), ['notes.txt', 'render.psd']);
 

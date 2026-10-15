@@ -36,7 +36,7 @@ const timesheetOptionRoutes = require('./routes/timesheet-options');
 const chatSettingsRoutes = require('./routes/chat-settings');
 const nudgeRoutes = require('./routes/nudges');
 const leaveSettingsRoutes = require('./routes/leave-settings');
-const serverTabRoutes = require('./routes/server');
+const serverRoutes = require('./routes/server');
 const serverSettingsRoutes = require('./routes/server-settings');
 const gatewayRoutes = require('./routes/gateway');
 const misAccessRoutes = require('./routes/mis-access');
@@ -200,7 +200,7 @@ app.use('/api/admin/settings/server', serverSettingsRoutes);
    an HMAC and no session at all. Mounting them together would have meant one
    router deciding per-route which kind of caller it had, which is exactly the
    mistake that leaves one route checking neither. */
-app.use('/api/server', serverTabRoutes);
+app.use('/api/server', serverRoutes);
 app.use('/api/gateway', gatewayRoutes);
 /* The integration's management screen. Its own mount under /api/admin, and every route
    in it behind settings.integrations — which is not grantable to anybody but the Super
