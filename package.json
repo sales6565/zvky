@@ -16,7 +16,8 @@
     "sample:data": "node scripts/sample-data.js",
     "pnl:demo": "node scripts/pnl-demo-data.js",
     "outbound:check": "node scripts/check-outbound.js",
-    "timesheet:check": "node scripts/check-timesheet-day-figures.js"
+    "timesheet:check": "node scripts/check-timesheet-day-figures.js",
+    "legacy:migrate": "node scripts/migrate-legacy-files.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

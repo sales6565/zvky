@@ -126,6 +126,53 @@ router.patch('/mapping/:projectId', async (req, res) => {
   res.json({ ok: true, folder: out.folder, mapping: await serverFolders.mapping(db) });
 });
 
+/* GET /api/admin/settings/server/legacy-files — what is still on this host.
+ *
+ * The inventory the migration tool walks. Rows in asset_versions that still
+ * carry a file_path: submissions made before the office file server existed.
+ * Nothing writes into those columns any more, so this list only ever shrinks.
+ *
+ * It is NOT a file index of the share — it is a list of what is on THIS server
+ * and should not be. The distinction is the whole point: this endpoint exists so
+ * the list can be emptied.
+ */
+router.get('/legacy-files', async (req, res) => {
+  const limit = Math.min(1000, Math.max(1, Number(req.query.limit) || 500));
+  const { rows } = await db.query(
+    `SELECT v.id, v.asset_id, v.file_name, v.file_size, v.version_number, v.created_at,
+            a.\`code\` AS asset_code, a.project_id, p.\`name\` AS project_name, p.server_folder
+       FROM asset_versions v
+       JOIN assets a ON a.id = v.asset_id
+       JOIN projects p ON p.id = a.project_id
+      WHERE v.file_path IS NOT NULL AND v.file_path <> ''
+      ORDER BY p.\`name\`, a.\`code\`, v.version_number
+      LIMIT ${limit}`
+  );
+  const { rows: counted } = await db.query(
+    "SELECT COUNT(*) AS n, COALESCE(SUM(file_size), 0) AS bytes FROM asset_versions WHERE file_path IS NOT NULL AND file_path <> ''"
+  );
+  res.json({
+    files: rows.map((r) => ({
+      versionId: r.id,
+      assetId: r.asset_id,
+      assetCode: r.asset_code,
+      projectId: r.project_id,
+      projectName: r.project_name,
+      // Where it should land. Null when the project has never claimed a folder;
+      // the tool asks Forge to claim one by reading the mapping first.
+      folder: r.server_folder || null,
+      name: r.file_name,
+      size: r.file_size === null || r.file_size === undefined ? null : Number(r.file_size),
+      version: r.version_number,
+      // The download this host still serves, which is what the tool pulls from.
+      download: `/api/assets/versions/${r.id}/download`,
+    })),
+    total: Number(counted[0].n),
+    totalBytes: Number(counted[0].bytes),
+    serveLegacy: serverSettings.current().serveLegacy,
+  });
+});
+
 /* THE SELF-TEST. Forge cannot reach the gateway — that is the whole shape of
  * this feature — so this endpoint does the half it CAN do and hands the browser
  * everything it needs to do the rest from the office network.

@@ -5106,8 +5106,16 @@ function openAsk({ title, message = '', input = null, confirmLabel = 'OK',
 }
 
 const askConfirm = (opts) => openAsk({ confirmLabel:'Yes, continue', ...opts, input:null });
+/* askText forwards the FIELD's own options too — multiline, and a minimum or
+   maximum length. openAsk has understood all three for a while (it draws the
+   textarea, the counter, and keeps the confirm button disabled until a minimum
+   is met); they were simply unreachable through this wrapper, so every caller
+   that wanted a required answer had to check it afterwards and show its own
+   error. Forwarded here so the dialog can refuse an empty answer where it is
+   asked, which is what the Server tab's "why should it be deleted?" needs. */
 const askText = (opts) => openAsk({ confirmLabel:'Save', ...opts,
-  input:{ label:opts.label, value:opts.value, placeholder:opts.placeholder } });
+  input:{ label:opts.label, value:opts.value, placeholder:opts.placeholder,
+    multiline:opts.multiline, minLength:opts.minLength, maxLength:opts.maxLength } });
 
 /* AND ON window, for native-bridge.js — the only other file served onto this
    document. It runs the Android hardware back button, which has to ask "Close

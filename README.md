@@ -1687,15 +1687,26 @@ file imports nothing and tells you why.
 
 ## Artist submission file formats
 
-`POST /api/assets/:id/submit` only accepts the studio's actual working
-formats — anything else is rejected before it touches disk:
+`POST /api/assets/:id/submit` takes a **link** and a description. It no longer
+takes a file: a request carrying one is answered `410 Gone` with a sentence
+pointing at the Server tab, and the multipart parser that used to be on that
+route has been deleted rather than left unused. Work files live on the office
+file server now — see [The Server tab](#the-server-tab-the-office-file-server).
+
+`REVIEW_EXTENSIONS` in `src/upload.js` is still the studio's list of what counts
+as a reviewable file, and is still the list to edit as the pipeline changes:
 
 - Images: `.psd .jpg .jpeg .png .gif .tiff .tif`
 - Spine rigging exports: `.json .atlas .skel`
 - After Effects: `.aep .aet`
 
-Add or remove extensions in `src/upload.js` (`REVIEW_EXTENSIONS`) as your
-pipeline changes — nothing else needs to know about the list.
+**Files uploaded before this change stay downloadable.** `asset_versions` keeps
+its `file_name`, `file_path` and `file_size` columns and the rows that have them;
+`GET /api/assets/versions/:id/download` still serves those files while
+Settings → Server → *Serve legacy files* is on (it ships on). Nothing writes into
+those columns any more, so the set only shrinks. Removing the old files from the
+hosting account is a manual job for the owner — this application will not delete
+a studio's old submissions on a timer.
 
 ## 4. Configure environment variables
 
@@ -3375,6 +3386,210 @@ rule the rest of the app runs on. That matters because the **Admin tier is
 a studio-wide total shown to an Admin would be full of projects they could not
 open. A Super Admin sees the whole studio; an Admin sees their own; the subtitle
 says which. Nobody is shown a number they cannot click into.
+
+## The Server tab: the office file server
+
+Work files live on a machine in the studio. Forge runs on GoDaddy. The Server
+tab lets people browse that machine's folders, copy files to it and take copies
+off it — and **not one byte passes through this application**.
+
+```
+  browser  ──HTTPS on the office LAN──►  gateway  ──►  \\SERVER\Projects
+     │                                      │
+     └──HTTPS over the internet──►  Forge  ◄─┘  heartbeat, config, callbacks
+                                 permissions, tokens, audit, settings
+```
+
+Forge is the control plane. It decides who may do what, where, mints a signed
+token that says so, and records that it happened. The gateway enforces the token
+and moves the bytes. Neither can do the other's job: Forge cannot reach the LAN,
+and the gateway holds no private key and so cannot grant itself anything.
+
+### The four things this guarantees
+
+1. **No file content ever reaches this server.** No route accepts a file body,
+   no route proxies one, nothing is cached or thumbnailed, and no column holds
+   bytes. The tab lists what is actually on the office server, every time —
+   there is deliberately **no table of files**, because a second copy of the
+   share's contents is a thing that goes out of date and starts lying.
+2. **Nothing can delete, rename, move or overwrite a stored file.** Not in
+   Forge, not in the gateway, not in the API, not on the page. A name that is
+   taken becomes `name (2).ext`. The only deletion either side performs is the
+   gateway clearing its own `.incoming` scratch area.
+3. **The files are reachable only from the office.** The gateway listens on the
+   LAN interface and is never port-forwarded. Off the network, the tab says
+   *"Open Forge from the office network to use Server files"* and shows nothing.
+4. **Neither secret is ever shown after it is saved.** The token signing key's
+   private half and the gateway secret are encrypted at rest (`src/email-secret.js`,
+   AES-256-GCM, keyed from `EMAIL_ENCRYPTION_KEY` falling back to `JWT_SECRET`)
+   and are readable afterwards only as a fingerprint and a date. A generated
+   gateway secret is shown exactly once, because it has to be pasted into the
+   gateway machine.
+
+### Switching it on
+
+It ships **off**, and the tab is hidden while it is. In Settings → Server, as a
+Super Admin:
+
+1. **Generate key pair** — the public half is shown and copyable; the private
+   half never leaves the server.
+2. **Generate secret** — shown once. Paste it into the gateway's
+   `GATEWAY_SECRET`.
+3. Set the **gateway address** (`https://files.office.example`) and the
+   **gateway id**, which must match the gateway's `GATEWAY_ID`.
+4. Install the gateway on an office machine — `gateway/README.md` is written for
+   whoever does that — and wait for the heartbeat to arrive.
+5. **Enable the Server tab.** Turning it on is refused until the four things
+   above are in place, so the tab cannot appear in a state where every click
+   fails.
+
+The checklist at the top of the section says which of those steps is still
+outstanding, and **Run self-test** goes through them one at a time: reachability,
+certificate trust, CORS, a 1 KB write into `.incoming/selftest` and a read back,
+heartbeat age and free disk.
+
+Switching it **off** hides the tab and makes every Server endpoint answer
+`409 feature_disabled` — but existing deletion requests stay viewable and
+resolvable, because a request is a message about a file that is still there and
+turning a feature off is not an answer to it.
+
+### Permissions
+
+Eight keys, all **Super Admin only by default** — unusual in this catalogue, and
+deliberate: on the day this ships nobody has installed a gateway, so the studio
+grants these when the office machine is actually there.
+
+| Key | What it allows |
+|---|---|
+| `server.view` | Open the tab and browse the folders of projects this role can already see, plus the shared folders. |
+| `server.download` | Take a copy of a file. |
+| `server.upload` | Copy files up, and create folders. |
+| `server.request_delete` | Ask for something to be deleted, with a reason. |
+| `server.manage_requests` | See every request and mark it done or declined. |
+| `server.browse_all` | Browse the whole share rather than only this role's projects. |
+| `server.view_audit` | Read the trail of who listed, downloaded and uploaded what. |
+| `settings.server.manage` | The Settings section: the address, the keys, the limits, the mapping, the self-test. |
+
+All eight are grantable per role and through role groups, like everything else.
+
+### Scoping: folders follow projects
+
+A non-admin sees the top-level folder of each project `visibleProjects()` returns
+— the same function that decides which projects they see anywhere else in the
+application, including the Acting Team Lead rule — plus any **shared folders**
+named in Settings. Nothing else, and the root itself is not listable for them.
+
+The folder a project owns is **derived once and then fixed**, in
+`projects.server_folder`:
+
+* It is derived from the project's **name**, not its code. `projects.code` in
+  this schema is generated initials (`codeFor()` in `src/routes/projects.js`,
+  re-derived on every rename), so "Alpha" has the code "A" — a share full of
+  single letters nobody can read. The name is what a person would have written
+  on that folder.
+* It is **snapshotted at first use** and never recomputed, so renaming a project
+  moves nothing and orphans nothing.
+* It is **unique**, so two projects can never point at one folder and see each
+  other's work.
+* It is **editable** in Settings → Server, which is how a project is pointed at a
+  folder that already exists on the share with four months of work in it.
+
+Every token Forge mints names one path inside those prefixes, and the gateway
+checks the path against the token again on its side. A client-supplied path is
+therefore checked twice and trusted never.
+
+### Tokens
+
+Ed25519, signed by Forge, verified by the gateway with **public keys only**.
+Claims: issuer, audience (the gateway id), user, operation, path, expiry, a
+one-time id, and for an upload its id and maximum size.
+
+| Operation | Lives | Reusable |
+|---|---|---|
+| `list` | 60 s | yes, for one folder (pagination) |
+| `mkdir` | 60 s | no |
+| `download` | 60 s | **no — once** |
+| `upload` | 30 min | yes, for one upload id; renewable through Forge |
+| `selftest` | 60 s | yes |
+
+Rotation keeps the previous public key published for an overlap window (default
+60 minutes), so a token minted a second before a rotation still verifies. The
+same arrangement covers the gateway secret.
+
+### Uploads
+
+Chunked and resumable, because a 40 GB render is not a web form. The browser
+reads the file with `File.slice` and never holds it in memory; each chunk is
+written by positional write into a file the gateway preallocated, so chunks may
+arrive out of order and finishing is a **move, not a copy**. `GET
+/v1/upload/:id/status` returns the byte ranges that arrived, so a reload resumes
+from what is actually on disk.
+
+Finishing claims the final name with `link()`, which fails if the name is taken —
+so a collision becomes `name (2).ext` and an existing file is never replaced —
+and then unlinks the source inside `.incoming`. The stored file is made
+read-only. The SHA-256 is read back **after** the move and reported by callback,
+which is why the page says *verifying…* and then shows a short checksum.
+
+### Deletion requests
+
+Row menu → **Request deletion**, with a required reason. Everybody holding
+`server.manage_requests` is notified in-app (always) and by email (a switch,
+default on, through the existing mail outbox). A second request for the same path
+while one is open is refused — the unique key on the open path makes that a fact
+about the schema rather than a race two requests can both win.
+
+**Resolving one deletes nothing.** Marking it *done* records that somebody
+removed the file on the office server itself, which is a job done on that
+machine with an account that is allowed to; Forge holds no route, credential or
+code that could do it. The requester is told either way, with the admin's note.
+
+### What the tab does when a browser will not cooperate
+
+A browser spike run before any of this was built found that current Chromium —
+Chrome and Edge share the engine — refuses a `fetch` from a page on a **public**
+address to a server on a **private** address until the user grants *Local Network
+Access*, and refuses it by **hanging**: nothing on the wire, no console error, no
+CORS error. An iframe is gated the same way. A **top-level navigation** is not,
+and neither is a page talking to its own origin. Measured in Chromium 141; the
+control was the same gateway bound a second time on a public-space address, which
+answered in 13 ms.
+
+So the tab decides its transport **without making a request**, which is what
+keeps it from triggering a permission prompt just by being opened:
+
+```js
+try { state = (await navigator.permissions.query({name:'local-network-access'})).state }
+catch (TypeError) { /* this engine has no such gate */ }
+```
+
+* **The desktop app** (Electron 33 / Chromium 130) throws — no gate — so it talks
+  to the gateway directly.
+* **A policy-managed browser** reports `granted`. Same.
+  `LocalNetworkAccessAllowedForUrls` is the policy, and it is verified to work;
+  the older `InsecurePrivateNetworkRequestsAllowedForUrls` has no effect in
+  current Chromium.
+* **Anything else** gets the **office link window**: a small page served by the
+  gateway, opened top-level, which relays between the Forge tab and the gateway
+  over `postMessage` — `File` and `Blob` slices travel by structured clone. Its
+  own fetches are same-origin and private-to-private, which nothing gates.
+
+Downloads are always a top-level link with a single-use token, in both cases:
+it is the only mechanism that survives a very large file and it hands the work to
+the browser's own download manager.
+
+### What is stored here
+
+| Table | What it holds |
+|---|---|
+| `server_settings` | One row. The switch, the address, the encrypted secrets, the limits, the shared folder names. |
+| `gateway_state` | One row, overwritten. The last heartbeat: version, free disk, applied config version. |
+| `server_events` | The audit trail — who listed, was issued a download, started or finished an upload, created a folder, ran a self-test. Actions on paths, not an index of the share. |
+| `deletion_requests` | Path, type, who asked, why, status, who answered and their note. |
+| `projects.server_folder` | The one column: which folder this project owns. |
+
+No file table. No file content. No deletion state — there is nothing here to
+delete.
 
 ## Acting Team Leads
 
