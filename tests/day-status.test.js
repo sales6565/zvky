@@ -1350,19 +1350,69 @@ test('leave, idle and the settings, end to end', { skip: cfg ? false : SKIP_REAS
   });
 
   await t.test('MUTATION 4 — the leave does not travel with a reassigned asset', async () => {
-    await mark({ userId: id.ana, date: today(), kind: 'leave', portion: 'full' });
-    /* Hand the asset to Bo, who is not on leave, and start their clock. */
-    const moved = await as('root', `/assets/${id.asset}`, { method: 'PATCH', body: { assigneeId: id.bo } });
+    /* ITS OWN ASSET, WITH AN EXPLICIT HISTORY.
+     *
+     * This used to reuse the suite's one asset and passed under a mutation that
+     * a clean run of the same sequence caught — it was passing on whatever the
+     * subtests before it had left behind rather than on its own premise. So the
+     * history is built here, in order, and asserted: Ana works on it, Ana goes
+     * on leave for the whole day, Bo picks it up. */
+    const made = await as('root', `/assets/project/${id.project}`, {
+      method: 'POST', body: { name: 'Handover', type: 'character' } });
+    assert.strictEqual(made.status, 201, JSON.stringify(made.body));
+    const asset = made.body.asset.id;
+
+    await undo({ userId: id.ana, date: today() }).catch(() => {});
+    await as('root', `/assets/${asset}`, { method: 'PATCH', body: { assigneeId: id.ana } });
+    const anaStart = await as('ana', `/assets/${asset}/start`, { method: 'POST', body: {} });
+    assert.strictEqual(anaStart.status, 200, JSON.stringify(anaStart.body));
+
+    const away = await mark({ userId: id.ana, date: today(), kind: 'leave', portion: 'full' });
+    assert.strictEqual(away.status, 200, JSON.stringify(away.body));
+    assert.strictEqual(away.body.stoppedTimers, 1, 'Ana\'s clock was stopped by the mark');
+
+    /* BO PICKS IT UP AND WORKS. Their clock starts normally — the leave is
+       Ana's, and it is not a property of the asset. */
+    const moved = await as('root', `/assets/${asset}`, { method: 'PATCH', body: { assigneeId: id.bo } });
     assert.ok(moved.status < 400, JSON.stringify(moved.body));
-    const started = await as('bo', `/assets/${id.asset}/start`, { method: 'POST', body: {} });
+    const started = await as('bo', `/assets/${asset}/start`, { method: 'POST', body: {} });
     assert.strictEqual(started.status, 200, JSON.stringify(started.body));
 
-    const [open] = await sql(cfg, 'SELECT id FROM work_sessions WHERE user_id = ? AND ended_at IS NULL', [id.bo]);
+    const [open] = await sql(cfg,
+      'SELECT id FROM work_sessions WHERE user_id = ? AND asset_id = ? AND ended_at IS NULL',
+      [id.bo, asset]);
     assert.ok(open, 'Bo\'s clock runs normally');
+
     /* AND THE SWEEP LEAVES IT ALONE: it is Ana who is away. */
     const stopped = await dayStatus.sweepLeave(handle);
     assert.ok(!stopped.some((s) => s.userId === id.bo), 'Bo is not stopped');
-    await as('bo', `/assets/${id.asset}/hold`, { method: 'POST', body: { note: 'done' } }).catch(() => {});
+
+    /* AND BO'S HOURS ARE BO'S.
+     *
+     * THE ASSERTION THAT MATTERS, and the one a "Bo can start" check does not
+     * make: close() must look the windows up by the SESSION'S OWN USER. Keying
+     * them on the asset instead — on whoever else has held it, which here is
+     * Ana — would zero an hour Bo actually worked, and every other assertion in
+     * this file would still pass.
+     *
+     * The session is back-dated an hour through the table so there is a
+     * measurable span to lose; the studio is open 24/7 in this fixture, so that
+     * hour is an hour of working time. It is then closed BY THE SERVER, through
+     * an ordinary reassignment — which is the move this test is named for, and
+     * which is also the only way to get the real arithmetic: close() reads the
+     * work-schedule mirror, and that mirror is loaded in the server's process
+     * and not in this one. */
+    await sql(cfg, 'UPDATE work_sessions SET started_at = NOW() - INTERVAL 1 HOUR WHERE id = ?',
+      [open.id]);
+    const others = await sql(cfg,
+      'SELECT COUNT(*) AS n FROM work_sessions WHERE asset_id = ? AND user_id = ?', [asset, id.ana]);
+    assert.ok(Number(others[0].n) > 0, 'Ana held this asset before Bo did');
+
+    const handed = await as('root', `/assets/${asset}`, { method: 'PATCH', body: { assigneeId: null } });
+    assert.ok(handed.status < 400, JSON.stringify(handed.body));
+    const [closed] = await sql(cfg, 'SELECT seconds FROM work_sessions WHERE id = ?', [open.id]);
+    assert.strictEqual(Number(closed.seconds), 3600,
+      'Bo\'s hour is Bo\'s — Ana\'s leave does not travel with the asset');
   });
 
   await t.test('MUTATION 16 — a past date needs its own permission', async () => {
