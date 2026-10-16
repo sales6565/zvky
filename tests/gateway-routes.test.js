@@ -364,6 +364,16 @@ test('the office link page is served, scoped to Forge, and reads nothing from th
   assert.match(r.headers.get('content-type'), /text\/html/);
   assert.match(r.text, /forge-gateway/);
   assert.ok(r.text.includes('https://forge.example.com'), 'the page only talks to the configured Forge origin');
+  /* THE TWO CHECKS THAT MAKE A RELAY SAFE, read off the page this route serves.
+     Pinned as source because this page runs in the OTHER window — there is no
+     browser here to drive it, and the Forge side of the same handshake is
+     driven for real in tests/server-tab-browser.test.js. Dropping either one
+     turns the bridge into something any page can talk to about somebody's
+     files, so neither may go quietly. */
+  assert.match(r.text, /e\.origin\s*!==\s*FORGE/,
+    'a message from another origin is dropped without being read');
+  assert.match(r.text, /e\.source\s*!==\s*opener/,
+    'and so is one from a window this page did not come from');
   assert.match(r.headers.get('content-security-policy'), /frame-ancestors 'none'/);
   assert.strictEqual(r.headers.get('x-frame-options'), 'DENY');
   // It needs no token precisely because it carries no data: nothing from the

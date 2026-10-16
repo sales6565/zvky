@@ -742,6 +742,56 @@ test('closing the bridge mid-upload pauses it, and reopening carries on', { skip
   } finally { await h.close(); }
 });
 
+test('a bridge reply from the wrong origin, or the wrong window, is not read', { skip: SKIP }, async () => {
+  const h = await harness({ transport: 'link' });
+  try {
+    await h.page.evaluate("SRV.path = 'Alpha'; srvGo()");
+    await h.page.waitForSelector('#srvConnect', { timeout: 20000 });
+    const [popup] = await Promise.all([
+      h.page.waitForEvent('popup', { timeout: 15000 }),
+      h.page.click('#srvConnect'),
+    ]);
+    await popup.waitForLoadState('load');
+    await h.page.waitForFunction('srvBridgeReady()', { timeout: 20000 });
+
+    /* A CALL IN FLIGHT, and three answers to it that must all be ignored: one
+       from another origin, one from this origin but a window Forge did not
+       open, and one that is not this channel at all. The real reply arrives
+       afterwards, which is how we know the listener was still working and had
+       simply refused the others.
+
+       Synthetic MessageEvents, because that is the only way to forge an origin:
+       a real page on another origin cannot be made to answer a pending id. The
+       check being driven is Forge's own, in the window.addEventListener in
+       public/index.html. */
+    const out = await h.page.evaluate(async () => {
+      const id = SRV.nextMessageId;
+      const answered = [];
+      const pending = new Promise((resolve) => {
+        SRV.pending.set(id, { resolve: (v) => { answered.push(v); resolve(v); } });
+        SRV.nextMessageId += 1;
+      });
+      const shout = (init) => window.dispatchEvent(new MessageEvent('message', init));
+      const origin = new URL(SRV.gatewayUrl).origin;
+      const reply = { channel: 'forge-gateway', reply: true, id, status: 200, ok: true, data: { hijacked: true } };
+
+      shout({ origin: 'https://evil.example', source: SRV.linkWindow, data: reply });
+      shout({ origin, source: window, data: reply });              // not the window we opened
+      shout({ origin, source: SRV.linkWindow, data: { channel: 'something-else', reply: true, id } });
+      await new Promise((r) => setTimeout(r, 50));
+      const afterForgeries = answered.length;
+
+      // And the genuine one, from the window Forge opened, at its exact origin.
+      shout({ origin, source: SRV.linkWindow, data: { ...reply, data: { real: true } } });
+      await pending;
+      return { afterForgeries, got: answered.map((a) => a.data) };
+    });
+    assert.strictEqual(out.afterForgeries, 0, 'nothing answered the forged replies');
+    assert.deepStrictEqual(out.got, [{ real: true }], 'and the real one still did');
+    await noNative(h);
+  } finally { await h.close(); }
+});
+
 /* ---- the virtual Projects list ------------------------------------------ */
 
 /* What a non-admin's first screen is: not the share's root, which they may not
