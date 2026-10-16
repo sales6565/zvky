@@ -228,6 +228,14 @@ function create({ local, log = console.log, fetchImpl, now = () => Date.now() } 
         freeBytes: free,
         queued: client.pending().length,
         clockSkewSeconds,
+        /* THE SHARE THIS GATEWAY IS ACTUALLY SERVING, so Settings can show it
+           beside the link prefix. Nobody can check those two against each other
+           without seeing both, and only this machine knows the second one:
+           \\SERVER\Projects in Forge and D:\Projects here are either the same
+           share or a silent misconfiguration, and the difference is invisible
+           until an upload lands somewhere nobody is looking. A local path, to a
+           screen that already holds the gateway's secret. */
+        fileRoot: local.fileRoot || null,
         at: new Date().toISOString(),
       });
       /* Measured from the answer, for the next beat. Taken from Forge's own

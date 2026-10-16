@@ -45,6 +45,9 @@ async function state() {
     clockSkewSeconds: row.clock_skew_seconds === null || row.clock_skew_seconds === undefined
       ? null : Number(row.clock_skew_seconds),
     clockSkewWarn: Math.abs(Number(row.clock_skew_seconds || 0)) > 15,
+    // The share the gateway says it is serving — the other half of the one
+    // check nobody can automate. See the link_prefix self-test step.
+    fileRoot: row.file_root || null,
     staleAfterSeconds: 120,
   };
 }
@@ -241,13 +244,27 @@ router.post('/self-test', async (req, res) => {
        other is a mount point in another building — so they are put side by side
        and a person confirms it. That is the single most common way to configure
        this wrongly. */
+    /* BOTH HALVES OF THE ONE THING NOBODY CAN CHECK FOR THEM. The prefix is
+       what Forge stores links against; FILE_ROOT is what the gateway actually
+       serves, and it arrives on the heartbeat because only that machine knows
+       it. They have to be the same share, and the difference is invisible from
+       either side alone — so they are printed together and the sentence asks
+       for a human comparison rather than pretending to have made one. */
     { key: 'link_prefix', ok: Boolean(settings.linkPrefix),
       detail: settings.linkPrefix
-        ? `Project links must start with ${settings.linkPrefix} — the gateway serves FILE_ROOT, `
-          + 'which must be the same share. Check the two against each other.'
+        ? `Project links must start with ${settings.linkPrefix}. The gateway serves `
+          + `${gateway.fileRoot ? `FILE_ROOT ${gateway.fileRoot}` : 'a FILE_ROOT it has not reported yet'}`
+          + ' — the same share, written the way each side writes it. Check the two against each other.'
         : 'Set the server link prefix: the share as the studio writes it, e.g. \\\\SERVER\\Projects.' },
     { key: 'encryption', ok: ready.encryptionAvailable,
-      detail: ready.encryptionAvailable ? 'Secrets can be encrypted at rest.' : 'Set EMAIL_ENCRYPTION_KEY (or JWT_SECRET) and restart.' },
+      detail: ready.encryptionAvailable
+        ? 'Secrets can be encrypted at rest.'
+        /* NOT "(or JWT_SECRET)", which is what this said and what the rest of
+           the application accepts. The Server secrets are read in strict mode
+           for the reasons in src/email-secret.js, so naming JWT_SECRET here
+           would send somebody to set a variable this screen will not use. */
+        : 'Set EMAIL_ENCRYPTION_KEY and restart. JWT_SECRET is deliberately not accepted for the '
+          + 'office file server\u2019s secrets.' },
     { key: 'signing_key', ok: ready.keyGenerated, detail: ready.keyGenerated ? `Key ${settings.signingKid}` : 'Generate a key pair.' },
     { key: 'gateway_secret', ok: ready.secretGenerated, detail: ready.secretGenerated ? 'Stored.' : 'Generate a secret and put it in the gateway\'s GATEWAY_SECRET.' },
     { key: 'heartbeat', ok: ready.heartbeatFresh,

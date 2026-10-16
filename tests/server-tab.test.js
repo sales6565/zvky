@@ -881,12 +881,23 @@ test('the Server tab, end to end', { skip: cfg ? false : SKIP_REASON }, async (t
 
   await t.test('a heartbeat is recorded and read back as online, then stale', async () => {
     const beat = await signed('POST', '/api/gateway/heartbeat',
-      { version: '1.0.0', configVersion: 99, freeBytes: 500 * 1024 * 1024 * 1024, queued: 0 });
+      { version: '1.0.0', configVersion: 99, freeBytes: 500 * 1024 * 1024 * 1024, queued: 0,
+        clockSkewSeconds: 2, fileRoot: 'D:\\Projects' });
     assert.strictEqual(beat.status, 200, JSON.stringify(beat.body));
     assert.ok(Number.isFinite(beat.body.configVersion), 'and the gateway is told which version to run');
+    /* FORGE'S OWN CLOCK comes back, because it is the clock that signed the
+       token the gateway is about to verify. */
+    assert.ok(Date.parse(beat.body.now) > 0, `the answer carries Forge's time: ${beat.body.now}`);
 
     const got = await settings();
     assert.strictEqual(got.body.gateway.version, '1.0.0');
+    /* THE SHARE THE GATEWAY SAYS IT IS SERVING, and the measured skew. Neither
+       can be known from this side, and the first is half of the one check
+       nobody can automate: the link prefix and FILE_ROOT must be the same
+       place. The self-test prints them together, so it is pinned there too. */
+    assert.strictEqual(got.body.gateway.fileRoot, 'D:\\Projects');
+    assert.strictEqual(got.body.gateway.clockSkewSeconds, 2);
+    assert.strictEqual(got.body.gateway.clockSkewWarn, false);
     assert.ok(got.body.gateway.ageSeconds !== null && got.body.gateway.ageSeconds < 60);
     assert.strictEqual(got.body.settings.readiness.heartbeatReceived, true);
     assert.strictEqual(got.body.settings.readiness.heartbeatFresh, true);
@@ -1066,6 +1077,13 @@ test('the Server tab, end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     const prefixStep = out.body.steps.find((st) => st.key === 'link_prefix');
     assert.strictEqual(prefixStep.ok, true);
     assert.match(prefixStep.detail, /FILE_ROOT/, 'and it names the other half by name');
+    /* AND PRINTS BOTH VALUES. The prefix is Forge's; FILE_ROOT arrives on the
+       heartbeat, because only the office machine knows it. A step that named
+       the idea without showing the two strings would leave the one thing
+       nobody can automate still unanswerable. */
+    assert.match(prefixStep.detail, new RegExp(PREFIX.replace(/[\\]/g, '\\\\')),
+      `the prefix itself: ${prefixStep.detail}`);
+    assert.match(prefixStep.detail, /D:\\Projects/, `and the gateway's share: ${prefixStep.detail}`);
     assert.ok(out.body.probe && out.body.probe.putToken && out.body.probe.getToken);
 
     const gwTokens = require('../gateway/src/tokens');

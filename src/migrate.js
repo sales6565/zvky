@@ -4563,9 +4563,17 @@ async function ensureServerTab(db, log) {
       remote_ip      VARCHAR(64) NULL,
       -- How far this machine's clock is from Forge's, as the gateway measured
       -- it from the previous heartbeat's answer. Positive means ahead.
-      clock_skew_seconds INT      NULL
+      clock_skew_seconds INT      NULL,
+      file_root      VARCHAR(500) NULL
     )`));
   const stateCols = await columnsOf(db, 'gateway_state');
+  if (stateCols.size && !stateCols.has('file_root')) {
+    /* THE SHARE THE GATEWAY IS SERVING, reported by the heartbeat so Settings
+       can show it beside the link prefix. Nobody can check the two against each
+       other without seeing both. */
+    await db.query('ALTER TABLE gateway_state ADD COLUMN file_root VARCHAR(500) NULL');
+    log('  + gateway_state.file_root');
+  }
   if (stateCols.size && !stateCols.has('clock_skew_seconds')) {
     await db.query('ALTER TABLE gateway_state ADD COLUMN clock_skew_seconds INT NULL');
     log('  + gateway_state.clock_skew_seconds');

@@ -88,6 +88,12 @@ async function gatewayState() {
        warning belongs, rather than at the point where people start seeing
        "that link has expired". */
     clockSkewWarn: Math.abs(Number(row.clock_skew_seconds || 0)) > 15,
+    /* THE SHARE THE GATEWAY SAYS IT IS SERVING. Shown beside the link prefix,
+       because "\\SERVER\Projects" in Forge and "D:\Projects" on the office
+       machine are either the same share or a misconfiguration nobody can see
+       until an upload lands somewhere nobody is looking. Only this machine
+       knows the second one, so it arrives on the heartbeat. */
+    fileRoot: row.file_root || null,
     staleAfterSeconds: HEARTBEAT_STALE_SECONDS,
   };
 }

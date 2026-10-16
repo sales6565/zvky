@@ -104,10 +104,12 @@ router.post('/heartbeat', gate, async (req, res) => {
   };
   await db.query(
     `UPDATE gateway_state SET last_seen = NOW(), version = $1, free_bytes = $2,
-            config_version = $3, queued = $4, remote_ip = $5, clock_skew_seconds = $6
+            config_version = $3, queued = $4, remote_ip = $5, clock_skew_seconds = $6,
+            file_root = $7
       WHERE id = 1`,
     [String(b.version || '').slice(0, 32) || null, num(b.freeBytes), num(b.configVersion), num(b.queued),
-      String(req.ip || '').slice(0, 64) || null, num(b.clockSkewSeconds)]
+      String(req.ip || '').slice(0, 64) || null, num(b.clockSkewSeconds),
+      String(b.fileRoot || '').slice(0, 500) || null]
   ).catch(async (err) => {
     /* An install part-way through its migration has the row without the
        column. The heartbeat is the one call that must never fail for a schema
