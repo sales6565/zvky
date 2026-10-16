@@ -3572,7 +3572,9 @@ by hand, because it is the same endpoint's answer.
       from projects.server_link    |          |
                                    |          └─ users.server_folder, assigned
                                    |             once and never recomputed
-                                   └─ from the ASSET'S CATEGORY, named in Settings
+                                   └─ assetDiscipline(asset) — the SAME rule as
+                                      the Dashboard's Art / Animation sub-tabs,
+                                      named in Settings
 ```
 
 * **The server computes the path. Every time, from the asset.** There is no
@@ -3580,14 +3582,32 @@ by hand, because it is the same endpoint's answer.
   would have it ignored — `src/routes/server.js` recomputes it and a test proves
   that. The browser says which asset, which file and how big; the server answers
   where it goes.
-* **The discipline is the asset's category**, not the person's role: the same
-  artist uploading an Art asset and an Animation asset in one project puts them
-  in `Artist/` and `Animator/`. Role-based mapping was the obvious design and it
-  is wrong — one person does both jobs in a small studio, and the folder is about
-  the work. The category → folder names are editable in Settings (`Art → Artist`,
-  `Animation → Animator`, everything else → `Work`). **Asset categories ship
-  empty** in this application, so a studio that has not created any gets the
-  fallback folder for everything, which is correct rather than broken.
+* **The discipline is whatever the Dashboard shows the asset under**, not the
+  person's role: the same artist uploading an Art asset and an Animation asset in
+  one project puts them in `Artist/` and `Animator/`. Role-based mapping was the
+  obvious design and it is wrong — one person does both jobs in a small studio,
+  and the folder is about the work.
+
+  **One function decides it, called by both**: `assetDiscipline()` in
+  `src/asset-discipline.js`, which reads `assets.type` — `animation` is Animation
+  and everything else is Art, which is what the sub-tabs have always done. The
+  first version of this read `assets.category` instead, and **that list ships
+  empty**, so every lookup missed and every upload in the studio landed in the
+  fallback folder `Work` while Settings showed a grid with no rows in it.
+
+  The page carries a copy of the function, because there is no build step between
+  `src/` and `public/index.html`; `tests/asset-discipline.test.js` compares the
+  two **character for character**, runs both over one matrix, runs the same assets
+  through the sub-tabs and through the path computation to compare the answers,
+  and fails on a second copy of the rule anywhere else. The folder names are
+  editable in Settings per discipline (`Art → Artist`, `Animation → Animator`),
+  with a fallback (`Work`) for a name left empty — the only way the fallback is
+  reached, since every asset is in one of exactly two disciplines.
+
+  A type a studio adds later is **Art**. That inference predates this feature and
+  is pinned by `tests/dashboard-lens.test.js`; if "rigging" should be its own
+  discipline one day, the fix is a discipline column on `asset_types`, read by
+  both callers at once.
 * **Their own folder, and only their own.** `users.server_folder` is assigned on
   first use from their name — transliterated, so "Zoë Müller" is `Zoe Muller` and
   not `Zoe Mu ller` — and then **fixed**, so renaming an account does not start a
@@ -3596,7 +3616,11 @@ by hand, because it is the same endpoint's answer.
   the gateway checks it.
 * **An asset cannot move between projects** in this schema (`EDIT_FIELDS` in
   `src/routes/assets.js` has no `projectId`), which is why a reference recorded
-  against an asset cannot be orphaned by somebody moving it.
+  against an asset cannot be orphaned by somebody moving it. **Nor can its type
+  change**: `type` is set when the asset is created and is in no route's editable
+  field list, so an asset's discipline is fixed for its lifetime unless somebody
+  edits the database. If one ever did, only later uploads would follow it —
+  nothing is moved and nothing is re-filed.
 * **Submitting is blocked while an upload is in flight**, with a sentence rather
   than a disabled button: a round submitted now would point at a folder that is
   still filling up.
