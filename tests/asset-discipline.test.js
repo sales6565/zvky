@@ -199,6 +199,19 @@ test('the Settings screen offers one row per discipline, and previews the path',
     '\\\\SERVER\\Projects\\<project>\\Artist\\Ana\\');
   // And with no prefix set yet it says so rather than drawing a broken path.
   assert.strictEqual(preview('', 'Artist', 'Ana'), '<prefix>/<project>/Artist/Ana/');
+
+  /* AND SOMETHING DRAWS IT. A preview nothing calls is the easiest kind of
+     feature to ship broken: the function is right, the test of the function
+     passes, and the line is never on screen. So the wiring is asserted too —
+     drawn once when the screen is wired, and redrawn as any of the three fields
+     that decide the path is typed into. */
+  const wiring = grab(PAGE, 'function wireServerSettings()');
+  assert.match(wiring, /\n  srvsPathPreview\(\);/, 'the preview is drawn when the screen is wired');
+  assert.match(wiring, /\['srvsPrefix', 'srvsFallback'\][\s\S]*?addEventListener\('input', srvsPathPreview\)/,
+    'and redrawn as the prefix or the fallback is typed');
+  assert.match(wiring, /\.srvs-disc[\s\S]*?addEventListener\('input', srvsPathPreview\)/,
+    'and as a discipline folder name is typed');
+  assert.match(PAGE, /<div class="ms-note" id="srvsPathPreview"><\/div>/, 'with somewhere to go');
 });
 
 test('nothing computes a discipline for itself', () => {
