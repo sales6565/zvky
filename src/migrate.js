@@ -4519,9 +4519,15 @@ async function ensureServerTab(db, log) {
          because without it there is nothing to validate a link against. */
       link_prefix       VARCHAR(500) NULL,
 
-      /* The folder a discipline's work goes in, by asset CATEGORY key — stored
-         as JSON because the category list is the studio's and starts empty. A
-         category with no entry falls back to the name below. */
+      /* The folder a discipline's work goes in, keyed by DISCIPLINE id ('art',
+         'animation') — the same classification the Dashboard's sub-tabs use;
+         see src/asset-discipline.js. Stored as JSON because it is a small map
+         rather than two columns, and a discipline whose name is left empty
+         falls back to the name below.
+         
+         It was keyed by asset CATEGORY first, which was the Prompt 52 bug: that
+         list ships empty, so nothing ever matched and every upload went to the
+         fallback. Names stored under the old keys are dropped on load. */
       discipline_folders TEXT        NULL,
       discipline_fallback VARCHAR(120) NOT NULL DEFAULT 'Work',
 
