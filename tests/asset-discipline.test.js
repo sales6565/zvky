@@ -70,6 +70,17 @@ test('the page and the server hold the SAME rule, character for character', () =
   assert.ok(!/category|project|assignee|status|role|designation/.test(moduleFn),
     `the rule reads the type and nothing else: ${moduleFn}`);
 
+  /* AND THE SUB-TABS CALL IT rather than holding a copy of the comparison.
+     Asserted on the source, because a copy that happens to agree today passes
+     every behavioural test there is: `a.type !== 'animation'` is the rule the
+     lens used to carry, and it differs from the shared function only on inputs
+     a matrix has to think to include. The point of the shared function is that
+     there is one place to change. */
+  for (const l of page().BOARD_LENS) {
+    assert.match(String(l.match), /assetDiscipline\(/,
+      `the ${l.id} sub-tab must ask assetDiscipline(), not compare types itself: ${l.match}`);
+  }
+
   // And the list of disciplines is the same list, in the same order.
   assert.deepStrictEqual(page().ASSET_DISCIPLINES, discipline.DISCIPLINES);
   assert.deepStrictEqual(discipline.DISCIPLINE_IDS, ['art', 'animation'],
