@@ -342,3 +342,141 @@ no prompt. The older `InsecurePrivateNetworkRequestsAllowedForUrls` policy has
   fetches, heartbeat failures, and anything refused with the reason.
 
 Neither ever contains a token, a secret or file content.
+
+---
+
+## 12. Operations
+
+Everything in this section is a thing somebody will need to do at 4pm on a
+Tuesday, written so they do not have to read the rest of this file first.
+
+### Switching the feature off
+
+In Forge, **Settings → Server → Enable the Server tab**, off. That is the whole
+switch, it takes effect on the next request, and no restart is involved.
+
+What disappears: the Server tab, the upload box in Submit Work, and every Server
+endpoint (they answer `409 feature_disabled`). The project form stops showing the
+**Server folder link** field. Artists go back to pasting a link in Submit Work,
+which is what they do today and what never stopped working.
+
+What stays: **every file on the office server, exactly where it is.** Forge has
+never held a copy and nothing is deleted by switching off. Also kept: the
+project links, the discipline names, both keys and the secret, and the deletion
+requests — which stay viewable and resolvable, because a request is a message
+about a file that is still there.
+
+There is a second, narrower switch: **Enable upload in Submit Work**. Turning
+only that off leaves the tab (browsing and downloading) and takes the upload box
+out of the submit form. If you are backing out of a pilot, that is usually the
+one you want.
+
+The gateway keeps running and keeps serving nothing: with the feature off, Forge
+publishes no token keys, so the gateway verifies nothing and refuses every
+browser request on its own side as well. You can leave it running.
+
+### Rotating the gateway secret, without downtime
+
+1. Forge: **Settings → Server → Regenerate** (gateway secret). The new value is
+   shown **once** — copy it now.
+2. The old secret keeps working for the **overlap window** (default 60 minutes,
+   set in the same screen).
+3. On this machine: put the new value in `GATEWAY_SECRET` and restart the
+   service (below).
+4. Watch Settings → Server: the heartbeat should keep arriving. If it stops, the
+   secret was mistyped — regenerate and try again; the old one is still valid
+   until the window closes.
+
+### Rotating the token signing key, without downtime
+
+Forge: **Settings → Server → Rotate key pair**. Nothing to do on this machine.
+The gateway picks up both the new and the previous public key on its next
+configuration fetch (within `CONFIG_SECONDS`, default 5 minutes), so tokens
+minted seconds before the rotation still verify. After the overlap window only
+the new key is published.
+
+The gateway holds **public** keys only. There is no private key here to rotate,
+lose or steal.
+
+### Restarting the service
+
+```
+Windows:  nssm restart ForgeGateway          (or Services → ZVKY Forge Gateway → Restart)
+Linux:    systemctl restart forge-gateway
+```
+
+An upload in progress stops and **resumes** when the browser retries: the chunks
+already on the share stay in `.incoming`, and the browser asks
+`/v1/upload/:id/status` for the byte ranges and carries on. Nothing half-made
+ever appears in the archive.
+
+Restart after: changing any environment variable, renewing the certificate, or
+upgrading Node.
+
+### Where the logs are
+
+| What | Where |
+|---|---|
+| requests, config fetches, heartbeat failures, refusals with reasons | the service log — `journalctl -u forge-gateway` on Linux; the `AppStdout`/`AppStderr` files NSSM was given on Windows |
+| one line per operation: who, what, which path, how many bytes | `<STATE_DIR>/audit.log`, one JSON object per line |
+| callbacks waiting to reach Forge | `<STATE_DIR>/outbox/` — one file each; they drain on their own |
+| the last configuration Forge sent | `<STATE_DIR>/config.json` |
+
+Tokens and signatures are redacted before anything is written to either. Neither
+ever contains file content.
+
+### Reading the doctor's output
+
+```
+node doctor.js            # or: npm run doctor
+node doctor.js --json     # the same checks, for a ticket or a script
+```
+
+Run it **as the service account**, on this machine, with the share mounted. Each
+line is `PASS`, `WARN` or `FAIL`, and every FAIL and WARN carries a one-line fix.
+It exits non-zero if anything FAILED, so it can go in a monitoring job.
+
+* **PASS** — that property of this share is what the gateway needs.
+* **WARN** — it works, with a consequence worth knowing. The common ones:
+  *no hard links* (finishing a large file will take a second pass over the
+  bytes — harmless, and the fallback never overwrites anything); *finished files
+  are read-only but a write still succeeded* (you are running it as root or as
+  an account with Full Control — see §4); *FILE_ROOT is on the same device as
+  its parent* (which is what an **unmounted share** looks like, so check it).
+* **FAIL** — do not let the studio use this gateway yet. The three that matter
+  most: `exclusive create` not honoured (the share cannot promise not to
+  overwrite — do not use it), `Forge is reachable` (nothing works without it),
+  and `clock agrees with Forge` (tokens live 60 seconds; a clock further out
+  than the leeway makes every link expire on arrival).
+
+Everything the doctor writes goes in `<FILE_ROOT>/.incoming/doctor/` and is
+removed before it exits. It cannot write anywhere else — by design, since the
+service account cannot delete what it would leave behind.
+
+### The manual check the doctor cannot do
+
+Proving the service account **cannot** delete an archived file needs an account
+that can, so the doctor prints it as a checklist instead of running it. Do it
+once, when the share is set up:
+
+1. As an **admin** account, create `<FILE_ROOT>\_delete-test.txt`.
+2. As the **gateway service account**: deleting it must be refused; opening it
+   for writing must be refused; renaming it must be refused; creating a **new**
+   file in the same folder must succeed.
+3. Still as the service account, inside `<FILE_ROOT>\.incoming`: creating and
+   deleting a file must both succeed.
+4. As the **admin** account, delete `_delete-test.txt`.
+
+If step 2 allows anything but its last line, the permissions in §4 are not in
+place and Forge's promise that nothing can be deleted through it is resting on
+the application alone rather than on the filesystem.
+
+### Also test in Edge and Chrome, on an office machine
+
+The transport decision (§10) was measured in Chromium and in the desktop app's
+Electron. **Edge is inferred from the shared engine, not measured.** Before a
+studio-wide rollout, on a real office machine: open Forge in **Chrome** and in
+**Edge**, open the Server tab, and press **Run self-test** in Settings → Server.
+The self-test reports which transport that browser is using — *Direct* or *Via
+bridge window* — along with reachability, certificate trust and CORS. Do it once
+per browser; it takes a minute and it is the only way to know.

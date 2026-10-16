@@ -943,7 +943,7 @@ test('the Server tab, end to end', { skip: cfg ? false : SKIP_REASON }, async (t
        check that they match, and putting them side by side is the whole point
        of the step. */
     assert.deepStrictEqual(keys, ['configured', 'link_prefix', 'encryption', 'signing_key',
-      'gateway_secret', 'heartbeat', 'config_applied', 'disk']);
+      'gateway_secret', 'heartbeat', 'config_applied', 'clock', 'disk']);
     const prefixStep = out.body.steps.find((st) => st.key === 'link_prefix');
     assert.strictEqual(prefixStep.ok, true);
     assert.match(prefixStep.detail, /FILE_ROOT/, 'and it names the other half by name');

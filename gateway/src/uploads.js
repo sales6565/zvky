@@ -216,7 +216,7 @@ function claim(blob, dirAbs, name) {
  * reported by callback — see sha256() — which is why the UI says "verifying…"
  * and then the short checksum.
  */
-function complete(root, uploadId, { dir, name }) {
+function complete(root, uploadId, { dir, name, existingPrefix }) {
   const st = status(root, uploadId);
   if (!st.ok) return st;
   if (!st.started) return { ok: false, reason: 'That upload has not started.' };
@@ -232,6 +232,32 @@ function complete(root, uploadId, { dir, name }) {
   }
   const target = paths.resolve(root, dir === undefined || dir === null ? st.dir : dir);
   if (!target.ok) return target;
+
+  /* THE PROJECT FOLDER IS A PRECONDITION, NOT SOMETHING THIS CREATES.
+   *
+   * The token names it (claims.pre). If it is not on the share, the upload is
+   * refused and NOTHING is created — because the alternative is a mistyped link
+   * silently producing a second project folder that nobody is looking in, with
+   * the artist and the project manager both told it worked.
+   *
+   * Only the folders BELOW it are made, lazily: the discipline and the person.
+   * A token with no `pre` is the Server tab's own upload, where the person
+   * chose a folder they can already see, and the old behaviour stands. */
+  if (existingPrefix !== undefined && existingPrefix !== null && existingPrefix !== '') {
+    const base = paths.resolve(root, existingPrefix);
+    if (!base.ok) return base;
+    let there = false;
+    try { there = fs.statSync(base.full).isDirectory(); } catch { there = false; }
+    if (!there) {
+      return {
+        ok: false,
+        reason: 'Project folder not found on the server. Ask your project manager or IT to check '
+          + "the project's server link.",
+        code: 'project_folder_missing',
+        missing: base.relative,
+      };
+    }
+  }
   if (!fs.existsSync(target.full)) fs.mkdirSync(target.full, { recursive: true });
   const clean = paths.cleanSegment(name || st.name);
   if (!clean.ok) return clean;

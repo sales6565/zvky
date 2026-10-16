@@ -204,10 +204,21 @@ async function handle(req, res, ctx) {
       const parent = paths.resolve(ctx.fileRoot, asked.relative);
       if (!parent.ok) return json(res, 400, { error: parent.reason });
       const full = path.join(parent.full, name.value);
+      /* The PARENT must exist. Same rule as finishing an upload: a folder is
+         created inside a folder somebody can already see, never at the end of a
+         chain this invented. Without it, "New folder" on a mistyped path would
+         build the whole path and look like it worked. */
+      if (!fs.existsSync(parent.full)) {
+        return json(res, 409, {
+          error: 'Project folder not found on the server. Ask your project manager or IT to check '
+            + "the project's server link.",
+          code: 'project_folder_missing',
+          missing: parent.relative,
+        });
+      }
       try {
         // Exclusive: mkdir without recursive fails with EEXIST rather than
         // quietly adopting a folder somebody else made, so "created" is true.
-        fs.mkdirSync(parent.full, { recursive: true });
         fs.mkdirSync(full);
       } catch (err) {
         if (err.code === 'EEXIST') return json(res, 409, { error: `"${name.value}" is already there.` });
@@ -250,8 +261,11 @@ async function handle(req, res, ctx) {
     }
 
     if (route.path === '/v1/upload/:id/complete') {
-      const out = uploads.complete(ctx.fileRoot, params.id, { dir: claims.path, name: claims.name });
-      if (!out.ok) return json(res, 409, { error: out.reason, received: out.received, size: out.size });
+      const out = uploads.complete(ctx.fileRoot, params.id,
+        { dir: claims.path, name: claims.name, existingPrefix: claims.pre });
+      if (!out.ok) {
+        return json(res, 409, { error: out.reason, code: out.code, received: out.received, size: out.size, missing: out.missing });
+      }
       ctx.audit({ op: 'upload', outcome: 'ok', path: out.relative, user: claims.sub, ip: ctx.ipOf(req), size: out.size });
       ctx.callback('upload_completed', {
         id: params.id, path: out.relative, name: out.stored, size: out.size,

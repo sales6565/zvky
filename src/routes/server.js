@@ -410,6 +410,10 @@ router.post('/submit-upload-session', requireEnabled, requirePermission('server.
     privateKey: key.privateKey, kid: key.kid, audience: settings.gatewayId,
     userId: req.user.id, op: 'upload', path: ctx.computed.relative,
     uploadId, maxBytes: size, name: name.value,
+    /* The project's own folder, which must already be on the share. The gateway
+       refuses the upload if it is not there and creates only the discipline and
+       person folders below it. */
+    existingPrefix: ctx.computed.existingPrefix,
   });
   await audit({
     userId: req.user.id, userEmail: req.user.email, ip: req.ip, action: 'upload_started',

@@ -59,7 +59,8 @@ function generate() {
 /* Mint. `seconds` may shorten a token but never lengthen it past the operation's
    limit — a caller that asks for an hour of download gets sixty seconds, which
    is the stricter of what was asked and what is allowed. */
-function mint({ privateKey, kid, audience, userId, op, path: relative, uploadId, maxBytes, name, seconds, now = Date.now() }) {
+function mint({ privateKey, kid, audience, userId, op, path: relative, uploadId, maxBytes, name,
+  existingPrefix, seconds, now = Date.now() }) {
   const limit = LIFETIMES[op];
   if (!limit) throw new Error(`There is no "${op}" operation to mint a token for.`);
   if (!audience) throw new Error('A token must name the gateway it is for.');
@@ -78,6 +79,17 @@ function mint({ privateKey, kid, audience, userId, op, path: relative, uploadId,
     jti: crypto.randomUUID(),
   };
   if (uploadId) payload.uid = String(uploadId);
+  /* THE FOLDER THAT MUST ALREADY EXIST, and the line below which the gateway
+     may create.
+     
+     A project's folder is a place a studio made, with months of work in it. If
+     the gateway created it when it was missing, a mistyped link would quietly
+     produce a second folder and the work would go somewhere nobody is looking —
+     and the project manager would see "uploaded" and believe it. So the token
+     names the project folder as a precondition: the gateway refuses the upload
+     if it is not there, and creates only the discipline and person folders
+     under it. */
+  if (existingPrefix !== undefined && existingPrefix !== null) payload.pre = String(existingPrefix);
   if (Number.isFinite(Number(maxBytes))) payload.max = Number(maxBytes);
   if (name) payload.name = String(name);
 

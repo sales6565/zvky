@@ -29,6 +29,7 @@ const gwPaths = require('../gateway/src/paths');
 const ROOT = path.join(__dirname, '..');
 const cfg = config('legacymig');
 const PASSWORD = 'Legacy-Move-1!';
+const PREFIX = '\\\\\\\\SERVER\\\\Projects';
 
 const run = (env) => new Promise((resolve) => {
   execFile(process.execPath, [path.join(ROOT, 'scripts', 'migrate-legacy-files.js'), ...(env.ARGS || [])],
@@ -91,7 +92,8 @@ test('the legacy migration tool', { skip: cfg ? false : SKIP_REASON }, async (t)
       id[`version_${key}`] = versionId;
     }
 
-    // Turn the Server tab on.
+    // Turn the Server tab on, with a prefix and a link for the project — which
+    // is where this tool now reads a project's folder from.
     const keys = await as('root', '/admin/settings/server/keys', { method: 'POST' });
     const secret = await as('root', '/admin/settings/server/secret', { method: 'POST' });
     id.publicKey = keys.body.publicKey;
@@ -123,10 +125,18 @@ test('the legacy migration tool', { skip: cfg ? false : SKIP_REASON }, async (t)
     await new Promise((r) => gatewayHttp.listen(0, '127.0.0.1', r));
     id.gatewayUrl = `http://127.0.0.1:${gatewayHttp.address().port}`;
 
-    await q('UPDATE server_settings SET gateway_url = ?, gateway_id = ?, enabled = 1 WHERE id = 1',
-      [id.gatewayUrl, 'GW-MIG']);
+    await q('UPDATE server_settings SET gateway_url = ?, gateway_id = ?, enabled = 1, link_prefix = ? WHERE id = 1',
+      [id.gatewayUrl, 'GW-MIG', PREFIX]);
     // An empty save re-reads the row into the running server's mirror.
     await as('root', '/admin/settings/server', { method: 'PATCH', body: {} });
+
+    /* The project's folder is its LINK now, and the folder has to be on the
+       share already — the gateway creates nothing above the discipline level,
+       so a migration into a folder nobody made would be refused. */
+    const linked = await as('root', `/projects/${id.project}`, { method: 'PATCH',
+      body: { serverLink: `${PREFIX}\\Hero Quest` } });
+    assert.strictEqual(linked.status, 200, JSON.stringify(linked.body));
+    fs.mkdirSync(path.join(share, 'Hero Quest'), { recursive: true });
   });
 
   t.after(async () => {
@@ -150,7 +160,11 @@ test('the legacy migration tool', { skip: cfg ? false : SKIP_REASON }, async (t)
     assert.strictEqual(out.body.totalBytes, 6144);
     const names = out.body.files.map((f) => f.name).sort();
     assert.deepStrictEqual(names, ['hero-idle.psd', 'hero-walk.psd']);
-    assert.strictEqual(out.body.files[0].folder, null, 'the project has not claimed a folder yet');
+    /* The folder is where the project's LINK resolves — which the setup gave it,
+       because a migration needs somewhere to put the files. A project with no
+       link reads as null here and is skipped by the tool with a reason. */
+    assert.strictEqual(out.body.files[0].folder, 'Hero Quest');
+    assert.strictEqual(out.body.files[0].link, `${PREFIX}\\Hero Quest`);
     // It is readable only by whoever manages the Server settings.
     const asNobody = await api(server.base, '/admin/settings/server/legacy-files', { token: null });
     assert.ok(asNobody.status === 401 || asNobody.status === 403);

@@ -129,20 +129,28 @@ async function main() {
   if (!all.length) { console.log('Nothing to move.'); return 0; }
   if (DRY) console.log('\n--- DRY RUN: nothing will be uploaded ---');
 
-  /* Which folder each project owns. Read through the mapping, which CLAIMS one
-     for a project that has never used the tab — so a migration is also the
-     thing that names the folders. */
-  const mapping = new Map((settings.mapping || []).map((m) => [m.projectId, m.folder || m.wouldBe]));
+  /* WHERE EACH PROJECT'S WORK GOES: its server link, resolved to a relative
+     path. Read from the Settings overview rather than derived — a project's
+     folder is the link somebody typed, and a project with no link (or one that
+     is not under the prefix) is one this tool must skip rather than guess at. */
+  const mapping = new Map((settings.projects || [])
+    .filter((m) => m.valid && m.relative)
+    .map((m) => [m.projectId, m.relative]));
+  const unusable = (settings.projects || []).filter((m) => !m.valid);
+  if (unusable.length) {
+    console.log(`${unusable.length} project(s) have no usable server link and will be skipped:`);
+    for (const m of unusable.slice(0, 10)) console.log(`  - ${m.name}: ${m.why}`);
+  }
 
   const report = { moved: 0, skipped: 0, failed: 0, unverified: 0, bytes: 0, problems: [] };
   const listingCache = new Map();
 
   for (const file of all) {
-    const folder = file.folder || mapping.get(file.projectId);
+    const folder = mapping.get(file.projectId);
     const label = `${file.projectName}/${file.name} (${bytes(file.size)})`;
     if (!folder) {
       report.failed += 1;
-      report.problems.push(`${label}: its project has no folder, and none could be derived`);
+      report.problems.push(`${label}: its project has no usable server link, so there is nowhere to put it`);
       continue;
     }
 

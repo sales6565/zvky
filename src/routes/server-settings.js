@@ -24,6 +24,7 @@ const { authenticate, requirePermission } = require('../middleware/auth');
 const activity = require('../activity');
 const serverSettings = require('../server-settings');
 const serverFolders = require('../server-folders');
+const serverLink = require('../server-link');
 const serverTokens = require('../server-tokens');
 
 router.use(authenticate);
@@ -177,7 +178,7 @@ router.get('/legacy-files', (req, res, next) => {
   const limit = Math.min(1000, Math.max(1, Number(req.query.limit) || 500));
   const { rows } = await db.query(
     `SELECT v.id, v.asset_id, v.file_name, v.file_size, v.version_number, v.created_at,
-            a.\`code\` AS asset_code, a.project_id, p.\`name\` AS project_name, p.server_folder
+            a.\`code\` AS asset_code, a.project_id, p.\`name\` AS project_name, p.server_link
        FROM asset_versions v
        JOIN assets a ON a.id = v.asset_id
        JOIN projects p ON p.id = a.project_id
@@ -195,9 +196,15 @@ router.get('/legacy-files', (req, res, next) => {
       assetCode: r.asset_code,
       projectId: r.project_id,
       projectName: r.project_name,
-      // Where it should land. Null when the project has never claimed a folder;
-      // the tool asks Forge to claim one by reading the mapping first.
-      folder: r.server_folder || null,
+      /* Where it should land, as the project's LINK resolves. Null for a
+         project with no link or one whose link is not under the prefix — the
+         migration tool skips those rather than guessing, and says which. */
+      folder: (() => {
+        if (!r.server_link) return null;
+        const out = serverLink.validateLink(r.server_link, serverSettings.linkPrefix());
+        return out.ok ? out.relative : null;
+      })(),
+      link: r.server_link || null,
       name: r.file_name,
       size: r.file_size === null || r.file_size === undefined ? null : Number(r.file_size),
       version: r.version_number,

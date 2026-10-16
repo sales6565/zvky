@@ -140,9 +140,29 @@ function projectFolderRel(project, prefix) {
  * start a second folder. The collision suffix is a piece of the account id
  * rather than a counter, so two people called Alex Kim get stable, different
  * folders without a sequence to keep. */
+/* The Latin letters NFKD cannot help with.
+ *
+ * Decomposition turns "ü" into "u" plus a mark, which the line below drops —
+ * but "ø" is not a composed character, so it survives decomposition and then
+ * falls foul of the \w filter. "Søren Ødegård" became "S ren degard", which is
+ * nobody's name and would be that person's folder for ever. Small, explicit,
+ * and only the letters that actually need it. */
+const TRANSLITERATE = {
+  ø: 'o', Ø: 'O', æ: 'ae', Æ: 'AE', œ: 'oe', Œ: 'OE', ß: 'ss',
+  ł: 'l', Ł: 'L', đ: 'd', Đ: 'D', ð: 'd', Ð: 'D', þ: 'th', Þ: 'Th',
+  ħ: 'h', Ħ: 'H', ı: 'i', İ: 'I', ŋ: 'n', Ŋ: 'N',
+};
+
 function userFolderName(name, id) {
   const base = String(name === undefined || name === null ? '' : name)
+    .replace(/[øØæÆœŒßłŁđĐðÐþÞħĦıİŋŊ]/g, (c) => TRANSLITERATE[c] || c)
+    /* NFKD, and then the combining marks REMOVED rather than replaced.
+       Decomposing "Müller" gives "Mu" + a combining diaeresis, and turning that
+       mark into a space produced "Mu ller" — a folder with a space in the
+       middle of somebody's name. Accents are dropped so the name survives a
+       share that cannot keep them; the letters stay where they were. */
     .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^\w\s.-]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
