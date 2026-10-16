@@ -1364,6 +1364,13 @@ tr.past-round{opacity:0.62;}
 .srv-once{background:var(--code-bg);border:1px solid var(--border);border-radius:7px;padding:8px 10px;
   font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;word-break:break-all;}
 /* the project form's link field, the submit box, the transport chip */
+.srv-refs:empty{display:none;}
+.srv-refs{margin:6px 0 0;padding:6px 8px;border-radius:6px;background:var(--surface-2);}
+.srv-refs-head{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-faint);margin-bottom:3px;}
+.srv-ref{display:flex;gap:8px;align-items:center;font-size:11.5px;padding:1px 0;}
+.srv-ref-name{word-break:break-all;}
+.srv-ref-size{color:var(--ink-faint);white-space:nowrap;}
+.srv-ref .btn.tiny{margin-left:auto;flex:0 0 auto;}
 .srv-link-field{margin-top:10px;}
 .srv-link-row{display:flex;gap:8px;align-items:center;}
 .srv-link-row input{flex:1 1 auto;min-width:0;}
@@ -10815,6 +10822,11 @@ async function openDrawer(id){
       <div class="note" style="border-left-color:${v.stage==='tl'?'var(--review)':'var(--review)'};">
         <span class="who">v${v.version_number} · ${avatarHTML({ id:v.uploaded_by, name:v.uploaded_by_name, photoAt:v.uploaded_by_photo_at }, { size:16, title:false })} ${escapeHTML(v.uploaded_by_name||'Someone')} · ${v.stage==='tl'?'Team Lead review':'Creative Director review'}</span> <span class="when">${fmtDate(v.created_at)}</span>
         ${v.link?`<p>${renderLink(v.link, {style:'color:var(--brand-accent);word-break:break-all;'})}</p>`:''}
+        <!-- THE FILES THAT LINK POINTS AT, when they were uploaded through Forge.
+             Filled in by srvSubmissionRefs() after the drawer draws — a second
+             request, so the submission block never waits on it, and absent
+             entirely for every round that was submitted by pasting a link. -->
+        <div class="srv-refs" data-refs="${escapeHTML(v.id)}"></div>
         ${v.description?`<p>${escapeHTML(v.description)}</p>`:''}
         ${v.file_name?`<p>${escapeHTML(v.file_name)} ${v.file_size?'· '+fmtBytes(v.file_size):''} — <a href="#" class="downloadVersionLink" data-vid="${v.id}" style="color:var(--brand-accent);">download</a></p>`:''}
       </div>`).join('') : '<div style="font-size:12px;color:var(--ink-faint);">Nothing submitted yet.</div>'}</div>
@@ -11375,6 +11387,9 @@ async function openDrawer(id){
      stitched into one sequence by the API, so nobody has to reconstruct the
      order from timestamps. */
   loadAssetHistory(id);
+  /* The uploaded files under each submission's link, if any. Never awaited:
+     the drawer is already on screen and this only ever adds to it. */
+  srvSubmissionRefs(id).catch(()=>{ /* the rounds read as they always did */ });
   if(canTlReview || canCdReview){
     /* Stage-specific ids rather than one pair shared between the two blocks.
        They cannot both render today — the statuses are mutually exclusive — but
@@ -11740,6 +11755,7 @@ function openRound(assetId, roundId){
         <span class="who">v${v.versionNumber} · ${v.stage==='tl'?'Team Lead review':'Creative Director review'}</span>
         <span class="when">${fmtDate(v.at)}</span>
         ${v.link?`<p>${renderLink(v.link, {style:'color:var(--brand-accent);word-break:break-all;'})}</p>`:''}
+        <div class="srv-refs" data-refs="${escapeHTML(v.id || '')}"></div>
         ${v.description?`<p>${escapeHTML(v.description)}</p>`:''}
       </div>`).join('') : '<div style="font-size:12px;color:var(--ink-faint);">Nothing was submitted in this round.</div>'}
 
@@ -11764,6 +11780,8 @@ function openRound(assetId, roundId){
   /* The full timeline, which is the same trail the asset panel shows — one
      place, not a second copy of it. */
   loadAssetHistory(assetId);
+  // And the uploaded files under this round's submissions, same as the panel.
+  srvSubmissionRefs(assetId).catch(()=>{ /* the round reads as it always did */ });
   document.getElementById('openWholeAsset').onclick = ()=>openDrawer(assetId);
 }
 
@@ -23867,6 +23885,63 @@ async function srvSubmitFinish(assetId){
   }catch(err){
     showToast(err && err.message ? err.message : 'The uploads could not be recorded.');
   }
+}
+
+/* ---------- the files a submission pointed at ----------
+ *
+ * WHAT THIS IS NOT: a file browser, a listing, or a second copy of the share.
+ * These are the references Forge wrote when an upload finished — asset, version,
+ * person, relative path, name — so this draws the same off the office network as
+ * on it, and a round submitted by pasting a link has none and shows nothing.
+ *
+ * A SECOND REQUEST, AFTER THE DRAWER. Same bargain as loadAssetHistory: the
+ * submissions block is drawn from the asset payload and must not wait on this.
+ *
+ * THE BUTTON IS THE SERVER'S DECISION. `mayOpen` comes per file from
+ * /server/submissions/:assetId, which checks `server.view` AND that the path is
+ * inside a prefix this person holds. A reviewer without the Server tab sees the
+ * names — which the link above them already implied — and no button. */
+async function srvSubmissionRefs(assetId){
+  const boxes = [...document.querySelectorAll('[data-refs]')];
+  if(!boxes.length || !SRV.enabled) return;
+  let data;
+  try{ data = await api('/server/submissions/' + assetId); }
+  catch{ return; /* off, or not for this person: the rounds read as they always did */ }
+
+  const byVersion = new Map();
+  for(const f of (data.files || [])){
+    const key = f.versionId || '';
+    if(!byVersion.has(key)) byVersion.set(key, []);
+    byVersion.get(key).push(f);
+  }
+  for(const box of boxes){
+    const files = byVersion.get(box.dataset.refs) || [];
+    if(!files.length) continue;
+    box.innerHTML = `<div class="srv-refs-head">Uploaded to the office server</div>`
+      + files.map(f=>`<div class="srv-ref">
+          <span class="srv-ref-name">${escapeHTML(f.name)}</span>
+          ${f.size === null || f.size === undefined ? '' : `<span class="srv-ref-size">${escapeHTML(srvBytes(f.size))}</span>`}
+          ${f.mayOpen ? `<button type="button" class="btn tiny" data-openref="${escapeHTML(f.relative)}">Open in Server tab</button>` : ''}
+        </div>`).join('');
+    box.querySelectorAll('[data-openref]').forEach(b=>{
+      b.onclick = ()=>srvOpenRef(b.dataset.openref);
+    });
+  }
+}
+
+/* THE FOLDER, NOT THE FILE. The Server tab lists folders; opening "the file"
+   means showing the person where it is, with its neighbours — which is what
+   somebody clicking this is after. The path is not trusted on the way back
+   either: the tab mints a token for it and Forge checks the scope again. */
+function srvOpenRef(relative){
+  const folder = String(relative || '').split('/').slice(0, -1).join('/');
+  SRV.path = folder;
+  SRV.filter = '';
+  SRV.entries = [];
+  SRV.total = 0;
+  if(typeof closeDrawer === 'function') closeDrawer();
+  setTab('server');
+  srvGo();
 }
 
 const SRV_RESUME_KEY = 'zvkyServerUploads';

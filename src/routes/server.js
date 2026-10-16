@@ -45,6 +45,7 @@ const serverFolders = require('../server-folders');
 const serverPaths = require('../server-paths');
 const serverLink = require('../server-link');
 const serverTokens = require('../server-tokens');
+const serverSubmissions = require('../server-submissions');
 const emailNotifications = require('../email-notifications');
 
 router.use(authenticate);
@@ -144,6 +145,47 @@ router.get('/state', requirePermission('server.view'), async (req, res) => {
       browseAll: permissions.holds(req.user, 'server.browse_all'),
       viewAudit: permissions.holds(req.user, 'server.view_audit'),
     },
+  });
+});
+
+/* GET /api/server/submissions/:assetId — what a submission's files were.
+ *
+ * THE RECORD, NOT THE SHARE. These rows are references written when an upload
+ * finished: an asset, a version, a person, a relative path and a name. Nothing
+ * here reads the office server, so this answers the same off the network as on
+ * it — and it is not an index of the share, because it only ever contains files
+ * somebody submitted through Forge.
+ *
+ * TWO DIFFERENT QUESTIONS, ANSWERED SEPARATELY.
+ *
+ *   May I see that this round pointed at three files called these things?
+ *     — the same question as seeing the submission, so the same rule:
+ *       permissions.canViewAsset(). A reviewer looking at a round already sees
+ *       the link those files sit under.
+ *
+ *   May I open one in the Server tab?
+ *     — a different question, and a Server-tab one: `server.view` AND the path
+ *       inside a prefix this person actually holds. So `mayOpen` is computed per
+ *       file and the button is drawn from it; a reviewer without the Server tab
+ *       sees the names and no button, which is what they could see anyway. */
+router.get('/submissions/:assetId', requireEnabled, async (req, res) => {
+  const { rows } = await db.query(
+    'SELECT id, project_id, assignee_id FROM assets WHERE id = $1', [req.params.assetId]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'No such asset.' });
+  if (!(await permissions.canViewAsset(req.user, rows[0]))) {
+    return res.status(403).json({ error: 'You do not have permission to do that' });
+  }
+  const files = await serverSubmissions.forAsset(db, req.params.assetId);
+  const mayView = permissions.holds(req.user, 'server.view');
+  /* One prefix read for the whole list rather than one per file: they are all
+     inside the same project's folder, and this is drawn on every drawer. */
+  const scope = mayView && files.length ? await serverFolders.allowedPrefixes(db, req.user) : null;
+  res.json({
+    files: files.map((f) => ({
+      ...f,
+      mayOpen: Boolean(scope && (scope.all || serverFolders.mayReach(scope.prefixes, f.relative))),
+    })),
   });
 });
 

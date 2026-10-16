@@ -485,4 +485,65 @@ test('the Submit Work upload', { skip: cfg ? false : SKIP_REASON }, async (t) =>
     // Put it back.
     await as('root', '/permissions/roles/game_artist', { method: 'PUT', body: { permissions: held } });
   });
+
+  await t.test('the two screens outside the tab get their settings, and nobody else does', async () => {
+    /* THE ROUTE THAT EXISTS BECAUSE /state DOES NOT FIT. The project form and
+       the submit box are drawn by people who hold project.edit or
+       server.submit_upload and need not hold server.view — see the note on
+       /page-context in src/routes/server.js. */
+    const mine = await as('ana', '/server/page-context');
+    assert.strictEqual(mine.status, 200, JSON.stringify(mine.body));
+    assert.strictEqual(mine.body.linkPrefix, PREFIX);
+    assert.strictEqual(mine.body.submitUploadEnabled, true);
+    assert.strictEqual(typeof mine.body.chunkBytes, 'number');
+    /* AND NOTHING ELSE IN IT. A secret, a key fingerprint or a list of other
+       people's projects reaching a screen that only needs a prefix is how a
+       convenience route becomes a leak. */
+    assert.deepStrictEqual(Object.keys(mine.body).sort(), [
+      'allowedExtensions', 'chunkBytes', 'deniedExtensions', 'enabled', 'gatewayId',
+      'gatewayUrl', 'linkPrefix', 'maxFileBytes', 'parallelChunks', 'submitUploadEnabled',
+    ]);
+
+    // Somebody with neither permission is refused.
+    const held = (await as('root', '/permissions/roles/game_artist')).body.role.permissions
+      .filter((p) => p.enabled).map((p) => p.key);
+    await as('root', '/permissions/roles/game_artist', { method: 'PUT',
+      body: { permissions: held.filter((k) => k !== 'server.submit_upload' && k !== 'project.edit') } });
+    const refused = await as('ana', '/server/page-context');
+    assert.strictEqual(refused.status, 403, JSON.stringify(refused.body));
+    await as('root', '/permissions/roles/game_artist', { method: 'PUT', body: { permissions: held } });
+  });
+
+  await t.test('the references under a submission: who may read them, and who may open them', async () => {
+    const mine = await as('ana', `/server/submissions/${id.heroArt}`);
+    assert.strictEqual(mine.status, 200, JSON.stringify(mine.body));
+    assert.ok(mine.body.files.length, 'the files this round pointed at');
+    /* SHE UPLOADED THEM AND STILL CANNOT OPEN THEM IN THE TAB: that needs
+       server.view, which is a different grant. The names are hers to see — the
+       link above them says the same thing. */
+    assert.deepStrictEqual([...new Set(mine.body.files.map((f) => f.mayOpen))], [false]);
+    // Nothing that is not a reference.
+    for (const f of mine.body.files) {
+      assert.deepStrictEqual(Object.keys(f).sort(),
+        ['at', 'id', 'mayOpen', 'name', 'relative', 'size', 'versionId'].sort());
+    }
+
+    // A Super Admin may open them, because the whole share is reachable for them.
+    const admin = await as('root', `/server/submissions/${id.heroArt}`);
+    assert.strictEqual(admin.status, 200, JSON.stringify(admin.body));
+    assert.deepStrictEqual([...new Set(admin.body.files.map((f) => f.mayOpen))], [true]);
+
+    /* AN ASSET THAT IS NOT THEIRS. Bo is an artist on nothing: the same rule
+       that hides the asset hides what it pointed at. */
+    const notBo = await as('bo', `/server/submissions/${id.heroArt}`);
+    assert.strictEqual(notBo.status, 403, JSON.stringify(notBo.body));
+
+    // And with the Server tab switched off the route is closed like the rest.
+    await patch({ enabled: false, submitUploadEnabled: false });
+    const off = await as('root', `/server/submissions/${id.heroArt}`);
+    assert.strictEqual(off.status, 409, JSON.stringify(off.body));
+    assert.strictEqual(off.body.code, 'feature_disabled');
+    await patch({ enabled: true });
+    await patch({ submitUploadEnabled: true });
+  });
 });

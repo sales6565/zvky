@@ -3597,6 +3597,15 @@ by hand, because it is the same endpoint's answer.
   still filling up.
 * **A failure leaves the link alone.** Only the files that actually landed are
   recorded; if none did, the field keeps whatever the artist typed.
+* **The files are shown under the submission afterwards**, with an *Open in
+  Server tab* button beside each. Two different questions, answered separately:
+  seeing that a round pointed at three files called these things is the same
+  question as seeing the submission (`canViewAsset`), while opening one is a
+  Server-tab question — `server.view` **and** the path inside a prefix this
+  person holds. So `mayOpen` is computed per file by the server and a reviewer
+  without the Server tab sees the names and no button, which is what the link
+  above them already told them. The button opens the **folder**, not a download:
+  the tab mints its own token for it and the scope is checked again.
 * **Two screens outside the tab, and one small route for them.** The project
   form's link field and this upload box are drawn by people who need not hold a
   Server-tab permission at all — `project.edit` for one, `server.submit_upload`

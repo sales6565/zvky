@@ -118,6 +118,9 @@ function fixture() {
     <button class="btn btn-brand" id="submitAssetBtn">Submit for review</button>
   </div>
   <div id="serverView"></div>
+  <!-- Where the test draws one submission's references box, which in the
+       application is inside each round in the drawer. -->
+  <div id="refsHost"></div>
 <script>
 window.__native = [];
 for (const name of ['alert', 'confirm', 'prompt']) {
@@ -136,6 +139,12 @@ window.__permissions = [];
 function can(key){ return window.__permissions.includes(key); }
 window.__closed = 0;
 function closeDrawer(){ window.__closed += 1; }
+window.__tab = null;
+function setTab(tab){ window.__tab = tab; }
+window.__drawRefs = (versionId) => {
+  document.getElementById('refsHost').innerHTML =
+    '<div class="srv-refs" data-refs="' + versionId + '"></div>';
+};
 function render(){ /* the board, which this fixture has not got */ }
 async function api(path, opts = {}){
   const res = await fetch('/api' + path, {
@@ -619,6 +628,47 @@ test('the Submit Work upload, in a browser', { skip: SKIP }, async (t) => {
       assert.strictEqual(versions[0].link, '\\\\OLD-NAS\\drops\\cycle-v4.ma');
       await h.native();
     } finally { await h.close(); }
+  });
+
+  await t.test('the uploaded files show under the submission, and open from it', async () => {
+    const version = (await q(
+      'SELECT id FROM asset_versions WHERE asset_id = ? ORDER BY created_at DESC LIMIT 1',
+      [id.heroArt]))[0].id;
+
+    /* THE ARTIST WHO UPLOADED THEM. She holds server.submit_upload and not
+       server.view, so she sees what she sent and no button — the Server tab is
+       not hers to open. */
+    const artist = await open('ana');
+    try {
+      await artist.ready();
+      await artist.page.evaluate((v) => window.__drawRefs(v), version);
+      await artist.page.evaluate((a) => srvSubmissionRefs(a), id.heroArt);
+      await artist.page.waitForSelector('.srv-ref');
+      const names = await artist.page.$$eval('.srv-ref .srv-ref-name',
+        (els) => els.map((e) => e.textContent.trim()).sort());
+      assert.deepStrictEqual(names, ['notes.txt', 'run.psd', 'walk.psd']);
+      assert.strictEqual(await artist.page.$$eval('[data-openref]', (els) => els.length), 0,
+        'no Server tab for her, so no button into it');
+      await artist.native();
+    } finally { await artist.close(); }
+
+    /* SOMEBODY WHO MAY BROWSE. The button opens the FOLDER the file is in, in
+       the Server tab — not a download, and not the file on its own. */
+    const admin = await open('root');
+    try {
+      await admin.ready();
+      await admin.page.evaluate((v) => window.__drawRefs(v), version);
+      await admin.page.evaluate((a) => srvSubmissionRefs(a), id.heroArt);
+      await admin.page.waitForSelector('[data-openref]');
+      assert.strictEqual(await admin.page.$$eval('[data-openref]', (els) => els.length), 3);
+      // The size is shown beside each name, read off the stored reference.
+      assert.match(await admin.page.$eval('.srv-ref .srv-ref-size', (e) => e.textContent), /\d/);
+      await admin.page.click('[data-openref]');
+      await admin.page.waitForFunction("window.__tab === 'server'");
+      assert.strictEqual(await admin.page.evaluate('SRV.path'), 'Hero Quest/Artist/Ana Artist');
+      assert.strictEqual(await admin.page.evaluate('window.__closed'), 1, 'and the drawer closed');
+      await admin.native();
+    } finally { await admin.close(); }
   });
 
   await t.test('submitting is held while an upload is still going', async () => {
