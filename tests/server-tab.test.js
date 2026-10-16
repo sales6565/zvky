@@ -99,6 +99,43 @@ test('no Forge route for the Server tab accepts a file body', () => {
   }
 });
 
+test('nothing on the Forge side logs a token or a secret', () => {
+  /* The gateway's own logger redacts, and tests/gateway-channel.test.js pins
+     that. Forge's side has no redacting logger — it has ordinary console calls —
+     so the rule here is that none of them is handed a value that could be a
+     token or a key. A token in a hosting provider's log file is a link to
+     somebody's work sitting in a place with a different audience to the share.
+     Mutation [earlier 13] is a console.log of a minted token, and until this
+     test existed it passed everything.
+  */
+  const files = ['routes/server.js', 'routes/server-settings.js', 'routes/gateway.js',
+    'server-tokens.js', 'server-settings.js', 'server-folders.js', 'server-submissions.js',
+    'server-link.js', 'email-secret.js'];
+  /* STRING LITERALS ARE NOT VALUES. A line that says "the signature does not
+     match" contains the word signature and leaks nothing; `${secret}` in the
+     same line would leak everything. So quoted text is removed and a template
+     literal is reduced to its interpolations before the test looks. */
+  const values = (args) => args
+    .replace(/'(?:[^'\\]|\\.)*'/g, "''")
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+    .replace(/`((?:[^`\\]|\\.)*)`/g, (whole, inner) =>
+      (inner.match(/\$\{[^}]*\}/g) || []).join(' '));
+  const FORBIDDEN = /\b(minted|token|tokens|privateKey|signingPrivate|gatewaySecret|secrets?|plain)\b/;
+  let checked = 0;
+  for (const f of files) {
+    const src = SRC(f);
+    const re = /console\.(log|info|warn|error|debug|trace)\(([\s\S]*?)\);/g;
+    let m;
+    while ((m = re.exec(src))) {
+      checked += 1;
+      const args = values(m[2]);
+      assert.ok(!FORBIDDEN.test(args),
+        `src/${f} hands a possible token or secret to console.${m[1]}: ${m[0].slice(0, 160)}`);
+    }
+  }
+  assert.ok(checked >= 3, `expected to have found some logging to check, found ${checked}`);
+});
+
 test('the Server secrets never fall back to JWT_SECRET', () => {
   /* ===========================================================================
    * WHY THIS IS A TEST AND NOT A COMMENT.
