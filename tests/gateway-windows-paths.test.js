@@ -53,20 +53,31 @@ test('backslashes and mixed separators are one path, not a name', () => {
 
 test('drive letters, UNC prefixes and device paths are refused', () => {
   const root = sandbox();
+  /* AND REFUSED BY THE RULE THAT NAMES THEM, which is the half of this that a
+     count of refusals misses. Every one of these would also trip the illegal
+     character check a step later — ':' is not allowed in a segment — so taking
+     the drive-letter rule out changed nothing a boolean could see, while the
+     person who pasted C:\Projects stopped being told what was wrong with it and
+     got "contains a character that cannot be used in a file name" instead. The
+     two rules are layers, and the reason is how you tell which one answered. */
   const refused = [
-    'C:\\Windows\\win.ini',
-    'c:/Windows/win.ini',
-    'C:Projects',                      // drive-relative: meaningless off that machine
-    '\\\\server\\share\\file',
-    '//server/share/file',
-    '\\\\?\\C:\\Windows',              // the extended-length prefix
-    '\\\\.\\PhysicalDrive0',           // a device namespace
-    '\\\\?\\UNC\\server\\share',
+    ['C:\\Windows\\win.ini', /drive letter/i],
+    ['c:/Windows/win.ini', /drive letter/i],
+    ['C:Projects', /drive letter/i],   // drive-relative: meaningless off that machine
+    ['\\\\server\\share\\file', /absolute path/i],
+    ['//server/share/file', /absolute path/i],
+    ['\\\\?\\C:\\Windows', /absolute path/i],        // the extended-length prefix
+    ['\\\\.\\PhysicalDrive0', /absolute path/i],     // a device namespace
+    ['\\\\?\\UNC\\server\\share', /absolute path/i],
   ];
-  for (const value of refused) {
+  for (const [value, why] of refused) {
     const out = paths.resolve(root, value);
     assert.strictEqual(out.ok, false, `${JSON.stringify(value)} must be refused`);
-    assert.ok(out.reason, `${value} must come with a reason`);
+    assert.match(out.reason, why, `${JSON.stringify(value)} must be refused for the right reason`);
+    // Forge refuses it before signing anything, with the same sentence.
+    const forge = serverPaths.cleanRelative(value);
+    assert.strictEqual(forge.ok, false, `Forge must refuse ${JSON.stringify(value)} too`);
+    assert.match(forge.reason, why, `and for the same reason: ${JSON.stringify(value)}`);
   }
 });
 
