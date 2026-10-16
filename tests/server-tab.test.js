@@ -584,6 +584,16 @@ test('the Server tab, end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     for (const [method, p, body] of calls) {
       const r = await as('ana', p, { method, body });
       assert.strictEqual(r.status, 403, `${method} ${p} gave ${r.status}: ${JSON.stringify(r.body)}`);
+      /* AND REFUSED BY THE ROUTE'S OWN GATE, which is the half a status code
+         cannot tell you. Several of these have a SECOND check inside them —
+         /server/token re-asks per operation, because `list`, `download` and
+         `mkdir` are different keys — and those inner checks answer 403 too, with
+         a different sentence. So a dropped requirePermission would leave the
+         status unchanged and only the wording would move, which is exactly the
+         mutation this has to notice. The middleware's sentence is the pin. */
+      assert.strictEqual(r.body && r.body.error, 'You do not have permission to do that',
+        `${method} ${p} must be refused by requirePermission itself, not by a later check: `
+        + JSON.stringify(r.body));
     }
     // And the lead, who holds no server keys either, cannot resolve a request.
     const resolve = await as('lead', '/server/deletion-requests/none/resolve', { method: 'POST', body: { status: 'done' } });
