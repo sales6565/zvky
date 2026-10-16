@@ -1328,6 +1328,27 @@ const GROUPS = [
           + 'records that somebody removed the file on the server; it deletes nothing here.',
       },
       {
+        key: 'server.submit_upload',
+        label: 'Upload from Submit Work',
+        /* SUPER ADMIN ONLY, and there is nothing better to imply it from.
+         *
+         * The obvious choice would have been "whoever may submit work", and no
+         * such key exists: submitting is gated by the state machine's
+         * who: 'assignee' rule (src/asset-workflow.js), not by a permission —
+         * the person the asset is assigned to may submit it, and nobody else,
+         * which is a relationship rather than a grant. Implying this from
+         * anything role-shaped would therefore have been inventing a mapping.
+         *
+         * So it starts where every other key in this group starts, and a studio
+         * grants it to the designations in its pilot. The assignee rule still
+         * applies underneath: holding this lets somebody upload on an asset
+         * they could already submit, never on one they could not. */
+        impliedBy: has('managePermissions'),
+        describe: 'Adds an upload box to the Submit Work form, which copies files to the office '
+          + 'server and fills in the link. The artist can still paste a link instead. Files go only '
+          + 'into that person\u2019s own folder on that project.',
+      },
+      {
         key: 'server.browse_all',
         label: 'Browse the Whole Share',
         impliedBy: has('managePermissions'),

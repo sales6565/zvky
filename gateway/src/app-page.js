@@ -49,7 +49,10 @@ function html({ forgeOrigin }) {
   <p class="state" id="state">Connecting to the Forge tab…</p>
   <p class="quiet">Keep this window open while you browse or upload office files.
      It carries the files between your browser and the office file server, and
-     nothing is stored here. You can close it when you are done.</p>
+     nothing is stored here — no files, and no password or token: each request
+     is permitted separately by Forge for a few seconds at a time. You can close
+     it when you are done; an upload in progress will pause and carry on when
+     you reopen it.</p>
   <p class="quiet" id="count"></p>
 <script>
 (function () {
@@ -86,9 +89,18 @@ function html({ forgeOrigin }) {
   }
 
   window.addEventListener('message', function (e) {
-    // The one origin this gateway is configured for. Anything else is dropped
-    // unread — the relay must not be usable by a page the studio did not open.
+    /* TWO CHECKS, BOTH REQUIRED.
+     *
+     * The ORIGIN must be the one Forge is configured at — exact, not a suffix
+     * match — so no other page can drive this relay.
+     *
+     * And the SOURCE must be the window that opened this one. Without that, any
+     * page at Forge's origin could reach a relay somebody left open in another
+     * tab; with it, only the tab that opened it can. A relay with neither check
+     * is a file server with a postMessage API. */
     if (!FORGE || e.origin !== FORGE) return;
+    var opener = window.opener || (window.parent !== window ? window.parent : null);
+    if (opener && e.source && e.source !== opener) return;
     var msg = e.data;
     if (!msg || typeof msg !== 'object' || msg.channel !== 'forge-gateway') return;
     if (msg.kind === 'ping') { reply(msg.id, { status: 200, ok: true, data: { ok: true } }); return; }

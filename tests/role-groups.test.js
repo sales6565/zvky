@@ -78,7 +78,12 @@ const MANAGE = 'settings.role_groups';
 const SINCE_SNAPSHOT = [MANAGE, 'settings.email_delivery', 'report.remind', 'settings.nudges',
   'followup.mark_leave', 'followup.mark_idle', 'followup.mark_past_dates', 'settings.leave.manage',
   'server.view', 'server.download', 'server.upload', 'server.request_delete',
-  'server.manage_requests', 'server.browse_all', 'server.view_audit', 'settings.server.manage'];
+  'server.manage_requests', 'server.browse_all', 'server.view_audit', 'settings.server.manage',
+  /* The ninth, added with the Submit Work upload. Super Admin like the rest,
+     and for a reason specific to it: there is no "may submit work" key to imply
+     it from — submitting is the state machine's assignee rule, not a grant —
+     so a studio grants this to its pilot designations deliberately. */
+  'server.submit_upload'];
 
 test('every key added since the snapshot is Super Admin only', () => {
   const added = catalog.KEYS.filter((k) => !SNAPSHOT.roles.super_admin.includes(k));

@@ -4499,9 +4499,31 @@ async function ensureServerTab(db, log) {
       -- Who hears about a deletion request, and whether by email as well as
       -- in-app. In-app is always on; this is the email half.
       email_on_delete_requests TINYINT(1) NOT NULL DEFAULT 1,
-      -- Legacy files already on this server stay downloadable until this is
-      -- turned off. Removing them from the host is an owner's manual job.
-      serve_legacy      TINYINT(1)   NOT NULL DEFAULT 1,
+
+      /* THE SECOND SWITCH, ALSO OFF, and it cannot be on while the first is
+         off — the server refuses that combination and the screen says why.
+         Two switches rather than one because they are two different risks: the
+         first opens a new tab for people who browse a file server, the second
+         changes the form every artist in the studio submits work through. A
+         studio will want the first on for a week before it touches the second. */
+      submit_upload_enabled TINYINT(1) NOT NULL DEFAULT 0,
+      -- all | selected. Selected with an empty list, so turning the switch on
+      -- changes nothing until a project is named.
+      submit_scope      VARCHAR(16)  NOT NULL DEFAULT 'selected',
+
+      /* THE SERVER LINK PREFIX: the text every project's server link must start
+         with, and the thing that ties what people paste to what the gateway can
+         see. "\\\\SERVER\\Projects" in the studio's words; FILE_ROOT on the
+         gateway machine is the same place in that machine's words. Required
+         before a project can be given a link or anything can be uploaded,
+         because without it there is nothing to validate a link against. */
+      link_prefix       VARCHAR(500) NULL,
+
+      /* The folder a discipline's work goes in, by asset CATEGORY key — stored
+         as JSON because the category list is the studio's and starts empty. A
+         category with no entry falls back to the name below. */
+      discipline_folders TEXT        NULL,
+      discipline_fallback VARCHAR(120) NOT NULL DEFAULT 'Work',
 
       -- Bumped on every save. The gateway reports the version it has applied,
       -- so Settings can say "the gateway is running an older configuration"
@@ -4510,6 +4532,22 @@ async function ensureServerTab(db, log) {
       updated_by        CHAR(36)     NULL,
       updated_at        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )`));
+  /* An install made earlier on this branch has the table without the columns
+     added above. Each is checked on its own, so a half-applied run finishes on
+     the next boot rather than failing on a duplicate column for ever. */
+  const settingsCols = await columnsOf(db, 'server_settings');
+  const addSetting = async (name, ddl) => {
+    if (settingsCols.size && !settingsCols.has(name)) {
+      await db.query(`ALTER TABLE server_settings ADD COLUMN ${ddl}`);
+      log(`  + server_settings.${name}`);
+    }
+  };
+  await addSetting('submit_upload_enabled', 'submit_upload_enabled TINYINT(1) NOT NULL DEFAULT 0');
+  await addSetting('submit_scope', "submit_scope VARCHAR(16) NOT NULL DEFAULT 'selected'");
+  await addSetting('link_prefix', 'link_prefix VARCHAR(500) NULL');
+  await addSetting('discipline_folders', 'discipline_folders TEXT NULL');
+  await addSetting('discipline_fallback', "discipline_fallback VARCHAR(120) NOT NULL DEFAULT 'Work'");
+
   await db.query('INSERT IGNORE INTO server_settings (id) VALUES (1)');
 
   /* What the gateway last said about itself. One row, overwritten — this is a
@@ -4548,6 +4586,40 @@ async function ensureServerTab(db, log) {
       KEY idx_server_events_at (at),
       KEY idx_server_events_user (user_id, at),
       KEY idx_server_events_action (action, at)
+    )`));
+
+  /* THE REFERENCES AN UPLOAD LEAVES BEHIND — and nothing else.
+   *
+   * A relative path, a name, a size and a time, for a file the artist put on
+   * the office server from the Submit Work form. No content, no thumbnail, no
+   * checksum of bytes this server never saw. It exists so the submission and
+   * its history can show what was uploaded beside the link, and so "Open in
+   * Server tab" has somewhere to go.
+   *
+   * NOT A FILE INDEX EITHER, and the difference is which question it answers:
+   * this says "these files were uploaded for this submission", which is a fact
+   * about the submission. It is never read to answer "what is in this folder" —
+   * the share answers that, every time.
+   *
+   * version_id is NULL until the artist actually submits, because the upload
+   * comes first: they upload, the link is filled in, and they may still edit
+   * the link or walk away. The rows are claimed by the submission when it
+   * happens, and an upload that was never submitted stays unclaimed rather
+   * than being attached to the wrong round.
+   */
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS server_submission_files (
+      id            CHAR(36)      NOT NULL PRIMARY KEY,
+      asset_id      CHAR(36)      NOT NULL,
+      version_id    CHAR(36)      NULL,
+      user_id       CHAR(36)      NULL,
+      relative_path VARCHAR(1000) NOT NULL,
+      \`name\`       VARCHAR(255)  NOT NULL,
+      size          BIGINT        NULL,
+      at            DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_ssf_asset (asset_id, at),
+      KEY idx_ssf_version (version_id),
+      CONSTRAINT fk_ssf_asset FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE,
+      CONSTRAINT fk_ssf_user  FOREIGN KEY (user_id)  REFERENCES users(id)  ON DELETE SET NULL
     )`));
 
   /* Deletion requests. Forge never deletes anything: this is a message to IT
@@ -4589,21 +4661,66 @@ async function ensureServerTab(db, log) {
     } catch { /* already there, or a server without generated columns */ }
   }
 
-  /* THE FOLDER A PROJECT OWNS, snapshotted at first use and then fixed.
+  /* THE PROJECT'S SERVER LINK — typed by a person, not derived.
    *
-   * Derived from the project code when it is first needed and written here, so
-   * renaming the project — or changing its code — never orphans the folder that
-   * already has a fortnight of renders in it. Unique, because two projects
-   * pointing at one folder would make the scoping rules lie: a person on one
-   * project would see the other's work. Nullable, and MySQL allows many NULLs
-   * in a unique index, so projects that have never used the tab cost nothing.
+   * This replaced a name-derived folder, and the reason is worth keeping: a
+   * derived name is a guess about a share that already exists. Studios have
+   * folders called "ALPHA 2024 (final)" with four months of work in them, and
+   * no derivation rule reaches that. So the project manager pastes the link
+   * they already use — the same shape as the link an artist pastes on submit —
+   * and everything else is computed from it.
+   *
+   * NULLABLE AND MEANINGFUL WHEN NULL: every project in production has no link,
+   * which is exactly the state in which nothing about this feature is available
+   * for it. Not unique at the database level, because an overlap is a WARNING a
+   * project manager may legitimately accept (two projects sharing a parent
+   * folder is a real arrangement), not something to refuse.
    */
   const projects = await columnsOf(db, 'projects');
-  if (projects.size && !projects.has('server_folder')) {
-    await db.query('ALTER TABLE projects ADD COLUMN server_folder VARCHAR(255) NULL');
-    try { await db.query('ALTER TABLE projects ADD UNIQUE KEY uq_projects_server_folder (server_folder)'); }
+  if (projects.size && !projects.has('server_link')) {
+    await db.query('ALTER TABLE projects ADD COLUMN server_link VARCHAR(2048) NULL');
+    log('  + projects.server_link');
+  }
+  if (projects.size && !projects.has('server_submit_enabled')) {
+    /* The per-project allowlist for the Submit Work upload, as a flag on the
+       project rather than a join table: it is one boolean per project, it is
+       read on every submit, and a table would be a join for a column. */
+    await db.query('ALTER TABLE projects ADD COLUMN server_submit_enabled TINYINT(1) NOT NULL DEFAULT 0');
+    log('  + projects.server_submit_enabled');
+  }
+  /* The column this replaced, removed where it exists — it was added on this
+     branch and never deployed, and leaving it would mean two columns answering
+     one question. Tolerated, because an install that never had it is the normal
+     case and must not fail the step. */
+  if (projects.has('server_folder')) {
+    try {
+      await db.query('ALTER TABLE projects DROP INDEX uq_projects_server_folder');
+    } catch { /* the key may not be there */ }
+    try {
+      await db.query('ALTER TABLE projects DROP COLUMN server_folder');
+      log('  - projects.server_folder (replaced by server_link)');
+    } catch { /* a server that will not drop it keeps it; nothing reads it */ }
+  }
+
+  /* THE PERSON'S OWN FOLDER, assigned once and then fixed.
+   *
+   * An artist's uploads go to <project>/<discipline>/<their folder>, and that
+   * last part has to survive them being renamed — somebody marrying, or a typo
+   * being corrected in Settings, must not scatter their work across two
+   * folders. So it is written on the first upload and never recomputed, and it
+   * is the SAME folder name on every project, which is what makes a person's
+   * work findable by whoever is looking for it.
+   *
+   * Unique, because two people sharing a folder name would mean one person
+   * uploading into another's folder — the one thing the own-folder rule exists
+   * to prevent. The collision is resolved when it is assigned, by appending a
+   * short piece of the account id. */
+  const users = await columnsOf(db, 'users');
+  if (users.size && !users.has('server_folder')) {
+    await db.query('ALTER TABLE users ADD COLUMN server_folder VARCHAR(255) NULL');
+    try { await db.query('ALTER TABLE users ADD UNIQUE KEY uq_users_server_folder (server_folder)'); }
     catch { /* an install that somehow already has it */ }
-    log('  + projects.server_folder');
+    log('  + users.server_folder');
   }
 }
 

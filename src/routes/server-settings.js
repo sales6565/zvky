@@ -50,7 +50,12 @@ router.get('/', async (req, res) => {
   res.json({
     settings: serverSettings.summarise({ state: gateway }),
     gateway,
-    mapping: await serverFolders.mapping(db),
+    /* READ-ONLY. The link is edited on the project, beside the project's other
+       fields, by whoever edits projects — not in a second place with a second
+       permission. What this screen shows is the consequence: every project, its
+       link, whether that link is usable and why not, and when it was last
+       uploaded to. */
+    projects: await serverFolders.overview(db),
   });
 });
 
@@ -68,7 +73,11 @@ router.patch('/', async (req, res) => {
     console.log(`${req.user.email} changed the office file server settings — ${lines.join('; ')}`);
   }
   const gateway = await state();
-  res.json({ settings: serverSettings.summarise({ state: gateway }), gateway, changes: lines });
+  res.json({
+    settings: serverSettings.summarise({ state: gateway }),
+    gateway, changes: lines,
+    projects: await serverFolders.overview(db),
+  });
 });
 
 /* Generate or rotate the token signing key pair. The public half and its id
@@ -111,19 +120,34 @@ router.post('/secret', async (req, res) => {
   });
 });
 
-/* The project → folder mapping. Editable because the common case on day one is
-   a share that already has folders with months of work in them. */
-router.patch('/mapping/:projectId', async (req, res) => {
-  const out = await serverFolders.setMapping(db, req.params.projectId, (req.body || {}).folder);
-  if (!out.ok) return res.status(out.status || 400).json({ error: out.error });
+/* WHICH PROJECTS MAY USE THE SUBMIT-WORK UPLOAD.
+ *
+ * The allowlist behind "Enable for: Selected projects". A flag per project,
+ * set here rather than on the project form, because deciding which projects are
+ * in a pilot is an administrator's decision about the rollout — not a property
+ * of the project that whoever edits projects should be changing.
+ *
+ * There is deliberately no folder mapping to edit here any more: a project's
+ * folder is its LINK, typed on the project beside its other fields. One place.
+ */
+router.patch('/projects/:projectId/submit', async (req, res) => {
+  const on = Boolean((req.body || {}).enabled);
+  const { rows } = await db.query('SELECT id, `name`, server_link FROM projects WHERE id = $1', [req.params.projectId]);
+  if (!rows.length) return res.status(404).json({ error: 'No such project.' });
+  if (on && !rows[0].server_link) {
+    return res.status(409).json({
+      error: `${rows[0].name} has no server folder link yet. Add one on the project first.`,
+      code: 'no_link',
+    });
+  }
+  await db.query('UPDATE projects SET server_submit_enabled = $1 WHERE id = $2', [on ? 1 : 0, req.params.projectId]);
   activity.record(db, {
-    req, module: 'settings', action: 'server.mapping.set', entityId: req.params.projectId,
-    summary: out.folder
-      ? `Mapped a project to the office server folder "${out.folder}"`
-      : 'Cleared a project\'s office server folder',
-    after: { folder: out.folder },
+    req, module: 'settings', action: on ? 'server.submit.enable' : 'server.submit.disable',
+    entityId: req.params.projectId, entityLabel: rows[0].name,
+    summary: `${on ? 'Enabled' : 'Disabled'} the Submit Work upload for ${rows[0].name}`,
+    after: { submitEnabled: on },
   }).catch(() => {});
-  res.json({ ok: true, folder: out.folder, mapping: await serverFolders.mapping(db) });
+  res.json({ ok: true, enabled: on, projects: await serverFolders.overview(db) });
 });
 
 /* GET /api/admin/settings/server/legacy-files — what is still on this host.
@@ -136,7 +160,17 @@ router.patch('/mapping/:projectId', async (req, res) => {
  * and should not be. The distinction is the whole point: this endpoint exists so
  * the list can be emptied.
  */
-router.get('/legacy-files', async (req, res) => {
+router.get('/legacy-files', (req, res, next) => {
+  /* BEHIND THE SWITCH as well as behind the permission. This endpoint lists
+     what is still on the hosting, which is only a question worth answering once
+     the office file server exists; with the feature off it does not exist, and
+     an endpoint that enumerates a studio's submissions should not be reachable
+     for a feature nobody has turned on. */
+  if (!serverSettings.serverEnabled()) {
+    return res.status(409).json({ error: 'The Server tab is switched off.', code: 'feature_disabled' });
+  }
+  return next();
+}, async (req, res) => {
   const limit = Math.min(1000, Math.max(1, Number(req.query.limit) || 500));
   const { rows } = await db.query(
     `SELECT v.id, v.asset_id, v.file_name, v.file_size, v.version_number, v.created_at,
@@ -191,6 +225,17 @@ router.post('/self-test', async (req, res) => {
   const steps = [
     { key: 'configured', ok: ready.gatewayUrl && ready.gatewayId,
       detail: ready.gatewayUrl && ready.gatewayId ? settings.gatewayUrl : 'Set the gateway address and id.' },
+    /* THE TWO NAMES FOR ONE PLACE, SHOWN TOGETHER. The prefix is the share as
+       the studio writes it; FILE_ROOT is the same share as the gateway machine
+       sees it. Nothing can check that they match — one is a string here and the
+       other is a mount point in another building — so they are put side by side
+       and a person confirms it. That is the single most common way to configure
+       this wrongly. */
+    { key: 'link_prefix', ok: Boolean(settings.linkPrefix),
+      detail: settings.linkPrefix
+        ? `Project links must start with ${settings.linkPrefix} — the gateway serves FILE_ROOT, `
+          + 'which must be the same share. Check the two against each other.'
+        : 'Set the server link prefix: the share as the studio writes it, e.g. \\\\SERVER\\Projects.' },
     { key: 'encryption', ok: ready.encryptionAvailable,
       detail: ready.encryptionAvailable ? 'Secrets can be encrypted at rest.' : 'Set EMAIL_ENCRYPTION_KEY (or JWT_SECRET) and restart.' },
     { key: 'signing_key', ok: ready.keyGenerated, detail: ready.keyGenerated ? `Key ${settings.signingKid}` : 'Generate a key pair.' },

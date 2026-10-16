@@ -1363,6 +1363,24 @@ tr.past-round{opacity:0.62;}
 .srv-tick.no{color:var(--warning-ink);}
 .srv-once{background:var(--code-bg);border:1px solid var(--border);border-radius:7px;padding:8px 10px;
   font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;word-break:break-all;}
+/* the project form's link field, the submit box, the transport chip */
+.srv-link-field{margin-top:10px;}
+.srv-link-row{display:flex;gap:8px;align-items:center;}
+.srv-link-row input{flex:1 1 auto;min-width:0;}
+.ms-warn.is-bad{color:var(--danger-ink);}
+.srv-transport{font-size:11px;padding:2px 8px;border-radius:999px;background:var(--surface-2);
+  color:var(--ink-muted);border:1px solid var(--border);white-space:nowrap;}
+.srv-submit{margin-top:10px;border:1px dashed var(--border);border-radius:9px;padding:9px 10px;}
+.srv-submit.is-over{background:var(--dragover);border-color:var(--brand-accent);}
+.srv-submit-head{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-muted);}
+.srv-submit-actions{display:flex;gap:6px;flex-wrap:wrap;margin:7px 0 4px;}
+.srv-submit-note,.srv-submit-done,.srv-submit-busy{font-size:11px;color:var(--ink-faint);margin-top:4px;}
+.srv-submit-busy{color:var(--warning-ink);}
+.srv-submit-off{margin-top:8px;font-size:11px;color:var(--ink-faint);}
+.srv-unavailable{margin-top:14px;}
+.srv-unavailable h4{margin:0 0 6px;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-muted);}
+.srv-ref{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--ink-muted);margin-top:3px;}
 .srv-key{background:var(--code-bg);border:1px solid var(--border);border-radius:7px;padding:8px 10px;
   font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;white-space:pre-wrap;word-break:break-all;
   max-height:140px;overflow:auto;}
@@ -2406,6 +2424,15 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
         <button type="button" class="btn btn-ghost btn-sm" id="p_addMilestone">+ Add Milestone</button>
         <div class="ms-warn" id="p_milestoneWarn"></div>
       </div>
+      <div class="srv-link-field" id="p_serverWrap" style="display:none;">
+        <label>Server folder link <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional)</span></label>
+        <div class="ms-note" id="p_serverNote"></div>
+        <div class="srv-link-row">
+          <input type="text" id="p_serverLink" autocomplete="off" spellcheck="false">
+          <button type="button" class="btn btn-ghost btn-sm" id="p_serverCheck">Check folder</button>
+        </div>
+        <div class="ms-warn" id="p_serverWarn"></div>
+      </div>
       <label>Team leads on this project</label><div class="checklist" id="p_leads"></div>
       <label>Acting Team Leads</label>
       <div class="checklist-note">Any active user can be selected. They act as a lead on this project only.</div>
@@ -2464,6 +2491,15 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
       <button type="button" class="btn btn-ghost btn-sm" id="ep_addMilestone">+ Add Milestone</button>
       <div class="ms-warn" id="ep_milestoneWarn"></div>
     </div>
+      <div class="srv-link-field" id="ep_serverWrap" style="display:none;">
+        <label>Server folder link <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional)</span></label>
+        <div class="ms-note" id="ep_serverNote"></div>
+        <div class="srv-link-row">
+          <input type="text" id="ep_serverLink" autocomplete="off" spellcheck="false">
+          <button type="button" class="btn btn-ghost btn-sm" id="ep_serverCheck">Check folder</button>
+        </div>
+        <div class="ms-warn" id="ep_serverWarn"></div>
+      </div>
     <label>Team leads on this project</label><div class="checklist" id="ep_leads"></div>
     <label>Acting Team Leads</label>
     <div class="checklist-note">Any active user can be selected. They act as a lead on this project only.</div>
@@ -10538,6 +10574,12 @@ async function openDrawer(id){
       <div class="field-lbl">${a.status.endsWith('_changes_requested') ? 'Resubmit for review' : 'Submit for review'}</div>
       <input type="text" id="submitLink" placeholder="https://drive.example.com/shot-01, \\fileserver\assets\ep01 or /mnt/shared/assets">
       <div style="font-size:10.5px;color:var(--ink-faint);margin-top:4px;">Link to the work. Internal and local server links are fine.</div>
+      <!-- UPLOAD TO SERVER. Drawn by srvSubmitBox() after the drawer opens, and
+           absent entirely unless both switches are on, this asset's project has
+           a usable server link and is enabled, and the person holds
+           server.submit_upload. Everything above this line is the flow every
+           artist uses today and is untouched by it. -->
+      <div id="submitUploadWrap"></div>
       <textarea id="submitDescription" rows="2" placeholder="Anything the reviewer should know (optional)…" style="margin-top:8px;"></textarea>
       <div class="ref-err" id="submitErr"></div>
       <button class="btn btn-brand" id="submitAssetBtn" style="width:100%;margin-top:8px;"
@@ -11282,6 +11324,12 @@ async function openDrawer(id){
   }
 
   if(canSubmit){
+    /* The upload box, drawn after the form so the form is never waiting on it.
+       It takes the project row the page already has — no extra request — and
+       draws nothing at all unless both switches, this project and this person's
+       permission all say yes. */
+    srvSubmitBox(id, state.projects.find(p=>p.id === a.project_id) || null)
+      .catch(()=>{ /* the form still works; the box is the addition */ });
     document.getElementById('submitAssetBtn').onclick = async (ev)=>{
       const err = document.getElementById('submitErr');
       err.textContent = '';
@@ -11290,6 +11338,15 @@ async function openDrawer(id){
       /* The server validates the link properly; this only saves a round trip
          on the most common mistake. */
       if(!link){ err.textContent = 'A link to the work is required.'; return; }
+      /* BLOCKED WHILE AN UPLOAD IS IN FLIGHT. Submitting now would record a
+         round pointing at a folder that is still filling up, and the reviewer
+         would open it and find half a file. Said plainly rather than by a
+         disabled button, because the person is looking at the button. */
+      if(srvSubmitBusy(id)){
+        err.textContent = 'Wait for the upload to finish before submitting — the link would point at '
+          + 'files that are still going up.';
+        return;
+      }
       ev.target.disabled = true;
       try{
         await api('/assets/'+id+'/submit', { method:'POST', body:{ link, description } });
@@ -12067,6 +12124,7 @@ document.getElementById('newProjectBtn').addEventListener('click', async ()=>{
         supervisionUsers(),
         api('/users?limit=500'),
       ]);
+    srvWireLinkField('p', '');
     epChecklist('p_leads', leads, [], { empty: 'No leads or supervisors visible to you.' });
     epChecklist('p_coords', coords, [], { empty: 'No coordinators visible to you.' });
     supervisionChecklist('p_supervision', 'p_supervisionCount', supervisors, []);
@@ -12173,7 +12231,14 @@ document.getElementById('saveProjectModal').addEventListener('click', async ()=>
        an empty list from everybody else would be a silent instruction to have
        none. */
     if(can('project.milestones')) body.milestones = milestonePayload('p');
-    const { project, warnings } = await api('/projects', { method:'POST', body });
+    /* Only while the field is on screen. With the Server tab off this key is
+       not sent at all, which is what keeps the production form's request
+       byte-identical to what it was. */
+    if(SRV.enabled){
+      const typed = (document.getElementById('p_serverLink') || {}).value || '';
+      if(typed.trim()) body.serverLink = typed.trim();
+    }
+    const { project, warnings, serverLinkWarnings } = await api('/projects', { method:'POST', body });
     projectModalWrap.classList.remove('show');
     /* Land on what was just made, rather than wherever the pickers happened to
        be pointing before. */
@@ -12183,6 +12248,7 @@ document.getElementById('saveProjectModal').addEventListener('click', async ()=>
     await bootApp();
     showToast(`${name} created.`);
     milestoneToast(warnings);
+    srvLinkWarningToast(serverLinkWarnings);
   }catch(e){ err.textContent = e.message; }
 });
 
@@ -12194,6 +12260,8 @@ document.getElementById('saveProjectModal').addEventListener('click', async ()=>
    project_members are left alone — taking a lead off a project is not a
    statement about the people working on it. */
 const editProjectModalWrap = document.getElementById('editProjectModalWrap');
+/* Set only by answering the repoint question, and cleared on every save. */
+let epConfirmLinkChange = false;
 let editingProject = null;
 
 function epError(message){ document.getElementById('ep_err').textContent = message || ''; }
@@ -12276,6 +12344,7 @@ async function openEditProject(){
   document.getElementById('ep_category').innerHTML = projectCategoryOptions(project.category || null);
   document.getElementById('ep_start').value = project.start_date ? String(project.start_date).slice(0,10) : '';
   document.getElementById('ep_end').value = project.end_date ? String(project.end_date).slice(0,10) : '';
+  srvWireLinkField('ep', project.serverLink || '');
   epChecklist('ep_leads', leads, project.teamLeadIds || [], { empty: 'No leads or supervisors visible to you.' });
   epChecklist('ep_coords', coords, project.coordinatorIds || [], { empty: 'No coordinators visible to you.' });
   supervisionChecklist('ep_supervision', 'ep_supervisionCount', supervisors, project.supervisionIds || []);
@@ -12325,6 +12394,11 @@ document.getElementById('saveEditProject').addEventListener('click', async ()=>{
          every save — the permission would read as "cannot add" while quietly
          meaning "removes them all". */
       ...(can('project.milestones') ? { milestones: milestonePayload('ep') } : {}),
+      /* Sent as null when cleared, like the three fields above it — this form
+         SHOWS the link, so a blank box is somebody removing it. Not sent at all
+         while the Server tab is off, so the production form is unchanged. */
+      ...(SRV.enabled ? { serverLink: (document.getElementById('ep_serverLink').value || '').trim() || null } : {}),
+      ...(epConfirmLinkChange ? { confirmLinkChange: true } : {}),
     }});
     editProjectModalWrap.classList.remove('show');
     const keep = editingProject.id;
@@ -12334,9 +12408,36 @@ document.getElementById('saveEditProject').addEventListener('click', async ()=>{
     if([...sel.options].some(o=>o.value===keep)){ sel.value = keep; state.currentProjectId = keep; await render(); }
     showToast(`${name} updated.`);
     milestoneToast(saved && saved.warnings);
-  }catch(err){ epError(err.message); }
+    srvLinkWarningToast(saved && saved.serverLinkWarnings);
+    epConfirmLinkChange = false;
+  }catch(err){
+    /* REPOINTING A PROJECT'S FOLDER IS ASKED ABOUT, ONCE. The server refuses
+       the first attempt with requiresConfirmation and the sentence to show;
+       answering yes retries the same save with the confirmation on it. Nothing
+       is moved either way — that is the whole point of asking. */
+    if(err && err.status === 409 && err.body && err.body.requiresConfirmation && err.body.field === 'serverLink'){
+      btn.disabled = false;
+      const ok = await askConfirm({
+        title:'Change this project’s server folder?',
+        message: err.body.error,
+        confirmLabel:'Change the folder',
+      });
+      if(ok){ epConfirmLinkChange = true; document.getElementById('saveEditProject').click(); }
+      return;
+    }
+    epError(err.message);
+  }
   finally{ btn.disabled = false; }
 });
+
+/* The non-blocking warnings: another project on the same folder, or one inside
+   it. Said as a toast rather than a refusal — two projects sharing a parent is
+   a real arrangement and the manager can see what they are agreeing to. */
+function srvLinkWarningToast(warnings){
+  const list = Array.isArray(warnings) ? warnings : [];
+  if(!list.length) return;
+  showToast(list.map(w=>w.message).join(' '));
+}
 
 /* ---------- milestones, shared by both project forms ----------
  *
@@ -23365,6 +23466,365 @@ async function refreshBuildStamp(){
 
 boot();
 refreshBuildStamp();
+
+/* ---------- the project's server folder link, in the project form ----------
+ *
+ * THE SAME RULE AS THE SERVER, SAID TWICE ON PURPOSE. src/server-link.js is
+ * what decides; this is what tells somebody as they type. They cannot be one
+ * function — src/ is served to the host and this file to the browser, with no
+ * build step between them — so tests/server-link.test.js runs both against one
+ * shared matrix of cases and fails naming any input they disagree about.
+ *
+ * Nothing is stored on the strength of what this says. */
+function srvFoldLink(text){
+  return String(text === undefined || text === null ? '' : text)
+    .trim().replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
+/* The page's copy of validateLink(). Returns { ok, error, relative }. */
+function srvValidateLink(link, prefix){
+  const text = String(link === undefined || link === null ? '' : link).trim();
+  if(text.length > 2048) return { ok:false, error:'That link is longer than 2048 characters.' };
+  if(/[\u0000-\u001f\u007f]/.test(text)) return { ok:false, error:'That link contains a line break or a control character.' };
+  const foldedPrefix = srvFoldLink(prefix);
+  if(!foldedPrefix) return { ok:false, reason:'no-prefix', error:'No server link prefix has been set in Settings → Server, so a link cannot be checked yet.' };
+  const folded = srvFoldLink(text);
+  if(!folded) return { ok:false, reason:'empty', error:'Paste the project’s folder link from the file server.' };
+  if(folded === foldedPrefix) return { ok:false, reason:'prefix-only', error:'That is the prefix itself. Add the project’s own folder after it.' };
+  if(!folded.startsWith(foldedPrefix + '/')){
+    return { ok:false, reason:'outside-prefix',
+      error:`A project link has to start with ${String(prefix).trim()} — that is the share the office file server serves.` };
+  }
+  const parts = text.split(/[\\/]+/).filter(p=>p !== '');
+  const prefixParts = String(prefix).trim().split(/[\\/]+/).filter(p=>p !== '');
+  const tail = parts.slice(prefixParts.length);
+  if(!tail.length) return { ok:false, reason:'prefix-only', error:'That is the prefix itself. Add the project’s own folder after it.' };
+  for(const seg of tail){
+    if(seg === '.' || seg === '..') return { ok:false, reason:'dots', error:'A project link cannot contain ".." or ".".' };
+    if(/[. ]$/.test(seg)){
+      return { ok:false, reason:'trailing',
+        error:`"${seg}" ends in a dot or a space, which Windows cannot keep. Rename the folder or correct the link.` };
+    }
+    if(/[\u0000-\u001f\u007f<>:"|?*]/.test(seg)){
+      return { ok:false, reason:'segment', error:`"${seg}" contains a character that cannot be used in a file name.` };
+    }
+    if(seg.length > 180) return { ok:false, reason:'segment', error:`That name is ${seg.length} characters; the limit is 180.` };
+    const base = seg.includes('.') ? seg.slice(0, seg.indexOf('.')) : seg;
+    if(/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(base)){
+      return { ok:false, reason:'segment', error:`"${seg}" is a name Windows reserves for a device.` };
+    }
+  }
+  return { ok:true, link:text, relative:tail.join('/'), segments:tail };
+}
+
+/* Draw the field, or leave it hidden. ONE function for both forms, so New
+   Project and Edit Project cannot drift — the same bargain epChecklist makes
+   for the four people-pickers. */
+function srvWireLinkField(prefixId, link){
+  const wrap = document.getElementById(prefixId + '_serverWrap');
+  if(!wrap) return;
+  /* HIDDEN UNLESS THE SERVER TAB IS ON. With the switch off this is the
+     production form, unchanged: no field, no note, nothing sent. */
+  if(!SRV.enabled){ wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+  const input = document.getElementById(prefixId + '_serverLink');
+  const note = document.getElementById(prefixId + '_serverNote');
+  const warn = document.getElementById(prefixId + '_serverWarn');
+  const check = document.getElementById(prefixId + '_serverCheck');
+  input.value = link || '';
+  const prefix = SRV.linkPrefix;
+
+  if(!prefix){
+    /* No prefix, no field: there is nothing to validate a link against, and a
+       field that accepted anything would fill the database with links the
+       gateway cannot serve. Disabled with the reason, not hidden — an admin
+       seeing it knows what to go and set. */
+    input.disabled = true; check.disabled = true;
+    note.textContent = 'An admin needs to set the server link prefix in Settings → Server before a project can be given a folder.';
+    warn.textContent = '';
+    return;
+  }
+  input.disabled = false; check.disabled = false;
+  note.textContent = `The project’s folder on the office file server. It must start with ${prefix}. `
+    + 'Leave it empty if this project does not use the file server.';
+
+  const say = ()=>{
+    const value = input.value.trim();
+    if(!value){ warn.textContent = ''; warn.classList.remove('is-bad'); return; }
+    const out = srvValidateLink(value, prefix);
+    warn.textContent = out.ok ? '' : out.error;
+    warn.classList.toggle('is-bad', !out.ok);
+  };
+  input.oninput = say;
+  say();
+
+  check.onclick = async ()=>{
+    const value = input.value.trim();
+    const out = srvValidateLink(value, prefix);
+    if(!out.ok){ warn.textContent = out.error; warn.classList.add('is-bad'); return; }
+    warn.classList.remove('is-bad');
+    warn.textContent = 'Checking…';
+    try{
+      const minted = await api('/server/check-folder', { method:'POST', body:{ link: value } });
+      const listed = await srvCall(`/v1/list?path=${encodeURIComponent(minted.path)}&limit=1`, { token: minted.token });
+      if(listed.status === 0){
+        warn.textContent = 'Could not reach the office file server from this browser. Are you on the office network?';
+        return;
+      }
+      warn.textContent = listed.ok
+        ? `Found. ${minted.path} exists on the office server.`
+        : `Not found: ${minted.path} is not on the office server yet. Saving is still fine — ask IT to create it.`;
+    }catch(err){
+      warn.textContent = err && err.message ? err.message : 'That folder could not be checked.';
+    }
+  };
+}
+
+
+/* ---------- Upload to Server, inside the Submit Work form ----------
+ *
+ * THE FLOW ABOVE THIS IS UNTOUCHED. An artist pastes a link and submits, today
+ * and after this ships. This box is an addition under the link field, and it
+ * only ever does one thing to that field: fill it in, with a link that passes
+ * the same validation anything pasted by hand goes through.
+ *
+ * THE DESTINATION IS NOT THIS CODE'S DECISION. The browser says which asset,
+ * which file and how big; the server answers with the path. So there is no
+ * folder picker here and no path in any request body — a client that invented
+ * one would have it ignored (src/routes/server.js recomputes it), and a test
+ * proves that.
+ */
+const SRV_SUBMIT = new Map();        // assetId -> { jobs: [], link, linkIs }
+
+const srvSubmitBusy = (assetId) => {
+  const box = SRV_SUBMIT.get(assetId);
+  return Boolean(box && box.jobs.some(j => j.state === 'running' || j.state === 'queued'));
+};
+
+/* Draw it, or leave the form exactly as it was. The four conditions are checked
+   here AND on every endpoint: this decides whether to offer it, the server
+   decides whether to allow it. */
+async function srvSubmitBox(assetId, project){
+  const host = document.getElementById('submitUploadWrap');
+  if(!host) return;
+  host.innerHTML = '';
+  if(!SRV.loaded){
+    try{ await srvLoadState(); }catch{ return; }
+  }
+  if(!SRV.enabled || !SRV.submitUploadEnabled || !can('server.submit_upload')) return;
+
+  /* The project has to have a usable link AND be enabled for this. Both come
+     from the project the drawer already has, so no extra request — and a
+     project that is not set up gets a sentence rather than a dead box. */
+  /* Either shape: GET /projects returns raw rows (server_link) and
+     GET /projects/:id returns the shaped form (serverLink). Reading both means
+     this works wherever it is called from rather than only from the one place
+     that happened to be tried first. */
+  const link = project && (project.serverLink || project.server_link);
+  const enabled = project && Boolean(project.serverSubmitEnabled !== undefined
+    ? project.serverSubmitEnabled : Number(project.server_submit_enabled));
+  /* The relative path is the SERVER's answer, and the page does not need it to
+     decide whether to offer the box — it only needs to know the link is usable,
+     which is the same validation the project form shows. */
+  const relative = link && SRV.linkPrefix ? (srvValidateLink(link, SRV.linkPrefix).relative || null) : null;
+  if(!link || !relative || !enabled){
+    host.innerHTML = `<div class="srv-submit-off" title="${escapeHTML(
+      !link ? 'This project has no server folder link yet.'
+        : (!relative ? 'This project’s server link is not under the configured prefix.'
+          : 'Uploading to the office server is not switched on for this project.'))}">
+      Upload to Server is not available for this project — paste a link instead.</div>`;
+    return;
+  }
+
+  if(!SRV_SUBMIT.has(assetId)) SRV_SUBMIT.set(assetId, { jobs: [], link: null, linkIs: null });
+  srvSubmitRender(assetId);
+}
+
+function srvSubmitRender(assetId){
+  const host = document.getElementById('submitUploadWrap');
+  const box = SRV_SUBMIT.get(assetId);
+  if(!host || !box) return;
+  const running = box.jobs.filter(j => j.state === 'running' || j.state === 'queued').length;
+  host.innerHTML = `
+    <div class="srv-submit" id="srvSubmitDrop">
+      <div class="srv-submit-head">
+        <span>Upload to Server</span>
+        <span class="srv-transport" title="How this browser reaches the office file server">${
+          escapeHTML(srvTransportLabel())}</span>
+      </div>
+      <div class="srv-submit-actions">
+        <button type="button" class="btn btn-ghost btn-sm" id="srvSubmitPick">Choose files</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="srvSubmitPickFolder">Choose a folder</button>
+        <input type="file" id="srvSubmitFiles" multiple hidden>
+        <input type="file" id="srvSubmitFolder" webkitdirectory multiple hidden>
+      </div>
+      <div class="srv-submit-note">Files go to your own folder for this project. Forge never stores them.</div>
+      ${box.jobs.map(j=>`<div class="srv-up">
+        <span class="srv-up-name">${escapeHTML(j.name)}</span>
+        <span class="srv-up-state">${escapeHTML(j.note || j.state)}</span>
+        <progress max="100" value="${Math.round(j.progress || 0)}"></progress>
+        <span class="srv-up-pct">${Math.round(j.progress || 0)}%</span>
+        ${j.state === 'running' ? `<button type="button" class="btn tiny" data-spause="${escapeHTML(j.key)}">Pause</button>` : ''}
+        ${j.state === 'paused' || j.state === 'failed' ? `<button type="button" class="btn tiny" data-sresume="${escapeHTML(j.key)}">${j.state === 'failed' ? 'Retry' : 'Resume'}</button>` : ''}
+      </div>`).join('')}
+      ${running ? '<div class="srv-submit-busy">Submitting is held until the upload finishes.</div>' : ''}
+      ${box.link ? `<div class="srv-submit-done">Link filled in: the ${box.linkIs === 'file' ? 'file' : 'folder'} you uploaded${
+        box.linkIs === 'folder' ? ' (a link points at one place, so several files share their folder)' : ''}.</div>` : ''}
+    </div>`;
+
+  const pick = (btnId, inputId) => {
+    const b = document.getElementById(btnId);
+    const i = document.getElementById(inputId);
+    if(!b || !i) return;
+    b.onclick = ()=>i.click();
+    i.onchange = ()=>{ srvSubmitQueue(assetId, [...i.files]); i.value = ''; };
+  };
+  pick('srvSubmitPick', 'srvSubmitFiles');
+  pick('srvSubmitPickFolder', 'srvSubmitFolder');
+
+  const drop = document.getElementById('srvSubmitDrop');
+  if(drop){
+    ['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,(e)=>{ e.preventDefault(); drop.classList.add('is-over'); }));
+    ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,()=>drop.classList.remove('is-over')));
+    drop.addEventListener('drop',(e)=>{
+      e.preventDefault();
+      const files = [...(e.dataTransfer && e.dataTransfer.files ? e.dataTransfer.files : [])];
+      if(files.length) srvSubmitQueue(assetId, files);
+    });
+  }
+  host.querySelectorAll('[data-spause]').forEach(b=>b.onclick = ()=>{
+    const job = box.jobs.find(j=>j.key === b.dataset.spause);
+    if(job){ job.paused = true; srvSubmitRender(assetId); }
+  });
+  host.querySelectorAll('[data-sresume]').forEach(b=>b.onclick = ()=>{
+    const job = box.jobs.find(j=>j.key === b.dataset.sresume);
+    if(job){ job.paused = false; job.state = 'queued'; srvSubmitRender(assetId); srvSubmitPump(assetId); }
+  });
+}
+
+function srvSubmitQueue(assetId, files){
+  const box = SRV_SUBMIT.get(assetId);
+  if(!box) return;
+  for(const file of files){
+    const problem = srvExtensionProblem(file.name)
+      || (file.size > SRV.maxFileBytes ? `${file.name} is ${srvBytes(file.size)}; the limit is ${srvBytes(SRV.maxFileBytes)}.` : null);
+    if(problem){ showToast(problem); continue; }
+    box.jobs.push({
+      key: `${Date.now()}-${box.jobs.length}`,
+      file, name: file.name, size: file.size,
+      // A dragged folder keeps its shape; the server decides where the root of
+      // it goes and this is only the part inside it.
+      subPath: String(file.webkitRelativePath || '').split('/').slice(0, -1).join('/'),
+      state: 'queued', progress: 0, sent: 0, note: null, paused: false,
+    });
+  }
+  srvSubmitRender(assetId);
+  srvSubmitPump(assetId);
+}
+
+async function srvSubmitPump(assetId){
+  const box = SRV_SUBMIT.get(assetId);
+  if(!box) return;
+  const next = box.jobs.find(j=>j.state === 'queued');
+  if(!next){ await srvSubmitFinish(assetId); return; }
+  await srvSubmitRun(assetId, next);
+  srvSubmitPump(assetId);
+}
+
+async function srvSubmitRun(assetId, job){
+  const box = SRV_SUBMIT.get(assetId);
+  job.state = 'running'; job.note = null; srvSubmitRender(assetId);
+  let session;
+  try{
+    session = await api('/server/submit-upload-session', { method:'POST',
+      body:{ assetId, name: job.name, size: job.size, subPath: job.subPath, uploadId: job.id || undefined } });
+  }catch(err){
+    job.state = 'failed'; job.note = err && err.message ? err.message : 'Forge refused the upload.';
+    srvSubmitRender(assetId); return;
+  }
+  job.id = session.uploadId;
+  job.token = session.token;
+  job.path = session.path;
+  const chunk = Number(session.chunkBytes) || SRV.chunkBytes;
+
+  let have = [];
+  const status = await srvCall(`/v1/upload/${job.id}/status`, { token: job.token });
+  if(status.ok && status.data && Array.isArray(status.data.received)) have = status.data.received;
+  const covered = (from, to)=>have.some(([s,e])=>s <= from && e >= to);
+
+  for(let offset = 0; offset < job.size; offset += chunk){
+    if(job.paused){ job.state = 'paused'; srvSubmitRender(assetId); return; }
+    const end = Math.min(offset + chunk, job.size);
+    if(covered(offset, end)){ job.sent = Math.max(job.sent, end); job.progress = (job.sent/job.size)*100; continue; }
+    let out = await srvCall(`/v1/upload/${job.id}/chunk?offset=${offset}`,
+      { method:'PUT', token: job.token, body: job.file.slice(offset, end) });
+    if(out.status === 401 || out.status === 403){
+      try{
+        const renewed = await api('/server/submit-upload-session', { method:'POST',
+          body:{ assetId, name: job.name, size: job.size, subPath: job.subPath, uploadId: job.id } });
+        job.token = renewed.token;
+        out = await srvCall(`/v1/upload/${job.id}/chunk?offset=${offset}`,
+          { method:'PUT', token: job.token, body: job.file.slice(offset, end) });
+      }catch(err){
+        job.state = 'failed'; job.note = err && err.message ? err.message : 'The upload token could not be renewed.';
+        srvSubmitRender(assetId); return;
+      }
+    }
+    if(!out.ok){
+      job.state = 'failed';
+      job.note = (out.data && out.data.error)
+        || (out.status === 0 ? 'The office server could not be reached.' : `The office server answered ${out.status}.`);
+      srvSubmitRender(assetId); return;
+    }
+    job.sent = end; job.progress = (end/job.size)*100;
+    srvSubmitRender(assetId);
+  }
+
+  const done = await srvCall(`/v1/upload/${job.id}/complete`, { method:'POST', token: job.token, body:{} });
+  if(!done.ok){
+    job.state = 'failed';
+    job.note = (done.data && done.data.error) || 'The office server could not finish the file.';
+    srvSubmitRender(assetId); return;
+  }
+  job.state = 'done';
+  job.progress = 100;
+  job.stored = done.data.name;
+  job.note = done.data.renamed ? `Saved as ${done.data.name}` : 'On the server';
+  srvSubmitRender(assetId);
+}
+
+/* Everything finished: record the references and take the link the SERVER
+ * composes. Not assembled here — a link the page built could fail the submit
+ * endpoint's own validation, and then the artist would be holding a form that
+ * refuses itself. */
+async function srvSubmitFinish(assetId){
+  const box = SRV_SUBMIT.get(assetId);
+  if(!box) return;
+  const done = box.jobs.filter(j=>j.state === 'done' && !j.recorded);
+  if(!done.length) return;
+  /* A FAILURE LEAVES THE LINK ALONE. Only the files that actually landed are
+     recorded, and if none did the field keeps whatever the artist typed. */
+  try{
+    const out = await api('/server/submit-uploads', { method:'POST', body:{
+      assetId,
+      files: done.map(j=>({ name: j.stored || j.name, size: j.size, subPath: j.subPath })),
+    }});
+    for(const j of done) j.recorded = true;
+    box.link = out.link;
+    box.linkIs = out.linkIs;
+    const field = document.getElementById('submitLink');
+    if(field && out.link){
+      field.value = out.link;
+      /* The artist can still change it, or clear it and paste something else —
+         this fills the field, it does not take it over. */
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    srvSubmitRender(assetId);
+  }catch(err){
+    showToast(err && err.message ? err.message : 'The uploads could not be recorded.');
+  }
+}
+
 const SRV_RESUME_KEY = 'zvkyServerUploads';
 
 /* Which transport this browser can use, decided without a request. */
@@ -23391,22 +23851,68 @@ function srvLinkOrigin(){
   try{ return new URL(SRV.gatewayUrl).origin; }catch{ return null; }
 }
 
-/* Open (or re-use) the office link window. A top-level window, because that is
-   the one thing no browser gates. It is the user's window: if they close it the
-   next call opens it again. */
-function srvOpenLink(){
+/* THE OFFICE LINK WINDOW IS OPENED BY A CLICK, AND ONLY BY A CLICK.
+ *
+ * Never on page load, never on a render, never because a listing happened to
+ * need it. Three reasons, and the first is the one that matters: a window that
+ * appears on its own is what a pop-up blocker is for, so it would be blocked
+ * for some people and there would be nothing on screen explaining why nothing
+ * worked. The second is consent — a window that relays a person's files to a
+ * machine in the office should be something they opened. The third is that a
+ * browser only reliably allows window.open inside a user gesture anyway.
+ *
+ * So srvCall() refuses with needsBridge instead of opening one, every screen
+ * that can need it draws a "Connect to office server" button, and this runs
+ * from that button's click. If the pop-up is blocked the button says so and
+ * what to do about it. */
+function srvConnectBridge(){
   const origin = srvLinkOrigin();
-  if(!origin) return null;
-  if(SRV.linkWindow && !SRV.linkWindow.closed) return SRV.linkWindow;
+  if(!origin) return { ok:false, error:'No office server address is configured.' };
+  if(SRV.linkWindow && !SRV.linkWindow.closed){
+    try{ SRV.linkWindow.focus(); }catch{ /* a focus a browser declined is not an error */ }
+    return { ok:true, already:true };
+  }
   SRV.linkReady = false;
+  SRV.bridgeBlocked = false;
+  /* No token, no path, no query at all. The URL of this window is in the
+     browser's history and in the person's title bar; what travels over it is
+     the page, and nothing else. Everything the gateway needs arrives by
+     postMessage after the handshake below. */
   SRV.linkWindow = window.open(`${origin}/v1/app`, 'zvkyOfficeLink',
     'width=460,height=320,noopener=no,noreferrer=no');
-  return SRV.linkWindow;
+  if(!SRV.linkWindow){
+    SRV.bridgeBlocked = true;
+    return { ok:false, blocked:true,
+      error:'Your browser blocked the office server window. Allow pop-ups for this site, then press '
+        + 'Connect to office server again.' };
+  }
+  return { ok:true };
+}
+
+const srvBridgeReady = () => Boolean(SRV.linkWindow && !SRV.linkWindow.closed && SRV.linkReady);
+
+/* What the person is told about how their files travel. Shown in the Server tab
+   and in the submit box, because "why is there a second window" and "why is
+   there not" are both reasonable questions. */
+function srvTransportLabel(){
+  if(SRV.transport === 'direct') return 'Direct';
+  if(SRV.transport === 'link') return srvBridgeReady() ? 'Via bridge window' : 'Bridge window needed';
+  return 'Checking…';
 }
 
 window.addEventListener('message', (e)=>{
+  /* ORIGIN PINNING, THIS DIRECTION. The gateway's exact origin, from the
+     address an admin configured — not a suffix match, not a regex, and not
+     whatever the message claims about itself. A message from anywhere else is
+     dropped without being read, which is what stops a page in another tab
+     talking to this one about somebody's files.
+     
+     And it must come from the window WE opened: e.source is compared with the
+     bridge handle, so a different window at the same origin cannot answer for
+     it either. */
   const origin = srvLinkOrigin();
-  if(!origin || e.origin !== origin) return;          // only the configured gateway
+  if(!origin || e.origin !== origin) return;
+  if(SRV.linkWindow && e.source && e.source !== SRV.linkWindow) return;
   const msg = e.data;
   if(!msg || typeof msg !== 'object' || msg.channel !== 'forge-gateway') return;
   if(msg.ready){ SRV.linkReady = true; return; }
@@ -23419,8 +23925,13 @@ window.addEventListener('message', (e)=>{
 });
 
 function srvViaLink(path, { method='GET', token, body, timeout=120000 } = {}){
-  const win = srvOpenLink();
-  if(!win) return Promise.resolve({ status:0, ok:false, data:{ error:'no_gateway' } });
+  /* NOT OPENED HERE. A call that needs the bridge and has not got one is told
+     so, and the screen asks. See srvConnectBridge. */
+  if(!srvBridgeReady()){
+    return Promise.resolve({ status:0, ok:false, needsBridge:true,
+      data:{ error:'The office server window is not open.' } });
+  }
+  const win = SRV.linkWindow;
   const id = SRV.nextMessageId++;
   const origin = srvLinkOrigin();
   return new Promise((resolve)=>{
@@ -23433,19 +23944,28 @@ function srvViaLink(path, { method='GET', token, body, timeout=120000 } = {}){
        a delay, the message is re-sent on a short interval until it answers or
        the timeout runs out — a window the user has not yet allowed to open, or
        a slow LAN, then costs a second rather than a failure. */
-    let tries = 0;
+    let waited = 0;
     const tick = setInterval(()=>{
-      tries += 1;
+      waited += 300;
       if(!SRV.pending.has(id)){ clearInterval(tick); return; }
-      if(tries * 300 > timeout){
+      /* THE WINDOW CLOSING MID-UPLOAD IS A PAUSE, NOT A FAILURE. The chunks
+         already on the share stay there, the job stops, and reopening the
+         bridge resumes from what the status route reports. */
+      if(!SRV.linkWindow || SRV.linkWindow.closed){
+        clearInterval(tick);
+        SRV.pending.delete(id);
+        SRV.linkReady = false;
+        resolve({ status:0, ok:false, bridgeClosed:true,
+          data:{ error:'The office server window was closed. Reopen it to carry on.' } });
+        return;
+      }
+      if(waited > timeout){
         clearInterval(tick);
         SRV.pending.delete(id);
         resolve({ status:0, ok:false, data:{ error:'The office link window did not answer.' } });
-        return;
       }
-      if(SRV.linkReady || tries > 1) send();
     }, 300);
-    if(SRV.linkReady) send();
+    send();
   });
 }
 
@@ -23520,7 +24040,10 @@ async function srvListCurrent(){
     const out = await srvCall(`/v1/list?path=${encodeURIComponent(SRV.path)}&limit=500`, { token: minted.token });
     if(out.status === 0){
       SRV.entries = []; SRV.total = 0;
-      SRV.error = 'offline';
+      /* Three different "nothing came back", told apart: the bridge is not open
+         yet (ask), it was closed mid-flight (say so), or the gateway cannot be
+         reached at all (which is what being away from the office looks like). */
+      SRV.error = out.needsBridge ? 'bridge' : (out.bridgeClosed ? 'bridge-closed' : 'offline');
       return;
     }
     if(!out.ok){
@@ -23543,9 +24066,32 @@ const srvBytes = (n)=>{
   return `${i === 0 ? v : v.toFixed(v < 10 ? 1 : 0)} ${u[i]}`;
 };
 
+/* THE BREADCRUMB STOPS AT THE PROJECT.
+ *
+ * A non-admin never had access to anything above their project's folder, so
+ * offering them a crumb for it would be offering a click that the server
+ * refuses — and a refusal somebody can reach by clicking a breadcrumb reads as
+ * a bug. The first crumb is "Projects", which goes back to the virtual list;
+ * then the project by NAME; then the folders inside it.
+ *
+ * browse_all gets the real root, because for them it is real. */
 const srvCrumbs = ()=>{
   const parts = String(SRV.path || '').split('/').filter(Boolean);
-  return [{ label:'Office server', path:'' }, ...parts.map((p,i)=>({ label:p, path: parts.slice(0,i+1).join('/') }))];
+  const all = SRV.roots && SRV.roots.all;
+  if(all){
+    return [{ label:'Office server', path:'' },
+      ...parts.map((p,i)=>({ label:p, path: parts.slice(0,i+1).join('/') }))];
+  }
+  const project = ((SRV.roots && SRV.roots.entries) || [])
+    .filter(e=>e.path && (SRV.path === e.path || String(SRV.path || '').startsWith(e.path + '/')))
+    .sort((a,b)=>b.path.length - a.path.length)[0];
+  if(!project) return [{ label:'Projects', path:'' }];
+  const inside = parts.slice(project.path.split('/').filter(Boolean).length);
+  return [
+    { label:'Projects', path:'' },
+    { label: project.label || project.name, path: project.path },
+    ...inside.map((p,i)=>({ label:p, path: [project.path, ...inside.slice(0,i+1)].join('/') })),
+  ];
 };
 
 function srvRequestedSet(){
@@ -23586,7 +24132,13 @@ async function renderServer(){
   const gw = SRV.gateway || {};
   const offline = SRV.error === 'offline';
 
-  const banner = offline
+  const banner = SRV.error === 'bridge'
+    ? `<div class="srv-banner srv-stale">This browser needs the office server window to reach the file
+        server. Press Connect to office server above.</div>`
+    : SRV.error === 'bridge-closed'
+    ? `<div class="srv-banner srv-stale">The office server window was closed. Press Connect to office
+        server to carry on — anything part-uploaded resumes where it stopped.</div>`
+    : offline
     /* THE OFF-NETWORK MESSAGE. Not an error: the person is working from home and
        the files are in the building. Said in one sentence with no data behind it. */
     ? `<div class="srv-banner srv-off">Open Forge from the office network to use Server files.</div>`
@@ -23600,6 +24152,9 @@ async function renderServer(){
       <div class="srv-head">
         <h3>Server</h3>
         <div class="srv-actions">
+          <span class="srv-transport" title="How this browser reaches the office file server">${escapeHTML(srvTransportLabel())}</span>
+          ${SRV.transport === 'link' && !srvBridgeReady()
+            ? `<button class="btn primary" id="srvConnect">Connect to office server</button>` : ''}
           ${SRV.may.upload ? `<button class="btn" id="srvNewFolder">New folder</button>` : ''}
           ${SRV.may.upload ? `<button class="btn primary" id="srvPick">Upload files</button>` : ''}
           ${SRV.may.upload ? `<button class="btn" id="srvPickFolder">Upload a folder</button>` : ''}
@@ -23629,7 +24184,12 @@ async function renderServer(){
           </tr></thead>
           <tbody>
             ${rows.length ? rows.map(e=>{
-              const full = [SRV.path, e.name].filter(Boolean).join('/');
+              /* e.path for the virtual Projects list — a project's folder may be
+                 several segments under the prefix, and its display name is its
+                 project name rather than a folder. Everything else is a child
+                 of wherever we are. */
+              const full = e.path !== undefined && e.path !== null
+                ? e.path : [SRV.path, e.name].filter(Boolean).join('/');
               const tagged = requested.has(full.toLowerCase());
               return `<tr class="srv-row">
                 <td class="srv-name">
@@ -23637,6 +24197,7 @@ async function renderServer(){
                     ? `<button class="srv-link" data-open="${escapeHTML(full)}">${escapeHTML(e.name)}</button>`
                     : `<span>${escapeHTML(e.name)}</span>`}
                   ${e.label && e.label !== e.name ? `<span class="srv-sub">${escapeHTML(e.label)}</span>` : ''}
+                  ${e.subtitle ? `<span class="srv-sub">${escapeHTML(e.subtitle)}</span>` : ''}
                   ${tagged ? `<span class="srv-tag">Deletion requested</span>` : ''}
                 </td>
                 <td>${escapeHTML(srvBytes(e.size))}</td>
@@ -23652,6 +24213,12 @@ async function renderServer(){
         </table>
         ${SRV.may.upload && !offline ? `<p class="srv-hint">Drag files or folders here to copy them to the office server.</p>` : ''}
       </div>
+      ${(SRV.roots && (SRV.roots.unavailable || []).length && !SRV.path) ? `<div class="srv-unavailable">
+        <h4>Not available in Server</h4>
+        ${SRV.roots.unavailable.slice(0, 50).map(u=>`<div class="srv-check-row">
+          <span class="srv-tag">no server link</span> ${escapeHTML(u.name)}
+          <span class="srv-sub">${escapeHTML(u.why || '')}</span></div>`).join('')}
+      </div>` : ''}
       ${SRV.uploads.length ? `<div class="srv-uploads">
         <h4>Transfers</h4>
         ${SRV.uploads.map(u=>`<div class="srv-up" data-up="${escapeHTML(u.id)}">
@@ -23721,6 +24288,17 @@ function srvWire(){
   on('[data-decline]', 'click', (e)=>srvResolve(e.currentTarget.dataset.decline, 'declined'));
   on('[data-pause]', 'click', (e)=>srvPause(e.currentTarget.dataset.pause));
   on('[data-resume]', 'click', (e)=>srvResume(e.currentTarget.dataset.resume));
+
+  const connect = el.querySelector('#srvConnect');
+  if(connect) connect.addEventListener('click', async ()=>{
+    const out = srvConnectBridge();
+    if(!out.ok){ showToast(out.error); renderServer(); return; }
+    /* Give the window a moment to say hello, then carry on with whatever was
+       being asked for. The handshake is what flips the label to "Via bridge
+       window". */
+    for(let i = 0; i < 20 && !srvBridgeReady(); i += 1) await new Promise(r=>setTimeout(r, 250));
+    await srvGo();
+  });
 
   const newFolder = el.querySelector('#srvNewFolder');
   if(newFolder) newFolder.addEventListener('click', srvNewFolder);
@@ -24023,7 +24601,15 @@ async function renderServerSettings(){
   if(!host) return;
   if(!SRVSET){
     host.innerHTML = '<div class="card"><h3>Server</h3><p class="muted">Loading…</p></div>';
-    try{ SRVSET = await api('/admin/settings/server'); }
+    try{
+      SRVSET = await api('/admin/settings/server');
+      /* The studio's asset categories, so the discipline rows are the studio's
+         own words rather than a guess. CATEGORIES is the list the page already
+         loaded for every asset dropdown — one source, no second request. It
+         ships EMPTY in this application, so "no categories yet" is a real state
+         and is said rather than shown as an empty grid. */
+      SRVSET.categories = (CATEGORIES || []).map(c=>({ key:c.id, label:c.label }));
+    }
     catch(err){
       host.innerHTML = `<div class="card"><h3>Server</h3><p class="err-line">${escapeHTML(err && err.message || 'Could not load the Server settings.')}</p></div>`;
       return;
@@ -24047,6 +24633,7 @@ async function renderServerSettings(){
       ${tick(r.keyGenerated, r.keyGenerated ? `Token signing key generated (${s.signing.kid || ''})` : 'Generate the token signing key')}
       ${tick(r.secretGenerated, r.secretGenerated ? 'Gateway secret generated' : "Generate the gateway secret and put it in the gateway's GATEWAY_SECRET")}
       ${tick(r.gatewayUrl && r.gatewayId, r.gatewayUrl && r.gatewayId ? `Gateway at ${s.gatewayUrl}` : 'Set the gateway address and id')}
+      ${tick(r.linkPrefix, r.linkPrefix ? `Server link prefix ${s.linkPrefix}` : 'Set the server link prefix')}
       ${tick(r.heartbeatReceived, r.heartbeatReceived ? `Heartbeat received${gw.version ? ` (version ${gw.version})` : ''}` : 'No heartbeat yet — is the gateway running?')}
       ${tick(r.configApplied, r.configApplied ? `The gateway is running configuration version ${gw.configVersion}` : `Saved version ${s.configVersion}; the gateway reports ${gw.configVersion === null || gw.configVersion === undefined ? 'nothing yet' : gw.configVersion}`)}
     </div>
@@ -24055,6 +24642,43 @@ async function renderServerSettings(){
       Enable the Server tab</label>
     <p class="muted">Off hides the tab and refuses every Server request. Existing deletion
       requests stay viewable and resolvable either way.</p>
+
+    <label class="srv-check-row"><input type="checkbox" id="srvsSubmit" ${s.submitUploadEnabled ? 'checked' : ''}
+      ${s.enabled ? '' : 'disabled'}>
+      Enable upload in Submit Work</label>
+    <p class="muted">${s.enabled
+      ? 'Adds an upload box under the link field in Submit Work, for the projects chosen below. '
+        + 'The link field itself does not change, and an artist can always paste a link instead.'
+      : 'Needs the Server tab switched on first \u2014 the upload has nowhere to list, check or '
+        + 'resume from without it.'}</p>
+    <div class="srv-set-grid">
+      <label>Enable for
+        <select id="srvsScope" ${s.enabled ? '' : 'disabled'}>
+          <option value="selected" ${s.submitScope === 'selected' ? 'selected' : ''}>Selected projects</option>
+          <option value="all" ${s.submitScope === 'all' ? 'selected' : ''}>All projects with a link</option>
+        </select>
+      </label>
+      <label>Server link prefix
+        <input id="srvsPrefix" type="text" value="${escapeHTML(s.linkPrefix || '')}"
+               placeholder="\\\\SERVER\\Projects">
+      </label>
+      <label>Fallback discipline folder
+        <input id="srvsFallback" type="text" value="${escapeHTML(s.disciplineFallback || '')}">
+      </label>
+    </div>
+    <p class="muted">The prefix is the share as the studio writes it. It must be the same place as the
+      gateway machine's <code>FILE_ROOT</code> \u2014 nothing can check that for you, so the self-test
+      shows both side by side. Every project link must start with it.</p>
+    <label>Discipline folder names</label>
+    <div class="ms-note">The folder an asset's work goes in, by its category. A category with no name
+      here uses the fallback above.</div>
+    <div class="srv-set-grid" id="srvsDisciplines">
+      ${(SRVSET.categories || []).map(c=>`<label>${escapeHTML(c.label)}
+        <input class="srvs-disc" data-key="${escapeHTML(c.key)}" type="text"
+               value="${escapeHTML((s.disciplineFolders || {})[c.key] || '')}"
+               placeholder="${escapeHTML(s.disciplineFallback || 'Work')}"></label>`).join('')
+        || '<p class="muted">No asset categories exist yet. Add them in Settings → Asset Categories.</p>'}
+    </div>
 
     <div class="srv-set-grid">
       <label>Gateway address<input id="srvsUrl" type="url" value="${escapeHTML(s.gatewayUrl || '')}" placeholder="https://files.office.example"></label>
@@ -24070,8 +24694,6 @@ async function renderServerSettings(){
     <label>Shared folders, visible to everyone with Server access<input id="srvsShared" type="text" value="${escapeHTML((s.sharedFolders || []).join(', '))}"></label>
     <label class="srv-check-row"><input type="checkbox" id="srvsEmail" ${s.emailOnDeleteRequests ? 'checked' : ''}>
       Email on deletion requests (in-app is always on)</label>
-    <label class="srv-check-row"><input type="checkbox" id="srvsLegacy" ${s.serveLegacy ? 'checked' : ''}>
-      Serve legacy files already on this host</label>
     <div class="srv-actions"><button class="btn primary" id="srvsSave">Save</button></div>
 
     <h4>Token signing key</h4>
@@ -24105,17 +24727,25 @@ async function renderServerSettings(){
     <div id="srvsTestOut"></div>
 
     <h4>Project folders</h4>
-    <p class="muted">Each project owns one folder, named from its code the first time it is
-      needed and then fixed — so renaming a project never orphans its folder. Edit one to point
-      a project at a folder that already exists on the share.</p>
-    <table class="srv-table"><thead><tr><th>Project</th><th>Client</th><th>Code</th><th>Folder</th><th></th></tr></thead>
-      <tbody>${(SRVSET.mapping || []).slice(0, 300).map(m=>`<tr>
+    <p class="muted">Read-only. A project's folder is its <strong>server folder link</strong>, typed on the
+      project itself beside its other fields — one place, edited by whoever edits projects. This is
+      what those links resolve to.</p>
+    <table class="srv-table"><thead><tr>
+      <th>Project</th><th>Client</th><th>Server folder link</th><th>Status</th><th>Last upload</th><th>Submit upload</th>
+    </tr></thead>
+      <tbody>${(SRVSET.projects || []).slice(0, 400).map(m=>`<tr>
         <td class="srv-name">${escapeHTML(m.name)}${m.active ? '' : '<span class="srv-sub">archived</span>'}</td>
         <td>${escapeHTML(m.client || '')}</td>
-        <td>${escapeHTML(m.code || '')}</td>
-        <td><input class="srvs-folder" data-project="${escapeHTML(m.projectId)}" type="text"
-             value="${escapeHTML(m.folder || '')}" placeholder="${escapeHTML(m.wouldBe || '')}"></td>
-        <td class="srv-right"><button class="btn tiny srvs-map" data-project="${escapeHTML(m.projectId)}">Set</button></td>
+        <td class="srv-name">${m.link ? escapeHTML(m.link) : '<span class="srv-sub">no link</span>'}
+          ${m.relative ? `<span class="srv-sub">${escapeHTML(m.relative)}</span>` : ''}</td>
+        <td>${m.valid ? '<span class="srv-tick yes">\u2713</span> usable'
+          : `<span class="srv-tick no">\u2022</span> <span class="srv-sub">${escapeHTML(m.why || '')}</span>`}</td>
+        <td>${m.lastUpload ? escapeHTML(new Date(m.lastUpload).toLocaleDateString()) : ''}</td>
+        <td class="srv-right">${m.valid
+          ? `<label class="srv-check-row"><input type="checkbox" class="srvs-submit"
+               data-project="${escapeHTML(m.projectId)}" ${m.submitEnabled ? 'checked' : ''}
+               ${s.submitScope === 'all' ? 'disabled title="Every project with a link is enabled"' : ''}></label>`
+          : ''}</td>
       </tr>`).join('')}</tbody></table>
   </div>`;
 
@@ -24143,7 +24773,12 @@ function wireServerSettings(){
       allowedExtensions: val('srvsAllowed'),
       sharedFolders: val('srvsShared'),
       emailOnDeleteRequests: checked('srvsEmail'),
-      serveLegacy: checked('srvsLegacy'),
+      submitUploadEnabled: checked('srvsSubmit'),
+      submitScope: val('srvsScope'),
+      linkPrefix: val('srvsPrefix'),
+      disciplineFallback: val('srvsFallback'),
+      disciplineFolders: Object.fromEntries([...document.querySelectorAll('.srvs-disc')]
+        .map(i=>[i.dataset.key, i.value.trim()]).filter(([, v])=>v)),
     };
     try{
       const out = await api('/admin/settings/server', { method:'PATCH', body });
@@ -24198,15 +24833,17 @@ function wireServerSettings(){
   const test = document.getElementById('srvsSelfTest');
   if(test) test.addEventListener('click', runServerSelfTest);
 
-  host.querySelectorAll('.srvs-map').forEach(b=>b.addEventListener('click', async ()=>{
-    const id = b.dataset.project;
-    const input = host.querySelector(`.srvs-folder[data-project="${id}"]`);
+  host.querySelectorAll('.srvs-submit').forEach(b=>b.addEventListener('change', async ()=>{
     try{
-      const out = await api(`/admin/settings/server/mapping/${id}`, { method:'PATCH', body:{ folder: input ? input.value : '' } });
-      SRVSET = { ...SRVSET, mapping: out.mapping };
-      showToast(out.folder ? `Mapped to ${out.folder}.` : 'Cleared.');
+      const out = await api(`/admin/settings/server/projects/${b.dataset.project}/submit`,
+        { method:'PATCH', body:{ enabled: b.checked } });
+      SRVSET = { ...SRVSET, projects: out.projects };
+      showToast(out.enabled ? 'Enabled for that project.' : 'Disabled for that project.');
       renderServerSettings();
-    }catch(err){ showToast(err && err.message ? err.message : 'That folder could not be set.'); }
+    }catch(err){
+      b.checked = !b.checked;
+      showToast(err && err.message ? err.message : 'That could not be changed.');
+    }
   }));
 }
 

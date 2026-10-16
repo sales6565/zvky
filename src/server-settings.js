@@ -26,13 +26,19 @@
  * One key would have meant the gateway holding something that could mint
  * tokens. That is the whole reason there are two, and they rotate separately.
  *
- * Both are stored through src/email-secret.js — AES-256-GCM, random IV, keyed
- * from EMAIL_ENCRYPTION_KEY (falling back to JWT_SECRET) with the key's
- * fingerprint recorded beside the ciphertext. Nothing new was invented for
- * this: that module exists, has been in production for the mail password, and
- * already answers "the key was rotated, enter it again" with a sentence instead
- * of a silence. Without a key in the environment, the secret features refuse
- * with that sentence rather than storing anything in the clear.
+ * Both are stored through src/email-secret.js in its STRICT mode: AES-256-GCM,
+ * random IV, the key's fingerprint recorded beside the ciphertext — and
+ * EMAIL_ENCRYPTION_KEY only, with NO fall-back to JWT_SECRET.
+ *
+ * The fall-back is right for the mail password and wrong here. JWT_SECRET
+ * should be rotated, rotating it signs everybody out, and that is an
+ * inconvenience; if it were also the key under the file server's signing key,
+ * rotating it would silently stop the studio's file server working, with the
+ * failure appearing as "nobody can upload" and nothing pointing at the cause.
+ * And the shipped placeholder JWT_SECRET is in the repository, so a deployment
+ * that has not rotated it would be encrypting a signing key under a published
+ * value. Without EMAIL_ENCRYPTION_KEY the two secret features are DISABLED and
+ * the screen says which variable to set.
  *
  * NEITHER IS EVER RETURNED. summarise() is what the page gets, and it carries
  * fingerprints and public keys. The generated secret is shown exactly once, at
@@ -43,8 +49,13 @@
 const crypto = require('node:crypto');
 const emailSecret = require('./email-secret');
 const serverTokens = require('./server-tokens');
+const serverLink = require('./server-link');
+const serverPaths = require('./server-paths');
 
 const GB = 1024 * 1024 * 1024;
+
+// Every secret in this module goes through the strict key. See the header.
+const STRICT = { strict: true };
 
 const DEFAULTS = {
   enabled: false,
@@ -64,7 +75,13 @@ const DEFAULTS = {
   incomingMaxAgeMinutes: 24 * 60,
   rotationOverlapMinutes: 60,
   emailOnDeleteRequests: true,
-  serveLegacy: true,
+  /* THE SECOND SWITCH, OFF, and it cannot be on while the first is off. See the
+     column's own note in src/migrate.js for why they are two. */
+  submitUploadEnabled: false,
+  submitScope: 'selected',
+  linkPrefix: null,
+  disciplineFolders: { ...serverLink.DEFAULT_DISCIPLINES },
+  disciplineFallback: serverLink.DEFAULT_FALLBACK,
   configVersion: 0,
 };
 
@@ -117,7 +134,22 @@ async function load(db) {
     sharedFolders: listOf(row.shared_folders),
     incomingMaxAgeMinutes: num(row.incoming_max_age_minutes, DEFAULTS.incomingMaxAgeMinutes),
     emailOnDeleteRequests: bool(row.email_on_delete_requests, DEFAULTS.emailOnDeleteRequests),
-    serveLegacy: bool(row.serve_legacy, DEFAULTS.serveLegacy),
+    submitUploadEnabled: bool(row.submit_upload_enabled, DEFAULTS.submitUploadEnabled),
+    submitScope: row.submit_scope === 'all' ? 'all' : 'selected',
+    linkPrefix: row.link_prefix || null,
+    disciplineFolders: (() => {
+      /* A column added after the table shipped reads as the seeded pair rather
+         than as an empty map — otherwise an install made earlier on this branch
+         would put every discipline in the fallback folder. */
+      if (row.discipline_folders === undefined || row.discipline_folders === null) {
+        return { ...DEFAULTS.disciplineFolders };
+      }
+      try {
+        const parsed = JSON.parse(row.discipline_folders);
+        return parsed && typeof parsed === 'object' ? parsed : { ...DEFAULTS.disciplineFolders };
+      } catch { return { ...DEFAULTS.disciplineFolders }; }
+    })(),
+    disciplineFallback: row.discipline_fallback || DEFAULTS.disciplineFallback,
     configVersion: Number(row.config_version || 0),
     updatedBy: row.updated_by || null,
     updatedByName: row.updated_by_name || null,
@@ -137,6 +169,27 @@ const current = () => (cache === null ? { ...DEFAULTS } : cache);
  * off takes effect on the next request with no restart. */
 const serverEnabled = () => Boolean(current().enabled);
 
+/* THE SECOND SWITCH, and it is AND-ed with the first here rather than at each
+ * call site. A studio cannot have the submit upload on with the tab off — the
+ * save refuses that combination — but a row written before that rule existed,
+ * or edited by hand, must not be able to produce it either. One function, so
+ * there is one answer. */
+const submitUploadEnabled = () => Boolean(current().enabled && current().submitUploadEnabled);
+
+/* Is the Submit Work upload available for THIS project? Three conditions, all
+   of them the studio's: both switches, a link on the project, and either
+   "all projects" or this project's own flag. */
+function submitUploadEnabledFor(project) {
+  if (!submitUploadEnabled()) return false;
+  if (!current().linkPrefix) return false;
+  if (!project || !project.server_link) return false;
+  if (!serverLink.projectFolderRel(project, current().linkPrefix)) return false;
+  return current().submitScope === 'all' || Boolean(Number(project.server_submit_enabled));
+}
+
+const linkPrefix = () => current().linkPrefix;
+const disciplines = () => ({ folders: current().disciplineFolders, fallback: current().disciplineFallback });
+
 /* Configured enough to work? The checklist on the Settings page is this
    function's answer, item by item, so the page and the server cannot disagree
    about whether setup is finished. */
@@ -153,7 +206,8 @@ function readiness(state = {}) {
     heartbeatFresh: Boolean(lastSeen && Date.now() - lastSeen < freshFor),
     configApplied: Boolean(state.configVersion !== null && state.configVersion !== undefined
       && Number(state.configVersion) === Number(c.configVersion)),
-    encryptionAvailable: emailSecret.available(),
+    encryptionAvailable: emailSecret.available(STRICT),
+    linkPrefix: Boolean(c.linkPrefix),
   };
 }
 
@@ -184,7 +238,7 @@ function signingKey() {
   if (!c.signingPrivate) {
     return { ok: false, reason: 'No token signing key has been generated yet. Settings → Server → Generate key pair.' };
   }
-  const out = emailSecret.decrypt(c.signingPrivate, c.signingKeyFp);
+  const out = emailSecret.decrypt(c.signingPrivate, c.signingKeyFp, STRICT);
   if (!out.ok) {
     return { ok: false, reason: out.error || 'The token signing key could not be read. Generate a new key pair in Settings → Server.' };
   }
@@ -199,7 +253,7 @@ function gatewaySecrets() {
   const out = [];
   const add = (stored, fp) => {
     if (!stored) return;
-    const d = emailSecret.decrypt(stored, fp);
+    const d = emailSecret.decrypt(stored, fp, STRICT);
     if (d.ok) out.push(d.value);
   };
   add(c.gatewaySecret, c.gatewaySecretFp);
@@ -208,13 +262,14 @@ function gatewaySecrets() {
 }
 
 async function generateKeyPair(db, actor) {
-  if (!emailSecret.available()) {
-    return { ok: false, status: 409, error: 'This server has no key to encrypt the signing key with. '
-      + 'Set EMAIL_ENCRYPTION_KEY (or JWT_SECRET) in the environment and restart.' };
+  if (!emailSecret.available(STRICT)) {
+    return { ok: false, status: 409, code: 'no_encryption_key',
+      error: 'This server has no key to encrypt the signing key with. Set EMAIL_ENCRYPTION_KEY in the '
+        + 'environment and restart. JWT_SECRET is deliberately not accepted for the file server\'s secrets.' };
   }
   const c = current();
   const made = serverTokens.generate();
-  const sealed = emailSecret.encrypt(made.privateKey);
+  const sealed = emailSecret.encrypt(made.privateKey, STRICT);
   if (!sealed.ok) return { ok: false, status: 409, error: sealed.error };
   const overlapUntil = c.signingPublic
     ? new Date(Date.now() + c.rotationOverlapMinutes * 60 * 1000)
@@ -242,9 +297,10 @@ async function generateKeyPair(db, actor) {
 }
 
 async function generateSecret(db, actor) {
-  if (!emailSecret.available()) {
-    return { ok: false, status: 409, error: 'This server has no key to encrypt the gateway secret with. '
-      + 'Set EMAIL_ENCRYPTION_KEY (or JWT_SECRET) in the environment and restart.' };
+  if (!emailSecret.available(STRICT)) {
+    return { ok: false, status: 409, code: 'no_encryption_key',
+      error: 'This server has no key to encrypt the gateway secret with. Set EMAIL_ENCRYPTION_KEY in the '
+        + 'environment and restart. JWT_SECRET is deliberately not accepted for the file server\'s secrets.' };
   }
   const c = current();
   /* 64 characters of letters and digits, which is what
@@ -255,7 +311,7 @@ async function generateSecret(db, actor) {
     secret += crypto.randomBytes(48).toString('base64').replace(/[^A-Za-z0-9]/g, '');
   }
   secret = secret.slice(0, 64);
-  const sealed = emailSecret.encrypt(secret);
+  const sealed = emailSecret.encrypt(secret, STRICT);
   if (!sealed.ok) return { ok: false, status: 409, error: sealed.error };
   const overlapUntil = c.gatewaySecret ? new Date(Date.now() + c.rotationOverlapMinutes * 60 * 1000) : null;
   await db.query(
@@ -358,7 +414,44 @@ function validate(patch = {}, { settings = current() } = {}) {
     else out.sharedFolders = cleaned;
   }
   if (patch.emailOnDeleteRequests !== undefined) out.emailOnDeleteRequests = Boolean(patch.emailOnDeleteRequests);
-  if (patch.serveLegacy !== undefined) out.serveLegacy = Boolean(patch.serveLegacy);
+  if (patch.submitUploadEnabled !== undefined) out.submitUploadEnabled = Boolean(patch.submitUploadEnabled);
+  if (patch.submitScope !== undefined) {
+    out.submitScope = patch.submitScope === 'all' ? 'all' : 'selected';
+  }
+  if (patch.linkPrefix !== undefined) {
+    const raw = String(patch.linkPrefix || '').trim();
+    if (!raw) out.linkPrefix = null;
+    else {
+      /* Checked as a LINK in its own right, with itself as the prefix plus one
+         segment — so a prefix that is not a usable path is refused where it is
+         typed rather than making every project link refuse later. */
+      // eslint-disable-next-line no-control-regex
+      if (/[\u0000-\u001f\u007f]/.test(raw)) errors.push('The prefix contains a line break or a control character.');
+      else if (raw.length > 500) errors.push('That prefix is longer than 500 characters.');
+      else if (!/[\\/]/.test(raw)) {
+        errors.push('The prefix should be the share as the studio writes it \u2014 '
+          + 'for example \\\\SERVER\\Projects or /mnt/projects.');
+      } else out.linkPrefix = raw.replace(/[\\/]+$/, '');
+    }
+  }
+  if (patch.disciplineFolders !== undefined) {
+    const given = patch.disciplineFolders && typeof patch.disciplineFolders === 'object' ? patch.disciplineFolders : {};
+    const cleaned = {};
+    for (const [key, value] of Object.entries(given)) {
+      const name = String(value === undefined || value === null ? '' : value).trim();
+      if (!name) continue;
+      const checked = serverPaths.cleanName(name);
+      if (!checked.ok) { errors.push(`"${name}" cannot be a folder name: ${checked.reason}`); continue; }
+      cleaned[String(key).trim().toLowerCase()] = checked.value;
+    }
+    out.disciplineFolders = cleaned;
+  }
+  if (patch.disciplineFallback !== undefined) {
+    const name = String(patch.disciplineFallback || '').trim();
+    const checked = serverPaths.cleanName(name || DEFAULTS.disciplineFallback);
+    if (!checked.ok) errors.push(`"${name}" cannot be a folder name: ${checked.reason}`);
+    else out.disciplineFallback = checked.value;
+  }
 
   /* Turning the switch ON is the one change with a precondition, and it is
      checked here rather than left to fail later: a tab that is on without a
@@ -369,6 +462,20 @@ function validate(patch = {}, { settings = current() } = {}) {
     if (!after.gatewayId) errors.push('Set the gateway id before turning the Server tab on.');
     if (!after.signingPublic) errors.push('Generate a token signing key before turning the Server tab on.');
     if (!after.gatewaySecret) errors.push('Generate a gateway secret before turning the Server tab on.');
+  }
+  /* THE SECOND SWITCH NEEDS THE FIRST, refused on the server rather than only
+     greyed out on the screen. Checked against the state AFTER this save, so
+     turning both on in one request works and turning the first off while the
+     second is on does not — which is the combination that would otherwise leave
+     an upload control on the submit form with no tab, no listing and no way to
+     check where anything went. */
+  if (after.submitUploadEnabled && !after.enabled) {
+    errors.push('The Submit Work upload needs the Server tab switched on. Turn that on first, '
+      + 'or turn the upload off in the same save.');
+  }
+  if (out.submitUploadEnabled === true && !after.linkPrefix) {
+    errors.push('Set the server link prefix before turning the Submit Work upload on \u2014 '
+      + 'without it there is nothing to check a project\'s link against.');
   }
   return { ok: errors.length === 0, errors, value: out };
 }
@@ -386,7 +493,10 @@ const COLUMNS = {
   incomingMaxAgeMinutes: 'incoming_max_age_minutes',
   rotationOverlapMinutes: 'rotation_overlap_minutes',
   emailOnDeleteRequests: 'email_on_delete_requests',
-  serveLegacy: 'serve_legacy',
+  submitUploadEnabled: 'submit_upload_enabled',
+  submitScope: 'submit_scope',
+  linkPrefix: 'link_prefix',
+  disciplineFallback: 'discipline_fallback',
 };
 
 async function save(db, patch, actor) {
@@ -400,6 +510,11 @@ async function save(db, patch, actor) {
     const v = checked.value[field];
     params.push(Array.isArray(v) ? v.join(',') : (typeof v === 'boolean' ? (v ? 1 : 0) : v));
     sets.push(`${column} = $${params.length}`);
+  }
+  // The one JSON column, written as JSON rather than through the map above.
+  if (checked.value.disciplineFolders !== undefined) {
+    params.push(JSON.stringify(checked.value.disciplineFolders));
+    sets.push(`discipline_folders = $${params.length}`);
   }
   /* A save with no field in it still RE-READS the row. It costs one query and it
      makes the mirror self-healing: anything that changed the row by another
@@ -473,12 +588,16 @@ function summarise({ state = {} } = {}) {
     },
     sharedFolders: c.sharedFolders,
     emailOnDeleteRequests: c.emailOnDeleteRequests,
-    serveLegacy: c.serveLegacy,
+    submitUploadEnabled: c.submitUploadEnabled,
+    submitScope: c.submitScope,
+    linkPrefix: c.linkPrefix,
+    disciplineFolders: c.disciplineFolders,
+    disciplineFallback: c.disciplineFallback,
     configVersion: c.configVersion,
     updatedBy: c.updatedByName,
     updatedAt: c.updatedAt,
     readiness: readiness(state),
-    encryption: { available: emailSecret.available(), keyName: emailSecret.keySource().name },
+    encryption: { available: emailSecret.available(STRICT), keyName: emailSecret.keySource(STRICT).name },
   };
 }
 
@@ -506,13 +625,21 @@ function describeChange(before = {}, after = {}) {
   say('incomingMaxAgeMinutes', 'Abandoned uploads kept for', (v) => `${v} min`);
   say('rotationOverlapMinutes', 'Rotation overlap', (v) => `${v} min`);
   say('emailOnDeleteRequests', 'Email on deletion requests', (v) => (v ? 'on' : 'off'));
-  say('serveLegacy', 'Serve legacy files', (v) => (v ? 'on' : 'off'));
+  say('submitUploadEnabled', 'Upload in Submit Work', (v) => (v ? 'on' : 'off'));
+  say('submitScope', 'Submit upload enabled for', (v) => (v === 'all' ? 'all projects' : 'selected projects'));
+  say('linkPrefix', 'Server link prefix', (v) => v || 'not set');
+  say('disciplineFallback', 'Fallback discipline folder');
+  if (JSON.stringify(before.disciplineFolders || {}) !== JSON.stringify(after.disciplineFolders || {})) {
+    const show = (v) => Object.entries(v || {}).map(([k, n]) => `${k}=${n}`).join(' ') || 'none';
+    lines.push(`Discipline folders: ${show(before.disciplineFolders)} \u2192 ${show(after.disciplineFolders)}`);
+  }
   return lines;
 }
 
 module.exports = {
   DEFAULTS, MIN_CHUNK, MAX_CHUNK, MAX_FILE_CEILING,
   load, isLoaded, current, serverEnabled, readiness,
+  submitUploadEnabled, submitUploadEnabledFor, linkPrefix, disciplines,
   publicKeys, signingKey, gatewaySecrets, fingerprint,
   generateKeyPair, generateSecret,
   validate, save, gatewayConfig, summarise, describeChange,

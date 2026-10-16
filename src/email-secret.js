@@ -38,14 +38,28 @@ const TAG_BYTES = 16;
  * fingerprint below means a later rotation produces a clear "re-enter the
  * password" rather than a mystery.
  */
-function keySource() {
+function keySource({ strict = false } = {}) {
   if (process.env.EMAIL_ENCRYPTION_KEY) return { secret: process.env.EMAIL_ENCRYPTION_KEY, name: 'EMAIL_ENCRYPTION_KEY' };
-  if (process.env.JWT_SECRET) return { secret: process.env.JWT_SECRET, name: 'JWT_SECRET' };
-  return { secret: null, name: null };
+  /* STRICT MODE HAS NO FALL-BACK, and that is the whole of it.
+   *
+   * The accommodation above — borrowing JWT_SECRET so a feature is not dead on
+   * a deployment nobody has configured — is right for the mail password and
+   * wrong for the office file server's two secrets. JWT_SECRET SHOULD be
+   * rotated, rotating it signs everybody out, and that is an inconvenience; if
+   * it were also the key under the file server's signing key, rotating it would
+   * silently stop the studio's file server working and the failure would show
+   * up as "nobody can upload" with nothing pointing at the cause. Worse, the
+   * shipped placeholder JWT_SECRET means a deployment that has not rotated it
+   * would be encrypting a signing key under a value that is in the repository.
+   *
+   * So a caller that passes strict gets a key or nothing, and the Server
+   * settings screen says which variable to set rather than quietly working. */
+  if (!strict && process.env.JWT_SECRET) return { secret: process.env.JWT_SECRET, name: 'JWT_SECRET' };
+  return { secret: null, name: null, strict };
 }
 
-function available() {
-  return Boolean(keySource().secret);
+function available(opts) {
+  return Boolean(keySource(opts).secret);
 }
 
 /* A 32-byte key from whatever length of secret the environment holds.
@@ -67,20 +81,23 @@ function fingerprint(secret) {
   return crypto.createHash('sha256').update(`fp:${secret}`).digest('hex').slice(0, 8);
 }
 
-function currentFingerprint() {
-  const { secret } = keySource();
+function currentFingerprint(opts) {
+  const { secret } = keySource(opts);
   return secret ? fingerprint(secret) : null;
 }
 
 /* Encrypt. Returns the string that goes in the column, and the fingerprint that
    goes beside it, or an explanation of why it cannot. */
-function encrypt(plain) {
-  const { secret, name } = keySource();
+function encrypt(plain, opts) {
+  const { secret, name } = keySource(opts);
   if (!secret) {
     return {
       ok: false,
-      error: 'This server has no key to encrypt the mail password with. Set EMAIL_ENCRYPTION_KEY '
-        + '(or JWT_SECRET) in the environment and restart, then save the password again.',
+      error: opts && opts.strict
+        ? 'This server has no key to encrypt that secret with. Set EMAIL_ENCRYPTION_KEY in the '
+          + 'environment and restart. JWT_SECRET is deliberately NOT accepted here.'
+        : 'This server has no key to encrypt the mail password with. Set EMAIL_ENCRYPTION_KEY '
+          + '(or JWT_SECRET) in the environment and restart, then save the password again.',
     };
   }
   const iv = crypto.randomBytes(IV_BYTES);
@@ -106,8 +123,8 @@ function encrypt(plain) {
  *   key-changed   the secret was rotated; the password must be re-entered
  *   corrupt       the column holds something this cannot read at all
  */
-function decrypt(stored, storedKeyId) {
-  const { secret } = keySource();
+function decrypt(stored, storedKeyId, opts) {
+  const { secret } = keySource(opts);
   if (!stored) return { ok: false, reason: 'empty' };
   if (!secret) {
     return { ok: false, reason: 'no-key',

@@ -13,13 +13,12 @@ const db = require('../db');
 const oversight = require('../project-oversight');
 const oversightOutsource = require('../outsource');
 const { authenticate, requirePermission, can } = require('../middleware/auth');
-/* uploadImport only. The work-file parser is gone: see
-   src/middleware/no-file-bodies.js. A spreadsheet of asset names is not a work
-   file — it is a few kilobytes of data this server parses and deletes — so the
-   bulk-import route keeps its parser. */
-const { uploadImport } = require('../upload');
-const { refuseFileBody } = require('../middleware/no-file-bodies');
+const { upload, uploadImport } = require('../upload');
+/* Read only to answer "is the office file server's submit upload switched on",
+   and to attach the references it leaves. Neither does anything while it is
+   off — see the note at the submit route. */
 const serverSettings = require('../server-settings');
+const serverSubmissions = require('../server-submissions');
 const {
   canAccessProject,
   canViewAsset,
@@ -1933,14 +1932,16 @@ async function applyBulkAssign(req, res, asset, opts) {
   return updated[0];
 }
 
-/* POST /api/assets/:id/submit — the assignee sends work for review.
- *
- * body: { link (required), description (optional) }. NO FILE: the attachment
- * that studios used to send alongside is gone, and a request that still carries
- * one is answered 410 with a sentence pointing at the Server tab — see
- * src/middleware/no-file-bodies.js. The link has been the required part for
- * some time, so this narrows the route rather than changing what it is for. */
-router.post('/:id/submit', refuseFileBody, async (req, res) => {
+// POST /api/assets/:id/submit — the assignee sends work for review.
+// body: { link (required), description (optional) }; a file may still be
+// attached alongside, for studios that were uploading them.
+//
+// UNCHANGED BY THE OFFICE FILE SERVER, deliberately. This is the flow every
+// artist in the studio uses today: paste a link, submit. The Server tab's
+// upload is an ADDITION above it, switched off by default and, when on, only
+// filling in the same link field — see src/routes/server.js. Nothing about
+// this endpoint, its validation, or the optional file alongside it moved.
+router.post('/:id/submit', upload.single('file'), async (req, res) => {
   const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
   const asset = rows[0];
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
@@ -1967,14 +1968,19 @@ router.post('/:id/submit', refuseFileBody, async (req, res) => {
   await db.query(
     `INSERT INTO asset_versions (id, asset_id, version_number, stage, link, description, file_name, file_path, file_size, uploaded_by)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-    /* file_name, file_path and file_size are written NULL and the columns are
-       kept: rows from before the office file server still hold their values and
-       are still downloadable while Settings → Server → Serve legacy files is
-       on. Nothing new is ever written into them, because nothing is stored on
-       this server any more. */
     [versionId, req.params.id, versionNumber, stage, link.link, description,
-     null, null, null, req.user.id]
+     req.file ? req.file.originalname : null, req.file ? req.file.filename : null,
+     req.file ? req.file.size : null, req.user.id]
   );
+
+  /* THE ONE LINE THIS FEATURE ADDS TO THIS ROUTE, and it does nothing while the
+     feature is off: it attaches any references left by an upload from the
+     Submit Work form to the round just created. With the switches off no such
+     row can exist, so this is a no-op — a test asserts the whole endpoint
+     behaves exactly as it did before in that state. */
+  if (serverSettings.submitUploadEnabled()) {
+    await serverSubmissions.claim(db, { assetId: req.params.id, userId: req.user.id, versionId });
+  }
 
   // Every round is kept: the submission table is append-only, so a re-submission
   // after changes adds a version rather than replacing the one that was rejected.
@@ -2814,17 +2820,7 @@ router.get('/:id/worklog', async (req, res) => {
   });
 });
 
-/* GET /api/assets/versions/:versionId/download — a LEGACY file, and only that.
- *
- * Every file this can serve was uploaded before the office file server existed.
- * Nothing writes into asset_versions.file_path any more, so this route cannot
- * grow: it drains as those rows age out, and the studio can switch it off in
- * Settings → Server once it is satisfied nothing is still wanted from it.
- *
- * REMOVING THE FILES THEMSELVES IS AN OWNER'S JOB on the hosting account —
- * deliberately not something this application does, because deleting a
- * studio's old submissions on a timer is not a decision software should make.
- * README.md says so where the setting is documented. */
+// GET /api/assets/versions/:versionId/download — stream the uploaded file
 router.get('/versions/:versionId/download', async (req, res) => {
   const { rows } = await db.query('SELECT * FROM asset_versions WHERE id = $1', [req.params.versionId]);
   const version = rows[0];
@@ -2834,21 +2830,8 @@ router.get('/versions/:versionId/download', async (req, res) => {
   if (!asset || !(await canViewAsset(req.user, asset))) {
     return res.status(403).json({ error: 'No access to this file' });
   }
-  if (!version.file_path) {
-    return res.status(404).json({
-      error: 'That submission is a link, not a file on this server. Open the link, or find the file on the office file server.',
-      code: 'no_file',
-    });
-  }
-  if (!serverSettings.current().serveLegacy) {
-    return res.status(410).json({
-      error: 'Legacy files are no longer served from this server. The file is on the office file server — open the Server tab.',
-      code: 'legacy_off',
-    });
-  }
   const filePath = path.join(__dirname, '..', '..', 'uploads', version.file_path);
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File missing from storage' });
-  res.setHeader('X-Legacy-File', '1');
   res.download(filePath, version.file_name);
 });
 

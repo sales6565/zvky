@@ -28,6 +28,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { execFileSync } = require('node:child_process');
 
 const { config, resetSchema, startServer, stopServer, api, sql, openStudio,
   systemClientId, SKIP_REASON } = require('./helpers');
@@ -47,6 +48,10 @@ const SRC = (f) => fs.readFileSync(path.join(ROOT, 'src', f), 'utf8');
 const SQL = fs.readFileSync(path.join(ROOT, 'sql', 'schema.sql'), 'utf8');
 
 const cfg = config('servertab');
+
+/* The commit before any of this feature existed. The production-safety test
+   compares src/routes/assets.js against it line for line. */
+const BEFORE_FEATURE = 'ff6c03f';
 
 /* Comments mention things code must not do — "see require('../gateway/src/paths')"
    is an explanation, not a dependency — so the structural scans read code. */
@@ -72,6 +77,9 @@ function serverTabCode() {
   return out;
 }
 const PASSWORD = 'Server-Tab-1!';
+/* The share as a studio writes it. Backslashes doubled for JavaScript; what is
+   stored and compared is \\\\SERVER\\Projects. */
+const PREFIX = '\\\\\\\\SERVER\\\\Projects';
 const NEW_TABLES = ['server_settings', 'server_events', 'gateway_state', 'deletion_requests'];
 
 // ===========================================================================
@@ -91,40 +99,86 @@ test('no Forge route for the Server tab accepts a file body', () => {
   }
 });
 
-test('the work-file parser is gone from the application, not merely unused', () => {
-  const upload = SRC('upload.js');
-  /* The 200 MB submission parser is deleted. uploadImport stays — a spreadsheet
-     of asset names is a few kilobytes of DATA this server parses and unlinks,
-     which is a different thing from a work file. */
-  const exported = upload.slice(upload.indexOf('module.exports'));
-  assert.ok(!/\bupload\b(?!Import)/.test(exported),
-    `src/upload.js must not export a work-file parser any more: ${exported.trim()}`);
-  assert.match(upload, /module\.exports = \{ uploadImport, UPLOAD_DIR, REVIEW_EXTENSIONS, IMPORT_EXTENSIONS \};/);
-  assert.ok(!/const upload = multer\(/.test(upload), 'and must not construct one');
+test('PRODUCTION SAFETY: the submit route is exactly what it was', () => {
+  /* ===========================================================================
+   * THE ONE FLOW EVERY ARTIST IN THE STUDIO USES TODAY.
+   *
+   * An artist pastes a link into Submit Work and submits. Some of them attach a
+   * file alongside it. Both must keep working, untouched, while the office file
+   * server is switched off — and after it is switched on, for every project and
+   * every role not in the pilot.
+   *
+   * An earlier version of this feature took the file attachment away and
+   * answered 410. That was a change to the one endpoint that must not change,
+   * so it was put back, and this is the test that keeps it back: the route is
+   * compared with what it was BEFORE any of this existed, with comments
+   * stripped, and the parser and the three file columns are named explicitly.
+   */
   const assets = SRC('routes/assets.js');
-  assert.ok(!/upload\.single\('file'\)/.test(assets), 'the submit route has no file parser');
-  assert.match(assets, /router\.post\('\/:id\/submit', refuseFileBody,/,
-    'and it refuses a multipart body instead');
-  // Exactly one route in the application still parses a file, and it is the
-  // spreadsheet import. Anything else would be a second storage path.
-  const parsers = [];
-  for (const file of fs.readdirSync(path.join(ROOT, 'src', 'routes'))) {
-    if (!file.endsWith('.js')) continue;
-    const src = fs.readFileSync(path.join(ROOT, 'src', 'routes', file), 'utf8');
-    for (const m of src.matchAll(/(\w+(?:\.\w+)?)\.(single|array|fields)\(/g)) parsers.push(`${file}:${m[0]}`);
+  assert.match(assets, /router\.post\('\/:id\/submit', upload\.single\('file'\), async/,
+    'the submit route still takes an optional file, with the same parser');
+  assert.match(assets, /req\.file \? req\.file\.originalname : null, req\.file \? req\.file\.filename : null/,
+    'and still writes file_name, file_path and file_size from it');
+  assert.match(SRC('upload.js'), /module\.exports = \{ upload, uploadImport,/,
+    'src/upload.js still exports the work-file parser');
+  assert.match(SRC('upload.js'), /limits: \{ fileSize: 200 \* 1024 \* 1024 \}/,
+    'with the same 200 MB limit');
+
+  // The legacy download is unchanged too: no new gate, no new status, no header.
+  assert.match(assets, /router\.get\('\/versions\/:versionId\/download', async \(req, res\) => \{/);
+  const download = assets.slice(assets.indexOf("router.get('/versions/:versionId/download'"));
+  const body = download.slice(0, download.indexOf('\n});'));
+  assert.ok(!/serveLegacy|legacy_off|X-Legacy-File|code: 'no_file'/.test(body),
+    'the legacy download gained no switch and no new refusal');
+
+  /* AND THE WHOLE ROUTE FILE, compared with the commit before this feature
+     began. Comments differ — two paragraphs were added saying why this must not
+     change — and not one line of code does. */
+  const before = execFileSync('git', ['show', `${BEFORE_FEATURE}:src/routes/assets.js`],
+    { cwd: ROOT, encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 });
+  /* Block comments FIRST, across lines: a continuation line of one does not
+     start with a comment marker, and filtering line by line left those in —
+     which made this fail on a paragraph rather than on a change. */
+  const code = (text) => text
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((line) => !/^\s*\/\//.test(line))
+    .map((line) => line.replace(/\s+$/, ''))
+    .filter((line) => line.trim() !== '')
+    .join('\n');
+  const mine = code(assets);
+  const theirs = code(before);
+  if (mine !== theirs) {
+    /* Named, so a failure says WHICH line moved rather than "they differ".
+       Two lines are expected to differ and both are additive: the two requires
+       and the one claim() call, all inert while the feature is off. */
+    const a = theirs.split('\n');
+    const b = mine.split('\n');
+    const added = b.filter((line) => line.trim() && !a.includes(line));
+    const removed = a.filter((line) => line.trim() && !b.includes(line));
+    assert.deepStrictEqual(removed, [], `the submit route lost code: ${removed.join(' | ')}`);
+    for (const line of added) {
+      assert.ok(
+        /server-settings|server-submissions|submitUploadEnabled\(\)|serverSubmissions\.claim|^\s*\}$/.test(line),
+        `src/routes/assets.js gained a line that is not the office file server's additive hook: ${line}`
+      );
+    }
   }
-  /* The four that remain are all application-internal and were classified as
-     such before this feature was built: the spreadsheet import (twice — assets
-     and users), chat attachments, the studio logo, and an avatar. None of them
-     is a work file and none of them goes to the office server. */
-  assert.deepStrictEqual(parsers.sort(), [
-    "assets.js:uploadImport.single(",     // a spreadsheet of asset names
-    "assets.js:uploadThumbnail.single(",  // an asset's preview image, in memory, stored as a blob on its row
-    "branding.js:upload.single(",         // the studio logo, likewise
-    "chat.js:files.upload.array(",        // a chat attachment, deleted after twelve hours
-    "users.js:uploadImport.single(",      // a spreadsheet of people
-    "users.js:uploadPhoto.single(",       // a profile photo, in memory, stored on the user's row
-  ], 'a new file parser appeared; classify it before adding it here');
+});
+
+test('with both switches off, nothing in the submission payload changes', () => {
+  /* The page's half of the same promise, read off the one function that builds
+     the request. With SRV.enabled false the project forms send no serverLink
+     key at all — not an empty one — so the request is byte-identical to the one
+     the production page sends today. */
+  const page = PAGE.slice(PAGE.indexOf("const { project, warnings, serverLinkWarnings } = await api('/projects'") - 1200,
+    PAGE.indexOf("const { project, warnings, serverLinkWarnings } = await api('/projects'"));
+  assert.match(page, /if\(SRV\.enabled\)\{[\s\S]*?body\.serverLink/,
+    'New Project only sends the link while the Server tab is on');
+  assert.match(PAGE, /\.\.\.\(SRV\.enabled \? \{ serverLink:/,
+    'and so does Edit Project');
+  // And the submit box draws nothing at all unless everything says yes.
+  assert.match(PAGE, /if\(!SRV\.enabled \|\| !SRV\.submitUploadEnabled \|\| !can\('server\.submit_upload'\)\) return;/);
 });
 
 test('there is no delete, rename, move or overwrite anywhere in the feature', () => {
@@ -294,21 +348,6 @@ test('describeChange names a secret rotation without printing it', () => {
   assert.match(text, /Server tab: off → on/);
 });
 
-test('a project folder is derived once and then fixed', () => {
-  /* THE NAME, NOT THE CODE. projects.code is generated initials in this schema
-     — codeFor() in src/routes/projects.js, re-derived on rename — so "Alpha"
-     has the code "A" and a code-derived share would be full of single letters.
-     src/server-folders.js says so at length. */
-  assert.strictEqual(serverFolders.derive({ code: 'A', name: 'Alpha' }), 'Alpha');
-  assert.strictEqual(serverFolders.derive({ code: 'ALPHA-24', name: '' }), 'ALPHA-24', 'the code is the fallback');
-  assert.strictEqual(serverFolders.derive({ code: '', name: 'Project: Beta/Gamma' }), 'Project Beta Gamma');
-  assert.match(serverFolders.derive({ id: 'abcdef12-0000', name: '', code: null }), /^project-abcdef12$/);
-  // The snapshot, in the schema: unique, so two projects cannot share a folder.
-  const migrate = SRC('migrate.js');
-  assert.match(migrate, /ADD UNIQUE KEY uq_projects_server_folder \(server_folder\)/);
-  assert.match(migrate, /THE FOLDER A PROJECT OWNS, snapshotted at first use and then fixed/);
-});
-
 // ===========================================================================
 // 2. LIVE: permissions, scoping, audit, deletion requests, the gateway channel.
 // ===========================================================================
@@ -353,8 +392,8 @@ test('the Server tab, end to end', { skip: cfg ? false : SKIP_REASON }, async (t
       assert.strictEqual(r.status, 201, JSON.stringify(r.body));
       id[key] = r.body.project.id;
     };
-    await mkProject('alpha', 'Alpha', { code: 'ALPHA', teamLeadIds: [id.lead] });
-    await mkProject('beta', 'Beta', { code: 'BETA' });
+    await mkProject('alpha', 'Alpha', { teamLeadIds: [id.lead] });
+    await mkProject('beta', 'Beta');
   });
 
   t.after(() => stopServer(server));
@@ -409,6 +448,33 @@ test('the Server tab, end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     assert.ok(on.body.changes.some((c) => /Server tab: off → on/.test(c)), on.body.changes.join('|'));
   });
 
+  await t.test('the prefix is what a project link is checked against', async () => {
+    /* Nothing about projects works until it is set, and that is the point of
+       it: without a prefix there is nothing to validate a link against. */
+    const before = await as('root', `/projects/${id.alpha}`, { method: 'PATCH',
+      body: { serverLink: `${PREFIX}\\Alpha` } });
+    assert.strictEqual(before.status, 400, JSON.stringify(before.body));
+    assert.match(before.body.error, /prefix/);
+
+    const bad = await patch({ linkPrefix: 'Projects' });
+    assert.strictEqual(bad.status, 400, 'a prefix with no separator is not a share');
+
+    const set = await patch({ linkPrefix: PREFIX });
+    assert.strictEqual(set.status, 200, JSON.stringify(set.body));
+    assert.strictEqual(set.body.settings.linkPrefix, PREFIX);
+
+    // And now the project takes one.
+    const linked = await as('root', `/projects/${id.alpha}`, { method: 'PATCH',
+      body: { serverLink: `${PREFIX}\\Alpha` } });
+    assert.strictEqual(linked.status, 200, JSON.stringify(linked.body));
+    assert.strictEqual(linked.body.project.serverLink, `${PREFIX}\\Alpha`);
+    assert.strictEqual(linked.body.project.serverFolderRelative, 'Alpha');
+
+    const beta = await as('root', `/projects/${id.beta}`, { method: 'PATCH',
+      body: { serverLink: `${PREFIX}\\Beta` } });
+    assert.strictEqual(beta.status, 200, JSON.stringify(beta.body));
+  });
+
   await t.test('and after saving, neither secret can be read back by anybody', async () => {
     const got = await settings();
     const text = JSON.stringify(got.body);
@@ -452,7 +518,7 @@ test('the Server tab, end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     assert.strictEqual(resolve.status, 403);
   });
 
-  await t.test('a token is scoped to the folders visibleProjects() gives, and no further', async () => {
+  await t.test('a token is scoped to the projects visibleProjects() gives, and no further', async () => {
     // Root holds server.browse_all by default, so the root itself is reachable.
     const rootTok = await as('root', '/server/token', { method: 'POST', body: { op: 'list', path: '' } });
     assert.strictEqual(rootTok.status, 200, JSON.stringify(rootTok.body));
@@ -468,11 +534,18 @@ test('the Server tab, end to end', { skip: cfg ? false : SKIP_REASON }, async (t
       body: { permissions: [...held, 'server.view', 'server.download', 'server.upload', 'server.request_delete'] } });
     assert.strictEqual(put.status, 200, JSON.stringify(put.body));
 
+    /* THE TOP LEVEL IS A LIST OF PROJECTS, not a listing of the share. The lead
+       is on Alpha and not on Beta, so that is what they get — by project NAME,
+       with the link as a subtitle, answered from Forge's own database because a
+       non-admin may not read the share's root at all. */
     const state = await as('lead', '/server/state');
     assert.strictEqual(state.status, 200, JSON.stringify(state.body));
-    const names = (state.body.roots.entries || []).map((e) => e.name);
-    assert.ok(names.includes('Alpha'), `the lead's own project folder is offered: ${names.join(',')}`);
-    assert.ok(!names.includes('Beta'), 'and a project they are not on is not');
+    assert.strictEqual(state.body.roots.all, false);
+    const names = (state.body.roots.entries || []).map((e) => e.label);
+    assert.deepStrictEqual(names, ['Alpha'], `the lead's own project: ${names.join(',')}`);
+    assert.strictEqual(state.body.roots.entries[0].path, 'Alpha');
+    assert.strictEqual(state.body.roots.entries[0].subtitle, `${PREFIX}\\Alpha`,
+      'the link is shown as the subtitle, so somebody can see which folder it is');
 
     // A path outside the prefix is refused even though the folder is real.
     const outside = await as('lead', '/server/token', { method: 'POST', body: { op: 'list', path: 'Beta' } });
@@ -484,7 +557,7 @@ test('the Server tab, end to end', { skip: cfg ? false : SKIP_REASON }, async (t
       const r = await as('lead', '/server/token', { method: 'POST', body: { op: 'list', path: p } });
       assert.ok(r.status === 400 || r.status === 403, `${p} gave ${r.status}`);
     }
-    // A subfolder of what they hold is fine — that is how browsing works.
+    // A subfolder of their project is fine — that is how browsing works.
     const deeper = await as('lead', '/server/token', { method: 'POST', body: { op: 'list', path: 'Alpha/scenes' } });
     assert.strictEqual(deeper.status, 200, JSON.stringify(deeper.body));
   });
@@ -782,37 +855,98 @@ test('the Server tab, end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     id.secret = fresh;
   });
 
-  await t.test('the project folder mapping is snapshotted, editable and unique', async () => {
+  await t.test('the project link is edited on the project, and the overview is read-only', async () => {
+    /* THERE IS NO MAPPING TABLE TO EDIT ANY MORE. A project's folder is its
+       link, typed on the project beside its other fields, by whoever edits
+       projects. Settings shows what those links resolve to and cannot change
+       them — one place, one permission. */
     const got = await settings();
-    const alpha = got.body.mapping.find((m) => m.name === 'Alpha');
-    assert.strictEqual(alpha.folder, 'Alpha', 'claimed on first use, from the name');
+    const alpha = got.body.projects.find((m) => m.name === 'Alpha');
+    assert.ok(alpha, 'the overview lists every project');
+    assert.strictEqual(alpha.link, `${PREFIX}\\Alpha`);
+    assert.strictEqual(alpha.relative, 'Alpha');
+    assert.strictEqual(alpha.valid, true);
+    assert.ok(!('wouldBe' in alpha), 'and nothing is derived from a name any more');
 
-    // Renaming the project does not move the folder.
+    // The old editing endpoint is gone, not merely unused.
+    const gone = await as('root', `/admin/settings/server/mapping/${id.alpha}`, { method: 'PATCH', body: { folder: 'X' } });
+    assert.strictEqual(gone.status, 404, JSON.stringify(gone.body));
+
+    /* RENAMING THE PROJECT MOVES NOTHING, because the link is what the folder
+       is — not a name derived from the project. */
     await as('root', `/projects/${id.alpha}`, { method: 'PATCH', body: { name: 'Alpha Rebranded' } });
     const after = await settings();
-    assert.strictEqual(after.body.mapping.find((m) => m.id === alpha.id || m.projectId === alpha.projectId).folder, 'Alpha');
+    const same = after.body.projects.find((m) => m.projectId === id.alpha);
+    assert.strictEqual(same.link, `${PREFIX}\\Alpha`, 'the link is untouched by a rename');
+    assert.strictEqual(same.relative, 'Alpha');
 
-    // Pointing it at an existing folder on the share.
-    const moved = await as('root', `/admin/settings/server/mapping/${id.alpha}`, { method: 'PATCH', body: { folder: 'ALPHA 2024' } });
-    assert.strictEqual(moved.status, 200, JSON.stringify(moved.body));
-    assert.strictEqual(moved.body.folder, 'ALPHA 2024');
+    /* CHANGING THE LINK IS ASKED ABOUT FIRST, and the answer moves nothing. */
+    const unconfirmed = await as('root', `/projects/${id.alpha}`, { method: 'PATCH',
+      body: { serverLink: `${PREFIX}\\Alpha 2026` } });
+    assert.strictEqual(unconfirmed.status, 409, JSON.stringify(unconfirmed.body));
+    assert.strictEqual(unconfirmed.body.requiresConfirmation, true);
+    assert.strictEqual(unconfirmed.body.field, 'serverLink');
+    assert.match(unconfirmed.body.error, /Existing files stay in the old folder/);
+    assert.match(unconfirmed.body.error, /Nothing is moved or deleted/);
+    const still = await q('SELECT server_link FROM projects WHERE id = ?', [id.alpha]);
+    assert.strictEqual(still[0].server_link, `${PREFIX}\\Alpha`, 'and nothing was written');
 
-    // Two projects cannot share one.
-    const clash = await as('root', `/admin/settings/server/mapping/${id.beta}`, { method: 'PATCH', body: { folder: 'ALPHA 2024' } });
-    assert.strictEqual(clash.status, 409, JSON.stringify(clash.body));
-    assert.match(clash.body.error, /Another project already uses/);
+    const confirmed = await as('root', `/projects/${id.alpha}`, { method: 'PATCH',
+      body: { serverLink: `${PREFIX}\\Alpha 2026`, confirmLinkChange: true } });
+    assert.strictEqual(confirmed.status, 200, JSON.stringify(confirmed.body));
+    assert.strictEqual(confirmed.body.project.serverFolderRelative, 'Alpha 2026');
 
-    // An impossible folder name is refused where somebody can see it.
-    const bad = await as('root', `/admin/settings/server/mapping/${id.beta}`, { method: 'PATCH', body: { folder: '../escape' } });
-    assert.strictEqual(bad.status, 400);
+    // And it is in the studio's record, with both sides of the change.
+    const log = await as('root', '/activity?module=projects&limit=20');
+    const entry = (log.body.entries || []).find((e) => e.action === 'project.server_link.set');
+    assert.ok(entry, 'the repoint is audited');
+    assert.match(entry.summary, /Repointed/);
+
+    // Put it back for the tests that follow.
+    await as('root', `/projects/${id.alpha}`, { method: 'PATCH',
+      body: { serverLink: `${PREFIX}\\Alpha`, confirmLinkChange: true } });
+  });
+
+  await t.test('overlapping links warn and do not refuse', async () => {
+    const inside = await as('root', `/projects/${id.beta}`, { method: 'POST' }).catch(() => null);
+    const made = await as('root', `/projects/${id.beta}`, { method: 'PATCH',
+      body: { serverLink: `${PREFIX}\\Alpha\\Shared`, confirmLinkChange: true } });
+    assert.strictEqual(made.status, 200, JSON.stringify(made.body));
+    const warnings = made.body.serverLinkWarnings || [];
+    assert.ok(warnings.some((w) => w.kind === 'inside'), JSON.stringify(warnings));
+    assert.match(warnings[0].message, /can see this project's work|inside/);
+    // Saved anyway: two projects sharing a parent is a real arrangement.
+    const check = await q('SELECT server_link FROM projects WHERE id = ?', [id.beta]);
+    assert.strictEqual(check[0].server_link, `${PREFIX}\\Alpha\\Shared`);
+    await as('root', `/projects/${id.beta}`, { method: 'PATCH',
+      body: { serverLink: `${PREFIX}\\Beta`, confirmLinkChange: true } });
+    assert.ok(inside === null || inside, 'the probe above is incidental');
+  });
+
+  await t.test('Check folder mints a list token for a link being typed', async () => {
+    const out = await as('root', '/server/check-folder', { method: 'POST', body: { link: `${PREFIX}\\Alpha\\scenes` } });
+    assert.strictEqual(out.status, 200, JSON.stringify(out.body));
+    assert.strictEqual(out.body.path, 'Alpha/scenes');
+    assert.ok(out.body.token);
+    // Not for a link outside the prefix, and not for somebody who cannot edit projects.
+    const no = await as('root', '/server/check-folder', { method: 'POST', body: { link: '\\\\OTHER\\x\\y' } });
+    assert.strictEqual(no.status, 400, JSON.stringify(no.body));
+    assert.strictEqual((await as('ana', '/server/check-folder', { method: 'POST', body: { link: `${PREFIX}\\Alpha` } })).status, 403);
   });
 
   await t.test('the self-test reports step by step and mints only self-test tokens', async () => {
     const out = await as('root', '/admin/settings/server/self-test', { method: 'POST' });
     assert.strictEqual(out.status, 200, JSON.stringify(out.body));
     const keys = out.body.steps.map((s) => s.key);
-    assert.deepStrictEqual(keys, ['configured', 'encryption', 'signing_key', 'gateway_secret',
-      'heartbeat', 'config_applied', 'disk']);
+    /* link_prefix is second, straight after the address: the prefix and the
+       gateway's FILE_ROOT are the same place in two notations, nothing can
+       check that they match, and putting them side by side is the whole point
+       of the step. */
+    assert.deepStrictEqual(keys, ['configured', 'link_prefix', 'encryption', 'signing_key',
+      'gateway_secret', 'heartbeat', 'config_applied', 'disk']);
+    const prefixStep = out.body.steps.find((st) => st.key === 'link_prefix');
+    assert.strictEqual(prefixStep.ok, true);
+    assert.match(prefixStep.detail, /FILE_ROOT/, 'and it names the other half by name');
     assert.ok(out.body.probe && out.body.probe.putToken && out.body.probe.getToken);
 
     const gwTokens = require('../gateway/src/tokens');
@@ -824,24 +958,6 @@ test('the Server tab, end to end', { skip: cfg ? false : SKIP_REASON }, async (t
     assert.ok(v.ok, JSON.stringify(v));
     assert.strictEqual(v.claims.op, 'selftest', 'a self-test token and nothing else');
     assert.strictEqual(v.claims.path, '', 'the gateway puts it in .incoming/selftest itself');
-  });
-
-  await t.test('the submit route refuses a file body with 410 and keeps working for a link', async () => {
-    const asset = await as('root', `/assets/project/${id.alpha}`, { method: 'POST',
-      body: { name: 'Hero', type: 'character' } });
-    assert.strictEqual(asset.status, 201, JSON.stringify(asset.body));
-    id.asset = asset.body.asset.id;
-    await as('root', `/assets/${id.asset}`, { method: 'PATCH', body: { assigneeId: id.ana } });
-
-    const multipart = await api(server.base, `/assets/${id.asset}/submit`, {
-      method: 'POST',
-      token: token.ana,
-      raw: '--X\r\nContent-Disposition: form-data; name="file"; filename="a.psd"\r\n\r\nbytes\r\n--X--\r\n',
-      headers: { 'content-type': 'multipart/form-data; boundary=X' },
-    });
-    assert.strictEqual(multipart.status, 410, JSON.stringify(multipart.body));
-    assert.strictEqual(multipart.body.code, 'files_moved');
-    assert.match(multipart.body.error, /Server tab/);
   });
 
   await t.test('NOTHING in any of this wrote a file to the Forge disk', async () => {

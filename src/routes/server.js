@@ -43,6 +43,7 @@ const notifications = require('../notifications');
 const serverSettings = require('../server-settings');
 const serverFolders = require('../server-folders');
 const serverPaths = require('../server-paths');
+const serverLink = require('../server-link');
 const serverTokens = require('../server-tokens');
 const emailNotifications = require('../email-notifications');
 
@@ -110,6 +111,11 @@ router.get('/state', requirePermission('server.view'), async (req, res) => {
   ).catch(() => ({ rows: [] }));
   res.json({
     enabled: serverSettings.serverEnabled(),
+    /* The second switch and the prefix, so the tab and the submit modal can
+       both draw themselves from one request. Neither is a permission: the
+       permission is checked on every endpoint regardless. */
+    submitUploadEnabled: serverSettings.submitUploadEnabled(),
+    linkPrefix: settings.linkPrefix,
     gatewayUrl: settings.gatewayUrl,
     gatewayId: settings.gatewayId,
     chunkBytes: settings.chunkBytes,
@@ -276,6 +282,201 @@ router.post('/upload-session/:id/renew', requireEnabled, requirePermission('serv
     return res.status(400).json({ error: 'That is not an upload id.' });
   }
   return openUploadSession(req, res, { uploadId: id, renewal: true });
+});
+
+/* POST /api/server/check-folder — "does this folder exist on the server?"
+ *
+ * For the project form: somebody pastes a link and presses Check folder. Forge
+ * cannot look — it cannot reach the LAN — so it mints a list token for that
+ * path and the browser does the looking through whichever transport it has.
+ *
+ * THE PERMISSION IS project.edit, NOT server.view. The person doing this is
+ * setting up a project, which is what project.edit is for, and requiring a
+ * Server-tab permission as well would mean a project manager could not check
+ * the link they are being asked to type. It is a read of one folder's existence
+ * and nothing else: the token is a list token, for that path, for sixty
+ * seconds, and it is audited like every other mint.
+ */
+router.post('/check-folder', requireEnabled, requirePermission('project.edit'), async (req, res) => {
+  const settings = serverSettings.current();
+  if (!settings.gatewayUrl || !settings.gatewayId) {
+    return res.status(409).json({ error: 'The office file gateway has not been configured.', code: 'not_configured' });
+  }
+  if (!settings.linkPrefix) {
+    return res.status(409).json({ error: 'No server link prefix has been set in Settings → Server.', code: 'no_prefix' });
+  }
+  const checked = serverLink.validateLink((req.body || {}).link, settings.linkPrefix);
+  if (!checked.ok) return res.status(400).json({ error: checked.error, reason: checked.reason });
+
+  const key = serverSettings.signingKey();
+  if (!key.ok) return res.status(409).json({ error: key.reason, code: 'no_signing_key' });
+  const minted = serverTokens.mint({
+    privateKey: key.privateKey, kid: key.kid, audience: settings.gatewayId,
+    userId: req.user.id, op: 'list', path: checked.relative,
+  });
+  await audit({ userId: req.user.id, userEmail: req.user.email, ip: req.ip, action: 'list', path: checked.relative });
+  res.json({
+    token: minted.token, expiresAt: minted.expiresAt, gatewayUrl: settings.gatewayUrl,
+    path: checked.relative, link: checked.link,
+  });
+});
+
+/* ---- Part C: the Submit Work upload --------------------------------------
+ *
+ * THE PATH IS COMPUTED HERE. The browser says which asset, which file name, how
+ * big, and — for a dragged folder — the subpath inside it. It does NOT say
+ * where the file goes: that is
+ *
+ *     <the project's folder> / <discipline> / <the person's own folder>
+ *
+ * read off the asset's project and category and the uploader's account. A
+ * client that sends a path has it ignored. This is the difference between the
+ * Server tab's upload (anywhere the person may reach, needing server.upload)
+ * and this one (their own folder on this asset's project, and nowhere else).
+ */
+async function submitUploadContext(req) {
+  const assetId = String((req.body || {}).assetId || '');
+  if (!assetId) return { ok: false, status: 400, error: 'Which asset is this for?' };
+  const { rows } = await db.query(
+    `SELECT a.id, a.project_id, a.\`category\`, a.assignee_id, p.\`name\` AS project_name,
+            p.server_link, p.server_submit_enabled
+       FROM assets a JOIN projects p ON p.id = a.project_id
+      WHERE a.id = $1`, [assetId]
+  );
+  const asset = rows[0];
+  if (!asset) return { ok: false, status: 404, error: 'Asset not found' };
+  if (!(await permissions.canViewAsset(req.user, asset))) {
+    return { ok: false, status: 403, error: 'No access to this asset' };
+  }
+  const project = { id: asset.project_id, server_link: asset.server_link, server_submit_enabled: asset.server_submit_enabled };
+  if (!serverSettings.submitUploadEnabledFor(project)) {
+    /* One answer for all of: the switch is off, the prefix is unset, this
+       project has no link, its link is not under the prefix, or it is not in
+       the allowlist. The page is told the code so it can draw the right
+       tooltip; the sentence is the one a person can act on. */
+    return {
+      ok: false, status: 409, code: 'project_not_enabled',
+      error: serverSettings.submitUploadEnabled()
+        ? 'Uploading to the office server is not switched on for this project. Paste a link instead, '
+          + 'or ask an admin to enable it.'
+        : 'Uploading to the office server is not switched on. Paste a link instead.',
+    };
+  }
+  const folder = await serverFolders.userFolderFor(db, req.user);
+  if (!folder.ok) return { ok: false, status: 409, error: folder.error };
+  const computed = serverLink.uploadPathFor({
+    project, prefix: serverSettings.linkPrefix(), categoryKey: asset.category,
+    userFolder: folder.folder, subPath: (req.body || {}).subPath || '',
+    discipline: serverSettings.disciplines(),
+  });
+  if (!computed.ok) return { ok: false, status: 409, error: computed.error, code: computed.reason };
+  return { ok: true, asset, computed, userFolder: folder.folder };
+}
+
+router.post('/submit-upload-session', requireEnabled, requirePermission('server.submit_upload'), async (req, res) => {
+  const ctx = await submitUploadContext(req);
+  if (!ctx.ok) return res.status(ctx.status).json({ error: ctx.error, code: ctx.code });
+
+  const settings = serverSettings.current();
+  const body = req.body || {};
+  const name = serverPaths.cleanName(body.name);
+  if (!name.ok) return res.status(400).json({ error: name.reason });
+  const size = Number(body.size);
+  if (!Number.isFinite(size) || size < 0) return res.status(400).json({ error: 'That upload has no size.' });
+  if (size > settings.maxFileBytes) {
+    const gb = (n) => `${(n / (1024 ** 3)).toFixed(n % (1024 ** 3) ? 1 : 0)} GB`;
+    return res.status(413).json({ error: `${name.value} is ${gb(size)}; the limit is ${gb(settings.maxFileBytes)}.` });
+  }
+  const ext = (String(name.value).match(/\.[^.]*$/) || [''])[0].toLowerCase();
+  if (settings.deniedExtensions.includes(ext)) {
+    return res.status(415).json({ error: `${ext || 'That kind of file'} may not be uploaded to the office server.` });
+  }
+  if (settings.allowedExtensions.length && !settings.allowedExtensions.includes(ext)) {
+    return res.status(415).json({ error: `Only ${settings.allowedExtensions.join(', ')} may be uploaded.` });
+  }
+
+  const key = serverSettings.signingKey();
+  if (!key.ok) return res.status(409).json({ error: key.reason, code: 'no_signing_key' });
+  const uploadId = String(body.uploadId || '').match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+    ? String(body.uploadId) : crypto.randomUUID();
+  const minted = serverTokens.mint({
+    privateKey: key.privateKey, kid: key.kid, audience: settings.gatewayId,
+    userId: req.user.id, op: 'upload', path: ctx.computed.relative,
+    uploadId, maxBytes: size, name: name.value,
+  });
+  await audit({
+    userId: req.user.id, userEmail: req.user.email, ip: req.ip, action: 'upload_started',
+    path: `${ctx.computed.relative}/${name.value}`, size,
+  });
+  res.json({
+    uploadId, token: minted.token, expiresAt: minted.expiresAt,
+    gatewayUrl: settings.gatewayUrl,
+    // The computed path, so the page can show where it is going — it is told,
+    // it does not choose.
+    path: ctx.computed.relative,
+    name: name.value,
+    existingPrefix: ctx.computed.existingPrefix,
+    chunkBytes: settings.chunkBytes,
+    parallelChunks: settings.parallelChunks,
+  });
+});
+
+/* POST /api/server/submit-uploads — the references, and the link to put in the
+ * form.
+ *
+ * REFERENCES ONLY: a relative path, a name, a size and a time. No content, no
+ * checksum of content this server never saw, no copy. And the LINK IS COMPUTED
+ * HERE as well, from the prefix and the relative path, so what lands in the
+ * form is a link this studio's own validator accepts — rather than something
+ * the page assembled and the submit endpoint then refuses.
+ *
+ * ONE FILE: the file's own link, which is what a reviewer wants to open.
+ * SEVERAL: the person's folder for this asset, because a link can only point at
+ * one thing and the folder is the one place all of them are.
+ */
+router.post('/submit-uploads', requireEnabled, requirePermission('server.submit_upload'), async (req, res) => {
+  const ctx = await submitUploadContext(req);
+  if (!ctx.ok) return res.status(ctx.status).json({ error: ctx.error, code: ctx.code });
+  const files = Array.isArray((req.body || {}).files) ? (req.body || {}).files : [];
+  if (!files.length) return res.status(400).json({ error: 'No files were named.' });
+
+  const stored = [];
+  for (const file of files.slice(0, 200)) {
+    const name = serverPaths.cleanName(file && file.name);
+    if (!name.ok) continue;
+    /* The path is RECOMPUTED from the asset, the person and the subpath — never
+       taken from the browser. A client naming somebody else's folder gets its
+       own folder, which is the only place this endpoint can write a reference
+       to. */
+    const computed = serverLink.uploadPathFor({
+      project: { id: ctx.asset.project_id, server_link: ctx.asset.server_link, server_submit_enabled: ctx.asset.server_submit_enabled },
+      prefix: serverSettings.linkPrefix(), categoryKey: ctx.asset.category,
+      userFolder: ctx.userFolder, subPath: file && file.subPath ? file.subPath : '',
+      discipline: serverSettings.disciplines(),
+    });
+    if (!computed.ok) continue;
+    const relative = `${computed.relative}/${name.value}`;
+    const size = Number.isFinite(Number(file.size)) ? Math.floor(Number(file.size)) : null;
+    await db.query(
+      `INSERT INTO server_submission_files (id, asset_id, user_id, relative_path, \`name\`, size)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [crypto.randomUUID(), ctx.asset.id, req.user.id, relative, name.value, size]
+    ).catch((err) => { if (!(err && (err.code === 'ER_DUP_ENTRY' || err.errno === 1062))) throw err; });
+    stored.push({ relative, name: name.value, size });
+  }
+  if (!stored.length) return res.status(400).json({ error: 'None of those files could be recorded.' });
+
+  const single = stored.length === 1;
+  const relative = single ? stored[0].relative : ctx.computed.relative;
+  const link = serverLink.linkFor(serverSettings.linkPrefix(), relative);
+  res.json({
+    files: stored,
+    link,
+    /* Said out loud, because the artist is about to see one or the other in the
+       field and should know why. */
+    linkIs: single ? 'file' : 'folder',
+    relative,
+  });
 });
 
 /* ---- deletion requests ---------------------------------------------------

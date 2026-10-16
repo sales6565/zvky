@@ -8,6 +8,10 @@ const { authenticate, requirePermission, can } = require('../middleware/auth');
 const lifecycle = require('../lifecycle');
 const { visibleProjects, canAccessProject, holds } = require('../permissions');
 const { assignableRoles, roleDef, supervisionRoles } = require('../roles');
+const activity = require('../activity');
+const serverSettings = require('../server-settings');
+const serverLink = require('../server-link');
+const serverFolders = require('../server-folders');
 const referenceData = require('../reference-data');
 const assetSchedule = require('../asset-schedule');
 const projectMilestones = require('../project-milestones');
@@ -29,6 +33,36 @@ const projectMilestones = require('../project-milestones');
 function checkProjectFields(body) {
   const sets = [];
   const b = body || {};
+
+  /* THE PROJECT'S SERVER FOLDER LINK.
+   *
+   * In here with category and the dates, rather than in a branch of its own,
+   * because it is an ordinary project field: the same form, the same
+   * permission, the same shared validator. What is NOT ordinary about it is the
+   * two states it has to tell apart — "not sent" (the production form, and
+   * every caller that predates this field) and "sent as empty" (somebody
+   * clearing it) — so an undefined value is left alone and an empty one is a
+   * deliberate NULL.
+   *
+   * IGNORED ENTIRELY WHILE THE SERVER TAB IS OFF. The field is not on the form
+   * then, so a value arriving is either a stale page or a hand-made request,
+   * and in both cases the right answer is to behave exactly as the application
+   * did before this feature existed rather than to start validating a field
+   * nobody can see. */
+  if (b.serverLink !== undefined && serverSettings.serverEnabled()) {
+    const prefix = serverSettings.linkPrefix();
+    const raw = b.serverLink === null ? '' : String(b.serverLink).trim();
+    if (!raw) {
+      sets.push(['server_link', null]);
+    } else if (!prefix) {
+      return { ok: false, field: 'serverLink',
+        error: 'No server link prefix has been set in Settings → Server, so a project link cannot be checked yet.' };
+    } else {
+      const checked = serverLink.validateLink(raw, prefix);
+      if (!checked.ok) return { ok: false, field: 'serverLink', error: checked.error };
+      sets.push(['server_link', checked.link]);
+    }
+  }
 
   if (b.category !== undefined) {
     const value = b.category === null || b.category === '' ? null : String(b.category);
@@ -226,7 +260,12 @@ router.post('/', requirePermission('project.add'), async (req, res) => {
     /* Warnings ride back with the saved project rather than refusing it — see
        the note at the top of src/project-milestones.js for why a milestone
        outside the project's own window is said and not blocked. */
-    res.status(201).json({ project: await withMembers(rows[0]), warnings: plan.warnings });
+    const madeWarnings = await linkWarnings(rows[0]);
+    res.status(201).json({
+      project: await withMembers(rows[0]),
+      warnings: [...(plan.warnings || []), ...madeWarnings.map((w) => w.message)],
+      serverLinkWarnings: madeWarnings,
+    });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error(err);
@@ -434,6 +473,31 @@ router.patch('/:id', requirePermission('project.edit'), async (req, res) => {
   const plan = checkMilestones(req, project, extras);
   if (!plan.ok) return res.status(plan.status).json({ error: plan.error, field: plan.field });
 
+  /* CHANGING A LINK THAT ALREADY POINTS SOMEWHERE IS ASKED ABOUT FIRST.
+   *
+   * Nothing is moved, copied or deleted by this — the gateway cannot move a
+   * file and Forge cannot either — which is exactly why it needs saying out
+   * loud: the work already uploaded stays in the old folder and stops appearing
+   * under this project in the Server tab. Somebody who meant to correct a typo
+   * and somebody who meant to repoint a project at a new share both type the
+   * same thing, and only one of them wants that.
+   *
+   * 409 with requiresConfirmation, the shape this application already uses for
+   * archiving a project with unfinished work — so the page's existing
+   * confirm-and-retry path handles it. */
+  const linkSet = extras.sets.find(([column]) => column === 'server_link');
+  const linkChanging = Boolean(linkSet) && String(linkSet[1] || '') !== String(project.server_link || '');
+  if (linkChanging && project.server_link && req.body.confirmLinkChange !== true) {
+    return res.status(409).json({
+      requiresConfirmation: true,
+      field: 'serverLink',
+      error: 'Existing files stay in the old folder and will no longer appear under this project in '
+        + 'Server. New uploads go to the new folder. Nothing is moved or deleted.',
+      from: project.server_link,
+      to: linkSet[1] || null,
+    });
+  }
+
   // Moving a project to another client. How the "Unassigned" pile gets sorted
   // out, so it has to be possible from the edit form.
   let newClient = null;
@@ -491,7 +555,29 @@ router.patch('/:id', requirePermission('project.edit'), async (req, res) => {
 
   const { rows: saved } = await db.query('SELECT * FROM projects WHERE id = $1', [project.id]);
   console.log(`${req.user.email} updated project "${saved[0].name}".`);
-  return res.json({ project: await withMembers(saved[0]), warnings: plan.warnings });
+
+  /* THE LINK CHANGE, IN THE STUDIO'S RECORD. Its own line rather than folded
+     into the generic project edit, because "which folder is this project's
+     work in, and since when" is a question somebody will ask months later —
+     and the answer is not recoverable from the current value. */
+  if (linkChanging) {
+    activity.record(db, {
+      req, module: 'projects', action: 'project.server_link.set', entityId: project.id,
+      entityLabel: saved[0].name,
+      summary: project.server_link
+        ? `Repointed ${saved[0].name}'s server folder (nothing was moved)`
+        : `Set ${saved[0].name}'s server folder link`,
+      before: { serverLink: project.server_link || null },
+      after: { serverLink: saved[0].server_link || null },
+    }).catch(() => {});
+  }
+
+  const serverWarnings = await linkWarnings(saved[0]);
+  return res.json({
+    project: await withMembers(saved[0]),
+    warnings: [...(plan.warnings || []), ...serverWarnings.map((w) => w.message)],
+    serverLinkWarnings: serverWarnings,
+  });
 });
 
 // GET /api/projects/:id — one project with who is attached to it, for the edit
@@ -519,8 +605,17 @@ async function withMembers(project) {
     db.query('SELECT user_id FROM project_supervision WHERE project_id = $1', [project.id]),
     projectMilestones.forProjects(db, [project.id]),
   ]);
+  /* The link as stored, plus what it resolves to. The relative path is computed
+     by the one shared function rather than by the page, so a form showing
+     "Hero Quest/Art" and a gateway serving something else cannot happen. */
+  const prefix = serverSettings.linkPrefix();
+  const resolved = project.server_link ? serverLink.validateLink(project.server_link, prefix) : null;
   return {
     ...project,
+    serverLink: project.server_link || null,
+    serverFolderRelative: resolved && resolved.ok ? resolved.relative : null,
+    serverLinkProblem: project.server_link && resolved && !resolved.ok ? (resolved.error || resolved.reason) : null,
+    serverSubmitEnabled: Boolean(Number(project.server_submit_enabled)),
     teamLeadIds: leads.rows.map((r) => r.user_id),
     actingTeamLeadIds: acting.rows.map((r) => r.user_id),
     coordinatorIds: coords.rows.map((r) => r.user_id),
@@ -635,6 +730,37 @@ router.post('/:id/reopen', requirePermission('project.close'), async (req, res) 
   console.log(`${req.user.email} reopened project "${project.name}".`);
   res.json({ ok: true, closed: false });
 });
+
+/* NON-BLOCKING WARNINGS about a project's link: another project on the same
+ * folder, or one whose folder contains or sits inside it.
+ *
+ * WARNINGS AND NOT REFUSALS, deliberately. Two projects sharing a parent folder
+ * is a real arrangement — a series and its episodes, a project and its
+ * reference library — and a studio that has organised its share that way should
+ * not be told its own filing is invalid. What it should be told is that people
+ * on one project will see the other's work, which is what these say.
+ */
+async function linkWarnings(project) {
+  if (!project || !project.server_link || !serverSettings.serverEnabled()) return [];
+  const prefix = serverSettings.linkPrefix();
+  const mine = serverLink.validateLink(project.server_link, prefix);
+  if (!mine.ok) return [];
+  const { rows } = await db.query(
+    'SELECT id, `name`, server_link FROM projects WHERE server_link IS NOT NULL AND id <> $1', [project.id]
+  );
+  const overlaps = serverLink.overlapWarnings(mine.relative, rows.map((r) => {
+    const theirs = serverLink.validateLink(r.server_link, prefix);
+    return { name: r.name, relative: theirs.ok ? theirs.relative : null };
+  }));
+  return overlaps.map((o) => ({
+    ...o,
+    message: o.kind === 'duplicate'
+      ? `${o.project} uses the same server folder. People on either project will see both.`
+      : (o.kind === 'inside'
+        ? `This folder is inside ${o.project}'s folder, so people on ${o.project} can see this project's work.`
+        : `${o.project}'s folder is inside this one, so people on this project can see ${o.project}'s work.`),
+  }));
+}
 
 /* GET /api/projects/:id/artists — who the New Asset form offers as assignee.
  *
