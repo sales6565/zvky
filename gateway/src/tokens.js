@@ -108,6 +108,11 @@ const SKEW_DEFAULT_SECONDS = 30;
 const SKEW_CAP_SECONDS = 120;
 
 function leewayFor(seconds) {
+  /* NOT CONFIGURED is not the same as ZERO. Number(null) and Number('') are
+     both 0, which would quietly turn the leeway off for a config that read an
+     empty variable — the opposite of what somebody leaving it alone meant. Only
+     an explicit 0 means none. */
+  if (seconds === null || seconds === undefined || seconds === '') return SKEW_DEFAULT_SECONDS;
   const n = Number(seconds);
   if (!Number.isFinite(n) || n < 0) return SKEW_DEFAULT_SECONDS;
   return Math.min(Math.floor(n), SKEW_CAP_SECONDS);

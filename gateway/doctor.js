@@ -360,11 +360,12 @@ async function checkForge(local) {
     if (json && json.now) {
       const skew = Math.round((Date.now() - Date.parse(json.now)) / 1000);
       const leeway = tokens.leewayFor(local.clockLeewaySeconds);
-      if (Math.abs(skew) > leeway) {
+      const verdict = probes.clockVerdict(skew, leeway);
+      if (verdict === 'fail') {
         fail('clock agrees with Forge', `This machine is ${skew}s from Forge (leeway ${leeway}s).`,
           'Tokens live 60 seconds and will expire on arrival. Fix the clock: w32tm /resync on Windows, '
           + 'or enable systemd-timesyncd on Linux.');
-      } else if (Math.abs(skew) > 15) {
+      } else if (verdict === 'warn') {
         warn('clock agrees with Forge', `This machine is ${skew}s from Forge.`, 'Within the leeway, but worth fixing.');
       } else {
         pass('clock agrees with Forge', `${skew}s apart.`);

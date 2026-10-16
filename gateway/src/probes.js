@@ -143,4 +143,25 @@ function run(root, { name = `probe-${crypto.randomUUID().slice(0, 8)}` } = {}) {
   };
 }
 
-module.exports = { run, finaliseProbe, filesystemProbe, scratch, NO_LINK_CODES };
+
+/* THE CLOCK VERDICT, as a function, because three places have an opinion about
+ * one number and only one of them should decide.
+ *
+ * Above the leeway is a FAILURE and not a warning: a token lives sixty seconds,
+ * so a clock that far out means every link expires on arrival and the tab goes
+ * quiet with nothing explaining it. Above fifteen seconds is a warning — it
+ * works today and it is drifting. The leeway is passed in rather than read
+ * here, so the doctor and the Settings screen cannot disagree about it, and
+ * tokens.leewayFor() is what caps it. */
+const CLOCK_WARN_SECONDS = 15;
+
+function clockVerdict(skewSeconds, leewaySeconds) {
+  const skew = Math.abs(Number(skewSeconds));
+  if (!Number.isFinite(skew)) return 'unknown';
+  if (skew > Number(leewaySeconds)) return 'fail';
+  if (skew > CLOCK_WARN_SECONDS) return 'warn';
+  return 'pass';
+}
+
+module.exports = { run, finaliseProbe, filesystemProbe, scratch, NO_LINK_CODES,
+  clockVerdict, CLOCK_WARN_SECONDS };

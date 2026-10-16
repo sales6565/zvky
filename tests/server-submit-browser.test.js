@@ -671,6 +671,49 @@ test('the Submit Work upload, in a browser', { skip: SKIP }, async (t) => {
     } finally { await admin.close(); }
   });
 
+  await t.test('a project that is not enabled gets a sentence, not a box', async () => {
+    const h = await open('ana');
+    try {
+      await h.ready();
+      /* A REAL PROJECT WITH A REAL LINK, not in the pilot. The server refuses
+         an upload for it either way; this is about what the artist is told,
+         which has to be "paste a link instead" rather than a box that fails. */
+      const off = await as('root', `/admin/settings/server/projects/${id.second}/submit`,
+        { method: 'PATCH', body: { enabled: false } });
+      assert.strictEqual(off.status, 200, JSON.stringify(off.body));
+      const second = (await as('root', `/projects/${id.second}`)).body.project;
+      assert.ok(second.serverLink, 'it has a link');
+      assert.strictEqual(second.serverSubmitEnabled, false);
+
+      await h.page.evaluate(({ assetId, p }) => srvSubmitBox(assetId, p), { assetId: id.secondArt, p: second });
+      await h.page.waitForSelector('.srv-submit-off');
+      assert.strictEqual(await h.page.$('#srvSubmitDrop'), null, 'and no way to start an upload');
+      assert.match(await h.page.$eval('.srv-submit-off', (e) => e.textContent), /paste a link instead/);
+      assert.match(await h.page.$eval('.srv-submit-off', (e) => e.title), /not switched on for this project/);
+      await h.native();
+    } finally {
+      await as('root', `/admin/settings/server/projects/${id.second}/submit`,
+        { method: 'PATCH', body: { enabled: true } });
+      await h.close();
+    }
+  });
+
+  await t.test('with the Server switch off the link field is not on the form at all', async () => {
+    const h = await open('pm');
+    try {
+      /* NOT DISABLED — ABSENT. With the switch off this is the production form,
+         and a disabled field nobody can use is still a field somebody has to
+         ask about. SRV.enabled false is what every browser has before a Super
+         Admin turns it on. */
+      await h.page.evaluate('SRV.enabled = false;');
+      await h.page.evaluate("srvWireLinkField('p', '')");
+      assert.strictEqual(await h.page.$eval('#p_serverWrap', (e) => e.style.display), 'none');
+      // And it asked Forge for nothing: there is nothing to ask about.
+      assert.strictEqual(await h.page.evaluate('SRV.linkPrefix'), null);
+      await h.native();
+    } finally { await h.close(); }
+  });
+
   await t.test('submitting is held while an upload is still going', async () => {
     const h = await open('ana');
     try {
