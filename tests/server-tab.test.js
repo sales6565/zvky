@@ -99,6 +99,78 @@ test('no Forge route for the Server tab accepts a file body', () => {
   }
 });
 
+test('the Server secrets never fall back to JWT_SECRET', () => {
+  /* ===========================================================================
+   * WHY THIS IS A TEST AND NOT A COMMENT.
+   *
+   * Everywhere else in this application EMAIL_ENCRYPTION_KEY falls back to
+   * JWT_SECRET, which is right for a mail password: a feature that is dead on a
+   * deployment nobody has configured is worse than one keyed from the session
+   * secret. It is wrong for the office file server's two secrets, for two
+   * reasons that compound. JWT_SECRET ships as a PLACEHOLDER — so a deployment
+   * that has not rotated it would be encrypting a studio's signing key under a
+   * value that is in this repository — and rotating it, which whoever deploys is
+   * told to do, would make both secrets undecryptable while leaving the feature
+   * switched on. The failure would read as "nobody can upload" with nothing
+   * pointing at the cause.
+   *
+   * So the Server settings read the key in STRICT mode. A mutation that drops
+   * the `strict` flag, at the key source or at any one call site, has to fail
+   * something.
+   */
+  const emailSecret = require('../src/email-secret');
+  const before = { key: process.env.EMAIL_ENCRYPTION_KEY, jwt: process.env.JWT_SECRET };
+  try {
+    delete process.env.EMAIL_ENCRYPTION_KEY;
+    process.env.JWT_SECRET = 'the-placeholder-that-ships-and-is-meant-to-be-rotated';
+
+    // The mail side still borrows it. That is deliberate and stays.
+    assert.strictEqual(emailSecret.available(), true);
+    assert.strictEqual(emailSecret.keySource().name, 'JWT_SECRET');
+
+    // The Server side does not, and says which variable to set.
+    assert.strictEqual(emailSecret.available({ strict: true }), false);
+    assert.strictEqual(emailSecret.keySource({ strict: true }).name, null);
+    assert.strictEqual(emailSecret.currentFingerprint({ strict: true }), null);
+    const sealed = emailSecret.encrypt('a signing key', { strict: true });
+    assert.strictEqual(sealed.ok, false);
+    assert.match(sealed.error, /EMAIL_ENCRYPTION_KEY/);
+    assert.match(sealed.error, /JWT_SECRET is deliberately NOT accepted/);
+    // And nothing encrypted under JWT_SECRET can be read back in strict mode.
+    const loose = emailSecret.encrypt('a signing key');
+    assert.strictEqual(loose.ok, true, 'the mail path still works');
+    assert.strictEqual(emailSecret.decrypt(loose.value, loose.keyId, { strict: true }).ok, false);
+
+    // With the real key set, strict mode works and names it.
+    process.env.EMAIL_ENCRYPTION_KEY = 'e'.repeat(64);
+    assert.strictEqual(emailSecret.available({ strict: true }), true);
+    assert.strictEqual(emailSecret.keySource({ strict: true }).name, 'EMAIL_ENCRYPTION_KEY');
+    const strictly = emailSecret.encrypt('a signing key', { strict: true });
+    assert.strictEqual(strictly.ok, true);
+    assert.strictEqual(emailSecret.decrypt(strictly.value, strictly.keyId, { strict: true }).value,
+      'a signing key');
+  } finally {
+    if (before.key === undefined) delete process.env.EMAIL_ENCRYPTION_KEY;
+    else process.env.EMAIL_ENCRYPTION_KEY = before.key;
+    if (before.jwt === undefined) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = before.jwt;
+  }
+
+  /* EVERY CALL SITE, structurally. The flag is an argument, so one call that
+     forgets it is a silent fall-back on that path alone — and the three that
+     matter most (available, encrypt, decrypt of the signing key and the gateway
+     secret) are in one file. Read off the source because the alternative is
+     reaching into the settings module's private state from a test process that
+     may not have a database. */
+  const settings = SRC('server-settings.js');
+  const calls = settings.match(/emailSecret\.(available|encrypt|decrypt|currentFingerprint|keySource)\([^)]*\)/g) || [];
+  assert.ok(calls.length >= 8, `expected the Server settings to read the key in several places: ${calls.length}`);
+  for (const call of calls) {
+    assert.match(call, /STRICT/,
+      `src/server-settings.js must pass STRICT to every email-secret call: ${call}`);
+  }
+});
+
 test('PRODUCTION SAFETY: the submit route is exactly what it was', () => {
   /* ===========================================================================
    * THE ONE FLOW EVERY ARTIST IN THE STUDIO USES TODAY.
