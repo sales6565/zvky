@@ -480,3 +480,59 @@ studio-wide rollout, on a real office machine: open Forge in **Chrome** and in
 The self-test reports which transport that browser is using — *Direct* or *Via
 bridge window* — along with reachability, certificate trust and CORS. Do it once
 per browser; it takes a minute and it is the only way to know.
+
+## 13. The setup checklist, and the order to go live in
+
+Two lists. The first is everything that has to exist; the second is the order to
+switch it on in, which matters because every step but the last is reversible.
+
+### Setup checklist
+
+| | What | Where |
+|---|---|---|
+| ☐ | A machine on the office LAN, on whenever people work, with the share mounted | §1 |
+| ☐ | Node 18 or newer on it | §1 |
+| ☐ | An **internal DNS name** for that machine's LAN address — `files.office.example` | §1 |
+| ☐ | A **TLS certificate** for that name, readable by the service account, not expiring within 30 days | §3 |
+| ☐ | `LISTEN_ADDRESS` set to the machine's LAN address — **never `0.0.0.0`**, and the gateway is **never port-forwarded** | §2 |
+| ☐ | **Share permissions**: the service account may *create* files and folders and may *not* delete, rename or overwrite anything outside `.incoming` | §4, and the manual check in §12 |
+| ☐ | `GATEWAY_ID`, matching the gateway id in Forge's Settings → Server | §2 |
+| ☐ | `GATEWAY_SECRET`, the value Forge showed once when it was generated | §2 |
+| ☐ | `FILE_ROOT` — the top of the share, the **same place** as Forge's *Server link prefix* | §2 |
+| ☐ | In Forge, **Server link prefix** set to that share as the studio writes it (`\\SERVER\Projects`) | Settings → Server |
+| ☐ | On the Forge host (GoDaddy), the environment variable **`EMAIL_ENCRYPTION_KEY`** — the Server secrets are encrypted with it and **`JWT_SECRET` is deliberately not accepted** | Forge's own `.env` |
+| ☐ | `npm run doctor` on the gateway machine: no FAILs | §12 |
+| ☐ | The **manual delete-restriction check**, with IT present | §12 |
+| ☐ | **Chrome and Edge checked on an office machine** via Run self-test | §12 |
+| ☐ | *Optional upgrade only:* the `LocalNetworkAccessAllowedForUrls` policy on Chrome/Edge, which removes the second window. Everything works without it | §10 |
+
+### Go-live runbook
+
+Each step is a place to stop. Nothing before step 7 changes what any artist sees.
+
+1. **Deploy with every switch OFF.** The Server tab switch and the Submit Work
+   upload switch both ship off. The tab is hidden, every Server endpoint answers
+   `409 feature_disabled`, and the project form has no link field.
+2. **Verify nothing changed.** An artist pastes a link into Submit Work and
+   submits, as they did yesterday. A file attached to a submission still
+   uploads. That is the whole of this step and it is the important one.
+3. **Run the doctor on the gateway machine** (`npm run doctor`). Fix every FAIL
+   before going further; read the WARNs and decide. Do the manual
+   delete-restriction check now, with IT present.
+4. **Enable the Server tab**, with the Server permissions still granted to
+   Super Admin only — which is how they ship. Nobody else sees anything.
+5. **Run the self-test** (Settings → Server), in Chrome and in Edge on an
+   office machine. It reports reachability, certificate trust, CORS, a 1 KB
+   write into `.incoming/selftest` and a read back, the clock difference, and
+   which transport that browser uses.
+6. **Set the Server link prefix**, and check it against the `FILE_ROOT` the
+   status line shows. Give **one** pilot project its *Server folder link* and
+   press **Check folder**.
+7. **Enable the Submit Work upload** with *Enable for: Selected projects* and
+   that one project in the list.
+8. **Grant `server.submit_upload`** to the pilot artists' role, and nothing
+   else. They now see the upload box on that project's assets only; every other
+   project and person is on the pasted-link flow, unchanged.
+9. **Widen gradually** — a project at a time, a role at a time. Turning either
+   switch off at any point puts everybody back on the flow from step 2, with
+   every file still on the office server where it is.

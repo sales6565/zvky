@@ -3455,6 +3455,11 @@ Super Admin:
 6. **Enable the Server tab.** Turning it on is refused until the things above are
    in place, so the tab cannot appear in a state where every click fails.
 
+The **setup checklist and the go-live runbook** are §13 of
+`gateway/README.md` — written for whoever installs the gateway, and ordered so
+that every step before the pilot is reversible and nothing an artist does changes
+until the last two.
+
 **And a second switch, for uploading from the submit-work form.** It is separate,
 it ships off, and it is refused unless the first one is on and a prefix is set —
 browsing the share and letting artists put files on it are different decisions,
