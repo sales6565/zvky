@@ -7621,9 +7621,39 @@ function cardHTML(a){
  * NOT A PERMISSION. Every role that can open the Dashboard sees both sub-tabs.
  * The lens partitions what somebody already sees; it grants nothing and hides
  * nothing that the board was not already showing them. */
+/* ---------- which discipline an asset's work belongs to ----------
+ *
+ * THE SAME RULE AS src/asset-discipline.js, SAID TWICE ON PURPOSE. The browser
+ * needs it to draw the sub-tabs below and the server needs it to decide which
+ * folder an upload lands in, and this application has no build step between
+ * src/ and this file. So the body of assetDiscipline() here is the SAME TEXT as
+ * the one in that module, and tests/asset-discipline.test.js compares the two
+ * character for character and runs both over one matrix. A divergence cannot be
+ * committed — which matters more here than almost anywhere else, because an
+ * artist who sees an asset under Animation and finds the file in Artist/ has
+ * been told two different things about one piece of work.
+ *
+ * Read src/asset-discipline.js for WHY the rule is the asset's type and what
+ * else was considered. Do not edit either copy alone. */
+const ASSET_DISCIPLINES = [
+  { id: 'art', label: 'Art' },
+  { id: 'animation', label: 'Animation' },
+];
+
+function assetDiscipline(asset) {
+  const type = String((asset && asset.type) || '').trim().toLowerCase();
+  return type === 'animation' ? 'animation' : 'art';
+}
+
+/* The sub-tabs ARE the discipline, which is the whole point: one rule, two
+   readers. `{ type: a.type }` rather than the asset itself so this cannot grow
+   a second input — the lens narrows by type and by nothing else, and now that
+   is structural rather than something a test has to read off the source.
+   The ids, labels and order are held equal to ASSET_DISCIPLINES by
+   tests/asset-discipline.test.js. */
 const BOARD_LENS = [
-  { id: 'art',       label: 'Art',       match: (a) => a.type !== 'animation' },
-  { id: 'animation', label: 'Animation', match: (a) => a.type === 'animation' },
+  { id: 'art',       label: 'Art',       match: (a) => assetDiscipline({ type: a.type }) === 'art' },
+  { id: 'animation', label: 'Animation', match: (a) => assetDiscipline({ type: a.type }) === 'animation' },
 ];
 const BOARD_LENS_DEFAULT = 'art';
 
@@ -24749,13 +24779,13 @@ async function renderServerSettings(){
   if(!SRVSET){
     host.innerHTML = '<div class="card"><h3>Server</h3><p class="muted">Loading…</p></div>';
     try{
+      /* The discipline rows come with the settings (`settings.disciplines`),
+         because the disciplines are a property of the rule in
+         src/asset-discipline.js and not of anything a studio edits. This used
+         to read the asset CATEGORIES list instead — which ships empty, so the
+         grid had no rows at all while every upload went to the fallback
+         folder. That was the whole of Prompt 52. */
       SRVSET = await api('/admin/settings/server');
-      /* The studio's asset categories, so the discipline rows are the studio's
-         own words rather than a guess. CATEGORIES is the list the page already
-         loaded for every asset dropdown — one source, no second request. It
-         ships EMPTY in this application, so "no categories yet" is a real state
-         and is said rather than shown as an empty grid. */
-      SRVSET.categories = (CATEGORIES || []).map(c=>({ key:c.id, label:c.label }));
     }
     catch(err){
       host.innerHTML = `<div class="card"><h3>Server</h3><p class="err-line">${escapeHTML(err && err.message || 'Could not load the Server settings.')}</p></div>`;
@@ -24817,15 +24847,19 @@ async function renderServerSettings(){
       gateway machine's <code>FILE_ROOT</code> \u2014 nothing can check that for you, so the self-test
       shows both side by side. Every project link must start with it.</p>
     <label>Discipline folder names</label>
-    <div class="ms-note">The folder an asset's work goes in, by its category. A category with no name
-      here uses the fallback above.</div>
+    <div class="ms-note">The folder an asset's work goes in. The discipline is the same one the
+      Dashboard's Art and Animation sub-tabs use — an asset's type, so an asset the board shows
+      under Animation uploads to the Animation folder. A name left empty uses the fallback above.</div>
     <div class="srv-set-grid" id="srvsDisciplines">
-      ${(SRVSET.categories || []).map(c=>`<label>${escapeHTML(c.label)}
-        <input class="srvs-disc" data-key="${escapeHTML(c.key)}" type="text"
-               value="${escapeHTML((s.disciplineFolders || {})[c.key] || '')}"
-               placeholder="${escapeHTML(s.disciplineFallback || 'Work')}"></label>`).join('')
-        || '<p class="muted">No asset categories exist yet. Add them in Settings → Asset Categories.</p>'}
+      ${(s.disciplines || ASSET_DISCIPLINES).map(d=>`<label>${escapeHTML(d.label)}
+        <input class="srvs-disc" data-key="${escapeHTML(d.id)}" type="text"
+               value="${escapeHTML((s.disciplineFolders || {})[d.id] || '')}"
+               placeholder="${escapeHTML(s.disciplineFallback || 'Work')}"></label>`).join('')}
     </div>
+    <!-- WHAT THAT ACTUALLY PRODUCES, in the words the person is typing. The
+         folder names are three inputs away from a path nobody sees until an
+         artist uploads; this is that path, redrawn as they type. -->
+    <div class="ms-note" id="srvsPathPreview"></div>
 
     <div class="srv-set-grid">
       <label>Gateway address<input id="srvsUrl" type="url" value="${escapeHTML(s.gatewayUrl || '')}" placeholder="https://files.office.example"></label>
@@ -24904,11 +24938,58 @@ async function renderServerSettings(){
   wireServerSettings();
 }
 
+/* AN EXAMPLE OF THE PATH THESE FIELDS PRODUCE, drawn from what is in them now.
+ *
+ * Three inputs decide where every upload in the studio lands, and until an
+ * artist actually uploads, nobody sees the result. So it is shown here, and
+ * redrawn as the person types rather than after a save.
+ *
+ * The separator is the prefix's own — the same one-line rule as linkFor() in
+ * src/server-link.js, because a UNC share previewed with forward slashes reads
+ * as a mistake to the person checking it. <project> and the person's own folder
+ * are shown as what they are: the project's link decides the first, and the
+ * second is the uploader's folder, named after them on their first upload and
+ * fixed from then on. */
+/* The path itself, with no DOM in it, so it can be tested as what it is: a
+   string built from three fields. The separator is the prefix's own — the same
+   one-line rule as linkFor() in src/server-link.js, because a UNC share
+   previewed with forward slashes reads as a mistake to the person checking it.
+   The two placeholders are honest about what decides them: <project> is the
+   project's own link, and the last segment is the uploader's folder, named
+   after them on their first upload and fixed from then on. */
+function srvsPreviewPath(prefix, folder, who){
+  const base = String(prefix === undefined || prefix === null ? '' : prefix).trim().replace(/[\\/]+$/, '');
+  const sep = base.includes('\\') ? '\\' : '/';
+  return [base || '<prefix>', '<project>', folder, who].join(sep) + sep;
+}
+
+function srvsPathPreview(){
+  const box = document.getElementById('srvsPathPreview');
+  if(!box) return;
+  const prefix = (document.getElementById('srvsPrefix') || {}).value || '';
+  const fallback = ((document.getElementById('srvsFallback') || {}).value || '').trim() || 'Work';
+  const who = (state.user && state.user.name) ? state.user.name : 'Your Name';
+  const rows = [...document.querySelectorAll('.srvs-disc')].map(i=>{
+    const label = (i.closest('label') ? i.closest('label').textContent : i.dataset.key).trim();
+    const folder = (i.value || '').trim() || fallback;
+    return `<div><strong>${escapeHTML(label)}</strong> \u2192 <code>${escapeHTML(
+      srvsPreviewPath(prefix, folder, who))}</code></div>`;
+  });
+  box.innerHTML = rows.length ? `An upload will go to:${rows.join('')}` : '';
+}
+
 function wireServerSettings(){
   const host = document.getElementById('serverSettingsSection');
   if(!host) return;
   const val = (id)=>{ const el = document.getElementById(id); return el ? el.value : undefined; };
   const checked = (id)=>{ const el = document.getElementById(id); return el ? el.checked : undefined; };
+
+  srvsPathPreview();
+  ['srvsPrefix', 'srvsFallback'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.addEventListener('input', srvsPathPreview);
+  });
+  document.querySelectorAll('.srvs-disc').forEach(i=>i.addEventListener('input', srvsPathPreview));
 
   const save = document.getElementById('srvsSave');
   if(save) save.addEventListener('click', async ()=>{

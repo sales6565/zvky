@@ -46,6 +46,7 @@ const serverPaths = require('../server-paths');
 const serverLink = require('../server-link');
 const serverTokens = require('../server-tokens');
 const serverSubmissions = require('../server-submissions');
+const { assetDiscipline } = require('../asset-discipline');
 const emailNotifications = require('../email-notifications');
 
 router.use(authenticate);
@@ -442,8 +443,11 @@ async function submitUploadContext(req) {
   const assetId = String((req.body || {}).assetId || '');
   if (!assetId) return { ok: false, status: 400, error: 'Which asset is this for?' };
   const { rows } = await db.query(
-    `SELECT a.id, a.project_id, a.\`category\`, a.assignee_id, p.\`name\` AS project_name,
-            p.server_link, p.server_submit_enabled
+    /* a.`type` is what decides the discipline folder — see
+       src/asset-discipline.js. The category is read too, but only so the
+       answer can say what it was: nothing computes a path from it any more. */
+    `SELECT a.id, a.project_id, a.\`type\`, a.\`category\`, a.assignee_id,
+            p.\`name\` AS project_name, p.server_link, p.server_submit_enabled
        FROM assets a JOIN projects p ON p.id = a.project_id
       WHERE a.id = $1`, [assetId]
   );
@@ -469,7 +473,11 @@ async function submitUploadContext(req) {
   const folder = await serverFolders.userFolderFor(db, req.user);
   if (!folder.ok) return { ok: false, status: 409, error: folder.error };
   const computed = serverLink.uploadPathFor({
-    project, prefix: serverSettings.linkPrefix(), categoryKey: asset.category,
+    project, prefix: serverSettings.linkPrefix(),
+    /* THE SAME CLASSIFICATION THE DASHBOARD DRAWS ITS SUB-TABS FROM, called
+       rather than reproduced. An asset the board shows under Animation lands in
+       the Animation folder, by construction. */
+    disciplineId: assetDiscipline(asset),
     userFolder: folder.folder, subPath: (req.body || {}).subPath || '',
     discipline: serverSettings.disciplines(),
   });
@@ -558,7 +566,7 @@ router.post('/submit-uploads', requireEnabled, requirePermission('server.submit_
        to. */
     const computed = serverLink.uploadPathFor({
       project: { id: ctx.asset.project_id, server_link: ctx.asset.server_link, server_submit_enabled: ctx.asset.server_submit_enabled },
-      prefix: serverSettings.linkPrefix(), categoryKey: ctx.asset.category,
+      prefix: serverSettings.linkPrefix(), disciplineId: assetDiscipline(ctx.asset),
       userFolder: ctx.userFolder, subPath: file && file.subPath ? file.subPath : '',
       discipline: serverSettings.disciplines(),
     });

@@ -50,6 +50,7 @@ const crypto = require('node:crypto');
 const emailSecret = require('./email-secret');
 const serverTokens = require('./server-tokens');
 const serverLink = require('./server-link');
+const assetDiscipline = require('./asset-discipline');
 const serverPaths = require('./server-paths');
 
 const GB = 1024 * 1024 * 1024;
@@ -146,7 +147,18 @@ async function load(db) {
       }
       try {
         const parsed = JSON.parse(row.discipline_folders);
-        return parsed && typeof parsed === 'object' ? parsed : { ...DEFAULTS.disciplineFolders };
+        if (!parsed || typeof parsed !== 'object') return { ...DEFAULTS.disciplineFolders };
+        /* KEPT TO THE DISCIPLINES THAT EXIST. This map was keyed by asset
+           CATEGORY before the discipline rule moved to the asset's type, so an
+           install made earlier on this branch may hold names for categories —
+           `fx`, `background` — that nothing reads any more. Dropping them here
+           means the Settings screen shows two rows rather than a list with
+           entries nobody can explain, and the next save stores only the two. */
+        const kept = {};
+        for (const id of assetDiscipline.DISCIPLINE_IDS) {
+          if (parsed[id]) kept[id] = parsed[id];
+        }
+        return kept;
       } catch { return { ...DEFAULTS.disciplineFolders }; }
     })(),
     disciplineFallback: row.discipline_fallback || DEFAULTS.disciplineFallback,
@@ -438,11 +450,22 @@ function validate(patch = {}, { settings = current() } = {}) {
     const given = patch.disciplineFolders && typeof patch.disciplineFolders === 'object' ? patch.disciplineFolders : {};
     const cleaned = {};
     for (const [key, value] of Object.entries(given)) {
+      const id = String(key).trim().toLowerCase();
+      /* ONLY THE DISCIPLINES THAT EXIST, and a name for anything else is an
+         ERROR rather than a silent drop. Storing a folder name nothing reads is
+         how this feature shipped putting every upload in "Work": the map was
+         keyed by a list that was empty, and nothing said so. */
+      if (!assetDiscipline.DISCIPLINE_IDS.includes(id)) {
+        errors.push(`"${key}" is not a discipline. The disciplines are `
+          + `${assetDiscipline.DISCIPLINE_IDS.join(' and ')}.`);
+        continue;
+      }
       const name = String(value === undefined || value === null ? '' : value).trim();
+      // Cleared on purpose: that discipline then uses the fallback name.
       if (!name) continue;
       const checked = serverPaths.cleanName(name);
       if (!checked.ok) { errors.push(`"${name}" cannot be a folder name: ${checked.reason}`); continue; }
-      cleaned[String(key).trim().toLowerCase()] = checked.value;
+      cleaned[id] = checked.value;
     }
     out.disciplineFolders = cleaned;
   }
@@ -593,6 +616,11 @@ function summarise({ state = {} } = {}) {
     linkPrefix: c.linkPrefix,
     disciplineFolders: c.disciplineFolders,
     disciplineFallback: c.disciplineFallback,
+    /* THE DISCIPLINES THEMSELVES, so the Settings screen draws one row per
+       discipline that actually exists rather than per asset category — which
+       is the list that ships empty and is why this screen used to show no rows
+       at all while every upload went to the fallback folder. */
+    disciplines: assetDiscipline.DISCIPLINES.map((d) => ({ ...d })),
     configVersion: c.configVersion,
     updatedBy: c.updatedByName,
     updatedAt: c.updatedAt,

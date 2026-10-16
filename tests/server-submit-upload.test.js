@@ -87,18 +87,22 @@ test('the Submit Work upload', { skip: cfg ? false : SKIP_REASON }, async (t) =>
     await mkProject('second', 'Second Project');
     await mkProject('nolink', 'No Link Project');
 
-    const mkAsset = async (key, projectKey, category) => {
+    /* THE TYPE IS WHAT DECIDES THE DISCIPLINE — the same field the Dashboard's
+       Art / Animation sub-tabs read. The category is set too, to a value that
+       would send each of these somewhere else entirely if anything still read
+       it: that is the Prompt 52 bug, made into a fixture. */
+    const mkAsset = async (key, projectKey, type, category) => {
       const r = await as('root', `/assets/project/${id[projectKey]}`, { method: 'POST',
-        body: { name: `Asset ${key}`, type: 'character', category } });
+        body: { name: `Asset ${key}`, type, category } });
       assert.strictEqual(r.status, 201, JSON.stringify(r.body));
       id[key] = r.body.asset.id;
       await as('root', `/assets/${id[key]}`, { method: 'PATCH', body: { assigneeId: id.ana } });
     };
-    await mkAsset('heroArt', 'hero', 'art');
-    await mkAsset('heroAnim', 'hero', 'animation');
-    await mkAsset('heroFx', 'hero', 'fx');
-    await mkAsset('secondArt', 'second', 'art');
-    await mkAsset('nolinkArt', 'nolink', 'art');
+    await mkAsset('heroArt', 'hero', 'character', 'animation');
+    await mkAsset('heroAnim', 'hero', 'animation', 'art');
+    await mkAsset('heroFx', 'hero', 'fx', 'fx');
+    await mkAsset('secondArt', 'second', 'character', 'art');
+    await mkAsset('nolinkArt', 'nolink', 'character', 'art');
 
     // The gateway, on http over loopback, serving a temporary share.
     share = fs.mkdtempSync(path.join(os.tmpdir(), 'su-share-'));
@@ -260,7 +264,7 @@ test('the Submit Work upload', { skip: cfg ? false : SKIP_REASON }, async (t) =>
     assert.strictEqual(refused.body.code, 'no_link');
   });
 
-  await t.test('the path is the asset\'s project, the category\'s discipline, and the uploader', async () => {
+  await t.test('the path is the asset\'s project, its discipline, and the uploader', async () => {
     const art = await upload('ana', id.heroArt, { name: 'walk.psd' });
     assert.ok(art.ok, JSON.stringify(art));
     assert.strictEqual(art.session.path, 'Hero Quest/Artist/Ana Artist');
@@ -269,12 +273,17 @@ test('the Submit Work upload', { skip: cfg ? false : SKIP_REASON }, async (t) =>
       fs.readFileSync(path.join(share, 'Hero Quest', 'Artist', 'Ana Artist', 'walk.psd')), art.bytes,
       'the bytes are on the share, where the server said');
 
-    // The CATEGORY decides the discipline, on the same project and person.
+    /* THE DISCIPLINE DECIDES, on the same project and the same person — and the
+       discipline is the asset's TYPE, which is what the Dashboard's sub-tabs
+       read. This asset's CATEGORY says "art"; it is an animation and it goes to
+       the Animator folder, because nothing reads the category any more. */
     const anim = await upload('ana', id.heroAnim, { name: 'run.aep' });
     assert.strictEqual(anim.session.path, 'Hero Quest/Animator/Ana Artist');
-    // And a category with no mapping falls back.
+    /* AND A TYPE THE STUDIO ADDS LATER IS ART — the inference the Dashboard has
+       made since the sub-tabs were built, now visible in the folder too. FX is
+       a seeded type and it is not animation, so it is art. */
     const fx = await upload('ana', id.heroFx, { name: 'smoke.psd' });
-    assert.strictEqual(fx.session.path, 'Hero Quest/Work/Ana Artist');
+    assert.strictEqual(fx.session.path, 'Hero Quest/Artist/Ana Artist');
 
     // ANOTHER PROJECT IS ANOTHER FOLDER.
     await as('root', `/projects/${id.second}`, { method: 'PATCH', body: { serverLink: `${PREFIX}\\Second Project` } });
@@ -294,6 +303,71 @@ test('the Submit Work upload', { skip: cfg ? false : SKIP_REASON }, async (t) =>
     // was not created by anybody — it was already there.
     assert.ok(fs.existsSync(path.join(share, 'Hero Quest', 'Artist')));
     assert.ok(fs.existsSync(path.join(share, 'Hero Quest', 'Animator')));
+  });
+
+  await t.test('the folder names are the studio\'s, and renaming one moves nothing', async () => {
+    /* Editing the names in Settings changes where the NEXT upload goes. What is
+       already on the share stays where it is — Forge moves nothing, ever, and
+       the old folder keeps the work that is in it. */
+    const before = await upload('ana', id.heroArt, { name: 'before-rename.psd' });
+    assert.strictEqual(before.session.path, 'Hero Quest/Artist/Ana Artist');
+
+    const renamed = await patch({ disciplineFolders: { art: '2D Art', animation: 'Motion' } });
+    assert.strictEqual(renamed.status, 200, JSON.stringify(renamed.body));
+    const after = await upload('ana', id.heroArt, { name: 'after-rename.psd' });
+    assert.strictEqual(after.session.path, 'Hero Quest/2D Art/Ana Artist');
+    assert.ok(fs.existsSync(path.join(share, 'Hero Quest', '2D Art', 'Ana Artist', 'after-rename.psd')));
+    // The file from before is still in the folder it went into.
+    assert.ok(fs.existsSync(path.join(share, 'Hero Quest', 'Artist', 'Ana Artist', 'before-rename.psd')),
+      'nothing was moved');
+
+    /* A NAME CLEARED FALLS BACK, which is the only way the fallback is reached:
+       every asset is in one of the two disciplines, so nothing falls out of the
+       rule itself. */
+    const cleared = await patch({ disciplineFolders: { animation: 'Motion' }, disciplineFallback: 'Work' });
+    assert.strictEqual(cleared.status, 200, JSON.stringify(cleared.body));
+    const fellBack = await upload('ana', id.heroArt, { name: 'no-name.psd' });
+    assert.strictEqual(fellBack.session.path, 'Hero Quest/Work/Ana Artist');
+
+    // A name for something that is not a discipline is refused, not ignored.
+    const nonsense = await patch({ disciplineFolders: { art: 'Artist', fx: 'FX' } });
+    assert.strictEqual(nonsense.status, 400, JSON.stringify(nonsense.body));
+    assert.match(nonsense.body.error, /"fx" is not a discipline/);
+
+    // Put the shipped names back for the tests that follow.
+    await patch({ disciplineFolders: { art: 'Artist', animation: 'Animator' } });
+    assert.strictEqual((await upload('ana', id.heroArt, { name: 'restored.psd' })).session.path,
+      'Hero Quest/Artist/Ana Artist');
+  });
+
+  await t.test('a type changed later moves nothing, and only new uploads follow it', async () => {
+    /* The classification is read at upload time and never written down beside
+       the file, so re-typing an asset cannot orphan what is already there. */
+    const asArt = await upload('ana', id.heroArt, { name: 'as-art.psd' });
+    assert.strictEqual(asArt.session.path, 'Hero Quest/Artist/Ana Artist');
+
+    /* AND THE APPLICATION HAS NO WAY TO DO IT. `type` is set when an asset is
+       created and is in no route's editable field list — PATCH /assets/:id
+       accepts status, priority, description, assignee, dates, hours and
+       category, and nothing else — so an asset's discipline is fixed for its
+       lifetime unless somebody goes into the database. Pinned here because it
+       is the strongest form of "nothing is orphaned": the classification cannot
+       move through the product at all. */
+    const refused = await as('root', `/assets/${id.heroArt}`, { method: 'PATCH', body: { type: 'animation' } });
+    assert.strictEqual(refused.status, 400, JSON.stringify(refused.body));
+    assert.match(refused.body.error, /Nothing to update/);
+
+    // So the only way to test the other half is the way it could really happen.
+    await q('UPDATE assets SET `type` = ? WHERE id = ?', ['animation', id.heroArt]);
+
+    const asAnim = await upload('ana', id.heroArt, { name: 'as-animation.psd' });
+    assert.strictEqual(asAnim.session.path, 'Hero Quest/Animator/Ana Artist',
+      'the next upload follows the new type');
+    assert.ok(fs.existsSync(path.join(share, 'Hero Quest', 'Artist', 'Ana Artist', 'as-art.psd')),
+      'and the earlier file is still in the Artist folder');
+
+    // Back, so the asset is what the rest of this file expects.
+    await q('UPDATE assets SET `type` = ? WHERE id = ?', ['character', id.heroArt]);
   });
 
   await t.test('a client-supplied path is ignored, and nobody writes into another folder', async () => {

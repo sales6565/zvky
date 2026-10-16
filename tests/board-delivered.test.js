@@ -69,6 +69,11 @@ function renderBoard({ assets, lensId = 'art', statuses = PAGE_STATUSES, realCar
   const columns = COLUMN_SOURCE;
   const source = [
     columns,
+    /* assetDiscipline() comes with the lens, because the lens calls it rather
+       than repeating the rule — one definition, read by these sub-tabs and by
+       the Submit Work upload folder (src/asset-discipline.js). Nothing this
+       file asserts has changed. */
+    grab('function assetDiscipline(asset)'),
     grab('const BOARD_LENS = [', '\n];'),
     grab('const boardLensMatch = ()', ';'),
     /* The arrival lens, which renderBoard spends on its first draw after an

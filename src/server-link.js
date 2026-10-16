@@ -29,6 +29,7 @@
  * uploaded on the strength of what the browser thought.
  */
 const paths = require('./server-paths');
+const assetDiscipline = require('./asset-discipline');
 
 /* Slash-normalised and case-folded, for comparison only.
  *
@@ -175,19 +176,26 @@ function userFolderName(name, id) {
 
 const withSuffix = (folder, id) => `${folder} (${String(id || '').slice(0, 4)})`;
 
-/* The discipline folder for an asset, from its CATEGORY.
+/* The folder name for a DISCIPLINE — 'art' or 'animation', as decided by
+ * src/asset-discipline.js and by nothing here.
  *
- * The category list is the studio's and ships EMPTY, so there is no fixed set
- * to map: the mapping is category key → folder name, edited in Settings, with
- * one fallback for every category that has no entry and for an asset with no
- * category at all. Art → Artist and Animation → Animator are seeded because
- * those are the two words the studio used, and both are editable.
+ * THIS USED TO READ THE ASSET'S CATEGORY, and that was the bug: the asset
+ * categories list ships EMPTY, so every asset had no category, every lookup
+ * missed, and every upload in the studio landed in the fallback folder "Work".
+ * The discipline now comes from the same rule the Dashboard's Art / Animation
+ * sub-tabs use, which is the asset's type — see src/asset-discipline.js for why
+ * that is the rule and what else was considered.
+ *
+ * What stays here is only the NAMING: discipline id → folder name, edited in
+ * Settings, with one fallback for a discipline whose name has been cleared.
+ * Art → Artist and Animation → Animator are seeded because those are the two
+ * words the studio used, and both are editable.
  *
  * NOT ROLE-BASED, deliberately: a 3D artist animating a rig this fortnight is
  * doing animation, and the folder should say what the work is rather than what
  * the person's designation says they usually do. */
-function disciplineFolder(categoryKey, { folders = {}, fallback = 'Work' } = {}) {
-  const key = String(categoryKey === undefined || categoryKey === null ? '' : categoryKey).trim().toLowerCase();
+function disciplineFolder(disciplineId, { folders = {}, fallback = 'Work' } = {}) {
+  const key = String(disciplineId === undefined || disciplineId === null ? '' : disciplineId).trim().toLowerCase();
   const named = key && folders[key];
   const chosen = String(named || fallback || 'Work').trim();
   const clean = paths.cleanName(chosen);
@@ -198,16 +206,17 @@ function disciplineFolder(categoryKey, { folders = {}, fallback = 'Work' } = {})
  *
  * <project folder>/<discipline>/<person>[/<subfolder the browser dragged>]
  *
- * The caller passes the project, the asset's category, the person's stored
- * folder and — for a dragged folder — the relative subpath of the file within
- * it. A path from the browser is NEVER used as the destination: only the
- * subfolder part is taken from it, and every segment of that goes through the
- * same name rules as everything else. */
-function uploadPathFor({ project, prefix, categoryKey, userFolder, subPath = '', discipline = {} }) {
+ * The caller passes the project, the asset's DISCIPLINE (from
+ * src/asset-discipline.js — never worked out here), the person's stored folder
+ * and — for a dragged folder — the relative subpath of the file within it. A
+ * path from the browser is NEVER used as the destination: only the subfolder
+ * part is taken from it, and every segment of that goes through the same name
+ * rules as everything else. */
+function uploadPathFor({ project, prefix, disciplineId, userFolder, subPath = '', discipline = {} }) {
   const base = projectFolderRel(project, prefix);
   if (!base) return { ok: false, reason: 'no-link', error: 'That project has no server link yet.' };
   if (!userFolder) return { ok: false, reason: 'no-user-folder', error: 'That account has no server folder yet.' };
-  const segments = [base, disciplineFolder(categoryKey, discipline), userFolder];
+  const segments = [base, disciplineFolder(disciplineId, discipline), userFolder];
   if (subPath) {
     const sub = paths.cleanRelative(subPath);
     if (!sub.ok) return { ok: false, reason: 'bad-subpath', error: sub.reason };
@@ -222,7 +231,7 @@ function uploadPathFor({ project, prefix, categoryKey, userFolder, subPath = '',
     // What the gateway may create, and no higher: the project folder must
     // already exist, and the two below it are made lazily on first upload.
     existingPrefix: base,
-    createBelow: [disciplineFolder(categoryKey, discipline), userFolder].join('/'),
+    createBelow: [disciplineFolder(disciplineId, discipline), userFolder].join('/'),
   };
 }
 
@@ -260,6 +269,8 @@ function overlapWarnings(relative, others) {
 module.exports = {
   fold, relativeOf, validateLink, projectFolderRel,
   userFolderName, withSuffix, disciplineFolder, uploadPathFor, linkFor, overlapWarnings,
-  DEFAULT_DISCIPLINES: { art: 'Artist', animation: 'Animator' },
-  DEFAULT_FALLBACK: 'Work',
+  /* Re-exported from where the disciplines themselves are defined, so the two
+     cannot drift into naming folders for disciplines that do not exist. */
+  DEFAULT_DISCIPLINES: { ...assetDiscipline.DEFAULT_FOLDERS },
+  DEFAULT_FALLBACK: assetDiscipline.DEFAULT_FALLBACK,
 };

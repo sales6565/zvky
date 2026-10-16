@@ -136,7 +136,7 @@ test('the upload path is project, discipline, person — in that order', () => {
   const project = { id: 'p1', server_link: `${UNC}\\Hero Quest` };
   const discipline = { folders: { art: 'Artist', animation: 'Animator' }, fallback: 'Work' };
   const out = serverLink.uploadPathFor({
-    project, prefix: UNC, categoryKey: 'art', userFolder: 'Ana Artist', discipline,
+    project, prefix: UNC, disciplineId: 'art', userFolder: 'Ana Artist', discipline,
   });
   assert.ok(out.ok, out.error);
   assert.strictEqual(out.relative, 'Hero Quest/Artist/Ana Artist');
@@ -144,29 +144,31 @@ test('the upload path is project, discipline, person — in that order', () => {
     'the project folder must already exist, so it is named separately from what may be created');
   assert.strictEqual(out.createBelow, 'Artist/Ana Artist');
 
-  // The category decides the discipline, and an unmapped one falls back.
-  assert.strictEqual(serverLink.uploadPathFor({ project, prefix: UNC, categoryKey: 'animation', userFolder: 'Ana', discipline }).relative,
+  /* THE DISCIPLINE IS PASSED IN, worked out by src/asset-discipline.js from the
+     asset's type — the same rule the Dashboard's sub-tabs use. This function
+     only names the folder, and a discipline with no name falls back. */
+  assert.strictEqual(serverLink.uploadPathFor({ project, prefix: UNC, disciplineId: 'animation', userFolder: 'Ana', discipline }).relative,
     'Hero Quest/Animator/Ana');
-  assert.strictEqual(serverLink.uploadPathFor({ project, prefix: UNC, categoryKey: 'fx', userFolder: 'Ana', discipline }).relative,
-    'Hero Quest/Work/Ana');
-  assert.strictEqual(serverLink.uploadPathFor({ project, prefix: UNC, categoryKey: null, userFolder: 'Ana', discipline }).relative,
-    'Hero Quest/Work/Ana', 'an asset with no category still has somewhere to go');
+  assert.strictEqual(serverLink.uploadPathFor({ project, prefix: UNC, disciplineId: 'art', userFolder: 'Ana', discipline: { folders: {}, fallback: 'Work' } }).relative,
+    'Hero Quest/Work/Ana', 'a discipline whose name was cleared uses the fallback');
+  assert.strictEqual(serverLink.uploadPathFor({ project, prefix: UNC, disciplineId: null, userFolder: 'Ana', discipline }).relative,
+    'Hero Quest/Work/Ana', 'and a caller that passes no discipline still has somewhere to go');
 
   // A dragged subfolder is kept, cleaned.
-  assert.strictEqual(serverLink.uploadPathFor({ project, prefix: UNC, categoryKey: 'art', userFolder: 'Ana', discipline, subPath: 'scenes/act1' }).relative,
+  assert.strictEqual(serverLink.uploadPathFor({ project, prefix: UNC, disciplineId: 'art', userFolder: 'Ana', discipline, subPath: 'scenes/act1' }).relative,
     'Hero Quest/Artist/Ana/scenes/act1');
   // And a subpath that tries to climb is refused, not cleaned into something.
   for (const subPath of ['../..', '/etc', 'a/../../b', 'C:\\x']) {
-    const bad = serverLink.uploadPathFor({ project, prefix: UNC, categoryKey: 'art', userFolder: 'Ana', discipline, subPath });
+    const bad = serverLink.uploadPathFor({ project, prefix: UNC, disciplineId: 'art', userFolder: 'Ana', discipline, subPath });
     assert.strictEqual(bad.ok, false, `${subPath} must be refused`);
   }
   // Two projects never share a folder, which is the point of computing it.
   const other = { id: 'p2', server_link: `${UNC}\\Second Project` };
-  assert.strictEqual(serverLink.uploadPathFor({ project: other, prefix: UNC, categoryKey: 'art', userFolder: 'Ana', discipline }).relative,
+  assert.strictEqual(serverLink.uploadPathFor({ project: other, prefix: UNC, disciplineId: 'art', userFolder: 'Ana', discipline }).relative,
     'Second Project/Artist/Ana');
   // A project with no link cannot be uploaded to at all.
-  assert.strictEqual(serverLink.uploadPathFor({ project: { id: 'p3' }, prefix: UNC, categoryKey: 'art', userFolder: 'Ana', discipline }).ok, false);
-  assert.strictEqual(serverLink.uploadPathFor({ project, prefix: UNC, categoryKey: 'art', userFolder: null, discipline }).ok, false);
+  assert.strictEqual(serverLink.uploadPathFor({ project: { id: 'p3' }, prefix: UNC, disciplineId: 'art', userFolder: 'Ana', discipline }).ok, false);
+  assert.strictEqual(serverLink.uploadPathFor({ project, prefix: UNC, disciplineId: 'art', userFolder: null, discipline }).ok, false);
 });
 
 test('a person\'s folder is their name, made safe, and stable across renames', () => {

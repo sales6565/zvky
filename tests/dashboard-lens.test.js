@@ -37,7 +37,13 @@ function grab(opener, closer = '\n}') {
   return rest.slice(0, rest.indexOf(closer) + closer.length);
 }
 
-const lensSource = grab('const BOARD_LENS = [', '\n];')
+/* assetDiscipline() comes with it, because the lens calls it rather than
+   repeating the rule — one definition, read by the sub-tabs here and by the
+   upload folder on the server. See src/asset-discipline.js and
+   tests/asset-discipline.test.js, which holds the page's copy and the module's
+   character for character. Nothing this file ASSERTS has changed. */
+const lensSource = grab('function assetDiscipline(asset)')
+  + '\n' + grab('const BOARD_LENS = [', '\n];')
   + '\n' + grab('const BOARD_LENS_DEFAULT');
 
 const lens = () => new Function(`${lensSource}; return { BOARD_LENS, BOARD_LENS_DEFAULT };`)();

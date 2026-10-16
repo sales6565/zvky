@@ -128,6 +128,11 @@ function harness({ projects, clients = [], assets = {}, currentProject = null, c
   })();
 
   const source = [
+    /* assetDiscipline() comes with the lens, because the lens calls it rather
+       than repeating the rule — one definition, read by these sub-tabs and by
+       the Submit Work upload folder (src/asset-discipline.js). Nothing this
+       file asserts has changed. */
+    grab('function assetDiscipline(asset)'),
     grab('const BOARD_LENS = [', '\n];'),
     grab('const BOARD_LENS_DEFAULT', ';'),
     'let boardLens = BOARD_LENS_DEFAULT;',
