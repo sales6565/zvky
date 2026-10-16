@@ -41,6 +41,9 @@ async function state() {
     configVersion: row.config_version === null || row.config_version === undefined ? null : Number(row.config_version),
     queued: row.queued === null || row.queued === undefined ? null : Number(row.queued),
     remoteIp: row.remote_ip || null,
+    clockSkewSeconds: row.clock_skew_seconds === null || row.clock_skew_seconds === undefined
+      ? null : Number(row.clock_skew_seconds),
+    clockSkewWarn: Math.abs(Number(row.clock_skew_seconds || 0)) > 15,
     staleAfterSeconds: 120,
   };
 }
@@ -248,6 +251,13 @@ router.post('/self-test', async (req, res) => {
       detail: ready.configApplied
         ? `The gateway is running configuration version ${gateway.configVersion}.`
         : `Saved version ${settings.configVersion}; the gateway reports ${gateway.configVersion === null ? 'nothing yet' : gateway.configVersion}.` },
+    { key: 'clock', ok: gateway.clockSkewSeconds === null ? false : Math.abs(gateway.clockSkewSeconds) <= 15,
+      detail: gateway.clockSkewSeconds === null
+        ? 'Not measured yet — it arrives on the second heartbeat.'
+        : (Math.abs(gateway.clockSkewSeconds) <= 15
+          ? `The gateway's clock is within ${Math.abs(gateway.clockSkewSeconds)}s of this server's.`
+          : `The gateway's clock is ${gateway.clockSkewSeconds}s from this server's. Tokens live 60s, `
+            + 'so fix the clock on that machine (w32tm /resync, or systemd-timesyncd).') },
     { key: 'disk', ok: gateway.freeBytes === null ? false : gateway.freeBytes > 1024 ** 3,
       detail: gateway.freeBytes === null ? 'Not reported yet.' : `${(gateway.freeBytes / (1024 ** 3)).toFixed(1)} GB free on the share.` },
   ];

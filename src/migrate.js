@@ -4560,8 +4560,16 @@ async function ensureServerTab(db, log) {
       free_bytes     BIGINT      NULL,
       config_version INT         NULL,
       queued         INT         NULL,
-      remote_ip      VARCHAR(64) NULL
+      remote_ip      VARCHAR(64) NULL,
+      -- How far this machine's clock is from Forge's, as the gateway measured
+      -- it from the previous heartbeat's answer. Positive means ahead.
+      clock_skew_seconds INT      NULL
     )`));
+  const stateCols = await columnsOf(db, 'gateway_state');
+  if (stateCols.size && !stateCols.has('clock_skew_seconds')) {
+    await db.query('ALTER TABLE gateway_state ADD COLUMN clock_skew_seconds INT NULL');
+    log('  + gateway_state.clock_skew_seconds');
+  }
   await db.query('INSERT IGNORE INTO gateway_state (id) VALUES (1)');
 
   /* The audit trail. Not a file index: see the header. */

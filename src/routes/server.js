@@ -80,6 +80,13 @@ async function gatewayState() {
     freeBytes: row.free_bytes === null || row.free_bytes === undefined ? null : Number(row.free_bytes),
     configVersion: row.config_version === null || row.config_version === undefined ? null : Number(row.config_version),
     queued: row.queued === null || row.queued === undefined ? null : Number(row.queued),
+    clockSkewSeconds: row.clock_skew_seconds === null || row.clock_skew_seconds === undefined
+      ? null : Number(row.clock_skew_seconds),
+    /* WARNED ABOUT WELL BEFORE IT BREAKS ANYTHING. The leeway is 30 s and a
+       token lives 60, so 15 s is halfway to a problem — which is where a
+       warning belongs, rather than at the point where people start seeing
+       "that link has expired". */
+    clockSkewWarn: Math.abs(Number(row.clock_skew_seconds || 0)) > 15,
     staleAfterSeconds: HEARTBEAT_STALE_SECONDS,
   };
 }

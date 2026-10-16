@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node index.js",
     "test": "node --test \"tests/*.test.js\"",
-    "routes": "node -e \"console.log(require('./src/router').describe())\""
+    "routes": "node -e \"console.log(require('./src/router').describe())\"",
+    "doctor": "node doctor.js",
+    "proof:largefile": "node scripts/large-file-proof.js"
   },
   "engines": { "node": ">=18" },
   "dependencies": {},

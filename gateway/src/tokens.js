@@ -86,7 +86,35 @@ class JtiStore {
  * this gateway knows, so a token minted seconds before a rotation still works
  * and one minted with a key that was retired long ago does not.
  */
-function verify(token, { keys, audience, now = Date.now(), jtiStore, expect = {} } = {}) {
+/* CLOCK SKEW LEEWAY.
+ *
+ * A download token lives sixty seconds. Two machines whose clocks differ by
+ * forty of those have a feature that works in the morning and not after lunch,
+ * and the failure says "that link has expired" to somebody who clicked it
+ * immediately — which is the least diagnosable error message in the system.
+ *
+ * So the expiry is checked with a small leeway, ±30 s by default, configurable
+ * for a studio with a worse NTP story, and HARD-CAPPED at 120 s. The cap is the
+ * point: leeway is a tolerance for ordinary drift, and a gateway that accepted
+ * an hour of it would have turned a sixty-second token into an hour-long one.
+ * Anything past the cap is clamped rather than refused, because a gateway that
+ * would not start over a mis-typed number is worse than one that runs with the
+ * documented maximum and says so.
+ *
+ * The real fix is the clock, and the system says so in three places: the
+ * heartbeat reports the measured skew, Settings warns above 15 s, and the
+ * doctor FAILS above the leeway. */
+const SKEW_DEFAULT_SECONDS = 30;
+const SKEW_CAP_SECONDS = 120;
+
+function leewayFor(seconds) {
+  const n = Number(seconds);
+  if (!Number.isFinite(n) || n < 0) return SKEW_DEFAULT_SECONDS;
+  return Math.min(Math.floor(n), SKEW_CAP_SECONDS);
+}
+
+function verify(token, { keys, audience, now = Date.now(), jtiStore, expect = {}, leewaySeconds } = {}) {
+  const leeway = leewayFor(leewaySeconds === undefined ? SKEW_DEFAULT_SECONDS : leewaySeconds);
   if (!token || typeof token !== 'string') return fail('missing', 'No token.');
   const parts = token.split('.');
   if (parts.length !== 3) return fail('malformed', 'That token is not in the expected form.');
@@ -121,11 +149,17 @@ function verify(token, { keys, audience, now = Date.now(), jtiStore, expect = {}
   if (!payload.jti) return fail('jti', 'That token has no identifier.');
   if (!Number.isFinite(payload.exp)) return fail('expiry', 'That token has no expiry.');
   const seconds = Math.floor(now / 1000);
-  if (payload.exp <= seconds) return fail('expired', 'That link has expired. Try again.');
+  if (payload.exp + leeway <= seconds) return fail('expired', 'That link has expired. Try again.');
+  /* nbf, when a token carries one: a clock AHEAD of Forge's would otherwise
+     refuse a token minted a moment ago as "not yet valid", which is the same
+     outage in the other direction. */
+  if (Number.isFinite(payload.nbf) && payload.nbf - leeway > seconds) {
+    return fail('too-early', 'That link is not valid yet. Check the clock on this machine.');
+  }
   if (Number.isFinite(payload.iat) && payload.exp - payload.iat > op.maxSeconds) {
     return fail('lifetime', `A ${payload.op} token may not live longer than ${op.maxSeconds} seconds.`);
   }
-  if (payload.exp - seconds > op.maxSeconds + 5) {
+  if (payload.exp - seconds > op.maxSeconds + leeway + 5) {
     return fail('lifetime', `A ${payload.op} token may not live longer than ${op.maxSeconds} seconds.`);
   }
   if (typeof payload.path !== 'string') return fail('path', 'That token does not say which folder it is for.');
@@ -138,4 +172,4 @@ function verify(token, { keys, audience, now = Date.now(), jtiStore, expect = {}
   return { ok: true, claims: payload, kid: usedKid, single: op.single };
 }
 
-module.exports = { verify, JtiStore, OPS, ALG, ISSUER, b64u };
+module.exports = { verify, JtiStore, OPS, ALG, ISSUER, b64u, leewayFor, SKEW_DEFAULT_SECONDS, SKEW_CAP_SECONDS };

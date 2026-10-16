@@ -33,6 +33,7 @@ const listing = require('./listing');
 const deleter = require('./deleter');
 const config = require('./config');
 const appPage = require('./app-page');
+const probe = require('./probes');
 
 /* method, path, the token operation it needs (null = no token), and whether the
    body is bytes rather than JSON. */
@@ -170,6 +171,7 @@ async function handle(req, res, ctx) {
     keys: cfg.keys,
     audience: ctx.gatewayId,
     jtiStore: ctx.jtiStore,
+    leewaySeconds: ctx.clockLeewaySeconds,
     expect: { op: route.op, uid: route.path.includes(':id') ? params.id : undefined },
   });
   if (!verdict.ok) {
@@ -259,7 +261,15 @@ async function handle(req, res, ctx) {
          file is safe the moment it is, and the verification arrives as a second
          callback a minute later for a big file. */
       ctx.verifyLater(params.id, path.join(ctx.fileRoot, ...out.relative.split('/')), out.relative, claims.sub);
-      return json(res, 200, { ok: true, path: out.relative, name: out.stored, size: out.size, renamed: out.renamed });
+      return json(res, 200, {
+        ok: true, path: out.relative, name: out.stored, size: out.size, renamed: out.renamed,
+        /* WHICH FINALISE PATH THIS SHARE TOOK — 'link' or 'reserve+copy'. Not
+           decoration: on a share without hard links finishing a large file
+           costs a second pass over the bytes, and this is how anybody
+           diagnosing "why did the last 10% take a minute" finds out. The
+           doctor reports the same value before anybody uploads. */
+        how: out.how,
+      });
     }
 
     if (route.path === '/v1/download') {
@@ -292,7 +302,18 @@ async function handle(req, res, ctx) {
       const bytes = fs.readFileSync(blob);
       const sha = crypto.createHash('sha256').update(bytes).digest('hex');
       deleter.remove(ctx.fileRoot, blob);                 // cleaned up immediately
-      return json(res, 200, { ok: true, bytes: bytes.length, sha256: sha, cleaned: !fs.existsSync(blob) });
+      /* AND WHAT KIND OF SHARE THIS IS, in the same answer.
+       *
+       * The same functions gateway/doctor.js runs on the machine — hard links,
+       * exclusive create, positional writes, case folding, long paths, free
+       * space. Reported here so somebody who cannot get onto that machine still
+       * sees them from Settings → Run self-test. Everything they write is
+       * inside .incoming and removed before this returns. */
+      const probes = probe.run(ctx.fileRoot, { name: 'selftest-probe' });
+      return json(res, 200, {
+        ok: true, bytes: bytes.length, sha256: sha, cleaned: !fs.existsSync(blob),
+        probes,
+      });
     }
   } catch (err) {
     ctx.log(`gateway: ${route.method} ${route.path} failed: ${ctx.redact(err && err.message)}`);

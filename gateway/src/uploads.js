@@ -44,6 +44,9 @@ const dirFor = (root, uploadId) => path.join(fs.realpathSync(root), paths.INCOMI
 /* An upload id is a name on disk, so it goes through the same gate every other
    name does — and is additionally held to the shape Forge mints (a uuid), so
    nothing creative can be smuggled in even if cleanSegment one day softens. */
+/* The errors a filesystem gives for "I do not do hard links". */
+const NO_LINK_CODES = new Set(['EPERM', 'EXDEV', 'ENOSYS', 'EOPNOTSUPP', 'ENOTSUP', 'EINVAL']);
+
 const ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const validId = (id) => typeof id === 'string' && ID_SHAPE.test(id);
 
@@ -148,20 +151,53 @@ function claim(blob, dirAbs, name) {
       return { ok: true, full: candidate, stored: path.basename(candidate), how: 'link' };
     } catch (err) {
       if (err.code === 'EEXIST') continue;             // taken — try "name (2).ext"
-      if (err.code === 'EPERM' || err.code === 'EXDEV' || err.code === 'ENOSYS' || err.code === 'EOPNOTSUPP') {
-        // No hard links on this share. Reserve the name exclusively, then
-        // rename over our own zero-byte reservation.
+      if (NO_LINK_CODES.has(err.code)) {
+        /* NO HARD LINKS ON THIS SHARE. Common on SMB/CIFS mounts with links
+         * disabled, and on anything FAT-shaped.
+         *
+         * The fallback must keep the two promises the link path keeps: never
+         * replace an existing file, and never delete one. So the name is
+         * claimed with an EXCLUSIVE create — which fails if it is taken, and
+         * that is the no-overwrite guarantee — and the bytes are then COPIED
+         * into that reservation and the source removed from .incoming.
+         *
+         * A copy, not a rename. rename() onto an existing path replaces it on
+         * POSIX, and the reservation we just made is an existing path: the
+         * earlier version of this did exactly that, which worked only because
+         * the file it replaced was its own. That is one refactor away from
+         * replacing somebody's render, so the fallback copies and verifies the
+         * size instead. It costs a second pass over the bytes on precisely the
+         * filesystems that cannot do better, and gateway/doctor.js tells IT
+         * which path their share will take before anybody uploads.
+         */
+        let fd;
         try {
-          const fd = fs.openSync(candidate, 'wx');
-          fs.closeSync(fd);
+          fd = fs.openSync(candidate, 'wx');
         } catch (e2) {
           if (e2.code === 'EEXIST') continue;
           return { ok: false, reason: `Could not create the file (${e2.code || e2.message}).` };
         }
         try {
-          fs.renameSync(blob, candidate);
-          return { ok: true, full: candidate, stored: path.basename(candidate), how: 'reserve+rename' };
+          const source = fs.openSync(blob, 'r');
+          try {
+            const buf = Buffer.allocUnsafe(4 * 1024 * 1024);
+            let at = 0;
+            for (;;) {
+              const read = fs.readSync(source, buf, 0, buf.length, at);
+              if (!read) break;
+              fs.writeSync(fd, buf, 0, read, at);
+              at += read;
+            }
+          } finally { fs.closeSync(source); }
+          fs.closeSync(fd);
+          const wrote = fs.statSync(candidate).size;
+          const was = fs.statSync(blob).size;
+          if (wrote !== was) {
+            return { ok: false, reason: `The copy is ${wrote} bytes and the upload was ${was}.` };
+          }
+          return { ok: true, full: candidate, stored: path.basename(candidate), how: 'reserve+copy' };
         } catch (e3) {
+          try { fs.closeSync(fd); } catch { /* already closed */ }
           return { ok: false, reason: `Could not finish the file (${e3.code || e3.message}).` };
         }
       }
@@ -201,7 +237,10 @@ function complete(root, uploadId, { dir, name }) {
   if (!clean.ok) return clean;
   const claimed = claim(blob, target.full, clean.value);
   if (!claimed.ok) return claimed;
-  if (claimed.how === 'link') deleter.remove(root, blob);     // our own link, inside .incoming
+  /* The source copy inside .incoming goes either way: it is our own link in
+     the link case, and our own original in the copy case. Both are inside
+     .incoming, which is the only place this may delete. */
+  deleter.remove(root, blob);
   try { fs.chmodSync(claimed.full, 0o444); } catch { /* a share may refuse; the README covers it */ }
   deleter.remove(root, home);                                 // meta and ranges, inside .incoming
   return {
@@ -229,4 +268,5 @@ async function sha256(file) {
   return hash.digest('hex');
 }
 
-module.exports = { ensure, putChunk, status, complete, sha256, mergeRanges, validId, dirFor, BLOB, META, RANGES };
+module.exports = { ensure, putChunk, status, complete, sha256, mergeRanges, validId, dirFor, claim,
+  BLOB, META, RANGES, NO_LINK_CODES };

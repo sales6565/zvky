@@ -63,6 +63,10 @@ function local(env = process.env) {
     heartbeatSeconds: num(env.HEARTBEAT_SECONDS, 30),
     configSeconds: num(env.CONFIG_SECONDS, 300),
     rateLimitPerMinute: num(env.RATE_LIMIT_PER_MINUTE, 600),
+    /* Clock-skew leeway on a token's expiry, hard-capped in
+       gateway/src/tokens.js. The cap is why this is read here and clamped
+       there rather than trusted. */
+    clockLeewaySeconds: num(env.CLOCK_LEEWAY_SECONDS, 30),
   };
   /* LISTEN_ADDRESS is required in spirit but not in form: binding to the LAN
      interface is the rule, and a gateway with no address given would bind every

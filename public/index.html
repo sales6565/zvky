@@ -24722,6 +24722,10 @@ async function renderServerSettings(){
       ${gw.lastSeen
         ? `${gw.ageSeconds < (gw.staleAfterSeconds || 120) ? 'Online' : 'Not answering'} — last heard ${gw.ageSeconds}s ago${gw.version ? `, version ${gw.version}` : ''}${gw.freeBytes !== null && gw.freeBytes !== undefined ? `, ${(gw.freeBytes/(1024**3)).toFixed(1)} GB free` : ''}${gw.queued ? `, ${gw.queued} callback(s) queued` : ''}.`
         : 'No heartbeat has ever arrived.'}
+      ${gw.clockSkewSeconds === null || gw.clockSkewSeconds === undefined ? ''
+        : (gw.clockSkewWarn
+          ? `<span class="srv-tick no">\u2022</span> Its clock is ${gw.clockSkewSeconds}s from this server's — a token lives 60s, so fix the clock on that machine.`
+          : `Its clock is within ${Math.abs(gw.clockSkewSeconds)}s of this server's.`)}
     </p>
     <div class="srv-actions"><button class="btn" id="srvsSelfTest">Run self-test</button></div>
     <div id="srvsTestOut"></div>

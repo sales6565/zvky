@@ -127,8 +127,18 @@ function create({ local, log = console.log, fetchImpl, now = () => Date.now() } 
   let current = config.readCache(local.stateDir) || { ...config.DEFAULTS, cached: false };
   let lastPull = null;
 
+  /* WHAT THE CLOCKS DISAGREE BY, measured on every heartbeat.
+   *
+   * Forge answers with its own time; the difference is the skew. Reported back
+   * on the NEXT heartbeat — there is nowhere else to put it, and a number one
+   * beat old is thirty seconds old, which is fresh enough for a warning about
+   * clocks. Settings shows it and warns above 15 s; the doctor fails above the
+   * leeway, because past that the tokens start expiring on arrival. */
+  let clockSkewSeconds = null;
+
   const ctx = {
     gatewayId: local.gatewayId,
+    clockLeewaySeconds: local.clockLeewaySeconds,
     fileRoot: local.fileRoot,
     forgeOrigin,
     jtiStore,
@@ -212,13 +222,28 @@ function create({ local, log = console.log, fetchImpl, now = () => Date.now() } 
     try { free = Number(fs.statfsSync(local.fileRoot).bavail) * Number(fs.statfsSync(local.fileRoot).bsize); }
     catch { free = null; }
     try {
-      await client.heartbeat({
+      const answer = await client.heartbeat({
         version: require('../package.json').version,
         configVersion: current.version,
         freeBytes: free,
         queued: client.pending().length,
+        clockSkewSeconds,
         at: new Date().toISOString(),
       });
+      /* Measured from the answer, for the next beat. Taken from Forge's own
+         clock rather than from a time server, because the only clock that
+         matters here is the one that signed the token. */
+      if (answer && answer.ok && answer.answer && answer.answer.now) {
+        const theirs = Date.parse(answer.answer.now);
+        if (Number.isFinite(theirs)) {
+          clockSkewSeconds = Math.round((Date.now() - theirs) / 1000);
+          if (Math.abs(clockSkewSeconds) > local.clockLeewaySeconds) {
+            log(`gateway: this machine's clock is ${clockSkewSeconds}s from Forge's, which is more `
+              + `than the ${local.clockLeewaySeconds}s leeway — tokens will start expiring on arrival. `
+              + 'Fix the clock (w32tm /resync, or systemd-timesyncd).');
+          }
+        }
+      }
     } catch (err) { log(`gateway: heartbeat failed: ${redact(err && err.message)}`); }
     try { await client.flush(); } catch { /* the queue is on disk; the next beat tries again */ }
   }
@@ -246,7 +271,7 @@ function create({ local, log = console.log, fetchImpl, now = () => Date.now() } 
     return { server, timers, stop: () => { for (const t of timers) clearInterval(t); server.close(); } };
   }
 
-  return { start, handler, ctx, pull, beat, client, get config() { return current; }, lastPull: () => lastPull, forgeOrigin };
+  return { start, handler, ctx, pull, beat, client, skew: () => clockSkewSeconds, get config() { return current; }, lastPull: () => lastPull, forgeOrigin };
 }
 
 module.exports = { create, rateLimiter, readBytes, readJson, sendFile, auditLogger };

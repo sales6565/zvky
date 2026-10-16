@@ -104,16 +104,34 @@ router.post('/heartbeat', gate, async (req, res) => {
   };
   await db.query(
     `UPDATE gateway_state SET last_seen = NOW(), version = $1, free_bytes = $2,
-            config_version = $3, queued = $4, remote_ip = $5
+            config_version = $3, queued = $4, remote_ip = $5, clock_skew_seconds = $6
       WHERE id = 1`,
     [String(b.version || '').slice(0, 32) || null, num(b.freeBytes), num(b.configVersion), num(b.queued),
-      String(req.ip || '').slice(0, 64) || null]
-  );
+      String(req.ip || '').slice(0, 64) || null, num(b.clockSkewSeconds)]
+  ).catch(async (err) => {
+    /* An install part-way through its migration has the row without the
+       column. The heartbeat is the one call that must never fail for a schema
+       detail: a gateway that cannot say it is alive looks dead. */
+    if (err && err.code === 'ER_BAD_FIELD_ERROR') {
+      await db.query(
+        `UPDATE gateway_state SET last_seen = NOW(), version = $1, free_bytes = $2,
+                config_version = $3, queued = $4, remote_ip = $5 WHERE id = 1`,
+        [String(b.version || '').slice(0, 32) || null, num(b.freeBytes), num(b.configVersion), num(b.queued),
+          String(req.ip || '').slice(0, 64) || null]
+      );
+      return;
+    }
+    throw err;
+  });
   res.json({
     ok: true,
     // So a gateway can notice it is behind without waiting for the next pull.
     configVersion: serverSettings.current().configVersion,
     enabled: serverSettings.serverEnabled(),
+    /* FORGE'S OWN CLOCK, which is the only one that matters: it is what signed
+       the token the gateway is about to verify. The gateway computes the
+       difference and reports it on the next beat. */
+    now: new Date().toISOString(),
   });
 });
 
