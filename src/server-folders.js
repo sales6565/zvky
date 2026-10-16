@@ -93,8 +93,14 @@ async function roots(db, user) {
   const { projects, invalid, shared } = await allowedPrefixes(db, user);
   const all = permissions.holds(user, 'server.browse_all');
   const entries = [
+    /* THE PROJECT'S NAME, NOT THE FOLDER'S. The first version of this read the
+       last segment of the link, which is the name somebody typed on a folder in
+       2019 — "EP01_old", "Beta", "Project 3 FINAL". What everybody in Forge
+       calls that project is its name, and the whole point of this screen is to
+       be a list of projects rather than a view of the share. The link is shown
+       underneath, so an admin can still see exactly where it points. */
     ...projects.map((p) => ({
-      name: p.relative.split('/').slice(-1)[0] || p.relative,
+      name: p.name,
       path: p.relative,
       type: 'folder',
       kind: 'project',

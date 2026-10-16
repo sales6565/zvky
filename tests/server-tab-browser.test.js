@@ -145,8 +145,9 @@ function forgeStub({ gatewayUrl, keys, state }) {
         enabled: state.enabled, gatewayUrl, gatewayId: GATEWAY_ID,
         chunkBytes: state.chunkBytes, parallelChunks: 1, maxFileBytes: 64 * 1024 * 1024,
         deniedExtensions: ['.exe'], allowedExtensions: [],
+        submitUploadEnabled: state.submitUploadEnabled, linkPrefix: state.linkPrefix,
         gateway: { lastSeen: new Date().toISOString(), ageSeconds: 2, online: true, version: '1.0.0', freeBytes: 1e12, configVersion: 1, queued: 0, staleAfterSeconds: 120 },
-        roots: { all: true, entries: [], shared: [] },
+        roots: state.roots,
         openRequests: state.requests.filter((r) => r.status === 'open').map((r) => ({ id: r.id, path: r.path, type: r.type })),
         may: { download: true, upload: true, requestDelete: true, manageRequests: true, browseAll: true, viewAudit: true },
       });
@@ -165,8 +166,14 @@ function forgeStub({ gatewayUrl, keys, state }) {
         requests.push(['session', body.name, body.size]);
         /* THE FIRST TOKEN IS DELIBERATELY SHORT-LIVED when the test asks for it,
            so the renewal path is exercised rather than asserted about. */
+        /* ALREADY EXPIRED, AND PAST THE LEEWAY — which takes both arguments.
+           An upload token lives thirty minutes, so minting one in the past is
+           not enough on its own; and the gateway allows ±30s of clock skew on
+           expiry (gateway/src/tokens.js), so one second of life is not enough
+           either. Issued two minutes ago with one second of life is expired by
+           119 seconds however either side rounds it. */
         const out = mint('upload', body.path || '', { uploadId, maxBytes: body.size, name: body.name,
-          seconds: state.shortTokens ? 1 : undefined });
+          ...(state.shortTokens ? { now: Date.now() - 120000, seconds: 1 } : {}) });
         send(200, { uploadId, token: out.token, gatewayUrl, path: body.path || '', name: body.name,
           chunkBytes: state.chunkBytes, parallelChunks: 1, renewed: false });
       });
@@ -214,7 +221,24 @@ function forgeStub({ gatewayUrl, keys, state }) {
 let browser = null;
 test.after(async () => { if (browser) await browser.close(); browser = null; });
 
-async function harness() {
+/* WHY THE TRANSPORT IS AN ARGUMENT AND NOT LEFT TO THE CAPABILITY CHECK.
+ *
+ * srvDecideTransport() asks the engine whether it has a Local Network Access
+ * gate, and nothing else — no address, no request, because making one is the
+ * thing that would raise a prompt. Headless Chromium 141 answers `prompt`, so
+ * the page's honest answer here is "use the bridge", even though this fixture
+ * is 127.0.0.1 talking to 127.0.0.1 and no gate would ever have applied to it.
+ *
+ * Measured, not assumed: Chromium 141 (`HeadlessChrome/141.0.0.0`) resolves
+ * navigator.permissions.query({name:'local-network-access'}) with state
+ * `prompt`.
+ *
+ * So each test says which transport it is about. The DECISION itself has its own
+ * test below ("which transport this browser chooses"), which is where the three
+ * engine answers are pinned; everything else would otherwise be re-testing that
+ * one function through seven screens.
+ */
+async function harness({ transport = 'direct', roots = { all: true, entries: [], shared: [] } } = {}) {
   const share = fs.mkdtempSync(path.join(os.tmpdir(), 'srv-br-share-'));
   fs.mkdirSync(path.join(share, gwPaths.INCOMING), { recursive: true });
   fs.mkdirSync(path.join(share, 'Alpha'), { recursive: true });
@@ -223,7 +247,8 @@ async function harness() {
   fs.mkdirSync(path.join(share, 'Beta'), { recursive: true });
 
   const keys = minter.generate();
-  const state = { enabled: true, chunkBytes: 16 * 1024, requests: [], shortTokens: false };
+  const state = { enabled: true, chunkBytes: 16 * 1024, requests: [], shortTokens: false,
+    roots, submitUploadEnabled: false, linkPrefix: null };
 
   // The page's own origin has to be decided before the gateway starts, because
   // the gateway's CORS is derived from it — as it is in production.
@@ -263,6 +288,7 @@ async function harness() {
   page.on('pageerror', (e) => errors.push(String(e && e.message)));
   await page.goto(pageOrigin, { waitUntil: 'load' });
   await page.waitForFunction('window.__ready === true');
+  if (transport) await page.evaluate(`SRV.transport = ${JSON.stringify(transport)};`);
 
   const close = async () => {
     await context.close();
@@ -399,7 +425,7 @@ test('an upload can be paused, resumed, and resumed after a reload', { skip: SKI
       { id: '${id}', name: 'paused.psd', size: ${70 * 1024}, path: 'Alpha', at: Date.now() }]))`);
     await h.page.reload({ waitUntil: 'load' });
     await h.page.waitForFunction('window.__ready === true');
-    await h.page.evaluate('srvResumeNotice(); renderServer()');
+    await h.page.evaluate("SRV.transport = 'direct'; srvResumeNotice(); renderServer()");
     await h.page.waitForSelector('.srv-up');
     const note = await h.page.$eval('.srv-up .srv-up-state', (e) => e.textContent.trim());
     assert.match(note, /Interrupted by a reload/);
@@ -414,15 +440,6 @@ test('an expired upload token is renewed through Forge and the chunk retried', {
     await h.page.evaluate("SRV.path = 'Alpha'; renderServer()");
     const bytes = Array.from({ length: 40 * 1024 }, (_, i) => i % 13);
     await h.page.evaluate(async (data) => {
-      /* The wait has to happen AFTER the session is created and BEFORE the
-         first chunk — the token is minted when the upload starts, so sleeping
-         before queueing would only produce a fresh one. */
-      window.__realSrvCall = window.srvCall;
-      let first = true;
-      window.srvCall = async (p, opts) => {
-        if (first && /\/chunk/.test(p)) { first = false; await new Promise((r) => setTimeout(r, 1600)); }
-        return window.__realSrvCall(p, opts);
-      };
       srvQueue([new File([new Uint8Array(data)], 'renewed.psd')]);
     }, bytes);
     await h.page.waitForFunction("SRV.uploads[0] && (SRV.uploads[0].state === 'done' || SRV.uploads[0].state === 'failed')", { timeout: 25000 });
@@ -552,29 +569,98 @@ test('with the feature switched off the tab draws its disabled state', { skip: S
   } finally { await h.close(); }
 });
 
-test('the office link window relays for a browser that will not talk to the LAN', { skip: SKIP }, async () => {
-  const h = await harness();
+test('which transport this browser chooses, and that choosing costs no request', { skip: SKIP }, async () => {
+  /* THE DECISION, PINNED AT ITS THREE ANSWERS. The page must never make a
+     request to find out how to make requests — that is the whole point of
+     asking the permission registry instead of trying a fetch — so this also
+     asserts that deciding sent nothing anywhere. */
+  const cases = [
+    // The desktop app's Chromium 130 has no such permission name at all.
+    { name: 'an engine with no Local Network Access gate', script:
+      "navigator.permissions.query = async () => { throw new TypeError('unknown'); };", expect: 'direct' },
+    // A policy-managed browser: LocalNetworkAccessAllowedForUrls.
+    { name: 'a policy-managed browser', script:
+      "navigator.permissions.query = async () => ({ state: 'granted' });", expect: 'direct' },
+    // Everything else, which is what this very Chromium answers unprompted.
+    { name: 'an ordinary current Chromium', script:
+      "navigator.permissions.query = async () => ({ state: 'prompt' });", expect: 'link' },
+  ];
+  for (const c of cases) {
+    const h = await harness({ transport: null });
+    try {
+      await h.page.addInitScript(c.script);
+      await h.page.reload({ waitUntil: 'load' });
+      await h.page.waitForFunction('window.__ready === true');
+      const before = h.stub.requests.length;
+      const chosen = await h.page.evaluate('srvDecideTransport()');
+      assert.strictEqual(chosen, c.expect, c.name);
+      assert.strictEqual(h.stub.requests.length, before, `${c.name}: deciding asked Forge for nothing`);
+      await noNative(h);
+    } finally { await h.close(); }
+  }
+
+  /* And unstubbed, this engine answers for itself — recorded here so the day
+     Chromium changes its mind, a test says so rather than a screen going quiet. */
+  const h = await harness({ transport: null });
   try {
-    /* The transport the spike chose. Forced rather than waited for: on
-       loopback Chromium has no Local Network Access gate to trip, so the only
-       way to exercise the relay here is to ask for it — which is what the
-       capability check does on a real office network. */
-    await h.page.evaluate("SRV.transport = 'link'; SRV.path = 'Alpha';");
+    const state = await h.page.evaluate(`(async () => {
+      try { return (await navigator.permissions.query({ name: 'local-network-access' })).state; }
+      catch (e) { return 'threw:' + e.name; }
+    })()`);
+    assert.ok(['prompt', 'granted', 'denied', 'threw:TypeError'].includes(state), state);
+    assert.strictEqual(await h.page.evaluate('srvDecideTransport()'),
+      (state === 'granted' || state === 'threw:TypeError') ? 'direct' : 'link',
+      `the transport follows this engine's answer (${state})`);
+  } finally { await h.close(); }
+});
+
+test('the office link window is never opened without a click', { skip: SKIP }, async () => {
+  const h = await harness({ transport: 'link' });
+  try {
+    /* A LISTING THAT NEEDS THE BRIDGE DOES NOT OPEN ONE. It asks. Anything else
+       is a window appearing on its own, which is what a pop-up blocker exists
+       for — and a blocked window would leave the tab silently empty. */
+    let popped = false;
+    h.page.on('popup', () => { popped = true; });
+    await h.page.evaluate("SRV.path = 'Alpha'; srvGo()");
+    await h.page.waitForSelector('#srvConnect', { timeout: 20000 });
+    assert.strictEqual(popped, false, 'nothing opened a window by itself');
+    assert.match(await h.page.$eval('.srv-banner', (e) => e.textContent),
+      /needs the office server window/);
+    assert.strictEqual(await h.page.$eval('.srv-transport', (e) => e.textContent.trim()),
+      'Bridge window needed');
+    assert.strictEqual(await h.page.$$eval('.srv-row', (els) => els.length), 0,
+      'and no listing was invented in the meantime');
+    await noNative(h);
+  } finally { await h.close(); }
+});
+
+test('Connect to office server opens the bridge, which then relays listing and uploads', { skip: SKIP }, async () => {
+  const h = await harness({ transport: 'link' });
+  try {
+    await h.page.evaluate("SRV.path = 'Alpha'; srvGo()");
+    await h.page.waitForSelector('#srvConnect', { timeout: 20000 });
+
     const [popup] = await Promise.all([
       h.page.waitForEvent('popup', { timeout: 15000 }),
-      h.page.evaluate('srvGo()'),
+      h.page.click('#srvConnect'),
     ]);
     await popup.waitForLoadState('load');
     assert.match(await popup.title(), /Office file link/);
     // It says what it is for, and that it holds nothing.
     assert.match(await popup.$eval('body', (e) => e.textContent), /nothing is stored here/);
 
-    await h.page.waitForFunction("document.querySelectorAll('.srv-row').length === 2", { timeout: 20000 });
+    await h.page.waitForFunction(
+      "SRV.path === 'Alpha' && [...document.querySelectorAll('.srv-row .srv-name')]"
+      + ".some((e) => e.textContent.includes('render.psd'))", { timeout: 20000 });
     const names = await h.page.$$eval('.srv-row .srv-name', (els) => els.map((e) => e.textContent.trim()));
     assert.deepStrictEqual(names.sort(), ['notes.txt', 'render.psd'],
       'the folder was listed through the relay');
+    // And the label now says how the files travel.
+    assert.strictEqual(await h.page.$eval('.srv-transport', (e) => e.textContent.trim()),
+      'Via bridge window');
 
-    // And an upload goes up the same way — the Blob travels by structured clone.
+    // An upload goes up the same way — the Blob travels by structured clone.
     const bytes = Array.from({ length: 20 * 1024 }, (_, i) => i % 7);
     await h.page.evaluate(async (data) => {
       srvQueue([new File([new Uint8Array(data)], 'relayed.psd')]);
@@ -583,6 +669,165 @@ test('the office link window relays for a browser that will not talk to the LAN'
     assert.strictEqual(await h.page.evaluate('SRV.uploads[0].state'), 'done',
       await h.page.evaluate('SRV.uploads[0].note'));
     assert.deepStrictEqual([...fs.readFileSync(path.join(h.share, 'Alpha', 'relayed.psd'))], bytes);
+
+    /* NO TOKEN IN THE WINDOW'S URL. The bridge's address is in the browser's
+       history and in the person's title bar; what travels over it is the page,
+       and everything else arrives by postMessage. */
+    const url = popup.url();
+    assert.match(url, /\/v1\/app$/, url);
+    assert.ok(!/[?#]/.test(url), `no query and no fragment: ${url}`);
+    await noNative(h);
+  } finally { await h.close(); }
+});
+
+test('closing the bridge mid-upload pauses it, and reopening carries on', { skip: SKIP }, async () => {
+  const h = await harness({ transport: 'link' });
+  try {
+    await h.page.evaluate("SRV.path = 'Alpha'; srvGo()");
+    await h.page.waitForSelector('#srvConnect', { timeout: 20000 });
+    const [popup] = await Promise.all([
+      h.page.waitForEvent('popup', { timeout: 15000 }),
+      h.page.click('#srvConnect'),
+    ]);
+    await popup.waitForLoadState('load');
+    await h.page.waitForFunction('srvBridgeReady()', { timeout: 20000 });
+
+    /* 70 KB against a 16 KB chunk, with the window shut after the second chunk:
+       what is already on the share stays there and the job stops. A closed
+       window is a PAUSE — the person shut a window, they did not lose an
+       upload. */
+    const bytes = Array.from({ length: 70 * 1024 }, (_, i) => i % 61);
+    await h.page.evaluate(async (data) => {
+      window.__realSrvCall = window.srvCall;
+      let sent = 0;
+      window.srvCall = async (p, opts) => {
+        const out = await window.__realSrvCall(p, opts);
+        if (/\/chunk/.test(p) && ++sent === 2) SRV.linkWindow.close();
+        return out;
+      };
+      srvQueue([new File([new Uint8Array(data)], 'interrupted.psd')]);
+    }, bytes);
+    await h.page.waitForFunction(
+      "SRV.uploads[0] && (SRV.uploads[0].state === 'paused' || SRV.uploads[0].state === 'failed')",
+      { timeout: 25000 });
+    assert.strictEqual(await h.page.evaluate('SRV.uploads[0].state'), 'paused',
+      await h.page.evaluate('SRV.uploads[0].note'));
+    /* EITHER SENTENCE. Which one depends on where the close landed: a call
+       already in flight is told the window went away, and the next call is told
+       there is no window to use. Both are a pause with the same consequence,
+       and pinning one of them would be pinning a race. */
+    assert.match(await h.page.evaluate('SRV.uploads[0].note || ""'),
+      /office server window (was closed|is not open)/);
+    assert.match(await h.page.evaluate('SRV.uploads[0].note || ""'), /carries on/);
+    assert.strictEqual(fs.existsSync(path.join(h.share, 'Alpha', 'interrupted.psd')), false,
+      'and nothing was finished while it was shut');
+
+    // Reopen, resume, and the file is whole — resumed from what the share had.
+    await h.page.evaluate('window.srvCall = window.__realSrvCall; renderServer()');
+    await h.page.waitForSelector('#srvConnect', { timeout: 20000 });
+    const [again] = await Promise.all([
+      h.page.waitForEvent('popup', { timeout: 15000 }),
+      h.page.click('#srvConnect'),
+    ]);
+    await again.waitForLoadState('load');
+    await h.page.waitForFunction('srvBridgeReady()', { timeout: 20000 });
+    await h.page.evaluate("srvResume(SRV.uploads[0].id)");
+    await h.page.waitForFunction("SRV.uploads[0].state === 'done' || SRV.uploads[0].state === 'failed'",
+      { timeout: 30000 });
+    assert.strictEqual(await h.page.evaluate('SRV.uploads[0].state'), 'done',
+      await h.page.evaluate('SRV.uploads[0].note'));
+    assert.deepStrictEqual([...fs.readFileSync(path.join(h.share, 'Alpha', 'interrupted.psd'))], bytes,
+      'byte for byte, across a closed window');
+    await noNative(h);
+  } finally { await h.close(); }
+});
+
+/* ---- the virtual Projects list ------------------------------------------ */
+
+/* What a non-admin's first screen is: not the share's root, which they may not
+   read, but the projects they can already see that have a usable server link.
+   Forge answers it; the gateway is not asked. */
+const PROJECT_ROOTS = {
+  all: false,
+  entries: [
+    { name: 'Alpha', label: 'Alpha', path: 'Alpha', type: 'folder', kind: 'project',
+      projectId: 'p-alpha', subtitle: '\\\\SERVER\\Projects\\Alpha' },
+    /* A project whose FOLDER is not named after it, which is the ordinary case
+       on a share that predates Forge — the row says the project and shows the
+       link underneath. */
+    { name: 'Beta the Second', label: 'Beta the Second', path: 'Beta', type: 'folder', kind: 'project',
+      projectId: 'p-beta', subtitle: '\\\\SERVER\\Projects\\Beta' },
+  ],
+  shared: [],
+  unavailable: [{ name: 'Gamma', why: 'No server folder link yet.' }],
+};
+
+test('the Projects list is the first screen, and the breadcrumb stops at the project', { skip: SKIP }, async () => {
+  const h = await harness({ roots: PROJECT_ROOTS });
+  try {
+    await h.page.evaluate('renderServer()');
+    await h.page.waitForSelector('.srv-row .srv-name');
+
+    /* THE PROJECT'S NAME, not the folder's. The link may point several segments
+       under the prefix and the folder may be called anything at all; what the
+       artist knows is the project. */
+    const names = await h.page.$$eval('.srv-row .srv-name',
+      (els) => els.map((e) => e.firstElementChild.textContent.trim()));
+    assert.deepStrictEqual(names, ['Alpha', 'Beta the Second'], names.join('|'));
+    // And the link it points at, underneath, for whoever has to check it.
+    const subs = await h.page.$$eval('.srv-row .srv-sub', (els) => els.map((e) => e.textContent.trim()));
+    assert.deepStrictEqual(subs, ['\\\\SERVER\\Projects\\Alpha', '\\\\SERVER\\Projects\\Beta'], subs.join('|'));
+
+    // Nothing was asked of the office server to draw it.
+    assert.deepStrictEqual(h.stub.requests.filter((r) => r[0] === 'token'), [],
+      'the Projects list cost no token and no listing');
+
+    // A project with no usable link is named, with why, and is not a row.
+    const unavailable = await h.page.$$eval('.srv-unavailable .srv-check-row',
+      (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
+    assert.strictEqual(unavailable.length, 1, unavailable.join('|'));
+    assert.match(unavailable[0], /no server link.*Gamma.*No server folder link yet/);
+
+    // Into the project, and the breadcrumb goes Projects → Beta the Second.
+    await h.page.click('.srv-link[data-open="Beta"]');
+    /* NOT "SRV.path === 'Beta'": the click handler sets the path before it
+       re-renders, so that is satisfied while the old breadcrumb is still on
+       screen — and this test then read the root's crumbs and failed depending
+       on how loaded the machine was. Waited on the drawn crumb instead. */
+    await h.page.waitForFunction(
+      "SRV.path === 'Beta' && [...document.querySelectorAll('.srv-crumbs *')]"
+      + ".some(e => e.textContent.trim() === 'Beta the Second')");
+    const crumbs = await h.page.$$eval('.srv-crumbs *',
+      (els) => els.map((e) => e.textContent.trim()).filter((t) => t && t !== '/'));
+    assert.deepStrictEqual(crumbs, ['Projects', 'Beta the Second'], crumbs.join('|'));
+    /* AND NOTHING ABOVE IT. There is no crumb for the share's root, because
+       they may not read it — a breadcrumb that leads to a refusal reads as a
+       bug, not as a permission. */
+    assert.strictEqual(await h.page.$$eval('.srv-crumb[data-path=""]', (els) => els.length), 1,
+      'exactly one crumb leads anywhere above the project, and it is Projects');
+
+    // Back to the list, from that crumb.
+    await h.page.click('.srv-crumb[data-path=""]');
+    await h.page.waitForFunction("SRV.path === '' && document.querySelectorAll('.srv-row').length === 2");
+    await noNative(h);
+  } finally { await h.close(); }
+});
+
+test('the gateway refuses a path outside the project, however the page asks', { skip: SKIP }, async () => {
+  const h = await harness({ roots: PROJECT_ROOTS });
+  try {
+    await h.page.evaluate('renderServer()');
+    await h.page.waitForSelector('.srv-row .srv-name');
+    /* The page is made to ask for the share's root with a token minted for it —
+       the stub mints whatever is asked, which is the point: this is the
+       gateway's own check, not Forge's. A real Forge refuses to mint it at all,
+       and tests/server-tab.test.js pins that side. */
+    const out = await h.page.evaluate(`(async () => {
+      const minted = await api('/server/token', { method:'POST', body:{ op:'list', path:'Alpha' } });
+      return srvCall('/v1/list?path=' + encodeURIComponent('Alpha/../Beta'), { token: minted.token });
+    })()`);
+    assert.ok(!out.ok, JSON.stringify(out));
+    assert.ok(out.status === 403 || out.status === 400, `refused with ${out.status}`);
     await noNative(h);
   } finally { await h.close(); }
 });

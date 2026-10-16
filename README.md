@@ -3421,10 +3421,20 @@ and the gateway holds no private key and so cannot grant itself anything.
    *"Open Forge from the office network to use Server files"* and shows nothing.
 4. **Neither secret is ever shown after it is saved.** The token signing key's
    private half and the gateway secret are encrypted at rest (`src/email-secret.js`,
-   AES-256-GCM, keyed from `EMAIL_ENCRYPTION_KEY` falling back to `JWT_SECRET`)
-   and are readable afterwards only as a fingerprint and a date. A generated
-   gateway secret is shown exactly once, because it has to be pasted into the
-   gateway machine.
+   AES-256-GCM) and are readable afterwards only as a fingerprint and a date. A
+   generated gateway secret is shown exactly once, because it has to be pasted
+   into the gateway machine.
+
+   **`EMAIL_ENCRYPTION_KEY` only, with no fallback.** Everywhere else in this
+   application that key falls back to `JWT_SECRET`, which is convenient and is
+   the right trade for a mail password. Not here: `JWT_SECRET` ships as a
+   placeholder, it is in reachable git history, and it is rotated by whoever
+   deploys — and rotating it would make every Server secret undecryptable while
+   silently leaving the feature switched on. So the Server section reads the key
+   in **strict mode**: with no `EMAIL_ENCRYPTION_KEY` set, the key generator and
+   the secret generator refuse with a sentence naming the variable, and the
+   self-test says so on its own line. Nothing is stored under a key that is
+   about to change under it.
 
 ### Switching it on
 
@@ -3437,16 +3447,26 @@ Super Admin:
    `GATEWAY_SECRET`.
 3. Set the **gateway address** (`https://files.office.example`) and the
    **gateway id**, which must match the gateway's `GATEWAY_ID`.
-4. Install the gateway on an office machine — `gateway/README.md` is written for
+4. Set the **server link prefix** — the share the gateway serves, written the way
+   the studio writes it: `\\SERVER\Projects`. Every project link has to start
+   with it, and it is how a link becomes a path inside the share.
+5. Install the gateway on an office machine — `gateway/README.md` is written for
    whoever does that — and wait for the heartbeat to arrive.
-5. **Enable the Server tab.** Turning it on is refused until the four things
-   above are in place, so the tab cannot appear in a state where every click
-   fails.
+6. **Enable the Server tab.** Turning it on is refused until the things above are
+   in place, so the tab cannot appear in a state where every click fails.
+
+**And a second switch, for uploading from the submit-work form.** It is separate,
+it ships off, and it is refused unless the first one is on and a prefix is set —
+browsing the share and letting artists put files on it are different decisions,
+taken on different days. See *Uploading from the submit-work form* below.
 
 The checklist at the top of the section says which of those steps is still
-outstanding, and **Run self-test** goes through them one at a time: reachability,
-certificate trust, CORS, a 1 KB write into `.incoming/selftest` and a read back,
-heartbeat age and free disk.
+outstanding, and **Run self-test** goes through them one at a time: the switch,
+the link prefix, the encryption key, the signing key, the gateway secret,
+reachability and heartbeat age, the applied config version, the **clock
+difference**, and free disk. On the gateway machine, `npm run doctor` goes
+further — it is the same two filesystem probes plus the things only that machine
+can answer. See §12 of `gateway/README.md`.
 
 Switching it **off** hides the tab and makes every Server endpoint answer
 `409 feature_disabled` — but existing deletion requests stay viewable and
@@ -3455,7 +3475,7 @@ turning a feature off is not an answer to it.
 
 ### Permissions
 
-Eight keys, all **Super Admin only by default** — unusual in this catalogue, and
+Nine keys, all **Super Admin only by default** — unusual in this catalogue, and
 deliberate: on the day this ships nobody has installed a gateway, so the studio
 grants these when the office machine is actually there.
 
@@ -3468,35 +3488,133 @@ grants these when the office machine is actually there.
 | `server.manage_requests` | See every request and mark it done or declined. |
 | `server.browse_all` | Browse the whole share rather than only this role's projects. |
 | `server.view_audit` | Read the trail of who listed, downloaded and uploaded what. |
-| `settings.server.manage` | The Settings section: the address, the keys, the limits, the mapping, the self-test. |
+| `server.submit_upload` | Upload work from the submit-work form, into their own folder. |
+| `settings.server.manage` | The Settings section: the address, the keys, the prefix, the limits, the two switches, the self-test. |
 
-All eight are grantable per role and through role groups, like everything else.
+All nine are grantable per role and through role groups, like everything else.
 
-### Scoping: folders follow projects
+`server.submit_upload` is its own key and not implied by anything, because there
+is nothing to imply it from: **submitting work is not a permission in this
+application**. An artist submits the asset assigned to them, and the workflow
+decides whether they may — there is no `assets.submit` to hang this off. So the
+new key says only "may put the file on the office server on the way", and an
+artist without it pastes a link exactly as before.
 
-A non-admin sees the top-level folder of each project `visibleProjects()` returns
-— the same function that decides which projects they see anywhere else in the
-application, including the Acting Team Lead rule — plus any **shared folders**
-named in Settings. Nothing else, and the root itself is not listable for them.
+Note that editing a project's **server folder link** needs no new key: it is part
+of editing the project, under `project.edit`, because deciding where a project's
+work lives is the same job as naming it.
 
-The folder a project owns is **derived once and then fixed**, in
-`projects.server_folder`:
+### Scoping: a project points at a folder, and says so
 
-* It is derived from the project's **name**, not its code. `projects.code` in
-  this schema is generated initials (`codeFor()` in `src/routes/projects.js`,
-  re-derived on every rename), so "Alpha" has the code "A" — a share full of
-  single letters nobody can read. The name is what a person would have written
-  on that folder.
-* It is **snapshotted at first use** and never recomputed, so renaming a project
-  moves nothing and orphans nothing.
-* It is **unique**, so two projects can never point at one folder and see each
-  other's work.
-* It is **editable** in Settings → Server, which is how a project is pointed at a
-  folder that already exists on the share with four months of work in it.
+A non-admin's first screen in the tab is not the share's root — they may not read
+it — but a **virtual "Projects" list** that Forge answers from
+`visibleProjects()`: the same function that decides which projects they see
+anywhere else in the application, including the Acting Team Lead rule. Each row
+is a project with a usable server link, named by the **project** with the link
+underneath; a project without one is not a row at all. The breadcrumb inside it
+goes `Projects / <the project> / …` and **stops there**, because a crumb for the
+folder above would be a click the server refuses, and a refusal somebody can
+reach by clicking a breadcrumb reads as a bug. `server.browse_all` gets the real
+root, because for them it is real.
+
+**The folder is a link somebody pasted, in `projects.server_link`.** Not derived
+from anything:
+
+* An earlier version of this derived the folder from the project's **name**
+  (`projects.code` is generated initials — `codeFor()` in
+  `src/routes/projects.js`, re-derived on every rename — so "Alpha" has the code
+  "A" and a share full of single letters nobody can read). Deriving it at all was
+  the mistake: **the folders already exist**, with four months of work in them and
+  names nobody is going to change, and a derived name is a guess about a share
+  this application cannot see. So a project manager pastes the link, with a
+  **Check folder** button that asks the gateway whether it is really there.
+* It must start with the **server link prefix** from Settings, and what is stored
+  is what was typed — separators and all, so it can be pasted back into Explorer.
+  One function decides it (`src/server-link.js`), and the project form says the
+  same thing as you type from a copy of that rule in the page;
+  `tests/server-link.test.js` runs both against one shared matrix of cases and
+  fails naming any input they disagree about.
+* **Nothing is moved, ever.** Repointing a project at a different folder asks for
+  confirmation, writes an audit entry, and moves not one byte: the old work stays
+  where it is, and new work goes to the new place. Two projects pointing at the
+  same folder, or one inside another, is a **warning and not a refusal** — a
+  studio that keeps two seasons of one show in one folder is doing something
+  reasonable, and an application that refused it would be wrong rather than safe.
+* A project with **no link** is unchanged in every other respect: it is absent
+  from the tab's Projects list, the submit-work upload is not offered for it, and
+  everything else about it works exactly as it did.
+* The gateway **never creates a project folder.** The upload token names it as a
+  precondition and the gateway refuses the upload if it is not there, with
+  *"Project folder not found on the server. Ask your project manager or IT to
+  check the project's server link."* A mistyped link that quietly produced a
+  second folder would send work somewhere nobody is looking, while the project
+  manager read "uploaded" and believed it.
 
 Every token Forge mints names one path inside those prefixes, and the gateway
 checks the path against the token again on its side. A client-supplied path is
 therefore checked twice and trusted never.
+
+### Uploading from the submit-work form
+
+Behind the second switch, and only for the projects it is enabled for: an artist
+with `server.submit_upload` gets an **Upload to Server** box under the link field
+in the submit-work form. It copies files to the office server and then **fills the
+link field in** — with a link that passes the same validation as anything pasted
+by hand, because it is the same endpoint's answer.
+
+```
+<the project's folder>/<discipline>/<the person's own folder>/<the files>
+      from projects.server_link    |          |
+                                   |          └─ users.server_folder, assigned
+                                   |             once and never recomputed
+                                   └─ from the ASSET'S CATEGORY, named in Settings
+```
+
+* **The server computes the path. Every time, from the asset.** There is no
+  folder picker, no path in any request body, and a client that invented one
+  would have it ignored — `src/routes/server.js` recomputes it and a test proves
+  that. The browser says which asset, which file and how big; the server answers
+  where it goes.
+* **The discipline is the asset's category**, not the person's role: the same
+  artist uploading an Art asset and an Animation asset in one project puts them
+  in `Artist/` and `Animator/`. Role-based mapping was the obvious design and it
+  is wrong — one person does both jobs in a small studio, and the folder is about
+  the work. The category → folder names are editable in Settings (`Art → Artist`,
+  `Animation → Animator`, everything else → `Work`). **Asset categories ship
+  empty** in this application, so a studio that has not created any gets the
+  fallback folder for everything, which is correct rather than broken.
+* **Their own folder, and only their own.** `users.server_folder` is assigned on
+  first use from their name — transliterated, so "Zoë Müller" is `Zoe Muller` and
+  not `Zoe Mu ller` — and then **fixed**, so renaming an account does not start a
+  second folder. It is UNIQUE, so two people with one name get a suffix rather
+  than one folder. An upload may go nowhere else: the token names the folder and
+  the gateway checks it.
+* **An asset cannot move between projects** in this schema (`EDIT_FIELDS` in
+  `src/routes/assets.js` has no `projectId`), which is why a reference recorded
+  against an asset cannot be orphaned by somebody moving it.
+* **Submitting is blocked while an upload is in flight**, with a sentence rather
+  than a disabled button: a round submitted now would point at a folder that is
+  still filling up.
+* **A failure leaves the link alone.** Only the files that actually landed are
+  recorded; if none did, the field keeps whatever the artist typed.
+* **Two screens outside the tab, and one small route for them.** The project
+  form's link field and this upload box are drawn by people who need not hold a
+  Server-tab permission at all — `project.edit` for one, `server.submit_upload`
+  for the other — so neither can call `GET /api/server/state`, which is the tab's
+  single request and needs `server.view`. They ask `GET
+  /api/server/page-context`, which answers to either of their own permissions
+  with the prefix, the address and the limits. (Not `/auth/me`: that is polled
+  every twenty seconds by every signed-in browser.) Until that route existed both
+  screens asked for `/state`, got a 403, and drew themselves as though nothing
+  had been configured — a link field disabled with *"an admin needs to set the
+  server link prefix"* on a studio that had set one, and no upload box at all,
+  with nothing on screen saying why. `tests/server-submit-browser.test.js` drives
+  both as people who hold exactly one of the two permissions.
+* **The old way keeps working, side by side.** Paste a link and submit — from a
+  machine that has nothing to do with the prefix, if that is where the work is.
+  That is the flow every artist uses today, it is untouched, and it is what
+  happens for every project and person outside the pilot. Switching either switch
+  off puts everybody back on it with nothing else changed.
 
 ### Tokens
 
@@ -3574,6 +3692,44 @@ catch (TypeError) { /* this engine has no such gate */ }
   over `postMessage` — `File` and `Blob` slices travel by structured clone. Its
   own fetches are same-origin and private-to-private, which nothing gates.
 
+**That window is opened by a click, and only by a click.** Never on page load,
+never on a render, never because a listing happened to need one. A window that
+appears on its own is what a pop-up blocker exists for, so for some people it
+would be blocked and nothing on screen would explain why nothing worked — and a
+window that relays somebody's files to a machine in the office should be one they
+opened. So a call that needs the bridge **refuses with "the window is not open"**
+instead of opening one, every screen that can need it draws a *Connect to office
+server* button, and a blocked pop-up says so and what to do about it. The tab and
+the submit box both show which transport is in use, because *"why is there a
+second window"* and *"why is there not"* are both reasonable questions.
+
+**Both directions are pinned to the gateway's exact origin** — the address an
+admin configured, not a suffix match and not whatever a message claims about
+itself — and a message must come from the window Forge opened (`e.source` is
+compared with the handle), so another tab at the same origin cannot answer for
+it. **No token is ever in that window's URL**: its address is in the browser's
+history and in the person's title bar, so what travels over it is the page, and
+everything else arrives by `postMessage` after the handshake.
+
+**Closing it mid-upload is a pause, not a failure.** The chunks already written
+are on the share, the gateway knows which ranges it has, and reopening resumes
+from what `GET /v1/upload/:id/status` reports.
+
+The **optional upgrade** for an office that would rather not have the second
+window: the `LocalNetworkAccessAllowedForUrls` policy on Chrome or Edge, which
+makes the permission report `granted` and the tab talk to the gateway directly.
+It is an upgrade and not a requirement — everything works without it.
+
+### Clock skew
+
+The gateway allows **±30 seconds** between its clock and Forge's when it checks a
+token's expiry (`GATEWAY_CLOCK_LEEWAY_SECONDS`, hard-capped at 120). An office
+machine whose clock has drifted by a minute would otherwise reject every token
+with nothing on screen explaining it. The heartbeat carries Forge's time, the
+gateway records the difference, Settings → Server **warns above 15 seconds**, and
+`npm run doctor` **fails** above the leeway — so the drift is visible before it
+becomes a mystery, and the cure is NTP rather than a bigger leeway.
+
 Downloads are always a top-level link with a single-use token, in both cases:
 it is the only mechanism that survives a very large file and it hands the work to
 the browser's own download manager.
@@ -3586,10 +3742,14 @@ the browser's own download manager.
 | `gateway_state` | One row, overwritten. The last heartbeat: version, free disk, applied config version. |
 | `server_events` | The audit trail — who listed, was issued a download, started or finished an upload, created a folder, ran a self-test. Actions on paths, not an index of the share. |
 | `deletion_requests` | Path, type, who asked, why, status, who answered and their note. |
-| `projects.server_folder` | The one column: which folder this project owns. |
+| `server_submission_files` | **References, not files**: which asset, which version, who, the relative path and the name. A row says "this submission points at that file on the office server" — it is not a copy, a cache or an index of the share. |
+| `projects.server_link` | The link somebody pasted, exactly as typed. |
+| `projects.server_submit_enabled` | Whether the submit-work upload is on for this project. |
+| `users.server_folder` | The person's own folder name, assigned once. |
 
 No file table. No file content. No deletion state — there is nothing here to
-delete.
+delete. `tests/server-tab.test.js` fails on any `BLOB` column or any table that
+looks like an index of the share.
 
 ## Acting Team Leads
 

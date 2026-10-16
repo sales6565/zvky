@@ -3391,6 +3391,13 @@ const SRV = {
   may: {},
   roots: null,
   openRequests: [],
+  /* The second switch, and the share every project link has to start with.
+     Both come from /server/state — see srvLoadState, which is where leaving
+     them out left the project form's link field permanently disabled and the
+     submit-work upload box permanently undrawn. */
+  submitUploadEnabled: false,
+  linkPrefix: null,
+  contextLoaded: false,   // page-context fetched (see srvPageContext)
   // where we are
   path: '',
   entries: [],
@@ -12124,7 +12131,7 @@ document.getElementById('newProjectBtn').addEventListener('click', async ()=>{
         supervisionUsers(),
         api('/users?limit=500'),
       ]);
-    srvWireLinkField('p', '');
+    srvWireLinkField('p', '').catch(()=>{ /* the rest of the form still works */ });
     epChecklist('p_leads', leads, [], { empty: 'No leads or supervisors visible to you.' });
     epChecklist('p_coords', coords, [], { empty: 'No coordinators visible to you.' });
     supervisionChecklist('p_supervision', 'p_supervisionCount', supervisors, []);
@@ -12344,7 +12351,8 @@ async function openEditProject(){
   document.getElementById('ep_category').innerHTML = projectCategoryOptions(project.category || null);
   document.getElementById('ep_start').value = project.start_date ? String(project.start_date).slice(0,10) : '';
   document.getElementById('ep_end').value = project.end_date ? String(project.end_date).slice(0,10) : '';
-  srvWireLinkField('ep', project.serverLink || '');
+  srvWireLinkField('ep', project.serverLink || '')
+    .catch(()=>{ /* the rest of the form still works */ });
   epChecklist('ep_leads', leads, project.teamLeadIds || [], { empty: 'No leads or supervisors visible to you.' });
   epChecklist('ep_coords', coords, project.coordinatorIds || [], { empty: 'No coordinators visible to you.' });
   supervisionChecklist('ep_supervision', 'ep_supervisionCount', supervisors, project.supervisionIds || []);
@@ -23517,16 +23525,47 @@ function srvValidateLink(link, prefix){
   return { ok:true, link:text, relative:tail.join('/'), segments:tail };
 }
 
+/* THE SETTINGS THE TWO SCREENS OUTSIDE THE SERVER TAB NEED, fetched once.
+ *
+ * /auth/me keeps SRV.enabled fresh for every signed-in browser, and that is all
+ * it carries — deliberately, because it is re-polled every twenty seconds. The
+ * rest lives in /server/state, which needs `server.view`: a permission a project
+ * manager editing a project and an artist uploading from the submit form need
+ * not hold. So they ask /server/page-context, which answers to either of their
+ * own permissions.
+ *
+ * Idempotent and cheap: it returns immediately once anything has filled the
+ * values in, including a visit to the Server tab, which loads the lot. */
+async function srvPageContext(){
+  if(!SRV.enabled || SRV.loaded || SRV.contextLoaded) return;
+  try{
+    const got = await api('/server/page-context');
+    SRV.contextLoaded = true;
+    SRV.submitUploadEnabled = Boolean(got.submitUploadEnabled);
+    SRV.linkPrefix = got.linkPrefix || null;
+    SRV.gatewayUrl = SRV.gatewayUrl || got.gatewayUrl || null;
+    SRV.chunkBytes = Number(got.chunkBytes) || SRV.chunkBytes;
+    SRV.parallelChunks = Number(got.parallelChunks) || SRV.parallelChunks;
+    SRV.maxFileBytes = Number(got.maxFileBytes) || SRV.maxFileBytes;
+    SRV.deniedExtensions = got.deniedExtensions || [];
+    SRV.allowedExtensions = got.allowedExtensions || [];
+  }catch{
+    /* No permission for either screen, or the switch went off between the poll
+       and now. Both screens draw their "not available" state, which is right. */
+  }
+}
+
 /* Draw the field, or leave it hidden. ONE function for both forms, so New
    Project and Edit Project cannot drift — the same bargain epChecklist makes
    for the four people-pickers. */
-function srvWireLinkField(prefixId, link){
+async function srvWireLinkField(prefixId, link){
   const wrap = document.getElementById(prefixId + '_serverWrap');
   if(!wrap) return;
   /* HIDDEN UNLESS THE SERVER TAB IS ON. With the switch off this is the
      production form, unchanged: no field, no note, nothing sent. */
   if(!SRV.enabled){ wrap.style.display = 'none'; return; }
   wrap.style.display = '';
+  await srvPageContext();
   const input = document.getElementById(prefixId + '_serverLink');
   const note = document.getElementById(prefixId + '_serverNote');
   const warn = document.getElementById(prefixId + '_serverWarn');
@@ -23608,9 +23647,10 @@ async function srvSubmitBox(assetId, project){
   const host = document.getElementById('submitUploadWrap');
   if(!host) return;
   host.innerHTML = '';
-  if(!SRV.loaded){
-    try{ await srvLoadState(); }catch{ return; }
-  }
+  /* NOT srvLoadState(). That is the tab's request and it needs `server.view` —
+     which an artist who may upload from this form need not hold, and when they
+     did not this box silently drew nothing at all. */
+  await srvPageContext();
   if(!SRV.enabled || !SRV.submitUploadEnabled || !can('server.submit_upload')) return;
 
   /* The project has to have a usable link AND be enabled for this. Both come
@@ -23771,8 +23811,10 @@ async function srvSubmitRun(assetId, job){
       }
     }
     if(!out.ok){
-      job.state = 'failed';
-      job.note = (out.data && out.data.error)
+      const held = srvHeldReason(out);
+      job.paused = Boolean(held);
+      job.state = held ? 'paused' : 'failed';
+      job.note = held || (out.data && out.data.error)
         || (out.status === 0 ? 'The office server could not be reached.' : `The office server answered ${out.status}.`);
       srvSubmitRender(assetId); return;
     }
@@ -23782,8 +23824,10 @@ async function srvSubmitRun(assetId, job){
 
   const done = await srvCall(`/v1/upload/${job.id}/complete`, { method:'POST', token: job.token, body:{} });
   if(!done.ok){
-    job.state = 'failed';
-    job.note = (done.data && done.data.error) || 'The office server could not finish the file.';
+    const held = srvHeldReason(done);
+    job.paused = Boolean(held);
+    job.state = held ? 'paused' : 'failed';
+    job.note = held || (done.data && done.data.error) || 'The office server could not finish the file.';
     srvSubmitRender(assetId); return;
   }
   job.state = 'done';
@@ -23826,6 +23870,21 @@ async function srvSubmitFinish(assetId){
 }
 
 const SRV_RESUME_KEY = 'zvkyServerUploads';
+
+/* A CLOSED BRIDGE WINDOW IS A PAUSE, NOT A FAILURE.
+ *
+ * The chunks already written are on the share, the gateway knows exactly which
+ * ranges it has, and resuming re-reads that and sends only the gaps — so the
+ * person shut a window, they did not lose an upload. Calling it "failed" would
+ * be telling them something untrue about their work and offering "Retry" for
+ * something that never stopped being in progress.
+ *
+ * Returns the sentence to show, or null when this really is a failure. */
+function srvHeldReason(out){
+  if(out && out.bridgeClosed) return 'The office server window was closed — reopen it and this carries on.';
+  if(out && out.needsBridge) return 'The office server window is not open — connect and this carries on.';
+  return null;
+}
 
 /* Which transport this browser can use, decided without a request. */
 async function srvDecideTransport(){
@@ -24020,6 +24079,14 @@ async function srvLoadState(){
   SRV.may = state.may || {};
   SRV.roots = state.roots || null;
   SRV.openRequests = state.openRequests || [];
+  /* READ BY THE PROJECT FORM AND THE SUBMIT BOX, and for a while not copied out
+     of the answer at all — so srvWireLinkField saw no prefix and disabled the
+     field with "an admin needs to set the server link prefix" on a studio that
+     had set one, and srvSubmitBox returned early and drew nothing. Nothing on
+     screen said why, because from the page's side nothing was wrong.
+     tests/server-submit-browser.test.js is what noticed. */
+  SRV.submitUploadEnabled = Boolean(state.submitUploadEnabled);
+  SRV.linkPrefix = state.linkPrefix || null;
   return state;
 }
 
@@ -24522,8 +24589,11 @@ async function srvRunUpload(job){
       }
     }
     if(!out.ok){
-      job.state = 'failed';
-      job.note = (out.data && out.data.error) || (out.status === 0 ? 'The office server could not be reached.' : `The office server answered ${out.status}.`);
+      const held = srvHeldReason(out);
+      job.paused = Boolean(held);
+      job.state = held ? 'paused' : 'failed';
+      job.note = held
+        || (out.data && out.data.error) || (out.status === 0 ? 'The office server could not be reached.' : `The office server answered ${out.status}.`);
       renderServer(); return;
     }
     job.sent = end;
@@ -24533,8 +24603,10 @@ async function srvRunUpload(job){
 
   const done = await srvCall(`/v1/upload/${job.id}/complete`, { method:'POST', token: job.token, body:{} });
   if(!done.ok){
-    job.state = 'failed';
-    job.note = (done.data && done.data.error) || 'The office server could not finish the file.';
+    const held = srvHeldReason(done);
+    job.paused = Boolean(held);
+    job.state = held ? 'paused' : 'failed';
+    job.note = held || (done.data && done.data.error) || 'The office server could not finish the file.';
     renderServer(); return;
   }
   job.state = 'done';

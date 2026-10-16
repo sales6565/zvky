@@ -304,6 +304,55 @@ router.post('/upload-session/:id/renew', requireEnabled, requirePermission('serv
  * and nothing else: the token is a list token, for that path, for sixty
  * seconds, and it is audited like every other mint.
  */
+/* GET /api/server/page-context — what the two screens OUTSIDE the tab need.
+ *
+ * WHY A ROUTE OF ITS OWN, rather than one more field somewhere.
+ *
+ * The project form's link field and the submit-work upload box are both drawn
+ * outside the Server tab, by people who need not hold a Server-tab permission at
+ * all — a project manager with `project.edit`, an artist with
+ * `server.submit_upload`. Neither can call /state, which is the TAB's single
+ * request and needs `server.view`; and until this route existed both screens
+ * asked for it anyway, got a 403, and drew themselves as if nothing had been
+ * configured: a link field disabled with "an admin needs to set the server link
+ * prefix" on a studio that had set one, and no upload box at all. Nothing on
+ * screen said why, because from the page's side nothing had gone wrong.
+ *
+ * Not on /auth/me: that endpoint is re-polled by every signed-in browser every
+ * twenty seconds, and the note there about keeping the settings out of it is
+ * right.
+ *
+ * NOTHING HERE IS A SECRET. The prefix is the first half of every project link,
+ * the address is on screen in Settings and is already handed to the same person
+ * by /check-folder, and the limits are the ones the upload endpoints enforce
+ * anyway. The permission is checked again on every endpoint regardless: this
+ * route decides what a screen can DRAW, never what anybody may do. */
+function requireAny(...keys) {
+  return (req, res, next) => {
+    if (!req.permissions || !keys.some((k) => req.permissions.has(k))) {
+      return res.status(403).json({ error: 'You do not have permission to do that' });
+    }
+    next();
+  };
+}
+
+router.get('/page-context', requireEnabled, requireAny('project.edit', 'server.submit_upload'),
+  (req, res) => {
+    const settings = serverSettings.current();
+    res.json({
+      enabled: true,                 // requireEnabled got us here
+      submitUploadEnabled: serverSettings.submitUploadEnabled(),
+      linkPrefix: settings.linkPrefix || null,
+      gatewayUrl: settings.gatewayUrl || null,
+      gatewayId: settings.gatewayId || null,
+      chunkBytes: settings.chunkBytes,
+      parallelChunks: settings.parallelChunks,
+      maxFileBytes: settings.maxFileBytes,
+      deniedExtensions: settings.deniedExtensions || [],
+      allowedExtensions: settings.allowedExtensions || [],
+    });
+  });
+
 router.post('/check-folder', requireEnabled, requirePermission('project.edit'), async (req, res) => {
   const settings = serverSettings.current();
   if (!settings.gatewayUrl || !settings.gatewayId) {
