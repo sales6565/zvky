@@ -628,6 +628,24 @@ const GROUPS = [
         describe: 'Idle Report: standard working hours against hours actually tracked, per person.',
       },
       {
+        key: 'report.artist_report',
+        label: 'View Artist Report',
+        /* SUPER ADMIN ONLY BY DEFAULT, which is stricter than the two reports
+           above it and deliberately so.
+           
+           Efficiency reports on ASSETS and groups them; this one is a list of
+           named people against the hours they recorded, one row per asset they
+           submitted, downloadable as a spreadsheet that leaves the building. A
+           studio may well want a producer reading efficiency without being
+           handed a per-person file of everybody's hours, so holding it is a
+           decision somebody makes in Settings rather than a consequence of
+           holding View Reports. Grantable per role and through role groups like
+           every other key. */
+        impliedBy: has('managePermissions'),
+        describe: 'Artist Report: every resource\u2019s submitted work \u2014 asset, submit date, bid '
+          + 'and recorded hours \u2014 with an Excel download. Scoped to the projects the role can see.',
+      },
+      {
         key: 'report.admin_dashboard',
         label: 'View Admin Dashboard',
         /* The studio in one screen: how many projects are running, what is late,

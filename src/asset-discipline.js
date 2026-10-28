@@ -70,7 +70,37 @@ function assetDiscipline(asset) {
 
 const disciplineLabel = (id) => (DISCIPLINES.find((d) => d.id === id) || {}).label || null;
 
+/* THE ONE TYPE THE RULE NAMES, for callers that have to express the rule in
+   something other than JavaScript. Not used inside assetDiscipline() itself —
+   that function's body is compared character for character against the page's
+   copy, so it keeps the literal. */
+const ANIMATION_TYPE = 'animation';
+
+/* The same rule as a SQL predicate, for a report that has to filter thousands
+ * of rows by discipline in the database.
+ *
+ * WRITTEN HERE AND NOWHERE ELSE, for the reason the whole module exists: a
+ * `CASE WHEN a.type = 'animation'` in a query is a second copy of the
+ * classification, and the Dashboard and the folder drifted apart precisely
+ * because there were two. tests/asset-discipline.test.js runs this predicate
+ * and assetDiscipline() over the same types and fails on any disagreement.
+ *
+ * Returns null for anything that is not a discipline, which the caller reads as
+ * "no filter" rather than as "no rows" — an unknown value in a query string
+ * should not silently empty a report.
+ *
+ * NULL IS ART, like everything that is not animation, so the art branch has to
+ * say so: `type <> 'animation'` alone is UNKNOWN for a NULL type in SQL and
+ * would drop a typeless asset that the Dashboard shows under Art. */
+function disciplineWhere(disciplineId, column = 'a.`type`') {
+  const id = String(disciplineId === undefined || disciplineId === null ? '' : disciplineId)
+    .trim().toLowerCase();
+  if (!DISCIPLINE_IDS.includes(id)) return null;
+  if (id === 'animation') return { sql: `LOWER(TRIM(${column})) = ?`, params: [ANIMATION_TYPE] };
+  return { sql: `(${column} IS NULL OR LOWER(TRIM(${column})) <> ?)`, params: [ANIMATION_TYPE] };
+}
+
 module.exports = {
-  assetDiscipline, disciplineLabel,
-  DISCIPLINES, DISCIPLINE_IDS, DEFAULT_FOLDERS, DEFAULT_FALLBACK,
+  assetDiscipline, disciplineLabel, disciplineWhere,
+  DISCIPLINES, DISCIPLINE_IDS, DEFAULT_FOLDERS, DEFAULT_FALLBACK, ANIMATION_TYPE,
 };

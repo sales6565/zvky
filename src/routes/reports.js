@@ -13,6 +13,9 @@ const xlsx = require('xlsx');
 const { holds } = require('../permissions');
 const idleRoutes = require('./idle');
 const workLog = require('../work-log');
+const artistReport = require('../artist-report');
+const artistXlsx = require('../artist-report-xlsx');
+const assetDiscipline = require('../asset-discipline');
 
 router.use(authenticate);
 
@@ -215,6 +218,84 @@ async function buildReport(req) {
       scopes: referenceData.list('asset_types').map((t) => ({ key: t.key, label: t.label })),
     },
     scope: { projects: projects.length },
+  };
+}
+
+/* ---------- the Artist Report ----------
+ *
+ * Two endpoints, the same data, the same permission: the screen's paged
+ * preview and the spreadsheet. src/artist-report.js decides what is in it;
+ * src/artist-report-xlsx.js decides what the file looks like. Neither is in
+ * this file, because a route that both queries and formats is a route nobody
+ * can test one half of.
+ */
+router.get('/artist', requirePermission('report.artist_report'), async (req, res) => {
+  const page = Math.max(1, Math.floor(Number(req.query.page) || 1));
+  const report = await artistReport.build(db, req.user, req.query, { page });
+  /* The filter pickers come from the same reference the Efficiency report uses,
+     so the two screens offer the same lists. Resources are every active account
+     PLUS anybody inactive who has rows — somebody who left still submitted the
+     work, and a picker that cannot name them cannot filter to them. */
+  res.json({
+    ...report,
+    pickers: await artistPickers(req.user),
+    limits: { downloadRows: artistReport.DOWNLOAD_LIMIT, pageSize: artistReport.PAGE_SIZE },
+  });
+});
+
+router.get('/artist.xlsx', requirePermission('report.artist_report'), async (req, res) => {
+  const report = await artistReport.build(db, req.user, req.query, { all: true });
+  if (report.truncated) {
+    /* REFUSED RATHER THAN TRUNCATED. A file that silently stops at 50,000 rows
+       is a file somebody will total up and act on. The message says what to do:
+       narrow the range. */
+    return res.status(413).json({
+      error: `That is ${report.total.toLocaleString('en-GB')} rows and the download holds `
+        + `${artistReport.DOWNLOAD_LIMIT.toLocaleString('en-GB')}. Narrow the date range or the filters.`,
+      code: 'too_many_rows',
+      total: report.total,
+      limit: artistReport.DOWNLOAD_LIMIT,
+    });
+  }
+  const buffer = artistXlsx.build({ rows: report.rows, title: artistReport.titleFor(report.filters) });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  /* The same two things the desktop app's Electron shell needs for a download —
+     a Content-Disposition with a filename, which the page turns into a blob and
+     an <a download>. Measured in desktop/: both reach will-download. */
+  res.setHeader('Content-Disposition', `attachment; filename="${artistReport.fileNameFor(report.filters)}"`);
+  res.setHeader('Content-Length', String(buffer.length));
+  console.log(`${req.user.email} downloaded the Artist Report (${report.rows.length} rows, `
+    + `${report.filters.from} to ${report.filters.to}).`);
+  return res.send(buffer);
+});
+
+/* The filter pickers, scoped like everything else.
+ *
+ * Projects and clients come from what this person can see. Resources are every
+ * active account, plus the inactive ones who appear in the data — which is two
+ * queries rather than one because "inactive but has rows" cannot be read off
+ * the users table alone. */
+async function artistPickers(user) {
+  const projects = await visibleProjects(user);
+  if (!projects.length) return { projects: [], clients: [], resources: [], departments: assetDiscipline.DISCIPLINES };
+  const projectIds = projects.map((p) => p.id);
+  const { rows: clients } = await db.query(
+    `SELECT DISTINCT c.id, c.\`name\` FROM clients c
+       JOIN projects p ON p.client_id = c.id
+      WHERE p.id IN ($1) ORDER BY c.\`name\``, [projectIds]);
+  const { rows: resources } = await db.query(
+    `SELECT u.id, u.\`name\`, u.is_active AS isActive
+       FROM users u
+      WHERE u.is_active = 1
+         OR EXISTS (SELECT 1 FROM asset_versions v
+                      JOIN assets a ON a.id = v.asset_id
+                     WHERE v.uploaded_by = u.id AND a.project_id IN ($1))
+      ORDER BY u.\`name\``, [projectIds]);
+  return {
+    projects: projects.map((p) => ({ id: p.id, name: p.name })),
+    clients,
+    resources: resources.map((r) => ({ id: r.id, name: r.name, active: Boolean(Number(r.isActive)) })),
+    departments: assetDiscipline.DISCIPLINES,
   };
 }
 

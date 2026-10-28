@@ -1223,13 +1223,30 @@ async function dayTotalFor(db, { assetId, userId, day, now = Date.now() }) {
  * of them. Summing rows excludes it by construction — there is no subtraction
  * here to get wrong, which is why the hold feature was built that way.
  */
+/* THE TWO EXPRESSIONS THAT DEFINE RECORDED TIME, exported as text.
+ *
+ * recordedFor() below answers for one asset and one person and is the
+ * definition every screen uses. A report over thousands of rows cannot call it
+ * per row — that is the N+1 shape — so it has to GROUP BY in SQL, and the only
+ * safe way to do that is to build the grouped query out of the same expressions
+ * rather than retyping them. `totalsFor` below already makes that bargain with
+ * a comment; these constants make it structural, and
+ * tests/artist-report.test.js asserts the grouped figure equals recordedFor()
+ * for every pair in a fixture.
+ *
+ * `w.` is the alias the callers use; recordedFor uses the unaliased column
+ * names, which is why it passes ''. */
+const RECORDED_SECONDS_SQL = (alias = 'w.') => `COALESCE(SUM(COALESCE(${alias}seconds, 0)), 0)`;
+const RECORDED_OPEN_AGE_SQL = (alias = 'w.') =>
+  `MIN(CASE WHEN ${alias}ended_at IS NULL THEN ${AGE(`${alias}started_at`)} END)`;
+
 async function recordedFor(db, { assetId, userId }) {
   if (!assetId || !userId) return { seconds: 0, sessions: 0, open: false };
   const { rows } = await db.query(
-    `SELECT COALESCE(SUM(COALESCE(seconds, 0)), 0) AS seconds,
+    `SELECT ${RECORDED_SECONDS_SQL('')} AS seconds,
             COUNT(*) AS sessions,
             SUM(ended_at IS NULL) AS still_open,
-            MIN(CASE WHEN ended_at IS NULL THEN ${AGE()} END) AS open_age
+            ${RECORDED_OPEN_AGE_SQL('')} AS open_age
        FROM work_sessions
       WHERE asset_id = $1 AND user_id = $2`,
     [assetId, userId]
@@ -1576,4 +1593,8 @@ module.exports = {
      and a second conversion there would be a number beside the timesheet's that
      disagreed with it over every lunch hour. */
   liveSeconds, instantFromAge,
+  /* And the two expressions a grouped reader needs, so there is one definition
+     of recorded time rather than one per report. See the note above
+     recordedFor. */
+  RECORDED_SECONDS_SQL, RECORDED_OPEN_AGE_SQL,
 };

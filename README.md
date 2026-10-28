@@ -4077,6 +4077,101 @@ The person is told through the existing notification mechanism when they are
 marked or unmarked. **No email** — an attendance mark leaving the building
 through a shared mailbox is a decision a studio should make deliberately.
 
+## The Artist Report
+
+Under **Reports**, beside Work Efficiency and the Idle Report: every resource's
+submitted work, one row per asset and person, with the studio's own Excel layout
+behind a Download button.
+
+```
+Client Name | Project Name | Department | Assets Name | Resource Name | Submit Date | Bid Hours | Spent Hours | Efficiency (%)
+```
+
+### Where each column comes from, and the two the brief guessed at
+
+| Column | Source |
+|---|---|
+| Client Name | the project's client. Every project has one — `projects.client_id` is NOT NULL — so a project with no real client reads **Unassigned**, which is the system client's name and what the rest of the application shows. Blanking it would make this report disagree with the Projects list |
+| Project Name | the project |
+| **Department** | **there is no department field.** `users` has none, and nothing on it means one: role groups are bundles of permissions, and `discipline` is free text on *freelancers*. So this is the **asset's** discipline, from the shared `assetDiscipline()` the Dashboard's Art / Animation sub-tabs use — which makes it a property of the work rather than of the person. One artist appears with "Art" on one row and "Animation" on the next, which is the honest reading of a studio where the same person does both |
+| Assets Name | the asset |
+| Resource Name | the submitter's display name. **Inactive accounts included**: somebody who left in March still submitted the work in March, and hiding it would under-report the month |
+| **Submit Date** | `asset_versions` — one row per submission, carrying `uploaded_by` and `created_at`. `asset_events` records the same transition (`action='submit'`, `actor_id`) in the same request; the versions table is used because it *is* the submission rather than a trace of it, and a test holds the two equal so a drift is caught rather than guessed at |
+| Bid Hours | `assets.man_hours` — the estimate the Efficiency report calls Man Hours |
+| **Spent Hours** | `work_sessions`, through the expressions `src/work-log.js` exports. **Leave-aware without this report excluding anything**: `close()` stores working seconds already computed by `day-status.countedSeconds` with leave windows removed, and the live tail of a still-open session gets the same treatment through `liveSeconds()`. There is no `countedIntervals()` in this codebase — `countedSeconds` is the helper |
+| Efficiency (%) | Bid ÷ the hours of **everyone** on the asset × 100, one decimal, through `reports.efficiencyOf()` — the rule the Efficiency report has always used, wrapped as `assetEfficiency()` rather than written a second time |
+
+### The row rules
+
+* **One row per asset × resource**, dated that resource's **latest** submission
+  on that asset. A rejected round and its resubmission are one row, dated the
+  resubmission; two people who both submitted one asset are two rows.
+* **The range selects rows; it does not clip hours.** Spent Hours is everything
+  that person ever recorded on the asset, because Bid Hours is the whole asset's
+  estimate and halving one side of a comparison is worse than reporting both
+  whole. The screen says so rather than leaving it to be inferred.
+* **Efficiency is the asset's, not the person's.** The bid was never split
+  between two people, so dividing the whole of it by one person's hours would
+  flatter whoever did least. Every row of a multi-resource asset therefore shows
+  the same figure, and the repeated Bid Hours is explained on screen.
+* **Blank, not zero**, when there is no estimate or no recorded time: both are
+  "cannot be given", which is what `efficiencyOf()` has always returned null for.
+* **Outsourced work is left out and counted.** A freelancer has no login and no
+  timer, so every row of theirs would read 0.00 against a blank efficiency; the
+  preview says *"N outsourced assets not included"* instead.
+* Sorted by client, project, resource, then submit date — with the asset name
+  breaking the last tie, so two downloads of the same data cannot differ in
+  order.
+
+### The file
+
+Written to the attached template, read off the file rather than from a
+description: `D1:F1` merged, bold, centred, green `70AD47` with a thin bottom
+border; nine headers in Calibri 11 bold, centred, bordered on four sides, filled
+yellow `FFFF00` except Department and Submit Date, which are orange `ED7D31`.
+The template expresses those two fills as theme indices (9 and 5); they resolve
+through its own `theme1.xml` to accent6 and accent2, and are written here as
+**explicit RGB** so a differently-themed Excel cannot render the studio's report
+in other colours. Submit Date is a real date cell formatted `dd-mmm-yyyy`, the
+hour columns are numbers at `0.00`, the percentage is `0.0`, the columns start at
+the template's widths and grow to fit up to 40 characters before wrapping, the
+panes freeze below row 2, and the header row carries an autofilter. An empty
+result still downloads a file with the title and the headers in it.
+
+**It is not written with the project's spreadsheet library**, and that is the
+one decision here worth arguing with. `xlsx` (SheetJS 0.18.5) is a dependency
+already and every other export in the application uses it — but the community
+build **cannot write styles at all**: a sheet written with `cell.s` and
+`cellStyles: true` comes back with one font, the two default fills, one border
+and one cell format. Measured, not assumed. Everything the template specifies is
+a style, so the file is written as OOXML directly and zipped with Node's own
+`zlib` (`src/ooxml-zip.js`, `src/artist-report-xlsx.js`). **No new dependency** —
+the brief asked for that to be reported before it happened, and this is the
+alternative. The result is checked three ways in the tests: the system `unzip`
+reads the archive, SheetJS parses it as a workbook, and the parts are compared
+as XML against the template's own styles.
+
+**Text is never a formula.** There is no `<f>` element anywhere in the writer, so
+an asset called `=1+1`, `+cmd|"/c calc"!A1` or `@SUM(A1)` is a string — a
+stronger guarantee than escaping a leading character.
+
+### Permissions, scope and size
+
+`report.artist_report` — **Super Admin only by default**, and deliberately
+stricter than the two reports beside it: Efficiency reports on assets, this one
+is a named list of people against their hours in a file that leaves the
+building. Holding View Reports does not hand it over. Both endpoints check it
+with `requirePermission`, the page with `can()`, and every query is scoped by
+`visibleProjects()` — so a lead with the key sees the rows of the projects they
+can already see, and the totals and the download agree with the preview about
+which those are.
+
+Four queries, whatever the row count: the visible projects, the rows (paged in
+the database), the recorded time grouped by asset and person, and the live-leave
+index. A test inserts four hundred more rows and asserts the query count does not
+move. The download is capped at 50,000 rows and **refuses** past it rather than
+truncating — a file that silently stops is one somebody will total up and act on.
+
 ## Profit & Loss
 
 The first money in this application. Its own tab, **Profit & Loss**, carrying two

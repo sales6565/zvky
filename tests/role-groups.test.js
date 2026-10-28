@@ -83,7 +83,12 @@ const SINCE_SNAPSHOT = [MANAGE, 'settings.email_delivery', 'report.remind', 'set
      and for a reason specific to it: there is no "may submit work" key to imply
      it from — submitting is the state machine's assignee rule, not a grant —
      so a studio grants this to its pilot designations deliberately. */
-  'server.submit_upload'];
+  'server.submit_upload',
+  /* And the Artist Report, which is stricter than the two reports beside it on
+     purpose: it is a named list of people against their hours, downloadable as
+     a file that leaves the building, so holding View Reports does not hand it
+     over. */
+  'report.artist_report'];
 
 test('every key added since the snapshot is Super Admin only', () => {
   const added = catalog.KEYS.filter((k) => !SNAPSHOT.roles.super_admin.includes(k));

@@ -199,6 +199,20 @@ tbody tr:hover{background:var(--row-hover);} tbody tr:last-child td{border-botto
 .rep-grain{display:flex;gap:4px;margin-bottom:10px;}
 .rep-downloads{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;margin-left:auto;}
 .rep-sections{margin-bottom:12px;}
+/* --- the Artist Report: the filter bar, the note lines and the paged table --- */
+.art-filters .art-multi{display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--ink-faint);
+  text-transform:uppercase;letter-spacing:.4px;}
+.art-filters select[multiple]{min-width:180px;}
+.art-filters .btn-brand{margin-left:auto;}
+.art-count{font-size:12px;margin-bottom:6px;}
+.art-note{margin:0 0 6px;}
+.art-table{width:100%;border-collapse:collapse;font-size:12.5px;}
+.art-table th,.art-table td{border-bottom:1px solid var(--table-border);padding:7px 9px;text-align:left;
+  vertical-align:top;}
+.art-table thead th{background:var(--thead-bg);color:var(--thead-ink);font-size:10.5px;
+  text-transform:uppercase;letter-spacing:.5px;}
+.art-table .art-num{text-align:right;}
+.art-pager{display:flex;gap:10px;align-items:center;margin-top:12px;font-size:12px;}
 /* --- the notification bell --- */
 .notif-wrap{position:relative;}
 .notif-bell{position:relative;padding:8px 10px;font-size:14px;line-height:1;}
@@ -3434,7 +3448,7 @@ const UI_GATES = {
      scoped by the role's projectScope, so opening it widens nobody's reach. */
   outsourceTabBtn:       () => can('outsource.view'),
   settingsTabBtn:        () => canOpenSettings(),
-  reportsTabBtn:         () => can('report.view','report.idle'),
+  reportsTabBtn:         () => can('report.view','report.idle','report.artist_report'),
   /* Its own grant, like the two report tabs beside it. What the screen COUNTS
      is still scoped by the role's projectScope, so holding this opens the tab
      without widening anybody's reach — an Admin sees their own projects and a
@@ -8695,6 +8709,10 @@ function reportSections(){
   return [
     { id:'efficiency', label:'Work Efficiency', allowed:can('report.view') },
     { id:'idle',       label:'Idle Report',     allowed:can('report.idle') },
+    /* A third report, a third permission. Nothing about holding the other two
+       implies this one: it is a named list of people against the hours they
+       recorded, and it downloads as a file that leaves the building. */
+    { id:'artist',     label:'Artist Report',   allowed:can('report.artist_report') },
   ].filter(s=>s.allowed);
 }
 
@@ -8704,6 +8722,7 @@ async function renderReportsTab(){
   if(!sections.length){ el.innerHTML = ''; return; }
   if(!sections.some(s=>s.id===reportState.section)) reportState.section = sections[0].id;
   if(reportState.section === 'idle') return renderIdleReport(sections);
+  if(reportState.section === 'artist') return renderArtistReport(sections);
   return renderReports(sections);
 }
 
@@ -9089,6 +9108,220 @@ async function renderReports(sections = reportSections()){
   const pdfBtn = document.getElementById('rep_pdf');
   if(pdfBtn) pdfBtn.onclick = ()=>download(pdfBtn, 'pdf', { view: reportState.view });
   el.querySelectorAll('.sub-tab[data-grain]').forEach(b=>b.onclick = ()=>{ reportState.grain=b.dataset.grain; reload(); });
+}
+
+/* ---------- Artist Report ----------
+ *
+ * Every resource's submitted work, one row per asset and person, with the
+ * spreadsheet the studio asked for behind one button.
+ *
+ * THE SERVER DECIDES EVERYTHING. The rows, the order, the efficiency, the
+ * paging and the outsourced count all arrive shaped — this file draws them.
+ * Two reasons: the download has to be the same report as the preview, and the
+ * only way to guarantee that is for one piece of code to produce both; and the
+ * rules (latest submission, hours not clipped, asset-level efficiency) are
+ * exactly the kind that drift when a screen re-derives them.
+ *
+ * NO NATIVE DIALOGS, like everywhere else in this application — the desktop
+ * app's web view has none (Prompt 39). Every message here is a toast or a line
+ * in the page.
+ */
+const artistState = { data:null, loading:false, page:1, busy:false,
+  filters:{ from:'', to:'', resourceIds:[], projectId:'', clientId:'', department:'' } };
+
+function artistQuery(){
+  const q = new URLSearchParams();
+  const f = artistState.filters;
+  if(f.from) q.set('from', f.from);
+  if(f.to) q.set('to', f.to);
+  if(f.projectId) q.set('projectId', f.projectId);
+  if(f.clientId) q.set('clientId', f.clientId);
+  if(f.department) q.set('department', f.department);
+  // A multi-select goes as one comma-separated parameter; the server accepts
+  // either shape.
+  if(f.resourceIds.length) q.set('resourceId', f.resourceIds.join(','));
+  return q;
+}
+
+async function loadArtistReport(){
+  const q = artistQuery();
+  q.set('page', String(artistState.page));
+  artistState.data = await api('/reports/artist?' + q.toString());
+  /* The range the SERVER settled on, written back into the filters — so the
+     date inputs show the month the report is actually of rather than empty
+     boxes on the first draw. */
+  artistState.filters.from = artistState.data.filters.from;
+  artistState.filters.to = artistState.data.filters.to;
+}
+
+const artistHours = (v) => (v === null || v === undefined) ? '' : Number(v).toFixed(2);
+const artistEff = (v) => (v === null || v === undefined) ? '' : Number(v).toFixed(1);
+
+async function renderArtistReport(sections = reportSections()){
+  const el = document.getElementById('reportsView');
+  if(!can('report.artist_report')){ el.innerHTML = ''; return; }
+  if(!artistState.data && !artistState.loading){
+    artistState.loading = true;
+    el.innerHTML = `${reportSectionTabs(sections)}<div class="empty">Working out the numbers…</div>`;
+    wireReportSections(el);
+    try{ await loadArtistReport(); }
+    catch(err){
+      el.innerHTML = `${reportSectionTabs(sections)}<div class="empty">${escapeHTML(err.message)}</div>`;
+      wireReportSections(el);
+      artistState.loading = false;
+      return;
+    }
+    artistState.loading = false;
+  }
+  const d = artistState.data;
+  if(!d) return;
+  const f = artistState.filters;
+  const p = d.pickers || { projects:[], clients:[], resources:[], departments:[] };
+
+  const opts = (list, valueKey, labelKey, selected) => list.map(x=>
+    `<option value="${escapeHTML(x[valueKey])}"${x[valueKey]===selected?' selected':''}>${escapeHTML(x[labelKey])}</option>`).join('');
+
+  /* THE RESOURCE PICKER IS A MULTI-SELECT, and a <select multiple> rather than
+     a bank of checkboxes: it is the one filter with a hundred options in a
+     studio, and the browser's own control scrolls, types-to-find and reports
+     its selection without this page reimplementing any of it. Nothing selected
+     means everybody, which is what the label says. */
+  const resourceOptions = p.resources.map(r=>
+    `<option value="${escapeHTML(r.id)}"${f.resourceIds.includes(r.id)?' selected':''}>${
+      escapeHTML(r.name)}${r.active ? '' : ' (left)'}</option>`).join('');
+
+  const filterBar = `
+    <div class="rep-filters art-filters">
+      <label class="rep-date">From <input type="date" id="art_from" value="${escapeHTML(f.from)}"></label>
+      <label class="rep-date">To <input type="date" id="art_to" value="${escapeHTML(f.to)}"></label>
+      <select id="art_project"><option value="">All projects/games</option>${opts(p.projects,'id','name',f.projectId)}</select>
+      <select id="art_client"><option value="">All clients</option>${opts(p.clients,'id','name',f.clientId)}</select>
+      <select id="art_dept"><option value="">All departments</option>${opts(p.departments,'id','label',f.department)}</select>
+      <label class="art-multi">Resources
+        <select id="art_resources" multiple size="4">${resourceOptions}</select>
+      </label>
+      <button class="btn btn-ghost" id="art_clear">Clear</button>
+      <button class="btn btn-brand" id="art_xlsx">Download Excel</button>
+    </div>`;
+
+  const from = d.total ? ((d.page - 1) * d.pageSize) + 1 : 0;
+  const to = Math.min(d.page * d.pageSize, d.total);
+  const pager = d.pages > 1 ? `
+    <div class="art-pager">
+      <button class="btn btn-ghost btn-sm" id="art_prev"${d.page <= 1 ? ' disabled' : ''}>Previous</button>
+      <span class="muted">Page ${d.page} of ${d.pages}</span>
+      <button class="btn btn-ghost btn-sm" id="art_next"${d.page >= d.pages ? ' disabled' : ''}>Next</button>
+    </div>` : '';
+
+  /* THE TWO THINGS A READER CANNOT INFER FROM THE TABLE, said rather than
+     left to be worked out: which work is missing, and why one number repeats. */
+  const notes = [
+    d.outsourcedExcluded
+      ? `${d.outsourcedExcluded} outsourced asset${d.outsourcedExcluded === 1 ? '' : 's'} not included — `
+        + 'a freelancer has no login and no timer, so there are no hours to report.'
+      : '',
+    d.rows.some(r=>r.sharedAsset)
+      ? 'Bid Hours is the asset’s, so it repeats on every row of an asset several people worked on — '
+        + 'and Efficiency is that asset’s too, measured against everybody’s hours on it.'
+      : '',
+    'Spent Hours is everything that person ever recorded on the asset, not only what falls inside the '
+      + 'dates: the date range chooses which assets are listed, by submit date.',
+  ].filter(Boolean);
+
+  el.innerHTML = `${reportSectionTabs(sections)}
+    ${filterBar}
+    <div class="art-count muted">${d.total.toLocaleString()} row${d.total === 1 ? '' : 's'}${
+      d.total ? ` · showing ${from}–${to}` : ''}</div>
+    ${notes.map(n=>`<div class="ms-note art-note">${escapeHTML(n)}</div>`).join('')}
+    <table class="art-table"><thead><tr>
+      <th>Client Name</th><th>Project Name</th><th>Department</th><th>Assets Name</th>
+      <th>Resource Name</th><th>Submit Date</th><th class="art-num">Bid Hours</th>
+      <th class="art-num">Spent Hours</th><th class="art-num">Efficiency (%)</th>
+    </tr></thead><tbody>
+      ${d.rows.length ? d.rows.map(r=>`<tr>
+        <td>${escapeHTML(r.clientName)}</td>
+        <td>${escapeHTML(r.projectName)}</td>
+        <td>${escapeHTML(r.department)}</td>
+        <td>${escapeHTML(r.assetName)}</td>
+        <td>${escapeHTML(r.resourceName)}</td>
+        <td class="mono">${escapeHTML(r.submitDate)}</td>
+        <td class="mono art-num">${escapeHTML(artistHours(r.bidHours))}</td>
+        <td class="mono art-num">${escapeHTML(artistHours(r.spentHours))}</td>
+        <td class="mono art-num"${r.efficiency === null ? '' : ` style="color:${effColor(r.efficiency)};font-weight:600;"`
+          }>${escapeHTML(artistEff(r.efficiency))}</td>
+      </tr>`).join('') : `<tr><td colspan="9" class="muted">Nothing was submitted in this range.</td></tr>`}
+    </tbody></table>
+    ${pager}`;
+
+  wireReportSections(el);
+  wireArtistReport(el);
+}
+
+function wireArtistReport(el){
+  const reload = async (resetPage = true)=>{
+    if(resetPage) artistState.page = 1;
+    artistState.data = null;
+    await renderArtistReport();
+  };
+  const bind = (id, key)=>{
+    const node = document.getElementById(id);
+    if(node) node.onchange = ()=>{ artistState.filters[key] = node.value; reload(); };
+  };
+  bind('art_from','from'); bind('art_to','to'); bind('art_project','projectId');
+  bind('art_client','clientId'); bind('art_dept','department');
+
+  const resources = document.getElementById('art_resources');
+  if(resources) resources.onchange = ()=>{
+    artistState.filters.resourceIds = [...resources.selectedOptions].map(o=>o.value);
+    reload();
+  };
+  const clear = document.getElementById('art_clear');
+  if(clear) clear.onclick = ()=>{
+    artistState.filters = { from:'', to:'', resourceIds:[], projectId:'', clientId:'', department:'' };
+    reload();
+  };
+  const prev = document.getElementById('art_prev');
+  if(prev) prev.onclick = ()=>{ artistState.page = Math.max(1, artistState.page - 1); reload(false); };
+  const next = document.getElementById('art_next');
+  if(next) next.onclick = ()=>{ artistState.page += 1; reload(false); };
+
+  /* THE DOWNLOAD, through the same mechanism as the other two reports: fetch
+     with the bearer token, then a blob and an <a download>. A plain link cannot
+     carry a token, and this is also what works in the desktop app — a blob with
+     a.download and a server Content-Disposition both reach Electron's
+     will-download, which desktop/'s own smoke test asserts in a real window. */
+  const xlsxBtn = document.getElementById('art_xlsx');
+  if(xlsxBtn) xlsxBtn.onclick = async ()=>{
+    if(artistState.busy) return;
+    artistState.busy = true;
+    const original = xlsxBtn.textContent;
+    xlsxBtn.disabled = true; xlsxBtn.textContent = 'Preparing…';
+    try{
+      const res = await fetch(`${API_BASE}/reports/artist.xlsx?${artistQuery().toString()}`, {
+        headers: { Authorization: 'Bearer ' + state.token },
+      });
+      if(!res.ok){
+        const problem = await res.json().catch(()=>({}));
+        throw new Error(problem.error || `The download failed (HTTP ${res.status})`);
+      }
+      const disposition = res.headers.get('content-disposition') || '';
+      const named = /filename="([^"]+)"/.exec(disposition);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = named ? named[1] : 'Artist_Report.xlsx';
+      document.body.appendChild(a); a.click(); a.remove();
+      // Revoked later, not now: revoking before the browser starts the
+      // download cancels it.
+      setTimeout(()=>URL.revokeObjectURL(url), 30000);
+      showToast('Downloaded.');
+    }catch(err){ showToast(err && err.message ? err.message : 'The download failed.'); }
+    finally{
+      xlsxBtn.disabled = false; xlsxBtn.textContent = original;
+      artistState.busy = false;
+    }
+  };
 }
 
 async function renderTeam(){
