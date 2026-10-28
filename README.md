@@ -4147,9 +4147,32 @@ and one cell format. Measured, not assumed. Everything the template specifies is
 a style, so the file is written as OOXML directly and zipped with Node's own
 `zlib` (`src/ooxml-zip.js`, `src/artist-report-xlsx.js`). **No new dependency** —
 the brief asked for that to be reported before it happened, and this is the
-alternative. The result is checked three ways in the tests: the system `unzip`
-reads the archive, SheetJS parses it as a workbook, and the parts are compared
-as XML against the template's own styles.
+alternative.
+
+**Writing the package by hand cost us one production bug, and it is worth
+saying what it was.** The first release of this report made Excel show "We
+found a problem with some content" and then, after the repair, a blank sheet.
+Two defects: the worksheet wrote `<mergeCells>` before `<autoFilter>`, and
+`CT_Worksheet` is a sequence in which `autoFilter` comes first; and
+`xl/styles.xml` was in the package with no relationship pointing at it, which
+Excel needs because it loads that part through the relationship rather than by
+its name. Neither was visible to any reader the tests used — the system `unzip`
+has no opinion about XML order and never reads relationships, SheetJS finds
+elements by regex and parts by name, and LibreOffice exists to open other
+people's broken files.
+
+So the package is now **checked against the schema** rather than read back by a
+reader. `tests/xlsx-validator.js` encodes the parts of ECMA-376 Excel enforces —
+child element order in the worksheet, the workbook and the styles; relationship
+completeness; `count` attributes against their children; style indices; cell
+types; blanks as absent values rather than empty numbers; merge, autofilter and
+pane consistency; sheet-name rules; XML-illegal characters — and fails with a
+message naming the offending XML. It is proved non-vacuous on the attached
+template, which Excel opens, and it runs over every shape of report including
+the 50,000-row maximum. Beside it, `tests/xlsx-transport.test.js` compares the
+sha-256 of the writer's own output with the bytes a real Chromium and a real
+Electron window receive through the Download button, for a small report and one
+of several megabytes.
 
 **Text is never a formula.** There is no `<f>` element anywhere in the writer, so
 an asset called `=1+1`, `+cmd|"/c calc"!A1` or `@SUM(A1)` is a string — a

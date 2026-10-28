@@ -23,9 +23,20 @@
  * no encryption, no append. It writes a fixed, small set of text parts once,
  * which is exactly what an .xlsx is.
  *
- * VERIFIED THREE WAYS in tests/artist-report.test.js: the system `unzip` reads
- * it, SheetJS parses it as a workbook, and the parts are compared against the
- * attached template's XML.
+ * HOW IT IS VERIFIED, AND HOW THAT WAS NOT ENOUGH. The first version of this
+ * file was checked three ways in tests/artist-report.test.js — the system
+ * `unzip` read it, SheetJS parsed it as a workbook, and the parts were compared
+ * against the attached template's XML — and it still produced a package Excel
+ * refused to open. All three readers are lenient: `unzip` has no opinion about
+ * XML and does not read relationships at all, SheetJS finds elements by regex
+ * and parts by name, and the part comparison only looked at the parts it knew
+ * to look at. A reader cannot stand in for a schema.
+ *
+ * So the package is now also CHECKED, by tests/xlsx-validator.js, against the
+ * parts of ECMA-376 Excel enforces — element order, relationship completeness,
+ * style indices, cell types and the rest. tests/xlsx-package.test.js runs it on
+ * every shape of report, and tests/xlsx-transport.test.js proves the bytes the
+ * studio receives in a browser and in the desktop app are these bytes.
  */
 const zlib = require('zlib');
 
