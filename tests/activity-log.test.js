@@ -388,7 +388,14 @@ test('the activity log', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     const xlsx = await fetch(`${server.base}/activity/export.xlsx?module=permissions`,
       { headers: { Authorization: `Bearer ${token.root}` } });
     assert.strictEqual(xlsx.status, 200);
-    const book = require('xlsx').read(Buffer.from(await xlsx.arrayBuffer()), { type: 'buffer' });
+    const workbookBytes = Buffer.from(await xlsx.arrayBuffer());
+    /* AND A PACKAGE EXCEL WILL OPEN, on the real bytes. See
+       tests/xlsx-validator.js: added after the Artist Report shipped a file
+       Excel refused, so "written with SheetJS, so it cannot have that bug" is
+       checked rather than assumed. */
+    assert.deepStrictEqual(require('./xlsx-validator').strictly(
+      require('./xlsx-validator').validate(workbookBytes)), [], 'the activity log workbook is a valid .xlsx');
+    const book = require('xlsx').read(workbookBytes, { type: 'buffer' });
     const text = require('xlsx').utils.sheet_to_csv(book.Sheets[book.SheetNames[0]]);
     assert.match(text, /Activity log/);
     assert.match(text, /Times shown in,IST/);

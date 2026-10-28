@@ -1007,7 +1007,14 @@ await t.test('the edge cases the studio named: a weekend, a handover, and repeat
     const xlsx = await fetch(`${server.base}/timesheets/export.xlsx?from=${MON}&to=2026-03-08`,
       { headers: { Authorization: `Bearer ${token.ana}` } });
     assert.strictEqual(xlsx.status, 200);
-    const book = require('xlsx').read(Buffer.from(await xlsx.arrayBuffer()), { type: 'buffer' });
+    const workbookBytes = Buffer.from(await xlsx.arrayBuffer());
+    /* AND A PACKAGE EXCEL WILL OPEN, on the real bytes. See
+       tests/xlsx-validator.js: added after the Artist Report shipped a file
+       Excel refused, so "written with SheetJS, so it cannot have that bug" is
+       checked rather than assumed. */
+    assert.deepStrictEqual(require('./xlsx-validator').strictly(
+      require('./xlsx-validator').validate(workbookBytes)), [], 'the timesheet workbook is a valid .xlsx');
+    const book = require('xlsx').read(workbookBytes, { type: 'buffer' });
     const text = require('xlsx').utils.sheet_to_csv(book.Sheets[book.SheetNames[0]]);
     assert.match(text, /Times shown in,IST/, 'the sheet still says which studio clock the days are on');
     assert.match(text, /Nightgarden/);

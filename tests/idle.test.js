@@ -610,7 +610,15 @@ test('idle, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     const res = await fetch(`${server.base}/idle/report.xlsx?period=week&on=2026-03-04`,
       { headers: { Authorization: `Bearer ${token.root}` } });
     assert.strictEqual(res.status, 200);
-    const book = xlsx.read(Buffer.from(await res.arrayBuffer()), { type: 'buffer' });
+    const bytes = Buffer.from(await res.arrayBuffer());
+    /* AND IT IS A PACKAGE EXCEL WILL OPEN, on the real bytes of the real route.
+       Added after the Artist Report shipped a file Excel refused — these exports
+       are written with SheetJS rather than by hand, so they could not share that
+       bug, but "could not" is worth replacing with "does not". The two
+       strictnesses SheetJS trips are named in tests/xlsx-validator.js. */
+    assert.deepStrictEqual(require('./xlsx-validator').strictly(
+      require('./xlsx-validator').validate(bytes)), [], 'the idle workbook is a valid .xlsx');
+    const book = xlsx.read(bytes, { type: 'buffer' });
     assert.deepStrictEqual(book.SheetNames, ['Summary', 'Idle']);
     const rows = xlsx.utils.sheet_to_json(book.Sheets.Idle);
     const cy = rows.find((r) => r.Person === 'Cy Dean');
@@ -636,7 +644,10 @@ test('idle, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       const res = await fetch(`${server.base}/reports/efficiency.xlsx${query}`,
         { headers: { Authorization: `Bearer ${token.root}` } });
       assert.strictEqual(res.status, 200);
-      return xlsx.read(Buffer.from(await res.arrayBuffer()), { type: 'buffer' });
+      const bytes = Buffer.from(await res.arrayBuffer());
+      assert.deepStrictEqual(require('./xlsx-validator').strictly(
+        require('./xlsx-validator').validate(bytes)), [], 'the Reports workbook is a valid .xlsx');
+      return xlsx.read(bytes, { type: 'buffer' });
     };
 
     const book = await grab('?from=2026-03-02&to=2026-03-06');

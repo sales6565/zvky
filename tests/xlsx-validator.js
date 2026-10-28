@@ -862,7 +862,27 @@ function parts(buffer) {
   return { parts: out, names: pkg.entries.map((e) => e.name), problems };
 }
 
+/* THE TWO CHECKS THIS VALIDATOR IS STRICTER ABOUT THAN EXCEL, named once so
+ * every caller that has to forgive them forgives the same two.
+ *
+ * SheetJS — which writes every other spreadsheet in this application — emits
+ * t="str" for plain text (that is the formula-string type; Excel accepts it and
+ * shows the text) and re-declares built-in number formats below id 164 in
+ * <numFmts> (Excel ignores the redefinition). Both are in the brief's list of
+ * things to check and both are worth refusing in OUR writer, where they would
+ * be mistakes rather than quirks. Neither is the kind of defect that broke the
+ * Artist Report: those were schema order and a missing relationship, and
+ * SheetJS gets both right.
+ *
+ * So the exports built with SheetJS are checked with everything except these,
+ * which keeps the exception explicit instead of turning the check off. */
+const SHEETJS_TOLERATED = /t="str"|numFmtId \d+ is below 164/;
+
+/* The problems that would stop Excel opening a file written by any writer. */
+const strictly = (problems) => problems.filter((p) => !SHEETJS_TOLERATED.test(p));
+
 module.exports = {
   validate, assertValid, parts, parseXml, readZip, crc32,
   WORKSHEET_ORDER, STYLES_ORDER, WORKBOOK_ORDER,
+  SHEETJS_TOLERATED, strictly,
 };

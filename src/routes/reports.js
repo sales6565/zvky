@@ -267,15 +267,29 @@ router.get('/artist.xlsx', requirePermission('report.artist_report'), async (req
    * a Content-Length we have already stated; tests/xlsx-transport.test.js holds
    * all of that by comparing the hash of what the writer produced with the hash
    * of what a real browser and the real desktop shell received. */
-  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  /* The desktop app is a window onto this same page with no bridge of its own
-     (desktop/src/preload.js exposes nothing to the remote page), so this header
-     is what both the browser and Electron act on. */
-  res.setHeader('Content-Disposition', artistReport.contentDisposition(artistReport.fileNameFor(report.filters)));
-  res.setHeader('Content-Length', String(buffer.length));
   console.log(`${req.user.email} downloaded the Artist Report (${report.rows.length} rows, `
     + `${report.filters.from} to ${report.filters.to}).`);
-  return res.send(buffer);
+  /* WRITTEN WITH writeHead AND end RATHER THAN res.send(), for three reasons
+     that only showed up once the delivery was being mutated.
+     - res.send() RECOMPUTES Content-Length from the body it is given, so the
+       header above it is decorative: setting a wrong one there changes nothing,
+       which is a guarantee nobody can read off the code. Here the length we
+       state is the length on the wire, and a wrong one truncates the response —
+       which tests/xlsx-transport.test.js catches.
+     - res.send() computes an ETag over the whole body. At the 50,000-row cap
+       that is a hash of several megabytes on every download, for a file that is
+       generated fresh each time and can never be revalidated usefully.
+     - With an ETag comes conditional GET, and a 304 on a download hands the
+       person an empty file. A generated report should always arrive.
+     The desktop app is a window onto this same page with no bridge of its own
+     (desktop/src/preload.js exposes nothing to the remote page), so these three
+     headers are what both the browser and Electron act on. */
+  res.writeHead(200, {
+    'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'Content-Disposition': artistReport.contentDisposition(artistReport.fileNameFor(report.filters)),
+    'Content-Length': buffer.length,
+  });
+  return res.end(buffer);
 });
 
 /* The filter pickers, scoped like everything else.

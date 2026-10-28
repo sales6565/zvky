@@ -351,6 +351,16 @@ test('the bytes the writer made are the bytes that arrive', { skip: SKIP }, asyn
       'nothing compressed the zip a second time behind the length we stated');
     assert.match(headers.get('content-disposition'),
       /^attachment; filename="Artist_Report_2026-09-01_to_2026-09-30\.xlsx"; filename\*=UTF-8''Artist_Report_2026-09-01_to_2026-09-30\.xlsx$/);
+    assert.strictEqual(headers.get('etag'), null,
+      'no ETag on a generated file, so no conditional GET can answer 304 with an empty body');
+
+    /* A DOWNLOAD MUST ALWAYS ARRIVE. A 304 here would hand the studio a
+       zero-byte file, so a request that invites one is asked for explicitly. */
+    const revalidated = await fetch(`${server.base}/reports/artist.xlsx?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${token}`, 'If-None-Match': '*', 'If-Modified-Since': new Date().toUTCString() },
+    });
+    assert.strictEqual(revalidated.status, 200, 'not a 304');
+    assert.strictEqual(sha(Buffer.from(await revalidated.arrayBuffer())), sha(body), 'and the whole file again');
   });
 
   await t.test('and the desktop app receives the same bytes as the browser',

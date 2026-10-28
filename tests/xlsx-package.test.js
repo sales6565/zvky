@@ -408,7 +408,8 @@ test('the other spreadsheet exports in the application go through the same check
      never affected. They do trip two checks this validator is deliberately
      stricter than Excel about, and naming them here keeps that an informed
      choice rather than a surprise. */
-  assert.deepStrictEqual(
-    problems.filter((p) => !/t="str"|numFmtId \d+ is below 164/.test(p)), [],
+  assert.deepStrictEqual(validator.strictly(problems), [],
     `SheetJS output, ignoring the two known-tolerated strictnesses: ${JSON.stringify(problems)}`);
+  assert.ok(problems.some((p) => validator.SHEETJS_TOLERATED.test(p)),
+    'and those two really are what SheetJS does, so the exception is not dead code');
 });
