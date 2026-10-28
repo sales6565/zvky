@@ -310,7 +310,29 @@ const titleFor = (filters) =>
 
 const fileNameFor = (filters) => `Artist_Report_${filters.from}_to_${filters.to}.xlsx`;
 
+/* THE Content-Disposition HEADER, BUILT RATHER THAN INTERPOLATED.
+ *
+ * The name this report generates is two ISO dates and so always ASCII, which is
+ * exactly why it is worth doing properly here: the one that is safe today is
+ * the one nobody checks tomorrow. A quote or a newline in a header value is a
+ * response-splitting bug, and a non-ASCII byte in the quoted form is simply
+ * undefined — RFC 6266 says to send `filename` for old clients and `filename*`
+ * with a percent-encoded UTF-8 value for the rest, and browsers prefer the
+ * second when both are there.
+ *
+ * The quoted form is reduced to ASCII without quotes, backslashes or control
+ * characters; filename* carries the real name. */
+// eslint-disable-next-line no-control-regex
+const UNSAFE_IN_HEADER = /[^\x20-\x7e]|["\\]/g;
+
+function contentDisposition(name) {
+  const fallback = String(name).replace(UNSAFE_IN_HEADER, '_');
+  const encoded = encodeURIComponent(String(name)).replace(/['()*]/g, (c) =>
+    `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
+}
+
 module.exports = {
-  build, assetEfficiency, filtersFrom, defaultRange, titleFor, fileNameFor, prettyDate,
+  build, assetEfficiency, filtersFrom, defaultRange, titleFor, fileNameFor, contentDisposition, prettyDate,
   selectionSql, PAGE_SIZE, DOWNLOAD_LIMIT, hours,
 };

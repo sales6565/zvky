@@ -258,11 +258,20 @@ router.get('/artist.xlsx', requirePermission('report.artist_report'), async (req
     });
   }
   const buffer = artistXlsx.build({ rows: report.rows, title: artistReport.titleFor(report.filters) });
+  /* SENT AS BYTES, AND NOTHING TOUCHES THEM ON THE WAY OUT.
+   *
+   * res.send() with a Buffer writes the buffer; with a string it would encode it
+   * as UTF-8 first, and a zip is not text — every byte above 0x7f would be
+   * rewritten and the file would arrive corrupt. There is no compression
+   * middleware in src/server.js, so nothing layers a Content-Encoding on top of
+   * a Content-Length we have already stated; tests/xlsx-transport.test.js holds
+   * all of that by comparing the hash of what the writer produced with the hash
+   * of what a real browser and the real desktop shell received. */
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  /* The same two things the desktop app's Electron shell needs for a download —
-     a Content-Disposition with a filename, which the page turns into a blob and
-     an <a download>. Measured in desktop/: both reach will-download. */
-  res.setHeader('Content-Disposition', `attachment; filename="${artistReport.fileNameFor(report.filters)}"`);
+  /* The desktop app is a window onto this same page with no bridge of its own
+     (desktop/src/preload.js exposes nothing to the remote page), so this header
+     is what both the browser and Electron act on. */
+  res.setHeader('Content-Disposition', artistReport.contentDisposition(artistReport.fileNameFor(report.filters)));
   res.setHeader('Content-Length', String(buffer.length));
   console.log(`${req.user.email} downloaded the Artist Report (${report.rows.length} rows, `
     + `${report.filters.from} to ${report.filters.to}).`);

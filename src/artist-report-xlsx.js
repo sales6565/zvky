@@ -72,16 +72,43 @@ const CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 const ROOT_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`;
 
-const WORKBOOK = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView/></bookViews><sheets><sheet name="${SHEET_NAME}" sheetId="1" r:id="rId1"/></sheets></workbook>`;
+/* THE WORKBOOK, which carries the autofilter's hidden defined name.
+ *
+ * `_xlnm._FilterDatabase` is what Excel writes beside every autoFilter and what
+ * SheetJS writes too; it stores the filtered range at workbook level. The sheet
+ * opens without it, but the filter then has no remembered range, so the pair is
+ * built together here rather than in two places that could disagree. The sheet
+ * name is quoted because it has a space in it. */
+function workbookXml(lastRow) {
+  const ref = `'${SHEET_NAME}'!$A$2:$I$${Math.max(lastRow, 2)}`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">`
+    + '<bookViews><workbookView/></bookViews>'
+    + `<sheets><sheet name="${SHEET_NAME}" sheetId="1" r:id="rId1"/></sheets>`
+    + `<definedNames><definedName name="_xlnm._FilterDatabase" localSheetId="0" hidden="1">${ref}</definedName></definedNames>`
+    + '</workbook>';
+}
 
+/* THE WORKBOOK'S RELATIONSHIPS, AND WHY styles.xml IS HERE.
+ *
+ * Shipping it without this line is the bug Prompt 54 fixed. xl/styles.xml was
+ * in the zip and declared in [Content_Types].xml, and nothing related to it —
+ * and Excel reaches the styles part through this relationship, not by its name.
+ * An orphaned styles part means every cell's s="4" points into a table Excel
+ * never loaded: the repair dialog, and then a blank sheet. Every lenient reader
+ * looks the part up by name instead, which is why nothing caught it.
+ * tests/xlsx-validator.js now walks the whole relationship graph. */
 const WORKBOOK_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`;
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`;
 
 /* Fills, borders, fonts and the ten cell formats. The numbers below are the
-   indices the sheet refers to; see S above. */
+   indices the sheet refers to; see S above.
+   The empty <dxfs> and <tableStyles> at the end are the template's, and
+   Excel's own writer puts them in every styles part it makes. They hold nothing
+   here; they are kept so this part has the same shape as a file Excel wrote,
+   which is what tests/xlsx-package.test.js compares it against. */
 const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="3"><numFmt numFmtId="164" formatCode="dd\\-mmm\\-yyyy"/><numFmt numFmtId="165" formatCode="0.00"/><numFmt numFmtId="166" formatCode="0.0"/></numFmts><fonts count="2"><font><sz val="11"/><color rgb="FF000000"/><name val="Calibri"/><family val="2"/></font><font><b/><sz val="11"/><color rgb="FF000000"/><name val="Calibri"/><family val="2"/></font></fonts><fills count="5"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF70AD47"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFFF00"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFED7D31"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="3"><border><left/><right/><top/><bottom/><diagonal/></border><border><left/><right/><top/><bottom style="thin"><color indexed="64"/></bottom><diagonal/></border><border><left style="thin"><color indexed="64"/></left><right style="thin"><color indexed="64"/></right><top style="thin"><color indexed="64"/></top><bottom style="thin"><color indexed="64"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="10"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="0" fontId="1" fillId="3" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="0" fontId="1" fillId="4" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="2" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="2" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf><xf numFmtId="164" fontId="0" fillId="0" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="165" fontId="0" fillId="0" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="166" fontId="0" fillId="0" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="2" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="3"><numFmt numFmtId="164" formatCode="dd\\-mmm\\-yyyy"/><numFmt numFmtId="165" formatCode="0.00"/><numFmt numFmtId="166" formatCode="0.0"/></numFmts><fonts count="2"><font><sz val="11"/><color rgb="FF000000"/><name val="Calibri"/><family val="2"/></font><font><b/><sz val="11"/><color rgb="FF000000"/><name val="Calibri"/><family val="2"/></font></fonts><fills count="5"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF70AD47"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFFF00"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFED7D31"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="3"><border><left/><right/><top/><bottom/><diagonal/></border><border><left/><right/><top/><bottom style="thin"><color indexed="64"/></bottom><diagonal/></border><border><left style="thin"><color indexed="64"/></left><right style="thin"><color indexed="64"/></right><top style="thin"><color indexed="64"/></top><bottom style="thin"><color indexed="64"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="10"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="0" fontId="1" fillId="3" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="0" fontId="1" fillId="4" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="2" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="2" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf><xf numFmtId="164" fontId="0" fillId="0" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="165" fontId="0" fillId="0" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="166" fontId="0" fillId="0" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="2" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles><dxfs count="0"/><tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/></styleSheet>`;
 
 /* ---- values ------------------------------------------------------------- */
 
@@ -199,13 +226,23 @@ function sheetXml(rows, title) {
   if (pending.length) chunks.push(Buffer.from(pending.join(''), 'utf8'));
 
   const head = Buffer.from(parts.join(''), 'utf8');
+  /* THE ORDER OF THESE THREE IS THE SCHEMA'S, NOT A PREFERENCE.
+   *
+   * CT_Worksheet (ECMA-376 Part 1 §18.3.1.99) is a sequence, and in it
+   * autoFilter is the 11th child and mergeCells the 15th. Prompt 53 wrote the
+   * merge first; Excel validates the sequence, rejected the whole worksheet
+   * part, offered to repair the file and then showed a blank sheet. Nothing
+   * caught it because every reader we tested with skips to the elements it
+   * wants: `unzip` has no opinion, SheetJS finds them by regex and LibreOffice
+   * was built to open other people's broken files. tests/xlsx-validator.js
+   * holds the sequence now. */
   const tail = Buffer.from('</sheetData>'
-    + `<mergeCells count="1"><mergeCell ref="D1:F1"/></mergeCells>`
     /* THE AUTOFILTER IS ON THE HEADER ROW, and on the data if there is any. An
        empty report still gets one on row 2 alone: the brief asks for a file
        with the title and headers, and a header row that cannot be filtered is a
        different file from the one with rows in it. */
     + `<autoFilter ref="A2:I${Math.max(last, 2)}"/>`
+    + '<mergeCells count="1"><mergeCell ref="D1:F1"/></mergeCells>'
     + '<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>'
     + '</worksheet>', 'utf8');
   return Buffer.concat([head, ...chunks, tail]);
@@ -217,7 +254,7 @@ function build({ rows = [], title = 'ARTIST REPORT' } = {}) {
   return zip([
     { name: '[Content_Types].xml', contents: CONTENT_TYPES },
     { name: '_rels/.rels', contents: ROOT_RELS },
-    { name: 'xl/workbook.xml', contents: WORKBOOK },
+    { name: 'xl/workbook.xml', contents: workbookXml(rows.length + 2) },
     { name: 'xl/_rels/workbook.xml.rels', contents: WORKBOOK_RELS },
     { name: 'xl/styles.xml', contents: STYLES },
     { name: 'xl/worksheets/sheet1.xml', contents: sheetXml(rows, title) },
@@ -225,7 +262,7 @@ function build({ rows = [], title = 'ARTIST REPORT' } = {}) {
 }
 
 module.exports = {
-  build, sheetXml, dateSerial, widthsFor,
+  build, sheetXml, workbookXml, dateSerial, widthsFor,
   COLUMNS, SHEET_NAME, MAX_WIDTH, STYLE_INDEX: S,
   HEADERS: COLUMNS.map((c) => c.header),
 };

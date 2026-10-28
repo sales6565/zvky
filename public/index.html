@@ -9287,9 +9287,13 @@ function wireArtistReport(el){
 
   /* THE DOWNLOAD, through the same mechanism as the other two reports: fetch
      with the bearer token, then a blob and an <a download>. A plain link cannot
-     carry a token, and this is also what works in the desktop app — a blob with
-     a.download and a server Content-Disposition both reach Electron's
-     will-download, which desktop/'s own smoke test asserts in a real window. */
+     carry a token.
+     This is also what works in the desktop app, and that is measured rather
+     than assumed: tests/xlsx-transport.test.js presses this button in a real
+     Electron window with the app's own webPreferences and preload, and compares
+     the sha-256 of the saved file with the bytes the server sent. The wrapper
+     has no bridge of its own — preload.js exposes nothing to the hosted page —
+     so the blob and the server's Content-Disposition are the whole path. */
   const xlsxBtn = document.getElementById('art_xlsx');
   if(xlsxBtn) xlsxBtn.onclick = async ()=>{
     if(artistState.busy) return;
