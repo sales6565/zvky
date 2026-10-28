@@ -700,9 +700,17 @@ test('the Artist Report, end to end', { skip: cfg ? false : SKIP_REASON }, async
   });
 
   await t.test('the rows are scoped to the projects the reader can see', async () => {
-    /* A lead sees their team's projects, not the studio's. Granted the key and
-       nothing else, they get the rows of what they can already see — and the
-       counts with them, so the page cannot report a total it will not show. */
+    /* A lead sees their team's projects, not the studio's.
+     
+       THE LEAD IS PUT ON ONE PROJECT FIRST, and that is the whole point of the
+       fixture: a lead who can see NOTHING passes a "sees fewer rows"
+       assertion trivially — build() returns early on an empty project list — so
+       dropping the scope entirely would not have failed anything. Mutation 8
+       found that, and this is the correction. Hero Quest is theirs; Side Job is
+       not. */
+    const onTeam = await as('root', `/projects/${id.hero}`, { method: 'PATCH',
+      body: { teamLeadIds: [id.lead] } });
+    assert.strictEqual(onTeam.status, 200, JSON.stringify(onTeam.body));
     const held = (await as('root', '/permissions/roles/team_lead')).body.role.permissions
       .filter((x) => x.enabled).map((x) => x.key);
     await as('root', '/permissions/roles/team_lead', { method: 'PUT',
@@ -711,8 +719,14 @@ test('the Artist Report, end to end', { skip: cfg ? false : SKIP_REASON }, async
       const all = await as('root', `/reports/artist?${OCT}`);
       const mine = await as('lead', `/reports/artist?${OCT}`);
       assert.strictEqual(mine.status, 200, JSON.stringify(mine.body));
+      assert.ok(mine.body.total > 0, 'the lead can see their own project\u2019s rows');
       assert.ok(mine.body.total < all.body.total,
         `the lead sees fewer rows than the Super Admin: ${mine.body.total} of ${all.body.total}`);
+      /* NAMED, not merely fewer: the other project's row has to be absent. */
+      assert.ok(mine.body.rows.every((r) => r.projectName === 'Hero Quest'),
+        `only their own project: ${[...new Set(mine.body.rows.map((r) => r.projectName))].join(', ')}`);
+      assert.ok(all.body.rows.some((r) => r.projectName === 'Side Job'),
+        'and the Super Admin does see the one they cannot');
       const visible = new Set(mine.body.pickers.projects.map((p) => p.id));
       for (const row of mine.body.rows) {
         assert.ok(visible.has(row.projectId), `${row.projectName} is outside the lead’s scope`);
@@ -724,10 +738,12 @@ test('the Artist Report, end to end', { skip: cfg ? false : SKIP_REASON }, async
       const sheet = xlsx.read(Buffer.from(await res.arrayBuffer()), { type: 'buffer' }).Sheets['Artist Report'];
       const names = Object.keys(sheet).filter((k) => /^B\d+$/.test(k) && Number(k.slice(1)) >= 3)
         .map((k) => sheet[k].v);
-      assert.ok(names.every((n) => n === 'Hero Quest' || n === 'Side Job'));
+      assert.ok(names.length, 'the lead\u2019s file has rows in it');
+      assert.ok(names.every((n) => n === 'Hero Quest'), `${[...new Set(names)].join(', ')}`);
       assert.strictEqual(names.length, mine.body.total, 'the file has exactly the rows the preview counted');
     } finally {
       await as('root', '/permissions/roles/team_lead', { method: 'PUT', body: { permissions: held } });
+      await as('root', `/projects/${id.hero}`, { method: 'PATCH', body: { teamLeadIds: [] } });
     }
   });
 
