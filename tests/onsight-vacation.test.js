@@ -903,8 +903,8 @@ test('Onsight and Vacation mode, end to end', { skip: cfg ? false : SKIP_REASON 
     assert.strictEqual(new Set(to).size, to.length, 'nobody is told twice');
     assert.match(String(notes[0].detail), /Ana Artist booked a vacation/);
 
-    const mails = await q('SELECT to_address FROM email_outbox').catch(() => []);
-    assert.ok(!mails.some((m) => String(m.to_address) === 'ana@ov.test'),
+    const mails = await q('SELECT recipient FROM email_outbox').catch(() => []);
+    assert.ok(!mails.some((m) => String(m.recipient) === 'ana@ov.test'),
       'and never emailed about their own');
 
     // The switch off means no mail and still a bell.
@@ -921,6 +921,62 @@ test('Onsight and Vacation mode, end to end', { skip: cfg ? false : SKIP_REASON 
     const noMail = await q('SELECT COUNT(*) AS n FROM email_outbox').catch(() => [{ n: 0 }]);
     assert.strictEqual(Number(noMail[0].n), 0, 'and no mail was queued');
     await revoke('team_lead', ['leave.view_team']);
+    await bothOn();
+  });
+
+  await t.test('an approver booking their own vacation is not told about it', async () => {
+    /* THE ONE CASE WHERE THE ACTOR IS GENUINELY IN THEIR OWN RECIPIENT LIST,
+       and the only one — which is why the first run of the mutation that removes
+       the actor-skip came back MISSED against the cases above.
+       leadsFor() excludes the person by its own SQL (lead.user_id <> $1), so a
+       lead booking their own holiday is never among their own leads. But
+       approvers() is "everybody who holds leave.approve", and in approval mode
+       a Super Admin booking their own vacation is in that list. Without the
+       skip they would be told, and emailed, about their own submission.
+
+       TWO GUARDS, BOTH ASSERTED: notifications.raise() refuses
+       recipientId === actorId, and email-notifications skips the actor. Either
+       alone would be a rule somebody could delete without a test noticing. */
+    await settings({ enabled: true, firstHalfEndMinutes: '13:00', secondHalfStartMinutes: '14:00',
+      vacationEnabled: true, vacationRequireApproval: true,
+      vacationMinNoticeDays: 1, vacationMaxRangeDays: 60, vacationEmailEnabled: true });
+    const cfgOn = await as('root', '/email-config', { method: 'PUT', body: {
+      enabled: true, host: '127.0.0.1', port: 2525, encryption: 'none',
+      fromName: 'ZVKY FORGE', fromAddress: 'noreply@zvkydesign.com',
+    } });
+    assert.ok(cfgOn.status < 400, JSON.stringify(cfgOn.body));
+    await q('DELETE FROM notifications');
+    await q('DELETE FROM email_outbox');
+
+    /* The Super Admin holds leave.approve, so they are their own approver. */
+    const approvers = await as('root', '/permissions/roles/super_admin');
+    assert.ok(approvers.body.role.permissions.some((x) => x.key === 'leave.approve' && x.enabled),
+      'the Super Admin is an approver, which is what puts them in the list');
+
+    const r = await as('root', '/leave/mine', { method: 'POST',
+      body: { from: vacation.addDays(today(), 180), to: vacation.addDays(today(), 181) } });
+    assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+    assert.strictEqual(r.body.approvalNeeded, true);
+
+    const mine = await q('SELECT COUNT(*) AS n FROM notifications WHERE recipient_id = ? AND kind = ?',
+      [id.root, 'vacation']);
+    assert.strictEqual(Number(mine[0].n), 0,
+      'the approver is not belled about their own submission');
+    const mails = await q('SELECT recipient FROM email_outbox');
+    assert.ok(!mails.some((m) => String(m.recipient) === 'root@ov.test'),
+      'nor emailed about it');
+
+    /* AND THE DECISION DOES NOT COME BACK TO THEM EITHER, when they approve
+       their own: the decision notice goes to the person, and they are the
+       person. raise() is what refuses it. */
+    await q('DELETE FROM notifications');
+    const ok = await as('root', `/leave/${r.body.request.id}/decide`, { method: 'POST', body: { approve: true } });
+    assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
+    const back = await q('SELECT COUNT(*) AS n FROM notifications WHERE recipient_id = ? AND kind = ?',
+      [id.root, 'vacation']);
+    assert.strictEqual(Number(back[0].n), 0, 'and not told they approved themselves');
+
+    await as('root', '/email-config', { method: 'PUT', body: { enabled: false } }).catch(() => {});
     await bothOn();
   });
 
