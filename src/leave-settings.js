@@ -379,12 +379,22 @@ function validate(input = {}, { existing = cache, schedule = workSchedule.curren
   };
 }
 
-const summarise = (s, { schedule = workSchedule.current() } = {}) => {
+/* THE CLAUSES, AS A LIST, AND WHY THIS IS A LIST AND NOT A STRING.
+ *
+ * describeChange() below diffs these position by position, so every toggle has
+ * to be a clause here or it moves silently — that is what makes "every toggle
+ * writes an audit line" true rather than aspirational.
+ *
+ * IT USED TO JOIN THEM AND SPLIT THEM BACK ON ', ' AND THAT WAS A TRAP. The
+ * moment a clause contained a comma of its own — "Leave, Idle & Onsight on",
+ * which is the switch's own label — one clause became two, every later clause
+ * shifted by one position, and the diff reported changes to settings nobody had
+ * touched. Measured: the audit line read "Idle & Onsight OFF → Idle & Onsight
+ * on" with the word "Leave" silently dropped. So the list is the
+ * representation and the joined string is only ever for display.
+ */
+const clauses = (s, { schedule = workSchedule.current() } = {}) => {
   const sp = split({ settings: s, schedule });
-  /* EVERY TOGGLE IS A CLAUSE HERE, which is what makes "every toggle writes an
-     audit line" true rather than aspirational: describeChange() below diffs
-     these clauses position by position, so a setting absent from this list
-     would move silently. */
   return [
     `Leave, Idle & Onsight ${s.enabled ? 'on' : 'OFF'}`,
     `first half ends ${clock(sp.firstHalfEndMinutes)}`,
@@ -394,15 +404,17 @@ const summarise = (s, { schedule = workSchedule.current() } = {}) => {
     `notice ${Number(s.vacationMinNoticeDays) || DEFAULTS.vacationMinNoticeDays} day(s)`,
     `longest range ${Number(s.vacationMaxRangeDays) || DEFAULTS.vacationMaxRangeDays} day(s)`,
     `vacation email ${s.vacationEmailEnabled ? 'on' : 'off'}`,
-  ].join(', ');
+  ];
 };
+
+const summarise = (s, options = {}) => clauses(s, options).join('; ');
 
 /* Only the clauses that moved — the same rule, and the same reason, as
    reminder-settings.describeChange: activity_log.summary is VARCHAR(500) and a
    line that stops mid-word is worse than one that says what changed. */
 function describeChange(before, after, { schedule = workSchedule.current() } = {}) {
-  const was = summarise(before, { schedule }).split(', ');
-  const now = summarise(after, { schedule }).split(', ');
+  const was = clauses(before, { schedule });
+  const now = clauses(after, { schedule });
   const moved = [];
   for (let i = 0; i < Math.max(was.length, now.length); i += 1) {
     if (was[i] !== now[i]) moved.push(`${was[i]} → ${now[i]}`);
@@ -482,6 +494,7 @@ async function save(db, input, userId, { schedule = workSchedule.current(), toda
 
 module.exports = {
   DEFAULTS, MINUTES_PER_DAY, DAY_START, DAY_END,
+  clauses,
   MIN_NOTICE_FLOOR, MAX_NOTICE, RANGE_FLOOR, RANGE_CEILING,
   load, isLoaded, current, leaveIdleEnabled,
   vacationEnabled, vacationApprovalRequired, vacationEmailEnabled, minNoticeDays, maxRangeDays,

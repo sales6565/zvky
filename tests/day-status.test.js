@@ -1269,7 +1269,11 @@ test('leave, idle and the settings, end to end', { skip: cfg ? false : SKIP_REAS
     const [log] = await sql(cfg,
       "SELECT summary, changes FROM activity_log WHERE action = 'leave_updated' ORDER BY created_at DESC LIMIT 1");
     assert.ok(log, 'a line was written');
-    assert.match(log.summary, /Leave & Idle OFF → Leave & Idle on/);
+    /* THE LABEL NOW NAMES ONSIGHT TOO, because the switch governs three kinds of
+       mark rather than two (Prompt 55). The audit line is the same clause in the
+       same position — summarise() diffs them positionally — so this pin moves
+       with the wording and nothing else about it changed. */
+    assert.match(log.summary, /Leave, Idle & Onsight OFF → Leave, Idle & Onsight on/);
     assert.ok(log.summary.length <= 500, 'and it fits the column');
 
     /* NO RESTART: the very next request through the same process sees it. */

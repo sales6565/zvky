@@ -1238,6 +1238,32 @@ tr.past-round{opacity:0.62;}
    wrap onto a second line when they do not fit rather than overflowing onto the
    name — which is the overlap Prompt 47 was raised for, and the reason these
    are flex:none items in that block rather than anything positioned. */
+/* VACATION MODE IN THE PROFILE. Two date fields on one row at any width, the
+   halves under them, and the list below — nothing positioned, so the modal
+   scrolls as one piece on a phone. */
+.pf-vac-dates,.pf-vac-halves{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;}
+.pf-vac-dates label,.pf-vac-halves label{flex:1 1 150px;min-width:0;font-size:11.5px;
+  color:var(--ink-muted);display:flex;flex-direction:column;gap:3px;}
+.pf-vac-rules{font-family:'IBM Plex Mono';font-size:10.5px;color:var(--ink-faint);margin-top:7px;
+  line-height:1.5;}
+.pf-vac-banner{font-size:12px;color:var(--info-ink);background:var(--info-t12,var(--surface-3));
+  border:1px solid var(--info-t30);border-radius:7px;padding:7px 10px;margin-top:8px;}
+.pf-vac-off{font-size:11.5px;color:var(--warning-ink);background:var(--warning-wash-t12);
+  border:1px solid var(--warning-wash-t30);border-radius:7px;padding:7px 10px;margin-top:8px;}
+.pf-vac-list{display:flex;flex-direction:column;gap:6px;margin-top:8px;}
+.pf-vac-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:5px 9px;font-size:11.5px;
+  border:1px solid var(--border);border-radius:7px;padding:6px 9px;background:var(--surface-2);}
+.pf-vac-when{color:var(--ink);}
+.pf-vac-state{font-family:'IBM Plex Mono';font-size:10px;padding:1px 7px;border-radius:20px;
+  border:1px solid var(--border);color:var(--ink-faint);flex:none;}
+.pf-vac-state.is-active{color:var(--warning-ink);border-color:var(--warning-wash-t30);
+  background:var(--warning-wash-t12);}
+.pf-vac-state.is-upcoming{color:var(--info-ink);border-color:var(--info-t30);}
+.pf-vac-note-txt{flex-basis:100%;font-size:10.5px;color:var(--ink-muted);}
+.pf-vac-act{margin-left:auto;background:none;border:0;cursor:pointer;padding:0;
+  font-family:'IBM Plex Mono';font-size:10.5px;color:var(--ink-muted);text-decoration:underline;}
+.pf-vac-act:hover{color:var(--brand-accent);}
+.pf-vac-act:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px;border-radius:4px;}
 .fu-day-wrap{display:inline-flex;align-items:center;gap:6px;flex:none;position:relative;}
 .fu-day-btn{font-family:'Inter',sans-serif;font-size:10.5px;padding:3px 9px;border-radius:7px;
   background:var(--surface-2);border:1px solid var(--border);color:var(--ink);cursor:pointer;
@@ -2796,6 +2822,52 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
       </span>
     </label>
     <div class="field-err" id="pf_push_err"></div>
+
+    <!-- VACATION MODE.
+         In the profile rather than in a tab of its own, because it is the one
+         thing in this application a person does about THEMSELVES — and this
+         modal is already where their own email and push preferences live.
+
+         DRAWN FROM THE SERVER EVERY TIME IT OPENS. The rules (the earliest date,
+         the longest range, whether approval is needed, the half-day times) are
+         the studio's and arrive with the list, so a studio that changes them in
+         Settings has changed this form too without a redeploy. Nothing here
+         computes a date boundary. -->
+    <div id="pf_vac_section" hidden>
+      <div class="field-lbl" style="margin-top:20px;">Vacation</div>
+      <div id="pf_vac_banner" class="pf-vac-banner" hidden></div>
+      <div id="pf_vac_off" class="pf-vac-off" hidden></div>
+      <div id="pf_vac_form">
+        <div class="pf-vac-dates">
+          <label>From<input type="date" id="pf_vac_from"></label>
+          <label>To<input type="date" id="pf_vac_to"></label>
+        </div>
+        <div class="pf-vac-halves">
+          <label>First day
+            <select id="pf_vac_from_portion">
+              <option value="full">All day</option>
+              <option value="second_half">From the afternoon</option>
+            </select>
+          </label>
+          <label>Last day
+            <select id="pf_vac_to_portion">
+              <option value="full">All day</option>
+              <option value="first_half">Until lunch</option>
+            </select>
+          </label>
+        </div>
+        <label style="display:block;margin-top:8px;">Note <em class="field-opt">optional</em>
+          <input type="text" id="pf_vac_note" maxlength="500" placeholder="e.g. Diwali">
+        </label>
+        <div class="pf-vac-rules" id="pf_vac_rules"></div>
+        <div class="field-err" id="pf_vac_err"></div>
+        <div style="margin-top:8px;">
+          <button type="button" class="btn btn-brand" id="pf_vac_save">Book vacation</button>
+        </div>
+      </div>
+      <div class="field-lbl" style="margin-top:18px;">Your vacations</div>
+      <div id="pf_vac_list" class="pf-vac-list"></div>
+    </div>
 
     <div class="field-lbl" style="margin-top:20px;">Change password</div>
 
@@ -15116,6 +15188,7 @@ function renderFollowUp(){
     </div>
     ${fuLeaveStrip(d)}
     ${fuReassignOffer()}
+    ${fuOnsightModal()}
     <div class="fu-overlap">
       <strong>${Number(d.overlap)||0}</strong> on both lists ·
       ${Number(d.expected)||0} ${Number(d.expected)===1?'person':'people'} in view
@@ -15553,7 +15626,8 @@ function fuDayButtons(r, d){
   if(!leave || !leave.enabled) return '';
   const mayLeave = can('followup.mark_leave');
   const mayIdle = can('followup.mark_idle');
-  if(!mayLeave && !mayIdle) return '';
+  const mayOnsight = can('followup.mark_onsight');
+  if(!mayLeave && !mayIdle && !mayOnsight) return '';
 
   const busy = FU_MARKING.has(r.id);
   const msg = FU_MARK_MSG.get(r.id) || null;
@@ -15593,11 +15667,84 @@ function fuDayButtons(r, d){
         aria-label="Mark ${escapeHTML(r.name)} idle for today">Idle</button>`
     : '';
 
+  /* ONSIGHT OPENS A MODAL RATHER THAN A MENU, and that is the difference
+     between the two controls: Leave is a choice between three fixed things, so
+     three buttons in a box is the whole of it. Onsight asks for a client, a note
+     and an end date — three fields — and a popover anchored to a row in a
+     scrolling list is the wrong place to type in. The modal is in-page and not
+     a native dialog, because the desktop application's web view has neither a
+     prompt nor a confirm (Prompt 39). */
+  const onsightBtn = (mayOnsight && !marked)
+    ? `<button type="button" class="fu-day-btn" data-fu-onsight="${escapeHTML(r.id)}"
+        ${busy ? 'disabled' : ''}
+        aria-label="Record ${escapeHTML(r.name)} as working at a client’s site"
+        >Onsight</button>`
+    : '';
+
+  /* ORDER AND OVERLAP. Four controls in one flex:none block, in the order the
+     brief gives — Remind is drawn by fuRemind() just before this — and every one
+     of them white-space:nowrap inside .fu-day-wrap, which is what stops the
+     name column from squeezing them into each other. See the note on .fu-row:
+     the furniture lives in .fu-side and may not shrink. */
   return `<span class="fu-day-wrap">
-    ${leaveBtn}${idleBtn}${undo}
+    ${idleBtn}${leaveBtn}${onsightBtn}${undo}
     ${msg ? `<span class="fu-sent ${msg.kind === 'err' ? 'is-err' : ''}" role="status">${escapeHTML(msg.text)}</span>` : ''}
     ${open ? fuLeaveMenu(r, d) : ''}
   </span>`;
+}
+
+/* ---------- the Onsight modal ----------
+ *
+ * ONE PRESS CAN COVER A FORTNIGHT, which is the whole reason this is a form and
+ * not a button: an on-site engagement at a client is an arrangement with an end
+ * date, and recording it a day at a time for ten days is ten chances to forget
+ * the eleventh. "Until" defaults to the same day, so the simple case is still
+ * one press.
+ *
+ * THE CLIENT LIST COMES FROM THE SERVER with the section, not from a fetch when
+ * this opens — a dropdown that fills in a moment later is one somebody will
+ * press through. See the note beside `clients` in src/follow-up.js.
+ */
+let FU_ONSIGHT = null;     // { userId, name }
+
+function fuOnsightModal(){
+  if(!FU_ONSIGHT) return '';
+  const d = FOLLOW_UP || {};
+  const leave = d.leave || {};
+  const clients = leave.clients || [];
+  const day = leave.date || leave.today || '';
+  const busy = FU_MARKING.has(FU_ONSIGHT.userId);
+  return `<div class="modal-wrap show" id="fuOnsightWrap" role="dialog" aria-modal="true"
+      aria-labelledby="fuOnsightTitle">
+    <div class="modal" style="max-width:430px;">
+      <h3 id="fuOnsightTitle">Onsight — ${escapeHTML(FU_ONSIGHT.name)}</h3>
+      <p class="modal-note">Working at a client’s site. Their hours still count, their timesheet
+        is still due and their timers still run — they simply stop being chased to start work
+        in the studio.</p>
+      <label class="field">
+        <span>Client <em class="field-opt">optional</em></span>
+        <select id="fu_os_client">
+          <option value="">— not recorded —</option>
+          ${clients.map(c => `<option value="${escapeHTML(c.id)}">${escapeHTML(c.name)}</option>`).join('')}
+        </select>
+      </label>
+      <label class="field">
+        <span>Until <em class="field-opt">optional — one row per working day</em></span>
+        <input type="date" id="fu_os_until" value="${escapeHTML(day)}" min="${escapeHTML(day)}">
+      </label>
+      <p class="modal-note" id="fu_os_span">Weekends and holidays are skipped.</p>
+      <label class="field">
+        <span>Note <em class="field-opt">optional</em></span>
+        <input type="text" id="fu_os_note" maxlength="500" placeholder="e.g. On site for the shoot">
+      </label>
+      <div id="fu_os_err" class="form-error" hidden></div>
+      <div class="modal-actions">
+        <button type="button" class="btn-ghost" data-fu-os-cancel="1">Cancel</button>
+        <button type="button" class="btn-primary" data-fu-os-save="1" ${busy ? 'disabled' : ''}
+          >${busy ? 'Recording…' : 'Record Onsight'}</button>
+      </div>
+    </div>
+  </div>`;
 }
 
 /* THE MENU: three portions, with the times the SERVER says the split is at.
@@ -15743,7 +15890,7 @@ function fuLeaveStrip(d){
     ? '<div class="fu-leave-off">Leave &amp; Idle is disabled — existing marks still count.</div>'
     : '';
   if(!total){
-    return `${banner}<div class="fu-leave-strip"><span class="fu-leave-none">Nobody is marked on leave or idle for ${escapeHTML(fuDate(leave.date))}.</span></div>`;
+    return `${banner}<div class="fu-leave-strip"><span class="fu-leave-none">Nobody is on leave, on vacation, idle or onsight for ${escapeHTML(fuDate(leave.date))}.</span></div>`;
   }
   const open = FU_STRIP_OPEN;
   const mayUndo = can('followup.mark_leave') || can('followup.mark_idle');
@@ -15971,6 +16118,29 @@ function wireFollowUp(){
   document.querySelectorAll('#followUpSlot [data-fu-idle]').forEach(b=>b.addEventListener('click', ()=>{
     markDay(b.dataset.fuIdle, 'idle', null);
   }));
+  document.querySelectorAll('#followUpSlot [data-fu-onsight]').forEach(b=>b.addEventListener('click', ()=>{
+    openOnsight(b.dataset.fuOnsight);
+  }));
+  document.querySelectorAll('[data-fu-os-cancel]').forEach(b=>b.addEventListener('click', ()=>{
+    FU_ONSIGHT = null;
+    paintFollowUp();
+  }));
+  document.querySelectorAll('[data-fu-os-save]').forEach(b=>b.addEventListener('click', ()=>{ saveOnsight(); }));
+  /* THE SPAN, SAID AS THE DATE MOVES. The number of working days is the
+     server's to decide when the press happens; this line is a count of the
+     calendar span, labelled as such, so nobody reads it as the row count. */
+  const until = document.getElementById('fu_os_until');
+  if(until) until.addEventListener('change', ()=>{
+    const span = document.getElementById('fu_os_span');
+    const d = FOLLOW_UP && FOLLOW_UP.leave;
+    const start = fuShownDate() || (d && d.date);
+    if(!span || !start) return;
+    if(!until.value || until.value === start){ span.textContent = 'Weekends and holidays are skipped.'; return; }
+    const days = Math.round((Date.parse(until.value + 'T00:00:00Z') - Date.parse(start + 'T00:00:00Z'))/86400000) + 1;
+    span.textContent = days > 0
+      ? `${days} calendar days. Weekends and holidays are skipped, so fewer rows than that.`
+      : 'The last day is before the first.';
+  });
   document.querySelectorAll('#followUpSlot [data-fu-undo]').forEach(b=>b.addEventListener('click', ()=>{
     undoDay(b.dataset.fuUndo);
   }));
@@ -16075,6 +16245,64 @@ async function markDay(userId, kind, portion){
     },
   }).catch(()=>false);
   if(ok === false && !FU_MARK_MSG.has(userId)) paintFollowUp();
+}
+
+/* ---------- Onsight ----------
+ *
+ * ITS OWN FUNCTION AND NOT A THIRD BRANCH OF markDay(), because the shape of
+ * the interaction is different rather than the wording: markDay asks a question
+ * and takes a note, and this collects three fields first and then asks. Folding
+ * them together would have meant a confirmation that sometimes came before the
+ * form and sometimes after it.
+ *
+ * NO PREVIEW IS FETCHED, and that is correct rather than an omission: an
+ * onsight day removes no hours, so there is nothing for a preview to warn
+ * about. The server says the same thing — its preview endpoint answers
+ * zero seconds for any kind that is not leave.
+ */
+function openOnsight(userId){
+  FU_ONSIGHT = { userId, name: fuMarkedName(userId) || 'that person' };
+  paintFollowUp();
+}
+
+async function saveOnsight(){
+  if(!FU_ONSIGHT) return;
+  const d = FOLLOW_UP;
+  const leave = (d && d.leave) || {};
+  const userId = FU_ONSIGHT.userId;
+  const name = FU_ONSIGHT.name;
+  const day = fuShownDate() || leave.date;
+  const err = document.getElementById('fu_os_err');
+  const show = (text) => { if(err){ err.textContent = text; err.hidden = !text; } };
+  const clientId = (document.getElementById('fu_os_client')||{}).value || null;
+  const untilRaw = (document.getElementById('fu_os_until')||{}).value || '';
+  const note = ((document.getElementById('fu_os_note')||{}).value || '').trim() || null;
+  show('');
+
+  if(untilRaw && untilRaw < day){ show('The last day is before the first.'); return; }
+
+  FU_MARKING.add(userId);
+  paintFollowUp();
+  try{
+    const out = await api('/admin-dashboard/follow-up/day-status', { method:'POST', body:{
+      userId, kind:'onsight', date: day, clientId,
+      until: untilRaw && untilRaw !== day ? untilRaw : null,
+      note,
+    } });
+    FU_ONSIGHT = null;
+    applyDayStatusResult(out);
+    /* THE COUNT COMES FROM THE SERVER, which is the only thing that knows how
+       many of those dates were working days — the page never subtracts
+       weekends. */
+    const n = (out.days || []).length;
+    FU_MARK_MSG.set(userId, { kind:'ok',
+      text: out.unchanged ? 'Already recorded' : (n > 1 ? `Recorded — ${n} working days` : 'Recorded') });
+  }catch(e){
+    show(e.message || 'That could not be recorded.');
+  } finally {
+    FU_MARKING.delete(userId);
+    paintFollowUp();
+  }
 }
 
 /* UNDO. No note, and no preview: it puts back what was there, which is a thing
@@ -18973,7 +19201,7 @@ async function renderLeaveSettings(){
       <div class="ref-add">
         <div style="align-self:end;">
           <label class="rh-check"><input type="checkbox" id="lv_enabled"${s.enabled?' checked':''}>
-            <strong>Enable Leave &amp; Idle</strong></label>
+            <strong>Enable Leave, Idle &amp; Onsight</strong></label>
         </div>
         <div class="rh-f">
           <label for="lv_first">First Half ends at</label>
@@ -19006,6 +19234,49 @@ async function renderLeaveSettings(){
       <div class="ref-note">Idle can only be marked for somebody with no actionable assets:
         ${escapeHTML((d.actionableStatuses||[]).join(', '))}.
         ${s.updatedByName ? `Last changed by ${escapeHTML(s.updatedByName)}.` : ''}</div>
+
+      <!-- VACATION MODE. A second switch under the first, and it REQUIRES the
+           first: a vacation is made of leave days, so the server refuses the
+           pair the other way round and this note says so before somebody tries. -->
+      <div class="ref-sub" style="margin-top:16px;"><strong>Vacation mode</strong></div>
+      <div class="ref-note">Lets <strong>everybody book their own time off from their profile</strong>
+        — a From and To date, with a half-day choice on the first and last day. It creates the same
+        leave days a lead would mark by hand, so the hours, the timesheet rule, the nudges and the
+        follow-up lists all behave identically.
+        ${s.enabled ? '' : '<strong>Needs Leave, Idle &amp; Onsight above switched on first.</strong>'}</div>
+      <div class="ref-add">
+        <div style="align-self:end;">
+          <label class="rh-check"><input type="checkbox" id="lv_vac"${s.vacationEnabled?' checked':''}
+            ${s.enabled?'':'disabled'}>
+            <strong>Enable Vacation mode</strong></label>
+          ${errFor('vacationEnabled') ? `<div class="rh-err">${escapeHTML(errFor('vacationEnabled'))}</div>` : ''}
+        </div>
+        <div style="align-self:end;">
+          <label class="rh-check"><input type="checkbox" id="lv_vac_approve"${s.vacationRequireApproval?' checked':''}>
+            Needs approving</label>
+        </div>
+        <div class="rh-f">
+          <label for="lv_vac_notice">Minimum notice (days)</label>
+          <input type="number" id="lv_vac_notice" class="narrow${errFor('vacationMinNoticeDays')?' bad':''}"
+                 min="1" max="180" value="${Number(s.vacationMinNoticeDays)||1}">
+          ${errFor('vacationMinNoticeDays') ? `<div class="rh-err">${escapeHTML(errFor('vacationMinNoticeDays'))}</div>` : ''}
+        </div>
+        <div class="rh-f">
+          <label for="lv_vac_range">Longest range (days)</label>
+          <input type="number" id="lv_vac_range" class="narrow${errFor('vacationMaxRangeDays')?' bad':''}"
+                 min="1" max="366" value="${Number(s.vacationMaxRangeDays)||60}">
+          ${errFor('vacationMaxRangeDays') ? `<div class="rh-err">${escapeHTML(errFor('vacationMaxRangeDays'))}</div>` : ''}
+        </div>
+        <div style="align-self:end;">
+          <label class="rh-check"><input type="checkbox" id="lv_vac_mail"${s.vacationEmailEnabled?' checked':''}>
+            Email as well as notify</label>
+        </div>
+      </div>
+      <div class="ref-note">Minimum notice is <strong>one day at the least</strong>, whatever is
+        typed here — today is a date somebody else records, from "People to follow up". Switching
+        Vacation mode <strong>off stops new bookings and leaves existing ones exactly as they
+        are</strong>; people can still see and cancel what they have booked, or nothing could be
+        undone.</div>
     </div>`;
 
   const first = document.getElementById('lv_first');
@@ -19017,6 +19288,17 @@ async function renderLeaveSettings(){
   first.addEventListener('input', keep);
   second.addEventListener('input', keep);
 
+  /* THE DEPENDENCY, SHOWN AS IT IS MADE. Unticking the master switch disables
+     the Vacation one in front of the reader instead of letting them save a pair
+     the server will refuse. The server still refuses it — see
+     src/leave-settings.js validate() — this only stops the round trip. */
+  const master = document.getElementById('lv_enabled');
+  const vac = document.getElementById('lv_vac');
+  if(master && vac) master.addEventListener('change', ()=>{
+    vac.disabled = !master.checked;
+    if(!master.checked) vac.checked = false;
+  });
+
   document.getElementById('lv_reset').onclick = ()=>{
     leaveState.typed = { firstHalfEnd:d.prefill.firstHalfEnd, secondHalfStart:d.prefill.secondHalfStart };
     leaveState.errors = [];
@@ -19027,10 +19309,24 @@ async function renderLeaveSettings(){
     if(leaveState.busy) return;
     leaveState.busy = true; leaveState.msg = null; renderLeaveSettings();
     try{
+      const num = (id, fallback) => {
+        const el = document.getElementById(id);
+        const n = el ? Number(el.value) : NaN;
+        return Number.isFinite(n) ? n : fallback;
+      };
       const out = await api('/admin/settings/leave', { method:'PUT', body:{
         enabled: document.getElementById('lv_enabled').checked,
         firstHalfEndMinutes: first.value,
         secondHalfStartMinutes: second.value,
+        /* ALL FIVE TRAVEL ON EVERY SAVE, so a half-filled body cannot silently
+           reset one of them to its default: validate() falls back to the
+           STORED value for a field it is not given, and "not given" and
+           "unchecked" are different things for a checkbox. */
+        vacationEnabled: document.getElementById('lv_vac').checked,
+        vacationRequireApproval: document.getElementById('lv_vac_approve').checked,
+        vacationMinNoticeDays: num('lv_vac_notice', 1),
+        vacationMaxRangeDays: num('lv_vac_range', 60),
+        vacationEmailEnabled: document.getElementById('lv_vac_mail').checked,
       } });
       leaveState.data = out;
       leaveState.errors = [];
@@ -20851,6 +21147,18 @@ function wireRoleGroup(g){
 
 /* ---------- profile / change password ---------- */
 const profileModalWrap = document.getElementById('profileModalWrap');
+/* Bound once at load rather than on every open, so repeated opens cannot stack
+   handlers — the same reason the password toggles are delegated. */
+(() => {
+  const save = document.getElementById('pf_vac_save');
+  if(save) save.addEventListener('click', ()=>{ saveVacation(); });
+  const from = document.getElementById('pf_vac_from');
+  const to = document.getElementById('pf_vac_to');
+  if(from && to) from.addEventListener('change', ()=>{
+    to.min = from.value || to.min;
+    if(to.value && to.value < from.value) to.value = from.value;
+  });
+})();
 let passwordPolicy = null;   // fetched once, from the same rules the API enforces
 
 const PF_FIELDS = ['pf_current', 'pf_new', 'pf_confirm'];
@@ -21107,7 +21415,197 @@ async function openProfileModal(){
   renderProfilePhoto();
   loadEmailPreference();
   loadPushPreference();
+  loadVacations();
   profileModalWrap.classList.add('show');
+}
+
+/* ---------- Vacation mode, in your own profile ----------
+ *
+ * READ WHEN THE MODAL OPENS, never cached: the rules are the studio's and move
+ * in Settings, and a form that offered last week's notice period would be a
+ * form the server refuses for reasons the reader cannot see. The same argument
+ * loadEmailPreference() makes a few lines up.
+ *
+ * EVERY DATE BOUNDARY IS THE SERVER'S. `rules.earliest` is the first day this
+ * person may book, computed from the studio's notice setting against the
+ * studio's clock — not from the browser's, which is in whatever timezone the
+ * laptop is set to. The `min` attributes below are that value and nothing
+ * derived from it.
+ */
+let VACATIONS = null;
+
+async function loadVacations(){
+  const section = document.getElementById('pf_vac_section');
+  if(!section) return;
+  /* THE SECTION IS FOR PEOPLE WHO MAY BOOK ONE. Not drawn at all otherwise —
+     offering a control the server would refuse is worse than not offering it,
+     which is the rule the follow-up row's name follows for user.view. */
+  if(!can('leave.request')){ section.hidden = true; return; }
+  section.hidden = false;
+  try{
+    VACATIONS = await api('/leave/mine');
+  }catch(err){
+    VACATIONS = null;
+    section.hidden = true;
+    return;
+  }
+  paintVacations();
+}
+
+function paintVacations(){
+  const v = VACATIONS;
+  if(!v) return;
+  const rules = v.rules || {};
+  const form = document.getElementById('pf_vac_form');
+  const off = document.getElementById('pf_vac_off');
+  const banner = document.getElementById('pf_vac_banner');
+
+  /* SWITCHED OFF: the form goes and the list stays. An existing vacation keeps
+     its effect — the switch governs creation and nothing else — so a list
+     nobody could read would be a vacation nobody could cancel. */
+  if(form) form.hidden = !rules.enabled;
+  if(off){
+    off.hidden = Boolean(rules.enabled);
+    off.textContent = rules.leaveEnabled
+      ? 'Vacation mode is switched off in Settings → Leave. Vacations already booked still '
+        + 'apply, and you can still cancel an upcoming one below.'
+      : 'Leave, Idle & Onsight is switched off in Settings → Leave, so vacations are too. '
+        + 'Anything already booked still applies.';
+  }
+
+  const active = (v.vacations || []).find(x => x.active);
+  if(banner){
+    banner.hidden = !active;
+    if(active){
+      const last = active.endedOn || active.to;
+      banner.textContent = `You’re on vacation until ${vacDate(last)}.`;
+    }
+  }
+
+  const from = document.getElementById('pf_vac_from');
+  const to = document.getElementById('pf_vac_to');
+  if(from && rules.earliest){
+    from.min = rules.earliest;
+    if(!from.value) from.value = rules.earliest;
+  }
+  if(to && rules.earliest){
+    to.min = from && from.value ? from.value : rules.earliest;
+    if(!to.value) to.value = from ? from.value : rules.earliest;
+  }
+
+  const rulesLine = document.getElementById('pf_vac_rules');
+  if(rulesLine){
+    const bits = [
+      `Earliest: ${vacDate(rules.earliest)}`,
+      `Longest: ${rules.maxRangeDays} days`,
+      rules.approvalRequired ? 'Needs approving before it counts' : 'Takes effect straight away',
+    ];
+    if(rules.firstHalfEnd) bits.push(`Half days split at ${rules.firstHalfEnd} / ${rules.secondHalfStart}`);
+    rulesLine.textContent = bits.join(' · ');
+  }
+
+  const list = document.getElementById('pf_vac_list');
+  if(!list) return;
+  const rows = v.vacations || [];
+  if(!rows.length){
+    list.innerHTML = '<div class="pf-vac-rules">None booked.</div>';
+    return;
+  }
+  list.innerHTML = rows.map(x => {
+    const state = x.status === 'submitted' ? 'Waiting to be approved'
+      : (x.status === 'rejected' ? 'Not approved'
+        : (x.status === 'cancelled' ? 'Cancelled'
+          : (x.phase === 'active' ? 'On vacation now'
+            : (x.phase === 'upcoming' ? 'Upcoming'
+              : (x.status === 'ended_early' ? 'Ended early' : 'Past')))));
+    const cls = x.phase === 'active' ? ' is-active' : (x.phase === 'upcoming' ? ' is-upcoming' : '');
+    /* WHICH ACTION, AND THE WORD FOR IT, follow the phase — "Cancel" before it
+       starts clears every day, "End early" while it is running clears tomorrow
+       onward. One endpoint answers both; the label is what differs, and it says
+       which one this is so nobody presses End early expecting today back. */
+    const act = (x.status === 'submitted' || x.phase === 'upcoming')
+      ? `<button type="button" class="pf-vac-act" data-vac-cancel="${escapeHTML(x.id)}">Cancel</button>`
+      : (x.phase === 'active'
+        ? `<button type="button" class="pf-vac-act" data-vac-end="${escapeHTML(x.id)}">End early</button>`
+        : '');
+    return `<div class="pf-vac-row">
+      <span class="pf-vac-when">${escapeHTML(x.label)}</span>
+      <span class="pf-vac-state${cls}">${escapeHTML(state)}</span>
+      ${act}
+      ${x.note ? `<span class="pf-vac-note-txt">${escapeHTML(x.note)}</span>` : ''}
+      ${x.decisionNote ? `<span class="pf-vac-note-txt">Decision: ${escapeHTML(x.decisionNote)}</span>` : ''}
+    </div>`;
+  }).join('');
+
+  list.querySelectorAll('[data-vac-cancel]').forEach(b => b.addEventListener('click', ()=>{
+    endVacation(b.dataset.vacCancel, false);
+  }));
+  list.querySelectorAll('[data-vac-end]').forEach(b => b.addEventListener('click', ()=>{
+    endVacation(b.dataset.vacEnd, true);
+  }));
+}
+
+/* "20 Oct" — the form the banner names a date in. The ISO string is kept for
+   the server; this is only ever shown. */
+const VAC_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function vacDate(iso){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(String(iso||''))) return String(iso||'');
+  const [, m, d] = iso.split('-');
+  return `${Number(d)} ${VAC_MONTHS[Number(m)-1]}`;
+}
+
+async function saveVacation(){
+  const err = document.getElementById('pf_vac_err');
+  const show = (t) => { if(err){ err.textContent = t || ''; } };
+  show('');
+  const body = {
+    from: (document.getElementById('pf_vac_from')||{}).value || '',
+    to: (document.getElementById('pf_vac_to')||{}).value || '',
+    fromPortion: (document.getElementById('pf_vac_from_portion')||{}).value || 'full',
+    toPortion: (document.getElementById('pf_vac_to_portion')||{}).value || 'full',
+    note: ((document.getElementById('pf_vac_note')||{}).value || '').trim() || null,
+  };
+  if(!body.from){ show('Which day does it start?'); return; }
+  if(!body.to) body.to = body.from;
+  const btn = document.getElementById('pf_vac_save');
+  if(btn){ btn.disabled = true; btn.textContent = 'Booking…'; }
+  try{
+    const out = await api('/leave/mine', { method:'POST', body });
+    showToast(out.approvalNeeded
+      ? 'Asked for — it needs approving before it counts.'
+      : `Booked — ${(out.days||[]).length} working day${(out.days||[]).length===1?'':'s'}.`);
+    const note = document.getElementById('pf_vac_note');
+    if(note) note.value = '';
+    await loadVacations();
+  }catch(e){
+    /* THE SERVER'S OWN SENTENCE, including the dates of an overlap — the page
+       never works out which days collided. */
+    show(e.message || 'That could not be booked.');
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = 'Book vacation'; }
+  }
+}
+
+async function endVacation(id, isEnding){
+  const ok = await openAsk({
+    title: isEnding ? 'End this vacation early?' : 'Cancel this vacation?',
+    message: isEnding
+      ? 'The days from tomorrow onward stop being leave and count as ordinary working days '
+        + 'again. Today stays as it is — changing a day that is already being counted is '
+        + 'somebody else’s to do.'
+      : 'Every day of it stops being leave and counts as an ordinary working day again.',
+    confirmLabel: isEnding ? 'Yes, end it' : 'Yes, cancel it',
+  }).catch(()=>false);
+  if(!ok) return;
+  try{
+    const out = await api(`/leave/${encodeURIComponent(id)}/cancel`, { method:'POST', body:{} });
+    showToast((out.cleared||[]).length
+      ? `Cleared ${(out.cleared||[]).length} day${(out.cleared||[]).length===1?'':'s'}.`
+      : 'Nothing left to clear.');
+    await loadVacations();
+  }catch(e){
+    showToast(e.message || 'That could not be changed.');
+  }
 }
 
 /* The email switch, read when the modal opens and saved the moment it moves.
