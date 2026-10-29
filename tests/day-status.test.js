@@ -446,12 +446,29 @@ test('MUTATION 20 and 21 — the switch governs creation and nothing else', () =
   assert.ok(!/leaveIdleEnabled/.test(code('start-reminders.js')));
 });
 
-test('the feature ships off', () => {
-  assert.strictEqual(leaveSettings.DEFAULTS.enabled, false);
+test('the feature ships ON now, and OFF still means exactly what it meant', () => {
+  /* REVERSED BY PROMPT 56, at the studio's request: these features are to be
+     available by default. This file used to assert the opposite and the argument
+     for it is kept in the header of src/leave-settings.js, because the risk it
+     named is real and is now carried by the switch rather than by the default.
+     
+     WHAT THIS STILL PINS, and it is the half that matters: the split is NOT
+     defaulted — it stays null so the prefill remains a suggestion somebody
+     agrees to — and the module and the migration agree about the switch. The
+     full defaults story, including an upgraded database and the one-time flip,
+     is tests/leave-upgrade-path.test.js. */
+  assert.strictEqual(leaveSettings.DEFAULTS.enabled, true);
+  assert.strictEqual(leaveSettings.DEFAULTS.vacationEnabled, true);
   assert.strictEqual(leaveSettings.DEFAULTS.firstHalfEndMinutes, null,
     'and the split is unset rather than defaulted, so the prefill is a suggestion');
-  /* THE MIGRATION AGREES WITH THE MODULE. */
-  assert.match(SRC('migrate.js'), /enabled\s+TINYINT\(1\)\s+NOT NULL DEFAULT 0/);
+  assert.match(SRC('migrate.js'), /enabled\s+TINYINT\(1\)\s+NOT NULL DEFAULT 1/);
+
+  /* AND OFF IS UNCHANGED: the switch is still read only where a row would be
+     CREATED, and never by anything that reads one. That is what makes
+     switching it off unable to rewrite a past month's totals, and it is
+     asserted structurally two tests above as well. */
+  assert.strictEqual(typeof leaveSettings.leaveIdleEnabled, 'function');
+  assert.strictEqual(typeof leaveSettings.vacationEnabled, 'function');
 });
 
 // ===========================================================================
@@ -1235,29 +1252,38 @@ test('leave, idle and the settings, end to end', { skip: cfg ? false : SKIP_REAS
   };
   const resetRole = (role) => as('root', `/permissions/roles/${role}/reset`, { method: 'POST', body: {} });
 
-  await t.test('MUTATION 21 (live) — the switch is off, and the server says so', async () => {
+  await t.test('MUTATION 21 (live) — with the switch off, the server says so', async () => {
+    /* SWITCHED OFF FIRST, because since Prompt 56 a fresh install arrives with
+       it ON. What this case is about is unchanged: with the switch off, the
+       endpoint refuses and writes nothing. The DEFAULT is now asserted in
+       tests/leave-upgrade-path.test.js, where a fresh boot, an upgraded
+       database and the one-time flip are all in one place. */
+    /* THE SPLIT IS STILL A PREFILL, asserted BEFORE anything is saved — a save
+       of any kind stores the split, because validate() falls back to the
+       prefill for a field it is not given, so this has to come first.
+       NOT ASSERTED AS 13:00: openStudio() opens the studio 24/7 with no
+       breaks, so this fixture has no lunch and the prefill falls to the
+       midpoint. Which source a given schedule produces is pinned in the pure
+       test above, where the schedule is an argument. */
+    const fresh = await as('root', '/admin/settings/leave');
+    assert.strictEqual(fresh.status, 200);
+    assert.ok(['lunch', 'midpoint', 'noon'].includes(fresh.body.split.source),
+      `a prefill, not a saved value: ${fresh.body.split.source}`);
+    assert.match(fresh.body.split.firstHalfEnd, /^\d{2}:\d{2}$/);
+    assert.strictEqual(fresh.body.prefill.from, fresh.body.split.source,
+      'and the Reset link would restore exactly it');
+
+    const off = await settings({ enabled: false, vacationEnabled: false });
+    assert.strictEqual(off.status, 200, JSON.stringify(off.body));
+
     const r = await mark({ userId: id.ana, date: today(), kind: 'leave', portion: 'full' });
     assert.strictEqual(r.status, 409, JSON.stringify(r.body));
     assert.strictEqual(r.body.code, 'feature_disabled');
     assert.strictEqual((await rowsOf()).length, 0, 'and nothing was written');
 
-    /* THE DEFAULT IS OFF, read back from the endpoint rather than from the
-       module — so a migration that defaulted it on would be caught here. */
     const read = await as('root', '/admin/settings/leave');
     assert.strictEqual(read.status, 200);
     assert.strictEqual(read.body.settings.enabled, false);
-    /* AND THE SPLIT IS A PREFILL, not a saved value — which is the state that
-       makes "Reset to lunch times" able to restore anything.
-       NOT ASSERTED AS 13:00 HERE: openStudio() opens the studio 24/7 with no
-       breaks, so this fixture has no lunch and the prefill falls to the
-       midpoint. Which source a given schedule produces is pinned in the pure
-       test above, where the schedule is an argument rather than whatever the
-       suite needed its clock to be. */
-    assert.ok(['lunch', 'midpoint', 'noon'].includes(read.body.split.source),
-      `a prefill, not a saved value: ${read.body.split.source}`);
-    assert.match(read.body.split.firstHalfEnd, /^\d{2}:\d{2}$/);
-    assert.strictEqual(read.body.prefill.from, read.body.split.source,
-      'and the Reset link would restore exactly it');
   });
 
   await t.test('switching it on takes effect with no restart, and is audited', async () => {
@@ -1266,8 +1292,14 @@ test('leave, idle and the settings, end to end', { skip: cfg ? false : SKIP_REAS
     assert.strictEqual(on.body.settings.enabled, true);
     assert.strictEqual(on.body.split.source, 'saved', 'and the split is now a value somebody chose');
 
+    /* ORDERED BY seq, NOT created_at. activity_log.created_at is a DATETIME —
+       one-second resolution — and two saves in the same second tie, so this
+       read used to return whichever row the engine felt like. It only started
+       mattering when the case above began with a save of its own, and then it
+       read THAT line and reported a wording failure. seq is the auto-increment
+       and cannot tie. */
     const [log] = await sql(cfg,
-      "SELECT summary, changes FROM activity_log WHERE action = 'leave_updated' ORDER BY created_at DESC LIMIT 1");
+      "SELECT summary, changes FROM activity_log WHERE action = 'leave_updated' ORDER BY seq DESC LIMIT 1");
     assert.ok(log, 'a line was written');
     /* THE LABEL NOW NAMES ONSIGHT TOO, because the switch governs three kinds of
        mark rather than two (Prompt 55). The audit line is the same clause in the

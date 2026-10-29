@@ -70,11 +70,37 @@ const MAX_NOTICE = 180;
 const RANGE_FLOOR = 1;
 const RANGE_CEILING = 366;
 
+/* ---------------------------------------------------------------------------
+ * THE DEFAULTS SHIP ON NOW, AND THAT IS A REVERSAL WORTH RECORDING.
+ *
+ * This file used to argue at length that the switch must ship OFF: marking
+ * somebody on leave changes what their hours add up to, and a studio that
+ * upgrades on a Tuesday and finds a Leave button beside every name has been
+ * handed a control that can silently remove an afternoon from a person's day
+ * before anybody has decided what the studio's half-day even is.
+ *
+ * That argument was right about the risk and wrong about the owner. The studio
+ * asked for these features, has now asked for them to be available by default
+ * (Prompt 56), and the half-day question answers itself: the split prefills
+ * from the studio's own lunch break, which is a value somebody already chose.
+ * A feature shipping switched off is one nobody finds — src/reminder-settings.js
+ * has always said so — and this one was found, twice, by somebody who then
+ * could not turn it on.
+ *
+ * WHAT HAS NOT CHANGED. The switches are still switches, and OFF still means
+ * exactly what it meant: no new marks, 409 feature_disabled, and every existing
+ * row keeping its full effect. The reversal is which way they point on day one,
+ * not what they do.
+ *
+ * AND AN ALREADY-DEPLOYED ROW IS NOT OVERWRITTEN on a hunch — see
+ * enableLeaveByDefault() in src/migrate.js, which flips it only where the audit
+ * trail shows no admin has ever touched these settings.
+ */
 const DEFAULTS = {
-  enabled: false,
+  enabled: true,
   firstHalfEndMinutes: null,
   secondHalfStartMinutes: null,
-  vacationEnabled: false,
+  vacationEnabled: true,
   vacationRequireApproval: false,
   vacationMinNoticeDays: 1,
   vacationMaxRangeDays: 60,

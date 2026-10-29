@@ -237,17 +237,26 @@ test('the settings refuse Vacation mode while Leave, Idle & Onsight is off', () 
 test('every toggle in the Leave group is in the audit summary', () => {
   const schedule = { dayStart: 540, dayEnd: 1080 };
   const base = { ...leaveSettings.DEFAULTS, enabled: true, firstHalfEndMinutes: 780, secondHalfStartMinutes: 840 };
-  const moves = [
-    ['vacationEnabled', true, /Vacation mode OFF → Vacation mode on/],
-    ['vacationRequireApproval', true, /approval not required → .*approval required/],
+  /* EACH TOGGLE IS MOVED AWAY FROM WHATEVER IT CURRENTLY DEFAULTS TO, rather
+     than to a hard-coded value. Prompt 56 flipped two of these defaults ON and
+     this test then asserted that setting `true` to `true` produced an audit
+     line — which is not a bug in the audit line. A move is a move whichever way
+     the default points, and exactly one clause should move. */
+  for (const field of ['enabled', 'vacationEnabled', 'vacationRequireApproval', 'vacationEmailEnabled']) {
+    const line = leaveSettings.describeChange(base, { ...base, [field]: !base[field] }, { schedule });
+    assert.ok(line.includes('→'), `${field} must appear in the audit line: ${line}`);
+    assert.strictEqual(line.split(';').length, 1, `${field} must be the only clause that moved: ${line}`);
+  }
+  const numbers = [
     ['vacationMinNoticeDays', 7, /notice 1 day\(s\) → notice 7 day\(s\)/],
     ['vacationMaxRangeDays', 30, /longest range 60 day\(s\) → longest range 30 day\(s\)/],
-    ['vacationEmailEnabled', false, /vacation email on → vacation email off/],
   ];
-  for (const [field, value, pattern] of moves) {
+  for (const [field, value, pattern] of numbers) {
     const line = leaveSettings.describeChange(base, { ...base, [field]: value }, { schedule });
     assert.match(line, pattern, `${field} must appear in the audit line`);
   }
+  assert.match(leaveSettings.describeChange(base, { ...base, firstHalfEndMinutes: 720 }, { schedule }),
+    /first half ends 12:00/);
 });
 
 test('there is exactly one engine: vacation.js writes no day table of its own', () => {

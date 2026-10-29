@@ -4364,21 +4364,22 @@ async function ensureActingTeamLeads(db, log) {
 async function ensureDayStatus(db, log) {
   await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS leave_settings (
       id                      TINYINT     NOT NULL PRIMARY KEY,
-      -- THE MASTER SWITCH, OFF. Nothing changes for anybody until an admin
-      -- turns it on; see src/leave-settings.js for why this one ships inert
-      -- where the nudges switch ships on.
-      enabled                 TINYINT(1)  NOT NULL DEFAULT 0,
+      -- THE MASTER SWITCH, ON for a fresh install since Prompt 56 — the studio
+      -- asked for these features to be available by default. It is still a
+      -- switch and OFF still means what it meant: no new marks, and every
+      -- existing row keeping its full effect. See src/leave-settings.js.
+      enabled                 TINYINT(1)  NOT NULL DEFAULT 1,
       -- The half-day split, as minutes past midnight IST — the frame
       -- work_schedule already stores its day and its breaks in. NULL until an
       -- admin saves, which is what makes "prefill from the lunch break" a
       -- first-run behaviour rather than a value nobody chose.
       first_half_end_minutes  SMALLINT    NULL,
       second_half_start_minutes SMALLINT  NULL,
-      -- VACATION MODE, OFF, and a second switch rather than a widening of the
-      -- first for the same reason the first one ships off: it hands every
-      -- person in the studio a control that removes days from their own
-      -- recorded time. It also REQUIRES the first — see src/leave-settings.js.
-      vacation_enabled        TINYINT(1)  NOT NULL DEFAULT 0,
+      -- VACATION MODE, ON for a fresh install, and still a second switch
+      -- rather than a widening of the first: a studio may want attendance
+      -- marking without self-service booking. It REQUIRES the first — see
+      -- src/leave-settings.js.
+      vacation_enabled        TINYINT(1)  NOT NULL DEFAULT 1,
       -- OFF means a vacation takes effect the moment it is submitted. ON means
       -- it waits for somebody holding leave.approve, and only an approved one
       -- ever touches time.
@@ -4483,7 +4484,13 @@ async function ensureDayStatus(db, log) {
   const ls = await columnsOf(db, 'leave_settings');
   const added = [];
   for (const [col, ddl] of [
-    ['vacation_enabled', 'TINYINT(1) NOT NULL DEFAULT 0'],
+    /* DEFAULT 1 ON THE ALTER TOO, and that is not the same decision as the
+       flip below. This column has never existed on a deployed database, so no
+       admin can have expressed a preference about it — there is nothing to
+       override. `enabled` is different: an admin may well have turned it on or
+       left it off deliberately, so it is only touched where the audit trail
+       says nobody ever has. */
+    ['vacation_enabled', 'TINYINT(1) NOT NULL DEFAULT 1'],
     ['vacation_require_approval', 'TINYINT(1) NOT NULL DEFAULT 0'],
     ['vacation_min_notice_days', 'SMALLINT NOT NULL DEFAULT 1'],
     ['vacation_max_range_days', 'SMALLINT NOT NULL DEFAULT 60'],
@@ -4543,6 +4550,66 @@ async function ensureDayStatus(db, log) {
     )`));
 
   await db.query('INSERT IGNORE INTO leave_settings (id) VALUES (1)');
+
+  await enableLeaveByDefault(db, log);
+}
+
+/* ---------------------------------------------------------------------------
+ * THE ONE-TIME FLIP, FOR A ROW THAT WAS DEPLOYED BEFORE THE DEFAULT CHANGED.
+ *
+ * Prompt 56 asks for both switches to be ON by default. A fresh install gets
+ * that from the CREATE above. An already-deployed studio has a row that was
+ * created when the default was 0, and flipping it blind would override a choice
+ * an admin may have made on purpose — switching a feature ON for a studio that
+ * decided against it is the same class of mistake as switching one off.
+ *
+ * SO THE AUDIT TRAIL DECIDES. Every save of these settings writes an
+ * activity_log line with action 'leave_updated' (src/routes/leave-settings.js),
+ * and that is the only record of whether a human has ever had an opinion here.
+ * No line means nobody has, and the row is still at the old default by
+ * accident rather than by decision — so it is brought to the new one.
+ *
+ * AND THAT CHECK IS ALSO WHAT MAKES THIS IDEMPOTENT, with no marker column to
+ * add. Run it twice and the second run finds both already 1 and does nothing.
+ * Run it, let an admin switch Vacation mode off — which writes a line — and run
+ * it again: the line is there, so their choice stands. The marker is the thing
+ * it is a marker FOR, which is the only kind that cannot go stale.
+ *
+ * IF THE TRAIL CANNOT BE READ AT ALL, nothing is touched and the log says so.
+ * The brief asked for exactly that, and the reason is sound: a migration that
+ * guesses about a studio's settings when it cannot see their history is a
+ * migration that will one day guess wrong.
+ */
+async function enableLeaveByDefault(db, log) {
+  let everChanged = null;
+  try {
+    const { rows } = await db.query(
+      "SELECT COUNT(*) AS n FROM activity_log WHERE action = 'leave_updated'"
+    );
+    everChanged = Number(rows[0] && rows[0].n) > 0;
+  } catch (err) {
+    everChanged = null;
+  }
+
+  if (everChanged === null) {
+    log('Leave: could not read the settings history, so the stored switches were left alone. '
+      + 'Turn Leave, Idle & Onsight and Vacation mode on in Settings → Leave if you want them.');
+    return;
+  }
+  if (everChanged) {
+    log('Leave: an admin has changed these settings before, so the stored switches were left '
+      + 'exactly as they are.');
+    return;
+  }
+
+  const { result } = await db.query(
+    'UPDATE leave_settings SET enabled = 1, vacation_enabled = 1 '
+    + 'WHERE id = 1 AND (enabled = 0 OR vacation_enabled = 0)'
+  ).catch(() => ({ result: { affectedRows: 0 } }));
+  if (Number((result && result.affectedRows) || 0)) {
+    log('Leave: nobody had ever changed these settings, so Leave, Idle & Onsight and Vacation '
+      + 'mode are now ON — the defaults as of Prompt 56. Switch either off in Settings → Leave.');
+  }
 }
 
 /* The Server tab: settings, the audit trail, deletion requests, and the one
