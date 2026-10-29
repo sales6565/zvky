@@ -60,9 +60,34 @@ const holidays = require('./holidays');
 const workflow = require('./asset-workflow');
 const { v4: uuid } = require('uuid');
 
-const KINDS = { leave: 'leave', idle: 'idle' };
+/* THREE KINDS OF DAY, AND THE WHOLE DIFFERENCE BETWEEN THEM IS WHAT THEY DO TO
+ * SOMEBODY'S HOURS AND TO THE TWO FOLLOW-UP LISTS. Written here because it is
+ * the one table worth having in front of you when reading the rest:
+ *
+ *             hours counted   timesheet owed   expected to start   timers
+ *   leave     no (window)     only a half      no, in the window   blocked
+ *   idle      yes             yes              no                  allowed
+ *   onsight   yes             yes              no                  allowed
+ *
+ * ONSIGHT IS NOT A LIGHTER LEAVE. Somebody at a client's office is at work:
+ * every hour they record counts, they owe a timesheet like anybody else, and a
+ * timer is exactly what they should be running. The only thing it changes is
+ * that nobody should chase them to start an asset timer in the studio's
+ * pipeline — so it joins idle in nothingToStart() and in nothing else.
+ *
+ * IT IS ALSO NOT THE TIMESHEET'S "On Site" CATEGORY. That is a line somebody
+ * writes about work they did; this is a mark somebody else makes about where
+ * they were. The same distinction this file's header draws between this "idle"
+ * and src/idle.js's measured idle, one feature along — and the spelling the
+ * studio uses for the two differs too, which helps rather than hurts.
+ */
+const KINDS = { leave: 'leave', idle: 'idle', onsight: 'onsight' };
 const PORTIONS = { full: 'full', first_half: 'first_half', second_half: 'second_half' };
-const SOURCES = { manual: 'manual' };
+/* manual: somebody pressed a button on People to follow up.
+   planned: materialised from a vacation request — see src/vacation.js. The row
+   is otherwise identical, which is the point: a planned day and a marked day
+   are the same row to every reader, so nothing downstream needs to know. */
+const SOURCES = { manual: 'manual', planned: 'planned' };
 
 const MS_PER_MINUTE = 60 * 1000;
 const MS_PER_DAY = 24 * 60 * MS_PER_MINUTE;
@@ -123,10 +148,12 @@ const startOfDay = (date) => Date.parse(`${date}T00:00:00Z`) - IST_OFFSET_MS;
    fails the statement outright. */
 const SELECT = `SELECT s.id, s.user_id AS userId, DATE_FORMAT(s.\`date\`, '%Y-%m-%d') AS \`date\`,
        s.kind, s.\`portion\` AS \`portion\`, s.window_start_time AS windowStart, s.window_end_time AS windowEnd,
-       s.note, s.set_by AS setBy, s.set_at AS setAt, s.source,
+       s.note, s.set_by AS setBy, s.set_at AS setAt, s.source, s.request_id AS requestId,
+       s.client_id AS clientId, c.\`name\` AS clientName,
        u.\`name\` AS setByName
   FROM user_day_status s
-  LEFT JOIN users u ON u.id = s.set_by`;
+  LEFT JOIN users u ON u.id = s.set_by
+  LEFT JOIN clients c ON c.id = s.client_id`;
 
 function shape(row) {
   if (!row) return null;
@@ -146,6 +173,11 @@ function shape(row) {
     setAt: row.setAt ? new Date(row.setAt).toISOString() : null,
     source: row.source || SOURCES.manual,
     planned: (row.source || SOURCES.manual) !== SOURCES.manual,
+    /* The vacation this day came from, so "End vacation early" can find its
+       remaining days and the strip can say which request a row belongs to. */
+    requestId: row.requestId || null,
+    clientId: row.clientId || null,
+    clientName: row.clientName || null,
   };
 }
 
@@ -387,9 +419,19 @@ function insideLeaveWindow(row, at) {
 /* NOTHING TO START, which is a different sentence from "not here". It is what
    the start nudges, the start reminder and list 1 skip somebody for; the
    timesheet reminder and list 2 do not, because a day with no work in it still
-   has to be written down. */
+   has to be written down.
+
+   TWO KINDS ANSWER YES AND FOR OPPOSITE REASONS. Idle has nothing on their
+   desk; onsight has plenty but it is at a client's office and not in this
+   pipeline. Either way chasing them to press Start is chasing them for
+   something that is not going to happen, which is all this function decides.
+
+   IT DECIDES NOTHING ELSE. Onsight's hours count and its timesheet is owed, and
+   both of those are other functions' answers — windowsFromRow() returns nothing
+   for it and timesheetRequiredFromRow() is true for it. A mutation that moves
+   onsight into either of those is caught by tests/onsight.test.js. */
 function nothingToStart(row) {
-  return Boolean(row && row.kind === KINDS.idle);
+  return Boolean(row && (row.kind === KINDS.idle || row.kind === KINDS.onsight));
 }
 
 /* DOES THIS PERSON OWE A TIMESHEET, given the day is already known to be a
@@ -477,6 +519,7 @@ async function clearRow(db, { userId, date, clearedBy, reason }) {
 }
 
 async function mark(db, { userId, date, kind, portion = null, note = null, setBy = null,
+  clientId = null, requestId = null,
   source = SOURCES.manual, schedule = workSchedule.current() }) {
   if (!userId || !isDate(date) || !KINDS[kind]) return { ok: false, code: 'bad_request' };
   if (kind === KINDS.leave && !PORTIONS[portion]) return { ok: false, code: 'bad_portion' };
@@ -488,7 +531,11 @@ async function mark(db, { userId, date, kind, portion = null, note = null, setBy
      double-click does not turn one row into two history rows that say the same
      thing. */
   const existing = await userDayStatus(db, userId, date);
-  if (existing && existing.kind === kind && (existing.portion || null) === (portion || null)) {
+  if (existing && existing.kind === kind && (existing.portion || null) === (portion || null)
+    /* AN ONSIGHT DAY WHOSE CLIENT CHANGED IS A CHANGE. Everything else about
+       the row is the same, so without this a correction from "no client" to
+       "Acme" would be swallowed as a no-op. */
+    && (kind !== KINDS.onsight || (existing.clientId || null) === (clientId || null))) {
     return { ok: true, unchanged: true, row: existing };
   }
 
@@ -498,11 +545,13 @@ async function mark(db, { userId, date, kind, portion = null, note = null, setBy
     await db.query(
       `INSERT INTO user_day_status
          (id, user_id, \`date\`, kind, \`portion\`, window_start_time, window_end_time,
-          note, set_by, source)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          note, set_by, source, client_id, request_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
       [id, userId, date, kind, kind === KINDS.leave ? portion : null,
         win ? win.start : null, win ? win.end : null,
-        note ? String(note).slice(0, 500) : null, setBy || null, source]
+        note ? String(note).slice(0, 500) : null, setBy || null, source,
+        kind === KINDS.onsight ? (clientId || null) : null,
+        kind === KINDS.leave ? (requestId || null) : null]
     );
   } catch (err) {
     if (DUPLICATE(err)) return { ok: false, code: 'race' };
@@ -767,6 +816,17 @@ function durationLabel(seconds) {
 function describe(row, { schedule = workSchedule.current() } = {}) {
   if (!row) return 'no mark';
   if (row.kind === KINDS.idle) return 'Idle';
+  if (row.kind === KINDS.onsight) {
+    return row.clientName ? `Onsight — ${row.clientName}` : 'Onsight';
+  }
+  /* A PLANNED LEAVE IS A VACATION, and says so wherever a mark is described —
+     the strip, the notification and the audit line all read this one sentence,
+     so they cannot call the same row different things. */
+  if (row.planned) {
+    if (row.portion === PORTIONS.first_half) return `Vacation — First Half (until ${leaveSettings.clock(row.windowEnd)})`;
+    if (row.portion === PORTIONS.second_half) return `Vacation — Second Half (from ${leaveSettings.clock(row.windowStart)})`;
+    return 'Vacation — Full Day';
+  }
   const c = leaveSettings.clock;
   if (row.portion === PORTIONS.first_half) {
     return `Leave — First Half (until ${c(row.windowEnd)})`;

@@ -775,6 +775,31 @@ const GROUPS = [
           + 'and never blocks assigning or starting work.',
       },
       {
+        key: 'followup.mark_onsight',
+        label: 'Mark Onsight',
+        /* A THIRD KIND OF MARK, AND THE MILDEST OF THE THREE. Onsight says
+           "this person is working at a client's site today". It removes no
+           hours, excuses no timesheet and blocks no timer — somebody at a
+           client's office is at work, and every figure that counts their day
+           goes on counting it. The only thing it changes is that nobody chases
+           them to start an asset timer in the studio's own pipeline.
+
+           SO WHY ITS OWN KEY RATHER THAN followup.mark_idle BESIDE IT? Because
+           it carries a RANGE. Idle is today and clears itself; an onsight mark
+           can be laid down across a fortnight in one press, and a fortnight of
+           somebody's attendance is a bigger statement than an afternoon's. It
+           also names a client, which puts a studio's client relationships into
+           a field a lead fills in.
+
+           SUPER ADMIN ONLY BY DEFAULT, like its two siblings, and grantable per
+           designation and through role groups. */
+        impliedBy: has('managePermissions'),
+        describe: 'Record that somebody is working at a client\u2019s site, for a day or a range of '
+          + 'working days, and undo it a day at a time. Their hours still count, their timesheet '
+          + 'is still due and their timers still run \u2014 they simply stop being chased to start '
+          + 'work in the studio.',
+      },
+      {
         key: 'followup.mark_past_dates',
         label: 'Mark Leave On Past Dates',
         /* MARKING LAST TUESDAY IS NOT MARKING TODAY. Today's mark changes a
@@ -783,9 +808,10 @@ const GROUPS = [
            and is useless on its own — the two keys above are what say which
            kind of mark may be made at all. */
         impliedBy: has('managePermissions'),
-        describe: 'Record or undo a leave mark on a date that has already passed. Needs "Mark '
-          + 'Leave" or "Mark Idle" as well. Idle is today-only whatever this says, because it '
-          + 'is a statement about what is on somebody\'s desk right now.',
+        describe: 'Record or undo a leave or onsight mark on a date that has already passed. '
+          + 'Needs "Mark Leave", "Mark Idle" or "Mark Onsight" as well. Idle is today-only '
+          + 'whatever this says, because it is a statement about what is on somebody\'s desk '
+          + 'right now.',
         danger: 'A past date\'s hours may already have been reported on. Changing them changes '
           + 'figures somebody has seen.',
       },
@@ -802,6 +828,90 @@ const GROUPS = [
     key: 'timesheet',
     label: 'Time Sheet',
     permissions: [
+      {
+        /* ASKING FOR YOUR OWN TIME OFF, which is the other half of a studio
+           that records attendance and the only key in this group that starts ON
+           for nearly everybody.
+
+           ON FOR EVERY DESIGNATION, THE SAME WAY timesheet.own IS, and the two
+           are the same set by construction rather than by coincidence.
+
+           The brief asks for this to be granted to "every role that can fill a
+           timesheet". I went looking for a capability to hang that on and there
+           is not one: `impliedBy` is a predicate over a ROLE'S CAPABILITY FLAGS
+           (assignable, leadsTeam, managePermissions and so on — see
+           src/roles.js), not over other permission keys, and filling your own
+           timesheet is not one of those flags. timesheet.own is itself
+           `() => true` — it is the one permission in this application that
+           starts on for everybody — so "every role that can fill a timesheet"
+           and "every role" name the same list, and will go on naming the same
+           list unless somebody changes timesheet.own's own default. Matching it
+           literally is therefore the honest reading, and tests/role-groups
+           pins the pair together so a change to one is noticed at the other.
+
+           STILL REVOCABLE PER DESIGNATION. A studio that handles leave on paper
+           for its freelance pool turns it off for that designation and keeps
+           it for staff; nothing else in the feature changes. */
+        key: 'leave.request',
+        label: 'Request Own Vacation',
+        impliedBy: () => true,
+        describe: 'Book your own vacation from your profile: a From and To date, with a half-day '
+          + 'choice on the first and last day. It starts tomorrow at the earliest \u2014 today is '
+          + 'somebody else\u2019s to record \u2014 and you can cancel it or end it early yourself.',
+      },
+      {
+        /* WHOSE TIME OFF YOU MAY SEE, which is a reading permission and nothing
+           more. It opens the Admin Dashboard's "Upcoming leaves" list and the
+           soft warning chip on an assignee picker; it grants no power to make,
+           approve or cancel anything.
+
+           Its own key because the two things it shows are genuinely useful to
+           somebody who may not act on them: a coordinator planning next
+           fortnight's assignments needs to know who is away, and does not
+           thereby need to be able to send them away. Scoped by
+           visibleProjects() like every other read in this application, so a
+           lead sees their own people and not the studio's. */
+        key: 'leave.view_team',
+        label: 'View Team Leave & Vacations',
+        impliedBy: anyOf(has('managePermissions'), has('leadsTeam')),
+        describe: 'See upcoming and current leave and vacations for the people in the projects '
+          + 'you can see \u2014 on the Admin Dashboard and as a warning chip when you assign work '
+          + 'to somebody who will be away. It never blocks an assignment.',
+      },
+      {
+        /* THE APPROVAL SEAT, which only exists when the studio has switched
+           approval on. With approval off a vacation takes effect on submission
+           and nothing asks this key; with it on, nothing takes effect until
+           somebody holding this says so.
+
+           SEPARATE FROM leave.manage_all, which is the heavier of the two:
+           approving tomorrow's request is a routine act, and reaching into a
+           week that has already been reported on is not. */
+        key: 'leave.approve',
+        label: 'Approve Vacations',
+        impliedBy: has('managePermissions'),
+        describe: 'Approve or reject a submitted vacation, when Settings \u2192 Leave asks for '
+          + 'approval. Until it is approved it changes nobody\u2019s hours.',
+      },
+      {
+        /* REACHING INTO TIME THAT HAS ALREADY HAPPENED. Cancelling the rest of
+           a vacation from tomorrow is something a person may do to their own;
+           clearing a day that has already excluded their hours is not, because
+           that figure may be in a report somebody has already sent.
+
+           THE SAME ARGUMENT followup.mark_past_dates MAKES, one feature along,
+           and deliberately a different key: this one is about somebody else's
+           booked vacation and that one is about a mark a lead made. A studio may
+           want its production manager correcting last Tuesday's attendance
+           without being able to cancel half of somebody's booked holiday. */
+        key: 'leave.manage_all',
+        label: 'Manage Anybody\u2019s Vacation',
+        impliedBy: has('managePermissions'),
+        describe: 'Cancel or end anybody\u2019s vacation, including days that have already passed '
+          + 'or are happening today, and book one on their behalf.',
+        danger: 'Clearing a day that has already passed changes recorded hours that may have '
+          + 'been reported on.',
+      },
       {
         /* Everybody, by default, and it is the one permission in this
            application that starts ON for every designation. Filling in your own

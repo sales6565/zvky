@@ -4374,6 +4374,23 @@ async function ensureDayStatus(db, log) {
       -- first-run behaviour rather than a value nobody chose.
       first_half_end_minutes  SMALLINT    NULL,
       second_half_start_minutes SMALLINT  NULL,
+      -- VACATION MODE, OFF, and a second switch rather than a widening of the
+      -- first for the same reason the first one ships off: it hands every
+      -- person in the studio a control that removes days from their own
+      -- recorded time. It also REQUIRES the first — see src/leave-settings.js.
+      vacation_enabled        TINYINT(1)  NOT NULL DEFAULT 0,
+      -- OFF means a vacation takes effect the moment it is submitted. ON means
+      -- it waits for somebody holding leave.approve, and only an approved one
+      -- ever touches time.
+      vacation_require_approval TINYINT(1) NOT NULL DEFAULT 0,
+      -- How many days ahead a person may start their own vacation. 1 = from
+      -- tomorrow, which is the floor: today is somebody else's to record.
+      vacation_min_notice_days  SMALLINT  NOT NULL DEFAULT 1,
+      -- The longest self-service range, in days inclusive.
+      vacation_max_range_days   SMALLINT  NOT NULL DEFAULT 60,
+      -- Whether the in-app notifications are also emailed. In-app is always
+      -- raised; this is the half an admin can silence.
+      vacation_email_enabled  TINYINT(1)  NOT NULL DEFAULT 1,
       updated_by              CHAR(36)    NULL,
       updated_at              DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )`));
@@ -4384,8 +4401,14 @@ async function ensureDayStatus(db, log) {
       user_id       CHAR(36)     NOT NULL,
       -- An IST calendar date, like every other date in this schema.
       \`date\`        DATE         NOT NULL,
-      -- leave | idle
+      -- leave | idle | onsight
       kind          VARCHAR(16)  NOT NULL,
+      -- WHOSE SITE, for an onsight day, and NULL for everything else — it is
+      -- optional even on onsight, because "at a client's office" is worth
+      -- recording whether or not somebody stops to pick which client.
+      -- ON DELETE SET NULL rather than CASCADE: deleting a client must not
+      -- delete the record that somebody was out of the studio that day.
+      client_id     CHAR(36)     NULL,
       -- full | first_half | second_half. Required for leave, NULL for idle.
       -- BACK-TICKED BECAUSE THE COLUMN NAME IS RESERVED in MariaDB 10.4 and later —
       -- it is a keyword in FOR PORTION OF, for application-time period tables.
@@ -4402,21 +4425,48 @@ async function ensureDayStatus(db, log) {
       cleared_by    CHAR(36)     NULL,
       cleared_at    DATETIME     NULL,
       clear_reason  VARCHAR(255) NULL,
-      -- manual today; Prompt 49 adds planned/imported sources.
+      -- manual: somebody pressed a button on People to follow up.
+      -- planned: materialised from a vacation request. The row is otherwise
+      -- identical, which is the point — one engine, one reader.
       source        VARCHAR(16)  NOT NULL DEFAULT 'manual',
+      -- The vacation this day belongs to, for a planned row, and NULL for a
+      -- marked one. It is what "End vacation early" uses to find the days it
+      -- may still clear. Deliberately NOT a foreign key: a day that has
+      -- already excluded somebody's hours must survive the request record
+      -- being tidied away, and the request is never the authority on time —
+      -- these rows are.
+      request_id    CHAR(36)     NULL,
       -- The date while the row is live, NULL once it is cleared. A unique key
       -- over it is what makes "one active row per person per day" a fact about
       -- the schema instead of a race between two requests.
       active_date   DATE AS (CASE WHEN cleared_at IS NULL THEN \`date\` END) STORED,
       UNIQUE KEY uq_day_status_active (user_id, active_date),
       KEY idx_day_status_date (\`date\`, kind),
-      KEY idx_day_status_user (user_id, \`date\`)
+      KEY idx_day_status_user (user_id, \`date\`),
+      KEY idx_day_status_request (request_id)
     )`));
 
   /* An install made before the generated column existed keeps its rows and
      gains the key. Both are tolerated failures: a schema that already has them
      says so, and one that cannot have them is still readable. */
   const cols = await columnsOf(db, 'user_day_status');
+  /* ONSIGHT'S COLUMN, for an install that predates it. The kind column is a
+     VARCHAR and needs nothing; only the client reference is new, and it is
+     added separately from its foreign key so a schema that cannot take the
+     constraint still gains the column. */
+  if (cols.size && !cols.has('client_id')) {
+    try {
+      await db.query('ALTER TABLE user_day_status ADD COLUMN client_id CHAR(36) NULL');
+      log('  + user_day_status.client_id (onsight)');
+    } catch (err) { /* already there */ }
+  }
+  if (cols.size && !cols.has('request_id')) {
+    try {
+      await db.query('ALTER TABLE user_day_status ADD COLUMN request_id CHAR(36) NULL, '
+        + 'ADD KEY idx_day_status_request (request_id)');
+      log('  + user_day_status.request_id (vacation)');
+    } catch (err) { /* already there */ }
+  }
   if (cols.size && !cols.has('active_date')) {
     try {
       await db.query('ALTER TABLE user_day_status '
@@ -4425,6 +4475,72 @@ async function ensureDayStatus(db, log) {
       log('  + user_day_status.active_date and its unique key');
     } catch (err) { /* already there, or a server without generated columns */ }
   }
+
+  /* The five vacation columns, for an install that predates them. Each is
+     added on its own so one refusal does not cost the other four, and each
+     carries the same default the CREATE above gives it — so an upgraded
+     deployment and a fresh one start in the same place: Vacation mode off. */
+  const ls = await columnsOf(db, 'leave_settings');
+  const added = [];
+  for (const [col, ddl] of [
+    ['vacation_enabled', 'TINYINT(1) NOT NULL DEFAULT 0'],
+    ['vacation_require_approval', 'TINYINT(1) NOT NULL DEFAULT 0'],
+    ['vacation_min_notice_days', 'SMALLINT NOT NULL DEFAULT 1'],
+    ['vacation_max_range_days', 'SMALLINT NOT NULL DEFAULT 60'],
+    ['vacation_email_enabled', 'TINYINT(1) NOT NULL DEFAULT 1'],
+  ]) {
+    if (!ls.size || ls.has(col)) continue;
+    try {
+      await db.query(`ALTER TABLE leave_settings ADD COLUMN ${col} ${ddl}`);
+      added.push(col);
+    } catch (err) { /* already there */ }
+  }
+  if (added.length) log(`  + leave_settings.${added.join(', ')}`);
+
+  /* ---------------------------------------------------------------------------
+   * VACATIONS: the REQUEST, which is a different thing from the days.
+   *
+   * THE DAYS ARE user_day_status ROWS AND NOTHING ELSE READS THIS TABLE TO
+   * DECIDE TIME. That is the whole design. A request is an intention with a
+   * status on it — submitted, approved, rejected, cancelled — and the moment it
+   * is approved it MATERIALISES one ordinary leave row per working day through
+   * src/day-status.js's mark(). So countedMs(), isTimesheetRequired(),
+   * isExpectedToWorkAt(), the timer block, the nudges, the follow-up lists and
+   * the half-day snapshot windows all apply to a vacation without one line of
+   * them knowing vacations exist.
+   *
+   * The alternative — a second table the time arithmetic also consults — is the
+   * mistake this codebase has found and fixed four times under four different
+   * names, so it is refused here by construction.
+   */
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS leave_requests (
+      id            CHAR(36)     NOT NULL PRIMARY KEY,
+      seq           BIGINT       NOT NULL AUTO_INCREMENT UNIQUE,
+      user_id       CHAR(36)     NOT NULL,
+      -- IST calendar dates, inclusive, like every other date here.
+      from_date     DATE         NOT NULL,
+      to_date       DATE         NOT NULL,
+      -- The portion on the FIRST and the LAST day, so a vacation can begin
+      -- after lunch and end at it. 'full' on both is the ordinary case and the
+      -- one the From/To control produces on its own.
+      from_portion  VARCHAR(16)  NOT NULL DEFAULT 'full',
+      to_portion    VARCHAR(16)  NOT NULL DEFAULT 'full',
+      note          VARCHAR(500) NULL,
+      -- submitted | approved | rejected | cancelled | ended_early
+      status        VARCHAR(16)  NOT NULL DEFAULT 'approved',
+      requested_by  CHAR(36)     NULL,
+      requested_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      decided_by    CHAR(36)     NULL,
+      decided_at    DATETIME     NULL,
+      decision_note VARCHAR(500) NULL,
+      -- Where it stopped, when somebody ended it early. The row keeps its
+      -- original to_date so the trail says what was asked for as well as what
+      -- happened.
+      ended_on      DATE         NULL,
+      KEY idx_leave_req_user (user_id, from_date),
+      KEY idx_leave_req_window (status, from_date, to_date),
+      CONSTRAINT fk_leave_req_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )`));
 
   await db.query('INSERT IGNORE INTO leave_settings (id) VALUES (1)');
 }

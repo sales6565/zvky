@@ -81,6 +81,22 @@ const permissions = require('./permissions');
  * needs. See the header of that file for the difference and why there are two. */
 const waitingWork = require('./waiting-work');
 const dayStatus = require('./day-status');
+
+/* THE CHIP ON THE STRIP AND ON THE ROW, worded once.
+ *
+ * Two places asked for it and they had grown two copies of the same ternary,
+ * which is how "Leave: full day" and "Vacation" would have come to disagree
+ * about the same row. A vacation IS a leave row — source 'planned' is the only
+ * difference — so the word is chosen here and nowhere else. */
+function chipFor(row) {
+  if (!row) return null;
+  if (row.kind === dayStatus.KINDS.idle) return 'Idle';
+  if (row.kind === dayStatus.KINDS.onsight) {
+    return row.clientName ? `Onsight: ${row.clientName}` : 'Onsight';
+  }
+  const portion = (dayStatus.PORTION_LABELS[row.portion] || 'full day').toLowerCase();
+  return row.planned ? `Vacation: ${portion}` : `Leave: ${portion}`;
+}
 const leaveSettings = require('./leave-settings');
 const lastActivity = require('./last-activity');
 const reminders = require('./reminders');
@@ -864,6 +880,16 @@ async function build(db, user, options = {}) {
      is the budget this section has always kept — see MUTATION 13. */
   const marks = await dayStatus.statusesFor(db, ids, widest.from, widest.to);
 
+  /* THE CLIENTS, FOR THE ONSIGHT PICKER, and only for somebody who may use it.
+     One query, read once per draw like everything else on this screen, and
+     empty for a viewer without the key — so the payload cannot become a way to
+     read the client list without report.follow_up and followup.mark_onsight
+     together. */
+  const onsightClients = permissions.holds(user, 'followup.mark_onsight')
+    ? (await db.query('SELECT id, `name` FROM clients ORDER BY `name`')
+      .catch(() => ({ rows: [] }))).rows.map((c) => ({ id: c.id, name: c.name }))
+    : [];
+
   const earliest = await earliestDay(db);
 
   /* THE LAST-ACTIVITY MARKER, for every person in view, in two more queries —
@@ -957,8 +983,7 @@ async function build(db, user, options = {}) {
             kind: row.kind,
             portion: row.portion,
             label: dayStatus.describe(row, { schedule: workSchedule.current() }),
-            chip: row.kind === dayStatus.KINDS.idle ? 'Idle'
-              : `Leave: ${(dayStatus.PORTION_LABELS[row.portion] || 'full day').toLowerCase()}`,
+            chip: chipFor(row),
             inWindow: !dayStatus.expectedToWorkFromRow(row, now),
             planned: row.planned,
             setByName: row.setByName,
@@ -1109,8 +1134,13 @@ async function build(db, user, options = {}) {
           name: person.name,
           kind: row.kind,
           portion: row.portion,
-          portionLabel: row.kind === dayStatus.KINDS.idle
-            ? 'Idle' : (dayStatus.PORTION_LABELS[row.portion] || 'Full day'),
+          portionLabel: row.kind === dayStatus.KINDS.idle ? 'Idle'
+            : (row.kind === dayStatus.KINDS.onsight ? 'Onsight'
+              : (dayStatus.PORTION_LABELS[row.portion] || 'Full day')),
+          chip: chipFor(row),
+          clientId: row.clientId,
+          clientName: row.clientName,
+          requestId: row.requestId,
           label: dayStatus.describe(row, { schedule: workSchedule.current() }),
           note: row.note,
           setByName: row.setByName,
@@ -1130,11 +1160,28 @@ async function build(db, user, options = {}) {
         date: asked.to,
         today: asked.to === today,
         rows,
-        onLeave: rows.filter((r) => r.kind === dayStatus.KINDS.leave).length,
+        onLeave: rows.filter((r) => r.kind === dayStatus.KINDS.leave && !r.planned).length,
+        /* VACATIONS ARE COUNTED APART FROM MARKED LEAVE even though they are the
+           same rows, because the two answer different questions on a dashboard:
+           "who did somebody send home today" and "who is on holiday". The sum
+           of the two is every leave row, which is what the strip shows. */
+        onVacation: rows.filter((r) => r.kind === dayStatus.KINDS.leave && r.planned).length,
         idle: rows.filter((r) => r.kind === dayStatus.KINDS.idle).length,
+        onsight: rows.filter((r) => r.kind === dayStatus.KINDS.onsight).length,
         firstHalfEnd: leaveSettings.clock(split.firstHalfEndMinutes),
         secondHalfStart: leaveSettings.clock(split.secondHalfStartMinutes),
         actionableStatuses: dayStatus.ACTIONABLE_STATUSES,
+        /* THE CLIENT PICKER'S OPTIONS, delivered with the section rather than
+           fetched by the modal when it opens — the Onsight modal has to be
+           usable the instant it appears, and a dropdown that fills in a moment
+           later is one somebody will press through. Carried only for a viewer
+           who may actually mark onsight: a list of the studio's clients is not
+           something to hand to a screen that has no use for it.
+           ALL of them, not the visible-project ones: an on-site engagement at
+           a client this viewer runs no project for is exactly the case somebody
+           needs to record, and a client's name is not scoped elsewhere on this
+           screen either. */
+        clients: onsightClients,
       };
     })(),
     notStarted: capped(notStartedRows),
@@ -1191,4 +1238,7 @@ module.exports = {
   expectedPeople, onBooksOn, unreconstructable, inScope,
   startedDays, heldCounts, earliestDay, stampMs,
   GRACE_MINUTES, graceMinutes, ROW_CAP, MAX_RANGE_DAYS, CACHE_MS,
+  /* Exported so the page's copy of the wording can be pinned against it rather
+     than compared by eye — see tests/onsight.test.js. */
+  chipFor,
 };

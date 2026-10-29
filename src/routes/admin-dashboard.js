@@ -412,9 +412,17 @@ router.post('/follow-up/remind',
  * is the same question the list already answers — asked of the same function,
  * never restated here.
  */
+/* THE LONGEST ONSIGHT RANGE ONE PRESS MAY LAY DOWN, as a span in days. Not a
+ * studio setting: it is a guard against a typo in a date field turning into two
+ * hundred rows, not a policy anybody needs to tune. Sixty days is the same
+ * ceiling Vacation mode's default range uses, so the two features refuse the
+ * same scale of mistake. */
+const MAX_ONSIGHT_SPAN = 59;
+
 const DAY_STATUS_PERMISSION = {
   leave: 'followup.mark_leave',
   idle: 'followup.mark_idle',
+  onsight: 'followup.mark_onsight',
 };
 
 /* WHO THIS VIEWER MAY ACT ON, answered once per request.
@@ -489,9 +497,9 @@ router.get('/follow-up/day-status/preview',
 router.post('/follow-up/day-status',
   requirePermission('report.follow_up'),
   async (req, res) => {
-    const { userId, date, kind, portion, note } = req.body || {};
+    const { userId, date, kind, portion, note, clientId, until } = req.body || {};
     if (!userId || typeof userId !== 'string') return res.status(400).json({ error: 'Which person?' });
-    if (kind !== dayStatus.KINDS.leave && kind !== dayStatus.KINDS.idle) {
+    if (!DAY_STATUS_PERMISSION[kind]) {
       return res.status(400).json({ error: 'That is not something this section records.' });
     }
 
@@ -521,6 +529,9 @@ router.post('/follow-up/day-status',
     /* A PAST DATE IS ITS OWN PERMISSION. Marking last Tuesday changes a figure
        somebody may already have acted on, which is a different act from marking
        today and is gated separately. */
+    const onsightClient = typeof clientId === 'string' && clientId ? clientId : null;
+    const untilDate = typeof until === 'string' && until ? until : null;
+
     if (day < today && !permissions.holds(req.user, 'followup.mark_past_dates')) {
       return res.status(403).json({
         error: 'You can only mark today. Marking a past date needs a further permission.',
@@ -593,14 +604,77 @@ router.post('/follow-up/day-status',
           code: 'has_assets',
         });
       }
+    } else if (kind === dayStatus.KINDS.onsight) {
+      /* THE CLIENT IS OPTIONAL AND IS CHECKED WHEN GIVEN. "At a client's site"
+         is worth recording whether or not somebody stops to pick which client;
+         an id that is not a client is a different matter and is refused rather
+         than stored. */
+      if (onsightClient && !/^[0-9a-fA-F-]{36}$/.test(onsightClient)) {
+        return res.status(400).json({ error: 'That is not a client.' });
+      }
+      if (onsightClient) {
+        const { rows: cs } = await db.query('SELECT id FROM clients WHERE id = $1', [onsightClient]);
+        if (!cs.length) return res.status(404).json({ error: 'That client is no longer on the books.' });
+      }
     } else if (!dayStatus.PORTIONS[portion]) {
       return res.status(400).json({ error: 'Which part of the day — first half, second half or full day?' });
     }
 
-    const marked = await dayStatus.mark(db, {
-      userId, date: day, kind, portion: kind === dayStatus.KINDS.leave ? portion : null,
-      note: note || null, setBy: req.user.id,
-    });
+    /* ---- THE RANGE, WHICH ONLY ONSIGHT HAS ----
+     *
+     * A fortnight at a client's office is one engagement and should be one
+     * press. Leave keeps Prompt 48's behaviour exactly — one day, one portion —
+     * and idle is today-only by its own rule, so neither reads `until`.
+     *
+     * NON-WORKING DAYS ARE SKIPPED RATHER THAN REFUSED. A Monday-to-Friday
+     * range that happens to contain a public holiday is a perfectly ordinary
+     * thing to record, and failing the whole press because of the Thursday
+     * would be useless; the weekend and the holiday simply get no row, which is
+     * what the holiday calendar already says about them. The single-day path
+     * still refuses outright, because there the non-working day IS the request.
+     *
+     * THE END MAY BE IN THE FUTURE even though the start may not. The start is
+     * a statement about a day that has happened or is happening; the end is a
+     * plan, and a plan about next week is the normal case for an on-site
+     * engagement. */
+    const days = [day];
+    if (kind === dayStatus.KINDS.onsight && untilDate && untilDate !== day) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(untilDate)) return res.status(400).json({ error: 'Until when?' });
+      if (untilDate < day) {
+        return res.status(400).json({ error: 'The last day is before the first.', code: 'bad_range' });
+      }
+      const span = Math.round((Date.parse(`${untilDate}T00:00:00Z`) - Date.parse(`${day}T00:00:00Z`)) / 86400000);
+      if (span > MAX_ONSIGHT_SPAN) {
+        return res.status(400).json({
+          error: `That is ${span + 1} days. Record at most ${MAX_ONSIGHT_SPAN + 1} at a time.`,
+          code: 'too_long',
+        });
+      }
+      for (let i = 1; i <= span; i += 1) {
+        const d = timesheetGate.istDate(Date.parse(`${day}T00:00:00Z`) + i * 86400000
+          + require('../working-time').IST_OFFSET_MINUTES * 60000);
+        if (timesheetGate.isWorkingDay(d, {
+          loggableDays: policy.loggableDays,
+          isHoliday: (x) => Boolean(require('../holidays').on(x)),
+        })) days.push(d);
+      }
+    }
+
+    /* EVERY DAY GOES THROUGH mark(), one at a time. A range is not a second
+       way of writing a row — it is this loop — so the unique key, the replace,
+       the history and the no-op check all apply per day exactly as they do to a
+       single press. */
+    let marked = null;
+    const madeOn = [];
+    for (const d of days) {
+      const one = await dayStatus.mark(db, {
+        userId, date: d, kind, portion: kind === dayStatus.KINDS.leave ? portion : null,
+        note: note || null, setBy: req.user.id,
+        clientId: kind === dayStatus.KINDS.onsight ? (onsightClient || null) : null,
+      });
+      if (d === day) marked = one;
+      if (one.ok && !one.unchanged) madeOn.push(d);
+    }
     if (!marked.ok) {
       const status = marked.code === 'race' ? 409 : 400;
       return res.status(status).json({
@@ -666,6 +740,10 @@ router.post('/follow-up/day-status',
       status: marked.row,
       label: dayStatus.describe(marked.row),
       stoppedTimers: stopped.filter((t) => t.userId === userId).length,
+      /* HOW MANY DAYS THE PRESS ACTUALLY WROTE, so the confirmation can say
+         "4 working days" rather than leaving somebody to count a fortnight
+         minus its weekends themselves. */
+      days: madeOn,
       reassign: offerReassign
         ? { name: person.name, assets: await dayStatus.actionableAssets(db, userId) }
         : null,
@@ -694,6 +772,9 @@ router.post('/follow-up/day-status/clear',
     if (!permissions.holds(req.user, key)) {
       return res.status(403).json({ error: 'You do not have permission to do that.', code: 'forbidden' });
     }
+    const onsightClient = typeof clientId === 'string' && clientId ? clientId : null;
+    const untilDate = typeof until === 'string' && until ? until : null;
+
     if (day < today && !permissions.holds(req.user, 'followup.mark_past_dates')) {
       return res.status(403).json({
         error: 'Undoing a past date needs a further permission.', code: 'past_date',

@@ -88,13 +88,77 @@ const SINCE_SNAPSHOT = [MANAGE, 'settings.email_delivery', 'report.remind', 'set
      purpose: it is a named list of people against their hours, downloadable as
      a file that leaves the building, so holding View Reports does not hand it
      over. */
-  'report.artist_report'];
+  'report.artist_report',
+  /* Onsight, the third kind of mark, Super Admin like the two beside it. It is
+     the mildest of the three — no hours removed, no timesheet excused, no timer
+     blocked — but it carries a RANGE, and a fortnight of somebody's attendance
+     recorded in one press is a bigger statement than an afternoon's. */
+  'followup.mark_onsight',
+  /* And the two heavier halves of Vacation mode. Approving somebody's booked
+     time off, and reaching into days that have already excluded their hours,
+     are both Super Admin until a studio hands them out. */
+  'leave.approve', 'leave.manage_all'];
+
+/* THE TWO VACATION KEYS THAT ARE DELIBERATELY NOT SUPER-ADMIN-ONLY, listed
+ * separately so the exception is argued rather than hidden in the list above.
+ *
+ * leave.request  is ON FOR EVERYBODY, and has to be: the brief asks for
+ *                Vacation mode "in every user's profile ... for all users who
+ *                can fill a timesheet", and timesheet.own — the key that names
+ *                that set — is itself the one permission in this application
+ *                implied for every designation. A Super-Admin-only "book your
+ *                own holiday" would be a feature nobody can use. The assertion
+ *                below ties it to timesheet.own rather than to a hard-coded
+ *                list, so if a studio ever narrows who may fill a timesheet,
+ *                this fails and somebody decides on purpose.
+ *
+ * leave.view_team is ON FOR LEADS as well, through leadsTeam — the same
+ *                capability asset.hold_any is implied by. It is a READ and
+ *                nothing else: who is away, on the dashboard and as a chip on
+ *                an assignee picker. A coordinator planning next fortnight's
+ *                work needs to know who is on holiday, and does not thereby
+ *                need to be able to send anybody on one.
+ */
+const WIDER_THAN_SUPER_ADMIN = ['leave.request', 'leave.view_team'];
+
+test('the two vacation keys that are wider than Super Admin are wider on purpose', () => {
+  const holdersOf = (key) => roles.roleKeys().filter((k) => {
+    const def = roles.roleDef(k);
+    return def && catalog.BY_KEY.get(key).impliedBy(def);
+  });
+
+  /* Booking your own time off reaches exactly the people who can fill a
+     timesheet — asserted as a set comparison, not as a list, so the two cannot
+     drift apart without this failing. */
+  assert.deepStrictEqual(holdersOf('leave.request'), holdersOf('timesheet.own'),
+    'leave.request must reach exactly the designations that can fill a timesheet');
+  assert.ok(holdersOf('leave.request').length > 1,
+    'and that is more than the Super Admin, or Vacation mode is a feature nobody can use');
+
+  /* Reading who is away reaches the leads and the Super Admin, and nobody who
+     merely contributes. */
+  const viewers = holdersOf('leave.view_team');
+  assert.ok(viewers.includes('super_admin'), 'the Super Admin sees team leave');
+  for (const key of viewers) {
+    const def = roles.roleDef(key);
+    assert.ok(def.leadsTeam || def.managePermissions,
+      `${key} sees team leave only by leading a team or administering the studio`);
+  }
+  assert.ok(viewers.some((k) => k !== 'super_admin'), 'and a lead is among them');
+
+  /* Neither of the two is an approval or a cancellation. */
+  for (const key of WIDER_THAN_SUPER_ADMIN) {
+    assert.ok(!['leave.approve', 'leave.manage_all'].includes(key));
+  }
+});
 
 test('every key added since the snapshot is Super Admin only', () => {
-  const added = catalog.KEYS.filter((k) => !SNAPSHOT.roles.super_admin.includes(k));
+  const added = catalog.KEYS.filter((k) => !SNAPSHOT.roles.super_admin.includes(k))
+    .filter((k) => !WIDER_THAN_SUPER_ADMIN.includes(k));
   assert.deepStrictEqual(added.sort(), [...SINCE_SNAPSHOT].sort(),
     'a catalogue key was added without being accounted for here');
-  assert.strictEqual(catalog.KEYS.length, SNAPSHOT.catalogueSize + SINCE_SNAPSHOT.length);
+  assert.strictEqual(catalog.KEYS.length,
+    SNAPSHOT.catalogueSize + SINCE_SNAPSHOT.length + WIDER_THAN_SUPER_ADMIN.length);
 
   for (const key of SINCE_SNAPSHOT) {
     const entry = catalog.BY_KEY.get(key);
@@ -123,7 +187,14 @@ test('THE SNAPSHOT: with no groups defined, every role is unchanged',
 
     for (const [roleKey, expected] of Object.entries(SNAPSHOT.roles)) {
       const held = await rolePermissions.effectiveFor(db, roleKey);
-      const now = [...held].filter((k) => !SINCE_SNAPSHOT.includes(k)).sort();
+      /* BOTH LISTS ARE SUBTRACTED. SINCE_SNAPSHOT is the Super-Admin-only
+         additions; WIDER_THAN_SUPER_ADMIN is the two Vacation keys that reach
+         further on purpose, and they reach the Super Admin too — so leaving
+         them in would read as "super_admin changed" for a change argued and
+         asserted twenty lines above. The test above is what holds their width;
+         this one is about everything that did NOT change. */
+      const added = [...SINCE_SNAPSHOT, ...WIDER_THAN_SUPER_ADMIN];
+      const now = [...held].filter((k) => !added.includes(k)).sort();
       assert.deepStrictEqual(now, expected,
         `${roleKey} changed: +${now.filter((k) => !expected.includes(k))} `
         + `-${expected.filter((k) => !now.includes(k))}`);

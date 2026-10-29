@@ -58,10 +58,27 @@ const MINUTES_PER_DAY = 24 * 60;
 const DAY_START = 0;
 const DAY_END = MINUTES_PER_DAY;
 
+/* THE FLOOR ON NOTICE IS ONE DAY AND IT IS NOT A SETTING.
+ *
+ * A person's own vacation starts tomorrow at the earliest, whatever the notice
+ * setting says, because today is the one date somebody else records: marking
+ * today changes a figure that is already being read, and the separation between
+ * asking for leave and granting it is the whole reason followup.mark_leave is
+ * a permission. A studio can ask for more notice; it cannot ask for less. */
+const MIN_NOTICE_FLOOR = 1;
+const MAX_NOTICE = 180;
+const RANGE_FLOOR = 1;
+const RANGE_CEILING = 366;
+
 const DEFAULTS = {
   enabled: false,
   firstHalfEndMinutes: null,
   secondHalfStartMinutes: null,
+  vacationEnabled: false,
+  vacationRequireApproval: false,
+  vacationMinNoticeDays: 1,
+  vacationMaxRangeDays: 60,
+  vacationEmailEnabled: true,
 };
 
 let cache = { ...DEFAULTS, updatedBy: null, updatedByName: null, updatedAt: null };
@@ -88,6 +105,21 @@ async function load(db) {
       ? DEFAULTS.enabled : Boolean(Number(row.enabled)),
     firstHalfEndMinutes: num(row.first_half_end_minutes),
     secondHalfStartMinutes: num(row.second_half_start_minutes),
+    /* EACH READS AS ITS DEFAULT WHERE THE COLUMN IS ABSENT, which is what makes
+       this safe to deploy before the migration has run: a server that boots
+       against an older table sees Vacation mode off rather than undefined, and
+       vacationEmailEnabled — the only one whose default is true — reads true
+       rather than false, so a studio does not silently lose its mail. */
+    vacationEnabled: row.vacation_enabled === undefined || row.vacation_enabled === null
+      ? DEFAULTS.vacationEnabled : Boolean(Number(row.vacation_enabled)),
+    vacationRequireApproval: row.vacation_require_approval === undefined || row.vacation_require_approval === null
+      ? DEFAULTS.vacationRequireApproval : Boolean(Number(row.vacation_require_approval)),
+    vacationMinNoticeDays: num(row.vacation_min_notice_days) === null
+      ? DEFAULTS.vacationMinNoticeDays : Math.max(MIN_NOTICE_FLOOR, num(row.vacation_min_notice_days)),
+    vacationMaxRangeDays: num(row.vacation_max_range_days) === null
+      ? DEFAULTS.vacationMaxRangeDays : num(row.vacation_max_range_days),
+    vacationEmailEnabled: row.vacation_email_enabled === undefined || row.vacation_email_enabled === null
+      ? DEFAULTS.vacationEmailEnabled : Boolean(Number(row.vacation_email_enabled)),
     updatedBy: row.updated_by || null,
     updatedByName: row.updated_by_name || null,
     updatedAt: row.updated_at || null,
@@ -103,6 +135,24 @@ const current = () => ({ ...cache });
    property so that nothing can capture it at require time and go on answering
    the value it had at boot. */
 const leaveIdleEnabled = () => Boolean(cache.enabled);
+
+/* VACATION MODE NEEDS BOTH SWITCHES, and this function is the only place that
+ * says so. Two switches with one of them meaningless on its own would be a trap
+ * — a studio turning Vacation mode on and finding nothing happens, because the
+ * days it creates are leave rows and Leave is off — so the dependency is a
+ * conjunction here rather than a rule written twice in two routes.
+ *
+ * A FUNCTION, NOT A PROPERTY, for the same reason leaveIdleEnabled is: nothing
+ * may capture it at require time and go on answering the value it had at boot.
+ * That is what "takes effect without a restart" means in practice. */
+const vacationEnabled = () => Boolean(cache.enabled && cache.vacationEnabled);
+
+/* The self-service rules, each read through a function so the floor is applied
+   once and cannot be skipped by a caller reading the column. */
+const minNoticeDays = () => Math.max(MIN_NOTICE_FLOOR, Number(cache.vacationMinNoticeDays) || MIN_NOTICE_FLOOR);
+const maxRangeDays = () => Math.max(RANGE_FLOOR, Number(cache.vacationMaxRangeDays) || DEFAULTS.vacationMaxRangeDays);
+const vacationApprovalRequired = () => Boolean(cache.vacationRequireApproval);
+const vacationEmailEnabled = () => Boolean(cache.vacationEmailEnabled);
 
 /* ---------------------------------------------------------------------------
  * THE PREFILL.
@@ -225,6 +275,50 @@ function validate(input = {}, { existing = cache, schedule = workSchedule.curren
   const firstHalfEndMinutes = readOne('firstHalfEndMinutes', 'First Half ends at', base.firstHalfEndMinutes);
   const secondHalfStartMinutes = readOne('secondHalfStartMinutes', 'Second Half starts at', base.secondHalfStartMinutes);
 
+  /* ---- Vacation mode ----
+   *
+   * THE DEPENDENCY IS REFUSED HERE, which is what makes it a rule. Enabling
+   * Vacation mode while Leave & Idle is off would create a feature whose days
+   * cannot be created: a vacation materialises leave rows, and the marking path
+   * answers 409 feature_disabled while the first switch is off. So the save is
+   * rejected with the reason rather than accepted into an unusable state. */
+  const bool = (key) => {
+    const v = pick(key);
+    return v === true || v === 'true' || v === 1 || v === '1';
+  };
+  const vacationEnabledNext = bool('vacationEnabled');
+  if (vacationEnabledNext && !enabled) {
+    errors.push({
+      field: 'vacationEnabled',
+      message: 'Vacation mode needs Leave, Idle & Onsight switched on — a vacation is made of leave days.',
+    });
+  }
+  const vacationRequireApproval = bool('vacationRequireApproval');
+  const vacationEmailEnabled = bool('vacationEmailEnabled');
+
+  const readCount = (key, label, fallback, floor, ceiling) => {
+    const v = pick(key);
+    if (v === undefined || v === null || v === '') return fallback;
+    const n = Number(v);
+    if (!Number.isInteger(n)) {
+      errors.push({ field: key, message: `${label} is a whole number of days.` });
+      return fallback;
+    }
+    if (n < floor || n > ceiling) {
+      errors.push({ field: key, message: `${label} is between ${floor} and ${ceiling} days.` });
+      return fallback;
+    }
+    return n;
+  };
+  const vacationMinNoticeDays = readCount('vacationMinNoticeDays', 'Minimum notice',
+    existing.vacationMinNoticeDays, MIN_NOTICE_FLOOR, MAX_NOTICE);
+  const vacationMaxRangeDays = readCount('vacationMaxRangeDays', 'Maximum range',
+    existing.vacationMaxRangeDays, RANGE_FLOOR, RANGE_CEILING);
+  if (vacationMaxRangeDays < vacationMinNoticeDays) {
+    warnings.push('The maximum range is shorter than the notice period. That is allowed — '
+      + 'they measure different things — but check it is what you meant.');
+  }
+
   const open = Number(schedule.dayStart);
   const close = Number(schedule.dayEnd);
   const haveDay = Number.isFinite(open) && Number.isFinite(close) && close > open;
@@ -277,7 +371,11 @@ function validate(input = {}, { existing = cache, schedule = workSchedule.curren
     ok: true,
     errors: [],
     warnings,
-    value: { enabled, firstHalfEndMinutes, secondHalfStartMinutes },
+    value: {
+      enabled, firstHalfEndMinutes, secondHalfStartMinutes,
+      vacationEnabled: vacationEnabledNext,
+      vacationRequireApproval, vacationMinNoticeDays, vacationMaxRangeDays, vacationEmailEnabled,
+    },
   };
 }
 
@@ -326,12 +424,32 @@ async function save(db, input, userId, { schedule = workSchedule.current(), toda
   const v = checked.value;
   await db.query(
     `INSERT INTO leave_settings
-       (id, enabled, first_half_end_minutes, second_half_start_minutes, updated_by)
-     VALUES (1, $1, $2, $3, $4)
+       (id, enabled, first_half_end_minutes, second_half_start_minutes, updated_by,
+        vacation_enabled, vacation_require_approval, vacation_min_notice_days,
+        vacation_max_range_days, vacation_email_enabled)
+     VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9)
      ON DUPLICATE KEY UPDATE
-       enabled = $1, first_half_end_minutes = $2, second_half_start_minutes = $3, updated_by = $4`,
-    [v.enabled ? 1 : 0, v.firstHalfEndMinutes, v.secondHalfStartMinutes, userId || null]
-  );
+       enabled = $1, first_half_end_minutes = $2, second_half_start_minutes = $3, updated_by = $4,
+       vacation_enabled = $5, vacation_require_approval = $6, vacation_min_notice_days = $7,
+       vacation_max_range_days = $8, vacation_email_enabled = $9`,
+    [v.enabled ? 1 : 0, v.firstHalfEndMinutes, v.secondHalfStartMinutes, userId || null,
+      v.vacationEnabled ? 1 : 0, v.vacationRequireApproval ? 1 : 0,
+      v.vacationMinNoticeDays, v.vacationMaxRangeDays, v.vacationEmailEnabled ? 1 : 0]
+  ).catch(async (err) => {
+    /* AN UNMIGRATED TABLE STILL SAVES THE THREE COLUMNS IT HAS. A deployment
+       part-way through its migration must not lose the ability to change the
+       half-day split, and the vacation columns it has not got yet cannot be
+       set from a screen that cannot show them either. */
+    if (!/Unknown column/i.test((err && (err.sqlMessage || err.message)) || '')) throw err;
+    await db.query(
+      `INSERT INTO leave_settings
+         (id, enabled, first_half_end_minutes, second_half_start_minutes, updated_by)
+       VALUES (1, $1, $2, $3, $4)
+       ON DUPLICATE KEY UPDATE
+         enabled = $1, first_half_end_minutes = $2, second_half_start_minutes = $3, updated_by = $4`,
+      [v.enabled ? 1 : 0, v.firstHalfEndMinutes, v.secondHalfStartMinutes, userId || null]
+    );
+  });
 
   const day = today || require('./timesheet-gate').istDate();
   let resnapshotted = 0;
@@ -355,7 +473,9 @@ async function save(db, input, userId, { schedule = workSchedule.current(), toda
 
 module.exports = {
   DEFAULTS, MINUTES_PER_DAY, DAY_START, DAY_END,
+  MIN_NOTICE_FLOOR, MAX_NOTICE, RANGE_FLOOR, RANGE_CEILING,
   load, isLoaded, current, leaveIdleEnabled,
+  vacationEnabled, vacationApprovalRequired, vacationEmailEnabled, minNoticeDays, maxRangeDays,
   prefill, split, windowFor, clock, readClock,
   validate, save, summarise, describeChange,
 };
