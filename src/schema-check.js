@@ -164,6 +164,33 @@ const REQUIRED = [
      startup, but /api/health should say it too. */
   { table: 'integration_ip_allowlist',       column: null, step: 'integration ip allowlist' },
   { table: 'integration_ip_allowlist_audit', column: null, step: 'integration ip allowlist' },
+
+  /* LEAVE, IDLE, ONSIGHT AND VACATION MODE. None of these three tables is in
+     sql/schema.sql — the 'leave and idle' step creates all of them, and adds
+     each column of the later ones by its own ALTER. On shared hosting an ALTER
+     is exactly what can be refused, and the failure mode is the one this list
+     exists for: the app reads vacation_enabled by name, the column is not
+     there, Settings → Leave answers 500, and /api/health says "complete".
+
+     THE COLUMNS NAMED ONE BY ONE, not just the tables, because all three
+     tables are created with CREATE TABLE IF NOT EXISTS: a studio that upgraded
+     from Prompt 48 has leave_settings and user_day_status already, with none of
+     what Prompt 55 and 56 added. The table being present is not the table
+     being current — the same reason asset_events is in this list twice. */
+  { table: 'leave_settings',   column: null,                        step: 'leave and idle' },
+  { table: 'leave_settings',   column: 'enabled',                   step: 'leave and idle' },
+  { table: 'leave_settings',   column: 'first_half_end_minutes',    step: 'leave and idle' },
+  { table: 'leave_settings',   column: 'second_half_start_minutes', step: 'leave and idle' },
+  { table: 'leave_settings',   column: 'vacation_enabled',          step: 'leave and idle' },
+  { table: 'leave_settings',   column: 'vacation_require_approval', step: 'leave and idle' },
+  { table: 'leave_settings',   column: 'vacation_min_notice_days',  step: 'leave and idle' },
+  { table: 'leave_settings',   column: 'vacation_max_range_days',   step: 'leave and idle' },
+  { table: 'leave_settings',   column: 'vacation_email_enabled',    step: 'leave and idle' },
+  { table: 'user_day_status',  column: null,                        step: 'leave and idle' },
+  { table: 'user_day_status',  column: 'client_id',                 step: 'leave and idle' },
+  { table: 'user_day_status',  column: 'request_id',                step: 'leave and idle' },
+  { table: 'leave_requests',   column: null,                        step: 'leave and idle' },
+  { table: 'leave_requests',   column: 'ended_on',                  step: 'leave and idle' },
 ];
 
 // Two queries for the whole check, rather than one per column.

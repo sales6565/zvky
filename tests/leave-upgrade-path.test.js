@@ -249,6 +249,78 @@ test('an upgraded database gains every column, twice, and then works', { skip: S
   assert.strictEqual(me.id === person.id, false);
 });
 
+/* AND /api/health WOULD NOTICE IF THE STEP HAD NOT RUN.
+ *
+ * This matters more here than for most of the schema, for two reasons that
+ * compound. None of these three tables is in sql/schema.sql — the 'leave and
+ * idle' migration step creates all of them and adds every column Prompt 55 and
+ * 56 brought with its own ALTER. And the studio runs on shared hosting, where a
+ * refused ALTER is a real outcome rather than a theoretical one.
+ *
+ * src/schema-check.js carries a comment about four tables that fell out of its
+ * REQUIRED list, during which the one endpoint built to name schema gaps
+ * reported "complete". A column the app reads by name and that list does not
+ * know about is invisible to it, which is the whole failure this asserts
+ * against: the owner opens Settings → Leave, gets a 500, opens /api/health, and
+ * is told everything is fine.
+ */
+test('/api/health would notice the leave schema missing', () => {
+  const declared = new Map();
+  for (const need of require('../src/schema-check').REQUIRED) {
+    if (!declared.has(need.table)) declared.set(need.table, new Set());
+    if (need.column) declared.get(need.table).add(need.column);
+  }
+
+  for (const table of ['leave_settings', 'user_day_status', 'leave_requests']) {
+    assert.ok(declared.has(table),
+      `${table} is created by the migration but absent from schema-check's REQUIRED list, `
+      + 'so /api/health would report "complete" on a database that does not have it');
+  }
+
+  /* THE COLUMNS THAT ARRIVE BY ALTER, which are the ones a database can be
+     missing while still having the table. Everything in a CREATE either comes
+     with the table or does not come at all; these came later, one ALTER each,
+     and each ALTER is a separate thing that can be refused. */
+  for (const [table, column] of [
+    ['leave_settings', 'vacation_enabled'],
+    ['leave_settings', 'vacation_require_approval'],
+    ['leave_settings', 'vacation_min_notice_days'],
+    ['leave_settings', 'vacation_max_range_days'],
+    ['leave_settings', 'vacation_email_enabled'],
+    ['leave_settings', 'first_half_end_minutes'],
+    ['leave_settings', 'second_half_start_minutes'],
+    ['leave_settings', 'enabled'],
+    ['user_day_status', 'client_id'],
+    ['user_day_status', 'request_id'],
+  ]) {
+    assert.ok(declared.get(table).has(column),
+      `${table}.${column} is added by its own ALTER and read by name, but is not `
+      + `declared, so a half-migrated ${table} would pass the health check`);
+  }
+
+  /* AND NOTHING DECLARED IS A NAME THE MIGRATION DOES NOT CREATE. A typo in
+     that list is worse than an omission: it makes /api/health report a gap that
+     can never be closed, and sends the owner to re-run a step that already ran.
+     NEEDED is the migration's own column list, asserted against SHOW COLUMNS in
+     the case above, so it is the right thing to check against. */
+  for (const [table, columns] of Object.entries(NEEDED)) {
+    for (const column of declared.get(table) || []) {
+      assert.ok(columns.includes(column),
+        `schema-check declares ${table}.${column}, which the migration does not create`);
+    }
+  }
+
+  /* And each one names a step that exists, so the health check sends the owner
+     to re-run something real. */
+  const steps = new Set(require('../src/migrate').STEPS
+    ? require('../src/migrate').STEPS.map((s) => s[0])
+    : ['leave and idle']);
+  for (const need of require('../src/schema-check').REQUIRED) {
+    if (!/^(leave_settings|user_day_status|leave_requests)$/.test(need.table)) continue;
+    assert.ok(steps.has(need.step), `${need.table}: "${need.step}" is a real migration step`);
+  }
+});
+
 test('the one-time flip touches only a row nobody has ever changed', { skip: SKIP }, async (t) => {
   let server;
   t.after(() => { if (server) stopServer(server); });
