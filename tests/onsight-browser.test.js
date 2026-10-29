@@ -52,6 +52,36 @@ function fixture() {
   const rowBlock = cut('function fuRow(r, heldLabel, d){', '/* ---------- the "waiting on them" panel ----------', 'the follow-up row');
   const vacBlock = cut('/* ---------- Vacation mode, in your own profile ----------', 'async function loadEmailPreference(){', 'Vacation mode');
 
+  /* NO STUB MAY SHADOW SOMETHING THE LIFTED CODE DECLARES, and this is checked
+   * here rather than discovered in a browser.
+   *
+   * It cost two runs to learn why: a `const` beside a `function` of the same
+   * name in one script scope is a SyntaxError, so the whole <script> fails to
+   * parse, window.__ready is never set, and every case in this file dies on a
+   * thirty-second waitForFunction that says only "Timeout". The failure is as
+   * far as it is possible to get from its cause.
+   *
+   * So the two lifted blocks are scanned for their top-level declarations and
+   * compared with the fixture's own. A clash fails the suite immediately, by
+   * name, before a browser is even launched. */
+  const declaredIn = (block) => new Set(
+    [...block.matchAll(/^(?:const|let|var|function|async function)\s+([A-Za-z_$][\w$]*)/gm)].map((m) => m[1]));
+  const FIXTURE_DECLARES = ['escapeHTML', 'showToast', 'can', 'openAsk', 'api',
+    'FOLLOW_UP', 'FOLLOW_UP_ASK', 'FU_MARKING', 'FU_MARK_MSG', 'FU_SENDING', 'FU_ROW_MSG',
+    'FU_LEAVE_MENU', 'FU_OPEN', 'FU_REASSIGN', 'FU_PANEL', 'FU_PANEL_BUSY', 'FU_PANEL_ERR',
+    'FU_PANEL_ALL', 'fuKey', 'fuDate'];
+  for (const [label, block] of [['the follow-up row', rowBlock], ['Vacation mode', vacBlock]]) {
+    const clash = FIXTURE_DECLARES.filter((n) => declaredIn(block).has(n));
+    assert.deepStrictEqual(clash, [],
+      `${label} already declares ${clash.join(', ')} \u2014 a stub beside it is a redeclaration, `
+      + 'which kills the whole script. Delete the stub and let the real one run, or override it '
+      + 'by assignment after the block.');
+  }
+  /* And the three overridden by assignment below must exist to be overridden. */
+  for (const name of ['fuWaitingPanel', 'fuStreak', 'paintFollowUp']) {
+    assert.ok(declaredIn(rowBlock).has(name), `${name} is declared in the lifted block`);
+  }
+
   return `<!doctype html><html><head><meta charset="utf-8"><style>${css}</style>
 <style>body{margin:0;}#reportsView{padding:12px;}</style></head>
 <body>
@@ -106,7 +136,6 @@ const FU_MARK_MSG = new Map();
    rather than a failed assertion. */
 const FU_SENDING = new Set();
 const FU_ROW_MSG = new Map();
-const fuClock = (t) => String(t || '');
 let FU_LEAVE_MENU = null;
 let FU_OPEN = null;
 let FU_REASSIGN = null;
@@ -132,7 +161,35 @@ window.__draw = () => {
   });
   document.querySelectorAll('[data-fu-os-cancel]').forEach(b => b.onclick = () => { FU_ONSIGHT = null; window.__draw(); });
   document.querySelectorAll('[data-fu-os-save]').forEach(b => b.onclick = () => saveOnsight());
+  /* THE SPAN LINE, wired exactly as wireFollowUp() wires it in the page — the
+     listener goes on after each paint because the field only exists while the
+     modal is open. Omitting it here cost a run: the test read the default
+     sentence and reported a product failure. */
+  const until = document.getElementById('fu_os_until');
+  if(until) until.addEventListener('change', ()=>{
+    const span = document.getElementById('fu_os_span');
+    const dd = FOLLOW_UP && FOLLOW_UP.leave;
+    const start = fuShownDate() || (dd && dd.date);
+    if(!span || !start) return;
+    if(!until.value || until.value === start){ span.textContent = 'Weekends and holidays are skipped.'; return; }
+    const days = Math.round((Date.parse(until.value + 'T00:00:00Z') - Date.parse(start + 'T00:00:00Z'))/86400000) + 1;
+    span.textContent = days > 0
+      ? days + ' calendar days. Weekends and holidays are skipped, so fewer rows than that.'
+      : 'The last day is before the first.';
+  });
 };
+/* And the profile's Save, bound once as the page binds it beside
+   profileModalWrap — which is outside both lifted blocks. */
+(() => {
+  const save = document.getElementById('pf_vac_save');
+  if(save) save.addEventListener('click', ()=>{ saveVacation(); });
+  const vfrom = document.getElementById('pf_vac_from');
+  const vto = document.getElementById('pf_vac_to');
+  if(vfrom && vto) vfrom.addEventListener('change', ()=>{
+    vto.min = vfrom.value || vto.min;
+    if(vto.value && vto.value < vfrom.value) vto.value = vfrom.value;
+  });
+})();
 window.__ready = true;
 </script>
 </body></html>`;
