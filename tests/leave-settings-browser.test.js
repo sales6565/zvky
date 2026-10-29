@@ -314,13 +314,21 @@ test('the Leave and Vacation settings save, from the page', { skip: SKIP }, asyn
     await p.fill('#lv_second', '11:00');
     const { call, shown } = await save(p);
     assert.strictEqual(call.status, 422, JSON.stringify(call));
-    /* THE READER MUST BE TOLD. A field error under the input, or a message
-       beside Save, or both — but never nothing, which is what "no reason" in
-       the report means. */
-    const told = (shown.fieldErrors.length > 0) || Boolean(shown.msg);
-    assert.ok(told, `the page shows the server's reason: ${JSON.stringify(shown)}`);
-    assert.ok(shown.fieldErrors.concat(shown.msg || '').join(' ').length > 10,
-      `and it is a sentence, not an empty box: ${JSON.stringify(shown)}`);
+    /* A MESSAGE BESIDE SAVE, ALWAYS — not "a field error OR a message".
+     *
+     * That looser reading is what this assertion used to make, and a mutation
+     * found it: putting back the old `errors.length ? null : …` left the field
+     * errors rendering, so the test passed while the thing the brief asks for
+     * was gone. The brief says the reason must be in the page NEXT TO THE SAVE
+     * BUTTON, and it is right to insist: a refusal about a checkbox has nowhere
+     * to put a field error the eye will find, and a reader who scrolled past
+     * one is looking at a Save button that did nothing. */
+    assert.ok(shown.msg, `a reason beside Save, always: ${JSON.stringify(shown)}`);
+    assert.strictEqual(shown.msgKind, 'err', 'and it reads as a refusal');
+    assert.ok(shown.msg.length > 10, `and it is a sentence: ${JSON.stringify(shown)}`);
+    // The field error is shown as well, where the refusal names a field.
+    assert.ok(shown.fieldErrors.length > 0,
+      `and the field says so too: ${JSON.stringify(shown)}`);
     // AND THE INPUT SURVIVES, so a correction is one keystroke and not a retype.
     assert.strictEqual(shown.first, '15:00', 'what was typed is still there');
     assert.strictEqual(shown.second, '11:00');
@@ -345,6 +353,9 @@ test('the Leave and Vacation settings save, from the page', { skip: SKIP }, asyn
       assert.ok(shown.msg, `switching the pair off has to say so: ${JSON.stringify(shown)}`);
     } else {
       assert.strictEqual(call.status, 422, JSON.stringify(call));
+      /* AND BESIDE SAVE, for a refusal whose field is a checkbox — which is
+         exactly the case that has nowhere else to put it. */
+      assert.ok(shown.msg, `a reason beside Save: ${JSON.stringify(shown)}`);
       const text = shown.fieldErrors.concat(shown.msg || '').join(' ');
       assert.match(text, /Vacation|vacation/, `the reason names the feature: ${JSON.stringify(shown)}`);
       assert.strictEqual(Number((await stored()).vacation_enabled), 1, 'and nothing changed');
