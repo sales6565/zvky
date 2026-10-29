@@ -138,6 +138,44 @@ test('a fresh install has both switches on', { skip: SKIP }, async (t) => {
   assert.strictEqual(mine.status, 200);
   assert.strictEqual(mine.body.rules.enabled, true, 'the profile offers Vacation mode');
   assert.strictEqual(mine.body.rules.leaveEnabled, true);
+
+  /* AND THE DASHBOARD BUTTONS ARE THERE, WITH NO OTHER SETUP. The brief asks
+     for exactly this: after the fix a Super Admin sees the buttons and the
+     Vacation section immediately. Three things have to be true at once and all
+     three are the server's answer, not the page's guess — the switch travels in
+     the follow-up payload, and the three marking keys travel on /auth/me. */
+  const dash = await api(server.base, '/admin-dashboard/follow-up', { token });
+  assert.strictEqual(dash.status, 200, JSON.stringify(dash.body));
+  assert.strictEqual(dash.body.leave.enabled, true,
+    'the section is told the feature is on, so it draws the buttons');
+  const held = (await api(server.base, '/auth/me', { token })).body.user.permissions;
+  for (const key of ['followup.mark_leave', 'followup.mark_idle', 'followup.mark_onsight',
+    'leave.request', 'leave.view_team', 'leave.approve', 'leave.manage_all']) {
+    assert.ok(held.includes(key), `the Super Admin holds ${key} out of the box`);
+  }
+  /* The three times the Leave menu offers, so the menu is usable the moment it
+     opens rather than after somebody has chosen a split. */
+  assert.match(dash.body.leave.firstHalfEnd, /^\d{2}:\d{2}$/);
+  assert.match(dash.body.leave.secondHalfStart, /^\d{2}:\d{2}$/);
+
+  /* AND THE PROFILE IS NOT BEHIND ANOTHER SCREEN. There is no profile PAGE in
+     this single-page application; the header carries a permanently visible
+     Profile button with no permission gate at all, and the Vacation section is
+     a labelled section inside what it opens — beside the person's own email and
+     push preferences, which is where everything somebody sets about themselves
+     already lives. Asserted off the page so a redesign that buried it fails. */
+  const page = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  assert.match(page, /<button class="btn btn-ghost btn-sm" id="profileBtn">Profile<\/button>/,
+    'the Profile button is in the header');
+  assert.ok(!/UI_GATES\[[^\]]*profileBtn/.test(page) && !/profileBtn:\s*\(\)/.test(page),
+    'and it is gated by nothing');
+  assert.match(page, /id="pf_vac_section"/, 'the Vacation section is in the profile');
+  assert.match(page, /id="pf_vac_from"[\s\S]{0,400}id="pf_vac_to"/,
+    'with a From and a To date');
+  assert.match(page, /id="pf_vac_banner"/, 'the active banner');
+  assert.match(page, /data-vac-end=/, 'End early');
+  assert.match(page, /data-vac-cancel=/, 'and Cancel');
 });
 
 test('an upgraded database gains every column, twice, and then works', { skip: SKIP }, async (t) => {
