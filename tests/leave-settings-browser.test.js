@@ -205,6 +205,30 @@ test('the Leave and Vacation settings save, from the page', { skip: SKIP }, asyn
 
   const stored = async () => (await q('SELECT * FROM leave_settings WHERE id = 1'))[0];
 
+  /* PUT THE STORED STATE WHERE A CASE NEEDS IT, THROUGH THE ENDPOINT.
+   *
+   * NOT with an UPDATE behind the server's back, which is what the first run of
+   * this file did and why two cases failed: src/leave-settings.js keeps the
+   * settings in a process cache and reloads it only at boot and after its own
+   * save(), so a direct write is invisible to the running application and the
+   * page is then drawn from values nobody stored. (On the live site that cache
+   * is correct — one Passenger process, and save() reloads it — but a test that
+   * writes round it is testing a database rather than a program.) */
+  const setStored = async (over) => {
+    const now = (await api(server.base, '/admin/settings/leave', { token })).body.settings;
+    const r = await api(server.base, '/admin/settings/leave', { method: 'PUT', token, body: {
+      enabled: over.enabled,
+      firstHalfEndMinutes: '13:00',
+      secondHalfStartMinutes: '14:00',
+      vacationEnabled: over.vacationEnabled,
+      vacationRequireApproval: now.vacationRequireApproval,
+      vacationMinNoticeDays: now.vacationMinNoticeDays,
+      vacationMaxRangeDays: now.vacationMaxRangeDays,
+      vacationEmailEnabled: now.vacationEmailEnabled,
+    } });
+    assert.ok(r.status < 400, `could not set up the stored state: ${JSON.stringify(r.body)}`);
+  };
+
   await t.test('STEP 0a: the section draws, and every control the brief names is on it', async () => {
     const p = await openSection();
     for (const id of ['lv_enabled', 'lv_first', 'lv_second', 'lv_save',
@@ -235,7 +259,7 @@ test('the Leave and Vacation settings save, from the page', { skip: SKIP }, asyn
   await t.test('STEP 0a: THE OWNER’S CASE — both switches in one save', async () => {
     /* FROM BOTH OFF, which is the state a studio upgrades into and the state
        the reproduction has to start from. */
-    await q('UPDATE leave_settings SET enabled = 0, vacation_enabled = 0 WHERE id = 1');
+    await setStored({ enabled: false, vacationEnabled: false });
     const p = await openSection();
     assert.strictEqual(await p.isChecked('#lv_enabled'), false);
     assert.strictEqual(await p.isChecked('#lv_vac'), false);
@@ -304,7 +328,7 @@ test('the Leave and Vacation settings save, from the page', { skip: SKIP }, asyn
   });
 
   await t.test('turning Leave & Idle off while Vacation is on is refused, and says what to do', async () => {
-    await q('UPDATE leave_settings SET enabled = 1, vacation_enabled = 1 WHERE id = 1');
+    await setStored({ enabled: true, vacationEnabled: true });
     const p = await openSection();
     assert.strictEqual(await p.isChecked('#lv_vac'), true);
     await p.uncheck('#lv_enabled');
