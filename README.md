@@ -3889,11 +3889,19 @@ pre-team path, exactly as it does for a project whose Team Leads are removed
 today. Deactivation is unchanged: the row stays, and the person stops qualifying
 because every picker filters on `is_active`.
 
-## Leave and Idle
+## Leave, Idle and Onsight
 
-Two marks a lead can make against somebody's day, from the "People to follow up"
-lists: **Leave** (First Half, Second Half or Full Day) and **Idle**. They are
-not the same kind of thing and the difference is the whole design.
+Three marks a lead can make against somebody's day, from the "People to follow
+up" lists: **Leave** (First Half, Second Half or Full Day), **Idle** and
+**Onsight**. They are not the same kind of thing and the difference is the whole
+design — so here it is as a table, which is the one thing worth having in front
+of you when reading the rest:
+
+| | hours counted | timesheet owed | expected to start | timers |
+|---|---|---|---|---|
+| **Leave** | no, inside the window | only on a half day | no, inside the window | blocked |
+| **Idle** | yes | yes | no | allowed |
+| **Onsight** | yes | yes | no | allowed |
 
 **Leave changes what somebody's hours add up to.** No time inside the window
 counts for them, a running timer is stopped at the moment the window opened,
@@ -3901,6 +3909,114 @@ and work cannot be started until it ends. **Idle changes nothing at all**: it
 records that there is nothing on their desk, removes no hours, blocks no
 assignment and no start, and clears itself the instant anybody assigns them
 something.
+
+**Onsight is not a lighter leave.** Somebody at a client's office is at work:
+every hour they record counts, they owe a timesheet like anybody else, and a
+timer is exactly what they should be running. The only thing it changes is that
+nobody chases them to start an asset timer in the studio's own pipeline — so it
+joins Idle in one function, `nothingToStart()`, and in nothing else. It is the
+one line of new judgement the feature needed, which is the measure of whether it
+belonged in the existing engine or beside it.
+
+It takes an optional **client** and an optional **Until** date, because a
+fortnight at a client's office is one engagement and should be one press. Non-
+working days inside the range are skipped rather than refusing the whole range:
+a Monday-to-Friday span containing a public holiday is perfectly ordinary. The
+single-day path still refuses a non-working day outright, because there the
+non-working day *is* the request. The end may be in the future while the start
+may not — the start is a statement about a day, the end is a plan.
+
+**It is also not the Time Sheet's "On Site" category.** That is a line somebody
+writes about work they did; this is a mark somebody else makes about where they
+were. The same distinction the next heading draws about "Idle", one feature
+along — and the studio's two spellings happen to help.
+
+## Vacation mode
+
+**Everybody books their own time off, from their own profile.** A From and To
+date, a half-day choice on the first and last day, an optional note; a list of
+what they have booked with Cancel on anything upcoming; a banner while one is
+running; and **End vacation early** on one that is.
+
+### There is one engine, and `src/vacation.js` is not it
+
+A vacation is a **request** — a row in `leave_requests` with a status on it. The
+moment it is approved it **materialises one ordinary leave row per working day**
+through `src/day-status.js`'s `mark()`, with `source` `'planned'` and the
+request's id on it. From that instant nothing else in the application needs to
+know vacations exist: `countedMs()` removes the hours, `isTimesheetRequired()`
+excuses a full day, `isExpectedToWorkAt()` stops the nudges, `sweepLeave()` stops
+a running timer, the follow-up lists drop the person and the half-day snapshot
+moves with Settings — all because **the row is leave**.
+
+A second table the time arithmetic also consulted is the mistake this codebase
+has found and fixed under four different names, so it is refused by
+construction: a test asserts `src/vacation.js` never writes `user_day_status`
+itself, and that nothing which decides whether an hour counts requires it.
+
+So why a request table at all? Three things are true of a booking and not of a
+day: it can be pending approval, it can be cancelled as a whole before it starts,
+and it can be ended early. All three are statements about **which days belong
+together**, and a pile of independent leave rows cannot make them.
+
+### Whose dates are whose
+
+* **From tomorrow** — a person's own booking. The floor is one day and is *not*
+  a setting: today is the one date somebody else records, because marking it
+  changes a figure already being read. Settings may ask for more notice; nothing
+  can ask for less.
+* **Today and the past** — "Mark Leave" on People to follow up, or
+  "Manage Anybody's Vacation" here. Both are somebody else saying what happened,
+  which is a different act from asking.
+* **End early cuts from tomorrow.** Today's exclusion may already be in a figure
+  somebody has read, and a person un-excusing their own morning after the fact is
+  exactly the separation the heavier key exists for.
+
+### Overlap is asked of the day rows, not of the request table
+
+A vacation must not collide with another vacation **or** with leave a lead marked
+by hand, and only the day rows know both. The refusal lists the dates.
+Complementary halves — first-half leave plus second-half leave — are named rather
+than allowed: the schema holds one active row per person per day, so
+"choose Full Day instead" is the only useful thing to say.
+
+### Two switches, and the second needs the first
+
+Settings → **Leave** gains **Enable Vacation mode**, **off by default**, which
+**requires** Leave, Idle & Onsight to be on — a vacation is made of leave days,
+so the server refuses the pair the other way round rather than accepting the
+feature into an unusable state. Beside it: whether a vacation needs approving
+(off, so it takes effect on submission), the minimum notice in days, the longest
+range, and whether the notifications are emailed as well as belled. Every one of
+them is a clause in the audit line.
+
+Switching Vacation mode **off stops new bookings and leaves existing ones exactly
+as they are** — the same rule the master switch already follows. People can still
+see and cancel what they have booked, because a list nobody could read would be
+a vacation nobody could undo.
+
+### Who hears about it
+
+In-app always, by email only when the switch is on, to the person's **leads** —
+the team leads, acting team leads and production coordinators of the projects
+they are a member of. On a decision, back to the person. **Never to the person
+about their own action**, and that is enforced twice on purpose: the mail skips
+the actor and `notifications.raise()` refuses `recipientId === actorId`. Either
+alone would be a rule somebody could delete without a test noticing. A failed or
+unconfigured mailer never fails the request.
+
+### Permissions
+
+| key | default |
+|---|---|
+| `followup.mark_onsight` | Super Admin |
+| `leave.request` | **everybody** — the same set as `timesheet.own`, compared as sets by a test so the two cannot drift |
+| `leave.view_team` | Super Admin and anybody who leads a team. A read: who is away, on the dashboard and as a warning on an assignee picker |
+| `leave.approve` | Super Admin |
+| `leave.manage_all` | Super Admin |
+
+The warning on an assignee picker **never blocks an assignment**: somebody back
+on Thursday is a fine person to give Friday's work to.
 
 ### "Idle" already meant something else, and still does
 
