@@ -166,6 +166,22 @@ const KINDS = {
      one person and it is telling them something about their own attendance —
      which nothing else in this list does. */
   day_status: 'day_status',
+  /* A VACATION WAS BOOKED, CANCELLED, ENDED EARLY, APPROVED OR REJECTED.
+   *
+   * A SEPARATE KIND FROM day_status EVEN THOUGH A VACATION IS MADE OF DAY
+   * STATUS ROWS, and the reason is the direction it travels. day_status is
+   * addressed to one person about their OWN attendance — "you were marked on
+   * leave" — and its fall-back sentence says so. This one mostly travels the
+   * other way: to a lead, about somebody else's booking, so that they can plan
+   * the fortnight. Sharing the kind would mean a lead's bell saying "your day
+   * was marked as leave" about an artist's holiday, which is the same mistake
+   * `assigned` and `submitted` are two kinds to avoid.
+   *
+   * THE SENTENCE IS CARRIED IN `detail`, like the reminder kinds: who, which
+   * dates, and which of the five things happened are not reconstructible from
+   * ids once the request has moved on, and a lead reading last week's bell
+   * should see what it said at the time. */
+  vacation: 'vacation',
   /* Somebody asked for a file on the office server to be deleted, told to
      whoever answers those asks; and the answer, told back to whoever asked.
      
@@ -204,6 +220,9 @@ function describe(row) {
   }
   if (row.kind === KINDS.day_status) {
     return row.detail || 'Your day was marked as leave or idle.';
+  }
+  if (row.kind === KINDS.vacation) {
+    return row.detail || `${row.other_name || 'Somebody'}’s vacation changed.`;
   }
   if (row.kind === KINDS.server_delete_request) {
     return row.detail || `${row.other_name || 'Somebody'} asked for a file on the office server to be deleted.`;

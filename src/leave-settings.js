@@ -381,10 +381,19 @@ function validate(input = {}, { existing = cache, schedule = workSchedule.curren
 
 const summarise = (s, { schedule = workSchedule.current() } = {}) => {
   const sp = split({ settings: s, schedule });
+  /* EVERY TOGGLE IS A CLAUSE HERE, which is what makes "every toggle writes an
+     audit line" true rather than aspirational: describeChange() below diffs
+     these clauses position by position, so a setting absent from this list
+     would move silently. */
   return [
-    `Leave & Idle ${s.enabled ? 'on' : 'OFF'}`,
+    `Leave, Idle & Onsight ${s.enabled ? 'on' : 'OFF'}`,
     `first half ends ${clock(sp.firstHalfEndMinutes)}`,
     `second half starts ${clock(sp.secondHalfStartMinutes)}`,
+    `Vacation mode ${s.vacationEnabled ? 'on' : 'OFF'}`,
+    `vacation approval ${s.vacationRequireApproval ? 'required' : 'not required'}`,
+    `notice ${Number(s.vacationMinNoticeDays) || DEFAULTS.vacationMinNoticeDays} day(s)`,
+    `longest range ${Number(s.vacationMaxRangeDays) || DEFAULTS.vacationMaxRangeDays} day(s)`,
+    `vacation email ${s.vacationEmailEnabled ? 'on' : 'off'}`,
   ].join(', ');
 };
 

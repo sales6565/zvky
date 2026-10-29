@@ -503,6 +503,128 @@ async function deletionResolved(db, { requesterId, actor, path: target, status, 
   }
 }
 
+/* ---------------------------------------------------------------------------
+ * VACATIONS.
+ *
+ * TWO DIRECTIONS AND THEREFORE TWO FUNCTIONS, the same split deletionRequested
+ * and deletionResolved already make: a booking travels UP to the leads who have
+ * to plan around it, and a decision travels BACK to the person who asked.
+ *
+ * THE PERSON IS NEVER MAILED ABOUT THEIR OWN ACTION, and it is enforced twice
+ * on purpose: `recipients` excludes the actor here, exactly as the deletion
+ * mail does, and src/notifications.js's raise() refuses recipientId === actorId
+ * for the in-app half. Either one alone would be a rule somebody could delete
+ * without a test noticing; both means the mutation that removes one is caught
+ * by the other and by its own test.
+ *
+ * THE SWITCH IS THE CALLER'S TO READ. Settings → Leave has its own email
+ * toggle, and it is checked at the call site rather than in here, so that this
+ * function has one job and the switch has one reading. isUsable() below is the
+ * different question of whether the studio has a mail server at all.
+ *
+ * A FAILURE NEVER FAILS THE REQUEST. Every path returns a reason instead of
+ * throwing, which is what the whole of this file already does and what the
+ * brief asks for in as many words.
+ */
+async function vacationSubmitted(db, { recipients, actor, person, request, action, origin }) {
+  try {
+    if (!emailConfig.isUsable()) return { queued: 0, reason: 'email_off' };
+    let queued = 0;
+    const seen = new Set();
+    for (const to of recipients || []) {
+      if (!to || !to.id) continue;
+      /* THE ACTOR IS SKIPPED, and so is a duplicate: a lead who is also an
+         approver appears in both lists and must not be mailed twice. */
+      if (actor && to.id === actor.id) continue;
+      if (seen.has(to.id)) continue;
+      seen.add(to.id);
+      const address = await recipient(db, to.id);
+      if (!address) continue;
+      const result = await emailOutbox.enqueue(db, {
+        to: address.email,
+        ...vacationSubmittedMessage({ actor, person, request, action, origin }),
+      });
+      if (result && result.ok) queued += 1;
+    }
+    return { queued, reason: null };
+  } catch (err) {
+    console.warn(`[email] vacation mail failed: ${err.message}`);
+    return { queued: 0, reason: 'error' };
+  }
+}
+
+async function vacationDecided(db, { recipientId, actor, request, approved, note, origin }) {
+  try {
+    if (!emailConfig.isUsable()) return { queued: false, reason: 'email_off' };
+    if (actor && actor.id === recipientId) return { queued: false, reason: 'own_action' };
+    const address = await recipient(db, recipientId);
+    if (!address) return { queued: false, reason: 'no_mailable_address' };
+    const result = await emailOutbox.enqueue(db, {
+      to: address.email,
+      ...vacationDecidedMessage({ actor, request, approved, note, origin }),
+    });
+    return result && result.ok ? { queued: true, id: result.id } : { queued: false, reason: (result && result.error) || 'not_queued' };
+  } catch (err) {
+    console.warn(`[email] vacation decision mail failed: ${err.message}`);
+    return { queued: false, reason: 'error' };
+  }
+}
+
+const VACATION_HEADINGS = {
+  submitted: 'Somebody booked a vacation',
+  pending: 'A vacation is waiting for approval',
+  cancelled: 'A vacation was cancelled',
+  ended_early: 'A vacation was ended early',
+};
+
+function vacationSubmittedMessage({ actor, person, request, action, origin }) {
+  const name = appName();
+  const who = (person && person.name) || 'Somebody';
+  const heading = VACATION_HEADINGS[action] || VACATION_HEADINGS.submitted;
+  const lead = action === 'pending'
+    ? `${who} has asked for time off. It changes nobody’s hours until it is approved.`
+    : (action === 'cancelled'
+      ? `${who} cancelled their vacation. Those days count as ordinary working days again.`
+      : (action === 'ended_early'
+        ? `${who} came back early. The remaining days have been cleared.`
+        : `${who} will be away. Their hours are excluded for those days and they are off the `
+          + 'follow-up lists while they are gone.'));
+  return {
+    subject: `${name}: ${who} — ${action === 'pending' ? 'vacation to approve' : 'vacation'}`,
+    ...shell({
+      heading,
+      lead,
+      rows: [
+        { label: 'Who', value: who },
+        { label: 'Dates', value: request && request.label },
+        { label: 'Note', value: (request && request.note) || '' },
+        { label: 'Booked by', value: (actor && actor.name) || '' },
+      ],
+      footer: origin ? `${origin}` : null,
+    }),
+  };
+}
+
+function vacationDecidedMessage({ actor, request, approved, note, origin }) {
+  const name = appName();
+  return {
+    subject: `${name}: your vacation was ${approved ? 'approved' : 'not approved'}`,
+    ...shell({
+      heading: approved ? 'Your vacation was approved' : 'Your vacation was not approved',
+      lead: approved
+        ? 'Those days are now excluded from your hours and you will not be asked for a timesheet '
+          + 'on a full day.'
+        : 'Nothing has changed about your hours. Speak to whoever decided it if you need to.',
+      rows: [
+        { label: 'Dates', value: request && request.label },
+        { label: 'Decided by', value: (actor && actor.name) || '' },
+        { label: 'Note', value: note || '' },
+      ],
+      footer: origin ? `${origin}` : null,
+    }),
+  };
+}
+
 function deletionRequestedMessage({ actor, path: target, type, reason, origin }) {
   const name = appName();
   return {
@@ -600,6 +722,7 @@ function testMessage({ to, byName }) {
 module.exports = {
   queueAssignment, flushAll, taskSubmitted, testMessage, reminder,
   deletionRequested, deletionResolved, deletionRequestedMessage, deletionResolvedMessage,
+  vacationSubmitted, vacationDecided, vacationSubmittedMessage, vacationDecidedMessage,
   // exported for the tests, which assert on the rendered strings
   assignedMessage, submittedMessage, reminderMessage, submissionRecipients, recipient, BATCH_MS,
 };
