@@ -1609,5 +1609,33 @@ test('leave, idle and the settings, end to end', { skip: cfg ? false : SKIP_REAS
     /* AND A ROLE WITHOUT settings.leave.manage CANNOT REACH THE SETTINGS. */
     const r = await as('ana', '/admin/settings/leave');
     assert.strictEqual(r.status, 403, JSON.stringify(r.body));
+
+    /* THE KEY IS THIS SCREEN'S OWN, NOT THE NEIGHBOURING SETTINGS KEY.
+     *
+     * src/permission-catalog.js makes a promise about settings.leave.manage
+     * next to settings.nudges: "A studio that delegates the marking has not
+     * thereby delegated the policy", and the same for the nudges screen. Both
+     * default to the Super Admin tier, so nothing above distinguishes them —
+     * a mutation that swapped one key for the other in the route passed every
+     * test, because the only account that exercised the route holds both.
+     *
+     * So delegate the OTHER key and nothing else. The studio has handed over
+     * the Nudges screen; the Leave screen must stay shut. */
+    await grant('game_artist', ['settings.nudges']);
+    const nudgesOnly = await as('ana', '/admin/settings/leave');
+    assert.strictEqual(nudgesOnly.status, 403,
+      `settings.nudges is not a key to this screen: ${JSON.stringify(nudgesOnly.body)}`);
+    const savedWithWrongKey = await as('ana', '/admin/settings/leave',
+      { method: 'PUT', body: { enabled: false } });
+    assert.strictEqual(savedWithWrongKey.status, 403,
+      `nor to writing it: ${JSON.stringify(savedWithWrongKey.body)}`);
+
+    /* AND THE KEY ITSELF OPENS IT, so the 403s above are the gate and not some
+       other obstacle standing in for it. */
+    await grant('game_artist', ['settings.leave.manage']);
+    const withKey = await as('ana', '/admin/settings/leave');
+    assert.strictEqual(withKey.status, 200,
+      `the key opens the screen: ${JSON.stringify(withKey.body)}`);
+    await resetRole('game_artist');
   });
 });
