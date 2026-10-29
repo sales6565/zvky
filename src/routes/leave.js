@@ -19,7 +19,7 @@ const express = require('express');
 
 const db = require('../db');
 const permissions = require('../permissions');
-const { requirePermission } = require('../middleware/auth');
+const { authenticate, requirePermission } = require('../middleware/auth');
 const vacation = require('../vacation');
 const leaveSettings = require('../leave-settings');
 const dayStatus = require('../day-status');
@@ -30,6 +30,12 @@ const followUp = require('../follow-up');
 const { roleDef } = require('../roles');
 
 const router = express.Router();
+
+/* EVERY ROUTE HERE IS SIGNED IN. Without this line requirePermission reads an
+   undefined req.user and refuses everything with a 403 — which is a safe
+   failure and an invisible one, and it is how the first run of
+   tests/onsight-vacation.test.js found this file. */
+router.use(authenticate);
 
 /* ---------------------------------------------------------------------------
  * WHO THIS VIEWER MAY NAME, answered once and the same way People to follow up
