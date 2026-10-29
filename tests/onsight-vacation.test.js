@@ -924,6 +924,107 @@ test('Onsight and Vacation mode, end to end', { skip: cfg ? false : SKIP_REASON 
     await bothOn();
   });
 
+  await t.test('a send failure never fails the booking', async () => {
+    /* FAILURE INJECTED AT THE OUTBOX, which is the one place a send can go
+       wrong that a test can reach from outside the process: the table the
+       enqueue writes to is taken away, so emailOutbox.enqueue() throws for
+       real rather than being told not to bother. The brief asks that this
+       never fail the request, and src/email-notifications.js catches every
+       path and returns a reason — this is what holds it.
+
+       NOT A MOCK. Nothing is stubbed and the application is not told it is
+       being tested; the booking goes through the same route a person's would
+       and the mail genuinely cannot be queued. */
+    await settings({ enabled: true, firstHalfEndMinutes: '13:00', secondHalfStartMinutes: '14:00',
+      vacationEnabled: true, vacationMinNoticeDays: 1, vacationMaxRangeDays: 60,
+      vacationEmailEnabled: true });
+    await grant('team_lead', ['leave.view_team']);
+    await q('INSERT IGNORE INTO project_team_leads (project_id, user_id) VALUES (?,?)', [id.project, id.lee]);
+    await q('DELETE FROM notifications');
+
+    /* EMAIL HAS TO BE CONFIGURED FOR A SEND TO FAIL AT ALL. Without a config
+       isUsable() is false and the outbox is never touched — which is the
+       'email_off' path, a different thing from a broken one. The host below is
+       never dialled: enqueue() writes to the outbox table and the sweep does
+       the sending, and the sweep is switched off in this suite. */
+    const cfgOn = await as('root', '/email-config', { method: 'PUT', body: {
+      enabled: true, host: '127.0.0.1', port: 2525, encryption: 'none',
+      fromName: 'ZVKY FORGE', fromAddress: 'noreply@zvkydesign.com',
+    } });
+    assert.ok(cfgOn.status < 400, JSON.stringify(cfgOn.body));
+
+    const saved = await q('SHOW CREATE TABLE email_outbox').catch(() => []);
+    assert.ok(saved.length, 'the outbox exists to be taken away');
+    const ddl = saved[0]['Create Table'];
+    await q('DROP TABLE email_outbox');
+    try {
+      const r = await as('ana', '/leave/mine', { method: 'POST',
+        body: { from: vacation.addDays(today(), 160), to: vacation.addDays(today(), 161) } });
+      assert.strictEqual(r.status, 201, `the booking survives a broken mailer: ${JSON.stringify(r.body)}`);
+      assert.ok(r.body.days.length, 'and the days were still created');
+      /* NOTHING WAS QUEUED, AND NOTHING WAS THROWN. The reason comes back null
+         rather than 'error', and that is worth recording rather than asserting
+         around: emailOutbox.enqueue() does not throw on a broken table, it
+         REPORTS — it returns { ok: false, error } — so the failure is absorbed
+         one layer below the catch in src/email-notifications.js. The guarantee
+         the brief asks for therefore holds twice over, and the observable fact
+         is that the count is zero and the request is a 201. */
+      assert.strictEqual(r.body.notified.mailed.queued, 0, 'no mail was queued');
+      /* AND THE IN-APP HALF STILL ARRIVED. The two are independent: a studio
+         with no working mail server must still get its bell. */
+      assert.ok(r.body.notified.raised > 0, 'the lead was still told in-app');
+      const belled = await q('SELECT COUNT(*) AS n FROM notifications WHERE kind = ?', ['vacation']);
+      assert.ok(Number(belled[0].n) > 0);
+
+      /* AND THE SAME FOR A CANCELLATION, which travels the same path. */
+      const c = await as('ana', `/leave/${r.body.request.id}/cancel`, { method: 'POST', body: {} });
+      assert.strictEqual(c.status, 200, `cancelling survives it too: ${JSON.stringify(c.body)}`);
+    } finally {
+      await q(ddl);
+      await as('root', '/email-config', { method: 'PUT', body: { enabled: false } }).catch(() => {});
+    }
+    await revoke('team_lead', ['leave.view_team']);
+  });
+
+  await t.test('with both switches off, nothing about the studio changes', async () => {
+    /* PRODUCTION SAFETY, asserted as the brief states it: both switches off and
+       the three screens behave exactly as they did before this prompt. */
+    await settings({ enabled: false, firstHalfEndMinutes: '13:00', secondHalfStartMinutes: '14:00',
+      vacationEnabled: false, vacationMinNoticeDays: 1, vacationMaxRangeDays: 60,
+      vacationEmailEnabled: true });
+
+    // No mark of any kind can be created.
+    for (const body of [
+      { userId: id.ana, kind: 'onsight' },
+      { userId: id.ana, kind: 'idle' },
+      { userId: id.ana, kind: 'leave', portion: 'full' },
+    ]) {
+      const r = await mark(body);
+      assert.strictEqual(r.status, 409, `${body.kind}: ${JSON.stringify(r.body)}`);
+      assert.strictEqual(r.body.code, 'feature_disabled');
+    }
+
+    // No vacation can be booked, by anybody, for anybody.
+    const mine = await as('ana', '/leave/mine', { method: 'POST',
+      body: { from: vacation.addDays(today(), 170), to: vacation.addDays(today(), 171) } });
+    assert.strictEqual(mine.status, 409);
+    assert.strictEqual(mine.body.code, 'feature_disabled');
+
+    // The dashboard still draws, and says the feature is off rather than hiding.
+    const d = await lists(today());
+    assert.strictEqual(d.status, undefined);
+    assert.strictEqual(d.leave.enabled, false);
+    assert.ok(Array.isArray(d.notStarted.rows));
+    assert.ok(Array.isArray(d.notFilled.rows));
+
+    // And the profile section still reads, so nothing already booked is stuck.
+    const listed = await as('ana', '/leave/mine');
+    assert.strictEqual(listed.status, 200);
+    assert.strictEqual(listed.body.rules.enabled, false);
+    assert.strictEqual(listed.body.rules.leaveEnabled, false);
+    await bothOn();
+  });
+
   await t.test('who is away, scoped, with the work sitting on their desk', async () => {
     const team = await as('root', '/leave/team');
     assert.strictEqual(team.status, 200, JSON.stringify(team.body));

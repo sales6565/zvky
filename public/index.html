@@ -1241,6 +1241,27 @@ tr.past-round{opacity:0.62;}
 /* VACATION MODE IN THE PROFILE. Two date fields on one row at any width, the
    halves under them, and the list below — nothing positioned, so the modal
    scrolls as one piece on a phone. */
+/* UPCOMING LEAVES, on the Admin Dashboard. One row per booking, wrapping at
+   narrow widths; the open-work count is a control where it can be opened and
+   plain text where it cannot — the rule the follow-up row's name follows. */
+.ul-list{display:flex;flex-direction:column;gap:6px;}
+.ul-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;font-size:11.5px;
+  padding:6px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface-2);}
+.ul-name{color:var(--ink);font-weight:500;}
+.ul-tag{font-family:'IBM Plex Mono';font-size:10px;color:var(--info-ink);
+  border:1px solid var(--info-t30);border-radius:20px;padding:1px 7px;flex:none;}
+.ul-when{font-family:'IBM Plex Mono';font-size:10.5px;color:var(--ink-muted);}
+.ul-now{font-family:'IBM Plex Mono';font-size:10px;color:var(--warning-ink);
+  background:var(--warning-wash-t12);border:1px solid var(--warning-wash-t30);
+  border-radius:20px;padding:1px 7px;flex:none;}
+.ul-load{margin-left:auto;font-family:'IBM Plex Mono';font-size:10.5px;cursor:pointer;
+  background:var(--surface-3);border:1px solid var(--border);border-radius:7px;padding:2px 8px;
+  color:var(--ink);white-space:nowrap;}
+.ul-load:hover{border-color:var(--brand-accent);color:var(--brand-accent);}
+.ul-load:focus-visible{outline:2px solid var(--focus-ring);outline-offset:1px;}
+.ul-load.is-plain{cursor:default;background:none;}
+.ul-clear{margin-left:auto;font-family:'IBM Plex Mono';font-size:10.5px;color:var(--ink-faint);}
+.ul-note{flex-basis:100%;font-size:10.5px;color:var(--ink-muted);}
 .pf-vac-dates,.pf-vac-halves{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;}
 .pf-vac-dates label,.pf-vac-halves label{flex:1 1 150px;min-width:0;font-size:11.5px;
   color:var(--ink-muted);display:flex;flex-direction:column;gap:3px;}
@@ -14628,11 +14649,82 @@ async function renderAdminDashboard(){
            Up: the server omits the key, so there is no slot and nothing on the
            page to notice. -->
       <div id="followUpSlot">${renderFollowUp()}</div>
+
+      <!-- Upcoming leaves. Absent entirely without View Team Leave &
+           Vacations: the slot is not drawn, so there is nothing on the page to
+           notice. Filled asynchronously because it is one more request and the
+           dashboard should not wait on it. -->
+      <div id="upcomingLeaveSlot"></div>
     </div>`;
 
   wireAdminDashboard();
   wireCapacity();
   wireFollowUp();
+  loadUpcomingLeave();
+}
+
+/* ---------- Upcoming leaves ----------
+ *
+ * WHO IS AWAY IN THE NEXT FORTNIGHT, with the number of actionable assets
+ * sitting on their desk — and the number is a BUTTON, because the only useful
+ * thing to do about "Ana is away from Monday and has four tasks open" is to
+ * move them before Monday. It opens the person in Users, which is where their
+ * work is listed and where a reassignment starts.
+ *
+ * THE COUNT IS THE SERVER'S, from dayStatus.actionableCount() — the same
+ * predicate the Idle button and the "waiting on them" figure use, so the three
+ * cannot tell a reader three different numbers about one desk.
+ */
+let UPCOMING_LEAVE = null;
+
+async function loadUpcomingLeave(){
+  const slot = document.getElementById('upcomingLeaveSlot');
+  if(!slot) return;
+  if(!can('leave.view_team')){ slot.innerHTML = ''; return; }
+  try{
+    UPCOMING_LEAVE = await api('/leave/team');
+  }catch(err){
+    UPCOMING_LEAVE = null;
+    slot.innerHTML = '';
+    return;
+  }
+  paintUpcomingLeave();
+}
+
+function paintUpcomingLeave(){
+  const slot = document.getElementById('upcomingLeaveSlot');
+  const d = UPCOMING_LEAVE;
+  if(!slot || !d) return;
+  const rows = d.vacations || [];
+  slot.innerHTML = `<section class="ad-panel">
+    <div class="ad-panel-head">
+      <h2>Upcoming leaves</h2>
+      <span class="ref-key">${rows.length
+        ? `${rows.length} between ${escapeHTML(vacDate(d.from))} and ${escapeHTML(vacDate(d.to))}`
+        : 'nobody is away in the next fortnight'}</span>
+    </div>
+    ${rows.length ? `<div class="ul-list">${rows.map(v => `
+      <div class="ul-row">
+        <span class="ul-name">${escapeHTML(v.personName)}</span>
+        <span class="ul-tag">${escapeHTML(v.type || 'Vacation')}</span>
+        <span class="ul-when">${escapeHTML(vacRange({ from: v.from, to: v.endedOn || v.to }))}</span>
+        ${v.phase === 'active' ? '<span class="ul-now">away now</span>' : ''}
+        ${v.status === 'submitted' ? '<span class="ul-tag">waiting to be approved</span>' : ''}
+        ${Number(v.actionable) > 0
+          ? (can('user.view')
+            ? `<button type="button" class="ul-load" data-ul-user="${escapeHTML(v.userId)}"
+                aria-label="Open ${escapeHTML(v.personName)} in Users to move their work"
+                >${Number(v.actionable)} open → move</button>`
+            : `<span class="ul-load is-plain">${Number(v.actionable)} open</span>`)
+          : '<span class="ul-clear">nothing open</span>'}
+        ${v.note ? `<span class="ul-note">${escapeHTML(v.note)}</span>` : ''}
+      </div>`).join('')}</div>`
+      : '<div class="fu-leave-none">Nothing booked in the next fortnight.</div>'}
+  </section>`;
+
+  slot.querySelectorAll('[data-ul-user]').forEach(b => b.addEventListener('click', ()=>{
+    openUserDetail(b.dataset.ulUser);
+  }));
 }
 
 /* One stat card. The number is the point, so it is the largest thing on it and
@@ -15816,8 +15908,14 @@ function fuReassignOffer(){
           ${opts === undefined ? '<option value="">Loading…</option>'
             : (opts.length
               ? `<option value="">Reassign to…</option>${opts.map(o=>
+                /* THE WARNING IS IN THE OPTION'S OWN TEXT and the option stays
+                   selectable. A <select> cannot carry a chip, and the brief is
+                   explicit that this never blocks an assignment: somebody back
+                   on Thursday is a fine person to give Friday's work to. The
+                   dates come from the server; nothing here formats a range. */
                 `<option value="${escapeHTML(o.id)}"${r.picked && r.picked[a.id]===o.id?' selected':''}
-                  >${escapeHTML(o.name)} · ${escapeHTML(o.roleLabel||'')}</option>`).join('')}`
+                  >${escapeHTML(o.name)} · ${escapeHTML(o.roleLabel||'')}${
+                    o.away ? ` · ⚠ away ${escapeHTML(vacRange(o.away))}` : ''}</option>`).join('')}`
               : '<option value="">There is nobody else to hand this to</option>')}
         </select>
         <button type="button" class="fu-day-btn" data-fu-reassign-do="${escapeHTML(a.id)}"
@@ -21552,6 +21650,18 @@ function vacDate(iso){
   if(!/^\d{4}-\d{2}-\d{2}$/.test(String(iso||''))) return String(iso||'');
   const [, m, d] = iso.split('-');
   return `${Number(d)} ${VAC_MONTHS[Number(m)-1]}`;
+}
+
+/* "12–20 Oct" — a range in the shortest honest form. Same month collapses to
+   one month name; one day is just that day. Shown only; the ISO strings are
+   what travel. */
+function vacRange(a){
+  if(!a || !a.from) return '';
+  if(a.from === a.to) return vacDate(a.from);
+  const sameMonth = a.from.slice(0, 7) === a.to.slice(0, 7);
+  return sameMonth
+    ? `${Number(a.from.slice(8))}–${vacDate(a.to)}`
+    : `${vacDate(a.from)} – ${vacDate(a.to)}`;
 }
 
 async function saveVacation(){
