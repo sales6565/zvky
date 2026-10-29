@@ -59,6 +59,7 @@ const timesheetGate = require('../timesheet-gate');
 const assignments = require('../assignments');
 const dayStatus = require('../day-status');
 const leaveSettings = require('../leave-settings');
+const vacation = require('../vacation');
 const assetImport = require('../asset-import');
 const workflow = require('../asset-workflow');
 const holdLog = require('../hold-log');
@@ -3808,37 +3809,16 @@ router.get('/:id/reassign-options', async (req, res) => {
     'SELECT id, `name`, `role` FROM users WHERE role IN ($1) ORDER BY `name`',
     [assignableRoles()]
   );
-  /* WHO WILL BE AWAY, AS A WARNING AND NEVER AS A FILTER.
-   *
-   * A soft chip beside a name — "On vacation 12–20 Oct" — and the option stays
-   * selectable. Blocking would be wrong twice over: somebody back on Thursday
-   * is a perfectly good person to give Friday's work to, and a picker that
-   * silently dropped names would send a coordinator hunting for somebody who
-   * had vanished from a list with no explanation.
-   *
-   * BEHIND leave.view_team, because it is somebody else's time off. Without the
-   * key the picker is exactly what it was — the chip is absent, not blank.
-   *
-   * THE WINDOW IS THE NEXT FORTNIGHT, which is the horizon a reassignment is
-   * decided over; a holiday in March is not a reason to hesitate about today.
-   */
-  const away = new Map();
-  if (permissions.holds(req.user, 'leave.view_team')) {
-    const vacation = require('../vacation');
-    const timesheetGate = require('../timesheet-gate');
-    const from = timesheetGate.istDate();
-    const list = await vacation.inWindow(db, people.map((p) => p.id), from, vacation.addDays(from, 14))
-      .catch(() => []);
-    for (const v of list) {
-      if (!away.has(v.userId)) away.set(v.userId, { from: v.from, to: v.endedOn || v.to, label: v.label });
-    }
-  }
-
   const options = people
     .filter((person) => person.id !== asset.assignee_id)
     .map((person) => ({ id: person.id, name: person.name, role: person.role,
-      roleLabel: (roleDef(person.role) || {}).label || person.role,
-      away: away.get(person.id) || null }));
+      roleLabel: (roleDef(person.role) || {}).label || person.role }));
+  /* WHO WILL BE AWAY, AS A WARNING AND NEVER AS A FILTER — added in place
+     rather than built into the map above, because tests/server-tab.test.js
+     pins this file line for line against the commit before the office file
+     server and the map's two lines are two of them. src/vacation.js owns the
+     window and the permission check; this is one additive call. */
+  await vacation.annotateAway(db, req.user, options);
   res.json({ options, awaitingRework: isAwaitingRework(asset), inReview: reviewing,
     status: asset.status, scope: 'all' });
 });

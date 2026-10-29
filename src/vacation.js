@@ -485,8 +485,42 @@ async function cancel(db, { requestId, actor, today = null, fromDate = null, may
   };
 }
 
+/* THE SOFT WARNING ON AN ASSIGNEE PICKER, and the reason it lives here.
+ *
+ * src/routes/assets.js is pinned line for line by tests/server-tab.test.js
+ * against the commit before the office file server — it is the file the one
+ * endpoint every artist uses lives in — so a feature that wanted four lines
+ * there could have had one. The window, the permission and the de-duplication
+ * are this module's business anyway.
+ *
+ * A WARNING AND NEVER A FILTER. The option stays selectable: somebody back on
+ * Thursday is a perfectly good person to give Friday's work to, and a picker
+ * that silently dropped names would send a coordinator hunting for somebody who
+ * had vanished from a list with no explanation.
+ *
+ * BEHIND leave.view_team, because it is somebody else's time off. Without the
+ * key the options are exactly what they were — `away` is absent, not null, so
+ * nothing on the page can tell the difference between "not away" and "you may
+ * not know".
+ *
+ * MUTATES IN PLACE AND RETURNS THE SAME ARRAY, so the caller's one line can be
+ * a statement rather than a reassignment. */
+async function annotateAway(db, user, options) {
+  if (!Array.isArray(options) || !options.length) return options;
+  const permissions = require('./permissions');
+  if (!permissions.holds(user, 'leave.view_team')) return options;
+  const from = timesheetGate.istDate();
+  const list = await inWindow(db, options.map((o) => o.id), from, addDays(from, 14)).catch(() => []);
+  const away = new Map();
+  for (const v of list) {
+    if (!away.has(v.userId)) away.set(v.userId, { from: v.from, to: v.endedOn || v.to, label: v.label });
+  }
+  for (const option of options) option.away = away.get(option.id) || null;
+  return options;
+}
+
 module.exports = {
-  STATUS, LIVE,
+  STATUS, LIVE, annotateAway,
   daysOf, validate, conflicts, overlapMessage, describe,
   listFor, byId, inWindow, daysOfRequest,
   submit, decide, cancel, materialise,

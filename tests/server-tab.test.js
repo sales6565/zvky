@@ -266,10 +266,33 @@ test('PRODUCTION SAFETY: the submit route is exactly what it was', () => {
     const added = b.filter((line) => line.trim() && !a.includes(line));
     const removed = a.filter((line) => line.trim() && !b.includes(line));
     assert.deepStrictEqual(removed, [], `the submit route lost code: ${removed.join(' | ')}`);
+    /* WHAT MAY BE ADDED, as a list of arguments rather than a pattern to edit.
+     *
+     * The promise this test makes is that the submit route and the legacy
+     * download do not change. It keeps that promise by pinning the WHOLE file,
+     * which is the strongest form of it and also means an additive change to
+     * any other route in the file has to be argued here. Each entry says which
+     * feature the line belongs to and why it cannot affect submitting work.
+     *
+     * NOTHING MAY BE REMOVED, whatever is on this list — that assertion above
+     * is absolute, and it is the half that actually protects the endpoint. */
+    const ADDITIVE = [
+      [/server-settings|server-submissions|submitUploadEnabled\(\)|serverSubmissions\.claim/,
+        'the office file server: inert while the Server tab is off'],
+      [/^\s*\}$/, 'a brace closing one of the blocks above'],
+      /* Prompt 55. The assignee picker gains a soft "on vacation" chip, which is
+         a different route in this file (/reassign-options) and reads nothing the
+         submit route touches. Two lines: the require, and one call that mutates
+         the options array in place — src/vacation.js owns the window and the
+         permission, deliberately, so that this file gained one line and not
+         four. */
+      [/require\('\.\.\/vacation'\)|vacation\.annotateAway\(/,
+        'the assignee picker\'s vacation warning, on another route entirely'],
+    ];
     for (const line of added) {
-      assert.ok(
-        /server-settings|server-submissions|submitUploadEnabled\(\)|serverSubmissions\.claim|^\s*\}$/.test(line),
-        `src/routes/assets.js gained a line that is not the office file server's additive hook: ${line}`
+      const why = ADDITIVE.find(([re]) => re.test(line));
+      assert.ok(why,
+        `src/routes/assets.js gained a line that no entry in ADDITIVE accounts for: ${line}`
       );
     }
   }

@@ -19282,9 +19282,34 @@ async function renderLeaveSettings(){
   const d = leaveState.data;
   const s = d.settings;
   const errFor = (f)=>{ const e = leaveState.errors.find(x=>x.field===f); return e ? e.message : ''; };
-  const shown = leaveState.typed || {
+  /* ONE OBJECT THE WHOLE FORM DRAWS FROM: what is stored, overlaid with what
+     the reader has typed since.
+     
+     THIS IS THE FIX FOR PROMPT 56, and the bug is worth stating because it had
+     been shipping since Prompt 48 and nothing noticed. The Save handler used to
+     call renderLeaveSettings() FIRST, to put "Saving…" on the button — which
+     replaces the section's innerHTML and therefore every control in it — and
+     only THEN read document.getElementById('lv_enabled').checked. So it read a
+     checkbox that had just been recreated from the STORED value, and the
+     reader's tick was discarded before the request was built. The save returned
+     200 and changed nothing, which is exactly "it does not save, and gives no
+     reason".
+     
+     The two time fields escaped it by accident: `first` and `second` are
+     captured once and their typed values were stashed in leaveState.typed by an
+     `input` listener, so the re-render read them back. Every checkbox and both
+     number fields had no such stash. Now everything does, and the form is read
+     BEFORE anything re-renders. */
+  const shown = {
+    enabled: s.enabled,
     firstHalfEnd: d.split.firstHalfEnd,
     secondHalfStart: d.split.secondHalfStart,
+    vacationEnabled: s.vacationEnabled,
+    vacationRequireApproval: s.vacationRequireApproval,
+    vacationMinNoticeDays: Number(s.vacationMinNoticeDays) || 1,
+    vacationMaxRangeDays: Number(s.vacationMaxRangeDays) || 60,
+    vacationEmailEnabled: s.vacationEmailEnabled,
+    ...(leaveState.typed || {}),
   };
   el.innerHTML = `
     <div class="ref-section">
@@ -19298,7 +19323,7 @@ async function renderLeaveSettings(){
         still be undone. A switch that rewrote last month's totals would not be a switch.</div>
       <div class="ref-add">
         <div style="align-self:end;">
-          <label class="rh-check"><input type="checkbox" id="lv_enabled"${s.enabled?' checked':''}>
+          <label class="rh-check"><input type="checkbox" id="lv_enabled"${shown.enabled?' checked':''}>
             <strong>Enable Leave, Idle &amp; Onsight</strong></label>
         </div>
         <div class="rh-f">
@@ -19341,32 +19366,32 @@ async function renderLeaveSettings(){
         — a From and To date, with a half-day choice on the first and last day. It creates the same
         leave days a lead would mark by hand, so the hours, the timesheet rule, the nudges and the
         follow-up lists all behave identically.
-        ${s.enabled ? '' : '<strong>Needs Leave, Idle &amp; Onsight above switched on first.</strong>'}</div>
+        ${shown.enabled ? '' : '<strong>Needs Leave, Idle &amp; Onsight above switched on first.</strong>'}</div>
       <div class="ref-add">
         <div style="align-self:end;">
-          <label class="rh-check"><input type="checkbox" id="lv_vac"${s.vacationEnabled?' checked':''}
-            ${s.enabled?'':'disabled'}>
+          <label class="rh-check"><input type="checkbox" id="lv_vac"${shown.vacationEnabled?' checked':''}
+            ${shown.enabled?'':'disabled'}>
             <strong>Enable Vacation mode</strong></label>
           ${errFor('vacationEnabled') ? `<div class="rh-err">${escapeHTML(errFor('vacationEnabled'))}</div>` : ''}
         </div>
         <div style="align-self:end;">
-          <label class="rh-check"><input type="checkbox" id="lv_vac_approve"${s.vacationRequireApproval?' checked':''}>
+          <label class="rh-check"><input type="checkbox" id="lv_vac_approve"${shown.vacationRequireApproval?' checked':''}>
             Needs approving</label>
         </div>
         <div class="rh-f">
           <label for="lv_vac_notice">Minimum notice (days)</label>
           <input type="number" id="lv_vac_notice" class="narrow${errFor('vacationMinNoticeDays')?' bad':''}"
-                 min="1" max="180" value="${Number(s.vacationMinNoticeDays)||1}">
+                 min="1" max="180" value="${Number(shown.vacationMinNoticeDays)||1}">
           ${errFor('vacationMinNoticeDays') ? `<div class="rh-err">${escapeHTML(errFor('vacationMinNoticeDays'))}</div>` : ''}
         </div>
         <div class="rh-f">
           <label for="lv_vac_range">Longest range (days)</label>
           <input type="number" id="lv_vac_range" class="narrow${errFor('vacationMaxRangeDays')?' bad':''}"
-                 min="1" max="366" value="${Number(s.vacationMaxRangeDays)||60}">
+                 min="1" max="366" value="${Number(shown.vacationMaxRangeDays)||60}">
           ${errFor('vacationMaxRangeDays') ? `<div class="rh-err">${escapeHTML(errFor('vacationMaxRangeDays'))}</div>` : ''}
         </div>
         <div style="align-self:end;">
-          <label class="rh-check"><input type="checkbox" id="lv_vac_mail"${s.vacationEmailEnabled?' checked':''}>
+          <label class="rh-check"><input type="checkbox" id="lv_vac_mail"${shown.vacationEmailEnabled?' checked':''}>
             Email as well as notify</label>
         </div>
       </div>
@@ -19382,19 +19407,55 @@ async function renderLeaveSettings(){
   /* WHAT WAS TYPED WINS OVER WHAT IS STORED, so a refused save keeps the edits
      rather than showing an error about values no longer on screen — the same
      rule the Holidays rows follow. */
-  const keep = ()=>{ leaveState.typed = { firstHalfEnd:first.value, secondHalfStart:second.value }; };
+  const master = document.getElementById('lv_enabled');
+  const vac = document.getElementById('lv_vac');
+
+  /* THE WHOLE FORM, READ OFF THE DOM IN ONE PLACE.
+   *
+   * Called before anything re-renders, and again on every change so a refused
+   * save can draw back exactly what the reader had. One reader for the form
+   * means the Save body and the redraw cannot disagree about which controls
+   * exist — which is the other half of the Prompt 56 bug: five controls were
+   * added in Prompt 55 and the "keep what was typed" stash still knew only
+   * about two. */
+  const readForm = ()=>{
+    const box = (id)=>{ const el = document.getElementById(id); return el ? el.checked : false; };
+    const num = (id, fallback)=>{
+      const el = document.getElementById(id);
+      const n = el ? Number(el.value) : NaN;
+      return Number.isFinite(n) ? n : fallback;
+    };
+    return {
+      enabled: box('lv_enabled'),
+      firstHalfEnd: first ? first.value : '',
+      secondHalfStart: second ? second.value : '',
+      vacationEnabled: box('lv_vac'),
+      vacationRequireApproval: box('lv_vac_approve'),
+      vacationMinNoticeDays: num('lv_vac_notice', 1),
+      vacationMaxRangeDays: num('lv_vac_range', 60),
+      vacationEmailEnabled: box('lv_vac_mail'),
+    };
+  };
+
+  const keep = ()=>{ leaveState.typed = readForm(); };
   first.addEventListener('input', keep);
   second.addEventListener('input', keep);
+  for(const id of ['lv_enabled','lv_vac','lv_vac_approve','lv_vac_mail','lv_vac_notice','lv_vac_range']){
+    const el = document.getElementById(id);
+    if(el) el.addEventListener('change', keep);
+  }
 
   /* THE DEPENDENCY, SHOWN AS IT IS MADE. Unticking the master switch disables
      the Vacation one in front of the reader instead of letting them save a pair
-     the server will refuse. The server still refuses it — see
-     src/leave-settings.js validate() — this only stops the round trip. */
-  const master = document.getElementById('lv_enabled');
-  const vac = document.getElementById('lv_vac');
+     the server will refuse; ticking it enables the Vacation switch in the same
+     breath, which is what makes "turn both on in one save" possible at all —
+     a disabled checkbox cannot be ticked, by a mouse or by anything else.
+     The server still refuses the illegal pair — see src/leave-settings.js
+     validate(), which checks the FINAL state — this only stops the round trip. */
   if(master && vac) master.addEventListener('change', ()=>{
     vac.disabled = !master.checked;
     if(!master.checked) vac.checked = false;
+    keep();
   });
 
   document.getElementById('lv_reset').onclick = ()=>{
@@ -19405,26 +19466,27 @@ async function renderLeaveSettings(){
 
   document.getElementById('lv_save').onclick = async ()=>{
     if(leaveState.busy) return;
+    /* READ THE FORM FIRST. renderLeaveSettings() below replaces every control
+       in this section, so anything read after it is the STORED value and not
+       what the reader chose. That ordering is the whole of the Prompt 56 bug:
+       the save returned 200 and changed nothing. */
+    const form = readForm();
+    leaveState.typed = form;
     leaveState.busy = true; leaveState.msg = null; renderLeaveSettings();
     try{
-      const num = (id, fallback) => {
-        const el = document.getElementById(id);
-        const n = el ? Number(el.value) : NaN;
-        return Number.isFinite(n) ? n : fallback;
-      };
       const out = await api('/admin/settings/leave', { method:'PUT', body:{
-        enabled: document.getElementById('lv_enabled').checked,
-        firstHalfEndMinutes: first.value,
-        secondHalfStartMinutes: second.value,
+        enabled: form.enabled,
+        firstHalfEndMinutes: form.firstHalfEnd,
+        secondHalfStartMinutes: form.secondHalfStart,
         /* ALL FIVE TRAVEL ON EVERY SAVE, so a half-filled body cannot silently
            reset one of them to its default: validate() falls back to the
            STORED value for a field it is not given, and "not given" and
            "unchecked" are different things for a checkbox. */
-        vacationEnabled: document.getElementById('lv_vac').checked,
-        vacationRequireApproval: document.getElementById('lv_vac_approve').checked,
-        vacationMinNoticeDays: num('lv_vac_notice', 1),
-        vacationMaxRangeDays: num('lv_vac_range', 60),
-        vacationEmailEnabled: document.getElementById('lv_vac_mail').checked,
+        vacationEnabled: form.vacationEnabled,
+        vacationRequireApproval: form.vacationRequireApproval,
+        vacationMinNoticeDays: form.vacationMinNoticeDays,
+        vacationMaxRangeDays: form.vacationMaxRangeDays,
+        vacationEmailEnabled: form.vacationEmailEnabled,
       } });
       leaveState.data = out;
       leaveState.errors = [];
@@ -19440,7 +19502,21 @@ async function renderLeaveSettings(){
     }catch(err){
       leaveState.errors = (err.body && err.body.errors) || [];
       leaveState.warnings = (err.body && err.body.warnings) || [];
-      leaveState.msg = leaveState.errors.length ? null : { kind:'err', text: err.message };
+      /* ALWAYS A REASON BESIDE SAVE, and the field errors as well where there
+         are any. It used to set the message to null whenever there were field
+         errors, on the reasoning that the fields said it already — but a
+         refusal about a CHECKBOX has nowhere to put a field error the eye will
+         find, and a reader who scrolled past it is looking at a Save button
+         that did nothing. So both, every time. The typed values are kept above,
+         so a correction is one keystroke. */
+      leaveState.msg = {
+        kind: 'err',
+        text: leaveState.errors.length
+          ? (leaveState.errors.length === 1
+            ? `Not saved — ${leaveState.errors[0].message}`
+            : `Not saved — ${leaveState.errors.length} problems: ${leaveState.errors.map(e=>e.message).join(' ')}`)
+          : `Not saved — ${err.message}`,
+      };
     }finally{
       leaveState.busy = false;
       renderLeaveSettings();
@@ -22443,6 +22519,13 @@ const NOTIF_TITLES = {
      One title for both directions, because the sentence underneath says which
      and the title's job is to say what it is about. */
   day_status: 'Your day was marked',
+  /* A VACATION MOVED. One title for all five things that can happen to one —
+     booked, cancelled, ended early, approved, rejected — because the sentence
+     underneath says which, and because this kind travels in two directions:
+     to a lead about somebody else's booking, and back to the person about a
+     decision. A title that said "your vacation" would be wrong half the time,
+     and one that said "somebody's vacation" would be wrong the other half. */
+  vacation: 'Vacation',
   /* The office file server. Two titles, because the two directions are two
      different things to be told: a job has arrived for whoever looks after the
      share, and a job you asked for has been answered. The path and the reason

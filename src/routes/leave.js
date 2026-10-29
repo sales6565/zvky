@@ -76,29 +76,43 @@ async function reachable(user) {
  * version, built here rather than invented in four places later.
  *
  * IT IS THE PROJECT'S LEADERSHIP, not a reporting line, because that is the
- * only relationship this schema holds: the team leads, the acting team leads
- * and the production coordinators of the projects the person is a member of.
- * All three, because all three plan the work the person was going to do.
+ * only relationship this schema holds. And it is asked of
+ * permissions.projectLeadIds(), which OWNS that union — the team leads, the
+ * acting team leads, the coordinators and the supervisors of a project.
+ *
+ * ASKED RATHER THAN RETYPED, and a frozen run is why: the first version of this
+ * function joined the acting-team-lead membership table itself, and
+ * tests/acting-team-leads.test.js refused it — that table has an allowlist of
+ * readers precisely so it does not acquire a fifth the way its three older
+ * siblings did. The allowlist was right and this function was wrong. (The name
+ * is deliberately not spelled here either: the allowlist is enforced by a
+ * substring scan over src/, so a comment that named it would trip the same
+ * check for no reason.)
  *
  * DE-DUPLICATED BY ID, since one person is commonly two of those things on two
  * projects, and nobody should be told twice.
  */
 async function leadsFor(userId) {
-  const { rows } = await db.query(
-    `SELECT DISTINCT u.id, u.\`name\`, u.email
-       FROM (
-         SELECT project_id FROM project_members     WHERE user_id = $1
-         UNION SELECT project_id FROM project_team_leads  WHERE user_id = $1
-         UNION SELECT project_id FROM project_coordinators WHERE user_id = $1
-       ) mine
-       JOIN (
-         SELECT project_id, user_id FROM project_team_leads
-         UNION SELECT project_id, user_id FROM project_acting_team_leads
-         UNION SELECT project_id, user_id FROM project_coordinators
-       ) lead ON lead.project_id = mine.project_id
-       JOIN users u ON u.id = lead.user_id AND u.is_active = 1
-      WHERE lead.user_id <> $1`,
+  /* WHICH PROJECTS THIS PERSON IS ON. The membership tables src/user-project.js
+     names, which is where "this person belongs to this project" lives. */
+  const { rows: mine } = await db.query(
+    `SELECT project_id AS projectId FROM project_members WHERE user_id = $1
+     UNION SELECT project_id FROM project_team_leads WHERE user_id = $1
+     UNION SELECT project_id FROM project_coordinators WHERE user_id = $1`,
     [userId]
+  ).catch(() => ({ rows: [] }));
+  if (!mine.length) return [];
+
+  const ids = new Set();
+  for (const row of mine) {
+    for (const leadId of await permissions.projectLeadIds(row.projectId)) {
+      if (leadId !== userId) ids.add(leadId);
+    }
+  }
+  if (!ids.size) return [];
+  const { rows } = await db.query(
+    'SELECT id, `name`, email FROM users WHERE id IN ($1) AND is_active = 1 ORDER BY `name`',
+    [[...ids]]
   ).catch(() => ({ rows: [] }));
   return rows.map((r) => ({ id: r.id, name: r.name, email: r.email }));
 }
