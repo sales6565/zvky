@@ -350,6 +350,32 @@ const workingDay = () => {
   };
 };
 
+/* WHICH PROJECTS THIS PERSON LEADS, for the TL Action box.
+ *
+ * SENT WITH THE WEEK RATHER THAN ASKED PER PROJECT. The first build of this
+ * feature had an endpoint the form called every time the project picker
+ * changed; a list of ids sent once with the week it belongs to answers the same
+ * question with no endpoint at all, no round trip while somebody is filling in
+ * a form, and nothing to cache or invalidate.
+ *
+ * ONLY FOR SOMEBODY WHO COULD USE IT. Two queries, skipped entirely for the
+ * people who do not hold the key — which is almost everybody, and all of them
+ * on every load of the week.
+ *
+ * THE PAGE STILL DECIDES NOTHING. This is the server's answer to "do you lead
+ * it", exactly as the endpoint's was; the form draws the box from it, and the
+ * save asks permissions.isProjectLead() again regardless. A list here that
+ * somebody tampered with buys nothing.
+ */
+async function tlActionProjectsFor(user) {
+  if (!policy().tlAction || !holds(user, 'timesheet.tl_action')) return [];
+  const reach = await permissions.visibleProjects(user).catch(() => []);
+  const ids = reach.map((p) => p.id).filter(Boolean);
+  if (!ids.length) return [];
+  const led = await permissions.reviewTeamProjects(user.id, ids).catch(() => new Set());
+  return ids.filter((id) => led.has(id));
+}
+
 /* GET /api/timesheets/week?date=&userId= — seven days, for filling in.
  *
  * Still a week on screen even though submission is now daily: a week is how
@@ -400,6 +426,10 @@ router.get('/week', requirePermission('timesheet.own'), async (req, res) => {
          way back out of a locked day is the owner's own reopen. */
       nonProjectTypes: sheets.nonProject(),
       workingDay: workingDay(),
+      /* THE PROJECTS THIS READER LEADS, so the TL Action box knows whether it
+         belongs on the line being added. Empty for everybody without the key,
+         and for everybody when the studio's switch is off. */
+      tlActionProjects: await tlActionProjectsFor(req.user),
       days: shaped,
       weekStart: days[0],
       weekEnd: days[6],
@@ -421,6 +451,9 @@ router.get('/week', requirePermission('timesheet.own'), async (req, res) => {
     res.json({
       user: null, mine: true, mayEdit: false, mayDecide: false, unavailable: true,
       nonProjectTypes: sheets.nonProject(), workingDay: workingDay(),
+      /* Empty on the unavailable path, like every other list in this payload:
+         a deployment whose timesheet tables are missing has no lines to add. */
+      tlActionProjects: [],
       days: days.map((d) => shapeDay(null, [], d)),
       weekStart: days[0], weekEnd: days[6], weekHours: 0,
       weekSplit: { project: 0, nonProject: 0, idle: 0 },
@@ -639,28 +672,31 @@ function hoursLabel(hours) {
 /* ---------------------------------------------------------------------------
  * TL ACTION, ON THE WAY IN.
  *
- * EVERY QUESTION ASKED ON THE SERVER, because the check box, the dropdown, the
- * greyed-out options and the locked Hours field are all things a person can
- * change with a developer console open. The page's version of these rules is
- * there so somebody is told before the round trip; this is the one that
- * decides.
+ * EVERY QUESTION ASKED ON THE SERVER, because the check box, the dropdown and
+ * the hidden Asset field are all things a person can change with a developer
+ * console open. The page's version of these rules is there so somebody is told
+ * before the round trip; this is the one that decides.
  *
  * ORDER MATTERS AND IS CHEAP-FIRST: the shape of the value, then the studio's
  * switch, then the key, then the kind of line, then the project membership —
  * which is the only one that costs a query.
  *
- * THE HOURS ARE NEVER THE CALLER'S for an asset review. They are recomputed
- * from the sessions by the same function the picker displayed, and whatever the
- * request carried is dropped. A locked field the API will happily overwrite is
- * not locked, it is decorated — which is the note hoursFor() above already
- * makes about recorded hours, and this is the same rule for the same reason.
+ * BOTH KINDS ARE THE SAME SHAPE now that a review is typed: project work, a
+ * project, no asset, and a number of hours the lead types. The hours are left
+ * to validateEntry, which already owns the step, the minimum, the maximum and
+ * the soft day cap — there is no second opinion about what a valid number of
+ * hours is, here or anywhere.
  */
-async function tlActionFor(user, body, { exceptId = null } = {}) {
+async function tlActionFor(user, body) {
   const raw = body.tlAction === undefined || body.tlAction === null || body.tlAction === ''
     ? null : String(body.tlAction);
   if (raw === null) return { ok: true, tlAction: null };
 
   if (!tlReview.isAction(raw)) {
+    /* INCLUDING 'asset_review', the name the first build of this feature used.
+       A client still sending it is told rather than quietly filed, which is why
+       isAction refuses it even though labelFor still reads it — strict on the
+       way in, lenient on the way out. */
     return { ok: false, status: 400, error: 'That is not a kind of TL Action.', field: 'tlAction' };
   }
   if (!policy().tlAction) {
@@ -671,7 +707,7 @@ async function tlActionFor(user, body, { exceptId = null } = {}) {
     return { ok: false, status: 403, field: 'tlAction',
       error: 'You do not have the permission to log TL Action time.' };
   }
-  /* PROJECT WORK ONLY. A meeting about a project and a review of an asset are
+  /* PROJECT WORK ONLY. A meeting about a project and a review of its work are
      both project time; neither is Leave, Training or Idle, and the non-project
      categories have their own second dropdown that would collide with this one. */
   const projectId = body.projectId || null;
@@ -679,73 +715,22 @@ async function tlActionFor(user, body, { exceptId = null } = {}) {
     return { ok: false, status: 400, field: 'projectId',
       error: 'TL Action is project work: choose the client and the project it was for.' };
   }
+  /* NO ASSET, FOR EITHER KIND. A meeting is not about one asset and a review is
+     the lead's own time rather than time on the thing reviewed — allowing one
+     would put a lead's hours on an asset's row in every screen that groups by
+     asset. Refused rather than quietly cleared: a request that names an asset
+     meant to name one. */
+  if (body.assetId) {
+    return { ok: false, status: 400, field: 'assetId',
+      error: 'TL Action time is not logged against an asset. Leave the asset unset.' };
+  }
   const reach = await permissions.visibleProjects(user);
   const inScope = reach.some((p) => p.id === projectId);
   if (!inScope || !await permissions.isProjectLead(user, projectId)) {
     return { ok: false, status: 403, field: 'projectId',
       error: 'You do not lead that project, so you cannot log TL Action time on it.' };
   }
-
-  if (raw === tlReview.ACTIONS.projectMeeting) {
-    /* NO ASSET. A meeting is not about one asset, and allowing one would put a
-       lead's meeting hours on an asset's row in every screen that groups by
-       asset. Refused rather than quietly cleared: a request that names an asset
-       meant to name one. */
-    if (body.assetId) {
-      return { ok: false, status: 400, field: 'assetId',
-        error: 'A project meeting is not logged against an asset. Leave the asset unset.' };
-    }
-    return { ok: true, tlAction: raw, calculated: false };
-  }
-
-  // asset_review
-  const assetId = String(body.assetId || '').trim();
-  if (!assetId) {
-    return { ok: false, status: 400, field: 'assetId',
-      error: 'Choose the asset you reviewed.' };
-  }
-  const { rows } = await db.query(
-    'SELECT id, project_id, `status` FROM assets WHERE id = $1', [assetId]
-  ).catch(() => ({ rows: [] }));
-  const asset = rows[0];
-  if (!asset || asset.project_id !== projectId) {
-    return { ok: false, status: 400, field: 'assetId',
-      error: 'That asset is not on the project you chose.' };
-  }
-  if (asset.status === tlReview.REVIEW_STATUS) {
-    return { ok: false, status: 409, field: 'assetId',
-      error: 'That review is not finished. Request Changes or TL Approved first, then log it.' };
-  }
-
-  const date = sheets.toISO(body.date);
-  if (!date || !sheets.isRealDate(date)) {
-    return { ok: false, status: 400, error: 'Which day?', field: 'date' };
-  }
-
-  /* ONE LINE PER LEAD, PER ASSET, PER DAY. The hours are the whole of that
-     day's reviewing, so a second line would file the same minutes twice. */
-  const { rows: dupe } = await db.query(
-    `SELECT id FROM timesheet_entries
-      WHERE user_id = $1 AND entry_date = $2 AND asset_id = $3 AND tl_action = $4
-        ${exceptId ? 'AND id <> $5' : ''} LIMIT 1`,
-    exceptId ? [user.id, date, assetId, tlReview.ACTIONS.assetReview, exceptId]
-      : [user.id, date, assetId, tlReview.ACTIONS.assetReview]
-  ).catch((err) => {
-    if (unavailable(err)) return { rows: [] };
-    throw err;
-  });
-  if (dupe.length) {
-    return { ok: false, status: 409, field: 'assetId',
-      error: 'You have already logged your review of that asset on that day.' };
-  }
-
-  const hours = await tlReview.hoursFor(db, { leadUserId: user.id, assetId, day: date });
-  if (!(hours > 0)) {
-    return { ok: false, status: 400, field: 'assetId',
-      error: 'None of your review of that asset fell inside that day\'s working hours, so there '
-        + 'is nothing to log against it for that day.' };
-  }
-  return { ok: true, tlAction: raw, hours, calculated: true };
+  return { ok: true, tlAction: raw };
 }
 
 async function hoursFor(userId, { assetId, hours, date }, { exceptId = null } = {}) {
@@ -791,9 +776,11 @@ router.post('/entries', requirePermission('timesheet.own'), async (req, res) => 
   const tl = await tlActionFor(req.user, req.body || {});
   if (!tl.ok) return res.status(tl.status).json({ error: tl.error, field: tl.field });
 
-  const worth = tl.calculated
-    ? { ok: true, hours: tl.hours, calculated: true }
-    : await hoursFor(req.user.id, req.body || {});
+  /* A TL Action line names no asset, so hoursFor() falls straight through to
+     "the number is the caller's" — the same path Leave, Training and
+     unattributed project time have always taken. Called anyway rather than
+     skipped, so there is one route into the figure and not two. */
+  const worth = await hoursFor(req.user.id, req.body || {});
   if (!worth.ok) return res.status(400).json({ error: worth.error, field: worth.field });
 
   const verdict = sheets.validateEntry(
@@ -892,16 +879,31 @@ router.patch('/entries/:id', requirePermission('timesheet.own'), async (req, res
     flagged: 'flagged' in req.body ? req.body.flagged : Boolean(found[0].flagged_at),
     flagNote: 'flagNote' in req.body ? req.body.flagNote : found[0].flag_note,
   };
-  /* WHAT AN EDIT MAY NOT CHANGE ON A TL ACTION LINE: what kind of action it
-     was, and which asset it was about.
+  /* WHAT AN EDIT MAY NOT CHANGE ON A TL ACTION LINE: what kind of action it was.
      
-     Not a restriction for its own sake. An asset review's hours ARE the review
-     sessions on that asset on that day — change the asset and the figure is a
-     different measurement of a different thing, and change the kind and it
-     stops being a measurement at all. The way to correct one is to delete it
-     and add the right one, which costs nothing: the sessions are still there,
-     so the asset comes straight back into "Ready to log" with the same hours.
-     Said plainly rather than silently ignored, so somebody who tried is told. */
+     A meeting is not a review and a review is not a meeting; they are two
+     different things that happened, not two labels on one. Turning an ordinary
+     line into a TL Action one is the same refusal from the other side — an
+     ordinary line was filed against an asset by somebody filling in their own
+     work, and relabelling it would move hours between two different meanings.
+     The way to correct either is to delete the line and add the right one,
+     which costs nothing: both kinds are typed.
+     
+     Said plainly rather than silently ignored, so somebody who tried is told.
+     
+     AND THE ASSET IS FROZEN RATHER THAN FORBIDDEN, which is not the same rule
+     the POST applies and is deliberately not.
+     
+     A TL Action line filed today has no asset. But a line converted from the
+     first build of this feature may still carry one, and that row has to stay
+     editable — somebody must be able to fix its hours or its note. Running the
+     POST's rule here would read the row's own inherited asset_id, refuse, and
+     leave the line permanently uneditable: a rule about what may be FILED,
+     applied to what was already filed.
+     
+     So the asset may not be changed, and is not re-examined. The value stays
+     exactly as it is rather than being cleared, because clearing it would
+     destroy the one record of which asset that line was about. */
   const wasTl = found[0].tl_action || null;
   if ('tlAction' in req.body && (req.body.tlAction || null) !== wasTl) {
     return res.status(400).json({ field: 'tlAction',
@@ -917,19 +919,27 @@ router.patch('/entries/:id', requirePermission('timesheet.own'), async (req, res
   /* The same lock as on the way in, and in the same order: a line naming an
      asset is worth what the timer recorded, and this row's own hours are
      excluded from the subtraction so an untouched edit does not shrink itself
-     to nothing.
-     
-     AND FOR A TL ACTION LINE the figure stays derived: an asset review is
-     recomputed from the sessions (with this line left out of the duplicate
-     check, so editing its notes does not refuse itself), and a project meeting
-     keeps the typed-hours path every other non-asset line uses. */
+     to nothing. A TL Action line names no asset, so it falls through to the
+     typed-hours path every other non-asset line takes. */
+  /* ASKED WITHOUT THE ASSET, because the line above has just established that
+     it is unchanged. Passing the row's own inherited asset_id into a rule about
+     what may be filed is what would make a converted row uneditable. */
   const tl = wasTl
-    ? await tlActionFor(req.user, { ...merged, tlAction: wasTl }, { exceptId: req.params.id })
+    ? await tlActionFor(req.user, { ...merged, assetId: null, tlAction: wasTl })
     : { ok: true, tlAction: null };
   if (!tl.ok) return res.status(tl.status).json({ error: tl.error, field: tl.field });
 
-  const worth = tl.calculated
-    ? { ok: true, hours: tl.hours, calculated: true }
+  /* A TL ACTION LINE'S HOURS ARE TYPED, whatever asset_id it carries.
+     
+     hoursFor() reads an asset_id as "this line is worth what the timer
+     recorded", which is right for every other line and wrong for this one. A
+     row converted from the first build of this feature still has the asset it
+     was filed against, so asking hoursFor() about it would answer "nothing was
+     recorded against that asset by you that day" and refuse the edit — leaving
+     the line permanently uncorrectable. The kind of line decides where the
+     figure comes from, not the presence of an asset_id. */
+  const worth = wasTl
+    ? { ok: true, hours: merged.hours, calculated: false }
     : await hoursFor(req.user.id, merged, { exceptId: req.params.id });
   if (!worth.ok) return res.status(400).json({ error: worth.error, field: worth.field });
 
@@ -1167,113 +1177,6 @@ router.get('/suggest', requirePermission('timesheet.own'), async (req, res) => {
     outside: figure.outside,
     future: figure.future,
   });
-});
-
-/* GET /api/timesheets/tl-review/assets?projectId=&date= — what a lead may log.
- *
- * TWO GROUPS, and the second one is the point. "Ready to log" is the work the
- * lead has finished reviewing and not yet filed; "Still in TL review" is the
- * work they have open, shown greyed rather than hidden, because an asset that
- * is simply absent from a list reads as lost. A lead who copied a path this
- * morning and has not decided yet should see the asset with the reason beside
- * it, not an empty box.
- *
- * SCOPED TWICE, like every list in this application: visibleProjects() decides
- * which projects this account can see at all, and isProjectLead() decides which
- * of those this person leads. The permission says the designation reviews work;
- * neither of those is a thing the key can answer.
- *
- * THE HOURS COME FROM THE SHARED FUNCTION, the same one the save recomputes
- * with. The page never calculates and never adds up — a list that offered 1.5
- * and a save that filed 1.25 is the bug this ordering exists to prevent.
- */
-router.get('/tl-review/assets', requirePermission('timesheet.tl_action'), async (req, res) => {
-  const empty = { projectId: null, date: null, ready: [], inReview: [], enabled: true };
-  if (!policy().tlAction) {
-    return res.json({ ...empty, enabled: false });
-  }
-  const projectId = String(req.query.projectId || '').trim();
-  const date = sheets.toISO(req.query.date);
-  if (!projectId) return res.status(400).json({ error: 'Which project?', field: 'projectId' });
-  if (!date || !sheets.isRealDate(date)) {
-    return res.status(400).json({ error: 'Which day?', field: 'date' });
-  }
-
-  /* IN SCOPE, THEN LED. Both, in that order, and the 403 says the same thing
-     for either — a lead of another project learning that this project exists
-     from the wording of a refusal is a small leak worth not having. */
-  const reach = await permissions.visibleProjects(req.user);
-  const inScope = reach.some((p) => p.id === projectId);
-  const leads = inScope && await permissions.isProjectLead(req.user, projectId);
-  if (!leads) {
-    return res.status(403).json({ error: 'You do not lead that project.', field: 'projectId' });
-  }
-
-  /* EVERY ASSET THIS LEAD HAS A SESSION ON for this project, open or closed,
-     plus what each is worth on the selected day. Two reads and no per-asset
-     query: the sessions, then one hours call for the lot. */
-  const { rows } = await db.query(
-    `SELECT s.asset_id AS assetId,
-            MAX(s.ended_at IS NULL) AS stillOpen,
-            a.\`code\` AS assetCode, a.\`name\` AS assetName, a.\`status\` AS assetStatus
-       FROM tl_review_sessions s
-       JOIN assets a ON a.id = s.asset_id
-      WHERE s.lead_user_id = $1 AND a.project_id = $2
-      GROUP BY s.asset_id, a.\`code\`, a.\`name\`, a.\`status\``,
-    [req.user.id, projectId]
-  ).catch((err) => {
-    /* No table, no list — and the form says "nothing to log" rather than
-       failing, which is what every other optional piece of the timesheet does
-       on a deployment whose migration has not run. */
-    if (unavailable(err)) return { rows: [] };
-    throw err;
-  });
-  if (!rows.length) return res.json({ ...empty, projectId, date });
-
-  const hours = await tlReview.hoursByAsset(db, {
-    leadUserId: req.user.id, assetIds: rows.map((r) => r.assetId), day: date,
-  });
-
-  /* WHAT IS ALREADY FILED, so an asset logged this morning is not offered
-     again this afternoon. One query, scoped to this lead, this day and this
-     kind of line — an ordinary project line on the same asset does not use the
-     asset up, because it is a different thing being recorded. */
-  const filed = new Set();
-  const { rows: already } = await db.query(
-    `SELECT asset_id FROM timesheet_entries
-      WHERE user_id = $1 AND entry_date = $2 AND tl_action = $3 AND asset_id IS NOT NULL`,
-    [req.user.id, date, tlReview.ACTIONS.assetReview]
-  ).catch((err) => {
-    if (unavailable(err)) return { rows: [] };
-    throw err;
-  });
-  for (const row of already) filed.add(row.asset_id);
-
-  const ready = [];
-  const inReview = [];
-  for (const row of rows) {
-    const shape = {
-      assetId: row.assetId,
-      code: row.assetCode,
-      name: row.assetName,
-      label: `${row.assetCode} \u2014 ${row.assetName}`,
-      hours: hours.get(row.assetId) || 0,
-    };
-    /* STILL IN REVIEW IS ABOUT THE ASSET, not about this lead's session. An
-       asset sitting in TL Review is unfinished whoever is holding it, and a
-       lead who closed their own session on it by approving a previous round
-       should still be told the current round is open. */
-    if (row.assetStatus === tlReview.REVIEW_STATUS) {
-      inReview.push({ ...shape, hours: null, reason: 'Finish the review first (Request Changes or TL Approved).' });
-      continue;
-    }
-    if (filed.has(row.assetId)) continue;
-    if (!(shape.hours > 0)) continue;
-    ready.push(shape);
-  }
-  ready.sort((a, b) => a.label.localeCompare(b.label));
-  inReview.sort((a, b) => a.label.localeCompare(b.label));
-  res.json({ projectId, date, ready, inReview, enabled: true });
 });
 
 /* GET /api/timesheets/history?userId=&date= — the audit trail for a day. */

@@ -2719,13 +2719,20 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
           <select id="tl_actionType">
             <option value="">Choose…</option>
             <option value="project_meeting">Project Meeting</option>
-            <option value="asset_review">Asset Review</option>
+            <option value="review">Review</option>
           </select>
           <div id="tl_actionErr" class="tl-sub-err"></div>
         </div>
       </div>
-      <label>Asset <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional)</span></label>
-      <select id="tl_asset"></select>
+      <!-- HIDDEN, LABEL AND ALL, while TL Action is ticked. Wrapped so the
+           heading goes with the field: a lone "Asset (optional)" above nothing
+           reads as a field that failed to load. Disabling it instead would
+           leave a greyed control asking to be filled in for a kind of line that
+           has no asset. -->
+      <div id="tl_assetWrap">
+        <label>Asset <span style="text-transform:none;letter-spacing:0;color:var(--ink-faint);">(optional)</span></label>
+        <select id="tl_asset"></select>
+      </div>
     </div>
     <div id="tl_catFields" style="display:none;">
       <label>Category</label>
@@ -2760,6 +2767,14 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
       working hours. Breaks, evenings, weekly offs and holidays are not counted.
       <span style="color:var(--ink-muted);">The studio's working hours are not kept with a history,
       so changing them later changes what past days are worth.</span>
+    </div>
+    <!-- WHAT REPLACES IT WHILE TL ACTION IS TICKED. The sentence above is about
+         a figure worked out from the clock, which is the wrong thing to say
+         over a field somebody is about to type in. Its own element rather than
+         rewritten text, so the standing sentence is never edited and cannot be
+         left in the wrong state by a path that forgot to put it back. -->
+    <div id="tl_helpTyped" style="display:none;font-size:11px;color:var(--ink-faint);margin:3px 0 0;line-height:1.5;">
+      Type the hours you spent.
     </div>
     <div id="tl_calc" style="font-size:11.5px;color:var(--ink-muted);margin:2px 0 4px;"></div>
     <!-- The way to disagree with a number nobody can edit, below the figure and
@@ -4956,19 +4971,10 @@ function renderLink(raw, opts){
   if(isWebLink(text)){
     return `<a href="${escapeHTML(text)}" target="_blank" rel="noopener noreferrer" style="${style}">${escapeHTML(text)}</a>`;
   }
-  /* WHICH ASSET'S SUBMISSION THIS IS, when it is one.
-     
-     Carried on the button so the copy handler below can tell a submitted task
-     link apart from the dozen other links this function draws — a reference
-     link on the brief, a path in the in-game panel, a version from last March.
-     Copying any of those is somebody fetching a file; copying a submission the
-     lead is about to review is the start of a review. Absent everywhere the
-     caller does not pass it, which is everywhere but the submission blocks. */
-  const forAsset = (opts && opts.assetId) ? ` data-review-asset="${escapeHTML(opts.assetId)}"` : '';
   return `<span class="link-ref" title="Only reachable from a machine with access to this location">`
     + `<span class="link-ref-kind">${escapeHTML(linkKindLabel(text))}</span>`
     + `<code class="link-ref-path">${escapeHTML(text)}</code>`
-    + `<button type="button" class="link-copy" data-copy="${escapeHTML(text)}"${forAsset} title="Copy this path">Copy</button>`
+    + `<button type="button" class="link-copy" data-copy="${escapeHTML(text)}" title="Copy this path">Copy</button>`
     + `</span>`;
 }
 
@@ -5003,25 +5009,6 @@ document.addEventListener('click', async (e)=>{
     }catch{ done = false; }
   }
   showToast(done ? (btn.dataset.copyLabel || 'Path copied.') : 'Could not copy — select it and copy it by hand.');
-
-  /* AND, FOR A SUBMISSION, THE LEAD'S REVIEW CLOCK — AFTER the copy and the
-     toast, never before.
-     
-     THE ORDER IS THE WHOLE RULE. The clipboard write is what this button is
-     for; the review session is bookkeeping. So the copy happens first, the
-     person is told it happened, and only then does this fire — not awaited, so
-     a slow database cannot make the button feel slow, and .catch'd to nothing,
-     so a server that is down cannot turn a successful copy into an error.
-     
-     SENT BY EVERYONE WHO CLICKS, and answered 204 for almost all of them. The
-     page does not try to work out who is a lead of what: the server knows, and
-     a page that guessed would either miss an Acting Team Lead or start sessions
-     for people who are not reviewing anything. See the route. */
-  const assetId = btn.dataset.reviewAsset;
-  if(assetId){
-    api(`/assets/${encodeURIComponent(assetId)}/tl-review/start`, { method:'POST' })
-      .catch(()=>{ /* the copy is what mattered, and it has already happened */ });
-  }
 });
 
 /* Which assets are ticked in the Assets List, by asset id.
@@ -7012,6 +6999,13 @@ async function renderTimesheet(){
                        table, the admin views and both exports — so the three
                        cannot come to disagree about what a line says. */
                     e.tlActionLabel ? ` <span class="ts-sub">${escapeHTML(e.tlActionLabel)}</span>` : ''}${
+                    /* THE ASSET IS DRAWN WHATEVER KIND OF LINE THIS IS, and
+                       that independence is deliberate rather than incidental.
+                       A TL Action line filed today has no asset. One converted
+                       from the first build of this feature may still carry the
+                       one it was filed against, and hiding it because the line
+                       carries a TL label would take information off somebody's
+                       own timesheet. */
                     e.assetCode ? `<div class="ts-asset">${escapeHTML(e.assetCode)} ${escapeHTML(e.assetName||'')}</div>` : ''}`}
                 ${e.notes ? `<div class="ts-notes">${escapeHTML(e.notes)}</div>` : ''}
                 ${e.flagNote ? `<div class="ts-flagged">\u26a0 Flagged: ${escapeHTML(e.flagNote)}</div>` : ''}
@@ -7178,12 +7172,7 @@ function openTimesheetLine(day){
     state.clients.map(c=>`<option value="${c.id}">${escapeHTML(c.name)}</option>`).join('');
   document.getElementById('tl_project').innerHTML = '<option value="">Choose a client first…</option>';
   document.getElementById('tl_asset').innerHTML = '<option value="">No specific asset</option>';
-  /* A FRESH FORM EVERY TIME, including the box and what the page remembers
-     about who leads what. The cache is per form rather than per session because
-     the day can change between one line and the next, and the answer the
-     endpoint gives is about a project AND a day. */
-  tlActionProjects = new Map();
-  tlReviewReady = new Map();
+  // A FRESH FORM EVERY TIME, the box included.
   tlClearAction();
   document.getElementById('tl_actionWrap').style.display = 'none';
   syncTimesheetLine();
@@ -7196,41 +7185,24 @@ function openTimesheetLine(day){
  *
  * THREE THINGS DECIDE WHETHER THE BOX EXISTS, and all three are also asked on
  * the server: the studio's switch, this person's permission, and whether they
- * lead the project currently chosen. The third changes as the form is used, so
- * it is asked again on every project change — and asked of the SERVER, because
- * "lead of this project" includes Acting Team Leads and is not a thing the
- * page can work out from a role.
+ * lead the project currently chosen. The third changes as the form is used.
  *
- * WHAT THE PAGE NEVER DOES is calculate an hour. The ready list and the figure
- * both come from the endpoint; the field is filled from what it says and locked.
+ * NO ROUND TRIP WHILE SOMEBODY IS TYPING. The projects this person leads come
+ * down with the week, as a list of ids — the server's answer to "do you lead
+ * it", decided by permissions.isProjectLead() and so including Acting Team
+ * Leads, which is not a thing the page could work out from a role. The first
+ * build of this feature asked an endpoint on every change of the project
+ * picker; a list sent once with the week it belongs to answers the same
+ * question with nothing to wait for and nothing to cache.
+ *
+ * TAMPERING WITH IT BUYS NOTHING. The save asks the server again, every time.
  */
-let tlActionProjects = new Map();   // projectId -> true/false, as the server answered
-let tlReviewTicket = 0;
-
 const tlActionAllowed = () => Boolean(
   ((tsState.week||{}).workingDay||{}).tlAction && can('timesheet.tl_action')
 );
 
-/* Is this person a lead of this project? Asked once per project per session and
-   remembered: the answer does not change while a form is open, and the picker
-   is redrawn on every keystroke in the client box. */
-async function tlLeadsProject(projectId){
-  if(!projectId) return false;
-  if(tlActionProjects.has(projectId)) return tlActionProjects.get(projectId);
-  try{
-    const r = await api(`/timesheets/tl-review/assets?projectId=${encodeURIComponent(projectId)}`
-      + `&date=${encodeURIComponent(tlDay||'')}`);
-    tlActionProjects.set(projectId, r.enabled !== false);
-    return r.enabled !== false;
-  }catch(err){
-    /* A 403 is the answer "you do not lead it", not a failure. Anything else —
-       a 400 about the date, a server that is down — leaves the box hidden,
-       which is the safe way to be wrong: the feature is missing rather than
-       offered and then refused on save. */
-    tlActionProjects.set(projectId, false);
-    return false;
-  }
-}
+const tlLeadsProject = (projectId) => Boolean(projectId)
+  && ((tsState.week||{}).tlActionProjects||[]).includes(projectId);
 
 /* Show or hide the box, and put everything back when it goes.
    
@@ -7238,11 +7210,11 @@ async function tlLeadsProject(projectId){
    and a hidden select keeps its value, and a value kept here would be posted
    with a line the server then refuses for a control the person cannot see —
    the same mistake the non-project sub-dropdown had to fix. */
-async function tlSyncAction(){
+function tlSyncAction(){
   const wrap = document.getElementById('tl_actionWrap');
   const kindIsProject = document.getElementById('tl_kind').value === 'project';
   const projectId = document.getElementById('tl_project').value || '';
-  const may = kindIsProject && projectId && tlActionAllowed() && await tlLeadsProject(projectId);
+  const may = kindIsProject && projectId && tlActionAllowed() && tlLeadsProject(projectId);
   if(!may){
     if(wrap.style.display !== 'none') tlClearAction();
     wrap.style.display = 'none';
@@ -7260,13 +7232,15 @@ function tlClearAction(){
   tlRestoreAssetField();
 }
 
-/* The Asset field put back the way the rest of the form expects it: every
-   asset on the project, enabled, nothing selected, hours typed. */
+/* The Asset field put back the way the rest of the form expects it: visible,
+   every asset on the project, nothing selected, hours calculated again. */
 function tlRestoreAssetField(){
   const sel = document.getElementById('tl_asset');
+  document.getElementById('tl_assetWrap').style.display = '';
   sel.disabled = false;
   document.getElementById('tl_hours').value = '';
   document.getElementById('tl_suggest').textContent = '';
+  tlHelpText(false);
   tlLockHours(false);
   tlRecalc();
   const projectId = document.getElementById('tl_project').value;
@@ -7274,118 +7248,51 @@ function tlRestoreAssetField(){
   else sel.innerHTML = '<option value="">No specific asset</option>';
 }
 
-/* What each kind of TL Action does to the two fields below it. */
-async function tlSyncActionType(){
+/* WHICH SENTENCE SITS UNDER THE HOURS FIELD. The standing one explains a figure
+   worked out from the clock, which is the wrong thing to say over a field
+   somebody is about to type in — so it is swapped rather than left to
+   contradict the form. */
+function tlHelpText(typed){
+  const help = document.getElementById('tl_help');
+  const typedNote = document.getElementById('tl_helpTyped');
+  if(!help || !typedNote) return;
+  help.style.display = typed ? 'none' : '';
+  typedNote.style.display = typed ? '' : 'none';
+}
+
+/* What TL Action does to the two fields below it, which is now the same for
+   both kinds: no asset, and a number the lead types. */
+function tlSyncActionType(){
   const ticked = document.getElementById('tl_action').checked;
   const type = document.getElementById('tl_actionType').value;
   document.getElementById('tl_actionTypeWrap').style.display = ticked ? '' : 'none';
   document.getElementById('tl_actionErr').textContent = '';
-  const asset = document.getElementById('tl_asset');
 
   if(!ticked){
     /* CLEARED, NOT MERELY HIDDEN. A hidden <select> keeps its value, so an
-       un-ticked box left "Asset Review" selected underneath it: re-ticking
-       showed a kind nobody had just chosen, with none of that kind's effects
-       applied to the two fields below. The same mistake the non-project remark
-       had to fix, and the reason this form clears on every switch. */
+       un-ticked box left its kind selected underneath: re-ticking showed a kind
+       nobody had just chosen. */
     document.getElementById('tl_actionType').value = '';
     tlRestoreAssetField();
     return;
   }
-
-  if(type === 'project_meeting'){
-    /* DISABLED AND CLEARED. A meeting is not about one asset, and the server
-       refuses a line that names one — so the field says so rather than letting
-       somebody choose and then be told. */
-    asset.innerHTML = '<option value="">Not for a project meeting</option>';
-    asset.value = '';
-    asset.disabled = true;
-    document.getElementById('tl_hours').value = '';
-    document.getElementById('tl_suggest').textContent = '';
-    tlLockHours(false);
-    tlRecalc();
+  if(!type){
+    /* TICKED, NOTHING CHOSEN YET. The form is left alone — a box that emptied
+       the asset field the instant it was ticked would punish somebody who
+       ticked it to see what it did — and the save refuses until a kind is
+       picked. */
     return;
   }
-  if(type === 'asset_review'){
-    asset.disabled = false;
-    await tlLoadReviewAssets();
-    return;
-  }
-  /* Chosen nothing yet: the asset field stays as it was, and the save refuses
-     until a type is picked. */
-  asset.disabled = false;
-}
 
-/* The two groups, from the server, for the project and the day on the form. */
-async function tlLoadReviewAssets(){
-  const sel = document.getElementById('tl_asset');
-  const note = document.getElementById('tl_suggest');
-  const projectId = document.getElementById('tl_project').value;
-  const day = tlDay;
-  sel.innerHTML = '<option value="">Loading…</option>';
+  /* EITHER KIND: the asset goes, label and all, and the hours become typed. */
+  const asset = document.getElementById('tl_asset');
+  asset.value = '';
+  document.getElementById('tl_assetWrap').style.display = 'none';
   document.getElementById('tl_hours').value = '';
-  tlLockHours(true);
-  note.textContent = '';
-  const ticket = ++tlReviewTicket;
-  let data;
-  try{
-    data = await api(`/timesheets/tl-review/assets?projectId=${encodeURIComponent(projectId)}`
-      + `&date=${encodeURIComponent(day)}`);
-  }catch(err){
-    if(ticket !== tlReviewTicket) return;
-    sel.innerHTML = '<option value="">Could not read your reviews</option>';
-    note.textContent = err.message;
-    return;
-  }
-  /* Stale on either count: a newer request, or the form has moved day or
-     project since this one went out. */
-  if(ticket !== tlReviewTicket) return;
-  if(day !== tlDay || projectId !== document.getElementById('tl_project').value) return;
-
-  const opt = (o) => `<option value="${escapeHTML(o.assetId)}">${escapeHTML(o.label)} — ${o.hours}h</option>`;
-  /* GREYED AND NOT SELECTABLE, with the reason in the option itself. `disabled`
-     on an <option> is what makes it unpickable by mouse, by keyboard and by
-     the form — and it is drawn rather than hidden because an asset that simply
-     vanishes from the list reads as lost. */
-  const waiting = (o) => `<option value="" disabled>${escapeHTML(o.label)} — still in review</option>`;
-  let html = '';
-  if(data.ready.length){
-    html += '<optgroup label="Ready to log">' + data.ready.map(opt).join('') + '</optgroup>';
-  }
-  if(data.inReview.length){
-    html += '<optgroup label="Still in TL review">' + data.inReview.map(waiting).join('') + '</optgroup>';
-  }
-  sel.innerHTML = '<option value="">Choose the asset you reviewed…</option>' + html;
-  tlReviewReady = new Map(data.ready.map(r=>[r.assetId, r.hours]));
-  if(!data.ready.length && !data.inReview.length){
-    sel.innerHTML = '<option value="">No finished reviews to log on this day</option>';
-    note.textContent = 'No finished reviews to log on this day.';
-  }else if(!data.ready.length){
-    note.textContent = 'Finish the review first (Request Changes or TL Approved).';
-  }
-  document.getElementById('tl_hours').value = '';
-  tlLockHours(true);
-}
-
-let tlReviewReady = new Map();
-
-/* Picking a ready asset fills the hours — from the figure the server sent with
-   the list, which is the same function the save recomputes with. */
-function tlFillReviewHours(){
-  const assetId = document.getElementById('tl_asset').value;
-  const note = document.getElementById('tl_suggest');
-  const field = document.getElementById('tl_hours');
-  if(!assetId || !tlReviewReady.has(assetId)){
-    field.value = '';
-    tlLockHours(true);
-    tlRecalc();
-    return;
-  }
-  field.value = tlReviewReady.get(assetId);
-  tlLockHours(true);
+  document.getElementById('tl_suggest').textContent = '';
+  tlLockHours(false);
+  tlHelpText(true);
   tlRecalc();
-  note.textContent = 'Time from when you copied the submission path until you approved or '
-    + 'requested changes, inside working hours.';
 }
 
 /* The refusal the form makes before the round trip, in the same shape the
@@ -7393,11 +7300,7 @@ function tlFillReviewHours(){
    chosen should be told beside the control they have to use. */
 function tlActionProblem(){
   if(!document.getElementById('tl_action').checked) return '';
-  const type = document.getElementById('tl_actionType').value;
-  if(!type) return 'Choose what kind of TL Action this was.';
-  if(type === 'asset_review' && !document.getElementById('tl_asset').value){
-    return 'Choose the asset you reviewed.';
-  }
+  if(!document.getElementById('tl_actionType').value) return 'Choose what kind of TL Action this was.';
   return '';
 }
 
@@ -7725,17 +7628,9 @@ document.getElementById('tl_project').addEventListener('change', async e=>{
   tlClearAction();
   await tlLoadAssets(e.target.value);
   document.getElementById('tl_suggest').textContent = '';
-  await tlSyncAction();
+  tlSyncAction();
 });
 document.getElementById('tl_asset').addEventListener('change', e=>{
-  /* AN ASSET REVIEW'S HOURS COME FROM THE REVIEW, not from the clock on the
-     asset. Same field, same lock, different measurement — tlSuggest() would
-     offer this lead the ARTIST's recorded time. */
-  if(document.getElementById('tl_action').checked
-    && document.getElementById('tl_actionType').value === 'asset_review'){
-    tlFillReviewHours();
-    return;
-  }
   if(!e.target.value){
     /* No asset, nothing to calculate from — the field goes back to being
        typed, which is how leave, training and unattributed project time have
@@ -7784,10 +7679,11 @@ document.getElementById('tl_save').addEventListener('click', async ()=>{
     body.assetId = document.getElementById('tl_asset').value || null;
     /* WHAT KIND OF LINE, when it is one. Sent only when the box is ticked, so
        an ordinary line posts nothing new and reads on the server exactly as it
-       always did. The hours go up with it and are ignored for an asset review:
-       the server recomputes them from the sessions. */
+       always did. The asset goes up as null with it — the field is hidden and
+       cleared by then, and the server refuses a TL line that names one. */
     if(document.getElementById('tl_action').checked){
       body.tlAction = document.getElementById('tl_actionType').value;
+      body.assetId = null;
     }
   }else{
     body.nonProject = document.getElementById('tl_cat').value;
@@ -11515,7 +11411,7 @@ async function openDrawer(id){
     <div id="d_versions">${(a.versions&&a.versions.length) ? a.versions.map(v=>`
       <div class="note" style="border-left-color:${v.stage==='tl'?'var(--review)':'var(--review)'};">
         <span class="who">v${v.version_number} · ${avatarHTML({ id:v.uploaded_by, name:v.uploaded_by_name, photoAt:v.uploaded_by_photo_at }, { size:16, title:false })} ${escapeHTML(v.uploaded_by_name||'Someone')} · ${v.stage==='tl'?'Team Lead review':'Creative Director review'}</span> <span class="when">${fmtDate(v.created_at)}</span>
-        ${v.link?`<p>${renderLink(v.link, {style:'color:var(--brand-accent);word-break:break-all;', assetId:a.id})}</p>`:''}
+        ${v.link?`<p>${renderLink(v.link, {style:'color:var(--brand-accent);word-break:break-all;'})}</p>`:''}
         <!-- THE FILES THAT LINK POINTS AT, when they were uploaded through Forge.
              Filled in by srvSubmissionRefs() after the drawer draws — a second
              request, so the submission block never waits on it, and absent
@@ -12448,7 +12344,7 @@ function openRound(assetId, roundId){
       <div class="note" style="border-left-color:${v.stage==='tl'?'var(--review)':'var(--review)'};">
         <span class="who">v${v.versionNumber} · ${v.stage==='tl'?'Team Lead review':'Creative Director review'}</span>
         <span class="when">${fmtDate(v.at)}</span>
-        ${v.link?`<p>${renderLink(v.link, {style:'color:var(--brand-accent);word-break:break-all;', assetId:a.id})}</p>`:''}
+        ${v.link?`<p>${renderLink(v.link, {style:'color:var(--brand-accent);word-break:break-all;'})}</p>`:''}
         <div class="srv-refs" data-refs="${escapeHTML(v.id || '')}"></div>
         ${v.description?`<p>${escapeHTML(v.description)}</p>`:''}
       </div>`).join('') : '<div style="font-size:12px;color:var(--ink-faint);">Nothing was submitted in this round.</div>'}
@@ -19452,15 +19348,13 @@ async function renderTimesheetOptions(){
             <span class="rh-opt">
               <strong>On by default, and it blocks nobody.</strong> A lead who has the
               <em>Log TL Action time</em> permission and leads the project they chose sees one more
-              check box on Add a line: <strong>Project Meeting</strong>, where they type the hours,
-              and <strong>Asset Review</strong>, where the hours are measured from the moment they
-              copied the submission path to the moment they approved it or sent it back, inside
-              working hours. Nobody else sees anything new.
-              Switching it off hides the box, refuses new TL Action lines and stops recording new
-              review time &mdash; lines already filed stay on their timesheets and still count
-              towards those people&rsquo;s own totals. This time is never added to an asset&rsquo;s
-              spent hours, its efficiency or the Artist Report: it is the lead&rsquo;s time, not the
-              artist&rsquo;s.
+              check box on Add a line, offering <strong>Project Meeting</strong> and
+              <strong>Review</strong>. Both are the lead&rsquo;s own time on that project, with no
+              asset and with the hours typed in. Nobody else sees anything new.
+              Switching it off hides the box and refuses new TL Action lines &mdash; lines already
+              filed stay on their timesheets and still count towards those people&rsquo;s own
+              totals. This time is never added to an asset&rsquo;s spent hours, its efficiency or
+              the Artist Report: it is the lead&rsquo;s time, not the artist&rsquo;s.
             </span>
           </div>
         </div>

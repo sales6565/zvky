@@ -3,9 +3,9 @@
  * WHAT THIS PROVES THAT THE OTHER SUITE CANNOT. tests/tl-review covers what the
  * server decides; this covers what somebody filling in a timesheet actually
  * sees and can press — that the box is absent for everyone it should be absent
- * for, that ticking it does what the brief says to the two fields below it,
- * that an asset still in review cannot be chosen however hard you click, and
- * that changing the day or the project puts everything back.
+ * for, that ticking either option takes the Asset field off the form entirely
+ * and leaves Hours to be typed, and that changing the project or the kind of
+ * time, or un-ticking, puts the ordinary form back.
  *
  * THE REAL FUNCTIONS, LIFTED. The block between the TL Action heading and the
  * day-total helper is taken out of the page verbatim, along with
@@ -50,10 +50,13 @@ function fixture() {
   const syncBlock = cut('function syncTimesheetLine(){', '/* ---------- the second dropdown ----------',
     'syncTimesheetLine');
 
-  /* THE MARKUP, LIFTED TOO — the real ids, the real option text, the real
-     optgroup structure. Taken out of the modal rather than retyped, so a field
-     renamed in the page breaks this suite instead of silently passing. */
+  /* THE MARKUP, LIFTED TOO — the real ids and the real option text, taken out
+     of the modal rather than retyped, so a field renamed in the page breaks
+     this suite instead of silently passing. Two pieces: the project fields
+     (which hold the box and the asset picker) and the pair of sentences under
+     the Hours field, which TL Action swaps between. */
   const markup = cut('<div id="tl_projectFields">', '<div id="tl_catFields"', 'the project fields');
+  const helpMarkup = cut('<div id="tl_help"', '<div id="tl_calc"', 'the two hours sentences');
 
   /* NO STUB MAY SHADOW SOMETHING THE LIFTED CODE DECLARES — a `const` beside a
      `function` of the same name in one scope is a SyntaxError that kills the
@@ -85,6 +88,7 @@ function fixture() {
   </div>
   <input type="number" id="tl_hours" step="0.25">
   <div id="tl_suggest"></div>
+  ${helpMarkup}
   <div id="tl_calc"></div>
   <div id="tl_flagWrap" style="display:none;">
     <input type="checkbox" id="tl_flag"><div id="tl_flagNoteWrap" style="display:none;">
@@ -100,6 +104,9 @@ const escapeHTML = (s) => String(s === undefined || s === null ? '' : s)
   .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 window.__permissions = [];
 function can(){ for (let i = 0; i < arguments.length; i++) if (window.__permissions.includes(arguments[i])) return true; return false; }
+/* EVERY REQUEST THIS PAGE MAKES, recorded — because one of the things this
+   suite asserts is that the TL Action box makes NONE. The projects somebody
+   leads come down with the week; the form asks nothing while it is open. */
 window.__calls = [];
 async function api(p, opts = {}){
   window.__calls.push({ path: p, method: (opts && opts.method) || 'GET' });
@@ -108,10 +115,11 @@ async function api(p, opts = {}){
   if (answer && answer.__throw) { const e = new Error(answer.__throw); e.status = answer.status; throw e; }
   return answer || {};
 }
-/* THE STATE THE LIFTED CODE READS. tsState.week.workingDay.tlAction is the
-   studio's switch as the week payload publishes it; tlDay is the day the form
-   is open on. Both are declared outside the lifted block in the page. */
-let tsState = { week: { workingDay: { tlAction: true, maxHours: 8 }, days: [] }, draft: {} };
+/* THE STATE THE LIFTED CODE READS, which is the week payload: the studio's
+   switch, and the ids of the projects this reader leads — the server's answer
+   to "do you lead it", including Acting Team Leads. Both are declared outside
+   the lifted block in the page. */
+let tsState = { week: { workingDay: { tlAction: true, maxHours: 8 }, tlActionProjects: [], days: [] }, draft: {} };
 let tlDay = '2026-03-12';
 /* The ordinary asset list, which the real one fetches. Stubbed because what it
    loads is not what this suite is about — what matters is that TL Action puts
@@ -143,11 +151,6 @@ ${syncBlock}
  * them this way — so if somebody moves or deletes one there, this fixture
  * stops being a faithful copy LOUDLY rather than quietly. */
 document.getElementById('tl_asset').addEventListener('change', (e) => {
-  if (document.getElementById('tl_action').checked
-    && document.getElementById('tl_actionType').value === 'asset_review') {
-    tlFillReviewHours();
-    return;
-  }
   if (!e.target.value) { tlLockHours(false); document.getElementById('tl_hours').value = ''; return; }
   tlSuggest();
 });
@@ -160,34 +163,38 @@ window.__ready = true;
 </script></body></html>`;
 }
 
-const open = async (browser, { permissions = ['timesheet.tl_action'], tlAction = true, answers = {} } = {}) => {
+const open = async (browser, { permissions = ['timesheet.tl_action'], tlAction = true,
+  leads = ['p1'] } = {}) => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   await page.setContent(fixture(), { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.__ready === true, null, { timeout: 15000 });
-  await page.evaluate(([perms, on, api]) => {
+  await page.evaluate(([perms, on, led]) => {
     window.__permissions = perms;
     tsState.week.workingDay.tlAction = on;
-    window.__apiAnswers = api;
-  }, [permissions, tlAction, answers]);
+    tsState.week.tlActionProjects = led;
+  }, [permissions, tlAction, leads]);
   return { page, errors };
 };
-
-const LEADS = { '/timesheets/tl-review/assets': { enabled: true, ready: [], inReview: [] } };
 const box = (page) => page.evaluate(() => ({
   wrap: document.getElementById('tl_actionWrap').style.display,
   ticked: document.getElementById('tl_action').checked,
   typeWrap: document.getElementById('tl_actionTypeWrap').style.display,
   type: document.getElementById('tl_actionType').value,
+  /* VISIBLE, not merely enabled — the brief's word is "hidden", and the two
+     are different things to somebody looking at the form. offsetParent is null
+     for an element no display:none ancestor is showing, which is the browser's
+     own answer rather than a reading of the style attribute. */
+  assetShown: Boolean(document.getElementById('tl_asset').offsetParent),
+  assetLabelShown: Boolean(document.getElementById('tl_assetWrap').offsetParent),
   assetDisabled: document.getElementById('tl_asset').disabled,
   assetValue: document.getElementById('tl_asset').value,
-  assetOptions: [...document.getElementById('tl_asset').options].map((o) => ({
-    value: o.value, text: o.textContent, disabled: o.disabled,
-    group: o.parentElement && o.parentElement.tagName === 'OPTGROUP' ? o.parentElement.label : null })),
+  assetOptions: [...document.getElementById('tl_asset').options].map((o) => o.textContent),
   hours: document.getElementById('tl_hours').value,
   hoursLocked: document.getElementById('tl_hours').readOnly,
-  note: document.getElementById('tl_suggest').textContent,
+  helpShown: Boolean(document.getElementById('tl_help').offsetParent),
+  typedHelpShown: Boolean(document.getElementById('tl_helpTyped').offsetParent),
   err: document.getElementById('tl_actionErr').textContent,
 }));
 
@@ -202,35 +209,41 @@ test('the TL Action box, in a browser', { skip: SKIP }, async (t) => {
   const browser = await chromium.launch({ executablePath: EXECUTABLE, args: ['--no-sandbox'] });
   t.after(() => browser.close());
 
-  await t.test('no key, no box — and the server is never even asked', async () => {
-    const { page, errors } = await open(browser, { permissions: [], answers: LEADS });
+  await t.test('no key, no box', async () => {
+    const { page, errors } = await open(browser, { permissions: [], leads: ['p1'] });
     await chooseProject(page);
     assert.strictEqual((await box(page)).wrap, 'none', 'the box is not drawn');
-    const asked = await page.evaluate(() => window.__calls.filter((c) => c.path.includes('tl-review')));
-    assert.deepStrictEqual(asked, [],
-      'and the page does not ask who leads what on behalf of somebody who could not use the answer');
     assert.deepStrictEqual(errors, []);
     await page.close();
   });
 
   await t.test('the switch off hides it, even for a lead who holds the key', async () => {
-    const { page } = await open(browser, { tlAction: false, answers: LEADS });
+    const { page } = await open(browser, { tlAction: false });
     await chooseProject(page);
     assert.strictEqual((await box(page)).wrap, 'none');
     await page.close();
   });
 
-  await t.test('a lead of another project is told no by the server, and sees no box', async () => {
-    const refused = { '/timesheets/tl-review/assets': { __throw: 'You do not lead that project.', status: 403 } };
-    const { page } = await open(browser, { answers: refused });
-    await chooseProject(page);
-    assert.strictEqual((await box(page)).wrap, 'none',
-      'a 403 is the answer "you do not lead it", and the box simply is not there');
+  await t.test('a lead of another project does not get it on this one', async () => {
+    /* The server sends the projects this person leads; p1 is not among them. */
+    const { page } = await open(browser, { leads: ['p2'] });
+    await chooseProject(page, 'p1');
+    assert.strictEqual((await box(page)).wrap, 'none');
+    await page.close();
+  });
+
+  await t.test('an Acting Team Lead gets it, because the list is the server\'s answer', async () => {
+    /* THE WHOLE POINT OF TAKING THE LIST FROM THE SERVER. An Acting Team Lead
+       is a lead of one project and may hold any designation at all — there is
+       nothing about the role the page could read to work this out. */
+    const { page } = await open(browser, { leads: ['p1'] });
+    await chooseProject(page, 'p1');
+    assert.strictEqual((await box(page)).wrap, '');
     await page.close();
   });
 
   await t.test('non-project time has no TL Action box', async () => {
-    const { page } = await open(browser, { answers: LEADS });
+    const { page } = await open(browser);
     await chooseProject(page);
     assert.strictEqual((await box(page)).wrap, '', 'it is there for project work');
     await page.selectOption('#tl_kind', 'non');
@@ -241,7 +254,7 @@ test('the TL Action box, in a browser', { skip: SKIP }, async (t) => {
   });
 
   await t.test('it sits after Project and before Asset, and reads as one line', async () => {
-    const { page } = await open(browser, { answers: LEADS });
+    const { page } = await open(browser);
     await chooseProject(page);
     const order = await page.evaluate(() => {
       const y = (id) => document.getElementById(id).getBoundingClientRect().top;
@@ -250,187 +263,108 @@ test('the TL Action box, in a browser', { skip: SKIP }, async (t) => {
     assert.ok(order.project < order.box, 'below the project picker');
     assert.ok(order.box < order.asset, 'and above the asset picker');
 
-    /* THE CHECK BOX AND ITS WORDS ON ONE LINE. A two-line check box in a column
-       of one-line fields reads as a section heading rather than a question. */
     const rows = await page.evaluate(() => {
       const label = document.querySelector('.tl-action-box');
-      const tick = label.querySelector('input');
-      const hint = label.querySelector('.tl-action-hint');
       const mid = (el) => { const r = el.getBoundingClientRect(); return r.top + r.height / 2; };
-      return { tick: mid(tick), hint: mid(hint), height: label.getBoundingClientRect().height };
+      return { tick: mid(label.querySelector('input')), hint: mid(label.querySelector('.tl-action-hint')),
+        height: label.getBoundingClientRect().height };
     });
     assert.ok(Math.abs(rows.tick - rows.hint) < 6, 'the tick and its hint share a line');
     assert.ok(rows.height < 40, `and the box is one line tall, not two — ${rows.height}px`);
     await page.close();
   });
 
-  await t.test('ticking it offers the two kinds, and chooses neither', async () => {
-    const { page } = await open(browser, { answers: LEADS });
+  await t.test('ticking it offers exactly two kinds, and chooses neither', async () => {
+    const { page } = await open(browser);
     await chooseProject(page);
     await page.check('#tl_action');
     const shown = await box(page);
-    assert.strictEqual(shown.typeWrap, '', 'the second dropdown appears');
+    assert.strictEqual(shown.typeWrap, '', 'the dropdown appears');
     assert.strictEqual(shown.type, '', 'on the placeholder');
     const options = await page.evaluate(() =>
       [...document.getElementById('tl_actionType').options].map((o) => [o.value, o.textContent]));
     assert.deepStrictEqual(options, [['', 'Choose…'], ['project_meeting', 'Project Meeting'],
-      ['asset_review', 'Asset Review']]);
-    /* TICKING IT CHOOSES NOTHING YET, so the asset field is left alone — a box
-       that cleared the asset the instant it was ticked would punish somebody
+      ['review', 'Review']], 'exactly two kinds, and the old name is not among them');
+
+    /* TICKING IT CHOOSES NOTHING YET, so the form is left alone — a box that
+       emptied the asset field the instant it was ticked would punish somebody
        who ticked it to see what it did. */
-    assert.strictEqual(shown.assetDisabled, false, 'and the asset field is untouched so far');
+    assert.strictEqual(shown.assetShown, true, 'the asset field is untouched so far');
     await page.close();
   });
 
-  await t.test('Project Meeting disables and clears the asset, and the hours are typed', async () => {
-    const { page } = await open(browser, { answers: LEADS });
+  for (const kind of ['project_meeting', 'review']) {
+    await t.test(`${kind}: the Asset field goes, and Hours is typed`, async () => {
+      const { page, errors } = await open(browser);
+      await chooseProject(page);
+      await page.evaluate(() => tlLoadAssets('p1'));
+      await page.selectOption('#tl_asset', 'ord-1');
+      await page.check('#tl_action');
+      await page.selectOption('#tl_actionType', kind);
+
+      const shown = await box(page);
+      /* HIDDEN, LABEL AND ALL — not disabled. A disabled select is still a
+         labelled control asking to be filled in for a kind of line that has no
+         asset; a lone heading above nothing reads as a field that failed. */
+      assert.strictEqual(shown.assetShown, false, 'the asset field is not visible');
+      assert.strictEqual(shown.assetLabelShown, false, 'and neither is its label');
+      assert.strictEqual(shown.assetValue, '', 'and the chosen asset is cleared, not just hidden');
+
+      assert.strictEqual(shown.hoursLocked, false, 'the hours are the lead\'s to type');
+      assert.strictEqual(shown.helpShown, false, 'the clock sentence is gone');
+      assert.strictEqual(shown.typedHelpShown, true, 'and says to type the hours instead');
+
+      await page.fill('#tl_hours', '1.5');
+      assert.strictEqual((await box(page)).hours, '1.5', 'and typing works');
+      assert.deepStrictEqual(errors, []);
+      await page.close();
+    });
+  }
+
+  await t.test('the box makes no request of any kind', async () => {
+    /* THE LIST COMES WITH THE WEEK, so nothing is fetched while somebody is
+       filling in the form — which is also what makes the box instant. */
+    const { page } = await open(browser);
+    await page.evaluate(() => { window.__calls = []; });
     await chooseProject(page);
-    await page.evaluate(() => tlLoadAssets('p1'));
-    await page.selectOption('#tl_asset', 'ord-1');
     await page.check('#tl_action');
+    await page.selectOption('#tl_actionType', 'review');
     await page.selectOption('#tl_actionType', 'project_meeting');
-
-    const shown = await box(page);
-    assert.strictEqual(shown.assetDisabled, true, 'the asset field is disabled');
-    assert.strictEqual(shown.assetValue, '', 'and cleared, not merely greyed');
-    assert.strictEqual(shown.assetOptions[0].text, 'Not for a project meeting',
-      'and says why rather than looking empty');
-    assert.strictEqual(shown.hoursLocked, false, 'the hours are the lead\'s to type');
-
-    await page.fill('#tl_hours', '1.5');
-    assert.strictEqual((await box(page)).hours, '1.5');
+    await page.uncheck('#tl_action');
+    const calls = await page.evaluate(() => window.__calls.map((c) => c.path));
+    assert.deepStrictEqual(calls.filter((p) => !p.startsWith('/assets/project/')), [],
+      `the box asks the server nothing: ${calls.join(' | ')}`);
     await page.close();
   });
 
-  await t.test('Asset Review draws both groups, and the unfinished ones cannot be chosen', async () => {
-    const answers = { '/timesheets/tl-review/assets': {
-      enabled: true,
-      ready: [{ assetId: 'a1', code: 'CH-01', name: 'Hero', label: 'CH-01 — Hero', hours: 1.5 },
-        { assetId: 'a2', code: 'CH-02', name: 'Villain', label: 'CH-02 — Villain', hours: 0.25 }],
-      inReview: [{ assetId: 'a3', code: 'CH-03', name: 'Sidekick', label: 'CH-03 — Sidekick',
-        hours: null, reason: 'Finish the review first (Request Changes or TL Approved).' }],
-    } };
-    const { page, errors } = await open(browser, { answers });
+  await t.test('un-ticking puts the asset field and the clock sentence back', async () => {
+    const { page } = await open(browser);
     await chooseProject(page);
     await page.check('#tl_action');
-    await page.selectOption('#tl_actionType', 'asset_review');
-    await page.waitForFunction(() => document.getElementById('tl_asset').options.length > 1);
-
-    const shown = await box(page);
-    const groups = [...new Set(shown.assetOptions.map((o) => o.group).filter(Boolean))];
-    assert.deepStrictEqual(groups, ['Ready to log', 'Still in TL review'],
-      'two groups, in that order');
-    const hero = shown.assetOptions.find((o) => o.text.includes('Hero'));
-    assert.match(hero.text, /1\.5h/, 'the hours are shown beside the asset');
-    assert.strictEqual(hero.disabled, false, 'and a finished one can be chosen');
-
-    const sidekick = shown.assetOptions.find((o) => o.text.includes('Sidekick'));
-    assert.strictEqual(sidekick.disabled, true, 'an unfinished one cannot');
-    assert.strictEqual(sidekick.value, '', 'and carries no id to post even if it could');
-    assert.match(sidekick.text, /still in review/);
-
-    /* AND NOT MERELY STYLED AS UNPICKABLE. Asked of the browser rather than of
-       the attribute: selectOption on a disabled option is refused, which is
-       what "cannot be selected" means to somebody using the form. */
-    let refused = false;
-    await page.selectOption('#tl_asset', 'a3', { timeout: 1500 }).catch(() => { refused = true; });
-    assert.ok(refused || (await box(page)).assetValue !== 'a3',
-      'the browser will not select it');
-    assert.deepStrictEqual(errors, []);
-    await page.close();
-  });
-
-  await t.test('choosing a ready asset fills the hours, locked, with the sentence beside them', async () => {
-    const answers = { '/timesheets/tl-review/assets': {
-      enabled: true,
-      ready: [{ assetId: 'a1', code: 'CH-01', name: 'Hero', label: 'CH-01 — Hero', hours: 1.5 }],
-      inReview: [],
-    } };
-    const { page } = await open(browser, { answers });
-    await chooseProject(page);
-    await page.check('#tl_action');
-    await page.selectOption('#tl_actionType', 'asset_review');
-    await page.waitForFunction(() => document.getElementById('tl_asset').options.length > 1);
-    await page.selectOption('#tl_asset', 'a1');
-    await page.waitForFunction(() => document.getElementById('tl_hours').value !== '');
-
-    const shown = await box(page);
-    assert.strictEqual(shown.hours, '1.5', 'the figure the server sent');
-    assert.strictEqual(shown.hoursLocked, true, 'and it is not the lead\'s to change');
-    assert.match(shown.note, /copied the submission path until you approved or requested changes/);
-    assert.match(shown.note, /inside working hours/);
-
-    /* AND THE PAGE DID NOT WORK IT OUT. The only number it ever had is the one
-       in the response — asserted by changing the response and redrawing. */
-    const calls = await page.evaluate(() => window.__calls.filter((c) => c.path.includes('tl-review')).length);
-    assert.ok(calls >= 1, 'it asked the server');
-    assert.strictEqual((await box(page)).hours, '1.5');
-    await page.close();
-  });
-
-  await t.test('an empty day says so instead of showing an empty box', async () => {
-    const answers = { '/timesheets/tl-review/assets': { enabled: true, ready: [], inReview: [] } };
-    const { page } = await open(browser, { answers });
-    await chooseProject(page);
-    await page.check('#tl_action');
-    await page.selectOption('#tl_actionType', 'asset_review');
-    await page.waitForFunction(() => /No finished reviews/.test(document.getElementById('tl_suggest').textContent)
-      || /No finished reviews/.test(document.getElementById('tl_asset').textContent));
-    const shown = await box(page);
-    assert.match(shown.note + shown.assetOptions.map((o) => o.text).join(' '),
-      /No finished reviews to log on this day/);
-    await page.close();
-  });
-
-  await t.test('everything in review and nothing ready says what to do about it', async () => {
-    const answers = { '/timesheets/tl-review/assets': { enabled: true, ready: [],
-      inReview: [{ assetId: 'a3', label: 'CH-03 — Sidekick', name: 'Sidekick', hours: null,
-        reason: 'Finish the review first (Request Changes or TL Approved).' }] } };
-    const { page } = await open(browser, { answers });
-    await chooseProject(page);
-    await page.check('#tl_action');
-    await page.selectOption('#tl_actionType', 'asset_review');
-    await page.waitForFunction(() => document.getElementById('tl_suggest').textContent.length > 0);
-    assert.match((await box(page)).note, /Finish the review first/);
-    await page.close();
-  });
-
-  await t.test('un-ticking puts the asset list and the typed hours back', async () => {
-    const answers = { '/timesheets/tl-review/assets': { enabled: true,
-      ready: [{ assetId: 'a1', label: 'CH-01 — Hero', name: 'Hero', hours: 1.5 }], inReview: [] } };
-    const { page } = await open(browser, { answers });
-    await chooseProject(page);
-    await page.check('#tl_action');
-    await page.selectOption('#tl_actionType', 'asset_review');
-    await page.waitForFunction(() => document.getElementById('tl_asset').options.length > 1);
-    await page.selectOption('#tl_asset', 'a1');
-    await page.waitForFunction(() => document.getElementById('tl_hours').value !== '');
-    assert.strictEqual((await box(page)).hours, '1.5');
+    await page.selectOption('#tl_actionType', 'review');
+    await page.waitForFunction(() => !document.getElementById('tl_asset').offsetParent);
 
     await page.uncheck('#tl_action');
-    await page.waitForFunction(() => document.getElementById('tl_hours').readOnly === false);
+    await page.waitForFunction(() => Boolean(document.getElementById('tl_asset').offsetParent));
     const shown = await box(page);
     assert.strictEqual(shown.typeWrap, 'none', 'the kind dropdown goes');
     assert.strictEqual(shown.type, '', 'and is cleared, not merely hidden');
-    assert.strictEqual(shown.hours, '', 'the figure goes with it');
-    assert.strictEqual(shown.hoursLocked, false, 'and the field is typed again');
-    assert.ok(shown.assetOptions.some((o) => o.text.includes('An Ordinary Asset')),
-      'and the project\'s own assets are back');
+    assert.strictEqual(shown.assetShown, true, 'the asset field is back');
+    assert.strictEqual(shown.assetLabelShown, true, 'with its label');
+    assert.strictEqual(shown.helpShown, true, 'and the clock sentence returns');
+    assert.strictEqual(shown.typedHelpShown, false);
+    assert.ok(shown.assetOptions.some((t) => t.includes('An Ordinary Asset')),
+      'and the project\'s own assets are back in it');
     await page.close();
   });
 
-  await t.test('changing the project clears the box before anything else', async () => {
-    const answers = { '/timesheets/tl-review/assets': { enabled: true,
-      ready: [{ assetId: 'a1', label: 'CH-01 — Hero', name: 'Hero', hours: 1.5 }], inReview: [] } };
-    const { page } = await open(browser, { answers });
+  await t.test('changing the project clears the box', async () => {
+    const { page } = await open(browser, { leads: ['p1', 'p2'] });
     await chooseProject(page, 'p1');
     await page.check('#tl_action');
-    await page.selectOption('#tl_actionType', 'asset_review');
-    await page.waitForFunction(() => document.getElementById('tl_asset').options.length > 1);
+    await page.selectOption('#tl_actionType', 'review');
+    await page.waitForFunction(() => !document.getElementById('tl_asset').offsetParent);
 
-    /* A SECOND PROJECT. The tick is about the project it was made on, and a
-       tick left over would be a tick about a project this person may not even
-       lead. */
     await page.evaluate(() => { document.getElementById('tl_project').innerHTML =
       '<option value="p1">A Project</option><option value="p2">Another Project</option>'; });
     await page.selectOption('#tl_project', 'p2');
@@ -438,43 +372,36 @@ test('the TL Action box, in a browser', { skip: SKIP }, async (t) => {
     const shown = await box(page);
     assert.strictEqual(shown.ticked, false, 'the tick goes');
     assert.strictEqual(shown.type, '', 'the kind goes');
-    assert.strictEqual(shown.hours, '', 'the hours go');
-    assert.strictEqual(shown.hoursLocked, false);
+    assert.strictEqual(shown.assetShown, true, 'and the asset field comes back');
+    assert.strictEqual(shown.wrap, '', 'the box itself stays, because this project is led too');
     await page.close();
   });
 
-  await t.test('changing the day re-reads the list for that day', async () => {
-    let asked = [];
-    const answers = { '/timesheets/tl-review/assets': { enabled: true,
-      ready: [{ assetId: 'a1', label: 'CH-01 — Hero', name: 'Hero', hours: 1.5 }], inReview: [] } };
-    const { page } = await open(browser, { answers });
-    await chooseProject(page);
+  await t.test('changing to a project the person does not lead takes the box away', async () => {
+    const { page } = await open(browser, { leads: ['p1'] });
+    await chooseProject(page, 'p1');
     await page.check('#tl_action');
-    await page.selectOption('#tl_actionType', 'asset_review');
-    await page.waitForFunction(() => document.getElementById('tl_asset').options.length > 1);
+    await page.selectOption('#tl_actionType', 'review');
 
-    await page.evaluate(() => { window.__calls = []; tlDay = '2026-03-13'; return tlLoadReviewAssets(); });
-    asked = await page.evaluate(() => window.__calls.map((c) => c.path));
-    assert.ok(asked.some((p) => p.includes('date=2026-03-13')),
-      `the new day is what it asks about: ${asked.join(' | ')}`);
+    await page.evaluate(() => { document.getElementById('tl_project').innerHTML =
+      '<option value="p1">A Project</option><option value="p2">Another Project</option>'; });
+    await page.selectOption('#tl_project', 'p2');
+    await page.waitForFunction(() => document.getElementById('tl_actionWrap').style.display === 'none');
+    const shown = await box(page);
+    assert.strictEqual(shown.ticked, false);
+    assert.strictEqual(shown.assetShown, true, 'and the ordinary form is back');
     await page.close();
   });
 
   await t.test('the form refuses a half-filled TL Action beside the dropdown, not in a dialog', async () => {
-    const answers = { '/timesheets/tl-review/assets': { enabled: true,
-      ready: [{ assetId: 'a1', label: 'CH-01 — Hero', name: 'Hero', hours: 1.5 }], inReview: [] } };
-    const { page } = await open(browser, { answers });
+    const { page } = await open(browser);
     await chooseProject(page);
     await page.check('#tl_action');
     assert.match(await page.evaluate(() => tlActionProblem()), /what kind of TL Action/);
 
-    await page.selectOption('#tl_actionType', 'asset_review');
-    await page.waitForFunction(() => document.getElementById('tl_asset').options.length > 1);
-    assert.match(await page.evaluate(() => tlActionProblem()), /Choose the asset you reviewed/);
-
-    await page.selectOption('#tl_asset', 'a1');
+    await page.selectOption('#tl_actionType', 'review');
     assert.strictEqual(await page.evaluate(() => tlActionProblem()), '',
-      'and nothing is wrong once both are chosen');
+      'and nothing is wrong once a kind is chosen — there is no asset left to choose');
 
     assert.deepStrictEqual(await page.evaluate(() => window.__native), [],
       'no native dialog was reached');

@@ -288,69 +288,14 @@ test('PRODUCTION SAFETY: the submit route is exactly what it was', () => {
          four. */
       [/require\('\.\.\/vacation'\)|vacation\.annotateAway\(/,
         'the assignee picker\'s vacation warning, on another route entirely'],
-      /* Prompt 57, TL Action, and it is TWO claims rather than one because the
-         lines fall into two kinds.
-         
-         THE ROUTE is a new path, /:id/tl-review/start, reached by a different
-         request. Nothing in the submit route calls it and nothing it does is
-         reachable from one.
-         
-         THE TWO closeIfReviewEnded CALLS ARE DIFFERENT, and worth being honest
-         about: they sit inside applyTransition, which the submit route DOES
-         run. They are a no-op on that path rather than absent from it —
-         closeIfReviewEnded returns before any query unless the status it is
-         LEAVING is pending_tl_review, and submitting moves INTO that status,
-         never out of it. That is not left as prose: the guard clause is
-         asserted structurally below, and tests/tl-review has the live half
-         (submitting opens no session and touches none). */
-      [/require\('\.\.\/tl-review'\)|require\('\.\.\/timesheet-settings'\)/,
-        'TL Action: the two requires'],
-      [/tlReview\.closeIfReviewEnded\(|\{ action: verdict\.action, actorId: req\.user\.id \}\);|\{ actorId: req\.user\.id \}\);/,
-        'TL Action: a no-op on any transition that is not LEAVING TL Review'],
-      /* THE ROUTE'S OWN LINES, matched by WHERE THEY ARE rather than by what
-         they say. A list of content patterns for a whole route is a list to
-         keep in step with it, and the claim being made is positional anyway:
-         "every remaining line I added is inside /:id/tl-review/start". Said
-         that way it cannot drift, and a line that strays OUT of that route
-         fails this test, which is the behaviour wanted. */
-      [(line) => insideTlReviewRoute.has(line.trim()),
-        'TL Action: inside the start route, a path the submit route never reaches'],
     ];
-    /* The new route's body, as a set of its own lines. Cut from the file by its
-       opening and the first blank line after its close, so it is the route and
-       not the neighbourhood. */
-    const routeFrom = mine.indexOf("router.post('/:id/tl-review/start'");
-    const routeTo = routeFrom === -1 ? -1 : mine.indexOf('\n});', routeFrom);
-    const insideTlReviewRoute = new Set(routeFrom === -1 ? []
-      : mine.slice(routeFrom, routeTo + 4).split('\n').map((l) => l.trim()).filter(Boolean));
-
     for (const line of added) {
-      const why = ADDITIVE.find(([re]) =>
-        (typeof re === 'function' ? re(line) : re.test(line)));
+      const why = ADDITIVE.find(([re]) => re.test(line));
       assert.ok(why,
         `src/routes/assets.js gained a line that no entry in ADDITIVE accounts for: ${line}`
       );
     }
   }
-
-  /* AND THE ONE CLAIM ON THAT LIST THAT IS NOT SELF-EVIDENT, checked rather
-     than taken on trust.
-     
-     closeIfReviewEnded is called from applyTransition, which the submit route
-     runs. The entry above says it is a no-op there because it returns before
-     any query unless the status being LEFT is pending_tl_review. That is a
-     property of two lines of src/tl-review.js, so it is asserted against those
-     two lines — if somebody later moves the guard below the UPDATE, this fails
-     and the claim in the allowlist stops being true quietly. */
-  const review = fs.readFileSync(path.join(ROOT, 'src', 'tl-review.js'), 'utf8');
-  assert.match(review, /const REVIEW_STATUS = 'pending_tl_review';/,
-    'the status it guards on is the TL review queue');
-  const guard = review.slice(review.indexOf('async function closeIfReviewEnded'));
-  const firstStatement = guard.slice(0, guard.indexOf('\n  return'));
-  assert.match(firstStatement, /if \(fromStatus !== REVIEW_STATUS\) return \{ closed: 0 \};/,
-    'and it returns on anything else before touching the database');
-  assert.ok(!/db\.query|UPDATE/.test(firstStatement),
-    'with no query before that guard — submitting must cost one comparison and nothing more');
 });
 
 test('with both switches off, nothing in the submission payload changes', () => {

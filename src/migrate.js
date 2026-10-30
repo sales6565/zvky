@@ -4133,6 +4133,23 @@ async function ensureTlReview(db, log) {
   };
   const fk = async (sql) => { await db.query(sql).catch(() => {}); };
 
+  /* THE SESSIONS TABLE IS CREATED AND NEVER WRITTEN TO, and that is deliberate.
+   *
+   * The first build of TL Action measured a review automatically — a session
+   * opened when the lead copied the submission path and closed when the asset
+   * left TL Review. The studio asked for the hours to be typed instead, so
+   * nothing writes to this table any more and nothing reads it.
+   *
+   * IT IS NOT DROPPED. A deployment that ran the earlier migration may hold
+   * rows, and a migration that destroys data to tidy up is a migration nobody
+   * can undo. An empty unused table costs a few kilobytes; dropping somebody's
+   * only record of who read what and when cannot be taken back. Whether to drop
+   * it is the owner's call, made once, with the table in front of them.
+   *
+   * STILL CREATED ON A FRESH INSTALL, so that call is the same call everywhere:
+   * every deployment has the same schema, and "drop it" means one statement
+   * rather than "drop it if you ever ran that version".
+   */
   if (!(await table('tl_review_sessions'))) {
     await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS tl_review_sessions (
         id               CHAR(36)    NOT NULL PRIMARY KEY,
@@ -4182,7 +4199,52 @@ async function ensureTlReview(db, log) {
   }
   await db.query('ALTER TABLE timesheet_entries ADD KEY idx_tse_tl_action (tl_action)')
     .catch(() => { /* the column is what matters; an index refused is not fatal */ });
-  log('Schema: added timesheet_entries.tl_action — Project Meeting or Asset Review on a lead\'s line.');
+  log('Schema: added timesheet_entries.tl_action — Project Meeting or Review on a lead\'s line.');
+}
+
+/* ---------------------------------------------------------------------------
+ * 'asset_review' BECOMES 'review'.
+ *
+ * The first build of TL Action called the second kind of line an Asset Review,
+ * because it was about one asset and was measured from the review of it. It is
+ * typed now and names no asset, so it is a Review — and the stored value
+ * follows the name rather than being left as a word nothing says any more.
+ *
+ * WHAT IT DOES TO EXISTING DATA: one UPDATE, on rows holding the old value.
+ * NOTHING IS DELETED. A converted row keeps whatever asset_id it had — the
+ * figures it must stay out of are keyed on tl_action and never on asset_id,
+ * precisely so an old row with one is still excluded, and the timesheet still
+ * shows the asset beside it so nothing is hidden from the person whose line it
+ * is.
+ *
+ * NO CHECK CONSTRAINT IS INVOLVED, and that is worth saying because it is the
+ * obvious place to look for one. The column shipped as a plain VARCHAR with the
+ * two values enforced by src/tl-review.js's isAction() — one place, with a
+ * message, rather than a database error nobody can read. So there is nothing to
+ * drop and recreate here; the rule changed where the rule lives, and this step
+ * only moves the data to match it.
+ *
+ * IDEMPOTENT BY ITS OWN WHERE CLAUSE. The second run matches nothing, which is
+ * the only kind of idempotence that cannot go stale — there is no marker to
+ * write and none to forget.
+ */
+async function ensureTlActionRenamed(db, log) {
+  const { result } = await db.query(
+    "UPDATE timesheet_entries SET tl_action = 'review' WHERE tl_action = 'asset_review'"
+  ).catch((err) => {
+    /* A deployment whose timesheet tables or whose tl_action column never
+       arrived has no rows to convert, and the step that adds them runs before
+       this one. Either way there is nothing to do and nothing to report. */
+    if (err.code === 'ER_NO_SUCH_TABLE' || err.code === 'ER_BAD_FIELD_ERROR') {
+      return { result: { affectedRows: 0 } };
+    }
+    throw err;
+  });
+  const moved = Number((result && result.affectedRows) || 0);
+  if (moved) {
+    log(`Schema: ${moved} timesheet line${moved === 1 ? '' : 's'} filed as "Asset Review" `
+      + 'now read as "Review". The hours and any asset on them are unchanged.');
+  }
 }
 
 /* A password an administrator reset, and the change it forces.
@@ -5282,6 +5344,8 @@ const STEPS = [
   /* After the timesheet tables (whose column it adds) and after assets and
      users (which the sessions table points at with a cascade each). */
   ['tl action', ensureTlReview],
+  // After the step that adds the column, whose values it converts.
+  ['tl action rename', ensureTlActionRenamed],
   // After users, whose key every chat table points at.
   ['chat', ensureChat],
   /* Beside the chat tables, though it depends on none of them — one row, no

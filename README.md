@@ -280,7 +280,7 @@ somebody grants you. `timesheet.options` is **Super Admin only**, via
 | `timesheet.all` | `fullAccess` | Read the studio's |
 | `timesheet.options` | **Super Admin** | Decide what the form offers everybody, and whether yesterday's sheet gates today's work |
 | `timesheet.sub_options` | **Super Admin** | Curate the second dropdown under a category — the Idle remarks, training types, on-site clients — and its heading |
-| `timesheet.tl_action` | **roles that lead a team**, plus Super Admin | Log your own TL Action time: a project meeting, or a review measured from the submission path you copied to the decision you made |
+| `timesheet.tl_action` | **roles that lead a team**, plus Super Admin | Log your own TL Action time on a project you lead: a project meeting, or a review. Hours are typed |
 
 A separate key rather than widening an existing one, because nothing about
 managing the options should narrow anybody's ability to log their own time — and
@@ -296,48 +296,46 @@ corrected.
 `PERMISSION_BY_PATH` that is not a `settings.*` key, so that a Super Admin
 granting the section does not have to find a second switch somewhere else.
 
-### TL Action: a lead's own time, and what it is measured from
+### TL Action: a lead's own time
 
 Two kinds of line, both project work and neither of them work on an asset:
-**Project Meeting**, where the lead types the hours, and **Asset Review**, where
-they are measured.
+**Project Meeting** and **Review**. The lead types the hours for both, with the
+same step, the same limits and the same "a day over 8 hours is flagged, not
+refused" rule as every other typed line. Neither names an asset — the field is
+hidden while the box is ticked, and the server refuses a TL Action line that
+carries one.
 
-**What is measured is the review, not the wait.** An asset sits in TL Review
-from the moment it is submitted until somebody acts on it, and most of that is
-it waiting on a desk. The clock starts when the lead clicks **Copy this path**
-on the submission — the one act that reliably means *I am looking at it now* —
-and stops when the asset leaves TL Review, whether that was **TL Approved**,
-**Request Changes**, or anything else that moved it. Submitted on Friday
-evening and approved on Monday morning is worth the twenty minutes on Monday.
-
-**Per lead, not per asset.** Two leads reading the same submission each get
-their own session, and the time is credited to whoever clicked Copy even when
-somebody else pressed the decision button: the clicker did the reading. A lead
-who never clicked Copy has nothing to log, which is the honest answer rather
-than a figure invented for them. A resubmitted round needs a fresh Copy.
-
-**The hours are working hours**, through the same `countedMsByDay()` that values
-a `work_sessions` row — breaks, evenings, weekly offs, holidays and the lead's
-own leave all come off, by the one piece of code in this application that
-decides what a working minute is. A review spanning two days puts each day's
-share on its own day. The figure is the server's: the field is locked, the list
-shows what the server calculated, and the save recomputes it and ignores
-whatever the request carried.
-
-**It is never the artist's time.** A TL Action line reaches no figure about the
+**It is never the artist's time.** A TL Action line reaches no figure about an
 asset — not Time Spent, not the Efficiency report, not bid-vs-spent, not the
 Artist Report, not the P&L, all of which read `work_sessions` and never the
 timesheet. It does count towards the lead's own day and its eight-hour flag.
+The exclusion is keyed on `tl_action` and never on `asset_id`, so a line left
+over from the earlier build of this feature — which did name an asset — is
+excluded too.
 
 **Three things have to be true** for the box to appear, and all three are asked
 again on the server: Settings → Time Sheet has **Timesheet TL Action** on (it is
 on by default and blocks nobody), the person holds `timesheet.tl_action`, and
 they lead the project they chose — which includes Acting Team Leads, through
 `permissions.isProjectLead()`. Holding the key studio-wide still gets lines only
-for the projects each person actually leads.
+for the projects each person actually leads. The projects somebody leads come
+down with the week as a list of ids, so the form needs no round trip while it is
+being filled in; the save asks the server again regardless.
 
-Switching the setting off hides the box, refuses new TL Action lines and stops
-recording new review time. Lines already filed stay exactly where they are.
+Switching the setting off hides the box and refuses new TL Action lines. Lines
+already filed stay exactly where they are.
+
+**What this used to be.** The first build measured a review automatically: a
+session opened when the lead clicked *Copy this path* on a submission and closed
+when the asset left TL Review, and the hours were that span intersected with the
+studio's working day. The studio asked for it to be typed instead, so the
+sessions, the endpoints, the hook in the transition function and the extra call
+on the copy button are all gone — *Copy this path* copies and nothing else. The
+empty `tl_review_sessions` table is left in place rather than dropped, because a
+deployment that ran the earlier migration may hold rows and a migration that
+destroys data to tidy up cannot be undone; whether to drop it is a decision to
+make once, deliberately. Lines filed as `asset_review` are converted to `review`
+by a migration and keep whatever asset they had.
 
 ### What is actually an option on the Time Sheet
 

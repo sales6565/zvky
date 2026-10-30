@@ -930,10 +930,9 @@ const GROUPS = [
         label: 'Log TL Action time on the timesheet',
         /* A LEAD'S OWN TIME, which the timesheet had no way to hold.
          *
-         * Two kinds of it: a project meeting, typed, and an asset review,
-         * measured from the moment the lead opened the submission until they
-         * decided. Neither is work on an asset and neither reaches any figure
-         * about one — see the note at the top of src/tl-review.js.
+         * Two kinds of it, a project meeting and a review, both typed. Neither
+         * is work on an asset, neither names one, and neither reaches any
+         * figure about one — see the note at the top of src/tl-review.js.
          *
          * THE ROLES THAT LEAD A TEAM, by default, plus the Super Admin. It is
          * not `() => true` like timesheet.own: everybody fills a timesheet,
@@ -948,9 +947,8 @@ const GROUPS = [
          * project". A studio that grants it studio-wide still gets lines only
          * for the projects each person actually leads. */
         impliedBy: anyOf(has('managePermissions'), has('leadsTeam')),
-        describe: 'On the Time Sheet, tick TL Action to log a project meeting, or an asset '
-          + 'review measured from when you copied the submission path to when you approved it '
-          + 'or sent it back. Only for projects you lead.',
+        describe: 'On the Time Sheet, tick TL Action to log a project meeting or a review as '
+          + 'your own time, with the hours typed in. Only for projects you lead.',
       },
       {
         /* THE STUDIO'S TIME SHEET POLICY, which is not the same as filling one in.

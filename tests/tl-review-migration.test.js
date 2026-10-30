@@ -1,5 +1,5 @@
-/* THE TWO SCHEMA ADDITIONS TL ACTION MAKES, and that running them twice is
- * harmless.
+/* THE SCHEMA TL ACTION NEEDS, that running it twice is harmless, and that the
+ * rename left every existing row intact.
  *
  * WHY THIS IS ITS OWN FILE. tl_review_sessions is not in sql/schema.sql — the
  * 'tl action' migration step creates it, and adds timesheet_entries.tl_action
@@ -8,10 +8,15 @@
  * studio takes. On shared hosting an ALTER is a thing that gets refused, so the
  * upgrade is worth booting rather than assuming.
  *
- * AND /api/health HAS TO BE ABLE TO SEE THEM. src/schema-check.js carries a
- * comment about four tables that fell out of its REQUIRED list, during which
- * the one endpoint built to name schema gaps reported "complete". A column the
- * app reads by name and that list does not know about is invisible to it.
+ * AND THE RENAME IS THE PART WITH REAL DATA IN IT. 'asset_review' became
+ * 'review' when the feature stopped measuring anything, and the one thing a
+ * migration over somebody's filed timesheet must do is leave everything else
+ * exactly as it was — the hours, the notes, and the asset those rows carry.
+ *
+ * /api/health HAS TO SEE THE SCHEMA TOO. src/schema-check.js carries a comment
+ * about four tables that fell out of its REQUIRED list, during which the one
+ * endpoint built to name schema gaps reported "complete". A column the app
+ * reads by name and that list does not know about is invisible to it.
  */
 const test = require('node:test');
 const assert = require('node:assert');
@@ -139,10 +144,131 @@ test('an existing database gains all three, twice over', { skip: SKIP }, async (
   assert.strictEqual(filed.status, 201, `a meeting files on an upgraded database: ${JSON.stringify(filed.body)}`);
   assert.strictEqual(filed.body.entry.tlAction, 'project_meeting', 'and the column holds it');
 
-  const listed = await api(server.base,
-    `/timesheets/tl-review/assets?projectId=${project.id}&date=2026-03-09`, { token });
-  assert.strictEqual(listed.status, 200, `the picker reads the new table: ${JSON.stringify(listed.body)}`);
-  assert.deepStrictEqual(listed.body.ready, [], 'with nothing to offer yet, which is right');
+  /* AND THE FORM IS TOLD IT MAY OFFER THE BOX on this upgraded database — the
+     switch published with the week, and the project this account leads. */
+  const week = await api(server.base, '/timesheets/week?date=2026-03-09', { token });
+  assert.strictEqual(week.status, 200, JSON.stringify(week.body));
+  assert.strictEqual(week.body.workingDay.tlAction, true, 'the switch reads on');
+  assert.deepStrictEqual(week.body.tlActionProjects, [project.id],
+    'and the project this account leads comes with it');
+});
+
+test('the rename converts the old rows and leaves everything else alone', { skip: SKIP }, async (t) => {
+  let server;
+  t.after(() => { if (server) stopServer(server); });
+
+  /* A DATABASE AS THE FIRST BUILD LEFT IT: rows holding the old value, one of
+     them with the asset it was filed against — which is the shape that matters,
+     and the shape the API refuses to create now. So the surroundings are built
+     through the API (a real user, a real project, a real asset, because
+     timesheet_entries has a foreign key on each) and only the four lines
+     themselves are written directly. */
+  await resetSchema(cfg);
+  server = await startServer(cfg, { BOOTSTRAP_TOKEN: 'tlmig-3a', WORK_HOURS_SWEEP_MINUTES: '0',
+    EMAIL_SWEEP_MS: '0', EMAIL_BATCH_MS: '0' });
+  await api(server.base, '/auth/bootstrap', { method: 'POST',
+    body: { token: 'tlmig-3a', name: 'Root', email: 'root@tlmig3.test', password: PASSWORD } });
+  const token = (await api(server.base, '/auth/login', { method: 'POST',
+    body: { email: 'root@tlmig3.test', password: PASSWORD } })).body.token;
+  await openStudio(server.base, token);
+  const userId = (await api(server.base, '/auth/me', { token })).body.user.id;
+  const client = (await api(server.base, '/clients', { method: 'POST', token,
+    body: { name: 'Old Build Co' } })).body.client;
+  const project = (await api(server.base, '/projects', { method: 'POST', token,
+    body: { name: 'Old Build', clientId: client.id } })).body.project;
+  const asset = (await api(server.base, `/assets/project/${project.id}`, { method: 'POST', token,
+    body: { name: 'Reviewed Once', type: 'prop', manHours: 4 } })).body.asset;
+  stopServer(server);
+
+  const uuid = () => require('node:crypto').randomUUID();
+  const assetless = uuid();
+  const withAsset = uuid();
+  const untouched = uuid();
+  const meeting = uuid();
+  await sql(cfg,
+    `INSERT INTO timesheet_entries (id, user_id, entry_date, hours, notes, tl_action)
+     VALUES (?,?, '2026-03-09', 1.5, 'the old name, no asset', 'asset_review')`,
+    [assetless, userId]);
+  await sql(cfg,
+    `INSERT INTO timesheet_entries (id, user_id, entry_date, client_id, project_id, asset_id,
+       hours, notes, tl_action)
+     VALUES (?,?, '2026-03-09', ?, ?, ?, 2.25, 'the old name, with an asset', 'asset_review')`,
+    [withAsset, userId, client.id, project.id, asset.id]);
+  await sql(cfg,
+    `INSERT INTO timesheet_entries (id, user_id, entry_date, client_id, project_id, asset_id,
+       hours, notes, tl_action)
+     VALUES (?,?, '2026-03-09', ?, ?, ?, 3, 'an ordinary line', NULL)`,
+    [untouched, userId, client.id, project.id, asset.id]);
+  await sql(cfg,
+    `INSERT INTO timesheet_entries (id, user_id, entry_date, hours, notes, tl_action)
+     VALUES (?,?, '2026-03-09', 1, 'a meeting', 'project_meeting')`,
+    [meeting, userId]);
+
+  const rowOf = async (id) =>
+    (await sql(cfg, 'SELECT * FROM timesheet_entries WHERE id = ?', [id]))[0];
+
+  for (const pass of [1, 2]) {
+    server = await startServer(cfg, { BOOTSTRAP_TOKEN: `tlmig-3-${pass}`,
+      WORK_HOURS_SWEEP_MINUTES: '0', EMAIL_SWEEP_MS: '0', EMAIL_BATCH_MS: '0' });
+
+    const a = await rowOf(assetless);
+    assert.strictEqual(a.tl_action, 'review', `pass ${pass}: the old name is gone`);
+    assert.strictEqual(Number(a.hours), 1.5, `pass ${pass}: its hours are untouched`);
+    assert.strictEqual(a.notes, 'the old name, no asset', `pass ${pass}: and its note`);
+
+    /* THE ROW THE WHOLE STEP IS ABOUT: converted, and still carrying the asset
+       it was filed against. Clearing it would destroy the only record of which
+       asset that line was about; the figures it must stay out of are keyed on
+       tl_action, so it does not need clearing to be excluded. */
+    const b = await rowOf(withAsset);
+    assert.strictEqual(b.tl_action, 'review', `pass ${pass}: converted`);
+    assert.strictEqual(b.asset_id, asset.id, `pass ${pass}: and it KEEPS its asset`);
+    assert.strictEqual(Number(b.hours), 2.25, `pass ${pass}: and its hours`);
+
+    const c = await rowOf(untouched);
+    assert.strictEqual(c.tl_action, null, `pass ${pass}: an ordinary line is not touched`);
+    assert.strictEqual(Number(c.hours), 3);
+    assert.strictEqual(c.asset_id, asset.id, `pass ${pass}: and keeps its asset too`);
+
+    const d = await rowOf(meeting);
+    assert.strictEqual(d.tl_action, 'project_meeting', `pass ${pass}: nor is a meeting`);
+
+    assert.strictEqual(
+      Number((await sql(cfg, "SELECT COUNT(*) AS n FROM timesheet_entries WHERE tl_action = 'asset_review'"))[0].n),
+      0, `pass ${pass}: no row holds the old value`);
+    assert.strictEqual(
+      Number((await sql(cfg, 'SELECT COUNT(*) AS n FROM timesheet_entries'))[0].n), 4,
+      `pass ${pass}: and nothing was deleted`);
+    if (pass === 1) stopServer(server);
+  }
+});
+
+test('the sessions table is created, empty, and written to by nothing', { skip: SKIP }, async (t) => {
+  let server;
+  t.after(() => { if (server) stopServer(server); });
+
+  /* IT STAYS, AND IT STAYS EMPTY. The first build wrote to it; nothing does
+     now. It is not dropped because a deployment that ran that build may hold
+     rows, and a migration that destroys data to tidy up cannot be undone —
+     whether to drop it is the owner's call, made once, with it in front of
+     them. Still created on a fresh install so that call is the same call
+     everywhere. */
+  await resetSchema(cfg);
+  server = await startServer(cfg, { BOOTSTRAP_TOKEN: 'tlmig-4', WORK_HOURS_SWEEP_MINUTES: '0',
+    EMAIL_SWEEP_MS: '0', EMAIL_BATCH_MS: '0' });
+  assert.ok(await tableExists('tl_review_sessions'), 'the table is there');
+  assert.strictEqual(
+    Number((await sql(cfg, 'SELECT COUNT(*) AS n FROM tl_review_sessions'))[0].n), 0,
+    'and empty');
+
+  /* AND THE MIGRATION ITSELF NEVER WRITES ONE, which is what makes "empty"
+     a property rather than a coincidence of this fixture. */
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const migrate = fs.readFileSync(path.join(__dirname, '..', 'src', 'migrate.js'), 'utf8');
+  assert.ok(!/INSERT INTO tl_review_sessions/i.test(migrate),
+    'the migration writes no sessions');
+  assert.match(migrate, /IT IS NOT DROPPED/, 'and says why it is kept');
 });
 
 test('/api/health would notice any of the three missing', () => {
@@ -175,18 +301,4 @@ test('/api/health would notice any of the three missing', () => {
   }
 });
 
-test('nothing is backfilled, and the module says why', () => {
-  /* A SESSION IS MEASURED FROM A CLICK NOBODY MADE BEFORE THIS SHIPPED, so
-     inventing spans for past reviews would be inventing the figure the feature
-     exists to measure. Asserted structurally because the temptation is real:
-     the first thing somebody will want, looking at an empty table, is to fill
-     it from asset_events. */
-  const fs = require('node:fs');
-  const path = require('node:path');
-  const migrate = fs.readFileSync(path.join(__dirname, '..', 'src', 'migrate.js'), 'utf8');
-  const step = migrate.slice(migrate.indexOf('async function ensureTlReview'));
-  const body = step.slice(0, step.indexOf('\n}\n'));
-  assert.ok(!/INSERT INTO tl_review_sessions/i.test(body),
-    'the migration writes no sessions — there is nothing true to write');
-  assert.match(migrate, /NOTHING IS BACKFILLED/, 'and it says so where somebody would add it');
-});
+

@@ -898,16 +898,26 @@ async function hoursLoggedOn(db, { assetId, userId, day, exceptId = null }) {
        the P&L all read work_sessions and never the timesheet at all, which is
        why there is nothing to change in any of them.)
        
-       THE CASE IT IS ACTUALLY FOR: a lead who reviewed an asset AND worked on
-       it the same day. Their review line names the asset, so without this it
-       would be subtracted from the hours the clock recorded for their own work
-       on it — and they would be offered, and able to file, less of their own
-       time than they spent. Two measurements of two different things, and only
-       one of them is what this sum is for.
+       ON tl_action, NEVER ON asset_id, and that is the point rather than a
+       detail. A TL Action line filed today names no asset at all — the field is
+       hidden for both kinds — so a rule written as "ignore TL lines that name
+       an asset" would do nothing whatsoever. What it is for is the rows the
+       first build of this feature left behind: lines filed as an Asset Review,
+       converted to 'review' by the migration, still carrying the asset_id they
+       were filed with. Those must stay out of this sum, and this is what keeps
+       them out.
        
-       IS NULL rather than <> 'asset_review': a value this column gains later is
-       still not ordinary project time, and the safe reading of an unknown TL
-       action is to leave it out. */
+       THE CASE IT IS ACTUALLY FOR, then: a lead who reviewed an asset under the
+       old build AND worked on it the same day. Without this clause their review
+       line would be subtracted from the hours the clock recorded for their own
+       work on it, and they would be offered, and able to file, less of their
+       own time than they spent.
+       
+       IS NULL rather than a list of the two values: a value this column gains
+       later is still not ordinary project time, and the safe reading of an
+       unknown TL action is to leave it out. It is also what makes a row the
+       rename could not reach — an 'asset_review' on a database whose UPDATE was
+       refused — excluded anyway. */
     `SELECT COALESCE(SUM(hours), 0) AS hours FROM timesheet_entries
       WHERE ${where} AND (tl_action IS NULL)`,
     params
