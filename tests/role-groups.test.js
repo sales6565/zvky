@@ -99,8 +99,8 @@ const SINCE_SNAPSHOT = [MANAGE, 'settings.email_delivery', 'report.remind', 'set
      are both Super Admin until a studio hands them out. */
   'leave.approve', 'leave.manage_all'];
 
-/* THE TWO VACATION KEYS THAT ARE DELIBERATELY NOT SUPER-ADMIN-ONLY, listed
- * separately so the exception is argued rather than hidden in the list above.
+/* THE KEYS THAT ARE DELIBERATELY NOT SUPER-ADMIN-ONLY, listed separately so
+ * each exception is argued rather than hidden in the list above.
  *
  * leave.request  is ON FOR EVERYBODY, and has to be: the brief asks for
  *                Vacation mode "in every user's profile ... for all users who
@@ -118,10 +118,27 @@ const SINCE_SNAPSHOT = [MANAGE, 'settings.email_delivery', 'report.remind', 'set
  *                an assignee picker. A coordinator planning next fortnight's
  *                work needs to know who is on holiday, and does not thereby
  *                need to be able to send anybody on one.
+ *
+ * timesheet.tl_action is ON FOR THE ROLES THAT LEAD A TEAM, through the same
+ *                leadsTeam capability, and for the same shape of reason: it is
+ *                about recording YOUR OWN time, not about reaching anybody
+ *                else's. A lead files their own project meeting and their own
+ *                review time on their own timesheet; nothing it grants touches
+ *                another person's week. Super-Admin-only would mean the one
+ *                account in the studio that reviews the least work is the only
+ *                one that can record reviewing it.
+ *
+ *                AND IT IS NOT THE WHOLE PERMISSION. Every endpoint behind it
+ *                asks a second question the key cannot answer — does this
+ *                person lead THIS project — through permissions.isProjectLead(),
+ *                which includes Acting Team Leads. So granting it studio-wide
+ *                still produces lines only for the projects each person
+ *                actually leads. The width here is "this designation reviews
+ *                work", which is exactly what leadsTeam says.
  */
-const WIDER_THAN_SUPER_ADMIN = ['leave.request', 'leave.view_team'];
+const WIDER_THAN_SUPER_ADMIN = ['leave.request', 'leave.view_team', 'timesheet.tl_action'];
 
-test('the two vacation keys that are wider than Super Admin are wider on purpose', () => {
+test('the keys that are wider than Super Admin are wider on purpose', () => {
   const holdersOf = (key) => roles.roleKeys().filter((k) => {
     const def = roles.roleDef(k);
     return def && catalog.BY_KEY.get(key).impliedBy(def);
@@ -146,9 +163,26 @@ test('the two vacation keys that are wider than Super Admin are wider on purpose
   }
   assert.ok(viewers.some((k) => k !== 'super_admin'), 'and a lead is among them');
 
-  /* Neither of the two is an approval or a cancellation. */
+  /* Logging your own lead time reaches the leads and the Super Admin, and
+     nobody who merely contributes — the same shape as leave.view_team above,
+     and asserted as the RULE rather than as a list, so a designation added
+     later with leadsTeam gets it and one without does not. */
+  const loggers = holdersOf('timesheet.tl_action');
+  assert.ok(loggers.includes('super_admin'), 'the Super Admin holds it');
+  assert.ok(loggers.includes('team_lead'), 'and so does a Team Lead');
+  for (const key of loggers) {
+    const def = roles.roleDef(key);
+    assert.ok(def.leadsTeam || def.managePermissions,
+      `${key} logs TL Action time only by leading a team or administering the studio`);
+  }
+  assert.ok(!loggers.includes('game_artist'), 'and an artist does not');
+
+  /* NONE OF THEM IS AN APPROVAL, A CANCELLATION, OR A REACH INTO SOMEBODY
+     ELSE'S WEEK. That is what makes "wider than Super Admin" defensible for
+     all three: each is about your own time, or about reading who is away. */
   for (const key of WIDER_THAN_SUPER_ADMIN) {
-    assert.ok(!['leave.approve', 'leave.manage_all'].includes(key));
+    assert.ok(!['leave.approve', 'leave.manage_all', 'timesheet.team', 'timesheet.all']
+      .includes(key), `${key} reaches only its holder's own time`);
   }
 });
 
@@ -188,8 +222,8 @@ test('THE SNAPSHOT: with no groups defined, every role is unchanged',
     for (const [roleKey, expected] of Object.entries(SNAPSHOT.roles)) {
       const held = await rolePermissions.effectiveFor(db, roleKey);
       /* BOTH LISTS ARE SUBTRACTED. SINCE_SNAPSHOT is the Super-Admin-only
-         additions; WIDER_THAN_SUPER_ADMIN is the two Vacation keys that reach
-         further on purpose, and they reach the Super Admin too — so leaving
+         additions; WIDER_THAN_SUPER_ADMIN is the keys that reach further on
+         purpose, and they reach the Super Admin too — so leaving
          them in would read as "super_admin changed" for a change argued and
          asserted twenty lines above. The test above is what holds their width;
          this one is about everything that did NOT change. */
