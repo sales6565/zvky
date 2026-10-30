@@ -850,6 +850,35 @@ test('the form asks the server for everything it shows', () => {
     'nor make it wait');
 });
 
+test('the two listeners the browser fixture copies are still wired this way', () => {
+  /* tests/tl-review-browser lifts the TL Action functions out of the page and
+     has to attach these two handlers itself, because in the page they sit at
+     the top level of the script rather than inside the lifted block. A fixture
+     that copies the functions and not the wiring has everything working and
+     nothing connected — which cost a run, with a failure that read like a
+     product bug. So the shape the fixture copies is pinned HERE, where moving
+     or deleting it in the page fails loudly instead of quietly making that
+     suite a copy of something that no longer exists. */
+  assert.match(PAGE, /document\.getElementById\('tl_asset'\)\.addEventListener\('change'/,
+    'the asset picker has a change handler');
+  const assetHandler = PAGE.slice(PAGE.indexOf("document.getElementById('tl_asset').addEventListener('change'"));
+  assert.match(assetHandler.slice(0, 600), /tlFillReviewHours\(\)/,
+    'which routes an asset review to the review figure rather than to the clock');
+  assert.match(assetHandler.slice(0, 600), /tlSuggest\(\)/,
+    'and an ordinary line to the clock, as it always did');
+
+  const projectHandler = PAGE.slice(PAGE.indexOf("document.getElementById('tl_project').addEventListener('change'"));
+  assert.match(projectHandler.slice(0, 600), /tlClearAction\(\)/,
+    'changing the project clears the box');
+  assert.match(projectHandler.slice(0, 600), /tlSyncAction\(\)/,
+    'and re-asks whether it belongs on the new one');
+  /* THE ORDER: cleared before re-asked. A tick left over from the old project
+     while the new one is being checked is a tick about a project this person
+     may not even lead. */
+  assert.ok(projectHandler.indexOf('tlClearAction()') < projectHandler.indexOf('tlSyncAction()'),
+    'in that order');
+});
+
 test('the box is gated on the switch, the key and the project', () => {
   assert.match(PAGE, /const tlActionAllowed = \(\) => Boolean\(\s*\n?\s*\(\(tsState\.week\|\|\{\}\)\.workingDay\|\|\{\}\)\.tlAction && can\('timesheet\.tl_action'\)/,
     'the switch and the key, on the page');

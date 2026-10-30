@@ -7282,7 +7282,16 @@ async function tlSyncActionType(){
   document.getElementById('tl_actionErr').textContent = '';
   const asset = document.getElementById('tl_asset');
 
-  if(!ticked){ tlRestoreAssetField(); return; }
+  if(!ticked){
+    /* CLEARED, NOT MERELY HIDDEN. A hidden <select> keeps its value, so an
+       un-ticked box left "Asset Review" selected underneath it: re-ticking
+       showed a kind nobody had just chosen, with none of that kind's effects
+       applied to the two fields below. The same mistake the non-project remark
+       had to fix, and the reason this form clears on every switch. */
+    document.getElementById('tl_actionType').value = '';
+    tlRestoreAssetField();
+    return;
+  }
 
   if(type === 'project_meeting'){
     /* DISABLED AND CLEARED. A meeting is not about one asset, and the server
