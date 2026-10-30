@@ -517,6 +517,40 @@ test('TL Action, end to end', { skip: SKIP }, async (t) => {
       'and the eleventh is its own day');
   });
 
+  await t.test('a review that ran overnight gives each day only its own share', async () => {
+    /* THE LIVE VERSION OF THE PURE CASE ABOVE, and it is here because a
+       mutation showed the pure one was not enough. The end-to-end cases all
+       used sessions that fell inside one day, and for those the day's share and
+       the span's whole total are the same number — so "only the selected day"
+       was never actually exercised through the endpoint.
+       
+       A review opened at 16:00 IST and finished at 11:00 the next morning. The
+       studio is open around the clock in this fixture, so the wall clock would
+       say nineteen hours; the day's share says eight on the first day and
+       eleven on the second, and the two must be asked for separately. */
+    const assetId = await submitted('Overnight');
+    await as('lead', `/assets/${assetId}/review`, { method: 'POST',
+      body: { decision: 'approved', text: 'ok' } });
+    // 10:30 UTC = 16:00 IST on the 26th; 05:30 UTC = 11:00 IST on the 27th.
+    await session(assetId, id.lead, '2026-03-26 10:30:00', '2026-03-27 05:30:00');
+
+    const first = await list('lead', 'alpha', '2026-03-26');
+    const second = await list('lead', 'alpha', '2026-03-27');
+    const hoursOn = (r) => (r.body.ready.find((x) => x.name === 'Overnight') || {}).hours;
+    assert.strictEqual(hoursOn(first), 8, 'the evening of the 26th');
+    assert.strictEqual(hoursOn(second), 11, 'and the morning of the 27th');
+    assert.strictEqual(hoursOn(first) + hoursOn(second), 19,
+      'and between them they are the whole review, counted once');
+
+    /* AND THE SAVE AGREES WITH THE LIST, which is the property the one shared
+       function buys: a picker offering eight and a save filing nineteen is the
+       bug this ordering exists to prevent. */
+    const filed = await file('lead', { date: '2026-03-26', hours: 99, clientId: id.client,
+      projectId: id.alpha, assetId, tlAction: 'asset_review' });
+    assert.strictEqual(filed.status, 201, JSON.stringify(filed.body));
+    assert.strictEqual(Number(filed.body.entry.hours), 8, 'the day it was filed for, not the span');
+  });
+
   await t.test('a lead of another project is refused the list, and an artist has no key', async () => {
     const mine = await list('other', 'alpha', '2026-03-05');
     assert.strictEqual(mine.status, 403, JSON.stringify(mine.body));
