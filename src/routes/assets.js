@@ -1,6 +1,8 @@
 const { asyncRouter } = require('../async-router');
 const assetHold = require('../asset-hold');
 const tlFeedback = require('../tl-feedback');
+const tlReview = require('../tl-review');
+const timesheetSettings = require('../timesheet-settings');
 
 // See src/async-router.js: keeps a failed query from killing the process.
 const router = asyncRouter();
@@ -807,6 +809,12 @@ router.patch('/:id', async (req, res) => {
        person on every other asset they held with no way to clear it. */
     if (req.body.status !== undefined && req.body.status !== asset.status) {
       await workLog.closeIfWorkStopped(conn, req.params.id, asset.status, req.body.status);
+      /* The same second question, for the same reason. This route is the one
+         place a status is written outside applyTransition, so a review ended by
+         an administrator moving the asset out of TL Review by hand is closed
+         here or nowhere — with outcome 'other', which is exactly what it was. */
+      await tlReview.closeIfReviewEnded(conn, req.params.id, asset.status, req.body.status,
+        { actorId: req.user.id });
     }
 
     // Changing who an asset is assigned to means the same thing however it was
@@ -1209,6 +1217,18 @@ async function applyTransition(req, res, asset, verdict, { note, versionId, conn
      earlier and with the reason that belongs to it, so this finds nothing to do
      on that path; it is the transitions nobody thought to close that it is for. */
   await workLog.closeIfWorkStopped(run, asset.id, asset.status, verdict.to);
+  /* AND THE LEAD'S REVIEW, if this is what ended one. Beside the line above
+     because it is the same shape and the same obligation: a status written here
+     is the only notice anything gets that something it was timing has finished,
+     and `run` is the caller's transaction, so a review closed by a transition
+     that then fails is rolled back with it.
+     
+     EVERY OPEN SESSION ON THE ASSET, not only this actor's: two leads reading
+     the same submission are both finished the moment it is decided, and the
+     time is credited to whoever clicked Copy rather than to whoever pressed the
+     button. See src/tl-review.js. */
+  await tlReview.closeIfReviewEnded(run, asset.id, asset.status, verdict.to,
+    { action: verdict.action, actorId: req.user.id });
   /* batch_id is the only thing a bulk action adds to an event, and it is
      nullable: a bulk delivery writes the SAME row a single delivery writes,
      and additionally says which act it was part of. Falls back to the older
@@ -3305,6 +3325,46 @@ router.post('/:id/review', async (req, res) => {
 
   const withDetails = await applyTransition(req, res, asset, verdict, { note: text, versionId });
   res.json({ asset: withDetails });
+});
+
+/* POST /api/assets/:id/tl-review/start — the lead has opened this submission.
+ *
+ * FIRED BY THE COPY BUTTON, and the copy is what matters: the page copies the
+ * path first and posts this afterwards, never the other way round, so a studio
+ * whose database is busy still gets its path on the clipboard. Nothing here is
+ * allowed to make that click slower or less reliable, which is why every
+ * refusal below is a 204 rather than an error the page would have to handle.
+ *
+ * 204 FOR EVERYONE ELSE, on purpose and not as laziness. An artist clicking
+ * Copy on their own submission, a lead without the permission, a producer
+ * looking at a delivered asset: all of them get their path, and none of them
+ * gets a session. The alternative — 403 — would put an error toast on a button
+ * that worked, for people who did nothing wrong.
+ *
+ * THE FOUR QUESTIONS, in the cheap-first order: is the feature on, does this
+ * person hold the key, is the asset in TL Review right now, and is this person
+ * a lead of its project. The last is the expensive one and the one that cannot
+ * be inferred from the key — permissions.isProjectLead() includes Acting Team
+ * Leads, which is the whole reason it is asked rather than the role read.
+ */
+router.post('/:id/tl-review/start', async (req, res) => {
+  const noted = (started) => res.status(204).set('X-TL-Review', started ? 'started' : 'ignored').end();
+  if (!timesheetSettings.current().tlAction) return noted(false);
+  if (!holds(req.user, 'timesheet.tl_action')) return noted(false);
+
+  const { rows } = await db.query('SELECT id, project_id, `status` FROM assets WHERE id = $1',
+    [req.params.id]).catch(() => ({ rows: [] }));
+  const asset = rows[0];
+  if (!asset) return noted(false);
+  /* IN REVIEW RIGHT NOW. A path copied off a delivered asset, or off one the
+     lead has already approved, is somebody fetching a file — not a review. */
+  if (asset.status !== tlReview.REVIEW_STATUS) return noted(false);
+  if (!await permissions.isProjectLead(req.user, asset.project_id)) return noted(false);
+
+  const out = await tlReview.start(db, {
+    assetId: asset.id, projectId: asset.project_id, leadUserId: req.user.id,
+  }).catch(() => ({ ok: false, started: false }));
+  return noted(Boolean(out.started));
 });
 
 // POST /api/assets/:id/relay — the team lead passes the Creative Director's

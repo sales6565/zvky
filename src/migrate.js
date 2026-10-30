@@ -3243,6 +3243,11 @@ async function ensureTimesheetSettings(db, log) {
       -- filled yesterday, which the morning after a deployment is most of a
       -- studio.
       require_previous_day TINYINT(1) NOT NULL DEFAULT 0,
+      -- The TL Action check box on the Add line form. DEFAULT 1, which is the
+      -- opposite of the line above and deliberately so: switching that one on
+      -- blocks people, where this one only offers a lead one more box and
+      -- changes nothing for anybody else. See src/timesheet-settings.js.
+      tl_action_enabled TINYINT(1) NOT NULL DEFAULT 1,
       updated_by      CHAR(36)     NULL,
       updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )`));
@@ -3258,6 +3263,22 @@ async function ensureTimesheetSettings(db, log) {
       'ALTER TABLE timesheet_settings ADD COLUMN require_previous_day TINYINT(1) NOT NULL DEFAULT 0'
     );
     log('Schema: added timesheet_settings.require_previous_day, off, so nothing changes until it is switched on.');
+  }
+
+  /* AND THE SAME, ASKED SEPARATELY, for TL Action. Its own information_schema
+     question rather than a second branch off the one above: a database that has
+     require_previous_day and not this one is exactly the database an upgrade
+     produces, and a shared check would skip this ALTER on every one of them. */
+  const { rows: tlCol } = await db.query(
+    `SELECT 1 AS present FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'timesheet_settings'
+        AND COLUMN_NAME = 'tl_action_enabled'`
+  );
+  if (!tlCol.length) {
+    await db.query(
+      'ALTER TABLE timesheet_settings ADD COLUMN tl_action_enabled TINYINT(1) NOT NULL DEFAULT 1'
+    );
+    log('Schema: added timesheet_settings.tl_action_enabled, on — the TL Action check box is available.');
   }
 
   const { rows } = await db.query('SELECT id FROM timesheet_settings WHERE id = 1');
@@ -4079,6 +4100,89 @@ async function ensureSubOptionColumn(db, log) {
   await db.query('ALTER TABLE timesheet_entries ADD KEY idx_tse_sub (non_project_sub)')
     .catch(() => { /* the column is what matters; an index refused is not fatal */ });
   log('Schema: added timesheet_entries.non_project_sub — which second-dropdown option a line carries.');
+}
+
+/* ---------------------------------------------------------------------------
+ * TL ACTION: the lead's own review time on a timesheet.
+ *
+ * TWO ADDITIONS AND NOTHING TOUCHED. A table nobody had before, and one
+ * nullable column on timesheet_entries. Every existing row reads as it always
+ * did — tl_action NULL is "an ordinary line", which is what all of them are.
+ *
+ * NOTHING IS BACKFILLED, and that is the decision rather than an omission. A
+ * session is measured from a click that nobody made before this shipped, so
+ * inventing spans for past reviews would be inventing the figure the feature
+ * exists to measure. Leads start getting hours from the first review they open
+ * after the deploy.
+ *
+ * EACH PIECE CHECKED FOR ON ITS OWN, so a database part-way through — the table
+ * created, the ALTER refused for want of permission on shared hosting — gains
+ * whichever half it is missing on the next boot rather than skipping both
+ * because the first was there. Same shape as every other step in this file, and
+ * tests/tl-review-migration.test.js boots twice to hold it.
+ */
+async function ensureTlReview(db, log) {
+  /* Local, like every other step's — `table` and `fk` are declared inside
+     ensureTimesheets and are not this file's to share. */
+  const table = async (name) => {
+    const { rows } = await db.query(
+      `SELECT TABLE_NAME AS n FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = $1`, [name]
+    );
+    return rows.length > 0;
+  };
+  const fk = async (sql) => { await db.query(sql).catch(() => {}); };
+
+  if (!(await table('tl_review_sessions'))) {
+    await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS tl_review_sessions (
+        id               CHAR(36)    NOT NULL PRIMARY KEY,
+        asset_id         CHAR(36)    NOT NULL,
+        -- Snapshotted beside the asset rather than joined for. The picker asks
+        -- "this lead's sessions on this project on this day", and an asset that
+        -- moved project later should not move its review time with it.
+        project_id       CHAR(36)    NULL,
+        -- WHOSE REVIEW IT IS: the lead who clicked Copy, not whoever decided.
+        lead_user_id     CHAR(36)    NOT NULL,
+        started_at       DATETIME    NOT NULL,
+        ended_at         DATETIME    NULL,
+        ended_by_user_id CHAR(36)    NULL,
+        -- 'approved' | 'changes_requested' | 'other'. NULL while open. Not an
+        -- ENUM: a transition added later lands in 'other', and widening an ENUM
+        -- is an ALTER on shared hosting where widening a VARCHAR is not.
+        outcome          VARCHAR(24) NULL,
+        -- The open-session lookup, which runs on every Copy click.
+        KEY idx_tlr_open (lead_user_id, asset_id, ended_at),
+        KEY idx_tlr_lead_asset (lead_user_id, asset_id),
+        KEY idx_tlr_asset (asset_id, ended_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`));
+    await fk('ALTER TABLE tl_review_sessions ADD CONSTRAINT fk_tlr_asset FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE');
+    await fk('ALTER TABLE tl_review_sessions ADD CONSTRAINT fk_tlr_lead FOREIGN KEY (lead_user_id) REFERENCES users(id) ON DELETE CASCADE');
+    log('Schema: added tl_review_sessions — a lead\'s review time, from Copy to decision.');
+  }
+
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'timesheet_entries'
+        AND COLUMN_NAME = 'tl_action'`
+  ).catch(() => ({ rows: [] }));
+  if (rows.length) return;
+  try {
+    /* VARCHAR WITH NO CHECK CONSTRAINT, deliberately. MariaDB 10.11 enforces
+       CHECK, MySQL 5.7 parses and ignores it, and the two values are enforced
+       on the way in by src/tl-review.js's isAction() — in one place, with a
+       message, rather than as a database error nobody can read. The column is
+       the storage; the rule is the code's, and a test holds it. */
+    await db.query(
+      'ALTER TABLE timesheet_entries ADD COLUMN tl_action VARCHAR(24) NULL AFTER non_project_sub'
+    );
+  } catch (err) {
+    if (err.code !== 'ER_NO_SUCH_TABLE') throw err;
+    log(`Schema: timesheet_entries is not there, so tl_action was skipped (${err.code}).`);
+    return;
+  }
+  await db.query('ALTER TABLE timesheet_entries ADD KEY idx_tse_tl_action (tl_action)')
+    .catch(() => { /* the column is what matters; an index refused is not fatal */ });
+  log('Schema: added timesheet_entries.tl_action — Project Meeting or Asset Review on a lead\'s line.');
 }
 
 /* A password an administrator reset, and the change it forces.
@@ -5175,6 +5279,9 @@ const STEPS = [
   ['timesheet entry flag', ensureTimesheetFlag],
   // After the timesheet tables, whose column it adds.
   ['timesheet sub-option column', ensureSubOptionColumn],
+  /* After the timesheet tables (whose column it adds) and after assets and
+     users (which the sessions table points at with a cascade each). */
+  ['tl action', ensureTlReview],
   // After users, whose key every chat table points at.
   ['chat', ensureChat],
   /* Beside the chat tables, though it depends on none of them — one row, no

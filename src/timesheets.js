@@ -891,12 +891,46 @@ async function hoursLoggedOn(db, { assetId, userId, day, exceptId = null }) {
   let where = 'user_id = $1 AND asset_id = $2 AND entry_date = $3';
   if (exceptId) { where += ' AND id <> $4'; params.push(exceptId); }
   const { rows } = await db.query(
-    `SELECT COALESCE(SUM(hours), 0) AS hours FROM timesheet_entries WHERE ${where}`,
+    /* TL ACTION LINES ARE NOT TIME ON THE ASSET, and this is the one query in
+       the application that reads timesheet_entries.asset_id — so this clause is
+       the whole of keeping them out of every figure that is about the asset.
+       (Time Spent, the Efficiency report, bid-vs-spent, the Artist Report and
+       the P&L all read work_sessions and never the timesheet at all, which is
+       why there is nothing to change in any of them.)
+       
+       THE CASE IT IS ACTUALLY FOR: a lead who reviewed an asset AND worked on
+       it the same day. Their review line names the asset, so without this it
+       would be subtracted from the hours the clock recorded for their own work
+       on it — and they would be offered, and able to file, less of their own
+       time than they spent. Two measurements of two different things, and only
+       one of them is what this sum is for.
+       
+       IS NULL rather than <> 'asset_review': a value this column gains later is
+       still not ordinary project time, and the safe reading of an unknown TL
+       action is to leave it out. */
+    `SELECT COALESCE(SUM(hours), 0) AS hours FROM timesheet_entries
+      WHERE ${where} AND (tl_action IS NULL)`,
     params
-  ).catch((err) => {
-    if (err && (err.code === 'ER_NO_SUCH_TABLE' || err.code === 'ER_BAD_FIELD_ERROR')) {
-      return { rows: [{ hours: 0 }] };
+  ).catch(async (err) => {
+    /* NO TABLE IS ZERO; A MISSING COLUMN IS NOT.
+     
+       A deployment whose timesheet tables were never created has logged
+       nothing, so nought is the true answer. A deployment whose tl_action ALTER
+       was refused has logged plenty — it simply cannot have a TL Action line to
+       exclude, because it cannot store one. Answering nought there would tell
+       somebody their three filed hours were not filed and let them file them
+       again, which is the opposite of what this sum is for. So it asks again
+       without the clause. */
+    if (err && err.code === 'ER_BAD_FIELD_ERROR') {
+      return db.query(
+        `SELECT COALESCE(SUM(hours), 0) AS hours FROM timesheet_entries WHERE ${where}`,
+        params
+      ).catch((err2) => {
+        if (err2 && err2.code === 'ER_NO_SUCH_TABLE') return { rows: [{ hours: 0 }] };
+        throw err2;
+      });
     }
+    if (err && err.code === 'ER_NO_SUCH_TABLE') return { rows: [{ hours: 0 }] };
     throw err;
   });
   return Math.round((Number(rows[0].hours) || 0) * 100) / 100;

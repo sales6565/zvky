@@ -57,6 +57,17 @@ const DEFAULTS = {
      arrives inert and the Super Admin turns it on when the studio has been
      told. See the Settings panel's description. */
   requirePreviousDay: false,
+  /* ON, unlike requirePreviousDay above, and the difference is worth stating
+     because the two sit next to each other.
+     
+     requirePreviousDay arrives off because switching it on BLOCKS people — the
+     morning after a deployment most of a studio has not filled yesterday. This
+     one blocks nobody and adds nothing to anybody's day: with it on, a lead who
+     holds timesheet.tl_action and leads the selected project sees one more
+     check box on the Add line form, and everyone else sees exactly what they
+     saw before. A feature that costs nothing to have on is one the studio asked
+     to have on. */
+  tlAction: true,
 };
 
 const DAY_NAMES = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -113,6 +124,10 @@ async function load(db) {
        which is off. */
     requirePreviousDay: row.require_previous_day === undefined
       ? DEFAULTS.requirePreviousDay : Boolean(Number(row.require_previous_day)),
+    /* Same tolerance, same reason: a database whose ALTER has not run yet reads
+       undefined here and gets the default — which for this one is ON. */
+    tlAction: row.tl_action_enabled === undefined
+      ? DEFAULTS.tlAction : Boolean(Number(row.tl_action_enabled)),
     updatedBy: row.updated_by || null,
     updatedByName: row.updated_by_name || null,
     updatedAt: row.updated_at || null,
@@ -213,15 +228,19 @@ function validate(input) {
      purpose — a checkbox posts true/false, a form post may send the string
      'true', and an absent field means "leave it as it was", which is what
      pick() already does for every other setting here. */
-  const raw = pick('requirePreviousDay', cache.requirePreviousDay);
-  const requirePreviousDay = raw === true || raw === 'true' || raw === 1 || raw === '1';
+  const bool = (key) => {
+    const raw = pick(key, cache[key]);
+    return raw === true || raw === 'true' || raw === 1 || raw === '1';
+  };
+  const requirePreviousDay = bool('requirePreviousDay');
+  const tlAction = bool('tlAction');
 
   if (errors.length) return { ok: false, errors };
   return {
     ok: true,
     errors: [],
     value: { maxDayHours, minLineHours, maxLineHours, backdateDays, futureDays, loggableDays,
-      requirePreviousDay },
+      requirePreviousDay, tlAction },
   };
 }
 
@@ -230,18 +249,35 @@ async function save(db, input, userId) {
   if (!checked.ok) return { ok: false, status: 422, errors: checked.errors };
   const before = current();
   const v = checked.value;
-  await db.query(
-    `INSERT INTO timesheet_settings
+  /* THE WIDE WRITE, THEN THE NARROW ONE. A deployment whose tl_action_enabled
+     ALTER has not applied still saves the other seven settings rather than
+     failing the whole screen over a column it does not have — the same
+     fallback src/leave-settings.js save() makes, and the same reason: on
+     shared hosting an ALTER is a thing that gets refused. */
+  const wide = `INSERT INTO timesheet_settings
+       (id, max_day_hours, min_line_hours, max_line_hours, backdate_days, future_days,
+        loggable_days, require_previous_day, tl_action_enabled, updated_by)
+     VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9)
+     ON DUPLICATE KEY UPDATE
+       max_day_hours = $1, min_line_hours = $2, max_line_hours = $3,
+       backdate_days = $4, future_days = $5, loggable_days = $6,
+       require_previous_day = $7, tl_action_enabled = $8, updated_by = $9`;
+  const narrow = `INSERT INTO timesheet_settings
        (id, max_day_hours, min_line_hours, max_line_hours, backdate_days, future_days,
         loggable_days, require_previous_day, updated_by)
      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8)
      ON DUPLICATE KEY UPDATE
        max_day_hours = $1, min_line_hours = $2, max_line_hours = $3,
        backdate_days = $4, future_days = $5, loggable_days = $6,
-       require_previous_day = $7, updated_by = $8`,
-    [v.maxDayHours, v.minLineHours, v.maxLineHours, v.backdateDays, v.futureDays,
-      v.loggableDays.join(','), v.requirePreviousDay ? 1 : 0, userId || null]
-  );
+       require_previous_day = $7, updated_by = $8`;
+  const core = [v.maxDayHours, v.minLineHours, v.maxLineHours, v.backdateDays, v.futureDays,
+    v.loggableDays.join(','), v.requirePreviousDay ? 1 : 0];
+  try {
+    await db.query(wide, [...core, v.tlAction ? 1 : 0, userId || null]);
+  } catch (err) {
+    if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
+    await db.query(narrow, [...core, userId || null]);
+  }
   await load(db);
   return { ok: true, before, settings: current() };
 }
@@ -259,6 +295,7 @@ const summarise = (s) => [
      somebody working. A log that recorded the hour limits and not the switch
      would be missing the only change anybody would come looking for. */
   `yesterday's sheet ${s.requirePreviousDay ? 'REQUIRED before starting work' : 'not required'}`,
+  `TL Action ${s.tlAction ? 'on' : 'off'}`,
 ].join(', ');
 
 module.exports = {

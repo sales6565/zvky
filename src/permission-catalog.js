@@ -926,6 +926,33 @@ const GROUPS = [
           + 'projects and assets or against non-project time.',
       },
       {
+        key: 'timesheet.tl_action',
+        label: 'Log TL Action time on the timesheet',
+        /* A LEAD'S OWN TIME, which the timesheet had no way to hold.
+         *
+         * Two kinds of it: a project meeting, typed, and an asset review,
+         * measured from the moment the lead opened the submission until they
+         * decided. Neither is work on an asset and neither reaches any figure
+         * about one — see the note at the top of src/tl-review.js.
+         *
+         * THE ROLES THAT LEAD A TEAM, by default, plus the Super Admin. It is
+         * not `() => true` like timesheet.own: everybody fills a timesheet,
+         * and only the people who actually review work have review time to put
+         * on one. leadsTeam is the capability that says so, and it is the same
+         * flag the review gate itself is built on.
+         *
+         * HOLDING IT IS NOT ENOUGH. Every endpoint asks a second question the
+         * key cannot answer — is this person a lead of THIS project — through
+         * permissions.isProjectLead(), which includes Acting Team Leads. The
+         * key says "this designation reviews work"; the membership says "this
+         * project". A studio that grants it studio-wide still gets lines only
+         * for the projects each person actually leads. */
+        impliedBy: anyOf(has('managePermissions'), has('leadsTeam')),
+        describe: 'On the Time Sheet, tick TL Action to log a project meeting, or an asset '
+          + 'review measured from when you copied the submission path to when you approved it '
+          + 'or sent it back. Only for projects you lead.',
+      },
+      {
         /* THE STUDIO'S TIME SHEET POLICY, which is not the same as filling one in.
          *
          * What it gates: the non-project category list (add, rename, reorder,
