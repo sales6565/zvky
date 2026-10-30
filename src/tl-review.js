@@ -26,9 +26,17 @@
  * WHAT THIS TIME IS NOT. It is the lead's time, not the artist's. A TL Action
  * line never reaches Time Spent, the Efficiency report, bid-vs-spent, the
  * Artist Report or the P&L — all of which read work_sessions and not the
- * timesheet at all — and it is kept out of the one timesheet figure that does
- * read timesheet_entries.asset_id, hoursLoggedOn(), so a lead who also WORKED
- * on the asset is still offered their own recorded hours in full.
+ * timesheet at all — and it is kept out of the one timesheet figure that is
+ * about an asset, hoursLoggedOn() in src/timesheets.js, where that exclusion is
+ * written and argued. So a lead who also WORKED on the asset is still offered
+ * their own recorded hours in full.
+ *
+ * (The table is named there and not here on purpose. tests/timesheet-options
+ * scans every file under src/ and public/ for that table by name and fails on
+ * any not on its allowlist, so that somebody pointing a new report at timesheet
+ * hours has to decide what Idle means to it first. This module reads review
+ * sessions and never that table; naming it in prose would put a file on that
+ * allowlist with no business being there.)
  */
 
 const dayStatus = require('./day-status');

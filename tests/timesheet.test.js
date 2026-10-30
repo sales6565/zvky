@@ -379,6 +379,12 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
       // windows existed and what a studio that has not set one still gets.
       backdateDays: null,
       futureDays: null,
+      /* AND WHETHER THE TL ACTION BOX EXISTS AT ALL, published with the rest of
+         the policy so the form does not fetch the settings separately. True on
+         a fresh install, which is this fixture. It is only the studio-wide
+         switch: the page still asks can() for the key, and the server still
+         asks which projects this person leads. */
+      tlAction: true,
     });
   });
 
@@ -1031,8 +1037,14 @@ await t.test('the edge cases the studio named: a weekend, a handover, and repeat
        than one per category: the heading differs per category and a spreadsheet
        gets one column, so it is named for what it holds. Blank on a project
        line and on a line filed before the dropdown existed. */
+    /* AND TL ACTION BESIDE THEM, in its own column rather than folded into
+       Category — Category is the non-project list, and a TL Action line IS
+       project work. Anybody adding a project's hours up outside Forge needs to
+       be able to take a lead's review time out of them, and a column they can
+       filter on is how. Blank on every ordinary line. */
     assert.deepStrictEqual(header.trim().split(','),
-      ['Date', 'Client', 'Project', 'Asset', 'Category', 'Option', 'Hours', 'Notes', 'Status'],
+      ['Date', 'Client', 'Project', 'Asset', 'Category', 'Option', 'TL Action',
+        'Hours', 'Notes', 'Status'],
       'and it is the hours-based shape, with no Start and no End');
     const trained = text.split('\n').find((l) => l.includes('Training'));
     if (trained) {

@@ -221,12 +221,25 @@ function formHarness(categories, { kind = 'non' } = {}) {
   const escapeHTML = (v) => String(v == null ? '' : v)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const tsState = { week: { nonProjectTypes: categories } };
-  const api = new Function('document', 'tsState', 'escapeHTML',
-    `${source};
+  /* THE TWO TL ACTION CALLS syncTimesheetLine NOW MAKES, stubbed rather than
+     lifted. This harness is about the second dropdown, and the TL Action box is
+     a separate feature with its own browser suite (tests/tl-review-browser) —
+     lifting it would drag in the endpoint, can() and the week payload to test a
+     clear-on-switch rule that is already tested where it belongs.
+     
+     WHAT IS STILL HELD HERE is that syncTimesheetLine CALLS them: a stub that
+     was not called would leave these cases passing while the box survived a
+     switch to Non-project, which is the bug the clearing exists to prevent. The
+     calls are counted and asserted on below. */
+  const tlCalls = { clear: 0, sync: 0 };
+  const api = new Function('document', 'tsState', 'escapeHTML', 'tlCalls',
+    `const tlClearAction = () => { tlCalls.clear += 1; };
+     const tlSyncAction = () => { tlCalls.sync += 1; };
+     ${source};
      return { syncTimesheetLine, tlSyncSubOptions, tlSubOptionProblem, tlClearSubOption,
               tlCurrentCategory };`
-  )({ getElementById: (id) => nodes[id] || null }, tsState, escapeHTML);
-  return { api, nodes, tsState };
+  )({ getElementById: (id) => nodes[id] || null }, tsState, escapeHTML, tlCalls);
+  return { api, nodes, tsState, tlCalls };
 }
 
 const CATEGORIES = [
@@ -300,6 +313,17 @@ test('a project line hides the dropdown and clears it', () => {
   h.api.syncTimesheetLine();
   assert.strictEqual(h.nodes.tl_subWrap.style.display, '');
   assert.strictEqual(h.nodes.tl_sub.value, '');
+
+  /* AND THE SAME RULE REACHES TL ACTION, which is the other control on this
+     form that survives a hidden <select> keeping its value. Switching to
+     Non-project cleared it; every switch re-asks whether the box belongs.
+     Asserted as calls rather than as state because the box's own behaviour is
+     tested in its own suite — what this case owns is that syncTimesheetLine
+     does not forget to ask. */
+  assert.strictEqual(h.tlCalls.clear, 1,
+    'switching to Non-project clears the TL Action box exactly once');
+  assert.strictEqual(h.tlCalls.sync, 2,
+    'and both switches re-ask whether the box belongs on this line');
 });
 
 test('the form refuses to file a half-filled line, and says so beside the dropdown', () => {
@@ -754,8 +778,13 @@ test('sub-options, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) =
     const book = require('xlsx').read(Buffer.from(await res.arrayBuffer()), { type: 'buffer' });
     const text = require('xlsx').utils.sheet_to_csv(book.Sheets[book.SheetNames[0]]);
     const header = text.split('\n').find((l) => l.startsWith('Date,'));
+    /* TL Action sits between Option and Hours — see the note on this header in
+       tests/timesheet.test.js, which is where the column's shape is argued.
+       Pinned here too because this case reads the Option column BY INDEX
+       below, and a column inserted before it would move it silently. */
     assert.deepStrictEqual(header.trim().split(','),
-      ['Date', 'Client', 'Project', 'Asset', 'Category', 'Option', 'Hours', 'Notes', 'Status']);
+      ['Date', 'Client', 'Project', 'Asset', 'Category', 'Option', 'TL Action',
+        'Hours', 'Notes', 'Status']);
     assert.ok(text.split('\n').some((l) => /Idle,No Work to Assign/.test(l)),
       'and a line prints its remark');
     /* And a category with no second dropdown leaves the column empty. Read by

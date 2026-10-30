@@ -1359,6 +1359,12 @@ async function exportRows(req) {
          one column, so it is named for what it holds. Blank on a project line
          and on a line filed before the dropdown existed. */
       Option: r.nonProjectSub ? sheets.subOptionLabel(r.nonProjectSub) : '',
+      /* A LEAD'S OWN TIME, named in its own column rather than folded into
+         Category — Category is the non-project list, and a TL Action line IS
+         project work. Anybody adding these up outside Forge needs to be able to
+         take them out of an asset's hours, and a column they can filter on is
+         how. From the one label function, like the screen. */
+      'TL Action': tlReview.labelFor(r.tlAction) || '',
       Hours: Number(r.hours),
       Notes: r.notes || '',
       Status: statusOf.get(sheets.toISO(r.date)) || 'draft',
@@ -1374,7 +1380,7 @@ async function exportRows(req) {
  * is still on those rows and still in each day's own history — this is the
  * summary, and its shape follows what a line is now. */
 const EXPORT_HEADERS = ['Date', 'Client', 'Project', 'Asset', 'Category', 'Option',
-  'Hours', 'Notes', 'Status'];
+  'TL Action', 'Hours', 'Notes', 'Status'];
 
 router.get('/export.xlsx', requirePermission('timesheet.own'), async (req, res) => {
   const data = await exportRows(req);
