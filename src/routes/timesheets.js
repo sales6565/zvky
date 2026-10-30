@@ -228,10 +228,11 @@ const shapeEntry = (e) => ({
      offered without a second request. */
   subOptionLabel: sheets.subOptionLabel(e.nonProjectSub),
   subOptionRetired: sheets.subOptionRetired(e.nonProjectSub),
-  /* "TL · Project Meeting" or "TL · Asset Review", from the one function that
-     spells it — so the screen, the admin views and both exports cannot disagree
-     about what a line says. null on every ordinary line, which is all of them
-     until a lead files one. */
+  /* WHAT KIND OF TL ACTION, in words, from the one function that spells them —
+     so the screen, the admin views and both exports cannot come to disagree
+     about what a line says. The words themselves live in src/tl-review.js and
+     a test fails on any second copy of them, this comment included. null on
+     every ordinary line, which is all of them until a lead files one. */
   tlActionLabel: tlReview.labelFor(e.tlAction),
 });
 
@@ -678,8 +679,8 @@ async function tlActionFor(user, body, { exceptId = null } = {}) {
     return { ok: false, status: 400, field: 'projectId',
       error: 'TL Action is project work: choose the client and the project it was for.' };
   }
-  const reach = permissions.visibleProjects(user);
-  const inScope = reach.studioWide || (reach.projectIds || []).includes(projectId);
+  const reach = await permissions.visibleProjects(user);
+  const inScope = reach.some((p) => p.id === projectId);
   if (!inScope || !await permissions.isProjectLead(user, projectId)) {
     return { ok: false, status: 403, field: 'projectId',
       error: 'You do not lead that project, so you cannot log TL Action time on it.' };
@@ -1201,8 +1202,8 @@ router.get('/tl-review/assets', requirePermission('timesheet.tl_action'), async 
   /* IN SCOPE, THEN LED. Both, in that order, and the 403 says the same thing
      for either — a lead of another project learning that this project exists
      from the wording of a refusal is a small leak worth not having. */
-  const reach = permissions.visibleProjects(req.user);
-  const inScope = reach.studioWide || (reach.projectIds || []).includes(projectId);
+  const reach = await permissions.visibleProjects(req.user);
+  const inScope = reach.some((p) => p.id === projectId);
   const leads = inScope && await permissions.isProjectLead(req.user, projectId);
   if (!leads) {
     return res.status(403).json({ error: 'You do not lead that project.', field: 'projectId' });

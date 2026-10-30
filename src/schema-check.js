@@ -191,6 +191,18 @@ const REQUIRED = [
   { table: 'user_day_status',  column: 'request_id',                step: 'leave and idle' },
   { table: 'leave_requests',   column: null,                        step: 'leave and idle' },
   { table: 'leave_requests',   column: 'ended_on',                  step: 'leave and idle' },
+
+  /* TL ACTION. The sessions table is not in sql/schema.sql either — the 'tl
+     action' step creates it and adds the two columns with an ALTER each. The
+     failure this is here to name: the ALTER is refused, a lead ticks the box,
+     the Add line form answers 500 and /api/health says "complete". */
+  { table: 'tl_review_sessions', column: null,                step: 'tl action' },
+  { table: 'tl_review_sessions', column: 'lead_user_id',      step: 'tl action' },
+  { table: 'tl_review_sessions', column: 'started_at',        step: 'tl action' },
+  { table: 'tl_review_sessions', column: 'ended_at',          step: 'tl action' },
+  { table: 'tl_review_sessions', column: 'outcome',           step: 'tl action' },
+  { table: 'timesheet_entries',  column: 'tl_action',         step: 'tl action' },
+  { table: 'timesheet_settings', column: 'tl_action_enabled', step: 'tl action' },
 ];
 
 // Two queries for the whole check, rather than one per column.
