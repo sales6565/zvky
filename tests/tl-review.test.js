@@ -333,14 +333,32 @@ test('TL Action, end to end', { skip: SKIP }, async (t) => {
   });
 
   await t.test('the hours get the same rules every typed line gets', async () => {
+    /* REFUSED AS A 400 WITH A SENTENCE, not merely "refused".
+     
+       That distinction is the whole of this case and it was learnt the hard
+       way: timesheet_entries carries a database CHECK constraint on hours, so a
+       figure that gets past validation comes back as a 500 reading "this
+       deployment's database rejected the value". A test that accepted any
+       status over 399 passed on that — which is to say it passed while the
+       person filling in the form was shown a database error instead of being
+       told what was wrong. The status is pinned at 400 so validation has to
+       catch these BEFORE the database does. */
     const bad = [
       ['zero', 0], ['negative', -2], ['not a number', 'half an hour'], ['empty', ''],
+      /* ABOVE ZERO AND BELOW THE STUDIO'S MINIMUM, which is the only one of
+         these the minimum itself refuses — the others are caught by being
+         unparseable or by not being a positive number at all. Without it,
+         removing the minimum check changes nothing any test can see. */
+      ['smaller than the smallest line', 0.1],
       ['longer than a day', 99],
     ];
     for (const [what, hours] of bad) {
       const r = await file('lead', { date: '2026-03-11', hours, clientId: id.client,
         projectId: id.alpha, tlAction: 'review' });
-      assert.ok(r.status >= 400, `${what} (${JSON.stringify(hours)}) is refused: ${JSON.stringify(r.body)}`);
+      assert.strictEqual(r.status, 400,
+        `${what} (${JSON.stringify(hours)}) is refused with a message: ${JSON.stringify(r.body)}`);
+      assert.ok(String(r.body.error || '').length > 10,
+        `${what}: and the message is a sentence — ${JSON.stringify(r.body)}`);
     }
     /* AND A GOOD ONE GOES THROUGH, so the list above is about the figures and
        not about the endpoint being broken. */
