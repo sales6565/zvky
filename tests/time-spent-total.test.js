@@ -226,12 +226,28 @@ test('summing the rounds', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     await workRound(assetId, 'ben', 30);
 
     const a = await onBoard(assetId);
+    /* THE SAME ONE-SECOND BOUNDARY AS ABOVE, and the same remedy — which this
+       case did not get when SLACK_SECONDS was introduced for the totals.
+       
+       A full-suite run found it: round 2 came back 1801 against an expected
+       1800. The figure is now minus a backdated started_at, two wall-clock
+       reads a request apart, so under load the two can fall either side of a
+       second. Reproduced here as a frozen-run failure that this file cannot
+       produce on its own — eight runs of it alone, before and after the change
+       that found it, were clean.
+       
+       SO THE SECONDS GET THE SLACK AND NOTHING ELSE DOES. The round number,
+       the name and whether it is open are exact, because none of them is a
+       measurement; and a minute of slack keeps every case this was written to
+       catch, the nearest gap between two rounds here being thirty minutes. */
     assert.deepStrictEqual(
-      a.rounds_spent.map((r) => ({ round: r.round, seconds: r.seconds, who: r.who, open: r.open })),
+      a.rounds_spent.map((r) => ({ round: r.round, who: r.who, open: r.open })),
       [
-        { round: 1, seconds: 3600, who: 'Ana Artist', open: false },
-        { round: 2, seconds: 1800, who: 'Ben Bhatt', open: false },
+        { round: 1, who: 'Ana Artist', open: false },
+        { round: 2, who: 'Ben Bhatt', open: false },
       ]);
+    aboutMinutes(a.rounds_spent[0].seconds, 60, 'the first round');
+    aboutMinutes(a.rounds_spent[1].seconds, 30, 'the second');
 
     /* And the asset panel's own breakdown is the same numbers — it is a
        different endpoint, and two breakdowns of one total that disagree is
