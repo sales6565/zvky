@@ -476,7 +476,15 @@ test('TL Action, end to end', { skip: SKIP }, async (t) => {
       return Number(row.time_spent_seconds || 0);
     };
     const before = await spentOf();
-    assert.strictEqual(before, 4 * 3600, 'four hours recorded on it, by the artist');
+    /* ABOUT four hours, not exactly. The figure is recomputed from the stored
+       stamps rather than read back as the `seconds` this fixture wrote, so
+       under load the two ends can fall either side of a second — a frozen run
+       turned up 14401 against 14400. A minute of slack keeps everything this
+       case is for: what it has to see is a TL line of 1.5 hours either landing
+       in this total or not, and the identity below is where that is actually
+       asserted. */
+    assert.ok(Math.abs(before - 4 * 3600) <= 60,
+      `about four hours recorded on it, by the artist — got ${before}s`);
 
     /* A TL LINE WITH AN ASSET_ID, written as the first build of this feature
        would have left one — the API refuses to create one now, so the only way
@@ -489,6 +497,8 @@ test('TL Action, end to end', { skip: SKIP }, async (t) => {
        VALUES (?, ?, '2026-03-18', ?, ?, ?, 1.5, 'review')`,
       [legacy, id.lead, id.client, id.alpha, assetId]);
 
+    /* THE CLAIM ITSELF, and it is an identity rather than a measurement: adding
+       a 1.5-hour TL line moved this figure by nothing at all. */
     assert.strictEqual(await spentOf(), before,
       'the asset\'s spent time is what the clock recorded, and no timesheet line is in it');
 
