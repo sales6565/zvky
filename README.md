@@ -5524,6 +5524,39 @@ session timezones; the first case in it is the reproduction, and it still prints
 anywhere in this application. Their messages remain and read "Attachment
 expired", which is all there is left to say.
 
+### Chat replies, and the emoji picker
+
+Both are Super Admin switches in Settings → Chat, both **on** by default, and
+neither takes anything away when it is off: with **Chat replies** off the Reply
+action is hidden and quotes already sent still render, and with **Chat emoji
+picker** off typed and pasted emoji go on working — the switch is about the
+picker, not about emoji.
+
+**A quote is a pointer, not a copy.** `chat_messages.reply_to_message_id` holds
+the id and nothing else; the quoted line is rendered from the original *as it is
+now*, on every read. That is what makes a deleted original read as unavailable
+instead of going on showing its text out of a snapshot nobody can delete, and it
+is why there is **no foreign key** on the column: `ON DELETE SET NULL` would
+erase the fact that a message was a reply at all, leaving a reply with nothing
+to say the original is gone. The server checks the target is in the same
+conversation before it will store it — a reply across conversations would show
+one room's words in another, which is the one way a live quote can leak.
+
+**Emoji are stored, not pictured.** Chat text is `utf8mb4` in the column, the
+table and the connection, which is what lets a four-byte character survive at
+all; `tests/chat-replies.test.js` round-trips a ZWJ family, a skin tone, a flag
+and a keycap through a real send and read. The picker draws with whatever emoji
+font the machine already has, so there is no webfont to fetch.
+
+**The set is this server's own file.** `public/emoji-data.json` — 52 KB, 1,914
+emoji in the eight Unicode categories, built by `scripts/build-emoji-data.js`
+from `unicode-emoji-json` (MIT, from unicode.org's `emoji-test.txt`), Emoji
+17.0. It is fetched when somebody first opens the picker and not before: it is
+the biggest single asset on a page the whole studio loads every morning, and
+most of those loads never open it. No CDN, which would make the chat panel
+depend on a third party being up and tell that third party who is using Forge
+and when.
+
 ### The outbox: what Forge sends out
 
 The other direction. A change that Dev & QA needs to know about writes a row in

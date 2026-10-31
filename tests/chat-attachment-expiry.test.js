@@ -300,12 +300,42 @@ test('a stored path outside the upload root is never followed', { skip: SKIP }, 
     ['../not-a-chat-file.txt']
   );
 
+  /* TWO MORE THAT MUST ALSO BE REFUSED, each caught by a DIFFERENT HALF of the
+     guard — which is what makes both halves worth having.
+
+     '..' passes the basename test (basename('..') IS '..') and is caught only
+     by the resolved-path test. 'nested/file.txt' passes the resolved-path test
+     — it resolves to somewhere properly inside the root — and is caught only
+     by the basename test. A mutation that takes out either half alone fails
+     here; without these two rows, either half alone covered the '../' case and
+     removing one proved nothing. Found by exactly that mutation coming back
+     green. */
+  const nested = path.join(chatFiles.CHAT_DIR, 'nested');
+  fs.mkdirSync(nested, { recursive: true });
+  fs.writeFileSync(path.join(nested, 'file.txt'), 'nested, so not from here');
+  for (const [id, stored] of [['dotdot', '..'], ['nested', 'nested/file.txt']]) {
+    await conn.query(
+      `INSERT INTO chat_attachments (id, message_id, file_name, byte_size, stored_name, expires_at)
+       VALUES (?, '${MESSAGE_ID}', 'x.txt', 1, ?, NOW() - INTERVAL 1 MINUTE)`,
+      [id, stored]
+    );
+  }
+
   const lines = [];
   const out = await chatFiles.sweep(db, { log: (m) => lines.push(String(m)) });
 
   assert.ok(fs.existsSync(outside), 'the file outside the root is still there');
-  assert.strictEqual(out.refused, 1, 'and the sweep says it refused one');
-  assert.strictEqual(out.rows, 0, 'the row is left alone rather than marked deleted');
+  assert.ok(fs.existsSync(path.join(nested, 'file.txt')), 'and the nested one');
+  assert.ok(fs.existsSync(chatFiles.CHAT_DIR), 'and the upload root itself');
+  assert.strictEqual(out.refused, 3, 'and the sweep says it refused all three');
+  assert.strictEqual(out.rows, 0, 'no row is marked deleted');
+  for (const id of ['dotdot', 'nested']) {
+    assert.ok(lines.some((l) => /outside the chat/i.test(l) && new RegExp(id).test(l)),
+      `${id} is logged by id: ${lines.join(' | ')}`);
+    const r = await sql(cfg, 'SELECT deleted_at FROM chat_attachments WHERE id = ?', [id]);
+    assert.strictEqual(r[0].deleted_at, null, `${id} is left for somebody to look at`);
+  }
+  fs.rmSync(nested, { recursive: true, force: true });
   assert.ok(lines.some((l) => /outside the chat/i.test(l) && /traverse/.test(l)),
     `and it is logged by id: ${lines.join(' | ')}`);
 
