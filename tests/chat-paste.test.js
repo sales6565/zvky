@@ -235,7 +235,16 @@ test('the composer keeps a half-written message across a redraw', () => {
   assert.ok(render);
   assert.match(render[1], /const draft = \(document\.getElementById\('chatInput'\) \|\| \{\}\)\.value/,
     'the draft has to be read before foot.innerHTML replaces the box');
-  assert.match(render[1], /box\.value = draft/, 'and put back afterwards');
+  /* AND PUT BACK AFTERWARDS — from the live box if it had anything in it, and
+     from the per-conversation draft otherwise. Prompt 58 added the second half
+     (chatDrafts, so a half-written message survives switching conversation and
+     a trip through the pop-up as well as a redraw); this used to read
+     `box.value = draft` and nothing else. The behaviour this test exists for is
+     unchanged, and the browser suite exercises it live in
+     tests/chat-composer-browser.test.js. */
+  assert.match(render[1], /const text = draft \|\| chatDraftGet\(\)/,
+    'the live value wins, and the stored draft is the fallback');
+  assert.match(render[1], /box\.value = text/, 'and it goes back into the new box');
 });
 
 test('every preview URL the composer makes is released again', () => {

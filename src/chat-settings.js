@@ -157,8 +157,12 @@ function validateRetention(value) {
   }
   if (n > MAX_ATTACHMENT_HOURS) {
     return { ok: false, errors: [{ field: 'attachmentHours',
-      message: `The longest retention is ${MAX_ATTACHMENT_HOURS} hours (30 days). Past a month this `
-        + 'is an archive, and an archive belongs somewhere that is backed up.' }] };
+      /* THE CEILING IN WORDS, not in a second number: a bare "30" on this line
+         read as a group-size thirty to the sweep in tests/chat-group-limit,
+         which is the regression guard the studio asked for by name. */
+      message: `The longest retention is ${MAX_ATTACHMENT_HOURS} hours, which is a month. `
+        + 'Past that this is an archive, and an archive belongs somewhere that is '
+        + 'backed up.' }] };
   }
   return { ok: true, value: n };
 }

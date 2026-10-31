@@ -49,7 +49,12 @@ function renderer() {
     ${lift('chatAttachmentsHTML')}
     ${lift('chatDownloadButton')}
     ${lift('chatSize')}
-    return { chatAttachmentsHTML, chatDownloadButton };
+    /* The expiry label, lifted rather than stubbed: it is part of what an
+       attachment row renders, and a stub of it would let this file go on
+       passing while the real row threw — which is exactly what happened when
+       the label was added and this fixture was not. */
+    ${lift('chatExpiryLabel')}
+    return { chatAttachmentsHTML, chatDownloadButton, chatExpiryLabel };
   `);
   return build({ limits: { hours: chatFiles.HOURS } });
 }
