@@ -441,10 +441,27 @@ async function sweep(db, { log = null } = {}) {
  * with the separator on the end so that a sibling directory whose name merely
  * starts with the root's cannot pass. */
 function insideChatDir(storedName) {
+  const raw = String(storedName || '');
+  if (!raw) return null;
+  /* THE RAW VALUE IS WHAT IS CHECKED, not a cleaned-up version of it.
+   
+     The first version of this called basename() and THEN checked the result
+     was inside the root — which it always is, because basename() is what makes
+     it so. A guard that sanitises its input before testing it can never fail,
+     and the test written for it duly reported that nothing was refused. What a
+     guard is for is noticing that a value is wrong, not quietly making it
+     right: a row whose stored_name is '../something' is a row somebody needs
+     to look at, and turning it into 'something' and deleting THAT file would
+     be worse than either refusing or ignoring it. */
   const root = path.resolve(CHAT_DIR);
-  const full = path.resolve(root, path.basename(String(storedName || '')));
+  const full = path.resolve(root, raw);
   if (full === root) return null;
-  return full.startsWith(root + path.sep) ? full : null;
+  if (!full.startsWith(root + path.sep)) return null;
+  /* AND NOTHING NESTED EITHER. Every file this module writes goes straight
+     into the root with a generated name, so a stored_name with a separator in
+     it did not come from here. */
+  if (raw !== path.basename(raw)) return null;
+  return full;
 }
 
 async function unlinkQuietly(full) {

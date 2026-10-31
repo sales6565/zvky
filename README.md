@@ -5486,6 +5486,44 @@ pass is the one that matters — a process restarted after a week down comes bac
 holding keys no timer ever fired for. A key reused after the window is treated as
 new, so the window has to outlast any retry a caller will really make.
 
+### Chat attachments: how long they live, and the bug that made it four hours
+
+A chat attachment is deleted after the studio's retention — **12 hours by
+default, 1 to 720 whole hours**, set in Settings → Chat behind
+`settings.chat_retention` (**Super Admin only** by default, grantable). "Never
+delete" is not on offer: these live on a shared-hosting disk and a chat that
+becomes an unbounded file store is one nobody can turn back off without deleting
+somebody's files.
+
+**Changing it never moves a file already uploaded.** The expiry is written once,
+at upload, from the retention in force then — so shortening the setting cannot
+reach back and wipe what people are working from this afternoon, and lengthening
+it does not resurrect anything.
+
+**The bug it replaced is worth knowing about**, because the shape of it recurs.
+`expires_at` was written from Node as a JS Date, which the driver renders as a
+wall clock in the **Node process's** timezone; `created_at` beside it is written
+by MariaDB's `CURRENT_TIMESTAMP`, a wall clock in the **database session's**
+timezone. Two columns in one row, in two zones, neither saying which. A boot
+migration then overwrote `expires_at` with `created_at + INTERVAL 12 HOUR`,
+replacing one rendering with the other, while the sweep went on comparing
+against a Node-rendered now. Every file's life became `12h + (dbOffset −
+nodeOffset)` — on a database session at `-08:00` with a Node process on UTC,
+exactly four hours. It was invisible wherever the two clocks agreed, which is
+every developer machine.
+
+The fix is to pick one clock and use it for everything: `NOW() + INTERVAL n
+HOUR` writes the stamp, `expires_at <= NOW()` compares it, and what reaches a
+reader is `TIMESTAMPDIFF(SECOND, NOW(), expires_at)` — a **difference**, so the
+session's zone cancels out of it. No instant is converted anywhere.
+`tests/chat-attachment-expiry.test.js` holds a nine-way matrix of process and
+session timezones; the first case in it is the reproduction, and it still prints
+4.00 against the old rule.
+
+**Files the bug already deleted cannot be recovered.** There is no copy of them
+anywhere in this application. Their messages remain and read "Attachment
+expired", which is all there is left to say.
+
 ### The outbox: what Forge sends out
 
 The other direction. A change that Dev & QA needs to know about writes a row in
