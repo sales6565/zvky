@@ -630,7 +630,13 @@ button.chat-status:focus-visible{outline:2px solid var(--focus-ring);outline-off
 #chatBigBody textarea{width:100%;min-height:13em;max-height:52vh;resize:vertical;padding:9px 11px;
   font:inherit;font-size:13px;line-height:1.5;background:var(--surface-2);color:var(--ink);
   border:1px solid var(--border);border-radius:9px;}
-.chat-big-foot{display:flex;align-items:center;gap:8px;margin-top:9px;flex-wrap:wrap;}
+/* POSITIONED, so the emoji panel opened from this row has something to anchor
+   to. Without it the panel's `bottom:100%` resolves against whatever ancestor
+   happens to be positioned — in the pop-up, nothing nearer than the viewport —
+   and it is laid out somewhere off screen: present, styled and unclickable. A
+   browser test found it that way round. */
+.chat-big-foot{display:flex;align-items:center;gap:8px;margin-top:9px;flex-wrap:wrap;
+  position:relative;}
 .chat-big-hint{font-size:10.5px;color:var(--ink-faint);}
 .chat-big-hint kbd{font:inherit;font-size:9.5px;border:1px solid var(--border);border-radius:3px;
   padding:0 3px;background:var(--surface-3);}
@@ -7710,17 +7716,27 @@ document.getElementById('tl_cat').addEventListener('change', tlSyncSubOptions);
 document.getElementById('tl_cancel').addEventListener('click', ()=>timesheetLineWrap.classList.remove('show'));
 timesheetLineWrap.addEventListener('click', e=>{ if(e.target===timesheetLineWrap) timesheetLineWrap.classList.remove('show'); });
 
-/* THE EMOJI PICKER CLOSES ON A CLICK OUTSIDE IT. Captured on the document so
-   it works wherever the picker was anchored, and ignoring clicks on the button
-   that opened it — which has its own toggle and would otherwise close and
-   reopen in one press. */
+/* THE EMOJI PICKER CLOSES ON A CLICK OUTSIDE IT.
+ *
+ * IN THE CAPTURE PHASE, and that is not a detail. The panel redraws itself on
+ * every tab and every keystroke in its search box, which means that by the time
+ * a click on a tab has finished bubbling, the element that was clicked has been
+ * replaced and is no longer inside anything — so `panel.contains(e.target)` is
+ * false and a listener in the bubble phase would close the picker every time
+ * somebody changed tab. A browser test caught exactly that.
+ *
+ * Capture runs before any of the handlers that redraw, so the target is still
+ * where it was when it was clicked.
+ *
+ * The button that opened it is ignored too: it has its own toggle, and without
+ * this it would close and reopen in one press. */
 document.addEventListener('click', (e)=>{
   const panel = document.getElementById('chatEmojiPanel');
   if(!panel) return;
   if(panel.contains(e.target)) return;
   if(e.target.closest && e.target.closest('#chatEmoji, #chatBigEmoji')) return;
   chatEmojiClose();
-});
+}, true);
 
 /* Clicking the backdrop of the bigger box closes it, like every other modal on
    this page — and keeps the draft, because chatCloseBig is the one way out. */
@@ -23589,7 +23605,7 @@ async function chatGoToMessage(id){
       return true;
     }
     if(!chatState.hasMore) break;
-    await loadOlderChat();
+    await loadChatOlder();
   }
   showToast('Original message not available.');
   return false;
