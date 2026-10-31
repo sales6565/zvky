@@ -331,6 +331,48 @@ test('replies and emoji, end to end', { skip: SKIP }, async (t) => {
     assert.match(page.slice(0, 400), /<meta charset="UTF-8">/i, 'and the page is UTF-8');
   });
 
+  await t.test('both switches gate both composers, in the page itself', () => {
+    /* WHY THIS IS A SOURCE TEST AND NOT A BROWSER ONE. The browser suite paints
+       its thread and composer from a fixture of its own — it lifts the quote
+       renderer, the drafts and pop-up block and the picker, but the composer
+       markup around them is the fixture's. So its "with the switches off,
+       neither control is drawn" case proves the FIXTURE consults the switch,
+       and a mutation that made the page draw the button unconditionally came
+       back green. Found exactly that way.
+
+       What is checked here is the page's own markup: every control the two
+       switches govern — the emoji button in each of the two composers, and the
+       Reply action — sits inside a conditional on the matching flag. Read as
+       "the nearest feature flag before this control is the right one", which
+       is a weaker statement than running it, and the one a source file can
+       honestly make. */
+    const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    const gated = [
+      ['id="chatEmoji"', 'emojiPicker', 'the emoji button in the inline composer'],
+      ['id="chatBigEmoji"', 'emojiPicker', 'the emoji button in the pop-up'],
+      ['data-chat-reply=', 'replies', 'the Reply action'],
+    ];
+    for (const [needle, flag, what] of gated) {
+      const at = [...page.matchAll(new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'))]
+        .map((m) => m.index);
+      assert.strictEqual(at.length, 1, `${what} appears once — found ${at.length}`);
+      /* The nearest flag BEFORE it, whichever it is. A control drawn
+         unconditionally has the previous control's flag as its nearest, which
+         is why this compares the nearest rather than searching for the right
+         one. */
+      const before = page.slice(0, at[0]);
+      const flags = [...before.matchAll(/chatState\.features\.(\w+)/g)];
+      assert.ok(flags.length, `${what} has a feature flag before it at all`);
+      const nearest = flags[flags.length - 1];
+      assert.strictEqual(nearest[1], flag, `${what} is drawn behind chatState.features.${flag}`);
+      /* AND CLOSE BY — within the same template expression rather than
+         hundreds of lines earlier in some other control's conditional. */
+      assert.ok(at[0] - nearest.index < 400,
+        `${what} is inside that conditional, not merely after it `
+        + `(${at[0] - nearest.index} characters later)`);
+    }
+  });
+
   await t.test('the emoji set is served from here and from nowhere else', () => {
     /* SELF-HOSTED, CHECKED IN THE SOURCE. The browser suite proves the picker
        only fetches it when opened and only from this origin; this is the
