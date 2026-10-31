@@ -700,6 +700,47 @@ test('the chat composer, in a browser', { skip: SKIP }, async (t) => {
     await page.close();
   });
 
+  await t.test('the emoji set is this server\'s own file, and not fetched until it is wanted',
+    async () => {
+    /* TWO PROMISES IN ONE CASE, because they are the same promise from two
+       sides: the set is served from here, and it costs the page nothing until
+       somebody opens the picker.
+
+       WHY IT MATTERS THAT IT IS LAZY. The file is the biggest single asset on a
+       page the whole studio loads every morning, and most of those loads never
+       open the picker. Fetching it at startup would spend that on everybody to
+       save a few hundred milliseconds for the few.
+
+       WHY IT MATTERS THAT IT IS LOCAL. A CDN would make the chat panel depend
+       on a third party being up and would tell that third party who is using
+       Forge and when. Neither is a thing to buy with a page of emoji. */
+    const { page, asked, errors } = await open(browser);
+    assert.deepStrictEqual(asked, [],
+      'nothing asked for the emoji set just by loading the page');
+
+    /* AND NOTHING ELSE WAS ASKED FOR EITHER — anything off this origin would
+       have had to come from somewhere, and the fixture serves exactly two
+       things. Read from the page rather than from the fixture, so a fetch
+       written into the page is what is being checked. */
+    const offOrigin = await page.evaluate(() => performance.getEntriesByType('resource')
+      .map((e) => e.name)
+      .filter((u) => !u.startsWith('http://chat.test/')));
+    assert.deepStrictEqual(offOrigin, [], 'and the page reached no other host to load');
+
+    await page.click('#chatEmoji');
+    await page.waitForSelector('.chat-emoji-panel .chat-emoji-grid button');
+    assert.deepStrictEqual(asked, ['http://chat.test/emoji-data.json'],
+      'opening the picker fetches it, from this origin, once');
+
+    /* A SECOND OPEN DOES NOT FETCH AGAIN. */
+    await page.keyboard.press('Escape');
+    await page.click('#chatEmoji');
+    await page.waitForSelector('.chat-emoji-panel .chat-emoji-grid button');
+    assert.strictEqual(asked.length, 1, 'and only once however often it is opened');
+    assert.deepStrictEqual(errors, []);
+    await page.close();
+  });
+
   await t.test('with the switches off, neither control is drawn', async () => {
     const { page } = await open(browser);
     await page.evaluate(() => {

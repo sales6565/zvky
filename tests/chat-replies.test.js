@@ -330,4 +330,39 @@ test('replies and emoji, end to end', { skip: SKIP }, async (t) => {
     const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
     assert.match(page.slice(0, 400), /<meta charset="UTF-8">/i, 'and the page is UTF-8');
   });
+
+  await t.test('the emoji set is served from here and from nowhere else', () => {
+    /* SELF-HOSTED, CHECKED IN THE SOURCE. The browser suite proves the picker
+       only fetches it when opened and only from this origin; this is the
+       narrower, cheaper statement that the picker's own code names no host at
+       all — it survives in a checkout with no Chromium, and it is the one a
+       future edit that reaches for a CDN will trip over.
+
+       THE FONT TOO. The picker deliberately draws with whatever emoji font the
+       machine already has, so there is no webfont to fetch either. */
+    const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+    const from = page.indexOf('/* ---------- the emoji picker ----------');
+    const to = page.indexOf('/* HOW LONG THIS FILE HAS LEFT', from + 1);
+    assert.ok(from !== -1 && to > from, 'the emoji block is where this test thinks it is');
+    const block = page.slice(from, to);
+    const absolute = [...block.matchAll(/(?:https?:)?\/\/[a-z0-9.-]+\.[a-z]{2,}/gi)].map((m) => m[0]);
+    assert.deepStrictEqual(absolute, [], 'the picker names no external host');
+    assert.match(block, /fetch\('\/emoji-data\.json'/, 'it reads this server\'s own file');
+
+    const data = path.join(__dirname, '..', 'public', 'emoji-data.json');
+    const bytes = fs.statSync(data).size;
+    assert.ok(bytes > 10000, `and that file is really here — ${bytes} bytes`);
+    const set = JSON.parse(fs.readFileSync(data, 'utf8'));
+    assert.strictEqual(set.groups.length, 8, 'the eight category tabs');
+    const entries = set.groups.reduce((n, g) => n + g.emoji.length, 0);
+    assert.ok(entries > 1500, `with the whole set in it — ${entries} entries`);
+    assert.strictEqual(entries, set.count, 'and the count it declares is the count it has');
+    assert.ok(set.emojiVersion, 'and it says which Unicode version it came from');
+    assert.ok(set.licence, 'and under what licence');
+
+    /* AND IT SHIPS. A deploy zip without it would leave the picker spinning in
+       production while every test here passed. */
+    const build = fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8');
+    assert.ok(/public/.test(build), 'and public/ is in what gets shipped');
+  });
 });
