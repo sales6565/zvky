@@ -570,9 +570,106 @@ button.chat-status:focus-visible{outline:2px solid var(--focus-ring);outline-off
 .chat-mention-row .who{font-size:12.5px;font-weight:600;}
 .chat-mention-row .chat-sub{font-size:10.5px;margin-left:auto;}
 .chat-mention-row:hover,.chat-mention-row.active{background:var(--surface-3);}
-.chat-compose textarea{flex:1;min-height:34px;max-height:110px;resize:none;padding:7px 9px;
+/* THE BOX STARTS AT THREE LINES AND GROWS TO EIGHT, then scrolls inside itself.
+ *
+ * max-height is in `em` against the box's own line-height, so eight lines is
+ * eight lines whatever the font ends up being — a pixel cap drifts the moment
+ * anybody changes the type size. The cap is what keeps a long message from
+ * pushing the conversation off a small window: past it the box scrolls and the
+ * thread stays where it is. */
+.chat-compose textarea{flex:1;min-height:3.9em;max-height:12.4em;resize:none;padding:7px 9px;
   font:inherit;font-size:12.5px;background:var(--surface-2);color:var(--ink);
+  border:1px solid var(--border);border-radius:9px;overflow-y:auto;
+  /* Room for the expand control in the corner, so a long line does not run
+     under it. */
+  padding-right:26px;}
+.chat-mirror{padding-right:26px;}
+.chat-expand{position:absolute;right:4px;bottom:4px;z-index:2;background:var(--surface-2);
+  border:0;border-radius:6px;color:var(--ink-faint);cursor:pointer;padding:2px 4px;
+  font-size:12px;line-height:1;}
+.chat-expand:hover{color:var(--brand-accent);}
+
+/* THE REPLY BAR, above the box in both composers. A coloured edge rather than
+   a box: it is attached to the message being written, not a thing of its own. */
+.chat-replybar{display:flex;align-items:flex-start;gap:8px;margin-bottom:6px;padding:5px 8px;
+  border-left:3px solid var(--brand-accent);background:var(--surface-2);border-radius:0 7px 7px 0;}
+.chat-replybar .who{font-size:11px;font-weight:600;color:var(--brand-accent);display:block;}
+.chat-replybar .snip{font-size:11.5px;color:var(--ink-muted);display:block;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;}
+.chat-replybar .drop{margin-left:auto;cursor:pointer;color:var(--ink-faint);
+  background:none;border:0;font-size:15px;line-height:1;padding:0 2px;}
+.chat-replybar .drop:hover{color:var(--brand-accent);}
+
+/* THE QUOTE ON A SENT MESSAGE. Clickable, because its job is to take you to
+   what it quotes — and a button, so a keyboard can do it too. */
+.chat-quote{display:block;width:100%;text-align:left;cursor:pointer;font:inherit;
+  border:0;border-left:3px solid var(--brand-accent);background:var(--surface-3);
+  border-radius:0 6px 6px 0;padding:4px 7px;margin:0 0 5px;}
+.chat-quote:hover{background:var(--surface-2);}
+.chat-quote .who{font-size:10.5px;font-weight:600;color:var(--brand-accent);display:block;}
+.chat-quote .snip{font-size:11.5px;color:var(--ink-muted);display:block;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.chat-quote.gone{border-left-color:var(--ink-faint);}
+.chat-quote.gone .snip{font-style:italic;}
+/* Where a quote lands you. Brief, and it fades rather than stopping dead, so
+   the eye follows it instead of being startled by it. */
+@keyframes chatFound{from{background:var(--brand-t44);}to{background:transparent;}}
+.chat-found{animation:chatFound 1.8s ease-out;border-radius:9px;}
+
+/* THE REPLY ACTION on a message. Hidden until the row is hovered or something
+   in it has focus — a conversation with a button on every line is a toolbar,
+   not a conversation. :focus-within is what keeps it reachable by keyboard. */
+.chat-row .chat-reply-act{opacity:0;transition:opacity .12s;background:none;border:0;
+  cursor:pointer;color:var(--ink-faint);font-size:11px;padding:1px 5px;border-radius:5px;}
+.chat-row:hover .chat-reply-act,.chat-row:focus-within .chat-reply-act{opacity:1;}
+.chat-row .chat-reply-act:hover,.chat-row .chat-reply-act:focus{color:var(--brand-accent);
+  background:var(--surface-3);opacity:1;}
+
+/* THE BIGGER BOX. A tall textarea and a row of controls under it; the row wraps
+   on a narrow window rather than pushing Send off the edge. */
+#chatBigBody textarea{width:100%;min-height:13em;max-height:52vh;resize:vertical;padding:9px 11px;
+  font:inherit;font-size:13px;line-height:1.5;background:var(--surface-2);color:var(--ink);
   border:1px solid var(--border);border-radius:9px;}
+.chat-big-foot{display:flex;align-items:center;gap:8px;margin-top:9px;flex-wrap:wrap;}
+.chat-big-hint{font-size:10.5px;color:var(--ink-faint);}
+.chat-big-hint kbd{font:inherit;font-size:9.5px;border:1px solid var(--border);border-radius:3px;
+  padding:0 3px;background:var(--surface-3);}
+/* The counter appears only near the limit, so when it is there it means
+   something. Over it, it is the one thing on the row that should catch the eye. */
+.chat-big-count{margin-left:auto;font-size:10.5px;color:var(--ink-faint);font-variant-numeric:tabular-nums;}
+.chat-big-count.over{color:var(--brand-accent);font-weight:600;}
+
+/* THE EMOJI PICKER. Above whichever composer opened it, and over the thread
+   rather than shoving it up the screen — the same choice the mention picker
+   makes a few rules above. */
+.chat-emoji-panel{position:absolute;left:8px;right:8px;bottom:100%;margin-bottom:6px;z-index:8;
+  background:var(--surface-2);border:1px solid var(--border);border-radius:10px;
+  box-shadow:0 10px 26px var(--shadow-t42);overflow:hidden;}
+.chat-emoji-top{display:flex;gap:6px;padding:7px 8px 0;}
+.chat-emoji-top input{flex:1;font:inherit;font-size:12px;padding:5px 8px;border-radius:7px;
+  border:1px solid var(--border);background:var(--surface-3);color:var(--ink);}
+.chat-emoji-top select{font:inherit;font-size:12px;padding:4px;border-radius:7px;
+  border:1px solid var(--border);background:var(--surface-3);color:var(--ink);max-width:120px;}
+.chat-emoji-tabs{display:flex;gap:2px;padding:6px 8px;overflow-x:auto;scrollbar-width:thin;}
+.chat-emoji-tab{background:none;border:0;cursor:pointer;font:inherit;font-size:10.5px;
+  color:var(--ink-muted);padding:3px 7px;border-radius:6px;white-space:nowrap;}
+.chat-emoji-tab:hover{background:var(--surface-3);}
+.chat-emoji-tab.on{background:var(--brand-t22);color:var(--brand-accent);font-weight:600;}
+.chat-emoji-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(30px,1fr));
+  gap:1px;padding:4px 6px 8px;max-height:230px;overflow-y:auto;}
+.chat-emoji-one{background:none;border:0;cursor:pointer;font-size:19px;line-height:1.5;
+  padding:2px;border-radius:6px;
+  /* THE SYSTEM EMOJI FONT, and no other. Naming the families keeps a long ZWJ
+     sequence rendering as one picture rather than falling back to a font that
+     has the parts but not the whole. */
+  font-family:'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji','Android Emoji',sans-serif;}
+.chat-emoji-one:hover,.chat-emoji-one:focus{background:var(--surface-3);outline:none;}
+.chat-emoji-loading{padding:14px;font-size:11.5px;color:var(--ink-muted);text-align:center;}
+/* A SENT MESSAGE'S EMOJI, same families. break-word on the bubble could
+   otherwise split a family emoji between two lines — the joiners are
+   zero-width and a browser will happily wrap at one. */
+.chat-bubble{font-family:'Inter','Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif;}
+.chat-bubble,.chat-quote .snip{overflow-wrap:break-word;word-break:normal;}
 .chat-clip{background:none;border:1px solid var(--border);border-radius:9px;color:var(--ink-muted);
   cursor:pointer;padding:6px 9px;font-size:14px;line-height:1;}
 .chat-clip:hover{color:var(--brand-accent);border-color:var(--brand-accent);}
@@ -3075,6 +3172,17 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
      in from the left edge, both fixed to the viewport and outside the header —
      so they are on every tab rather than on the Dashboard, and nothing that
      scrolls can take them with it. -->
+<!-- THE BIGGER MESSAGE BOX. In the page, not a native dialog: the desktop web
+     view has none, and everything else in this application that asks a question
+     is in-page for the same reason. Its draft is the inline box's draft; see
+     chatDrafts. -->
+<div class="modal-wrap" id="chatBigWrap">
+  <div class="modal" style="width:620px;max-width:94vw;">
+    <h2>Write a message</h2>
+    <div id="chatBigBody"></div>
+  </div>
+</div>
+
 <div class="chat-wrap" id="chatWrap" style="display:none;">
   <div class="chat-panel" id="chatPanel" aria-hidden="true">
     <div class="chat-topbar">
@@ -7601,6 +7709,25 @@ document.getElementById('tl_kind').addEventListener('change', syncTimesheetLine)
 document.getElementById('tl_cat').addEventListener('change', tlSyncSubOptions);
 document.getElementById('tl_cancel').addEventListener('click', ()=>timesheetLineWrap.classList.remove('show'));
 timesheetLineWrap.addEventListener('click', e=>{ if(e.target===timesheetLineWrap) timesheetLineWrap.classList.remove('show'); });
+
+/* THE EMOJI PICKER CLOSES ON A CLICK OUTSIDE IT. Captured on the document so
+   it works wherever the picker was anchored, and ignoring clicks on the button
+   that opened it — which has its own toggle and would otherwise close and
+   reopen in one press. */
+document.addEventListener('click', (e)=>{
+  const panel = document.getElementById('chatEmojiPanel');
+  if(!panel) return;
+  if(panel.contains(e.target)) return;
+  if(e.target.closest && e.target.closest('#chatEmoji, #chatBigEmoji')) return;
+  chatEmojiClose();
+});
+
+/* Clicking the backdrop of the bigger box closes it, like every other modal on
+   this page — and keeps the draft, because chatCloseBig is the one way out. */
+document.addEventListener('click', (e)=>{
+  const wrap = document.getElementById('chatBigWrap');
+  if(wrap && e.target === wrap) chatCloseBig();
+});
 
 /* The cascade. Projects come from the client, assets from the project — the
    same shape the header pickers use, read fresh rather than from state.assets,
@@ -23015,7 +23142,12 @@ const chatState = {
      This used to be a hard-coded 30, which was the last copy of the old
      constant outside the server and would have gone on saying thirty to a
      studio that had set something else. */
-  limits:{ allowed:'', maxBytes:0, hours:8 }, canCreateGroup:false, maxMembers:null,
+  limits:{ allowed:'', maxBytes:0, hours:8, maxBody:4000 }, canCreateGroup:false, maxMembers:null,
+  /* THE TWO SWITCHES, as the server last answered. Both default ON here so the
+     controls are drawn before the first poll has come back — the server
+     refuses regardless, so drawing a button a studio has switched off is a
+     flicker rather than a hole. */
+  features:{ replies:true, emojiPicker:true },
   canManageAnyGroup:false,
   /* Blob URLs made for attachments, by attachment id. An <img src> cannot
      carry an Authorization header, so every attachment is fetched with one and
@@ -23088,7 +23220,8 @@ async function loadChatList(){
      by the looser operator — the wrong way round for a value that gates. */
   chatState.maxMembers = res.maxGroupMembers ?? null;
   chatState.canManageAnyGroup = Boolean(res.canManageAnyGroup);
-  chatState.limits = res.attachments;
+  chatState.limits = { ...res.attachments, maxBody: res.maxBody || 4000 };
+  if(res.features) chatState.features = res.features;
   paintChatBadge();
 }
 
@@ -23316,14 +23449,19 @@ function renderChatThread(head, body, foot){
     const mine = m.senderId === (state.currentUser||{}).id;
     const face = mine ? '' : avatarHTML(
       { id:m.senderId, name:m.senderName, photoAt:m.senderPhotoUpdatedAt }, { size:26, title:m.senderName });
-    return `<div class="chat-msg${mine ? ' mine' : ''}">
+    return `<div class="chat-msg chat-row${mine ? ' mine' : ''}" data-msg="${escapeHTML(m.id)}">
       ${face}
       <div class="chat-bubble">
         ${(!mine && isGroup) ? `<div class="from">${escapeHTML(m.senderName || 'Removed user')}</div>` : ''}
+        ${chatQuoteHTML(m)}
         ${m.body ? chatBodyHTML(m.body) : ''}
         ${chatAttachmentsHTML(m)}
         <div class="when">${escapeHTML(chatWhen(m.createdAt))}<span data-tick="${escapeHTML(m.id)}">${chatTickHTML(m)}</span></div>
       </div>
+      ${chatState.features.replies
+        ? `<button class="chat-reply-act" data-chat-reply="${escapeHTML(m.id)}"
+                   title="Reply to this message">Reply</button>`
+        : ''}
     </div>`;
   }).join('');
 
@@ -23356,12 +23494,21 @@ function renderChatThread(head, body, foot){
       }).join('')}</div>`
     : '';
   foot.innerHTML = `${picked}
+    ${chatReplyBarHTML('chatReplyBar')}
     <div class="chat-mentions" id="chatMentions" role="listbox" aria-label="People you can tag" hidden></div>
     <div class="chat-compose">
       <button class="chat-clip" id="chatClip" title="Attach a file" aria-label="Attach a file">&#128206;</button>
+      ${chatState.features.emojiPicker
+        ? '<button class="chat-clip" id="chatEmoji" title="Emoji" aria-label="Insert an emoji" aria-expanded="false">\u263a</button>'
+        : ''}
       <div class="chat-inputwrap">
         <div class="chat-mirror" id="chatInputMirror" aria-hidden="true"></div>
-        <textarea id="chatInput" rows="1" placeholder="Write a message…"></textarea>
+        <textarea id="chatInput" rows="3" placeholder="Write a message…"></textarea>
+        <!-- THE EXPAND CONTROL, in the box's own corner rather than beside Send.
+             It is about the box, and a row of three buttons under a message
+             reads as three ways to send it. -->
+        <button class="chat-expand" id="chatExpand" title="Open a bigger box (Esc closes it)"
+                aria-label="Open a bigger message box">&#9974;</button>
       </div>
       <button class="btn btn-sm" id="chatSend">Send</button>
     </div>
@@ -23374,9 +23521,18 @@ function renderChatThread(head, body, foot){
      than at the start — somebody who attaches a file mid-sentence carries on
      typing, and a caret sent back to position zero is its own small insult. */
   const box = document.getElementById('chatInput');
-  if(box && draft){
-    box.value = draft;
-    if(hadFocus){ box.focus(); box.setSelectionRange(draft.length, draft.length); }
+  if(box){
+    /* THE DRAFT, which is the conversation's and not the textarea's. What was
+       in the box wins where there is anything — it is the newer of the two,
+       because an input event may not have fired yet — and the conversation's
+       draft fills it otherwise, which is what carries a half-written message
+       across a conversation switch and back. */
+    const text = draft || chatDraftGet();
+    box.value = text;
+    chatDraftSet(text);
+    chatAutosize(box);
+    if(hadFocus){ box.focus(); box.setSelectionRange(text.length, text.length); }
+    box.addEventListener('input', ()=>{ chatDraftSet(box.value); chatAutosize(box); });
   }
   /* The layer is rebuilt with the footer, so it has to be repainted from
      whatever went back into the box — otherwise attaching a file would leave
@@ -23386,6 +23542,465 @@ function renderChatThread(head, body, foot){
 
   // Fetch the pictures, which cannot be done through a plain src — see chatState.blobs.
   body.querySelectorAll('[data-attach]').forEach(loadChatAttachment);
+}
+
+/* THE QUOTE ABOVE A REPLY, from what the SERVER says the target is now.
+ *
+ * Nothing here reads the original out of chatState.messages, and that is the
+ * point rather than an oversight: the original may not be loaded, and if it is,
+ * it may be a copy from before it was deleted. The server renders the quote
+ * live on every read — see withQuotes() in src/chat.js — so a deleted original
+ * arrives as unavailable and nothing about it can leak through this.
+ */
+function chatQuoteHTML(m){
+  const q = m.quote;
+  if(!q) return '';
+  if(!q.available){
+    /* DELETED, OR IN ANOTHER CONVERSATION, OR NEVER THERE. One wording for all
+       three, because telling them apart would say something about a message
+       this reader is not entitled to know exists. */
+    return `<div class="chat-quote gone"><span class="snip">This message was deleted</span></div>`;
+  }
+  const snippet = q.empty ? 'Message' : q.snippet;
+  return `<button class="chat-quote" data-chat-goto="${escapeHTML(q.id)}"
+            title="Go to the message this answers">
+      <span class="who">${escapeHTML(q.senderName || 'Someone')}</span>
+      <span class="snip">${escapeHTML(snippet)}</span>
+    </button>`;
+}
+
+/* TAKE ME TO THE MESSAGE THIS QUOTES.
+ *
+ * If it is on screen, scroll to it and mark it briefly. If it is further back
+ * than what is loaded, load older pages until it turns up — bounded, because a
+ * quote of something from last March should not walk the whole history, and a
+ * reader is better served by being told than by a spinner that never stops.
+ */
+async function chatGoToMessage(id){
+  for(let tries = 0; tries < 10; tries += 1){
+    const el = document.querySelector(`[data-msg="${CSS.escape(id)}"]`);
+    if(el){
+      el.scrollIntoView({ block:'center', behavior:'smooth' });
+      /* Re-triggered by removing and re-adding, so clicking the same quote
+         twice flashes twice rather than once. */
+      el.classList.remove('chat-found');
+      void el.offsetWidth;
+      el.classList.add('chat-found');
+      return true;
+    }
+    if(!chatState.hasMore) break;
+    await loadOlderChat();
+  }
+  showToast('Original message not available.');
+  return false;
+}
+
+/* ---------- drafts, the bigger box, replies and emoji ----------
+ *
+ * ONE DRAFT PER CONVERSATION, held for as long as the page is open.
+ *
+ * It lives here rather than in the textarea because the textarea is rebuilt
+ * constantly — attaching a file redraws the whole footer — and because
+ * switching conversations and coming back should find the half-written message
+ * still there. Not localStorage: a draft is a thing somebody is in the middle
+ * of, not a thing to find again next week, and the studio shares machines.
+ *
+ * THE INLINE BOX AND THE POP-UP SHARE IT, which is what makes "expand" feel
+ * like the same message in a bigger window rather than a second message.
+ */
+const chatDrafts = new Map();
+
+const chatDraftKey = () => String(chatState.conversationId || '');
+function chatDraftGet(){ return chatDrafts.get(chatDraftKey()) || ''; }
+function chatDraftSet(text){
+  const key = chatDraftKey();
+  if(!key) return;
+  if(text) chatDrafts.set(key, text); else chatDrafts.delete(key);
+}
+
+/* WHICH MESSAGE THE NEXT ONE ANSWERS, per conversation for the same reason the
+   draft is: switching away and back should not quietly drop it. */
+const chatReplies = new Map();
+const chatReplyGet = () => chatReplies.get(chatDraftKey()) || null;
+function chatReplySet(target){
+  const key = chatDraftKey();
+  if(!key) return;
+  if(target) chatReplies.set(key, target); else chatReplies.delete(key);
+  chatPaintReplyBars();
+}
+
+/* The bar above the box, in whichever composer is drawn. Built from the
+   message as it is in state, so it says what the quote will say. */
+function chatReplyBarHTML(id){
+  const target = chatReplyGet();
+  if(!target) return `<div id="${id}" hidden></div>`;
+  return `<div class="chat-replybar" id="${id}">
+      <div style="min-width:0;">
+        <span class="who">Replying to ${escapeHTML(target.senderName || 'someone')}</span>
+        <span class="snip">${escapeHTML(target.snippet || 'Message')}</span>
+      </div>
+      <button class="drop" data-chat-reply-cancel title="Don't reply to this"
+              aria-label="Cancel the reply">&times;</button>
+    </div>`;
+}
+
+/* Repaint both bars wherever they are. Cheap, and it means nothing has to know
+   which composer is open. */
+function chatPaintReplyBars(){
+  for(const id of ['chatReplyBar','chatBigReplyBar']){
+    const el = document.getElementById(id);
+    if(!el) continue;
+    const wrap = document.createElement('div');
+    wrap.innerHTML = chatReplyBarHTML(id);
+    el.replaceWith(wrap.firstElementChild);
+  }
+}
+
+/* WHAT A REPLY BAR SAYS ABOUT A MESSAGE, from the message itself — the same
+   words the server puts in a quote, so choosing Reply and then seeing the sent
+   quote is not a surprise. */
+function chatReplyTargetOf(message){
+  if(!message) return null;
+  const body = String(message.body || '').trim();
+  let snippet = null;
+  if(body){
+    const points = [...body.replace(/\s+/g,' ')];
+    snippet = points.length > 120 ? points.slice(0,120).join('') + '\u2026' : points.join('');
+  }else if((message.attachments||[]).length){
+    const first = message.attachments[0];
+    if(first.expired) snippet = 'Attachment expired';
+    else if(message.attachments.length > 1) snippet = `${message.attachments.length} attachments`;
+    else snippet = first.fileName || (first.kind === 'image' ? 'Photo' : 'Attachment');
+  }
+  return { id: message.id, senderName: message.senderName, snippet };
+}
+
+/* THE BOX GROWS WITH WHAT IS IN IT, to the cap the stylesheet sets and no
+   further. Measured rather than counted: reset to nothing, read what the
+   content actually needs, and take the smaller of that and the cap. Counting
+   newlines would be wrong the moment a line wraps. */
+function chatAutosize(box){
+  if(!box) return;
+  const max = parseFloat(getComputedStyle(box).maxHeight);
+  box.style.height = 'auto';
+  box.style.height = `${Math.min(box.scrollHeight, Number.isFinite(max) ? max : box.scrollHeight)}px`;
+}
+
+/* ---------- the pop-up ----------
+ *
+ * THE SAME DRAFT, THE SAME REPLY, THE SAME ATTACHMENTS. Opening and closing it
+ * never loses text, which is the whole point of it: the inline box and this
+ * are two windows onto one message.
+ *
+ * ENTER MAKES A NEW LINE HERE and Ctrl/Cmd+Enter sends, which is the opposite
+ * of the inline box — deliberately, and said on screen. Somebody who opened a
+ * bigger box did it to write something long, and Enter sending would be the
+ * one key they are most likely to press by accident.
+ */
+let chatBigOpen = false;
+
+function chatOpenBig(){
+  if(chatBigOpen) return;
+  /* WHAT IS IN THE INLINE BOX GOES TO THE DRAFT FIRST, so the pop-up opens on
+     it even if nothing has fired an input event yet. */
+  const inline = document.getElementById('chatInput');
+  if(inline) chatDraftSet(inline.value);
+  chatBigOpen = true;
+  const wrap = document.getElementById('chatBigWrap');
+  if(!wrap) return;
+  wrap.classList.add('show');
+  chatRenderBig();
+  const box = document.getElementById('chatBigInput');
+  if(box){ box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
+}
+
+function chatCloseBig(){
+  if(!chatBigOpen) return;
+  /* THE DRAFT SURVIVES THE CLOSE. Read before anything is torn down — a
+     textarea removed from the document still has its value, but nothing else
+     would ever read it again. */
+  const box = document.getElementById('chatBigInput');
+  if(box) chatDraftSet(box.value);
+  chatBigOpen = false;
+  chatEmojiClose();
+  const wrap = document.getElementById('chatBigWrap');
+  if(wrap) wrap.classList.remove('show');
+  /* And back into the inline box, with the caret after it. */
+  const inline = document.getElementById('chatInput');
+  if(inline){
+    inline.value = chatDraftGet();
+    chatAutosize(inline);
+    inline.focus();
+    inline.setSelectionRange(inline.value.length, inline.value.length);
+  }
+  chatMentionHighlight();
+}
+
+function chatRenderBig(){
+  const body = document.getElementById('chatBigBody');
+  if(!body) return;
+  const draft = chatDraftGet();
+  const max = Number(chatState.limits.maxBody) || 4000;
+  body.innerHTML = `
+    ${chatReplyBarHTML('chatBigReplyBar')}
+    <textarea id="chatBigInput" rows="12" placeholder="Write a message\u2026"></textarea>
+    <div class="chat-big-foot">
+      <button class="chat-clip" id="chatBigClip" title="Attach a file" aria-label="Attach a file">&#128206;</button>
+      ${chatState.features.emojiPicker
+        ? '<button class="chat-clip" id="chatBigEmoji" title="Emoji" aria-label="Insert an emoji" aria-expanded="false">\u263a</button>'
+        : ''}
+      <span class="chat-big-hint">Enter makes a new line \u00b7 <kbd>Ctrl</kbd>+<kbd>Enter</kbd> sends</span>
+      <span class="chat-big-count" id="chatBigCount"></span>
+      <button class="btn btn-ghost btn-sm" id="chatBigClose">Close</button>
+      <button class="btn btn-brand btn-sm" id="chatBigSend">Send</button>
+    </div>`;
+  const box = document.getElementById('chatBigInput');
+  box.value = draft;
+  chatBigCount();
+  box.addEventListener('input', ()=>{ chatDraftSet(box.value); chatBigCount(); });
+  box.addEventListener('keydown', (e)=>{
+    /* CTRL OR CMD, because the studio is on both. metaKey is Cmd on a Mac and
+       the Windows key elsewhere, where it is not a chord anybody presses by
+       accident. */
+    if(e.key === 'Enter' && (e.ctrlKey || e.metaKey)){
+      e.preventDefault();
+      chatBigSend();
+    }
+  });
+  document.getElementById('chatBigClose').onclick = chatCloseBig;
+  document.getElementById('chatBigSend').onclick = chatBigSend;
+  const clip = document.getElementById('chatBigClip');
+  if(clip) clip.onclick = ()=>{ const f = document.getElementById('chatFile'); if(f) f.click(); };
+  const emoji = document.getElementById('chatBigEmoji');
+  if(emoji) emoji.onclick = ()=> chatEmojiToggle('chatBigInput', emoji);
+}
+
+async function chatBigSend(){
+  const box = document.getElementById('chatBigInput');
+  if(box) chatDraftSet(box.value);
+  /* Through the one send path, so the pop-up cannot come to differ from the
+     inline box about what sending means. */
+  await sendChatMessage({ from: 'big' });
+}
+
+/* THE COUNTER, shown only when it is close to mattering.
+ *
+ * WITHIN 10% OF THE LIMIT, as the brief asks: a counter on screen from the
+ * first character is a thing to ignore, and a limit that appears without
+ * warning at 4,000 is a thing to resent. Counted by CODE POINTS, the same way
+ * the server counts — .length would say a family emoji is eleven characters
+ * and the two would disagree about when to warn. */
+function chatBigCount(){
+  const box = document.getElementById('chatBigInput');
+  const out = document.getElementById('chatBigCount');
+  if(!box || !out) return;
+  const max = Number(chatState.limits.maxBody) || 4000;
+  const used = [...box.value].length;
+  if(used < max * 0.9){ out.textContent = ''; out.classList.remove('over'); return; }
+  out.textContent = `${used} / ${max}`;
+  out.classList.toggle('over', used > max);
+}
+
+/* ---------- the emoji picker ----------
+ *
+ * THE DATA IS FETCHED THE FIRST TIME SOMEBODY OPENS IT, and never again. 52 KB
+ * of it, from this server — see public/emoji-data.json and the script that
+ * builds it. Nothing is loaded from anywhere else: the office network has no
+ * CDN and the page's CSP must not need a new host.
+ *
+ * RECENTS AND SKIN TONE LIVE IN localStorage, per browser, inside try/catch.
+ * The picker has to work with storage blocked — a private window, a locked-down
+ * machine — and all that is lost is the memory of what somebody used last.
+ */
+const EMOJI_RECENT_KEY = 'zvky.emoji.recent';
+const EMOJI_TONE_KEY = 'zvky.emoji.tone';
+const EMOJI_RECENT_MAX = 24;
+
+let emojiData = null;          // the file, once
+let emojiLoading = null;       // the promise, so two clicks fetch once
+let emojiOpenFor = null;       // which textarea the open picker is inserting into
+
+/* EVERY TOUCH OF STORAGE IS GUARDED. It throws rather than returning null in a
+   private window on some browsers, and a picker that cannot remember a skin
+   tone is a smaller problem than a picker that does not open. */
+function emojiStored(key, fallback){
+  try{
+    const raw = localStorage.getItem(key);
+    return raw === null ? fallback : JSON.parse(raw);
+  }catch{ return fallback; }
+}
+function emojiStore(key, value){
+  try{ localStorage.setItem(key, JSON.stringify(value)); }catch{ /* storage is a convenience */ }
+}
+
+const emojiTone = () => String(emojiStored(EMOJI_TONE_KEY, 'default') || 'default');
+const emojiRecents = () => {
+  const list = emojiStored(EMOJI_RECENT_KEY, []);
+  return Array.isArray(list) ? list.filter((e)=> typeof e === 'string').slice(0, EMOJI_RECENT_MAX) : [];
+};
+function emojiRemember(char){
+  const list = [char, ...emojiRecents().filter((e)=> e !== char)].slice(0, EMOJI_RECENT_MAX);
+  emojiStore(EMOJI_RECENT_KEY, list);
+}
+
+async function emojiLoad(){
+  if(emojiData) return emojiData;
+  if(!emojiLoading){
+    emojiLoading = fetch('/emoji-data.json', { cache:'force-cache' })
+      .then((r)=>{ if(!r.ok) throw new Error('Could not load the emoji list.'); return r.json(); })
+      .then((d)=>{ emojiData = d; return d; })
+      .catch((err)=>{ emojiLoading = null; throw err; });
+  }
+  return emojiLoading;
+}
+
+/* THE TONE APPLIED, for the emoji that take one.
+ *
+ * A modifier goes after the base character. For the simple ones that is the
+ * whole of it; a sequence with a joiner in it takes the modifier after its
+ * FIRST code point, which is the person in it. Anything more elaborate than
+ * that is left alone rather than assembled wrongly — a mangled sequence renders
+ * as two unrelated pictures, which is worse than the default tone. */
+function emojiWithTone(char, supportsTone){
+  const tone = emojiTone();
+  if(!supportsTone || tone === 'default' || !emojiData) return char;
+  const row = (emojiData.skinTones || []).find((t)=> t[0] === tone);
+  const modifier = row && row[1];
+  if(!modifier) return char;
+  const points = [...char];
+  if(points.length === 1) return char + modifier;
+  return points[0] + modifier + points.slice(1).join('');
+}
+
+function chatEmojiClose(){
+  const el = document.getElementById('chatEmojiPanel');
+  if(el) el.remove();
+  for(const id of ['chatEmoji','chatBigEmoji']){
+    const b = document.getElementById(id);
+    if(b) b.setAttribute('aria-expanded','false');
+  }
+  emojiOpenFor = null;
+}
+
+async function chatEmojiToggle(targetId, button){
+  if(emojiOpenFor === targetId){ chatEmojiClose(); return; }
+  chatEmojiClose();
+  emojiOpenFor = targetId;
+  if(button) button.setAttribute('aria-expanded','true');
+
+  const panel = document.createElement('div');
+  panel.className = 'chat-emoji-panel';
+  panel.id = 'chatEmojiPanel';
+  panel.setAttribute('role','dialog');
+  panel.setAttribute('aria-label','Emoji');
+  panel.innerHTML = '<div class="chat-emoji-loading">Loading emoji\u2026</div>';
+  /* ANCHORED TO THE BUTTON'S OWN COMPOSER, so the pop-up's picker is inside the
+     pop-up and the inline one is inside the panel. Appended to the button's
+     offsetParent rather than to body, which keeps it with its composer when
+     either scrolls. */
+  (button && button.closest('.chat-compose, .chat-big-foot') || document.body).appendChild(panel);
+
+  let data;
+  try{ data = await emojiLoad(); }
+  catch(err){ panel.innerHTML = `<div class="chat-emoji-loading">${escapeHTML(err.message)}</div>`; return; }
+  if(emojiOpenFor !== targetId) return;   // closed while it was loading
+
+  emojiPaint(panel, data, { tab: (emojiRecents().length ? 'recent' : data.groups[0].key), query:'' });
+}
+
+/* The whole panel, redrawn on every tab, search and tone change. Redrawn rather
+   than patched because it is a few hundred nodes at most and the alternative is
+   six code paths that each have to agree about what is on screen. */
+function emojiPaint(panel, data, state){
+  const tone = emojiTone();
+  const recents = emojiRecents();
+  const tabs = [
+    ...(recents.length ? [['recent','Recently used']] : []),
+    ...data.groups.map((g)=> [g.key, g.label]),
+  ];
+
+  /* WHAT IS SHOWN: a search over every group, or one group. Search matches the
+     emoji's name and the words in it, so "cat" finds "grinning cat" and "smile"
+     finds "smiling face with smiling eyes". */
+  let shown;
+  const q = String(state.query || '').trim().toLowerCase();
+  if(q){
+    shown = [];
+    for(const g of data.groups){
+      for(const e of g.emoji){
+        if(e[1].includes(q) || e[1].split(/[\s-]+/).some((w)=> w.startsWith(q))) shown.push(e);
+      }
+      if(shown.length > 400) break;
+    }
+  }else if(state.tab === 'recent'){
+    /* A recent is stored with its tone already applied, so it is shown as it
+       was used rather than re-toned. */
+    shown = recents.map((char)=> [char, 'recently used']);
+  }else{
+    const group = data.groups.find((g)=> g.key === state.tab) || data.groups[0];
+    shown = group.emoji;
+  }
+
+  panel.innerHTML = `
+    <div class="chat-emoji-top">
+      <input type="search" id="chatEmojiSearch" placeholder="Search emoji\u2026"
+             aria-label="Search emoji" value="${escapeHTML(state.query || '')}">
+      <select id="chatEmojiTone" aria-label="Skin tone" title="Skin tone">
+        ${(data.skinTones||[]).map(([key, ch])=>
+          `<option value="${escapeHTML(key)}"${key === tone ? ' selected':''}>${ch || '\u270b'} ${escapeHTML(key)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="chat-emoji-tabs" role="tablist">
+      ${tabs.map(([key,label])=>
+        `<button role="tab" class="chat-emoji-tab${!q && state.tab === key ? ' on':''}"
+                 data-emoji-tab="${escapeHTML(key)}" aria-selected="${!q && state.tab === key}"
+                 title="${escapeHTML(label)}">${escapeHTML(label)}</button>`).join('')}
+    </div>
+    <div class="chat-emoji-grid" role="listbox" aria-label="Emoji">
+      ${shown.length ? shown.map((e)=>{
+        const ch = state.tab === 'recent' && !q ? e[0] : emojiWithTone(e[0], e[2]);
+        return `<button class="chat-emoji-one" role="option" data-emoji="${escapeHTML(ch)}"
+                 data-tone="${e[2] ? '1' : ''}" title="${escapeHTML(e[1])}"
+                 aria-label="${escapeHTML(e[1])}">${ch}</button>`;
+      }).join('') : '<div class="chat-emoji-loading">Nothing matches that.</div>'}
+    </div>`;
+
+  const search = panel.querySelector('#chatEmojiSearch');
+  search.addEventListener('input', ()=> emojiPaint(panel, data, { ...state, query: search.value }));
+  panel.querySelector('#chatEmojiTone').addEventListener('change', (e)=>{
+    emojiStore(EMOJI_TONE_KEY, e.target.value);
+    emojiPaint(panel, data, state);
+  });
+  panel.querySelectorAll('[data-emoji-tab]').forEach((b)=>{
+    b.onclick = ()=> emojiPaint(panel, data, { tab: b.dataset.emojiTab, query:'' });
+  });
+  panel.querySelectorAll('[data-emoji]').forEach((b)=>{
+    b.onclick = ()=> emojiInsert(b.dataset.emoji);
+  });
+  /* Focus the search, so the picker is usable from the keyboard the moment it
+     opens: type to narrow, Tab into the grid, Enter to insert. */
+  if(state.query === '') search.focus();
+}
+
+/* INSERTED AT THE CARET, with the caret left after it — so picking three in a
+ * row types three in a row rather than stacking them backwards.
+ *
+ * THE PICKER STAYS OPEN, because people pick more than one. Esc and a click
+ * outside close it; see the document listener.
+ */
+function emojiInsert(char){
+  const box = document.getElementById(emojiOpenFor);
+  if(!box) return;
+  const start = box.selectionStart ?? box.value.length;
+  const end = box.selectionEnd ?? box.value.length;
+  box.value = box.value.slice(0, start) + char + box.value.slice(end);
+  const after = start + char.length;
+  box.setSelectionRange(after, after);
+  box.focus();
+  emojiRemember(char);
+  /* Both composers keep the one draft, and the inline box grows with what is
+     in it. Dispatching input rather than calling them keeps this to one path. */
+  box.dispatchEvent(new Event('input', { bubbles:true }));
 }
 
 /* HOW LONG THIS FILE HAS LEFT, in the words somebody reads at a glance.
@@ -24201,15 +24816,31 @@ async function openChatConversation(id){
   scheduleChatPoll();
 }
 
-async function sendChatMessage(){
-  const input = document.getElementById('chatInput');
-  const text = input ? input.value.trim() : '';
+async function sendChatMessage({ from = 'inline' } = {}){
+  /* WHICHEVER BOX IS OPEN, through one path. The pop-up and the inline box are
+     two windows onto one message, so there is one place that knows what
+     sending means and one place that clears what was sent. */
+  const input = document.getElementById(from === 'big' ? 'chatBigInput' : 'chatInput');
+  const text = input ? input.value.trim() : chatDraftGet().trim();
   if(!text && !chatState.files.length) return;
+  /* REFUSED HERE AS WELL AS BY THE SERVER, and counted the same way — by code
+     points, so the two agree about what a family emoji costs. The server is
+     still what decides; this is so somebody is told before the round trip. */
+  const max = Number(chatState.limits.maxBody) || 4000;
+  if([...text].length > max){
+    showToast(`That message is ${[...text].length} characters. The longest is ${max}.`);
+    return;
+  }
   const form = new FormData();
   /* The readable @names become tokens here, at the last possible moment. Up to
      this line the box has held what a person typed; from here the server has
      what it can act on. */
   form.set('body', chatMentionEncode(text, chatState.picked));
+  /* WHAT THIS ANSWERS, if anything. Sent as a field on the same multipart body
+     the attachments ride on; the server checks that it exists, is in this
+     conversation and is not this message. */
+  const replying = chatReplyGet();
+  if(replying) form.set('replyToId', replying.id);
   chatState.files.forEach(f=>form.append('files', f, f.name));
   const sendBtn = document.getElementById('chatSend');
   if(sendBtn) sendBtn.disabled = true;
@@ -24230,6 +24861,11 @@ async function sendChatMessage(){
      * afterwards, which is why only the button showed it. One place now, and
      * it is the place that knows the send succeeded. */
     if(input) input.value = '';
+    /* ONLY THIS CONVERSATION'S DRAFT, and its reply with it. Sending in one
+       conversation must not empty the half-written message in another. */
+    chatDraftSet('');
+    chatReplySet(null);
+    if(chatBigOpen) chatCloseBig();
     if(res.message.seq > (chatState.cursor||0)) chatState.cursor = res.message.seq;
     renderChat();
     chatScrollToEnd();
@@ -24381,6 +25017,23 @@ document.addEventListener('click', async e=>{
   if(e.target.closest('#chatOlder')){ await loadChatOlder(); return; }
   if(e.target.closest('#chatSend')){ await sendChatMessage(); return; }
   if(e.target.closest('#chatClip')){ const f = document.getElementById('chatFile'); if(f) f.click(); return; }
+  if(e.target.closest('#chatExpand')){ chatOpenBig(); return; }
+  const emojiBtn = e.target.closest('#chatEmoji');
+  if(emojiBtn){ await chatEmojiToggle('chatInput', emojiBtn); return; }
+  /* REPLY, and CANCEL. Delegated like everything else in this panel, because
+     the thread is rebuilt on every poll and per-row handlers would have to be
+     re-attached each time. */
+  const replyTo = e.target.closest('[data-chat-reply]');
+  if(replyTo){
+    const message = chatState.messages.find((m)=> m.id === replyTo.dataset.chatReply);
+    chatReplySet(chatReplyTargetOf(message));
+    const box = document.getElementById(chatBigOpen ? 'chatBigInput' : 'chatInput');
+    if(box) box.focus();
+    return;
+  }
+  if(e.target.closest('[data-chat-reply-cancel]')){ chatReplySet(null); return; }
+  const goto = e.target.closest('[data-chat-goto]');
+  if(goto){ await chatGoToMessage(goto.dataset.chatGoto); return; }
 
   /* Before the other chat targets, because a suggestion row lives inside the
      panel and carries an avatar — which is itself clickable elsewhere. */
@@ -24549,6 +25202,18 @@ document.addEventListener('keydown', async e=>{
        through to the branch that closes the whole chat panel, so dismissing a
        dropdown would throw away the message being written. */
     if(e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); chatMentionClose(); return; }
+  }
+  /* THE EMOJI PICKER CLOSES ON ESC, before anything else looks at the key —
+     otherwise dismissing it would fall through to whichever branch closes the
+     chat panel, and throw away the message being written. The same reason the
+     mention picker's Escape is handled above. */
+  if(e.key === 'Escape' && document.getElementById('chatEmojiPanel')){
+    e.preventDefault(); e.stopPropagation(); chatEmojiClose(); return;
+  }
+  /* AND THE BIGGER BOX closes on Esc, WITH THE DRAFT INTACT — chatCloseBig
+     reads the textarea before anything is torn down. */
+  if(e.key === 'Escape' && chatBigOpen){
+    e.preventDefault(); e.stopPropagation(); chatCloseBig(); return;
   }
   if(e.target && e.target.id === 'chatInput' && e.key === 'Enter' && !e.shiftKey){
     e.preventDefault();
