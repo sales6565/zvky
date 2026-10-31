@@ -105,6 +105,16 @@ router.get('/', async (req, res) => {
       maxBytes: files.MAX_BYTES,
       hours: files.HOURS,
     },
+    /* THE TWO SWITCHES AND THE LENGTH LIMIT, published with everything else the
+       panel needs so the composer does not fetch its own settings. The page
+       hides the Reply action and the emoji button from these; the server
+       refuses regardless, which is what makes the hiding a courtesy rather
+       than the rule. */
+    features: {
+      replies: require('../chat-settings').repliesEnabled(),
+      emojiPicker: require('../chat-settings').emojiPickerEnabled(),
+    },
+    maxBody: chat.MAX_BODY,
   });
 });
 
@@ -384,11 +394,22 @@ router.post('/:id/messages', files.upload.array('files', 5), async (req, res) =>
   });
   if (!allowed.ok) return res.status(allowed.status).json({ error: allowed.error });
 
-  const messageId = await chat.send(db, {
-    conversationId: req.params.id,
-    senderId: req.user.id,
-    body,
-  });
+  /* WHAT THIS ANSWERS, if anything. chat.send() checks it — that it exists, is
+     in THIS conversation, and is not the message itself — and throws with a
+     status if not, which the error handler below turns into that status rather
+     than a 500. */
+  let messageId;
+  try {
+    messageId = await chat.send(db, {
+      conversationId: req.params.id,
+      senderId: req.user.id,
+      body,
+      replyToId: (req.body && req.body.replyToId) || null,
+    });
+  } catch (err) {
+    if (!err.status) throw err;
+    return res.status(err.status).json({ error: err.message, field: err.field || null });
+  }
   for (const file of uploaded) {
     await files.record(db, { messageId, file });
   }

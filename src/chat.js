@@ -64,6 +64,21 @@ function pairKey(a, b) {
 
 const trimmed = (v, max) => String(v == null ? '' : v).trim().slice(0, max);
 
+/* HOW LONG A MESSAGE IS, counted the way a person would count it.
+ *
+ * NOT .length, which counts UTF-16 code units: every emoji outside the basic
+ * plane is two of them, so a message of 2001 emoji "is" 4002 characters, and a
+ * family emoji built from four people and three joiners is eleven. Spreading
+ * the string counts CODE POINTS, which is the nearest thing to what somebody
+ * typing believes they have typed.
+ *
+ * (Grapheme clusters would be nearer still — a family emoji is one thing on
+ * screen — but Intl.Segmenter is the only correct way to find them and the
+ * limit is a storage limit, not a typography one. Code points are what the
+ * column holds and what the page can count identically without shipping a
+ * table.) */
+const codePoints = (v) => [...String(v == null ? '' : v)].length;
+
 // ---------------------------------------------------------------- membership
 
 /* Is this person in this conversation? The one authorisation question chat
@@ -572,6 +587,7 @@ function previewOf(row) {
 
 const MESSAGE_SELECT = `SELECT m.id, m.seq, m.conversation_id AS conversationId, m.kind, m.body,
        m.created_at AS createdAt, m.sender_id AS senderId,
+       m.reply_to_message_id AS replyToId,
        u.\`name\` AS senderName, u.avatar_updated_at AS senderPhotoUpdatedAt
   FROM chat_messages m
   LEFT JOIN users u ON u.id = m.sender_id`;
@@ -614,7 +630,96 @@ const shapeMessage = (r) => ({
   senderPhotoUpdatedAt: r.senderPhotoUpdatedAt || null,
   createdAt: r.createdAt,
   attachments: [],
+  replyToId: r.replyToId || null,
+  /* Filled in by withQuotes(), from the TARGET as it is now. Null while the
+     target is simply not loaded; see the note there. */
+  quote: null,
 });
+
+/* THE QUOTED BLOCK ON A REPLY, read LIVE from the message it points at.
+ *
+ * NOTHING IS COPIED AT SEND TIME, and that is the whole design rather than an
+ * implementation detail. A snapshot of the original's text would go on showing
+ * it after the original was deleted — which is a leak of exactly the thing
+ * deleting it was meant to stop — and would go on showing an attachment's name
+ * after the file expired. So the quote is a read, every time, and a target that
+ * has gone says so.
+ *
+ * ONE LEVEL ONLY. A reply to a reply is allowed and quotes its own target; it
+ * does not quote what THAT quoted. Chat windows that nest quotes end up
+ * rendering a conversation inside a message.
+ *
+ * SCOPED TO THE SAME CONVERSATION, again, here as well as at send time. The
+ * send-time check is what refuses a bad reply; this is what makes a row that
+ * somehow holds one anyway render as unavailable rather than reaching into
+ * another conversation.
+ *
+ * ONE QUERY FOR THE PAGE, not one per reply.
+ */
+async function withQuotes(db, conversationId, messages) {
+  const wanted = [...new Set(messages.map((m) => m.replyToId).filter(Boolean))];
+  if (!wanted.length) return messages;
+
+  const { rows } = await db.query(
+    `SELECT m.id, m.body, m.kind, m.sender_id AS senderId, u.\`name\` AS senderName,
+            (SELECT COUNT(*) FROM chat_attachments a WHERE a.message_id = m.id) AS attachmentCount,
+            (SELECT a.file_name FROM chat_attachments a WHERE a.message_id = m.id ORDER BY a.id LIMIT 1) AS firstFile,
+            (SELECT ${'TIMESTAMPDIFF(SECOND, NOW(), a.expires_at)'} FROM chat_attachments a
+              WHERE a.message_id = m.id ORDER BY a.id LIMIT 1) AS firstFileLeft
+       FROM chat_messages m
+       LEFT JOIN users u ON u.id = m.sender_id
+      WHERE m.id IN ($1) AND m.conversation_id = $2`,
+    [wanted, conversationId]
+  ).catch((err) => { if (unavailable(err)) return { rows: [] }; throw err; });
+
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return messages.map((m) => {
+    if (!m.replyToId) return m;
+    const target = byId.get(m.replyToId);
+    /* GONE: deleted, or in another conversation, or never there. All three read
+       the same on purpose — a reader of this conversation learns that the
+       original is not available, and nothing more. */
+    if (!target) {
+      return { ...m, quote: { id: m.replyToId, available: false, senderName: null, snippet: null } };
+    }
+    return { ...m, quote: quoteOf(target) };
+  });
+}
+
+/* What a quote says about its target. Its own function so the thread read, a
+   single message hand-back and anything added later cannot word it differently. */
+function quoteOf(target) {
+  const files = Number(target.attachmentCount) || 0;
+  const body = String(target.body || '').trim();
+  let snippet = null;
+  if (body) {
+    /* ONE LINE. A quote is a pointer, not a copy — the original is one click
+       away, and a quote that reproduces four paragraphs buries the reply. Cut
+       by CODE POINTS so an emoji is not halved, and only when it is actually
+       too long, so the ellipsis means something. */
+    const points = [...body.replace(/\s+/g, ' ')];
+    snippet = points.length > 120 ? `${points.slice(0, 120).join('')}\u2026` : points.join('');
+  } else if (files) {
+    /* WHAT KIND OF ATTACHMENT, in the words the panel uses elsewhere, and the
+       file's name when there is one to give — "Photo" alone leaves somebody
+       guessing which. An expired one says so rather than naming a file that is
+       no longer there to open. */
+    const left = Number(target.firstFileLeft);
+    const expired = !Number.isFinite(left) || left <= 0;
+    if (expired) snippet = 'Attachment expired';
+    else snippet = files > 1 ? `${files} attachments` : (target.firstFile || 'Attachment');
+  }
+  return {
+    id: target.id,
+    available: true,
+    senderName: target.senderName || (target.kind === 'system' ? null : 'Removed user'),
+    snippet,
+    /* A quote of a message with nothing left in it at all. Its own flag rather
+       than a sentence, so the page words it and the server does not have to
+       guess which language the reader is in. */
+    empty: !snippet,
+  };
+}
 
 /* A page of a conversation, oldest last.
  *
@@ -634,27 +739,109 @@ async function messagesIn(db, conversationId, { before, limit = 40 } = {}) {
 
   const page = rows.map(shapeMessage).reverse();
   return {
-    messages: await withAttachments(db, page),
+    messages: await withQuotes(db, conversationId, await withAttachments(db, page)),
     /* Whether there is more behind this page. A full page is the only case
        where there might be, so this costs nothing when there is not. */
     hasMore: rows.length === n,
   };
 }
 
-async function send(db, { conversationId, senderId, body }) {
-  const text = trimmed(body, MAX_BODY);
+/* MAY THIS MESSAGE ANSWER THAT ONE?
+ *
+ * Four questions, and all four are the server's because every one of them is a
+ * thing a browser can lie about:
+ *
+ *   it exists                 — or there is nothing to quote
+ *   in THIS conversation      — the one that matters. Without it, a reply is a
+ *                               way to pull a line of somebody else's
+ *                               conversation into one you are in: the quote is
+ *                               rendered live from the target, so the target's
+ *                               text would be shown to a reader who was never
+ *                               in the room it was said in.
+ *   not itself                — a message cannot answer itself, and allowing it
+ *                               makes a quote that renders its own body
+ *   the feature is on         — the studio's switch
+ *
+ * READABILITY NEEDS NO SEPARATE CHECK, and that is worth saying rather than
+ * leaving as an omission: membership of the conversation is the only read rule
+ * chat has, the caller has already been checked into it by the route, and the
+ * target is required to be in the same conversation. There is no third thing.
+ *
+ * A REPLY TO A REPLY IS FINE. It quotes its own target and nothing deeper —
+ * see quoteOf().
+ */
+async function checkReplyTarget(db, { conversationId, replyToId, messageId = null }) {
+  if (!replyToId) return { ok: true, replyToId: null };
+  if (!require('./chat-settings').repliesEnabled()) {
+    return { ok: false, status: 409, field: 'replyToId',
+      error: 'Replies are switched off for this studio.' };
+  }
+  if (messageId && replyToId === messageId) {
+    return { ok: false, status: 400, field: 'replyToId', error: 'A message cannot reply to itself.' };
+  }
+  const { rows } = await db.query(
+    'SELECT id FROM chat_messages WHERE id = $1 AND conversation_id = $2',
+    [replyToId, conversationId]
+  ).catch(() => ({ rows: [] }));
+  if (!rows.length) {
+    /* ONE ANSWER FOR "NOT THERE" AND "SOMEWHERE ELSE". Telling a caller that
+       the id exists but belongs to another conversation confirms the existence
+       of a message in a conversation they are not in. */
+    return { ok: false, status: 404, field: 'replyToId',
+      error: 'That message is not in this conversation.' };
+  }
+  return { ok: true, replyToId };
+}
+
+async function send(db, { conversationId, senderId, body, replyToId = null }) {
+  /* TRIMMED, NEVER TRUNCATED. The old line was slice(0, MAX_BODY) on the raw
+     string, which did two wrong things at once: it silently dropped whatever
+     somebody had written past the limit — the first they knew of it was
+     reading their own message back short — and it counted UTF-16 units, so it
+     could cut a surrogate pair in half and leave a lone surrogate that is not
+     valid UTF-8 at all. A long message is refused with its length now, which
+     is a thing the sender can act on. */
+  const text = String(body == null ? '' : body).trim();
+  if (codePoints(text) > MAX_BODY) {
+    const err = new Error(`That message is ${codePoints(text)} characters. The longest a chat `
+      + `message can be is ${MAX_BODY}.`);
+    err.status = 400;
+    err.field = 'body';
+    throw err;
+  }
   const id = uuid();
-  await db.query(
-    'INSERT INTO chat_messages (id, conversation_id, sender_id, kind, body) VALUES ($1,$2,$3,$4,$5)',
-    [id, conversationId, senderId, 'text', text]
-  );
+  const target = await checkReplyTarget(db, { conversationId, replyToId });
+  if (!target.ok) {
+    const err = new Error(target.error);
+    err.status = target.status;
+    err.field = target.field;
+    throw err;
+  }
+  /* THE COLUMN MAY NOT BE THERE, on a deployment whose ALTER was refused —
+     which on shared hosting is an ordinary outcome. A message still sends; it
+     simply cannot carry what it was answering. Narrower than failing the send,
+     and the same tolerance every other late column in this application gets. */
+  try {
+    await db.query(
+      `INSERT INTO chat_messages (id, conversation_id, sender_id, kind, body, reply_to_message_id)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [id, conversationId, senderId, 'text', text, target.replyToId]
+    );
+  } catch (err) {
+    if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
+    await db.query(
+      'INSERT INTO chat_messages (id, conversation_id, sender_id, kind, body) VALUES ($1,$2,$3,$4,$5)',
+      [id, conversationId, senderId, 'text', text]
+    );
+  }
   return id;
 }
 
 async function messageById(db, id) {
   const { rows } = await db.query(`${MESSAGE_SELECT} WHERE m.id = $1`, [id]);
   if (!rows.length) return null;
-  const [one] = await withAttachments(db, [shapeMessage(rows[0])]);
+  const [withFiles] = await withAttachments(db, [shapeMessage(rows[0])]);
+  const [one] = await withQuotes(db, withFiles.conversationId, [withFiles]);
   return one;
 }
 
@@ -678,7 +865,23 @@ async function since(db, userId, cursor, { limit = 50 } = {}) {
      ORDER BY m.seq ASC LIMIT ${n}`,
     [userId, from]
   ).catch((err) => { if (unavailable(err)) return { rows: [] }; throw err; });
-  return withAttachments(db, rows.map(shapeMessage));
+  const withFiles = await withAttachments(db, rows.map(shapeMessage));
+  /* THE POLL SPANS CONVERSATIONS, so the quotes are fetched a conversation at
+     a time — withQuotes scopes its lookup to one, which is what stops a reply
+     quoting a message from somewhere else even if its row says so. A handful
+     of conversations per poll at most; the alternative is one query per reply. */
+  const byConversation = new Map();
+  for (const m of withFiles) {
+    if (!byConversation.has(m.conversationId)) byConversation.set(m.conversationId, []);
+    byConversation.get(m.conversationId).push(m);
+  }
+  const out = [];
+  for (const [conversationId, group] of byConversation) {
+    out.push(...await withQuotes(db, conversationId, group));
+  }
+  /* Back into the order the query gave them, which is by seq ascending and is
+     what the caller's cursor arithmetic depends on. */
+  return out.sort((a, b) => a.seq - b.seq);
 }
 
 // The newest sequence anywhere in this person's conversations, or 0.
@@ -718,7 +921,8 @@ async function markRead(db, conversationId, userId, seq) {
 }
 
 module.exports = {
-  MAX_GROUP_MEMBERS, MAX_BODY, MAX_TITLE, KINDS,
+  MAX_GROUP_MEMBERS, MAX_BODY, MAX_TITLE, KINDS, codePoints,
+  checkReplyTarget, quoteOf,
   pairKey, membership, memberCount, membersOf,
   shieldedAmong, hasSpokenIn, mayWriteTo,
   openDirect, createGroup, rename, addMembers, removeMember, leave,

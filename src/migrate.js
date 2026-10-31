@@ -3916,6 +3916,12 @@ async function ensureChat(db, log) {
       sender_id       CHAR(36)    NULL,
       kind            VARCHAR(24) NOT NULL DEFAULT 'text',
       body            TEXT        NULL,
+      -- WHICH MESSAGE THIS ONE ANSWERS, or NULL for almost all of them. The
+      -- quote is rendered LIVE from the target rather than copied, so a
+      -- deleted original shows "This message was deleted" and nothing about it
+      -- leaks through the quote. SET NULL rather than CASCADE: deleting the
+      -- original must not take the reply with it.
+      reply_to_message_id CHAR(36) NULL,
       created_at      DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
       KEY idx_chat_messages_conv (conversation_id, seq)
     )`));
@@ -3982,6 +3988,25 @@ async function ensureChat(db, log) {
     + 'FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE SET NULL');
   await fk('ALTER TABLE chat_attachments ADD CONSTRAINT fk_chat_attach_message '
     + 'FOREIGN KEY (message_id) REFERENCES chat_messages(id) ON DELETE CASCADE');
+
+  /* REPLIES, for a deployment whose chat_messages predates them. Its own
+     check, like every other column added after a table shipped. */
+  const { rows: replyCol } = await db.query(
+    `SELECT 1 AS present FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'chat_messages'
+        AND COLUMN_NAME = 'reply_to_message_id'`
+  ).catch(() => ({ rows: [{ present: 1 }] }));
+  if (!replyCol.length) {
+    await db.query('ALTER TABLE chat_messages ADD COLUMN reply_to_message_id CHAR(36) NULL AFTER body');
+    log('Schema: added chat_messages.reply_to_message_id — a reply points at what it answers.');
+  }
+  /* INDEXED, because every thread read asks "what do these messages quote" for
+     a page of them at once. Added separately and tolerantly: an index refused
+     costs speed, not correctness. */
+  await db.query('ALTER TABLE chat_messages ADD KEY idx_chat_reply (reply_to_message_id)')
+    .catch(() => { /* already there, or not permitted — neither is fatal */ });
+  await fk('ALTER TABLE chat_messages ADD CONSTRAINT fk_chat_reply '
+    + 'FOREIGN KEY (reply_to_message_id) REFERENCES chat_messages(id) ON DELETE SET NULL');
 
   /* The delivery watermark, for a deployment whose chat_members already exists
    * — CREATE TABLE IF NOT EXISTS leaves an existing table exactly as it found
