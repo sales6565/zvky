@@ -4005,8 +4005,28 @@ async function ensureChat(db, log) {
      costs speed, not correctness. */
   await db.query('ALTER TABLE chat_messages ADD KEY idx_chat_reply (reply_to_message_id)')
     .catch(() => { /* already there, or not permitted — neither is fatal */ });
-  await fk('ALTER TABLE chat_messages ADD CONSTRAINT fk_chat_reply '
-    + 'FOREIGN KEY (reply_to_message_id) REFERENCES chat_messages(id) ON DELETE SET NULL');
+
+  /* NO FOREIGN KEY ON THIS COLUMN, and that is a decision rather than an
+     oversight — it was written with ON DELETE SET NULL first, and a test
+     caught what that does.
+     
+     SET NULL erases the fact that a message WAS a reply. The brief asks for a
+     deleted original to show "This message was deleted" in the quote, and a
+     reply whose pointer has been nulled has no quote to show it in: it renders
+     as an ordinary message, and the answer is left dangling with nothing
+     saying what it answered.
+     
+     A dangling id is exactly what makes the right behaviour possible.
+     withQuotes() in src/chat.js looks the target up and finds nothing, which
+     is already the "available: false" branch — the id is never shown, and the
+     same wording covers deleted, moved and never-there. CASCADE would be worse
+     still: deleting one message would silently take every answer to it.
+     
+     Dropped if an earlier boot added it, so a database that ran this migration
+     while the constraint was in it is corrected rather than left behaving
+     differently from a fresh one. */
+  await db.query('ALTER TABLE chat_messages DROP FOREIGN KEY fk_chat_reply')
+    .catch(() => { /* not there, which is the ordinary case */ });
 
   /* The delivery watermark, for a deployment whose chat_members already exists
    * — CREATE TABLE IF NOT EXISTS leaves an existing table exactly as it found
