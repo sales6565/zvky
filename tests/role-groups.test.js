@@ -97,7 +97,13 @@ const SINCE_SNAPSHOT = [MANAGE, 'settings.email_delivery', 'report.remind', 'set
   /* And the two heavier halves of Vacation mode. Approving somebody's booked
      time off, and reaching into days that have already excluded their hours,
      are both Super Admin until a studio hands them out. */
-  'leave.approve', 'leave.manage_all'];
+  'leave.approve', 'leave.manage_all',
+  /* How long a chat attachment is kept before it is DELETED. Its own key
+     rather than chat.settings for the reason the catalogue gives: the group
+     size is a matter of taste, this one is a matter of somebody's work
+     disappearing. Super Admin until a studio hands it to whoever watches the
+     disk. */
+  'settings.chat_retention'];
 
 /* THE KEYS THAT ARE DELIBERATELY NOT SUPER-ADMIN-ONLY, listed separately so
  * each exception is argued rather than hidden in the list above.

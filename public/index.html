@@ -605,6 +605,11 @@ button.chat-status:focus-visible{outline:2px solid var(--focus-ring);outline-off
    because a two-line check box in a column of one-line fields reads as a
    section heading. text-transform off: the form's labels are small caps, and
    the words beside a tick are a sentence. */
+/* HOW LONG A CHAT FILE HAS LEFT. Quiet — it is a fact about the file, not a
+   warning about it, and a countdown in the accent colour on every picture in a
+   conversation would read as a page full of alarms. */
+.chat-expiry{display:block;font-size:10.5px;color:var(--ink-faint);margin-top:3px;letter-spacing:.01em;}
+.chat-file .chat-expiry{display:inline;margin:0 0 0 8px;}
 .tl-action-box{display:flex;align-items:center;gap:8px;margin:14px 0 0;cursor:pointer;
   text-transform:none;letter-spacing:0;font-size:13px;color:var(--ink);}
 .tl-action-box input{accent-color:var(--form-accent);margin:0;}
@@ -3832,7 +3837,15 @@ const TOUR_STEPS = [
     title: 'Chat',
     body: 'Message anybody in the studio, one to one — no permission needed for that. '
         + 'Leads, Production and Managers can also start a group of up to thirty. '
-        + 'Files can be attached, and they are deleted twelve hours later; the messages stay. '
+        /* THE STUDIO'S OWN NUMBER, not a word. The retention is a setting, and a
+           tour that says "twelve hours" to a studio that chose forty-eight is
+           a tour teaching people something untrue. chatState.limits.hours is
+           the server's answer; before the chat panel has ever been opened
+           there is nothing to read, and the sentence simply leaves the number
+           out rather than guessing one. */
+        + (((window.chatState || {}).limits || {}).hours
+          ? `Files can be attached, and they are deleted ${chatState.limits.hours} hours later; the messages stay. `
+          : 'Files can be attached, and they are deleted after a while; the messages stay. ')
         + 'Nobody but the people in a conversation can read it, administrators included \u2014 and a few '
         + 'designations can only be written to by the Super Admin.',
   },
@@ -19467,7 +19480,10 @@ async function renderChatSettings(){
              and the add-people dialog become hard to read, which is the only practical ceiling.`}
         ${s.updatedByName ? `<br>Last changed by ${escapeHTML(s.updatedByName)}.` : ''}
       </div>
-    </div>`;
+    </div>
+    <div id="chatPolicySection"></div>`;
+
+  renderChatPolicy();
 
   const box = document.getElementById('cs_unlimited');
   const num = document.getElementById('cs_max');
@@ -19488,6 +19504,108 @@ async function renderChatSettings(){
   };
 }
 
+
+/* ---------- Chat attachments: how long they are kept ----------
+ *
+ * ITS OWN SECTION AND ITS OWN PERMISSION, settings.chat_retention, not the
+ * Super Admin tier the group-size section above is gated on. How big a group
+ * may be is a matter of taste; how long before a file is DELETED is a matter
+ * of somebody's work disappearing.
+ *
+ * can() HERE, requirePermission ON THE SERVER. This section not rendering is a
+ * courtesy to everybody else's Settings page; the lock is the endpoint.
+ */
+let cpState = { data:null, errors:[], busy:false, msg:null, typed:null };
+
+async function renderChatPolicy(){
+  const el = document.getElementById('chatPolicySection');
+  if(!el) return;
+  if(!can('settings.chat_retention')){ el.innerHTML = ''; return; }
+  if(!cpState.data){
+    try{ cpState.data = await api('/admin/settings/chat-policy'); }
+    catch(err){ el.innerHTML = `<div class="ref-section"><div class="ref-err">${escapeHTML(err.message)}</div></div>`; return; }
+  }
+  const d = cpState.data;
+  const s = d.settings;
+  const bounds = s.attachmentHoursBounds || { min:1, max:720 };
+  const errFor = (f)=>{ const e = cpState.errors.find(x=>x.field===f); return e ? e.message : ''; };
+  /* WHAT IS IN THE BOX is what was typed if anything was, and the stored value
+     otherwise — so a refusal does not wipe what somebody was correcting. */
+  const shown = cpState.typed === null || cpState.typed === undefined
+    ? String(s.attachmentHours) : cpState.typed;
+
+  el.innerHTML = `
+    <div class="ref-section">
+      <div class="ref-head"><h3>Chat attachments</h3><span class="rh-badge">Super Admin</span></div>
+      <div class="ref-note">How long a file sent in chat is kept before it is deleted. The message
+        always stays — only the file goes, and it reads &ldquo;Attachment expired&rdquo; afterwards.
+        Whole hours, from ${bounds.min} to ${bounds.max} (30 days).
+        &ldquo;Never delete&rdquo; is not on offer: these sit on the same disk as everything else.</div>
+      <div class="ref-add">
+        <div>
+          <label>Chat attachment retention (hours)</label>
+          <input type="number" id="cp_hours" class="narrow${errFor('attachmentHours')?' rh-bad':''}"
+                 min="${bounds.min}" max="${bounds.max}" step="1" value="${escapeHTML(shown)}">
+        </div>
+        <div style="align-self:end;">
+          <button class="btn btn-brand" id="cp_save"${cpState.busy?' disabled':''}>Save</button>
+        </div>
+        ${cpState.msg ? `<div class="pm-msg ${cpState.msg.kind}" style="align-self:end;">${escapeHTML(cpState.msg.text)}</div>` : ''}
+      </div>
+      ${cpState.errors.length ? `<div class="rh-errs">${cpState.errors.map(e=>`<div class="rh-err">${escapeHTML(e.message)}</div>`).join('')}</div>` : ''}
+      <div class="rh-warn" style="border-color:var(--border);background:var(--surface);">
+        <div><strong>Applies to attachments uploaded after you save. Files already uploaded keep
+        their original expiry.</strong> Shortening this cannot reach back and delete what people are
+        working from today, and lengthening it does not bring anything back.</div>
+        ${typeof d.live === 'number' ? `<div style="margin-top:4px;">${d.live}
+          file${d.live===1?'' : 's'} ${d.live===1?'is':'are'} live right now, each keeping the
+          retention it was uploaded under.</div>` : ''}
+      </div>
+      <div class="ref-note">
+        <label class="rh-check"><input type="checkbox" id="cp_replies"${s.repliesEnabled?' checked':''}>
+          Chat replies</label>
+        <span class="rh-opt">Reply to a particular message, shown as a quote above the new one.
+          Switching it off hides the Reply action and refuses new replies; quotes already sent go on
+          showing.</span>
+      </div>
+      <div class="ref-note">
+        <label class="rh-check"><input type="checkbox" id="cp_emoji"${s.emojiPickerEnabled?' checked':''}>
+          Chat emoji picker</label>
+        <span class="rh-opt">The emoji button in the message box. Switching it off hides the button
+          only &mdash; typed and pasted emoji go on working either way.</span>
+      </div>
+    </div>`;
+
+  const hours = document.getElementById('cp_hours');
+  hours.addEventListener('input', ()=>{ cpState.typed = hours.value; });
+  document.getElementById('cp_save').onclick = async ()=>{
+    if(cpState.busy) return;
+    /* READ BEFORE ANYTHING REDRAWS. Setting busy and re-rendering first would
+       rebuild these controls from the stored values and read back what was
+       already saved — which is a mistake this application has made once
+       already, on the Leave settings, and it cost a whole prompt to find. */
+    const body = {
+      attachmentHours: hours.value,
+      repliesEnabled: document.getElementById('cp_replies').checked,
+      emojiPickerEnabled: document.getElementById('cp_emoji').checked,
+    };
+    cpState.busy = true;
+    try{
+      cpState.data = await api('/admin/settings/chat-policy', { method:'PUT', body });
+      cpState.errors = [];
+      cpState.typed = null;
+      cpState.msg = { kind:'ok', text:`Saved — files sent from now on are kept ${cpState.data.settings.attachmentHours} hours.` };
+      /* The chat panel republishes the number on every poll, so it corrects
+         itself within a few seconds without anything here reaching into it. */
+      showToast('Chat attachment settings saved.');
+    }catch(e){
+      cpState.errors = (e.body && e.body.errors) ? e.body.errors : [{ field:null, message:e.message }];
+      /* ALWAYS A SENTENCE BESIDE SAVE, whether or not a field is named. A
+         refusal about a checkbox has nowhere else to put one. */
+      cpState.msg = { kind:'err', text:`Not saved — ${cpState.errors[0].message}` };
+    }finally{ cpState.busy = false; renderChatPolicy(); }
+  };
+}
 
 /* ---------- Start-of-day nudges ----------
  *
@@ -23270,6 +23388,38 @@ function renderChatThread(head, body, foot){
   body.querySelectorAll('[data-attach]').forEach(loadChatAttachment);
 }
 
+/* HOW LONG THIS FILE HAS LEFT, in the words somebody reads at a glance.
+ *
+ * FROM A COUNT OF SECONDS, never from a stamp. The server sends
+ * expiresInSeconds — the difference between its own now and the file's
+ * deadline — because a difference has no timezone in it. An instant would have
+ * had to be rendered in some zone and parsed back in another, which is exactly
+ * the mistake that deleted people's files in four hours instead of twelve.
+ *
+ * TWO FORMS, by how far off it is. Under a day, a countdown: "Expires in 3h
+ * 20m" is what somebody deciding whether to download it now actually wants.
+ * Beyond that a date, because "Expires in 53h" is arithmetic the reader has to
+ * do themselves.
+ *
+ * COMPUTED FROM THE PAGE'S OWN CLOCK plus the seconds given, so it keeps
+ * counting down between polls without asking the server again. It can drift by
+ * the length of a round trip, which is nothing against a figure printed to the
+ * minute. */
+function chatExpiryLabel(a){
+  const left = Number(a && a.expiresInSeconds);
+  if(!Number.isFinite(left) || left <= 0) return '';
+  if(left >= 24 * 3600){
+    const when = new Date(Date.now() + left * 1000);
+    return `<span class="chat-expiry" title="This file is deleted then; the message stays.">Expires ${
+      escapeHTML(when.toLocaleString([], { day:'2-digit', month:'short', hour:'numeric', minute:'2-digit' }))}</span>`;
+  }
+  const h = Math.floor(left / 3600);
+  const m = Math.floor((left % 3600) / 60);
+  /* Under a minute says "any moment" rather than "0m", which reads as broken. */
+  const text = left < 60 ? 'any moment' : (h ? `${h}h ${m}m` : `${m}m`);
+  return `<span class="chat-expiry" title="This file is deleted then; the message stays.">Expires in ${text}</span>`;
+}
+
 /* One attachment, as HTML. The bytes are not here — see loadChatAttachment. */
 function chatAttachmentsHTML(m){
   if(!m.attachments || !m.attachments.length) return '';
@@ -23283,13 +23433,14 @@ function chatAttachmentsHTML(m){
     const id = escapeHTML(a.id);
     const name = escapeHTML(a.fileName);
     const dl = chatDownloadButton(a);
+    const left = chatExpiryLabel(a);
     /* downloadOnly is the server saying this format can carry a script, so it
        must never become a page on this origin. Shown as a row with a download,
        not rendered. */
     if(a.downloadOnly || a.kind === 'file'){
       return `<div class="chat-file"><span>&#128206;</span>
         <a data-download="${id}" data-name="${name}">${name}</a>
-        <span class="chat-sub">${chatSize(a.byteSize)}</span>${dl}</div>`;
+        <span class="chat-sub">${chatSize(a.byteSize)}</span>${left}${dl}</div>`;
     }
     /* The picture and its download control are SIBLINGS inside a wrapper, not
        nested one in the other, and that is what keeps the two actions apart.
@@ -23298,10 +23449,12 @@ function chatAttachmentsHTML(m){
        because closest('[data-attach]') from the button finds nothing. */
     if(a.kind === 'video'){
       return `<div class="chat-media">
-        <video data-attach="${id}" data-kind="video" controls preload="none" title="${name}"></video>${dl}</div>`;
+        <video data-attach="${id}" data-kind="video" controls preload="none" title="${name}"></video>${dl}
+        ${left}</div>`;
     }
     return `<div class="chat-media">
-      <img data-attach="${id}" data-kind="image" alt="${name}" title="${name}">${dl}</div>`;
+      <img data-attach="${id}" data-kind="image" alt="${name}" title="${name}">${dl}
+      ${left}</div>`;
   }).join('')}</div>`;
 }
 
