@@ -14,7 +14,7 @@ const { asyncRouter } = require('../async-router');
 
 const router = asyncRouter();
 const db = require('../db');
-const { authenticate, requireSuperAdmin } = require('../middleware/auth');
+const { authenticate, requireSuperAdmin, requirePermission } = require('../middleware/auth');
 const chatSettings = require('../chat-settings');
 const activity = require('../activity');
 
@@ -89,4 +89,69 @@ router.put('/', async (req, res) => {
   res.json(await payload());
 });
 
+/* ---------------------------------------------------------------------------
+ * Settings -> Chat: attachment retention, and the two Prompt 58 switches.
+ *
+ * ITS OWN PERMISSION, settings.chat_retention, and NOT the router-wide
+ * requireSuperAdmin above. How big a group may be is a matter of taste; how
+ * long a file is kept before it is DELETED is a matter of somebody's work
+ * disappearing, and a studio that delegates the first has not thereby
+ * delegated the second.
+ *
+ * SO IT IS A SECOND ROUTER, mounted at its own path, rather than two more
+ * handlers below. The router.use(requireSuperAdmin) at the top of this file
+ * applies to every route declared on `router`, so a holder of
+ * settings.chat_retention who is not a Super Admin would be turned away by it
+ * before their own permission was ever consulted — the grant would be real in
+ * the catalogue and worth nothing in practice. Same file, because this is
+ * where somebody looking for "the chat settings" will look; different router,
+ * because they are different gates.
+ */
+const policy = asyncRouter();
+policy.use(authenticate);
+policy.use(requirePermission('settings.chat_retention'));
+
+const policyPayload = () => ({
+  settings: chatSettings.current(),
+  /* WHAT IS ACTUALLY OUT THERE, so a Super Admin shortening the retention can
+     see what it will and will not touch. Live attachments keep the expiry they
+     were uploaded with, which is the whole promise of the screen's note. */
+  live: null,
+});
+
+policy.get('/', async (req, res) => {
+  const { rows } = await db.query(
+    `SELECT COUNT(*) AS n FROM chat_attachments
+      WHERE deleted_at IS NULL AND expires_at IS NOT NULL AND expires_at > NOW()`
+  ).catch(() => ({ rows: [{ n: 0 }] }));
+  res.json({ ...policyPayload(), live: Number(rows[0].n || 0) });
+});
+
+policy.put('/', async (req, res) => {
+  const result = await chatSettings.saveAttachmentPolicy(db, req.body || {}, req.user.id);
+  if (!result.ok) {
+    return res.status(result.status).json({ errors: result.errors, error: result.errors[0].message });
+  }
+  const was = chatSettings.describeAttachmentPolicy(result.before);
+  const now = chatSettings.describeAttachmentPolicy(result.settings);
+  /* WHO, OLD, NEW, WHEN — through the mechanism every other setting in this
+     application uses, so it reads in the Activity Log beside them rather than
+     in a log of its own. */
+  req.activity({
+    module: 'settings',
+    action: 'settings.chat_retention',
+    entityType: 'setting',
+    entityLabel: 'Chat attachment retention',
+    summary: was === now ? 'Saved the chat attachment settings with no change'
+      : `Changed the chat attachment settings: ${was} → ${now}`,
+    changes: activity.diff({ policy: was }, { policy: now }),
+  });
+  const { rows } = await db.query(
+    `SELECT COUNT(*) AS n FROM chat_attachments
+      WHERE deleted_at IS NULL AND expires_at IS NOT NULL AND expires_at > NOW()`
+  ).catch(() => ({ rows: [{ n: 0 }] }));
+  res.json({ ...policyPayload(), live: Number(rows[0].n || 0) });
+});
+
 module.exports = router;
+module.exports.policy = policy;

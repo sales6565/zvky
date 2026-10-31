@@ -189,6 +189,10 @@ app.use('/api/admin/settings/recording-hours', recordingHoursRoutes);
 app.use('/api/admin/settings/holidays', holidayRoutes);
 app.use('/api/admin/settings/timesheet', timesheetOptionRoutes);
 app.use('/api/admin/settings/chat-group-limit', chatSettingsRoutes);
+/* The attachment retention and the two chat switches. Its own mount because it
+   is its own permission — settings.chat_retention rather than the Super Admin
+   tier the group-limit router is gated on. */
+app.use('/api/admin/settings/chat-policy', chatSettingsRoutes.policy);
 /* Settings -> Start-of-day nudges: the four switches that govern the reminders
    sent from the Admin Dashboard's follow-up lists. */
 app.use('/api/admin/settings/nudges', nudgeRoutes);

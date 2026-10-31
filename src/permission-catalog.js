@@ -1197,6 +1197,31 @@ const GROUPS = [
         describe: 'The largest number of people a chat group may hold, studio-wide — or no limit '
           + 'at all. Lowering it never removes anybody from a group that is already larger.',
       },
+      {
+        key: 'settings.chat_retention',
+        label: 'Change chat attachment retention',
+        /* ITS OWN KEY, NOT chat.settings, and the distinction is the same one
+         * the catalogue draws between settings.leave.manage and
+         * followup.mark_leave: how big a group may be is a matter of taste, and
+         * how long a file is kept before it is DELETED is a matter of
+         * somebody's work disappearing.
+         *
+         * Lengthening it fills a shared-hosting disk; shortening it means the
+         * next sweep takes files people were counting on this afternoon. A
+         * studio that delegates the group size has not thereby delegated that.
+         *
+         * SUPER ADMIN ONLY by default, through managePermissions, like every
+         * other Settings key in this catalogue. Grantable, so a studio with a
+         * systems person who manages disk can hand it over on purpose.
+         *
+         * requirePermission AND can(), NEVER THE TIER — see the note at the top
+         * of src/routes/timesheet-options.js for what that distinction has
+         * already cost this application. */
+        impliedBy: has('managePermissions'),
+        describe: 'Settings → Chat: how many hours a chat attachment is kept before it is '
+          + 'deleted, and the switches for chat replies and the emoji picker. Changing the '
+          + 'retention never moves the expiry of a file already uploaded.',
+      },
     ],
   },
   {

@@ -87,10 +87,28 @@ test('the shield is a permission, seeded onto two designations, not a role check
   }
 });
 
-test('the attachment window is twelve hours', () => {
-  assert.strictEqual(chatFiles.HOURS, 12);
-  const at = chatFiles.expiryFor(new Date('2026-01-01T00:00:00Z'));
-  assert.strictEqual(at.toISOString(), '2026-01-01T12:00:00.000Z');
+test('twelve hours is the default retention, and it comes from the setting', () => {
+  /* REWRITTEN, because what it pinned is the bug.
+   
+     It used to assert that chatFiles.expiryFor(t) === t + 12h — a JS Date
+     computed in the Node process and handed to the driver, which renders it as
+     a wall clock in the Node process's zone. Beside it, created_at is a wall
+     clock in the DATABASE session's zone, and a boot migration overwrote one
+     with the other. That is how a twelve-hour file came to be deleted in four.
+     
+     So expiryFor is gone: the expiry is written by `NOW() + INTERVAL n HOUR`
+     and compared by `expires_at <= NOW()`, and no instant is converted on the
+     way in or out. What is left to assert here is the number itself. */
+  assert.strictEqual(chatFiles.DEFAULT_HOURS, 12, 'twelve is still the default');
+  assert.strictEqual(chatFiles.HOURS, 12, 'and what the screens print, with no setting saved');
+  assert.strictEqual(typeof chatFiles.expiryFor, 'undefined',
+    'nothing computes an expiry in this process any more');
+
+  /* AND IT IS A GETTER, not a captured number, because the retention is a
+     setting now and a screen that captured 12 at require time would go on
+     saying twelve while the server enforced forty-eight. */
+  const descriptor = Object.getOwnPropertyDescriptor(chatFiles, 'HOURS');
+  assert.strictEqual(typeof descriptor.get, 'function', 'HOURS is read fresh every time');
 });
 
 test('no CHAT permission grants reading other people\'s chat', () => {
@@ -148,14 +166,27 @@ test('the allowlist is the six formats the studio asked for, plus the jpeg alias
 });
 
 test('expiry is decided by the clock, not by the sweep having run', () => {
-  const past = { expiresAt: new Date(Date.now() - 1000), deletedAt: null, storedName: 'x.png' };
-  const future = { expiresAt: new Date(Date.now() + 60000), deletedAt: null, storedName: 'x.png' };
+  /* THE SAME CLAIM, ASKED OF THE NEW SHAPE. A row now carries how many SECONDS
+     it has left according to the database's own clock, rather than a stamp this
+     process would have to parse — see the note at the top of src/chat-files.js
+     for why parsing one is what broke this. */
+  const past = { expiresInSeconds: -1, deletedAt: null, storedName: 'x.png' };
+  const future = { expiresInSeconds: 60, deletedAt: null, storedName: 'x.png' };
   // Still on disk, sweep not yet run — and already expired.
   assert.strictEqual(chatFiles.isExpired(past), true);
   assert.strictEqual(chatFiles.isExpired(future), false);
+  // Exactly on the boundary is expired: the promise is "gone after n hours".
+  assert.strictEqual(chatFiles.isExpired({ expiresInSeconds: 0 }), true);
+  /* A ROW WITH NO EXPIRY READS AS EXPIRED, which is the safe way round: it is
+     a row the backfill could not date, and refusing it is better than serving
+     it for ever. */
+  assert.strictEqual(chatFiles.isExpired({ expiresInSeconds: null }), true);
+
   // A shape with no url is what stops the panel offering a dead link.
-  assert.strictEqual(chatFiles.shape({ id: 'a', fileName: 'b.png', expiresAt: past.expiresAt }).url, null);
-  assert.ok(chatFiles.shape({ id: 'a', fileName: 'b.png', expiresAt: future.expiresAt }).url);
+  assert.strictEqual(chatFiles.shape({ id: 'a', fileName: 'b.png', expiresInSeconds: -1 }).url, null);
+  assert.ok(chatFiles.shape({ id: 'a', fileName: 'b.png', expiresInSeconds: 60 }).url);
+  // And the countdown the panel prints from.
+  assert.strictEqual(chatFiles.shape({ id: 'a', fileName: 'b.png', expiresInSeconds: 3600 }).expiresInSeconds, 3600);
 });
 
 // --------------------------------------------------------- integration tests
@@ -515,8 +546,8 @@ test('chat', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     assert.match(empty.body.error, /Type something/i);
   });
 
-  await t.test('a file expires after twelve hours and its message does not', async () => {
-    /* The studio's fifth testing step, driven by moving the clock rather than
+  await t.test('a file expires after its retention and its message does not', async () => {
+    /* The studio's fifth testing step, driven by moving the stamp rather than
        by waiting twelve hours. */
     const id = (await openDirect('ana', people.bo)).body.conversationId;
     const sent = await post('ana', id, {
@@ -536,7 +567,7 @@ test('chat', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     await sql(cfg, 'UPDATE chat_attachments SET expires_at = NOW() - INTERVAL 1 MINUTE WHERE id = ?', [attachmentId]);
 
     /* Refused BEFORE the sweep. This is the point of deciding expiry by the
-       clock: the promise is "gone after eight hours", not "gone once a timer
+       clock: the promise is "gone after the retention", not "gone once a timer
        somewhere has fired". */
     const early = await fetch(url, { headers: { Authorization: `Bearer ${token.bo}` } });
     assert.strictEqual(early.status, 410);

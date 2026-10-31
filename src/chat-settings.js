@@ -36,18 +36,75 @@ const DEFAULT_MAX_GROUP_MEMBERS = 30;
  * Unlimited, which is larger. */
 const COMFORTABLE_MAX = 500;
 
-let cache = { maxGroupMembers: DEFAULT_MAX_GROUP_MEMBERS, updatedBy: null, updatedAt: null };
+/* HOW LONG A CHAT ATTACHMENT LIVES, in whole hours.
+ *
+ * Twelve is what the code always meant and what the help text always said; it
+ * is a default here rather than a constant because the studio asked to be able
+ * to change it without a deploy.
+ *
+ * WHOLE HOURS, AND NEVER ZERO. "Never delete" is not on offer: chat
+ * attachments are not studio records, they live on a shared-hosting disk, and
+ * a switch that turns a chat into an unbounded file store is one nobody would
+ * be able to turn back off without deleting somebody's files. One hour is the
+ * floor and thirty days the ceiling — past a month this is an archive, and an
+ * archive belongs somewhere that is backed up. */
+const DEFAULT_ATTACHMENT_HOURS = 12;
+const MIN_ATTACHMENT_HOURS = 1;
+const MAX_ATTACHMENT_HOURS = 720;
+
+/* The two Prompt 58 switches, both ON. Neither blocks anybody: with replies off
+   the Reply action is hidden and existing quotes still render, and with the
+   picker off typed and pasted emoji go on working, because the switch is about
+   the picker and not about emoji. */
+const DEFAULT_REPLIES = true;
+const DEFAULT_EMOJI_PICKER = true;
+
+let cache = {
+  maxGroupMembers: DEFAULT_MAX_GROUP_MEMBERS,
+  attachmentHours: DEFAULT_ATTACHMENT_HOURS,
+  repliesEnabled: DEFAULT_REPLIES,
+  emojiPickerEnabled: DEFAULT_EMOJI_PICKER,
+  updatedBy: null,
+  updatedAt: null,
+};
 let loaded = false;
 
 async function load(db) {
-  const { rows } = await db.query(
-    `SELECT c.max_group_members AS n, c.updated_by AS by_id, c.updated_at AS at, u.name AS by_name
+  /* THE WIDE READ, THEN THE NARROW ONE. A deployment whose Prompt 58 ALTERs
+     have not applied — a refused ALTER is an ordinary outcome on shared
+     hosting — still reads its group size rather than losing the whole mirror
+     over three columns it does not have. */
+  const wide = `SELECT c.max_group_members AS n, c.attachment_hours AS hours,
+            c.replies_enabled AS replies, c.emoji_picker_enabled AS picker,
+            c.updated_by AS by_id, c.updated_at AS at, u.name AS by_name
        FROM chat_settings c
        LEFT JOIN users u ON u.id = c.updated_by
-      WHERE c.id = 1`
-  ).catch(() => ({ rows: [] }));
+      WHERE c.id = 1`;
+  const narrow = `SELECT c.max_group_members AS n, c.updated_by AS by_id, c.updated_at AS at,
+            u.name AS by_name
+       FROM chat_settings c
+       LEFT JOIN users u ON u.id = c.updated_by
+      WHERE c.id = 1`;
+  let rows = [];
+  try {
+    ({ rows } = await db.query(wide));
+  } catch (err) {
+    if (err && err.code !== 'ER_BAD_FIELD_ERROR') rows = [];
+    else ({ rows } = await db.query(narrow).catch(() => ({ rows: [] })));
+  }
   const row = rows[0];
+  const bool = (value, fallback) => (value === null || value === undefined
+    ? fallback : Boolean(Number(value)));
+  const hours = row && row.hours !== null && row.hours !== undefined
+    ? Number(row.hours) : DEFAULT_ATTACHMENT_HOURS;
   cache = {
+    /* CLAMPED ON THE WAY OUT AS WELL AS IN. A value outside the bounds can only
+       come from a hand-edited row, and a retention of nought hours read from
+       one would delete every attachment the moment it was uploaded. */
+    attachmentHours: Number.isInteger(hours) && hours >= MIN_ATTACHMENT_HOURS
+      && hours <= MAX_ATTACHMENT_HOURS ? hours : DEFAULT_ATTACHMENT_HOURS,
+    repliesEnabled: row ? bool(row.replies, DEFAULT_REPLIES) : DEFAULT_REPLIES,
+    emojiPickerEnabled: row ? bool(row.picker, DEFAULT_EMOJI_PICKER) : DEFAULT_EMOJI_PICKER,
     /* A row with NULL in the column is a studio that chose Unlimited. NO row at
        all is a deployment that has not migrated yet, which keeps the number the
        constant always held — the two are different answers and the difference
@@ -66,6 +123,77 @@ const isLoaded = () => loaded;
 
 /* THE ONE QUESTION EVERYTHING ASKS. Null is unlimited; a number is the cap. */
 const maxGroupMembers = () => cache.maxGroupMembers;
+
+/* THE ONE QUESTION src/chat-files.js ASKS, every time it needs the retention —
+   never captured, because the setting can change while the process runs. */
+const attachmentRetentionHours = () => cache.attachmentHours;
+const repliesEnabled = () => cache.repliesEnabled;
+const emojiPickerEnabled = () => cache.emojiPickerEnabled;
+
+/* WHAT A RETENTION MAY BE, as its own validator so the message says which end
+ * was wrong. Whole hours only: a retention of 1.5 would have to be stored as
+ * minutes somewhere, and "hours" that are sometimes minutes is the family of
+ * bug this whole prompt is about. */
+function validateRetention(value) {
+  if (value === null || value === undefined || String(value).trim() === '') {
+    return { ok: false, errors: [{ field: 'attachmentHours',
+      message: `Enter a number of hours between ${MIN_ATTACHMENT_HOURS} and ${MAX_ATTACHMENT_HOURS}.` }] };
+  }
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
+    return { ok: false, errors: [{ field: 'attachmentHours',
+      message: 'A retention is a number of hours.' }] };
+  }
+  if (!Number.isInteger(n)) {
+    return { ok: false, errors: [{ field: 'attachmentHours',
+      message: 'Whole hours only — 12, not 12.5.' }] };
+  }
+  if (n < MIN_ATTACHMENT_HOURS) {
+    return { ok: false, errors: [{ field: 'attachmentHours',
+      message: n <= 0
+        ? 'Nought would delete every file the moment it was sent, and "never delete" is not on '
+          + `offer. The shortest retention is ${MIN_ATTACHMENT_HOURS} hour.`
+        : `The shortest retention is ${MIN_ATTACHMENT_HOURS} hour.` }] };
+  }
+  if (n > MAX_ATTACHMENT_HOURS) {
+    return { ok: false, errors: [{ field: 'attachmentHours',
+      message: `The longest retention is ${MAX_ATTACHMENT_HOURS} hours (30 days). Past a month this `
+        + 'is an archive, and an archive belongs somewhere that is backed up.' }] };
+  }
+  return { ok: true, value: n };
+}
+
+/* Save the retention and the two switches. Separate from save() above because
+   it is a different screen, a different permission and a different audit line —
+   folding them together would mean a Super Admin who may change the group size
+   could change the retention by posting one more field. */
+async function saveAttachmentPolicy(db, input, userId) {
+  const checked = validateRetention(input.attachmentHours);
+  if (!checked.ok) return { ok: false, status: 422, errors: checked.errors };
+  const before = current();
+  const bit = (value, fallback) => (value === undefined ? (fallback ? 1 : 0)
+    : (value === true || value === 'true' || value === 1 || value === '1' ? 1 : 0));
+  await db.query(
+    `INSERT INTO chat_settings (id, attachment_hours, replies_enabled, emoji_picker_enabled, updated_by)
+     VALUES (1, $1, $2, $3, $4)
+     ON DUPLICATE KEY UPDATE attachment_hours = VALUES(attachment_hours),
+                             replies_enabled = VALUES(replies_enabled),
+                             emoji_picker_enabled = VALUES(emoji_picker_enabled),
+                             updated_by = VALUES(updated_by)`,
+    [checked.value, bit(input.repliesEnabled, cache.repliesEnabled),
+      bit(input.emojiPickerEnabled, cache.emojiPickerEnabled), userId || null]
+  );
+  await load(db);
+  return { ok: true, before, settings: current() };
+}
+
+/* One line a person reads, for the audit trail — the same job
+   timesheet-settings' summarise() does, and the same reason. */
+const describeAttachmentPolicy = (s) => [
+  `attachments kept ${s.attachmentHours} hour${s.attachmentHours === 1 ? '' : 's'}`,
+  `replies ${s.repliesEnabled ? 'on' : 'off'}`,
+  `emoji picker ${s.emojiPickerEnabled ? 'on' : 'off'}`,
+].join('; ');
 const isUnlimited = () => cache.maxGroupMembers === null;
 
 /* Would a group of this size be allowed? The single predicate, so no caller
@@ -88,10 +216,19 @@ function current() {
   return {
     maxGroupMembers: cache.maxGroupMembers,
     unlimited: cache.maxGroupMembers === null,
+    attachmentHours: cache.attachmentHours,
+    repliesEnabled: cache.repliesEnabled,
+    emojiPickerEnabled: cache.emojiPickerEnabled,
+    attachmentHoursBounds: { min: MIN_ATTACHMENT_HOURS, max: MAX_ATTACHMENT_HOURS },
     updatedBy: cache.updatedBy,
     updatedByName: cache.updatedByName || null,
     updatedAt: cache.updatedAt,
-    defaults: { maxGroupMembers: DEFAULT_MAX_GROUP_MEMBERS },
+    defaults: {
+      maxGroupMembers: DEFAULT_MAX_GROUP_MEMBERS,
+      attachmentHours: DEFAULT_ATTACHMENT_HOURS,
+      repliesEnabled: DEFAULT_REPLIES,
+      emojiPickerEnabled: DEFAULT_EMOJI_PICKER,
+    },
     comfortableMax: COMFORTABLE_MAX,
   };
 }
@@ -147,6 +284,10 @@ const describe = (limit) => (limit === null || limit === undefined ? 'unlimited'
 
 module.exports = {
   DEFAULT_MAX_GROUP_MEMBERS, COMFORTABLE_MAX,
+  DEFAULT_ATTACHMENT_HOURS, MIN_ATTACHMENT_HOURS, MAX_ATTACHMENT_HOURS,
+  DEFAULT_REPLIES, DEFAULT_EMOJI_PICKER,
   load, isLoaded, current, maxGroupMembers, isUnlimited, roomFor, remaining,
   validate, save, describe,
+  attachmentRetentionHours, repliesEnabled, emojiPickerEnabled,
+  validateRetention, saveAttachmentPolicy, describeAttachmentPolicy,
 };

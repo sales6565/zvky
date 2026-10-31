@@ -3299,9 +3299,40 @@ async function ensureChatSettings(db, log) {
       -- NULL is Unlimited, and is a real answer rather than a missing one. The
       -- absence of the ROW is what "not migrated yet" looks like.
       max_group_members INT       NULL,
+      -- HOW LONG A CHAT ATTACHMENT LIVES, in whole hours. Twelve is what the
+      -- code always meant and what the help text always said; NOT NULL because
+      -- "never delete" is not on offer and a NULL here would have to mean
+      -- something. See src/chat-settings.js.
+      attachment_hours  INT       NOT NULL DEFAULT 12,
+      -- The two Prompt 58 switches, both on: neither blocks anybody, and with
+      -- replies off the quotes already filed still render.
+      replies_enabled      TINYINT(1) NOT NULL DEFAULT 1,
+      emoji_picker_enabled TINYINT(1) NOT NULL DEFAULT 1,
       updated_by        CHAR(36)  NULL,
       updated_at        DATETIME  NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )`));
+
+  /* THE THREE COLUMNS, EACH ASKED FOR ON ITS OWN, for a database whose table
+     predates them. Separately rather than as one check, because a deployment
+     part-way through — one ALTER applied, the next refused for want of
+     permission on shared hosting — gains whichever it is missing on the next
+     boot instead of skipping all three because the first was there. */
+  for (const [column, ddl, note] of [
+    ['attachment_hours', 'INT NOT NULL DEFAULT 12',
+      'how long a chat attachment is kept, in hours'],
+    ['replies_enabled', 'TINYINT(1) NOT NULL DEFAULT 1', 'chat replies, on'],
+    ['emoji_picker_enabled', 'TINYINT(1) NOT NULL DEFAULT 1', 'the chat emoji picker, on'],
+  ]) {
+    const { rows: have } = await db.query(
+      `SELECT 1 AS present FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'chat_settings'
+          AND COLUMN_NAME = $1`, [column]
+    ).catch(() => ({ rows: [{ present: 1 }] }));
+    if (have.length) continue;
+    await db.query(`ALTER TABLE chat_settings ADD COLUMN ${column} ${ddl}`);
+    log(`Schema: added chat_settings.${column} — ${note}.`);
+  }
+
   const { rows } = await db.query('SELECT id FROM chat_settings WHERE id = 1');
   if (rows.length) return;
   await db.query('INSERT INTO chat_settings (id, max_group_members) VALUES (1, $1)',
@@ -3927,7 +3958,11 @@ async function ensureChat(db, log) {
       mime        VARCHAR(120) NULL,
       byte_size   BIGINT       NOT NULL DEFAULT 0,
       stored_name VARCHAR(160) NULL,
-      expires_at  DATETIME     NOT NULL,
+      -- NULLABLE, and NULL reads as expired. A row whose upload time cannot be
+      -- established has no honest expiry to write, and NOT NULL would force one
+      -- to be invented. Every live row gets one at insert from NOW() + the
+      -- studio's retention; see src/chat-files.js.
+      expires_at  DATETIME     NULL,
       deleted_at  DATETIME     NULL,
       created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
       KEY idx_chat_attach_message (message_id),
@@ -3973,36 +4008,114 @@ async function ensureChat(db, log) {
   log('Schema: chat tables ready.');
 }
 
-/* Chat attachments were stamped to expire eight hours after upload; the studio
- * moved that to twelve.
+/* THE STEP THAT DELETED PEOPLE'S FILES IN FOUR HOURS, and what replaces it.
  *
- * `expires_at` is written once, at upload, and every read compares it against
- * now — which is what makes the guarantee independent of the sweep, and also
- * what means a change to the window does nothing to rows already written. Left
- * alone, every file uploaded before this deploy would still go at eight hours
- * while everything after it went at twelve, and nobody could tell which they
- * had.
+ * It was written to move an old eight-hour window to twelve, and it did that by
+ * restamping every live attachment:
  *
- * So the stamps are recomputed from created_at, for anything not already swept.
- * From created_at rather than by adding four hours, so re-running it is a
- * no-op instead of pushing every deadline out again — and by reading the window
- * out of src/chat-files.js rather than writing 12 here, so the number cannot
- * come to differ between the module that enforces it and the migration that
- * backfilled it.
+ *     UPDATE chat_attachments
+ *        SET expires_at = created_at + INTERVAL 12 HOUR
+ *      WHERE expires_at <> created_at + INTERVAL 12 HOUR
  *
- * A file that is already past eight hours but has not been swept yet is
- * extended rather than left to die: nothing should be deleted early under a
- * rule the studio has replaced. */
-async function ensureChatExpiryWindow(db, log) {
-  const { HOURS } = require('./chat-files');
-  const out = await db.query(
+ * which looks like arithmetic and is actually a change of timezone. `created_at`
+ * is written by MariaDB's CURRENT_TIMESTAMP — a wall clock in the DATABASE
+ * SESSION's zone. `expires_at` was written from Node as a JS Date, which the
+ * driver renders as a wall clock in the NODE PROCESS's zone. Two columns in one
+ * row, in two zones, neither saying which. This statement replaced Node's
+ * rendering with the database's, and the sweep went on comparing the result
+ * against a Node-rendered now — so every file's life became
+ * 12h + (dbOffset − nodeOffset). On a database session at -08:00 with a Node
+ * process on UTC: four hours. Measured, in tests/chat-attachment-expiry.
+ *
+ * AND BECAUSE THE WHERE CLAUSE COULD NEVER BE SATISFIED under mixed zones, it
+ * ran on every boot, restamping every live attachment every time.
+ *
+ * WHAT REPLACES IT. src/chat-files.js now writes and compares expiry entirely
+ * on the database's clock — `NOW() + INTERVAL n HOUR` in, `expires_at <= NOW()`
+ * out — so the two columns are finally in the same zone and the statement above
+ * would now be correct. It is not kept anyway: a migration that rewrites live
+ * deadlines on every boot is the wrong shape whether or not its arithmetic
+ * holds, and the studio's retention is a setting now, so "the window changed"
+ * is no longer a thing a deploy does.
+ *
+ * WHAT THIS DOES INSTEAD, once, idempotently:
+ *
+ *   1. Rows with NO expiry at all get one, from created_at plus the studio's
+ *      retention — the backfill the brief asks for. There are none today; the
+ *      column is NOT NULL. It is here because the column is about to become
+ *      nullable for exactly this case and because a row that cannot be dated
+ *      must not be left to live for ever.
+ *
+ *   2. Rows whose expiry was mangled by the old step are repaired, ONCE, to
+ *      created_at + the retention they were uploaded under. "Mangled" is
+ *      recognisable: the gap between created_at and expires_at is not a whole
+ *      number of hours that any retention could have produced, because a
+ *      timezone offset is in it. Repaired to the DEFAULT twelve rather than to
+ *      the current setting — twelve is the policy those files were uploaded
+ *      under, and a studio that later chose 48 did not thereby ask for last
+ *      week's files to live longer.
+ *
+ * NOTHING IS SHORTENED. A repair that could bring a deadline closer would be
+ * this bug again from the other side, so the statement only ever moves a
+ * deadline later, and a row already further out than the repair would give it
+ * is left exactly as it is.
+ *
+ * WHAT CANNOT BE PUT RIGHT: files the bug already deleted. The bytes are gone
+ * and there is no copy of them anywhere in this application. The messages
+ * remain and read "Attachment expired", which is all that is left to say.
+ */
+async function ensureChatExpiryRepair(db, log) {
+  const hours = Number(require('./chat-settings').DEFAULT_ATTACHMENT_HOURS) || 12;
+
+  /* 0. THE COLUMN BECOMES NULLABLE, which is a widening and so is safe on a
+        table with rows in it. The brief asks for it and the reason is the case
+        below: a row whose upload time cannot be established has no honest
+        expiry to write, and NOT NULL would force one to be invented. NULL
+        reads as expired everywhere (see isExpired), so an undated row is
+        refused rather than served for ever.
+        
+        Asked of information_schema rather than run blind, so a second boot
+        does not re-ALTER a table that is already right — on a large
+        chat_attachments that is a table rebuild for nothing. */
+  const { rows: col } = await db.query(
+    `SELECT IS_NULLABLE AS nullable FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'chat_attachments'
+        AND COLUMN_NAME = 'expires_at'`
+  ).catch(() => ({ rows: [] }));
+  if (col.length && String(col[0].nullable).toUpperCase() === 'NO') {
+    await db.query('ALTER TABLE chat_attachments MODIFY COLUMN expires_at DATETIME NULL')
+      .catch((err) => log(`Schema: chat_attachments.expires_at could not be made nullable (${err.code}).`));
+  }
+
+  /* 1. No expiry at all — give it one from created_at. */
+  const nulls = await db.query(
     `UPDATE chat_attachments
-        SET expires_at = created_at + INTERVAL ${Number(HOURS)} HOUR
+        SET expires_at = created_at + INTERVAL ${hours} HOUR
+      WHERE deleted_at IS NULL AND expires_at IS NULL`
+  ).catch(() => null);
+  const dated = Number((nulls && nulls.result && nulls.result.affectedRows) || 0);
+  if (dated) {
+    log(`Schema: ${dated} chat attachment(s) had no expiry and were dated from their upload `
+      + `time plus ${hours} hours.`);
+  }
+
+  /* 2. The mangled ones, moved LATER only. TIMESTAMPDIFF in minutes rather
+        than hours so a half-hour zone (+05:30, +05:45) is recognised too —
+        those are exactly the offsets a whole-hour test would call correct. */
+  const fixed = await db.query(
+    `UPDATE chat_attachments
+        SET expires_at = created_at + INTERVAL ${hours} HOUR
       WHERE deleted_at IS NULL
-        AND expires_at <> created_at + INTERVAL ${Number(HOURS)} HOUR`
-  );
-  const moved = Number((out && out.result && out.result.affectedRows) || 0);
-  if (moved) log(`Schema: chat attachment expiry restamped to ${HOURS} hours on ${moved} file(s).`);
+        AND expires_at IS NOT NULL
+        AND MOD(TIMESTAMPDIFF(MINUTE, created_at, expires_at), 60) <> 0
+        AND expires_at < created_at + INTERVAL ${hours} HOUR`
+  ).catch(() => null);
+  const moved = Number((fixed && fixed.result && fixed.result.affectedRows) || 0);
+  if (moved) {
+    log(`Schema: ${moved} chat attachment(s) carried an expiry shifted by a timezone offset and `
+      + `were repaired to ${hours} hours from upload. Files the old rule already deleted cannot `
+      + 'be recovered.');
+  }
 }
 
 /* The way to disagree with a number you cannot change.
@@ -5386,7 +5499,7 @@ const STEPS = [
   ['timesheet settings', ensureTimesheetSettings],
   ['timesheet settings mirror', (db) => timesheetSettings.load(db)],
   // After the tables exist, and reading the window from the module that owns it.
-  ['chat attachment expiry window', ensureChatExpiryWindow],
+  ['chat attachment expiry repair', ensureChatExpiryRepair],
   // After users and after role_permissions: it touches a column on one and a
   // default on the other.
   ['admin password reset', ensurePasswordReset],

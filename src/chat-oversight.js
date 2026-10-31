@@ -122,9 +122,15 @@ async function attachmentsFor(db, messageIds) {
   const out = new Map();
   if (!messageIds.length) return out;
   const { rows } = await db.query(
-    `SELECT id, message_id AS messageId, file_name AS fileName, mime, byte_size AS byteSize,
-            stored_name AS storedName, expires_at AS expiresAt, deleted_at AS deletedAt
-       FROM chat_attachments WHERE message_id IN ($1)`,
+    /* THE EXPIRY AS A COUNTDOWN, from the database's own clock — never the
+       stored stamp. files.EXPIRY_SELECT is the one expression that reads it;
+       parsing the column here would be the four-hour bug again, in a second
+       place. The alias on the table is `a` because that is what the shared
+       expression names. */
+    `SELECT a.id, a.message_id AS messageId, a.file_name AS fileName, a.mime,
+            a.byte_size AS byteSize, a.stored_name AS storedName,
+            ${files.EXPIRY_SELECT}, a.deleted_at AS deletedAt
+       FROM chat_attachments a WHERE a.message_id IN ($1)`,
     [messageIds]
   ).catch((err) => { if (unavailable(err)) return { rows: [] }; throw err; });
 
