@@ -325,6 +325,24 @@ test('who may do what in a group', { skip: SKIP }, async (t) => {
     /* STILL NOT PROMOTION, and still not ownership. */
     const stillNo = await promote('root', group, 'bo', 'admin');
     assert.strictEqual(stillNo.status, 403, 'demotion only, never promotion');
+
+    /* AND NOT THE OWNER, EVEN A DEACTIVATED ONE. This is the one path that can
+       reach the owner as a TARGET at all — everybody else is refused for not
+       being the owner, and the owner aiming at themselves is refused as self —
+       so without this case the guard that protects the owner's row is
+       unreachable and a mutation removing it passes. Found exactly that way.
+       
+       What it protects: a Super Admin clearing is_owner would leave a group
+       with no owner at all, which is a state nothing in this application
+       creates and nothing knows how to repair. */
+    const atTheOwner = await promote('root', group, 'ana', 'member');
+    assert.strictEqual(atTheOwner.status, 400, JSON.stringify(atTheOwner.body));
+    assert.match(atTheOwner.body.error, /owner/i);
+    const stillOwner = await sql(cfg,
+      'SELECT is_owner AS o, group_role AS r FROM chat_members WHERE conversation_id = ? AND user_id = ?',
+      [group, id.ana]);
+    assert.strictEqual(Number(stillOwner[0].o), 1, 'and they are still the owner');
+    assert.strictEqual(stillOwner[0].r, 'owner');
     await sql(cfg, 'UPDATE users SET is_active = 1 WHERE id = ?', [id.ana]);
     tok.ana = await login('ana@ga.test');
   });
