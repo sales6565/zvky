@@ -174,8 +174,13 @@ function build() {
   return `${lines.join('\n')}\n`;
 }
 
-const text = build();
-if (process.argv.includes('--stdout')) {
+/* ONLY WHEN THIS FILE IS THE PROGRAM — see the same note in
+   scripts/route-guards.js. Requiring it to borrow uiGates() must not write a
+   half-megabyte file as a side effect. */
+const text = require.main === module ? build() : '';
+if (require.main !== module) {
+  // required as a module: nothing is built and nothing is written
+} else if (process.argv.includes('--stdout')) {
   process.stdout.write(text);
 } else {
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
