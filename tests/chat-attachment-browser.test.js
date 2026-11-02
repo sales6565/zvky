@@ -12,9 +12,13 @@
  * response would be this file asserting against its own fixture, which is
  * exactly the mistake Prompt 58's switch case made.
  *
- * THE FIXTURE PAGE IS SERVED FROM ANOTHER ORIGIN and the server is started with
- * CORS_ORIGIN pointing at it, which is how the browser is allowed to call the
- * API at all. The page itself is the real attachment code, lifted.
+ * THE FIXTURE PAGE IS SERVED ON THE SERVER'S OWN ORIGIN, through a route that
+ * fulfils one path locally while every other request goes to the real server.
+ * It was on an origin of its own first, with CORS_ORIGIN pointed at it, and
+ * Chrome refused every call: a page on a public-looking origin may not reach
+ * `loopback` from an insecure context (Private Network Access), which is a
+ * browser rule no server header can waive. Same origin, no CORS, no PNA — and
+ * it is also what the real page does, since Forge serves its own API.
  */
 const test = require('node:test');
 const assert = require('node:assert');
@@ -38,7 +42,9 @@ const SKIP = !cfg ? SKIP_REASON
 
 const PASSWORD = 'Chat-Browser-11!';
 const ROOT = path.join(os.homedir(), '.zvky-test-chat-uploads', 'browser');
-const ORIGIN = 'http://chat-attachments.test';
+/* The one path the fixture answers on. Anything else on this origin is the real
+   server, which is the point. */
+const FIXTURE_PATH = '/__chat-attachment-fixture';
 
 function lift(name) {
   const m = PAGE.match(new RegExp(`\\nfunction ${name}\\(([\\s\\S]*?)\\n}\\n`));
@@ -98,7 +104,7 @@ test('what somebody sees when an attachment does not arrive', { skip: SKIP }, as
     fs.mkdirSync(ROOT, { recursive: true });
     await resetSchema(cfg);
     server = await startServer(cfg, { BOOTSTRAP_TOKEN: 'attbrowser', CHAT_UPLOAD_DIR: ROOT,
-      CHAT_SWEEP_MINUTES: '0', CORS_ORIGIN: ORIGIN });
+      CHAT_SWEEP_MINUTES: '0' });
     await api(server.base, '/auth/bootstrap', { method: 'POST',
       body: { token: 'attbrowser', name: 'Root', email: 'root@attb.test', password: PASSWORD } });
     tok.root = await login('root@attb.test');
@@ -144,9 +150,10 @@ test('what somebody sees when an attachment does not arrive', { skip: SKIP }, as
     const page = await browser.newPage();
     const errors = [];
     page.on('pageerror', (e) => errors.push(String(e)));
-    await page.route(`${ORIGIN}/`, (route) => route.fulfill({ status: 200,
+    const origin = new URL(server.base).origin;
+    await page.route(origin + FIXTURE_PATH, (route) => route.fulfill({ status: 200,
       contentType: 'text/html; charset=utf-8', body: fixture(server.base, tok[who]) }));
-    await page.goto(`${ORIGIN}/`, { waitUntil: 'domcontentloaded' });
+    await page.goto(origin + FIXTURE_PATH, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.__ready === true, null, { timeout: 15000 });
     return { page, errors };
   };
@@ -168,8 +175,12 @@ test('what somebody sees when an attachment does not arrive', { skip: SKIP }, as
       { timeout: 10000 });
 
     const text = await page.evaluate(() => window.__text());
-    assert.match(text, /thirty-minutes\.png/, 'the file is named');
-    assert.match(text, /Expires in 11h/, 'and says how long it has left');
+    /* A PICTURE CARRIES ITS NAME IN alt, not in the text — the panel shows the
+       image itself, and the name is what a screen reader reads and what the
+       tooltip says. */
+    assert.strictEqual(await page.getAttribute('img[data-attach]', 'alt'), 'thirty-minutes.png',
+      'the file is named for anybody who cannot see it');
+    assert.match(text, /Expires in 11h/, 'and the countdown says how long it has left');
     assert.ok(!/expired|missing|access/i.test(text), `nothing is wrong with it: ${text}`);
     assert.deepStrictEqual(errors, []);
     await page.close();
