@@ -3909,6 +3909,31 @@ async function ensureChat(db, log) {
       KEY idx_chat_members_user (user_id)
     )`));
 
+  /* WHEN A CHAT FILE WENT MISSING, OR A SWEEP REFUSED TO RUN.
+   *
+   * ===========================================================================
+   * EVIDENCE FOR THE NEXT BUG REPORT. Two reports of vanishing attachments
+   * arrived with nothing to go on but a sentence on screen that turned out to
+   * mean three different things. This table is so the third one arrives with
+   * the attachment id, the time, and what the server was looking for.
+   *
+   * attachment_id is NULLABLE and carries NO FOREIGN KEY: a sweep that refused
+   * to run is about no single attachment, and an incident about an attachment
+   * that is later deleted is exactly the incident worth keeping. A cascade here
+   * would delete the record of the problem along with its subject.
+   *
+   * It is written by the application, never read by it for any decision — only
+   * counted for the health panel. Nothing in chat behaves differently because
+   * of a row in here. */
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS chat_file_incidents (
+      id            CHAR(36)     NOT NULL PRIMARY KEY,
+      attachment_id CHAR(36)     NULL,
+      kind          VARCHAR(32)  NOT NULL,
+      detail        VARCHAR(500) NULL,
+      created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_chat_incidents_when (kind, created_at)
+    )`));
+
   await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS chat_messages (
       id              CHAR(36)    NOT NULL PRIMARY KEY,
       seq             BIGINT      NOT NULL AUTO_INCREMENT UNIQUE,
@@ -4115,9 +4140,11 @@ async function ensureChatExpiryRepair(db, log) {
   /* 0. THE COLUMN BECOMES NULLABLE, which is a widening and so is safe on a
         table with rows in it. The brief asks for it and the reason is the case
         below: a row whose upload time cannot be established has no honest
-        expiry to write, and NOT NULL would force one to be invented. NULL
-        reads as expired everywhere (see isExpired), so an undated row is
-        refused rather than served for ever.
+        expiry to write, and NOT NULL would force one to be invented. A NULL is
+        read as created_at + the retention everywhere (see expirySelect in
+        src/chat-files.js) — Prompt 59 changed that from "expired", because a
+        column nobody filled should not make every file in the studio read as
+        gone.
         
         Asked of information_schema rather than run blind, so a second boot
         does not re-ALTER a table that is already right — on a large

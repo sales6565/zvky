@@ -633,6 +633,22 @@ async function start() {
     require('./integration-secrets').describeAtStartup();
     startReferenceRefresh(db);
     startAllowlistRefresh(db);
+    /* WHERE CHAT FILES GO, SAID OUT LOUD, BEFORE ANY OF THEM MOVE.
+     *
+     * The second report of vanishing attachments was a storage path inside the
+     * application folder, which a cPanel deploy replaces. This prints the
+     * resolved folder on every boot and shouts when it is unusable, because the
+     * thing that made that bug expensive was not the path — it was that nothing
+     * anywhere said what the path was. See src/chat-storage.js.
+     *
+     * Then the one-time catch-up: whatever is still in the old folder and still
+     * belongs to a live row is COPIED into the configured one. Nothing is
+     * moved and nothing is deleted, and the old folder goes on being read. */
+    const chatStorage = require('./chat-storage').describeAtStartup();
+    if (chatStorage.ok) {
+      await require('./chat-storage').copyForward(db, { log: console.log })
+        .catch((err) => console.warn(`[chat] upload folder catch-up failed: ${err.message}`));
+    }
     /* Chat attachments live twelve hours. The first pass runs now rather than
        in ten minutes' time: a process that was restarted comes back holding
        files that expired while it was down, and no timer ever fired for those.

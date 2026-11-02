@@ -5524,6 +5524,60 @@ session timezones; the first case in it is the reproduction, and it still prints
 anywhere in this application. Their messages remain and read "Attachment
 expired", which is all there is left to say.
 
+### Where chat attachments are stored, and the second bug about them vanishing
+
+The first report was files deleted after about four hours; that was a timezone
+mixture in the expiry arithmetic, fixed above. The second report was files gone
+**within an hour**, with the retention set to twelve — and that one was not
+arithmetic at all. The bytes were written to `<app>/uploads/chat`, **inside the
+deployed application folder**, and on cPanel the application folder is what a
+deploy replaces: extract the archive over it, clear it and re-extract, point a
+Git deployment at it, and the upload folder goes with it. The rows survive,
+because they are in the database. The files do not. Passenger then restarts the
+app — which on shared hosting it does several times a day anyway — and the panel
+reported the whole thing as "file is no longer available", which reads exactly
+like an expiry.
+
+**Chat attachments now live outside the application folder**, in the folder
+`CHAT_UPLOAD_DIR` names:
+
+    CHAT_UPLOAD_DIR = /home/<cpanel-account>/zvky-chat-uploads
+
+Create it once, keep it writable, and never let a deploy touch it. If the
+variable is unset the application falls back to `$HOME/zvky-chat-uploads`, which
+on cPanel is outside the application folder and survives a deploy; set it
+anyway, so the folder is a decision rather than a default. A root that is
+relative, inside the application folder, inside a temporary directory, missing
+or not writable makes chat **refuse new uploads** — the paperclip is disabled
+with a reason, the message says the variable to set, and Settings → Chat shows
+the resolved path and what is wrong with it. Nothing stops reading: files
+already uploaded go on being served, including from the old folder, and a
+one-time catch-up **copies** what is still there for rows that have not expired.
+Nothing is ever moved or deleted out of the old folder.
+
+**"No longer available" is three sentences now.** One message for three
+different situations is what sent everybody to read the retention code twice:
+
+| What happened | What the panel says |
+|---|---|
+| the retention ran out | *Attachment expired* |
+| the row says live, the file is not on disk | *File is missing on the server (not expected). Ask your admin.* |
+| not in that conversation | *You do not have access to this file* |
+
+The middle one is a fault, so it is also written to `chat_file_incidents` with
+the attachment id, how long it had left, the name looked for and the folders
+looked in — and Settings → Chat counts those for the last seven days with the
+time of the most recent. The next report of vanishing files arrives with
+evidence attached.
+
+**And the sweeper has two circuit breakers**, neither of which was the cause of
+either report. It deletes nothing on a run where it would take more than half of
+all live attachments *and* at least one of them is younger than the retention it
+was supposedly kept for — the signature of a unit mix-up or a moved clock, and
+something an honest expiry cannot look like. It also refuses to run at all if
+the retention reads as under an hour. Both tell the Super Admin in the
+application rather than only in a log.
+
 ### Chat replies, and the emoji picker
 
 Both are Super Admin switches in Settings → Chat, both **on** by default, and

@@ -136,7 +136,9 @@ router.get('/summary', async (req, res) => {
  */
 router.get('/attachments/:attachmentId', async (req, res) => {
   const found = await files.forOversight(db, req.params.attachmentId);
-  if (!found.ok) return res.status(found.status).json({ error: found.error });
+  if (!found.ok) {
+    return res.status(found.status).json({ error: found.error, state: found.state || null });
+  }
 
   activity.record(db, {
     actor: req.user,

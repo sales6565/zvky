@@ -711,6 +711,20 @@ button.chat-status:focus-visible{outline:2px solid var(--focus-ring);outline-off
 /* HOW LONG A CHAT FILE HAS LEFT. Quiet — it is a fact about the file, not a
    warning about it, and a countdown in the accent colour on every picture in a
    conversation would read as a page full of alarms. */
+/* THE STORAGE HEALTH PANEL in Settings → Chat. A table of facts, so it reads
+   as a report rather than as more settings — nothing in it is editable. */
+.cs-health{margin-top:6px;display:grid;gap:4px;font-size:12px;}
+.cs-row{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;}
+.cs-k{min-width:150px;color:var(--muted);}
+.cs-v{flex:1 1 220px;word-break:break-all;}
+.cs-v.bad{color:var(--danger,#b4232a);font-weight:600;}
+.cs-from{color:var(--muted);}
+.cs-flag{display:inline-block;margin:0 8px 2px 0;white-space:nowrap;}
+.cs-flag.ok{color:var(--muted);}
+.cs-flag.bad{color:var(--danger,#b4232a);font-weight:600;}
+/* AND THE FAULT STATE ON AN ATTACHMENT. A file that expired is ordinary; a file
+   that is missing before its expiry is a fault, and looks like one. */
+.chat-file-fault{border-left:3px solid var(--danger,#b4232a);padding-left:6px;}
 .chat-expiry{display:block;font-size:10.5px;color:var(--ink-faint);margin-top:3px;letter-spacing:.01em;}
 .chat-file .chat-expiry{display:inline;margin:0 0 0 8px;}
 .tl-action-box{display:flex;align-items:center;gap:8px;margin:14px 0 0;cursor:pointer;
@@ -19660,6 +19674,67 @@ async function renderChatSettings(){
  */
 let cpState = { data:null, errors:[], busy:false, msg:null, typed:null };
 
+/* WHERE CHAT FILES ARE KEPT, AND WHETHER THAT IS SAFE — read-only.
+ *
+ * ===========================================================================
+ * WHY THIS PANEL EXISTS AT ALL. The studio reported attachments vanishing
+ * twice. Both times the only evidence anybody had was a sentence in the
+ * conversation saying the file was no longer available, and finding the cause
+ * meant reading server code. Nothing in the application could answer "where are
+ * these files, and is anything deleting them?", so nobody could.
+ *
+ * Six facts, each one a question somebody actually asked:
+ *   the folder, and where the server got it from;
+ *   is it outside the application folder — the cause of the second report, and
+ *      the one a deploy destroys;
+ *   is it outside the temp directories — the same fault with a different owner;
+ *   is it writable — because "uploads are refused" needs a reason;
+ *   how many live attachments there are — so "they are all gone" is checkable;
+ *   how many files went missing before their expiry in the last week, and when
+ *      the most recent was — the fault that should never happen, counted.
+ *
+ * READ-ONLY and behind the same permission as the retention itself: it names a
+ * folder on the server, which is not something to show the whole studio. */
+function chatStorageHealthHTML(h){
+  if(!h) return '';
+  const yes = (ok, good, bad) => `<span class="cs-flag ${ok?'ok':'bad'}">${ok?'✓ '+good:'✗ '+bad}</span>`;
+  const from = h.source === 'env' ? `set by ${escapeHTML(h.envName)}`
+    : h.source === 'home' ? `${escapeHTML(h.envName)} is not set &mdash; using the account home folder`
+    : 'inside the application folder, which is not safe';
+  return `
+    <div class="ref-note">
+      <div class="rh-check" style="cursor:default;"><strong>Attachment storage</strong></div>
+      <span class="rh-opt">Where chat files are written on this server, and whether anything other
+        than the retention can remove them.</span>
+      <div class="cs-health">
+        <div class="cs-row"><span class="cs-k">Folder</span>
+          <code class="cs-v">${escapeHTML(h.path)}</code> <span class="cs-from">(${from})</span></div>
+        <div class="cs-row"><span class="cs-k">Checks</span>
+          <span class="cs-v">
+            ${yes(!h.insideApp, 'outside the application folder', 'INSIDE the application folder — a deploy will delete these files')}
+            ${yes(!h.inTemp, 'not a temporary folder', 'inside a temporary folder — the host clears it without warning')}
+            ${yes(h.writable, 'writable', 'not writable')}
+            ${yes(h.acceptingUploads, 'accepting uploads', 'NEW UPLOADS ARE REFUSED')}
+          </span></div>
+        <div class="cs-row"><span class="cs-k">Live attachments</span>
+          <span class="cs-v">${Number(h.liveAttachments || 0)}</span></div>
+        <div class="cs-row"><span class="cs-k">Missing before expiry</span>
+          <span class="cs-v${h.missingLast7Days ? ' bad' : ''}">${Number(h.missingLast7Days || 0)} in the last 7 days${
+            h.missingLatest ? ` &mdash; most recent ${escapeHTML(fmtDate(h.missingLatest))}` : ''}</span></div>
+        ${h.sweepsHaltedLast7Days ? `<div class="cs-row"><span class="cs-k">Sweeps stopped</span>
+          <span class="cs-v bad">${Number(h.sweepsHaltedLast7Days)} in the last 7 days &mdash; a safety guard
+          refused to delete anything${h.sweepHaltedLatest ? `, most recent ${escapeHTML(fmtDate(h.sweepHaltedLatest))}` : ''}</span></div>` : ''}
+        ${h.legacyExists && h.legacyPath !== h.path ? `<div class="cs-row"><span class="cs-k">Old folder</span>
+          <span class="cs-v">${escapeHTML(h.legacyPath)} is still read for files sent before the
+          move. Nothing is deleted from it.</span></div>` : ''}
+      </div>
+      ${h.problems && h.problems.length ? `<div class="rh-errs">${h.problems.map(pr=>
+        `<div class="rh-err">${escapeHTML(pr.message)}</div>`).join('')}
+        <div class="rh-err">Set this in cPanel &rarr; Setup Node.js App &rarr; Environment
+          variables, then restart the application: <code>${escapeHTML(h.hint)}</code></div></div>` : ''}
+    </div>`;
+}
+
 async function renderChatPolicy(){
   const el = document.getElementById('chatPolicySection');
   if(!el) return;
@@ -19717,6 +19792,7 @@ async function renderChatPolicy(){
         <span class="rh-opt">The emoji button in the message box. Switching it off hides the button
           only &mdash; typed and pasted emoji go on working either way.</span>
       </div>
+      ${chatStorageHealthHTML(d.storage)}
     </div>`;
 
   const hours = document.getElementById('cp_hours');
@@ -23513,7 +23589,17 @@ function renderChatThread(head, body, foot){
     ${chatReplyBarHTML('chatReplyBar')}
     <div class="chat-mentions" id="chatMentions" role="listbox" aria-label="People you can tag" hidden></div>
     <div class="chat-compose">
-      <button class="chat-clip" id="chatClip" title="Attach a file" aria-label="Attach a file">&#128206;</button>
+      <!-- THE PAPERCLIP, OFF WHEN THE SERVER CANNOT STORE ANYTHING.
+           storageOk is false when the upload folder is missing, unwritable,
+           inside the application folder or inside a temp directory — all of
+           which mean an attachment would be accepted, shown, and then lost. A
+           disabled button with a reason on it is a far better morning than a
+           file that uploads and disappears, which is the bug this whole prompt
+           is about. Typing still works; only attaching stops. -->
+      <button class="chat-clip" id="chatClip"${chatState.limits.storageOk === false ? ' disabled' : ''}
+              title="${chatState.limits.storageOk === false
+                ? 'Attachments are unavailable: the server has nowhere safe to store them. Ask your administrator.'
+                : 'Attach a file'}" aria-label="Attach a file">&#128206;</button>
       ${chatState.features.emojiPicker
         ? '<button class="chat-clip" id="chatEmoji" title="Emoji" aria-label="Insert an emoji" aria-expanded="false">\u263a</button>'
         : ''}
@@ -23529,9 +23615,12 @@ function renderChatThread(head, body, foot){
       <button class="btn btn-sm" id="chatSend">Send</button>
     </div>
     <input type="file" id="chatFile" multiple accept="${escapeHTML(chatFileAccept())}" style="display:none;">
-    <div class="chat-hint">${escapeHTML(chatState.limits.allowed)} &middot; up to ${Math.round(chatState.limits.maxBytes/1048576)}MB
+    <div class="chat-hint">${chatState.limits.storageOk === false
+      ? 'Attachments are unavailable at the moment &mdash; the server has nowhere safe to store them. '
+        + 'Your administrator needs to set the chat upload folder. Messages still send.'
+      : `${escapeHTML(chatState.limits.allowed)} &middot; up to ${Math.round(chatState.limits.maxBytes/1048576)}MB
       &middot; paste a screenshot straight into the box
-      &middot; files are deleted ${chatState.limits.hours} hours after they are sent</div>`;
+      &middot; files are deleted ${chatState.limits.hours} hours after they are sent`}</div>`;
 
   /* And the half-written message goes back in, with the caret after it rather
      than at the start — somebody who attaches a file mid-sentence carries on
@@ -24058,7 +24147,11 @@ function chatAttachmentsHTML(m){
     if(a.expired){
       /* The placeholder. Named, so the reader knows WHICH file went, and
          phrased as an expiry rather than an error — nothing went wrong. */
-      return `<div class="chat-file gone">&#128206; ${escapeHTML(a.fileName)} — file no longer available
+      /* EXPIRED, AND SAID AS EXPIRY. This is the one state the thread can know
+         without asking: the server already told it the countdown had run out.
+         The other two (missing, no access) only show up when the bytes are
+         actually fetched — see chatFileSentence. */
+      return `<div class="chat-file gone">&#128206; ${escapeHTML(a.fileName)} — attachment expired
         (chat files are deleted ${chatState.limits.hours} hours after they are sent)</div>`;
     }
     const id = escapeHTML(a.id);
@@ -24661,24 +24754,71 @@ function chatNamePastedImage(file){
    documented trade for a picture of somebody's face. A chat attachment is not
    that: the membership check lives inside the download query on purpose, so
    the bytes are fetched properly and handed to the element as a blob. */
+/* WHAT TO SAY WHEN A FILE DOES NOT ARRIVE, in one place.
+ *
+ * ===========================================================================
+ * THREE CAUSES, THREE SENTENCES, which is the whole of Prompt 59's part D.
+ * "file no longer available" used to cover all of them, and the studio read it
+ * as "the retention deleted my file" twice in a row — once when the retention
+ * was genuinely wrong, and once when the bytes had been wiped by a deploy and
+ * the retention was blameless. A message that cannot tell those apart sends
+ * everybody looking in the wrong place.
+ *
+ *   expired         normal, and the only one of the three that is not a fault.
+ *   missing_file    the row says the file is live and the server cannot find
+ *                   it. Says so plainly, says it is not expected, and says who
+ *                   to tell — and the server has already written the details
+ *                   down, so "ask your admin" is not asking them to guess.
+ *   no_access       nothing to do with the file: this person is not in that
+ *                   conversation.
+ *
+ * The state comes from the server (`state` on the error body) rather than being
+ * inferred from the status code, because expired and missing are both 410 and
+ * always will be. */
+function chatFileSentence(state, name){
+  const what = name ? `📎 ${name}` : '📎 This file';
+  if(state === 'expired') return `${what} — attachment expired`;
+  if(state === 'missing_file'){
+    return `${what} — file is missing on the server (not expected). Ask your admin.`;
+  }
+  if(state === 'no_access') return `${what} — you do not have access to this file`;
+  /* Anything else, including a network failure on the way to finding out. Not
+     dressed up as one of the three: "could not be loaded" is true, and the
+     three above are claims about the server that this branch cannot make. */
+  return `${what} — could not be loaded just now`;
+}
+
 async function loadChatAttachment(el){
   const id = el.dataset.attach;
   if(!id) return;
   const had = chatState.blobs.get(id);
   if(had){ el.src = had; return; }
+  /* NOT NAMED `state`. The page's session object is a global called exactly
+     that, and a local of the same name here shadows it — which makes the
+     Authorization header below read a token off this variable instead. Found
+     the moment it was written; left as a note because the next person adding a
+     local to one of these handlers will reach for the same word. */
+  let failState = null;
   try{
     const res = await fetch(`${API_BASE}/chat/attachments/${encodeURIComponent(id)}`,
       { headers:{ Authorization:'Bearer ' + state.token } });
-    if(!res.ok) throw new Error('gone');
+    if(!res.ok){
+      const said = await res.json().catch(()=>({}));
+      failState = said.state || null;
+      throw new Error(said.error || 'gone');
+    }
     const url = URL.createObjectURL(await res.blob());
     chatState.blobs.set(id, url);
     el.src = url;
   }catch(err){
-    /* Expired between the render and the fetch, or removed. Say so in place
-       rather than leaving a broken-image icon. */
+    /* Expired between the render and the fetch, missing from the server, or
+       not ours. Said in place rather than left as a broken-image icon. */
     const note = document.createElement('div');
-    note.className = 'chat-file gone';
-    note.textContent = `📎 ${el.getAttribute('alt') || el.title || 'file'} — file no longer available`;
+    note.className = 'chat-file gone' + (failState === 'missing_file' ? ' chat-file-fault' : '');
+    note.textContent = chatFileSentence(failState, el.getAttribute('alt') || el.title || '');
+    if(failState === 'missing_file'){
+      note.title = 'The server has recorded the details for your administrator.';
+    }
     el.replaceWith(note);
   }
 }
@@ -24709,7 +24849,10 @@ async function downloadChatAttachment(id, name){
         { headers:{ Authorization:'Bearer ' + state.token } });
       if(!res.ok){
         const said = await res.json().catch(()=>({}));
-        throw new Error(said.error || 'That file is no longer available.');
+        /* The server's own sentence, which already distinguishes expired from
+           missing from not-yours. The fallback is only for a response with no
+           body at all. */
+        throw new Error(said.error || chatFileSentence(said.state, name));
       }
       url = URL.createObjectURL(await res.blob());
       temporary = true;

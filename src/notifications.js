@@ -27,6 +27,15 @@ const { v4: uuid } = require('uuid');
  * both inboxes, which reads as an accusation in one of them and a task in the
  * other. */
 const KINDS = {
+  /* CHAT STORAGE HAS A PROBLEM, and only the people who can fix it are told.
+   *
+     Raised by the attachment sweep when it refuses to run — because the
+     retention reads as implausible, or because one pass was about to delete
+     more than half the studio's files. A guard that trips silently turns a
+     visible disaster into an invisible one, and the two bug reports that led
+     to these guards both began with somebody noticing files were gone days
+     later. The sentence is carried in `detail`, like the reminder kinds. */
+  chat_storage: 'chat_storage',
   assigned: 'assigned',            // it is yours now
   unassigned: 'unassigned',        // it is no longer yours
   /* Work has been handed in, told to the people who are now waiting on it:
@@ -223,6 +232,9 @@ function describe(row) {
   }
   if (row.kind === KINDS.vacation) {
     return row.detail || `${row.other_name || 'Somebody'}’s vacation changed.`;
+  }
+  if (row.kind === KINDS.chat_storage) {
+    return row.detail || 'Chat attachment storage needs attention — see Settings → Chat.';
   }
   if (row.kind === KINDS.server_delete_request) {
     return row.detail || `${row.other_name || 'Somebody'} asked for a file on the office server to be deleted.`;

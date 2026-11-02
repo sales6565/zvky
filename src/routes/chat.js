@@ -104,6 +104,12 @@ router.get('/', async (req, res) => {
       allowed: files.ADVERTISED,
       maxBytes: files.MAX_BYTES,
       hours: files.HOURS,
+      /* WHETHER THE PAPERCLIP WILL WORK AT ALL, told to the page so it can say
+         so in the composer instead of letting somebody write a message, attach
+         a file and discover both are refused. No paths and no problem details
+         here — this reaches every user, and the folder layout of the server is
+         the Super Admin's business. */
+      storageOk: files.acceptingUploads(),
     },
     /* THE TWO SWITCHES AND THE LENGTH LIMIT, published with everything else the
        panel needs so the composer does not fetch its own settings. The page
@@ -372,7 +378,31 @@ router.post('/groups', requirePermission('chat.group_create'), async (req, res) 
  * multipart, because an attachment can come with it. A message with neither
  * words nor a file is refused: it would render as an empty bubble that nobody
  * can tell from a bug. */
-router.post('/:id/messages', files.upload.array('files', 5), async (req, res) => {
+/* REFUSED BEFORE MULTER WRITES A BYTE, when chat storage is not usable.
+ *
+ * Ahead of the upload middleware on purpose: multer's job is to put the file
+ * somewhere, and the whole point of this check is that there is nowhere safe to
+ * put it. The message names the problem and the variable to set, because the
+ * person who sees it is the one who will forward it to whoever can fix it.
+ *
+ * A MESSAGE WITH NO FILE IS NOT REFUSED. Chat goes on working; only attachments
+ * stop, and only while the folder is wrong. Refusing the whole panel over a
+ * storage misconfiguration would be a bigger outage than the one being
+ * prevented. */
+function refuseUploadsWhenUnsafe(req, res, next) {
+  const type = String(req.headers['content-type'] || '');
+  if (!/multipart\/form-data/i.test(type)) return next();
+  if (files.acceptingUploads()) return next();
+  const s = files.storage.status();
+  return res.status(503).json({
+    error: 'Attachments cannot be saved on this server at the moment, so this message was not sent. '
+      + 'Your administrator needs to set the chat upload folder: ' + s.problems[0].message,
+    field: 'files',
+    state: 'storage_unavailable',
+  });
+}
+
+router.post('/:id/messages', refuseUploadsWhenUnsafe, files.upload.array('files', 5), async (req, res) => {
   const seat = await mine(req, res);
   if (!seat) return;
 
@@ -536,7 +566,13 @@ router.post('/:id/read', async (req, res) => {
  * either one or a fixed second, so nothing shadows it. */
 router.get('/attachments/:attachmentId', async (req, res) => {
   const found = await files.forDownload(db, req.params.attachmentId, req.user.id);
-  if (!found.ok) return res.status(found.status).json({ error: found.error });
+  /* THE STATE TRAVELS WITH THE SENTENCE. The page shows a different placeholder
+     for a file that expired, one that is missing from the server and one this
+     person may not have — it cannot tell them apart from a status code, because
+     expired and missing are both 410 and always will be. */
+  if (!found.ok) {
+    return res.status(found.status).json({ error: found.error, state: found.state || null });
+  }
 
   res.setHeader('Content-Type', found.contentType);
   res.setHeader('X-Content-Type-Options', 'nosniff');

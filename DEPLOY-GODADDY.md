@@ -79,8 +79,33 @@ placeholder.
 | `JWT_SECRET` | a long random value (at least 32 characters; 96 hex characters below) |
 | `CORS_ORIGIN` | the site URL, e.g. `https://pipeline.zvky.com` |
 | `TRUST_PROXY` | `1` |
+| `CHAT_UPLOAD_DIR` | `/home/<your-cpanel-account>/zvky-chat-uploads` |
 
 Don't set `PORT` — Passenger assigns it.
+
+**`CHAT_UPLOAD_DIR` is not optional in practice, and this is the one setting a
+deploy can destroy.** Chat attachments are written to that folder. It must be an
+absolute path **outside the application folder** — next to it under your cPanel
+home, not inside it — because step 3 above replaces the application folder, and
+anything stored inside it goes with it. That is not a hypothetical: it is how
+attachments came to vanish within an hour of being sent while the retention said
+twelve hours, with the panel reporting "file is no longer available" as though
+they had aged out.
+
+Create the folder once in cPanel → **File Manager** (for example
+`/home/myaccount/zvky-chat-uploads`), leave it writable by the application, and
+**never include it in a deploy**: do not extract into it, do not delete it, and
+do not point a Git deployment at its parent. The application refuses new chat
+uploads — with a message naming this variable — when the folder is missing, not
+writable, inside the application folder or inside a temporary directory, and
+Settings → Chat shows the same thing with the resolved path. Files already
+uploaded go on being served either way.
+
+If the variable is not set, the application falls back to
+`$HOME/zvky-chat-uploads`, which on cPanel is outside the application folder and
+survives a deploy. That keeps a studio working after an upgrade; set the variable
+anyway, so the folder is a decision somebody made rather than a default that a
+future change of host could move.
 
 A random `JWT_SECRET`, from any machine with Node.js:
 `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`, or a
@@ -193,6 +218,15 @@ Check `https://your-domain.com/api/health` — it should return `{"ok":true}`.
 
 Artist submissions are written to `uploads/` inside the application root. That
 folder ships empty in the zip and must stay writable by the app.
+
+> **Chat attachments are not kept there.** They live in `CHAT_UPLOAD_DIR`
+> (step 5), outside the application folder, precisely because this folder is
+> inside it and a deploy replaces it. Artist submissions are in a different
+> position: they are studio records with database rows and an owner, and losing
+> one is noticed and recoverable from the submitter; a chat screenshot is
+> neither. Moving `uploads/` out as well would be a sensible next step and is
+> not what Prompt 59 changed — if you clear the application folder on deploy
+> rather than extracting over it, back `uploads/` up first.
 
 It is *not* inside `public_html`, and files are only served back through
 `GET /api/assets/versions/:id/download`, which re-checks permissions on every

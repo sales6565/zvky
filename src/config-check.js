@@ -31,6 +31,28 @@ function warnings(env = process.env) {
   const out = [];
   if (!env.DATABASE_URL && env.DB_NAME && !env.DB_PASSWORD) out.push('DB_PASSWORD is not set; connecting to the database without a password.');
   if (!String(env.CORS_ORIGIN || '').trim()) out.push('CORS_ORIGIN is not set, so any origin may call the API. Set it to this site\'s address.');
+  /* WHERE CHAT FILES GO IS CONFIGURATION, so it is checked with the rest of it.
+   *
+   * A WARNING AND NOT A PROBLEM: a storage folder that cannot be used stops
+   * chat ATTACHMENTS, which is an inconvenience, and refusing to start the
+   * whole application over it would be an outage. Chat itself, and everything
+   * else, goes on working. The sentence names the variable, because the two
+   * bug reports that led to this check both cost days to the fact that nothing
+   * anywhere said where the files were supposed to be.
+   *
+   * Required lazily and defensively: config-check runs before anything else and
+   * must not be the thing that fails to load. */
+  try {
+    const storage = require('./chat-storage').status({ refresh: true, env });
+    if (!storage.ok) {
+      out.push(`chat attachments cannot be stored. ${storage.problems[0].message} `
+        + 'New uploads are refused until this is fixed; existing files are still served.');
+    } else if (storage.source !== 'env') {
+      out.push(`${storage.envName} is not set, so chat attachments are being written to `
+        + `${storage.path}. That folder is outside the application and survives a deploy, but set `
+        + `the variable explicitly so a future deploy cannot move it: ${storage.hint}`);
+    }
+  } catch { /* the module could not load; the startup banner still reports it */ }
   return out;
 }
 

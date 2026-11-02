@@ -96,6 +96,26 @@ test('THE REPRODUCTION: the old rule gave four hours on a -08:00 database', { sk
   assert.strictEqual(measured['+05:30'], 12 + 5.5);
 });
 
+/* THE SUITE'S OWN db, over its own connection.
+ *
+ * NOT src/db. That module reads DB_NAME from the environment of the process it
+ * is required in, and a suite runs against a database of its own — so an
+ * in-process require('../src/db') here connects to the WRONG database and
+ * reports "Unknown database", which cost a run. The shim translates the $n
+ * placeholders the application writes into the ? MariaDB wants, which is the
+ * one thing src/db does that the raw connection does not. */
+function dbOver(conn) {
+  return {
+    query: async (text, params = []) => {
+      const values = [];
+      const translated = String(text).replace(/\$(\d+)/g,
+        (_, n) => { values.push(params[Number(n) - 1]); return '?'; });
+      const [rows, fields] = await conn.query(translated, values.length ? values : params);
+      return { rows: Array.isArray(rows) ? rows : [], result: rows, fields };
+    },
+  };
+}
+
 test('THE FIX: the expiry instant is the same in every timezone combination',
   { skip: SKIP }, async (t) => {
   await prepare();
@@ -173,6 +193,313 @@ test('the process timezone does not move the expiry either', { skip: SKIP }, asy
   }
 });
 
+test('THE UNIT: a retention of 12 is twelve HOURS, to the second', { skip: SKIP }, async (t) => {
+  /* PROMPT 59'S FIRST SUSPECT, checked first and ruled out. "12 read as 12
+     minutes" would produce exactly the reported symptom — files gone inside an
+     hour with the screen saying twelve hours — so it gets a case that measures
+     the gap rather than trusting the constant.
+     
+     MEASURED FROM created_at TO expires_at, in the database, in MINUTES: a
+     seconds comparison would pass for a write that landed a second after the
+     stamp, and a bug that read hours as minutes gives 12 minutes, as seconds
+     gives 0, and as milliseconds gives 0 — all of which this separates. */
+  await prepare();
+  const server = await startServer(cfg, { BOOTSTRAP_TOKEN: 'unit', CHAT_SWEEP_MINUTES: '0' });
+  stopServer(server);
+
+  const conn = await connect(null);
+  t.after(() => conn.end());
+  const db = dbOver(conn);
+  const files = require('../src/chat-files');
+
+  const stampOne = async () => {
+    await sql(cfg, 'DELETE FROM chat_attachments');
+    await files.record(db, { messageId: MESSAGE_ID,
+      file: { originalname: 'x.png', size: 1, filename: 'x.png' } });
+    const rows = await sql(cfg,
+      `SELECT TIMESTAMPDIFF(MINUTE, created_at, expires_at) AS gapMinutes,
+              TIMESTAMPDIFF(SECOND, created_at, expires_at) AS gapSeconds
+         FROM chat_attachments`);
+    return { minutes: Number(rows[0].gapMinutes), seconds: Number(rows[0].gapSeconds) };
+  };
+
+  const twelve = await stampOne();
+  assert.strictEqual(twelve.minutes, 720, 'twelve hours is 720 minutes, not 12 and not 0');
+  assert.ok(Math.abs(twelve.seconds - 12 * 3600) <= 1,
+    `and 43200 seconds, give or take the write: ${twelve.seconds}`);
+
+  /* AND IT FOLLOWS THE SETTING, in the same unit, both ways. */
+  for (const hours of [1, 48, 720]) {
+    await sql(cfg,
+      'INSERT INTO chat_settings (id, attachment_hours) VALUES (1, ?) '
+      + 'ON DUPLICATE KEY UPDATE attachment_hours = VALUES(attachment_hours)', [hours]);
+    await require('../src/chat-settings').load(db);
+    const got = await stampOne();
+    assert.strictEqual(got.minutes, hours * 60, `${hours} hours is ${hours * 60} minutes`);
+  }
+
+  /* A MISSING OR NONSENSE SETTING FALLS BACK TO TWELVE HOURS — never to zero,
+     and never to "now", both of which delete everything immediately. */
+  const settings = require('../src/chat-settings');
+  for (const bad of [0, -5, null]) {
+    await sql(cfg,
+      'INSERT INTO chat_settings (id, attachment_hours) VALUES (1, ?) '
+      + 'ON DUPLICATE KEY UPDATE attachment_hours = VALUES(attachment_hours)',
+      [bad === null ? 0 : bad]);
+    await settings.load(db).catch(() => {});
+    const got = await stampOne();
+    assert.strictEqual(got.minutes, 720,
+      `a stored ${bad} falls back to twelve hours, not ${got.minutes / 60}`);
+  }
+  await sql(cfg, 'UPDATE chat_settings SET attachment_hours = 12 WHERE id = 1');
+  await settings.load(db);
+});
+
+test('a live row with no expiry is not treated as expired', { skip: SKIP }, async (t) => {
+  /* THE OTHER WAY TO LOSE EVERY FILE AT ONCE, and Prompt 58 had it the wrong
+     way round on purpose: a NULL expires_at read as "expired", which is safe
+     if you think of the column as a promise and unsafe if you think about what
+     a reader sees. One unfilled column and every attachment in the studio reads
+     as gone — the same disaster as the bug being fixed, through another door.
+     
+     A NULL deadline is now created_at + the retention, which is what the row
+     would have said if anybody had stamped it. */
+  await prepare();
+  const server = await startServer(cfg, { BOOTSTRAP_TOKEN: 'nullexp', CHAT_SWEEP_MINUTES: '0' });
+  stopServer(server);
+  const conn = await connect(null);
+  t.after(() => conn.end());
+  const db = dbOver(conn);
+  const files = require('../src/chat-files');
+
+  await sql(cfg, 'DELETE FROM chat_attachments');
+  await sql(cfg,
+    `INSERT INTO chat_attachments (id, message_id, file_name, byte_size, stored_name, created_at, expires_at)
+     VALUES ('fresh-null', '${MESSAGE_ID}', 'a.png', 1, 'a.png', NOW() - INTERVAL 30 MINUTE, NULL),
+            ('old-null',   '${MESSAGE_ID}', 'b.png', 1, 'b.png', NOW() - INTERVAL 20 HOUR, NULL),
+            ('epoch',      '${MESSAGE_ID}', 'c.png', 1, 'c.png', NOW() - INTERVAL 30 MINUTE, '1970-01-01 00:00:01')`);
+  /* FOUR MORE LIVE ROWS, so the sweep below is a minority of the table.
+   
+     Without them this fixture is two deletions out of three rows, one of them
+     (the 1970 stamp on a half-hour-old row) younger than the retention — which
+     is precisely the shape the runaway guard exists to refuse, and it duly
+     refused, and this case failed. The guard was right and the fixture was
+     unrealistic: a studio with three attachments in total, two of them
+     impossible, is not the situation being tested here. */
+  for (let i = 0; i < 4; i += 1) {
+    await sql(cfg,
+      `INSERT INTO chat_attachments (id, message_id, file_name, byte_size, stored_name, created_at, expires_at)
+       VALUES (?, '${MESSAGE_ID}', 'live.png', 1, 'live.png', NOW(), NOW() + INTERVAL 6 HOUR)`,
+      [`bystander-${i}`]);
+  }
+
+  const read = async (id) => {
+    const { rows } = await db.query(
+      `SELECT a.id, ${files.expirySelect('a')}, a.deleted_at AS deletedAt
+         FROM chat_attachments a WHERE a.id = $1`, [id]);
+    return rows[0];
+  };
+
+  const fresh = await read('fresh-null');
+  assert.strictEqual(files.isExpired(fresh), false,
+    'half an hour old with no stamp is not expired');
+  assert.ok(Math.abs(Number(fresh.expiresInSeconds) - 11.5 * 3600) < 120,
+    `and has about eleven and a half hours left: ${fresh.expiresInSeconds}`);
+
+  const old = await read('old-null');
+  assert.strictEqual(files.isExpired(old), true,
+    'twenty hours old with no stamp IS past twelve, so it is expired');
+
+  /* AN EPOCH STAMP IS A REAL DEADLINE IN THE PAST, and must stay expired: the
+     fallback is for a MISSING deadline, not for an inconvenient one. */
+  const epoch = await read('epoch');
+  assert.strictEqual(files.isExpired(epoch), true, 'a 1970 deadline is still a deadline');
+
+  /* AND THE SWEEP AGREES WITH THE READER about all three, which is the thing
+     that was inconsistent: the old sweep skipped NULL rows entirely while the
+     read path called them expired, so their bytes sat on disk for ever while
+     the panel told everybody they were gone. */
+  const swept = await files.sweep(db, { log: () => {} });
+  assert.strictEqual(swept.halted, null, 'the sweep ran');
+  assert.deepStrictEqual(swept.ids.sort(), ['epoch', 'old-null'],
+    'and takes exactly the two that are past their deadline');
+  const left = await sql(cfg,
+    "SELECT id FROM chat_attachments WHERE deleted_at IS NULL ORDER BY id");
+  assert.deepStrictEqual(left.map((r) => r.id).filter((id) => !id.startsWith('bystander')),
+    ['fresh-null'], 'and leaves the one that is not');
+});
+
+test('the sweeper refuses to run away', { skip: SKIP }, async (t) => {
+  /* TWO CIRCUIT BREAKERS, neither of which was the cause of either reported
+     bug. They are here because this loop deletes people's files unattended and
+     two reports in a row were about files vanishing — the cost of being wrong
+     here is measured in somebody's work, and the cost of refusing a run is
+     measured in ten minutes of disk. */
+  await prepare();
+  const server = await startServer(cfg, { BOOTSTRAP_TOKEN: 'guards', CHAT_SWEEP_MINUTES: '0' });
+  /* SOMEBODY TO TELL. The guards notify every holder of settings.chat_retention,
+     which is the Super Admin by default — so a database with no users at all
+     would let a broken notification pass as "nobody to notify". */
+  const made = await api(server.base, '/auth/bootstrap', { method: 'POST',
+    body: { token: 'guards', name: 'Root', email: 'root@guards.test', password: 'Guards-Pass-11!' } });
+  assert.ok(made.status < 400, JSON.stringify(made.body));
+  stopServer(server);
+  const conn = await connect(null);
+  t.after(() => conn.end());
+  const db = dbOver(conn);
+  const files = require('../src/chat-files');
+  const settings = require('../src/chat-settings');
+
+  /* `young` is what makes an expired row look like a MISCONFIGURATION rather
+     than an expiry: created minutes ago and already past its deadline, which is
+     what "twelve read as twelve minutes" produces. The default is the honest
+     shape — created two days ago, expired yesterday. */
+  const seed = async (expired, live, { young = false } = {}) => {
+    await sql(cfg, 'DELETE FROM chat_attachments');
+    for (let i = 0; i < expired; i += 1) {
+      await sql(cfg, young
+        ? `INSERT INTO chat_attachments (id, message_id, file_name, byte_size, stored_name, created_at, expires_at)
+           VALUES (?, '${MESSAGE_ID}', 'x.png', 1, NULL, NOW() - INTERVAL 20 MINUTE, NOW() - INTERVAL 8 MINUTE)`
+        : `INSERT INTO chat_attachments (id, message_id, file_name, byte_size, stored_name, created_at, expires_at)
+           VALUES (?, '${MESSAGE_ID}', 'x.png', 1, NULL, NOW() - INTERVAL 2 DAY, NOW() - INTERVAL 1 DAY)`,
+        [`gone-${i}`]);
+    }
+    for (let i = 0; i < live; i += 1) {
+      await sql(cfg,
+        `INSERT INTO chat_attachments (id, message_id, file_name, byte_size, stored_name, created_at, expires_at)
+         VALUES (?, '${MESSAGE_ID}', 'y.png', 1, NULL, NOW(), NOW() + INTERVAL 6 HOUR)`,
+        [`keep-${i}`]);
+    }
+  };
+  const admins = async () => sql(cfg,
+    `SELECT COUNT(*) AS n FROM notifications WHERE kind = 'chat_storage'`);
+
+  await t.test('over half in one pass, and younger than the retention, deletes nothing, loudly',
+    async () => {
+    await sql(cfg, "DELETE FROM notifications WHERE kind = 'chat_storage'");
+    await sql(cfg, 'DELETE FROM chat_file_incidents');
+    /* SIX OF TEN, all of them twenty minutes old and already "expired" — which
+       is not an expiry at all, it is the twelve-read-as-minutes shape. */
+    await seed(6, 4, { young: true });
+    const lines = [];
+    const out = await files.sweep(db, { log: (m) => lines.push(String(m)) });
+    assert.strictEqual(out.halted, 'runaway');
+    assert.strictEqual(out.rows, 0, 'nothing was marked deleted');
+    const still = await sql(cfg, 'SELECT COUNT(*) AS n FROM chat_attachments WHERE deleted_at IS NULL');
+    assert.strictEqual(Number(still[0].n), 10, 'and every row is still live');
+    assert.ok(lines.some((l) => /refused to run/i.test(l) && /6 of 10/.test(l)),
+      `and it says so with the numbers: ${lines.join(' | ')}`);
+    const inc = await sql(cfg,
+      "SELECT kind FROM chat_file_incidents WHERE kind = 'sweep_halted_runaway'");
+    assert.strictEqual(inc.length, 1, 'the refusal is recorded');
+    assert.ok(Number((await admins())[0].n) >= 1, 'and the Super Admin is told in-app');
+  });
+
+  await t.test('and half or less proceeds as usual', async () => {
+    await seed(4, 6, { young: true });                   // four of ten
+    const out = await files.sweep(db, { log: () => {} });
+    assert.strictEqual(out.halted, null);
+    assert.strictEqual(out.rows, 4, 'the four that aged out');
+    const still = await sql(cfg, 'SELECT COUNT(*) AS n FROM chat_attachments WHERE deleted_at IS NULL');
+    assert.strictEqual(Number(still[0].n), 6);
+  });
+
+  await t.test('THE OVERNIGHT SWEEP IS NEVER HALTED, whatever share it is', async () => {
+    /* THE FALSE POSITIVE THE SHARE-ONLY GUARD HAD, and the reason the age test
+       is there. A studio that sent four screenshots on Tuesday and nothing on
+       Wednesday has four expired attachments and no live ones. That is 100% of
+       everything, and it is the most ordinary sweep there is. A guard that
+       refuses it refuses it for ever — the same four are still there next time
+       — so nothing is ever reclaimed and the Super Admin is told every ten
+       minutes. Found by two existing cases in this file going red. */
+    await sql(cfg, "DELETE FROM notifications WHERE kind = 'chat_storage'");
+    await seed(4, 0);                                    // all of them, properly aged
+    const out = await files.sweep(db, { log: () => {} });
+    assert.strictEqual(out.halted, null, 'four of four, all a day past their expiry, is fine');
+    assert.strictEqual(out.rows, 4, 'and all four are swept');
+    const told = await sql(cfg, "SELECT COUNT(*) AS n FROM notifications WHERE kind = 'chat_storage'");
+    assert.strictEqual(Number(told[0].n), 0, 'and nobody is woken up about it');
+  });
+
+  await t.test('one expired attachment on its own is not a runaway', async () => {
+    /* THE GUARD MUST NOT BITE ON A SMALL STUDIO. One file, expired, nothing
+       else in the table: 1 of 1 is 100%, and deleting it is correct. */
+    await seed(1, 0, { young: true });
+    const out = await files.sweep(db, { log: () => {} });
+    assert.strictEqual(out.halted, null, 'a single expired file is just an expired file');
+    assert.strictEqual(out.rows, 1);
+  });
+
+  await t.test('a retention under an hour stops the sweep altogether', async () => {
+    await sql(cfg, "DELETE FROM notifications WHERE kind = 'chat_storage'");
+    await sql(cfg, 'DELETE FROM chat_file_incidents');
+    await seed(1, 9, { young: true });
+
+    /* THE RETENTION CANNOT ACTUALLY BE BELOW AN HOUR TODAY, and that is worth
+       saying rather than dressing up. The screen refuses anything under 1, and
+       chat-settings replaces an invalid stored value with twelve before this
+       code sees it — so there is no configuration that reaches this guard.
+       
+       It is a backstop against a FUTURE reader of that number getting it wrong,
+       which is the bug that has now been reported twice in two different forms.
+       A backstop that cannot be exercised is one nobody should trust, so sweep()
+       takes the figure as a seam and this case hands it a quarter of an hour. */
+    const lines = [];
+    const out = await files.sweep(db, { log: (m) => lines.push(String(m)), hours: 0.25 });
+    assert.strictEqual(out.halted, 'retention');
+    assert.strictEqual(out.rows, 0, 'and nothing was deleted');
+    assert.ok(lines.some((l) => /below the one-hour minimum/i.test(l)),
+      `with the reason: ${lines.join(' | ')}`);
+    const still = await sql(cfg,
+      'SELECT COUNT(*) AS n FROM chat_attachments WHERE deleted_at IS NULL');
+    assert.strictEqual(Number(still[0].n), 10, 'every row is still live');
+    const inc = await sql(cfg,
+      "SELECT kind FROM chat_file_incidents WHERE kind = 'sweep_halted_retention'");
+    assert.strictEqual(inc.length, 1, 'the refusal is recorded');
+    assert.ok(Number((await admins())[0].n) >= 1, 'and the Super Admin is told in-app');
+  });
+
+  await t.test('a failed claim query skips the disk pass instead of deleting everything',
+    async () => {
+    /* THE LINE THAT WAS ONE DROPPED CONNECTION AWAY FROM A DISASTER. The disk
+       pass asks which files are still claimed by a row; that query used to be
+       wrapped in `.catch(() => ({ rows: [] }))`, so any database error meant
+       "no file is claimed" and every file older than the grace period was
+       deleted. It was never shown to be the cause of either report — it only
+       ever needed to be reachable. */
+    const root = files.CHAT_DIR;
+    fs.mkdirSync(root, { recursive: true });
+    const name = 'claimed-by-a-live-row.png';
+    fs.writeFileSync(path.join(root, name), 'bytes');
+    /* Older than the fifteen-minute grace, so only the claim list protects it. */
+    const old = Date.now() - 60 * 60 * 1000;
+    fs.utimesSync(path.join(root, name), old / 1000, old / 1000);
+    await sql(cfg, 'DELETE FROM chat_attachments');
+    await sql(cfg,
+      `INSERT INTO chat_attachments (id, message_id, file_name, byte_size, stored_name, created_at, expires_at)
+       VALUES ('claimer', '${MESSAGE_ID}', ?, 1, ?, NOW(), NOW() + INTERVAL 6 HOUR)`, [name, name]);
+
+    const lines = [];
+    let asked = 0;
+    const flaky = {
+      query: async (text, params) => {
+        if (/stored_name IS NOT NULL/.test(text) && !/deleted_at/.test(text)) {
+          asked += 1;
+          throw new Error('Lost connection to MySQL server during query');
+        }
+        return db.query(text, params);
+      },
+    };
+    const out = await files.sweep(flaky, { log: (m) => lines.push(String(m)) });
+    assert.strictEqual(asked, 1, 'the claim query was the one that failed');
+    assert.strictEqual(out.orphans, 0, 'and nothing on disk was removed');
+    assert.ok(fs.existsSync(path.join(root, name)), 'the claimed file is still there');
+    assert.ok(lines.some((l) => /skipped the orphan pass/i.test(l)),
+      `and it said why: ${lines.join(' | ')}`);
+    fs.rmSync(path.join(root, name), { force: true });
+  });
+});
+
 test('not deleted at 11h59m; deleted after 12h', { skip: SKIP }, async (t) => {
   await prepare();
   const conn = await connect(null);
@@ -246,8 +573,13 @@ test('two sweepers at once delete each file once, and neither errors', { skip: S
   fs.mkdirSync(chatFiles.CHAT_DIR, { recursive: true });
   for (let i = 0; i < 6; i += 1) {
     await a.query(
-      `INSERT INTO chat_attachments (id, message_id, file_name, byte_size, stored_name, expires_at)
-       VALUES (?, '${MESSAGE_ID}', ?, 1, ?, NOW() - INTERVAL 1 MINUTE)`,
+      /* CREATED YESTERDAY, expired a minute ago — an HONEST expiry, which is
+          what this case is about. Created-now-and-already-expired is the shape
+          the runaway guard refuses (a file deleted before it has lived as long
+          as the retention), and with that fixture this case measured the guard
+          rather than the race. */
+      `INSERT INTO chat_attachments (id, message_id, file_name, byte_size, stored_name, created_at, expires_at)
+       VALUES (?, '${MESSAGE_ID}', ?, 1, ?, NOW() - INTERVAL 1 DAY, NOW() - INTERVAL 1 MINUTE)`,
       [`race${i}`, `race${i}.png`, `race${i}.png`]
     );
     fs.writeFileSync(path.join(chatFiles.CHAT_DIR, `race${i}.png`), 'bytes');
@@ -295,8 +627,8 @@ test('a stored path outside the upload root is never followed', { skip: SKIP }, 
 
   await conn.query('DELETE FROM chat_attachments');
   await conn.query(
-    `INSERT INTO chat_attachments (id, message_id, file_name, byte_size, stored_name, expires_at)
-     VALUES ('traverse', '${MESSAGE_ID}', 'x.txt', 1, ?, NOW() - INTERVAL 1 MINUTE)`,
+    `INSERT INTO chat_attachments (id, message_id, file_name, byte_size, stored_name, created_at, expires_at)
+     VALUES ('traverse', '${MESSAGE_ID}', 'x.txt', 1, ?, NOW() - INTERVAL 1 DAY, NOW() - INTERVAL 1 MINUTE)`,
     ['../not-a-chat-file.txt']
   );
 
@@ -315,8 +647,8 @@ test('a stored path outside the upload root is never followed', { skip: SKIP }, 
   fs.writeFileSync(path.join(nested, 'file.txt'), 'nested, so not from here');
   for (const [id, stored] of [['dotdot', '..'], ['nested', 'nested/file.txt']]) {
     await conn.query(
-      `INSERT INTO chat_attachments (id, message_id, file_name, byte_size, stored_name, expires_at)
-       VALUES (?, '${MESSAGE_ID}', 'x.txt', 1, ?, NOW() - INTERVAL 1 MINUTE)`,
+      `INSERT INTO chat_attachments (id, message_id, file_name, byte_size, stored_name, created_at, expires_at)
+       VALUES (?, '${MESSAGE_ID}', 'x.txt', 1, ?, NOW() - INTERVAL 1 DAY, NOW() - INTERVAL 1 MINUTE)`,
       [id, stored]
     );
   }

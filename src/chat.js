@@ -664,7 +664,7 @@ async function withQuotes(db, conversationId, messages) {
     `SELECT m.id, m.body, m.kind, m.sender_id AS senderId, u.\`name\` AS senderName,
             (SELECT COUNT(*) FROM chat_attachments a WHERE a.message_id = m.id) AS attachmentCount,
             (SELECT a.file_name FROM chat_attachments a WHERE a.message_id = m.id ORDER BY a.id LIMIT 1) AS firstFile,
-            (SELECT ${'TIMESTAMPDIFF(SECOND, NOW(), a.expires_at)'} FROM chat_attachments a
+            (SELECT ${files.expirySelect('a').replace(/ AS expiresInSeconds$/, '')} FROM chat_attachments a
               WHERE a.message_id = m.id ORDER BY a.id LIMIT 1) AS firstFileLeft
        FROM chat_messages m
        LEFT JOIN users u ON u.id = m.sender_id

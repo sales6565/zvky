@@ -119,12 +119,59 @@ const policyPayload = () => ({
   live: null,
 });
 
+/* THE HEALTH PANEL'S FIGURES. Read-only, behind the same permission as the
+ * retention itself, and deliberately the smallest set of facts that answers the
+ * question the studio actually asked twice: "where did the files go?"
+ *
+ *   the folder, and where it came from — because the first thing to establish
+ *      is whether the server agrees with the owner about where files live;
+ *   writable, outside the app, outside temp — the three ways it is wrong,
+ *      each said separately so the fix is obvious;
+ *   live attachments — a number that makes "they are all gone" checkable;
+ *   missing before expiry, last seven days, with the latest time — the fault
+ *      that should never happen, counted rather than guessed at.
+ *
+ * NO PATHS BEYOND THE UPLOAD ROOTS and no environment values: this is a screen
+ * about storage, not a window onto the filesystem. */
+async function storageHealth() {
+  const storage = require('../chat-files').storage.status({ refresh: true });
+  const files = require('../chat-files');
+  const live = await files.liveAttachmentCount(db);
+  const { rows: inc } = await db.query(
+    `SELECT COUNT(*) AS n, MAX(created_at) AS latest FROM chat_file_incidents
+      WHERE kind = 'missing_before_expiry' AND created_at >= NOW() - INTERVAL 7 DAY`
+  ).catch(() => ({ rows: [{ n: 0, latest: null }] }));
+  const { rows: halted } = await db.query(
+    `SELECT COUNT(*) AS n, MAX(created_at) AS latest FROM chat_file_incidents
+      WHERE kind LIKE 'sweep_halted%' AND created_at >= NOW() - INTERVAL 7 DAY`
+  ).catch(() => ({ rows: [{ n: 0, latest: null }] }));
+  return {
+    path: storage.path,
+    source: storage.source,
+    envName: storage.envName,
+    hint: storage.hint,
+    legacyPath: storage.legacyPath,
+    legacyExists: storage.legacyExists,
+    ok: storage.ok,
+    acceptingUploads: files.acceptingUploads(),
+    problems: storage.problems,
+    insideApp: storage.problems.some((p) => p.code === 'inside-app'),
+    inTemp: storage.problems.some((p) => p.code === 'temp'),
+    writable: !storage.problems.some((p) => p.code === 'not-writable' || p.code === 'missing'),
+    liveAttachments: live,
+    missingLast7Days: Number(inc[0].n) || 0,
+    missingLatest: inc[0].latest || null,
+    sweepsHaltedLast7Days: Number(halted[0].n) || 0,
+    sweepHaltedLatest: halted[0].latest || null,
+  };
+}
+
 policy.get('/', async (req, res) => {
   const { rows } = await db.query(
     `SELECT COUNT(*) AS n FROM chat_attachments
       WHERE deleted_at IS NULL AND expires_at IS NOT NULL AND expires_at > NOW()`
   ).catch(() => ({ rows: [{ n: 0 }] }));
-  res.json({ ...policyPayload(), live: Number(rows[0].n || 0) });
+  res.json({ ...policyPayload(), live: Number(rows[0].n || 0), storage: await storageHealth() });
 });
 
 policy.put('/', async (req, res) => {
@@ -150,7 +197,7 @@ policy.put('/', async (req, res) => {
     `SELECT COUNT(*) AS n FROM chat_attachments
       WHERE deleted_at IS NULL AND expires_at IS NOT NULL AND expires_at > NOW()`
   ).catch(() => ({ rows: [{ n: 0 }] }));
-  res.json({ ...policyPayload(), live: Number(rows[0].n || 0) });
+  res.json({ ...policyPayload(), live: Number(rows[0].n || 0), storage: await storageHealth() });
 });
 
 module.exports = router;

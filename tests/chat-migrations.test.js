@@ -101,6 +101,58 @@ test('an existing database gains all of it without losing anything', { skip: SKI
   }
 });
 
+test('the incident table arrives, survives a second run, and keeps what is in it',
+  { skip: SKIP }, async () => {
+  /* PROMPT 59'S ONLY NEW TABLE. Three things worth pinning: it exists, a second
+     boot leaves its rows alone, and it has NO foreign key on attachment_id —
+     an incident about an attachment that is later deleted is exactly the
+     incident worth keeping, and a cascade would delete the record of the
+     problem along with its subject. */
+  await resetSchema(cfg);
+  await boot('inc-1');
+
+  const cols = await columnsOf('chat_file_incidents');
+  for (const c of ['id', 'attachment_id', 'kind', 'detail', 'created_at']) {
+    assert.ok(cols.includes(c), `chat_file_incidents.${c}`);
+  }
+  const nullable = (await sql(cfg,
+    `SELECT IS_NULLABLE AS n FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'chat_file_incidents'
+        AND COLUMN_NAME = 'attachment_id'`))[0];
+  assert.strictEqual(String(nullable.n).toUpperCase(), 'YES',
+    'a sweep that refused to run is about no single attachment');
+  const fks = await sql(cfg,
+    `SELECT CONSTRAINT_NAME AS n FROM information_schema.KEY_COLUMN_USAGE
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'chat_file_incidents'
+        AND REFERENCED_TABLE_NAME IS NOT NULL`);
+  assert.deepStrictEqual(fks, [], 'and no foreign key to cascade the evidence away');
+
+  await sql(cfg,
+    `INSERT INTO chat_file_incidents (id, attachment_id, kind, detail)
+     VALUES ('i1', 'some-attachment', 'missing_before_expiry', 'written by hand for this test')`);
+  await boot('inc-2');
+  const kept = await sql(cfg, "SELECT detail FROM chat_file_incidents WHERE id = 'i1'");
+  assert.strictEqual(kept.length, 1, 'a second boot keeps the row');
+  assert.strictEqual(kept[0].detail, 'written by hand for this test');
+});
+
+test('an existing database gains the incident table without losing anything',
+  { skip: SKIP }, async () => {
+  await resetSchema(cfg);
+  await boot('inc-3');
+  await sql(cfg, "INSERT INTO chat_conversations (id, kind) VALUES ('c-inc', 'direct')");
+  await sql(cfg, "INSERT INTO chat_messages (id, conversation_id, body) VALUES ('m-inc', 'c-inc', 'said')");
+  await sql(cfg, 'DROP TABLE chat_file_incidents');
+
+  for (const pass of [1, 2]) {
+    await boot(`inc-4-${pass}`);
+    assert.ok((await columnsOf('chat_file_incidents')).includes('kind'),
+      `pass ${pass}: the table is there`);
+    const msg = await sql(cfg, "SELECT body FROM chat_messages WHERE id = 'm-inc'");
+    assert.strictEqual(msg[0].body, 'said', `pass ${pass}: and the conversation is untouched`);
+  }
+});
+
 test('the repair moves a mangled expiry later, and never earlier', { skip: SKIP }, async () => {
   await resetSchema(cfg);
   await boot('mig-3a');
