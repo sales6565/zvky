@@ -3308,6 +3308,7 @@ async function ensureChatSettings(db, log) {
       -- replies off the quotes already filed still render.
       replies_enabled      TINYINT(1) NOT NULL DEFAULT 1,
       emoji_picker_enabled TINYINT(1) NOT NULL DEFAULT 1,
+      group_admins_enabled TINYINT(1) NOT NULL DEFAULT 1,
       updated_by        CHAR(36)  NULL,
       updated_at        DATETIME  NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )`));
@@ -3322,6 +3323,10 @@ async function ensureChatSettings(db, log) {
       'how long a chat attachment is kept, in hours'],
     ['replies_enabled', 'TINYINT(1) NOT NULL DEFAULT 1', 'chat replies, on'],
     ['emoji_picker_enabled', 'TINYINT(1) NOT NULL DEFAULT 1', 'the chat emoji picker, on'],
+    /* GROUP ADMINS, ON. Off means an admin acts as an ordinary member while
+       their stored role is kept, so the switch is reversible without anybody
+       having to remember who was an admin. */
+    ['group_admins_enabled', 'TINYINT(1) NOT NULL DEFAULT 1', 'chat group admins, on'],
   ]) {
     const { rows: have } = await db.query(
       `SELECT 1 AS present FROM information_schema.COLUMNS
@@ -3898,6 +3903,21 @@ async function ensureChat(db, log) {
       user_id         CHAR(36)   NOT NULL,
       seq             BIGINT     NOT NULL AUTO_INCREMENT UNIQUE,
       is_owner        TINYINT(1) NOT NULL DEFAULT 0,
+      /* THE GROUP ROLE: 'owner' | 'admin' | 'member'.
+       *
+       * ADDED BESIDE is_owner RATHER THAN REPLACING IT, and that is a decision
+       * worth recording. is_owner is read by a dozen queries and is what the
+       * member list is ORDERED BY; dropping it would be a rewrite of working
+       * code in a production table for tidiness. So ownership is stored twice,
+       * in lockstep, and ONE function writes both (see setGroupRole in
+       * src/chat.js) — nothing else may set either. A test asserts the two
+       * never disagree, because a pair of columns that can drift is a bug
+       * waiting for its first week in production.
+       *
+       * DIRECT CONVERSATIONS HAVE NO ROLES. Their rows carry the default and
+       * nothing ever reads it: one-to-one chats have no owner, no admins, and
+       * the endpoint refuses them outright. */
+      group_role      VARCHAR(16) NOT NULL DEFAULT 'member',
       joined_at       DATETIME   NOT NULL DEFAULT CURRENT_TIMESTAMP,
       last_read_seq   BIGINT     NOT NULL DEFAULT 0,
       /* How far this person's CLIENT has been handed, which is not how far
@@ -3908,6 +3928,32 @@ async function ensureChat(db, log) {
       PRIMARY KEY (conversation_id, user_id),
       KEY idx_chat_members_user (user_id)
     )`));
+
+  /* AND ON A DATABASE THAT ALREADY HAS THE TABLE, the column is added and
+     backfilled from is_owner — the only place ownership has lived until now.
+     
+     IDEMPOTENT IN BOTH HALVES: the ALTER is attempted only when
+     information_schema says the column is absent, and the backfill only
+     touches rows that disagree with is_owner, so a second boot writes nothing.
+     Nobody's membership, read position or message is touched. */
+  const { rows: roleCol } = await db.query(
+    `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'chat_members'
+        AND COLUMN_NAME = 'group_role'`
+  ).catch(() => ({ rows: [] }));
+  if (!roleCol.length) {
+    await db.query(
+      "ALTER TABLE chat_members ADD COLUMN group_role VARCHAR(16) NOT NULL DEFAULT 'member' AFTER is_owner"
+    ).catch((err) => log(`Schema: chat_members.group_role could not be added (${err.code}).`));
+    log('Schema: added chat_members.group_role — owner, admin or member within a group.');
+  }
+  const { result: backfilled } = await db.query(
+    `UPDATE chat_members SET group_role = CASE WHEN is_owner = 1 THEN 'owner' ELSE 'member' END
+      WHERE group_role <> CASE WHEN is_owner = 1 THEN 'owner' ELSE 'member' END
+        AND group_role <> 'admin'`
+  ).catch(() => ({ result: null }));
+  const moved = Number((backfilled && backfilled.affectedRows) || 0);
+  if (moved) log(`Schema: set group_role on ${moved} chat member row(s) from is_owner.`);
 
   /* WHEN A CHAT FILE WENT MISSING, OR A SWEEP REFUSED TO RUN.
    *

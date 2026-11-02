@@ -58,12 +58,17 @@ const MAX_ATTACHMENT_HOURS = 720;
    the picker and not about emoji. */
 const DEFAULT_REPLIES = true;
 const DEFAULT_EMOJI_PICKER = true;
+/* GROUP ADMINS, ON by default and reversible. Off hides and refuses the admin
+   actions and makes every admin act as an ordinary member; the roles stay in
+   the table, so switching it back on restores them exactly. */
+const DEFAULT_GROUP_ADMINS = true;
 
 let cache = {
   maxGroupMembers: DEFAULT_MAX_GROUP_MEMBERS,
   attachmentHours: DEFAULT_ATTACHMENT_HOURS,
   repliesEnabled: DEFAULT_REPLIES,
   emojiPickerEnabled: DEFAULT_EMOJI_PICKER,
+  groupAdminsEnabled: DEFAULT_GROUP_ADMINS,
   updatedBy: null,
   updatedAt: null,
 };
@@ -76,6 +81,7 @@ async function load(db) {
      over three columns it does not have. */
   const wide = `SELECT c.max_group_members AS n, c.attachment_hours AS hours,
             c.replies_enabled AS replies, c.emoji_picker_enabled AS picker,
+            c.group_admins_enabled AS groupAdmins,
             c.updated_by AS by_id, c.updated_at AS at, u.name AS by_name
        FROM chat_settings c
        LEFT JOIN users u ON u.id = c.updated_by
@@ -105,6 +111,7 @@ async function load(db) {
       && hours <= MAX_ATTACHMENT_HOURS ? hours : DEFAULT_ATTACHMENT_HOURS,
     repliesEnabled: row ? bool(row.replies, DEFAULT_REPLIES) : DEFAULT_REPLIES,
     emojiPickerEnabled: row ? bool(row.picker, DEFAULT_EMOJI_PICKER) : DEFAULT_EMOJI_PICKER,
+    groupAdminsEnabled: row ? bool(row.groupAdmins, DEFAULT_GROUP_ADMINS) : DEFAULT_GROUP_ADMINS,
     /* A row with NULL in the column is a studio that chose Unlimited. NO row at
        all is a deployment that has not migrated yet, which keeps the number the
        constant always held — the two are different answers and the difference
@@ -129,6 +136,7 @@ const maxGroupMembers = () => cache.maxGroupMembers;
 const attachmentRetentionHours = () => cache.attachmentHours;
 const repliesEnabled = () => cache.repliesEnabled;
 const emojiPickerEnabled = () => cache.emojiPickerEnabled;
+const groupAdminsEnabled = () => cache.groupAdminsEnabled;
 
 /* WHAT A RETENTION MAY BE, as its own validator so the message says which end
  * was wrong. Whole hours only: a retention of 1.5 would have to be stored as
@@ -178,14 +186,17 @@ async function saveAttachmentPolicy(db, input, userId) {
   const bit = (value, fallback) => (value === undefined ? (fallback ? 1 : 0)
     : (value === true || value === 'true' || value === 1 || value === '1' ? 1 : 0));
   await db.query(
-    `INSERT INTO chat_settings (id, attachment_hours, replies_enabled, emoji_picker_enabled, updated_by)
-     VALUES (1, $1, $2, $3, $4)
+    `INSERT INTO chat_settings (id, attachment_hours, replies_enabled, emoji_picker_enabled,
+       group_admins_enabled, updated_by)
+     VALUES (1, $1, $2, $3, $4, $5)
      ON DUPLICATE KEY UPDATE attachment_hours = VALUES(attachment_hours),
                              replies_enabled = VALUES(replies_enabled),
                              emoji_picker_enabled = VALUES(emoji_picker_enabled),
+                             group_admins_enabled = VALUES(group_admins_enabled),
                              updated_by = VALUES(updated_by)`,
     [checked.value, bit(input.repliesEnabled, cache.repliesEnabled),
-      bit(input.emojiPickerEnabled, cache.emojiPickerEnabled), userId || null]
+      bit(input.emojiPickerEnabled, cache.emojiPickerEnabled),
+      bit(input.groupAdminsEnabled, cache.groupAdminsEnabled), userId || null]
   );
   await load(db);
   return { ok: true, before, settings: current() };
@@ -197,6 +208,7 @@ const describeAttachmentPolicy = (s) => [
   `attachments kept ${s.attachmentHours} hour${s.attachmentHours === 1 ? '' : 's'}`,
   `replies ${s.repliesEnabled ? 'on' : 'off'}`,
   `emoji picker ${s.emojiPickerEnabled ? 'on' : 'off'}`,
+  `group admins ${s.groupAdminsEnabled ? 'on' : 'off'}`,
 ].join('; ');
 const isUnlimited = () => cache.maxGroupMembers === null;
 
@@ -223,6 +235,7 @@ function current() {
     attachmentHours: cache.attachmentHours,
     repliesEnabled: cache.repliesEnabled,
     emojiPickerEnabled: cache.emojiPickerEnabled,
+    groupAdminsEnabled: cache.groupAdminsEnabled,
     attachmentHoursBounds: { min: MIN_ATTACHMENT_HOURS, max: MAX_ATTACHMENT_HOURS },
     updatedBy: cache.updatedBy,
     updatedByName: cache.updatedByName || null,
@@ -232,6 +245,7 @@ function current() {
       attachmentHours: DEFAULT_ATTACHMENT_HOURS,
       repliesEnabled: DEFAULT_REPLIES,
       emojiPickerEnabled: DEFAULT_EMOJI_PICKER,
+      groupAdminsEnabled: DEFAULT_GROUP_ADMINS,
     },
     comfortableMax: COMFORTABLE_MAX,
   };
@@ -289,9 +303,9 @@ const describe = (limit) => (limit === null || limit === undefined ? 'unlimited'
 module.exports = {
   DEFAULT_MAX_GROUP_MEMBERS, COMFORTABLE_MAX,
   DEFAULT_ATTACHMENT_HOURS, MIN_ATTACHMENT_HOURS, MAX_ATTACHMENT_HOURS,
-  DEFAULT_REPLIES, DEFAULT_EMOJI_PICKER,
+  DEFAULT_REPLIES, DEFAULT_EMOJI_PICKER, DEFAULT_GROUP_ADMINS,
   load, isLoaded, current, maxGroupMembers, isUnlimited, roomFor, remaining,
   validate, save, describe,
-  attachmentRetentionHours, repliesEnabled, emojiPickerEnabled,
+  attachmentRetentionHours, repliesEnabled, emojiPickerEnabled, groupAdminsEnabled,
   validateRetention, saveAttachmentPolicy, describeAttachmentPolicy,
 };

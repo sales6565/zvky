@@ -22,6 +22,17 @@ const boot = async (token) => {
   const server = await startServer(cfg, { BOOTSTRAP_TOKEN: token, CHAT_SWEEP_MINUTES: '0' });
   stopServer(server);
 };
+/* THREE PEOPLE WITH REAL ROWS. chat_members has a foreign key on user_id, so a
+   fixture membership needs a user to point at — which is worth knowing: a test
+   that invents an id gets ER_NO_REFERENCED_ROW_2 rather than a wrong answer. */
+const people = async () => {
+  for (const [id, name] of [['u-ana', 'Ana'], ['u-bo', 'Bo'], ['u-cas', 'Cas']]) {
+    await sql(cfg,
+      'INSERT IGNORE INTO users (id, `name`, email, password_hash, role) VALUES (?,?,?,?,?)',
+      [id, name, `${id}@mig.test`, 'x', 'game_artist']);
+  }
+};
+
 const columnsOf = async (table) =>
   (await sql(cfg, `SHOW COLUMNS FROM \`${table}\``)).map((r) => r.Field);
 
@@ -151,6 +162,121 @@ test('an existing database gains the incident table without losing anything',
     const msg = await sql(cfg, "SELECT body FROM chat_messages WHERE id = 'm-inc'");
     assert.strictEqual(msg[0].body, 'said', `pass ${pass}: and the conversation is untouched`);
   }
+});
+
+test('the group role column arrives, backfills from is_owner, and a second boot is a no-op',
+  { skip: SKIP }, async () => {
+  /* PROMPT 60'S MIGRATION. Ownership has lived in chat_members.is_owner since
+     chat was built; group_role is added beside it and backfilled from it. The
+     two then say the same thing in two shapes, in lockstep, which is a decision
+     recorded on the schema and asserted here: a pair of columns that can drift
+     is a bug waiting for its first week in production. */
+  await resetSchema(cfg);
+  await boot('role-1');
+
+  const cols = await columnsOf('chat_members');
+  assert.ok(cols.includes('group_role'), 'chat_members.group_role');
+  assert.ok(cols.includes('is_owner'), 'and is_owner is still there — nothing was dropped');
+  const col = (await sql(cfg,
+    `SELECT COLUMN_TYPE AS t, IS_NULLABLE AS n, COLUMN_DEFAULT AS d
+       FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'chat_members'
+        AND COLUMN_NAME = 'group_role'`))[0];
+  assert.match(String(col.t), /varchar\(16\)/i);
+  assert.strictEqual(String(col.n).toUpperCase(), 'NO', 'never NULL: an absent role is a member');
+  /* MariaDB quotes a string default in information_schema; MySQL does not. */
+  assert.strictEqual(String(col.d).replace(/^'|'$/g, ''), 'member',
+    'and the default is the role with no powers');
+
+  await boot('role-1b');
+  assert.ok((await columnsOf('chat_members')).includes('group_role'), 'a second boot is a no-op');
+});
+
+test('an existing database with groups keeps every member and gains the roles',
+  { skip: SKIP }, async () => {
+  await resetSchema(cfg);
+  await boot('role-2');
+
+  /* THE SHAPE BEFORE THIS PROMPT: the column taken back out, so what is tested
+     is the migration and not a reconstructed schema that could be wrong in its
+     own ways. */
+  await sql(cfg, 'ALTER TABLE chat_members DROP COLUMN group_role');
+  await people();
+  await sql(cfg, "INSERT INTO chat_conversations (id, kind, title, created_by) "
+    + "VALUES ('g-owned', 'group', 'Has an owner', 'u-ana'), "
+    + "('g-ownerless', 'group', 'Lost its owner', 'u-ana'), "
+    + "('d-pair', 'direct', NULL, 'u-ana')");
+  /* A group with an owner, a group whose owner has gone (which this
+     application can produce: see the README on owner departure), and a
+     one-to-one, which has no roles at all. */
+  await sql(cfg, `INSERT INTO chat_members (conversation_id, user_id, is_owner) VALUES
+    ('g-owned', 'u-ana', 1), ('g-owned', 'u-bo', 0), ('g-owned', 'u-cas', 0),
+    ('g-ownerless', 'u-bo', 0), ('g-ownerless', 'u-cas', 0),
+    ('d-pair', 'u-ana', 0), ('d-pair', 'u-bo', 0)`);
+  const before = Number((await sql(cfg, 'SELECT COUNT(*) AS n FROM chat_members'))[0].n);
+
+  for (const pass of [1, 2]) {
+    await boot(`role-3-${pass}`);
+    const rows = await sql(cfg,
+      'SELECT conversation_id AS c, user_id AS u, is_owner AS o, group_role AS r '
+      + 'FROM chat_members ORDER BY conversation_id, user_id');
+    assert.strictEqual(rows.length, before, `pass ${pass}: not one membership was lost`);
+    const role = (c, u) => (rows.find((x) => x.c === c && x.u === u) || {}).r;
+    assert.strictEqual(role('g-owned', 'u-ana'), 'owner', `pass ${pass}: is_owner became 'owner'`);
+    assert.strictEqual(role('g-owned', 'u-bo'), 'member', `pass ${pass}: everybody else is a member`);
+    assert.strictEqual(role('g-ownerless', 'u-bo'), 'member',
+      `pass ${pass}: a group with no owner gains no owner from this`);
+    assert.strictEqual(role('d-pair', 'u-ana'), 'member',
+      `pass ${pass}: a one-to-one has no roles — the rows carry the default and nothing reads it`);
+    for (const row of rows) {
+      assert.strictEqual(Number(row.o) === 1, row.r === 'owner',
+        `pass ${pass}: is_owner and group_role agree for ${row.u} in ${row.c}`);
+    }
+  }
+});
+
+test('an admin already in the table is not demoted by the backfill', { skip: SKIP }, async () => {
+  /* THE SECOND-RUN CASE WITH SOMETHING TO LOSE. Once a studio has admins, a
+     backfill that read "not the owner, therefore member" would wipe them on the
+     next deploy. It is written to leave 'admin' alone, and this is the case
+     that would catch it — found by asking what the second boot does rather than
+     whether it errors. */
+  await resetSchema(cfg);
+  await boot('role-4');
+  await people();
+  await sql(cfg, "INSERT INTO chat_conversations (id, kind, title) VALUES ('g-adm', 'group', 'Admins')");
+  await sql(cfg, `INSERT INTO chat_members (conversation_id, user_id, is_owner, group_role) VALUES
+    ('g-adm', 'u-ana', 1, 'owner'), ('g-adm', 'u-bo', 0, 'admin'), ('g-adm', 'u-cas', 0, 'member')`);
+
+  await boot('role-5');
+  const rows = await sql(cfg,
+    "SELECT user_id AS u, group_role AS r FROM chat_members WHERE conversation_id = 'g-adm' ORDER BY user_id");
+  assert.deepStrictEqual(rows.map((x) => [x.u, x.r]),
+    [['u-ana', 'owner'], ['u-bo', 'admin'], ['u-cas', 'member']],
+    'the admin is still an admin after another migration run');
+});
+
+test('the group admins switch arrives on, and keeps whatever it was told',
+  { skip: SKIP }, async () => {
+  await resetSchema(cfg);
+  await boot('role-6');
+  const fresh = (await sql(cfg, 'SELECT group_admins_enabled AS g FROM chat_settings WHERE id = 1'))[0];
+  assert.strictEqual(Number(fresh.g), 1, 'on by default');
+
+  /* Switched off by hand, then migrated again: a boot must not switch a
+     studio's choice back on. */
+  await sql(cfg, 'UPDATE chat_settings SET group_admins_enabled = 0 WHERE id = 1');
+  await boot('role-7');
+  assert.strictEqual(Number((await sql(cfg,
+    'SELECT group_admins_enabled AS g FROM chat_settings WHERE id = 1'))[0].g), 0,
+  'and a migration does not change it back');
+
+  /* AND ON A DATABASE THAT PREDATES THE COLUMN. */
+  await sql(cfg, 'ALTER TABLE chat_settings DROP COLUMN group_admins_enabled');
+  await boot('role-8');
+  assert.strictEqual(Number((await sql(cfg,
+    'SELECT group_admins_enabled AS g FROM chat_settings WHERE id = 1'))[0].g), 1,
+  'the column is added with the default');
 });
 
 test('the repair moves a mangled expiry later, and never earlier', { skip: SKIP }, async () => {

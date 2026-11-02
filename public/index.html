@@ -711,6 +711,12 @@ button.chat-status:focus-visible{outline:2px solid var(--focus-ring);outline-off
 /* HOW LONG A CHAT FILE HAS LEFT. Quiet — it is a fact about the file, not a
    warning about it, and a countdown in the accent colour on every picture in a
    conversation would read as a page full of alarms. */
+/* THE ROLE BADGES in a group's member list. Words, not colours: this list is
+   read on a phone in a dark room as often as on a desk, and "admin" has to
+   survive that. The admin one is emphasised because it is the one that is new
+   and the one somebody is looking for. */
+.chat-badge{text-transform:uppercase;letter-spacing:.04em;font-size:10px;}
+.chat-badge-admin{font-weight:700;}
 /* THE STORAGE HEALTH PANEL in Settings → Chat. A table of facts, so it reads
    as a report rather than as more settings — nothing in it is editable. */
 .cs-health{margin-top:6px;display:grid;gap:4px;font-size:12px;}
@@ -19792,6 +19798,14 @@ async function renderChatPolicy(){
         <span class="rh-opt">The emoji button in the message box. Switching it off hides the button
           only &mdash; typed and pasted emoji go on working either way.</span>
       </div>
+      <div class="ref-note">
+        <label class="rh-check"><input type="checkbox" id="cp_group_admins"${s.groupAdminsEnabled?' checked':''}>
+          Chat group admins</label>
+        <span class="rh-opt">Lets the owner of a group make other members admins, who can then add
+          members, remove ordinary members and rename the group &mdash; and nothing else. Switching
+          it off makes every admin act as an ordinary member and hides the action; their roles are
+          kept, so switching it back on restores them exactly.</span>
+      </div>
       ${chatStorageHealthHTML(d.storage)}
     </div>`;
 
@@ -19807,6 +19821,7 @@ async function renderChatPolicy(){
       attachmentHours: hours.value,
       repliesEnabled: document.getElementById('cp_replies').checked,
       emojiPickerEnabled: document.getElementById('cp_emoji').checked,
+      groupAdminsEnabled: document.getElementById('cp_group_admins').checked,
     };
     cpState.busy = true;
     try{
@@ -23410,6 +23425,21 @@ async function pollChat(){
        moves the list. Refreshing the whole list on every message would reorder
        the panel under somebody's cursor while they were reading. */
     const mine = res.fresh.filter(m=>m.conversationId === chatState.conversationId);
+    /* A SYSTEM LINE MEANS THE GROUP ITSELF CHANGED, so whoever is looking at
+       the members panel is looking at something out of date: somebody was made
+       an admin, added, removed, or the group was renamed. Re-read on the
+       existing poll rather than adding a second timer — this is the one tick
+       chat already has, and a promotion shows up for everybody on it.
+       
+       Only in the manage view, and only for the open conversation: the thread
+       appends the line itself below, and a member list nobody is looking at is
+       not worth a request every few seconds. */
+    if(chatState.open && chatState.view === 'manage'
+       && mine.some(m => m.kind === 'system')){
+      refreshChatConversation().then(()=>{
+        if(chatState.view === 'manage') renderChat();
+      }).catch(()=>{});
+    }
     if(chatState.open && chatState.view === 'thread' && mine.length){
       const known = new Set(chatState.messages.map(m=>m.id));
       const add = mine.filter(m=>!known.has(m.id));
@@ -24937,7 +24967,7 @@ function renderChatManage(head, body, foot){
     : Math.max(0, chatState.maxMembers - (conv.memberCount || 0));
   const others = chatPeopleMatching().filter(p=>!inIt.has(p.id));
   body.innerHTML = `
-    ${conv.isOwner ? `<div class="chat-form">
+    ${groupMemberCan(chatMyGroupRole(), 'rename') ? `<div class="chat-form">
       <input class="chat-search" id="chatRename" value="${escapeHTML(conv.title||'')}" maxlength="120">
       <button class="btn btn-sm btn-ghost" id="chatRenameGo">Rename group</button>
     </div>` : ''}
@@ -24946,14 +24976,22 @@ function renderChatManage(head, body, foot){
         ? `${conv.memberCount} members`
         : `${conv.memberCount} of ${chatState.maxMembers} members${room > 0 ? ` — room for ${room} more` : ' — full'}`}
     </div></div>
-    ${(conv.members||[]).map(m=>`
-      <div class="chat-person">
+    ${(conv.members||[]).map(m=>{
+      /* WHAT THIS VIEWER MAY DO TO THIS PERSON, from the shared function and
+         nothing else. An action the viewer cannot perform is not drawn — see
+         chatRowActions for why hiding beats disabling here. */
+      const act = chatRowActions(m);
+      return `
+      <div class="chat-person" data-member="${escapeHTML(m.id)}">
         ${avatarHTML({ id:m.id, name:m.name, photoAt:m.photoUpdatedAt }, { size:30, title:false })}
-        <div class="body"><div class="nm">${escapeHTML(m.name)}${m.isOwner?' <span class="chat-sub">owner</span>':''}</div>
+        <div class="body"><div class="nm">${escapeHTML(m.name)}${chatRoleBadge(m)}</div>
           <div class="rl">${escapeHTML(roleInfo(m.role).label)}</div></div>
-        ${(conv.isOwner && !m.isOwner) ? `<button class="u-link chat-danger" data-remove="${escapeHTML(m.id)}">Remove</button>` : ''}
-      </div>`).join('')}
-    ${(conv.isOwner && room > 0) ? `<div class="chat-form">
+        ${act.promote ? `<button class="u-link" data-make-admin="${escapeHTML(m.id)}">Make admin</button>` : ''}
+        ${act.demote ? `<button class="u-link" data-drop-admin="${escapeHTML(m.id)}">Remove admin</button>` : ''}
+        ${act.remove ? `<button class="u-link chat-danger" data-remove="${escapeHTML(m.id)}">Remove</button>` : ''}
+      </div>`;
+    }).join('')}
+    ${(groupMemberCan(chatMyGroupRole(), 'add_member') && room > 0) ? `<div class="chat-form">
       <div class="chat-sub">Add people</div>
       <input class="chat-search" id="chatSearch" placeholder="Search people…" value="${escapeHTML(chatState.search)}">
     </div>
@@ -24965,6 +25003,143 @@ function renderChatManage(head, body, foot){
         <span class="u-link">Add</span>
       </button>`).join('')}` : ''}
     <div class="chat-form"><button class="btn btn-sm btn-ghost chat-danger" id="chatLeave">Leave group</button></div>`;
+}
+
+/* ---------- who may do what in a group ----------
+ *
+ * ===========================================================================
+ * THE FUNCTION BELOW IS A VERBATIM COPY of the one in src/chat-group-roles.js,
+ * markers and all. There is no build step in this application — this file is
+ * served exactly as it is written — and the page has to hide what the server
+ * will refuse, so the rule exists in two places by necessity.
+ *
+ * tests/chat-group-roles.test.js slices both files between the two markers and
+ * compares them CHARACTER FOR CHARACTER. Change one without the other and the
+ * suite fails, which is the only way two copies of a rule stay one rule.
+ *
+ * THE PAGE NEVER DECIDES ANYTHING ELSE. It does not consult a Forge
+ * designation, it does not special-case the Super Admin, and it does not read
+ * the switch here: the server has already run every role through the switch
+ * before sending it, so `conv.myRole` and each member's `groupRole` are what
+ * they are TODAY. */
+
+// --8<-- groupMemberCan --8<--
+function groupMemberCan(role, action, targetRole) {
+  /* Anybody who is not in the group decides nothing. membership is checked
+     before this is ever called; this is the second latch. */
+  if (role !== 'owner' && role !== 'admin' && role !== 'member') return false;
+  switch (action) {
+    /* HANDING OUT THE ROLE IS THE OWNER'S ALONE, and that is the whole point of
+       there being an owner at all. An admin who could promote could build a
+       majority; an admin who could demote could remove the only person able to
+       stop them. */
+    case 'promote':
+    case 'demote':
+      return role === 'owner';
+    /* ADDING IS THE DELEGATED JOB people actually asked for. Whoever is added
+       arrives as an ordinary member whichever of the two did the adding. */
+    case 'add_member':
+      return role === 'owner' || role === 'admin';
+    /* REMOVING DEPENDS ON WHO. The owner can remove anybody but themselves
+       (Leave group is how an owner goes). An admin can remove ordinary members
+       only: not the owner, and not another admin — two admins who could remove
+       each other is a race, not a hierarchy. */
+    case 'remove_member':
+      if (targetRole === 'owner') return false;
+      if (role === 'owner') return true;
+      if (role === 'admin') return targetRole === 'member';
+      return false;
+    /* THE GROUP'S NAME AND DETAILS. One action in the vocabulary for each, so a
+       future group description or icon has a name here already; today they are
+       the same field and the same answer. */
+    case 'rename':
+    case 'edit_details':
+      return role === 'owner' || role === 'admin';
+    /* NOBODY DELETES A GROUP, including the owner, because there is no such
+       thing in this application: a group ends when the last person leaves it
+       (see leave() in src/chat.js). The action is in the vocabulary so the
+       answer is written down rather than missing, and so that a mutation that
+       hands it to an admin has something to fail against. */
+    case 'delete_group':
+      return false;
+    default:
+      return false;
+  }
+}
+// --8<-- end --8<--
+
+/* THE TWO SENTENCES THAT DESCRIBE THE ROLE, copied from the same module
+   (ADMIN_CAN and ADMIN_CANNOT in src/chat-group-roles.js) so the modal, the
+   system line and the README cannot come to describe an admin differently. */
+const CHAT_ADMIN_CAN = 'add members, remove ordinary members, and rename the group';
+const CHAT_ADMIN_CANNOT = 'remove or demote the owner or other admins, make anybody else an admin, '
+  + 'or delete the group';
+
+/* The viewer's role in the conversation on screen, as the server resolved it. */
+const chatMyGroupRole = () => String((chatState.conversation || {}).myRole || 'member');
+
+/* WHAT A MEMBER ROW IS ALLOWED TO OFFER, for one target.
+ *
+ * Hidden rather than shown-and-refused: a Remove button on another admin that
+ * answers 403 teaches somebody that the screen lies to them. The server checks
+ * all of it again regardless — this is what is drawn, not what is allowed. */
+function chatRowActions(member){
+  const me = chatMyGroupRole();
+  const target = String(member.groupRole || 'member');
+  const admins = !!(chatState.features && chatState.features.groupAdmins);
+  return {
+    remove: groupMemberCan(me, 'remove_member', target),
+    /* PROMOTE AND DEMOTE ARE THE OWNER'S, and only while the studio has the
+       feature on. The owner's own row offers neither: there is nothing to
+       change about being the owner. */
+    promote: admins && target === 'member' && groupMemberCan(me, 'promote'),
+    demote: admins && target === 'admin' && groupMemberCan(me, 'demote'),
+  };
+}
+
+/* The badge beside a name. The owner's has always been there in words; admins
+   get one of their own, and both are plain text rather than a colour, because
+   the members list is read on a phone in a dark room as often as not. */
+function chatRoleBadge(member){
+  const role = String(member.groupRole || 'member');
+  if(role === 'owner') return ' <span class="chat-sub chat-badge">owner</span>';
+  if(role === 'admin' && chatState.features && chatState.features.groupAdmins){
+    return ' <span class="chat-sub chat-badge chat-badge-admin">admin</span>';
+  }
+  return '';
+}
+
+/* MAKING SOMEBODY AN ADMIN, FROM THE OWNER'S SCREEN.
+ *
+ * The confirmation says what the person will be able to do AND what they will
+ * not, because "admin" means something different in every application anybody
+ * has used, and the two lists are the only honest way to say which one this is.
+ * Both sentences come from the shared module, so the modal, the README and the
+ * server cannot describe the role differently. */
+async function chatSetMemberRole(userId, role){
+  const conv = chatState.conversation || {};
+  const member = (conv.members || []).find(m => m.id === userId) || {};
+  const who = member.name || 'this person';
+  const ask = role === 'admin'
+    ? { title: `Make ${who} an admin?`,
+        message: `They will be able to ${CHAT_ADMIN_CAN}. They will not be able to `
+          + `${CHAT_ADMIN_CANNOT}. You can remove this at any time.`,
+        confirmLabel: 'Make admin' }
+    : { title: `Remove ${who} as admin?`,
+        message: 'They stay in the group as an ordinary member and keep every message. '
+          + 'You can make them an admin again later.',
+        confirmLabel: 'Remove admin', danger: true };
+  if(!await askConfirm(ask)) return;
+  try{
+    await api(`/chat/groups/${encodeURIComponent(chatState.conversationId)}/members/${encodeURIComponent(userId)}`,
+      { method:'PATCH', body:{ role } });
+    /* Read back rather than patched in place: the member list, the badges and
+       the actions all come from the server's answer, so there is one shape of
+       truth on this screen. */
+    await refreshChatConversation();
+    renderChat();
+    showToast(role === 'admin' ? `${who} is now an admin.` : `${who} is no longer an admin.`);
+  }catch(err){ showToast(err.message); }
 }
 
 /* ---- actions ---------------------------------------------------------------- */
@@ -25227,6 +25402,13 @@ document.addEventListener('click', async e=>{
     }catch(err){ showToast(err.message); }
     return;
   }
+  /* THE TWO ROLE ACTIONS, before Remove so a row carrying both is read
+     correctly — closest() walks up from the button that was clicked, so the
+     order here is only about which selector is tried first. */
+  const mk = e.target.closest('[data-make-admin]');
+  if(mk){ await chatSetMemberRole(mk.dataset.makeAdmin, 'admin'); chatState.view = 'manage'; renderChat(); return; }
+  const dr = e.target.closest('[data-drop-admin]');
+  if(dr){ await chatSetMemberRole(dr.dataset.dropAdmin, 'member'); chatState.view = 'manage'; renderChat(); return; }
   const rm = e.target.closest('[data-remove]');
   if(rm){
     try{

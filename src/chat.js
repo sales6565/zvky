@@ -48,6 +48,36 @@ const MAX_TITLE = 120;
 
 const KINDS = { direct: 'direct', group: 'group' };
 
+/* THE GROUP ROLES, and the one function that decides what each may do. Shared
+   verbatim with the page — see src/chat-group-roles.js. */
+const groupRoles = require('./chat-group-roles');
+const { ROLES, groupMemberCan, effectiveRole } = groupRoles;
+
+/* Anything that is not a role this application knows is a member. A column
+   value from a hand-edited row, or NULL from a deployment whose ALTER has not
+   applied, must not become a power. */
+const normaliseRole = (value) => {
+  const role = String(value == null ? '' : value);
+  return role === ROLES.owner || role === ROLES.admin ? role : ROLES.member;
+};
+
+/* THE ONE PLACE EITHER OWNERSHIP COLUMN IS WRITTEN.
+ *
+ * is_owner and group_role say the same thing in two shapes, for the reason
+ * recorded on the schema: is_owner is older, is read by a dozen queries and is
+ * what the member list is ordered by, so it stays — and a pair of columns that
+ * can drift is a bug waiting for its first week in production. Every write of
+ * either goes through here, and tests/chat-group-admins.test.js asserts they
+ * never disagree. */
+async function setGroupRole(conn, conversationId, userId, role) {
+  const value = normaliseRole(role);
+  await conn.query(
+    'UPDATE chat_members SET group_role = $1, is_owner = $2 WHERE conversation_id = $3 AND user_id = $4',
+    [value, value === ROLES.owner ? 1 : 0, conversationId, userId]
+  );
+  return value;
+}
+
 const unavailable = (err) => err && (err.code === 'ER_NO_SUCH_TABLE' || /doesn't exist/i.test(err.message || ''));
 
 /* The identity of a one-to-one conversation.
@@ -86,15 +116,62 @@ const codePoints = (v) => [...String(v == null ? '' : v)].length;
 async function membership(db, conversationId, userId) {
   const { rows } = await db.query(
     `SELECT m.conversation_id AS conversationId, m.user_id AS userId, m.is_owner AS isOwner,
+            m.group_role AS groupRole,
             m.last_read_seq AS lastReadSeq, c.kind, c.title, c.created_by AS createdBy
        FROM chat_members m
        JOIN chat_conversations c ON c.id = m.conversation_id
       WHERE m.conversation_id = $1 AND m.user_id = $2`,
     [conversationId, userId]
-  );
+  ).catch(async (err) => {
+    /* A DEPLOYMENT WHOSE ALTER HAS NOT APPLIED still reads its seat. A refused
+       ALTER is an ordinary outcome on shared hosting, and losing the membership
+       check over a column that is only about admins would take chat down
+       entirely. The role falls back to what is_owner says. */
+    if (!err || err.code !== 'ER_BAD_FIELD_ERROR') throw err;
+    return db.query(
+      `SELECT m.conversation_id AS conversationId, m.user_id AS userId, m.is_owner AS isOwner,
+              NULL AS groupRole,
+              m.last_read_seq AS lastReadSeq, c.kind, c.title, c.created_by AS createdBy
+         FROM chat_members m
+         JOIN chat_conversations c ON c.id = m.conversation_id
+        WHERE m.conversation_id = $1 AND m.user_id = $2`,
+      [conversationId, userId]
+    );
+  });
   if (!rows.length) return null;
   const r = rows[0];
-  return { ...r, isOwner: Boolean(Number(r.isOwner)), lastReadSeq: Number(r.lastReadSeq) || 0 };
+  const isOwner = Boolean(Number(r.isOwner));
+  return {
+    ...r,
+    isOwner,
+    /* THE STORED ROLE, and the owner's is never in doubt: is_owner is the older
+       of the two columns and the one every other query orders by, so where they
+       could disagree it wins. See the schema note on chat_members.group_role. */
+    groupRole: isOwner ? ROLES.owner : normaliseRole(r.groupRole),
+    lastReadSeq: Number(r.lastReadSeq) || 0,
+  };
+}
+
+/* ONE PERSON'S ROLE IN ONE GROUP, for a caller that needs to know before it
+   decides. Returns 'member' for somebody who is not in the group at all: the
+   route that asks this refuses them a moment later for not being there, and
+   answering 'owner' or 'admin' for a non-member would be the dangerous way to
+   be wrong. */
+async function memberRoleOf(db, conversationId, userId) {
+  const { rows } = await db.query(
+    'SELECT is_owner AS isOwner, group_role AS groupRole FROM chat_members '
+    + 'WHERE conversation_id = $1 AND user_id = $2',
+    [conversationId, userId]
+  ).catch(async (err) => {
+    if (!err || err.code !== 'ER_BAD_FIELD_ERROR') throw err;
+    return db.query(
+      'SELECT is_owner AS isOwner, NULL AS groupRole FROM chat_members '
+      + 'WHERE conversation_id = $1 AND user_id = $2',
+      [conversationId, userId]
+    );
+  });
+  if (!rows.length) return ROLES.member;
+  return Number(rows[0].isOwner) ? ROLES.owner : normaliseRole(rows[0].groupRole);
 }
 
 async function memberCount(db, conversationId) {
@@ -110,21 +187,48 @@ async function membersOf(db, conversationIds) {
   if (!list.length) return [];
   const { rows } = await db.query(
     `SELECT m.conversation_id AS conversationId, m.user_id AS userId, m.is_owner AS isOwner,
-            u.\`name\`, u.email, u.role, u.avatar_updated_at AS photoUpdatedAt
+            m.group_role AS groupRole,
+            u.\`name\`, u.email, u.role, u.is_active AS isActive,
+            u.avatar_updated_at AS photoUpdatedAt
        FROM chat_members m
        JOIN users u ON u.id = m.user_id
       WHERE m.conversation_id IN ($1)
-      ORDER BY m.is_owner DESC, m.seq ASC`,
+      /* OWNER FIRST, THEN ADMINS, THEN JOIN ORDER. is_owner leads because it
+         always has; group_role orders the admins above the members within what
+         is left, so the list reads as the hierarchy it now has. */
+      ORDER BY m.is_owner DESC, m.group_role = 'admin' DESC, m.seq ASC`,
     [list]
-  );
+  ).catch(async (err) => {
+    if (!err || err.code !== 'ER_BAD_FIELD_ERROR') throw err;
+    return db.query(
+      `SELECT m.conversation_id AS conversationId, m.user_id AS userId, m.is_owner AS isOwner,
+              NULL AS groupRole,
+              u.\`name\`, u.email, u.role, u.is_active AS isActive,
+              u.avatar_updated_at AS photoUpdatedAt
+         FROM chat_members m
+         JOIN users u ON u.id = m.user_id
+        WHERE m.conversation_id IN ($1)
+        ORDER BY m.is_owner DESC, m.seq ASC`,
+      [list]
+    );
+  });
   return rows.map((r) => ({
     conversationId: r.conversationId,
     id: r.userId,
     name: r.name,
     email: r.email,
+    /* u.role is the person's DESIGNATION in the studio — Game Artist, Team Lead
+       — and it is not the same thing as their role in this group, which is
+       groupRole. Two fields, deliberately both here, because the members panel
+       prints both and conflating them would put "Admin" where it means
+       "Production Manager". */
     role: r.role,
     photoUpdatedAt: r.photoUpdatedAt || null,
     isOwner: Boolean(Number(r.isOwner)),
+    groupRole: Boolean(Number(r.isOwner)) ? ROLES.owner : normaliseRole(r.groupRole),
+    /* Whether their Forge account is still active, so the page can say why an
+       owner is not answering — see the owner-departure note in the README. */
+    isActive: r.isActive === undefined || r.isActive === null ? true : Boolean(Number(r.isActive)),
   }));
 }
 
@@ -255,6 +359,9 @@ async function openDirect(db, meId, otherId) {
       [id, KINDS.direct, key, meId]
     );
     await conn.query(
+      /* A ONE-TO-ONE HAS NO OWNER AND NO ADMINS. Both rows take the column's
+         default, which nothing ever reads for a direct conversation — the
+         endpoint refuses them outright. */
       'INSERT INTO chat_members (conversation_id, user_id, is_owner) VALUES ($1,$2,0), ($1,$3,0)',
       [id, meId, otherId]
     );
@@ -310,9 +417,10 @@ async function createGroup(db, { title, ownerId, memberIds = [], ownerName = '' 
       [id, KINDS.group, name, ownerId]
     );
     for (const userId of wanted) {
+      const isTheOwner = String(userId) === String(ownerId);
       await conn.query(
-        'INSERT INTO chat_members (conversation_id, user_id, is_owner) VALUES ($1,$2,$3)',
-        [id, userId, String(userId) === String(ownerId) ? 1 : 0]
+        'INSERT INTO chat_members (conversation_id, user_id, is_owner, group_role) VALUES ($1,$2,$3,$4)',
+        [id, userId, isTheOwner ? 1 : 0, isTheOwner ? ROLES.owner : ROLES.member]
       );
     }
     await systemLine(conn, id, `${ownerName || 'Someone'} created “${name}”.`);
@@ -395,9 +503,13 @@ async function addMembers(db, conversationId, actor, userIds = []) {
   try {
     await conn.query('BEGIN');
     for (const row of real) {
+      /* ALWAYS AS A MEMBER, whoever did the adding. An admin who could add an
+         admin would be promoting without the owner, which is the one thing the
+         owner keeps. And somebody re-added after being removed comes back as a
+         member: the role went with the removal. */
       await conn.query(
-        'INSERT INTO chat_members (conversation_id, user_id, is_owner) VALUES ($1,$2,0)',
-        [conversationId, row.id]
+        'INSERT INTO chat_members (conversation_id, user_id, is_owner, group_role) VALUES ($1,$2,0,$3)',
+        [conversationId, row.id, ROLES.member]
       );
     }
     await systemLine(conn, conversationId,
@@ -417,12 +529,27 @@ async function removeMember(db, conversationId, actor, userId) {
     return { ok: false, status: 400, error: 'Use Leave group to take yourself out.' };
   }
   const { rows } = await db.query(
-    'SELECT m.is_owner AS isOwner, u.`name` FROM chat_members m JOIN users u ON u.id = m.user_id '
-    + 'WHERE m.conversation_id = $1 AND m.user_id = $2',
+    'SELECT m.is_owner AS isOwner, m.group_role AS groupRole, u.`name` FROM chat_members m '
+    + 'JOIN users u ON u.id = m.user_id WHERE m.conversation_id = $1 AND m.user_id = $2',
     [conversationId, userId]
-  );
+  ).catch(async (err) => {
+    if (!err || err.code !== 'ER_BAD_FIELD_ERROR') throw err;
+    return db.query(
+      'SELECT m.is_owner AS isOwner, NULL AS groupRole, u.`name` FROM chat_members m '
+      + 'JOIN users u ON u.id = m.user_id WHERE m.conversation_id = $1 AND m.user_id = $2',
+      [conversationId, userId]
+    );
+  });
   if (!rows.length) return { ok: false, status: 404, error: 'They are not in this group.' };
   if (Number(rows[0].isOwner)) return { ok: false, status: 400, error: 'The owner cannot be removed.' };
+  /* WHAT THEY WERE, handed back so the ROUTE can decide whether this caller was
+     allowed to remove somebody of that rank — an admin may remove ordinary
+     members only. The rule lives in groupMemberCan; this is the fact it needs.
+     
+     THE ROLE GOES WITH THE ROW. There is no second table to tidy: the DELETE
+     below takes the membership and the role together, which is why re-adding
+     somebody brings them back as a member. */
+  const targetRole = Number(rows[0].isOwner) ? ROLES.owner : normaliseRole(rows[0].groupRole);
 
   const conn = await db.connect();
   try {
@@ -431,13 +558,122 @@ async function removeMember(db, conversationId, actor, userId) {
       [conversationId, userId]);
     await systemLine(conn, conversationId, `${actor.name} removed ${rows[0].name}.`);
     await conn.query('COMMIT');
-    return { ok: true, removed: userId };
+    return { ok: true, removed: userId, wasRole: targetRole, name: rows[0].name };
   } catch (err) {
     await conn.query('ROLLBACK').catch(() => {});
     throw err;
   } finally {
     conn.release();
   }
+}
+
+/* MAKING SOMEBODY AN ADMIN, AND TAKING IT BACK.
+ *
+ * ===========================================================================
+ * THE OWNER'S ALONE, and this function does not decide that — the route asks
+ * groupMemberCan first, with the caller's effective role, and so does the page.
+ * What is here is everything else the change has to be true about:
+ *
+ *   it is a GROUP (a one-to-one has no roles at all);
+ *   the target is a CURRENT MEMBER of it;
+ *   the target is not the owner, and not the caller;
+ *   the new role is 'admin' or 'member' and nothing else — never 'owner',
+ *     because this feature must never move ownership;
+ *   and it is IDEMPOTENT: promoting somebody who is already an admin succeeds,
+ *     changes nothing, writes no system line and leaves nothing for the audit
+ *     log, because nothing happened. `changed` says which it was.
+ *
+ * ONE TRANSACTION, and the row is re-read inside it with FOR UPDATE. Two owners
+ * on two tabs pressing "Make admin" at the same moment is the ordinary way this
+ * gets raced; serialising on the membership row makes the second one the
+ * idempotent case rather than a second system line saying the same thing.
+ */
+async function setMemberRole(db, { conversationId, actor, userId, role }) {
+  const wanted = String(role || '');
+  if (!groupRoles.ASSIGNABLE.includes(wanted)) {
+    return { ok: false, status: 400, field: 'role',
+      error: `A group role is ${groupRoles.ASSIGNABLE.join(' or ')}. Ownership cannot be given away.` };
+  }
+  if (String(userId) === String(actor.id)) {
+    return { ok: false, status: 400, error: 'You cannot change your own role in a group.' };
+  }
+
+  const conn = await db.connect();
+  try {
+    await conn.query('BEGIN');
+    const { rows: conv } = await conn.query(
+      'SELECT kind, title FROM chat_conversations WHERE id = $1', [conversationId]);
+    if (!conv.length) {
+      await conn.query('ROLLBACK');
+      return { ok: false, status: 404, error: 'That conversation no longer exists.' };
+    }
+    if (conv[0].kind !== KINDS.group) {
+      await conn.query('ROLLBACK');
+      return { ok: false, status: 400, error: 'That is a one-to-one conversation, not a group.' };
+    }
+    /* LOCKED FOR THE LENGTH OF THE DECISION. The role is read and written in
+       one transaction so a concurrent promotion of the same person cannot
+       produce two system lines, two log entries, or a lost update. */
+    const { rows: target } = await conn.query(
+      `SELECT m.is_owner AS isOwner, m.group_role AS groupRole, u.\`name\`
+         FROM chat_members m JOIN users u ON u.id = m.user_id
+        WHERE m.conversation_id = $1 AND m.user_id = $2 FOR UPDATE`,
+      [conversationId, userId]
+    );
+    if (!target.length) {
+      await conn.query('ROLLBACK');
+      return { ok: false, status: 404, error: 'They are not in this group.' };
+    }
+    if (Number(target[0].isOwner)) {
+      await conn.query('ROLLBACK');
+      return { ok: false, status: 400,
+        error: 'The owner already runs the group; their role cannot be changed.' };
+    }
+
+    const was = normaliseRole(target[0].groupRole);
+    if (was === wanted) {
+      /* NOTHING HAPPENED, and nothing is written down. A second press of the
+         same button is not an event. */
+      await conn.query('COMMIT');
+      return { ok: true, changed: false, was, now: was, name: target[0].name,
+        title: conv[0].title };
+    }
+
+    await setGroupRole(conn, conversationId, userId, wanted);
+    await systemLine(conn, conversationId, wanted === ROLES.admin
+      ? `${actor.name} made ${target[0].name} an admin.`
+      : `${actor.name} removed ${target[0].name} as admin.`);
+    await conn.query('COMMIT');
+    return { ok: true, changed: true, was, now: wanted, name: target[0].name,
+      title: conv[0].title };
+  } catch (err) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
+/* WHO IS STILL ABLE TO RUN THIS GROUP — asked only to answer the one question
+ * the brief puts to the Super Admin: may they demote an admin?
+ *
+ * Yes, but only when the owner cannot do it themselves: they have left the
+ * group, or their Forge account has been deactivated. That is not a new power
+ * over groups in general — it is the way out of the gap recorded in the README:
+ * nothing in this application takes a deactivated person's groups off them, so
+ * a group whose owner has been deactivated has an owner who can never act. */
+async function ownerIsAbsent(db, conversationId) {
+  const { rows } = await db.query(
+    `SELECT u.is_active AS isActive FROM chat_members m
+       JOIN users u ON u.id = m.user_id
+      WHERE m.conversation_id = $1 AND m.is_owner = 1`,
+    [conversationId]
+  );
+  if (!rows.length) return { absent: true, reason: 'the group has no owner' };
+  if (!Number(rows[0].isActive)) {
+    return { absent: true, reason: "the owner's account is not active" };
+  }
+  return { absent: false, reason: null };
 }
 
 /* Leaving, including the case nobody thinks about until it happens.
@@ -477,8 +713,12 @@ async function leave(db, conversationId, actor) {
     let handedTo = null;
     if (Number(mine[0].isOwner)) {
       handedTo = left[0].id;
-      await conn.query('UPDATE chat_members SET is_owner = 1 WHERE conversation_id = $1 AND user_id = $2',
-        [conversationId, handedTo]);
+      /* UNCHANGED RULE, NEW WRITER. Ownership still goes to whoever has been in
+         the group longest — Prompt 60 did not touch that — but it now sets both
+         columns through the one function, so an inherited owner is 'owner' in
+         group_role too. An ADMIN gets no advantage here: succession is by join
+         order, and being an admin is not a claim on the group. */
+      await setGroupRole(conn, conversationId, handedTo, ROLES.owner);
     }
     await systemLine(conn, conversationId, `${actor.name} left the group.`);
     await conn.query('COMMIT');
@@ -923,6 +1163,8 @@ async function markRead(db, conversationId, userId, seq) {
 module.exports = {
   MAX_GROUP_MEMBERS, MAX_BODY, MAX_TITLE, KINDS, codePoints,
   checkReplyTarget, quoteOf,
+  setMemberRole, ownerIsAbsent, setGroupRole, memberRoleOf,
+  ROLES, groupMemberCan, effectiveRole, normaliseRole,
   pairKey, membership, memberCount, membersOf,
   shieldedAmong, hasSpokenIn, mayWriteTo,
   openDirect, createGroup, rename, addMembers, removeMember, leave,

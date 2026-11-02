@@ -119,6 +119,10 @@ router.get('/', async (req, res) => {
     features: {
       replies: require('../chat-settings').repliesEnabled(),
       emojiPicker: require('../chat-settings').emojiPickerEnabled(),
+      /* The admin feature as a whole. The page hides the two actions when this
+         is false and shows no Admin badge; the server refuses them regardless,
+         which is what makes the hiding a courtesy rather than the rule. */
+      groupAdmins: require('../chat-settings').groupAdminsEnabled(),
     },
     maxBody: chat.MAX_BODY,
   });
@@ -230,6 +234,11 @@ router.get('/:id/messages', async (req, res) => {
         ? ((members.find((m) => String(m.id) !== String(req.user.id)) || {}).name || 'Removed user')
         : seat.title,
       isOwner: seat.isOwner,
+      /* THE VIEWER'S OWN ROLE IN THIS GROUP, already run through the studio's
+         switch — so the page never has to combine the two and cannot get it
+         wrong in a way the server would not. */
+      myRole: chat.effectiveRole(seat.groupRole,
+        { adminsEnabled: chatSettings.groupAdminsEnabled() }),
       /* EVERY conversation now names its members, where this used to send them
          for a group and an empty list for a one-to-one.
          
@@ -238,7 +247,16 @@ router.get('/:id/messages', async (req, res) => {
          could offer nobody. Nothing is disclosed by it that the reader did not
          already have — the other person's name is the title of the
          conversation they are looking at. */
-      members: members.map(({ conversationId, ...m }) => m),
+      /* EVERY MEMBER'S GROUP ROLE, RUN THROUGH THE SWITCH ON THE WAY OUT.
+         With "Chat group admins" off the page is told everybody is a member,
+         which is exactly how they behave; the stored roles are untouched in the
+         table, so switching it back on restores every admin. One place does
+         this, so the badge, the actions and the server can never disagree. */
+      members: members.map(({ conversationId, ...m }) => ({
+        ...m,
+        groupRole: chat.effectiveRole(m.groupRole,
+          { adminsEnabled: chatSettings.groupAdminsEnabled() }),
+      })),
       memberCount: members.length,
       maxMembers: chatSettings.maxGroupMembers(),
     },
@@ -611,23 +629,49 @@ router.get('/attachments/:attachmentId', async (req, res) => {
  * this session. The page is told whether it holds this (canManageAnyGroup on
  * the poll) so it can stop offering what would be refused, and that telling is
  * a courtesy: this function is the rule. */
-function ownerOnly(req, seat, res) {
+/* AND SINCE PROMPT 60 IT ASKS groupMemberCan, so an admin is allowed exactly
+ * the delegated subset and nothing else drifts.
+ *
+ * THE THREE WAYS IN, in this order, because they are three different claims:
+ *
+ *   the group role    owner or admin, from the membership row, run through the
+ *                     studio's switch (an admin with the switch off is an
+ *                     ordinary member) and then through the shared function;
+ *   chat.group_manage_any  the catalogue's override, unchanged — it is how a
+ *                     moderator acts in a group when there is nobody to ask,
+ *                     and it still does not reach past membership;
+ *   nothing else.     A Forge designation is never consulted. Super Admin
+ *                     reaches these routes through the permission above, like
+ *                     everybody who holds it, which is the distinction
+ *                     src/routes/timesheet-options.js has a note about.
+ *
+ * The REFUSAL NAMES WHAT WAS WANTED, because "only the owner can do that" is
+ * wrong now for four of the six actions and right for two. */
+function groupAction(req, seat, res, action, targetRole = null) {
   if (seat.kind !== chat.KINDS.group) {
     res.status(400).json({ error: 'That is a one-to-one conversation, not a group.' });
     return false;
   }
-  if (!seat.isOwner && !can(req, 'chat.group_manage_any')) {
-    res.status(403).json({ error: 'Only the person who created this group can change who is in it.' });
-    return false;
-  }
-  return true;
+  const role = chat.effectiveRole(seat.groupRole,
+    { adminsEnabled: chatSettings.groupAdminsEnabled() });
+  if (chat.groupMemberCan(role, action, targetRole)) return true;
+  if (can(req, 'chat.group_manage_any')) return true;
+  res.status(403).json({ error: action === 'promote' || action === 'demote'
+    ? 'Only the person who owns this group can change who is an admin.'
+    : 'You do not have permission to change this group.' });
+  return false;
 }
+
+/* The old name, kept for the routes that mean exactly what it says. */
+const ownerOnly = (req, seat, res) => groupAction(req, seat, res, 'rename');
 
 // PATCH /api/chat/:id { title }
 router.patch('/:id', async (req, res) => {
   const seat = await mine(req, res);
   if (!seat) return;
-  if (!ownerOnly(req, seat, res)) return;
+  /* RENAME IS DELEGATED: the owner and an admin may, a member may not — which
+     is what members could do before, unchanged. */
+  if (!groupAction(req, seat, res, 'rename')) return;
   const result = await chat.rename(db, req.params.id, req.user, (req.body || {}).title);
   if (!result.ok) return res.status(result.status).json({ error: result.error, field: result.field });
   req.activity({
@@ -646,7 +690,7 @@ router.patch('/:id', async (req, res) => {
 router.post('/:id/members', async (req, res) => {
   const seat = await mine(req, res);
   if (!seat) return;
-  if (!ownerOnly(req, seat, res)) return;
+  if (!groupAction(req, seat, res, 'add_member')) return;
   const { userIds } = req.body || {};
   const wanted = (Array.isArray(userIds) ? userIds : []).map(String).filter(Boolean);
   if (wanted.length && !can(req, 'chat.message_protected')) {
@@ -677,7 +721,23 @@ router.post('/:id/members', async (req, res) => {
 router.delete('/:id/members/:userId', async (req, res) => {
   const seat = await mine(req, res);
   if (!seat) return;
-  if (!ownerOnly(req, seat, res)) return;
+  /* WHO IS BEING REMOVED DECIDES WHETHER THIS CALLER MAY. An admin may remove
+     ordinary members only — not the owner, not another admin — so the target's
+     role is read before the check rather than after it. An unknown target is
+     treated as an ordinary member here and refused properly by removeMember(),
+     which is the function that owns "they are not in this group". */
+  /* SELF-REMOVAL IS ANSWERED BY removeMember, AS IT ALWAYS WAS. Checking the
+     capability first would turn "Use Leave group to take yourself out" — which
+     tells somebody what to do — into "you do not have permission", which is
+     both less useful and not true: the owner has every permission here, and
+     what they are doing is not removal. So the target's role is only consulted
+     for somebody ELSE. */
+  if (String(req.params.userId) !== String(req.user.id)) {
+    const target = await chat.memberRoleOf(db, req.params.id, req.params.userId);
+    if (!groupAction(req, seat, res, 'remove_member', target)) return;
+  } else if (seat.kind !== chat.KINDS.group) {
+    return res.status(400).json({ error: 'That is a one-to-one conversation, not a group.' });
+  }
   const result = await chat.removeMember(db, req.params.id, req.user, req.params.userId);
   if (!result.ok) return res.status(result.status).json({ error: result.error });
   req.activity({
@@ -689,6 +749,95 @@ router.delete('/:id/members/:userId', async (req, res) => {
     summary: `${req.user.name} removed somebody from the chat group "${seat.title}".`,
   });
   res.json({ removed: result.removed });
+});
+
+/* PATCH /api/chat/groups/:id/members/:userId { role: 'admin' | 'member' }
+ *
+ * ===========================================================================
+ * THE OWNER HANDS OUT THE ADMIN ROLE AND TAKES IT BACK. Nobody else does, with
+ * one narrow exception recorded below.
+ *
+ * Mounted under /groups/ rather than beside DELETE /:id/members/:userId so the
+ * path says what it is about. Nothing shadows it: /groups is already a fixed
+ * segment on this router (POST /groups creates one) and no /:id route has a
+ * second segment that could match "groups".
+ *
+ * WHAT THE ROUTE DECIDES AND WHAT chat.setMemberRole DECIDES. Here: whether
+ * THIS caller may change a role at all, which is groupMemberCan plus the
+ * switch. There: everything about the change itself — group, membership, the
+ * owner as target, self as target, the role value, idempotence, the
+ * transaction. Two questions, two places, neither duplicated.
+ *
+ * THE ONE EXCEPTION. A holder of chat.group_manage_any — the Super Admin by
+ * default — may DEMOTE an admin when the owner cannot: they have left the group
+ * or their Forge account has been deactivated. Nothing in this application
+ * takes a deactivated person's groups off them (see the README), so without
+ * this a group could keep an admin nobody is able to remove. It is demotion
+ * only: no promotion, and never a change of owner.
+ */
+router.patch('/groups/:id/members/:userId', async (req, res) => {
+  const seat = await mine(req, res);
+  if (!seat) return;
+  if (seat.kind !== chat.KINDS.group) {
+    return res.status(400).json({ error: 'That is a one-to-one conversation, not a group.' });
+  }
+  const wanted = String(((req.body || {}).role) || '');
+  const action = wanted === chat.ROLES.admin ? 'promote' : 'demote';
+
+  /* THE SWITCH FIRST. With "Chat group admins" off there is no such thing as an
+     admin to make, and the refusal says so rather than talking about
+     permissions. Demotion is refused too: with the feature off, every admin is
+     already acting as an ordinary member, and the stored roles are kept exactly
+     so that switching it back on restores them. */
+  if (!chatSettings.groupAdminsEnabled()) {
+    return res.status(409).json({
+      error: 'Group admins are switched off for this studio, so roles cannot be changed. '
+        + 'A Super Admin can switch them on in Settings → Chat.',
+      field: 'role',
+    });
+  }
+
+  const role = chat.effectiveRole(seat.groupRole, { adminsEnabled: true });
+  let allowed = chat.groupMemberCan(role, action, null);
+  let viaOverride = false;
+  if (!allowed && action === 'demote' && can(req, 'chat.group_manage_any')) {
+    const owner = await chat.ownerIsAbsent(db, req.params.id);
+    if (owner.absent) { allowed = true; viaOverride = owner.reason; }
+  }
+  if (!allowed) {
+    return res.status(403).json({
+      error: 'Only the person who owns this group can change who is an admin.',
+    });
+  }
+
+  const result = await chat.setMemberRole(db, {
+    conversationId: req.params.id,
+    actor: req.user,
+    userId: req.params.userId,
+    role: wanted,
+  });
+  if (!result.ok) {
+    return res.status(result.status).json({ error: result.error, field: result.field || null });
+  }
+
+  /* NOTHING CHANGED, NOTHING WRITTEN DOWN. A second press of the same button is
+     not an event, so there is no second log line for the Activity Log to show
+     and no second system message in the group. */
+  if (result.changed) {
+    req.activity({
+      module: 'chat',
+      action: 'chat.group_admin_changed',
+      entityType: 'chat_group',
+      entityId: req.params.id,
+      entityLabel: result.title || seat.title,
+      summary: result.now === chat.ROLES.admin
+        ? `${req.user.name} made ${result.name} an admin of the chat group "${result.title || seat.title}".`
+        : `${req.user.name} removed ${result.name} as an admin of the chat group "${result.title || seat.title}".`
+        + (viaOverride ? ` (${viaOverride})` : ''),
+      changes: { groupRole: { from: result.was, to: result.now } },
+    });
+  }
+  res.json({ userId: req.params.userId, role: result.now, changed: result.changed });
 });
 
 /* POST /api/chat/:id/leave — anybody in a group, including its owner.
