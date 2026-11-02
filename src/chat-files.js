@@ -396,7 +396,28 @@ async function forDownload(db, attachmentId, userId) {
   if (!rows.length) return { ok: false, status: 404, state: STATE.notFound, error: 'No such file.' };
   const row = rows[0];
   if (!Number(row.mine)) {
-    return { ok: false, status: 403, state: STATE.noAccess,
+    /* 404, NOT 403 — AND THE STATUS IS THE PART THAT MATTERS.
+     *
+       Two existing cases assert this route answers 404 to a non-member holding
+       the id (tests/chat.test.js and tests/chat-activity.test.js), under the
+       heading "an attachment id is not a bearer token", and they are right: a
+       status that said 403 would confirm to anybody holding a stolen id that it
+       names something real, in a conversation they are not in. The Super Admin
+       is refused here too, which is the point of oversight being its own
+       router.
+       
+       What Prompt 59 asks for is that the PERSON is told which of the three
+       things happened rather than reading "no longer available" and reporting a
+       retention bug. So the status stays exactly as it was and the sentence
+       changes: somebody removed from a group between opening the panel and
+       clicking a picture now reads that they do not have access, instead of
+       being told the file is gone.
+       
+       The trade: the sentence distinguishes "exists but not yours" from "no
+       such thing", where the status does not. Reaching it at all requires
+       already holding a version-4 UUID, which can only have come from somebody
+       who could see the file. */
+    return { ok: false, status: 404, state: STATE.noAccess,
       error: 'You do not have access to this file.' };
   }
   if (isExpired(row)) {

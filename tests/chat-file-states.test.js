@@ -129,7 +129,11 @@ test('expired, missing and no-access are three different answers', { skip: SKIP 
   await t.test('NO ACCESS says so, and says nothing about the file', async () => {
     const att = await upload('ana', 'private.png');
     const got = await fetchFile('cas', att.id);
-    assert.strictEqual(got.status, 403);
+    /* 404, THE SAME STATUS A MADE-UP ID GETS. The status is what two older
+       cases pin as a security property — an attachment id must not be a bearer
+       token, and a 403 would confirm that a stolen id names something real.
+       What changes is the sentence the person reads. */
+    assert.strictEqual(got.status, 404);
     assert.strictEqual(got.state, 'no_access');
     assert.match(got.error, /do not have access/i);
     assert.ok(!/private\.png/.test(JSON.stringify(got)), 'and does not name the file');

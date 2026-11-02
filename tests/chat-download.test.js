@@ -111,7 +111,13 @@ test('an expired attachment does not', () => {
   /* Nothing to fetch: the sweep has deleted the bytes and shape() withholds
      the url. A button here would be a button that can only fail. */
   const html = render([attachment({ expired: true, url: null })]);
-  assert.match(html, /no longer available/);
+  /* "ATTACHMENT EXPIRED", not "no longer available" — Prompt 59 split that one
+     sentence into three, because it used to cover an expiry, a file missing
+     from the server and a file that is not yours, and the studio read it as a
+     retention bug twice. This is the only one of the three the thread can know
+     without fetching anything. */
+  assert.match(html, /attachment expired/i);
+  assert.ok(!/no longer available/i.test(html), 'the sentence that meant three things is gone');
   assert.ok(!/chat-dl/.test(html), 'an expired attachment must not offer a download');
 });
 

@@ -717,14 +717,14 @@ button.chat-status:focus-visible{outline:2px solid var(--focus-ring);outline-off
 .cs-row{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;}
 .cs-k{min-width:150px;color:var(--muted);}
 .cs-v{flex:1 1 220px;word-break:break-all;}
-.cs-v.bad{color:var(--danger,#b4232a);font-weight:600;}
+.cs-v.bad{color:var(--error);font-weight:600;}
 .cs-from{color:var(--muted);}
 .cs-flag{display:inline-block;margin:0 8px 2px 0;white-space:nowrap;}
 .cs-flag.ok{color:var(--muted);}
-.cs-flag.bad{color:var(--danger,#b4232a);font-weight:600;}
+.cs-flag.bad{color:var(--error);font-weight:600;}
 /* AND THE FAULT STATE ON AN ATTACHMENT. A file that expired is ordinary; a file
    that is missing before its expiry is a fault, and looks like one. */
-.chat-file-fault{border-left:3px solid var(--danger,#b4232a);padding-left:6px;}
+.chat-file-fault{border-left:3px solid var(--error);padding-left:6px;}
 .chat-expiry{display:block;font-size:10.5px;color:var(--ink-faint);margin-top:3px;letter-spacing:.01em;}
 .chat-file .chat-expiry{display:inline;margin:0 0 0 8px;}
 .tl-action-box{display:flex;align-items:center;gap:8px;margin:14px 0 0;cursor:pointer;
@@ -23121,6 +23121,12 @@ const NOTIF_TITLES = {
      asked — there is deliberately no table of files to rebuild it from. */
   server_delete_request: 'Deletion requested on the office server',
   server_delete_resolved: 'Your deletion request was answered',
+  /* CHAT STORAGE NEEDS ATTENTION. Raised only when the attachment sweep refuses
+     to run — because the retention reads as implausible, or because one pass was
+     about to delete more than half the studio's files — so it goes to whoever
+     holds the retention permission and nobody else. The sentence underneath
+     carries the numbers; the title's job is to say which screen to open. */
+  chat_storage: 'Chat attachment storage needs attention',
 };
 const notifTitle = (n) => (n && NOTIF_TITLES[n.kind]) || 'Something needs your attention';
 
@@ -23596,10 +23602,9 @@ function renderChatThread(head, body, foot){
            disabled button with a reason on it is a far better morning than a
            file that uploads and disappears, which is the bug this whole prompt
            is about. Typing still works; only attaching stops. -->
-      <button class="chat-clip" id="chatClip"${chatState.limits.storageOk === false ? ' disabled' : ''}
-              title="${chatState.limits.storageOk === false
-                ? 'Attachments are unavailable: the server has nowhere safe to store them. Ask your administrator.'
-                : 'Attach a file'}" aria-label="Attach a file">&#128206;</button>
+      <button class="chat-clip" id="chatClip" title="Attach a file" aria-label="Attach a file"${
+        chatState.limits.storageOk === false
+          ? ' disabled aria-describedby="chatHint" data-storage="off"' : ''}>&#128206;</button>
       ${chatState.features.emojiPicker
         ? '<button class="chat-clip" id="chatEmoji" title="Emoji" aria-label="Insert an emoji" aria-expanded="false">\u263a</button>'
         : ''}
@@ -23615,7 +23620,7 @@ function renderChatThread(head, body, foot){
       <button class="btn btn-sm" id="chatSend">Send</button>
     </div>
     <input type="file" id="chatFile" multiple accept="${escapeHTML(chatFileAccept())}" style="display:none;">
-    <div class="chat-hint">${chatState.limits.storageOk === false
+    <div class="chat-hint" id="chatHint">${chatState.limits.storageOk === false
       ? 'Attachments are unavailable at the moment &mdash; the server has nowhere safe to store them. '
         + 'Your administrator needs to set the chat upload folder. Messages still send.'
       : `${escapeHTML(chatState.limits.allowed)} &middot; up to ${Math.round(chatState.limits.maxBytes/1048576)}MB
