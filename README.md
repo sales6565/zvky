@@ -5578,6 +5578,71 @@ something an honest expiry cannot look like. It also refuses to run at all if
 the retention reads as under an hour. Both tell the Super Admin in the
 application rather than only in a log.
 
+### Group admins, and who runs a chat group
+
+Every member of a group chat has exactly one role in it. One-to-one chats have
+no roles at all.
+
+| | Add members | Remove | Rename | Make/remove admin | Leave | Delete the group |
+|---|---|---|---|---|---|---|
+| **owner** | yes | anybody but themselves | yes | **yes — only the owner** | yes | no such thing |
+| **admin** | yes | ordinary members only | yes | no | yes | no |
+| **member** | no | no | no | no | yes | no |
+
+**An admin is a delegated subset and nothing more.** They cannot remove or
+demote the owner or another admin, cannot make anybody else an admin, and never
+become the owner. Two admins who could remove each other is a race, not a
+hierarchy. There is no delete-a-group in Forge for anybody: a group ends when
+its last member leaves, and the conversation is deleted then.
+
+**The rule is one function, `groupMemberCan(role, action, targetRole)`**, in
+[`src/chat-group-roles.js`](src/chat-group-roles.js). The page has to hide what
+the server will refuse — an action offered and then rejected teaches somebody
+that the screen lies — and this application has no build step, so that function
+is **copied verbatim into `public/index.html`** between two markers.
+`tests/chat-group-roles.test.js` slices both files and compares them character
+for character, which is the only way two copies of a rule stay one rule.
+
+**Roles live in `chat_members.group_role`**, added beside `is_owner` rather than
+replacing it: `is_owner` is read by a dozen queries and is what the member list
+is ordered by, so dropping it would be a rewrite of working code in a production
+table. The two say the same thing in two shapes, in lockstep, written only by
+`setGroupRole()` — and a test asserts they never disagree.
+
+**Super Admin gains exactly one thing.** `chat.group_manage_any` is unchanged:
+within a group they are *in*, a holder may rename, add and remove, and it still
+does not reach past membership. On top of that they may **demote** an admin when
+the owner cannot — the owner has left the group, or their Forge account has been
+deactivated. Never promote, and never a change of owner.
+
+**The "Chat group admins" switch** (Settings → Chat, Super Admin, default **on**)
+turns the feature off without losing anything: every admin acts as an ordinary
+member, the action disappears from the screen, role changes are refused — and the
+stored roles are untouched, so switching it back on restores every admin exactly.
+
+#### Owner departure, and a gap worth knowing about
+
+Unchanged by this feature, and worth writing down because it surprised us:
+
+- **The owner leaves** → the group goes to whoever has been in it longest, by
+  join order. Being an admin is **not** a claim on the group; the admin does not
+  inherit, and an inherited owner is an owner in both columns.
+- **The last member leaves** → the conversation is deleted outright, messages
+  and attachment rows with it.
+- **Somebody tries to remove the owner** → refused. The owner leaves; they are
+  not removed.
+- **The owner's Forge account is deactivated** → **nothing happens to the
+  group.** Chat does not filter members by `is_active`, so the group keeps an
+  owner who can never sign in to act. Nobody else can hand out or take back the
+  admin role in it, and nobody inherits.
+
+That last one is the gap. Prompt 60 did not change the succession rule, so the
+Admin role gives nobody ownership — and the one relief valve is the Super Admin
+demotion above, so a group in that state cannot be stuck with an admin nobody
+can remove. Giving a deactivated person's groups away automatically is a
+decision about what deactivation means, which belongs to the studio and not to a
+chat feature.
+
 ### Chat replies, and the emoji picker
 
 Both are Super Admin switches in Settings → Chat, both **on** by default, and
