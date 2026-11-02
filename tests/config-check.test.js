@@ -10,9 +10,20 @@ const { spawnSync } = require('node:child_process');
 const { problems, warnings } = require('../src/config-check');
 
 const ROOT = path.join(__dirname, '..');
+
+/* A FOLDER FOR CHAT ATTACHMENTS THAT REALLY EXISTS, outside the application
+   folder and outside any temp directory — which is what the check demands, so a
+   fixture cannot use the scratch directory it would otherwise reach for. Made
+   here because "a complete environment" now includes where chat files go: since
+   Prompt 59 an unset CHAT_UPLOAD_DIR is a warning, and a deployment that has
+   not decided where attachments live is not completely configured. */
+const CHAT_DIR_FIXTURE = path.join(require('node:os').homedir(), '.zvky-config-check-uploads');
+fs.mkdirSync(CHAT_DIR_FIXTURE, { recursive: true });
+
 const GOOD = {
   DB_HOST: 'localhost', DB_NAME: 'acct_forge', DB_USER: 'acct_forge_app', DB_PASSWORD: 'S3cret-db-Pass-unique-41',
   JWT_SECRET: 'b7f0c2d9e4a1f6b3c8d5e2a7f4b1c6d3e8a5f2b9c4d1e6a3', CORS_ORIGIN: 'https://pipeline.example.org',
+  CHAT_UPLOAD_DIR: CHAT_DIR_FIXTURE,
 };
 const placeholderOf = (name) => {
   const line = fs.readFileSync(path.join(ROOT, '.env.example'), 'utf8').split('\n').find((l) => l.startsWith(`${name}=`));
@@ -53,6 +64,39 @@ test('configuration validation', async (t) => {
     const w = warnings({ ...GOOD, DB_PASSWORD: '', CORS_ORIGIN: '' });
     assert.ok(w.some((x) => x.startsWith('DB_PASSWORD is not set')));
     assert.ok(w.some((x) => x.startsWith('CORS_ORIGIN is not set')));
+  });
+
+  await t.test('the chat upload folder is part of the configuration it checks', () => {
+    /* WHY THIS IS A STARTUP WARNING AND NOT A STARTUP FAILURE: a folder that
+       cannot be used stops chat ATTACHMENTS, and refusing to start the whole
+       application over that would be a bigger outage than the one being
+       prevented. But it is said, and it names the variable — the two bug
+       reports about vanishing files both cost days to the fact that nothing
+       anywhere said where the files were meant to be. */
+    const os = require('node:os');
+    const inside = path.join(ROOT, 'uploads', 'chat');
+    const bad = warnings({ ...GOOD, HOME: '', CHAT_UPLOAD_DIR: inside });
+    assert.ok(bad.some((w) => /chat attachments cannot be stored/i.test(w)
+      && /application folder/i.test(w)), `${JSON.stringify(bad)}`);
+    assert.ok(bad.some((w) => /refused/i.test(w) && /still served/i.test(w)),
+      'and says what that does and does not break');
+
+    /* A TEMPORARY DIRECTORY IS THE SAME ANSWER, with the host as its owner. */
+    assert.ok(warnings({ ...GOOD, CHAT_UPLOAD_DIR: path.join(os.tmpdir(), 'zvky') })
+      .some((w) => /temporary directory/i.test(w)));
+
+    /* AND A GOOD FOLDER THAT IS ONLY A FALLBACK still gets a nudge, because a
+       default is not a decision and a future change of host could move it. */
+    const nudge = warnings({ ...GOOD, HOME: os.homedir(), CHAT_UPLOAD_DIR: '' });
+    assert.ok(nudge.some((w) => /CHAT_UPLOAD_DIR is not set/.test(w)
+      && /survives a deploy/.test(w)), `${JSON.stringify(nudge)}`);
+    assert.ok(!nudge.some((w) => /cannot be stored/i.test(w)),
+      'and is not reported as broken, because it is not');
+
+    /* A CONFIGURED, USABLE FOLDER SAYS NOTHING AT ALL — which is what GOOD
+       carries, and why the first case in this file still expects silence. */
+    assert.deepStrictEqual(warnings(GOOD).filter((w) => /chat/i.test(w)), [],
+      'a folder that is set and usable is not worth a line');
   });
 
   await t.test('no message ever contains a value', () => {
