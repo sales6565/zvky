@@ -18,7 +18,31 @@ const { config, sql, SKIP_REASON } = require('./helpers');
 const cfg = config('tsmig');
 const OLD_SCHEMA = '3865766';   // the last commit on the weekly shape
 
-test('a weekly timesheet install migrates to the daily one', { skip: cfg ? false : SKIP_REASON }, async (t) => {
+/* THE FIXTURE IS A COMMIT, AND A SHALLOW CLONE DOES NOT HAVE IT.
+ *
+ * This test builds the old weekly schema by reading sql/schema.sql out of the
+ * commit it last shipped in, which is the only honest way to test a migration
+ * FROM it: a hand-typed copy of that file would drift and the test would then
+ * be migrating from a shape no studio ever ran.
+ *
+ * A clone made with --depth (which is what a cloud checkout of this repository
+ * is) has no such object, and `git show` fails with "invalid object name". That
+ * is a fact about the checkout, not about the migration, so the test says so
+ * and skips rather than reporting a failure somebody would go looking for in
+ * src/migrate.js. `git fetch --unshallow` makes it run. */
+const historyDepth = (() => {
+  try {
+    require('node:child_process').execFileSync('git', ['cat-file', '-e', OLD_SCHEMA],
+      { cwd: path.join(__dirname, '..'), stdio: 'ignore' });
+    return false;
+  } catch {
+    return `The weekly schema lives in commit ${OLD_SCHEMA}, which this clone does not have `
+      + '(a shallow checkout). Run `git fetch --unshallow` to include this test.';
+  }
+})();
+
+test('a weekly timesheet install migrates to the daily one',
+  { skip: cfg ? historyDepth : SKIP_REASON }, async (t) => {
   const mysql = require('mysql2/promise');
   const { execFileSync } = require('node:child_process');
 

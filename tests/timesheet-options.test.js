@@ -79,6 +79,16 @@ test('no report outside the Time Sheet reads timesheet hours', () => {
        is a usage count, not a report of hours, and it reads non_project rather
        than hours. */
     'src/reference-data.js',
+    /* THE TIMESHEET DOWNLOAD, and it is allowed here because it made the
+       decision this test exists to force. It reads timesheet_entries for one
+       reason — to put the studio's own spreadsheet format on disk — and it says
+       in so many words what Idle means to it: IDLE_LIKE names the categories
+       that go to the Idle Hours column and carry their sub-option into the
+       remarks column, NO_ROW names the ones that produce no row at all, and the
+       module's header argues both. It is also the one reader that is NOT a
+       report of the studio's own: it is the Time Sheet tab's own download,
+       behind the Time Sheet tab's own visibility. */
+    'src/timesheet-export.js',
   ]);
   const readers = files.filter((f) => !allowed.has(f)
     && fs.readFileSync(path.join(root, f), 'utf8').includes('timesheet_entries'));
