@@ -30,7 +30,18 @@
  * panes and an autofilter. All four were asked for; the first three are
  * cosmetic and the fourth only exists once there are rows to filter.
  */
-const { zip, xmlText } = require('./ooxml-zip');
+/* THE SHARED WRITER. Prompt 62 moved the package-level knowledge - the content
+   types, both relationship parts, the worksheet child order, the date serial
+   and the cell builders - into src/xlsx-sheet.js so the Timesheet report could
+   use it instead of growing a second copy of the same hard-won bugs. What
+   stayed here is what is genuinely this report's: its nine columns, its style
+   table, its freeze pane and its autofilter.
+
+   NOTHING ABOUT THE FILE CHANGED. The bytes this module produces for the same
+   rows are identical before and after that move, which tests assert with a
+   sha-256 of a fixed input. */
+const { xmlText } = require('./ooxml-zip');
+const sheetKit = require('./xlsx-sheet');
 
 const COLUMNS = [
   { key: 'clientName',   header: 'Client Name',    width: 12,    kind: 'text',   fill: 'yellow' },
@@ -64,13 +75,11 @@ const S = {
   BLANK: 9,
 };
 
-/* ---- the fixed parts ---------------------------------------------------- */
-
-const CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`;
-
-const ROOT_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`;
+/* ---- the fixed parts ----------------------------------------------------
+ *
+ * [Content_Types].xml, _rels/.rels and xl/_rels/workbook.xml.rels now come from
+ * src/xlsx-sheet.js - see the note on WORKBOOK_RELS there for the Prompt 54 bug
+ * that the styles relationship fixes. */
 
 /* THE WORKBOOK, which carries the autofilter's hidden defined name.
  *
@@ -79,15 +88,13 @@ const ROOT_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
  * opens without it, but the filter then has no remembered range, so the pair is
  * built together here rather than in two places that could disagree. The sheet
  * name is quoted because it has a space in it. */
-function workbookXml(lastRow) {
+function filterName(lastRow) {
   const ref = `'${SHEET_NAME}'!$A$2:$I$${Math.max(lastRow, 2)}`;
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">`
-    + '<bookViews><workbookView/></bookViews>'
-    + `<sheets><sheet name="${SHEET_NAME}" sheetId="1" r:id="rId1"/></sheets>`
-    + `<definedNames><definedName name="_xlnm._FilterDatabase" localSheetId="0" hidden="1">${ref}</definedName></definedNames>`
-    + '</workbook>';
+  return `<definedNames><definedName name="_xlnm._FilterDatabase" localSheetId="0" hidden="1">${ref}</definedName></definedNames>`;
 }
+const workbookXml = (lastRow) => sheetKit.workbookXml({
+  sheetName: SHEET_NAME, definedNames: filterName(lastRow),
+});
 
 /* THE WORKBOOK'S RELATIONSHIPS, AND WHY styles.xml IS HERE.
  *
@@ -98,8 +105,6 @@ function workbookXml(lastRow) {
  * never loaded: the repair dialog, and then a blank sheet. Every lenient reader
  * looks the part up by name instead, which is why nothing caught it.
  * tests/xlsx-validator.js now walks the whole relationship graph. */
-const WORKBOOK_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`;
 
 /* Fills, borders, fonts and the ten cell formats. The numbers below are the
    indices the sheet refers to; see S above.
@@ -124,14 +129,7 @@ const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
  * The epoch is 1899-12-30, not 1900-01-01, which absorbs the 1900 leap-year bug
  * Excel keeps for compatibility — correct for every date from 1900-03-01, and
  * this report deals in submissions. */
-const EXCEL_EPOCH_UTC = Date.UTC(1899, 11, 30);
-
-function dateSerial(text) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(text || ''));
-  if (!m) return null;
-  const days = (Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) - EXCEL_EPOCH_UTC) / 86400000;
-  return Number.isFinite(days) ? days : null;
-}
+const { dateSerial } = sheetKit;
 
 /* One cell.
  *
@@ -251,14 +249,12 @@ function sheetXml(rows, title) {
 /* The whole file. `rows` are already shaped and sorted by src/artist-report.js;
    nothing here decides what is in the report, only what it looks like. */
 function build({ rows = [], title = 'ARTIST REPORT' } = {}) {
-  return zip([
-    { name: '[Content_Types].xml', contents: CONTENT_TYPES },
-    { name: '_rels/.rels', contents: ROOT_RELS },
-    { name: 'xl/workbook.xml', contents: workbookXml(rows.length + 2) },
-    { name: 'xl/_rels/workbook.xml.rels', contents: WORKBOOK_RELS },
-    { name: 'xl/styles.xml', contents: STYLES },
-    { name: 'xl/worksheets/sheet1.xml', contents: sheetXml(rows, title) },
-  ]);
+  return sheetKit.workbook({
+    sheetName: SHEET_NAME,
+    definedNames: filterName(rows.length + 2),
+    styles: STYLES,
+    sheetXml: sheetXml(rows, title),
+  });
 }
 
 module.exports = {
