@@ -7480,10 +7480,13 @@ function tsExportRender(){
         ${st.choosing ? `
           <input type="text" class="chat-search" id="tse_search" placeholder="Search people…"
                  value="${escapeHTML(st.search)}" style="margin:6px 0;">
-          <div class="checklist" id="tse_people">${matching.map(u =>
-            `<label><input type="checkbox" data-tse-user="${escapeHTML(String(u.id))}"${
-              st.users.has(String(u.id)) ? ' checked' : ''}> ${escapeHTML(u.name)}</label>`).join('')
-            || '<div class="chat-sub">Nobody matches that.</div>'}</div>
+          <!-- FILLED BY epChecklist BELOW, not here. Every tick-box list in this
+               page renders its rows from that one helper — the bargain the
+               project pickers make and tests/checklist-layout.test.js enforces,
+               so the scroller, the row alignment and every later fix to them
+               reach this list too. A private copy of the row markup here is
+               exactly the staircase that test exists to prevent. -->
+          <div class="checklist" id="tse_people"></div>
           ${st.users.size ? '' : '<div class="chat-sub">Nobody ticked — the download covers everybody you can see.</div>'}` : ''}`}
     <div style="margin-top:12px;">${line}</div>
     <div class="chat-sub" style="margin-top:6px;">${range
@@ -7526,10 +7529,14 @@ function tsExportRender(){
   if(some) some.onchange = () => { st.choosing = true; tsExportRender(); };
   const search = body.querySelector('#tse_search');
   if(search) search.oninput = () => { st.search = search.value; tsExportRender(); };
-  body.querySelectorAll('[data-tse-user]').forEach(box => { box.onchange = () => {
-    if(box.checked) st.users.add(box.dataset.tseUser); else st.users.delete(box.dataset.tseUser);
-    st.count = null; tsExportRender(); tsExportCount();
-  }; });
+  if(body.querySelector('#tse_people')){
+    epChecklist('tse_people', matching, [...st.users], {
+      empty: st.search ? 'Nobody matches that.' : 'Nobody else to choose from.' });
+    body.querySelectorAll('#tse_people input[type=checkbox]').forEach(box => { box.onchange = () => {
+      if(box.checked) st.users.add(box.value); else st.users.delete(box.value);
+      st.count = null; tsExportRender(); tsExportCount();
+    }; });
+  }
 
   const go = document.getElementById('tsExportGo');
   if(go) go.disabled = st.busy || !range || !st.count || st.count.lines === 0;

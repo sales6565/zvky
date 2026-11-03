@@ -207,10 +207,16 @@ test('both project forms render their pickers the same way', () => {
   assert.deepStrictEqual(
     containers.map((c) => c.match(/id="(\w+)"/)[1]).sort(),
     ['ba_list', 'bd_list', 'ep_acting', 'ep_coords', 'ep_leads', 'ep_supervision',
-     'p_acting', 'p_coords', 'p_leads', 'p_supervision'],
+     'p_acting', 'p_coords', 'p_leads', 'p_supervision', 'tse_people'],
     'every checklist should use the .checklist class'
   );
-  /* bd_list and ba_list are the odd ones out and are listed here deliberately:
+  /* tse_people is the Download timesheets modal's "choose people" list, and it
+     is in here for the reason this test exists: it could perfectly well have
+     drawn its own rows, and instead it calls epChecklist like the rest, so the
+     scroller and the row alignment are the same list of pixels. It is a picker
+     like the project ones, not a read-only panel.
+
+     bd_list and ba_list are the odd ones out and are listed here deliberately:
      they are the two bulk-action panels — Mark as Delivered, and Assign &
      Schedule — each a read-only list of assets rather than a picker. They
      borrow the scroller and the row alignment, which is the point of the class,

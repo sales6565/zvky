@@ -111,6 +111,12 @@ function fixture() {
   const markup = cut('<!-- DOWNLOAD TIMESHEETS.', '<div class="modal-wrap" id="modalWrap">',
     'the modal’s markup');
   const tint = cut('function statusTint(colour){', 'const STATUSES = [', 'statusTint');
+  /* THE ONE TICK-BOX LIST HELPER. The modal's "choose people" list is drawn by
+     it rather than by row markup of its own — see tests/checklist-layout.test
+     .js — so the fixture has to carry it, and carrying it means this suite
+     drives the same rows the project pickers do. */
+  const checklist = cut('function epChecklist(elId, people, chosen,',
+    '/* WHO MAY BE AN ACTING TEAM LEAD', 'epChecklist');
 
   return `<!doctype html><html><head><meta charset="utf-8"><style>${css}</style></head>
 <body>
@@ -157,6 +163,7 @@ async function api(path, opts = {}){
   return data;
 }
 ${tint}
+${checklist}
 ${tab}
 ${modal}
 ${wiring}
@@ -623,7 +630,7 @@ test('the Download timesheets button, in a browser, in every state of the tab',
           assert.match(said, /^You can only download timesheets you are allowed to view/);
           /* AND NO PICKER, because there is nobody to pick. */
           assert.strictEqual(await h.page.$('#tse_all'), null);
-          assert.strictEqual(await h.page.$('[data-tse-user]'), null);
+          assert.strictEqual(await h.page.$('#tse_people'), null);
 
           assert.match(await h.page.$eval('#tse_count', (e) => e.textContent),
             /1 timesheet line from 1 person/, 'her own day, and not Lee’s');
@@ -652,10 +659,14 @@ test('the Download timesheets button, in a browser, in every state of the tab',
         /* CHOOSING ONE PERSON NARROWS IT. The list offered is the same one the
            week picker uses, so there is nobody in it Lee may not read. */
         await h.page.click('#tse_some');
-        await h.page.waitForSelector('[data-tse-user]');
-        const offered = await h.page.$$eval('[data-tse-user]', (b) => b.map((x) => x.dataset.tseUser));
+        await h.page.waitForSelector('#tse_people input[type=checkbox]');
+        /* The rows come from epChecklist, the one helper every tick-box list in
+           this page uses, so a row is identified by its value — which is the
+           user id — exactly as the project pickers' rows are. */
+        const offered = await h.page.$$eval('#tse_people input[type=checkbox]',
+          (b) => b.map((x) => x.value));
         assert.deepStrictEqual(offered, [String(id.ana)], 'only the people Lee can see');
-        await h.page.check(`[data-tse-user="${id.ana}"]`);
+        await h.page.check(`#tse_people input[value="${id.ana}"]`);
         await h.page.waitForFunction(
           "/1 timesheet line from 1 person/.test((document.querySelector('#tse_count')||{}).textContent||'')");
         await h.native();
