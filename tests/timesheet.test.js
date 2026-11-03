@@ -385,6 +385,16 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
          switch: the page still asks can() for the key, and the server still
          asks which projects this person leads. */
       tlAction: true,
+      /* AND WHETHER THE DOWNLOAD BUTTON EXISTS AT ALL, published beside
+         tlAction for exactly the same reason and justified here as that
+         deep-equal demands: the Timesheet tab already fetches this payload to
+         draw the week, and a second request on every visit to the tab just to
+         learn whether to draw one button would be a request for nothing. True
+         on a fresh install, which is this fixture. Also only the studio-wide
+         switch: the page still asks can('timesheet.export'), and
+         /api/timesheet/export refuses regardless — which is what makes hiding
+         the button a courtesy rather than the rule. */
+      exportEnabled: true,
     });
   });
 
