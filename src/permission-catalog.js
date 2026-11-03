@@ -1053,6 +1053,39 @@ const GROUPS = [
         describe: 'See everybody\'s timesheets, not only your team\'s. The reporting-level view, '
           + 'for the roles that already read across the studio.',
       },
+      {
+        /* THE DOWNLOAD, AND WHY IT IS ITS OWN KEY RATHER THAN PART OF
+         * timesheet.all.
+         *
+         * Reading a person's week on screen and walking out with a spreadsheet
+         * of the whole studio's months are different acts. The screen is
+         * auditable by being a screen — somebody looked at one week of one
+         * person — and a file is not: it leaves the building and keeps working
+         * after the role that made it is taken away. A studio that is happy for
+         * its production managers to read everybody's hours is not thereby
+         * happy for everybody's hours to be emailed, and this key is where it
+         * says which.
+         *
+         * IT WIDENS NOBODY'S REACH. The download is intersected with the
+         * requester's existing timesheet visibility — the same
+         * readableUserIds() the tab uses — so a lead who may see their own team
+         * downloads their own team and nothing else. Holding this key without
+         * timesheet.team or timesheet.all produces a file of your own lines.
+         *
+         * SUPER ADMIN ONLY by default, through managePermissions, and grantable
+         * so a studio can hand it to whoever actually compiles the month. */
+        key: 'timesheet.export',
+        label: 'Download Timesheets Report (all users)',
+        impliedBy: has('managePermissions'),
+        describe: 'Download timesheet lines as a spreadsheet, for a day, a month, a year or a '
+          + 'date range, in the studio\'s own format. Only lines from days people have submitted, '
+          + 'and only for the people you can already see in the Time Sheet tab \u2014 this does '
+          + 'not widen whose hours you may read. A Super Admin can switch the download off for the '
+          + 'whole studio in Settings \u2192 Time Sheet.',
+        danger: 'A download leaves the application: it keeps working after this permission is '
+          + 'taken away, and it holds everybody\'s hours for the period asked for. Every download '
+          + 'is written to the Activity Log with who asked, the period and how many lines it held.',
+      },
     ],
   },
   {

@@ -3281,6 +3281,23 @@ async function ensureTimesheetSettings(db, log) {
     log('Schema: added timesheet_settings.tl_action_enabled, on — the TL Action check box is available.');
   }
 
+  /* THE TIMESHEET DOWNLOAD'S SWITCH, on. Its own check for the same reason the
+     one above has its own: a database that has require_previous_day and
+     tl_action_enabled but not this one is exactly what an upgrade produces, and
+     a shared check would skip this ALTER on every one of them. */
+  const { rows: exportCol } = await db.query(
+    `SELECT 1 AS present FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'timesheet_settings'
+        AND COLUMN_NAME = 'export_enabled'`
+  );
+  if (!exportCol.length) {
+    await db.query(
+      'ALTER TABLE timesheet_settings ADD COLUMN export_enabled TINYINT(1) NOT NULL DEFAULT 1'
+    );
+    log('Schema: added timesheet_settings.export_enabled, on — the timesheet download is available '
+      + 'to whoever holds timesheet.export.');
+  }
+
   const { rows } = await db.query('SELECT id FROM timesheet_settings WHERE id = 1');
   if (rows.length) return;
   await db.query(

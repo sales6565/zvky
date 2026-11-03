@@ -154,6 +154,10 @@ app.use('/api/clients', clientRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/project-reviews', projectReviewRoutes);
 app.use('/api/timesheets', timesheetRoutes);
+/* THE TIMESHEET DOWNLOAD, on its own prefix because every route under it needs
+   timesheet.export and the studio's switch, where nothing under /api/timesheets
+   does. See the note at the top of src/routes/timesheet-export.js. */
+app.use('/api/timesheet', require('./routes/timesheet-export'));
 app.use('/api/assets', assetRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/team', teamRoutes);

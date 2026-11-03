@@ -68,6 +68,12 @@ const DEFAULTS = {
      saw before. A feature that costs nothing to have on is one the studio asked
      to have on. */
   tlAction: true,
+  /* ON, for the same reason as tlAction above: it blocks nobody and adds
+     nothing to anybody's day. With it on, a role holding timesheet.export sees
+     one more button on the Timesheet tab; everybody else sees exactly what
+     they saw before. Off hides the button and the endpoint refuses, so a studio
+     that would rather nobody took a copy of everybody's hours can say so. */
+  exportEnabled: true,
 };
 
 const DAY_NAMES = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -128,6 +134,8 @@ async function load(db) {
        undefined here and gets the default — which for this one is ON. */
     tlAction: row.tl_action_enabled === undefined
       ? DEFAULTS.tlAction : Boolean(Number(row.tl_action_enabled)),
+    exportEnabled: row.export_enabled === undefined || row.export_enabled === null
+      ? DEFAULTS.exportEnabled : Boolean(Number(row.export_enabled)),
     updatedBy: row.updated_by || null,
     updatedByName: row.updated_by_name || null,
     updatedAt: row.updated_at || null,
@@ -256,12 +264,13 @@ async function save(db, input, userId) {
      shared hosting an ALTER is a thing that gets refused. */
   const wide = `INSERT INTO timesheet_settings
        (id, max_day_hours, min_line_hours, max_line_hours, backdate_days, future_days,
-        loggable_days, require_previous_day, tl_action_enabled, updated_by)
-     VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9)
+        loggable_days, require_previous_day, tl_action_enabled, export_enabled, updated_by)
+     VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      ON DUPLICATE KEY UPDATE
        max_day_hours = $1, min_line_hours = $2, max_line_hours = $3,
        backdate_days = $4, future_days = $5, loggable_days = $6,
-       require_previous_day = $7, tl_action_enabled = $8, updated_by = $9`;
+       require_previous_day = $7, tl_action_enabled = $8, export_enabled = $9,
+       updated_by = $10`;
   const narrow = `INSERT INTO timesheet_settings
        (id, max_day_hours, min_line_hours, max_line_hours, backdate_days, future_days,
         loggable_days, require_previous_day, updated_by)
@@ -273,7 +282,7 @@ async function save(db, input, userId) {
   const core = [v.maxDayHours, v.minLineHours, v.maxLineHours, v.backdateDays, v.futureDays,
     v.loggableDays.join(','), v.requirePreviousDay ? 1 : 0];
   try {
-    await db.query(wide, [...core, v.tlAction ? 1 : 0, userId || null]);
+    await db.query(wide, [...core, v.tlAction ? 1 : 0, v.exportEnabled ? 1 : 0, userId || null]);
   } catch (err) {
     if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
     await db.query(narrow, [...core, userId || null]);

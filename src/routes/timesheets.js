@@ -93,50 +93,14 @@ async function selectEntries(tail, params) {
   throw last;
 }
 
-/* Whose sheet may this person open?
+/* WHOSE SHEET MAY THIS PERSON OPEN, and whose may they list.
  *
- * Three answers, widening: your own always; your team if you hold
- * timesheet.team; anybody if you hold timesheet.all. "Your team" is the
- * reporting line the rest of the app already uses — reports_to_id or
- * team_lead_id — rather than a second idea of a team invented here.
- *
- * Returns null when the answer is "no", so a caller can 403 without a second
- * lookup deciding the same thing differently.
- */
-async function mayRead(viewer, targetId) {
-  if (!targetId || targetId === viewer.id) return { ok: true, scope: 'own' };
-  if (holds(viewer, 'timesheet.all')) return { ok: true, scope: 'all' };
-  if (holds(viewer, 'timesheet.team')) {
-    const { rows } = await db.query(
-      'SELECT 1 AS ok FROM users WHERE id = $1 AND (reports_to_id = $2 OR team_lead_id = $2)',
-      [targetId, viewer.id]
-    );
-    if (rows.length) return { ok: true, scope: 'team' };
-  }
-  return { ok: false };
-}
-
-// Everybody whose sheet this person may read, for the picker and the queue.
-async function readableUserIds(viewer) {
-  if (holds(viewer, 'timesheet.all')) {
-    /* Everybody, deactivated accounts included. There IS an is_active on a
-       user now — see src/user-deactivation.js — and this deliberately does not
-       filter by it: somebody who has left still has the weeks they filled in,
-       and a timesheet report that quietly dropped them would stop adding up.
-       (This comment used to say no such column existed, which stopped being
-       true when deactivation was added.) */
-    const { rows } = await db.query('SELECT id FROM users');
-    return rows.map((r) => r.id);
-  }
-  const mine = [viewer.id];
-  if (holds(viewer, 'timesheet.team')) {
-    const { rows } = await db.query(
-      'SELECT id FROM users WHERE reports_to_id = $1 OR team_lead_id = $1', [viewer.id]
-    );
-    rows.forEach((r) => mine.push(r.id));
-  }
-  return [...new Set(mine)];
-}
+ * MOVED TO src/timesheet-visibility.js by Prompt 62, unchanged, because the
+ * timesheet DOWNLOAD has to answer the same question with the same code. A
+ * report that showed a line the requester cannot open in this tab would be a
+ * permission hole with a spreadsheet in front of it, and two copies of a
+ * reporting-line query is how that happens. */
+const { mayRead, readableUserIds } = require('../timesheet-visibility');
 
 // The week row, made on demand. A week nobody has touched has no row, which is
 // the right default: a draft is the absence of a decision, not a record of one.
