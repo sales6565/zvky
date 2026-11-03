@@ -38,6 +38,7 @@
 const db = require('./db');
 const { readableUserIds } = require('./timesheet-visibility');
 const { assetDiscipline, disciplineLabel } = require('./asset-discipline');
+const tlReview = require('./tl-review');
 const writer = require('./timesheet-export-xlsx');
 
 const MAX_SPAN_DAYS = 366;
@@ -167,8 +168,6 @@ async function subLabels(keys) {
   return new Map(rows.map((r) => [r.key, r.label]));
 }
 
-const TL_LABEL = { project_meeting: 'TL · Project Meeting', review: 'TL · Review' };
-
 /* One database row as one spreadsheet row. Pure, so the mapping can be tested
    without a database — which is what tests/timesheet-export.test.js does for
    every kind of line. */
@@ -178,7 +177,14 @@ function mapRow(row, labels = new Map()) {
   const idle = IDLE_LIKE.has(category);
   const hours = writer.round2(row.hours);
 
-  const tl = row.tlAction ? (TL_LABEL[row.tlAction] || null) : null;
+  /* THE TL ACTION'S LABEL, FROM THE MODULE THAT OWNS THE SPELLING.
+     This file used to carry its own copy of the two strings, which
+     tests/tl-review.test.js exists to prevent and duly caught — that scan
+     reads comments too, so the words themselves are not repeated here either.
+     It is not only tidiness: labelFor() also reads the retired review value as
+     a review, so a row the migration could not reach gets a description here
+     instead of an empty Asset Name cell. */
+  const tl = row.tlAction ? tlReview.labelFor(row.tlAction) : null;
   const subLabel = row.subKey ? (labels.get(row.subKey) || row.subKey) : null;
   const note = row.notes === null || row.notes === undefined ? '' : String(row.notes).trim();
 
@@ -299,6 +305,6 @@ function fileNameFor(from, to) {
 
 module.exports = {
   validate, rowsFor, countFor, mapRow, fileNameFor, subLabels,
-  MAX_SPAN_DAYS, MAX_ROWS, SUBMITTED_STATUSES, IDLE_LIKE, NO_ROW, TL_LABEL,
+  MAX_SPAN_DAYS, MAX_ROWS, SUBMITTED_STATUSES, IDLE_LIKE, NO_ROW,
   validDate, daysBetween,
 };
