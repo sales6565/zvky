@@ -353,6 +353,36 @@ test('Onsight and Vacation mode, end to end', { skip: cfg ? false : SKIP_REASON 
   const as = (who, p, opts = {}) => api(server.base, p, { ...opts, token: token[who] });
   const q = (text, params) => sql(cfg, text, params);
   const today = () => require('../src/timesheet-gate').istDate(Date.now());
+  /* A BOOKING HAS TO START ON A WORKING DAY, and "today plus a number" does not.
+   *
+   * Every future booking below is a fixed offset from today, which means the
+   * weekday it lands on depends on the weekday the suite is RUN on. A short
+   * range that falls entirely on a weekend is refused with `no_working_days` —
+   * correctly, by the endpoint — so three of these tests failed on a Tuesday
+   * and passed on a Thursday. MEASURED: run on 2026-11-03 (a Tuesday),
+   * today+40 is Sunday 13 December and today+25..+26 is Saturday the 28th to
+   * Sunday the 29th.
+   *
+   * So the from-date walks forward to the next Monday-to-Friday, and each
+   * to-date is derived from it rather than from today — which keeps every
+   * range's LENGTH exactly as it was written, and keeps the offset bands these
+   * tests use to stay out of each other's way (they are five or more apart,
+   * and this moves a date by at most two days).
+   *
+   * The weekend is the studio's default working week here; a suite that set its
+   * own weekly offs would have to say so, and none of these do. Past dates are
+   * deliberately NOT routed through this: the tests that use them are the ones
+   * asserting the past is refused. */
+  const workday = (offset) => {
+    let date = vacation.addDays(today(), offset);
+    for (let guard = 0; guard < 7; guard += 1) {
+      const [y, m, d] = date.split('-').map(Number);
+      const weekday = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+      if (weekday !== 0 && weekday !== 6) return date;
+      date = vacation.addDays(date, 1);
+    }
+    return date;
+  };
 
   const handle = {
     async query(text, params = []) {
@@ -607,7 +637,7 @@ test('Onsight and Vacation mode, end to end', { skip: cfg ? false : SKIP_REASON 
 
   await t.test('a person books their own vacation, and it becomes leave rows', async () => {
     await bothOn();
-    const from = vacation.addDays(today(), 3);
+    const from = workday(3);
     const to = vacation.addDays(from, 6);
     const r = await as('ana', '/leave/mine', { method: 'POST', body: { from, to, note: 'Diwali' } });
     assert.strictEqual(r.status, 201, JSON.stringify(r.body));
@@ -687,7 +717,7 @@ test('Onsight and Vacation mode, end to end', { skip: cfg ? false : SKIP_REASON 
 
     /* COMPLEMENTARY HALVES SAY WHAT TO DO INSTEAD rather than being allowed:
        the schema holds one active row per person per day. */
-    const halfFrom = vacation.addDays(today(), 40);
+    const halfFrom = workday(40);
     const h1 = await as('bo', '/leave/mine', { method: 'POST',
       body: { from: halfFrom, to: halfFrom, fromPortion: 'first_half', toPortion: 'first_half' } });
     assert.strictEqual(h1.status, 201, JSON.stringify(h1.body));
@@ -704,18 +734,18 @@ test('Onsight and Vacation mode, end to end', { skip: cfg ? false : SKIP_REASON 
 
   await t.test('the maximum range and the notice period are the studio’s', async () => {
     const long = await as('ana', '/leave/mine', { method: 'POST',
-      body: { from: vacation.addDays(today(), 100), to: vacation.addDays(today(), 400) } });
+      body: { from: workday(100), to: vacation.addDays(workday(100), 300) } });
     assert.strictEqual(long.status, 422);
     assert.strictEqual(long.body.errors[0].code, 'too_long');
 
     await settings({ enabled: true, firstHalfEndMinutes: '13:00', secondHalfStartMinutes: '14:00',
       vacationEnabled: true, vacationMinNoticeDays: 7, vacationMaxRangeDays: 10, vacationEmailEnabled: true });
     const soon = await as('ana', '/leave/mine', { method: 'POST',
-      body: { from: vacation.addDays(today(), 2), to: vacation.addDays(today(), 3) } });
+      body: { from: workday(2), to: vacation.addDays(workday(2), 1) } });
     assert.strictEqual(soon.status, 422);
     assert.match(soon.body.errors[0].message, /7 days/);
     const wide = await as('ana', '/leave/mine', { method: 'POST',
-      body: { from: vacation.addDays(today(), 200), to: vacation.addDays(today(), 215) } });
+      body: { from: workday(200), to: vacation.addDays(workday(200), 15) } });
     assert.strictEqual(wide.status, 422);
     assert.strictEqual(wide.body.errors[0].code, 'too_long');
     await bothOn();
@@ -753,7 +783,7 @@ test('Onsight and Vacation mode, end to end', { skip: cfg ? false : SKIP_REASON 
   });
 
   await t.test('cancelling before it starts clears every day', async () => {
-    const from = vacation.addDays(today(), 60);
+    const from = workday(60);
     const r = await as('root', '/leave/mine', { method: 'POST',
       body: { userId: id.ana, from, to: vacation.addDays(from, 3) } });
     assert.strictEqual(r.status, 201, JSON.stringify(r.body));
@@ -799,12 +829,12 @@ test('Onsight and Vacation mode, end to end', { skip: cfg ? false : SKIP_REASON 
 
   await t.test('somebody else’s vacation is not yours to book or cancel', async () => {
     const mineOnly = await as('ana', '/leave/mine', { method: 'POST',
-      body: { userId: id.bo, from: vacation.addDays(today(), 20), to: vacation.addDays(today(), 21) } });
+      body: { userId: id.bo, from: workday(20), to: vacation.addDays(workday(20), 1) } });
     assert.strictEqual(mineOnly.status, 403, JSON.stringify(mineOnly.body));
     assert.strictEqual(mineOnly.body.code, 'not_yours');
 
     const booked = await as('bo', '/leave/mine', { method: 'POST',
-      body: { from: vacation.addDays(today(), 25), to: vacation.addDays(today(), 26) } });
+      body: { from: workday(25), to: vacation.addDays(workday(25), 1) } });
     assert.strictEqual(booked.status, 201, JSON.stringify(booked.body));
     const nope = await as('ana', `/leave/${booked.body.request.id}/cancel`, { method: 'POST', body: {} });
     assert.strictEqual(nope.status, 403);
@@ -812,7 +842,7 @@ test('Onsight and Vacation mode, end to end', { skip: cfg ? false : SKIP_REASON 
 
     // And out of scope on somebody else's behalf, even holding manage_all.
     const out = await as('root', '/leave/mine', { method: 'POST',
-      body: { userId: id.far, from: vacation.addDays(today(), 230), to: vacation.addDays(today(), 231) } });
+      body: { userId: id.far, from: workday(230), to: vacation.addDays(workday(230), 1) } });
     assert.strictEqual(out.status, 201,
       `the Super Admin is studio-wide, so Far Away is in reach: ${JSON.stringify(out.body)}`);
   });
@@ -822,7 +852,7 @@ test('Onsight and Vacation mode, end to end', { skip: cfg ? false : SKIP_REASON 
       vacationEnabled: true, vacationRequireApproval: true,
       vacationMinNoticeDays: 1, vacationMaxRangeDays: 60, vacationEmailEnabled: true });
 
-    const from = vacation.addDays(today(), 70);
+    const from = workday(70);
     const r = await as('ana', '/leave/mine', { method: 'POST', body: { from, to: vacation.addDays(from, 2) } });
     assert.strictEqual(r.status, 201, JSON.stringify(r.body));
     assert.strictEqual(r.body.request.status, 'submitted');
@@ -847,7 +877,7 @@ test('Onsight and Vacation mode, end to end', { skip: cfg ? false : SKIP_REASON 
 
     // A rejected one never touches time.
     const r2 = await as('bo', '/leave/mine', { method: 'POST',
-      body: { from: vacation.addDays(today(), 80), to: vacation.addDays(today(), 81) } });
+      body: { from: workday(80), to: vacation.addDays(workday(80), 1) } });
     const no = await as('root', `/leave/${r2.body.request.id}/decide`,
       { method: 'POST', body: { approve: false, note: 'Crunch week' } });
     assert.strictEqual(no.status, 200, JSON.stringify(no.body));
@@ -858,7 +888,7 @@ test('Onsight and Vacation mode, end to end', { skip: cfg ? false : SKIP_REASON 
   });
 
   await t.test('the switches: off refuses new bookings and keeps existing ones working', async () => {
-    const from = vacation.addDays(today(), 90);
+    const from = workday(90);
     const made = await as('ana', '/leave/mine', { method: 'POST', body: { from, to: vacation.addDays(from, 2) } });
     assert.strictEqual(made.status, 201, JSON.stringify(made.body));
     const day = made.body.days[0];
@@ -867,7 +897,7 @@ test('Onsight and Vacation mode, end to end', { skip: cfg ? false : SKIP_REASON 
     await settings({ enabled: true, firstHalfEndMinutes: '13:00', secondHalfStartMinutes: '14:00',
       vacationEnabled: false, vacationMinNoticeDays: 1, vacationMaxRangeDays: 60, vacationEmailEnabled: true });
     const refused = await as('ana', '/leave/mine', { method: 'POST',
-      body: { from: vacation.addDays(today(), 95), to: vacation.addDays(today(), 96) } });
+      body: { from: workday(95), to: vacation.addDays(workday(95), 1) } });
     assert.strictEqual(refused.status, 409, JSON.stringify(refused.body));
     assert.strictEqual(refused.body.code, 'feature_disabled');
 
@@ -901,7 +931,7 @@ test('Onsight and Vacation mode, end to end', { skip: cfg ? false : SKIP_REASON 
     /* Lee leads Hero Quest, which Ana is on. */
     await q('INSERT IGNORE INTO project_team_leads (project_id, user_id) VALUES (?,?)', [id.project, id.lee]);
 
-    const from = vacation.addDays(today(), 120);
+    const from = workday(120);
     const r = await as('ana', '/leave/mine', { method: 'POST', body: { from, to: vacation.addDays(from, 2) } });
     assert.strictEqual(r.status, 201, JSON.stringify(r.body));
 
@@ -922,7 +952,7 @@ test('Onsight and Vacation mode, end to end', { skip: cfg ? false : SKIP_REASON 
     await settings({ enabled: true, firstHalfEndMinutes: '13:00', secondHalfStartMinutes: '14:00',
       vacationEnabled: true, vacationMinNoticeDays: 1, vacationMaxRangeDays: 60, vacationEmailEnabled: false });
     const r2 = await as('ana', '/leave/mine', { method: 'POST',
-      body: { from: vacation.addDays(today(), 130), to: vacation.addDays(today(), 131) } });
+      body: { from: workday(130), to: vacation.addDays(workday(130), 1) } });
     assert.strictEqual(r2.status, 201, JSON.stringify(r2.body));
     assert.strictEqual(r2.body.notified.mailed.reason, 'switch_off');
     const stillBelled = await q('SELECT COUNT(*) AS n FROM notifications WHERE kind = ?', ['vacation']);
@@ -963,7 +993,7 @@ test('Onsight and Vacation mode, end to end', { skip: cfg ? false : SKIP_REASON 
       'the Super Admin is an approver, which is what puts them in the list');
 
     const r = await as('root', '/leave/mine', { method: 'POST',
-      body: { from: vacation.addDays(today(), 180), to: vacation.addDays(today(), 181) } });
+      body: { from: workday(180), to: vacation.addDays(workday(180), 1) } });
     assert.strictEqual(r.status, 201, JSON.stringify(r.body));
     assert.strictEqual(r.body.approvalNeeded, true);
 
@@ -1024,7 +1054,7 @@ test('Onsight and Vacation mode, end to end', { skip: cfg ? false : SKIP_REASON 
     await q('DROP TABLE email_outbox');
     try {
       const r = await as('ana', '/leave/mine', { method: 'POST',
-        body: { from: vacation.addDays(today(), 160), to: vacation.addDays(today(), 161) } });
+        body: { from: workday(160), to: vacation.addDays(workday(160), 1) } });
       assert.strictEqual(r.status, 201, `the booking survives a broken mailer: ${JSON.stringify(r.body)}`);
       assert.ok(r.body.days.length, 'and the days were still created');
       /* NOTHING WAS QUEUED, AND NOTHING WAS THROWN. The reason comes back null
@@ -1071,7 +1101,7 @@ test('Onsight and Vacation mode, end to end', { skip: cfg ? false : SKIP_REASON 
 
     // No vacation can be booked, by anybody, for anybody.
     const mine = await as('ana', '/leave/mine', { method: 'POST',
-      body: { from: vacation.addDays(today(), 170), to: vacation.addDays(today(), 171) } });
+      body: { from: workday(170), to: vacation.addDays(workday(170), 1) } });
     assert.strictEqual(mine.status, 409);
     assert.strictEqual(mine.body.code, 'feature_disabled');
 
@@ -1104,7 +1134,7 @@ test('Onsight and Vacation mode, end to end', { skip: cfg ? false : SKIP_REASON 
 
     // A lead sees their own people and not Far Away's.
     await grant('team_lead', ['leave.view_team']);
-    const from = vacation.addDays(today(), 150);
+    const from = workday(150);
     await as('root', '/leave/mine', { method: 'POST', body: { userId: id.far, from, to: vacation.addDays(from, 1) } });
     await as('root', '/leave/mine', { method: 'POST', body: { userId: id.bo, from, to: vacation.addDays(from, 1) } });
     const lead = await as('lee', `/leave/team?from=${from}&to=${vacation.addDays(from, 2)}`);
