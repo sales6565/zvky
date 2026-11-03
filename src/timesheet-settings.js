@@ -242,13 +242,27 @@ function validate(input) {
   };
   const requirePreviousDay = bool('requirePreviousDay');
   const tlAction = bool('tlAction');
+  /* THE DOWNLOAD SWITCH, AND WHY ITS ABSENCE HERE WAS A BUG.
+   *
+   * save() below writes `v.exportEnabled ? 1 : 0`. Until this line existed,
+   * validate() never put exportEnabled into `value` at all — so every save of
+   * the Time Sheet options screen, whatever it was changing, wrote 0 to
+   * export_enabled and silently switched the whole studio's timesheet download
+   * off. The default is ON, so a fresh installation was fine and the first
+   * person to press Save on an unrelated setting broke it.
+   *
+   * bool() reads the CURRENT value when the field is absent (pick(key,
+   * cache[key])), which is what makes "leave this as it was" work for an older
+   * page that does not send the field — so this is also the line that stops a
+   * stale tab turning it off. */
+  const exportEnabled = bool('exportEnabled');
 
   if (errors.length) return { ok: false, errors };
   return {
     ok: true,
     errors: [],
     value: { maxDayHours, minLineHours, maxLineHours, backdateDays, futureDays, loggableDays,
-      requirePreviousDay, tlAction },
+      requirePreviousDay, tlAction, exportEnabled },
   };
 }
 
@@ -305,6 +319,10 @@ const summarise = (s) => [
      would be missing the only change anybody would come looking for. */
   `yesterday's sheet ${s.requirePreviousDay ? 'REQUIRED before starting work' : 'not required'}`,
   `TL Action ${s.tlAction ? 'on' : 'off'}`,
+  /* ALSO NAMED, for the same reason: this is the switch that makes everybody's
+     hours downloadable, and a log that recorded the hour limits but not the day
+     it was turned on would be missing the entry somebody came for. */
+  `timesheet download ${s.exportEnabled ? 'on' : 'off'}`,
 ].join(', ');
 
 module.exports = {

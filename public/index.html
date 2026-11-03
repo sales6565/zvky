@@ -2576,6 +2576,21 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
   </div>
 </div>
 
+<!-- DOWNLOAD TIMESHEETS. The body is drawn by tsExportRender() because every
+     control in it depends on the mode chosen and on who the viewer may see;
+     the wrapper is here so the markup exists before the Timesheet tab is ever
+     opened, like every other modal on this page. -->
+<div class="modal-wrap" id="tsExportWrap">
+  <div class="modal" style="width:520px;">
+    <h2>Download timesheets</h2>
+    <div id="tsExportBody"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="tsExportCancel">Cancel</button>
+      <button class="btn btn-brand" id="tsExportGo">Download (.xlsx)</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-wrap" id="modalWrap">
   <div class="modal">
     <h2>New Asset</h2>
@@ -7095,6 +7110,19 @@ async function renderTimesheet(){
       ${can('timesheet.own') ? `
         <button class="btn btn-ghost btn-sm" id="ts_xlsx">Excel</button>
         <button class="btn btn-ghost btn-sm" id="ts_pdf">PDF</button>` : ''}
+      <!-- DOWNLOAD TIMESHEETS (all users), in the tab's own header bar.
+           IN THE BAR, NOT IN A SUB-VIEW, and that is the whole of the fix for
+           the report that it never appeared: this bar is drawn once by
+           renderTimesheet() for every state the tab can be in -- your own week,
+           somebody else's week through the picker, any week of any month -- so
+           a button here is a button in all of them. The two export buttons
+           beside it are your OWN week; this one is everybody you may see.
+           TWO CONDITIONS, both the server's: the studio's switch, published
+           with the week's policy, and the permission. The endpoint checks both
+           again. -->
+      ${(wd.exportEnabled !== false && can('timesheet.export')) ? `
+        <button class="btn btn-ghost btn-sm" id="timesheet-export-btn"
+                title="Download timesheets for everybody you can see, as a spreadsheet">Download timesheets</button>` : ''}
     </div>
 
     <!-- Seven days, each with its own status, its own lock and its own Submit.
@@ -7204,6 +7232,13 @@ function wireTimesheet(el){
   const dl = (path)=>downloadAuthed(`/timesheets/${path}?${range()}`);
   if(el.querySelector('#ts_xlsx')) el.querySelector('#ts_xlsx').onclick = ()=>dl('export.xlsx');
   if(el.querySelector('#ts_pdf'))  el.querySelector('#ts_pdf').onclick  = ()=>dl('export.pdf');
+  /* AND THE ALL-USERS DOWNLOAD, which opens the modal rather than fetching a
+     file: the period and the people have to be chosen first, and the count has
+     to be shown before anybody commits to a year of somebody else's hours.
+     Guarded with a presence check like the two above, because the button is
+     only in the bar when the switch is on and the permission is held. */
+  const exportBtn = el.querySelector('#timesheet-export-btn');
+  if(exportBtn) exportBtn.onclick = ()=>openTimesheetExport();
 
   el.querySelectorAll('.ts-add').forEach(b=>b.onclick = ()=>openTimesheetLine(b.dataset.day));
   el.querySelectorAll('.ts-del').forEach(b=>b.onclick = async ()=>{
@@ -7252,7 +7287,13 @@ function wireTimesheet(el){
  * to be permitted to do.
  */
 
-async function downloadAuthed(path){
+async function downloadAuthed(path, opts={}){
+  /* ONE TRANSPORT, TWO WAYS OF REPORTING. Everything that downloads a file in
+     this page comes through here — which is the point, because this is the
+     function that carries the Prompt 54 lesson about handing over bytes
+     untouched. The only thing a caller may vary is where the failure is shown:
+     a toast by default, and `{ rethrow:true }` for a caller that has a dialog
+     open with the controls that produced the error still on screen. */
   try{
     const res = await fetch(API_BASE + path, { headers:{ Authorization:'Bearer '+state.token } });
     if(!res.ok){
@@ -7267,7 +7308,281 @@ async function downloadAuthed(path){
     a.href = url; a.download = named ? named[1] : 'timesheet';
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(()=>URL.revokeObjectURL(url), 30000);
-  }catch(err){ showToast(err.message); }
+  }catch(err){
+    if(opts.rethrow) throw err;
+    showToast(err.message);
+  }
+}
+
+/* ---------- Download timesheets (everybody you can see) ----------
+ *
+ * ===========================================================================
+ * FOUR WAYS TO SAY THE SAME THING, AND THE SERVER ONLY EVER HEARS ONE. Day,
+ * Month, Year and a custom range are what somebody actually asks for; every one
+ * of them is turned into an inclusive from/to pair HERE, so /timesheet/export
+ * has a single shape to validate and a single thing to test. A server that
+ * understood "month" would need a calendar of its own, and two calendars are
+ * how a February goes wrong.
+ *
+ * THE COUNT BEFORE THE FILE. The line under the controls comes from
+ * /timesheet/export/count with the same filters the download will use, so the
+ * number somebody reads is the number of rows they get — and an empty period
+ * disables Download rather than handing over a spreadsheet with nothing in it.
+ *
+ * WHAT IT CANNOT DO. The people offered here are tsState.people, which is
+ * /timesheets/people — the list the week picker uses, which is everybody this
+ * person may already read. Nothing in this modal widens that, and
+ * readableUserIds() intersects again on the server regardless.
+ */
+const tsExportState = {
+  mode: 'month',
+  day: null, month: null, year: null, from: null, to: null,
+  users: new Set(),            // empty = everybody I can see
+  choosing: false,             // "Choose people" picked, perhaps with nothing ticked yet
+  search: '',
+  count: null,                 // { lines, people }, or null while unknown
+  busy: false,
+  error: null,
+  seq: 0,                      // so a slow count cannot overwrite a newer one
+};
+
+const tsPad = (n) => String(n).padStart(2, '0');
+/* The length of a month, asked of the calendar rather than carried in a table:
+   February in a leap year is this one line's problem and nobody else's. */
+const tsMonthEnd = (year, month) => new Date(Date.UTC(year, month, 0)).getUTCDate();
+
+const TS_MONTHS = ['January','February','March','April','May','June','July',
+  'August','September','October','November','December'];
+
+/* THE ONE PLACE A MODE BECOMES A PAIR OF DATES. Returns null when the chosen
+   mode has not been given enough to work with, which is also what disables the
+   Download button. */
+function tsExportRange(){
+  const st = tsExportState;
+  if(st.mode === 'day') return st.day ? { from: st.day, to: st.day } : null;
+  if(st.mode === 'month'){
+    if(!st.month || !st.year) return null;
+    const last = tsMonthEnd(Number(st.year), Number(st.month));
+    return { from: `${st.year}-${tsPad(st.month)}-01`,
+             to: `${st.year}-${tsPad(st.month)}-${tsPad(last)}` };
+  }
+  if(st.mode === 'year') return st.year ? { from: `${st.year}-01-01`, to: `${st.year}-12-31` } : null;
+  return (st.from && st.to) ? { from: st.from, to: st.to } : null;
+}
+
+/* The filters, as the two endpoints take them. One function so the count and
+   the download cannot drift apart. */
+function tsExportQuery(){
+  const range = tsExportRange();
+  if(!range) return null;
+  const query = new URLSearchParams({ from: range.from, to: range.to });
+  if(tsExportState.users.size) query.set('users', [...tsExportState.users].join(','));
+  return { range, query: query.toString() };
+}
+
+/* WHOEVER ELSE THIS PERSON MAY SEE. tsState.people holds them and everybody
+   whose week they may open, so a list of one means the only timesheet they can
+   download is their own — which the modal then says in words rather than
+   offering a picker with one name in it. */
+const tsExportOthers = () => (tsState.people || []).filter(u => u.id !== state.currentUser.id);
+
+function openTimesheetExport(){
+  const today = tsToday();
+  const st = tsExportState;
+  /* OPENS ON THIS MONTH, which is what a month-end download is for. */
+  st.mode = 'month';
+  st.day = today;
+  st.year = Number(today.slice(0, 4));
+  st.month = Number(today.slice(5, 7));
+  st.from = `${today.slice(0, 7)}-01`;
+  st.to = today;
+  st.users = new Set();
+  st.choosing = false;
+  st.search = '';
+  st.count = null;
+  st.error = null;
+  st.busy = false;
+  document.getElementById('tsExportWrap').classList.add('show');
+  tsExportRender();
+  tsExportCount();
+}
+
+const closeTimesheetExport = () =>
+  document.getElementById('tsExportWrap').classList.remove('show');
+
+function tsExportRender(){
+  const st = tsExportState;
+  const body = document.getElementById('tsExportBody');
+  if(!body) return;
+  const thisYear = Number(tsToday().slice(0, 4));
+  const years = [];
+  for(let y = thisYear; y >= thisYear - 6; y -= 1) years.push(y);
+
+  const others = tsExportOthers();
+  const matching = others.filter(u =>
+    !st.search || (u.name || '').toLowerCase().includes(st.search.toLowerCase()));
+
+  const yearSelect = (id) => `<select id="${id}">${years.map(y =>
+    `<option value="${y}"${Number(st.year) === y ? ' selected' : ''}>${y}</option>`).join('')}</select>`;
+
+  const period = st.mode === 'day'
+    ? `<label>Date</label><input type="date" id="tse_day" value="${escapeHTML(st.day || '')}">`
+    : st.mode === 'month'
+      ? `<div class="row2">
+          <div><label>Month</label><select id="tse_month">${TS_MONTHS.map((m, i) =>
+            `<option value="${i + 1}"${Number(st.month) === i + 1 ? ' selected' : ''}>${m}</option>`).join('')}</select></div>
+          <div><label>Year</label>${yearSelect('tse_year')}</div>
+        </div>`
+      : st.mode === 'year'
+        ? `<label>Year</label>${yearSelect('tse_year')}`
+        : `<div class="row2">
+            <div><label>From</label><input type="date" id="tse_from" value="${escapeHTML(st.from || '')}"></div>
+            <div><label>To</label><input type="date" id="tse_to" value="${escapeHTML(st.to || '')}"></div>
+          </div>`;
+
+  /* THE COUNT LINE, in the four states it has: a refusal from the server, not
+     counted yet, counted and empty, counted. The empty case is a sentence
+     rather than "0 lines" because nought lines for a period is usually a
+     period nobody has filed yet, not a mistake. */
+  const line = st.error
+    ? `<div class="ref-err" id="tse_err">${escapeHTML(st.error)}</div>`
+    : st.count === null
+      ? '<div class="chat-sub" id="tse_count">Counting…</div>'
+      : st.count.lines === 0
+        ? '<div class="chat-sub" id="tse_count">No submitted timesheets in this period</div>'
+        : `<div class="chat-sub" id="tse_count">${st.count.lines} timesheet line${
+            st.count.lines === 1 ? '' : 's'} from ${st.count.people} ${
+            st.count.people === 1 ? 'person' : 'people'}</div>`;
+
+  const range = tsExportRange();
+
+  body.innerHTML = `
+    <label>Period</label>
+    <div class="sub-tabs" id="tse_modes">
+      ${[['day', 'Day'], ['month', 'Month'], ['year', 'Year'], ['range', 'Date range']].map(([key, label]) =>
+        `<button type="button" class="sub-tab${st.mode === key ? ' active' : ''}" data-tse-mode="${key}">${label}</button>`).join('')}
+    </div>
+    ${period}
+    <label style="margin-top:12px;">Users</label>
+    ${others.length === 0
+      /* ONLY THEMSELVES, AND SAID SO. A role can hold timesheet.export without
+         holding timesheet.team or timesheet.all: the download still works and
+         still contains their own lines, and the count below already reflects
+         that, because the server intersects with the same visibility the tab
+         uses. The sentence is here so the file's size is not a surprise. */
+      ? `<div class="chat-sub" id="tse_only_mine">You can only download timesheets you are
+          allowed to view, which is your own. Ask a Super Admin for wider timesheet access if
+          you need other people's.</div>`
+      : `<label class="rh-check"><input type="radio" name="tse_who" id="tse_all"${
+            st.choosing ? '' : ' checked'}> Everybody I can see (${tsState.people.length})</label>
+        <label class="rh-check"><input type="radio" name="tse_who" id="tse_some"${
+            st.choosing ? ' checked' : ''}> Choose people</label>
+        ${st.choosing ? `
+          <input type="text" class="chat-search" id="tse_search" placeholder="Search people…"
+                 value="${escapeHTML(st.search)}" style="margin:6px 0;">
+          <div class="checklist" id="tse_people">${matching.map(u =>
+            `<label><input type="checkbox" data-tse-user="${escapeHTML(String(u.id))}"${
+              st.users.has(String(u.id)) ? ' checked' : ''}> ${escapeHTML(u.name)}</label>`).join('')
+            || '<div class="chat-sub">Nobody matches that.</div>'}</div>
+          ${st.users.size ? '' : '<div class="chat-sub">Nobody ticked — the download covers everybody you can see.</div>'}` : ''}`}
+    <div style="margin-top:12px;">${line}</div>
+    <div class="chat-sub" style="margin-top:6px;">${range
+      ? `${escapeHTML(range.from)} to ${escapeHTML(range.to)}`
+      : 'Choose a period.'} · only days that have been submitted · the studio's own format</div>`;
+
+  /* The controls, re-bound on every draw because the body is rebuilt on every
+     change — the same pattern the roles screen's checklists use. */
+  body.querySelectorAll('[data-tse-mode]').forEach(b => { b.onclick = () => {
+    st.mode = b.dataset.tseMode; st.error = null; st.count = null;
+    tsExportRender(); tsExportCount();
+  }; });
+  const onDate = (sel, field) => {
+    const input = body.querySelector(sel);
+    if(input) input.onchange = () => {
+      st[field] = input.value; st.error = null; st.count = null;
+      tsExportRender(); tsExportCount();
+    };
+  };
+  onDate('#tse_day', 'day'); onDate('#tse_from', 'from'); onDate('#tse_to', 'to');
+  const onNumber = (sel, field) => {
+    const pick = body.querySelector(sel);
+    if(pick) pick.onchange = () => {
+      st[field] = Number(pick.value); st.error = null; st.count = null;
+      tsExportRender(); tsExportCount();
+    };
+  };
+  onNumber('#tse_month', 'month'); onNumber('#tse_year', 'year');
+
+  const all = body.querySelector('#tse_all');
+  if(all) all.onchange = () => {
+    st.choosing = false; st.users = new Set(); st.count = null;
+    tsExportRender(); tsExportCount();
+  };
+  const some = body.querySelector('#tse_some');
+  /* CHOOSING "Choose people" IS NOT A FILTER OF NOBODY. The list opens and the
+     count stays as it is until something is ticked — an empty `users` means
+     "everybody I can see" to the endpoint, which is also what the line under
+     the list says. */
+  if(some) some.onchange = () => { st.choosing = true; tsExportRender(); };
+  const search = body.querySelector('#tse_search');
+  if(search) search.oninput = () => { st.search = search.value; tsExportRender(); };
+  body.querySelectorAll('[data-tse-user]').forEach(box => { box.onchange = () => {
+    if(box.checked) st.users.add(box.dataset.tseUser); else st.users.delete(box.dataset.tseUser);
+    st.count = null; tsExportRender(); tsExportCount();
+  }; });
+
+  const go = document.getElementById('tsExportGo');
+  if(go) go.disabled = st.busy || !range || !st.count || st.count.lines === 0;
+}
+
+/* The count, from the server, with the same filters the download will use.
+   SEQUENCED: a slow answer for last month must not overwrite a fast one for
+   this month, which is exactly what happens to somebody clicking through the
+   four modes. */
+async function tsExportCount(){
+  const st = tsExportState;
+  const want = tsExportQuery();
+  if(!want){ st.count = null; st.error = null; tsExportRender(); return; }
+  const mine = ++st.seq;
+  try{
+    const got = await api(`/timesheet/export/count?${want.query}`);
+    if(mine !== st.seq) return;
+    st.count = { lines: Number(got.lines) || 0, people: Number(got.people) || 0 };
+    st.error = null;
+  }catch(err){
+    if(mine !== st.seq) return;
+    st.count = null;
+    st.error = err && err.message ? err.message : 'That period could not be counted.';
+  }
+  tsExportRender();
+}
+
+async function tsExportDownload(){
+  const st = tsExportState;
+  const want = tsExportQuery();
+  if(!want || st.busy) return;
+  st.busy = true;
+  const go = document.getElementById('tsExportGo');
+  const label = go ? go.textContent : '';
+  if(go){ go.disabled = true; go.textContent = 'Preparing…'; }
+  try{
+    /* THE SHARED TRANSPORT, which is the one the Artist Report uses. A second
+       copy of that fetch would be a second chance to lose the Prompt 54 fix. */
+    await downloadAuthed(`/timesheet/export?${want.query}`, { rethrow: true });
+    st.error = null;
+    closeTimesheetExport();
+    showToast('Downloaded.');
+  }catch(err){
+    /* IN THE MODAL, not as a toast behind a closing dialog: the person is still
+       looking at the controls that produced the refusal and will want to change
+       one of them — a period too long, or a studio switch turned off since the
+       tab was opened. */
+    st.error = err && err.message ? err.message : 'The download failed.';
+  }finally{
+    st.busy = false;
+    if(go) go.textContent = label;
+    tsExportRender();
+  }
 }
 
 /* One line of a day. A modal rather than an inline row because the cascade —
@@ -7735,6 +8050,14 @@ document.getElementById('tl_kind').addEventListener('change', syncTimesheetLine)
 document.getElementById('tl_cat').addEventListener('change', tlSyncSubOptions);
 document.getElementById('tl_cancel').addEventListener('click', ()=>timesheetLineWrap.classList.remove('show'));
 timesheetLineWrap.addEventListener('click', e=>{ if(e.target===timesheetLineWrap) timesheetLineWrap.classList.remove('show'); });
+
+/* The download modal's two fixed buttons and its backdrop, wired once here
+   beside the line modal's, because this markup is static — only the body
+   between them is redrawn. */
+const tsExportWrap = document.getElementById('tsExportWrap');
+document.getElementById('tsExportCancel').addEventListener('click', closeTimesheetExport);
+document.getElementById('tsExportGo').addEventListener('click', tsExportDownload);
+tsExportWrap.addEventListener('click', e=>{ if(e.target===tsExportWrap) closeTimesheetExport(); });
 
 /* THE EMOJI PICKER CLOSES ON A CLICK OUTSIDE IT.
  *
@@ -19535,6 +19858,28 @@ async function renderTimesheetOptions(){
           </div>
         </div>
       </div>
+      <div class="rh-list">
+        <div class="rh-head"><h4>Timesheet report download</h4></div>
+        <div class="rh-grid">
+          <div class="rh-f rh-days">
+            <label class="rh-day"><input type="checkbox" id="tso_exportEnabled"${
+              s.exportEnabled?' checked':''}><span>Let the roles that hold the permission download
+              timesheets as a spreadsheet</span></label>
+            <span class="rh-opt">
+              <strong>On by default, and it grants nobody anything on its own.</strong> With it on,
+              a role that holds <em>Download Timesheets Report</em> gets a
+              <strong>Download timesheets</strong> button in the Time Sheet tab, offering a day, a
+              month, a year or a date range, and produces the studio&rsquo;s own spreadsheet format.
+              The file only ever contains lines from days that have been <strong>submitted</strong>,
+              and only for the people that person can already open in this tab &mdash; a lead gets
+              their team, and somebody with no wider timesheet access gets their own hours. Every
+              download is written to the Activity Log with who asked, the period and how many lines
+              it held. Switching it off hides the button and refuses the download for everybody,
+              Super Admin included; nothing else about the Time Sheet changes.
+            </span>
+          </div>
+        </div>
+      </div>
       ${tsoState.errors.length?`<div class="rh-errs">${tsoState.errors.map(e=>`<div class="rh-err">${escapeHTML(e.message)}</div>`).join('')}</div>`:''}
       <div class="ref-add" style="margin-top:4px;">
         <button class="btn btn-brand btn-sm" id="tso_save"${tsoState.busy?' disabled':''}>Save</button>
@@ -19558,6 +19903,10 @@ async function renderTimesheetOptions(){
       loggableDays: [...el.querySelectorAll('[data-tsoday]:checked')].map(i=>Number(i.dataset.tsoday)),
       requirePreviousDay: document.getElementById('tso_requirePreviousDay').checked,
       tlAction: document.getElementById('tso_tlAction').checked,
+      /* SENT EVERY TIME, because the validator reads an absent boolean as
+         "leave it as it was" and a page that never sent it would leave the one
+         switch on this screen that nobody could then turn back on. */
+      exportEnabled: document.getElementById('tso_exportEnabled').checked,
     };
     try{
       tsoState.data = await api('/admin/settings/timesheet', { method:'PUT', body });

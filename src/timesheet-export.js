@@ -253,7 +253,12 @@ async function countFor(viewer, { from, to, users = [] }) {
   const ids = users.length ? users.filter((id) => allowedSet.has(String(id))) : allowed;
   if (!ids.length) return { lines: 0, people: 0 };
   const { rows } = await db.query(
-    `SELECT COUNT(*) AS lines, COUNT(DISTINCT e.user_id) AS people
+    /* `lines` IS A RESERVED WORD IN MARIADB (it is the LINES clause of LOAD
+       DATA / SELECT INTO), so the alias has to be quoted or the whole statement
+       is a parse error — which is what this endpoint did until it was first
+       pressed: a 500 with ER_PARSE_ERROR on every count. Quoted rather than
+       renamed, because the field name is part of the response the page reads. */
+    `SELECT COUNT(*) AS \`lines\`, COUNT(DISTINCT e.user_id) AS people
        FROM timesheet_entries e
        JOIN timesheet_days d ON d.user_id = e.user_id AND d.work_date = e.entry_date
       WHERE e.entry_date BETWEEN $1 AND $2

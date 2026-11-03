@@ -311,6 +311,14 @@ const workingDay = () => {
        is only the studio-wide switch, published with the rest of the policy so
        the form does not have to fetch the settings separately. */
     tlAction: policy().tlAction,
+    /* AND WHETHER THE DOWNLOAD BUTTON EXISTS AT ALL, published with the rest of
+       the policy for the same reason tlAction is: the Timesheet tab already
+       fetches this payload to draw the week, and a second request just to learn
+       whether to draw one button would be a request on every visit to the tab.
+       The page still asks can('timesheet.export') as well — this is only the
+       studio-wide switch — and the endpoint refuses regardless, which is what
+       makes the hiding a courtesy rather than the rule. */
+    exportEnabled: policy().exportEnabled,
   };
 };
 
