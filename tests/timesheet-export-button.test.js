@@ -91,7 +91,17 @@ test('the Timesheet tab renders the download button, gated and wired', () => {
   const button = render.indexOf('id="timesheet-export-btn"');
   assert.ok(bar !== -1 && week > bar, 'the bar is drawn, then the days');
   assert.ok(button > bar && button < week,
-    'the button is in the header bar and not inside the day cards');
+    'the button is drawn between the bar opening and the day cards');
+  /* AND INSIDE THE BAR, NOT BETWEEN IT AND THE DAY CARDS — a real distinction,
+     and the one a mutation found: a button moved below the bar's closing tag
+     still sits before `.ts-week` and would satisfy the check above while being
+     outside the header. The bar closes with the first `</div>` at its own
+     indentation after it opens. The browser suite pins the same thing through
+     the DOM (`b.closest('.ts-bar')`); this is the cheap half that fails without
+     a browser. */
+  const barEnds = render.indexOf('\n    </div>', bar);
+  assert.ok(barEnds > bar && barEnds < week, 'the bar’s closing tag was found');
+  assert.ok(button < barEnds, 'the button is INSIDE the header bar');
 
   /* BOTH CONDITIONS, AND NOTHING ELSE. The studio's switch, published with the
      week's policy, and the permission. `!== false` rather than a truth test, so
