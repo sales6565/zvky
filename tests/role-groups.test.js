@@ -103,7 +103,16 @@ const SINCE_SNAPSHOT = [MANAGE, 'settings.email_delivery', 'report.remind', 'set
      size is a matter of taste, this one is a matter of somebody's work
      disappearing. Super Admin until a studio hands it to whoever watches the
      disk. */
-  'settings.chat_retention'];
+  'settings.chat_retention',
+  /* THE TIMESHEET DOWNLOAD, and it belongs in this list for the same reason the
+     Artist Report does: reading one person's week on screen and walking out
+     with a spreadsheet of the whole studio's months are different acts. The
+     screen is auditable by being a screen; a file keeps working after the role
+     that made it is taken away. So holding View All Timesheets does not hand
+     this over, and it starts Super Admin until a studio gives it to whoever
+     actually compiles the month. It widens nobody's reach either way — the
+     rows are intersected with the requester's existing timesheet visibility. */
+  'timesheet.export'];
 
 /* THE KEYS THAT ARE DELIBERATELY NOT SUPER-ADMIN-ONLY, listed separately so
  * each exception is argued rather than hidden in the list above.
