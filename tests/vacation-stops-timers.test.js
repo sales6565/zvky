@@ -413,6 +413,55 @@ test('a vacation that covers now, end to end', { skip: cfg ? false : SKIP_REASON
         assert.strictEqual(stopped[0].assetId, asset.id);
       });
 
+    await t.test('a leave window that has PASSED does not stop today\'s timer',
+      async () => {
+        /* THE CASE THE WINDOW GUARD EXISTS FOR, and the one my first set of
+           tests missed entirely.
+         *
+         * liveWindowsNow looks at YESTERDAY as well as today — it has to, for a
+         * session that started yesterday and is still running — so yesterday's
+         * leave row is in range while its window is long past. Somebody who was
+         * on leave yesterday and is working today must not be swept up by it.
+         *
+         * A MUTATION FOUND THIS. Removing the "is `now` inside this window"
+         * check from both places that make it escaped every other test in this
+         * file, because in all of them the window did contain `now`. The guard
+         * was load-bearing and nothing proved it.
+         *
+         * YESTERDAY RATHER THAN A HALF DAY THAT HAS ENDED: a first-half window
+         * has passed only if the suite runs in the afternoon, and a test that
+         * passes or fails by the hour it runs at is worse than no test. */
+        const yesterday = require('../src/timesheet-gate').shiftDays(today(), -1);
+        await q(
+          `INSERT INTO user_day_status (id, user_id, \`date\`, kind, \`portion\`, source, set_by)
+           VALUES (UUID(), ?, ?, 'leave', 'full', 'manual', ?)`,
+          [people.dee, yesterday, people.root]);
+        try {
+          const asset = await newAsset('Back Today', people.dee);
+          assert.strictEqual((await startTimer('dee', asset.id)).status, 200);
+
+          const stopped = await require('../src/day-status')
+            .sweepLeave(handle, { userId: people.dee });
+          assert.deepStrictEqual(stopped, [],
+            'yesterday\'s leave is not a reason to stop today\'s work');
+          const open = await openSessions(people.dee);
+          assert.ok(open.filter((r) => !r.endedAt).length >= 1, 'the timer is still running');
+        } finally {
+          await q('DELETE FROM user_day_status WHERE user_id = ? AND `date` = ?',
+            [people.dee, yesterday]);
+          /* AND PUT dee's TIMER DOWN AGAIN. One person may hold one running
+             session, so a test that leaves one running makes that person
+             unusable for every test after it — which is how this one broke the
+             reassignment test below on its first run. Closed in SQL because the
+             assertion above is about a sweep that must NOT close it, and using
+             a route here would muddle the two. */
+          await q(
+            `UPDATE work_sessions SET ended_at = NOW(), seconds = 0,
+                ended_reason = 'submit' WHERE user_id = ? AND ended_at IS NULL`,
+            [people.dee]);
+        }
+      });
+
     await t.test('deleting a vacation never starts anything', async () => {
       const asset = await newAsset('No Resume', people.bo);
       await as('root', '/admin-dashboard/follow-up/day-status/clear', { method: 'POST',
