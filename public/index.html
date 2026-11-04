@@ -15342,6 +15342,11 @@ async function renderSettings(){
     ${can('settings.recording_hours') ? '<div id="recordingHoursSection"></div>' : ''}
     ${can('settings.holidays_view') ? '<div id="holidaysSection"></div>' : ''}
     ${can('timesheet.options') ? '<div id="timesheetOptionsSection"></div>' : ''}
+    ${/* THE HISTORY TAB, under the timesheet section's own key: these three
+           values decide whether a tab exists and how much of somebody's own
+           history it opens with, which is a presentation decision rather than a
+           permission one, and the tab's data is the timesheet's. */''}
+    ${can('timesheet.options') ? '<div id="historySettingsSection"></div>' : ''}
     ${can('settings.nudges') ? '<div id="nudgeSettingsSection"></div>' : ''}
     ${can('settings.leave.manage') ? '<div id="leaveSettingsSection"></div>' : ''}
     ${can('settings.server.manage') ? '<div id="serverSettingsSection"></div>' : ''}
@@ -15373,6 +15378,7 @@ async function renderSettings(){
   if(can('settings.server.manage')) renderServerSettings();
   if(can('chat.settings')) renderChatSettings();
   if(can('settings.asset_rename')) renderAssetNameSettings();
+  if(can('timesheet.options')) renderHistorySettings();
   if(can('settings.mis_access')) renderMisAccess();
   if(can('settings.working_hours')) renderSchedule();
   if(can('settings.permissions')) await renderRolePermissions();
@@ -21201,6 +21207,95 @@ let csState = { data:null, errors:[], busy:false };
  * it never undoes a rename, and the history stays readable either way.
  */
 const anSetState = { data:null, busy:false, error:null };
+
+const histSetState = { data: null, error: null, busy: false };
+
+async function renderHistorySettings(){
+  const el = document.getElementById('historySettingsSection');
+  if(!el) return;
+  if(!histSetState.data){
+    try{ histSetState.data = await api('/admin/settings/history'); }
+    catch(err){ el.innerHTML = `<div class="ref-section"><div class="ref-err">${escapeHTML(err.message)}</div></div>`; return; }
+  }
+  const d = histSetState.data;
+  const s = d.settings;
+  el.innerHTML = `
+    <div class="ref-section">
+      <div class="ref-head"><h3>History tab</h3><span class="rh-badge">Super Admin</span></div>
+      <div class="ref-note">The <strong>My History</strong> tab: one card per day, newest first,
+        showing what somebody worked on, the time recorded against each asset, the day&rsquo;s
+        status and their timesheet for that day. It shows only what is already recorded elsewhere
+        and changes nothing. Who may open it is <strong>See My History</strong> in Role Permissions,
+        which every designation holds by default &mdash; it is their own record. Reading somebody
+        else&rsquo;s needs <strong>See Another User&rsquo;s History</strong>, and that shows only
+        the people the designation can already see in the Time Sheet tab.</div>
+      <div class="ref-add">
+        <div style="align-self:end;">
+          <label class="rh-check"><input type="checkbox" id="hs_enabled"${s.enabled?' checked':''}>
+            History tab</label>
+        </div>
+        <div class="rh-f">
+          <label for="hs_days">Days shown by default</label>
+          <input type="number" id="hs_days" class="narrow" min="${d.limits.minDays}"
+                 max="${d.limits.maxDays}" value="${Number(s.defaultDays)||30}">
+          <span class="rh-opt">${d.limits.minDays}&ndash;${d.limits.maxDays}. The range filter and
+            Load more go further.</span>
+        </div>
+        <div style="align-self:end;">
+          <label class="rh-check"><input type="checkbox" id="hs_submit"${s.submitFromHistory?' checked':''}>
+            Allow submitting the timesheet from History</label>
+        </div>
+        <div style="align-self:end;">
+          <button class="btn btn-brand" id="hs_save">Save</button>
+        </div>
+      </div>
+      ${histSetState.error ? `<div class="rh-errs"><div class="rh-err">${escapeHTML(histSetState.error)}</div></div>` : ''}
+      <div class="rh-warn" style="border-color:var(--border);background:var(--surface);">
+        <div><strong>Submitting from History is a second door, never a second rule.</strong>
+        The button calls the same submit route the Time Sheet tab calls, so the required hours, the
+        entry window, the previous-day rule and the exemption all apply exactly as they do there.
+        It is disabled, with the server&rsquo;s own sentence beside it, on a day that is short, over
+        or closed. Switching it off removes the button and changes nothing else &mdash; the day is
+        still submitted from the Time Sheet tab.</div>
+      </div>
+      <div class="ref-note" id="hs_now">
+        ${s.enabled
+          ? `The tab is shown. It opens with the last ${Number(s.defaultDays)||30} days.`
+          : 'The tab is hidden, and the endpoint behind it refuses every request.'}
+      </div>
+    </div>`;
+
+  const save = document.getElementById('hs_save');
+  if(save) save.onclick = async () => {
+    if(histSetState.busy) return;
+    histSetState.busy = true;
+    save.disabled = true;
+    histSetState.error = null;
+    try{
+      /* ALL THREE VALUES EVERY TIME: the PUT replaces the row, so sending one
+         field would reset the other two — the same rule every other settings
+         form here follows. */
+      histSetState.data = await api('/admin/settings/history', { method:'PUT', body:{
+        enabled: document.getElementById('hs_enabled').checked,
+        defaultDays: Number(document.getElementById('hs_days').value),
+        submitFromHistory: document.getElementById('hs_submit').checked,
+      }});
+      showToast('History tab settings saved.');
+      /* THE TAB STRIP RE-DECIDES ITSELF, because this switch is one of the two
+         things historyTabBtn is drawn from — otherwise turning the tab off would
+         leave its own button on screen until the next /auth/me poll. applyGate
+         is the function that re-reads one gate; TAB_GATE_IDS is how the boot
+         path reads them all. */
+      state.historyEnabled = histSetState.data.settings.enabled;
+      applyGate('historyTabBtn');
+    }catch(e){
+      histSetState.error = e.message || 'That could not be saved.';
+    }finally{
+      histSetState.busy = false;
+      renderHistorySettings();
+    }
+  };
+}
 
 async function renderAssetNameSettings(){
   const el = document.getElementById('assetNamesSection');

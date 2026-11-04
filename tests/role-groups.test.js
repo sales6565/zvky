@@ -137,7 +137,16 @@ const SINCE_SNAPSHOT = [MANAGE, 'settings.email_delivery', 'report.remind', 'set
      a period that may already have been reported on; wider by default would
      make the window advisory. */
   'timesheet.backdate',
-  'timesheet.unlock_day'];
+  'timesheet.unlock_day',
+  /* READING SOMEBODY ELSE'S HISTORY (Prompt 65 Part C). history.view itself is
+     NOT in this list and must not be: it reaches every designation by default,
+     mirroring timesheet.own, because it is a person's own record and anything
+     narrower would hide somebody's own week from them. This is the other half —
+     a history card is a fuller picture of a working day than a timesheet is
+     (what they had open, for how long, what happened to it), so it starts with
+     the Super Admin and is scoped by the Time Sheet tab's own visibility union
+     on top of that. */
+  'history.view_others'];
 
 /* THE KEYS THAT ARE DELIBERATELY NOT SUPER-ADMIN-ONLY, listed separately so
  * each exception is argued rather than hidden in the list above.
@@ -199,8 +208,19 @@ const SINCE_SNAPSHOT = [MANAGE, 'settings.email_delivery', 'report.remind', 'set
  *                than to a hard-coded list, so if a studio ever narrows who may
  *                edit an asset, this fails and somebody decides on purpose.
  */
+/* history.view   READING YOUR OWN RECORDED DAYS (Prompt 65 Part C). Wider than
+ *                Super Admin on purpose and by the same argument as
+ *                leave.request: it is a statement about your own time and
+ *                nobody else's. It mirrors timesheet.own, which is itself
+ *                implied for every designation, and the assertion below ties it
+ *                to that key's own holders rather than to a hard-coded list — so
+ *                if a studio ever narrows who may fill a timesheet, this fails
+ *                and somebody decides on purpose. The half that reads SOMEBODY
+ *                ELSE'S history is history.view_others, which is in
+ *                SINCE_SNAPSHOT with the rest of the Super-Admin-only keys.
+ */
 const WIDER_THAN_SUPER_ADMIN = ['leave.request', 'leave.view_team', 'timesheet.tl_action',
-  'assets.rename'];
+  'assets.rename', 'history.view'];
 
 test('the keys that are wider than Super Admin are wider on purpose', () => {
   const holdersOf = (key) => roles.roleKeys().filter((k) => {
@@ -249,6 +269,17 @@ test('the keys that are wider than Super Admin are wider on purpose', () => {
   assert.ok(holdersOf('assets.rename').includes('super_admin'), 'the Super Admin holds it');
   assert.ok(!holdersOf('assets.rename').includes('art_director'),
     'and Creative Direction, which gives direction as feedback, does not');
+
+  /* READING YOUR OWN HISTORY REACHES EXACTLY THE PEOPLE WHO CAN FILL A
+     TIMESHEET, as a set comparison for the same reason leave.request's is: the
+     two must not drift apart, and "every role that can use the Timesheet today"
+     is what the brief asked for. */
+  assert.deepStrictEqual(holdersOf('history.view'), holdersOf('timesheet.own'),
+    'history.view must reach exactly the designations that can fill a timesheet');
+  assert.ok(holdersOf('history.view').length > 1, 'which is more than the Super Admin');
+  /* AND THE OTHER HALF IS NOT WIDE. Reading somebody else's history is a
+     different act and stays with the Super Admin. */
+  assert.deepStrictEqual(holdersOf('history.view_others'), ['super_admin']);
 
   /* NONE OF THEM IS AN APPROVAL, A CANCELLATION, OR A REACH INTO SOMEBODY
      ELSE'S WEEK. That is what makes "wider than Super Admin" defensible for

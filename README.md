@@ -1631,6 +1631,119 @@ storage for an S3-compatible bucket — it's the only file that needs to
 change, since every route just uses `req.file` / `file_path` without caring
 where it physically lives.
 
+## My History
+
+**A new top-level tab, right after Time Sheet**, because it is the other view of
+the same days: one is the week you are filling in, this is the record of the ones
+that are done. One card per day, newest first.
+
+**Settings → History tab**, under the Time Sheet section's own key:
+
+| | default | |
+|---|---|---|
+| History tab | **on** | the tab, and the endpoint behind it |
+| Days shown by default | **30** | 7–366; the range filter and Load more go further |
+| Allow submitting the timesheet from History | **on** | a second door, never a second rule |
+
+**It ships on, unlike the other two parts of this prompt.** The rule this
+codebase has settled on: anything that **stops** somebody doing what they could
+do yesterday ships off — the exact-hours rule, the entry window,
+`requirePreviousDay` — and anything that only **shows** somebody something ships
+on. History shows; it refuses nothing and changes no figure.
+
+### Two keys
+
+| key | default | |
+|---|---|---|
+| `history.view` — *See My History* | **every designation** | mirrors `timesheet.own`, which is itself implied for every role. It is a person's own record; anything narrower would hide somebody's own week from them. |
+| `history.view_others` — *See Another User's History* | **Super Admin** | adds a person selector whose options come from `readableUserIds()` — the same union the Time Sheet tab uses. It adds a selector, not people. |
+
+`history.view_others` is deliberately **separate from `timesheet.team` and
+`timesheet.all`** rather than riding on them: those two are about hours, and a
+history card is a fuller picture of a working day than a timesheet is — what
+somebody had open, for how long, and what happened to it. A studio that wants a
+lead to see their team's *hours* without seeing their days reconstructed can have
+exactly that.
+
+### Nothing new is tracked
+
+Every figure on a card already exists and is already read by some other screen,
+and that is a constraint rather than a boast: a history that recorded its own
+version of the day would, within a release, be the screen people trusted — and it
+would disagree with the Artist Report, the timesheet and the follow-up lists,
+because all four would be counting different things.
+
+| | from |
+|---|---|
+| time recorded per asset | `work_sessions`, through **work-log's own `RECORDED_SECONDS_SQL`** — the expression `recordedFor()` uses, so a card and the Artist Report cannot print different hours |
+| the day's status | `user_day_status` (a vacation is leave with `source='planned'`), the holiday calendar, `loggableDays` |
+| the required figure and the day's state | the exact-hours rule module |
+| whether the day is open | the Part B window module |
+| the day's events | `asset_events` |
+
+A test asserts the card's recorded figure **equals `workLog.recordedFor()`** for
+the same asset and person, rather than equalling a constant.
+
+### Whose event is it: the one genuine gap
+
+`asset_events` records an **actor**. It does not record who was assigned at the
+time, and there is no assignment history to reconstruct it from — so "TL feedback
+received" is an event whose actor is the lead and whose subject is the artist, and
+nothing in the schema says the artist's name.
+
+**Current assignment is not an answer.** An asset reassigned last week would put
+last month's feedback on the wrong person's history, silently and
+retrospectively, and it would look identical on screen. So an event reaches
+somebody's day only when it is clearly theirs: **they are the actor**, **they are
+`routed_to_id`**, or **they have a `work_sessions` row on that same asset on that
+same day**.
+
+What that reaches, stated plainly, because a screen that silently shows three of
+four things is worse than one that shows three and says so:
+
+| event | reached? |
+|---|---|
+| **submitted for review** | **Yes, always** — the artist is the actor. |
+| **approved** | **Yes** when they worked on it that day or it was routed to them; otherwise it is the reviewer's event and appears on the reviewer's day. |
+| **TL feedback received** | **Yes** when `routed_to_id` is set — the ordinary case, since changes-required routes the asset back — or when they worked on it that day. Feedback left without routing, on a day they did not touch the asset, is not attributable and does not appear. |
+| **reassigned** | **Yes** for the person it was routed **to**, and for the actor who did it. **No** for the person it was taken **from**: that is the fact the schema does not hold. |
+
+### What a card shows, and the one action it offers
+
+The day's chip (worked / leave 1st or 2nd half / full leave / vacation / holiday
+/ weekly off / idle / on site), then **Worked on** — each asset with its code,
+name, discipline, client, project, the recorded time and that day's events — then
+the **timesheet block**: the day's lines, the total against the required figure
+where the rule applies, and the state (Submitted with its time / Not submitted /
+Closed for entry).
+
+* **Submit timesheet** calls the **same route** the Time Sheet tab calls, with no
+  arguments of its own, so the required hours, the entry window, the previous-day
+  gate and the exemption all apply exactly as they do there. It is drawn only when
+  the server says `maySubmit`, which folds in the switch, the window, the lock,
+  the rule and whose history this is — the page makes no part of that decision. On
+  a day that is short or over it is **disabled with the server's own sentence**
+  beside it.
+* **Nobody submits somebody else's day.** `maySubmit` is false on another
+  person's history, always: a day is its owner's statement about their own time.
+* **Open in Timesheet** takes an unfinished open day to that day in the Time Sheet
+  tab, which is where the form and all its rules live. **There is no line editing
+  in History** — a history is a record, and a record you can type into is a draft.
+* Holders of `timesheet.unlock_day` get **Open this day** on a closed, unsubmitted
+  day of the person they are looking at.
+* Days with **no activity at all are not drawn**, nor are days before the person's
+  account existed. The statuses that matter — a holiday, a weekly off, a leave day
+  — *are* the fact about that day, so those are drawn. Empty range:
+  *"No activity in this period."*
+
+### What the page does not do
+
+It computes no counted time, no required hours, no lock state and no window. A
+test greps the block for `maxDayHours`, `backdateDays`, `futureDays`,
+`loggableDays`, `isLocked(`, `istDate(` and the exemption key and fails if any
+appears — because a browser-side copy would be right today and wrong the first
+time a setting moved, and nothing would error.
+
 ## Timesheet days: which days are open for entry
 
 **Settings → Time Sheet → Timesheet days.** Two fields, both **blank by
