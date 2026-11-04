@@ -1131,6 +1131,39 @@ const GROUPS = [
           + 'taken away, and it holds everybody\'s hours for the period asked for. Every download '
           + 'is written to the Activity Log with who asked, the period and how many lines it held.',
       },
+      {
+        /* THE WAY OUT OF THE EXACT-HOURS RULE, and the only one.
+         *
+         * With Settings -> Time Sheet's "Timesheet hours rule" switched on, a
+         * day on or after its start date must total EXACTLY the required hours
+         * before it can be submitted, and a line that would take it over is
+         * refused. That is a hard rule on purpose — the owner asked for it —
+         * and a hard rule needs exactly one door in it for the cases nobody
+         * foresaw. This is that door.
+         *
+         * SUPER ADMIN ONLY by default, through managePermissions, and grantable
+         * so a studio can hand it to whoever handles the exceptions. It is the
+         * ONLY bypass: there is no per-day override, no reason box, no "submit
+         * anyway" button. Where somebody genuinely cannot reach the figure
+         * because they were away, the answer is for an admin to mark the leave,
+         * which shrinks the requirement through the day-status logic every other
+         * screen already reads — and the Timesheet tab says so in those words.
+         *
+         * IT IS NOT A LICENCE OVER ANYBODY ELSE'S SHEET. Every timesheet route
+         * writes for req.user, so this exempts its holder's own days and
+         * nobody else's. */
+        key: 'timesheet.min_hours_exempt',
+        label: 'Exempt From The Required-Hours Rule',
+        impliedBy: has('managePermissions'),
+        describe: 'Exempt from the required-hours rule (may submit fewer or more than the required '
+          + 'hours). With the studio\'s hours rule on, everybody else must log exactly the required '
+          + 'hours for a day before they can submit it, and cannot log more; a holder of this may '
+          + 'submit a day that is short or over. It changes nothing about whose timesheet they can '
+          + 'see or fill.',
+        danger: 'This is the only way around the hours rule. A designation holding it can submit '
+          + 'days that do not add up to the studio\'s required hours, and nothing on the screen '
+          + 'will say the figure is unusual.',
+      },
     ],
   },
   {

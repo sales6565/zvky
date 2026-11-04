@@ -3298,6 +3298,36 @@ async function ensureTimesheetSettings(db, log) {
       + 'to whoever holds timesheet.export.');
   }
 
+  /* THE EXACT-HOURS RULE'S TWO COLUMNS, asked for together because they are one
+     setting in two fields and neither is any use without the other: a switch
+     with no start date would rule every day ever filed, and a date with no
+     switch rules nothing.
+     
+     OFF, AND NO DATE. Nothing changes on any deployment until a Super Admin
+     turns it on, and the moment they do, src/timesheet-settings.js stamps the
+     date with today in the studio's timezone — which is what keeps a month of
+     half-filled days behind it submittable. See the header of
+     src/timesheet-hours-rule.js.
+     
+     Its own information_schema question, like the three above and for the same
+     reason: a database that has those three and not these is exactly what an
+     upgrade produces, and a shared check would skip this ALTER on every one. */
+  for (const [column, ddl, note] of [
+    ['hours_rule_enabled', 'TINYINT(1) NOT NULL DEFAULT 0',
+      'off — nothing changes until a Super Admin switches it on'],
+    ['hours_rule_from', 'DATE NULL',
+      'the day the rule starts; null until the switch is first turned on'],
+  ]) {
+    const { rows: have } = await db.query(
+      `SELECT 1 AS present FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'timesheet_settings'
+          AND COLUMN_NAME = $1`, [column]
+    );
+    if (have.length) continue;
+    await db.query(`ALTER TABLE timesheet_settings ADD COLUMN ${column} ${ddl}`);
+    log(`Schema: added timesheet_settings.${column} — ${note}.`);
+  }
+
   const { rows } = await db.query('SELECT id FROM timesheet_settings WHERE id = 1');
   if (rows.length) return;
   await db.query(

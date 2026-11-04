@@ -89,6 +89,20 @@ test('no report outside the Time Sheet reads timesheet hours', () => {
        report of the studio's own: it is the Time Sheet tab's own download,
        behind the Time Sheet tab's own visibility. */
     'src/timesheet-export.js',
+    /* THE EXACT-HOURS RULE, and it is allowed here because it makes the
+       decision this test exists to force, out loud and in its header: IDLE
+       COUNTS. Idle exists so that a day can be filled honestly, so a rule that
+       made people log eight hours of "work" to escape it would be a rule that
+       produced false timesheets. It reads the hours column of a single
+       user-day — never a range, never anybody else's — to answer one question:
+       does this day add up to exactly what the studio requires. */
+    'src/timesheet-hours-rule.js',
+    /* NAMES IT IN A COMMENT ABOUT UNITS, exactly as src/work-schedule.js above
+       does and for the same reason: the required-hours validator has to explain
+       why a value whose half is 4.125h is refused, and the explanation is that
+       `timesheet_entries.hours` is DECIMAL(5,2). It reads no hours and runs no
+       query against the table. */
+    'src/timesheet-settings.js',
   ]);
   const readers = files.filter((f) => !allowed.has(f)
     && fs.readFileSync(path.join(root, f), 'utf8').includes('timesheet_entries'));

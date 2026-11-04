@@ -353,11 +353,28 @@ async function expectedWorkingMinutes(db, userId, date, { schedule = workSchedul
  */
 async function isTimesheetRequired(db, userId, date, { settings = null, isHoliday = null } = {}) {
   if (!isDate(date)) return false;
+  return timesheetRequiredOn(date, await userDayStatus(db, userId, date), { settings, isHoliday });
+}
+
+/* THE SAME JUDGEMENT, FROM A ROW ALREADY IN HAND — the sync half of the pair
+ * above, in the shape this file already uses for its other three judgements
+ * (see expectedToWorkFromRow and timesheetRequiredFromRow).
+ *
+ * It exists because the Time Sheet's week payload shapes seven days from seven
+ * marks it has already fetched in one query, and the exact-hours rule has to
+ * know, for each of them, whether anything is owed. Calling the async version
+ * seven times would be seven more queries for an answer already in hand; and
+ * writing "a working day, and not a full day's leave" a second time in the
+ * route is how two copies of a rule start. So the composition lives here, once,
+ * and the async function above is now a thin wrapper over it.
+ */
+function timesheetRequiredOn(date, row, { settings = null, isHoliday = null } = {}) {
+  if (!isDate(date)) return false;
   const loggableDays = (settings && settings.loggableDays)
     || require('./timesheet-settings').current().loggableDays;
   const holiday = isHoliday || ((d) => Boolean(holidays.on(d)));
   if (!timesheetGate.isWorkingDay(date, { loggableDays, isHoliday: holiday })) return false;
-  return timesheetRequiredFromRow(await userDayStatus(db, userId, date));
+  return timesheetRequiredFromRow(row);
 }
 
 /* ---------------------------------------------------------------------------
@@ -849,7 +866,7 @@ module.exports = {
   statusesFor, userDayStatus, markedOn,
   leaveWindows, windowsFromRow, windowsForSpan,
   countedMsByDay, countedSeconds, countedMs,
-  expectedWorkingMinutes, isTimesheetRequired, isExpectedToWorkAt,
+  expectedWorkingMinutes, isTimesheetRequired, timesheetRequiredOn, isExpectedToWorkAt,
   insideLeaveWindow, leaveEndsAt, expectedToWorkFromRow, nothingToStart, timesheetRequiredFromRow,
   actionableCount, actionableAssets, mark, clear, clearRow, onAssigned, describe,
   sweepLeave, liveWindowsNow, activeBetween, recount, recordedInside, durationLabel,

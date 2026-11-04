@@ -395,6 +395,16 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
          /api/timesheet/export refuses regardless — which is what makes hiding
          the button a courtesy rather than the rule. */
       exportEnabled: true,
+      /* AND THE EXACT-HOURS RULE'S TWO FIELDS, published for the same reason as
+         the two above and justified here as this deep-equal demands: the week
+         payload is what the Timesheet tab already fetches, and the progress bar
+         it draws has to know whether the rule exists at all before it draws
+         anything. The PER-DAY numbers are on each day (see day.hoursRule), not
+         here — these two are the studio-wide facts: is it on, and from when.
+         Off with no date on a fresh install, which is this fixture, and which
+         is what makes the feature inert until a Super Admin starts it. */
+      hoursRuleEnabled: false,
+      hoursRuleFrom: null,
     });
   });
 

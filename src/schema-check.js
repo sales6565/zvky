@@ -215,6 +215,14 @@ const REQUIRED = [
   { table: 'asset_name_history', column: 'changed_by_user_id', step: 'asset renaming' },
   { table: 'asset_settings',     column: null,                step: 'asset renaming' },
   { table: 'asset_settings',     column: 'rename_enabled',    step: 'asset renaming' },
+  /* THE EXACT-HOURS RULE. Both columns, because the feature needs both and a
+     deployment with one is a deployment where the rule either applies to every
+     day ever filed or to none. The failure this names: the ALTER is refused,
+     the Super Admin turns the switch on, and nothing happens — the settings
+     save falls back to the narrower statement and the rule stays off, silently.
+     With this in the list /api/health says which step to re-run. */
+  { table: 'timesheet_settings', column: 'hours_rule_enabled', step: 'timesheet settings' },
+  { table: 'timesheet_settings', column: 'hours_rule_from',    step: 'timesheet settings' },
 ];
 
 // Two queries for the whole check, rather than one per column.

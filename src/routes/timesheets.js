@@ -11,6 +11,7 @@ const tlReview = require('../tl-review');
 const sheets = require('../timesheets');
 const workSchedule = require('../work-schedule');
 const dayStatus = require('../day-status');
+const hoursRule = require('../timesheet-hours-rule');
 const holidays = require('../holidays');
 // For the Hours suggestion: what this person's own work sessions say about one day.
 const workLog = require('../work-log');
@@ -121,6 +122,87 @@ async function ensureDay(userId, workDate) {
   return dayRow(userId, workDate);
 }
 
+/* ---------------------------------------------------------------------------
+ * THE EXACT-HOURS RULE, FOR ONE PERSON ON ONE DAY.
+ *
+ * Every route in this file that could let a day stop being exactly the required
+ * hours asks this, and none of them asks any part of it directly: the submit
+ * route, the three line routes and the week payload all take their verdict from
+ * here, so there is one answer per user-day and not five that might differ.
+ *
+ * WHAT IT GATHERS, and why each piece comes from where it does:
+ *
+ *   the settings      the switch, the required hours and the start date. One
+ *                     in-memory row (src/timesheet-settings.js).
+ *   the exemption     timesheet.min_hours_exempt, off the request's own
+ *                     permission set — never the tier.
+ *   the day's mark    src/day-status.js's row: the leave, idle or onsight
+ *                     somebody recorded. This is what makes a half day ask for
+ *                     half and a full day's leave ask for nothing.
+ *   is it owed at all isTimesheetRequired(), which owns the weekend, the
+ *                     holiday calendar and full-day leave. NOT re-derived here:
+ *                     a second copy of "is this a working day" is exactly the
+ *                     drift this application has been bitten by before.
+ *   the lines         summed in centihours by the rule module.
+ *
+ * `conn` is passed when the caller is inside a transaction that has locked the
+ * day, so the figure it reads is the figure it is about to change. Everything
+ * else passes nothing and reads through the pool.
+ */
+async function hoursRuleFor(user, date, { conn = null, entries = null } = {}) {
+  const query = conn || db;
+  const settings = policy();
+  const exempt = holds(user, 'timesheet.min_hours_exempt');
+
+  /* NOTHING TO ASK WHEN THE SWITCH IS OFF OR THE PERSON IS EXEMPT. Two queries
+     saved on every line anybody files, and — more to the point — a deployment
+     with the rule off never touches the day-status or holiday machinery on this
+     path at all, so the feature cannot slow down or break a studio that has not
+     switched it on. */
+  if (!settings.hoursRuleEnabled || exempt) {
+    return hoursRule.decide({
+      enabled: settings.hoursRuleEnabled, exempt,
+      requiredHours: settings.maxDayHours, effectiveFrom: settings.hoursRuleFrom, date,
+      timesheetRequired: true, logged: 0,
+    });
+  }
+
+  const lines = entries || (await query.query(
+    'SELECT hours FROM timesheet_entries WHERE user_id = $1 AND entry_date = $2',
+    [user.id, date]
+  ).catch(() => ({ rows: [] }))).rows;
+
+  const mark = await dayStatus.userDayStatus(query, user.id, date).catch(() => null);
+  const required = await dayStatus.isTimesheetRequired(query, user.id, date, { settings })
+    .catch(() => true);
+
+  return hoursRule.decide({
+    enabled: true,
+    exempt: false,
+    requiredHours: settings.maxDayHours,
+    effectiveFrom: settings.hoursRuleFrom,
+    date,
+    mark,
+    timesheetRequired: required,
+    entries: lines,
+  });
+}
+
+/* The refusal body, spelled once so the submit route and the two line routes
+   answer a stale page with the same shape. Hours as well as the integer unit:
+   the page prints the hours and the tests compare the integers. */
+const hoursRefusal = (verdict, code) => ({
+  error: verdict.reason,
+  code,
+  status: verdict.status,
+  required: verdict.required,
+  logged: verdict.logged,
+  remaining: verdict.remaining,
+  requiredHours: hoursRule.toHours(verdict.required),
+  loggedHours: hoursRule.toHours(verdict.logged),
+  remainingHours: hoursRule.toHours(verdict.remaining),
+});
+
 /* Every change to a timesheet, on the record.
  *
  * Hours are the input to somebody's pay, so this covers edits a person makes to
@@ -208,7 +290,7 @@ const shapeEntry = (e) => ({
  * it. Everything to do with the clock is minutes past midnight IST, which is
  * what makes the times identical for a reader in any timezone.
  */
-const shapeDay = (day, entries, workDate, mark = null) => {
+const shapeDay = (day, entries, workDate, mark = null, rule = null) => {
   const total = sheets.dayTotal(entries, workSchedule.timesheetWindow());
   return {
     date: workDate,
@@ -275,6 +357,33 @@ const shapeDay = (day, entries, workDate, mark = null) => {
       const closed = holidays.on(workDate);
       return closed ? { date: closed.date, name: closed.name } : null;
     })(),
+    /* THE EXACT-HOURS RULE'S VERDICT FOR THIS DAY, and the page draws from
+     * nothing else.
+     *
+     * COMPUTED ON THE SERVER, by the same function the submit route and the two
+     * line routes are refused by. The page has no copy of the requirement, no
+     * copy of the half-day rule and no copy of the comparison — it prints these
+     * numbers and enables or disables one button on `canSubmit`. That is the
+     * whole of the division, and tests/timesheet-hours-rule.test.js greps the
+     * page to prove it holds.
+     *
+     * Null only on the unavailable path, where there is no settings row to read
+     * and nothing to rule on. */
+    hoursRule: rule ? {
+      applies: rule.applies,
+      /* Centihours — hundredths of an hour, the unit the lines are stored in.
+         The page formats; it never compares. See src/timesheet-hours-rule.js. */
+      required: rule.required,
+      logged: rule.logged,
+      remaining: rule.remaining,
+      requiredHours: hoursRule.toHours(rule.required),
+      loggedHours: hoursRule.toHours(rule.logged),
+      remainingHours: rule.remaining === null ? null : hoursRule.toHours(rule.remaining),
+      status: rule.status,
+      canSubmit: rule.canSubmit,
+      reason: rule.reason,
+      inactiveBecause: rule.inactiveBecause,
+    } : null,
   };
 };
 
@@ -295,6 +404,11 @@ const workingDay = () => {
        worse than no setting. hoursPerDay stays: it is this cap AND what the
        Idle report measures a day against. */
     maxHours: win.maxHours,
+    /* THE EXACT-HOURS RULE, as the form needs it: whether it is on at all, and
+       from which day. The per-day numbers are on each day (see shapeDay); these
+       two are what the Settings note and the week's own header quote. */
+    hoursRuleEnabled: policy().hoursRuleEnabled,
+    hoursRuleFrom: policy().hoursRuleFrom,
     /* THE POLICY THE FORM HAS TO QUOTE, from the studio's setting rather than
        from words in the page. "Monday to Friday" was hardcoded in two places on
        screen while the rule itself was hardcoded in validateEntry; now the form
@@ -385,9 +499,34 @@ router.get('/week', requirePermission('timesheet.own'), async (req, res) => {
     /* THE WEEK'S MARKS, in one query for seven days — never one per day. */
     const marks = await dayStatus.statusesFor(db, [userId], days[0], days[6]).catch(() => new Map());
 
-    const shaped = shownDays.map((d) =>
-      shapeDay(byDate.get(d) || null, entries.filter((e) => sheets.toISO(e.date) === d), d,
-        marks.get(`${userId}|${d}`) || null));
+    /* THE RULE'S CONTEXT, READ ONCE FOR THE WEEK. The switch, the required
+       hours, the start date and whether THIS READER is exempt — which is the
+       reader rather than the sheet's owner for a reason: it is the reader's
+       page that draws the bar and their button that is disabled, and nobody can
+       submit anybody else's day anyway (mayEdit is `userId === req.user.id`).
+       The settings are one in-memory row and the exemption is one set lookup,
+       so this costs nothing per day. */
+    const ruleSettings = policy();
+    const ruleExempt = holds(req.user, 'timesheet.min_hours_exempt');
+    const shaped = shownDays.map((d) => {
+      const mark = marks.get(`${userId}|${d}`) || null;
+      const dayEntries = entries.filter((e) => sheets.toISO(e.date) === d);
+      /* ASKED OF src/day-status.js, not worked out here: whether anything is
+         owed for this day is the weekend, the holiday calendar and full-day
+         leave, and that composition lives in one place. */
+      const owed = dayStatus.timesheetRequiredOn(d, mark, { settings: ruleSettings });
+      const verdict = hoursRule.decide({
+        enabled: ruleSettings.hoursRuleEnabled,
+        exempt: ruleExempt,
+        requiredHours: ruleSettings.maxDayHours,
+        effectiveFrom: ruleSettings.hoursRuleFrom,
+        date: d,
+        mark,
+        timesheetRequired: owed,
+        entries: dayEntries,
+      });
+      return shapeDay(byDate.get(d) || null, dayEntries, d, mark, verdict);
+    });
 
     res.json({
       user: who[0] || null,
@@ -481,14 +620,17 @@ const ENTRY_OPTIONAL = (line, stamp) => [
   [['tl_action', line.tlAction || null]],
 ];
 
-async function writeEntry(build, line, stamp) {
+/* `on` is the connection to write through: the pool by default, and the
+   caller's transaction when the write has to happen inside one — which is what
+   the hours cap needs, so that the day it counted is the day it adds to. */
+async function writeEntry(build, line, stamp, on = null) {
   const optional = ENTRY_OPTIONAL(line, stamp);
   let last;
   for (let drop = 0; drop <= optional.length; drop += 1) {
     const pairs = [...ENTRY_CORE(line), ...optional.slice(0, optional.length - drop).flat()];
     try {
       const { sql, values } = build(pairs);
-      await db.query(sql, values);
+      await (on || db).query(sql, values);
       return;
     } catch (err) {
       if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
@@ -498,7 +640,7 @@ async function writeEntry(build, line, stamp) {
   throw last;
 }
 
-async function insertEntry(id, userId, line) {
+async function insertEntry(id, userId, line, on = null) {
   await writeEntry((pairs) => {
     const columns = ['id', 'user_id', ...pairs.map(([c]) => c)];
     const values = [id, userId, ...pairs.map(([, v]) => v)];
@@ -507,13 +649,13 @@ async function insertEntry(id, userId, line) {
             VALUES (${values.map((_, i) => `$${i + 1}`).join(',')})`,
       values,
     };
-  }, line, line.flagNote ? new Date() : null);
+  }, line, line.flagNote ? new Date() : null, on);
 }
 
 /* The same tolerance on the way back out. An unchanged flag keeps its original
  * stamp: re-stamping it on every edit would make the flag look raised at the
  * moment of the last unrelated change. */
-async function updateEntry(id, line, was) {
+async function updateEntry(id, line, was, on = null) {
   const stamp = line.flagNote
     ? (was.flag_note === line.flagNote && was.flagged_at ? was.flagged_at : new Date())
     : null;
@@ -524,7 +666,7 @@ async function updateEntry(id, line, was) {
       sql: `UPDATE timesheet_entries SET ${sets.join(', ')} WHERE id = $${values.length}`,
       values,
     };
-  }, line, stamp);
+  }, line, stamp, on);
 }
 
 /* THE ONE FIGURE A TIMESHEET LINE IS WORTH, asked once and read twice — by the
@@ -788,8 +930,72 @@ router.post('/entries', requirePermission('timesheet.own'), async (req, res) => 
      compare, so the day's total and its soft warning are the only defence
      left. See validateEntry in src/timesheets.js. */
 
+  /* THE DAY CANNOT BE PUSHED PAST ITS REQUIRED HOURS, AND THE CHECK HOLDS THE
+   * DAY WHILE IT DECIDES.
+   *
+   * Two tabs each adding six hours to an eight-hour day is not a hypothetical:
+   * it is what happens when somebody opens their timesheet on a laptop and a
+   * phone. Read-then-insert without a lock lets both reads see two hours of
+   * room and both inserts succeed, and the day ends up at fourteen — refused
+   * at submit time, by which point the person has to work out which of their
+   * own lines to delete.
+   *
+   * So the day's own row in timesheet_days is locked FOR UPDATE, the verdict is
+   * computed from the lines read inside that lock, and the INSERT happens
+   * before the lock is released. The second tab waits, reads the day as it now
+   * is, and is refused. One accepted, one refused, every time —
+   * tests/timesheet-hours-rule.test.js fires the two at once and asserts
+   * exactly that.
+   *
+   * THE LOCK IS THE DAY ROW because every line belongs to one, ensureDay() has
+   * already created it above, and (user_id, work_date) is unique — so it is one
+   * row per person per day, which is the smallest thing that can be locked here
+   * and still serialise what needs serialising. Nobody else's day waits.
+   *
+   * ON A DEPLOYMENT WITH THE RULE OFF this still opens a transaction and still
+   * locks the row, and that is deliberate: one code path, so the path the
+   * studio runs with the rule on is the path every test and every other studio
+   * exercises too. The verdict short-circuits without touching day-status or
+   * the holiday calendar when the switch is off — see hoursRuleFor. */
   const id = uuid();
-  await insertEntry(id, req.user.id, line);
+  const conn = await db.connect();
+  let refusal = null;
+  try {
+    await conn.query('BEGIN');
+    await conn.query(
+      'SELECT id FROM timesheet_days WHERE user_id = $1 AND work_date = $2 FOR UPDATE',
+      [req.user.id, line.date]
+    );
+    const rule = await hoursRuleFor(req.user, line.date, { conn });
+    const fits = hoursRule.lineFits({ verdict: rule, wanted: hoursRule.toCenti(line.hours) });
+    if (!fits.ok) {
+      await conn.query('ROLLBACK');
+      /* THE REFUSAL NAMES WHAT WOULD HAVE FITTED, because "too many hours" with
+         no number is a message that makes somebody guess. The verdict quoted is
+         the day AS IT IS, plus the line that was attempted — so the sentence
+         reads "that line is 3h and there is 1.5h left today". */
+      refusal = {
+        ...hoursRefusal({ ...rule, remaining: fits.headroom }, 'HOURS_ABOVE_MAXIMUM'),
+        error: fits.headroom <= 0
+          ? `This day already has its ${hoursRule.label(rule.required)}. Edit or delete a line to `
+            + 'make room.'
+          : `This line (${hoursRule.label(hoursRule.toCenti(line.hours))}) is more than the time `
+            + `left today (${hoursRule.label(fits.headroom)}). Edit or delete other lines first.`,
+        status: 'over',
+        attempted: hoursRule.toCenti(line.hours),
+        attemptedHours: Number(line.hours),
+      };
+    } else {
+      await insertEntry(id, req.user.id, line, conn);
+      await conn.query('COMMIT');
+    }
+  } catch (err) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    conn.release();
+  }
+  if (refusal) return res.status(422).json(refusal);
 
   const rows = await selectEntries('WHERE e.id = $1', [id]);
   const said = `${line.hours}h `
@@ -936,7 +1142,57 @@ router.patch('/entries/:id', requirePermission('timesheet.own'), async (req, res
     }
   }
 
-  await updateEntry(req.params.id, line, found[0]);
+  /* THE SAME CAP AS ON THE WAY IN, with this line's own hours given back first.
+   *
+   * An edit from 3h to 4h on an eight-hour day that already totals eight has to
+   * be refused; an edit from 3h to 2h on the same day has to be allowed; and an
+   * edit that changes only the note must not be refused for the hours the line
+   * itself is contributing. All three fall out of one subtraction --
+   * lineFits({ own }) -- rather than three cases written here.
+   *
+   * THE DAY THAT MATTERS IS THE ONE THE LINE IS MOVING TO. A line moved from
+   * Tuesday to Wednesday takes its hours with it, so Wednesday is the day that
+   * can be pushed over; Tuesday can only get smaller, which this rule never
+   * refuses. `own` is therefore the line's old hours only when it is staying
+   * put -- moving it gives Wednesday nothing back.
+   *
+   * Locked FOR UPDATE for the same reason the insert is: two tabs editing two
+   * lines of the same day would otherwise each see room the other was taking. */
+  const conn = await db.connect();
+  let editRefusal = null;
+  try {
+    await conn.query('BEGIN');
+    await conn.query(
+      'SELECT id FROM timesheet_days WHERE user_id = $1 AND work_date = $2 FOR UPDATE',
+      [req.user.id, line.date]
+    );
+    const rule = await hoursRuleFor(req.user, line.date, { conn });
+    const own = line.date === wasOn ? hoursRule.toCenti(found[0].hours) : 0;
+    const fits = hoursRule.lineFits({
+      verdict: rule, wanted: hoursRule.toCenti(line.hours), own,
+    });
+    if (!fits.ok) {
+      await conn.query('ROLLBACK');
+      editRefusal = {
+        ...hoursRefusal({ ...rule, remaining: fits.headroom }, 'HOURS_ABOVE_MAXIMUM'),
+        error: `This line (${hoursRule.label(hoursRule.toCenti(line.hours))}) is more than the time `
+          + `left today (${hoursRule.label(fits.headroom)}). Edit or delete other lines first.`,
+        status: 'over',
+        attempted: hoursRule.toCenti(line.hours),
+        attemptedHours: Number(line.hours),
+      };
+    } else {
+      await updateEntry(req.params.id, line, found[0], conn);
+      await conn.query('COMMIT');
+    }
+  } catch (err) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    conn.release();
+  }
+  if (editRefusal) return res.status(422).json(editRefusal);
+
   const rows = await selectEntries('WHERE e.id = $1', [req.params.id]);
   await record(req.user.id, line.date, 'entry_edited', req.user,
     `now ${line.hours}h — ${describeLine(rows[0])}`);
@@ -959,6 +1215,19 @@ router.delete('/entries/:id', requirePermission('timesheet.own'), async (req, re
   if (day && sheets.isLocked(day.status)) {
     return res.status(409).json({ error: 'That day is locked.', status: day.status });
   }
+  /* NO HOURS-RULE CHECK HERE, AND THAT IS THE DESIGN RATHER THAN AN OMISSION.
+   *
+   * Deleting can only make a day smaller, and a day that is short is a day that
+   * cannot be submitted -- which the submit route already refuses. So there is
+   * nothing to protect against on the way down.
+   *
+   * "A submitted day must not be dropped off exact" is already guaranteed by
+   * the line above: a submitted day is LOCKED, and both this route and the edit
+   * route refuse every change to a locked day with a 409. The way to change a
+   * submitted day is to reopen it, which makes it a draft again and puts it
+   * back under the rule at submit time. A second check here would be dead code
+   * guarding a state that cannot be reached -- tests/timesheet-hours-rule.test.js
+   * proves the lock does it instead. */
   await db.query('DELETE FROM timesheet_entries WHERE id = $1', [req.params.id]);
   await record(req.user.id, on, 'entry_removed', req.user,
     `${Number(found[0].hours)}h removed`);
@@ -994,6 +1263,27 @@ router.post('/submit', requirePermission('timesheet.own'), async (req, res) => {
     return res.status(400).json({ error: 'There is nothing on that day to submit.' });
   }
 
+  /* THE EXACT-HOURS RULE, AND IT IS ENFORCED HERE RATHER THAN ON THE PAGE.
+   *
+   * The page disables the button, which is the kind thing to do; this is the
+   * rule. A stale tab, a second browser, a script or a page whose poll has not
+   * landed all arrive here with the same request, and all four get the same
+   * refusal with the same numbers in it.
+   *
+   * THE LINES ARE READ AGAIN INSIDE THE VERDICT rather than summed from `rows`
+   * above: one function owns "what does this day add up to", and a second sum
+   * written here is the one that would eventually disagree with it.
+   *
+   * 422 and not 409: the request is well-formed and the state is not a
+   * conflict, the figures simply do not satisfy the rule. The code and the
+   * numbers are machine-readable so the page can refresh and say the same
+   * sentence the server did. */
+  const rule = await hoursRuleFor(req.user, date);
+  if (!rule.canSubmit) {
+    return res.status(422).json(hoursRefusal(rule,
+      rule.status === 'over' ? 'HOURS_ABOVE_MAXIMUM' : 'HOURS_BELOW_MINIMUM'));
+  }
+
   await db.query(
     `UPDATE timesheet_days SET status = 'submitted', submitted_at = NOW(),
         decided_by = NULL, decider_email = NULL, decided_at = NULL, rejection_reason = NULL
@@ -1001,8 +1291,13 @@ router.post('/submit', requirePermission('timesheet.own'), async (req, res) => {
     [req.user.id, date]
   );
   const total = sheets.dayTotal(rows, workSchedule.timesheetWindow());
+  /* THE SENTENCE READS THE SETTING, not the number eight. It said "over the
+     eight-hour day" while the length of a day had been a Super Admin setting
+     for two prompts, so a studio on seven and a half hours had its own history
+     describing a day it does not have. */
   await record(req.user.id, date, 'submitted', req.user,
-    `${total.hours}h across ${total.lines} line(s)${total.overLong ? ' — over the eight-hour day' : ''}`);
+    `${total.hours}h across ${total.lines} line(s)${
+      total.overLong ? ` — over the ${total.maxHours}-hour day` : ''}`);
   console.log(`${req.user.email} submitted their timesheet for ${date} (${total.hours}h).`);
 
   req.activity({
