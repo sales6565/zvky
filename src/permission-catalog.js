@@ -37,6 +37,43 @@ const fullAccess = (caps) => Boolean(caps.manageUsers && caps.projectScope === '
 // the screen can say so rather than implying a toggle does something.
 const PENDING = 'This action has not been built yet. The permission can be granted now and will take effect when it is.';
 
+/* WRITE IMPLIES VIEW, EXPRESSED ONCE.
+ *
+ * ===========================================================================
+ * THE PROMISE PROMPT 61 MAKES is that nothing changes for any existing role on
+ * the day the view keys arrive. A role that could reach a screen yesterday
+ * because it held the key that CHANGES that screen must still reach it today —
+ * so every view key's default is "whoever already holds any of this area's
+ * write keys".
+ *
+ * WHY A DISJUNCTION OF THE WRITES' OWN PREDICATES rather than a hand-written
+ * capability test per view key: because a hand-written one is a second
+ * statement of who holds the write keys, and the two would drift the first time
+ * a write key's own default moved. This reads the write keys' predicates, so
+ * there is one source of truth and it is the write key itself.
+ *
+ * `BY_KEY` IS LOOKED UP WHEN THE PREDICATE RUNS, not when it is built — the
+ * catalogue is still being constructed at that point, and every caller asks
+ * this question long afterwards (baselineFor, at resolution time). A test
+ * asserts, for every area in src/permission-areas.js, that the view key's
+ * holders are a superset of the union of its writes' holders.
+ *
+ * AND IT IS ONLY HALF THE PROMISE. This covers a role that holds a write key by
+ * DEFAULT, which is also what topUpRole() hands to a role whose stored rows
+ * predate the new key. A role that was GRANTED a write key in the database,
+ * against its default, is the other half — and that is what the migration in
+ * src/migrate.js does, by writing the view key explicitly for every role and
+ * every role group whose stored rows reach the area.
+ */
+const viewOf = (...writeKeys) => (caps) => writeKeys.some((k) => {
+  const entry = BY_KEY.get(k);
+  /* A write key this file does not have is a typo in the area model, and
+     silently returning false would hide it. Loud, because a view key that
+     reaches nobody is a screen that quietly disappeared for somebody. */
+  if (!entry) throw new Error(`viewOf names an unknown permission: ${k}`);
+  return entry.impliedBy(caps);
+});
+
 const GROUPS = [
   {
     key: 'users',
@@ -487,6 +524,31 @@ const GROUPS = [
     key: 'projects',
     label: 'Project Management',
     permissions: [
+      {
+        /* THE ONE C-CLASS AREA: READING THE PROJECT LIST.
+         *
+         * THE TAB was already client.view. The ROUTE was not: GET /api/projects
+         * had no key at all, so any signed-in person could read the project
+         * list within their scope over the API while the tab was hidden from
+         * them. That is the page and the server disagreeing, which is the shape
+         * this prompt exists to find.
+         *
+         * IMPLIED FOR EVERY DESIGNATION, and that is the whole of "defaults
+         * reproduce today's visibility exactly": the read keeps working for
+         * everybody because the artist's own board needs it — a board with no
+         * project names is not a board. What changes is that the route now says
+         * out loud who may call it, and a future narrowing is a decision
+         * somebody makes rather than a gap somebody finds.
+         *
+         * IT WIDENS NOTHING. visibleProjects() still decides WHICH projects
+         * come back; this decides only whether the question may be asked. */
+        key: 'project.view',
+        label: 'Read The Project List',
+        impliedBy: () => true,
+        describe: 'Read the list of clients and projects you can already see \u2014 which is what '
+          + 'the Dashboard, the Assets List and every picker are drawn from. It shows no more than '
+          + 'those screens already show you, and changing a project needs its own permission.',
+      },
       { key: 'project.add',           label: 'Project Add',          impliedBy: has('createProject') },
       { key: 'project.edit',          label: 'Project Edit',         impliedBy: has('createProject') },
       {
@@ -996,6 +1058,20 @@ const GROUPS = [
           + 'your own time, with the hours typed in. Only for projects you lead.',
       },
       {
+        /* READING THE TIMESHEET POLICY, which is a reasonable thing for a lead
+           to need: "why was my artist refused a line on Saturday" is answered
+           by this screen, and answering it should not require the ability to
+           move the studio's hours rule. Covers both write keys, since the
+           second dropdown's options are the same screen. */
+        key: 'timesheet.options_view',
+        label: 'Read Timesheet Settings',
+        impliedBy: viewOf('timesheet.options', 'timesheet.sub_options'),
+        describe: 'Open Settings \u2192 Time Sheet and read the studio\'s timesheet policy \u2014 the '
+          + 'length of a day, the smallest and largest line, which days hours may be logged on, '
+          + 'the days open for entry, the hours rule and the category lists \u2014 without being '
+          + 'able to change any of it.',
+      },
+      {
         /* THE STUDIO'S TIME SHEET POLICY, which is not the same as filling one in.
          *
          * What it gates: the non-project category list (add, rename, reorder,
@@ -1400,6 +1476,27 @@ const GROUPS = [
           + 'it. The person who created a group can already do all of this to their own. This does '
           + 'NOT open groups you are not in — being a member is still what lets you see a '
           + 'conversation at all, and that is a separate permission.',
+      },
+      {
+        /* READING THE CHAT SETTINGS, AND NOTHING THAT WAS SAID IN A CHAT.
+         *
+         * This is the clearest case of the rule that governs every view key in
+         * this prompt: where an area mixes configuration with private data, the
+         * view key covers the configuration only. It opens the settings panel —
+         * whether chat is on, the attachment limits, the retention — and reads
+         * no conversation, no message and no attachment.
+         *
+         * THERE IS DELIBERATELY NO "VIEW ALL CHATS" KEY. Chat is
+         * membership-based and stays so: no permission in this catalogue lets
+         * anybody read a conversation they are not a member of, and a test
+         * asserts it against the routes. */
+        key: 'chat.settings_view',
+        label: 'Read Chat Settings',
+        impliedBy: viewOf('chat.settings'),
+        describe: 'Open Settings \u2192 Chat and read how chat is configured for the studio \u2014 '
+          + 'whether it is on, what may be attached, how long things are kept \u2014 without being '
+          + 'able to change it. It shows no conversation and no message: chat is membership-based, '
+          + 'and no permission reads a chat you are not in.',
       },
       {
         /* The size cap itself.
@@ -1814,6 +1911,14 @@ const GROUPS = [
          that reason. It was in Chat for one commit and tests/role-permissions
          said so. */
       {
+        key: 'settings.chat_retention_view',
+        label: 'Read Chat Retention',
+        impliedBy: viewOf('settings.chat_retention'),
+        describe: 'Open Settings → Chat Retention and read how long messages and attachments are kept,'
+          + ' without being able to change it or run a sweep. It shows no message and no attachment'
+          + ' — chat stays membership-based, and no permission reads a conversation you are not in.',
+      },
+      {
         key: 'settings.chat_retention',
         label: 'Change chat attachment retention',
         /* ITS OWN KEY, NOT chat.settings, and the distinction is the same one
@@ -1854,7 +1959,26 @@ const GROUPS = [
         describe: 'Turn asset name editing on or off for the whole studio. Off hides the control '
           + 'everywhere and the server refuses a rename; names already changed stay changed.',
       },
+      {
+        key: 'settings.roles_view',
+        label: 'Read Designations',
+        impliedBy: viewOf('settings.roles'),
+        describe: 'Open Settings → Designations and read the list of designations and what each one is'
+          + ' for, without being able to add, rename or retire one.',
+      },
       { key: 'settings.roles',        label: 'Manage Roles',         impliedBy: has('manageSettings') },
+      {
+        /* FIVE SECTIONS, ONE READ. They are five panels over one reference table
+           and one route family, whose read was gated by each list's own MANAGE key.
+           They are vocabularies rather than data: a studio that lets somebody read
+           one is not exposed by their reading another. */
+        key: 'settings.reference_view',
+        label: 'Read The Reference Lists',
+        impliedBy: viewOf('settings.asset_types', 'settings.priorities', 'settings.categories', 'settings.project_categories', 'settings.milestone_types'),
+        describe: 'Read the studio\'s dropdown vocabularies — Scope of Work, Priorities, Asset'
+          + ' Categories, Project Categories and Milestone Types — without being able to add, rename'
+          + ' or retire an entry in any of them. Each list keeps its own key for changing it.',
+      },
       { key: 'settings.asset_types',  label: 'Manage Scope of Work', impliedBy: has('manageSettings') },
       { key: 'settings.priorities',   label: 'Manage Priorities',    impliedBy: has('manageSettings') },
       { key: 'settings.categories',   label: 'Manage Asset Categories', impliedBy: has('manageSettings'),
@@ -1897,6 +2021,13 @@ const GROUPS = [
           + 'particular project is a separate permission, under Project Management.',
       },
       {
+        key: 'settings.theme_view',
+        label: 'Read Theme',
+        impliedBy: viewOf('settings.theme'),
+        describe: 'Open Settings → Theme and read the studio\'s colours without being able to change them'
+          + ' or apply a preset.',
+      },
+      {
         key: 'settings.theme',
         label: 'Manage Theme',
         /* THE STUDIO'S COLOURS, every one of them, on every screen including the
@@ -1921,6 +2052,18 @@ const GROUPS = [
           + 'permission — the sign-in screen wears the theme too.',
       },
       {
+        key: 'settings.server.view',
+        label: 'Read Office Server Settings',
+        impliedBy: viewOf('settings.server.manage'),
+        describe: 'Open Settings → Server and read how the office file server is configured — the share,'
+          + ' the paths, whether it is reachable — without being able to change any of it. No'
+          + ' gateway key or secret is ever shown to anybody: the screen says only whether one is'
+          + ' set and when it last changed.',
+        danger: 'A holder learns the share and the folder layout of the studio\'s file server. They'
+          + ' learn no key: the gateway\'s secrets are never returned by any route, to any'
+          + ' permission.',
+      },
+      {
         key: 'settings.server.manage',
         label: 'Manage the Office File Server',
         /* Super Admin only, through managePermissions rather than
@@ -1934,6 +2077,13 @@ const GROUPS = [
           + 'and extension rules, the project\u2011to\u2011folder mapping, and the self\u2011test.',
       },
       {
+        key: 'settings.branding_view',
+        label: 'Read Branding',
+        impliedBy: viewOf('settings.branding'),
+        describe: 'Open Settings → Branding and read the studio\'s name and logo settings without being'
+          + ' able to change them or upload a logo.',
+      },
+      {
         key: 'settings.branding',
         label: 'Manage Branding',
         // The application's own name, tagline and logo. Everyone sees the
@@ -1941,6 +2091,16 @@ const GROUPS = [
         // something any role that can edit an asset picks up.
         impliedBy: has('manageSettings'),
         describe: 'The name, tagline and logo shown in the header and on the sign-in screen.',
+      },
+      {
+        /* THE EXAMPLE THE BRIEF LEADS WITH. Handing somebody read access to
+           Working Hours used to mean handing them the ability to move everybody's
+           working day — and every hours figure in the application with it. */
+        key: 'settings.working_hours_view',
+        label: 'Read Working Hours',
+        impliedBy: viewOf('settings.working_hours'),
+        describe: 'Open Settings → Working Hours and read the studio\'s day, its lunch break and its'
+          + ' working days, without being able to move them.',
       },
       {
         key: 'settings.working_hours',
@@ -1958,6 +2118,13 @@ const GROUPS = [
         impliedBy: has('manageSettings'),
         describe: 'The length of the working day, which days the studio works, and the hours and '
           + 'lunch break the Time Sheet accepts entries within.',
+      },
+      {
+        key: 'settings.recording_hours_view',
+        label: 'Read Recording Hours',
+        impliedBy: viewOf('settings.recording_hours'),
+        describe: 'Open Settings → Recording Hours and read which windows of the day count towards'
+          + ' recorded time, without being able to change them.',
       },
       {
         /* The studio's recording windows, in any number and by name.
@@ -2057,6 +2224,13 @@ const GROUPS = [
         danger: 'A holiday stops time tracking for the whole studio on that day, and refuses Accept and Start.',
       },
       {
+        key: 'settings.mis_access_view',
+        label: 'Read MIS Access',
+        impliedBy: viewOf('settings.mis_access'),
+        describe: 'Open Settings → MIS Access and read which designations reach the management figures,'
+          + ' without being able to change it.',
+      },
+      {
         /* Giving the studio's staff side sight of a project.
          *
          * SUPER ADMIN ONLY. What it hands out is visibility into projects the
@@ -2074,12 +2248,28 @@ const GROUPS = [
           + 'an asset, a project or anybody’s work.',
       },
       {
+        key: 'settings.ip_allowlist_view',
+        label: 'Read The Address Allowlist',
+        impliedBy: viewOf('settings.ip_allowlist'),
+        describe: 'Open Settings → IP Allowlist and read which addresses may reach Forge and whether'
+          + ' enforcement is on, without being able to change the list or the switch.',
+        danger: 'A holder learns the studio\'s own addresses and whether the restriction is enforced.'
+          + ' They cannot add an address, remove one, or turn enforcement off.',
+      },
+      {
         key: 'settings.ip_allowlist',
         label: 'Manage IP Allowlist',
         impliedBy: has('manageAccess'),
         // Surfaced to the UI so the warning lives with the permission rather
         // than being remembered by whoever wrote the screen.
         danger: 'A wrong entry here locks everyone out of the application, and the way back is an environment variable on the server.',
+      },
+      {
+        key: 'settings.ip_blocklist_view',
+        label: 'Read The Address Blocklist',
+        impliedBy: viewOf('settings.ip_blocklist'),
+        describe: 'Open Settings → IP Blocklist and read which addresses are refused and why, without'
+          + ' being able to block or unblock one.',
       },
       {
         /* Addresses refused whatever the allowlist says.
@@ -2102,6 +2292,13 @@ const GROUPS = [
           + 'would admit it, and even while the allowlist is only monitoring.',
         danger: 'A block takes effect immediately and the person blocked cannot tell you. Blocking your own '
           + 'address is refused; blocking the range you sit in is not, and would lock out everyone on it.',
+      },
+      {
+        key: 'settings.email_delivery_view',
+        label: 'Read Email Delivery',
+        impliedBy: viewOf('settings.email_delivery'),
+        describe: 'Open Settings → Email Delivery and read the queue, what has failed and why, without'
+          + ' being able to resume it, retry a message or send a test.',
       },
       {
         key: 'settings.email_delivery',
@@ -2127,6 +2324,13 @@ const GROUPS = [
         impliedBy: has('managePermissions'),
         describe: 'See whether the studio\'s email is being delivered — the connection, the queue, '
           + 'failures, today\'s count against the daily cap — and send a test message to yourself.',
+      },
+      {
+        key: 'settings.nudges_view',
+        label: 'Read Reminder Settings',
+        impliedBy: viewOf('settings.nudges'),
+        describe: 'Open Settings → Reminders and read which reminders the studio sends and when, without'
+          + ' being able to change them or send one.',
       },
       {
         key: 'settings.nudges',
@@ -2156,6 +2360,14 @@ const GROUPS = [
           + 'the second reminder\'s time and the banner snooze.',
       },
       {
+        key: 'settings.leave.view',
+        label: 'Read Leave Settings',
+        impliedBy: viewOf('settings.leave.manage'),
+        describe: 'Open Settings → Leave and read the leave, idle, onsight and vacation settings — the'
+          + ' half-day split, the notice period, whether vacations need approving — without being'
+          + ' able to change them.',
+      },
+      {
         key: 'settings.leave.manage',
         label: 'Manage Leave Settings',
         /* SETTINGS -> LEAVE: the master switch and the half-day split.
@@ -2177,6 +2389,18 @@ const GROUPS = [
         impliedBy: has('managePermissions'),
         describe: 'Settings → Leave: whether Leave & Idle is available at all, and the two times '
           + 'that divide a half-day.',
+      },
+      {
+        key: 'settings.email_config_view',
+        label: 'Read Email Configuration',
+        impliedBy: viewOf('settings.email_config'),
+        describe: 'Open Settings → Email and read how outgoing mail is configured — the sender, the'
+          + ' server, which account is connected — without being able to change it or send a test.'
+          + ' No password, client secret or token is ever shown to anybody, whatever they hold: the'
+          + ' screen says only whether one is set and when it last changed.',
+        danger: 'A holder learns which mail account the studio sends from and which host it uses. They'
+          + ' learn no credential: the secret fields are never returned by any route, to any'
+          + ' permission.',
       },
       {
         key: 'settings.email_config',
@@ -2270,6 +2494,17 @@ const GROUPS = [
           + 'chat is logged before it is granted, not after.',
       },
       {
+        key: 'settings.integrations_view',
+        label: 'Read Integrations',
+        impliedBy: viewOf('settings.integrations'),
+        describe: 'Open Settings → Integrations and read which integration clients exist and what they'
+          + ' may do, without being able to add, change or revoke one. A client\'s secret is shown'
+          + ' once when it is created and never again, to anybody.',
+        danger: 'A holder learns which systems are connected to Forge and what each may reach. They'
+          + ' learn no client secret: it is returned only once, at creation, to the person who'
+          + ' created it.',
+      },
+      {
         key: 'settings.integrations',
         label: 'Manage Dev & QA Integration',
         /* SUPER ADMIN ONLY, and NOT grantable — the one other permission in this catalogue
@@ -2293,6 +2528,13 @@ const GROUPS = [
           + 'It also shows each key once, at creation, and never again.',
       },
       {
+        key: 'settings.role_groups_view',
+        label: 'Read Role Groups',
+        impliedBy: viewOf('settings.role_groups'),
+        describe: 'Open Settings → Role Groups and read which groups exist, which designations are in'
+          + ' them and which permissions they add, without being able to change any of it.',
+      },
+      {
         key: 'settings.role_groups',
         label: 'Manage Role Groups',
         /* Role groups: a named bag of permissions that every member role
@@ -2314,6 +2556,18 @@ const GROUPS = [
           + 'Groups only ever add permissions — they cannot take one away.',
         danger: 'Whoever holds this can grant any permission they themselves hold to every role '
           + 'in a group, in one action.',
+      },
+      {
+        /* READING THE PERMISSION MAP, which is a different act from editing it.
+           A producer answering "why can Ana not open the Server tab" needs to see
+           the map; giving them settings.permissions to do it hands them the ability
+           to grant themselves anything. */
+        key: 'settings.permissions_view',
+        label: 'Read Role Permissions',
+        impliedBy: viewOf('settings.permissions'),
+        describe: 'Open Settings → Role Permissions and read which designation holds which permission,'
+          + ' without being able to change any of it. The screen draws every tick box disabled and'
+          + ' the server refuses every save.',
       },
       {
         key: 'settings.permissions',

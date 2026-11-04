@@ -222,6 +222,47 @@ const SINCE_SNAPSHOT = [MANAGE, 'settings.email_delivery', 'report.remind', 'set
 const WIDER_THAN_SUPER_ADMIN = ['leave.request', 'leave.view_team', 'timesheet.tl_action',
   'assets.rename', 'history.view'];
 
+/* PROMPT 61'S VIEW KEYS: a third category, and they need one.
+ *
+ * They are not SINCE_SNAPSHOT, because they are deliberately NOT
+ * Super-Admin-only — the whole promise is that whoever could already reach a
+ * screen through the key that CHANGES it keeps reaching it, so each view key is
+ * implied by exactly the holders of its area's write keys. And they are not
+ * WIDER_THAN_SUPER_ADMIN either: that list is about keys that reach further than
+ * the Super Admin tier ON PURPOSE for a reason argued per key, and each of its
+ * members is asserted to be about its holder's own time. A view key is a
+ * different claim — it reaches exactly as far as the writes it shadows.
+ *
+ * HAND-LISTED AND THEN CHECKED AGAINST src/permission-areas.js, rather than
+ * derived from it. Derived, this list would agree with the model by
+ * construction and could not notice a key leaving the model; written out, it is
+ * an independent statement and the assertion below is what ties the two
+ * together. That is the same reason SNAPSHOT itself is a literal.
+ */
+const VIEW_KEYS = [
+  'project.view',
+  'chat.settings_view',
+  'timesheet.options_view',
+  'settings.branding_view',
+  'settings.chat_retention_view',
+  'settings.email_config_view',
+  'settings.email_delivery_view',
+  'settings.integrations_view',
+  'settings.ip_allowlist_view',
+  'settings.ip_blocklist_view',
+  'settings.leave.view',
+  'settings.mis_access_view',
+  'settings.nudges_view',
+  'settings.permissions_view',
+  'settings.recording_hours_view',
+  'settings.reference_view',
+  'settings.role_groups_view',
+  'settings.roles_view',
+  'settings.server.view',
+  'settings.theme_view',
+  'settings.working_hours_view',
+];
+
 test('the keys that are wider than Super Admin are wider on purpose', () => {
   const holdersOf = (key) => roles.roleKeys().filter((k) => {
     const def = roles.roleDef(k);
@@ -291,13 +332,66 @@ test('the keys that are wider than Super Admin are wider on purpose', () => {
   }
 });
 
+test('the view keys reach exactly as far as the writes they shadow', () => {
+  /* THE PROMISE OF PROMPT 61, as one assertion per area: nothing changes for
+     any existing role. A role that could reach a screen yesterday because it
+     held the key that CHANGES that screen must reach it today, and a role that
+     could not must still not.
+
+     SO IT IS AN EQUALITY, NOT A SUPERSET. A view key whose holders were a
+     strict superset of its writes' would be handing a screen to somebody who
+     could not see it yesterday — additive, but not "nothing changes", and the
+     studio asked for the second. The one exception is the C-class area, where
+     the read was ALREADY open to everybody over the API and the key is what
+     says so out loud. */
+  const { AREAS } = require('../src/permission-areas');
+  const holdersOf = (key) => roles.roleKeys().filter((k) => {
+    const def = roles.roleDef(k);
+    return def && catalog.BY_KEY.get(key).impliedBy(def);
+  }).sort();
+
+  /* THE HAND-WRITTEN LIST AND THE MODEL AGREE. Either one changing without the
+     other is what this catches — a view key added to the model and never built,
+     or built and never accounted for here. */
+  assert.deepStrictEqual([...VIEW_KEYS].sort(),
+    AREAS.filter((a) => a.addView).map((a) => a.addView).sort(),
+    'every view key the area model declares is accounted for here, and vice versa');
+
+  for (const area of AREAS.filter((a) => a.addView)) {
+    assert.ok(catalog.BY_KEY.has(area.addView),
+      `${area.addView} is in the catalogue, or the area model is describing a plan`);
+    const view = holdersOf(area.addView);
+    const writes = [...new Set(area.writes.flatMap(holdersOf))].sort();
+    if (area.class === 'C') {
+      /* THE ONE C-CLASS AREA. GET /api/projects had no key at all, so the read
+         was open to every signed-in person within their scope — and the artist's
+         own board needs it. Implied for everybody is therefore what "reproduces
+         today exactly" means here, and it is wider than the writes on purpose. */
+      assert.deepStrictEqual(view, roles.roleKeys().sort(),
+        `${area.addView} is implied for every designation, as the read already was`);
+      continue;
+    }
+    assert.deepStrictEqual(view, writes,
+      `${area.addView} reaches exactly the designations that can change ${area.label}`);
+  }
+
+  /* AND NO VIEW KEY IS A WRITE KEY'S EQUAL IN POWER: each one is grantable on
+     its own, which is what makes a view-only role possible at all. */
+  for (const key of VIEW_KEYS) {
+    assert.notStrictEqual(catalog.BY_KEY.get(key).grantable, false,
+      `${key} can be granted by itself — that is the view-only role`);
+  }
+});
+
 test('every key added since the snapshot is Super Admin only', () => {
   const added = catalog.KEYS.filter((k) => !SNAPSHOT.roles.super_admin.includes(k))
-    .filter((k) => !WIDER_THAN_SUPER_ADMIN.includes(k));
+    .filter((k) => !WIDER_THAN_SUPER_ADMIN.includes(k))
+    .filter((k) => !VIEW_KEYS.includes(k));
   assert.deepStrictEqual(added.sort(), [...SINCE_SNAPSHOT].sort(),
     'a catalogue key was added without being accounted for here');
   assert.strictEqual(catalog.KEYS.length,
-    SNAPSHOT.catalogueSize + SINCE_SNAPSHOT.length + WIDER_THAN_SUPER_ADMIN.length);
+    SNAPSHOT.catalogueSize + SINCE_SNAPSHOT.length + WIDER_THAN_SUPER_ADMIN.length
+    + VIEW_KEYS.length);
 
   for (const key of SINCE_SNAPSHOT) {
     const entry = catalog.BY_KEY.get(key);
@@ -332,7 +426,7 @@ test('THE SNAPSHOT: with no groups defined, every role is unchanged',
          them in would read as "super_admin changed" for a change argued and
          asserted twenty lines above. The test above is what holds their width;
          this one is about everything that did NOT change. */
-      const added = [...SINCE_SNAPSHOT, ...WIDER_THAN_SUPER_ADMIN];
+      const added = [...SINCE_SNAPSHOT, ...WIDER_THAN_SUPER_ADMIN, ...VIEW_KEYS];
       const now = [...held].filter((k) => !added.includes(k)).sort();
       assert.deepStrictEqual(now, expected,
         `${roleKey} changed: +${now.filter((k) => !expected.includes(k))} `

@@ -168,27 +168,27 @@ The gateway's own credential. Not a role, and its config route publishes the key
 
 | New view key | Area | Implied by | Default holders |
 |---|---|---|---|
-| `project.view` | Projects & clients | `client.add` `client.edit` `client.delete` `client.close` `project.add` `project.edit` `project.delete` `project.close` `project.milestones` | none yet |
-| `settings.permissions_view` | Role Permissions | `settings.permissions` | none yet |
-| `settings.role_groups_view` | Role Groups | `settings.role_groups` | none yet |
-| `settings.roles_view` | Designations | `settings.roles` | none yet |
-| `settings.working_hours_view` | Working Hours | `settings.working_hours` | none yet |
-| `settings.recording_hours_view` | Recording Hours | `settings.recording_hours` | none yet |
-| `timesheet.options_view` | Time Sheet Options | `timesheet.options` `timesheet.sub_options` | none yet |
-| `settings.leave.view` | Leave & Idle | `settings.leave.manage` | none yet |
-| `settings.nudges_view` | Start-of-day nudges | `settings.nudges` | none yet |
-| `settings.branding_view` | Branding | `settings.branding` | none yet |
-| `settings.theme_view` | Theme | `settings.theme` | none yet |
-| `settings.email_config_view` | Email (mail server) | `settings.email_config` | none yet |
-| `settings.email_delivery_view` | Email (Gmail) delivery | `settings.email_delivery` | none yet |
-| `settings.server.view` | Server (gateway) | `settings.server.manage` | none yet |
-| `settings.integrations_view` | Dev & QA Integration | `settings.integrations` | none yet |
-| `chat.settings_view` | Chat settings | `chat.settings` | none yet |
-| `settings.chat_retention_view` | Chat attachment retention | `settings.chat_retention` | none yet |
-| `settings.ip_allowlist_view` | Allowed IP addresses | `settings.ip_allowlist` | none yet |
-| `settings.ip_blocklist_view` | Blocked IP addresses | `settings.ip_blocklist` | none yet |
-| `settings.mis_access_view` | MIS Project Access | `settings.mis_access` | none yet |
-| `settings.reference_view` | Reference lists | `settings.asset_types` `settings.priorities` `settings.categories` `settings.project_categories` `settings.milestone_types` | none yet |
+| `project.view` | Projects & clients | `client.add` `client.edit` `client.delete` `client.close` `project.add` `project.edit` `project.delete` `project.close` `project.milestones` | every designation |
+| `settings.permissions_view` | Role Permissions | `settings.permissions` | 1: super_admin |
+| `settings.role_groups_view` | Role Groups | `settings.role_groups` | 1: super_admin |
+| `settings.roles_view` | Designations | `settings.roles` | 7: super_admin, head_of_production, cto, general_manager, managing_director_ceo, vice_president_global_operations_business_development … |
+| `settings.working_hours_view` | Working Hours | `settings.working_hours` | 7: super_admin, head_of_production, cto, general_manager, managing_director_ceo, vice_president_global_operations_business_development … |
+| `settings.recording_hours_view` | Recording Hours | `settings.recording_hours` | 1: super_admin |
+| `timesheet.options_view` | Time Sheet Options | `timesheet.options` `timesheet.sub_options` | 1: super_admin |
+| `settings.leave.view` | Leave & Idle | `settings.leave.manage` | 1: super_admin |
+| `settings.nudges_view` | Start-of-day nudges | `settings.nudges` | 1: super_admin |
+| `settings.branding_view` | Branding | `settings.branding` | 7: super_admin, head_of_production, cto, general_manager, managing_director_ceo, vice_president_global_operations_business_development … |
+| `settings.theme_view` | Theme | `settings.theme` | 1: super_admin |
+| `settings.email_config_view` | Email (mail server) | `settings.email_config` | 1: super_admin |
+| `settings.email_delivery_view` | Email (Gmail) delivery | `settings.email_delivery` | 1: super_admin |
+| `settings.server.view` | Server (gateway) | `settings.server.manage` | 1: super_admin |
+| `settings.integrations_view` | Dev & QA Integration | `settings.integrations` | 1: super_admin |
+| `chat.settings_view` | Chat settings | `chat.settings` | 1: super_admin |
+| `settings.chat_retention_view` | Chat attachment retention | `settings.chat_retention` | 1: super_admin |
+| `settings.ip_allowlist_view` | Allowed IP addresses | `settings.ip_allowlist` | 1: super_admin |
+| `settings.ip_blocklist_view` | Blocked IP addresses | `settings.ip_blocklist` | 1: super_admin |
+| `settings.mis_access_view` | MIS Project Access | `settings.mis_access` | 1: super_admin |
+| `settings.reference_view` | Reference lists | `settings.asset_types` `settings.priorities` `settings.categories` `settings.project_categories` `settings.milestone_types` | 7: super_admin, head_of_production, cto, general_manager, managing_director_ceo, vice_president_global_operations_business_development … |
 
 ## Routes whose guard the static reader cannot see
 
@@ -267,7 +267,7 @@ route is missing from it.
 | `POST /api/push/devices` | **yes** | inline-self |
 | `POST /api/push/test` | **yes** | inline-self |
 
-298 routes in all; 168 mutating; 67 with no guard in a middleware position.
+299 routes in all; 169 mutating; 67 with no guard in a middleware position.
 
 ## The page's own tables
 
@@ -286,6 +286,7 @@ route is missing from it.
 | projectsTabBtn | `can('client.view')` |
 | pendingTabBtn | `can('pending.view')` |
 | timesheetTabBtn | `can('timesheet.own')` |
+| historyTabBtn | `can('history.view') && state.historyEnabled !== false` |
 | chatWrap | `can('chat.use')` |
 | newClientBtn | `can('client.add')` |
 | newProjectBtn | `can('project.add')` |
