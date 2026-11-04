@@ -12,6 +12,7 @@ const sheets = require('../timesheets');
 const workSchedule = require('../work-schedule');
 const dayStatus = require('../day-status');
 const hoursRule = require('../timesheet-hours-rule');
+const dayWindow = require('../timesheet-day-window');
 const holidays = require('../holidays');
 // For the Hours suggestion: what this person's own work sessions say about one day.
 const workLog = require('../work-log');
@@ -102,6 +103,7 @@ async function selectEntries(tail, params) {
  * permission hole with a spreadsheet in front of it, and two copies of a
  * reporting-line query is how that happens. */
 const { mayRead, readableUserIds } = require('../timesheet-visibility');
+const notifications = require('../notifications');
 
 // The week row, made on demand. A week nobody has touched has no row, which is
 // the right default: a draft is the absence of a decision, not a record of one.
@@ -290,7 +292,7 @@ const shapeEntry = (e) => ({
  * it. Everything to do with the clock is minutes past midnight IST, which is
  * what makes the times identical for a reader in any timezone.
  */
-const shapeDay = (day, entries, workDate, mark = null, rule = null) => {
+const shapeDay = (day, entries, workDate, mark = null, rule = null, window = null) => {
   const total = sheets.dayTotal(entries, workSchedule.timesheetWindow());
   return {
     date: workDate,
@@ -369,6 +371,14 @@ const shapeDay = (day, entries, workDate, mark = null, rule = null) => {
      *
      * Null only on the unavailable path, where there is no settings row to read
      * and nothing to rule on. */
+    /* THE DAY'S ENTRY WINDOW, as the server decided it. `open` is the whole
+       answer the page needs; `reason` is what it quotes when it is false. */
+    entryWindow: window ? {
+      open: Boolean(window.open),
+      reason: window.reason,
+      closedMessage: window.open ? null : require('../timesheet-day-window')
+        .refusalFor({ ...window, date: workDate }),
+    } : null,
     hoursRule: rule ? {
       applies: rule.applies,
       /* Centihours — hundredths of an hour, the unit the lines are stored in.
@@ -508,6 +518,24 @@ router.get('/week', requirePermission('timesheet.own'), async (req, res) => {
        so this costs nothing per day. */
     const ruleSettings = policy();
     const ruleExempt = holds(req.user, 'timesheet.min_hours_exempt');
+    /* WHICH DAYS ARE OPEN FOR ENTRY, decided on the server and sent per day.
+     *
+     * THE PAGE NEVER WORKS THIS OUT. It has no business knowing the studio's
+     * window, the previous-day carve-out, whether this reader holds
+     * timesheet.backdate or whether a day was unlocked for them — and a second
+     * copy of that in the browser would disagree the first time any of the four
+     * changed. It draws `open` and quotes `reason`.
+     *
+     * THE UNLOCKS ARE ONE QUERY FOR THE WEEK rather than one per day: a person
+     * has none in the ordinary case, and seven round trips to learn that would
+     * be seven more than necessary. */
+    const windowKey = holds(req.user, 'timesheet.backdate');
+    const unlocked = new Set(
+      (userId === req.user.id
+        ? await dayWindow.liveFor(db, userId,
+          { from: shownDays[0], to: shownDays[shownDays.length - 1] })
+        : []).map((r) => r.date)
+    );
     const shaped = shownDays.map((d) => {
       const mark = marks.get(`${userId}|${d}`) || null;
       const dayEntries = entries.filter((e) => sheets.toISO(e.date) === d);
@@ -525,7 +553,17 @@ router.get('/week', requirePermission('timesheet.own'), async (req, res) => {
         timesheetRequired: owed,
         entries: dayEntries,
       });
-      return shapeDay(byDate.get(d) || null, dayEntries, d, mark, verdict);
+      /* ASKED FOR THE SHEET'S OWNER, not for the viewer: a lead reading
+         somebody else's week is being shown whether THAT person may type into
+         it. The week is read-only for everybody but its owner anyway, so this
+         is information rather than permission — which is why the unlock lookup
+         above only runs for your own sheet, where it can change an answer. */
+      const openDay = userId === req.user.id
+        ? dayWindow.isTimesheetDayOpen({
+          policy: ruleSettings, date: d, backdateKey: windowKey, unlocked: unlocked.has(d),
+        })
+        : { open: false, reason: 'not_yours', window: null, owed: null };
+      return shapeDay(byDate.get(d) || null, dayEntries, d, mark, verdict, openDay);
     });
 
     res.json({
@@ -897,9 +935,26 @@ router.post('/entries', requirePermission('timesheet.own'), async (req, res) => 
   const worth = await hoursFor(req.user.id, req.body || {});
   if (!worth.ok) return res.status(400).json({ error: worth.error, field: worth.field });
 
+  /* THE DAY'S WINDOW, RESOLVED FOR THIS PERSON, and handed to the validator.
+   *
+   * validateEntry() applies the window but cannot look up a permission or an
+   * unlock row, so a timesheet.backdate holder would be refused by it before
+   * the key could help. The verdict is computed here, where req.user exists,
+   * and passed in — one window, one answer, and the refusal the validator
+   * returns is the same sentence the other three routes return.
+   *
+   * THE TRANSACTION RE-ASKS on its own connection further down. That is not
+   * duplication: this one produces the 400 a person reads, and that one is the
+   * authoritative read taken with the day's row locked. */
+  const dayOpen = await dayWindow.openFor(db, req.user, sheets.toISO((req.body || {}).date));
   const verdict = sheets.validateEntry(
-    { ...(req.body || {}), hours: worth.hours }, workSchedule.timesheetWindow());
-  if (!verdict.ok) return res.status(400).json(verdict);
+    { ...(req.body || {}), hours: worth.hours }, workSchedule.timesheetWindow(), { dayOpen });
+  if (!verdict.ok) {
+    /* A CLOSED DAY IS A 422 WITH ITS CODE, like the other three routes, rather
+       than the 400 every other validation failure returns: the page tells a
+       locked day apart from a malformed one by the code, and refreshes on it. */
+    return res.status(verdict.code === dayWindow.CODE ? 422 : 400).json(verdict);
+  }
   const line = verdict.value;
   line.calculated = worth.calculated;
   line.tlAction = tl.tlAction;
@@ -960,15 +1015,35 @@ router.post('/entries', requirePermission('timesheet.own'), async (req, res) => 
   const id = uuid();
   const conn = await db.connect();
   let refusal = null;
+  let windowRefusal = null;
   try {
     await conn.query('BEGIN');
     await conn.query(
       'SELECT id FROM timesheet_days WHERE user_id = $1 AND work_date = $2 FOR UPDATE',
       [req.user.id, line.date]
     );
-    const rule = await hoursRuleFor(req.user, line.date, { conn });
-    const fits = hoursRule.lineFits({ verdict: rule, wanted: hoursRule.toCenti(line.hours) });
-    if (!fits.ok) {
+    /* IS THE DAY EVEN OPEN. Asked before the hours rule because a closed day
+       is not a question about hours — and asked on `conn` so it reads the same
+       unlock state as the rest of this transaction. validateEntry() has already
+       applied the window to a CREATE; this is the same answer from the same
+       function, and it is here so the four routes share one call shape rather
+       than one of them being special. */
+    const open = await dayWindow.openFor(db, req.user, line.date, { conn });
+    if (!open.open) {
+      await conn.query('ROLLBACK');
+      windowRefusal = dayWindow.refusal(open, line.date);
+    }
+    const rule = windowRefusal
+      ? null : await hoursRuleFor(req.user, line.date, { conn });
+    const fits = windowRefusal
+      ? { ok: true } : hoursRule.lineFits({ verdict: rule, wanted: hoursRule.toCenti(line.hours) });
+    /* THE CLOSED-DAY CASE IS ITS OWN BRANCH, and it has to be: the transaction
+       is already rolled back above, so falling through to the `else` would
+       insert the line and commit on a connection whose transaction had ended.
+       (That is exactly what the first version of this did.) */
+    if (windowRefusal) {
+      /* Rolled back where the refusal was decided; nothing more to do here. */
+    } else if (!fits.ok) {
       await conn.query('ROLLBACK');
       /* THE REFUSAL NAMES WHAT WOULD HAVE FITTED, because "too many hours" with
          no number is a message that makes somebody guess. The verdict quoted is
@@ -995,6 +1070,7 @@ router.post('/entries', requirePermission('timesheet.own'), async (req, res) => 
   } finally {
     conn.release();
   }
+  if (windowRefusal) return res.status(422).json(windowRefusal);
   if (refusal) return res.status(422).json(refusal);
 
   const rows = await selectEntries('WHERE e.id = $1', [id]);
@@ -1127,10 +1203,17 @@ router.patch('/entries/:id', requirePermission('timesheet.own'), async (req, res
      Idle line somebody is only correcting the hours of, and a retired option
      keeps working on the line that already holds it. Change the category and
      the full rules apply. See the note on `was` in src/timesheets.js. */
+  /* THE WINDOW FOR THE DAY THE LINE IS MOVING TO, resolved for this person.
+     The day it is LEAVING is checked in the transaction below, which is where
+     both dates are known to be settled. */
+  const editDayOpen = await dayWindow.openFor(db, req.user, sheets.toISO(merged.date));
   const verdict = sheets.validateEntry(
     { ...merged, hours: worth.hours }, workSchedule.timesheetWindow(),
-    { was: { nonProject: found[0].non_project, nonProjectSub: found[0].non_project_sub } });
-  if (!verdict.ok) return res.status(400).json(verdict);
+    { dayOpen: editDayOpen,
+      was: { nonProject: found[0].non_project, nonProjectSub: found[0].non_project_sub } });
+  if (!verdict.ok) {
+    return res.status(verdict.code === dayWindow.CODE ? 422 : 400).json(verdict);
+  }
   const line = verdict.value;
   line.tlAction = wasTl;
 
@@ -1160,18 +1243,34 @@ router.patch('/entries/:id', requirePermission('timesheet.own'), async (req, res
    * lines of the same day would otherwise each see room the other was taking. */
   const conn = await db.connect();
   let editRefusal = null;
+  let editWindowRefusal = null;
   try {
     await conn.query('BEGIN');
     await conn.query(
       'SELECT id FROM timesheet_days WHERE user_id = $1 AND work_date = $2 FOR UPDATE',
       [req.user.id, line.date]
     );
-    const rule = await hoursRuleFor(req.user, line.date, { conn });
+    /* BOTH DAYS, NOT ONE. An edit can MOVE a line, and if either the day it
+       is leaving or the day it is arriving on is closed, the edit is a change to
+       a closed day. Checking only the new date would let somebody empty a closed
+       Tuesday by moving its lines to today. */
+    for (const when of [...new Set([line.date, wasOn])]) {
+      if (editWindowRefusal) break;
+      const open = await dayWindow.openFor(db, req.user, when, { conn });
+      if (!open.open) editWindowRefusal = dayWindow.refusal(open, when);
+    }
+    if (editWindowRefusal) await conn.query('ROLLBACK');
+    const rule = editWindowRefusal
+      ? null : await hoursRuleFor(req.user, line.date, { conn });
     const own = line.date === wasOn ? hoursRule.toCenti(found[0].hours) : 0;
-    const fits = hoursRule.lineFits({
+    const fits = editWindowRefusal ? { ok: true } : hoursRule.lineFits({
       verdict: rule, wanted: hoursRule.toCenti(line.hours), own,
     });
-    if (!fits.ok) {
+    /* ITS OWN BRANCH for the reason the insert's is: the rollback has happened,
+       so the update must not run. */
+    if (editWindowRefusal) {
+      /* Rolled back above. */
+    } else if (!fits.ok) {
       await conn.query('ROLLBACK');
       editRefusal = {
         ...hoursRefusal({ ...rule, remaining: fits.headroom }, 'HOURS_ABOVE_MAXIMUM'),
@@ -1191,6 +1290,7 @@ router.patch('/entries/:id', requirePermission('timesheet.own'), async (req, res
   } finally {
     conn.release();
   }
+  if (editWindowRefusal) return res.status(422).json(editWindowRefusal);
   if (editRefusal) return res.status(422).json(editRefusal);
 
   const rows = await selectEntries('WHERE e.id = $1', [req.params.id]);
@@ -1214,6 +1314,24 @@ router.delete('/entries/:id', requirePermission('timesheet.own'), async (req, re
   const day = await dayRow(req.user.id, on);
   if (day && sheets.isLocked(day.status)) {
     return res.status(409).json({ error: 'That day is locked.', status: day.status });
+  }
+  /* A CLOSED DAY MAY NOT BE EMPTIED EITHER, and this route checked no date at
+   * all until now — which was the real gap behind this part of the brief.
+   *
+   * WHY DELETING NEEDS THE WINDOW WHEN IT DOES NOT NEED THE HOURS RULE: the
+   * hours rule only ever refuses a day for being wrong in a way the person can
+   * fix, and deleting moves a day towards short, which submit already refuses.
+   * The window is a different kind of statement — "this period is finished" —
+   * and a period that is finished must not be able to lose hours any more than
+   * it can gain them. A reconciled month whose lines can still be deleted is
+   * not reconciled.
+   *
+   * 422 AND NOT 409 for the same reason the hours rule uses 422: the request is
+   * well formed and the state is not a conflict, the date is simply outside
+   * what the studio allows. */
+  const openDay = await dayWindow.openFor(db, req.user, on);
+  if (!openDay.open) {
+    return res.status(422).json(dayWindow.refusal(openDay, on));
   }
   /* NO HOURS-RULE CHECK HERE, AND THAT IS THE DESIGN RATHER THAN AN OMISSION.
    *
@@ -1241,6 +1359,100 @@ router.delete('/entries/:id', requirePermission('timesheet.own'), async (req, re
  * gets approved now, which means a Tuesday can be approved while Wednesday is
  * still being filled in — the thing a weekly row could not express.
  */
+/* ---------------------------------------------------------------------------
+ * OPEN A CLOSED DAY FOR ONE PERSON. POST /timesheets/unlock-day
+ *
+ * ITS OWN KEY, timesheet.unlock_day, Super Admin by default and grantable.
+ *
+ * SCOPED BY WHO THE HOLDER CAN ALREADY SEE, asked of mayRead() — the same
+ * function the week payload and the export use to decide whose timesheet you may
+ * read. Holding this key does not widen that: a lead may open a day for their
+ * own team and for nobody else. Without the scope check the route would also be
+ * a probe, since a 200 would tell a narrow holder that a user id exists.
+ *
+ * WHY "OPEN" AND NOT "FILE IT FOR THEM": because the hours are the person's own
+ * statement about their own day. An admin who could type them would be filing
+ * somebody else's timesheet, which nothing in this application lets anybody do.
+ * This hands the day back to its owner.
+ *
+ * ALREADY OPEN IS A 200, NOT A CONFLICT. Two admins pressing the same button is
+ * an ordinary thing and the second press should report the state.
+ *
+ * AUDITED ALWAYS, because it is somebody deciding that a rule does not apply to
+ * one day, and a figure may later depend on it.
+ */
+router.post('/unlock-day', requirePermission('timesheet.unlock_day'), async (req, res) => {
+  const date = sheets.toISO(req.body && req.body.date);
+  const userId = String((req.body && req.body.userId) || '') || null;
+  if (!date) return res.status(422).json({ error: 'Which day?', field: 'date' });
+  if (!userId) return res.status(422).json({ error: 'Whose day?', field: 'userId' });
+
+  const allowed = await mayRead(req.user, userId);
+  if (!allowed.ok) {
+    return res.status(403).json({
+      error: 'That is not somebody whose timesheet you can see.',
+      code: 'out_of_scope',
+    });
+  }
+
+  const { rows: who } = await db.query('SELECT id, `name` FROM users WHERE id = $1', [userId]);
+  if (!who.length) return res.status(404).json({ error: 'That person is not there.' });
+
+  /* A DAY THAT IS ALREADY OPEN NEEDS NO UNLOCK, and saying so is more useful
+     than writing a row nothing will ever read. The window is asked AS THAT
+     PERSON — openFor takes the user because the answer depends on their own
+     backdate key — which is why this builds a minimal user rather than asking
+     about req.user. */
+  const target = { id: userId, role: null, permissions: [] };
+  const already = await dayWindow.openFor(db, target, date);
+  if (already.open && already.reason !== 'unlocked') {
+    return res.json({
+      ok: true,
+      opened: false,
+      reason: already.reason,
+      message: already.reason === 'owed_day'
+        ? 'That day is already fillable: it is the day the previous-day rule is asking for.'
+        : 'That day is already inside the studio’s window, so nothing was needed.',
+    });
+  }
+
+  const done = await dayWindow.openDay(db, { userId, date, by: req.user });
+  if (!done.ok) {
+    return res.status(done.code === 'unavailable' ? 503 : 422).json({
+      error: done.code === 'unavailable'
+        ? 'Opening a day is not available on this deployment yet.'
+        : 'That day could not be opened.',
+      code: done.code,
+    });
+  }
+
+  if (!done.already) {
+    await notifications.raise(db, {
+      recipientId: userId,
+      actorId: req.user.id,
+      /* timesheet_reminder IS THE KIND THAT CARRIES A SENTENCE. It is the one
+         timesheet-facing kind, and its `detail` column exists precisely so the
+         message a person was sent is the message they read later, rather than
+         one recomputed from state that has moved on. */
+      kind: notifications.KINDS.timesheet_reminder,
+      detail: `${date} has been opened for you — you can fill and submit it now. `
+        + 'It closes again once you submit it.',
+    }).catch(() => {});
+  }
+
+  req.activity({
+    module: 'timesheets',
+    action: 'day_unlocked',
+    entityType: 'user',
+    entityId: userId,
+    entityLabel: who[0].name,
+    summary: `${who[0].name}'s ${date} opened for entry`
+      + `${done.already ? ' (already open)' : ''}`,
+  });
+
+  return res.json({ ok: true, opened: !done.already, already: done.already, date, userId });
+});
+
 router.post('/submit', requirePermission('timesheet.own'), async (req, res) => {
   const date = sheets.toISO(req.body.date || new Date().toISOString().slice(0, 10));
   if (!date) return res.status(400).json({ error: 'Which day?', field: 'date' });
@@ -1278,6 +1490,15 @@ router.post('/submit', requirePermission('timesheet.own'), async (req, res) => {
    * conflict, the figures simply do not satisfy the rule. The code and the
    * numbers are machine-readable so the page can refresh and say the same
    * sentence the server did. */
+  /* AND THE SUBMIT PATH, which also checked no date until now. A day outside
+   * the window cannot be filed at all — asked BEFORE the hours rule, because
+   * "that period is closed" is the more fundamental answer and telling somebody
+   * they are two hours short of a day they may not file either way would send
+   * them to fix the wrong thing. */
+  const openOn = await dayWindow.openFor(db, req.user, date);
+  if (!openOn.open) {
+    return res.status(422).json(dayWindow.refusal(openOn, date));
+  }
   const rule = await hoursRuleFor(req.user, date);
   if (!rule.canSubmit) {
     return res.status(422).json(hoursRefusal(rule,
@@ -1290,6 +1511,27 @@ router.post('/submit', requirePermission('timesheet.own'), async (req, res) => {
       WHERE user_id = $1 AND work_date = $2`,
     [req.user.id, date]
   );
+  /* AND AN UNLOCK, IF ONE OPENED THIS DAY, CLOSES HERE.
+   *
+   * SUBMISSION IS WHAT CLOSES IT, which is the whole of its lifetime: an unlock
+   * exists so one specific day can be filed, and the act that finishes the job
+   * is filing it. A clock-based expiry would strand somebody handed an unlock at
+   * five o'clock, and a permanent one would quietly become a second window
+   * nobody remembers granting.
+   *
+   * AFTER the day is marked submitted, not before: if the UPDATE above threw,
+   * the day is not filed and the unlock must still be live. */
+  const closedUnlocks = await dayWindow.closeOnSubmit(db, req.user.id, date).catch(() => 0);
+  if (closedUnlocks) {
+    req.activity({
+      module: 'timesheets',
+      action: 'day_unlock_closed',
+      entityType: 'user',
+      entityId: req.user.id,
+      entityLabel: req.user.name || req.user.email || 'you',
+      summary: `${date} was submitted, so the day it was opened for closed again`,
+    });
+  }
   const total = sheets.dayTotal(rows, workSchedule.timesheetWindow());
   /* THE SENTENCE READS THE SETTING, not the number eight. It said "over the
      eight-hour day" while the length of a day had been a Super Admin setting

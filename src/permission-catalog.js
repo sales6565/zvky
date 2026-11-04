@@ -357,7 +357,7 @@ const GROUPS = [
         impliedBy: has('manageAccess'),
         describe: 'Select several Not Assigned assets in the Assets List and give them all one '
           + 'assignee, one Start Date and one End Date in a single action. Assets already on '
-          + 'somebody\u2019s desk are left alone \u2014 those are handed over one at a time.',
+          + 'somebody\u2019s desk are left alone — those are handed over one at a time.',
       },
       {
         key: 'asset.override_stage',
@@ -687,8 +687,8 @@ const GROUPS = [
            holding View Reports. Grantable per role and through role groups like
            every other key. */
         impliedBy: has('managePermissions'),
-        describe: 'Artist Report: every resource\u2019s submitted work \u2014 asset, submit date, bid '
-          + 'and recorded hours \u2014 with an Excel download. Scoped to the projects the role can see.',
+        describe: 'Artist Report: every resource\u2019s submitted work — asset, submit date, bid '
+          + 'and recorded hours — with an Excel download. Scoped to the projects the role can see.',
       },
       {
         key: 'report.admin_dashboard',
@@ -841,7 +841,7 @@ const GROUPS = [
         impliedBy: has('managePermissions'),
         describe: 'Record that somebody is working at a client\u2019s site, for a day or a range of '
           + 'working days, and undo it a day at a time. Their hours still count, their timesheet '
-          + 'is still due and their timers still run \u2014 they simply stop being chased to start '
+          + 'is still due and their timers still run — they simply stop being chased to start '
           + 'work in the studio.',
       },
       {
@@ -901,8 +901,8 @@ const GROUPS = [
         label: 'Request Own Vacation',
         impliedBy: () => true,
         describe: 'Book your own vacation from your profile: a From and To date, with a half-day '
-          + 'choice on the first and last day. It starts tomorrow at the earliest \u2014 today is '
-          + 'somebody else\u2019s to record \u2014 and you can cancel it or end it early yourself.',
+          + 'choice on the first and last day. It starts tomorrow at the earliest — today is '
+          + 'somebody else\u2019s to record — and you can cancel it or end it early yourself.',
       },
       {
         /* WHOSE TIME OFF YOU MAY SEE, which is a reading permission and nothing
@@ -920,7 +920,7 @@ const GROUPS = [
         label: 'View Team Leave & Vacations',
         impliedBy: anyOf(has('managePermissions'), has('leadsTeam')),
         describe: 'See upcoming and current leave and vacations for the people in the projects '
-          + 'you can see \u2014 on the Admin Dashboard and as a warning chip when you assign work '
+          + 'you can see — on the Admin Dashboard and as a warning chip when you assign work '
           + 'to somebody who will be away. It never blocks an assignment.',
       },
       {
@@ -935,7 +935,7 @@ const GROUPS = [
         key: 'leave.approve',
         label: 'Approve Vacations',
         impliedBy: has('managePermissions'),
-        describe: 'Approve or reject a submitted vacation, when Settings \u2192 Leave asks for '
+        describe: 'Approve or reject a submitted vacation, when Settings → Leave asks for '
           + 'approval. Until it is approved it changes nobody\u2019s hours.',
       },
       {
@@ -1029,7 +1029,7 @@ const GROUPS = [
           + 'against, how long a normal day is, the smallest and largest a line can be, how far '
           + 'back and ahead a line may be filed, and which days hours can be logged on. Separate '
           + 'from filling in your own hours, which every designation can do.',
-        danger: 'These apply to everybody\u2019s Time Sheet at once. Tightening a window stops new lines being filed outside it \u2014 lines already filed are never changed.',
+        danger: 'These apply to everybody\u2019s Time Sheet at once. Tightening a window stops new lines being filed outside it — lines already filed are never changed.',
       },
       {
         /* THE WORDS INSIDE A CATEGORY, which is a different job from deciding
@@ -1060,8 +1060,8 @@ const GROUPS = [
         key: 'timesheet.sub_options',
         label: 'Manage Time Sheet Sub-Options',
         impliedBy: has('managePermissions'),
-        describe: 'Edit the second dropdown that appears under a non-project category \u2014 the Idle '
-          + 'remarks, the training types, the on-site clients \u2014 and the heading each one carries. '
+        describe: 'Edit the second dropdown that appears under a non-project category — the Idle '
+          + 'remarks, the training types, the on-site clients — and the heading each one carries. '
           + 'Separate from managing the categories themselves, and from filling in your own hours, '
           + 'which every designation can do.',
         danger: 'An option deactivated here leaves everybody\u2019s Add line form. Lines already filed against it keep showing it.',
@@ -1124,12 +1124,68 @@ const GROUPS = [
         impliedBy: has('managePermissions'),
         describe: 'Download timesheet lines as a spreadsheet, for a day, a month, a year or a '
           + 'date range, in the studio\'s own format. Only lines from days people have submitted, '
-          + 'and only for the people you can already see in the Time Sheet tab \u2014 this does '
+          + 'and only for the people you can already see in the Time Sheet tab — this does '
           + 'not widen whose hours you may read. A Super Admin can switch the download off for the '
-          + 'whole studio in Settings \u2192 Time Sheet.',
+          + 'whole studio in Settings → Time Sheet.',
         danger: 'A download leaves the application: it keeps working after this permission is '
           + 'taken away, and it holds everybody\'s hours for the period asked for. Every download '
           + 'is written to the Activity Log with who asked, the period and how many lines it held.',
+      },
+      {
+        /* FILE ON ANY DAY, whatever the studio's window is.
+         *
+         * THE WINDOW IS Settings -> Time Sheet's backdateDays and futureDays,
+         * which have existed since Prompt 51 and were enforced only on creating
+         * and editing a line. They now govern deleting and submitting too, and
+         * a window with nothing behind it would make the studio's own
+         * back-office its hostage: somebody has to be able to fix last month.
+         *
+         * SUPER ADMIN ONLY by default and grantable, so a studio hands it to
+         * whoever actually reconciles the period rather than to a tier.
+         *
+         * IT IS NOT AN EXEMPTION FROM THE RULES OF A LINE. The step, the
+         * minimum, the maximum, the loggable days, the exact-hours rule and the
+         * submitted-day lock all still apply; this key moves the DATE window and
+         * nothing else. */
+        key: 'timesheet.backdate',
+        label: 'Fill Timesheet On Any Day',
+        impliedBy: has('managePermissions'),
+        describe: 'File, change, delete and submit timesheet lines on any date, past or future, '
+          + 'ignoring the studio\'s "days open" window in Settings → Time Sheet. Every '
+          + 'other rule still applies — the smallest and largest line, which days hours may '
+          + 'be logged on, the required hours for a day, and the lock on a day that has already '
+          + 'been submitted.',
+        danger: 'A holder can add hours to a period that has already been reported on. The '
+          + 'figures in a report somebody has already sent will not match the ones they would '
+          + 'get by running it again.',
+      },
+      {
+        /* OPEN ONE DAY FOR ONE PERSON, and let it close itself.
+         *
+         * THE CASE THIS ANSWERS: "I was away and now I cannot file Tuesday."
+         * The alternatives are both worse — widening the studio's window for
+         * everybody, or handing that person timesheet.backdate permanently —
+         * and this is neither: one named day, one named person, closed the
+         * moment the day is submitted.
+         *
+         * SCOPED BY WHO THE HOLDER CAN ALREADY SEE, which is the same
+         * visibleProjects() union every other read and write about somebody
+         * else is scoped by. Holding this does not widen whose timesheet you
+         * may reach.
+         *
+         * AUDITED, because it is somebody deciding that a rule does not apply
+         * to one day, and that is exactly the kind of decision a figure later
+         * depends on. */
+        key: 'timesheet.unlock_day',
+        label: 'Open A Locked Timesheet Day',
+        impliedBy: has('managePermissions'),
+        describe: 'Open one closed day for one person so they can fill and submit it, for the '
+          + 'people you can already see. The day closes itself again the moment it is submitted. '
+          + 'Use it when somebody was away and the studio\'s "days open" window has moved past '
+          + 'the day they still owe.',
+        danger: 'Opening a day lets hours be added to a period that may already have been '
+          + 'reported on. Every unlock is written to the Activity Log with who opened it, for '
+          + 'whom, and which day.',
       },
       {
         /* THE WAY OUT OF THE EXACT-HOURS RULE, and the only one.
@@ -1291,7 +1347,7 @@ const GROUPS = [
         impliedBy: has('managePermissions'),
         describe: 'Rename a group you are in, and add or remove its members, without having created '
           + 'it. The person who created a group can already do all of this to their own. This does '
-          + 'NOT open groups you are not in \u2014 being a member is still what lets you see a '
+          + 'NOT open groups you are not in — being a member is still what lets you see a '
           + 'conversation at all, and that is a separate permission.',
       },
       {
@@ -1375,7 +1431,7 @@ const GROUPS = [
            project's cost basis, and somebody who can change invoiced-to-date
            can change what the studio believes it has earned. */
         impliedBy: has('managePermissions'),
-        describe: 'Edit the Rate Card in Settings \u2014 what an hour of each role and level costs. '
+        describe: 'Edit the Rate Card in Settings — what an hour of each role and level costs. '
           + 'This is the only editable data the Profit & Loss feature has, apart from each project\'s '
           + 'Total Project Value, which belongs to Access Actual P&L.',
         danger: 'The Rate Card is what BOTH tabs are costed from, for every project at once and for '
@@ -1459,15 +1515,15 @@ const GROUPS = [
         key: 'outsource.deliver',
         label: 'Record Outsourced Work Stages',
         impliedBy: anyOf(has('leadsTeam'), has('deliver'), has('manageUsers')),
-        describe: 'Record where a freelancer\u2019s work has got to \u2014 Completed when they say it is '
-          + 'finished, Delivered when we have it \u2014 one row at a time or several at once. A '
+        describe: 'Record where a freelancer\u2019s work has got to — Completed when they say it is '
+          + 'finished, Delivered when we have it — one row at a time or several at once. A '
           + 'freelancer has no login, so these are always recorded by somebody here on their behalf, '
           + 'and the history says which. Delivered moves the task straight to Delivered, the end of '
           + 'the pipeline: marking it is the studio attesting the work went to the client or was '
           + 'accepted here, so NO REVIEW STEP FOLLOWS IT. The Review group\u2019s Mark as Delivered '
           + 'reaches the same state from Approved for Client, after the studio\u2019s own review; this '
           + 'one is for work done outside. Undoing either is a separate permission.',
-        danger: 'This marks the task Delivered \u2014 the end of the pipeline \u2014 without anybody inside the studio reviewing the work, and only Reopen Outsourced Work can undo it.',
+        danger: 'This marks the task Delivered — the end of the pipeline — without anybody inside the studio reviewing the work, and only Reopen Outsourced Work can undo it.',
       },
       {
         /* UNDOING A RECORDED STAGE, and narrower than recording one on purpose.
@@ -1501,7 +1557,7 @@ const GROUPS = [
         describe: 'Undo a Completed or Delivered that was recorded by mistake, putting the work back '
           + 'with the freelancer. It is the only way back out of Delivered, which is otherwise '
           + 'terminal. Refused on a task that was submitted and reviewed inside the studio before it '
-          + 'was delivered \u2014 that is the studio\u2019s own delivery rather than the outsourced one, and '
+          + 'was delivered — that is the studio\u2019s own delivery rather than the outsourced one, and '
           + 'moving it back is a pipeline override. The reversal is written to the task\u2019s history '
           + 'and clears the stamps it undoes.',
         danger: 'Reopening a delivery takes the task back out of Delivered to Not Assigned and clears who delivered it and when.',
@@ -1751,7 +1807,7 @@ const GROUPS = [
       { key: 'settings.asset_types',  label: 'Manage Scope of Work', impliedBy: has('manageSettings') },
       { key: 'settings.priorities',   label: 'Manage Priorities',    impliedBy: has('manageSettings') },
       { key: 'settings.categories',   label: 'Manage Asset Categories', impliedBy: has('manageSettings'),
-        describe: 'The Category dropdown on an asset. Separate from project categories below \u2014 an asset is '
+        describe: 'The Category dropdown on an asset. Separate from project categories below — an asset is '
           + 'a character or an environment, which is a different question from what kind of job a project is.' },
       {
         /* The project category list, which is not the asset one.
@@ -1767,13 +1823,13 @@ const GROUPS = [
         key: 'settings.project_categories',
         label: 'Manage Project Categories',
         impliedBy: has('manageSettings'),
-        describe: 'The Category dropdown on Add Project \u2014 what kind of job a project is. Independent of the '
+        describe: 'The Category dropdown on Add Project — what kind of job a project is. Independent of the '
           + 'asset category list, with no values shared between them.',
       },
       {
         /* The list of stages a project can be planned in: Art, Animation, and
          * whatever the studio adds. Separate from the asset type list even
-         * though two of the words appear in both \u2014 an asset type says what a
+         * though two of the words appear in both — an asset type says what a
          * thing is, a milestone type names a stretch of a project's calendar,
          * and a studio adding "Rigging" here would not want it in the dropdown
          * on Add Asset.
@@ -1785,7 +1841,7 @@ const GROUPS = [
         key: 'settings.milestone_types',
         label: 'Manage Milestone Types',
         impliedBy: has('manageSettings'),
-        describe: 'The stages a project can be planned in \u2014 Art and Animation to begin with, plus anything '
+        describe: 'The stages a project can be planned in — Art and Animation to begin with, plus anything '
           + 'the studio adds. Adding one changes a dropdown for every project; setting the dates on a '
           + 'particular project is a separate permission, under Project Management.',
       },
@@ -1811,7 +1867,7 @@ const GROUPS = [
         impliedBy: has('managePermissions'),
         describe: 'The Theme section: every colour the application draws, with a live '
           + 'contrast check, named presets and a one-click revert. Read access needs no '
-          + 'permission \u2014 the sign-in screen wears the theme too.',
+          + 'permission — the sign-in screen wears the theme too.',
       },
       {
         key: 'settings.server.manage',
@@ -1904,7 +1960,7 @@ const GROUPS = [
         key: 'settings.holidays_view',
         label: 'View Holidays',
         impliedBy: () => true,
-        describe: 'See the studio\u2019s holiday calendar in Settings \u2014 which days the studio is closed, '
+        describe: 'See the studio\u2019s holiday calendar in Settings — which days the studio is closed, '
           + 'upcoming and past, who declared each one and any note on it. Read-only, and separate from '
           + 'being told why a timer refused to start: that reason is always given, to everybody. '
           /* WHAT THIS DOES NOT HIDE, in the describe text rather than a field of
@@ -1919,7 +1975,7 @@ const GROUPS = [
              schedule read answering differently per person, and then the one
              definition of the studio's clock would no longer be one. */
           + 'Note: the closed dates themselves travel with the studio schedule, which every '
-          + 'signed-in user can read \u2014 switching this off closes the calendar section, not '
+          + 'signed-in user can read — switching this off closes the calendar section, not '
           + 'the fact that a day is closed.',
       },
       {
@@ -1945,7 +2001,7 @@ const GROUPS = [
         impliedBy: has('managePermissions'),
         describe: 'Add, change and remove the days the studio is closed. A holiday stops the clock for '
           + 'everybody: work cannot be started or resumed, and a running timer is put down. Dates are '
-          + 'entered in advance \u2014 a day that has begun or passed cannot be edited or removed, so hours '
+          + 'entered in advance — a day that has begun or passed cannot be edited or removed, so hours '
           + 'already recorded are never changed.',
         danger: 'A holiday stops time tracking for the whole studio on that day, and refuses Accept and Start.',
       },

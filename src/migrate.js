@@ -3364,6 +3364,51 @@ async function ensureTimesheetSettings(db, log) {
  * fix it. OFF still means what it means everywhere else — no control, and the
  * server refuses — and it never undoes a rename already made.
  */
+/* ONE PERSON, ONE DAY, OPENED ON PURPOSE.
+ *
+ * WHY A TABLE AND NOT A COLUMN ON timesheet_days: because an unlock exists for
+ * days that have no timesheet_days row at all. The commonest case is exactly
+ * that — somebody was away, filed nothing, and the day is now outside the
+ * window — so a column on a row that does not exist could not hold it. It is
+ * also a record of a decision somebody made, with their name on it, which is a
+ * different kind of thing from the day's own state.
+ *
+ * closed_at IS NULL IS THE WHOLE OF "LIVE". Submitting the day closes every
+ * live row for it, so there is no expiry to compute and no sweep to run. See
+ * src/timesheet-day-window.js for why submission is the right thing to close on
+ * and a clock is not.
+ *
+ * NO UNIQUE KEY ON (user_id, date), deliberately: two admins may each open the
+ * same day, and both decisions are real and worth keeping. The reader asks
+ * whether ANY live row exists, and the closer closes all of them.
+ */
+async function ensureTimesheetDayUnlocks(db, log) {
+  /* columnsOf() is the helper this file already has; an empty set means the
+     table is not there yet, which is the only thing this needs to know. */
+  const existed = (await columnsOf(db, 'timesheet_day_unlocks')).size > 0;
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS timesheet_day_unlocks (
+      id          CHAR(36)  NOT NULL PRIMARY KEY,
+      seq         BIGINT    NOT NULL AUTO_INCREMENT UNIQUE,
+      user_id     CHAR(36)  NOT NULL,
+      -- The day being opened, in the studio's calendar like every other
+      -- timesheet date.
+      \`date\`      DATE      NOT NULL,
+      -- Who opened it. NULL once that account is deleted: the day was still
+      -- opened, and a record that vanishes with its author is a hole in it.
+      unlocked_by CHAR(36)  NULL,
+      unlocked_at DATETIME  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      -- Set when the day is submitted. NULL means live.
+      closed_at   DATETIME  NULL,
+      KEY idx_tdu_live (user_id, \`date\`, closed_at),
+      CONSTRAINT fk_tdu_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )`));
+  await db.query(
+    'ALTER TABLE timesheet_day_unlocks ADD CONSTRAINT fk_tdu_by '
+    + 'FOREIGN KEY (unlocked_by) REFERENCES users(id) ON DELETE SET NULL'
+  ).catch(() => {});
+  if (!existed) log('Schema: added timesheet_day_unlocks — a day opened for one person.');
+}
+
 async function ensureAssetRename(db, log) {
   const before = await columnsOf(db, 'asset_name_history');
   await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS asset_name_history (
@@ -5737,6 +5782,9 @@ const STEPS = [
   /* After assets and users, whose keys the history points at, and before the
      mirror below reads the switch. */
   ['asset renaming', ensureAssetRename],
+  /* After users (whose keys the rows point at) and after timesheet_entries,
+     whose window these unlocks are an exception to. */
+  ['timesheet day unlocks', ensureTimesheetDayUnlocks],
   ['asset settings mirror', (db) => require('./asset-settings').load(db)],
   ['chat settings', ensureChatSettings],
   ['chat settings mirror', (db) => chatSettings.load(db)],

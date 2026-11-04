@@ -487,10 +487,6 @@ const studioToday = (at = Date.now()) => {
   return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, '0')}-${String(shifted.getUTCDate()).padStart(2, '0')}`;
 };
 
-// Whole days between two 'YYYY-MM-DD' dates. Positive when `then` is earlier.
-const daysBefore = (then, today) =>
-  Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${then}T00:00:00Z`)) / 86400000);
-
 /* `was` is the line AS STORED, and only the edit path passes it.
  *
  * It is what makes a line filed before the second dropdown existed stay valid
@@ -499,7 +495,7 @@ const daysBefore = (then, today) =>
  * Idle line somebody is only correcting the hours of, and a remark that has
  * since been RETIRED keeps working on the line that already holds it. Change
  * the category, or choose a different option, and the full rules apply. */
-function validateEntry(raw = {}, win, { now = Date.now(), was = null } = {}) {
+function validateEntry(raw = {}, win, { now = Date.now(), was = null, dayOpen = null } = {}) {
   const { maxHours } = windowOf(win);
   const policy = timesheetSettings.current();
   const date = toISO(raw.date);
@@ -527,53 +523,32 @@ function validateEntry(raw = {}, win, { now = Date.now(), was = null } = {}) {
    * defensible reading — a rule applied backwards would make a submitted week
    * unopenable and a figure already reported unexplainable — and it is the one
    * the Settings screen states in as many words. */
-  const today = studioToday(now);
-  if (policy.backdateDays !== null) {
-    const behind = daysBefore(date, today);
-    /* THE ONE DAY THE WINDOW DOES NOT CLOSE ON, while the previous-day rule is
-     * switched on.
-     *
-     * THE CONFLICT THIS RESOLVES, which the two settings create between them:
-     * the rule refuses to let somebody start work until they have filled the
-     * previous working day, and backdateDays could put that very day out of
-     * reach. A window of 1 and a Monday morning is the plain case — Friday is
-     * three days back — and the result would be a person told to fill a day the
-     * form then refuses, with no way out of either. A rule that demands the
-     * impossible is worse than no rule.
-     *
-     * So the gate's own day is always fillable. Exactly that day, and only
-     * while the rule is on: every other date keeps the window the studio set.
-     * src/timesheet-gate.js decides which day it is, so there is one answer and
-     * it cannot drift from the one the refusal names. */
-    const gate = require('./timesheet-gate');
-    const owed = gate.exemptBackdate(policy)
-      ? gate.previousWorkingDay(today, {
-        loggableDays: policy.loggableDays,
-        isHoliday: (d) => Boolean(holidays.on(d)),
-      })
-      : null;
-    if (behind > policy.backdateDays && date !== owed) {
-      return {
-        ok: false,
-        field: 'date',
-        error: `${date} is ${behind} days ago, and the studio allows lines to be filed up to `
-          + `${policy.backdateDays} day${policy.backdateDays === 1 ? '' : 's'} back. `
-          + 'Lines filed before this rule was set are unaffected.',
-      };
-    }
-  }
-  if (policy.futureDays !== null) {
-    const ahead = -daysBefore(date, today);
-    if (ahead > policy.futureDays) {
-      return {
-        ok: false,
-        field: 'date',
-        error: policy.futureDays === 0
-          ? `${date} is in the future, and the studio does not allow hours to be logged ahead of today.`
-          : `${date} is ${ahead} days ahead, and the studio allows lines up to `
-            + `${policy.futureDays} day${policy.futureDays === 1 ? '' : 's'} ahead.`,
-      };
-    }
+  /* THE WINDOW IS ASKED OF src/timesheet-day-window.js, not worked out here.
+   *
+   * THIS FUNCTION USED TO OWN IT, and that was fine while it was the only place
+   * the window was enforced. It is not any more: deleting a line and submitting
+   * a day now obey the same window, and two of the three escape hatches
+   * (timesheet.backdate and a day unlock) are facts about a person and a row
+   * that a pure validator cannot look up. One implementation, four routes.
+   *
+   * `dayOpen` IS THE CALLER'S VERDICT, already computed with that person's key
+   * and their unlocks. When it is absent — any caller that does not know about
+   * permissions — the window is applied as it always was, with no key and no
+   * unlock, so the old behaviour is exactly preserved.
+   *
+   * THE SENTENCES ARE UNCHANGED, which is deliberate: they are on screens and
+   * in tests already, and rewording an existing refusal while moving it would
+   * make this change impossible to review. refusalFor() carries the same two
+   * strings this block used to build. */
+  const dayWindow = require('./timesheet-day-window');
+  const verdict = dayOpen || dayWindow.isTimesheetDayOpen({ policy, date, now });
+  if (!verdict.open) {
+    return {
+      ok: false,
+      field: 'date',
+      error: dayWindow.refusalFor({ ...verdict, date }),
+      code: dayWindow.CODE,
+    };
   }
 
   const hours = parseHours(raw.hours);

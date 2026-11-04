@@ -187,6 +187,7 @@ const REQUIRED = [
   { table: 'leave_settings',   column: 'vacation_max_range_days',   step: 'leave and idle' },
   { table: 'leave_settings',   column: 'vacation_email_enabled',    step: 'leave and idle' },
   { table: 'leave_settings',   column: 'vacation_stop_timers',      step: 'leave and idle' },
+  { table: 'timesheet_day_unlocks', column: 'closed_at',            step: 'timesheet day unlocks' },
   { table: 'user_day_status',  column: null,                        step: 'leave and idle' },
   { table: 'user_day_status',  column: 'client_id',                 step: 'leave and idle' },
   { table: 'user_day_status',  column: 'request_id',                step: 'leave and idle' },
