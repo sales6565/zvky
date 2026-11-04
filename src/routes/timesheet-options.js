@@ -66,6 +66,23 @@ router.put('/', async (req, res) => {
   }
   const was = timesheetSettings.summarise(result.before);
   const now = timesheetSettings.summarise(result.settings);
+  /* THE THREE FIELDS THE HOURS RULE TURNS ON, NAMED SEPARATELY, and that is not
+   * duplication of the sentence beside them.
+   *
+   * src/activity.js clips every recorded value at 200 characters. The policy
+   * sentence is longer than that, and the hours rule is at the end of it — so
+   * "turned the exact-hours rule on, from the 7th" was being clipped out of the
+   * one record that exists of it. A test caught it; the fix is to record the
+   * three values as their own short fields, which cannot be clipped, rather
+   * than to shuffle the sentence and hope the next setting added goes after it.
+   *
+   * The sentence stays as well: it is what a person reads in the log, and the
+   * fields are what an auditor compares. */
+  const ruleFields = (settings) => ({
+    requiredHoursPerDay: settings.maxDayHours,
+    exactHoursRule: settings.hoursRuleEnabled,
+    exactHoursRuleFrom: settings.hoursRuleFrom,
+  });
   req.activity({
     module: 'settings',
     action: 'timesheet.options_updated',
@@ -74,7 +91,10 @@ router.put('/', async (req, res) => {
     entityLabel: 'Time Sheet options',
     summary: was === now ? 'Saved the Time Sheet options with no change'
       : `Changed the Time Sheet options: ${was} → ${now}`,
-    changes: activity.diff({ policy: was }, { policy: now }),
+    changes: {
+      ...(activity.diff({ policy: was }, { policy: now }) || {}),
+      ...(activity.diff(ruleFields(result.before), ruleFields(result.settings)) || {}),
+    },
   });
   res.json(await payload());
 });
