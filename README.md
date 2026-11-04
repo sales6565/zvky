@@ -6796,6 +6796,33 @@ blocks every outbound request), which makes it stricter rather than weaker: noth
 it asserts a pixel width, only that boxes clear each other in whatever font the engine
 falls back to.
 
+`tests/timesheet-hours-rule.test.js` covers the exact-hours rule. The pure half
+pins the unit before anything else — that hours become centihours with no drift,
+that a brute-forced triple summing to eight in integers does **not** sum to eight
+in doubles, and that the module compares no floating-point number anywhere — then
+the requirement over fifteen shapes of day, the 799/800/801 boundary, each of the
+five reasons the rule does not apply, and that none of them ever reads as
+`exact`. The live half drives the real routes: a short day refused with its code
+and its figures, a day exact to the centihour accepted, a line that would take
+the day over refused with the room left, an edit given its own hours back, **two
+adds fired concurrently with exactly one getting in**, every kind of line
+counting (Idle included), a weekly off and a holiday and full-day and half-day
+leave, the exemption, and that there is one guarded path to a submitted day and
+no system path that writes a line.
+
+`tests/timesheet-hours-rule-browser.test.js` is the same feature in Chromium,
+because most of this rule is a thing somebody *sees*: the sentence and the colour
+at short, exact and over; Submit disabled except at exact, with the server's own
+sentence as both its helper text and its tooltip; "Fill remaining" typing the
+exact figure (`2.67`, which a division would have made `2.6700000000000004`); the
+Hours field's ceiling following the remaining time and never going negative; a
+locked calculated value over the room left keeping Add line shut; an exempt
+designation seeing no bar at all; and a **second tab** whose Submit was enabled a
+moment ago getting the 422 as text in the page and a refetched week that then
+shows the truth. The page's own code is lifted out of `public/index.html` rather
+than retyped, and the suite asserts the lifted spans are disjoint — an
+overlapping cut once silently killed ten tests in a sibling suite.
+
 `tests/day-status.test.js` covers Leave and Idle. Most of it is arithmetic over a
 frozen clock rather than clicks, and deliberately: marking somebody on leave
 changes what their hours add up to, and a figure that is wrong by an afternoon
