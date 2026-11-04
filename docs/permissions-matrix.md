@@ -267,7 +267,7 @@ route is missing from it.
 | `POST /api/push/devices` | **yes** | inline-self |
 | `POST /api/push/test` | **yes** | inline-self |
 
-292 routes in all; 166 mutating; 67 with no guard in a middleware position.
+298 routes in all; 168 mutating; 67 with no guard in a middleware position.
 
 ## The page's own tables
 
@@ -313,6 +313,7 @@ route is missing from it.
 | Leave | `settings.leave.manage` |
 | Chat | `chat.settings` |
 | MIS Project Access | `settings.mis_access` |
+| Asset Names | `settings.asset_rename` |
 | Priorities | `settings.priorities` |
 | Asset Categories | `settings.categories` |
 | Project Categories | `settings.project_categories` |

@@ -459,6 +459,10 @@ test('every module that shows an asset name reads it live, by id', () => {
       'the Outsource and delivery screens'],
     ['src/notifications.js', /a\.\\`name\\` AS asset_name/, /LEFT JOIN assets a ON a\.id = n\.asset_id/,
       'the notification bell'],
+    /* THE ADMIN DASHBOARD's "work waiting on this person" panel, which is the
+       one dashboard that names assets rather than counting them. */
+    ['src/waiting-work.js', /SELECT a\.id, a\.\\`code\\`, a\.\\`name\\`/, /FROM assets a/,
+      'the Admin Dashboard\'s waiting-work panel'],
   ];
   for (const [file, select, join, what] of joins) {
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
