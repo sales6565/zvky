@@ -112,7 +112,14 @@ const SINCE_SNAPSHOT = [MANAGE, 'settings.email_delivery', 'report.remind', 'set
      this over, and it starts Super Admin until a studio gives it to whoever
      actually compiles the month. It widens nobody's reach either way — the
      rows are intersected with the requester's existing timesheet visibility. */
-  'timesheet.export'];
+  'timesheet.export',
+  /* THE STUDIO-WIDE SWITCH over editing an asset's name. Super Admin only, and
+     a different key from the one that DOES the renaming (assets.rename, which
+     is in the list below): the designations that may rename an asset are most
+     of the studio, and if the switch lived behind that key every one of them
+     could take the feature away from everybody else. Using a feature and
+     deciding whether the studio has it are different acts. */
+  'settings.asset_rename'];
 
 /* THE KEYS THAT ARE DELIBERATELY NOT SUPER-ADMIN-ONLY, listed separately so
  * each exception is argued rather than hidden in the list above.
@@ -150,8 +157,32 @@ const SINCE_SNAPSHOT = [MANAGE, 'settings.email_delivery', 'report.remind', 'set
  *                still produces lines only for the projects each person
  *                actually leads. The width here is "this designation reviews
  *                work", which is exactly what leadsTeam says.
+ *
+ * assets.rename  IS ON FOR EXACTLY THE DESIGNATIONS THAT MAY ALREADY EDIT AN
+ *                ASSET, through has('editAsset') — the same predicate asset.edit
+ *                itself uses. The argument is "nobody gains anything on the day
+ *                this ships, and nobody loses anything either": a studio that
+ *                has decided a designation may change an asset's deadline, its
+ *                priority and its brief has not been asked a new question by a
+ *                name being editable too, and a Super-Admin-only default would
+ *                have meant the one account least likely to be looking at the
+ *                board is the only one that can correct a typo on it.
+ *
+ *                AND IT IS NOT THE WHOLE PERMISSION, in the same way
+ *                timesheet.tl_action is not: every rename also goes through
+ *                canViewAsset, so a contributor reaches the asset on their own
+ *                desk and nothing else, and no designation reaches outside its
+ *                own projectScope. On top of that there is a studio-wide switch
+ *                (settings.asset_rename, in the Super-Admin-only list above),
+ *                which is the control a studio uses if it would rather nobody
+ *                renamed anything at all.
+ *
+ *                The assertion below ties it to asset.edit's own holders rather
+ *                than to a hard-coded list, so if a studio ever narrows who may
+ *                edit an asset, this fails and somebody decides on purpose.
  */
-const WIDER_THAN_SUPER_ADMIN = ['leave.request', 'leave.view_team', 'timesheet.tl_action'];
+const WIDER_THAN_SUPER_ADMIN = ['leave.request', 'leave.view_team', 'timesheet.tl_action',
+  'assets.rename'];
 
 test('the keys that are wider than Super Admin are wider on purpose', () => {
   const holdersOf = (key) => roles.roleKeys().filter((k) => {
@@ -192,9 +223,19 @@ test('the keys that are wider than Super Admin are wider on purpose', () => {
   }
   assert.ok(!loggers.includes('game_artist'), 'and an artist does not');
 
+  /* EDITING A NAME REACHES EXACTLY THE DESIGNATIONS THAT MAY EDIT AN ASSET —
+     asserted as a set comparison, not as a list, so the two cannot drift apart
+     without this failing. */
+  assert.deepStrictEqual(holdersOf('assets.rename'), holdersOf('asset.edit'),
+    'Edit Asset Name must reach exactly the designations that may edit an asset');
+  assert.ok(holdersOf('assets.rename').includes('super_admin'), 'the Super Admin holds it');
+  assert.ok(!holdersOf('assets.rename').includes('art_director'),
+    'and Creative Direction, which gives direction as feedback, does not');
+
   /* NONE OF THEM IS AN APPROVAL, A CANCELLATION, OR A REACH INTO SOMEBODY
      ELSE'S WEEK. That is what makes "wider than Super Admin" defensible for
-     all three: each is about your own time, or about reading who is away. */
+     all four: each is about your own time, about reading who is away, or about
+     a label on work the holder can already edit. */
   for (const key of WIDER_THAN_SUPER_ADMIN) {
     assert.ok(!['leave.approve', 'leave.manage_all', 'timesheet.team', 'timesheet.all']
       .includes(key), `${key} reaches only its holder's own time`);

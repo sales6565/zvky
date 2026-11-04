@@ -12,6 +12,7 @@ const timesheetGate = require('../timesheet-gate');
 const dayStateFor = require('../day-state');
 const theme = require('../theme');
 const serverSettings = require('../server-settings');
+const assetSettings = require('../asset-settings');
 const { userFields } = require('../user-fields');
 const { authenticate } = require('../middleware/auth');
 const { capabilitiesFor, catalogue } = require('../roles');
@@ -176,6 +177,16 @@ router.get('/me', authenticate, async (req, res) => {
        fetched by the tab itself when somebody opens it, and sending them on
        every poll would be the themeVersion mistake in a different field. */
     serverEnabled: serverSettings.serverEnabled(),
+    /* WHETHER AN ASSET'S NAME MAY BE EDITED, on this same poll and for exactly
+       the reason serverEnabled is here: the pencil beside a name is decided by
+       a permission AND by this switch, and this endpoint is the one every
+       signed-in browser already re-polls every twenty seconds. A Super Admin
+       turning it off takes the control off everybody's open page inside that
+       cycle, with no reload and no sign-out — and turning it on puts it back.
+
+       A boolean, not the settings row: the counts the Settings section shows
+       are fetched by that section when somebody opens it. */
+    assetRenameEnabled: assetSettings.renameEnabled(),
     timesheetGate: {
       blocked: gate.blocked,
       date: gate.date,

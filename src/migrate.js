@@ -3310,6 +3310,73 @@ async function ensureTimesheetSettings(db, log) {
   log('Schema: timesheet_settings created with the numbers the code already used.');
 }
 
+/* RENAMING AN ASSET: the trail it leaves, and the switch that allows it.
+ *
+ * TWO TABLES, BOTH ADDITIVE, NEITHER TOUCHING A ROW THAT EXISTS.
+ *
+ * asset_name_history is the record. One row per rename, holding the old name,
+ * the new one, who did it and when — and nothing else, because the asset it
+ * concerns is already identified by asset_id and everything else about it is
+ * live on the asset. NO BACKFILL: an asset that has never been renamed has no
+ * rows, which is the honest answer. Inventing a "created as" row for every
+ * asset in the studio would claim a changed_by and a changed_at this
+ * application does not know.
+ *
+ * ON DELETE CASCADE, because the history of a name is part of the asset. An
+ * asset that is deleted takes its own renames with it; keeping them would leave
+ * rows pointing at nothing, which no screen could render and nobody could use.
+ *
+ * asset_settings is the switch, ON. One studio-wide row, like every other
+ * settings table here. ON is not a reversal of the usual caution: the feature
+ * is a text field behind a permission that only the designations which may
+ * already edit an asset hold, and OFF would mean a studio finding a typo in a
+ * name on its second day and having to go looking in Settings for permission to
+ * fix it. OFF still means what it means everywhere else — no control, and the
+ * server refuses — and it never undoes a rename already made.
+ */
+async function ensureAssetRename(db, log) {
+  const before = await columnsOf(db, 'asset_name_history');
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS asset_name_history (
+      id                CHAR(36)     NOT NULL PRIMARY KEY,
+      /* The order renames happened in. created_at is accurate to the second and
+         two corrections in one minute are an ordinary thing, so the sequence the
+         list is read in is this, exactly as asset_events.seq is. */
+      seq               BIGINT       NOT NULL AUTO_INCREMENT UNIQUE,
+      asset_id          CHAR(36)     NOT NULL,
+      -- As it was, and as it became. Both VARCHAR(255), the width of the column
+      -- they came from and go to; a history row cannot hold a name the asset
+      -- could not.
+      old_name          VARCHAR(255) NOT NULL,
+      new_name          VARCHAR(255) NOT NULL,
+      -- Who. NULL once that account is deleted: the rename still happened, and
+      -- a row that disappears with its author is a hole in the record.
+      changed_by_user_id CHAR(36)    NULL,
+      -- Kept beside the id for the same reason asset_events.actor_email is: the
+      -- trail has to read as something after the account has gone.
+      changed_by_email  VARCHAR(191) NULL,
+      changed_at        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_asset_name_history_asset (asset_id, seq)
+    )`));
+  const fk = async (sql) => { await db.query(sql).catch(() => {}); };
+  await fk('ALTER TABLE asset_name_history ADD CONSTRAINT fk_anh_asset '
+    + 'FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE');
+  await fk('ALTER TABLE asset_name_history ADD CONSTRAINT fk_anh_user '
+    + 'FOREIGN KEY (changed_by_user_id) REFERENCES users(id) ON DELETE SET NULL');
+  if (!before.size) log('Schema: asset_name_history created (empty — no rename has happened yet).');
+
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS asset_settings (
+      id              TINYINT     NOT NULL PRIMARY KEY,
+      -- THE SWITCH, ON. See the header above for why this one ships on.
+      rename_enabled  TINYINT(1)  NOT NULL DEFAULT 1,
+      updated_by      CHAR(36)    NULL,
+      updated_at      DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )`));
+  const { rows } = await db.query('SELECT id FROM asset_settings WHERE id = 1');
+  if (rows.length) return;
+  await db.query('INSERT INTO asset_settings (id, rename_enabled) VALUES (1, 1)');
+  log('Schema: asset_settings created — asset name editing is on.');
+}
+
 async function ensureChatSettings(db, log) {
   await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS chat_settings (
       id                TINYINT   NOT NULL PRIMARY KEY,
@@ -5626,6 +5693,10 @@ const STEPS = [
   ['integration key rotation', ensureKeyRotation],
   ['asset_events.acted_via', ensureActedVia],
   ['integration contract v1', ensureIntegrationContract],
+  /* After assets and users, whose keys the history points at, and before the
+     mirror below reads the switch. */
+  ['asset renaming', ensureAssetRename],
+  ['asset settings mirror', (db) => require('./asset-settings').load(db)],
   ['chat settings', ensureChatSettings],
   ['chat settings mirror', (db) => chatSettings.load(db)],
   /* After timesheet_entries exists (the lines its policy governs) and after the

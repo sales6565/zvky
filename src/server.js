@@ -35,6 +35,7 @@ const recordingHoursRoutes = require('./routes/recording-hours');
 const holidayRoutes = require('./routes/holidays');
 const timesheetOptionRoutes = require('./routes/timesheet-options');
 const chatSettingsRoutes = require('./routes/chat-settings');
+const assetSettingsRoutes = require('./routes/asset-settings');
 const nudgeRoutes = require('./routes/nudges');
 const leaveSettingsRoutes = require('./routes/leave-settings');
 const serverRoutes = require('./routes/server');
@@ -192,6 +193,9 @@ app.use('/api/theme', themeRoutes);
 app.use('/api/admin/settings/recording-hours', recordingHoursRoutes);
 app.use('/api/admin/settings/holidays', holidayRoutes);
 app.use('/api/admin/settings/timesheet', timesheetOptionRoutes);
+/* Settings -> Asset Names: whether an asset's name can be edited after it is
+   created. Its own key, settings.asset_rename — see the route. */
+app.use('/api/admin/settings/asset-names', assetSettingsRoutes);
 app.use('/api/admin/settings/chat-group-limit', chatSettingsRoutes);
 /* The attachment retention and the two chat switches. Its own mount because it
    is its own permission — settings.chat_retention rather than the Super Admin

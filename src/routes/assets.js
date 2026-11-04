@@ -61,6 +61,9 @@ const dayStatus = require('../day-status');
 const leaveSettings = require('../leave-settings');
 const vacation = require('../vacation');
 const assetImport = require('../asset-import');
+const assetName = require('../asset-name');
+const assetSettings = require('../asset-settings');
+const activity = require('../activity');
 const workflow = require('../asset-workflow');
 const holdLog = require('../hold-log');
 // For the explain endpoint, which resolves ANOTHER user's permissions the way
@@ -532,7 +535,14 @@ router.post('/project/:projectId', async (req, res) => {
 
   const { name, type, category = null, priority = assetImport.defaultPriority(), assigneeId = null,
     due = null, startDate = null, description = '', manHours = null } = req.body || {};
-  if (!name || !name.trim()) return res.status(400).json({ error: 'Asset name is required' });
+  /* THE ONE RULE, from the one module. It used to be `!name.trim()` here and a
+     255 ceiling only in the bulk import, so the sheet refused a long name with
+     a sentence and this route turned the same name into a MySQL error. Both ask
+     src/asset-name.js now, and so does the rename — see its header. */
+  const checkedName = assetName.validate(name);
+  if (!checkedName.ok) {
+    return res.status(400).json({ error: checkedName.message, field: 'name' });
+  }
   /* Category is optional — the list ships empty and a studio that has not set
      one up yet must still be able to add assets. A value that IS given has to
      be one of the managed ones, so the column cannot fill with typos. */
@@ -572,7 +582,7 @@ router.post('/project/:projectId', async (req, res) => {
     await conn.query(
       `INSERT INTO assets (id, \`code\`, \`name\`, \`type\`, category, \`status\`, priority, project_id, assignee_id, created_by, due_date, start_date, description, man_hours)
        VALUES ($1,$2,$3,$4,$5,'not_started',$6,$7,$8,$9,$10,$11,$12,$13)`,
-      [id, code, name.trim(), type, category || null, priority, projectId, assigneeId, req.user.id,
+      [id, code, checkedName.value, type, category || null, priority, projectId, assigneeId, req.user.id,
        due, assetSchedule.asISODate(startDate), description, manHours]
     );
   // Created Not Assigned, as the pipeline says. If it was created with somebody
@@ -957,6 +967,274 @@ router.patch('/:id', async (req, res) => {
   const { rows: updated } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [req.params.id]);
   const [withDetails] = await attachTasksAndNotes(updated, req.user);
   res.json({ asset: withDetails });
+});
+
+/* ---- the name --------------------------------------------------------------
+ *
+ * RENAMING AN ASSET. Its own route, its own permission and its own trail, and
+ * deliberately NOT a field on PATCH /:id beside status and priority.
+ *
+ * WHY NOT A FIELD ON THAT ROUTE. Everything PATCH /:id edits is a fact about
+ * the work — what stage it is at, how urgent it is, when it is due. The name is
+ * how the whole studio refers to the thing, so changing it has a different
+ * permission (assets.rename), a studio-wide switch, a history table, an
+ * optimistic-concurrency check and an audit line of its own. Folding it in
+ * would have meant `wantsEdit` quietly covering it, which is exactly the
+ * widening the catalogue entry for assets.rename argues against.
+ *
+ * WHAT IS GUARANTEED, and what the tests in tests/asset-rename.test.js hold:
+ *
+ *   THE VALIDATOR IS CREATION'S.          src/asset-name.js, the same function
+ *     POST /project/:projectId calls two hundred lines above. Not a second copy
+ *     of the rule; not a stricter one. A name the create form takes, this takes.
+ *
+ *   NOTHING ON DISK IS TOUCHED.           Not a file, not a folder, not a path.
+ *     No asset name appears in any stored path — the office server's layout is
+ *     project folder / discipline / person / subpath (src/server-link.js) — so
+ *     there is nothing here to move even if it were wanted, and this route makes
+ *     no gateway call of any kind.
+ *
+ *   IDENTITY DOES NOT MOVE.               The id is the identity and the CODE
+ *     (FX-001) is the reference. Timers, assignments, timesheet lines, stage
+ *     history, reviews, submissions and submission links all hang off the id and
+ *     none of them is read or written here.
+ *
+ *   HISTORICAL TEXT KEEPS THE OLD NAME.   Nothing already written is rewritten:
+ *     not an activity_log entity_label, not a chat message, not a queued or sent
+ *     email, not an integration event payload. The only UPDATE this route issues
+ *     is to assets.name.
+ *
+ *   LIVE DISPLAYS SHOW THE NEW NAME, with no work needed here, because every
+ *     one of them reads the name by id at the moment it draws: the board and the
+ *     asset list (ASSET_SELECT is SELECT a.*), the review queues, the timesheet
+ *     lines list (src/routes/timesheets.js), the Artist Report
+ *     (src/artist-report.js), the Timesheet download (src/timesheet-export.js),
+ *     the outsource and delivery screens (src/outsource.js), the dashboards, and
+ *     the header's search, which filters the board's own rows in the browser.
+ *     There is no denormalised copy of an asset's name in this schema — no
+ *     column is called asset_name anywhere — which is why this transaction has
+ *     two writes in it and not twelve.
+ *
+ *     The in-app bell is the one thing in that list worth naming out loud: its
+ *     sentences are REBUILT on every read from the row's links
+ *     (notifications.describe), so a notification sent last week will read with
+ *     the new name. That is not this route rewriting history — it writes nothing
+ *     to notifications — it is what that table has always done, and changing it
+ *     would mean storing a copy of every sentence, which is a change to
+ *     notifications and not to renaming.
+ */
+router.patch('/:id/name', requirePermission('assets.rename'), async (req, res) => {
+  /* THE STUDIO SWITCH, ASKED FIRST and asked of the module rather than of a
+     value the browser sent. A page left open across a Super Admin switching
+     this off cannot get past it. */
+  if (!assetSettings.isLoaded()) await assetSettings.load(db).catch(() => {});
+  if (!assetSettings.renameEnabled()) {
+    return res.status(409).json({
+      error: 'Asset name editing is switched off for this studio.',
+      code: 'rename_disabled',
+    });
+  }
+
+  const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
+  const asset = rows[0];
+  if (!asset) return res.status(404).json({ error: 'Asset not found' });
+  /* PROJECT SCOPE, through the app's own visibility answer rather than a second
+     reading of it. canViewAsset's first question IS canAccessProject — which is
+     visibleProjects() — and it adds the one thing project scope alone cannot
+     say: a contributor sees their own work. Renaming something you cannot see
+     would be an absurd grant, so the question asked is "can you see it", and
+     the answer is 403 with the sentence every other asset route uses. */
+  if (!(await canViewAsset(req.user, asset))) {
+    return res.status(403).json({ error: 'No access to this asset' });
+  }
+  // A closed or archived project finishes nothing, a correction included —
+  // every write to an asset in this file goes through this and so does this one.
+  if (await projectClosedResponse(res, asset.project_id)) return undefined;
+
+  const body = req.body || {};
+  const checked = assetName.validate(body.name);
+  if (!checked.ok) return res.status(400).json({ error: checked.message, field: 'name' });
+
+  /* ONE TRANSACTION, AND THE CURRENT NAME IS READ INSIDE IT, UNDER A ROW LOCK.
+   *
+   * THIS IS NOT BELT AND BRACES. It was written the obvious way first — compare
+   * the name read at the top of the handler, then update — and the concurrency
+   * test in tests/asset-rename.test.js failed on the first run: two renames
+   * sent at the same moment both read "Race", both passed their expected_name
+   * check, both wrote a history row saying "Race -> …", and the asset ended up
+   * with a chain of history that did not join up. Nothing was lost and nothing
+   * was corrupt, but the trail claimed something that had not happened.
+   *
+   * SELECT ... FOR UPDATE makes the two requests queue. The second one reads
+   * the name the first one committed, finds its expected_name no longer matches
+   * and is told so — which is exactly what it would have been told if the two
+   * had been a minute apart. The three answers below are therefore decided
+   * inside the transaction and acted on after it:
+   *
+   *   conflict   expected_name is not what the row says NOW. Nothing written.
+   *   noop       the normalised name IS what the row says. Nothing written.
+   *   changed    the name and its history row, together or not at all.
+   *
+   * A name that changed with no record of who changed it is the one outcome
+   * this feature must never produce, and it is what two loose statements
+   * produce the first time the second one fails.
+   */
+  const conn = await db.connect();
+  let outcome;
+  try {
+    await conn.query('BEGIN');
+    const { rows: locked } = await conn.query(
+      'SELECT `name` FROM assets WHERE id = $1 FOR UPDATE', [asset.id]
+    );
+    // Deleted between the read at the top and this lock: nothing to rename.
+    if (!locked.length) {
+      await conn.query('ROLLBACK');
+      outcome = { gone: true };
+    } else {
+      const currentName = locked[0].name;
+      /* OPTIMISTIC CONCURRENCY, and it is the asset's CURRENT name that is
+         compared — not a timestamp and not a version number. Two people with
+         the panel open on the same asset is the ordinary case this exists for:
+         the second one is told what it says now and by whom, rather than
+         silently overwriting a correction made thirty seconds ago.
+
+         OPTIONAL. A caller that sends no expected_name is not checked, which
+         keeps the route usable from a script and keeps a form's first write
+         from depending on a field it might not have. The page always sends it. */
+      if (body.expected_name !== undefined && body.expected_name !== null
+          && String(body.expected_name) !== String(currentName)) {
+        await conn.query('ROLLBACK');
+        outcome = { conflict: true, currentName };
+      } else if (checked.value === currentName) {
+        /* A NO-OP WRITES NOTHING. Not the name, not a history row, not an audit
+           line. Normalisation is what makes this reachable by accident — "Hero "
+           and "Hero" are the same name — and a studio whose history fills with
+           rows saying "Hero -> Hero" has a history nobody will read. */
+        await conn.query('ROLLBACK');
+        outcome = { noop: true, currentName };
+      } else {
+        await conn.query('UPDATE assets SET `name` = $1 WHERE id = $2', [checked.value, asset.id]);
+        await conn.query(
+          `INSERT INTO asset_name_history
+             (id, asset_id, old_name, new_name, changed_by_user_id, changed_by_email)
+           VALUES ($1,$2,$3,$4,$5,$6)`,
+          [uuid(), asset.id, currentName, checked.value, req.user.id, req.user.email || null]
+        );
+        await conn.query('COMMIT');
+        outcome = { changed: true, from: currentName };
+      }
+    }
+  } catch (err) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    conn.release();
+  }
+
+  if (outcome.gone) return res.status(404).json({ error: 'Asset not found' });
+
+  if (outcome.conflict) {
+    const last = await lastRenameOf(asset.id);
+    return res.status(409).json({
+      error: 'Somebody else changed this name while you were editing it.',
+      code: 'name_changed',
+      currentName: outcome.currentName,
+      changedByName: last ? last.changedByName : null,
+      changedAt: last ? last.changedAt : null,
+    });
+  }
+
+  if (outcome.noop) {
+    /* req.activitySkip() is what keeps the middleware's own backstop entry out
+       of the log as well; without it, "changed nothing" would still be recorded
+       as an action by whoever sent it. */
+    req.activitySkip();
+    const { rows: same } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [asset.id]);
+    const [sameDetails] = await attachTasksAndNotes(same, req.user);
+    return res.json({ asset: sameDetails, changed: false, name: outcome.currentName });
+  }
+
+  /* The audit line, in the studio's own Activity Log — on the same handle every
+     other enriched route here uses, and carrying the CODE as well as both names
+     so the entry still identifies the asset if it is renamed again later. */
+  req.activity({
+    module: 'assets',
+    action: 'asset.rename',
+    entityType: 'asset',
+    entityId: asset.id,
+    /* THE OLD NAME IN THE LABEL, deliberately: this entry is the record of a
+       moment, and entity_label is a snapshot column — see src/activity.js. An
+       entry that renamed itself every time the asset was renamed again would
+       make the log unable to answer "what was it called then". */
+    entityLabel: `${asset.code || ''} ${outcome.from || ''}`.trim(),
+    summary: `Renamed ${asset.code} from "${outcome.from}" to "${checked.value}"`,
+    changes: activity.diff({ name: outcome.from }, { name: checked.value }),
+  });
+
+  const { rows: updated } = await db.query(`${ASSET_SELECT} WHERE a.id = $1`, [asset.id]);
+  const [withDetails] = await attachTasksAndNotes(updated, req.user);
+  res.json({ asset: withDetails, changed: true, name: checked.value });
+});
+
+/* The most recent rename of an asset, for the 409 above and for the list below.
+   Null when it has never been renamed, which is not the same as "nobody knows":
+   an asset with no history row has always been called what it is called. */
+async function lastRenameOf(assetId) {
+  const { rows } = await db.query(
+    `SELECT h.old_name, h.new_name, h.changed_at, h.changed_by_email,
+            u.\`name\` AS changed_by_name
+       FROM asset_name_history h
+       LEFT JOIN users u ON u.id = h.changed_by_user_id
+      WHERE h.asset_id = $1 ORDER BY h.seq DESC LIMIT 1`, [assetId]
+  ).catch(() => ({ rows: [] }));
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    oldName: row.old_name,
+    newName: row.new_name,
+    changedByName: row.changed_by_name || row.changed_by_email || null,
+    changedAt: row.changed_at,
+  };
+}
+
+/* GET /api/assets/:id/name-history — who called it what, and when.
+ *
+ * BEHIND THE SAME KEY AS THE RENAME, not behind plain asset visibility. The
+ * list names people and times; it is a small audit trail, and the studio's other
+ * audit trails are all behind a permission. Whoever may change a name may see
+ * what it has been called — and a Super Admin, who holds every key.
+ *
+ * NOT BEHIND THE SWITCH. Switching the feature off stops new renames; it does
+ * not hide the ones already made, for the reason src/asset-settings.js gives:
+ * a switch that rewrote the past would not be a switch. */
+router.get('/:id/name-history', requirePermission('assets.rename'), async (req, res) => {
+  const { rows } = await db.query('SELECT * FROM assets WHERE id = $1', [req.params.id]);
+  const asset = rows[0];
+  if (!asset) return res.status(404).json({ error: 'Asset not found' });
+  if (!(await canViewAsset(req.user, asset))) {
+    return res.status(403).json({ error: 'No access to this asset' });
+  }
+  const { rows: history } = await db.query(
+    `SELECT h.id, h.old_name, h.new_name, h.changed_at, h.changed_by_email,
+            u.\`name\` AS changed_by_name, u.avatar_updated_at AS changed_by_photo_at
+       FROM asset_name_history h
+       LEFT JOIN users u ON u.id = h.changed_by_user_id
+      WHERE h.asset_id = $1 ORDER BY h.seq DESC LIMIT 500`, [req.params.id]
+  ).catch(() => ({ rows: [] }));
+  res.json({
+    name: asset.name,
+    code: asset.code,
+    history: history.map((h) => ({
+      id: h.id,
+      oldName: h.old_name,
+      newName: h.new_name,
+      // The account's name while it exists, its email after it is deleted, and
+      // null when neither is on the row. Never a blank that reads as nobody.
+      changedBy: h.changed_by_name || h.changed_by_email || null,
+      changedByPhotoAt: h.changed_by_photo_at || null,
+      changedAt: h.changed_at,
+    })),
+  });
 });
 
 // DELETE /api/assets/:id

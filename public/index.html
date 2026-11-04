@@ -2400,6 +2400,20 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
 .login-panel input:focus{outline:none;border-color:var(--input-focus-border);}
 .login-err{color:var(--login-err);font-size:12px;margin-top:10px;min-height:16px;}
 .demo-note{font-size:11px;color:var(--ink-faint);margin-top:14px;line-height:1.5;}
+/* Edit asset name, and the history list beside it. */
+.an-current{font-size:12px;color:var(--ink-muted);margin-bottom:12px;}
+.an-current .mono{font-family:'IBM Plex Mono';color:var(--ink);}
+.an-note{font-size:11.5px;color:var(--ink-faint);margin-top:10px;line-height:1.5;}
+.an-conflict{font-size:12px;color:var(--brand-accent);margin-top:10px;line-height:1.5;}
+.name-edit{background:none;border:none;color:var(--ink-muted);cursor:pointer;padding:0 4px;font-size:13px;line-height:1;}
+.name-edit:hover{color:var(--ink);}
+.an-hist{font-size:12px;}
+.an-hist-row{display:flex;flex-direction:column;gap:2px;padding:9px 0;border-bottom:1px solid var(--border);}
+.an-hist-row:last-child{border-bottom:none;}
+.an-hist-names{color:var(--ink);}
+.an-hist-names .was{color:var(--ink-faint);text-decoration:line-through;}
+.an-hist-who{color:var(--ink-muted);font-size:11px;}
+.an-hist-empty{color:var(--ink-muted);}
 #appRoot{display:none;}
 @media (max-width:720px){ .drawer{width:100%;} .stats{flex-wrap:wrap;} }
 </style>
@@ -2587,6 +2601,45 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
     <div class="modal-actions">
       <button class="btn btn-ghost" id="tsExportCancel">Cancel</button>
       <button class="btn btn-brand" id="tsExportGo">Download (.xlsx)</button>
+    </div>
+  </div>
+</div>
+
+<!-- EDIT ASSET NAME. One modal, shared by every screen that offers the pencil
+     — the asset panel and the Assets List — rather than one per place. Two
+     copies of a form with live validation in it are two validators, and the
+     whole point of Prompt 63 is that there is one rule. In-page, like every
+     other control here: no prompt(), no confirm(). -->
+<div class="modal-wrap" id="assetNameWrap">
+  <div class="modal">
+    <h2>Edit asset name</h2>
+    <div id="anCurrent" class="an-current"></div>
+    <label for="an_name">Asset name</label>
+    <!-- NO maxlength. The browser silently truncating a long paste would make
+         the "at most 255 characters" message unreachable, and an unreachable
+         message is one nobody can test and nobody ever sees. The validator
+         says it instead, live, in the same words the server uses. -->
+    <input type="text" id="an_name" autocomplete="off">
+    <div class="ref-err" id="an_err"></div>
+    <!-- SAID BEFORE IT IS ASKED, because it is the first thing anybody renaming
+         a delivered asset worries about. -->
+    <div class="an-note">Files already stored are not renamed or moved.</div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="an_cancel">Cancel</button>
+      <button class="btn btn-brand" id="an_save">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- WHAT IT HAS BEEN CALLED. Its own modal rather than a panel inside the one
+     above: it is a read, it is opened from the asset panel's own link, and
+     sharing a modal with the form would mean one of the two had to be hidden. -->
+<div class="modal-wrap" id="assetHistoryWrap">
+  <div class="modal">
+    <h2>Name history</h2>
+    <div id="ah_body"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="ah_close">Close</button>
     </div>
   </div>
 </div>
@@ -3574,7 +3627,8 @@ async function refreshPermissions(){
   permissionsCheckedAt = Date.now();
   const before = perms().join(',');
   try{
-    const { user, timesheetGate, themeVersion, dayState, serverEnabled } = await api('/auth/me');
+    const { user, timesheetGate, themeVersion, dayState, serverEnabled,
+      assetRenameEnabled } = await api('/auth/me');
     state.currentUser = user;
     /* WHERE THE DAY STANDS, on the poll the indicator's "normal refresh cycle"
        already is. A timer started in another tab, a Settings change, lunch
@@ -3597,13 +3651,22 @@ async function refreshPermissions(){
        open page within twenty seconds — and switching it off removes it. The
        nav buttons are re-applied by render() whenever this function reports a
        change, so the switch moving is reported as one. */
+    /* THE ASSET-NAME SWITCH, on the same poll and reported as a change for the
+       same reason: the pencil beside a name is drawn from mayRenameAssets(),
+       which reads this, so a Super Admin turning it off has to take the control
+       off everybody's open page without anybody reloading. Undefined means a
+       server that predates the field — the page then keeps the shipped default
+       rather than hiding a feature because a field was missing. */
+    const renameMoved = assetRenameEnabled !== undefined
+      && Boolean(assetRenameEnabled) !== (state.assetRenameEnabled !== false);
+    if(assetRenameEnabled !== undefined) state.assetRenameEnabled = Boolean(assetRenameEnabled);
     const switchMoved = serverEnabled !== undefined && Boolean(serverEnabled) !== SRV.enabled;
     if(serverEnabled !== undefined){
       SRV.enabled = Boolean(serverEnabled);
       // The tab's own cached state is about to be wrong if the switch moved.
       if(switchMoved) SRV.loaded = false;
     }
-    if(switchMoved) return true;
+    if(switchMoved || renameMoved) return true;
   }catch(e){ return false; }          /* a blip must not blank the screen */
   return perms().join(',') !== before;
 }
@@ -4225,6 +4288,10 @@ const SETTINGS_SECTIONS = [
   /* Super Admin only, by a permission implied by managePermissions — the same
      route as Recording Hours and Chat above. */
   { permission:'settings.mis_access', label:'MIS Project Access', heading:'MIS Project Access', note:'Which projects the MIS, Finance and HR side may see. View only.' },
+  /* Super Admin only, by a permission implied by managePermissions — the same
+     route as Recording Hours, Chat and MIS Project Access above. One switch:
+     whether an asset's name can be edited after it is created. */
+  { permission:'settings.asset_rename', label:'Asset Names', heading:'Asset Names', note:'Whether an asset\'s name can be edited after it is created. Off hides the control everywhere; names already changed stay changed.' },
   { permission:'settings.priorities',   label:'Priorities',       heading:'Priorities',       note:'The Priority dropdown.' },
   { permission:'settings.categories',   label:'Asset Categories', heading:'Asset Categories', note:'The Category dropdown on an asset. Starts empty — add the studio\'s own list.' },
   { permission:'settings.project_categories', label:'Project Categories', heading:'Project Categories', note:'The Category dropdown on a project. A separate list from the asset one.' },
@@ -5896,11 +5963,15 @@ async function boot(){
   if(saved){
     state.token = saved;
     try{
-      const { user, timesheetGate, dayState, serverEnabled } = await api('/auth/me');
+      const { user, timesheetGate, dayState, serverEnabled,
+        assetRenameEnabled } = await api('/auth/me');
       state.currentUser = user;
       state.timesheetGate = timesheetGate || null;
       // Read by bootApp() before it applies the nav gates; see the note there.
       state.serverEnabled = Boolean(serverEnabled);
+      /* In hand before the first paint, so the first board drawn either has the
+         pencils on it or does not — rather than growing them a moment later. */
+      if(assetRenameEnabled !== undefined) state.assetRenameEnabled = Boolean(assetRenameEnabled);
       /* BEFORE THE FRAME IS DRAWN, which is what keeps the banner from shoving
          the page down a moment after it settles: showApp() below paints with the
          state already in hand, so the first paint either has a banner in it or
@@ -5937,6 +6008,7 @@ async function attemptLogin(){
       const me = await api('/auth/me');
       applyDayState(me.dayState);
       state.timesheetGate = me.timesheetGate || null;
+      if(me.assetRenameEnabled !== undefined) state.assetRenameEnabled = Boolean(me.assetRenameEnabled);
     }catch{ /* the poll will have it within the refresh cycle */ }
     /* The mobile shells register for push HERE rather than at load: a device
        token is stored against a user, so there is nobody to store one against
@@ -8066,6 +8138,23 @@ document.getElementById('tsExportCancel').addEventListener('click', closeTimeshe
 document.getElementById('tsExportGo').addEventListener('click', tsExportDownload);
 tsExportWrap.addEventListener('click', e=>{ if(e.target===tsExportWrap) closeTimesheetExport(); });
 
+/* Edit asset name, and the history list. Wired here beside the other modals
+   rather than in each screen that opens them: there is one of each in the page,
+   and a per-screen binding would attach a second handler every redraw. */
+const assetNameWrap = document.getElementById('assetNameWrap');
+document.getElementById('an_cancel').addEventListener('click', closeAssetRename);
+document.getElementById('an_save').addEventListener('click', anSave);
+document.getElementById('an_name').addEventListener('input', anRefresh);
+document.getElementById('an_name').addEventListener('keydown', e=>{
+  // Enter saves, exactly as pressing Save does — and does nothing while Save is
+  // disabled, so an invalid or unchanged name cannot be submitted by keyboard.
+  if(e.key==='Enter' && !document.getElementById('an_save').disabled){ e.preventDefault(); anSave(); }
+});
+assetNameWrap.addEventListener('click', e=>{ if(e.target===assetNameWrap) closeAssetRename(); });
+const assetHistoryWrap = document.getElementById('assetHistoryWrap');
+document.getElementById('ah_close').addEventListener('click', closeNameHistory);
+assetHistoryWrap.addEventListener('click', e=>{ if(e.target===assetHistoryWrap) closeNameHistory(); });
+
 /* THE EMOJI PICKER CLOSES ON A CLICK OUTSIDE IT.
  *
  * IN THE CAPTURE PHASE, and that is not a detail. The panel redraws itself on
@@ -9097,7 +9186,13 @@ function renderList(){
          rather than the asset as it stands now. The live row has none, and
          opens the ordinary panel. */
       return `<tr data-id="${a.id}"${past?` data-round="${ep.id}"`:''}${past?' class="past-round"':''}>${box}
-      <td class="mono">${a.code}</td><td style="font-weight:600;">${escapeHTML(a.name)}</td>
+      <td class="mono">${a.code}</td><td style="font-weight:600;">${escapeHTML(a.name)}${
+      /* The pencil in the name cell, because this is the other screen where a
+         name is shown beside things you can do to the asset. Not on a finished
+         round's row: that row is a record of a past round, it opens a read-only
+         panel, and an edit control on it would invite changing the asset while
+         looking at a page about somebody else's finished work. */
+      past ? '' : nameEditPencil(a.id)}</td>
       <td>${escapeHTML(categoryLabel(a.category))||'—'}</td>
       <td>${t.label}</td>
       <!-- The estimate. Time Spent, the last column, is the elapsed time between
@@ -9129,6 +9224,16 @@ function renderList(){
     if(row.dataset.round) openRound(row.dataset.id, row.dataset.round);
     else openDrawer(row.dataset.id);
   }));
+
+  /* The pencil must not also open the panel: the row under it is a link, and
+     somebody correcting a name is not asking to leave the list. Same shape as
+     the Time Spent breakdown's handler below. */
+  el.querySelectorAll('[data-rename]').forEach(btn=>{
+    btn.addEventListener('click', ev=>{
+      ev.preventDefault(); ev.stopPropagation();
+      openAssetRename(btn.dataset.rename);
+    });
+  });
 
   /* The Time Spent breakdown. Its click must not also open the asset — the row
      under it is a link to the panel, and somebody asking how a total adds up is
@@ -11032,6 +11137,176 @@ document.getElementById('cm_save').addEventListener('click', async (ev)=>{
   finally{ ev.target.disabled = false; }
 });
 
+/* ---------- editing an asset's name ----------------------------------------
+ *
+ * THE RULE IS src/asset-name.js's RULE. This is a copy of it, because this page
+ * has no build step and cannot require() a module, and tests/asset-name.test.js
+ * reads both files and fails if the two drift apart by a character — the
+ * messages, the ceiling and the normalisation all compared. So the box refuses
+ * what the server refuses, with the words the server uses, before the request
+ * is made; and anything that gets past it is refused again on the server, which
+ * is the only gate that counts.
+ *
+ * WHAT THE CONTROL IS GATED ON: the permission and the studio switch, and
+ * nothing else. Never a tier, never ownership, never a status — see
+ * UI_GATES' note about can() versus caps(), and the catalogue entry for
+ * assets.rename.
+ */
+const ASSET_NAME_MAX = 255;
+const ASSET_NAME_MESSAGES = {
+  required: 'An asset needs a name.',
+  tooLong: 'An asset name can be at most ' + ASSET_NAME_MAX + ' characters.',
+};
+/* Line breaks and tabs become a space — "Hero\tPose" is two words however it
+   was typed — and every other control character is dropped. Then runs of any
+   kind of space collapse to one, and the ends are trimmed. */
+function assetNameNormalise(raw){
+  const text = (raw===undefined || raw===null) ? '' : String(raw);
+  return text
+    .replace(/[\t\n\v\f\r\u0085\u2028\u2029]/g, ' ')
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+function assetNameCheck(raw){
+  const value = assetNameNormalise(raw);
+  if(!value) return { ok:false, code:'required', value:'', message:ASSET_NAME_MESSAGES.required };
+  if(value.length > ASSET_NAME_MAX) return { ok:false, code:'too_long', value, message:ASSET_NAME_MESSAGES.tooLong };
+  return { ok:true, code:null, value, message:'' };
+}
+
+/* MAY THIS PERSON RENAME ANYTHING AT ALL — the one predicate every screen asks,
+   so a second place cannot forget half of it. `!== false` rather than a truthy
+   test: the field is absent on a page whose /auth/me poll has not landed yet,
+   and absent means "the shipped default", which is on. */
+function mayRenameAssets(){
+  return state.assetRenameEnabled !== false && can('assets.rename');
+}
+/* The pencil, wherever a name is shown with other actions. data-rename carries
+   the asset so one delegated handler per screen is enough. */
+function nameEditPencil(assetId, extra){
+  if(!mayRenameAssets()) return '';
+  return `<button class="name-edit" data-rename="${assetId}"${extra||''}
+    title="Edit this asset's name" aria-label="Edit this asset's name">&#9998;</button>`;
+}
+
+const anState = { assetId:null, current:'', busy:false, conflict:null };
+
+function openAssetRename(assetId){
+  if(!mayRenameAssets()) return;
+  const a = (state.assets||[]).find(x=>x.id===assetId);
+  if(!a) return;
+  anState.assetId = assetId;
+  anState.current = a.name || '';
+  anState.conflict = null;
+  anState.busy = false;
+  document.getElementById('anCurrent').innerHTML =
+    `<span class="mono">${escapeHTML(a.code||'')}</span> — currently <span class="mono">${escapeHTML(anState.current)}</span>`;
+  const box = document.getElementById('an_name');
+  box.value = anState.current;
+  document.getElementById('an_err').textContent = '';
+  anRefresh();
+  document.getElementById('assetNameWrap').classList.add('show');
+  box.focus();
+  box.select();
+}
+function closeAssetRename(){
+  document.getElementById('assetNameWrap').classList.remove('show');
+  anState.assetId = null;
+}
+/* THE LIVE HALF. Save is disabled while the name is invalid OR unchanged —
+   unchanged because a rename that changes nothing is not an edit, and the
+   server would write nothing anyway. Compared on the NORMALISED value, so
+   adding a trailing space does not make Save look available. */
+function anRefresh(){
+  const box = document.getElementById('an_name');
+  const err = document.getElementById('an_err');
+  const save = document.getElementById('an_save');
+  const verdict = assetNameCheck(box.value);
+  /* Typing clears a conflict notice: the message was about the value that was
+     refused, and leaving it under a box somebody is editing reads as a
+     complaint about what they are typing now. */
+  if(anState.conflict && box.value !== anState.conflict.attempted) anState.conflict = null;
+  err.innerHTML = anState.conflict
+    ? `<span class="an-conflict">${escapeHTML(anState.conflict.message)}
+        <button class="u-link" id="an_reload">Show me the current name</button></span>`
+    : escapeHTML(verdict.message || '');
+  const reload = document.getElementById('an_reload');
+  if(reload) reload.onclick = ()=>anReload();
+  save.disabled = Boolean(anState.busy || !verdict.ok || verdict.value === anState.current);
+}
+/* What it says NOW. Offered rather than done: somebody who has just been told
+   the name moved under them should choose whether to keep what they typed. */
+async function anReload(){
+  const id = anState.assetId;
+  if(!id) return;
+  try{
+    const res = await api(`/assets/${id}/name-history`);
+    anState.current = res.name || anState.current;
+    anState.conflict = null;
+    document.getElementById('anCurrent').innerHTML =
+      `<span class="mono">${escapeHTML(res.code||'')}</span> — currently <span class="mono">${escapeHTML(anState.current)}</span>`;
+    document.getElementById('an_name').value = anState.current;
+    anRefresh();
+  }catch(err){ document.getElementById('an_err').textContent = err.message; }
+}
+async function anSave(){
+  if(anState.busy) return;
+  const box = document.getElementById('an_name');
+  const verdict = assetNameCheck(box.value);
+  if(!verdict.ok || verdict.value === anState.current) return;
+  anState.busy = true; anRefresh();
+  const attempted = box.value;
+  try{
+    /* expected_name is the name this form was opened on. The server compares it
+       with what the row says now and refuses with 409 if somebody else has
+       changed it in the meantime — which is the ordinary case of two people
+       with the panel open, not an exotic one. */
+    const res = await api(`/assets/${anState.assetId}/name`, { method:'PATCH',
+      body:{ name: verdict.value, expected_name: anState.current } });
+    const id = anState.assetId;
+    closeAssetRename();
+    /* The view in front of the person updates now; everything else picks it up
+       on its own next refresh. No new poller — see applyAssetUpdate. */
+    if(res.asset && !applyAssetUpdate(res.asset)) render();
+    if(state.openAssetId === id && document.getElementById('drawer').classList.contains('show')){
+      openDrawer(id);
+    }
+    showToast('Name updated.');
+  }catch(err){
+    const body = err.body || {};
+    if(body.code === 'name_changed'){
+      anState.conflict = {
+        attempted,
+        message: `${body.error} It is now "${body.currentName}"${
+          body.changedByName ? `, changed by ${body.changedByName}` : ''}.`,
+      };
+    }else{
+      document.getElementById('an_err').textContent = err.message;
+    }
+  }finally{ anState.busy = false; if(anState.assetId) anRefresh(); }
+}
+
+/* ---- what it has been called ---- */
+async function openNameHistory(assetId){
+  if(!can('assets.rename')) return;
+  const body = document.getElementById('ah_body');
+  body.innerHTML = '<div class="an-hist-empty">Reading the history…</div>';
+  document.getElementById('assetHistoryWrap').classList.add('show');
+  try{
+    const res = await api(`/assets/${assetId}/name-history`);
+    body.innerHTML = res.history && res.history.length
+      ? `<div class="an-hist">${res.history.map(h=>`
+          <div class="an-hist-row">
+            <div class="an-hist-names"><span class="was">${escapeHTML(h.oldName)}</span> → ${escapeHTML(h.newName)}</div>
+            <div class="an-hist-who">${escapeHTML(h.changedBy || 'somebody no longer in the studio')} · ${escapeHTML(fmtDate(h.changedAt))}</div>
+          </div>`).join('')}</div>`
+      : `<div class="an-hist-empty">This asset has always been called
+          ${escapeHTML(res.name || 'this')}. Nothing has been renamed.</div>`;
+  }catch(err){ body.innerHTML = `<div class="ref-err">${escapeHTML(err.message)}</div>`; }
+}
+function closeNameHistory(){ document.getElementById('assetHistoryWrap').classList.remove('show'); }
+
 /* ---------- drawer ---------- */
 /* "4h 32m" — how every screen writes a stretch of tracked time. */
 function fmtDuration(seconds){
@@ -11527,7 +11802,14 @@ async function openDrawer(id){
       </div>
       ${a.thumbnail_url ? `<div class="thumb-src">Showing a linked image · <span>${escapeHTML(a.thumbnail_url)}</span></div>` : ''}
       <div class="ref-err" id="d_thumbErr"></div>` : ''}
-    <div class="code">${a.code}</div><h2 class="display" style="margin:4px 0 2px;font-size:19px;">${escapeHTML(a.name)}</h2>
+    <div class="code">${a.code}</div><h2 class="display" style="margin:4px 0 2px;font-size:19px;">${escapeHTML(a.name)}${
+      /* THE PENCIL, beside the name and nowhere else on this panel. Drawn only
+         when the studio switch is on and this role holds assets.rename — see
+         mayRenameAssets(). The code above it never changes, which is why it is
+         the reference everything else uses. */
+      nameEditPencil(a.id, ' id="asset-rename-btn"')}</h2>
+    ${can('assets.rename') ? `<button class="u-link" id="asset-name-history-link"
+      style="font-size:11.5px;">Name history</button>` : ''}
     <div class="type-tag" style="display:inline-block;">${t.label}</div>
     <div class="field-lbl">Status</div>
     <div class="status-pill" style="background:${statusOf(a.status).color}22;color:${statusOf(a.status).color};font-size:12px;padding:5px 11px;"><span class="d" style="background:${statusOf(a.status).color}"></span>${statusOf(a.status).label}</div>
@@ -11945,6 +12227,16 @@ async function openDrawer(id){
   document.getElementById('overlay').classList.add('show'); drawer.classList.add('show');
   document.getElementById('closeDrawer').onclick = closeDrawer;
   document.getElementById('overlay').onclick = closeDrawer;
+
+  /* Renaming, and reading what it has been called. Both wired OUTSIDE the
+     `editable` block: assets.rename is its own permission and carries no
+     ownership condition, so an asset somebody else added is renameable by
+     whoever holds the key — see the catalogue entry. Either control is absent
+     from the markup when the key or the switch says so, hence the if. */
+  const renameBtn = document.getElementById('asset-rename-btn');
+  if(renameBtn) renameBtn.onclick = ()=>openAssetRename(a.id);
+  const historyLink = document.getElementById('asset-name-history-link');
+  if(historyLink) historyLink.onclick = ()=>openNameHistory(a.id);
 
   drawer.querySelectorAll('.downloadVersionLink').forEach(link=>{
     link.addEventListener('click', async (e)=>{
@@ -14266,6 +14558,7 @@ async function renderSettings(){
     ${can('settings.leave.manage') ? '<div id="leaveSettingsSection"></div>' : ''}
     ${can('settings.server.manage') ? '<div id="serverSettingsSection"></div>' : ''}
     ${can('chat.settings') ? '<div id="chatSettingsSection"></div>' : ''}
+    ${can('settings.asset_rename') ? '<div id="assetNamesSection"></div>' : ''}
     ${can('settings.mis_access') ? '<div id="misAccessSection"></div>' : ''}
     ${can('settings.working_hours') ? '<div id="scheduleSection"></div>' : ''}
     ${can('settings.ip_allowlist') ? '<div id="ipAllowlistSection"></div>' : ''}
@@ -14291,6 +14584,7 @@ async function renderSettings(){
   if(can('settings.leave.manage')) renderLeaveSettings();
   if(can('settings.server.manage')) renderServerSettings();
   if(can('chat.settings')) renderChatSettings();
+  if(can('settings.asset_rename')) renderAssetNameSettings();
   if(can('settings.mis_access')) renderMisAccess();
   if(can('settings.working_hours')) renderSchedule();
   if(can('settings.permissions')) await renderRolePermissions();
@@ -19946,6 +20240,79 @@ async function renderTimesheetOptions(){
    server, which reads the designation resolved for the session. This section
    not rendering is a courtesy to everybody else's Settings page. */
 let csState = { data:null, errors:[], busy:false };
+
+/* SETTINGS -> ASSET NAMES. One switch, and the two figures that make it a
+ * decision rather than a guess: how many renames the studio has made, and when
+ * the last one was.
+ *
+ * SHIPS ON, which is the opposite of the Leave and Server switches and for a
+ * stated reason — see src/asset-settings.js. OFF takes the pencil off every
+ * screen inside the twenty-second /auth/me poll and makes the server refuse;
+ * it never undoes a rename, and the history stays readable either way.
+ */
+const anSetState = { data:null, busy:false, error:null };
+
+async function renderAssetNameSettings(){
+  const el = document.getElementById('assetNamesSection');
+  if(!el) return;
+  if(!anSetState.data){
+    try{ anSetState.data = await api('/admin/settings/asset-names'); }
+    catch(err){ el.innerHTML = `<div class="ref-section"><div class="ref-err">${escapeHTML(err.message)}</div></div>`; return; }
+  }
+  const d = anSetState.data;
+  const s = d.settings;
+  el.innerHTML = `
+    <div class="ref-section">
+      <div class="ref-head"><h3>Asset Names</h3><span class="rh-badge">Super Admin</span></div>
+      <div class="ref-note">Whether an asset's name can be edited after it has been created.
+        The pencil beside a name is shown to the designations holding <strong>Edit Asset Name</strong>
+        in Role Permissions, within the projects their designation already reaches. An asset's code
+        (FX-001) is its reference and never changes, whatever the name says.</div>
+      <div class="ref-add">
+        <div style="align-self:end;">
+          <label class="rh-check"><input type="checkbox" id="an_enabled"${s.renameEnabled?' checked':''}>
+            Asset name editing</label>
+        </div>
+        <div style="align-self:end;">
+          <button class="btn btn-brand" id="an_set_save">Save</button>
+        </div>
+      </div>
+      ${anSetState.error ? `<div class="rh-errs"><div class="rh-err">${escapeHTML(anSetState.error)}</div></div>` : ''}
+      <div class="rh-warn" style="border-color:var(--border);background:var(--surface);">
+        <div><strong>Switching this off changes nothing that has already happened.</strong>
+        A name that has been edited stays as it is, every rename stays in the asset's name history,
+        and no file or folder on the office server is ever renamed or moved by this feature —
+        not when it is on, and not when it is switched off.</div>
+      </div>
+      <div class="ref-note" id="an_set_now">
+        ${s.renameEnabled
+          ? 'Names can be edited. The server records every change with who made it.'
+          : 'Names cannot be edited. The control is hidden and the server refuses a rename.'}
+        ${d.renames
+          ? `<br><strong>${d.renames}</strong> name${d.renames===1?' has':'s have'} been changed,
+             the last on ${escapeHTML(fmtDate(d.lastRenameAt))}.`
+          : '<br>No asset has been renamed yet.'}
+        ${s.updatedByName ? `<br>Last changed by ${escapeHTML(s.updatedByName)}.` : ''}
+      </div>
+    </div>`;
+
+  document.getElementById('an_set_save').onclick = async ()=>{
+    if(anSetState.busy) return;
+    anSetState.busy = true;
+    try{
+      anSetState.data = await api('/admin/settings/asset-names', { method:'PUT',
+        body:{ renameEnabled: document.getElementById('an_enabled').checked } });
+      anSetState.error = null;
+      /* The page's own copy of the switch, so the Super Admin who just turned it
+         off sees the pencils go without waiting for the next poll. Everybody
+         else's page picks it up on theirs. */
+      state.assetRenameEnabled = anSetState.data.settings.renameEnabled;
+      showToast('Asset name editing saved.');
+    }catch(e){
+      anSetState.error = (e.body && e.body.error) ? e.body.error : e.message;
+    }finally{ anSetState.busy = false; renderAssetNameSettings(); }
+  };
+}
 
 async function renderChatSettings(){
   const el = document.getElementById('chatSettingsSection');

@@ -4,6 +4,7 @@
 // here, so the sample can never describe a format the endpoint would reject.
 
 const referenceData = require('./reference-data');
+const assetName = require('./asset-name');
 const defaults = require('./reference-defaults');
 // The same validator the asset panel's Requirement / Reference Link box uses.
 const submissionLink = require('./submission-link');
@@ -171,13 +172,17 @@ const COLUMNS = [
     required: true,
     describe: 'Asset name — required',
     example: ['Waterfall Spray FX', 'Trader Cart', 'Northern Ridge'],
+    /* THE SAME RULE THE CREATE FORM AND THE RENAME USE, from
+       src/asset-name.js — a sheet must not be able to import a name the panel
+       would refuse, and vice versa. The PHRASING stays this file's own: these
+       errors are printed after the column heading ("Asset Name is required"),
+       so the module's full sentences would read as sentences in the middle of
+       one. The module hands back a code; this maps it. */
     parse(raw) {
-      const value = String(raw ?? '').trim();
-      if (!value) return { error: 'is required' };
-      // The column is VARCHAR(255); a longer value would be a database error
-      // rather than a message anyone could act on.
-      if (value.length > 255) return { error: `is ${value.length} characters; the limit is 255` };
-      return { value };
+      const verdict = assetName.check(raw);
+      if (verdict.ok) return { value: verdict.value };
+      if (verdict.code === 'required') return { error: 'is required' };
+      return { error: `is ${verdict.length} characters; the limit is ${assetName.MAX_LENGTH}` };
     },
   },
   {

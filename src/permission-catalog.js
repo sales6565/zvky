@@ -122,6 +122,51 @@ const GROUPS = [
     permissions: [
       { key: 'asset.add',             label: 'Asset Add',            impliedBy: has('createAsset') },
       { key: 'asset.edit',            label: 'Asset Edit',           impliedBy: has('editAsset') },
+      {
+        /* EDITING THE NAME, which until Prompt 63 nothing could do: a name was
+         * set once at creation and was then the one field on an asset that no
+         * screen in the application offered a way to correct.
+         *
+         * ITS OWN KEY RATHER THAN A WIDENING OF asset.edit, and the difference
+         * is worth saying out loud. asset.edit governs the fields that describe
+         * the WORK — its stage, its priority, its brief, its deadline. The name
+         * is how everybody in the studio refers to the thing: it is on the
+         * board, in the review queue, on a timesheet line, in the Artist Report
+         * and in every notification about it. Changing it changes what a hundred
+         * screens say. A studio that is happy for a role to move an asset's
+         * deadline has not thereby said it may rename what the whole studio
+         * calls that asset, so the two are separate checkboxes.
+         *
+         * THE DEFAULT IS THE SAME SET AS asset.edit — has('editAsset') — which
+         * is "nobody gains anything on the day this ships, and nobody loses
+         * anything either". The studio then narrows it on the Role Permissions
+         * screen if it wants to, which is the shape every key here takes.
+         *
+         * WHAT IT DOES NOT DROP: project scope. A permission says what may be
+         * done, never how much of the studio it may be done to, so this reaches
+         * only the projects the role already reaches — the same sentence the
+         * README's permissions chapter makes about asset.edit.
+         *
+         * WHAT IT DOES NOT CARRY, and this is the one place it is wider than
+         * asset.edit: ownership. canEditAsset() in src/permissions.js asks "did
+         * you add this asset" as well as "do you hold the key"; the rename asks
+         * the key, the studio switch and project scope. That is deliberate — a
+         * typo is found by whoever reads the board, not by whoever typed it, and
+         * an ownership condition would mean the one person who can fix a name is
+         * often the one person who is not looking at it. A studio that wants the
+         * narrower rule switches this key off for the designations it does not
+         * trust with it, which is a decision somebody makes once on a screen
+         * rather than a rule nobody can see.
+         *
+         * AND IT IS SWITCHABLE STUDIO-WIDE as well: Settings -> Asset Names
+         * governs whether the control exists at all. See src/asset-settings.js. */
+        key: 'assets.rename',
+        label: 'Edit Asset Name',
+        impliedBy: has('editAsset'),
+        describe: 'Change the name of an asset in reach. Its code, its timers, its assignment, its '
+          + 'timesheet lines and its files are untouched, every rename is recorded with who made '
+          + 'it, and anything already sent — notifications, emails, chat — keeps the old name.',
+      },
       { key: 'asset.delete',          label: 'Asset Delete',         impliedBy: has('deleteAsset') },
       { key: 'asset.assign',          label: 'Asset Assign/Reassign', impliedBy: has('editAsset') },
       {
@@ -1652,6 +1697,22 @@ const GROUPS = [
         describe: 'Settings → Chat: how many hours a chat attachment is kept before it is '
           + 'deleted, and the switches for chat replies and the emoji picker. Changing the '
           + 'retention never moves the expiry of a file already uploaded.',
+      },
+      {
+        /* THE STUDIO-WIDE SWITCH behind Edit Asset Name, and Super Admin only
+         * by the usual route — a permission implied by managePermissions, like
+         * Recording Hours, Chat and MIS Project Access.
+         *
+         * A SECOND KEY RATHER THAN A FIELD ON AN EXISTING SCREEN: this one
+         * decides whether a feature exists for the whole studio, which is a
+         * different act from using it. Folding the switch into assets.rename
+         * would mean everybody who may rename an asset may also take the ability
+         * away from everybody else. */
+        key: 'settings.asset_rename',
+        label: 'Manage Asset Name Editing',
+        impliedBy: has('managePermissions'),
+        describe: 'Turn asset name editing on or off for the whole studio. Off hides the control '
+          + 'everywhere and the server refuses a rename; names already changed stay changed.',
       },
       { key: 'settings.roles',        label: 'Manage Roles',         impliedBy: has('manageSettings') },
       { key: 'settings.asset_types',  label: 'Manage Scope of Work', impliedBy: has('manageSettings') },
