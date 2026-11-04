@@ -145,11 +145,20 @@ const IST_LABEL = 'IST';
    hardcoded — which is what keeps the arithmetic here a pure function and
    testable without a database.
 
-   maxHours is eight, and it is a WARNING rather than a wall — the studio asked
-   for the soft version, and it is the right one: a genuinely long day exists,
-   and a form that refuses it teaches somebody to log eight and go home late.
-   The day is flagged instead, and the flag travels to whoever approves it.
-   Under eight is silent: a half day of leave is not a problem to report. */
+   maxHours falls back to eight, and what the overLong flag below does with it is
+   WARN rather than wall — the studio asked for the soft version, and for the
+   flag it is the right one: a genuinely long day exists, and a form that
+   refuses it teaches somebody to log eight and go home late. The day is flagged
+   instead, and the flag travels with it. Under the figure is silent here: a half
+   day of leave is not a problem to report.
+
+   THAT IS THIS FLAG, NOT THE WHOLE STORY. Settings -> Time Sheet now has an
+   hours rule (src/timesheet-hours-rule.js) which, when a studio turns it on,
+   makes the same figure a wall in both directions: a day must total exactly it
+   before it can be submitted, and a line that would take the day over is
+   refused. Nothing in this file decides that — the rule is asked, per day, in
+   src/routes/timesheets.js — and with the rule off, which is how every install
+   starts, everything below behaves as it always has. */
 const DEFAULT_WINDOW = {
   dayStart: 9 * 60 + 30,   // 09:30
   dayEnd: 19 * 60,         // 19:00
