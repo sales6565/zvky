@@ -203,6 +203,18 @@ const REQUIRED = [
   { table: 'tl_review_sessions', column: 'outcome',           step: 'tl action' },
   { table: 'timesheet_entries',  column: 'tl_action',         step: 'tl action' },
   { table: 'timesheet_settings', column: 'tl_action_enabled', step: 'tl action' },
+  /* EDITING AN ASSET'S NAME. Neither table is in sql/schema.sql — the 'asset
+     renaming' step creates both. The failure this is here to name: CREATE is
+     refused on shared hosting, somebody presses Save in the rename modal, and
+     the request answers 500 while /api/health says "complete". With the history
+     table missing the rename is refused by the transaction rather than half
+     done, which is the right failure; this is what says which step to re-run. */
+  { table: 'asset_name_history', column: null,                step: 'asset renaming' },
+  { table: 'asset_name_history', column: 'old_name',          step: 'asset renaming' },
+  { table: 'asset_name_history', column: 'new_name',          step: 'asset renaming' },
+  { table: 'asset_name_history', column: 'changed_by_user_id', step: 'asset renaming' },
+  { table: 'asset_settings',     column: null,                step: 'asset renaming' },
+  { table: 'asset_settings',     column: 'rename_enabled',    step: 'asset renaming' },
 ];
 
 // Two queries for the whole check, rather than one per column.

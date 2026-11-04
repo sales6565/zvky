@@ -6,7 +6,7 @@
 # A deliberate change to anybody's visibility is made by regenerating this
 # file, so it lands in the diff where a reviewer will see it.
 #
-# roles: 60   routes: 292
+# roles: 60   routes: 298
 
 ## PAGE ELEMENTS  (UI_GATES, read from public/index.html)
 
@@ -46,6 +46,7 @@ section settings.server.manage := Server
 section settings.leave.manage := Leave
 section chat.settings := Chat
 section settings.mis_access := MIS Project Access
+section settings.asset_rename := Asset Names
 section settings.priorities := Priorities
 section settings.categories := Asset Categories
 section settings.project_categories := Project Categories
@@ -61,7 +62,7 @@ section settings.chat_activity := Chat Activity
 section mobile.distribute := Mobile Apps
 
 ## ROLE super_admin
-keys(121): asset.add asset.assign asset.assign_any asset.bulk_assign asset.bulk_upload asset.delete asset.edit asset.hold asset.hold_any asset.lead_notes asset.override_stage chat.group_create chat.group_manage_any chat.message_protected chat.open_inbox chat.settings chat.use client.add client.close client.delete client.edit client.view followup.mark_idle followup.mark_leave followup.mark_onsight followup.mark_past_dates integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.approve leave.manage_all leave.request leave.view_team mobile.distribute outsource.deliver outsource.manage outsource.rates outsource.reopen outsource.view pending.view pnl.actual pnl.fixed pnl.manage project.add project.close project.delete project.edit project.milestones project.review_mine project.review_queue project.review_respond project.review_send report.admin_dashboard report.artist_report report.follow_up report.idle report.remind report.view review.approve_client review.cd review.client_deliver review.client_return review.client_send review.client_view review.deliver review.tl review.tl_feedback review.tl_send_client server.browse_all server.download server.manage_requests server.request_delete server.submit_upload server.upload server.view server.view_audit settings.activity_log settings.asset_types settings.audit_logs settings.branding settings.categories settings.chat_activity settings.chat_retention settings.email_config settings.email_delivery settings.holidays settings.holidays_view settings.integrations settings.ip_allowlist settings.ip_blocklist settings.leave.manage settings.milestone_types settings.mis_access settings.nudges settings.permissions settings.priorities settings.project_categories settings.recording_hours settings.role_groups settings.roles settings.server.manage settings.theme settings.working_hours timesheet.all timesheet.options timesheet.own timesheet.sub_options timesheet.team timesheet.tl_action user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.deactivate user.delete user.edit user.idle_view user.reset_password user.view user.view_team
+keys(124): asset.add asset.assign asset.assign_any asset.bulk_assign asset.bulk_upload asset.delete asset.edit asset.hold asset.hold_any asset.lead_notes asset.override_stage assets.rename chat.group_create chat.group_manage_any chat.message_protected chat.open_inbox chat.settings chat.use client.add client.close client.delete client.edit client.view followup.mark_idle followup.mark_leave followup.mark_onsight followup.mark_past_dates integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.approve leave.manage_all leave.request leave.view_team mobile.distribute outsource.deliver outsource.manage outsource.rates outsource.reopen outsource.view pending.view pnl.actual pnl.fixed pnl.manage project.add project.close project.delete project.edit project.milestones project.review_mine project.review_queue project.review_respond project.review_send report.admin_dashboard report.artist_report report.follow_up report.idle report.remind report.view review.approve_client review.cd review.client_deliver review.client_return review.client_send review.client_view review.deliver review.tl review.tl_feedback review.tl_send_client server.browse_all server.download server.manage_requests server.request_delete server.submit_upload server.upload server.view server.view_audit settings.activity_log settings.asset_rename settings.asset_types settings.audit_logs settings.branding settings.categories settings.chat_activity settings.chat_retention settings.email_config settings.email_delivery settings.holidays settings.holidays_view settings.integrations settings.ip_allowlist settings.ip_blocklist settings.leave.manage settings.milestone_types settings.mis_access settings.nudges settings.permissions settings.priorities settings.project_categories settings.recording_hours settings.role_groups settings.roles settings.server.manage settings.theme settings.working_hours timesheet.all timesheet.export timesheet.options timesheet.own timesheet.sub_options timesheet.team timesheet.tl_action user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.deactivate user.delete user.edit user.idle_view user.reset_password user.view user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -97,6 +98,7 @@ settings sections:
   settings.leave.manage=yes
   chat.settings=yes
   settings.mis_access=yes
+  settings.asset_rename=yes
   settings.priorities=yes
   settings.categories=yes
   settings.project_categories=yes
@@ -134,6 +136,7 @@ write routes:
   PATCH /api/admin/settings/server = yes
   PATCH /api/admin/settings/server/projects/:projectId/submit = yes
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -258,6 +261,7 @@ write routes:
   POST /api/users/:id/reset-password = yes
   POST /api/users/bulk = yes
   PUT /api/admin/mis-assignments/:userId = yes
+  PUT /api/admin/settings/asset-names = yes
   PUT /api/admin/settings/chat-group-limit = yes
   PUT /api/admin/settings/chat-policy = yes
   PUT /api/admin/settings/holidays/:id = yes
@@ -279,7 +283,7 @@ write routes:
   PUT /api/theme = yes
 
 ## ROLE admin
-keys(37): asset.add asset.assign asset.bulk_upload asset.delete asset.edit asset.hold chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view integration.send_to_dev leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones report.admin_dashboard review.deliver settings.holidays_view timesheet.own user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.view
+keys(38): asset.add asset.assign asset.bulk_upload asset.delete asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view integration.send_to_dev leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones report.admin_dashboard review.deliver settings.holidays_view timesheet.own user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.view
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -315,6 +319,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -352,6 +357,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = no
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -476,6 +482,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = yes
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -497,7 +504,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE coordinator
-keys(16): asset.add asset.assign asset.bulk_upload asset.edit asset.hold chat.group_create chat.open_inbox chat.use client.view leave.request outsource.deliver outsource.manage outsource.view review.deliver settings.holidays_view timesheet.own
+keys(17): asset.add asset.assign asset.bulk_upload asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.view leave.request outsource.deliver outsource.manage outsource.view review.deliver settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -533,6 +540,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -570,6 +578,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = no
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -694,6 +703,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -751,6 +761,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -788,6 +799,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = no
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -912,6 +924,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -969,6 +982,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -1006,6 +1020,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = no
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -1130,6 +1145,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -1151,7 +1167,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_art_director
-keys(24): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any chat.group_create chat.open_inbox chat.use client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.tl_action user.view_team
+keys(25): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any assets.rename chat.group_create chat.open_inbox chat.use client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.tl_action user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -1187,6 +1203,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -1224,6 +1241,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -1348,6 +1366,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -1369,7 +1388,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE art_supervisor
-keys(24): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any chat.group_create chat.open_inbox chat.use client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.tl_action user.view_team
+keys(25): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any assets.rename chat.group_create chat.open_inbox chat.use client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.tl_action user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -1405,6 +1424,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -1442,6 +1462,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -1566,6 +1587,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -1587,7 +1609,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_animation_supervisor
-keys(24): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any chat.group_create chat.open_inbox chat.use client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.tl_action user.view_team
+keys(25): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any assets.rename chat.group_create chat.open_inbox chat.use client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.tl_action user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -1623,6 +1645,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -1660,6 +1683,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -1784,6 +1808,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -1805,7 +1830,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE senior_team_lead
-keys(24): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any chat.group_create chat.open_inbox chat.use client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.tl_action user.view_team
+keys(25): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any assets.rename chat.group_create chat.open_inbox chat.use client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.tl_action user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -1841,6 +1866,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -1878,6 +1904,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -2002,6 +2029,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -2023,7 +2051,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE team_lead
-keys(24): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any chat.group_create chat.open_inbox chat.use client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.tl_action user.view_team
+keys(25): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any assets.rename chat.group_create chat.open_inbox chat.use client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.tl_action user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -2059,6 +2087,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -2096,6 +2125,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -2220,6 +2250,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -2241,7 +2272,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_team_lead
-keys(24): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any chat.group_create chat.open_inbox chat.use client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.tl_action user.view_team
+keys(25): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any assets.rename chat.group_create chat.open_inbox chat.use client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.tl_action user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -2277,6 +2308,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -2314,6 +2346,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -2438,6 +2471,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -2459,7 +2493,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE technical_manager
-keys(24): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any chat.group_create chat.open_inbox chat.use client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.tl_action user.view_team
+keys(25): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any assets.rename chat.group_create chat.open_inbox chat.use client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.tl_action user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -2495,6 +2529,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -2532,6 +2567,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -2656,6 +2692,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -2677,7 +2714,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE senior_game_artist
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -2713,6 +2750,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -2750,6 +2788,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -2874,6 +2913,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -2895,7 +2935,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE game_artist
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -2931,6 +2971,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -2968,6 +3009,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -3092,6 +3134,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -3113,7 +3156,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_game_artist
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -3149,6 +3192,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -3186,6 +3230,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -3310,6 +3355,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -3331,7 +3377,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE trainee_game_artist
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -3367,6 +3413,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -3404,6 +3451,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -3528,6 +3576,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -3549,7 +3598,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE senior_motion_graphics_artist
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -3585,6 +3634,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -3622,6 +3672,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -3746,6 +3797,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -3767,7 +3819,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE senior_game_animator
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -3803,6 +3855,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -3840,6 +3893,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -3964,6 +4018,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -3985,7 +4040,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE game_animator
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -4021,6 +4076,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -4058,6 +4114,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -4182,6 +4239,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -4203,7 +4261,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_game_animator
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -4239,6 +4297,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -4276,6 +4335,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -4400,6 +4460,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -4421,7 +4482,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE trainee_game_animator
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -4457,6 +4518,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -4494,6 +4556,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -4618,6 +4681,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -4639,7 +4703,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE game_designer
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -4675,6 +4739,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -4712,6 +4777,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -4836,6 +4902,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -4857,7 +4924,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE senior_ui_ux_designer
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -4893,6 +4960,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -4930,6 +4998,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -5054,6 +5123,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -5075,7 +5145,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_ui_ux_designer
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -5111,6 +5181,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -5148,6 +5219,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -5272,6 +5344,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -5293,7 +5366,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_game_designer
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -5329,6 +5402,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -5366,6 +5440,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -5490,6 +5565,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -5511,7 +5587,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE consultant_lead_game_designer
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -5547,6 +5623,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -5584,6 +5661,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -5708,6 +5786,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -5729,7 +5808,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE head_of_production
-keys(61): asset.add asset.assign asset.assign_any asset.bulk_upload asset.delete asset.edit asset.hold asset.override_stage chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones report.admin_dashboard report.idle report.view review.approve_client review.cd review.deliver review.tl review.tl_feedback review.tl_send_client settings.activity_log settings.asset_types settings.audit_logs settings.branding settings.categories settings.holidays_view settings.milestone_types settings.priorities settings.project_categories settings.roles settings.working_hours timesheet.all timesheet.own user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.idle_view user.view user.view_team
+keys(62): asset.add asset.assign asset.assign_any asset.bulk_upload asset.delete asset.edit asset.hold asset.override_stage assets.rename chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones report.admin_dashboard report.idle report.view review.approve_client review.cd review.deliver review.tl review.tl_feedback review.tl_send_client settings.activity_log settings.asset_types settings.audit_logs settings.branding settings.categories settings.holidays_view settings.milestone_types settings.priorities settings.project_categories settings.roles settings.working_hours timesheet.all timesheet.own user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.idle_view user.view user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -5765,6 +5844,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=yes
   settings.categories=yes
   settings.project_categories=yes
@@ -5802,6 +5882,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -5926,6 +6007,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = yes
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -5947,7 +6029,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE cto
-keys(61): asset.add asset.assign asset.assign_any asset.bulk_upload asset.delete asset.edit asset.hold asset.override_stage chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones report.admin_dashboard report.idle report.view review.approve_client review.cd review.deliver review.tl review.tl_feedback review.tl_send_client settings.activity_log settings.asset_types settings.audit_logs settings.branding settings.categories settings.holidays_view settings.milestone_types settings.priorities settings.project_categories settings.roles settings.working_hours timesheet.all timesheet.own user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.idle_view user.view user.view_team
+keys(62): asset.add asset.assign asset.assign_any asset.bulk_upload asset.delete asset.edit asset.hold asset.override_stage assets.rename chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones report.admin_dashboard report.idle report.view review.approve_client review.cd review.deliver review.tl review.tl_feedback review.tl_send_client settings.activity_log settings.asset_types settings.audit_logs settings.branding settings.categories settings.holidays_view settings.milestone_types settings.priorities settings.project_categories settings.roles settings.working_hours timesheet.all timesheet.own user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.idle_view user.view user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -5983,6 +6065,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=yes
   settings.categories=yes
   settings.project_categories=yes
@@ -6020,6 +6103,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -6144,6 +6228,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = yes
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -6165,7 +6250,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE general_manager
-keys(61): asset.add asset.assign asset.assign_any asset.bulk_upload asset.delete asset.edit asset.hold asset.override_stage chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones report.admin_dashboard report.idle report.view review.approve_client review.cd review.deliver review.tl review.tl_feedback review.tl_send_client settings.activity_log settings.asset_types settings.audit_logs settings.branding settings.categories settings.holidays_view settings.milestone_types settings.priorities settings.project_categories settings.roles settings.working_hours timesheet.all timesheet.own user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.idle_view user.view user.view_team
+keys(62): asset.add asset.assign asset.assign_any asset.bulk_upload asset.delete asset.edit asset.hold asset.override_stage assets.rename chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones report.admin_dashboard report.idle report.view review.approve_client review.cd review.deliver review.tl review.tl_feedback review.tl_send_client settings.activity_log settings.asset_types settings.audit_logs settings.branding settings.categories settings.holidays_view settings.milestone_types settings.priorities settings.project_categories settings.roles settings.working_hours timesheet.all timesheet.own user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.idle_view user.view user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -6201,6 +6286,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=yes
   settings.categories=yes
   settings.project_categories=yes
@@ -6238,6 +6324,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -6362,6 +6449,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = yes
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -6383,7 +6471,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE managing_director_ceo
-keys(61): asset.add asset.assign asset.assign_any asset.bulk_upload asset.delete asset.edit asset.hold asset.override_stage chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones report.admin_dashboard report.idle report.view review.approve_client review.cd review.deliver review.tl review.tl_feedback review.tl_send_client settings.activity_log settings.asset_types settings.audit_logs settings.branding settings.categories settings.holidays_view settings.milestone_types settings.priorities settings.project_categories settings.roles settings.working_hours timesheet.all timesheet.own user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.idle_view user.view user.view_team
+keys(62): asset.add asset.assign asset.assign_any asset.bulk_upload asset.delete asset.edit asset.hold asset.override_stage assets.rename chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones report.admin_dashboard report.idle report.view review.approve_client review.cd review.deliver review.tl review.tl_feedback review.tl_send_client settings.activity_log settings.asset_types settings.audit_logs settings.branding settings.categories settings.holidays_view settings.milestone_types settings.priorities settings.project_categories settings.roles settings.working_hours timesheet.all timesheet.own user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.idle_view user.view user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -6419,6 +6507,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=yes
   settings.categories=yes
   settings.project_categories=yes
@@ -6456,6 +6545,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -6580,6 +6670,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = yes
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -6601,7 +6692,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE vice_president_global_operations_business_development
-keys(61): asset.add asset.assign asset.assign_any asset.bulk_upload asset.delete asset.edit asset.hold asset.override_stage chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones report.admin_dashboard report.idle report.view review.approve_client review.cd review.deliver review.tl review.tl_feedback review.tl_send_client settings.activity_log settings.asset_types settings.audit_logs settings.branding settings.categories settings.holidays_view settings.milestone_types settings.priorities settings.project_categories settings.roles settings.working_hours timesheet.all timesheet.own user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.idle_view user.view user.view_team
+keys(62): asset.add asset.assign asset.assign_any asset.bulk_upload asset.delete asset.edit asset.hold asset.override_stage assets.rename chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones report.admin_dashboard report.idle report.view review.approve_client review.cd review.deliver review.tl review.tl_feedback review.tl_send_client settings.activity_log settings.asset_types settings.audit_logs settings.branding settings.categories settings.holidays_view settings.milestone_types settings.priorities settings.project_categories settings.roles settings.working_hours timesheet.all timesheet.own user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.idle_view user.view user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -6637,6 +6728,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=yes
   settings.categories=yes
   settings.project_categories=yes
@@ -6674,6 +6766,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -6798,6 +6891,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = yes
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -6819,7 +6913,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE senior_producer
-keys(16): asset.add asset.assign asset.bulk_upload asset.edit asset.hold chat.group_create chat.open_inbox chat.use client.view leave.request outsource.deliver outsource.manage outsource.view review.deliver settings.holidays_view timesheet.own
+keys(17): asset.add asset.assign asset.bulk_upload asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.view leave.request outsource.deliver outsource.manage outsource.view review.deliver settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -6855,6 +6949,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -6892,6 +6987,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = no
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -7016,6 +7112,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -7037,7 +7134,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE producer
-keys(16): asset.add asset.assign asset.bulk_upload asset.edit asset.hold chat.group_create chat.open_inbox chat.use client.view leave.request outsource.deliver outsource.manage outsource.view review.deliver settings.holidays_view timesheet.own
+keys(17): asset.add asset.assign asset.bulk_upload asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.view leave.request outsource.deliver outsource.manage outsource.view review.deliver settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -7073,6 +7170,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -7110,6 +7208,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = no
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -7234,6 +7333,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -7255,7 +7355,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE creative_producer
-keys(16): asset.add asset.assign asset.bulk_upload asset.edit asset.hold chat.group_create chat.open_inbox chat.use client.view leave.request outsource.deliver outsource.manage outsource.view review.deliver settings.holidays_view timesheet.own
+keys(17): asset.add asset.assign asset.bulk_upload asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.view leave.request outsource.deliver outsource.manage outsource.view review.deliver settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -7291,6 +7391,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -7328,6 +7429,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = no
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -7452,6 +7554,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -7473,7 +7576,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE senior_project_manager
-keys(16): asset.add asset.assign asset.bulk_upload asset.edit asset.hold chat.group_create chat.open_inbox chat.use client.view leave.request outsource.deliver outsource.manage outsource.view review.deliver settings.holidays_view timesheet.own
+keys(17): asset.add asset.assign asset.bulk_upload asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.view leave.request outsource.deliver outsource.manage outsource.view review.deliver settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -7509,6 +7612,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -7546,6 +7650,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = no
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -7670,6 +7775,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -7691,7 +7797,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE project_manager
-keys(16): asset.add asset.assign asset.bulk_upload asset.edit asset.hold chat.group_create chat.open_inbox chat.use client.view leave.request outsource.deliver outsource.manage outsource.view review.deliver settings.holidays_view timesheet.own
+keys(17): asset.add asset.assign asset.bulk_upload asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.view leave.request outsource.deliver outsource.manage outsource.view review.deliver settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -7727,6 +7833,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -7764,6 +7871,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = no
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -7888,6 +7996,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -7909,7 +8018,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_project_manager
-keys(16): asset.add asset.assign asset.bulk_upload asset.edit asset.hold chat.group_create chat.open_inbox chat.use client.view leave.request outsource.deliver outsource.manage outsource.view review.deliver settings.holidays_view timesheet.own
+keys(17): asset.add asset.assign asset.bulk_upload asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.view leave.request outsource.deliver outsource.manage outsource.view review.deliver settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -7945,6 +8054,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -7982,6 +8092,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = no
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -8106,6 +8217,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -8127,7 +8239,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE senior_production_coordinator
-keys(16): asset.add asset.assign asset.bulk_upload asset.edit asset.hold chat.group_create chat.open_inbox chat.use client.view leave.request outsource.deliver outsource.manage outsource.view review.deliver settings.holidays_view timesheet.own
+keys(17): asset.add asset.assign asset.bulk_upload asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.view leave.request outsource.deliver outsource.manage outsource.view review.deliver settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -8163,6 +8275,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -8200,6 +8313,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = no
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -8324,6 +8438,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -8345,7 +8460,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE senior_technical_artist
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -8381,6 +8496,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -8418,6 +8534,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -8542,6 +8659,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -8563,7 +8681,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE technical_artist
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -8599,6 +8717,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -8636,6 +8755,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -8760,6 +8880,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -8781,7 +8902,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_technical_artist
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -8817,6 +8938,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -8854,6 +8976,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -8978,6 +9101,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -8999,7 +9123,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE senior_unity_developer
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -9035,6 +9159,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -9072,6 +9197,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -9196,6 +9322,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -9217,7 +9344,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE unity_developer
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -9253,6 +9380,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -9290,6 +9418,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -9414,6 +9543,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -9435,7 +9565,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_unity_developer
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -9471,6 +9601,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -9508,6 +9639,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -9632,6 +9764,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -9653,7 +9786,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE game_developer
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -9689,6 +9822,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -9726,6 +9860,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -9850,6 +9985,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -9871,7 +10007,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_game_developer
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -9907,6 +10043,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -9944,6 +10081,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -10068,6 +10206,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -10089,7 +10228,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE test_engineer
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -10125,6 +10264,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -10162,6 +10302,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -10286,6 +10427,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -10307,7 +10449,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_test_engineer
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -10343,6 +10485,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -10380,6 +10523,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -10504,6 +10648,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -10525,7 +10670,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE trainee_test_engineer
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -10561,6 +10706,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -10598,6 +10744,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -10722,6 +10869,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -10743,7 +10891,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE game_mathematician
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -10779,6 +10927,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -10816,6 +10965,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -10940,6 +11090,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -10961,7 +11112,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_game_mathematician
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -10997,6 +11148,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -11034,6 +11186,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -11158,6 +11311,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -11179,7 +11333,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_math_analyst
-keys(11): asset.assign asset.edit asset.hold chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
+keys(12): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view integration.flag_tech_art integration.view_ingame leave.request settings.holidays_view timesheet.own
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -11215,6 +11369,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -11252,6 +11407,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -11376,6 +11532,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -11433,6 +11590,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -11470,6 +11628,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = no
   PATCH /api/assets/:id/tech-art = no
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -11594,6 +11753,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -11651,6 +11811,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -11688,6 +11849,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = no
   PATCH /api/assets/:id/tech-art = no
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -11812,6 +11974,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -11833,7 +11996,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE account_manager_marketing
-keys(61): asset.add asset.assign asset.assign_any asset.bulk_upload asset.delete asset.edit asset.hold asset.override_stage chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones report.admin_dashboard report.idle report.view review.approve_client review.cd review.deliver review.tl review.tl_feedback review.tl_send_client settings.activity_log settings.asset_types settings.audit_logs settings.branding settings.categories settings.holidays_view settings.milestone_types settings.priorities settings.project_categories settings.roles settings.working_hours timesheet.all timesheet.own user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.idle_view user.view user.view_team
+keys(62): asset.add asset.assign asset.assign_any asset.bulk_upload asset.delete asset.edit asset.hold asset.override_stage assets.rename chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones report.admin_dashboard report.idle report.view review.approve_client review.cd review.deliver review.tl review.tl_feedback review.tl_send_client settings.activity_log settings.asset_types settings.audit_logs settings.branding settings.categories settings.holidays_view settings.milestone_types settings.priorities settings.project_categories settings.roles settings.working_hours timesheet.all timesheet.own user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.idle_view user.view user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -11869,6 +12032,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=yes
   settings.categories=yes
   settings.project_categories=yes
@@ -11906,6 +12070,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = yes
   PATCH /api/assets/:id/tech-art = yes
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -12030,6 +12195,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = yes
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -12087,6 +12253,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -12124,6 +12291,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = no
   PATCH /api/assets/:id/tech-art = no
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -12248,6 +12416,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -12305,6 +12474,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -12342,6 +12512,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = no
   PATCH /api/assets/:id/tech-art = no
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -12466,6 +12637,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -12523,6 +12695,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -12560,6 +12733,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = no
   PATCH /api/assets/:id/tech-art = no
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -12684,6 +12858,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -12741,6 +12916,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -12778,6 +12954,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = no
   PATCH /api/assets/:id/tech-art = no
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -12902,6 +13079,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no
@@ -12959,6 +13137,7 @@ settings sections:
   settings.leave.manage=no
   chat.settings=no
   settings.mis_access=no
+  settings.asset_rename=no
   settings.priorities=no
   settings.categories=no
   settings.project_categories=no
@@ -12996,6 +13175,7 @@ write routes:
   PATCH /api/admin/settings/server = no
   PATCH /api/admin/settings/server/projects/:projectId/submit = no
   PATCH /api/assets/:id = conditional
+  PATCH /api/assets/:id/name = no
   PATCH /api/assets/:id/tech-art = no
   PATCH /api/assets/tasks/:id = conditional
   PATCH /api/assets/tasks/:id/text = conditional
@@ -13120,6 +13300,7 @@ write routes:
   POST /api/users/:id/reset-password = no
   POST /api/users/bulk = no
   PUT /api/admin/mis-assignments/:userId = no
+  PUT /api/admin/settings/asset-names = no
   PUT /api/admin/settings/chat-group-limit = no
   PUT /api/admin/settings/chat-policy = no
   PUT /api/admin/settings/holidays/:id = no

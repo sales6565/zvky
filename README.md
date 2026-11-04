@@ -1625,6 +1625,144 @@ storage for an S3-compatible bucket — it's the only file that needs to
 change, since every route just uses `req.file` / `file_path` without caring
 where it physically lives.
 
+## Renaming an asset
+
+Until this existed, a name was set once at creation and was then the one field on
+an asset that no screen offered a way to correct. A typo in `FX-014 Watrefall
+Spray` was permanent, and the studio's workaround was to create a second asset
+and abandon the first — which costs the real one its history, its timers and its
+submissions.
+
+**`PATCH /api/assets/:id/name`**, behind the `assets.rename` permission
+("Edit Asset Name") and a studio-wide switch in **Settings → Asset Names**.
+
+### One rule for what a name may be
+
+[`src/asset-name.js`](src/asset-name.js) is the whole rule, and three callers ask
+it: the create route, the bulk import and the page. Before, each had its own and
+no two agreed — the create route had no length check at all, so a 256-character
+name was a MySQL error rather than a message anybody could act on.
+
+A name is **required**, at most **255 characters** (the column's width), and
+**normalised**: a line break or a tab becomes a space, every other control
+character is dropped, runs of any kind of space collapse to one, and the ends are
+trimmed. `Hero\tPose` is two words however it was typed, so it does not become
+`HeroPose`.
+
+**There is no uniqueness rule, and that is the rule rather than a gap.** `assets`
+has no unique key on `name`, creating an asset runs no duplicate query and the
+bulk import runs none either — so two assets in one project may be called the same
+thing, and on a deployment that has been running for years some of them are. The
+rename therefore accepts a duplicate too: it must refuse exactly what creation
+refuses, or a studio with two assets already called `Hero` would find one of them
+unrenameable for ever. An asset's identity is its **id** and its reference on
+screen is its **code** (`FX-001`), which is generated per project and never
+changes.
+
+The page carries a copy of the rule, because `public/index.html` has no build step
+and cannot `require()` a module. `tests/asset-name.test.js` lifts that copy out of
+the page, runs it, and compares it with the module over every shape of input —
+messages, ceiling and normalisation — so the two cannot drift apart.
+
+### What a rename changes, and what it must not
+
+| | |
+|---|---|
+| **Changes** | `assets.name`, and therefore every live screen: the board, the Assets List, the asset panel, the review queues, the timesheet lines list, the Artist Report, the Timesheet download, the Outsource screens and the header's search. |
+| **Writes** | one `asset_name_history` row (old name, new name, who, when) and one Activity Log entry. Both, or neither. |
+| **Does not touch** | the id, the code, timers, assignments, status, the checklist, submissions, submission links, stage history, timesheet lines, thumbnails — and nothing on disk. |
+
+Every live screen moves at once because **there is no denormalised copy of an
+asset's name in this schema**: no column anywhere is called `asset_name`, and each
+of those screens joins `assets` by id at the moment it draws.
+`tests/asset-name.test.js` pins that join in all five modules, so the day somebody
+adds a `name` column to one of those tables for speed, the test fails and the
+update has to go into the rename's transaction.
+
+**No file or folder is ever renamed or moved.** No asset name appears in any
+stored path: an upload's path is *project folder / discipline / person / subpath*
+(`uploadPathFor` in [`src/server-link.js`](src/server-link.js)) and a locally
+stored file is named by a uuid. The modal says so, in those words, above the Save
+button.
+
+**Historical text keeps the old name.** `activity_log.entity_label` is a snapshot
+column by design, and the rename's own entry carries the name the asset had when it
+was written — an entry that renamed itself could never answer "what was it called
+then". Chat messages, sent emails and integration event payloads are the same: the
+only `UPDATE` the route issues is to `assets.name`, which a test asserts by
+counting the statements in it. The one thing that does follow the rename is the
+notification bell, whose sentences have always been rebuilt from the row's links
+rather than stored.
+
+### Two people, one asset
+
+The form sends `expected_name`, and the route reads the asset's current name
+**inside the transaction, under `SELECT ... FOR UPDATE`**. A mismatch is a `409`
+carrying the current name and who changed it, shown in the modal with an offer to
+fetch it — nothing is overwritten and the typing is not thrown away.
+
+That lock is not belt and braces. It was written the obvious way first, comparing
+the name read at the top of the handler, and the concurrency test failed on its
+first run: two renames sent at the same moment both passed their `expected_name`
+check and left a history chain that did not join up.
+
+**A rename that changes nothing writes nothing** — not the name, not a history
+row, not an audit line, not even the activity middleware's own backstop entry.
+Normalisation makes that reachable by accident, since `Hero ` and `Hero` are the
+same name.
+
+### Who may do it
+
+`assets.rename` starts with **exactly the designations that already hold
+`asset.edit`** — asserted as a set comparison in `tests/role-groups.test.js`, not
+as a list, so the two cannot drift apart. Nobody gains anything on the day it
+ships and nobody loses anything either; a studio narrows it on the Role
+Permissions screen.
+
+It is a separate checkbox from `asset.edit` because `asset.edit` governs the facts
+about the *work* — stage, priority, brief, deadline — while the name is how the
+whole studio refers to the thing. A studio happy for a role to move a deadline has
+not thereby said it may rename what everyone calls that asset.
+
+Two differences from `asset.edit` are worth stating:
+
+* **No ownership condition.** `canEditAsset()` also asks "did you add this asset";
+  the rename asks the key, the switch and visibility. A typo is found by whoever
+  reads the board, not by whoever typed it.
+* **Visibility, not just project scope.** Every rename goes through
+  `canViewAsset()`, so a contributor reaches the asset on their own desk and
+  nothing else, and no designation reaches outside its own `projectScope`.
+  Out of reach is `403 No access to this asset`; no such asset is `404`.
+
+A rename is allowed in **every** workflow status, Delivered included — a
+correction is never out of season. A **closed or archived project** refuses it,
+like every other write to an asset in one.
+
+### The switch
+
+**Settings → Asset Names** (`settings.asset_rename`, Super Admin only) **ships
+on**. Every other switch here that ships off does so because turning it on changes
+a number somebody is already reading, or because the feature cannot work until a
+gateway is installed; neither applies to a text field behind a permission.
+
+Off hides the pencil everywhere within the twenty-second `/auth/me` poll and makes
+the server answer `409 rename_disabled`. It undoes nothing: names already changed
+stay changed, and **the history stays readable**, because a switch that rewrote the
+past would not be a switch.
+
+### Name history
+
+`GET /api/assets/:id/name-history` — old name, new name, who and when, newest
+first — behind the same key as the rename and **not** behind the switch. The asset
+panel shows a *Name history* link beside the pencil. An asset nobody has renamed
+says so, rather than showing an empty list.
+
+The migration (`asset renaming` in [`src/migrate.js`](src/migrate.js)) creates
+`asset_name_history` and `asset_settings`, is safe to run on every boot, and does
+**no backfill**: an asset that has never been renamed has no rows, which is the
+honest answer rather than an invented "created as" entry with a `changed_by` this
+application does not know.
+
 ## 3. Bulk uploads
 
 Two separate uploaders, one per entity. Each has its own button, its own

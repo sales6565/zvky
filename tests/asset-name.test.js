@@ -439,6 +439,55 @@ test('the Settings section is listed, so the tab opens for a role granted only i
   assert.ok(PAGE.includes("if(can('settings.asset_rename')) renderAssetNameSettings();"));
 });
 
+test('every module that shows an asset name reads it live, by id', () => {
+  /* THE SURVEY THIS FEATURE RESTS ON, pinned so it cannot quietly stop being
+     true. There is NO denormalised copy of an asset's name in this schema — no
+     column anywhere is called asset_name — so a rename needs to update exactly
+     one row and every screen in the studio moves with it.
+
+     The modules below are the ones that print a name. Each is asserted to get
+     it from a JOIN on assets by id. The day somebody adds a `name` column to
+     one of these tables for speed, this test fails and they have to come and
+     put the update in the rename's transaction. */
+  const joins = [
+    ['src/routes/timesheets.js', /a\.\\`name\\` AS assetName/, /LEFT JOIN assets\s+a ON a\.id = e\.asset_id/,
+      'the timesheet lines list'],
+    ['src/timesheet-export.js', /a\.\\`name\\`\s+AS assetName/, /LEFT JOIN assets\s+a ON a\.id = e\.asset_id/,
+      'the timesheet download'],
+    ['src/artist-report.js', /a\.\\`name\\` AS assetName/, /JOIN assets\s+a/, 'the Artist Report'],
+    ['src/outsource.js', /s\.\\`name\\` AS asset_name/, /JOIN assets\s+s ON s\.id = a\.asset_id/,
+      'the Outsource and delivery screens'],
+    ['src/notifications.js', /a\.\\`name\\` AS asset_name/, /LEFT JOIN assets a ON a\.id = n\.asset_id/,
+      'the notification bell'],
+  ];
+  for (const [file, select, join, what] of joins) {
+    const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    assert.match(source, select, `${what} selects the name`);
+    assert.match(source, join, `${what} joins assets by id to get it`);
+  }
+
+  /* THE BOARD, THE ASSETS LIST AND THE DRAWER are one query, and it is
+     `SELECT a.*` — so the name on a card is the name in the row, always. */
+  assert.match(CREATE, /const ASSET_SELECT = `SELECT a\.\*,/);
+
+  /* AND THE HEADER'S SEARCH filters the rows the board already has, in the
+     browser. There is no search index to keep in step. */
+  assert.match(PAGE, /pool = pool\.filter\(a=>a\.name\.toLowerCase\(\)\.includes\(q\)\|\|a\.code\.toLowerCase\(\)\.includes\(q\)\)/);
+
+  /* THE ONE PLACE A NAME IS COPIED rather than read: activity_log.entity_label,
+     which is a SNAPSHOT column by design — src/activity.js says so — and the
+     integration event payloads in src/feedback-lifecycle.js, which are records
+     of a moment that has already been sent. Both keep the old name, which is
+     what "historical text stays as it was written" means. Asserted here so the
+     two are named rather than discovered. */
+  const activity = fs.readFileSync(path.join(ROOT, 'src', 'activity.js'), 'utf8');
+  assert.match(activity, /entry\.entityLabel \? String\(entry\.entityLabel\)\.slice\(0, 255\) : null/,
+    'the label is whatever the route passed, stored as given');
+  const lifecycle = fs.readFileSync(path.join(ROOT, 'src', 'feedback-lifecycle.js'), 'utf8');
+  assert.match(lifecycle, /assetName: asset\.name \|\| null/,
+    'an integration event carries the name it was raised with');
+});
+
 test('no asset name appears in any stored path, which is why nothing is moved', () => {
   /* THE SURVEY, PINNED. An upload's path is project folder / discipline /
      person / subpath — see uploadPathFor in src/server-link.js — and a local
