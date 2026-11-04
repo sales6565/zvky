@@ -102,8 +102,24 @@ function fixture() {
   /* Lifted, not retyped, so this drives what ships: the whole Time Sheet tab
      (tsState, renderTimesheet, wireTimesheet, downloadAuthed), the download
      modal's own code, its static markup and the three lines that wire it. */
-  const tab = cut('/* ---------- Time Sheet ----------',
+  /* STARTS AT THE EXACT-HOURS RULE, not at the Time Sheet comment.
+     That block sits immediately above the tab and renderTimesheet now calls
+     into it — tsRuleLine for the day's progress sentence, tsSubmitHelp for the
+     text beside Submit, tsHoursRefusal on the save path. A cut beginning one
+     comment lower left tsRuleLine undefined and every test in this file died
+     inside renderTimesheet with a ReferenceError; the frozen full-suite run
+     caught exactly that, which is the second time a lifted span in this suite
+     has gone stale under a change to the page it lifts.
+     The rule has its own two suites. It is carried here because the tab cannot
+     be drawn without it, and the assertion below says so out loud so the next
+     person who moves this cut finds out at once. */
+  const tab = cut('/* ---------- the exact-hours rule ---',
     '/* ---------- Download timesheets (everybody you can see) ----------', 'the Time Sheet tab');
+  for (const needed of ['function tsRuleLine(', 'const tsSubmitHelp =',
+    'async function tsHoursRefusal(', 'async function renderTimesheet(']) {
+    assert.ok(tab.includes(needed),
+      `the lifted tab carries ${needed} — renderTimesheet calls it`);
+  }
   const modal = cut('/* ---------- Download timesheets (everybody you can see) ----------',
     '/* One line of a day. A modal rather than an inline row', 'the download modal');
   const wiring = cut("const tsExportWrap = document.getElementById('tsExportWrap');",

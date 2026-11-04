@@ -335,8 +335,16 @@ test('the form refuses to file a half-filled line, and says so beside the dropdo
   h.nodes.tl_sub.value = 'idle_left_early';
   assert.strictEqual(h.api.tlSubOptionProblem(), null, 'and is satisfied once one is chosen');
 
-  // The Save button asks the same question before the round trip.
-  const save = PAGE.slice(PAGE.indexOf("document.getElementById('tl_save')"));
+  /* The Save button asks the same question before the round trip.
+
+     NAMED BY ITS addEventListener, NOT BY THE ID ALONE. Three places in the
+     page now reach for tl_save — this handler, and two functions that enable or
+     disable it — and the first of those three sits above the handler in the
+     file, so slicing from the bare id landed in the wrong function and matched
+     none of the three assertions below. (The frozen full-suite run caught it;
+     the locator was fragile before anything was added near it.) */
+  const save = PAGE.slice(
+    PAGE.indexOf("document.getElementById('tl_save').addEventListener('click'"));
   const body = save.slice(0, save.indexOf('\n});'));
   assert.match(body, /const subProblem = tlSubOptionProblem\(\);/);
   assert.match(body, /if\(subProblem\)\{/, 'and refuses rather than posting');
