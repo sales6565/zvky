@@ -653,9 +653,10 @@ async function onAssigned(db, userId, assetId, { now = Date.now() } = {}) {
  * invisible to it. The person starts again themselves, which is what the brief
  * asked for.
  */
-async function sweepLeave(db, { now = Date.now(), log = null } = {}) {
+async function sweepLeave(db, { now = Date.now(), log = null, userId = null,
+  includePlanned = null, at: stopAt = null } = {}) {
   const workLog = require('./work-log');
-  const index = await liveWindowsNow(db, now);
+  const index = await liveWindowsNow(db, now, { userId, includePlanned });
   if (!index.size) return [];
   let rows = [];
   try {
@@ -681,8 +682,18 @@ async function sweepLeave(db, { now = Date.now(), log = null } = {}) {
     if (!hit) continue;
     const startedAt = now - (Number(row.age_seconds) || 0) * 1000;
     /* Never before the session began: a window that opened this morning and a
-       timer started inside it close at the start, not at a stamp before it. */
-    const at = Math.max(startedAt, hit.from);
+       timer started inside it close at the start, not at a stamp before it.
+     *
+     * `stopAt` IS FOR A BOOKING MADE JUST NOW, and it is the reason this
+     * parameter exists. A vacation starting TODAY (notice period 0) has a
+     * window that opened at midnight, and closing the timer at the window's
+     * start would throw away the hours the person genuinely worked this morning
+     * before they decided to go. The booking route passes the moment of
+     * booking, so time before it stays recorded and only time after it is cut.
+     * The floor is still the session's own start, for the same reason as
+     * before. */
+    const from = stopAt === null ? hit.from : Math.max(hit.from, Number(stopAt));
+    const at = Math.max(startedAt, Math.min(from, now));
     await workLog.close(db, row.assetId, 'on_leave', null, { at });
     stopped.push({ userId: row.userId, assetId: row.assetId, code: row.code, name: row.name });
   }
@@ -695,12 +706,32 @@ async function sweepLeave(db, { now = Date.now(), log = null } = {}) {
 /* Who is inside a leave window at this instant, as intervals. One query, no
    user filter, for the reason liveLeaveIndex gives in src/work-log.js: leave is
    rare and the whole of today's is a handful of rows. */
-async function liveWindowsNow(db, now = Date.now()) {
+async function liveWindowsNow(db, now = Date.now(), { userId = null,
+  includePlanned = null } = {}) {
   const today = timesheetGate.istDate(now);
   const yesterday = timesheetGate.shiftDays(today, -1);
   const index = new Map();
   const map = await activeBetween(db, yesterday, today);
+  /* WHETHER A VACATION'S DAYS PUT A TIMER DOWN, read once for the whole sweep.
+   *
+   * A vacation materialises into ORDINARY LEAVE ROWS carrying source
+   * 'planned' — that is the whole design of src/vacation.js, and it is why
+   * every figure in this application excludes a holiday without knowing
+   * vacations exist. So this is the one place that has to tell the two apart,
+   * because the studio's switch is about vacations and not about leave: a lead
+   * marking somebody on leave this afternoon still stops their timer whatever
+   * this setting says.
+   *
+   * THE HOURS ARE EXCLUDED EITHER WAY. With the switch off the timer keeps
+   * running, and the leave window is still subtracted from it — by
+   * workLog.liveLeaveIndex while it runs and by close() when it ends. Nothing
+   * about the arithmetic depends on this; all it governs is whether a timer is
+   * left sitting on a screen as though somebody were at work. */
+  const planned = includePlanned === null
+    ? require('./leave-settings').vacationStopTimers() : Boolean(includePlanned);
   for (const row of map) {
+    if (userId && row.userId !== userId) continue;
+    if (row.planned && !planned) continue;
     const wins = windowsFromRow(row).filter((w) => now >= w.from && now < w.to);
     if (wins.length) index.set(row.userId, (index.get(row.userId) || []).concat(wins));
   }

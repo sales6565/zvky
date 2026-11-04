@@ -4896,13 +4896,20 @@ async function ensureDayStatus(db, log) {
       -- ever touches time.
       vacation_require_approval TINYINT(1) NOT NULL DEFAULT 0,
       -- How many days ahead a person may start their own vacation. 1 = from
-      -- tomorrow, which is the floor: today is somebody else's to record.
+      -- tomorrow, which is the DEFAULT and was once the floor. 0 is now legal
+      -- and means a person may start a vacation today; the floor moved, the
+      -- default did not, so an existing deployment is unchanged.
       vacation_min_notice_days  SMALLINT  NOT NULL DEFAULT 1,
       -- The longest self-service range, in days inclusive.
       vacation_max_range_days   SMALLINT  NOT NULL DEFAULT 60,
       -- Whether the in-app notifications are also emailed. In-app is always
       -- raised; this is the half an admin can silence.
       vacation_email_enabled  TINYINT(1)  NOT NULL DEFAULT 1,
+      -- Whether a vacation that covers now puts the person's running timers
+      -- down. ON by default: the hours are excluded either way (the leave
+      -- window is subtracted from every figure), so all this governs is whether
+      -- a timer is left sitting on a screen as though somebody were at work.
+      vacation_stop_timers    TINYINT(1)  NOT NULL DEFAULT 1,
       updated_by              CHAR(36)    NULL,
       updated_at              DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )`));
@@ -5006,6 +5013,10 @@ async function ensureDayStatus(db, log) {
     ['vacation_min_notice_days', 'SMALLINT NOT NULL DEFAULT 1'],
     ['vacation_max_range_days', 'SMALLINT NOT NULL DEFAULT 60'],
     ['vacation_email_enabled', 'TINYINT(1) NOT NULL DEFAULT 1'],
+    /* DEFAULT 1 for the same reason the others carry theirs: the column has
+       never existed on a deployed database, so no admin can have expressed a
+       preference about it and there is nothing to override. */
+    ['vacation_stop_timers', 'TINYINT(1) NOT NULL DEFAULT 1'],
   ]) {
     if (!ls.size || ls.has(col)) continue;
     try {

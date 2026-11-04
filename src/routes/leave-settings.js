@@ -32,6 +32,7 @@ const leaveSettings = require('../leave-settings');
 const dayStatus = require('../day-status');
 const workSchedule = require('../work-schedule');
 const activity = require('../activity');
+const notifications = require('../notifications');
 
 const PERMISSION = 'settings.leave.manage';
 
@@ -116,8 +117,59 @@ router.put('/', async (req, res) => {
     summary: leaveSettings.describeChange(result.before, result.settings, { schedule }),
     changes: activity.diff({ leave: was }, { leave: now }),
   });
+  /* WHAT THE SWITCH DID TO THE BOOKINGS THAT WERE WAITING FOR IT.
+   *
+   * Told to the people whose vacations just took effect, because the state of
+   * their booking changed without them doing anything, and audited separately
+   * from the settings entry so the trail says which requests moved rather than
+   * only that a policy did.
+   *
+   * AND THE TIMERS. Activation is the moment the leave days appear, so it is
+   * the moment a vacation that already covers now should put a timer down —
+   * the same sweepLeave call the booking route makes, scoped to one user. The
+   * minute sweep would catch it anyway; doing it here means the person is not
+   * shown a running timer on a day the server has just decided they are away. */
+  for (const item of (result.activated || [])) {
+    await notifications.raise(db, {
+      recipientId: item.userId,
+      actorId: req.user.id,
+      kind: notifications.KINDS.vacation,
+      detail: `Your vacation — ${item.label} — is now active: approval is no longer required.`,
+    }).catch(() => {});
+    const stopped = await dayStatus.sweepLeave(db, { userId: item.userId }).catch(() => []);
+    for (const row of stopped) {
+      await notifications.raise(db, {
+        recipientId: row.userId,
+        actorId: null,
+        kind: notifications.KINDS.work_paused,
+        assetId: row.assetId,
+      }).catch(() => {});
+    }
+  }
+  if ((result.activated || []).length || (result.activationSkippedPast || []).length) {
+    req.activity({
+      module: 'settings',
+      action: 'vacation.approval_switched_off',
+      entityType: 'setting',
+      entityId: 'leave_settings',
+      entityLabel: 'Leave',
+      summary: `Vacation approval switched off — ${result.activated.length} waiting `
+        + `booking(s) took effect`
+        + `${result.activationSkippedPast.length
+          ? `; ${result.activationSkippedPast.length} already in the past were left alone` : ''}`,
+      changes: {
+        activated: result.activated.map((a) => `${a.label} (${a.days.length} day(s))`),
+        skippedPast: result.activationSkippedPast,
+      },
+    });
+  }
+
   res.json({
     ...(await payload()),
+    /* WHICH WAITING BOOKINGS THE SWITCH ACTIVATED, so the screen can say so
+       rather than leaving an admin to wonder what happened to the queue. */
+    activated: result.activated || [],
+    activationSkippedPast: result.activationSkippedPast || [],
     /* NON-BLOCKING, AND SAID AFTER THE SAVE rather than instead of it: a gap
        between the two halves that is ordinary working time is a legitimate
        thing for a studio to want and a surprising thing to do by accident. */

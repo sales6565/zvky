@@ -314,6 +314,32 @@ async function inWindow(db, userIds, from, to) {
   return rows.map((r) => shape(r, { today: timesheetGate.istDate() }));
 }
 
+/* EVERY BOOKING STILL WAITING FOR A DECISION, for the approver's list.
+ *
+ * SCOPED BY THE CALLER, like inWindow above: the route hands in the ids it may
+ * show, because who a person may see is permissions.visibleProjects()'s
+ * question and not this module's. `null` means no scoping — the studio-wide
+ * case — and an EMPTY array means "nobody", which is a different answer and
+ * must not be read as "everybody". That distinction is the whole reason this
+ * takes null rather than defaulting to [].
+ *
+ * OLDEST FIRST, because the queue is a queue: the booking that has been waiting
+ * longest is the one somebody is still wondering about. The dates ordering used
+ * by listFor is the wrong one here — a request made this morning for next
+ * December would sit at the bottom of a list sorted by from_date.
+ */
+async function pending(db, { scopeIds = null, today = null } = {}) {
+  const day = today || timesheetGate.istDate();
+  if (Array.isArray(scopeIds) && !scopeIds.length) return [];
+  const where = Array.isArray(scopeIds)
+    ? 'r.status = $1 AND r.user_id IN ($2)' : 'r.status = $1';
+  const params = Array.isArray(scopeIds) ? [STATUS.submitted, scopeIds] : [STATUS.submitted];
+  const { rows } = await db.query(
+    `${SELECT} WHERE ${where} ORDER BY r.requested_at ASC`, params
+  ).catch((err) => { if (!unavailable(err)) throw err; return { rows: [] }; });
+  return rows.map((r) => shape(r, { today: day }));
+}
+
 /* ---------------------------------------------------------------------------
  * WRITING.
  */
@@ -395,6 +421,206 @@ async function submit(db, { userId, input, actor, today = null, forSelf = true }
      vacations affect time" is this line and not a filter somewhere downstream. */
   const days = approvalNeeded ? [] : await materialise(db, { ...v, id, userId }, { setBy: (actor && actor.id) || userId });
   return { ok: true, request: await byId(db, id, { today: day }), days, approvalNeeded };
+}
+
+/* ---------------------------------------------------------------------------
+ * TURNING THE APPROVAL OPTION OFF ACTIVATES WHAT WAS WAITING.
+ *
+ * THE RULE THE BRIEF STATES: pending items follow the OFF rule, so they become
+ * active. The alternative — leaving them pending with nobody able to approve
+ * them, because the screen that approves them is now hidden — is a set of
+ * bookings that can never take effect and that their owners believe are in.
+ * That is the failure this exists to prevent.
+ *
+ * ONLY WHAT WAS STILL WAITING. A rejected or cancelled request is a decision
+ * somebody made and is not reopened by a settings change; an approved one is
+ * already live. Only STATUS.submitted moves.
+ *
+ * AND NOTHING THAT HAS GONE BY. A request whose last day is behind us is
+ * activated as a record — its status becomes approved so the person's history
+ * is honest about what was booked — but materialise() only writes the days
+ * daysOf() yields, and the day rows it writes for past dates would be marks on
+ * time that has already been reported on. So past-only requests are left
+ * alone and reported separately: a studio turning this off in April does not
+ * retroactively put somebody on leave in February.
+ *
+ * EXISTING VACATIONS ARE UNTOUCHED, which is the brief's other instruction and
+ * follows from the status filter rather than from a special case.
+ */
+async function activatePending(db, { actor = null, today = null } = {}) {
+  const day = today || timesheetGate.istDate();
+  let rows = [];
+  try {
+    const got = await db.query(
+      `SELECT id, user_id AS userId, DATE_FORMAT(to_date, '%Y-%m-%d') AS \`to\`
+         FROM leave_requests WHERE status = $1 ORDER BY from_date`, [STATUS.submitted]
+    );
+    rows = got.rows;
+  } catch (err) {
+    if (!unavailable(err)) throw err;
+    return { activated: [], skippedPast: [] };
+  }
+
+  const activated = [];
+  const skippedPast = [];
+  for (const row of rows) {
+    if (String(row.to) < day) { skippedPast.push(row.id); continue; }
+    await db.query(
+      `UPDATE leave_requests SET status = $1, decided_by = $2, decided_at = NOW(),
+              decision_note = $3 WHERE id = $4 AND status = $5`,
+      [STATUS.approved, (actor && actor.id) || null,
+        'Approval was switched off in Settings, so this took effect.', row.id, STATUS.submitted]
+    );
+    const request = await byId(db, row.id, { today: day });
+    if (!request) continue;
+    const days = await materialise(db, request, { setBy: (actor && actor.id) || null });
+    activated.push({ id: row.id, userId: row.userId, label: request.label, days });
+  }
+  if (activated.length) {
+    for (const who of new Set(activated.map((a) => a.userId))) {
+      await dayStatus.recount(db, { userId: who }).catch(() => {});
+    }
+  }
+  return { activated, skippedPast };
+}
+
+/* ---------------------------------------------------------------------------
+ * CHANGING THE DATES OF A BOOKING THAT IS ALREADY IN.
+ *
+ * THE OWNER MAY ALWAYS DO THIS, which is what the brief asks for, and the
+ * validation is the booking's own: same notice period, same maximum range, same
+ * overlap check, same "every day is a weekly off" refusal. One validate(), so a
+ * rule the studio sets cannot be enforced on booking and skipped on editing.
+ *
+ * WHAT MAY MOVE DEPENDS ON WHETHER IT HAS STARTED, and this is the one rule
+ * here that the brief does not state:
+ *
+ *   not started yet    the whole range may change. Nothing has happened, no
+ *                      figure has been affected, so this is a re-booking.
+ *   already started     only the END may move. The days already behind the
+ *                      cut excluded somebody's hours, were counted by the
+ *                      follow-up lists, and may be in a report that has been
+ *                      sent. Moving the start of a vacation that began on
+ *                      Monday would be rewriting what happened on Monday, and
+ *                      "the vacation's effect on past days is never rewritten"
+ *                      is the brief's own instruction.
+ *
+ * So a started vacation can be shortened, extended, or ended today — all of
+ * which are statements about the future — and cannot be made to have begun on a
+ * different day. An owner who genuinely needs that asks somebody with
+ * leave.manage_all to cancel it, which is the existing route for reaching into
+ * time that has already happened.
+ *
+ * THE CUT is tomorrow for the owner, exactly as cancel() computes it, and for
+ * the same reason: today's figure is already being read.
+ *
+ * DAYS ARE RECONCILED, NOT REBUILT. Days at or after the cut that the new range
+ * does not want are cleared; days it wants that are not marked are
+ * materialised; days before the cut are not touched at all. A test asserts that
+ * a day before the cut survives an edit that no longer covers it.
+ */
+async function edit(db, { requestId, input, actor, today = null, forSelf = true }) {
+  const day = today || timesheetGate.istDate();
+  if (!leaveSettings.vacationEnabled()) return { ok: false, status: 409, code: 'feature_disabled' };
+
+  const request = await byId(db, requestId, { today: day });
+  if (!request) return { ok: false, status: 404, code: 'not_found' };
+  if (![STATUS.submitted, ...LIVE].includes(request.status)) {
+    return { ok: false, status: 409, code: 'already_closed', request };
+  }
+
+  const started = String(request.from) <= day;
+  const checked = validate(
+    /* A STARTED VACATION KEEPS ITS OWN START, whatever was sent. Taking it from
+       the request rather than refusing a payload that repeats it means the
+       screen can send the whole booking back unchanged, which is what a form
+       does, without having to know this rule. */
+    started ? { ...input, from: request.from, fromPortion: request.fromPortion } : input,
+    { today: day, forSelf }
+  );
+  if (!checked.ok) return { ok: false, status: 422, code: 'invalid', errors: checked.errors };
+  const v = checked.value;
+
+  if (started && (String(input.from || request.from) !== String(request.from))) {
+    return {
+      ok: false,
+      status: 422,
+      code: 'started',
+      errors: [{ field: 'from', message: `This vacation began on ${request.from}, so its start `
+        + 'cannot be moved — those days have already excluded your hours. The end date can '
+        + 'still change.' }],
+    };
+  }
+
+  const wanted = daysOf(v);
+  if (!wanted.length) {
+    return {
+      ok: false,
+      status: 422,
+      code: 'no_working_days',
+      errors: [{ field: 'from', message: 'Every day in that range is already a weekly off or a holiday.' }],
+    };
+  }
+
+  /* ITS OWN DAYS ARE NOT A CLASH WITH ITSELF. */
+  const clash = await conflicts(db, request.userId, wanted, { ignoreRequestId: requestId });
+  if (clash.length) {
+    return { ok: false, status: 409, code: 'overlap', overlap: clash, error: overlapMessage(clash) };
+  }
+
+  const cut = addDays(day, 1);
+  const live = await daysOfRequest(db, requestId);
+  const wantedDates = new Set(wanted.map((d) => d.date));
+
+  const cleared = [];
+  for (const d of live) {
+    if (d < cut || wantedDates.has(d)) continue;
+    const gone = await dayStatus.clear(db, {
+      userId: request.userId, date: d,
+      clearedBy: (actor && actor.id) || null,
+      reason: 'vacation dates changed',
+    });
+    if (gone && gone.ok !== false) cleared.push(d);
+  }
+
+  /* MATERIALISED ONLY IF THE REQUEST IS LIVE. One awaiting approval still has
+     no days, and editing it must not conjure them — the approval is what does
+     that, and a test edits a pending request and asserts it still has none. */
+  const liveNow = LIVE.includes(request.status);
+  const haveNow = new Set(await daysOfRequest(db, requestId));
+  const added = [];
+  if (liveNow) {
+    for (const d of wanted) {
+      if (d.date < cut || haveNow.has(d.date)) continue;
+      const one = await dayStatus.mark(db, {
+        userId: request.userId,
+        date: d.date,
+        kind: dayStatus.KINDS.leave,
+        portion: d.portion,
+        note: request.note || null,
+        setBy: (actor && actor.id) || null,
+        source: dayStatus.SOURCES.planned,
+        requestId,
+      });
+      if (one.ok) added.push(d.date);
+    }
+  }
+  await dayStatus.recount(db, { userId: request.userId }).catch(() => {});
+
+  await db.query(
+    `UPDATE leave_requests SET from_date = $1, to_date = $2, from_portion = $3, to_portion = $4,
+            note = $5 WHERE id = $6`,
+    [started ? request.from : v.from, v.to, started ? request.fromPortion : v.fromPortion,
+      v.toPortion, v.note, requestId]
+  );
+
+  return {
+    ok: true,
+    request: await byId(db, requestId, { today: day }),
+    cleared,
+    added,
+    started,
+  };
 }
 
 async function decide(db, { requestId, approve, actor, note = null, today = null }) {
@@ -520,6 +746,7 @@ async function annotateAway(db, user, options) {
 }
 
 module.exports = {
+  edit, activatePending, pending,
   STATUS, LIVE, annotateAway,
   daysOf, validate, conflicts, overlapMessage, describe,
   listFor, byId, inWindow, daysOfRequest,

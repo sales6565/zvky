@@ -65,7 +65,22 @@ const DAY_END = MINUTES_PER_DAY;
  * today changes a figure that is already being read, and the separation between
  * asking for leave and granting it is the whole reason followup.mark_leave is
  * a permission. A studio can ask for more notice; it cannot ask for less. */
-const MIN_NOTICE_FLOOR = 1;
+/* ZERO IS NOW A LEGAL NOTICE PERIOD, and the default is still one.
+ *
+ * The floor used to be one day and src/vacation.js argued for it at length:
+ * today is the one date somebody ELSE records, because marking today changes a
+ * figure that is already being read. That argument is about who may mark a day,
+ * and the studio has now answered it — a person booking their own holiday
+ * starting this morning is not reaching into anybody else's figures, they are
+ * leaving.
+ *
+ * SO THE FLOOR MOVES AND THE DEFAULT DOES NOT. A deployment that never visits
+ * Settings keeps asking for a day's notice and behaves exactly as before; a
+ * studio that wants same-day holidays sets this to 0 deliberately. At 0 a
+ * booking that covers this moment stops the person's running timers in the same
+ * request — see src/routes/leave.js — which is why the Settings screen says so
+ * on the line beneath. */
+const MIN_NOTICE_FLOOR = 0;
 const MAX_NOTICE = 180;
 const RANGE_FLOOR = 1;
 const RANGE_CEILING = 366;
@@ -103,6 +118,13 @@ const DEFAULTS = {
   vacationEnabled: true,
   vacationRequireApproval: false,
   vacationMinNoticeDays: 1,
+  /* STOP A RUNNING TIMER WHEN A VACATION COVERS NOW. On by default, because a
+     timer left running through somebody's holiday records nothing anyway (the
+     leave window is subtracted from every figure either way) and the only thing
+     it can still do is sit on a screen looking as though they are at work.
+     Switching it off keeps the hours exclusion and leaves the timer alone,
+     which is a studio's choice to make and not a correctness question. */
+  vacationStopTimers: true,
   vacationMaxRangeDays: 60,
   vacationEmailEnabled: true,
 };
@@ -142,6 +164,8 @@ async function load(db) {
       ? DEFAULTS.vacationRequireApproval : Boolean(Number(row.vacation_require_approval)),
     vacationMinNoticeDays: num(row.vacation_min_notice_days) === null
       ? DEFAULTS.vacationMinNoticeDays : Math.max(MIN_NOTICE_FLOOR, num(row.vacation_min_notice_days)),
+    vacationStopTimers: row.vacation_stop_timers === undefined || row.vacation_stop_timers === null
+      ? DEFAULTS.vacationStopTimers : Boolean(Number(row.vacation_stop_timers)),
     vacationMaxRangeDays: num(row.vacation_max_range_days) === null
       ? DEFAULTS.vacationMaxRangeDays : num(row.vacation_max_range_days),
     vacationEmailEnabled: row.vacation_email_enabled === undefined || row.vacation_email_enabled === null
@@ -179,6 +203,7 @@ const minNoticeDays = () => Math.max(MIN_NOTICE_FLOOR, Number(cache.vacationMinN
 const maxRangeDays = () => Math.max(RANGE_FLOOR, Number(cache.vacationMaxRangeDays) || DEFAULTS.vacationMaxRangeDays);
 const vacationApprovalRequired = () => Boolean(cache.vacationRequireApproval);
 const vacationEmailEnabled = () => Boolean(cache.vacationEmailEnabled);
+const vacationStopTimers = () => Boolean(cache.vacationStopTimers);
 
 /* ---------------------------------------------------------------------------
  * THE PREFILL.
@@ -321,6 +346,7 @@ function validate(input = {}, { existing = cache, schedule = workSchedule.curren
   }
   const vacationRequireApproval = bool('vacationRequireApproval');
   const vacationEmailEnabled = bool('vacationEmailEnabled');
+  const vacationStopTimers = bool('vacationStopTimers');
 
   const readCount = (key, label, fallback, floor, ceiling) => {
     const v = pick(key);
@@ -401,6 +427,7 @@ function validate(input = {}, { existing = cache, schedule = workSchedule.curren
       enabled, firstHalfEndMinutes, secondHalfStartMinutes,
       vacationEnabled: vacationEnabledNext,
       vacationRequireApproval, vacationMinNoticeDays, vacationMaxRangeDays, vacationEmailEnabled,
+      vacationStopTimers,
     },
   };
 }
@@ -430,6 +457,7 @@ const clauses = (s, { schedule = workSchedule.current() } = {}) => {
     `notice ${Number(s.vacationMinNoticeDays) || DEFAULTS.vacationMinNoticeDays} day(s)`,
     `longest range ${Number(s.vacationMaxRangeDays) || DEFAULTS.vacationMaxRangeDays} day(s)`,
     `vacation email ${s.vacationEmailEnabled ? 'on' : 'off'}`,
+    `vacation stops timers ${s.vacationStopTimers ? 'on' : 'OFF'}`,
   ];
 };
 
@@ -473,29 +501,54 @@ async function save(db, input, userId, { schedule = workSchedule.current(), toda
     `INSERT INTO leave_settings
        (id, enabled, first_half_end_minutes, second_half_start_minutes, updated_by,
         vacation_enabled, vacation_require_approval, vacation_min_notice_days,
-        vacation_max_range_days, vacation_email_enabled)
-     VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9)
+        vacation_max_range_days, vacation_email_enabled, vacation_stop_timers)
+     VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      ON DUPLICATE KEY UPDATE
        enabled = $1, first_half_end_minutes = $2, second_half_start_minutes = $3, updated_by = $4,
        vacation_enabled = $5, vacation_require_approval = $6, vacation_min_notice_days = $7,
-       vacation_max_range_days = $8, vacation_email_enabled = $9`,
+       vacation_max_range_days = $8, vacation_email_enabled = $9, vacation_stop_timers = $10`,
     [v.enabled ? 1 : 0, v.firstHalfEndMinutes, v.secondHalfStartMinutes, userId || null,
       v.vacationEnabled ? 1 : 0, v.vacationRequireApproval ? 1 : 0,
-      v.vacationMinNoticeDays, v.vacationMaxRangeDays, v.vacationEmailEnabled ? 1 : 0]
+      v.vacationMinNoticeDays, v.vacationMaxRangeDays, v.vacationEmailEnabled ? 1 : 0,
+      v.vacationStopTimers ? 1 : 0]
   ).catch(async (err) => {
-    /* AN UNMIGRATED TABLE STILL SAVES THE THREE COLUMNS IT HAS. A deployment
+    /* AN UNMIGRATED TABLE STILL SAVES THE COLUMNS IT HAS. A deployment
        part-way through its migration must not lose the ability to change the
        half-day split, and the vacation columns it has not got yet cannot be
-       set from a screen that cannot show them either. */
+       set from a screen that cannot show them either.
+
+       THREE WIDTHS, NOT TWO, AND THE MIDDLE ONE IS WHY. Before the timer switch
+       existed this fell straight from "all the vacation columns" to "the three
+       original ones" — which was right when there was one vacation migration,
+       and became wrong the moment there were two: a deployment missing only
+       vacation_stop_timers would have dropped the approval setting, the notice
+       period and the range on the floor on its way past. Each step gives up
+       exactly the columns the error says are missing, and no more. */
     if (!/Unknown column/i.test((err && (err.sqlMessage || err.message)) || '')) throw err;
     await db.query(
+      `INSERT INTO leave_settings
+         (id, enabled, first_half_end_minutes, second_half_start_minutes, updated_by,
+          vacation_enabled, vacation_require_approval, vacation_min_notice_days,
+          vacation_max_range_days, vacation_email_enabled)
+       VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON DUPLICATE KEY UPDATE
+         enabled = $1, first_half_end_minutes = $2, second_half_start_minutes = $3, updated_by = $4,
+         vacation_enabled = $5, vacation_require_approval = $6, vacation_min_notice_days = $7,
+         vacation_max_range_days = $8, vacation_email_enabled = $9`,
+      [v.enabled ? 1 : 0, v.firstHalfEndMinutes, v.secondHalfStartMinutes, userId || null,
+        v.vacationEnabled ? 1 : 0, v.vacationRequireApproval ? 1 : 0,
+        v.vacationMinNoticeDays, v.vacationMaxRangeDays, v.vacationEmailEnabled ? 1 : 0]
+    ).catch(async (err2) => {
+      if (!/Unknown column/i.test((err2 && (err2.sqlMessage || err2.message)) || '')) throw err2;
+      await db.query(
       `INSERT INTO leave_settings
          (id, enabled, first_half_end_minutes, second_half_start_minutes, updated_by)
        VALUES (1, $1, $2, $3, $4)
        ON DUPLICATE KEY UPDATE
-         enabled = $1, first_half_end_minutes = $2, second_half_start_minutes = $3, updated_by = $4`,
-      [v.enabled ? 1 : 0, v.firstHalfEndMinutes, v.secondHalfStartMinutes, userId || null]
-    );
+           enabled = $1, first_half_end_minutes = $2, second_half_start_minutes = $3, updated_by = $4`,
+        [v.enabled ? 1 : 0, v.firstHalfEndMinutes, v.secondHalfStartMinutes, userId || null]
+      );
+    });
   });
 
   const day = today || require('./timesheet-gate').istDate();
@@ -515,7 +568,38 @@ async function save(db, input, userId, { schedule = workSchedule.current(), toda
   }
 
   await load(db);
-  return { ok: true, before, settings: current(), warnings: checked.warnings, resnapshotted };
+
+  /* TURNING APPROVAL OFF ACTIVATES WHAT WAS WAITING FOR IT.
+   *
+   * AFTER load(), deliberately: materialise() asks this module whether vacation
+   * mode is on, and it must get the saved answer rather than the one being
+   * replaced.
+   *
+   * REQUIRED LAZILY because src/vacation.js requires this file — it asks for the
+   * notice period and the approval option — so a top-level require here would
+   * be a cycle. The same lazy-require this file already uses for
+   * timesheet-gate, for the same reason.
+   *
+   * ONE DIRECTION ONLY. Turning approval ON leaves live vacations live: it
+   * governs what happens to new bookings, and un-approving somebody's holiday
+   * because an admin changed a policy would clear the days under a person who
+   * may already be away. */
+  let activated = { activated: [], skippedPast: [] };
+  if (before.vacationRequireApproval && !v.vacationRequireApproval) {
+    activated = await require('./vacation')
+      .activatePending(db, { actor: userId ? { id: userId } : null, today: day })
+      .catch(() => ({ activated: [], skippedPast: [] }));
+  }
+
+  return {
+    ok: true,
+    before,
+    settings: current(),
+    warnings: checked.warnings,
+    resnapshotted,
+    activated: activated.activated,
+    activationSkippedPast: activated.skippedPast,
+  };
 }
 
 module.exports = {
@@ -523,7 +607,8 @@ module.exports = {
   clauses,
   MIN_NOTICE_FLOOR, MAX_NOTICE, RANGE_FLOOR, RANGE_CEILING,
   load, isLoaded, current, leaveIdleEnabled,
-  vacationEnabled, vacationApprovalRequired, vacationEmailEnabled, minNoticeDays, maxRangeDays,
+  vacationEnabled, vacationApprovalRequired, vacationEmailEnabled, vacationStopTimers,
+  minNoticeDays, maxRangeDays,
   prefill, split, windowFor, clock, readClock,
   validate, save, summarise, describeChange,
 };

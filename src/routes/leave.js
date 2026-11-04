@@ -134,6 +134,59 @@ async function approvers() {
  * caller gets a count rather than an exception. The brief asks for that in as
  * many words and src/email-notifications.js already works that way; this is the
  * in-app half held to the same promise. */
+/* ---------------------------------------------------------------------------
+ * A VACATION THAT COVERS THIS MOMENT PUTS THE PERSON'S TIMERS DOWN, NOW.
+ *
+ * THE SAME MECHANISM AS LEAVE, not a second one: this calls
+ * dayStatus.sweepLeave — the function the minute sweep calls — scoped to one
+ * user and given the moment of booking as the stop time. So the close reason is
+ * REASONS.on_leave exactly as before, resumeOverdue() still ignores it (nothing
+ * auto-resumes), a session started yesterday is still handled, and the figures
+ * are still produced by close(). There is nothing here that could drift from
+ * what the sweep does, because it IS what the sweep does.
+ *
+ * WHY IT IS NEEDED AT ALL, when the sweep runs every minute: because the sweep
+ * would close the timer at the window's START, which for a vacation beginning
+ * today is midnight — throwing away the hours somebody genuinely worked this
+ * morning before deciding to take the day. Passing `at` keeps that time and
+ * cuts only what follows the booking.
+ *
+ * ONLY WHEN THE DAYS ARE REAL. A booking awaiting approval has materialised no
+ * leave rows, so sweepLeave finds no window and stops nothing — which is the
+ * correct behaviour rather than a special case, and a test asserts it by
+ * calling this on a pending request.
+ *
+ * AND ONLY WHEN THE STUDIO ASKS. The switch is read inside liveWindowsNow, so
+ * it is read in one place for both the sweep and this.
+ */
+async function stopTimersForVacation(req, { userId, at = Date.now() }) {
+  const stopped = await dayStatus.sweepLeave(db, { now: Date.now(), at, userId })
+    .catch(() => []);
+  for (const row of stopped) {
+    /* THE SAME NOTIFICATION THE SWEEP RAISES, with no actor for the same
+       reason: the booking did this, and raise() drops a recipient who is also
+       the actor — which would be this very person. */
+    await notifications.raise(db, {
+      recipientId: row.userId,
+      actorId: null,
+      kind: notifications.KINDS.work_paused,
+      assetId: row.assetId,
+    }).catch(() => {});
+  }
+  if (stopped.length) {
+    req.activity({
+      module: 'users',
+      action: 'vacation.timers_stopped',
+      entityType: 'user',
+      entityId: userId,
+      entityLabel: stopped[0].code || 'asset',
+      summary: `Vacation started — stopped ${stopped.length} running timer(s): `
+        + stopped.map((r) => r.code || r.assetId).join(', '),
+    });
+  }
+  return stopped;
+}
+
 async function announce(req, { person, request, action, recipients }) {
   const sentence = {
     submitted: `${person.name} booked a vacation — ${request.label}.`,
@@ -259,7 +312,93 @@ router.post('/mine', requirePermission('leave.request'), async (req, res) => {
     summary: `${person.name} — ${made.request.label}${made.approvalNeeded ? ' (awaiting approval)' : ''}`,
   });
 
-  return res.status(201).json({ ...made, notified: sent });
+  /* THE TIMERS, IN THIS REQUEST. Only once the days exist — a booking awaiting
+     approval has none — and stopTimersForVacation finds nothing to stop for a
+     vacation that starts tomorrow, so this is one query on the ordinary path. */
+  const stopped = made.approvalNeeded
+    ? [] : await stopTimersForVacation(req, { userId: target });
+
+  return res.status(201).json({ ...made, notified: sent, stoppedTimers: stopped });
+});
+
+/* ---------------------------------------------------------------------------
+ * CHANGING THE DATES OF YOUR OWN BOOKING. PATCH /leave/:id
+ *
+ * ALWAYS ALLOWED FOR THE OWNER, which is the brief's instruction, and that is
+ * why the permission here is leave.request and not leave.approve: editing your
+ * own holiday is the same act as booking it. Somebody else's needs
+ * leave.manage_all, exactly as booking on their behalf does.
+ *
+ * APPROVAL IS NOT RE-ASKED, and that is a decision worth recording. An edit to
+ * a LIVE vacation leaves it live; an edit to one still awaiting approval leaves
+ * it waiting. The alternative — sending an approved vacation back to pending
+ * because its owner moved the end date by a day — would clear the days under
+ * somebody who is already away, and a person mid-holiday is the worst possible
+ * moment to make their time off provisional again. A studio that wants the
+ * change reviewed has the audit entry and the notification below.
+ */
+router.patch('/:id', requirePermission('leave.request'), async (req, res) => {
+  if (!leaveSettings.vacationEnabled()) {
+    return res.status(409).json({
+      error: 'Vacation mode is switched off in Settings → Leave.',
+      code: 'feature_disabled',
+    });
+  }
+  const today = timesheetGate.istDate();
+  const existing = await vacation.byId(db, req.params.id, { today });
+  if (!existing) return res.status(404).json({ error: 'That vacation is not there.' });
+
+  const forSelf = existing.userId === req.user.id;
+  if (!forSelf && !permissions.holds(req.user, 'leave.manage_all')) {
+    return res.status(403).json({ error: 'You can only change your own vacation.', code: 'not_yours' });
+  }
+  if (!forSelf) {
+    const reach = await reachable(req.user);
+    if (reach.ids && !reach.ids.has(existing.userId)) {
+      return res.status(403).json({ error: 'That person is not in the projects you can see.' });
+    }
+  }
+
+  const done = await vacation.edit(db, {
+    requestId: existing.id, input: req.body || {}, actor: req.user, today, forSelf,
+  });
+  if (!done.ok) {
+    return res.status(done.status).json({
+      error: done.error || (done.errors && done.errors[0] && done.errors[0].message)
+        || 'That could not be changed.',
+      code: done.code,
+      errors: done.errors || null,
+      overlap: done.overlap || null,
+    });
+  }
+
+  req.activity({
+    module: 'users',
+    action: 'vacation.edited',
+    entityType: 'user',
+    entityId: existing.userId,
+    entityLabel: existing.personName,
+    summary: `${existing.personName} — ${existing.label} — changed to ${done.request.label}`
+      + `${done.cleared.length ? `; ${done.cleared.length} day(s) released` : ''}`
+      + `${done.added.length ? `; ${done.added.length} day(s) added` : ''}`,
+  });
+
+  /* THE LEADS ARE TOLD, as they were when it was booked: a date somebody was
+     planning around has moved. The owner is not told about their own edit —
+     raise() drops a recipient who is also the actor. */
+  await Promise.all((await leadsFor(existing.userId)).map((id) => notifications.raise(db, {
+    recipientId: id,
+    actorId: req.user.id,
+    kind: notifications.KINDS.vacation,
+    detail: `${existing.personName} changed a vacation — now ${done.request.label}`,
+  }).catch(() => {})));
+
+  /* AND IF THE NEW RANGE NOW COVERS THIS MOMENT, the timers go down — the same
+     call the booking makes, for the case where somebody extends a vacation
+     backwards onto today or brings tomorrow's forward. */
+  const stopped = await stopTimersForVacation(req, { userId: existing.userId });
+
+  return res.json({ ...done, stoppedTimers: stopped });
 });
 
 router.post('/:id/cancel', requirePermission('leave.request'), async (req, res) => {
@@ -313,6 +452,48 @@ router.post('/:id/cancel', requirePermission('leave.request'), async (req, res) 
   return res.json({ ...done, notified: sent });
 });
 
+/* ---------------------------------------------------------------------------
+ * THE APPROVER'S QUEUE. GET /api/leave/pending
+ *
+ * THE GAP THIS FILLS, found in the survey: with approval switched on, a pending
+ * vacation was surfaced ONLY by the notification raised when it was submitted.
+ * There was no list anywhere. A notification that is missed, or read on a phone
+ * at the weekend, left a booking waiting with nobody able to find it again, and
+ * the person who booked it believing it was in. The decide route has existed
+ * since Prompt 55; what was missing was any way to know what to decide.
+ *
+ * ITS OWN KEY, NOT THE DASHBOARD'S, and that is a deliberate difference from
+ * the other lists on that screen. The Admin Dashboard guards everything behind
+ * report.admin_dashboard, so mounting this there would mean a studio that gives
+ * a producer leave.approve — the authority to decide these — hands them a
+ * button that returns nothing unless they are also given the whole dashboard.
+ * The authority to approve is the right gate for the queue of things to
+ * approve. The dashboard DRAWS this list; it does not own it.
+ *
+ * SCOPED LIKE EVERY OTHER READ, by reachable() — the same visibleProjects()
+ * union the booking route uses to decide whose vacation you may book. A lead
+ * sees their own people's requests; a studio-wide account sees the studio's.
+ * The `ids: null` case is studio-wide and the empty-Set case is "nobody", which
+ * vacation.pending() keeps distinct from each other.
+ */
+router.get('/pending', requirePermission('leave.approve'), async (req, res) => {
+  const today = timesheetGate.istDate();
+  const reach = await reachable(req.user);
+  const list = await vacation.pending(db, {
+    scopeIds: reach.ids ? [...reach.ids] : null,
+    today,
+  });
+  return res.json({
+    today,
+    /* SAID OUT LOUD so the screen can tell "nothing is waiting" from "approval
+       is switched off, so nothing ever will be". */
+    approvalRequired: leaveSettings.vacationApprovalRequired(),
+    vacationEnabled: leaveSettings.vacationEnabled(),
+    studioWide: reach.studioWide,
+    requests: list,
+  });
+});
+
 router.post('/:id/decide', requirePermission('leave.approve'), async (req, res) => {
   const today = timesheetGate.istDate();
   const approve = req.body.approve === true || req.body.approve === 'true';
@@ -356,7 +537,13 @@ router.post('/:id/decide', requirePermission('leave.approve'), async (req, res) 
     summary: `${existing.personName} — ${done.request.label} — ${approve ? 'approved' : 'rejected'}`,
   });
 
-  return res.json({ ...done, mailed });
+  /* APPROVING IS WHEN THE DAYS APPEAR, so it is also when the timers go down if
+     the vacation already covers now — the approval may well come after the
+     start date. A rejection materialises nothing and stops nothing. */
+  const stopped = approve
+    ? await stopTimersForVacation(req, { userId: existing.userId }) : [];
+
+  return res.json({ ...done, mailed, stoppedTimers: stopped });
 });
 
 /* ---------------------------------------------------------------------------
