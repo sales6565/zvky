@@ -707,7 +707,14 @@ test('the rule, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) => {
          not a hole in the policy. */
       const older = gate.previousWorkingDay(owed, { loggableDays: WEEK });
       const refused = await fill('ana', older);
-      assert.strictEqual(refused.status, 400, JSON.stringify(refused.body));
+      /* 422 AND TIMESHEET_DAY_LOCKED since Prompt 65, where this was a 400.
+         The window now governs deleting and submitting too, and all four routes
+         answer a closed day with one code the page can act on; the sentence a
+         person reads is unchanged. The carve-out above is untouched — it is
+         still exactly one day wide, which is what the two assertions either
+         side of this one prove. */
+      assert.strictEqual(refused.status, 422, JSON.stringify(refused.body));
+      assert.strictEqual(refused.body.code, 'TIMESHEET_DAY_LOCKED');
       assert.match(refused.body.error, /days ago/);
     } finally {
       await as('root', '/admin/settings/timesheet', {

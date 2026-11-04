@@ -1631,6 +1631,127 @@ storage for an S3-compatible bucket — it's the only file that needs to
 change, since every route just uses `req.file` / `file_path` without caring
 where it physically lives.
 
+## Timesheet days: which days are open for entry
+
+**Settings → Time Sheet → Timesheet days.** Two fields, both **blank by
+default**, which means no limit and is exactly what this application did before
+either existed:
+
+| | |
+|---|---|
+| **Days open before today** | `backdateDays`. Blank allows any past date; `1` means today and the previous day. |
+| **Days open after today** | `futureDays`. `0` refuses tomorrow; blank allows any date. |
+
+**There is no new switch, and that is deliberate.** These two have existed since
+Prompt 51 and already mean what a "limit entry to recent days" switch would
+mean — the pair being blank *is* the switch being off. A third setting beside
+them could only ever disagree with them.
+
+### What was actually missing: enforcement on two of the four routes
+
+The windows were checked in `sheets.validateEntry()`, which `POST` and `PATCH`
+call — and nothing else. **`DELETE` and submit never looked at the date at all**,
+so a day outside the window could be emptied and filed.
+
+[`src/timesheet-day-window.js`](src/timesheet-day-window.js) is now the one
+implementation, and all four ask it. `validateEntry` delegates to it rather than
+keeping a second copy, so a rule the studio sets cannot be enforced on filing and
+skipped on deleting.
+
+**Why deleting obeys the window when it is exempt from the *hours* rule.** The
+hours rule only ever refuses a day for being wrong in a way its owner can fix,
+and deleting moves a day towards short, which submit already refuses. The window
+is a different kind of statement — *this period is finished* — and a reconciled
+month whose lines can still be deleted is not reconciled.
+
+**An edit is checked on both days**, the one the line is leaving and the one it
+is arriving on. Checking only the destination would let somebody empty a closed
+Tuesday by moving its lines to today.
+
+### The three ways a closed day opens
+
+| | reason reported | |
+|---|---|---|
+| the previous-day carve-out | `owed_day` | the gate's own owed day is always fillable |
+| **Fill Timesheet On Any Day** | `backdate_key` | `timesheet.backdate`, Super Admin by default |
+| an unlock row | `unlocked` | **Open A Locked Timesheet Day**, `timesheet.unlock_day` |
+
+The carve-out **predates this prompt and is unchanged**. It exists because
+`backdateDays` could put the day the gate is demanding out of reach — a window of
+1 on a Monday makes Friday three days back — and a rule that demands the
+impossible is worse than no rule. It is checked **before** the two keys because
+it is not a privilege: it is the window declining to contradict the gate, and it
+applies to somebody holding nothing. It is exactly one day wide, and it covers
+submitting that day as well as filling it, since a rule that let somebody fill
+the owed day but not file it would still be demanding the impossible.
+
+`reason` travels in the week payload and in every refusal, because "why was I
+allowed to edit this?" is the question an admin asks when a figure from a closed
+period looks wrong.
+
+### Opening one day for one person
+
+`timesheet_day_unlocks` — `user_id`, `date`, `unlocked_by`, `unlocked_at`,
+`closed_at`. **`closed_at IS NULL` is the whole of "live"**, and **submitting the
+day is the only thing that closes one**: an unlock exists so one specific day can
+be filed, and the act that finishes the job is filing it. A clock-based expiry
+would strand somebody handed an unlock at five o'clock; a permanent one would
+quietly become a second window nobody remembers granting.
+
+* **A table, not a column on `timesheet_days`**, because the commonest case is a
+  day with no `timesheet_days` row at all — somebody was away, filed nothing, and
+  the day is now outside the window.
+* **No unique key on `(user_id, date)`**: two admins may each open the same day,
+  both decisions are real, and the reader asks whether *any* live row exists
+  while the closer closes all of them.
+* **`POST /api/timesheets/unlock-day`** is scoped by `mayRead()` — the same
+  function the week and the export use — so holding the key does not widen whose
+  timesheet you may reach, and a narrow holder cannot use a 200 to discover that
+  a user id exists.
+* **It opens the day rather than filing it**, because the hours are the person's
+  own statement about their own day. An admin who could type them would be filing
+  somebody else's timesheet, which nothing here lets anybody do.
+* Pressing it twice is a **200**, not a conflict. Every unlock is audit-logged,
+  and the person is notified that the day is open and will close on submission.
+
+### What the page does
+
+The week payload carries `entryWindow` per day: `open`, `reason`, and the
+server's own `closedMessage`. **The page computes none of it** — not the window,
+not the carve-out, not whether this reader holds `timesheet.backdate`, not
+whether a day was unlocked for them. A browser-side copy would be wrong the
+moment any of the four changed while the tab was open; a test greps the week
+renderer to prove it holds none of them.
+
+A closed day is **readable and not hidden**: it keeps its lines, its total and
+its status, loses every write control, and carries a "Closed for entry" chip plus
+the server's sentence. "Where did last Tuesday go" is a worse question than "why
+can I not type in it". Holders of `timesheet.unlock_day` get an **Open this day**
+button on *somebody else's* week — not their own, where it would just be
+`timesheet.backdate` with extra steps and an audit trail reading "they opened it
+for themselves".
+
+**A `422` with `TIMESHEET_DAY_LOCKED` is shown in the page and the week
+refetched**, by the same handler the hours rule uses: both codes mean *this tab
+is out of date*, so the honest answer is identical.
+
+### One behaviour change worth noting on upgrade
+
+A window refusal on `POST`/`PATCH /api/timesheets/entries` now returns **422 with
+`code: "TIMESHEET_DAY_LOCKED"`** where it previously returned a bare **400**. The
+page needs the code to tell "this period is closed" (refresh) from "this line is
+malformed" (do not). **The sentences a person reads are unchanged** — they moved
+into `refusalFor()` verbatim. A **Saturday** refusal is still a 400: that is a day
+the studio does not log hours on at all, a different setting with a different
+answer, and the window's 422 must not swallow it.
+
+### How it interacts with the exact-hours rule
+
+The window is asked **first**, on submit and on every line route. "That period is
+closed" is the more fundamental answer, and telling somebody they are two hours
+short of a day they may not file either way would send them to fix the wrong
+thing.
+
 ## The timesheet hours rule: a day must be exactly the required hours
 
 **Settings → Time Sheet → Timesheet hours rule.** With the switch on, a day must

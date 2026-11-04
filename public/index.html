@@ -2242,6 +2242,14 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
 .ts-flag{font-size:10px;font-family:'IBM Plex Mono';padding:1px 6px;border-radius:9px;
   background:var(--surface-3);color:var(--ink-muted);}
 .ts-flag.over{background:var(--at-risk-t1f);color:var(--at-risk);}
+/* A DAY CLOSED FOR ENTRY. Quiet rather than alarming: it is a policy, not a
+   fault, and the card beneath it is still perfectly readable — which is the
+   whole point of showing a closed day instead of hiding it. The muted card is
+   the same treatment a weekend gets, for the same reason: nothing is wrong, it
+   simply is not a day you type into. */
+.ts-flag.closed{background:var(--surface-3);color:var(--ink-faint);}
+.ts-day.closed{opacity:.86;}
+.ts-closed-note{color:var(--ink-faint);}
 /* Idle hours, named beside the week total rather than taken out of it. Amber,
    the same family the long-day flag uses and the same family the Idle category's
    own seeded colour uses — it says "look at this", not "this is wrong", because
@@ -7185,7 +7193,16 @@ const TS_LEAVE_HINT = 'If you were on leave, ask your admin to mark it.';
    bar will say it after the refresh. */
 async function tsHoursRefusal(err, where){
   const body = (err && err.body) || {};
-  const known = body.code === 'HOURS_BELOW_MINIMUM' || body.code === 'HOURS_ABOVE_MAXIMUM';
+  /* THREE CODES, ONE HANDLER, and the third is the day being closed for entry.
+   *
+   * It belongs here rather than in a handler of its own because the response is
+   * identical in every respect that matters: a 422 carrying one of these codes
+   * means THIS TAB IS OUT OF DATE — somebody's window moved, an unlock closed,
+   * or another tab filed the day — so the honest answer is to say the server's
+   * sentence where the person is looking and redraw from a fresh read. A second
+   * handler would be the same five lines with one more code in it. */
+  const known = body.code === 'HOURS_BELOW_MINIMUM' || body.code === 'HOURS_ABOVE_MAXIMUM'
+    || body.code === 'TIMESHEET_DAY_LOCKED';
   if(!known) return false;
   const message = body.error || 'That day does not add up to the hours required.';
   if(where){
@@ -7198,6 +7215,39 @@ async function tsHoursRefusal(err, where){
      means — so redrawing from a fresh read is the only honest response. */
   await renderTimesheet();
   return true;
+}
+
+/* OPENING ONE CLOSED DAY FOR THE PERSON WHOSE WEEK IS ON SCREEN.
+ *
+ * ASKED FIRST, in the page's own dialog, because it is a decision about a period
+ * that may already have been reported on — and the sentence says what it costs
+ * rather than only what it does.
+ *
+ * THE SERVER DECIDES EVERYTHING ELSE: whether this reader may see that person,
+ * whether the day even needs opening, and when it closes again. The page sends
+ * a date and a user id and redraws from the answer. */
+async function tsOpenDay(date){
+  const whose = (tsState.people||[]).find(u=>u.id === tsState.userId);
+  const name = (whose && whose.name) || 'this person';
+  const ok = await openAsk({
+    title: `Open ${escapeHTML(date)} for ${escapeHTML(name)}?`,
+    message: 'They will be able to fill and submit that day even though it is outside the '
+      + 'studio’s entry window, and it closes again the moment they submit it. '
+      + 'Hours added to a period that has already been reported on will not match a report '
+      + 'somebody has already sent.',
+    confirmLabel: 'Yes, open it',
+  }).catch(()=>false);
+  if(!ok) return;
+  try{
+    const out = await api('/timesheets/unlock-day', { method:'POST',
+      body:{ date, userId: tsState.userId } });
+    showToast(out.opened ? `${date} is open for ${name}.`
+      : (out.already ? 'That day was already open.'
+        : (out.message || 'Nothing was needed.')));
+    await renderTimesheet();
+  }catch(e){
+    showToast(e.message || 'That day could not be opened.');
+  }
 }
 
 /* ---------- Time Sheet ----------
@@ -7330,8 +7380,26 @@ async function renderTimesheet(){
     <div class="ts-week">
       ${week.days.map(day=>{
         const pill = TS_STATUS[day.status] || { label: day.status, color:'var(--ink-muted)' };
-        const editable = week.mayEdit && !day.locked;
-        return `<div class="ts-day${day.overLong?' over':''}${day.weekend||day.holiday?' weekend':''}">
+        /* CLOSED FOR ENTRY, AND THE SERVER SAID SO.
+         *
+         * `day.entryWindow` is the whole answer: the studio's window, the
+         * previous-day carve-out, this reader's timesheet.backdate key and any
+         * unlock opened for them, all resolved on the server. The page has no
+         * copy of any of that and could not have one that stayed true — a key
+         * granted while the tab is open would make a browser-side copy wrong at
+         * once.
+         *
+         * READ-ONLY, NOT HIDDEN. Viewing a closed day stays possible, which is
+         * the brief's instruction and the right one: "where did last Tuesday
+         * go" is a worse question than "why can I not type in it". So `editable`
+         * loses the write controls and the card keeps its lines, its total and
+         * its status. */
+        const closed = Boolean(day.entryWindow && day.entryWindow.open === false
+          && day.entryWindow.reason !== 'not_yours');
+        const closedWhy = (day.entryWindow && day.entryWindow.closedMessage)
+          || 'Closed for entry. Ask your admin to open it.';
+        const editable = week.mayEdit && !day.locked && !closed;
+        return `<div class="ts-day${day.overLong?' over':''}${day.weekend||day.holiday?' weekend':''}${closed?' closed':''}">
           <div class="ts-day-head">
             <span class="ts-day-name">${tsDayName(day.date)}</span>
             <span class="ts-day-date">${tsPretty(day.date)}</span>
@@ -7343,6 +7411,8 @@ async function renderTimesheet(){
             ${day.weekend && day.hours ? '<span class="ts-flag">Weekend</span>' : ''}
             ${day.holiday ? `<span class="ts-flag">${escapeHTML(day.holiday.name)}</span>` : ''}
             ${day.overLong ? `<span class="ts-flag over">Over ${wd.maxHours}h</span>` : ''}
+            ${closed ? `<span class="ts-flag closed" title="${escapeHTML(closedWhy)}"
+              >Closed for entry</span>` : ''}
           </div>
           ${day.status==='rejected' && day.rejectionReason ? `
             <div class="ts-sentback">
@@ -7421,6 +7491,23 @@ async function renderTimesheet(){
           ${/* Submitted is the end of it — there is nobody to approve it. So the
                  way back is the owner's own, and it has to be offered here or a
                  mistyped figure would be permanent. Only on your own sheet. */''}
+          ${/* WHY IT IS CLOSED, in the server's own words, where the person is
+                 looking. Drawn only when there is nothing else to say about the
+                 day: a submitted day already explains itself, and two notices
+                 would compete. */''}
+          ${closed && !day.locked ? `<div class="ts-empty ts-closed-note">${escapeHTML(closedWhy)}</div>` : ''}
+          ${/* OPENING SOMEBODY ELSE'S CLOSED DAY, for a holder of the key.
+                 ON THEIR WEEK AND NOT ON YOUR OWN: the point of an unlock is
+                 that somebody ELSE decided this day may be filed. A holder
+                 opening their own day would just be timesheet.backdate with
+                 extra steps, and an audit trail that reads "they opened it for
+                 themselves" is not the record this key exists to leave.
+                 The server refuses it either way — openFor() is asked as the
+                 sheet's owner — so this is which button to draw, not the rule. */''}
+          ${closed && !day.locked && !week.mine && can('timesheet.unlock_day')
+            ? `<button class="btn btn-ghost btn-sm ts-unlock" data-day="${day.date}"
+                 title="Let them fill and submit this day. It closes again when they submit it."
+                 >Open this day</button>` : ''}
           ${day.locked ? `<div class="ts-empty">Submitted${day.submittedAt?` ${fmtDate(day.submittedAt)}`:''}.${
             week.mine ? ' Reopen it if something needs changing.' : ''}</div>` : ''}
           ${day.locked && week.mine
@@ -7467,6 +7554,7 @@ function wireTimesheet(el){
   if(exportBtn) exportBtn.onclick = ()=>openTimesheetExport();
 
   el.querySelectorAll('.ts-add').forEach(b=>b.onclick = ()=>openTimesheetLine(b.dataset.day));
+  el.querySelectorAll('.ts-unlock').forEach(b=>b.onclick = ()=>tsOpenDay(b.dataset.day));
   el.querySelectorAll('.ts-del').forEach(b=>b.onclick = async ()=>{
     b.disabled = true;
     try{ await api('/timesheets/entries/'+b.dataset.id, { method:'DELETE' }); await renderTimesheet();
@@ -20485,10 +20573,23 @@ async function renderTimesheetOptions(){
         </div>
       </div>
       <div class="rh-list">
-        <div class="rh-head"><h4>When hours may be filed</h4></div>
+        <div class="rh-head"><h4>Timesheet days</h4></div>
+        ${/* THE TWO FIELDS ARE THE WINDOW, and the section is named for what
+               they do rather than for when they apply. They have existed since
+               Prompt 51 and were enforced only on filing and editing a line;
+               they now govern deleting and submitting too, which is a bigger
+               claim than "when hours may be filed" was making. Blank on both is
+               the default and means no limit, which is the behaviour this
+               application had before either field existed. */''}
+        <div class="rh-note" style="margin:0 0 8px;">Blank means no limit, which is the default.
+          Set <strong>Days open before today</strong> to 1 and <strong>Days open after today</strong>
+          to 0 for &ldquo;today and the previous day only&rdquo;. Outside the window a day cannot be
+          filled, edited, emptied or submitted &mdash; it stays readable. Somebody holding
+          <em>Fill Timesheet On Any Day</em> ignores this, and a day can be opened for one person
+          with <em>Open A Locked Timesheet Day</em>.</div>
         <div class="rh-grid">
-          ${window('backdateDays', 'Days back', 'How old a date a new line may carry.', s.backdateDays)}
-          ${window('futureDays', 'Days ahead', '0 refuses tomorrow; blank allows any date.', s.futureDays)}
+          ${window('backdateDays', 'Days open before today', 'Blank allows any past date.', s.backdateDays)}
+          ${window('futureDays', 'Days open after today', '0 refuses tomorrow; blank allows any date.', s.futureDays)}
           <div class="rh-f rh-days">
             <label>Days hours can be logged on</label>
             <div class="rh-dayset${bad('loggableDays')}">

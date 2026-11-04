@@ -629,7 +629,20 @@ test('Idle, the categories and the policy, end to end',
     assert.strictEqual((await setPolicy('root', { backdateDays: 7 })).status, 200);
     try {
       const refused = await line('ana', { date: '2026-01-08', nonProject: 'admin', hours: 2 });
-      assert.strictEqual(refused.status, 400, JSON.stringify(refused.body));
+      /* 422 AND TIMESHEET_DAY_LOCKED, where this used to be a bare 400.
+       *
+       * THE STATUS CHANGED ON PURPOSE in Prompt 65: the window now governs
+       * deleting and submitting as well as filing, and all four routes answer a
+       * closed day the same way — 422 with a code the page can recognise, so a
+       * stale tab can tell "that period is closed" apart from "that line is
+       * malformed" and refresh rather than just printing a sentence. A 400 with
+       * no code could not carry that distinction.
+       *
+       * THE SENTENCE IS UNCHANGED, which is the other half of the deal: the
+       * wording moved from validateEntry into timesheet-day-window.refusalFor()
+       * verbatim, so what a person reads is exactly what they read before. */
+      assert.strictEqual(refused.status, 422, JSON.stringify(refused.body));
+      assert.strictEqual(refused.body.code, 'TIMESHEET_DAY_LOCKED');
       assert.match(refused.body.error, /the studio allows lines to be filed up to 7 days back/);
       assert.match(refused.body.error, /Lines filed before this rule was set are unaffected/);
 
@@ -650,15 +663,23 @@ test('Idle, the categories and the policy, end to end',
     assert.strictEqual((await setPolicy('root', { futureDays: 0 })).status, 200);
     try {
       const ahead = await line('ana', { date: '2099-01-07', nonProject: 'admin', hours: 1 });
-      assert.strictEqual(ahead.status, 400, JSON.stringify(ahead.body));
+      /* The same change of status as the back-dating case above, for the same
+         reason, on the other edge of the same window. */
+      assert.strictEqual(ahead.status, 422, JSON.stringify(ahead.body));
+      assert.strictEqual(ahead.body.code, 'TIMESHEET_DAY_LOCKED');
       assert.match(ahead.body.error, /does not allow hours to be logged ahead of today/);
     } finally { await resetPolicy(); }
 
     /* SATURDAY, WHICH WAS HARDCODED AS IMPOSSIBLE. The form said "Monday to
        Friday" and validateEntry refused the date outright, while Settings ->
        Working Hours has had a configurable set of days all along. */
+    /* STILL A 400, AND THAT IS THE POINT OF LEAVING IT HERE. A Saturday is not
+       a day outside the studio's WINDOW — it is a day the studio does not log
+       hours on at all, which is a different setting with a different answer. The
+       window's 422 must not swallow it. */
     const refused = await line('ana', { date: SAT, nonProject: 'admin', hours: 2 });
     assert.strictEqual(refused.status, 400, JSON.stringify(refused.body));
+    assert.strictEqual(refused.body.code, undefined, 'not a window refusal');
     assert.match(refused.body.error, /nothing can be logged on a Saturday/);
 
     assert.strictEqual((await setPolicy('root', { loggableDays: [1, 2, 3, 4, 5, 6] })).status, 200);

@@ -127,7 +127,17 @@ const SINCE_SNAPSHOT = [MANAGE, 'settings.email_delivery', 'report.remind', 'set
      rule — there is no per-day override and no "submit anyway" — so it starts
      with the Super Admin and a studio hands it to whoever handles the
      exceptions. Wider by default would make the rule advisory. */
-  'timesheet.min_hours_exempt'];
+  'timesheet.min_hours_exempt',
+  /* THE TWO WAYS ROUND THE TIMESHEET ENTRY WINDOW (Prompt 65 Part B). The
+     window — Settings -> Time Sheet's "days open" pair — now governs filing,
+     editing, deleting AND submitting, so it can genuinely strand somebody who
+     was away. These are the two answers: a standing key for whoever reconciles
+     the period, and a one-day-one-person unlock that closes itself when the day
+     is submitted. Both start with the Super Admin because both let hours reach
+     a period that may already have been reported on; wider by default would
+     make the window advisory. */
+  'timesheet.backdate',
+  'timesheet.unlock_day'];
 
 /* THE KEYS THAT ARE DELIBERATELY NOT SUPER-ADMIN-ONLY, listed separately so
  * each exception is argued rather than hidden in the list above.
