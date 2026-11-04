@@ -386,8 +386,24 @@ test('recording against the studio clock', { skip: cfg ? false : SKIP_REASON }, 
 
     await as('ana', `/assets/${asset}/submit`, { method: 'POST', body: { link: 'https://example.com/v1' } });
     const rows = await sessions(asset);
-    assert.strictEqual(Number(rows[0].seconds), 3 * 3600,
-      'and the stored figure is the same number the panel was showing');
+    /* TO THE SECOND, not to the exact integer — and the one second is the real
+       clock, not slack in the rule.
+       
+       The start is backdated by exactly 180 minutes and then read twice: once
+       by the panel above, and once by the submit that closes the session. Both
+       are NOW minus that stamp, so a second ticking between the two requests
+       makes the stored figure 10801 while the panel said 10800. That is a
+       one-in-sixty failure with no pattern to it, and it happened — the full
+       suite caught it once and the file passed on its own immediately after.
+       
+       The property being asserted is that NOTHING WAS EXCLUDED: the window is
+       00:00 to 24:00, so the only difference the rule could make would be
+       hundreds or thousands of seconds, never one. */
+    const stored = Number(rows[0].seconds);
+    assert.ok(Math.abs(stored - 3 * 3600) <= 1,
+      `and the stored figure is the number the panel was showing, to the second: ${stored}`);
+    assert.ok(stored >= live.currentSeconds,
+      'the clock only ever moves forward between the two reads');
   });
 
   await t.test('the live figure and the stored figure never disagree', async () => {
