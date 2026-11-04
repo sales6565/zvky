@@ -26,6 +26,8 @@ const router = asyncRouter();
 const db = require('../db');
 const { authenticate, requirePermission } = require('../middleware/auth');
 const timesheetSettings = require('../timesheet-settings');
+const roles = require('../roles');
+const rolePermissions = require('../role-permissions');
 const referenceData = require('../reference-data');
 const activity = require('../activity');
 
@@ -50,7 +52,42 @@ async function payload() {
       .filter((e) => e.isSystem).map((e) => e.key),
     dayNames: timesheetSettings.DAY_SHORT,
     limits: { hours: timesheetSettings.HOURS_CEILING, window: timesheetSettings.WINDOW_CEILING },
+    /* WHO IS EXEMPT FROM THE HOURS RULE, by designation, read-only.
+     *
+     * The brief asks the Settings screen to say which roles hold the exemption,
+     * and it asks for a reason: this is the only way round a rule that stops
+     * people submitting, so a Super Admin turning the rule on should be able to
+     * see, on the same screen, who it will not apply to.
+     *
+     * COMPUTED FROM THE LIVE ANSWER rather than from the catalogue's default —
+     * role groups grant permissions as an additive union, so a role can hold
+     * this key without the catalogue implying it. effectiveFor() is the same
+     * function the gate uses, so the list cannot disagree with who actually
+     * gets past the rule.
+     *
+     * LABELS, not keys: this is a sentence a person reads. */
+    exemptRoles: await exemptRoleLabels(),
   };
+}
+
+const EXEMPT_KEY = 'timesheet.min_hours_exempt';
+
+async function exemptRoleLabels() {
+  try {
+    const out = [];
+    for (const key of roles.roleKeys()) {
+      const held = await rolePermissions.effectiveFor(db, key);
+      if (held && held.has(EXEMPT_KEY)) {
+        const def = roles.roleDef(key);
+        out.push((def && def.label) || key);
+      }
+    }
+    return out;
+  } catch {
+    /* A deployment whose role_permissions table cannot be read still draws the
+       screen; the sentence simply does not name anybody, which is honest. */
+    return [];
+  }
 }
 
 // GET /api/admin/settings/timesheet

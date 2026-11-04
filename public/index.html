@@ -2414,6 +2414,20 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
 .an-hist-names .was{color:var(--ink-faint);text-decoration:line-through;}
 .an-hist-who{color:var(--ink-muted);font-size:11px;}
 .an-hist-empty{color:var(--ink-muted);}
+/* The hours required today: the bar, its three states, and the sentence beside
+   Submit. The colours are tokens, like everything else on this page. */
+.ts-rule{margin:8px 0 10px;}
+.ts-rule-bar{height:5px;border-radius:3px;background:var(--surface-3);overflow:hidden;}
+.ts-rule-fill{height:100%;background:var(--ink-muted);transition:width .18s ease;}
+.ts-rule-text{font-size:11.5px;color:var(--ink-muted);margin-top:4px;line-height:1.5;}
+.ts-rule.exact .ts-rule-fill{background:var(--approved);}
+.ts-rule.exact .ts-rule-text{color:var(--approved);}
+.ts-rule.over .ts-rule-fill{background:var(--brand-accent);}
+.ts-rule.over .ts-rule-text{color:var(--brand-accent);}
+.ts-rule.none{font-size:11.5px;color:var(--ink-faint);line-height:1.5;}
+.ts-submit-help{font-size:11.5px;color:var(--ink-muted);margin-top:5px;line-height:1.5;}
+.tl-remaining{font-size:11.5px;color:var(--ink-muted);margin:3px 0 0;line-height:1.5;}
+.tl-fill{background:none;border:none;padding:0;color:var(--brand-accent);cursor:pointer;font-size:11.5px;text-decoration:underline;}
 #appRoot{display:none;}
 @media (max-width:720px){ .drawer{width:100%;} .stats{flex-wrap:wrap;} }
 </style>
@@ -2949,6 +2963,13 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
          memory, which is how a timesheet is actually filled in. -->
     <label>Hours</label>
     <input type="number" id="tl_hours" step="0.25" min="0.25" max="24" placeholder="e.g. 3.5">
+    <!-- HOW MUCH OF THE DAY IS LEFT, and a one-press way to use all of it.
+         Both are drawn from the server's verdict for the day the form is open
+         on (tlSyncRemaining), and both disappear on a day the rule does not
+         touch. The button is the brief's "Fill remaining": it puts the exact
+         remaining figure in the field, which is the one value that makes the
+         day submittable. -->
+    <div id="tl_remaining" class="tl-remaining"></div>
     <div id="tl_suggest" style="font-size:11.5px;color:var(--ink-faint);margin:2px 0 0;"></div>
     <!-- WHAT THE FIGURE IS, AND THE ONE CAVEAT IT CARRIES.
          The hours are this person's time on this asset inside THAT DAY's working
@@ -7073,6 +7094,105 @@ function wirePendingActions(el, refresh){
   }));
 }
 
+/* ---------- the exact-hours rule ------------------------------------------
+ *
+ * THE PAGE DRAWS WHAT THE SERVER DECIDED, AND DECIDES NOTHING.
+ *
+ * Every number below arrives on the day in `day.hoursRule`, computed by
+ * src/timesheet-hours-rule.js: the required figure, what is logged, what is
+ * left, the status and whether the day may be submitted. This block formats
+ * them and enables or disables one button. It does not know that a half day
+ * asks for half, it does not know which days are holidays, and it never
+ * compares an hours figure of its own — because a second copy of the rule is a
+ * second rule, and the two would differ the first time a studio changed the
+ * setting or somebody took a half day. tests/timesheet-hours-rule.test.js greps
+ * this block to prove it stays that way.
+ *
+ * THE BUTTON BEING DISABLED IS A COURTESY, NOT THE RULE. The server refuses a
+ * submit that does not satisfy it, with a 422 and the same sentence, so a stale
+ * tab is told rather than obeyed. tsHoursRefusal below is what shows it.
+ *
+ * CENTIHOURS — hundredths of an hour, the unit a line is stored in. Formatted
+ * here, never compared.
+ */
+function tsHours(centi){
+  if(centi === null || centi === undefined) return '';
+  const hours = Math.round(Number(centi)) / 100;
+  return `${hours.toFixed(2).replace(/\.?0+$/, '')}h`;
+}
+
+/* The one-line sentence under a day's head, in the three states the server can
+   report. The wording is the brief's, and the style class is what the browser
+   test reads to tell success from warning apart. */
+function tsRuleLine(rule){
+  if(!rule || !rule.applies){
+    /* A DAY THE RULE SAYS NOTHING ABOUT. Only the "nothing owed" case gets a
+       note, because it is the only one a person needs explaining — a holiday or
+       a day's leave with no bar on it would otherwise just look broken. The
+       switch being off, the day being before the start date and the reader
+       being exempt are all silent: there is nothing on screen to explain. */
+    if(rule && rule.inactiveBecause === 'nothing_owed'){
+      return `<div class="ts-rule none" id="ts-rule-${rule.date||''}">${
+        escapeHTML(tsNothingOwed(rule))}</div>`;
+    }
+    return '';
+  }
+  const pct = rule.required > 0
+    ? Math.max(0, Math.min(100, Math.round((rule.logged / rule.required) * 100))) : 0;
+  const text = rule.status === 'exact'
+    ? `${tsHours(rule.logged)} of ${tsHours(rule.required)}, ready to submit`
+    : (rule.status === 'short'
+      ? `${tsHours(rule.logged)} of ${tsHours(rule.required)} logged, ${tsHours(rule.remaining)} to go`
+      : `${tsHours(rule.logged)} of ${tsHours(rule.required)}, ${tsHours(-rule.remaining)} over: edit or delete lines to submit`);
+  return `<div class="ts-rule ${rule.status}" role="group" aria-label="Hours required today">
+    <div class="ts-rule-bar"><div class="ts-rule-fill" style="width:${pct}%;"></div></div>
+    <div class="ts-rule-text">${escapeHTML(text)}</div>
+  </div>`;
+}
+
+/* WHY A DAY ASKS FOR NOTHING, in the day's own words. The reason comes from the
+   fields the day already carries — the holiday the server named, the leave mark
+   it already sends for the banner — so this adds no rule of its own. */
+function tsNothingOwed(rule){
+  const day = rule.day || {};
+  if(day.holiday && day.holiday.name) return `${day.holiday.name}: nothing to fill.`;
+  if(day.weekend) return 'A weekly off: nothing to fill.';
+  if(day.dayMark && day.dayMark.label) return `${day.dayMark.label}: nothing to fill.`;
+  return 'Nothing to fill for this day.';
+}
+
+/* The helper text beside Submit, and its tooltip: the same sentence, which is
+   the server's own `reason`. Empty when the day may be submitted. */
+const tsSubmitHelp = (rule) => (rule && rule.applies && !rule.canSubmit ? rule.reason || '' : '');
+
+/* AND THE ONE THING THE PAGE SAYS THAT THE SERVER DOES NOT: where to go when
+   the figure cannot honestly be reached. The brief asks for this sentence and
+   for no other way out — the only bypass is the exemption key, which is a
+   Super Admin's decision and not a button. */
+const TS_LEAVE_HINT = 'If you were on leave, ask your admin to mark it.';
+
+/* A 422 FROM THE SERVER, SHOWN WHERE THE PERSON IS LOOKING, AND THE DAY
+   REFRESHED. Two tabs, a stale page, or a poll that has not landed all arrive
+   here. `where` is the element the message belongs in — the line form's error
+   row when a line was refused, nothing when it was a submit and the day's own
+   bar will say it after the refresh. */
+async function tsHoursRefusal(err, where){
+  const body = (err && err.body) || {};
+  const known = body.code === 'HOURS_BELOW_MINIMUM' || body.code === 'HOURS_ABOVE_MAXIMUM';
+  if(!known) return false;
+  const message = body.error || 'That day does not add up to the hours required.';
+  if(where){
+    const el = document.getElementById(where);
+    if(el) el.textContent = message;
+  }else{
+    showToast(message);
+  }
+  /* THE DAY DATA, AGAIN. The page was out of date — that is what a 422 here
+     means — so redrawing from a fresh read is the only honest response. */
+  await renderTimesheet();
+  return true;
+}
+
 /* ---------- Time Sheet ----------
 
    A week at a time, seven days down the page, several lines per day. Weekly
@@ -7222,6 +7342,10 @@ async function renderTimesheet(){
               <strong>Sent back by ${escapeHTML(day.decidedBy||'your approver')}</strong>
               <div>${escapeHTML(day.rejectionReason)}</div>
             </div>` : ''}
+          ${/* THE HOURS REQUIRED TODAY, from the server's verdict for this day.
+                 Drawn above the lines so somebody filling a day in reads the
+                 figure before the list rather than under it. */''}
+          ${tsRuleLine(day.hoursRule ? { ...day.hoursRule, day, date: day.date } : null)}
           ${day.entries.length ? `<table class="ts-lines"><tbody>${day.entries.map(e=>`
             <tr>
               <td class="ts-what">
@@ -7262,8 +7386,31 @@ async function renderTimesheet(){
                 ? `<button class="ts-del" data-id="${e.id}" title="Remove this line">×</button>` : ''}</td>
             </tr>`).join('')}</tbody></table>` : '<div class="ts-empty">Nothing logged.</div>'}
           ${editable ? `<button class="btn btn-ghost btn-sm ts-add" data-day="${day.date}">+ Add a line</button>` : ''}
-          ${editable && day.entries.length
-            ? `<button class="btn btn-brand btn-sm ts-submit-day" data-day="${day.date}">Submit this day</button>` : ''}
+          ${editable && day.entries.length ? (()=>{
+            /* THE BUTTON, AND WHY IT IS DISABLED RATHER THAN HIDDEN.
+
+               A button that disappears leaves somebody wondering where it went;
+               a disabled one with a sentence beside it says what to do. The
+               sentence is the server's own `reason` — the same words the 422
+               carries — and it is both the visible helper text and the
+               tooltip, because a tooltip is not reachable from a touchscreen
+               and visible text is not reachable by a screen reader reading the
+               button alone.
+
+               KEYBOARD-ACCESSIBLE: a real <button disabled>, so it is skipped
+               by tab order and announced as disabled, with aria-describedby
+               pointing at the sentence. */
+            const rule = day.hoursRule || null;
+            const blocked = Boolean(rule && rule.applies && !rule.canSubmit);
+            const help = tsSubmitHelp(rule);
+            const helpId = `ts-submit-help-${day.date}`;
+            return `<button class="btn btn-brand btn-sm ts-submit-day" data-day="${day.date}"
+                      id="ts-submit-${day.date}"${blocked ? ' disabled' : ''}${
+                        blocked ? ` title="${escapeHTML(help)}" aria-describedby="${helpId}"` : ''}
+                    >Submit this day</button>${blocked ? `
+              <div class="ts-submit-help" id="${helpId}">${escapeHTML(help)}${
+                rule.status === 'short' ? ` ${escapeHTML(TS_LEAVE_HINT)}` : ''}</div>` : ''}`;
+          })() : ''}
           ${/* Submitted is the end of it — there is nobody to approve it. So the
                  way back is the owner's own, and it has to be offered here or a
                  mistyped figure would be permanent. Only on your own sheet. */''}
@@ -7341,11 +7488,17 @@ function wireTimesheet(el){
     try{
       const res = await api('/timesheets/submit', { method:'POST', body:{ date: b.dataset.day } });
       showToast(res.overLong
-        ? 'Submitted — flagged as over the eight-hour day.'
+        ? `Submitted — flagged as over the ${tsState.week.workingDay.maxHours}-hour day.`
         : 'Day submitted.');
       await renderTimesheet();
       refreshTimesheetCount();
-    }catch(e){ showToast(e.message); b.disabled = false; }
+    }catch(e){
+      /* A 422 MEANS THIS PAGE WAS OUT OF DATE — another tab added a line, or
+         the Super Admin changed the figure while this week was on screen. The
+         message is the server's and the day is redrawn from a fresh read. */
+      if(await tsHoursRefusal(e, null)) return;
+      showToast(e.message); b.disabled = false;
+    }
   });
 }
 
@@ -7718,6 +7871,10 @@ function openTimesheetLine(day){
   document.getElementById('tl_actionWrap').style.display = 'none';
   syncTimesheetLine();
   tlRecalc();
+  /* THE DAY'S REMAINING TIME, after the form is otherwise set up: it reads the
+     Hours field's locked state, which tlRecalc has just decided. */
+  tsState.draft.ownCenti = 0;
+  tlSyncRemaining();
   timesheetLineWrap.classList.add('show');
   document.getElementById('tl_hours').focus();
 }
@@ -7853,19 +8010,117 @@ function tlRecalc(){
   const out = document.getElementById('tl_calc');
   const wd = (tsState.week||{}).workingDay;
   const hours = Number(document.getElementById('tl_hours').value);
-  if(!wd || !Number.isFinite(hours) || hours <= 0){ out.textContent=''; return; }
+  if(!wd || !Number.isFinite(hours) || hours <= 0){ out.textContent=''; tlSyncRemaining(); return; }
   const day = (tsState.week.days||[]).find(d=>d.date===tlDay);
   const already = day ? Number(day.hours)||0 : 0;
   const total = Math.round((already + hours)*100)/100;
-  out.textContent = total > wd.maxHours
-    ? `That makes ${total}h on this day — over the ${wd.maxHours}-hour day. It is allowed; it will be flagged.`
-    : `That makes ${total}h on this day.`;
+  /* TWO SENTENCES, AND WHICH ONE DEPENDS ON THE DAY.
+
+     On a day under the exact-hours rule, "it is allowed; it will be flagged" is
+     no longer true — the server refuses it — so saying so would be the page
+     promising something the server will not do. The rule's own arithmetic is
+     not repeated here either: whether this line fits is answered by the
+     remaining figure the server sent, which tlSyncRemaining draws. */
+  const ruled = tlRuleFor(tlDay);
+  if(ruled && ruled.applies){
+    out.textContent = `That makes ${total}h on this day, of ${tsHours(ruled.required)} required.`;
+  }else{
+    out.textContent = total > wd.maxHours
+      ? `That makes ${total}h on this day — over the ${wd.maxHours}-hour day. It is allowed; it will be flagged.`
+      : `That makes ${total}h on this day.`;
+  }
+  tlSyncRemaining();
 }
 /* Hours is locked wherever it can be calculated, and typed where it cannot.
  *
  * readOnly rather than disabled: a disabled input is skipped by the form, drops
  * out of the tab order and reads to a screen reader as unavailable, where this
  * one has a value and is worth reading — it simply is not yours to change. */
+/* ---------- the Hours field, under the exact-hours rule -------------------
+ *
+ * THE FIELD'S CEILING IS THE DAY'S REMAINING TIME, and the figure comes from
+ * the server's verdict for that day — `remaining` in centihours, which the page
+ * formats and never computes. On a day the rule does not touch, the field keeps
+ * the studio's own maximum and nothing is drawn.
+ *
+ * `own` is the hours of the line being EDITED, given back before the limit is
+ * applied, so correcting a 3h line on a full day is not refused for the hours
+ * that line is itself contributing. Zero when a line is being added.
+ *
+ * THE SERVER STILL DECIDES. This narrows a number input and draws a sentence;
+ * POST and PATCH /timesheets/entries refuse anything that does not fit,
+ * whatever the field allowed. */
+function tlRuleFor(day){
+  const week = tsState.week;
+  if(!week || !week.days) return null;
+  const found = week.days.find(d=>d.date === day);
+  return found && found.hoursRule ? found.hoursRule : null;
+}
+
+function tlRemainingCenti(day, own){
+  const rule = tlRuleFor(day);
+  if(!rule || !rule.applies) return null;
+  return rule.required - (rule.logged - Math.round(Number(own) || 0));
+}
+
+function tlSyncRemaining(){
+  const el = document.getElementById('tl_remaining');
+  const field = document.getElementById('tl_hours');
+  if(!el || !field) return;
+  const draft = tsState.draft || {};
+  const own = draft.ownCenti || 0;
+  const left = tlRemainingCenti(draft.day, own);
+  if(left === null){
+    /* NO RULE ON THIS DAY: the studio's own largest line, which is what the
+       field has always carried. */
+    const wd = (tsState.week && tsState.week.workingDay) || {};
+    field.max = wd.maxLineHours || 24;
+    el.innerHTML = '';
+    tlSyncSaveState();
+    return;
+  }
+  /* NEVER NEGATIVE. A day already over its figure has no room, and `max="-1"`
+     is a field no browser can satisfy. */
+  const max = Math.max(0, left) / 100;
+  field.max = String(max);
+  const locked = field.readOnly;
+  const typed = Math.round(Number(field.value) * 100);
+  const tooBig = locked && Number.isFinite(typed) && typed > left;
+  el.innerHTML = tooBig
+    ? `<span class="tl-over">This line (${escapeHTML(tsHours(typed))}) is more than the time left
+        today (${escapeHTML(tsHours(left))}). Edit or delete other lines first.</span>`
+    : (left > 0
+      ? `${escapeHTML(tsHours(left))} left today.${locked ? '' :
+        ` <button type="button" class="tl-fill" id="tl_fill">Fill remaining</button>`}`
+      : 'This day already has all its hours. Edit or delete a line to make room.');
+  const fill = document.getElementById('tl_fill');
+  if(fill) fill.onclick = ()=>{
+    /* THE EXACT REMAINING VALUE, formatted from the integer and not from a
+       division that could land on 2.9999999999. */
+    field.value = tsHours(left).replace(/h$/, '');
+    tlSyncRemaining();
+  };
+  tlSyncSaveState();
+}
+
+/* ADD LINE IS SHUT WHILE THE FIGURE CANNOT BE FILED, which is the case the
+   brief names: a line whose hours are CALCULATED FROM THE CLOCK and are more
+   than the day has room for. Nothing can be typed to fix it — the field is
+   locked — so the button has to say so rather than fail on the press. */
+function tlSyncSaveState(){
+  const btn = document.getElementById('tl_save');
+  const field = document.getElementById('tl_hours');
+  if(!btn || !field) return;
+  const draft = tsState.draft || {};
+  const left = tlRemainingCenti(draft.day, draft.ownCenti || 0);
+  if(left === null){ btn.disabled = false; btn.title = ''; return; }
+  const typed = Math.round(Number(field.value) * 100);
+  const blocked = field.readOnly && Number.isFinite(typed) && typed > left;
+  btn.disabled = blocked;
+  btn.title = blocked
+    ? `This line is more than the time left today (${tsHours(left)}).` : '';
+}
+
 function tlLockHours(locked){
   const field = document.getElementById('tl_hours');
   if(!field) return;
@@ -8304,7 +8559,13 @@ document.getElementById('tl_save').addEventListener('click', async ()=>{
     if(res.overLong) showToast('Logged — that day is over the standard day, and is flagged.');
     await renderTimesheet();
     await refreshTimesheetGate();   // the line may be the one holding Start shut
-  }catch(e){ err.textContent = e.message; }
+  }catch(e){
+    /* A 422 FROM THE HOURS RULE: shown in the form, beside the field that
+       caused it, and the week redrawn so the remaining figure is the real one.
+       The form stays open — the typing is not thrown away. */
+    if(await tsHoursRefusal(e, 'tl_err')){ tlSyncRemaining(); }
+    else err.textContent = e.message;
+  }
   finally{ btn.disabled = false; }
 });
 
@@ -20189,6 +20450,43 @@ async function renderTimesheetOptions(){
           </div>
         </div>
       </div>
+      <div class="rh-list">
+        <div class="rh-head"><h4>Timesheet hours rule</h4><span class="rh-badge">Super Admin</span></div>
+        <div class="rh-grid">
+          <div class="rh-f rh-days">
+            <label class="rh-day"><input type="checkbox" id="tso_hoursRuleEnabled"${
+              s.hoursRuleEnabled?' checked':''}><span>Require exactly the day&rsquo;s hours before a
+              timesheet can be submitted</span></label>
+            <span class="rh-opt">
+              <strong>Off by default, and switching it on stops people submitting.</strong>
+              With it on, a day must total <strong>exactly</strong> the hours required below before
+              it can be submitted &mdash; fewer is refused, and a line that would take the day over
+              is refused as it is filed. The rule starts from the date beside it: turning the switch
+              on sets that date to <strong>today</strong>, so a month of half-filled days behind it
+              submit exactly as they do now. Change the date to start from a different day.
+              <br>
+              <strong>Half a day&rsquo;s leave asks for half the figure</strong>, and a day nothing
+              is owed for &mdash; a holiday, a weekly off, a full day&rsquo;s leave, a vacation day
+              &mdash; asks for nothing and behaves exactly as it does today. Every kind of line
+              counts towards the figure, <strong>Idle included</strong>: Idle exists so that a day
+              can be filled in honestly.
+              <br>
+              Where somebody genuinely cannot reach the figure because they were away, mark the
+              leave &mdash; that is what shrinks the day. The only way round the rule is the
+              <em>Exempt From The Required-Hours Rule</em> permission${
+                (tsoState.data && tsoState.data.exemptRoles)
+                  ? `, held by: <strong>${escapeHTML(tsoState.data.exemptRoles.join(', ') || 'nobody but the Super Admin')}</strong>`
+                  : ''}.
+            </span>
+          </div>
+          <div class="rh-f">
+            <label>Rule starts from</label>
+            <input type="date" id="tso_hoursRuleFrom" value="${escapeHTML(s.hoursRuleFrom||'')}">
+            <span class="rh-opt">Days before this date are not under the rule. Set when the switch
+              is first turned on, and editable.</span>
+          </div>
+        </div>
+      </div>
       ${tsoState.errors.length?`<div class="rh-errs">${tsoState.errors.map(e=>`<div class="rh-err">${escapeHTML(e.message)}</div>`).join('')}</div>`:''}
       <div class="ref-add" style="margin-top:4px;">
         <button class="btn btn-brand btn-sm" id="tso_save"${tsoState.busy?' disabled':''}>Save</button>
@@ -20216,6 +20514,15 @@ async function renderTimesheetOptions(){
          "leave it as it was" and a page that never sent it would leave the one
          switch on this screen that nobody could then turn back on. */
       exportEnabled: document.getElementById('tso_exportEnabled').checked,
+      /* THE HOURS RULE'S TWO FIELDS, sent every time for the same reason
+         exportEnabled is: an absent boolean reads as "leave it as it was", so a
+         page that never sent it would leave a switch nobody could turn off.
+
+         The DATE is sent as the field's own value, which is '' when it has been
+         cleared — and '' means "never started" to the validator, not "leave it
+         alone". Those are different intentions and the form says which. */
+      hoursRuleEnabled: document.getElementById('tso_hoursRuleEnabled').checked,
+      hoursRuleFrom: document.getElementById('tso_hoursRuleFrom').value,
     };
     try{
       tsoState.data = await api('/admin/settings/timesheet', { method:'PUT', body });

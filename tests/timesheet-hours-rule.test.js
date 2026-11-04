@@ -360,23 +360,62 @@ test('the page prints the server\'s numbers and holds no copy of the rule', () =
     assert.ok(block.includes(field), `the page reads ${field} from the payload`);
   }
   /* AND IT DOES NONE OF THE ARITHMETIC. No halving for a half day, no reading
-     of the setting to compare against, no 480, no 800, no 8. */
+     of the setting to compare against, no requirement in minutes or
+     centihours, no decision about which days are owed.
+
+     READING A LABEL IS NOT COMPUTING. The block does look at day.holiday.name
+     and day.dayMark.label to say WHY a day asks for nothing — "Diwali: nothing
+     to fill" — which is the sentence the brief asks for. What it must not do is
+     DECIDE that nothing is owed, and that is what this list is about:
+     timesheetRequiredOn is the server's, the halving is the server's, and the
+     comparison is the server's. */
   for (const forbidden of [' / 2', '* 0.5', 'maxDayHours', 'first_half', 'second_half',
-    'isTimesheetRequired', 'holiday &&', '480', '800']) {
+    'isTimesheetRequired', 'timesheetRequiredOn', 'loggableDays', '480', '800']) {
     assert.ok(!block.includes(forbidden), `the page does not compute ${forbidden}`);
   }
-  /* The one comparison a page is allowed is against the server's own verdict —
-     `=== 'exact'` or `canSubmit` — and never against an hours figure. */
-  const sums = block.split('\n').filter((l) => /(required|logged|remaining)\s*[<>]=?/.test(l));
-  assert.deepStrictEqual(sums, [], 'the page compares no hours figures itself');
+  /* The one thing it reads about a day is what to CALL it, and only inside the
+     function that writes that sentence. */
+  const why = block.slice(block.indexOf('function tsNothingOwed('));
+  assert.ok(why.includes('day.holiday'), 'the note names the holiday the server sent');
+  assert.ok(!block.slice(0, block.indexOf('function tsNothingOwed(')).includes('day.holiday'),
+    'and nothing else in the block looks at it');
+  /* THE COMPARISON THE PAGE MAY NOT MAKE is one figure against another: the
+     moment it decides for itself whether logged has reached required, there are
+     two rules. It takes that answer from `status` and `canSubmit`.
+
+     ONE INEQUALITY IS ALLOWED AND IT IS NAMED: `rule.required > 0`, which is
+     the guard on dividing by it to draw the bar's width. It compares the
+     requirement with nothing. */
+  const pairs = block.split('\n').filter((l) =>
+    /(logged|remaining)\s*[<>]=?\s*[A-Za-z.]*required/.test(l)
+    || /required\s*[<>]=?\s*[A-Za-z.]*(logged|remaining)/.test(l));
+  assert.deepStrictEqual(pairs, [], 'the page compares no two hours figures itself');
+  const inequalities = block.split('\n')
+    .filter((l) => /(required|logged|remaining)\s*[<>]=?/.test(l))
+    .map((l) => l.trim());
+  assert.deepStrictEqual(inequalities, ['const pct = rule.required > 0'],
+    'and the only inequality is the bar\'s divide-by-zero guard');
+
+  /* AND THE THREE STATUS WORDS ARE ONLY EVER READ, never produced. A page that
+     worked out 'over' for itself would be deciding the rule. */
+  for (const word of ['exact', 'short', 'over']) {
+    const assigned = new RegExp(`(status|canSubmit)\\s*[:=]\\s*'${word}'`);
+    assert.ok(!assigned.test(block), `the page does not assign ${word}`);
+  }
+  assert.match(block, /rule\.status === 'exact'/, 'it reads the status instead');
 });
 
 test('nothing in the page or the server still says eight hours', () => {
   /* THE NUMBER WAS A SETTING FOR TWO PROMPTS AND THE WORDS HAD NOT CAUGHT UP.
      The submit route's own day history said "over the eight-hour day", and the
      page's toast said it too, on a studio that may be on seven and a half. */
-  assert.ok(!ROUTE.includes('eight-hour'), 'the submit route reads the setting');
-  assert.ok(!PAGE.includes('eight-hour'), 'and so does the page');
+  /* COMMENTS STRIPPED FIRST. Both files now explain the fix in prose — "it said
+     over the eight-hour day while the length of a day had been a setting for
+     two prompts" — and a test that failed on its own explanation would be a
+     test nobody could document. What must not contain the words is the code. */
+  const code = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.ok(!code(ROUTE).includes('eight-hour'), 'the submit route reads the setting');
+  assert.ok(!code(PAGE).includes('eight-hour'), 'and so does the page');
   assert.match(ROUTE, /over the \$\{total\.maxHours\}-hour day/);
   /* The two places the number legitimately lives are the setting's default and
      the fallbacks that exist for a database which cannot be read — both named,
