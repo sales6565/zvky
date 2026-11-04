@@ -3382,6 +3382,30 @@ async function ensureTimesheetSettings(db, log) {
  * same day, and both decisions are real and worth keeping. The reader asks
  * whether ANY live row exists, and the closer closes all of them.
  */
+/* THE HISTORY TAB'S THREE SETTINGS, in their own row like every other section.
+ *
+ * ON BY DEFAULT: History shows and refuses nothing, and the rule this codebase
+ * has settled on is that restrictive features ship off while informative ones
+ * ship on. See src/history-settings.js for the argument.
+ */
+async function ensureHistorySettings(db, log) {
+  const existed = (await columnsOf(db, 'history_settings')).size > 0;
+  await db.query(await applyTableOptions(db, `CREATE TABLE IF NOT EXISTS history_settings (
+      id                  TINYINT     NOT NULL PRIMARY KEY,
+      enabled             TINYINT(1)  NOT NULL DEFAULT 1,
+      -- How many days of cards the tab opens with. 7..366, see the module.
+      default_days        SMALLINT    NOT NULL DEFAULT 30,
+      -- Whether a day's timesheet may be submitted from its card. It goes
+      -- through the same route with the same rules; this is a second door and
+      -- never a second rule.
+      submit_from_history TINYINT(1)  NOT NULL DEFAULT 1,
+      updated_by          CHAR(36)    NULL,
+      updated_at          DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )`));
+  await db.query('INSERT IGNORE INTO history_settings (id) VALUES (1)');
+  if (!existed) log('Schema: added history_settings — the My History tab.');
+}
+
 async function ensureTimesheetDayUnlocks(db, log) {
   /* columnsOf() is the helper this file already has; an empty set means the
      table is not there yet, which is the only thing this needs to know. */
@@ -5785,6 +5809,10 @@ const STEPS = [
   /* After users (whose keys the rows point at) and after timesheet_entries,
      whose window these unlocks are an exception to. */
   ['timesheet day unlocks', ensureTimesheetDayUnlocks],
+  /* After users exist (updated_by points at one) and beside the other
+     settings sections. The mirror loads straight after, like every other. */
+  ['history settings', ensureHistorySettings],
+  ['history settings mirror', (db) => require('./history-settings').load(db)],
   ['asset settings mirror', (db) => require('./asset-settings').load(db)],
   ['chat settings', ensureChatSettings],
   ['chat settings mirror', (db) => chatSettings.load(db)],

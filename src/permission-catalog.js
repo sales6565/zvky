@@ -357,7 +357,7 @@ const GROUPS = [
         impliedBy: has('manageAccess'),
         describe: 'Select several Not Assigned assets in the Assets List and give them all one '
           + 'assignee, one Start Date and one End Date in a single action. Assets already on '
-          + 'somebody\u2019s desk are left alone — those are handed over one at a time.',
+          + 'somebody’s desk are left alone — those are handed over one at a time.',
       },
       {
         key: 'asset.override_stage',
@@ -687,7 +687,7 @@ const GROUPS = [
            holding View Reports. Grantable per role and through role groups like
            every other key. */
         impliedBy: has('managePermissions'),
-        describe: 'Artist Report: every resource\u2019s submitted work — asset, submit date, bid '
+        describe: 'Artist Report: every resource’s submitted work — asset, submit date, bid '
           + 'and recorded hours — with an Excel download. Scoped to the projects the role can see.',
       },
       {
@@ -839,7 +839,7 @@ const GROUPS = [
            SUPER ADMIN ONLY BY DEFAULT, like its two siblings, and grantable per
            designation and through role groups. */
         impliedBy: has('managePermissions'),
-        describe: 'Record that somebody is working at a client\u2019s site, for a day or a range of '
+        describe: 'Record that somebody is working at a client’s site, for a day or a range of '
           + 'working days, and undo it a day at a time. Their hours still count, their timesheet '
           + 'is still due and their timers still run — they simply stop being chased to start '
           + 'work in the studio.',
@@ -902,7 +902,7 @@ const GROUPS = [
         impliedBy: () => true,
         describe: 'Book your own vacation from your profile: a From and To date, with a half-day '
           + 'choice on the first and last day. It starts tomorrow at the earliest — today is '
-          + 'somebody else\u2019s to record — and you can cancel it or end it early yourself.',
+          + 'somebody else’s to record — and you can cancel it or end it early yourself.',
       },
       {
         /* WHOSE TIME OFF YOU MAY SEE, which is a reading permission and nothing
@@ -936,7 +936,7 @@ const GROUPS = [
         label: 'Approve Vacations',
         impliedBy: has('managePermissions'),
         describe: 'Approve or reject a submitted vacation, when Settings → Leave asks for '
-          + 'approval. Until it is approved it changes nobody\u2019s hours.',
+          + 'approval. Until it is approved it changes nobody’s hours.',
       },
       {
         /* REACHING INTO TIME THAT HAS ALREADY HAPPENED. Cancelling the rest of
@@ -950,9 +950,9 @@ const GROUPS = [
            want its production manager correcting last Tuesday's attendance
            without being able to cancel half of somebody's booked holiday. */
         key: 'leave.manage_all',
-        label: 'Manage Anybody\u2019s Vacation',
+        label: 'Manage Anybody’s Vacation',
         impliedBy: has('managePermissions'),
-        describe: 'Cancel or end anybody\u2019s vacation, including days that have already passed '
+        describe: 'Cancel or end anybody’s vacation, including days that have already passed '
           + 'or are happening today, and book one on their behalf.',
         danger: 'Clearing a day that has already passed changes recorded hours that may have '
           + 'been reported on.',
@@ -1025,11 +1025,11 @@ const GROUPS = [
         key: 'timesheet.options',
         label: 'Manage Time Sheet Options',
         impliedBy: has('managePermissions'),
-        describe: 'Edit the Time Sheet\u2019s own settings: the non-project categories people log '
+        describe: 'Edit the Time Sheet’s own settings: the non-project categories people log '
           + 'against, how long a normal day is, the smallest and largest a line can be, how far '
           + 'back and ahead a line may be filed, and which days hours can be logged on. Separate '
           + 'from filling in your own hours, which every designation can do.',
-        danger: 'These apply to everybody\u2019s Time Sheet at once. Tightening a window stops new lines being filed outside it — lines already filed are never changed.',
+        danger: 'These apply to everybody’s Time Sheet at once. Tightening a window stops new lines being filed outside it — lines already filed are never changed.',
       },
       {
         /* THE WORDS INSIDE A CATEGORY, which is a different job from deciding
@@ -1064,7 +1064,7 @@ const GROUPS = [
           + 'remarks, the training types, the on-site clients — and the heading each one carries. '
           + 'Separate from managing the categories themselves, and from filling in your own hours, '
           + 'which every designation can do.',
-        danger: 'An option deactivated here leaves everybody\u2019s Add line form. Lines already filed against it keep showing it.',
+        danger: 'An option deactivated here leaves everybody’s Add line form. Lines already filed against it keep showing it.',
       },
       {
         /* Reading your team's weeks, which is not the same as deciding on
@@ -1130,6 +1130,57 @@ const GROUPS = [
         danger: 'A download leaves the application: it keeps working after this permission is '
           + 'taken away, and it holds everybody\'s hours for the period asked for. Every download '
           + 'is written to the Activity Log with who asked, the period and how many lines it held.',
+      },
+      {
+        /* SEE YOUR OWN HISTORY: the My History tab.
+         *
+         * DEFAULTS TO EVERY ROLE THAT CAN USE THE TIMESHEET TODAY, through
+         * impliedBy on timesheet.own — which is the brief's instruction and is
+         * also the only defensible default: History shows somebody their own
+         * recorded days, and anybody who fills a timesheet already has every
+         * figure on those cards in front of them, one screen at a time. A
+         * narrower default would hide somebody's own week from them.
+         *
+         * IT WIDENS NOTHING. The tab reads one endpoint, that endpoint reads
+         * one user's own data, and whose data it may read is decided by
+         * readableUserIds() exactly as the Time Sheet tab decides it. */
+        key: 'history.view',
+        label: 'See My History',
+        /* EVERY ROLE, which is what "every role that can use the Timesheet
+           today" means in this catalogue: timesheet.own is itself
+           `impliedBy: () => true`, so mirroring it is the faithful reading and
+           anything narrower would hide somebody's own week from them.
+           (`has('timesheet.own')` would NOT do this — has() tests a role
+           CAPABILITY, not another key, so it would silently be false for
+           everybody. The snapshot caught that.) */
+        impliedBy: () => true,
+        describe: 'Open the My History tab and read your own recorded days: what you worked on, '
+          + 'the time recorded against each asset, the day\'s status, and your timesheet for that '
+          + 'day. It shows only what is already recorded elsewhere and changes nothing.',
+      },
+      {
+        /* SEE SOMEBODY ELSE'S HISTORY.
+         *
+         * SUPER ADMIN ONLY by default and grantable, and the scope is NOT this
+         * key's: it adds a person selector whose options come from
+         * readableUserIds() — the same union the Time Sheet tab uses. So a lead
+         * given this sees their own team's history and a studio-wide account
+         * sees the studio's. Holding it never turns on "see everybody".
+         *
+         * WHY IT IS SEPARATE FROM timesheet.team AND timesheet.all rather than
+         * riding on them: those two are about hours. A History card also carries
+         * what somebody worked on, when they submitted, and the events of their
+         * day — a fuller picture of a person's working day than a timesheet is —
+         * so a studio that wants a lead to see their team's HOURS without seeing
+         * their days reconstructed can have exactly that. */
+        key: 'history.view_others',
+        label: 'See Another User’s History',
+        impliedBy: has('managePermissions'),
+        describe: 'Add a person selector to My History and read the history of the people you can '
+          + 'already see in the Time Sheet tab. It does not widen who that is, and it never shows '
+          + 'anybody\'s private messages, profile details or credentials.',
+        danger: 'A history card is a fuller picture of somebody’s working day than a '
+          + 'timesheet: what they had open, for how long, and what happened to it.',
       },
       {
         /* FILE ON ANY DAY, whatever the studio's window is.
@@ -1515,13 +1566,13 @@ const GROUPS = [
         key: 'outsource.deliver',
         label: 'Record Outsourced Work Stages',
         impliedBy: anyOf(has('leadsTeam'), has('deliver'), has('manageUsers')),
-        describe: 'Record where a freelancer\u2019s work has got to — Completed when they say it is '
+        describe: 'Record where a freelancer’s work has got to — Completed when they say it is '
           + 'finished, Delivered when we have it — one row at a time or several at once. A '
           + 'freelancer has no login, so these are always recorded by somebody here on their behalf, '
           + 'and the history says which. Delivered moves the task straight to Delivered, the end of '
           + 'the pipeline: marking it is the studio attesting the work went to the client or was '
-          + 'accepted here, so NO REVIEW STEP FOLLOWS IT. The Review group\u2019s Mark as Delivered '
-          + 'reaches the same state from Approved for Client, after the studio\u2019s own review; this '
+          + 'accepted here, so NO REVIEW STEP FOLLOWS IT. The Review group’s Mark as Delivered '
+          + 'reaches the same state from Approved for Client, after the studio’s own review; this '
           + 'one is for work done outside. Undoing either is a separate permission.',
         danger: 'This marks the task Delivered — the end of the pipeline — without anybody inside the studio reviewing the work, and only Reopen Outsourced Work can undo it.',
       },
@@ -1557,8 +1608,8 @@ const GROUPS = [
         describe: 'Undo a Completed or Delivered that was recorded by mistake, putting the work back '
           + 'with the freelancer. It is the only way back out of Delivered, which is otherwise '
           + 'terminal. Refused on a task that was submitted and reviewed inside the studio before it '
-          + 'was delivered — that is the studio\u2019s own delivery rather than the outsourced one, and '
-          + 'moving it back is a pipeline override. The reversal is written to the task\u2019s history '
+          + 'was delivered — that is the studio’s own delivery rather than the outsourced one, and '
+          + 'moving it back is a pipeline override. The reversal is written to the task’s history '
           + 'and clears the stamps it undoes.',
         danger: 'Reopening a delivery takes the task back out of Delivered to Not Assigned and clears who delivered it and when.',
       },
@@ -1666,7 +1717,7 @@ const GROUPS = [
         impliedBy: has('managePermissions'),
         describe: 'Adds an upload box to the Submit Work form, which copies files to the office '
           + 'server and fills in the link. The artist can still paste a link instead. Files go only '
-          + 'into that person\u2019s own folder on that project.',
+          + 'into that person’s own folder on that project.',
       },
       {
         key: 'server.browse_all',
@@ -1960,7 +2011,7 @@ const GROUPS = [
         key: 'settings.holidays_view',
         label: 'View Holidays',
         impliedBy: () => true,
-        describe: 'See the studio\u2019s holiday calendar in Settings — which days the studio is closed, '
+        describe: 'See the studio’s holiday calendar in Settings — which days the studio is closed, '
           + 'upcoming and past, who declared each one and any note on it. Read-only, and separate from '
           + 'being told why a timer refused to start: that reason is always given, to everybody. '
           /* WHAT THIS DOES NOT HIDE, in the describe text rather than a field of

@@ -2248,6 +2248,60 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
    the same treatment a weekend gets, for the same reason: nothing is wrong, it
    simply is not a day you type into. */
 .ts-flag.closed{background:var(--surface-3);color:var(--ink-faint);}
+
+/* ---------- My History ----------
+   One card per day. The card is a record, so it reads as a list of facts rather
+   than as a panel with controls: the date and the chip lead, what was worked on
+   follows, and the timesheet sits at the bottom where the one action lives. */
+.hist-bar{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;margin:0 0 14px;}
+.hist-title{font-size:15px;margin:0;}
+.hist-pick{display:flex;flex-direction:column;gap:3px;font-size:10.5px;color:var(--ink-faint);}
+.hist-pick select,.hist-pick input{font-size:12px;}
+.hist-shortcuts{display:flex;gap:4px;}
+.hist-card{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;
+  padding:12px 14px;margin:0 0 10px;}
+.hist-card-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 8px;}
+.hist-date{font-size:12.5px;font-weight:600;}
+.hist-chip{font-size:10px;font-family:'IBM Plex Mono';padding:1px 7px;border-radius:9px;
+  background:var(--surface-3);color:var(--ink-muted);}
+/* THE FAMILIES MATCH THE ONES THE REST OF THE APPLICATION ALREADY USES for the
+   same facts, so a leave day looks like a leave day wherever it is drawn. */
+.hist-chip-worked{background:var(--approved-t1f,var(--surface-3));color:var(--approved);}
+.hist-chip-leave{background:var(--at-risk-t1f,var(--surface-3));color:var(--at-risk);}
+.hist-chip-vac{background:var(--brand-accent-t1f,var(--surface-3));color:var(--brand-accent);}
+.hist-chip-holiday,.hist-chip-off{background:var(--surface-3);color:var(--ink-faint);}
+.hist-chip-idle{background:var(--at-risk-t1f,var(--surface-3));color:var(--at-risk);}
+.hist-chip-onsite{background:var(--surface-3);color:var(--ink-muted);}
+.hist-chip-none{background:var(--surface-3);color:var(--ink-faint);}
+.hist-chip-open{background:var(--surface-3);color:var(--brand-accent);}
+.hist-note{font-size:11px;color:var(--ink-faint);}
+.hist-worked{margin:0 0 10px;}
+.hist-worked-title,.hist-ts-title{font-size:10px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-faint);}
+.hist-asset{padding:6px 0;border-top:1px solid var(--line);}
+.hist-asset-top{display:flex;align-items:center;gap:7px;font-size:12px;}
+.hist-code{font-family:'IBM Plex Mono';font-size:11px;color:var(--ink-muted);}
+.hist-name{font-weight:500;}
+.hist-disc{font-size:10px;color:var(--ink-faint);}
+.hist-time{font-family:'IBM Plex Mono';font-size:11px;color:var(--ink-muted);}
+.hist-where{font-size:10.5px;color:var(--ink-faint);margin-top:1px;}
+.hist-events{margin:4px 0 0;padding-left:16px;font-size:11px;color:var(--ink-muted);line-height:1.6;}
+.hist-ts{border-top:1px solid var(--line);padding-top:8px;}
+.hist-ts-head{display:flex;align-items:center;gap:8px;margin:0 0 5px;}
+.hist-ts-total{font-family:'IBM Plex Mono';font-size:11px;color:var(--ink-muted);}
+.hist-ts-state{font-size:10.5px;color:var(--ink-faint);margin-left:auto;}
+.hist-ts-state.is-done{color:var(--approved);}
+.hist-lines{width:100%;border-collapse:collapse;font-size:11.5px;}
+.hist-lines td{padding:2px 6px 2px 0;vertical-align:top;}
+.hist-l-hours{font-family:'IBM Plex Mono';white-space:nowrap;}
+.hist-l-where{font-size:10px;color:var(--ink-faint);}
+.hist-l-notes{color:var(--ink-muted);}
+.hist-empty-line{font-size:11px;color:var(--ink-faint);}
+.hist-ts-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px;}
+.hist-why{font-size:11px;color:var(--ink-muted);line-height:1.5;}
+.hist-none,.hist-err{font-size:12px;color:var(--ink-faint);padding:18px 0;}
+.hist-err{color:var(--error-strong);}
+.hist-more{display:flex;justify-content:center;padding:6px 0 18px;}
 .ts-day.closed{opacity:.86;}
 .ts-closed-note{color:var(--ink-faint);}
 /* Idle hours, named beside the week total rather than taken out of it. Amber,
@@ -2538,6 +2592,10 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
            somebody looks for things about themselves rather than about the
            work. Its count is weeks waiting on this person to approve. -->
       <button data-tab="timesheet" id="timesheetTabBtn" style="display:none;">Time Sheet <span class="tab-count" id="timesheetCount" hidden></span></button>
+      <!-- Right after Time Sheet, because it is the other view of the same days:
+           one is the week you are filling in, this is the record of the ones
+           that are done. The label is "My History" exactly. -->
+      <button data-tab="history" id="historyTabBtn" style="display:none;">My History</button>
       <button data-tab="reports" id="reportsTabBtn" style="display:none;">Reports</button>
       <!-- Its own tab rather than a section under Reports: what it discloses is
            different in kind from anything there — what the studio earns and
@@ -2572,6 +2630,7 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
   <div id="listView" style="display:none;"></div>
   <div id="teamView" style="display:none;"></div>
   <div id="timesheetView" style="display:none;"></div>
+  <div id="historyView" style="display:none;"></div>
   <div id="outsourceView" style="display:none;"></div>
   <div id="serverView" style="display:none;"></div>
   <div id="usersView" style="display:none;"></div>
@@ -3664,8 +3723,13 @@ async function refreshPermissions(){
   const before = perms().join(',');
   try{
     const { user, timesheetGate, themeVersion, dayState, serverEnabled,
-      assetRenameEnabled } = await api('/auth/me');
+      assetRenameEnabled, historyEnabled } = await api('/auth/me');
     state.currentUser = user;
+    /* !== false AND NOT Boolean(): a server that does not send the field at all
+       — an older build, or one whose history_settings migration has not run —
+       must leave the tab as it was rather than hiding it, which is the rule
+       every other switch on this payload follows. */
+    if(historyEnabled !== undefined) state.historyEnabled = historyEnabled !== false;
     /* WHERE THE DAY STANDS, on the poll the indicator's "normal refresh cycle"
        already is. A timer started in another tab, a Settings change, lunch
        beginning: all of them arrive here within twenty seconds, because all of
@@ -3877,6 +3941,11 @@ const UI_GATES = {
      queue — the server decides that, this only decides whether there is a tab. */
   pendingTabBtn:         () => can('pending.view'),
   timesheetTabBtn:       () => can('timesheet.own'),
+  /* THE SWITCH AND THE KEY, both. The key says this designation may read its
+     own history; the switch says the studio wants the tab at all. The server
+     refuses the endpoint on either count, so this is the courtesy half —
+     without it the tab would open and report that it is switched off. */
+  historyTabBtn:         () => can('history.view') && state.historyEnabled !== false,
   /* The header's chat button. In UI_GATES, unlike the bell beside it, because
      this one IS a permission question: a studio can close chat for a
      designation, and when it does the button must go with it. */
@@ -5285,6 +5354,11 @@ document.addEventListener('click', async (e)=>{
    ones I saw two filters ago". */
 let selectedAssets = new Set();
 let state = { view:'board', search:'', userSearch:'', filterType:'', listGroup:'active',
+  /* THE MY HISTORY TAB'S SWITCH, mirrored from /auth/me and defaulting to on.
+     Undefined until the first poll answers, and `!== false` is what reads it —
+     so the tab is shown rather than hidden while we do not yet know, which is
+     the right way round for a switch whose default is on. */
+  historyEnabled: undefined,
   /* The Assets List's column filters — one per heading, see
      ASSET_LIST_FILTERS. On top of the header's search and scope filter, and
      still NOT folded into filteredAssets(): that pool feeds the Board too, and
@@ -6584,6 +6658,7 @@ function setTab(tab){
   document.getElementById('listView').style.display = tab==='list' ? '' : 'none';
   document.getElementById('teamView').style.display = tab==='team' ? '' : 'none';
   document.getElementById('timesheetView').style.display = tab==='timesheet' ? '' : 'none';
+  document.getElementById('historyView').style.display = tab==='history' ? '' : 'none';
   document.getElementById('outsourceView').style.display = tab==='outsource' ? '' : 'none';
   document.getElementById('serverView').style.display = tab==='server' ? '' : 'none';
   document.getElementById('usersView').style.display = tab==='users' ? '' : 'none';
@@ -7107,6 +7182,354 @@ function wirePendingActions(el, refresh){
       refreshPendingCount();
     }catch(e){ if(err) err.textContent = e.message; else showToast(e.message); b.disabled = false; }
   }));
+}
+
+/* ---------- My History ----------------------------------------------------
+ *
+ * ONE DAY PER CARD, NEWEST FIRST, AND THE SERVER DECIDED ALL OF IT.
+ *
+ * Every number, chip, label and button state on a card arrives in the payload
+ * from GET /api/history. This block formats and arranges; it computes no
+ * counted time, no required hours and no lock state, because all three already
+ * exist on the server and a second version in the browser would disagree with
+ * the Timesheet tab, the Artist Report and the follow-up lists the first time
+ * any setting moved. tests/history.test.js greps this block to prove it.
+ *
+ * NO LINE EDITING HERE, which is the brief's instruction and the right one:
+ * a history is a record, and a record you can type into is a draft. The card
+ * offers "Open in Timesheet" for a day that still needs work, which is where
+ * the form and all its rules live.
+ */
+const HIST = {
+  /* WHAT IS BEING LOOKED AT. `userId` is null for your own, which is also the
+     only value anybody without history.view_others can have. */
+  userId: null,
+  from: null,
+  to: null,
+  days: null,
+  people: [],
+  data: null,
+  loading: false,
+  error: null,
+};
+
+/* THE CHIP'S COLOUR FAMILY, by the kind the server named. Reading the kind
+   rather than the label, so renaming a label never changes a colour. */
+const HIST_CHIPS = {
+  worked:     { cls: 'hist-chip-worked' },
+  leave:      { cls: 'hist-chip-leave' },
+  leave_half: { cls: 'hist-chip-leave' },
+  vacation:   { cls: 'hist-chip-vac' },
+  holiday:    { cls: 'hist-chip-holiday' },
+  weekly_off: { cls: 'hist-chip-off' },
+  idle:       { cls: 'hist-chip-idle' },
+  onsight:    { cls: 'hist-chip-onsite' },
+  nothing:    { cls: 'hist-chip-none' },
+};
+
+/* THE EVENT SENTENCES. The server sends the action and the statuses; the words
+   are here, because they are words and the server has no business holding a
+   studio's phrasing. `byMe` and `toMe` are the server's attribution — see
+   src/history.js for which of the four event types each reaches. */
+function histEventLine(e){
+  const who = e.byMe ? 'You' : (e.actorName || 'Somebody');
+  const to = e.toStatus || '';
+  if(e.action === 'submit') return `${who} submitted it for review`;
+  if(e.action === 'approve' || to === 'approved') return `${who} approved it`;
+  if(e.action === 'request_changes' || to === 'changes_required'){
+    return e.toMe ? `${who} sent it back to you with changes` : `${who} asked for changes`;
+  }
+  if(e.action === 'assign' || e.action === 'reassign'){
+    return e.toMe ? `It was assigned to you` : `${who} reassigned it`;
+  }
+  if(e.action === 'hold') return `${who} put it on hold`;
+  if(e.action === 'resume') return `${who} took it off hold`;
+  /* ANYTHING ELSE, NAMED RATHER THAN DROPPED. A studio adds statuses; a card
+     that silently omitted an event would be a record with holes in it. */
+  return `${who} moved it${to ? ` to ${to.replace(/_/g, ' ')}` : ''}`;
+}
+
+const histHours = (h) => `${Number(h || 0).toFixed(2).replace(/\.?0+$/, '')}h`;
+
+/* ONE LINE OF THE DAY'S TIMESHEET, named the way the Timesheet tab names it. */
+function histLine(l){
+  const what = l.assetCode
+    ? `${l.assetCode}${l.assetName ? ` — ${l.assetName}` : ''}`
+    : (l.tlAction ? (l.tlAction === 'review' ? 'Review' : 'Project meeting')
+      /* tsCategory READS .nonProjectTypes off whatever it is handed, and the
+         history payload carries the same list the week payload does — so a
+         renamed category re-labels every line here too, and there is one
+         resolver rather than two. */
+      : (l.nonProject ? tsCategory(HIST.data || {}, l.nonProject) : 'Work'));
+  const where = [l.clientName, l.projectName].filter(Boolean).join(' · ');
+  return `<tr>
+    <td class="hist-l-what">${escapeHTML(String(what))}${
+      where ? `<div class="hist-l-where">${escapeHTML(where)}</div>` : ''}</td>
+    <td class="hist-l-hours">${escapeHTML(histHours(l.hours))}</td>
+    <td class="hist-l-notes">${l.notes ? escapeHTML(l.notes) : ''}</td>
+  </tr>`;
+}
+
+/* THE TIMESHEET BLOCK OF ONE CARD: the lines, the total against the required
+   figure, the state, and whichever single action the day actually offers. */
+function histTimesheet(card){
+  const t = card.timesheet || {};
+  const lines = t.lines || [];
+  const state = t.locked
+    ? `Submitted${t.submittedAt ? ` ${fmtDate(t.submittedAt)}` : ''}`
+    : (card.entryWindow && !card.entryWindow.open ? 'Closed for entry'
+      : (lines.length ? 'Not submitted' : 'Nothing filed'));
+  /* THE TOTAL AGAINST THE REQUIREMENT, in the rule's own numbers. Drawn only
+     where the rule applies — on a holiday or a full day's leave there is no
+     requirement to be short of, and "0h of 0h" is not information. */
+  const total = t.ruleApplies
+    ? `${escapeHTML(histHours(t.loggedHours))} of ${escapeHTML(histHours(t.requiredHours))}`
+    : (lines.length ? escapeHTML(histHours(t.loggedHours)) : '');
+
+  /* ONE ACTION, AND THE SERVER CHOSE WHICH. maySubmit already folds in the
+     switch, the window, the lock, the exact-hours rule and whose history this
+     is — so this is a draw, not a decision. */
+  let action = '';
+  if(t.maySubmit){
+    action = `<button class="btn btn-brand btn-sm hist-submit" data-day="${escapeHTML(card.date)}"
+      >Submit timesheet</button>`;
+  }else if(card.timesheet && card.timesheet.canSubmit === false && card.timesheet.ruleApplies
+           && card.entryWindow && card.entryWindow.open && HIST.data
+           && HIST.data.settings.submitFromHistory && card.mineForSubmit !== false){
+    /* DISABLED WITH THE SERVER'S OWN SENTENCE, the same words the Timesheet tab
+       puts beside its own Submit — a tooltip for the pointer and visible text
+       for everything else. */
+    action = `<button class="btn btn-brand btn-sm" disabled
+        title="${escapeHTML(t.reason || '')}"
+        aria-describedby="hist-why-${escapeHTML(card.date)}">Submit timesheet</button>
+      <div class="hist-why" id="hist-why-${escapeHTML(card.date)}">${escapeHTML(t.reason || '')}</div>`;
+  }
+  /* AND THE WAY TO FIX A DAY: the tab where the form is. Only when the day is
+     open and not already submitted, because there is nothing to fix otherwise. */
+  const open = card.entryWindow && card.entryWindow.open && !t.locked && HIST.mine
+    ? `<button class="btn btn-ghost btn-sm hist-open-ts" data-day="${escapeHTML(card.date)}"
+        >Open in Timesheet</button>` : '';
+  /* AND FOR A HOLDER OF THE KEY, ON SOMEBODY ELSE'S HISTORY: open a closed day. */
+  const unlock = card.entryWindow && !card.entryWindow.open && !t.locked
+    && !HIST.mine && can('timesheet.unlock_day')
+    ? `<button class="btn btn-ghost btn-sm hist-unlock" data-day="${escapeHTML(card.date)}"
+        title="Let them fill and submit this day. It closes again when they submit it."
+        >Open this day</button>` : '';
+
+  return `<div class="hist-ts">
+    <div class="hist-ts-head">
+      <span class="hist-ts-title">Timesheet</span>
+      ${total ? `<span class="hist-ts-total">${total}</span>` : ''}
+      <span class="hist-ts-state${t.locked ? ' is-done' : ''}">${escapeHTML(state)}</span>
+    </div>
+    ${lines.length ? `<table class="hist-lines"><tbody>${lines.map(histLine).join('')}</tbody></table>`
+      : '<div class="hist-empty-line">No lines filed for this day.</div>'}
+    ${action || open || unlock ? `<div class="hist-ts-actions">${action}${open}${unlock}</div>` : ''}
+  </div>`;
+}
+
+/* WHAT WAS WORKED ON, one row per asset, with the events of that day under it. */
+function histWorked(card){
+  const rows = card.workedOn || [];
+  const others = card.otherEvents || [];
+  if(!rows.length && !others.length) return '';
+  return `<div class="hist-worked">
+    <div class="hist-worked-title">Worked on</div>
+    ${rows.map(w => `<div class="hist-asset">
+      <div class="hist-asset-top">
+        <span class="hist-code">${escapeHTML(w.code || '—')}</span>
+        <span class="hist-name">${escapeHTML(w.name || '')}</span>
+        ${w.discipline ? `<span class="hist-disc">${escapeHTML(w.discipline)}</span>` : ''}
+        <span class="spacer"></span>
+        ${/* THE RECORDED FIGURE, as the server labelled it. A session still
+               running has no recorded total yet — the figure materialises when
+               it closes — so the card says it is running rather than printing a
+               nought that looks like a fact. */''}
+        <span class="hist-time">${w.open ? 'running now' : escapeHTML(w.label || '0 m')}</span>
+      </div>
+      ${(w.projectName || w.clientName) ? `<div class="hist-where">${
+        escapeHTML([w.clientName, w.projectName].filter(Boolean).join(' · '))}</div>` : ''}
+      ${(w.events || []).length ? `<ul class="hist-events">${w.events.map(e =>
+        `<li>${escapeHTML(histEventLine(e))}${e.note ? `: ${escapeHTML(e.note)}` : ''}</li>`
+      ).join('')}</ul>` : ''}
+    </div>`).join('')}
+    ${others.length ? `<div class="hist-asset hist-asset-other">
+      <div class="hist-worked-title">Also that day</div>
+      <ul class="hist-events">${others.map(e =>
+        `<li><span class="hist-code">${escapeHTML(e.code || '—')}</span>
+          ${escapeHTML(histEventLine(e))}${e.note ? `: ${escapeHTML(e.note)}` : ''}</li>`
+      ).join('')}</ul>
+    </div>` : ''}
+  </div>`;
+}
+
+function histCard(card){
+  const chip = card.chip || { kind: 'nothing', label: '' };
+  const style = HIST_CHIPS[chip.kind] || HIST_CHIPS.nothing;
+  return `<section class="hist-card" data-day="${escapeHTML(card.date)}">
+    <div class="hist-card-head">
+      <span class="hist-date">${escapeHTML(tsPretty(card.date))}</span>
+      <span class="hist-chip ${style.cls}">${escapeHTML(chip.label)}</span>
+      ${card.entryWindow && card.entryWindow.unlocked
+        ? '<span class="hist-chip hist-chip-open">Opened for entry</span>' : ''}
+      ${card.dayMark && card.dayMark.note
+        ? `<span class="hist-note">${escapeHTML(card.dayMark.note)}</span>` : ''}
+    </div>
+    ${histWorked(card)}
+    ${histTimesheet(card)}
+  </section>`;
+}
+
+async function renderHistory(){
+  const el = document.getElementById('historyView');
+  if(!el) return;
+  if(!can('history.view')){ el.innerHTML = ''; return; }
+
+  if(HIST.loading){ return; }
+  HIST.loading = true;
+  try{
+    /* THE SELECTOR'S OPTIONS, fetched once and only when this reader could have
+       a selector at all. Without history.view_others the route answers with
+       just this person, which is the honest answer rather than a filtered
+       version of a longer list. */
+    if(!HIST.people.length && can('history.view_others')){
+      try{ HIST.people = (await api('/history/people')).users || []; }
+      catch{ HIST.people = []; }
+    }
+    const q = [];
+    if(HIST.from) q.push(`from=${encodeURIComponent(HIST.from)}`);
+    if(HIST.to) q.push(`to=${encodeURIComponent(HIST.to)}`);
+    if(HIST.days) q.push(`days=${encodeURIComponent(HIST.days)}`);
+    if(HIST.userId) q.push(`userId=${encodeURIComponent(HIST.userId)}`);
+    HIST.data = await api(`/history${q.length ? `?${q.join('&')}` : ''}`);
+    HIST.error = null;
+  }catch(e){
+    HIST.data = null;
+    HIST.error = e.message || 'That could not be loaded.';
+  }finally{
+    HIST.loading = false;
+  }
+  paintHistory();
+}
+
+function paintHistory(){
+  const el = document.getElementById('historyView');
+  if(!el) return;
+  const d = HIST.data;
+  HIST.mine = !d || !d.user || d.user.mine !== false;
+
+  const picker = can('history.view_others') && HIST.people.length > 1
+    ? `<label class="hist-pick">Whose
+        <select id="hist_user">${HIST.people.map(u =>
+    `<option value="${escapeHTML(u.id)}"${u.id === (HIST.userId || (d && d.user && d.user.id))
+      ? ' selected' : ''}>${escapeHTML(u.name)}</option>`).join('')}</select>
+      </label>` : '';
+
+  el.innerHTML = `
+    <div class="hist-bar">
+      <h2 class="hist-title">My History</h2>
+      ${picker}
+      <label class="hist-pick">From <input type="date" id="hist_from"
+        value="${escapeHTML((d && d.from) || '')}"></label>
+      <label class="hist-pick">To <input type="date" id="hist_to"
+        value="${escapeHTML((d && d.to) || '')}"></label>
+      <div class="hist-shortcuts">
+        ${[['7 days', 7], ['30 days', 30], ['90 days', 90]].map(([label, n]) =>
+    `<button type="button" class="btn btn-ghost btn-sm hist-span" data-days="${n}"
+        >${label}</button>`).join('')}
+      </div>
+      <span class="spacer"></span>
+      ${d ? `<span class="ref-key">${d.days.length} day${d.days.length === 1 ? '' : 's'}</span>` : ''}
+    </div>
+    ${HIST.error ? `<div class="hist-err">${escapeHTML(HIST.error)}</div>` : ''}
+    ${d && d.empty ? '<div class="hist-none">No activity in this period.</div>' : ''}
+    ${d ? d.days.map(histCard).join('') : ''}
+    ${d && d.days.length && d.days.length >= 1 && d.from > (d.earliest || '0000-00-00')
+      ? `<div class="hist-more"><button type="button" class="btn btn-ghost btn-sm" id="hist_more"
+          >Load more</button></div>` : ''}
+  `;
+  wireHistory(el);
+}
+
+function wireHistory(el){
+  const pick = el.querySelector('#hist_user');
+  if(pick) pick.onchange = () => {
+    HIST.userId = pick.value;
+    /* A DIFFERENT PERSON IS A DIFFERENT HISTORY, so the range travels with the
+       reader rather than resetting — looking at the same fortnight for three
+       people in turn is the thing somebody actually does. */
+    renderHistory();
+  };
+  const from = el.querySelector('#hist_from');
+  const to = el.querySelector('#hist_to');
+  const applyRange = () => {
+    HIST.from = (from && from.value) || null;
+    HIST.to = (to && to.value) || null;
+    HIST.days = null;
+    renderHistory();
+  };
+  if(from) from.onchange = applyRange;
+  if(to) to.onchange = applyRange;
+  el.querySelectorAll('.hist-span').forEach(b => { b.onclick = () => {
+    HIST.days = Number(b.dataset.days);
+    HIST.from = null;
+    HIST.to = null;
+    renderHistory();
+  }; });
+  const more = el.querySelector('#hist_more');
+  if(more) more.onclick = () => {
+    /* ONE MORE SPAN OF THE SAME LENGTH, which is what "load more" means on a
+       list ordered by date. The server clamps it to the studio's maximum. */
+    HIST.days = Number((HIST.data && HIST.data.days.length) || 30) + 30;
+    HIST.from = null;
+    renderHistory();
+  };
+
+  el.querySelectorAll('.hist-open-ts').forEach(b => { b.onclick = () => {
+    /* STRAIGHT TO THAT DAY IN THE TIMESHEET, which is where the form and every
+       one of its rules lives. History never edits a line. */
+    tsState.date = b.dataset.day;
+    setTab('timesheet');
+  }; });
+
+  el.querySelectorAll('.hist-submit').forEach(b => { b.onclick = async () => {
+    b.disabled = true;
+    try{
+      /* THE SAME ROUTE THE TIMESHEET TAB CALLS, with no arguments of its own:
+         the exact-hours rule, the entry window, the previous-day gate and the
+         exemption all apply exactly as they do there. This is a second door,
+         never a second rule. */
+      await api('/timesheets/submit', { method:'POST', body:{ date: b.dataset.day } });
+      showToast(`${b.dataset.day} submitted.`);
+      await renderHistory();
+    }catch(e){
+      /* THE SERVER'S OWN SENTENCE, in the page. A 422 here means this tab is
+         out of date — somebody filed the day elsewhere, or a window moved — so
+         the list is read again. */
+      showToast(e.message || 'That day could not be submitted.');
+      await renderHistory();
+    }finally{
+      b.disabled = false;
+    }
+  }; });
+
+  el.querySelectorAll('.hist-unlock').forEach(b => { b.onclick = async () => {
+    const ok = await openAsk({
+      title: `Open ${b.dataset.day}?`,
+      message: 'They will be able to fill and submit that day even though it is outside the '
+        + 'studio’s entry window, and it closes again the moment they submit it.',
+      confirmLabel: 'Yes, open it',
+    }).catch(()=>false);
+    if(!ok) return;
+    try{
+      await api('/timesheets/unlock-day', { method:'POST',
+        body:{ date: b.dataset.day, userId: HIST.userId || (HIST.data && HIST.data.user.id) } });
+      showToast(`${b.dataset.day} is open.`);
+      await renderHistory();
+    }catch(e){
+      showToast(e.message || 'That day could not be opened.');
+    }
+  }; });
 }
 
 /* ---------- the exact-hours rule ------------------------------------------
@@ -10926,7 +11349,7 @@ async function renderUsers(sections = userSections()){
 async function render(){
   const viewIds = { admin:'adminDashView', board:'boardView', list:'listView', team:'teamView',
     users:'usersView', projects:'projectsView', reports:'reportsView', settings:'settingsView',
-    pnl:'pnlView', outsource:'outsourceView', server:'serverView' };
+    pnl:'pnlView', outsource:'outsourceView', server:'serverView', history:'historyView' };
   try{
   /* If the role gained or lost something since this page loaded, the tabs and
      toolbar buttons have to be re-decided too — they are applied once at boot
@@ -10948,6 +11371,7 @@ async function render(){
   refreshTimesheetCount();
   if(state.view==='admin') await renderAdminDashboard();
   else if(state.view==='timesheet') await renderTimesheet();
+  else if(state.view==='history') await renderHistory();
   else if(state.view==='pending') await renderPending();
   else if(state.view==='board') renderBoard();
   else if(state.view==='list') renderList();

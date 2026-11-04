@@ -12,6 +12,7 @@ const authRoutes = require('./routes/auth');
 const projectRoutes = require('./routes/projects');
 const projectReviewRoutes = require('./routes/project-reviews');
 const timesheetRoutes = require('./routes/timesheets');
+const historyRoutes = require('./routes/history');
 const clientRoutes = require('./routes/clients');
 const assetRoutes = require('./routes/assets');
 const userRoutes = require('./routes/users');
@@ -34,6 +35,7 @@ const themeDelivery = require('./theme-delivery');
 const recordingHoursRoutes = require('./routes/recording-hours');
 const holidayRoutes = require('./routes/holidays');
 const timesheetOptionRoutes = require('./routes/timesheet-options');
+const historySettingRoutes = require('./routes/history-settings');
 const chatSettingsRoutes = require('./routes/chat-settings');
 const assetSettingsRoutes = require('./routes/asset-settings');
 const nudgeRoutes = require('./routes/nudges');
@@ -155,6 +157,8 @@ app.use('/api/clients', clientRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/project-reviews', projectReviewRoutes);
 app.use('/api/timesheets', timesheetRoutes);
+/* My History: one endpoint, guarded by history.view / history.view_others. */
+app.use('/api/history', historyRoutes);
 /* THE TIMESHEET DOWNLOAD, on its own prefix because every route under it needs
    timesheet.export and the studio's switch, where nothing under /api/timesheets
    does. See the note at the top of src/routes/timesheet-export.js. */
@@ -193,6 +197,7 @@ app.use('/api/theme', themeRoutes);
 app.use('/api/admin/settings/recording-hours', recordingHoursRoutes);
 app.use('/api/admin/settings/holidays', holidayRoutes);
 app.use('/api/admin/settings/timesheet', timesheetOptionRoutes);
+app.use('/api/admin/settings/history', historySettingRoutes);
 /* Settings -> Asset Names: whether an asset's name can be edited after it is
    created. Its own key, settings.asset_rename — see the route. */
 app.use('/api/admin/settings/asset-names', assetSettingsRoutes);

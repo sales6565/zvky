@@ -187,6 +187,13 @@ router.get('/me', authenticate, async (req, res) => {
        A boolean, not the settings row: the counts the Settings section shows
        are fetched by that section when somebody opens it. */
     assetRenameEnabled: assetSettings.renameEnabled(),
+    /* THE MY HISTORY TAB'S SWITCH, on the poll every other switch rides.
+       A boolean and not the settings row, for the reason above it: the three
+       values the Settings section shows are fetched by that section when
+       somebody opens it, and all the tab strip needs to know is whether there
+       is a tab. Turning it off takes the tab away within the refresh cycle,
+       with no reload and no sign-out. */
+    historyEnabled: require('../history-settings').enabled(),
     timesheetGate: {
       blocked: gate.blocked,
       date: gate.date,
