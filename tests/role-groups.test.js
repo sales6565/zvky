@@ -119,7 +119,15 @@ const SINCE_SNAPSHOT = [MANAGE, 'settings.email_delivery', 'report.remind', 'set
      of the studio, and if the switch lived behind that key every one of them
      could take the feature away from everybody else. Using a feature and
      deciding whether the studio has it are different acts. */
-  'settings.asset_rename'];
+  'settings.asset_rename',
+  /* THE ONE WAY ROUND THE EXACT-HOURS RULE. With Settings -> Time Sheet's hours
+     rule on, a day must total exactly the required hours before it can be
+     submitted and a line that would take it over is refused; a holder of this
+     key may submit a day that is short or over. It is the only door in that
+     rule — there is no per-day override and no "submit anyway" — so it starts
+     with the Super Admin and a studio hands it to whoever handles the
+     exceptions. Wider by default would make the rule advisory. */
+  'timesheet.min_hours_exempt'];
 
 /* THE KEYS THAT ARE DELIBERATELY NOT SUPER-ADMIN-ONLY, listed separately so
  * each exception is argued rather than hidden in the list above.

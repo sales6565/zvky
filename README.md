@@ -300,8 +300,9 @@ granting the section does not have to find a second switch somewhere else.
 
 Two kinds of line, both project work and neither of them work on an asset:
 **Project Meeting** and **Review**. The lead types the hours for both, with the
-same step, the same limits and the same "a day over 8 hours is flagged, not
-refused" rule as every other typed line. Neither names an asset — the field is
+same step, the same limits and the same "a day over the day's length is
+flagged, not refused" rule as every other typed line — or, with the hours rule
+on, the same exact requirement as every other line. Neither names an asset — the field is
 hidden while the box is ticked, and the server refuses a TL Action line that
 carries one.
 
@@ -344,7 +345,8 @@ The inventory, because most of the candidates turned out not to exist:
 | Option | Was | Now |
 | --- | --- | --- |
 | Non-project categories | a hardcoded array of five in `src/timesheets.js` | reference data, `timesheet_categories` |
-| Length of a normal day (the soft cap) | `TIMESHEET_MAX_HOURS = 8` | `timesheet_settings.max_day_hours` |
+| Length of a normal day — a soft cap, or the exact requirement with the hours rule on | `TIMESHEET_MAX_HOURS = 8` | `timesheet_settings.max_day_hours` |
+| Whether a day must total exactly that before it can be submitted | **did not exist** | `hours_rule_enabled`, **default off**, and `hours_rule_from` |
 | Smallest line | `MIN_LINE_HOURS = 0.25` | `min_line_hours` |
 | Largest line | `MAX_LINE_HOURS = 24` | `max_line_hours` |
 | Which days hours can be logged on | `isWeekend()`, fixed | `loggable_days`, default Mon–Fri |
@@ -586,9 +588,13 @@ Two definitions carry the whole rule, and both live once in
   distinction lives on `timesheet_days.status` and not on the lines, and
   submitting *locks* them, so reading "filled" as "submitted" would mean the
   only way to satisfy the rule was also the way to stop correcting it. It is
-  not an hours threshold and not configurable: `max_day_hours` is a soft cap the
-  form quotes, not a floor, and a floor would refuse somebody whose Tuesday
-  honestly was three hours.
+  not an hours threshold and not configurable *here*: compliance asks whether
+  the day was filled at all. Whether it has to add up to the day's length is a
+  separate switch with its own start date — see
+  [the timesheet hours rule](#the-timesheet-hours-rule-a-day-must-be-exactly-the-required-hours) —
+  and with that switch off, which is how every install starts, `max_day_hours`
+  stays a soft cap the form quotes rather than a floor, because a floor would
+  refuse somebody whose Tuesday honestly was three hours.
 
 **Nobody is asked for a day they could not fill.** A user whose `created_at` is
 after that day is not blocked. If `backdate_days` is set narrow enough to put
@@ -1624,6 +1630,184 @@ durability independent of the box, swap `src/upload.js`'s multer disk
 storage for an S3-compatible bucket — it's the only file that needs to
 change, since every route just uses `req.file` / `file_path` without caring
 where it physically lives.
+
+## The timesheet hours rule: a day must be exactly the required hours
+
+**Settings → Time Sheet → Timesheet hours rule.** With the switch on, a day must
+total **exactly** the hours required before it can be submitted. Fewer is
+refused; more cannot even be filed — a line that would take the day over is
+refused as it is typed.
+
+Off on every existing install, for the reason `requirePreviousDay` is off:
+switching it on stops people submitting, and the morning after a deployment most
+of a studio has a day that is not exactly eight hours.
+
+### Centihours, because minutes cannot express the rule
+
+`timesheet_entries.hours` is `DECIMAL(5,2)` — hundredths of an hour, exactly,
+with nothing below them. So the rule is decided in **centihours**: 8h is `800`,
+a quarter of an hour is `25`, and every comparison is integer equality.
+
+* **Minutes would be the wrong unit.** 0.01h is 0.6 of a minute, so 7.99h is not
+  a whole number of minutes. A rule in minutes would have to round, and a
+  rounded comparison is not an exact one: "exactly eight hours" would quietly
+  mean "eight hours give or take a third of a minute".
+* **Floating point would be the wrong representation.** `4.02 + 0.02 + 3.96` is
+  `7.999999999999999` as doubles, so `=== 8` is **false** — a day that is exactly
+  eight hours would be refused. In centihours it is `402 + 2 + 396 = 800`.
+* **Both sides match.** The requirement is `timesheet_settings.max_day_hours`,
+  also `DECIMAL(5,2)`, so it is always reachable by some sum of lines. That is
+  what makes "exactly" a rule somebody can satisfy rather than a trap.
+
+[`src/timesheet-hours-rule.js`](src/timesheet-hours-rule.js) is the whole
+decision. The submit route, the three line routes and the week payload all take
+their verdict from it; the page draws the numbers and holds no copy of the rule,
+which `tests/timesheet-hours-rule.test.js` proves by grepping the page.
+
+### What the day asks for
+
+The required figure is the **existing** setting — "the length of a normal day",
+which has been a Super Admin setting since Prompt 51 and is also the threshold
+the old "over 8 hours is flagged" behaviour reads. One number, relabelled
+**Exact hours required per day**; there is no second figure that could disagree
+with it.
+
+| the day | required |
+|---|---|
+| a normal working day | the setting (8h → `800`) |
+| **half a day's leave**, first or second half | half of it (`400`) |
+| full-day leave, a holiday, a weekly off, a vacation day, a planned full day | **nothing** (`0`) |
+| an Idle day, an On Site day | the setting in full |
+
+"Nothing is owed" is not decided here: it is `isTimesheetRequired` in
+[`src/day-status.js`](src/day-status.js), which owns the weekly offs, the holiday
+calendar and full-day leave. The week payload asks the sync half of that pair,
+`timesheetRequiredOn`, because it already holds the week's marks from one query.
+
+**Every kind of line counts** — project work, TL Action, Training, On Site, Idle
+with its remarks, Leave, and anything a studio adds to the category list.
+**Idle counts** because Idle exists so that a day can be filled in honestly; a
+rule that made people log eight hours of "work" to escape it would be a rule
+that produced false timesheets. A Leave *line* counts once like any other and
+shrinks nothing: the requirement comes from the day's **mark**, not from a line
+somebody typed.
+
+### Where it does not apply
+
+In all five cases the day behaves exactly as it did before this feature existed,
+including the old flag-only treatment of hours above the setting:
+
+| | |
+|---|---|
+| the switch is off | `hours_rule_enabled` |
+| the day is before the start date | `hours_rule_from` — see below |
+| the person is exempt | `timesheet.min_hours_exempt` |
+| nothing is owed for the day | a holiday, a weekly off, full-day leave, a vacation |
+| the required figure is zero | the same thing said in numbers |
+
+`decide()` returns `status: null` for all of them, never `'exact'`: the Submit
+button is enabled on `'exact'`, so a day the rule says nothing about must not
+borrow a state that means something.
+
+### No backlog trap
+
+Turning the switch on stamps **`hours_rule_from` with today, in the studio's
+timezone** — asked of `timesheet-gate.istDate`, not built from a local `Date`,
+because this server runs in UTC and between 18:30 and midnight UTC "today" is
+already tomorrow in the office. Days before that date submit exactly as they do
+now. The date is editable afterwards, and switching the rule off and on again
+does not move a date somebody chose.
+
+### The three refusals
+
+| | |
+|---|---|
+| `POST /timesheets/submit` | `422 HOURS_BELOW_MINIMUM` when short, `422 HOURS_ABOVE_MAXIMUM` when over, with `{required, logged, remaining}` in centihours and in hours |
+| `POST /timesheets/entries` | `422 HOURS_ABOVE_MAXIMUM` when the line would take the day over, naming what would have fitted |
+| `PATCH /timesheets/entries/:id` | the same, with the line's **own** hours given back first — so correcting a 3h line on a full day is not refused for the hours it is itself contributing |
+
+**Deleting is always allowed**, and needs no guard: it can only make a day
+smaller, and a short day cannot be submitted. "A submitted day must not be
+dropped off exact" is already guaranteed by the lock that has always been there —
+a submitted day refuses *every* change with a `409`, and the way to change one is
+to reopen it, which makes it a draft again.
+
+**Only one route marks a day submitted** and only one writes a line
+(`insertEntry`, one call site). No system path creates timesheet lines: Idle, On
+Site and leave are marks on `user_day_status`, not timesheet lines. Both facts
+are asserted against the source, so a new path has to come and decide what the
+rule means to it.
+
+### Two tabs, one day
+
+The add and the edit both run inside a transaction that locks the day's own row
+in `timesheet_days` with `SELECT … FOR UPDATE`, reads the lines inside that lock
+and writes before releasing it.
+
+That is not belt and braces. Two tabs each adding six hours to an eight-hour day
+is what happens when somebody opens their timesheet on a laptop and a phone:
+read-then-insert without a lock lets both reads see two hours of room and both
+inserts succeed, and the day ends up at fourteen. The test fires the two
+requests **concurrently** and asserts exactly one is accepted — a sequential test
+would pass with no lock at all.
+
+### The exemption
+
+`timesheet.min_hours_exempt` — *Exempt from the required-hours rule (may submit
+fewer or more than the required hours)*. **Super Admin only** by default,
+grantable to any designation, and **the only way round the rule**: there is no
+per-day override, no reason box and no "submit anyway" button. A test asserts
+none of those words exists in the route or the page.
+
+Where somebody genuinely cannot reach the figure because they were away, the
+answer is for an admin to **mark the leave**, which shrinks the requirement
+through the day-status logic every other screen already reads. The Timesheet tab
+says so in those words, beside the disabled button: *"If you were on leave, ask
+your admin to mark it."*
+
+The Settings section lists the designations that currently hold the exemption,
+computed from `effectiveFor` — the same function the gate uses — so role groups
+granting it through an additive union are named too.
+
+### What the page does
+
+The week payload carries, per day, `required`, `logged`, `remaining`, `status`
+and `canSubmit`. The page draws a progress bar and one sentence:
+
+| status | |
+|---|---|
+| `short` | "6.5h of 8h logged, 1.5h to go" |
+| `exact` | "8h of 8h, ready to submit" (success style) |
+| `over` | "9.25h of 8h, 1.25h over: edit or delete lines to submit" (warning style) |
+
+Submit is a real `<button disabled>` — in the tab order, announced as disabled,
+with `aria-describedby` pointing at the same sentence that is its tooltip. The
+Add line form's Hours field takes its `max` from the remaining time, never
+negative, and offers **Fill remaining**, which puts the exact figure in the
+field. A **calculated** (locked) value over the remaining time cannot be typed
+around, so the form says *"This line (3h) is more than the time left today
+(1.5h). Edit or delete other lines first."* and keeps Add line disabled.
+
+A `422` from either route is shown **in the page** and the week is refetched: a
+`422` here means this tab was out of date, so redrawing from a fresh read is the
+only honest response.
+
+### The setting's three constraints
+
+`maxDayHours` was `0.01`–`HOURS_CEILING` when it was only a flag threshold. As a
+requirement it is **1 to 24**, in **quarter hours**, and **its half must be
+storable** — 8.25h would make a half day 4.125h, which no line can hold, so such
+a day could never be satisfied. In practice that means multiples of half an hour,
+and the refusal says which two values are nearest. All three apply whether the
+rule is on or off, because the value is one value and a studio that set 8.25 with
+the switch off would find its half-days unsatisfiable the moment it turned on.
+
+Saving is audit-logged, and the rule's three values are recorded as their **own
+named fields** (`requiredHoursPerDay`, `exactHoursRule`, `exactHoursRuleFrom`)
+rather than only inside the policy sentence: `src/activity.js` clips every
+recorded value at 200 characters, and the rule is at the end of that sentence —
+so "turned the rule on, from the 7th" was being clipped out of the only record of
+it. A test caught that.
 
 ## Renaming an asset
 
@@ -6579,7 +6763,8 @@ npm test
 
 Runs on Node's built-in test runner — no test framework dependency.
 
-**One test file at a time, not one per core.** Ninety-six files in `tests/` start their own
+**One test file at a time, not one per core.** The files in `tests/` — over a hundred and
+sixty of them now, which is why the figures below are dated rather than current — start their own
 server and run the whole startup migration against their own database. At the runner's
 default concurrency that is one simultaneous boot per core against one MariaDB, and some
 suite always loses the race: three consecutive full runs failed with "Server did not start"
@@ -6589,8 +6774,8 @@ deadline only moved which suite died.
 
 **Two at a time was not enough, which is why this now says one.** The cap was `2` and
 measured again as the suite grew: 12 boot timeouts in one run, with 11 failures concentrated
-in `game-feedback-panel` — which passes 16/16 on its own. At `1`: **zero boot timeouts, 1796
-of 1797 passing, about 16 minutes.** That is the honest cost of the cap, and it is the right
+in `game-feedback-panel` — which passes 16/16 on its own. At `1`, measured when the cap was
+set: **zero boot timeouts, 1796 of 1797 passing, about 16 minutes.** That is the honest cost of the cap, and it is the right
 trade — a boot timeout is a capacity problem, and capping concurrency is the remedy for it,
 whereas raising a deadline only hides which suite is starving. Override with
 `TEST_CONCURRENCY=4 npm test` on a bigger machine.
