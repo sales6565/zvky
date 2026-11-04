@@ -243,12 +243,37 @@ function windowsFromRow(row) {
   if (!row || row.kind !== KINDS.leave) return [];
   const base = startOfDay(row.date);
   if (!Number.isFinite(base)) return [];
-  if (row.portion === PORTIONS.full || row.windowStart === null || row.windowEnd === null) {
+  /* A STORED WINDOW WINS, WHATEVER THE PORTION SAYS — and the order of these
+     two tests is the whole of it.
+   *
+   * It used to read "full day OR no window -> the whole calendar date", which
+   * was right while the only windows that existed came from a portion: a full
+   * day has no window to store, so the two conditions could not disagree.
+   *
+   * A SAME-DAY VACATION MAKES THEM DISAGREE. Somebody books a holiday at
+   * eleven, having already recorded an hour that morning, and the brief is
+   * explicit: the hour stays and only the time after the booking is cut. The
+   * day still has to BE full-day leave — that is what stops the timesheet
+   * asking for hours they cannot log, and what keeps them off the follow-up
+   * lists — so the row is portion 'full' with a window that begins at eleven.
+   *
+   * EVERY ROW THAT EXISTS TODAY IS UNAFFECTED, which is what makes this safe:
+   * windowFor() returns null for a full day, so every full-day row ever written
+   * has NULL windows and still falls through to the whole date. Only a row
+   * written with an explicit window behaves differently, and only this feature
+   * writes one. */
+  if (row.windowStart !== null && row.windowStart !== undefined
+      && row.windowEnd !== null && row.windowEnd !== undefined) {
+    const from = base + Number(row.windowStart) * MS_PER_MINUTE;
+    const to = base + Number(row.windowEnd) * MS_PER_MINUTE;
+    return to > from ? [{ from, to }] : [];
+  }
+  if (row.portion === PORTIONS.full) {
     return [{ from: base, to: base + MS_PER_DAY }];
   }
-  const from = base + row.windowStart * MS_PER_MINUTE;
-  const to = base + row.windowEnd * MS_PER_MINUTE;
-  return to > from ? [{ from, to }] : [];
+  /* A HALF DAY WITH NO STORED WINDOW. Only reachable for a row written before
+     the window columns existed; the snapshot is what every row has now. */
+  return [{ from: base, to: base + MS_PER_DAY }];
 }
 
 async function leaveWindows(db, userId, date) {
@@ -536,19 +561,45 @@ async function clearRow(db, { userId, date, clearedBy, reason }) {
 }
 
 async function mark(db, { userId, date, kind, portion = null, note = null, setBy = null,
-  clientId = null, requestId = null,
+  clientId = null, requestId = null, fromMinute = null,
   source = SOURCES.manual, schedule = workSchedule.current() }) {
   if (!userId || !isDate(date) || !KINDS[kind]) return { ok: false, code: 'bad_request' };
   if (kind === KINDS.leave && !PORTIONS[portion]) return { ok: false, code: 'bad_portion' };
 
   const sp = leaveSettings.split({ schedule });
-  const win = kind === KINDS.leave ? leaveSettings.windowFor(portion, sp) : null;
+  /* `fromMinute` IS THE ONE CALLER-SUPPLIED WINDOW, and it exists for a vacation
+     that starts TODAY: the day is leave from the moment it was booked, not from
+     midnight, so the hours already recorded this morning survive. Everything
+     else still takes its window from the portion, which is the only way a
+     window has ever been set.
+
+     IGNORED FOR A HALF DAY, because a half day already names its window and two
+     answers would be one too many; and ignored at or before the start of the
+     working day, where it would describe the same whole day in a more fragile
+     way. */
+  const explicit = kind === KINDS.leave && portion === PORTIONS.full
+    && Number.isFinite(Number(fromMinute))
+    && Number(fromMinute) > leaveSettings.DAY_START
+    && Number(fromMinute) < leaveSettings.DAY_END;
+  const win = explicit
+    /* FLOORED, NOT ROUNDED, and the run is what taught me the difference.
+       Math.round on a booking made at 10:59:42 stores 660 — the window then
+       begins in the future, liveWindowsNow finds no window containing `now`,
+       and the booking stops nothing at all. Flooring puts the window's start at
+       or before this instant, which is what makes the stop reachable, and costs
+       at most the current minute of recorded time. */
+    ? { start: Math.floor(Number(fromMinute)), end: leaveSettings.DAY_END }
+    : (kind === KINDS.leave ? leaveSettings.windowFor(portion, sp) : null);
 
   /* MARKING THE SAME THING TWICE IS A NO-OP, checked before the clear so that a
      double-click does not turn one row into two history rows that say the same
      thing. */
   const existing = await userDayStatus(db, userId, date);
   if (existing && existing.kind === kind && (existing.portion || null) === (portion || null)
+    /* A WINDOW THAT MOVED IS A CHANGE. Without this, re-marking today's
+       full-day leave with a later start would be swallowed as a duplicate and
+       the window would keep its old value. */
+    && (existing.windowStart || null) === (win ? win.start : null)
     /* AN ONSIGHT DAY WHOSE CLIENT CHANGED IS A CHANGE. Everything else about
        the row is the same, so without this a correction from "no client" to
        "Acme" would be swallowed as a no-op. */

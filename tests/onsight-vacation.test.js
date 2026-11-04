@@ -228,10 +228,39 @@ test('the settings refuse Vacation mode while Leave, Idle & Onsight is off', () 
   assert.strictEqual(on.ok, true);
   assert.strictEqual(on.value.vacationEnabled, true);
 
-  // And the notice floor is refused at the edge rather than silently raised.
+  /* THE NOTICE FLOOR IS NOW ZERO, AND THE DEFAULT IS STILL ONE.
+   *
+   * This assertion used to read the other way — 0 refused, "between 1 and" in
+   * the message — and the studio has changed its mind deliberately: 0 lets
+   * somebody book a vacation that starts today, and their running timer stops
+   * in the same request. The old floor's argument was that today is the one
+   * date somebody ELSE records, which is about who may mark a day; a person
+   * booking their own holiday starting this morning is not reaching into
+   * anybody's figures.
+   *
+   * WHAT MUST NOT HAVE CHANGED IS THE DEFAULT, and that is the real content of
+   * this block: a deployment that never visits Settings still asks for a day's
+   * notice, so nothing moves on upgrade. */
+  assert.strictEqual(leaveSettings.DEFAULTS.vacationMinNoticeDays, 1,
+    'the default is a day\'s notice, so an existing install is unchanged');
+  assert.strictEqual(leaveSettings.MIN_NOTICE_FLOOR, 0, 'and zero is now reachable');
   const zero = leaveSettings.validate({ enabled: true, vacationMinNoticeDays: 0 }, { existing: base });
-  assert.strictEqual(zero.ok, false);
-  assert.match(zero.errors[0].message, /between 1 and/);
+  assert.strictEqual(zero.ok, true, 'zero notice is a legal setting now');
+  assert.strictEqual(zero.value.vacationMinNoticeDays, 0);
+
+  /* AND THE EDGE IS STILL AN EDGE. Below zero is not a shorter notice period,
+     it is a vacation that started before it was booked, and the message has to
+     name the range it is outside. */
+  const under = leaveSettings.validate({ enabled: true, vacationMinNoticeDays: -1 }, { existing: base });
+  assert.strictEqual(under.ok, false);
+  assert.match(under.errors[0].message, /between 0 and/);
+
+  /* THE NEW SWITCH, pinned where its three siblings are: default ON, and a
+     boolean rather than something that can arrive as a string and read true. */
+  assert.strictEqual(leaveSettings.DEFAULTS.vacationStopTimers, true);
+  const stop = leaveSettings.validate({ enabled: true, vacationStopTimers: false }, { existing: base });
+  assert.strictEqual(stop.ok, true);
+  assert.strictEqual(stop.value.vacationStopTimers, false);
 });
 
 test('every toggle in the Leave group is in the audit summary', () => {

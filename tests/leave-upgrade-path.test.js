@@ -76,7 +76,12 @@ const RELEASED_DAY_STATUS = `CREATE TABLE IF NOT EXISTS user_day_status (
 const NEEDED = {
   leave_settings: ['id', 'enabled', 'first_half_end_minutes', 'second_half_start_minutes',
     'updated_by', 'updated_at', 'vacation_enabled', 'vacation_require_approval',
-    'vacation_min_notice_days', 'vacation_max_range_days', 'vacation_email_enabled'],
+    'vacation_min_notice_days', 'vacation_max_range_days', 'vacation_email_enabled',
+    /* Whether a vacation covering now puts the person's running timers down.
+       Added by its own ALTER like the four above it, so it belongs in both this
+       list and schema-check's — the pair of assertions below is exactly what
+       catches a column added to one and forgotten in the other. */
+    'vacation_stop_timers'],
   user_day_status: ['id', 'seq', 'user_id', 'date', 'kind', 'portion', 'window_start_time',
     'window_end_time', 'note', 'set_by', 'set_at', 'cleared_by', 'cleared_at', 'clear_reason',
     'source', 'active_date', 'client_id', 'request_id'],

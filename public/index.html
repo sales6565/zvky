@@ -934,6 +934,10 @@ tr.past-round{opacity:0.62;}
 .rh-bad,input.rh-bad{border-color:var(--error-strong) !important;}
 .rh-errs{margin-top:7px;display:flex;flex-direction:column;gap:3px;}
 .rh-err{font-size:11px;color:var(--error-strong);}
+/* A SETTING'S CONSEQUENCE, SAID BESIDE IT. Quieter than a label and quieter
+   than an error, because it is neither: it is the sentence somebody needs
+   before they choose a value, not after. */
+.rh-note{font-size:10.5px;color:var(--ink-faint);line-height:1.45;}
 .rh-meta{margin-top:6px;font-size:10px;color:var(--ink-faint);}
 .rh-empty{font-size:11.5px;color:var(--ink-faint);padding:6px 0 10px;}
 /* --- Holidays: the days the clock does not run -----------------------------
@@ -3150,6 +3154,9 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
         <div class="field-err" id="pf_vac_err"></div>
         <div style="margin-top:8px;">
           <button type="button" class="btn btn-brand" id="pf_vac_save">Book vacation</button>
+          ${/* WHICH MODE THE FORM IS IN, and the way out of it. Empty while
+                booking, which is the ordinary case. */''}
+          <div id="pf_vac_mode" class="pf-vac-rules"></div>
         </div>
       </div>
       <div class="field-lbl" style="margin-top:18px;">Your vacations</div>
@@ -15954,12 +15961,115 @@ async function renderAdminDashboard(){
            notice. Filled asynchronously because it is one more request and the
            dashboard should not wait on it. -->
       <div id="upcomingLeaveSlot"></div>
+
+      <!-- Vacation requests waiting for a decision. Absent entirely without
+           Approve Vacations, and absent when approval is switched off, because
+           then nothing can ever be waiting. Its own request, like the leaves
+           above, so the dashboard does not wait on it. -->
+      <div id="vacationQueueSlot"></div>
     </div>`;
 
   wireAdminDashboard();
   wireCapacity();
   wireFollowUp();
   loadUpcomingLeave();
+  loadVacationQueue();
+}
+
+/* ---------- Vacation requests ----------
+ *
+ * THE QUEUE OF THINGS TO DECIDE, which before this had no home. A pending
+ * vacation was announced by a notification when it was submitted and then
+ * existed nowhere — so one missed notification left a booking waiting
+ * indefinitely while the person who made it believed it was in.
+ *
+ * ITS KEY IS leave.approve, which is also the endpoint's. The dashboard DRAWS
+ * this; it does not own it — see GET /api/leave/pending for why the authority
+ * to decide is the right gate rather than the dashboard's own.
+ *
+ * TWO BUTTONS AND NO FORM. Approve and Decline, both going to the route that
+ * has existed since Prompt 55 — so a decision made here is the same decision,
+ * with the same notification, the same email and the same audit entry. The
+ * decline reason is asked for in the page's own ask dialog rather than a native
+ * prompt.
+ */
+let VACATION_QUEUE = null;
+
+async function loadVacationQueue(){
+  const slot = document.getElementById('vacationQueueSlot');
+  if(!slot) return;
+  if(!can('leave.approve')){ slot.innerHTML = ''; return; }
+  try{
+    VACATION_QUEUE = await api('/leave/pending');
+  }catch(err){
+    VACATION_QUEUE = null;
+    slot.innerHTML = '';
+    return;
+  }
+  paintVacationQueue();
+}
+
+function paintVacationQueue(){
+  const slot = document.getElementById('vacationQueueSlot');
+  const d = VACATION_QUEUE;
+  if(!slot || !d) return;
+  /* NOTHING TO SHOW WHEN NOTHING CAN BE WAITING. With approval off a booking
+     takes effect on submission, so an empty panel headed "Vacation requests"
+     would be a permanent empty box inviting somebody to wonder what broke. */
+  if(!d.approvalRequired || !d.vacationEnabled){ slot.innerHTML = ''; return; }
+  const rows = d.requests || [];
+  slot.innerHTML = `<section class="ad-panel">
+    <div class="ad-panel-head">
+      <h2>Vacation requests</h2>
+      <span class="ref-key">${rows.length
+        ? `${rows.length} waiting${d.studioWide ? '' : ' in your projects'}`
+        : 'nothing waiting'}</span>
+    </div>
+    ${rows.length ? `<div class="ul-list">${rows.map(v => `
+      <div class="ul-row">
+        <span class="ul-name">${escapeHTML(v.personName || 'Somebody')}</span>
+        <span class="ul-when">${escapeHTML(vacRange({ from: v.from, to: v.to }))}</span>
+        <span class="ul-tag">${escapeHTML(v.label || '')}</span>
+        ${v.note ? `<span class="ul-note">${escapeHTML(v.note)}</span>` : ''}
+        <button type="button" class="ul-load" data-vq-yes="${escapeHTML(v.id)}">Approve</button>
+        <button type="button" class="pf-vac-act" data-vq-no="${escapeHTML(v.id)}">Decline</button>
+      </div>`).join('')}</div>`
+      : '<div class="fu-leave-none">No vacation is waiting for a decision.</div>'}
+  </section>`;
+
+  slot.querySelectorAll('[data-vq-yes]').forEach(b => b.addEventListener('click', ()=>{
+    decideVacation(b.dataset.vqYes, true);
+  }));
+  slot.querySelectorAll('[data-vq-no]').forEach(b => b.addEventListener('click', ()=>{
+    decideVacation(b.dataset.vqNo, false);
+  }));
+}
+
+async function decideVacation(id, approve){
+  const row = ((VACATION_QUEUE||{}).requests||[]).find(r => r.id === id) || {};
+  const ok = await openAsk({
+    title: approve ? 'Approve this vacation?' : 'Decline this vacation?',
+    message: approve
+      ? `${row.personName || 'This person'} will be on leave for ${row.label || 'those dates'}. `
+        + 'Those days stop asking for a timesheet and stop counting hours, and if the vacation '
+        + 'already covers today any running timer of theirs stops now.'
+      : `${row.personName || 'This person'} will be told it was not approved. Nothing about `
+        + 'their hours changes — a request that was never approved never affected anything.',
+    confirmLabel: approve ? 'Yes, approve it' : 'Yes, decline it',
+  }).catch(()=>false);
+  if(!ok) return;
+  try{
+    const out = await api(`/leave/${encodeURIComponent(id)}/decide`,
+      { method:'POST', body:{ approve } });
+    const stopped = (out.stoppedTimers||[]).length;
+    showToast(approve
+      ? `Approved${stopped ? ` — ${stopped} running timer${stopped===1?'':'s'} stopped` : ''}.`
+      : 'Declined — they have been told.');
+    await loadVacationQueue();
+    await loadUpcomingLeave();
+  }catch(e){
+    showToast(e.message || 'That could not be decided.');
+  }
 }
 
 /* ---------- Upcoming leaves ----------
@@ -20950,6 +21060,7 @@ async function renderLeaveSettings(){
     vacationMinNoticeDays: Number(s.vacationMinNoticeDays) || 1,
     vacationMaxRangeDays: Number(s.vacationMaxRangeDays) || 60,
     vacationEmailEnabled: s.vacationEmailEnabled,
+    vacationStopTimers: s.vacationStopTimers,
     ...(leaveState.typed || {}),
   };
   el.innerHTML = `
@@ -21022,7 +21133,13 @@ async function renderLeaveSettings(){
         <div class="rh-f">
           <label for="lv_vac_notice">Minimum notice (days)</label>
           <input type="number" id="lv_vac_notice" class="narrow${errFor('vacationMinNoticeDays')?' bad':''}"
-                 min="1" max="180" value="${Number(shown.vacationMinNoticeDays)||1}">
+                 min="0" max="180" value="${Number(shown.vacationMinNoticeDays) === 0 ? 0 : (Number(shown.vacationMinNoticeDays)||1)}">
+          ${/* THE ONE SENTENCE THE BRIEF ASKS FOR, and it is here rather than in
+                the README because the consequence is immediate and surprising:
+                somebody books a holiday starting this morning and their running
+                timer stops under them. An admin setting this to 0 should read
+                that before pressing Save, not afterwards. */''}
+          <div class="rh-note">0 lets users start a vacation today; their running timer stops immediately.</div>
           ${errFor('vacationMinNoticeDays') ? `<div class="rh-err">${escapeHTML(errFor('vacationMinNoticeDays'))}</div>` : ''}
         </div>
         <div class="rh-f">
@@ -21030,6 +21147,16 @@ async function renderLeaveSettings(){
           <input type="number" id="lv_vac_range" class="narrow${errFor('vacationMaxRangeDays')?' bad':''}"
                  min="1" max="366" value="${Number(shown.vacationMaxRangeDays)||60}">
           ${errFor('vacationMaxRangeDays') ? `<div class="rh-err">${escapeHTML(errFor('vacationMaxRangeDays'))}</div>` : ''}
+        </div>
+        <div style="align-self:end;">
+          ${/* STOPPING THE TIMERS IS A SEPARATE QUESTION FROM EXCLUDING THE
+                HOURS, which is why this is a switch and not a consequence. The
+                hours are excluded either way — a vacation day is a leave day and
+                every figure already subtracts it — so all this governs is
+                whether a timer left running is put down. A studio that would
+                rather see it running and deal with it by hand may. */''}
+          <label class="rh-check" title="A vacation day records no time either way. This decides whether a running timer is put down when one starts."><input type="checkbox" id="lv_vac_stop"${shown.vacationStopTimers?' checked':''}>
+            Stop running timers when vacation starts</label>
         </div>
         <div style="align-self:end;">
           <label class="rh-check"><input type="checkbox" id="lv_vac_mail"${shown.vacationEmailEnabled?' checked':''}>
@@ -21075,13 +21202,14 @@ async function renderLeaveSettings(){
       vacationMinNoticeDays: num('lv_vac_notice', 1),
       vacationMaxRangeDays: num('lv_vac_range', 60),
       vacationEmailEnabled: box('lv_vac_mail'),
+      vacationStopTimers: box('lv_vac_stop'),
     };
   };
 
   const keep = ()=>{ leaveState.typed = readForm(); };
   first.addEventListener('input', keep);
   second.addEventListener('input', keep);
-  for(const id of ['lv_enabled','lv_vac','lv_vac_approve','lv_vac_mail','lv_vac_notice','lv_vac_range']){
+  for(const id of ['lv_enabled','lv_vac','lv_vac_approve','lv_vac_mail','lv_vac_stop','lv_vac_notice','lv_vac_range']){
     const el = document.getElementById(id);
     if(el) el.addEventListener('change', keep);
   }
@@ -23343,15 +23471,31 @@ function paintVacations(){
       : (x.phase === 'active'
         ? `<button type="button" class="pf-vac-act" data-vac-end="${escapeHTML(x.id)}">End early</button>`
         : '');
+    /* AND EDITING, on anything that has not finished. The owner may always do
+       this — it is the same act as booking — so there is no key to check here.
+       A vacation that has STARTED can only have its end moved, and the form
+       says so by locking the From field rather than by letting somebody change
+       it and reading the server's refusal: the rule is about days that have
+       already excluded their hours, which is easier to accept before typing
+       than after. The server refuses it regardless; this is the courtesy. */
+    const editable = x.status === 'submitted' || x.phase === 'upcoming' || x.phase === 'active';
+    const edit = editable
+      ? `<button type="button" class="pf-vac-act" data-vac-edit="${escapeHTML(x.id)}">Edit</button>`
+      : '';
     return `<div class="pf-vac-row">
       <span class="pf-vac-when">${escapeHTML(x.label)}</span>
       <span class="pf-vac-state${cls}">${escapeHTML(state)}</span>
+      ${edit}
       ${act}
       ${x.note ? `<span class="pf-vac-note-txt">${escapeHTML(x.note)}</span>` : ''}
       ${x.decisionNote ? `<span class="pf-vac-note-txt">Decision: ${escapeHTML(x.decisionNote)}</span>` : ''}
     </div>`;
   }).join('');
 
+  list.querySelectorAll('[data-vac-edit]').forEach(b => b.addEventListener('click', ()=>{
+    const row = rows.find(r => r.id === b.dataset.vacEdit);
+    if(row) startVacationEdit(row);
+  }));
   list.querySelectorAll('[data-vac-cancel]').forEach(b => b.addEventListener('click', ()=>{
     endVacation(b.dataset.vacCancel, false);
   }));
@@ -23381,6 +23525,72 @@ function vacRange(a){
     : `${vacDate(a.from)} – ${vacDate(a.to)}`;
 }
 
+/* ---------- editing a booking that is already in -------------------------
+ *
+ * THE SAME FORM, which is the point: one set of fields, one validation message
+ * area, one Save. A second form for editing would be a second place for the
+ * portions and the note to drift out of step with the booking form's.
+ *
+ * `pfVacEditing` is the whole of the mode. Null means booking.
+ */
+let pfVacEditing = null;
+
+function startVacationEdit(row){
+  pfVacEditing = { id: row.id, started: row.phase === 'active' };
+  const set = (id, value) => { const el = document.getElementById(id); if(el) el.value = value; };
+  set('pf_vac_from', row.from || '');
+  set('pf_vac_to', (row.endedOn || row.to) || '');
+  set('pf_vac_from_portion', row.fromPortion || 'full');
+  set('pf_vac_to_portion', row.toPortion || 'full');
+  set('pf_vac_note', row.note || '');
+  paintVacationMode();
+  const from = document.getElementById('pf_vac_from');
+  if(from && !from.disabled) from.focus();
+  else { const to = document.getElementById('pf_vac_to'); if(to) to.focus(); }
+}
+
+function cancelVacationEdit(){
+  pfVacEditing = null;
+  for(const id of ['pf_vac_from','pf_vac_to','pf_vac_note']){
+    const el = document.getElementById(id);
+    if(el) el.value = '';
+  }
+  for(const id of ['pf_vac_from_portion','pf_vac_to_portion']){
+    const el = document.getElementById(id);
+    if(el) el.value = 'full';
+  }
+  paintVacationMode();
+}
+
+/* WHAT THE FORM SAYS IT IS DOING. Drawn from pfVacEditing alone, so there is
+   one description of the mode and the button, the lock and the escape hatch
+   cannot disagree about which mode it is in. */
+function paintVacationMode(){
+  const btn = document.getElementById('pf_vac_save');
+  const from = document.getElementById('pf_vac_from');
+  const fromPortion = document.getElementById('pf_vac_from_portion');
+  const hint = document.getElementById('pf_vac_mode');
+  const editing = Boolean(pfVacEditing);
+  if(btn) btn.textContent = editing ? 'Save changes' : 'Book vacation';
+  const lock = editing && pfVacEditing.started;
+  for(const el of [from, fromPortion]){
+    if(!el) continue;
+    el.disabled = lock;
+    el.title = lock
+      ? 'This vacation has already begun, so its start cannot be moved — those days have '
+        + 'already excluded your hours. The end date can still change.'
+      : '';
+  }
+  if(hint){
+    hint.innerHTML = editing
+      ? `Editing a booking.${lock ? ' It has already begun, so only the end date can change.' : ''}
+         <button type="button" class="pf-vac-act" id="pf_vac_cancel_edit">Stop editing</button>`
+      : '';
+    const stop = document.getElementById('pf_vac_cancel_edit');
+    if(stop) stop.onclick = () => cancelVacationEdit();
+  }
+}
+
 async function saveVacation(){
   const err = document.getElementById('pf_vac_err');
   const show = (t) => { if(err){ err.textContent = t || ''; } };
@@ -23394,22 +23604,52 @@ async function saveVacation(){
   };
   if(!body.from){ show('Which day does it start?'); return; }
   if(!body.to) body.to = body.from;
+  const editing = pfVacEditing;
   const btn = document.getElementById('pf_vac_save');
-  if(btn){ btn.disabled = true; btn.textContent = 'Booking…'; }
+  if(btn){ btn.disabled = true; btn.textContent = editing ? 'Saving…' : 'Booking…'; }
   try{
-    const out = await api('/leave/mine', { method:'POST', body });
-    showToast(out.approvalNeeded
-      ? 'Asked for — it needs approving before it counts.'
-      : `Booked — ${(out.days||[]).length} working day${(out.days||[]).length===1?'':'s'}.`);
+    const out = editing
+      ? await api(`/leave/${encodeURIComponent(editing.id)}`, { method:'PATCH', body })
+      : await api('/leave/mine', { method:'POST', body });
+    if(editing){
+      /* WHAT ACTUALLY MOVED, from the server's own two lists. "Saved" alone
+         leaves somebody wondering whether the days followed the dates. */
+      const added = (out.added||[]).length;
+      const freed = (out.cleared||[]).length;
+      showToast(added || freed
+        ? `Changed — ${added ? `${added} day${added===1?'':'s'} added` : ''}${
+          added && freed ? ', ' : ''}${freed ? `${freed} day${freed===1?'':'s'} released` : ''}.`
+        : 'Changed — the working days it covers are the same.');
+      pfVacEditing = null;
+    }else{
+      showToast(out.approvalNeeded
+        ? 'Asked for — it needs approving before it counts.'
+        : `Booked — ${(out.days||[]).length} working day${(out.days||[]).length===1?'':'s'}.`);
+    }
+    /* THE TIMER, IF ONE WENT DOWN. Said out loud because it happened to
+       something the person was in the middle of, and a timer that stops with no
+       explanation reads as a fault. The server decides and reports it; the page
+       only counts what it was told. */
+    const stopped = (out.stoppedTimers||[]).length;
+    if(stopped){
+      showToast(`Your vacation covers right now, so ${stopped === 1
+        ? 'your running timer was stopped' : `${stopped} running timers were stopped`}.`);
+    }
     const note = document.getElementById('pf_vac_note');
     if(note) note.value = '';
     await loadVacations();
+    /* THE BOARD, IF A TIMER WENT DOWN. render() is the page's one redraw and it
+       re-reads the assets, so the card that was counting stops counting without
+       the person reloading. Only when something was actually stopped: a booking
+       for next month must not bounce the view somebody is working in. */
+    if(stopped) await render();
   }catch(e){
     /* THE SERVER'S OWN SENTENCE, including the dates of an overlap — the page
        never works out which days collided. */
-    show(e.message || 'That could not be booked.');
+    show(e.message || (editing ? 'That could not be changed.' : 'That could not be booked.'));
   } finally {
-    if(btn){ btn.disabled = false; btn.textContent = 'Book vacation'; }
+    if(btn){ btn.disabled = false; }
+    paintVacationMode();
   }
 }
 

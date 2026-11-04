@@ -348,9 +348,30 @@ async function pending(db, { scopeIds = null, today = null } = {}) {
    vacation's effect, and every day it creates goes through dayStatus.mark() —
    so a planned day and a day a lead marked by hand are the same row, with the
    same window snapshot, the same unique key and the same history. */
-async function materialise(db, request, { setBy = null, loggableDays = null, isHoliday = null } = {}) {
+async function materialise(db, request, { setBy = null, loggableDays = null, isHoliday = null,
+  now = null } = {}) {
   const wanted = daysOf(request, { loggableDays, isHoliday });
   const made = [];
+  /* A VACATION THAT STARTS TODAY IS LEAVE FROM THE MOMENT IT WAS BOOKED.
+   *
+   * WHY NOT FROM MIDNIGHT, which is what a full-day leave row has always meant:
+   * because somebody who worked an hour this morning and then decided to take
+   * the day has worked that hour. The brief is explicit — time already recorded
+   * stays recorded, and only time after the booking is cut — and a window
+   * opening at midnight would take the morning back.
+   *
+   * THE DAY IS STILL FULL-DAY LEAVE. That is what matters for everything other
+   * than the arithmetic: nothing is owed on the timesheet (so the person is not
+   * asked for hours they now cannot log), they are off the follow-up lists, and
+   * the strip says they are away. Only the hours arithmetic reads the window.
+   *
+   * TODAY ONLY, and only when `now` is supplied. Every other day of the
+   * vacation, and every vacation booked in advance, is the whole day as before —
+   * so this is reachable only through a same-day booking, which needs the
+   * studio to have set the notice period to 0. */
+  const todayHere = now === null ? null : timesheetGate.istDate(now);
+  const fromMinute = now === null
+    ? null : require('./working-time').istPartsOf(now).minute;
   for (const day of wanted) {
     const one = await dayStatus.mark(db, {
       userId: request.userId,
@@ -361,6 +382,7 @@ async function materialise(db, request, { setBy = null, loggableDays = null, isH
       setBy,
       source: dayStatus.SOURCES.planned,
       requestId: request.id,
+      fromMinute: day.date === todayHere ? fromMinute : null,
     });
     if (one.ok) made.push(day.date);
   }
@@ -419,7 +441,10 @@ async function submit(db, { userId, input, actor, today = null, forSelf = true }
 
   /* NOTHING IS MATERIALISED WHILE IT WAITS FOR APPROVAL. "Only approved
      vacations affect time" is this line and not a filter somewhere downstream. */
-  const days = approvalNeeded ? [] : await materialise(db, { ...v, id, userId }, { setBy: (actor && actor.id) || userId });
+  const days = approvalNeeded
+    ? []
+    : await materialise(db, { ...v, id, userId },
+      { setBy: (actor && actor.id) || userId, now: Date.now() });
   return { ok: true, request: await byId(db, id, { today: day }), days, approvalNeeded };
 }
 
@@ -473,7 +498,8 @@ async function activatePending(db, { actor = null, today = null } = {}) {
     );
     const request = await byId(db, row.id, { today: day });
     if (!request) continue;
-    const days = await materialise(db, request, { setBy: (actor && actor.id) || null });
+    /* AND THE SAME WHEN A SETTINGS CHANGE ACTIVATES A WAITING BOOKING. */
+    const days = await materialise(db, request, { setBy: (actor && actor.id) || null, now: Date.now() });
     activated.push({ id: row.id, userId: row.userId, label: request.label, days });
   }
   if (activated.length) {
@@ -647,7 +673,11 @@ async function decide(db, { requestId, approve, actor, note = null, today = null
       await db.query('UPDATE leave_requests SET status = $1 WHERE id = $2', [STATUS.submitted, requestId]);
       return { ok: false, status: 409, code: 'overlap', overlap: clash, error: overlapMessage(clash), request };
     }
-    days = await materialise(db, request, { setBy: (actor && actor.id) || null });
+    /* THE SAME MOMENT RULE AS BOOKING. An approval that lands mid-morning on
+       the vacation's first day makes the day leave from now, not from midnight
+       — otherwise an approver's timing would silently erase the hours the
+       person worked while waiting for it. */
+    days = await materialise(db, request, { setBy: (actor && actor.id) || null, now: Date.now() });
   }
   return { ok: true, request: await byId(db, requestId, { today: day }), days, approved: Boolean(approve) };
 }

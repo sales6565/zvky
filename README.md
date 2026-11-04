@@ -4325,16 +4325,144 @@ together**, and a pile of independent leave rows cannot make them.
 
 ### Whose dates are whose
 
-* **From tomorrow** — a person's own booking. The floor is one day and is *not*
-  a setting: today is the one date somebody else records, because marking it
-  changes a figure already being read. Settings may ask for more notice; nothing
-  can ask for less.
+* **From tomorrow by default, and the floor is now a setting.** It used to be a
+  hard floor of one day, argued for on the grounds that today is the one date
+  somebody *else* records. That argument is about who may mark a day, and a
+  person booking their own holiday starting this morning is not reaching into
+  anybody's figures — so **Minimum notice** may now be set to **0**, and the
+  default is still **1**, which is what makes this invisible on upgrade. At 0 the
+  booking takes effect at the moment it is made: see
+  [a vacation that starts today](#a-vacation-that-starts-today).
 * **Today and the past** — "Mark Leave" on People to follow up, or
   "Manage Anybody's Vacation" here. Both are somebody else saying what happened,
   which is a different act from asking.
 * **End early cuts from tomorrow.** Today's exclusion may already be in a figure
   somebody has read, and a person un-excusing their own morning after the fact is
   exactly the separation the heavier key exists for.
+
+### Stopping a running timer, through the one mechanism Leave already has
+
+**Settings → Leave → "Stop running timers when vacation starts"**, on by
+default. When a vacation covers this moment, the person's running timers are put
+down — and the brief's wording ("the same mechanism Leave uses") is the whole
+design, because a second mechanism would be easy and nearly right.
+
+It is `dayStatus.sweepLeave()`, the function the minute sweep calls. It finds
+everybody inside a leave window at this instant, closes their open
+`work_sessions` with reason **`on_leave`** at `max(sessionStart, windowStart)`,
+and `resumeOverdue()` then ignores that reason, which is *why* nothing comes
+back on its own. A plausible second implementation — close the session, write
+`'vacation'`, stop at `now` — would pass a careless test while recording a
+different number, resuming at the wrong moment, and being invisible to the sweep
+that has to catch a vacation whose day simply arrived.
+
+**Nothing is held in memory**, which is what makes a future vacation work at all
+and what makes it survive a restart: the stop is decided by reading
+`user_day_status` at the moment somebody asks. A vacation booked for next Tuesday
+schedules nothing; Tuesday arriving is the entire trigger.
+
+**The switch is about vacations and not about leave.** A lead marking somebody on
+leave this afternoon still stops their timer whatever this setting says, because
+that is a different act with a different `source`. The filter is on
+`source = 'planned'`, read once per sweep in `liveWindowsNow()`.
+
+**And the hours are excluded either way.** With the switch off the timer runs on
+and the leave window is *still* subtracted from it — by `liveLeaveIndex()` while
+it runs and by `close()` when it ends. Excluding the hours is the leave row's
+job; all this switch governs is whether a timer is left sitting on a screen as
+though somebody were at work.
+
+### A vacation that starts today
+
+With **Minimum notice** at 0, somebody can book a holiday beginning this morning.
+Two things then have to be true at once, and they pull against each other:
+
+* the day must **be full-day leave**, so the timesheet asks for nothing, the
+  follow-up lists drop the person and the strip says they are away;
+* the hours they **already recorded this morning** must stay recorded. Only time
+  after the booking is cut.
+
+A full-day leave window has always meant the whole calendar date, so the second
+of those was being broken by the first: `close()` subtracted the morning too.
+So the first day of a same-day vacation is written as **portion `full` with a
+window that opens at the booking minute**. The day is still full-day leave;
+only the hours arithmetic reads the window.
+
+`windowsFromRow()` used to read *"full day **or** no window → the whole date"*,
+which was right while the only windows that existed came from a portion — a full
+day has none, so the two conditions could not disagree. It now prefers a stored
+window whatever the portion says. **Every row that exists today is unaffected**,
+and that is what makes the change provably inert: `windowFor()` returns `null`
+for a full day, so every full-day row ever written has `NULL` windows and still
+falls through to the whole date. Only a row written with an explicit window
+behaves differently, and only this feature writes one.
+
+The minute is **floored, not rounded**. A booking at 10:59:42 rounded to 660
+puts the window's start in the *future*, `liveWindowsNow()` then finds no window
+containing `now`, and the booking stops nothing at all. (That was a real bug,
+caught by its test.) Flooring costs at most the current minute.
+
+**What the day then asks for on the timesheet: nothing.** Full-day leave means
+`requiredCentiFor()` returns 0, so the exact-hours rule does not apply and the
+person is never asked for hours they can no longer log. The hour they did work
+stays in `work_sessions` and still appears in the figures and in My History.
+
+The same moment rule applies when an **approval** materialises the days, and
+when turning the approval option off activates a waiting booking — an approver's
+timing must not silently erase the hours somebody worked while waiting for them.
+
+### Editing a booking that is already in
+
+**PATCH `/api/leave/:id`**, guarded by `leave.request`, because editing your own
+holiday is the same act as booking it. Somebody else's needs `leave.manage_all`,
+exactly as booking on their behalf does. The validation is the booking's own —
+one `validate()`, so a rule the studio sets cannot be enforced on booking and
+skipped on editing.
+
+| | |
+|---|---|
+| **not started yet** | the whole range may change: nothing has happened and no figure has been affected, so this is a re-booking |
+| **already started** | only the **end** may move. The days behind the cut excluded somebody's hours, were counted by the follow-up lists and may be in a report that has been sent |
+
+So a started vacation can be shortened, extended or ended today — all statements
+about the future — and cannot be made to have begun on a different day. An owner
+who genuinely needs that asks a `leave.manage_all` holder to cancel it, which is
+the existing route for reaching into time that has already happened. The form
+locks the From field rather than letting somebody type and then reading a
+refusal; the server refuses it regardless.
+
+**An edit does not re-ask for approval.** Sending an approved vacation back to
+pending because its owner moved the end date by a day would clear the days under
+somebody who is already away, and a person mid-holiday is the worst possible
+moment to make their time off provisional again. The change is in the audit trail
+and the leads are notified.
+
+### The approver's queue, and what happens when approval is switched off
+
+**Settings → Leave → "Needs approving"** has existed since vacations did, and so
+has `POST /api/leave/:id/decide` behind **`leave.approve`** ("Approve
+Vacations"). What did *not* exist was any way to know what to decide: a pending
+vacation was announced by a notification when it was submitted and then existed
+nowhere, so one missed notification left a booking waiting indefinitely while the
+person who made it believed it was in.
+
+**GET `/api/leave/pending`** is that queue, drawn as "Vacation requests" on the
+Admin Dashboard. It is guarded by **`leave.approve`, not by the dashboard's own
+key** — the Admin Dashboard gates everything behind `report.admin_dashboard`, so
+mounting the queue there would hand a producer given `leave.approve` a button
+that returns nothing. The authority to decide is the right gate for the queue of
+things to decide; the dashboard *draws* the list, it does not own it. It is
+scoped by the same `visibleProjects()` union the booking route uses, and it is
+hidden entirely when approval is off, because then nothing can ever be waiting.
+
+**Turning approval off activates what was waiting.** The alternative is a set of
+bookings that can never take effect — the screen that approves them is now
+hidden — whose owners believe they are in. Only `submitted` requests move; a
+rejected or cancelled one is a decision somebody made and is not reopened by a
+settings change, and an approved one is already live. **Requests whose last day
+has already passed are left alone** and reported separately: a studio turning
+this off in April does not retroactively put somebody on leave in February.
+Turning approval *on* changes nothing about live vacations.
 
 ### Overlap is asked of the day rows, not of the request table
 
