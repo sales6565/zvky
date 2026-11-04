@@ -5806,6 +5806,13 @@ const STEPS = [
   /* After assets and users, whose keys the history points at, and before the
      mirror below reads the switch. */
   ['asset renaming', ensureAssetRename],
+  /* STRAIGHT AFTER ITS TABLE AND NOTHING BETWEEN THEM. The pairing is the
+     pattern every settings row in this file follows, and
+     tests/asset-rename-migration.test.js asserts this exact adjacency so the
+     first request already knows whether the switch is on rather than
+     discovering it on the first rename. Prompt 65 put two steps in this gap and
+     that test caught it in the frozen run; they belong below. */
+  ['asset settings mirror', (db) => require('./asset-settings').load(db)],
   /* After users (whose keys the rows point at) and after timesheet_entries,
      whose window these unlocks are an exception to. */
   ['timesheet day unlocks', ensureTimesheetDayUnlocks],
@@ -5813,7 +5820,6 @@ const STEPS = [
      settings sections. The mirror loads straight after, like every other. */
   ['history settings', ensureHistorySettings],
   ['history settings mirror', (db) => require('./history-settings').load(db)],
-  ['asset settings mirror', (db) => require('./asset-settings').load(db)],
   ['chat settings', ensureChatSettings],
   ['chat settings mirror', (db) => chatSettings.load(db)],
   /* After timesheet_entries exists (the lines its policy governs) and after the

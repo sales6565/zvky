@@ -4061,6 +4061,26 @@ const TOUR_STEPS = [
         + 'worked-out figure looks wrong, flag it rather than editing it. Submit each day when '
         + 'it is done — nobody approves it, and you can reopen a day yourself.',
   },
+  /* RIGHT AFTER THE TIME SHEET'S STEP, because it is the other view of the same
+     days and the tour walks the tabs in the order they appear.
+     tests/quick-tour.test.js requires a step for every permission-gated tab —
+     which caught this tab shipping without one, in the frozen run.
+     THE COMMENT IS OUTSIDE THE OBJECT, deliberately: that test reads TOUR_STEPS
+     with a regex expecting `id:` on the first line after the brace, and a
+     comment in between makes the step invisible to it — which is how this step
+     stayed "missing" after I first added it. */
+  {
+    id: 'history',
+    target: '#historyTabBtn',
+    gate: 'historyTabBtn',
+    title: 'My History',
+    body: 'One card per day, newest first: what you worked on and for how long, the day\u2019s '
+        + 'status — worked, leave, a holiday, a weekly off — and your timesheet for that day '
+        + 'with its total against what the day asked for. It is a record built from what is '
+        + 'already there, so nothing on it is typed in and nothing on it can be edited. Where a '
+        + 'day is finished you can submit it from here; where it still needs lines, open it in '
+        + 'the Time Sheet tab.',
+  },
   {
     id: 'reports',
     target: '#reportsTabBtn',

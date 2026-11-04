@@ -536,7 +536,48 @@ test('the day figure, end to end', { skip: cfg ? false : SKIP_REASON }, async (t
       'SELECT user_id FROM timesheet_entries WHERE id = ?', [forged.body.entry.id]);
     assert.strictEqual(whose[0].user_id, id.bo, 'and the line is Bo\'s');
     const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'timesheets.js'), 'utf8');
-    assert.ok(!/req\.body\.userId/.test(route), 'nothing reads a userId off the body');
+
+    /* THE INVARIANT IS "NOBODY WRITES HOURS ONTO SOMEBODY ELSE'S TIMESHEET",
+     * and it used to be checked by the proxy "no req.body.userId anywhere in
+     * this file". That proxy was exact while every route in the file was about
+     * one person's own lines. Prompt 65 added POST /timesheets/unlock-day, which
+     * reads a userId off the body ON PURPOSE — opening a closed day FOR somebody
+     * is an on-behalf-of action, and the whole point of the key is that one
+     * person does it for another. It writes a row in timesheet_day_unlocks and
+     * no hours at all.
+     *
+     * So the assertion is narrowed to the invariant rather than relaxed. Two
+     * halves:
+     *
+     *   1. every line written carries req.user.id and nothing else, so an entry
+     *      is always its caller's own;
+     *   2. the only place a userId is read off the body is the unlock route,
+     *      named here, so a third one cannot appear unnoticed.
+     */
+    const code = route.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+
+    // 1. The line writers take the caller, always.
+    const writes = [...code.matchAll(/(insertEntry|updateEntry)\([^)]*\)/g)].map((m) => m[0]);
+    assert.ok(writes.length >= 2, `found the line writers: ${JSON.stringify(writes)}`);
+    for (const call of writes) {
+      if (!/^(insertEntry|updateEntry)\(/.test(call)) continue;
+      assert.ok(!/req\.body/.test(call),
+        `a line writer takes nothing from the body: ${call}`);
+    }
+    assert.match(code, /insertEntry\(id, req\.user\.id, line/,
+      'the insert writes the caller\'s own id');
+
+    // 2. And the one on-behalf-of reader is the unlock route.
+    const perRoute = code.split(/^router\.(?=get|post|patch|delete|put)/m);
+    const readers = perRoute
+      .filter((chunk) => /req\.body\.userId|req\.body && req\.body\.userId/.test(chunk))
+      .map((chunk) => (chunk.match(/^\w+\('([^']+)'/) || [, '?'])[1]);
+    assert.deepStrictEqual(readers, ['/unlock-day'],
+      'only the unlock route reads a userId off the body, and it writes no hours');
+    const unlock = perRoute.find((c) => c.startsWith("post('/unlock-day'"));
+    assert.ok(unlock, 'found the unlock route');
+    assert.ok(!/insertEntry|updateEntry|timesheet_entries/.test(unlock),
+      'and it touches no timesheet line');
   });
 
   await t.test('an asset worked across three days answers for each of them', async () => {

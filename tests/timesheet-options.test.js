@@ -103,6 +103,25 @@ test('no report outside the Time Sheet reads timesheet hours', () => {
        `timesheet_entries.hours` is DECIMAL(5,2). It reads no hours and runs no
        query against the table. */
     'src/timesheet-settings.js',
+    /* MY HISTORY, and the decision it makes is: IDLE IS A LINE LIKE ANY OTHER,
+       counted and shown.
+     *
+     * A history card lists the day's lines as they were filed — an Idle line
+     * among them, with its remark — and the day's total against what the day
+     * required. It does NOT split Idle out of the total the way the week payload
+     * does, and that is the decision rather than an omission: the card's total
+     * and its requirement both come from src/timesheet-hours-rule.js, which
+     * counts Idle for the reason its own header argues (Idle exists so a day can
+     * be filled honestly), and a history whose total disagreed with the
+     * Timesheet tab's would be the worse of the two numbers.
+     *
+     * IT READS ONE USER OVER A DATE RANGE, which is more than the rule module
+     * does, and that is why it is here rather than passing unnoticed: whose
+     * range is decided by readableUserIds() before this module is called, and
+     * the module never resolves a user itself. It is a record of days, not a
+     * report of hours — it aggregates nothing across people and produces no
+     * studio-wide figure. */
+    'src/history.js',
   ]);
   const readers = files.filter((f) => !allowed.has(f)
     && fs.readFileSync(path.join(root, f), 'utf8').includes('timesheet_entries'));
