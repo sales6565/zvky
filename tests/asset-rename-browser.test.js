@@ -84,8 +84,11 @@ function fixture() {
   // Lifted, not retyped: the rule, the gate, the modal's code and its wiring.
   const feature = cut("/* ---------- editing an asset's name ---",
     '/* ---------- drawer ---------- */', 'the rename feature');
+  /* ENDS AT THE TIMESHEET DOWNLOAD'S OWN WIRING, which follows this feature's
+     in the page. Cutting as far as the emoji picker's comment would carry that
+     wiring in too, and this fixture has none of its functions. */
   const wiring = cut("const assetNameWrap = document.getElementById('assetNameWrap');",
-    '/* THE EMOJI PICKER CLOSES', 'the modal wiring');
+    "const tsExportWrap = document.getElementById('tsExportWrap');", 'the modal wiring');
   const markup = cut('<!-- EDIT ASSET NAME.', '<div class="modal-wrap" id="modalWrap">',
     'the modal markup');
 

@@ -255,8 +255,29 @@ test('PRODUCTION SAFETY: the submit route is exactly what it was', () => {
     .map((line) => line.replace(/\s+$/, ''))
     .filter((line) => line.trim() !== '')
     .join('\n');
-  const mine = code(assets);
-  const theirs = code(before);
+  /* THE TWO ROUTES PROMPT 63 ADDED, EXCLUDED AS A BLOCK and not line by line.
+   *
+   * Editing an asset's name is PATCH /:id/name and GET /:id/name-history, a
+   * hundred lines of new handler between the asset PATCH and DELETE
+   * /api/assets/:id. Listing them one at a time in ADDITIVE below would be a
+   * list nobody could read and nobody would keep; a block exclusion is at
+   * least honest about what it is.
+   *
+   * WHAT IT DOES NOT WEAKEN: the exclusion is bounded by two markers that are
+   * asserted to exist and to be in that order, so it cannot quietly grow to
+   * swallow the submit route — and everything outside it, the submit route and
+   * the legacy download included, is still compared line for line against the
+   * commit before the Server tab existed.
+   */
+  const withoutNameRoutes = (text) => {
+    const from = text.indexOf("router.patch('/:id/name'");
+    if (from === -1) return text;                 // the commit from before it existed
+    const to = text.indexOf('// DELETE /api/assets/:id', from);
+    assert.ok(to > from, 'the asset-name routes end before DELETE /api/assets/:id');
+    return text.slice(0, from) + text.slice(to);
+  };
+  const mine = code(withoutNameRoutes(assets));
+  const theirs = code(withoutNameRoutes(before));
   if (mine !== theirs) {
     /* Named, so a failure says WHICH line moved rather than "they differ".
        Two lines are expected to differ and both are additive: the two requires
@@ -265,7 +286,30 @@ test('PRODUCTION SAFETY: the submit route is exactly what it was', () => {
     const b = mine.split('\n');
     const added = b.filter((line) => line.trim() && !a.includes(line));
     const removed = a.filter((line) => line.trim() && !b.includes(line));
-    assert.deepStrictEqual(removed, [], `the submit route lost code: ${removed.join(' | ')}`);
+    /* NOTHING MAY BE REMOVED — with two named exceptions, and they are the only
+     * two this guard has ever been given.
+     *
+     * Prompt 63 made one function the single rule for what an asset may be
+     * called (src/asset-name.js), because a rename that validated differently
+     * from creation would be a second rule. Creating an asset therefore asks
+     * that function instead of carrying its own trim, and the two lines it used
+     * to carry are gone.
+     *
+     * WHY THIS CANNOT REACH THE ENDPOINT THIS TEST PROTECTS: both lines are
+     * inside POST /project/:projectId — creating an asset. Neither is in
+     * POST /:id/submit, neither is in GET /versions/:versionId/download, and
+     * neither is read by either. The replacement is stricter, not looser: a
+     * 256-character name used to be a MySQL error and is now a 400 with a
+     * sentence. tests/asset-name.test.js pins the new rule from both ends.
+     *
+     * Any OTHER removal still fails this test, which is the half that actually
+     * protects the endpoint. */
+    const REMOVED_OK = [
+      "  if (!name || !name.trim()) return res.status(400).json({ error: 'Asset name is required' });",
+      '      [id, code, name.trim(), type, category || null, priority, projectId, assigneeId, req.user.id,',
+    ];
+    const lost = removed.filter((line) => !REMOVED_OK.includes(line));
+    assert.deepStrictEqual(lost, [], `the submit route lost code: ${lost.join(' | ')}`);
     /* WHAT MAY BE ADDED, as a list of arguments rather than a pattern to edit.
      *
      * The promise this test makes is that the submit route and the legacy
@@ -288,6 +332,14 @@ test('PRODUCTION SAFETY: the submit route is exactly what it was', () => {
          four. */
       [/require\('\.\.\/vacation'\)|vacation\.annotateAway\(/,
         'the assignee picker\'s vacation warning, on another route entirely'],
+      /* Prompt 63. Editing an asset's name. The two routes themselves are
+         excluded as a block above; what is left are the three requires and the
+         five lines in POST /project/:projectId that now ask src/asset-name.js
+         for the rule instead of trimming the name here. The submit route reads
+         none of them — it does not touch assets.name at all. */
+      [/require\('\.\.\/asset-name'\)|require\('\.\.\/asset-settings'\)|require\('\.\.\/activity'\)/,
+        'the one shared asset-name rule, its studio switch, and the audit helper'],
+      [/checkedName/, 'creating an asset asks src/asset-name.js for the rule'],
     ];
     for (const line of added) {
       const why = ADDITIVE.find(([re]) => re.test(line));

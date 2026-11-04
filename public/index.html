@@ -8133,14 +8133,16 @@ timesheetLineWrap.addEventListener('click', e=>{ if(e.target===timesheetLineWrap
 /* The download modal's two fixed buttons and its backdrop, wired once here
    beside the line modal's, because this markup is static — only the body
    between them is redrawn. */
-const tsExportWrap = document.getElementById('tsExportWrap');
-document.getElementById('tsExportCancel').addEventListener('click', closeTimesheetExport);
-document.getElementById('tsExportGo').addEventListener('click', tsExportDownload);
-tsExportWrap.addEventListener('click', e=>{ if(e.target===tsExportWrap) closeTimesheetExport(); });
-
 /* Edit asset name, and the history list. Wired here beside the other modals
    rather than in each screen that opens them: there is one of each in the page,
-   and a per-screen binding would attach a second handler every redraw. */
+   and a per-screen binding would attach a second handler every redraw.
+
+   DELIBERATELY ABOVE the timesheet download's wiring below, not below it.
+   tests/timesheet-export-browser.test.js lifts the lines from
+   `const tsExportWrap` to the emoji picker's comment out of this file as "the
+   modal's wiring"; anything written inside that span is carried into a fixture
+   that has none of these functions, and the page it builds dies on load with a
+   ReferenceError. Found by the full suite, not by reading. */
 const assetNameWrap = document.getElementById('assetNameWrap');
 document.getElementById('an_cancel').addEventListener('click', closeAssetRename);
 document.getElementById('an_save').addEventListener('click', anSave);
@@ -8154,6 +8156,12 @@ assetNameWrap.addEventListener('click', e=>{ if(e.target===assetNameWrap) closeA
 const assetHistoryWrap = document.getElementById('assetHistoryWrap');
 document.getElementById('ah_close').addEventListener('click', closeNameHistory);
 assetHistoryWrap.addEventListener('click', e=>{ if(e.target===assetHistoryWrap) closeNameHistory(); });
+
+const tsExportWrap = document.getElementById('tsExportWrap');
+document.getElementById('tsExportCancel').addEventListener('click', closeTimesheetExport);
+document.getElementById('tsExportGo').addEventListener('click', tsExportDownload);
+tsExportWrap.addEventListener('click', e=>{ if(e.target===tsExportWrap) closeTimesheetExport(); });
+
 
 /* THE EMOJI PICKER CLOSES ON A CLICK OUTSIDE IT.
  *

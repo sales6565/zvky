@@ -416,9 +416,21 @@ test('the Download timesheets button, in a browser, in every state of the tab',
            which for a Super Admin there is. */
         await h.page.waitForSelector('#ts_person');
         await h.page.selectOption('#ts_person', String(id.ana));
-        await h.page.waitForFunction(`tsState.userId === ${JSON.stringify(String(id.ana))}`);
+        /* WAIT FOR THE WEEK THAT COMES BACK, not for tsState.userId and not for
+           `.ts-bar`.
+           
+           The picker's onchange sets tsState.userId synchronously and then calls
+           renderTimesheet(), which FETCHES before it draws — so both of those
+           are true while the screen still shows the previous person's week, and
+           a run that read the bar in that gap saw whatever was there a moment
+           before. The honest signal is the week the server sent: tsState.week
+           .user.id is the person the drawn bar belongs to. */
+        await h.page.waitForFunction(
+          `tsState.week && tsState.week.user && tsState.week.user.id === ${JSON.stringify(String(id.ana))}`
+        );
         await h.page.waitForSelector('.ts-bar');
-        assert.strictEqual(await buttonVisible(h), true, 'viewing Ana’s week');
+        assert.strictEqual(await buttonVisible(h), true,
+          `viewing Ana’s week${h.lastHtml ? ` — the view holds: ${h.lastHtml}` : ''}`);
         await h.native();
       } finally { await h.close(); }
     });
