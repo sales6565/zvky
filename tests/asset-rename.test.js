@@ -434,6 +434,33 @@ test('renaming an asset', { skip: cfg ? false : SKIP_REASON }, async (t) => {
     }
   });
 
+  await t.test('if the history cannot be written, the name does not change either',
+    async () => {
+      /* THE TRANSACTION, TESTED BY BREAKING THE SECOND WRITE. The alternative —
+         asserting that the source contains BEGIN and COMMIT — is what the
+         static suite does, and it cannot tell a real transaction from two loose
+         statements with the words around them. So the history table is moved
+         out of the way, which makes the INSERT fail after the UPDATE has
+         already run.
+
+         WITH a transaction: the UPDATE is rolled back and the name is exactly
+         what it was. WITHOUT one: the name changes and no record of who changed
+         it exists, which is the one outcome this feature must never produce. */
+      const asset = await newAsset('root', projectA, 'Atomic', people.ana);
+      await q('RENAME TABLE asset_name_history TO asset_name_history_moved');
+      try {
+        const res = await rename('pat', asset.id, 'Half Done', 'Atomic');
+        assert.ok(res.status >= 500, `expected the write to fail: ${res.status} ${JSON.stringify(res.body)}`);
+        assert.strictEqual(await nameOf(asset.id), 'Atomic',
+          'the name is unchanged — the rename either happens with its record or not at all');
+      } finally {
+        await q('RENAME TABLE asset_name_history_moved TO asset_name_history');
+      }
+      // And with the table back, the same rename goes through and is recorded.
+      assert.strictEqual((await rename('pat', asset.id, 'Whole', 'Atomic')).status, 200);
+      assert.strictEqual((await historyOf(asset.id)).length, 1);
+    });
+
   /* ---- the history list ------------------------------------------------ */
 
   await t.test('the history reads newest first, with who and when', async () => {
