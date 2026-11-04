@@ -586,6 +586,37 @@ test('My History, end to end', { skip: cfg ? false : SKIP_REASON }, async (t) =>
       assert.strictEqual(card.timesheet.maySubmit, false,
         `${card.date}: nobody submits somebody else's day`);
     }
+
+    /* ON A DAY THAT WOULD OTHERWISE BE SUBMITTABLE, which is the whole point
+       and which this test did not do until a mutation proved it.
+     *
+     * maySubmit also needs the day open, unsubmitted, satisfying the rule and
+     * carrying lines — and in this fixture the viewed person's days happened to
+     * be either already submitted or empty, so maySubmit was false INCIDENTALLY
+     * and the ownership check was never the thing making it false. Removing
+     * that check escaped every assertion above.
+     *
+     * So: build the day that ticks every other box. lee has a fresh day with
+     * lines, nothing submitted, the hours rule off — their own history offers
+     * the button, and the same day on somebody else's screen does not. The pair
+     * is what pins ownership rather than one of its neighbours. */
+    const day = shift(-11);
+    assert.strictEqual((await as('lee', '/timesheets/entries', { method: 'POST',
+      body: { date: day, hours: 2, nonProject: 'leave' } })).status, 201);
+
+    const theirs = await historyOf('lee');
+    const own = cardFor(theirs.body, day);
+    assert.ok(own, 'the day has a card on its owner\'s history');
+    assert.strictEqual(own.timesheet.maySubmit, true,
+      'and its owner is offered the button, so every other condition is met');
+
+    const watched = await historyOf('root', `?userId=${people.lee}`);
+    const seen = cardFor(watched.body, day);
+    assert.ok(seen, 'the same day is on the admin\'s view of it');
+    assert.strictEqual(seen.timesheet.canSubmit, true,
+      'the rule is satisfied, so nothing but ownership is in the way');
+    assert.strictEqual(seen.timesheet.maySubmit, false,
+      'and ownership is what stops it: a day is its owner\'s statement');
   });
 
   await t.test('the switch hides the tab and refuses the endpoint', async () => {
