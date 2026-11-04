@@ -485,6 +485,27 @@ test('the exact-hours rule, in a browser', { skip: SKIP }, async (t) => {
       /* AND NO LEAVE HINT HERE: being over is not something leave explains, and
          the sentence that fixes it is the one about editing lines. */
       assert.ok(!seen.helpText.includes('ask your admin'), seen.helpText);
+
+      /* AND THE HOURS FIELD NEVER OFFERS A NEGATIVE CEILING. An over day has
+         less than no room — 800 logged against 700 required is minus one hour —
+         and `max="-1"` is a field no browser can satisfy and no person can
+         understand. A mutation run caught this: dropping the Math.max(0, …)
+         escaped every other test, because every other test is on a day whose
+         remainder is zero or more. */
+      const field = await tab.page.evaluate(() => {
+        tsState.draft = { day: tsState.only, ownCenti: 0 };
+        tlSyncRemaining();
+        return { max: document.getElementById('tl_hours').max,
+          note: document.getElementById('tl_remaining').textContent.trim(),
+          fill: Boolean(document.getElementById('tl_fill')),
+          disabled: document.getElementById('tl_save').disabled };
+      });
+      assert.strictEqual(field.max, '0', 'floored at nothing, never negative');
+      assert.strictEqual(field.note,
+        'This day already has all its hours. Edit or delete a line to make room.');
+      assert.strictEqual(field.fill, false, 'and nothing to fill');
+      assert.strictEqual(field.disabled, false,
+        'but a typed line is the server\'s to refuse, not the button\'s');
       await tab.clean();
       await tab.close();
     } finally {

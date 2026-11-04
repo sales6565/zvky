@@ -89,6 +89,19 @@ test('hours become centihours exactly, and no sum drifts', () => {
   assert.strictEqual(rule.loggedCenti(
     [{ hours: 2.35 }, { hours: 1.15 }, { hours: 0.5 }, { hours: 4 }]), 800);
 
+  /* AND THE WHOLE WAY THROUGH decide(), not only through the adder. This is the
+     assertion that makes the unit matter: a day filed as those three drifting
+     lines is EXACT and submittable, where the same day decided in hours would
+     be 7.999999999999999 against 8 — short, refused, and unfixable, because
+     there is no line small enough to make up the difference. */
+  const drifted = rule.decide({
+    enabled: true, requiredHours: 8, effectiveFrom: '2026-01-01', date: '2026-10-07',
+    exempt: false, mark: null, timesheetRequired: true,
+    entries: drifting.map((hours) => ({ hours })),
+  });
+  assert.deepStrictEqual([drifted.status, drifted.canSubmit, drifted.logged, drifted.remaining],
+    ['exact', true, 800, 0]);
+
   // And back to hours for a message, never for a comparison.
   assert.strictEqual(rule.toHours(800), 8);
   assert.strictEqual(rule.toHours(799), 7.99);
@@ -703,6 +716,50 @@ test('the exact-hours rule, end to end', { skip: cfg ? false : SKIP_REASON }, as
     assert.strictEqual(day.entries.length, 2, 'two lines, not three');
     assert.strictEqual((await submit('ana', WED)).status, 200);
     await clear('ana', WED);
+  });
+
+  await t.test('the add really does hold the day: a held lock blocks it', async () => {
+    /* THE CONCURRENT PAIR ABOVE PROVES THE OUTCOME; THIS PROVES THE MECHANISM,
+       and it is here because the pair alone does not.
+       `Promise.all` over HTTP gives the two requests a sub-millisecond skew, and
+       the first commits before the second reads — so the pair passes with the
+       row lock REMOVED, by luck rather than by design. A mutation run said so:
+       deleting FOR UPDATE from the insert escaped every test in this file.
+
+       So this test takes the lock itself, from its own connection, and asserts
+       the route WAITS for it. Without FOR UPDATE in the route the add returns
+       immediately and this fails on the first assertion. */
+    const mysql = require('mysql2/promise');
+    assert.strictEqual((await add('bo', line(FRI, 1))).status, 201, 'the day row exists');
+    const holder = await mysql.createConnection({
+      host: cfg.host, port: cfg.port, user: cfg.user, password: cfg.password,
+      database: cfg.database,
+    });
+    let settled = false;
+    let pending;
+    try {
+      await holder.query('BEGIN');
+      await holder.query(
+        'SELECT id FROM timesheet_days WHERE user_id = ? AND work_date = ? FOR UPDATE',
+        [people.bo, FRI]
+      );
+      pending = add('bo', line(FRI, 1)).then((r) => { settled = true; return r; });
+      /* LONG ENOUGH TO BE THE LOCK AND NOT THE NETWORK. An add on this suite's
+         own server answers in single-digit milliseconds; 400 is two orders of
+         magnitude more. */
+      await new Promise((r) => setTimeout(r, 400));
+      assert.strictEqual(settled, false,
+        'the add is waiting on the day row, which is what the lock is for');
+    } finally {
+      await holder.query('COMMIT').catch(() => {});
+      await holder.end().catch(() => {});
+    }
+    /* AND IT GOES THROUGH THE MOMENT THE LOCK IS RELEASED, so what was proved
+       above is a wait and not a hang. */
+    const done = await pending;
+    assert.strictEqual(done.status, 201, JSON.stringify(done.body));
+    assert.strictEqual((await dayOf('bo', FRI)).hoursRule.logged, 200);
+    await clear('bo', FRI);
   });
 
   /* ---- what counts ---------------------------------------------------- */
