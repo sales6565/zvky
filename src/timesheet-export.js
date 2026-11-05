@@ -39,7 +39,8 @@ const db = require('./db');
 const { readableUserIds } = require('./timesheet-visibility');
 const { assetDiscipline, disciplineLabel } = require('./asset-discipline');
 /* The category -> discipline mapping the Art / Animation rule reads beside the
-   type. See src/asset-discipline.js. */
+   type. Read once per export and passed into mapRow(), which stays pure — see
+   the note there, and src/asset-discipline.js for the rule. */
 const referenceData = require('./reference-data');
 const tlReview = require('./tl-review');
 const writer = require('./timesheet-export-xlsx');
@@ -176,8 +177,15 @@ async function subLabels(keys) {
 
 /* One database row as one spreadsheet row. Pure, so the mapping can be tested
    without a database — which is what tests/timesheet-export.test.js does for
-   every kind of line. */
-function mapRow(row, labels = new Map()) {
+   every kind of line.
+   
+   `disciplines` IS PASSED IN RATHER THAN LOOKED UP, and that is what keeps this
+   function pure now that the Art / Animation rule reads the asset's category
+   through a mapping. Asking src/reference-data.js for it in here would make
+   every call read module state, and would rebuild the Map once per
+   spreadsheet row. Empty by default, which is a studio that has classified no
+   category: the rule then reads the type alone, exactly as it did before. */
+function mapRow(row, labels = new Map(), disciplines = new Map()) {
   const category = row.category || null;
   if (NO_ROW.has(category)) return null;
   const idle = IDLE_LIKE.has(category);
@@ -220,8 +228,7 @@ function mapRow(row, labels = new Map()) {
        asset has no department: users carry no discipline in this schema — only
        freelancers do, and a freelancer is not a user. */
     department: row.assetName ? disciplineLabel(assetDiscipline(
-      { type: row.assetType, category: row.assetCategory },
-      referenceData.categoryDisciplines())) : null,
+      { type: row.assetType, category: row.assetCategory }, disciplines)) : null,
     /* BID HOURS REPEAT ON EVERY ROW OF THE SAME ASSET, which is safe precisely
        because this file has no totals row: nothing adds the column up, so
        nothing double counts. */
@@ -246,10 +253,12 @@ async function rowsFor(viewer, { from, to, users = [] }) {
 
   const { rows } = await db.query(ROW_SQL, [from, to, ids, SUBMITTED_STATUSES]);
   const labels = await subLabels(rows.map((r) => r.subKey));
+  /* Built once for the whole export, not once per row. */
+  const disciplines = referenceData.categoryDisciplines();
   const mapped = [];
   const people = new Set();
   for (const row of rows) {
-    const out = mapRow(row, labels);
+    const out = mapRow(row, labels, disciplines);
     if (!out) continue;
     mapped.push(out);
     people.add(row.artist);
