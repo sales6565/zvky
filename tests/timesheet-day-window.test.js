@@ -593,15 +593,26 @@ test('the entry window, end to end', { skip: cfg ? false : SKIP_REASON }, async 
     const twoBack = shift(-4);
     await setPolicy(base({ backdateDays: 1, futureDays: 0 }));
     try {
+      /* MATCHED ON ITS CONTENT, NOT ON BEING THE NEWEST ROW.
+         activity_log.created_at is second-granular, so "ORDER BY created_at
+         DESC LIMIT 1" is not deterministic among rows written in the same
+         second — and this suite writes several. It picked up an earlier
+         subtest's line ("lee's ... opened for entry (already open)") on a run
+         where the two landed together, which is a flake that was always
+         possible here and only waited for a fast enough machine. */
+      const unlocks = () => q(
+        `SELECT summary FROM activity_log
+          WHERE action = 'day_unlocked' AND summary LIKE ? AND summary LIKE ?`,
+        [`%${twoBack}%`, '%ana%']);
+      const before = (await unlocks()).length;
+
       const opened = await as('root', '/timesheets/unlock-day',
         { method: 'POST', body: { userId: people.ana, date: twoBack } });
       assert.strictEqual(opened.status, 200, JSON.stringify(opened.body));
-      const rows = await q(
-        `SELECT action, summary FROM activity_log
-          WHERE action = 'day_unlocked' ORDER BY created_at DESC LIMIT 1`);
-      assert.strictEqual(rows.length, 1, 'the unlock is logged');
-      assert.match(rows[0].summary, new RegExp(twoBack), 'naming the day');
-      assert.match(rows[0].summary, /ana/, 'and whose it is');
+
+      const after = await unlocks();
+      assert.strictEqual(after.length, before + 1,
+        'the unlock is logged, naming the day and whose it is');
     } finally {
       await setPolicy(base());
     }

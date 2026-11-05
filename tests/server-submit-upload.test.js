@@ -87,10 +87,24 @@ test('the Submit Work upload', { skip: cfg ? false : SKIP_REASON }, async (t) =>
     await mkProject('second', 'Second Project');
     await mkProject('nolink', 'No Link Project');
 
-    /* THE TYPE IS WHAT DECIDES THE DISCIPLINE — the same field the Dashboard's
-       Art / Animation sub-tabs read. The category is set too, to a value that
-       would send each of these somewhere else entirely if anything still read
-       it: that is the Prompt 52 bug, made into a fixture. */
+    /* THE TYPE **OR** THE CATEGORY DECIDES THE DISCIPLINE — the same rule the
+       Dashboard's Art / Animation sub-tabs read, with Animation winning a
+       disagreement.
+       
+       THIS FIXTURE USED TO SAY THE OPPOSITE, and the comment it carried is kept
+       here because it records what changed: each asset's category was set "to a
+       value that would send each of these somewhere else entirely if anything
+       still read it: that is the Prompt 52 bug, made into a fixture". Reading
+       the category DIRECTLY was that bug — the list ships empty, so every lookup
+       missed and every upload landed in the fallback folder. Reading it through
+       a `discipline` column is not that bug, and not reading it at all was the
+       one the studio reported: an asset whose category said Animation never
+       appeared under the Animation tab.
+       
+       So the types and categories below AGREE, which keeps every claim in this
+       file about projects, people, folders and renames exactly as it was — and
+       `heroByCategory` is the new case: a CHARACTER filed under the Animation
+       category, whose upload must land in the Animator folder. */
     const mkAsset = async (key, projectKey, type, category) => {
       const r = await as('root', `/assets/project/${id[projectKey]}`, { method: 'POST',
         body: { name: `Asset ${key}`, type, category } });
@@ -98,8 +112,9 @@ test('the Submit Work upload', { skip: cfg ? false : SKIP_REASON }, async (t) =>
       id[key] = r.body.asset.id;
       await as('root', `/assets/${id[key]}`, { method: 'PATCH', body: { assigneeId: id.ana } });
     };
-    await mkAsset('heroArt', 'hero', 'character', 'animation');
-    await mkAsset('heroAnim', 'hero', 'animation', 'art');
+    await mkAsset('heroArt', 'hero', 'character', 'art');
+    await mkAsset('heroAnim', 'hero', 'animation', 'animation');
+    await mkAsset('heroByCategory', 'hero', 'character', 'animation');
     await mkAsset('heroFx', 'hero', 'fx', 'fx');
     await mkAsset('secondArt', 'second', 'character', 'art');
     await mkAsset('nolinkArt', 'nolink', 'character', 'art');
@@ -273,15 +288,25 @@ test('the Submit Work upload', { skip: cfg ? false : SKIP_REASON }, async (t) =>
       fs.readFileSync(path.join(share, 'Hero Quest', 'Artist', 'Ana Artist', 'walk.psd')), art.bytes,
       'the bytes are on the share, where the server said');
 
-    /* THE DISCIPLINE DECIDES, on the same project and the same person — and the
-       discipline is the asset's TYPE, which is what the Dashboard's sub-tabs
-       read. This asset's CATEGORY says "art"; it is an animation and it goes to
-       the Animator folder, because nothing reads the category any more. */
+    /* THE DISCIPLINE DECIDES, on the same project and the same person — the
+       folder is about the work, not about whose desk it is on. */
     const anim = await upload('ana', id.heroAnim, { name: 'run.aep' });
     assert.strictEqual(anim.session.path, 'Hero Quest/Animator/Ana Artist');
+
+    /* AND THE CATEGORY CAN DECIDE IT ON ITS OWN. A CHARACTER filed under the
+       Animation category: its Scope of Work says Art, its category says
+       Animation, Animation wins, and the upload goes to the Animator folder —
+       which is the same answer the Dashboard's Animation tab now gives for this
+       asset. A folder and a tab disagreeing about one piece of work is what the
+       shared rule exists to prevent, and this is the case the studio reported. */
+    const byCategory = await upload('ana', id.heroByCategory, { name: 'rig.ma' });
+    assert.strictEqual(byCategory.session.path, 'Hero Quest/Animator/Ana Artist');
+    assert.strictEqual(byCategory.done.path, 'Hero Quest/Animator/Ana Artist/rig.ma');
+
     /* AND A TYPE THE STUDIO ADDS LATER IS ART — the inference the Dashboard has
        made since the sub-tabs were built, now visible in the folder too. FX is
-       a seeded type and it is not animation, so it is art. */
+       a seeded type and it is not animation, and the FX category is not an
+       animation category either, so it is art. */
     const fx = await upload('ana', id.heroFx, { name: 'smoke.psd' });
     assert.strictEqual(fx.session.path, 'Hero Quest/Artist/Ana Artist');
 
@@ -346,13 +371,18 @@ test('the Submit Work upload', { skip: cfg ? false : SKIP_REASON }, async (t) =>
     const asArt = await upload('ana', id.heroArt, { name: 'as-art.psd' });
     assert.strictEqual(asArt.session.path, 'Hero Quest/Artist/Ana Artist');
 
-    /* AND THE APPLICATION HAS NO WAY TO DO IT. `type` is set when an asset is
-       created and is in no route's editable field list — PATCH /assets/:id
-       accepts status, priority, description, assignee, dates, hours and
-       category, and nothing else — so an asset's discipline is fixed for its
-       lifetime unless somebody goes into the database. Pinned here because it
-       is the strongest form of "nothing is orphaned": the classification cannot
-       move through the product at all. */
+    /* AND THE APPLICATION HAS NO WAY TO CHANGE THE TYPE. It is set when an
+       asset is created and is in no route's editable field list — PATCH
+       /assets/:id accepts status, priority, description, assignee, dates, hours
+       and category, and nothing else.
+       
+       WHICH IS WHY THE RULE READS THE CATEGORY. An asset's discipline used to be
+       fixed for its lifetime by a field nobody could correct, so an asset filed
+       under the wrong Scope of Work on day one had no way back — and the studio
+       reported exactly that, as work missing from the Animation tab. The
+       category IS editable, and it is now the half of the rule a studio can
+       reach. The test below covers the other half: whichever field moves, only
+       NEW uploads follow it and nothing already on the share is touched. */
     const refused = await as('root', `/assets/${id.heroArt}`, { method: 'PATCH', body: { type: 'animation' } });
     assert.strictEqual(refused.status, 400, JSON.stringify(refused.body));
     assert.match(refused.body.error, /Nothing to update/);
