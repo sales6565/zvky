@@ -4482,6 +4482,77 @@ async function ensureSubOptionHeadings(db, log) {
   }
 }
 
+/* WHICH DISCIPLINE A CATEGORY'S ASSETS BELONG TO — the Art / Animation split's
+ * second input.
+ *
+ * ===========================================================================
+ * THE BUG THIS CLOSES. The Dashboard's Art and Animation sub-tabs were decided
+ * by `assets.type` alone, so an asset whose CATEGORY was Animation appeared
+ * under Art. The studio had filled the category list in with the word
+ * Animation, filed work against it, and could not see that work where it
+ * expected to. See src/asset-discipline.js for the rule and why the category
+ * had been left out of it.
+ *
+ * ADDITIVE AND DEFAULTED TO ART, which is what makes the deploy quiet: every
+ * category that is not about animation keeps classifying its assets exactly as
+ * it did, because Art is what the type-only rule gave them.
+ *
+ * SEEDED BY NAME, ONCE. A category whose label or key contains "animation",
+ * case-insensitively, starts as Animation — because a studio that typed the
+ * word meant it, and the alternative is an owner hunting through Settings after
+ * the upgrade to re-state something they already said. The guess lives in
+ * src/asset-discipline.js (disciplineFromName) so the migration, the create
+ * path and the audit script cannot disagree about it.
+ *
+ * IDEMPOTENT, AND IT NEVER OVERRULES A CHOICE. The ALTER is guarded on the
+ * column's absence and the seed is guarded on `discipline IS NULL`, so running
+ * it twice changes nothing the second time, and a category somebody moved to
+ * Art on the Settings screen stays Art on the next boot. That is the same
+ * promise ensureSubOptionHeadings() above makes for a renamed heading, and it
+ * is kept the same way.
+ *
+ * THE COLUMN IS NULLABLE FOR EXACTLY THAT REASON, with the default applied by
+ * the read rather than by the column: a NULL discipline is "never set", which
+ * is the only state the seed may write to, and src/asset-discipline.js reads
+ * anything that is not `animation` as Art. A NOT NULL DEFAULT 'art' column
+ * would have made "seeded as Art" and "chosen as Art" the same value, and the
+ * seed could then never be told apart from a decision.
+ *
+ * HERE, BESIDE THE HEADINGS STEP, for the reason that one gives: it writes to a
+ * table the 'reference tables' step has just created and it has to land BEFORE
+ * the reference-data mirror loads, or the mirror holds rows read before the
+ * column existed and every screen classifies by type alone until the next
+ * restart — which is the bug, back again, on the day it was fixed.
+ */
+async function ensureCategoryDisciplines(db, log) {
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'categories'
+        AND COLUMN_NAME = 'discipline'`
+  ).catch(() => ({ rows: [] }));
+  if (!rows.length) {
+    await db.query('ALTER TABLE categories ADD COLUMN discipline VARCHAR(16) NULL AFTER label');
+    log('Schema: added categories.discipline — which Dashboard tab a category\'s assets appear under.');
+  }
+
+  /* ONE UPDATE, over the categories that have never been classified, deciding
+     each by its own name. Written as a single statement rather than a row per
+     category so a studio with a long list costs one round trip; the LIKE is the
+     SQL form of disciplineFromName() and tests/asset-discipline.test.js holds
+     the two in agreement. */
+  const seeded = await db.query(
+    `UPDATE categories SET discipline = CASE
+        WHEN LOWER(label) LIKE '%animation%' OR LOWER(\`key\`) LIKE '%animation%' THEN 'animation'
+        ELSE 'art' END
+      WHERE discipline IS NULL`
+  );
+  /* `.result`, not `.rows`. src/db.js returns { rows, result } and normalises
+     rows to [] for anything that is not a result set, so an UPDATE's row count
+     is only on `result` — which is how the other steps here read it. */
+  const n = Number((seeded && seeded.result && seeded.result.affectedRows) || 0);
+  if (n) log(`Schema: classified ${n} asset ${n === 1 ? 'category' : 'categories'} as Art or Animation.`);
+}
+
 /* Which second-dropdown option a line carries.
  *
  * THE KEY AND NEVER THE LABEL, so a rename changes how every old line reads and
@@ -5659,6 +5730,11 @@ const STEPS = [
   /* Also before the mirror, and for the same reason: a heading added after it
      loads is a heading every screen reads as absent until the next restart. */
   ['time sheet sub-option headings', ensureSubOptionHeadings],
+  /* Also before the mirror, and for the third time the same reason: a category
+     classified after it loads is a category every screen reads as Art until the
+     next restart — which would be the Animation-tab bug back on the day it was
+     fixed. See the note on the step. */
+  ['asset category disciplines', ensureCategoryDisciplines],
   ['reference data mirror', (db) => referenceData.load(db)],
   // After the mirror: isTopOfHierarchy reads a role's tier from it.
   ['reporting hierarchy', ensureReportingAndMembership],

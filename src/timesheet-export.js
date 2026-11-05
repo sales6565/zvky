@@ -38,6 +38,9 @@
 const db = require('./db');
 const { readableUserIds } = require('./timesheet-visibility');
 const { assetDiscipline, disciplineLabel } = require('./asset-discipline');
+/* The category -> discipline mapping the Art / Animation rule reads beside the
+   type. See src/asset-discipline.js. */
+const referenceData = require('./reference-data');
 const tlReview = require('./tl-review');
 const writer = require('./timesheet-export-xlsx');
 
@@ -138,6 +141,9 @@ const ROW_SQL = `
          p.\`name\`            AS projectName,
          a.\`name\`            AS assetName,
          a.type               AS assetType,
+         /* Beside the type because the Department column is the Art /
+            Animation rule, and that rule reads both fields. */
+         a.category           AS assetCategory,
          a.man_hours          AS bidHours,
          e.hours              AS hours,
          e.non_project        AS category,
@@ -213,7 +219,9 @@ function mapRow(row, labels = new Map()) {
        so the two reports cannot disagree about the same asset. A line with no
        asset has no department: users carry no discipline in this schema — only
        freelancers do, and a freelancer is not a user. */
-    department: row.assetName ? disciplineLabel(assetDiscipline({ type: row.assetType })) : null,
+    department: row.assetName ? disciplineLabel(assetDiscipline(
+      { type: row.assetType, category: row.assetCategory },
+      referenceData.categoryDisciplines())) : null,
     /* BID HOURS REPEAT ON EVERY ROW OF THE SAME ASSET, which is safe precisely
        because this file has no totals row: nothing adds the column up, so
        nothing double counts. */

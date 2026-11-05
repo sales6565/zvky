@@ -3468,7 +3468,14 @@ async function loadReferenceData(){
   PRIORITIES = data.priorities.map(p=>({ id:p.key, label:p.label, color:p.color||'var(--ink-muted)' }));
   /* Ships empty. Every consumer treats "no categories yet" as a normal state,
      so the field is simply optional until a Super Admin fills the list in. */
-  CATEGORIES = (data.categories || []).map(c=>({ id:c.key, label:c.label, color:c.color||'var(--ink-muted)' }));
+  /* `key` beside `id` — they are the same word, and the mirrored
+     disciplineMap() prefers `key` so neither the page's shape nor the server's
+     had to change. `discipline` is what puts an asset under the Animation tab
+     when its Scope of Work does not; a list served by a copy that predates the
+     column reads as 'art', which is the default the column itself carries. */
+  CATEGORIES = (data.categories || []).map(c=>({ id:c.key, key:c.key, label:c.label,
+    discipline:c.discipline || 'art', color:c.color||'var(--ink-muted)' }));
+  CATEGORY_DISCIPLINE = disciplineMap(CATEGORIES);
   PROJECT_CATEGORIES = (data.projectCategories || []).map(c=>({ id:c.key, label:c.label, color:c.color||'var(--ink-muted)' }));
   MILESTONE_TYPES = (data.milestoneTypes || []).map(m=>({ id:m.key, label:m.label, color:m.color||'var(--ink-muted)' }));
   ROLE_GROUPS = data.groups || [];
@@ -9379,20 +9386,45 @@ const ASSET_DISCIPLINES = [
   { id: 'animation', label: 'Animation' },
 ];
 
-function assetDiscipline(asset) {
+function disciplineMap(categories) {
+  const map = new Map();
+  for (const c of categories || []) {
+    const key = String((c && (c.key || c.id)) || '').trim().toLowerCase();
+    if (key) map.set(key, String((c && c.discipline) || '').trim().toLowerCase());
+  }
+  return map;
+}
+
+/* THE MAP, BUILT ONCE PER CATEGORY LIST rather than per asset. The lens below
+   runs over every card on the board and is called again for each sub-tab's
+   count, so building the mapping inside the rule would rebuild it hundreds of
+   times a draw. Rebuilt wherever CATEGORIES is — see loadReferenceData() —
+   which is the only place the list changes. */
+let CATEGORY_DISCIPLINE = new Map();
+
+function assetDiscipline(asset, categories) {
   const type = String((asset && asset.type) || '').trim().toLowerCase();
-  return type === 'animation' ? 'animation' : 'art';
+  if (type === 'animation') return 'animation';
+  const key = String((asset && asset.category) || '').trim().toLowerCase();
+  if (!key || !categories) return 'art';
+  const map = categories instanceof Map ? categories : disciplineMap(categories);
+  return map.get(key) === 'animation' ? 'animation' : 'art';
 }
 
 /* The sub-tabs ARE the discipline, which is the whole point: one rule, two
-   readers. `{ type: a.type }` rather than the asset itself so this cannot grow
-   a second input — the lens narrows by type and by nothing else, and now that
-   is structural rather than something a test has to read off the source.
+   readers.
+
+   THE ASSET ITSELF NOW, not `{ type: a.type }`. That narrowing was deliberate
+   and is recorded here because it was the bug: it made "the lens narrows by
+   type and by nothing else" structural, so an asset whose CATEGORY said
+   Animation could not possibly be shown under Animation however the shared rule
+   changed. The rule reads two fields, so the lens hands it the row.
+
    The ids, labels and order are held equal to ASSET_DISCIPLINES by
    tests/asset-discipline.test.js. */
 const BOARD_LENS = [
-  { id: 'art',       label: 'Art',       match: (a) => assetDiscipline({ type: a.type }) === 'art' },
-  { id: 'animation', label: 'Animation', match: (a) => assetDiscipline({ type: a.type }) === 'animation' },
+  { id: 'art',       label: 'Art',       match: (a) => assetDiscipline(a, CATEGORY_DISCIPLINE) === 'art' },
+  { id: 'animation', label: 'Animation', match: (a) => assetDiscipline(a, CATEGORY_DISCIPLINE) === 'animation' },
 ];
 const BOARD_LENS_DEFAULT = 'art';
 

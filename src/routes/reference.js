@@ -1,6 +1,9 @@
 const { asyncRouter } = require('../async-router');
 const { authenticate, can } = require('../middleware/auth');
 const referenceData = require('../reference-data');
+/* For diff() alone — the entry itself is written by req.activity(), the
+   middleware every audited route here uses. */
+const activity = require('../activity');
 const { describeTiers } = require('../role-tiers');
 const { groupOrder, catalogue } = require('../roles');
 
@@ -172,9 +175,42 @@ router.post('/:collection', requireCollectionPermission, async (req, res) => {
 router.patch('/:collection/:key', requireCollectionPermission, async (req, res) => {
   const name = resolveCollection(req, res);
   if (!name) return undefined;
+  /* READ BEFORE THE WRITE, for the audit line below. Taken for the one
+     collection that needs it rather than for all of them: this is a dropdown
+     list, and a before-and-after read on every rename of every priority would
+     be a cost paid for nothing. */
+  const before = name === 'categories' ? referenceData.get(name, req.params.key) : null;
   const result = await referenceData.update(db, name, req.params.key, req.body || {});
   if (!result.ok) return res.status(result.status).json({ error: result.errors[0].message, errors: result.errors });
   console.log(`${req.user.email} updated ${referenceData.COLLECTIONS[name].singular} "${result.entry.label}".`);
+
+  /* MOVING A CATEGORY BETWEEN ART AND ANIMATION IS RECORDED, and it is the one
+     change through this route that is.
+     
+     WHY IT IS DIFFERENT FROM A RENAME: renaming a category changes a word on a
+     screen, and the key every asset holds is untouched. This moves every asset
+     in that category from one Dashboard tab to the other — immediately, because
+     the discipline is derived at read time — so a studio asking "why is half of
+     Art suddenly under Animation" has one question, and it is who did this and
+     when. Nothing else here can move somebody's work.
+     
+     Only when it CHANGED. A save that re-submits the same value is not an
+     event, and a screen that sends the whole row would otherwise write a line
+     every time somebody recoloured a category. */
+  if (before && result.entry.discipline !== before.discipline) {
+    req.activity({
+      module: 'settings',
+      action: 'settings.categories.discipline',
+      entityType: 'category',
+      entityId: result.entry.id,
+      entityLabel: result.entry.label,
+      summary: `Assets in the "${result.entry.label}" category now count as ${
+        result.entry.discipline === 'animation' ? 'Animation' : 'Art'} (was ${
+        before.discipline === 'animation' ? 'Animation' : 'Art'})`,
+      changes: activity.diff({ discipline: before.discipline },
+        { discipline: result.entry.discipline }),
+    });
+  }
   return res.json({ entry: result.entry });
 });
 

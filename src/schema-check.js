@@ -226,6 +226,12 @@ const REQUIRED = [
      With this in the list /api/health says which step to re-run. */
   { table: 'timesheet_settings', column: 'hours_rule_enabled', step: 'timesheet settings' },
   { table: 'timesheet_settings', column: 'hours_rule_from',    step: 'timesheet settings' },
+  /* WHICH DASHBOARD TAB A CATEGORY'S ASSETS APPEAR UNDER. Listed because a copy
+     without it does not fail — src/reference-data.js reads a missing discipline
+     as Art, which is the old type-only behaviour — so the Animation tab would
+     quietly stay empty for a studio whose migration half-ran, with nothing on
+     the screen or in the log to say why. /api/health names the step instead. */
+  { table: 'categories',         column: 'discipline',        step: 'asset category disciplines' },
 ];
 
 // Two queries for the whole check, rather than one per column.

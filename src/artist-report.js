@@ -63,6 +63,11 @@ const { visibleProjects } = require('./permissions');
 const workLog = require('./work-log');
 const reports = require('./reports');
 const { assetDiscipline, disciplineLabel, disciplineWhere } = require('./asset-discipline');
+/* THE CATEGORY -> DISCIPLINE MAPPING, which the Art / Animation rule reads
+   alongside the type. From the reference mirror rather than a join, because the
+   list is a few dozen rows that every request already has in memory and the
+   predicate below needs the animation keys as parameters, not as a subquery. */
+const referenceData = require('./reference-data');
 
 const PAGE_SIZE = 100;
 const DOWNLOAD_LIMIT = 50000;
@@ -144,7 +149,8 @@ function selectionSql(filters, projectIds) {
   /* THE DEPARTMENT PREDICATE IS NOT WRITTEN HERE. src/asset-discipline.js owns
      the rule and hands over the SQL for it, so there is no second copy of
      "animation is Animation" to drift. */
-  const dept = disciplineWhere(filters.department);
+  const dept = disciplineWhere(filters.department,
+    { animationCategories: referenceData.animationCategories() });
   if (dept) {
     params.push(...dept.params);
     where.push(dept.sql.replace('?', `$${params.length}`));
@@ -212,7 +218,12 @@ async function build(db, user, query = {}, { page = 1, pageSize = PAGE_SIZE, all
      move between two downloads of the same data looks broken. */
   const order = 'ORDER BY COALESCE(c.`name`, \'\'), p.`name`, u.`name`, s.submitted_at, a.`name`, a.id';
   const { rows } = await db.query(
+    /* a.category travels with a.type because the Department column is the Art /
+       Animation rule, and that rule reads both. Selecting one and not the other
+       is how the Dashboard and this report would come to disagree about an
+       asset — which is the bug this field was changed to fix. */
     `SELECT a.id AS assetId, a.\`name\` AS assetName, a.\`type\` AS assetType,
+            a.category AS assetCategory,
             a.man_hours AS bidHours,
             p.id AS projectId, p.\`name\` AS projectName,
             c.id AS clientId, c.\`name\` AS clientName,
@@ -250,6 +261,11 @@ async function build(db, user, query = {}, { page = 1, pageSize = PAGE_SIZE, all
     byAsset.set(r.asset_id, (byAsset.get(r.asset_id) || 0) + seconds);
   }
 
+  /* Built once for the whole report rather than per row: the rule takes the
+     mapping or the list, and a list handed to it row by row would rebuild the
+     Map for every line of a report that can run to thousands. */
+  const categoryDisciplines = referenceData.categoryDisciplines();
+
   const shaped = rows.map((r) => {
     const own = byPair.get(`${r.assetId}|${r.resourceId}`) || 0;
     const assetSeconds = byAsset.get(r.assetId) || 0;
@@ -262,7 +278,8 @@ async function build(db, user, query = {}, { page = 1, pageSize = PAGE_SIZE, all
       clientName: r.clientName || '',
       projectName: r.projectName || '',
       // The shared rule, called — never re-derived from the type here.
-      department: disciplineLabel(assetDiscipline({ type: r.assetType })),
+      department: disciplineLabel(assetDiscipline(
+        { type: r.assetType, category: r.assetCategory }, categoryDisciplines)),
       assetName: r.assetName || '',
       resourceName: r.resourceName || '',
       submitDate: r.submitDate,

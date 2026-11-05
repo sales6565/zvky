@@ -47,6 +47,10 @@ const serverLink = require('../server-link');
 const serverTokens = require('../server-tokens');
 const serverSubmissions = require('../server-submissions');
 const { assetDiscipline } = require('../asset-discipline');
+/* For the category -> discipline mapping the rule above now reads. Retired
+   categories included — see categoryDisciplines() there for why that matters
+   to a folder name. */
+const referenceData = require('../reference-data');
 const emailNotifications = require('../email-notifications');
 
 router.use(authenticate);
@@ -476,8 +480,15 @@ async function submitUploadContext(req) {
     project, prefix: serverSettings.linkPrefix(),
     /* THE SAME CLASSIFICATION THE DASHBOARD DRAWS ITS SUB-TABS FROM, called
        rather than reproduced. An asset the board shows under Animation lands in
-       the Animation folder, by construction. */
-    disciplineId: assetDiscipline(asset),
+       the Animation folder, by construction — which is now true of an asset
+       that is Animation by its CATEGORY as well as one that is by its type.
+       
+       NEW UPLOADS ONLY, and nothing is moved. The path is computed per upload,
+       so the day a category moves to Animation the next file goes to the
+       Animator folder and every file already on the share stays exactly where
+       it is, under the name it has. There is no rename pass and there must not
+       be: those paths are in asset_versions rows and in links people have. */
+    disciplineId: assetDiscipline(asset, referenceData.categoryDisciplines()),
     userFolder: folder.folder, subPath: (req.body || {}).subPath || '',
     discipline: serverSettings.disciplines(),
   });
@@ -566,7 +577,8 @@ router.post('/submit-uploads', requireEnabled, requirePermission('server.submit_
        to. */
     const computed = serverLink.uploadPathFor({
       project: { id: ctx.asset.project_id, server_link: ctx.asset.server_link, server_submit_enabled: ctx.asset.server_submit_enabled },
-      prefix: serverSettings.linkPrefix(), disciplineId: assetDiscipline(ctx.asset),
+      prefix: serverSettings.linkPrefix(),
+      disciplineId: assetDiscipline(ctx.asset, referenceData.categoryDisciplines()),
       userFolder: ctx.userFolder, subPath: file && file.subPath ? file.subPath : '',
       discipline: serverSettings.disciplines(),
     });

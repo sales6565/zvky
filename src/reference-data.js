@@ -10,6 +10,11 @@
 
 const { v4: uuid } = require('uuid');
 const { isTier, capabilitiesForTier, TIERS } = require('./role-tiers');
+/* The Art / Animation split's one definition. This file stores the category's
+   half of it and validates what may be stored; it does not decide what the
+   split MEANS — see src/asset-discipline.js. */
+const { DISCIPLINE_IDS, disciplineFromName, disciplineMap,
+  animationCategoryKeys } = require('./asset-discipline');
 
 // --- what each collection is -------------------------------------------------
 // `usedBy` is how deletion decides whether a value is still in use. Nothing is
@@ -28,12 +33,18 @@ const COLLECTIONS = {
     extra: ['color'],
     usedBy: { table: 'assets', column: 'priority' },
   },
-  // Starts empty and is filled in Settings; an asset with no category is
-  // normal, so nothing here treats an empty list as a broken one.
+  /* Starts empty and is filled in Settings; an asset with no category is
+     normal, so nothing here treats an empty list as a broken one.
+
+     `discipline` IS WHICH DASHBOARD TAB ITS ASSETS APPEAR UNDER — Art or
+     Animation — and the one attribute in this file that changes what a screen
+     shows rather than how it reads. See src/asset-discipline.js: the Art /
+     Animation lens asks the type OR the category, and this column is the
+     category half of it. */
   categories: {
     table: 'categories',
     singular: 'category',
-    extra: ['color'],
+    extra: ['color', 'discipline'],
     usedBy: { table: 'assets', column: 'category' },
   },
   /* The PROJECT category list, separate from the asset one above.
@@ -200,6 +211,16 @@ function shape(name, row) {
      that has none. Null and absent read the same to the form, which draws no
      second dropdown when the category has no options anyway. */
   if (name === 'timesheet_categories') return { ...base, subLabel: row.sub_label || null };
+  /* WHICH DASHBOARD TAB THIS CATEGORY'S ASSETS APPEAR UNDER. Normalised here so
+     every consumer — the Settings dropdown, the page's mirrored rule, the
+     reports — reads one of exactly two words, and a row whose column is still
+     NULL (never classified, or a copy of the list read before the migration)
+     reads as 'art', which is what the type-only rule gave it. */
+  if (name === 'categories') {
+    return { ...base,
+      discipline: DISCIPLINE_IDS.includes(String(row.discipline || '').trim().toLowerCase())
+        ? String(row.discipline).trim().toLowerCase() : 'art' };
+  }
   if (name === 'roles') {
     const capabilities = capabilitiesForTier(row.tier) || capabilitiesForTier('staff');
     return {
@@ -292,6 +313,30 @@ function keys(name, options) {
   return list(name, options).map((e) => e.key);
 }
 
+/* THE CATEGORY -> DISCIPLINE MAPPING, OUT OF THE MIRROR, for the Art /
+ * Animation rule in src/asset-discipline.js.
+ *
+ * INCLUDING RETIRED CATEGORIES, and that is the entire reason this is a
+ * function here rather than a list() call at each of its call sites. A category
+ * that has been deactivated is gone from the dropdowns, but every asset already
+ * filed against it still HOLDS it — and an asset whose category was retired
+ * must not change which Dashboard tab it appears under, or which folder its
+ * uploads land in, because somebody tidied up the list. list() hides inactive
+ * values by default, so `includeInactive` had to be remembered at four call
+ * sites or remembered once here.
+ *
+ * TWO SHAPES OF THE SAME ANSWER, because the rule is read in JavaScript and in
+ * SQL: the Map for assetDiscipline(), the key list for disciplineWhere(). Both
+ * are derived from the same rows by the same module, so they cannot disagree.
+ */
+function categoryDisciplines() {
+  return disciplineMap(list('categories', { includeInactive: true }));
+}
+
+function animationCategories() {
+  return animationCategoryKeys(list('categories', { includeInactive: true }));
+}
+
 // --- validation --------------------------------------------------------------
 function validate(name, payload, { existingKey = null } = {}) {
   const errors = [];
@@ -352,6 +397,18 @@ function validate(name, payload, { existingKey = null } = {}) {
       ? null : String(payload.subLabel).trim();
     if (heading && heading.length > 100) {
       errors.push({ field: 'subLabel', message: 'The dropdown heading must be 100 characters or fewer.' });
+    }
+  }
+
+  if (name === 'categories' && payload.discipline !== undefined && payload.discipline !== null) {
+    /* REFUSED RATHER THAN COERCED. A third word here would silently classify
+       the category as Art — and this field decides which Dashboard tab a
+       studio's work appears under, which is the one thing about this change
+       nobody should have to guess at twice. */
+    const id = String(payload.discipline).trim().toLowerCase();
+    if (!DISCIPLINE_IDS.includes(id)) {
+      errors.push({ field: 'discipline',
+        message: `A category counts as ${DISCIPLINE_IDS.join(' or ')}, not "${payload.discipline}".` });
     }
   }
 
@@ -431,6 +488,22 @@ async function create(db, name, payload) {
       'INSERT INTO asset_types (id, `key`, label, code_prefix, color, position, is_active, is_system) VALUES ($1,$2,$3,$4,$5,$6,1,0)',
       [id, key, label, prefix, color, position]
     );
+  } else if (name === 'categories') {
+    /* THE ONE PLAIN COLLECTION WITH AN INSERT OF ITS OWN, and only because of
+       the discipline. A category's name is how a studio says what it is for, so
+       one called "Animation Props" is born Animation rather than needing a
+       second visit to the Settings dropdown — the same guess the migration
+       makes about the list a studio already had, from the same function. An
+       explicit value in the payload wins, because somebody chose it. */
+    const chosen = payload.discipline === undefined || payload.discipline === null
+      || String(payload.discipline).trim() === ''
+      ? disciplineFromName(label)
+      : String(payload.discipline).trim().toLowerCase();
+    await db.query(
+      'INSERT INTO categories (id, `key`, label, discipline, color, position, is_active, is_system) '
+      + 'VALUES ($1,$2,$3,$4,$5,$6,1,0)',
+      [id, key, label, chosen, color, position]
+    );
   } else if (PLAIN.includes(name)) {
     /* Label, colour and position and nothing else, so they share one insert
        rather than each having a near-identical branch.
@@ -479,6 +552,7 @@ async function update(db, name, key, payload) {
        so validate() scopes the duplicate check to the right parent. */
     parentKey: current.parentKey,
     subLabel: payload.subLabel !== undefined ? payload.subLabel : current.subLabel,
+    discipline: payload.discipline !== undefined ? payload.discipline : current.discipline,
     tier: payload.tier !== undefined ? payload.tier : current.tier,
     group: payload.group !== undefined ? payload.group : current.group,
     codePrefix: payload.codePrefix !== undefined ? payload.codePrefix : current.codePrefix,
@@ -517,6 +591,13 @@ async function update(db, name, key, payload) {
   } else if (name === 'roles') {
     set('group_name', String(merged.group).trim());
     set('tier', String(merged.tier).trim());
+  } else if (name === 'categories' && payload.discipline !== undefined) {
+    /* Only written when the request mentions it, so renaming a category or
+       recolouring it leaves its classification alone — the same rule the
+       dropdown heading below follows, and for the same reason: a field written
+       on every save is a field that gets reset by a screen that does not know
+       about it. */
+    set('discipline', String(merged.discipline).trim().toLowerCase());
   } else if (name === 'timesheet_categories' && payload.subLabel !== undefined) {
     /* The dropdown heading, editable so "Idle Remarks" can be renamed without a
        deploy. Only written when the request mentions it, so a rename of the
@@ -598,6 +679,8 @@ module.exports = {
   list,
   get,
   keys,
+  categoryDisciplines,
+  animationCategories,
   validate,
   usageCount,
   create,
