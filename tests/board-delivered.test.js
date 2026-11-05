@@ -71,9 +71,17 @@ function renderBoard({ assets, lensId = 'art', statuses = PAGE_STATUSES, realCar
     columns,
     /* assetDiscipline() comes with the lens, because the lens calls it rather
        than repeating the rule — one definition, read by these sub-tabs and by
-       the Submit Work upload folder (src/asset-discipline.js). Nothing this
-       file asserts has changed. */
-    grab('function assetDiscipline(asset)'),
+       the Submit Work upload folder (src/asset-discipline.js).
+       
+       THREE DECLARATIONS NOW, not one: the rule reads the asset's CATEGORY as
+       well as its type, so the mapping it looks the category up in
+       (disciplineMap, and the CATEGORY_DISCIPLINE the page keeps it in) has to
+       come with it. Empty here, which is a studio that has classified no
+       category — and that is deliberately the state in which this file's
+       assertions are unchanged by the category joining the rule. */
+    grab('function disciplineMap(categories) {'),
+    grab('let CATEGORY_DISCIPLINE = new Map();', ';'),
+    grab('function assetDiscipline(asset, categories)'),
     grab('const BOARD_LENS = [', '\n];'),
     grab('const boardLensMatch = ()', ';'),
     /* The arrival lens, which renderBoard spends on its first draw after an

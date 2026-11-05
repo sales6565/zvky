@@ -234,10 +234,23 @@ test('the Submit Work upload, in a browser', { skip: SKIP }, async (t) => {
     await mkProject('hero', 'Hero Quest');
     await mkProject('second', 'Second Project');
 
-    /* THE TYPE IS THE DISCIPLINE — the same field the Dashboard's Art and
-       Animation sub-tabs read (src/asset-discipline.js). The category is set to
-       the opposite word on purpose: if anything still computed a folder from
-       it, these two assets would swap folders and the test below would say so. */
+    /* THE DISCIPLINE IS THE TYPE **OR** THE CATEGORY — the same rule the
+       Dashboard's Art and Animation sub-tabs read (src/asset-discipline.js),
+       with Animation winning a disagreement.
+       
+       THIS FIXTURE USED TO SAY THE OPPOSITE, and the comment it carried is
+       worth keeping because it records the behaviour that changed: each asset's
+       category was set to the opposite word on purpose, so that "if anything
+       still computed a folder from it, these two assets would swap folders".
+       Reading the category was the bug (an asset whose category said Animation
+       never appeared under the Animation tab), so the category is now read — and
+       the two assets below are given a type and a category that AGREE, so the
+       claim this file is really about is unchanged: the folder follows the work,
+       and the same person uploading to one project gets two folders.
+       
+       `heroByCategory` is the new case, and it is the studio's own complaint: a
+       CHARACTER filed under the Animation category. Its upload must land in
+       Animator/ even though its Scope of Work says otherwise. */
     const mkAsset = async (key, projectKey, type, category) => {
       const r = await as('root', `/assets/project/${id[projectKey]}`, { method: 'POST',
         body: { name: `Asset ${key}`, type, category } });
@@ -245,14 +258,15 @@ test('the Submit Work upload, in a browser', { skip: SKIP }, async (t) => {
       id[key] = r.body.asset.id;
       await as('root', `/assets/${id[key]}`, { method: 'PATCH', body: { assigneeId: id.ana } });
     };
-    await mkAsset('heroArt', 'hero', 'character', 'animation');
+    await mkAsset('heroArt', 'hero', 'character', 'art');
     /* STARTED HERE AND NOWHERE ELSE. Submitting work that was never started is
        refused by this application ("click Accept and Start"), and an artist has
        one asset in progress at a time — so each test that submits starts its
        own asset first rather than the setup starting all of them. */
     const started = await as('ana', `/assets/${id.heroArt}/start`, { method: 'POST' });
     assert.ok(started.status === 200 || started.status === 201, JSON.stringify(started.body));
-    await mkAsset('heroAnim', 'hero', 'animation', 'art');
+    await mkAsset('heroAnim', 'hero', 'animation', 'animation');
+    await mkAsset('heroByCategory', 'hero', 'character', 'animation');
     await mkAsset('secondArt', 'second', 'character', 'art');
     // A spare, for the test that turns the switch off: an asset already in
     // review cannot be submitted again, which is the application's own rule.
@@ -567,7 +581,7 @@ test('the Submit Work upload, in a browser', { skip: SKIP }, async (t) => {
     } finally { await h.close(); }
   });
 
-  await t.test('a second project uses its own folder, and the discipline follows the type', async () => {
+  await t.test('a second project uses its own folder, and the discipline follows the work', async () => {
     const h = await open('ana');
     try {
       await h.ready();
@@ -591,9 +605,7 @@ test('the Submit Work upload, in a browser', { skip: SKIP }, async (t) => {
 
       /* AND AN ANIMATION ASSET IN THE SAME PROJECT GOES TO THE ANIMATOR'S
          FOLDER — the discipline is what the Dashboard shows the asset under,
-         not the person's role. Same person, same project, two folders, and the
-         asset's category says the opposite of each so nothing can be passing
-         by reading that instead. */
+         not the person's role. Same person, same project, two folders. */
       const hero = (await as('root', `/projects/${id.hero}`)).body.project;
       await h.page.evaluate(({ assetId, p }) => srvSubmitBox(assetId, p), { assetId: id.heroAnim, p: hero });
       await h.page.waitForSelector('#srvSubmitDrop');
@@ -607,20 +619,46 @@ test('the Submit Work upload, in a browser', { skip: SKIP }, async (t) => {
         `Boolean(SRV_SUBMIT.get(${JSON.stringify(id.heroAnim)}).link)`, { timeout: 20000 });
       assert.ok(fs.existsSync(path.join(share, 'Hero Quest', 'Animator', 'Ana Artist', 'cycle.ma')),
         fs.readdirSync(path.join(share, 'Hero Quest')).join(','));
+      // And the link the server composed names the Animator folder.
+      assert.strictEqual(await h.page.$eval('#submitLink', (e) => e.value),
+        `${PREFIX}\\Hero Quest\\Animator\\Ana Artist\\cycle.ma`);
+
+      /* AND THE STUDIO'S OWN COMPLAINT, AS AN UPLOAD: a CHARACTER filed under
+         the Animation category. Its Scope of Work says Art and its category
+         says Animation, Animation wins, and the file lands in Animator/ —
+         which is the same answer the Dashboard's Animation tab now gives for
+         this asset. A folder and a tab that disagreed about one piece of work is
+         the failure this whole shared rule exists to prevent. */
+      await h.page.evaluate(({ assetId, p }) => srvSubmitBox(assetId, p),
+        { assetId: id.heroByCategory, p: hero });
+      await h.page.waitForSelector('#srvSubmitDrop');
+      await h.page.evaluate((assetId) => {
+        srvSubmitQueue(assetId, [new File([new Uint8Array(256)], 'rig.ma')]);
+      }, id.heroByCategory);
+      await h.page.waitForFunction(
+        `SRV_SUBMIT.get(${JSON.stringify(id.heroByCategory)}).jobs.every(j => j.state === 'done' || j.state === 'failed')`,
+        { timeout: 60000 });
+      await h.page.waitForFunction(
+        `Boolean(SRV_SUBMIT.get(${JSON.stringify(id.heroByCategory)}).link)`, { timeout: 20000 });
+      assert.ok(fs.existsSync(path.join(share, 'Hero Quest', 'Animator', 'Ana Artist', 'rig.ma')),
+        fs.readdirSync(path.join(share, 'Hero Quest', 'Animator', 'Ana Artist')).join(','));
+      assert.strictEqual(await h.page.$eval('#submitLink', (e) => e.value),
+        `${PREFIX}\\Hero Quest\\Animator\\Ana Artist\\rig.ma`,
+        'the character filed under Animation gets an Animator link');
+
       /* THE TWO FOLDERS, SIDE BY SIDE, in one project — which is the whole of
          Prompt 52 read off a filesystem. The Art asset's files are in Artist/
-         and the Animation asset's in Animator/, uploaded by the same person
+         and the Animation work's in Animator/, uploaded by the same person
          from the same screen. */
       assert.deepStrictEqual(
         fs.readdirSync(path.join(share, 'Hero Quest')).filter(n => n !== '.incoming').sort(),
         ['Animator', 'Artist']);
       assert.ok(fs.readdirSync(path.join(share, 'Hero Quest', 'Artist', 'Ana Artist')).includes('walk.psd'),
         'the Art asset\'s upload is in Artist/');
-      assert.deepStrictEqual(fs.readdirSync(path.join(share, 'Hero Quest', 'Animator', 'Ana Artist')),
-        ['cycle.ma'], 'and only the Animation asset\'s is in Animator/');
-      // And the link the server composed names the Animator folder.
-      assert.strictEqual(await h.page.$eval('#submitLink', (e) => e.value),
-        `${PREFIX}\\Hero Quest\\Animator\\Ana Artist\\cycle.ma`);
+      assert.deepStrictEqual(
+        fs.readdirSync(path.join(share, 'Hero Quest', 'Animator', 'Ana Artist')).sort(),
+        ['cycle.ma', 'rig.ma'],
+        'and both the animation-type asset\'s and the animation-category character\'s are in Animator/');
       await h.native();
     } finally { await h.close(); }
   });

@@ -118,6 +118,23 @@ test('the Settings panel offers a Discipline dropdown per category', () => {
   assert.match(rows, /ASSET_DISCIPLINES\.map\(d=>`<option value="\$\{escapeHTML\(d\.id\)\}"/,
     'with one option per discipline, from the shared list');
 
+  /* AND SOMETHING LISTENS TO IT. A select nobody wired is the easiest version
+     of this feature to ship broken: it renders, it shows the right value, and
+     changing it does nothing. The handler lives in wireSettings(), which
+     renderSettings() calls immediately after writing the markup that contains
+     these rows — the same order .ref-rename has always relied on. */
+  const wiring = PAGE.slice(PAGE.indexOf('function wireSettings(){'),
+    PAGE.indexOf("document.querySelectorAll('.ref-rename')"));
+  assert.match(wiring, /querySelectorAll\('\.ref-discipline'\)[\s\S]*?addEventListener\('change'/,
+    'the dropdown saves on change');
+  assert.match(wiring, /method:'PATCH', body:\{ discipline: sel\.value \}/,
+    'through the route that already manages this list');
+  assert.match(wiring, /sel\.value = was;/,
+    'and a refusal puts the row back, so it never shows a value the server does not hold');
+  const renderTail = PAGE.slice(PAGE.indexOf("el.querySelectorAll('.sii-link')"));
+  assert.match(renderTail.slice(0, 200), /wireSettings\(\);/,
+    'and wireSettings() runs after the markup, so the rows are there to wire');
+
   /* THE BLANK FIRST OPTION ON THE ADD ROW, which is the default and means "work
      it out from the name". A select defaulting to Art would send Art with every
      new category and defeat the guess entirely. */

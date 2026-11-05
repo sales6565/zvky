@@ -136,6 +136,15 @@ test('no CHAT permission grants reading other people\'s chat', () => {
     'chat.open_inbox',
     /* The studio-wide group size cap. One number; it reads nothing. */
     'chat.settings',
+    /* READ-ONLY ACCESS TO THAT SETTINGS PANEL, and the clearest case of the
+       rule every view key follows: where an area mixes configuration with
+       private data, the view key covers the CONFIGURATION only. It opens
+       Settings → Chat and reads no conversation, no message and no attachment.
+       There is deliberately no "view all chats" key: chat is membership-based,
+       a request for a conversation somebody is not in is answered 404 before
+       any permission is consulted, and the claim this test makes is therefore
+       unchanged by it. */
+    'chat.settings_view',
     'chat.use',
   ]);
 

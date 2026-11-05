@@ -1511,20 +1511,52 @@ Two sub-tabs above the board, splitting the project it already shows. They use t
 `.sub-tabs` component as Pending Actions, the Assets List, Reports and the Time Sheet — the
 seventh group on the page, wired the same way.
 
-**The field is `assets.type`, and it is the only one that could carry this.** Checked
-rather than assumed, because the obvious candidates all fail: `discipline` exists only as
-free text on `freelancers`; `projects.category` comes from `project_categories`, which
-ships **empty** on purpose; and `milestone_types` does hold exactly `{art, animation}` —
-but `project_milestones` joins a type to a **project**, never to an asset, so it cannot
-partition a board. Nothing in the app filtered or displayed an Art/Animation split before
-this.
+**An asset is Animation when its Scope of Work is `animation` OR its category counts as
+Animation. Otherwise it is Art, and where the two fields disagree Animation wins.** One
+rule, in `src/asset-discipline.js`, called by the sub-tabs, the upload folder, the Artist
+Report's Department column and the Time Sheet export.
 
-**So Animation is `type === 'animation'` and Art is everything else** — a decision, not a
-reading. `asset_types` is editable in Settings, so a studio that adds *Rigging* or *Layout*
-gets them under Art without being asked. That is the right default, and it is an inference:
-the change to make if it stops being true is a discipline flag on the asset type itself,
-not a longer list of strings on the page. A test pins the inference so altering it is
-deliberate.
+**It used to be the type alone, and that was the bug.** The reasoning was sound when the
+sub-tabs were built and stopped being true: `assets.category` comes from the asset
+categories list, which ships **empty**, so a rule reading an empty list classifies nothing.
+Studios then filled the list in — with the word *Animation* — filed work against it, and
+reported that assets in the Animation category did not appear under the Animation tab. The
+category is also the field a studio can still correct: **`assets.type` cannot be edited
+after an asset is created** (there is no `req.body.type` in `src/routes/assets.js`) while
+the Category dropdown is in the drawer, so a rule reading only the type gave an asset filed
+wrongly on day one no way back.
+
+**The mapping is data, not strings in the code.** `categories.discipline`, added by the
+`asset category disciplines` migration step, `NULL` meaning never classified and read as
+Art. Settings → Asset Categories has a **Counts as** dropdown per row, under the
+`settings.categories` permission that already manages that list; moving a category between
+Art and Animation is written to the Activity Log, because it moves every asset in that
+category between the tabs. So a studio whose animation category is called *Motion* says so
+once, on the screen where it already manages the list.
+
+**On upgrade, nothing moves unless the studio named it.** The column defaults to Art, which
+is what the type-only rule gave every non-`animation` type, and the migration seeds a
+category whose label or key contains *animation* — once, only where nothing has been chosen,
+so it is idempotent and can never overrule a later decision. `scripts/discipline-audit.js`
+is read-only and safe on production: it prints the assets grouped by `(type, category)`,
+which tab each group lands in before and after, and exactly which assets move.
+
+**Nothing is rewritten.** The discipline is derived every time the board is drawn, from the
+two fields the asset already carries — so fixing the rule fixed every existing asset at
+once, with no pass over `assets` and nothing to undo, and a category moved back to Art moves
+its assets back. Office-server folders follow the rule for **new uploads only**; files
+already on the share are never moved or renamed.
+
+**The other candidates are still wrong**, and still worth recording: `discipline` exists
+only as free text on `freelancers`; `projects.category` comes from `project_categories`,
+which ships **empty** and says what kind of *job* a project is; and `milestone_types` does
+hold exactly `{art, animation}` — but `project_milestones` joins a type to a **project**,
+never to an asset, so it cannot partition a board.
+
+**A type a studio adds later is still Art.** That decision is untouched: `asset_types` is
+editable in Settings, so *Rigging* or *Layout* land under Art without being asked, and a
+test pins it so altering it is deliberate. What is new is that a **category** can put an
+asset under Animation whatever its type.
 
 **Default: Art. Not remembered.** Art because it is five of the six seeded types, so the
 landing screen is most of the project rather than a corner of it. Not remembered because
@@ -2248,7 +2280,7 @@ For Excel files, these are just the header row of the first sheet:
 | Column | Notes |
 |---|---|
 | `name` | Asset name |
-| `type` | One of `character, prop, environment, fx, animation, background` |
+| `type` | One of `character, prop, environment, fx, animation, background`. Not editable after creation — see the Art / Animation sub-tabs for why that matters |
 | `priority` | `low`, `med`, or `high` — defaults to `med` |
 | `assignee_email` | Must match the email of someone whose designation can be assigned work, or the row is left unassigned with a warning |
 | `man_hours` | Estimated hours, numeric |
@@ -4187,17 +4219,30 @@ by hand, because it is the same endpoint's answer.
   and the folder is about the work.
 
   **One function decides it, called by both**: `assetDiscipline()` in
-  `src/asset-discipline.js`, which reads `assets.type` — `animation` is Animation
-  and everything else is Art, which is what the sub-tabs have always done. The
-  first version of this read `assets.category` instead, and **that list ships
-  empty**, so every lookup missed and every upload in the studio landed in the
-  fallback folder `Work` while Settings showed a grid with no rows in it.
+  `src/asset-discipline.js`, which reads `assets.type` **and** `assets.category`
+  (via `categories.discipline`) — `animation`, or an animation category, is
+  Animation and everything else is Art, exactly as the sub-tabs do.
 
-  The page carries a copy of the function, because there is no build step between
-  `src/` and `public/index.html`; `tests/asset-discipline.test.js` compares the
-  two **character for character**, runs both over one matrix, runs the same assets
-  through the sub-tabs and through the path computation to compare the answers,
-  and fails on a second copy of the rule anywhere else. The folder names are
+  The first version of this read `assets.category` **directly**, and that list
+  ships empty, so every lookup missed and every upload in the studio landed in
+  the fallback folder `Work` while Settings showed a grid with no rows in it. The
+  fix then was to read the type instead; the fix now is to read the category
+  through a `discipline` column that says what each category means, which is what
+  the empty list could never say for itself.
+
+  **New uploads only.** The path is computed per upload, so the day a category
+  moves to Animation the next file goes to `Animator/` and every file already on
+  the share stays where it is, under the name it has. There is no rename pass and
+  there must not be: those paths are in `asset_versions` rows and in links people
+  already hold.
+
+  The page carries copies of **both** functions — the rule and the
+  category-to-discipline mapping it reads — because there is no build step between
+  `src/` and `public/index.html`; `tests/asset-discipline.test.js` compares each
+  pair **character for character**, runs both over one matrix of `(type,
+  category)` pairs, runs the same assets through the sub-tabs and through the path
+  computation to compare the answers, and fails on a second copy of the rule
+  anywhere else. The folder names are
   editable in Settings per discipline (`Art → Artist`, `Animation → Animator`),
   with a fallback (`Work`) for a name left empty — the only way the fallback is
   reached, since every asset is in one of exactly two disciplines.
