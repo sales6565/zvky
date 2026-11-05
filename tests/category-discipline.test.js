@@ -93,6 +93,57 @@ test('the migration\'s guess and disciplineFromName() are the same guess', () =>
   assert.strictEqual(discipline.assetDiscipline({ type: 'animations' }), 'art');
 });
 
+test('the mapping is read with retired categories included', () => {
+  /* A DEACTIVATED CATEGORY STILL CLASSIFIES THE ASSETS FILED AGAINST IT.
+     list() hides inactive values by default — right for a dropdown, wrong for
+     this — so the one function that builds the mapping asks for them, and this
+     is what holds it there. Without it, tidying up the category list silently
+     moves somebody's work from Animation to Art, and nothing on the screen or
+     in the log says why. The page's half of the same requirement is the
+     categoryDisciplines field on GET /api/reference. */
+  const referenceData = require('../src/reference-data');
+  referenceData.seedCache('categories', [
+    { key: 'retired_animation', discipline: 'animation', isActive: false },
+    { key: 'live_animation', discipline: 'animation', isActive: true },
+    { key: 'props', discipline: 'art', isActive: true },
+  ]);
+  try {
+    const map = referenceData.categoryDisciplines();
+    assert.strictEqual(map.get('retired_animation'), 'animation',
+      'a retired animation category still counts as Animation');
+    assert.strictEqual(map.get('live_animation'), 'animation');
+    assert.strictEqual(map.get('props'), 'art');
+    assert.deepStrictEqual(referenceData.animationCategories().sort(),
+      ['live_animation', 'retired_animation'],
+      'and the SQL side sees the same ones, so the two cannot disagree');
+  } finally {
+    referenceData.seedCache('categories', []);
+  }
+});
+
+test('the migration step runs before the reference mirror loads', () => {
+  /* AN ORDERING CONTRACT, asserted structurally because that is what it is.
+     The step writes to a table the mirror is about to read; after the mirror,
+     every screen reads a category's discipline as absent until the next
+     restart — which would be the Animation-tab bug back on the day it was
+     fixed. Two independent safety nets happen to cover for it (reads through
+     GET /api/reference refresh the mirror first, and a background timer
+     reloads it), which is exactly why a behavioural test here would be weak
+     and this one is not: the note on the step makes a claim about ORDER, so
+     the order is what is checked. */
+  const names = require('../src/migrate').STEPS.map(([name]) => name);
+  const step = names.indexOf('asset category disciplines');
+  const mirror = names.indexOf('reference data mirror');
+  assert.ok(step !== -1, 'the step is registered');
+  assert.ok(mirror !== -1, 'and so is the mirror');
+  assert.ok(step < mirror,
+    `'asset category disciplines' (${step}) must come before `
+    + `'reference data mirror' (${mirror})`);
+  // And after the step that creates the table it writes to.
+  assert.ok(names.indexOf('reference tables') < step,
+    'and after the step that creates the categories table');
+});
+
 /* ---- the Settings panel, read off the page ------------------------------ */
 
 test('the Settings panel offers a Discipline dropdown per category', () => {
@@ -434,6 +485,44 @@ test('a category can count as Animation, end to end',
         .find((e) => e.key === 'props').discipline, 'animation',
       'and the rename left the classification alone');
       assert.strictEqual((await setDiscipline('props', 'art')).status, 200);
+    });
+
+    await t.test('a category nobody has classified reads as Art, and stays unclassified', async () => {
+      /* NULL IS "NEVER CLASSIFIED", and two things depend on it.
+       *
+       * IT READS AS ART, so a copy of the list taken before the column existed,
+       * or a row the seed has not reached, classifies exactly as the type-only
+       * rule did. Normalised in shape() rather than by a column default, so
+       * "seeded as Art" and "chosen as Art" stay different values.
+       *
+       * AND IT SURVIVES A RENAME. A save that does not mention the discipline
+       * must not write one — otherwise renaming a category turns its NULL into
+       * 'art', the seed's IS NULL guard no longer applies to it, and the upgrade
+       * silently skips a category the studio had never been asked about. */
+      await q("UPDATE categories SET discipline = NULL WHERE `key` = 'characters'");
+      const listed = () => as('root', '/reference/categories')
+        .then((r) => r.body.entries.find((e) => e.key === 'characters'));
+      /* The mirror is reloaded by the read itself — GET /api/reference and
+         /:collection both refresh first, which is what makes them
+         authoritative. */
+      assert.strictEqual((await listed()).discipline, 'art',
+        'an unclassified category reads as Art');
+      const payload = (await as('root', '/reference')).body.categoryDisciplines
+        .find((c) => c.key === 'characters');
+      assert.strictEqual(payload.discipline, 'art',
+        'and the page is sent Art, not null — the rule must not have to guess');
+
+      const renamed = await as('root', '/reference/categories/characters',
+        { method: 'PATCH', body: { label: 'Characters & Creatures' } });
+      assert.strictEqual(renamed.status, 200, JSON.stringify(renamed.body));
+      const after = await q(
+        "SELECT discipline FROM categories WHERE `key` = 'characters'");
+      assert.strictEqual(after[0].discipline, null,
+        'and a rename wrote nothing to the column it never mentioned');
+
+      // Put it back the way the subtests above left it.
+      await as('root', '/reference/categories/characters',
+        { method: 'PATCH', body: { label: 'Characters', discipline: 'art' } });
     });
 
     await t.test('the migration seeds an existing list, is idempotent, and overrules nobody', async () => {

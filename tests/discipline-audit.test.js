@@ -139,7 +139,13 @@ test('the audit, against a real database', { skip: cfg ? false : SKIP_REASON }, 
     projectId = (await as('root', '/projects', { method: 'POST',
       body: { clientId, name: 'Audit Project' } })).body.project.id;
 
-    for (const label of ['Animation', 'Characters', 'Props']) {
+    /* "FX Animation" IS THE ONE THAT MATTERS HERE. A fixture of categories whose
+       names are exactly "Animation" or clearly not animation cannot tell the
+       shared guess apart from an exact-match test of the word — a mutation that
+       replaced disciplineFromName() with /^animation$/i survived against one.
+       A name that CONTAINS the word is what the migration's LIKE actually
+       does. */
+    for (const label of ['Animation', 'FX Animation', 'Characters', 'Props']) {
       const made = await as('root', '/reference/categories', { method: 'POST', body: { label } });
       assert.strictEqual(made.status, 201, JSON.stringify(made.body));
     }
@@ -152,6 +158,7 @@ test('the audit, against a real database', { skip: cfg ? false : SKIP_REASON }, 
       ['Hero', 'character', 'characters'],
       ['Hero Run', 'animation', null],
       ['Lantern', 'prop', 'props'],
+      ['Water Splash', 'fx', 'fx_animation'],
       ['Opening Beat', 'background', null],
     ]) {
       const made = await as('root', `/assets/project/${projectId}`,
@@ -182,7 +189,7 @@ test('the audit, against a real database', { skip: cfg ? false : SKIP_REASON }, 
 
     // And it printed something, with the database it was pointed at named.
     assert.ok(out.join('').includes('audit-suite'), 'the output names the database');
-    assert.strictEqual(report.assets, 7);
+    assert.strictEqual(report.assets, 8);
   });
 
   await t.test('its verdict for every row is the rule the application will use', async () => {
@@ -240,7 +247,7 @@ test('the audit, against a real database', { skip: cfg ? false : SKIP_REASON }, 
     assert.ok(!/assets by \(type, category\)/.test(brief.join('')),
       '--changes-only leaves the groups out');
     for (const text of [full.join(''), brief.join('')]) {
-      assert.match(text, /assets whose tab changes: 2/,
+      assert.match(text, /assets whose tab changes: 3/,
         'and both say how many move, because that is the number being asked for');
     }
   });
@@ -259,7 +266,7 @@ test('the audit, against a real database', { skip: cfg ? false : SKIP_REASON }, 
         assert.strictEqual(c.discipline, discipline.disciplineFromName(c.label),
           'and the preview is the migration\'s own guess, from the shared function');
       }
-      assert.strictEqual(report.moves.length, 2,
+      assert.strictEqual(report.moves.length, 3,
         'and it still names the assets that will move');
 
       const out = [];

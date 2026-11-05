@@ -65,13 +65,27 @@ const page = (categories = []) => new Function('CATEGORIES', `${grab(PAGE, 'cons
   CATEGORY_DISCIPLINE = disciplineMap(CATEGORIES);
   return { assetDiscipline, disciplineMap, ASSET_DISCIPLINES, BOARD_LENS, CATEGORY_DISCIPLINE };`)(categories);
 
-/* The category list a studio that has filled it in has. Deliberately includes a
-   category whose discipline is MISSING and one whose discipline is a word
-   neither side knows, because those are the two shapes a mapping built twice
-   can disagree about. */
+/* The category list a studio that has filled it in has.
+ *
+ * TWO SHAPES, ON PURPOSE, because the two sides hold this list differently and
+ * the mapping has to key on the same thing either way:
+ *
+ *   THE SERVER'S reference entries carry `id` = a UUID and `key` = the stable
+ *   word. The first two entries are that shape, and a mapping that preferred
+ *   `id` would key the whole thing by UUID — so every lookup would miss and
+ *   every asset would read as Art. A fixture whose `id` and `key` were the same
+ *   word could not tell the two apart, which is what it was: a mutation that
+ *   swapped the preference survived against it.
+ *
+ *   THE PAGE'S CATEGORIES entries were built with the key in `id` long before
+ *   this rule existed, and carry `key` beside it now. The rest are that shape.
+ *
+ * It also deliberately includes a category whose discipline is MISSING, one
+ * whose discipline is a word neither side knows, and one stored in upper case —
+ * the three shapes a mapping built twice can disagree about. */
 const CATEGORIES = [
-  { id: 'animation', key: 'animation', label: 'Animation', discipline: 'animation' },
-  { id: 'fx_animation', key: 'fx_animation', label: 'FX Animation', discipline: 'animation' },
+  { id: 'e3b0c442-98fc-1c14-9afb-f4c8996fb924', key: 'animation', label: 'Animation', discipline: 'animation' },
+  { id: '7d793037-a076-4d0c-8ad6-d4d16be3a4e7', key: 'fx_animation', label: 'FX Animation', discipline: 'animation' },
   { id: 'characters', key: 'characters', label: 'Characters', discipline: 'art' },
   { id: 'props', key: 'props', label: 'Props' },
   { id: 'layout', key: 'layout', label: 'Layout', discipline: 'rigging' },
@@ -158,6 +172,36 @@ test('both copies answer identically for every type, and only ever art or animat
   assert.deepStrictEqual([...seeded.CATEGORY_DISCIPLINE.entries()].sort(),
     [...serverMap.entries()].sort(),
     'the page and the server build the same category -> discipline mapping');
+
+  /* AND IT IS KEYED BY THE CATEGORY'S KEY, NEVER BY ITS id. The server's
+     entries carry a UUID in `id`; a mapping keyed by that would miss on every
+     asset, which holds the key — and would do so silently, reading the whole
+     studio as Art. Asserted on the keys themselves rather than left to the
+     behavioural matrix, because a fixture whose id and key agree cannot see it. */
+  assert.deepStrictEqual([...serverMap.keys()].sort(),
+    CATEGORIES.map((c) => c.key).sort(),
+    'the mapping is keyed by `key`, not by `id`');
+  assert.ok(!CATEGORIES.every((c) => c.id === c.key),
+    'and the fixture contains server-shaped entries, or this proves nothing');
+
+  /* A STORED DISCIPLINE IS FOLDED, so a value that reached the column by any
+     route but the Settings screen still classifies. reference-data lowercases
+     on the way in and on the way out, so this is defensive — and it is the
+     defence that has to be asserted, or folding it is free to disappear. */
+  assert.strictEqual(serverMap.get('upper'), 'animation',
+    'an upper-case stored discipline is folded, not read as unknown');
+  assert.strictEqual(discipline.assetDiscipline(
+    { type: 'character', category: 'upper' }, serverMap), 'animation',
+  'so a character in that category is Animation');
+
+  /* AND NOTHING IS STORED UNDER AN EMPTY KEY. This is what makes the `!key`
+     short-circuit in the rule a clarity guard rather than a behavioural one:
+     with no empty key in the map, looking one up and short-circuiting give the
+     same answer. Said here so the guard is not mistaken for load-bearing. */
+  const blanks = discipline.disciplineMap([{ key: '', discipline: 'animation' },
+    { key: '   ', discipline: 'animation' }, { discipline: 'animation' }]);
+  assert.strictEqual(blanks.size, 0, 'a category with no key is not in the mapping');
+  assert.strictEqual(discipline.assetDiscipline({ type: 'character', category: '' }, serverMap), 'art');
   // The named halves, explicitly.
   assert.strictEqual(discipline.assetDiscipline({ type: 'animation' }), 'animation');
   assert.strictEqual(discipline.assetDiscipline({ type: 'character' }), 'art');
