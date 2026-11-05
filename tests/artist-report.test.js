@@ -327,25 +327,54 @@ test('the title and the file name both carry the range', () => {
     { from: '2024-02-01', to: '2024-02-29' });
 });
 
-test('the department filter is the shared rule, not a copy of it in SQL', () => {
-  /* The predicate and the function have to agree for every type, including the
-     ones nobody thought of — a `CASE WHEN type = 'animation'` in a query would
-     be the second copy of the rule that Prompt 52 removed. */
-  const TYPES = [...require('../src/reference-defaults').ASSET_TYPES.map((t) => t.key),
-    'rigging', 'layout', 'ANIMATION', ' animation ', 'animations', '', null];
+test('the department filter is generated from the shared rule, not written in SQL', () => {
+  /* WHAT THIS CHECKS AND WHAT THE DATABASE CHECKS. The agreement between the
+     predicate and the function is only really provable by running the predicate
+     in MySQL, and that is done against a real connection in "the department
+     predicate, evaluated by the database" inside the end-to-end test below.
+     What is cheap and worth asserting here is the SHAPE: that the predicate is
+     built out of the rule's own parameters rather than hand-written, that Art is
+     the negation of the same expression and not a second one, and that the
+     category keys reach it. A JavaScript re-implementation of the predicate
+     used to live here, and it was a third copy of the rule.
+     
+     THE COLUMNS AND THE CATEGORY KEYS now come in as options, because the rule
+     reads two fields: see src/asset-discipline.js. */
+  const keys = ['animation', 'fx_animation'];
   for (const id of discipline.DISCIPLINE_IDS) {
-    const where = discipline.disciplineWhere(id, 'type');
+    const where = discipline.disciplineWhere(id, { animationCategories: keys });
     assert.ok(where, `${id} has a predicate`);
-    for (const type of TYPES) {
-      // The predicate, evaluated in JavaScript the way MySQL would evaluate it.
-      const value = type === null || type === undefined ? null : String(type).trim().toLowerCase();
-      const matches = id === 'animation'
-        ? value === where.params[0]
-        : (value === null || value !== where.params[0]);
-      assert.strictEqual(matches, discipline.assetDiscipline({ type }) === id,
-        `${id} disagreed about ${JSON.stringify(type)}`);
-    }
+    // The one type the rule names, and every animation-side category key.
+    assert.deepStrictEqual(where.params, [discipline.ANIMATION_TYPE, ...keys],
+      `${id}'s parameters are the rule's own values`);
+    assert.match(where.sql, /LOWER\(TRIM\(a\.`type`\)\) = \?/, 'it tests the type');
+    assert.match(where.sql, /LOWER\(TRIM\(a\.category\)\) IN \(\?,\?\)/, 'and the category');
   }
+
+  /* ART IS THE NEGATION OF THE ANIMATION EXPRESSION, character for character,
+     rather than a complement somebody wrote out — which is how the typeless
+     asset was lost from Art before. */
+  const anim = discipline.disciplineWhere('animation', { animationCategories: keys });
+  const art = discipline.disciplineWhere('art', { animationCategories: keys });
+  assert.strictEqual(art.sql, `NOT COALESCE(${anim.sql}, 0)`,
+    'Art is "not Animation" and says so by negating the same text');
+  assert.deepStrictEqual(art.params, anim.params);
+
+  /* WITH NO ANIMATION CATEGORIES — a studio whose list is empty, or all Art —
+     the predicate is the type test alone, which is exactly what it was before
+     the category joined the rule. */
+  const typeOnly = discipline.disciplineWhere('animation');
+  assert.strictEqual(typeOnly.sql, 'LOWER(TRIM(a.`type`)) = ?');
+  assert.deepStrictEqual(typeOnly.params, [discipline.ANIMATION_TYPE]);
+
+  // The columns are the caller's to name.
+  assert.match(discipline.disciplineWhere('animation', { typeColumn: 'x.t' }).sql, /x\.t/);
+
+  // A key repeated in the list does not widen the parameter array.
+  assert.deepStrictEqual(
+    discipline.disciplineWhere('animation', { animationCategories: ['a', 'A', ' a ', '', null] }).params,
+    [discipline.ANIMATION_TYPE, 'a'], 'folded and de-duplicated, as the JavaScript rule folds them');
+
   // Anything that is not a discipline is no filter at all, not an empty report.
   assert.strictEqual(discipline.disciplineWhere('rigging'), null);
   assert.strictEqual(discipline.disciplineWhere(''), null);
@@ -501,6 +530,55 @@ test('the Artist Report, end to end', { skip: cfg ? false : SKIP_REASON }, async
   const rowsOf = (body) => body.rows.map((r) =>
     [r.clientName, r.projectName, r.department, r.assetName, r.resourceName,
       r.submitDate, r.bidHours, r.spentHours, r.efficiency]);
+
+  await t.test('the department predicate, evaluated by the database', async () => {
+    /* THE ONE TEST THAT CAN ACTUALLY PROVE IT. The predicate is SQL, and SQL's
+       three-valued logic is the part a JavaScript re-implementation gets wrong:
+       `NOT (NULL = 'animation')` is UNKNOWN, not TRUE, so a typeless and
+       categoryless asset silently falls out of Art. So the matrix is handed to
+       MariaDB as a derived table and the predicate is applied to it, and the
+       answer is compared with assetDiscipline() row by row.
+       
+       No fixture and no schema: the rows are literals in the query, so this
+       says nothing about the report's data and everything about the rule. */
+    const keys = ['animation', 'fx_animation'];
+    const map = discipline.disciplineMap([
+      { key: 'animation', discipline: 'animation' },
+      { key: 'fx_animation', discipline: 'animation' },
+      { key: 'characters', discipline: 'art' },
+    ]);
+    const types = [...require('../src/reference-defaults').ASSET_TYPES.map((x) => x.key),
+      'rigging', 'ANIMATION', ' animation ', 'animations', '', null];
+    const categories = ['animation', 'fx_animation', 'characters', 'ANIMATION', 'nonesuch', '', null];
+
+    const rows = [];
+    for (const type of types) {
+      for (const category of categories) rows.push({ type, category });
+    }
+    /* The derived table. `a` so the predicate's default column names resolve. */
+    const union = rows.map(() => 'SELECT ? AS `type`, ? AS category').join(' UNION ALL ');
+    const values = rows.flatMap((r) => [r.type, r.category]);
+
+    for (const id of discipline.DISCIPLINE_IDS) {
+      const where = discipline.disciplineWhere(id, { animationCategories: keys });
+      const got = await q(
+        `SELECT a.\`type\`, a.category FROM (${union}) a WHERE ${where.sql}`,
+        [...values, ...where.params]
+      );
+      const fromSql = new Set(got.map((r) => `${r.type}\u0000${r.category}`));
+      for (const r of rows) {
+        const expected = discipline.assetDiscipline(r, map) === id;
+        assert.strictEqual(fromSql.has(`${r.type}\u0000${r.category}`), expected,
+          `${id} disagreed about ${JSON.stringify(r)}`);
+      }
+      /* AND THE TWO HALVES PARTITION THE MATRIX — asserted by counting, so a
+         predicate that dropped a row from both would be caught even if the
+         row-by-row comparison above were ever loosened. */
+      assert.strictEqual(got.length,
+        rows.filter((r) => discipline.assetDiscipline(r, map) === id).length,
+        `${id} selects exactly its own rows`);
+    }
+  });
 
   await t.test('one row per asset and resource, in the order the brief asks for', async () => {
     const r = await as('root', `/reports/artist?${OCT}`);

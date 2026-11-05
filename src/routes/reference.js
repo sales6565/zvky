@@ -121,6 +121,26 @@ router.get('/', async (req, res) => {
   res.json({
     assetTypes: referenceData.list('asset_types'),
     categories: referenceData.list('categories'),
+    /* THE CATEGORY -> DISCIPLINE MAPPING, INCLUDING RETIRED CATEGORIES, and it
+     * has to be a second field rather than part of `categories` above.
+     *
+     * WHY: `categories` is what fills the dropdowns, so it excludes anything
+     * deactivated — correct, and nobody wants a retired category offered on Add
+     * Asset. But the Art / Animation lens has to classify assets that are
+     * ALREADY filed against a retired category, and those assets still hold its
+     * key. Without this the page classified them by type alone, so tidying up
+     * the category list silently moved somebody's work from Animation to Art.
+     * (A test caught exactly that: see tests/category-discipline.test.js, "a
+     * retired category still classifies the assets already filed under it".)
+     *
+     * The server side has the same requirement and solves it the same way —
+     * referenceData.categoryDisciplines() reads with includeInactive — so the
+     * page and the server agree about a retired category too.
+     *
+     * Keys and disciplines only: this is a lookup table, not a list, and it must
+     * not become a way to read the retired half of a list somebody manages. */
+    categoryDisciplines: referenceData.list('categories', { includeInactive: true })
+      .map((c) => ({ key: c.key, discipline: c.discipline })),
     // The project list, alongside the asset one and never merged with it. Both
     // travel in the same bundle because both fill a dropdown on first paint.
     projectCategories: referenceData.list('project_categories'),

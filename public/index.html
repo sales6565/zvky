@@ -2164,6 +2164,11 @@ body.perm-bar-on{padding-top:38px;}
    `.modal input` is not the only rule that would dress a checkbox as a text
    field, so the size is pinned here rather than inherited. */
 table th.pick-col, table td.pick-col{width:34px;padding-left:12px;padding-right:0;}
+/* The "Counts as Animation" line under Category and Scope of Work. Small print
+   that is read once per asset and then trusted, so it is sized and coloured
+   like the other hints on these forms rather than like a warning. */
+.discipline-hint{ font-size:12px; color:var(--ink-faint); margin-top:4px; padding:2px 0; }
+.discipline-hint strong{ color:var(--ink-muted); }
 table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
   width:auto;flex:none;margin:0;accent-color:var(--form-accent);cursor:pointer;}
 /* The count on the Pending Actions tab. Sits inside the button so it moves with
@@ -2734,6 +2739,11 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
     <h2>New Asset</h2>
     <label>Asset Name</label><input type="text" id="f_name" placeholder="e.g. River Spirit — Hero">
     <div class="row2"><div><label>Category</label><select id="f_category"></select></div><div><label>Scope of Work</label><select id="f_type"></select></div></div>
+    <!-- WHICH DASHBOARD TAB THIS WILL APPEAR UNDER, said here rather than
+         discovered later. The rule reads BOTH fields above and Animation wins a
+         disagreement, which is not something anybody should have to work out
+         from a board. See disciplineHint(). -->
+    <div id="f_disciplineHint" class="discipline-hint"></div>
     <!-- The estimate, not the record. Time Spent is worked out from the start
          and submit stamps on the asset panel and is never typed in here. -->
     <label>Man Hours</label><input type="text" id="f_hours" placeholder="e.g. 16 — the estimate, not time tracked">
@@ -3475,7 +3485,14 @@ async function loadReferenceData(){
      column reads as 'art', which is the default the column itself carries. */
   CATEGORIES = (data.categories || []).map(c=>({ id:c.key, key:c.key, label:c.label,
     discipline:c.discipline || 'art', color:c.color||'var(--ink-muted)' }));
-  CATEGORY_DISCIPLINE = disciplineMap(CATEGORIES);
+  /* FROM ITS OWN FIELD, NOT FROM CATEGORIES, and the difference is a retired
+     category: `categories` above is the dropdown list and excludes deactivated
+     values, while assets already filed against one still hold its key and must
+     not change Dashboard tab because somebody tidied the list. The server sends
+     the mapping for every category, live or retired, for exactly that. The
+     fallback keeps a page served beside an older API classifying by the live
+     list rather than by nothing. */
+  CATEGORY_DISCIPLINE = disciplineMap(data.categoryDisciplines || CATEGORIES);
   PROJECT_CATEGORIES = (data.projectCategories || []).map(c=>({ id:c.key, label:c.label, color:c.color||'var(--ink-muted)' }));
   MILESTONE_TYPES = (data.milestoneTypes || []).map(m=>({ id:m.key, label:m.label, color:m.color||'var(--ink-muted)' }));
   ROLE_GROUPS = data.groups || [];
@@ -9411,6 +9428,29 @@ function assetDiscipline(asset, categories) {
   return map.get(key) === 'animation' ? 'animation' : 'art';
 }
 
+/* THE RULE, SAID IN WORDS, on a form where somebody is choosing the two fields
+ * it reads.
+ *
+ * ONE SENTENCE AND NOT A DIAGRAM: "Counts as Animation" is the whole of it, and
+ * the half that surprises people — a category can put an asset under Animation
+ * whatever its Scope of Work says — is named only when that is what is actually
+ * happening, so the line is an explanation when it needs to be one and a plain
+ * label the rest of the time. */
+function disciplineHint(type, category){
+  const id = assetDiscipline({ type, category }, CATEGORY_DISCIPLINE);
+  /* THE RULE ASKED TWICE RATHER THAN A COMPARISON AGAINST A WORD. "Did the
+     category decide this?" is exactly "would the type alone have said something
+     else?", and asking the shared rule without the mapping answers it — so this
+     function names no discipline, which is what keeps the page's only
+     comparison against 'animation' inside the rule itself. */
+  const byCategory = id !== assetDiscipline({ type });
+  const label = (ASSET_DISCIPLINES.find(d=>d.id===id)||{}).label || id;
+  return `Counts as <strong>${escapeHTML(label)}</strong> \u2014 appears under the ${
+    escapeHTML(label)} tab on the Dashboard${byCategory
+      ? `, because the "${escapeHTML(categoryLabel(category))}" category counts as ${escapeHTML(label)}`
+      : ''}.`;
+}
+
 /* The sub-tabs ARE the discipline, which is the whole point: one rule, two
    readers.
 
@@ -12740,6 +12780,14 @@ async function openDrawer(id){
          this, a category chosen at creation could never be corrected. -->
     <div class="field-lbl">Category</div>
     <select id="d_category" ${editable?'':'disabled'}>${categoryOptions(a.category||'')}</select>
+    <!-- The same sentence the Add Asset form carries, and the reason it is
+         here too: Category is the ONLY one of the two fields that can still be
+         changed (there is no type edit, by design), so this is the screen where
+         somebody moves an asset between the Dashboard's tabs. It has to say so.
+         Drawn inline rather than wired, because the Category select already
+         re-renders this whole panel on a successful save — so the line is
+         always what the asset now is, never what it was a moment ago. -->
+    <div id="d_disciplineHint" class="discipline-hint">${disciplineHint(a.type, a.category||'')}</div>
 
     <div class="field-lbl">Priority</div>
     <select id="d_priority" ${editable?'':'disabled'}>${priorityOptions(a.priority)}</select>
@@ -14019,12 +14067,27 @@ function closeDrawer(){
 }
 
 /* ---------- new asset modal ---------- */
+/* The hint under Category and Scope of Work, redrawn whenever either changes —
+   both of them, because either can be the one that decides. */
+function f_drawDisciplineHint(){
+  const el = document.getElementById('f_disciplineHint');
+  if(!el) return;
+  el.innerHTML = disciplineHint(
+    (document.getElementById('f_type')||{}).value,
+    (document.getElementById('f_category')||{}).value);
+}
+['f_type','f_category'].forEach(id=>{
+  const el = document.getElementById(id);
+  if(el) el.addEventListener('change', f_drawDisciplineHint);
+});
+
 const modalWrap = document.getElementById('modalWrap');
 document.getElementById('newAssetBtn').addEventListener('click', async ()=>{
   document.getElementById('f_name').value=''; document.getElementById('f_due').value='';
   document.getElementById('f_start').value=''; document.getElementById('f_desc').value=''; document.getElementById('f_priority').value='med'; document.getElementById('f_hours').value='';
   document.getElementById('f_type').innerHTML = TYPES.map(t=>`<option value="${t.id}">${t.label}</option>`).join('');
   document.getElementById('f_category').innerHTML = categoryOptions('');
+  f_drawDisciplineHint();
   try{
     const { artists } = await api('/projects/'+state.currentProjectId+'/artists');
     document.getElementById('f_assignee').innerHTML = '<option value="">Unassigned</option>' + artists.map(u=>`<option value="${u.id}">${escapeHTML(u.name)}</option>`).join('');
@@ -15245,9 +15308,14 @@ const REF_SECTIONS = [
        to prevent, and it would land on the one screen where somebody is about
        to change a list for the whole studio. */
     title: 'Asset Categories',
-    note: 'The Category dropdown on Add Asset and in the asset drawer. Separate from Project Categories below. This list starts empty — nothing is assumed about how the studio groups its work.',
+    note: 'The Category dropdown on Add Asset and in the asset drawer. Separate from Project Categories below. This list starts empty \u2014 nothing is assumed about how the studio groups its work. "Counts as" decides which Dashboard tab a category\'s assets appear under: an asset counts as Animation when its Scope of Work is Animation OR its category counts as Animation, so a character filed under an animation category shows up under Animation. Changing it moves that category\'s assets between the tabs straight away, and is recorded in the Activity Log.',
     columns: [
       { key:'label', label:'Name',   input:'text', placeholder:'e.g. Slot Game', required:true },
+      /* WHICH DASHBOARD TAB, as a column of this panel rather than a screen of
+         its own. The studio already comes here to manage this list; a separate
+         place to say which half of the board a category belongs to is a place
+         somebody has to be told about. */
+      { key:'discipline', label:'Counts as', input:'discipline' },
       { key:'color', label:'Colour', input:'color' },
     ],
   },
@@ -15647,6 +15715,17 @@ function renderRefSection(sec){
       cells.push(`<td>${escapeHTML(parent ? parent.label : e.parentKey)}
         <div class="ref-key">${escapeHTML((parent && parent.subLabel) || '')}</div></td>`);
     }
+    /* WHICH DASHBOARD TAB THIS CATEGORY'S ASSETS APPEAR UNDER, editable in
+       place. A dropdown rather than a Rename-style button because it is a
+       choice between two known values and not a sentence somebody types, and
+       because the whole point is that the current answer is visible on the row
+       without anybody clicking anything: an owner scanning this panel can see
+       at a glance which of their categories are on the Animation side. */
+    if(sec.collection==='categories') cells.push(`<td>
+      <select class="ref-discipline" data-k="${escapeHTML(e.key)}" title="Which Dashboard tab this category's assets appear under">
+        ${ASSET_DISCIPLINES.map(d=>`<option value="${escapeHTML(d.id)}"${
+          d.id===e.discipline?' selected':''}>${escapeHTML(d.label)}</option>`).join('')}
+      </select></td>`);
     if(sec.collection==='roles') cells.push(
       `<td>${escapeHTML(e.group||'')}</td>`,
       `<td><span class="ref-pill">${escapeHTML(e.tierLabel||e.tier||'')}</span></td>`
@@ -15673,6 +15752,7 @@ function renderRefSection(sec){
 
   const heads = ['Name'];
   if(sec.collection==='asset-types') heads.push('Prefix');
+  if(sec.collection==='categories') heads.push('Counts as');
   if(sec.collection==='timesheet-sub-options') heads.push('Category');
   if(sec.collection==='roles') heads.push('Group','Can do');
   heads.push('');
@@ -15710,6 +15790,21 @@ function refInput(sec, col){
     const cats = refCache['timesheet-categories'] || [];
     return `<select id="${id}">${cats.filter(c=>c.isActive)
       .map(c=>`<option value="${escapeHTML(c.key)}">${escapeHTML(c.label)}</option>`).join('')}</select>`;
+  }
+  /* WHICH DASHBOARD TAB A NEW CATEGORY'S ASSETS APPEAR UNDER.
+     
+     THE FIRST OPTION IS BLANK ON PURPOSE, and it is the default. The create
+     handler only sends a field whose value is not empty, so blank means "say
+     nothing" — and the server then decides from the name, the same guess the
+     migration made about the list the studio already had. A select that
+     defaulted to Art would send Art with every new category and a studio
+     adding "Animation Props" would have to come back and correct a value it
+     never chose. */
+  if(col.input==='discipline'){
+    return `<select id="${id}">
+      <option value="" selected>\u2014 Decide from the name \u2014</option>
+      ${ASSET_DISCIPLINES.map(d=>`<option value="${escapeHTML(d.id)}">${escapeHTML(d.label)}</option>`).join('')}
+    </select>`;
   }
   if(col.input==='tier') return `<select id="${id}">${ROLE_TIERS.map(t=>`<option value="${t.key}" title="${escapeHTML(t.describe)}">${escapeHTML(t.label)}</option>`).join('')}</select>`;
   if(col.input==='group') return `<input type="text" id="${id}" list="ref-groups" placeholder="e.g. Engineering">
@@ -15755,6 +15850,33 @@ function wireSettings(){
     }catch(err){ refError(collection, err.message); }
     finally{ btn.disabled = false; }
   }));
+
+  /* MOVING A CATEGORY BETWEEN THE DASHBOARD'S TWO TABS.
+     
+     SAVED ON CHANGE, with no Save button, like the other in-place controls in
+     Settings — and the toast says what actually happened, because what happened
+     is not "saved": every asset in that category has just moved from one tab to
+     the other. Nothing was written to those assets (the tab is worked out when
+     the board is drawn), so moving it back moves them back.
+     
+     The select is put back to where it was if the save is refused, so the row
+     never shows a value the server does not hold. */
+  document.querySelectorAll('.ref-discipline').forEach(sel=>{
+    const was = sel.value;
+    sel.addEventListener('change', async ()=>{
+      const key = sel.dataset.k;
+      const entry = (refCache['categories']||[]).find(e=>e.key===key);
+      const label = (ASSET_DISCIPLINES.find(d=>d.id===sel.value)||{}).label || sel.value;
+      refError('categories', '');
+      sel.disabled = true;
+      try{
+        await api(`/reference/categories/${encodeURIComponent(key)}`,
+          { method:'PATCH', body:{ discipline: sel.value } });
+        await afterRefChange(`Assets in "${entry?entry.label:key}" now count as ${label}.`);
+      }catch(err){ sel.value = was; refError('categories', err.message); }
+      finally{ sel.disabled = false; }
+    });
+  });
 
   document.querySelectorAll('.ref-rename').forEach(btn=>btn.addEventListener('click', async ()=>{
     const { c: collection, k: key } = btn.dataset;

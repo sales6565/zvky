@@ -43,15 +43,40 @@ function grab(text, opener, closer = '\n}') {
   return rest.slice(0, rest.indexOf(closer) + closer.length);
 }
 
-const SIGNATURE = 'function assetDiscipline(asset) {';
-const pageFn = grab(PAGE, SIGNATURE);
-const moduleFn = grab(MODULE_SRC, SIGNATURE);
+/* TWO FUNCTIONS ARE MIRRORED NOW, not one, and that is the price of the second
+   field: a rule that reads a MAPPING needs the mapping built identically on
+   both sides, or the page and the server disagree about a category whose
+   discipline is blank, or stored in another letter case, or keyed by `id` on one
+   side and `key` on the other. */
+const SIGNATURES = [
+  'function disciplineMap(categories) {',
+  'function assetDiscipline(asset, categories) {',
+];
+const pageFn = grab(PAGE, SIGNATURES[1]);
+const moduleFn = grab(MODULE_SRC, SIGNATURES[1]);
 
-/* The page's copy, plus the two things that read it there. */
-const page = () => new Function(`${grab(PAGE, 'const ASSET_DISCIPLINES = [', '\n];')}
+/* The page's copies, plus the two things that read them there. `categories` is
+   whatever a test seeds: the list the page holds at runtime. */
+const page = (categories = []) => new Function('CATEGORIES', `${grab(PAGE, 'const ASSET_DISCIPLINES = [', '\n];')}
+  ${grab(PAGE, SIGNATURES[0])}
+  ${grab(PAGE, 'let CATEGORY_DISCIPLINE = new Map();', ';')}
   ${pageFn}
   ${grab(PAGE, 'const BOARD_LENS = [', '\n];')}
-  return { assetDiscipline, ASSET_DISCIPLINES, BOARD_LENS };`)();
+  CATEGORY_DISCIPLINE = disciplineMap(CATEGORIES);
+  return { assetDiscipline, disciplineMap, ASSET_DISCIPLINES, BOARD_LENS, CATEGORY_DISCIPLINE };`)(categories);
+
+/* The category list a studio that has filled it in has. Deliberately includes a
+   category whose discipline is MISSING and one whose discipline is a word
+   neither side knows, because those are the two shapes a mapping built twice
+   can disagree about. */
+const CATEGORIES = [
+  { id: 'animation', key: 'animation', label: 'Animation', discipline: 'animation' },
+  { id: 'fx_animation', key: 'fx_animation', label: 'FX Animation', discipline: 'animation' },
+  { id: 'characters', key: 'characters', label: 'Characters', discipline: 'art' },
+  { id: 'props', key: 'props', label: 'Props' },
+  { id: 'layout', key: 'layout', label: 'Layout', discipline: 'rigging' },
+  { id: 'upper', key: 'upper', label: 'Upper', discipline: 'ANIMATION' },
+];
 
 /* Every seeded asset type, plus the shapes a field can really take. */
 const TYPES = [
@@ -60,15 +85,25 @@ const TYPES = [
 ];
 
 test('the page and the server hold the SAME rule, character for character', () => {
-  assert.strictEqual(pageFn, moduleFn,
-    'public/index.html and src/asset-discipline.js must hold the identical function — '
-    + 'edit neither copy alone');
-  /* AND IT READS ONE FIELD. A rule that grew a second input would need the
-     server's row and the page's card to carry the same second field, which is
-     exactly the kind of divergence this feature cannot survive. */
+  for (const signature of SIGNATURES) {
+    assert.strictEqual(grab(PAGE, signature), grab(MODULE_SRC, signature),
+      `public/index.html and src/asset-discipline.js must hold the identical ${
+        signature} — edit neither copy alone`);
+  }
+
+  /* AND IT READS EXACTLY TWO FIELDS OF THE ASSET: the type and the category.
+   *
+   * THIS ASSERTION USED TO SAY THE OPPOSITE — "the rule reads the type and
+   * nothing else", with `category` in a list of forbidden words — and it was
+   * the bug, written down and enforced. An asset whose category said Animation
+   * could not appear under the Animation tab, and this test is what would have
+   * refused the fix. It is inverted deliberately, and the forbidden list keeps
+   * everything else out: the rule is about the piece of work, not about who
+   * holds it or what state it is in. */
   assert.match(moduleFn, /asset && asset\.type/, 'it reads the asset type');
-  assert.ok(!/category|project|assignee|status|role|designation/.test(moduleFn),
-    `the rule reads the type and nothing else: ${moduleFn}`);
+  assert.match(moduleFn, /asset && asset\.category/, 'and the asset category');
+  assert.ok(!/project|assignee|status|\brole\b|designation/.test(moduleFn),
+    `the rule reads the type and the category and nothing else: ${moduleFn}`);
 
   /* AND THE SUB-TABS CALL IT rather than holding a copy of the comparison.
      Asserted on the source, because a copy that happens to agree today passes
@@ -96,6 +131,33 @@ test('both copies answer identically for every type, and only ever art or animat
     assert.ok(discipline.DISCIPLINE_IDS.includes(server),
       `${JSON.stringify(type)} produced ${server}, which is not a discipline`);
   }
+
+  /* AND OVER EVERY (TYPE, CATEGORY) PAIR, with the mapping seeded on both
+     sides. One matrix, two copies, including the categories whose stored
+     discipline is missing or unrecognised — which is where two hand-built maps
+     drift apart. */
+  const seeded = page(CATEGORIES);
+  const serverMap = discipline.disciplineMap(CATEGORIES);
+  const KEYS = [...CATEGORIES.map((c) => c.key), 'ANIMATION', ' animation ', 'nonesuch', '', null, undefined];
+  for (const type of TYPES) {
+    for (const category of KEYS) {
+      const asset = { id: 'a1', type, category, project_id: 'p1' };
+      const onServer = discipline.assetDiscipline(asset, serverMap);
+      assert.strictEqual(seeded.assetDiscipline(asset, seeded.CATEGORY_DISCIPLINE), onServer,
+        `disagreed about ${JSON.stringify({ type, category })}`);
+      assert.ok(discipline.DISCIPLINE_IDS.includes(onServer),
+        `${JSON.stringify({ type, category })} produced ${onServer}, not a discipline`);
+      /* AND THE LIST IS AS GOOD AS THE MAP, because a caller with one asset
+         passes the list and should not have to know. */
+      assert.strictEqual(discipline.assetDiscipline(asset, CATEGORIES), onServer,
+        'the list and the Map must classify identically');
+    }
+  }
+
+  // The two mappings, built separately, are the same mapping.
+  assert.deepStrictEqual([...seeded.CATEGORY_DISCIPLINE.entries()].sort(),
+    [...serverMap.entries()].sort(),
+    'the page and the server build the same category -> discipline mapping');
   // The named halves, explicitly.
   assert.strictEqual(discipline.assetDiscipline({ type: 'animation' }), 'animation');
   assert.strictEqual(discipline.assetDiscipline({ type: 'character' }), 'art');
@@ -244,7 +306,7 @@ test('nothing computes a discipline for itself', () => {
   };
   const allowed = [
     block('const ASSET_DISCIPLINES = [', '\n];'),
-    block(SIGNATURE, '\n}'),
+    block(SIGNATURES[1], '\n}'),
     block('const BOARD_LENS = [', '\n];'),
   ];
   const stray = [];

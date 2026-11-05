@@ -42,11 +42,31 @@ function grab(opener, closer = '\n}') {
    upload folder on the server. See src/asset-discipline.js and
    tests/asset-discipline.test.js, which holds the page's copy and the module's
    character for character. Nothing this file ASSERTS has changed. */
-const lensSource = grab('function assetDiscipline(asset)')
+const lensSource = grab('function disciplineMap(categories) {')
+  + '\n' + grab('let CATEGORY_DISCIPLINE = new Map();', ';')
+  + '\n' + grab('function assetDiscipline(asset, categories)')
   + '\n' + grab('const BOARD_LENS = [', '\n];')
   + '\n' + grab('const BOARD_LENS_DEFAULT');
 
-const lens = () => new Function(`${lensSource}; return { BOARD_LENS, BOARD_LENS_DEFAULT };`)();
+/* THE CATEGORY LIST THE LENS IS READING, passed in per call.
+ *
+ * The rule takes two fields now, and the second one is a LOOKUP — so a lens
+ * lifted without the mapping it reads would classify by type alone and pass
+ * every assertion this file had before the category joined the rule. Seeding it
+ * explicitly is what makes those assertions mean something: `lens()` with no
+ * categories is a studio whose list is empty, which is how this application
+ * ships and which is why the type-only rule survived as long as it did. */
+const lens = (categories = []) => new Function('CATEGORIES', `${lensSource};
+  CATEGORY_DISCIPLINE = disciplineMap(CATEGORIES);
+  return { BOARD_LENS, BOARD_LENS_DEFAULT, CATEGORY_DISCIPLINE };`)(categories);
+
+/* The category list a studio that has filled it in actually has — the shape
+   loadReferenceData() builds, which is what the page holds at runtime. */
+const FILLED = [
+  { id: 'animation', key: 'animation', label: 'Animation', discipline: 'animation' },
+  { id: 'characters', key: 'characters', label: 'Characters', discipline: 'art' },
+  { id: 'props', key: 'props', label: 'Props', discipline: 'art' },
+];
 
 // --- the field, and what each tab claims ------------------------------------
 
@@ -83,12 +103,75 @@ test('the two lenses partition every asset type, with nothing in both and nothin
   assert.ok(BOARD_LENS[0].match({ type: 'rigging' }),
     'a type added in Settings lands in Art — see the note on BOARD_LENS');
 
-  // Nothing here reads anything but the type: no project, no status, no permission.
+  /* NOTHING HERE READS ANYTHING BUT THE ASSET AND THE CATEGORY MAPPING: no
+     project, no status, no permission. The old form of this assertion looked
+     for `a.type` in the body, which is exactly what stopped the category ever
+     being consulted — the lens handed the rule `{ type: a.type }` and nothing
+     else could reach it. It now hands over the row, so what this checks is that
+     it asks the shared rule and reads nothing else of its own. */
   for (const l of BOARD_LENS) {
     const body = String(l.match);
-    assert.ok(/\ba\.type\b/.test(body), `${l.id} reads the asset's type`);
+    assert.match(body, /assetDiscipline\(a, CATEGORY_DISCIPLINE\)/,
+      `${l.id} asks the shared rule with the asset and the category mapping: ${body}`);
     assert.ok(!/project|status|can\(|caps\(|assignee/.test(body),
-      `${l.id} must narrow by type and by nothing else — found: ${body}`);
+      `${l.id} must narrow by discipline and by nothing else — found: ${body}`);
+  }
+});
+
+test('a category that counts as Animation puts its assets under Animation', () => {
+  /* THE BUG THIS PROMPT FIXED, as the smallest assertion that catches it: an
+     asset whose Scope of Work is `character` and whose CATEGORY is Animation.
+     It was shown under Art, which is what the studio reported. */
+  const { BOARD_LENS } = lens(FILLED);
+  const [art, animation] = BOARD_LENS;
+  const filed = { type: 'character', category: 'animation' };
+
+  assert.ok(animation.match(filed),
+    'a character filed under an animation category belongs to Animation');
+  assert.ok(!art.match(filed), 'and not to Art');
+
+  // ANIMATION WINS A DISAGREEMENT, both ways round.
+  assert.ok(animation.match({ type: 'animation', category: 'characters' }),
+    'an animation under an art category is still Animation — the type says so');
+  assert.ok(animation.match({ type: 'character', category: 'animation' }),
+    'and a character under an animation category is Animation — the category says so');
+
+  // An art category changes nothing: this is the behaviour every studio had.
+  assert.ok(art.match({ type: 'character', category: 'characters' }));
+  assert.ok(art.match({ type: 'character', category: null }));
+  // A category the list does not hold cannot classify anything.
+  assert.ok(art.match({ type: 'character', category: 'nonesuch' }));
+
+  /* AND EVERY ASSET IS STILL IN EXACTLY ONE TAB. The rule grew a second input,
+     which is the shape that produces an asset in both tabs or in neither. */
+  for (const type of ['character', 'animation', 'prop', '', null]) {
+    for (const category of ['animation', 'characters', 'nonesuch', null]) {
+      const hits = BOARD_LENS.filter((l) => l.match({ type, category }));
+      assert.strictEqual(hits.length, 1,
+        `${JSON.stringify({ type, category })} must land in exactly one sub-tab`);
+    }
+  }
+});
+
+test('nothing moves for a studio whose category list is empty or all Art', () => {
+  /* THE DEPLOY-DAY PROMISE. The column defaults to Art and the list ships
+     empty, so a studio that has not classified anything must see precisely the
+     board it saw yesterday: the type-only rule. Asserted against the rule as it
+     was, written out, rather than against a handful of examples. */
+  const before = (a) => (String((a && a.type) || '').trim().toLowerCase() === 'animation'
+    ? 'animation' : 'art');
+  const allArt = FILLED.map((c) => ({ ...c, discipline: 'art' }));
+
+  for (const categories of [[], allArt]) {
+    const { BOARD_LENS } = lens(categories);
+    for (const type of ['character', 'animation', 'prop', 'environment', 'rigging', '', null]) {
+      for (const category of ['animation', 'characters', 'props', null]) {
+        const asset = { type, category };
+        const now = BOARD_LENS.find((l) => l.match(asset)).id;
+        assert.strictEqual(now, before(asset),
+          `${JSON.stringify(asset)} must land where it always did`);
+      }
+    }
   }
 });
 

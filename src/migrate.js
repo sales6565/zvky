@@ -4538,8 +4538,8 @@ async function ensureCategoryDisciplines(db, log) {
   /* ONE UPDATE, over the categories that have never been classified, deciding
      each by its own name. Written as a single statement rather than a row per
      category so a studio with a long list costs one round trip; the LIKE is the
-     SQL form of disciplineFromName() and tests/asset-discipline.test.js holds
-     the two in agreement. */
+     SQL form of disciplineFromName() and tests/category-discipline.test.js
+     holds the two in agreement, by reading this expression out of this file. */
   const seeded = await db.query(
     `UPDATE categories SET discipline = CASE
         WHEN LOWER(label) LIKE '%animation%' OR LOWER(\`key\`) LIKE '%animation%' THEN 'animation'
