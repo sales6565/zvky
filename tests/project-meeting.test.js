@@ -477,8 +477,27 @@ test('Project Meeting, end to end', { skip: cfg ? false : SKIP_REASON }, async (
         return { rows: Array.isArray(rows) ? rows : [], result: rows };
       },
     };
-    const logged = await sheets.hoursLoggedOn(handle, people.ana, { assetId, date: day });
+    /* THE SIGNATURE IS (db, { assetId, userId, day }) — ONE options object.
+       This was written as (db, userId, { assetId, date }), which destructures a
+       string: every field came out undefined, `if (!assetId || !userId) return
+       0` fired, and the assertion below passed for a reason that had nothing to
+       do with meeting lines. A mutation that removed the exclusion entirely
+       survived against it, which is how it was found. */
+    const logged = await sheets.hoursLoggedOn(handle,
+      { assetId, userId: people.ana, day });
     assert.strictEqual(logged, 0,
       'a meeting line carrying an asset_id is still not time on that asset');
+
+    /* AND THE SUM IS REAL, not nought because the query found nothing to look
+       at. An ORDINARY line on the same asset and day is counted — so the nought
+       above is the exclusion working and not the call failing. */
+    const ordinary = await line('ana', { date: day, hours: 1.5,
+      clientId: id.client, projectId: id.alpha });
+    assert.strictEqual(ordinary.status, 201, JSON.stringify(ordinary.body));
+    await q('UPDATE timesheet_entries SET asset_id = ? WHERE id = ?',
+      [assetId, ordinary.body.entry.id]);
+    assert.strictEqual(
+      await sheets.hoursLoggedOn(handle, { assetId, userId: people.ana, day }), 1.5,
+      'an ordinary line on that asset IS counted, so the query is really looking');
   });
 });

@@ -265,6 +265,14 @@ test('an approved vacation on the timesheet, end to end',
 
       const again = await vacationTimesheet.fill(handle, shaped, { now: Date.now() });
       assert.deepStrictEqual(again.created, [], 'a second run creates nothing');
+      /* AND REPORTS NOTHING SKIPPED EITHER. Two guards stand between a second
+         run and a duplicate — "this day already has OUR line" and "this day has
+         ANY line" — so removing the first still creates nothing, and the only
+         visible difference is the audit entry claiming it skipped days because
+         somebody else had used them. A log that misreports why it did nothing
+         is how a feature gets blamed for a day it never touched. */
+      assert.deepStrictEqual(again.skipped, [],
+        'and does not report its own lines as somebody else\'s');
 
       /* TWO AT ONCE, which is what two workers on one database are. The claim
          is the one the brief makes: the sweep is safe with two processes. */
