@@ -3021,6 +3021,17 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
           <div id="tl_actionErr" class="tl-sub-err"></div>
         </div>
       </div>
+      <!-- PROJECT MEETING, the other half of TL Action and in the same slot:
+           after Project, before Asset. Shown to somebody who is on the selected
+           project but does NOT lead it; a lead sees the TL Action box above
+           instead, and never both. See pmSync(). -->
+      <div id="pm_wrap" style="display:none;">
+        <label class="tl-action-box">
+          <input type="checkbox" id="pm_box">
+          <span>Project Meeting</span>
+          <span class="tl-action-hint">Time you spent in a meeting about this project</span>
+        </label>
+      </div>
       <!-- HIDDEN, LABEL AND ALL, while TL Action is ticked. Wrapped so the
            heading goes with the field: a lone "Asset (optional)" above nothing
            reads as a field that failed to load. Disabling it instead would
@@ -7303,14 +7314,19 @@ const histHours = (h) => `${Number(h || 0).toFixed(2).replace(/\.?0+$/, '')}h`;
 
 /* ONE LINE OF THE DAY'S TIMESHEET, named the way the Timesheet tab names it. */
 function histLine(l){
+  /* THE LABEL IS THE SERVER'S. This used to spell the two TL Action words
+     here — "Review" and "Project meeting" — which was a second copy of what
+     src/tl-review.js owns, living in the one place the test that scans for
+     copies was not looking. It also could not have named a Project Meeting
+     line, because it only knew about tl_action. */
   const what = l.assetCode
     ? `${l.assetCode}${l.assetName ? ` — ${l.assetName}` : ''}`
-    : (l.tlAction ? (l.tlAction === 'review' ? 'Review' : 'Project meeting')
+    : (l.tlActionLabel
       /* tsCategory READS .nonProjectTypes off whatever it is handed, and the
          history payload carries the same list the week payload does — so a
          renamed category re-labels every line here too, and there is one
          resolver rather than two. */
-      : (l.nonProject ? tsCategory(HIST.data || {}, l.nonProject) : 'Work'));
+      || (l.nonProject ? tsCategory(HIST.data || {}, l.nonProject) : 'Work'));
   const where = [l.clientName, l.projectName].filter(Boolean).join(' · ');
   return `<tr>
     <td class="hist-l-what">${escapeHTML(String(what))}${
@@ -8434,9 +8450,11 @@ function openTimesheetLine(day){
     state.clients.map(c=>`<option value="${c.id}">${escapeHTML(c.name)}</option>`).join('');
   document.getElementById('tl_project').innerHTML = '<option value="">Choose a client first…</option>';
   document.getElementById('tl_asset').innerHTML = '<option value="">No specific asset</option>';
-  // A FRESH FORM EVERY TIME, the box included.
+  // A FRESH FORM EVERY TIME, both boxes included.
   tlClearAction();
   document.getElementById('tl_actionWrap').style.display = 'none';
+  pmClear();
+  document.getElementById('pm_wrap').style.display = 'none';
   syncTimesheetLine();
   tlRecalc();
   /* THE DAY'S REMAINING TIME, after the form is otherwise set up: it reads the
@@ -8560,6 +8578,78 @@ function tlSyncActionType(){
   tlHelpText(true);
   tlRecalc();
 }
+
+/* ---------- Project Meeting ----------
+ *
+ * THE OTHER HALF OF TL ACTION, built on the same three questions and one
+ * inversion. The studio's switch, this person's permission, and whether they
+ * lead the project currently chosen — and where TL Action needs them to lead
+ * it, this needs them NOT to.
+ *
+ * TWO LISTS, SENT WITH THE WEEK. The server sends the projects this person
+ * leads and the projects they are on and do not lead, computed over the same
+ * reach from the same membership answer. So a person who leads project A and
+ * is an artist on B sees TL Action on A and Project Meeting on B, with nothing
+ * to wait for when the picker changes — and the save asks the server again
+ * either way, so a tampered list buys nothing.
+ *
+ * NO KIND TO CHOOSE, unlike TL Action. A meeting is the only thing this box
+ * files, so ticking it is the whole of the decision: the Asset field goes and
+ * the hours become typed, immediately.
+ */
+const pmAllowed = () => Boolean(
+  ((tsState.week||{}).workingDay||{}).projectMeeting && can('timesheet.project_meeting')
+);
+
+const pmOnProject = (projectId) => Boolean(projectId)
+  && ((tsState.week||{}).projectMeetingProjects||[]).includes(projectId);
+
+function pmSync(){
+  const wrap = document.getElementById('pm_wrap');
+  if(!wrap) return;
+  const kindIsProject = document.getElementById('tl_kind').value === 'project';
+  const projectId = document.getElementById('tl_project').value || '';
+  /* AND NOT WHILE TL ACTION IS TICKED. The two lists cannot overlap, so this
+     can only matter if a week payload ever disagreed with itself — but a form
+     showing both boxes at once would be offering a line the server refuses. */
+  const tlTicked = document.getElementById('tl_action').checked;
+  const may = kindIsProject && projectId && !tlTicked && pmAllowed() && pmOnProject(projectId);
+  if(!may){
+    if(wrap.style.display !== 'none') pmClear();
+    wrap.style.display = 'none';
+    return;
+  }
+  wrap.style.display = '';
+}
+
+/* CLEARED, NOT MERELY HIDDEN — the same rule every control on this form
+   follows. A hidden check box keeps its tick, and a tick kept here would be
+   posted with a line the server then refuses for a box nobody can see. */
+function pmClear(){
+  const box = document.getElementById('pm_box');
+  if(!box) return;
+  const was = box.checked;
+  box.checked = false;
+  if(was) tlRestoreAssetField();
+}
+
+/* What ticking it does: the Asset field goes, label and all, and the hours
+   become a number somebody types — which is the same thing TL Action does to
+   the same two fields, through the same two helpers. */
+function pmSyncBox(){
+  const ticked = document.getElementById('pm_box').checked;
+  if(!ticked){ tlRestoreAssetField(); return; }
+  const asset = document.getElementById('tl_asset');
+  asset.value = '';
+  document.getElementById('tl_assetWrap').style.display = 'none';
+  document.getElementById('tl_hours').value = '';
+  document.getElementById('tl_suggest').textContent = '';
+  tlLockHours(false);
+  tlHelpText(true);
+  tlRecalc();
+}
+
+const pmTicked = () => Boolean((document.getElementById('pm_box')||{}).checked);
 
 /* The refusal the form makes before the round trip, in the same shape the
    second dropdown's does — and for the same reason: somebody who has not
@@ -8710,8 +8800,13 @@ document.getElementById('tl_action').addEventListener('change', ()=>{
      the asset the instant it was ticked would punish somebody who ticked it to
      see what it did. */
   tlSyncActionType();
+  /* And the meeting box goes while TL Action is ticked: the two lists cannot
+     overlap, so this only matters if a payload ever disagreed with itself — but
+     a form offering both is offering a line the server refuses. */
+  pmSync();
 });
 document.getElementById('tl_actionType').addEventListener('change', tlSyncActionType);
+document.getElementById('pm_box').addEventListener('change', pmSyncBox);
 document.getElementById('tl_hours').addEventListener('input', tlRecalc);
 document.getElementById('tl_flag').addEventListener('change', e=>{
   document.getElementById('tl_flagNoteWrap').style.display = e.target.checked ? '' : 'none';
@@ -8850,7 +8945,12 @@ function syncTimesheetLine(){
      the same reason the remark is: Leave, Training and Idle are not a lead's
      review time, and a tick surviving the switch would be posted with them. */
   if(!project) tlClearAction();
+  /* AND THE MEETING BOX GOES WITH IT, for the same reason: Leave, Training and
+     Idle are not time in a project meeting, and a tick surviving the switch
+     would be posted with them. */
+  if(!project) pmClear();
   tlSyncAction();
+  pmSync();
 }
 
 /* ---------- the second dropdown ----------
@@ -9052,9 +9152,13 @@ document.getElementById('tl_project').addEventListener('change', async e=>{
      left over from the old one would be a tick about a project this person may
      not even lead. */
   tlClearAction();
+  /* The same for the meeting box, and for the same reason the comment above
+     gives: whether it belongs is a question about the NEW project. */
+  pmClear();
   await tlLoadAssets(e.target.value);
   document.getElementById('tl_suggest').textContent = '';
   tlSyncAction();
+  pmSync();
 });
 document.getElementById('tl_asset').addEventListener('change', e=>{
   if(!e.target.value){
@@ -9109,6 +9213,15 @@ document.getElementById('tl_save').addEventListener('click', async ()=>{
        cleared by then, and the server refuses a TL line that names one. */
     if(document.getElementById('tl_action').checked){
       body.tlAction = document.getElementById('tl_actionType').value;
+      body.assetId = null;
+    }
+    /* AND THE OTHER HALF. Sent only when ticked, for the same reason, and the
+       asset goes up as null with it — the field is hidden and cleared by then,
+       and the server refuses a meeting line that names one. The two are never
+       sent together: the boxes cannot both be on screen, and the server refuses
+       a line carrying both in a sentence that names the conflict. */
+    if(pmTicked()){
+      body.projectMeeting = true;
       body.assetId = null;
     }
   }else{
@@ -21266,6 +21379,30 @@ async function renderTimesheetOptions(){
         </div>
       </div>
       <div class="rh-list">
+        <div class="rh-head"><h4>Timesheet Project Meeting</h4></div>
+        <div class="rh-grid">
+          <div class="rh-f rh-days">
+            <label class="rh-day"><input type="checkbox" id="tso_projectMeeting"${
+              s.projectMeeting?' checked':''}><span>Let everybody else log time spent in a project
+              meeting</span></label>
+            <span class="rh-opt">
+              <strong>On by default, and it blocks nobody.</strong> This is the other half of
+              TL&nbsp;Action above, for the people who are <em>not</em> the lead. Somebody who holds
+              the <em>Log Project Meeting time</em> permission and is on the project they chose
+              &mdash; but does not lead it &mdash; sees one more check box on Add a line. Ticking it
+              hides the Asset field and lets them type the hours.
+              A person who leads one project and works as an artist on another gets
+              <strong>TL&nbsp;Action</strong> on the first and <strong>Project Meeting</strong> on
+              the second, from the same form; nobody ever sees both at once.
+              Switching it off hides the box and refuses new meeting lines &mdash; lines already
+              filed stay on their timesheets and still count towards those people&rsquo;s own
+              totals. This time is never added to an asset&rsquo;s spent hours, its efficiency,
+              bid-vs-spent or the Artist Report: it is time in a meeting, not work on an asset.
+            </span>
+          </div>
+        </div>
+      </div>
+      <div class="rh-list">
         <div class="rh-head"><h4>Timesheet report download</h4></div>
         <div class="rh-grid">
           <div class="rh-f rh-days">
@@ -21347,6 +21484,7 @@ async function renderTimesheetOptions(){
       loggableDays: [...el.querySelectorAll('[data-tsoday]:checked')].map(i=>Number(i.dataset.tsoday)),
       requirePreviousDay: document.getElementById('tso_requirePreviousDay').checked,
       tlAction: document.getElementById('tso_tlAction').checked,
+      projectMeeting: document.getElementById('tso_projectMeeting').checked,
       /* SENT EVERY TIME, because the validator reads an absent boolean as
          "leave it as it was" and a page that never sent it would leave the one
          switch on this screen that nobody could then turn back on. */

@@ -385,6 +385,14 @@ test('the timesheet', { skip: cfg ? false : SKIP_REASON }, async (t) => {
          switch: the page still asks can() for the key, and the server still
          asks which projects this person leads. */
       tlAction: true,
+      /* AND THE OTHER HALF OF IT, published beside tlAction and for the same
+         reason: the form draws one box or the other from the same payload. True
+         on a fresh install, which is this fixture. It too is only the
+         studio-wide switch — the page still asks can() for the key, and the
+         server still asks whether this person leads the project, because the
+         box a non-lead gets is this one and the box a lead gets is the one
+         above. */
+      projectMeeting: true,
       /* AND WHETHER THE DOWNLOAD BUTTON EXISTS AT ALL, published beside
          tlAction for exactly the same reason and justified here as that
          deep-equal demands: the Timesheet tab already fetches this payload to

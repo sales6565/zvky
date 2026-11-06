@@ -69,13 +69,15 @@ const ENTRY_SELECT_FROM = `
  * problem: widest first, and each fallback fills in what it could not ask for.
  */
 const ENTRY_EXTRAS = [
-  { select: ',\n         e.flagged_at AS flaggedAt, e.flag_note AS flagNote,\n         e.non_project_sub AS nonProjectSub,\n         e.tl_action AS tlAction',
+  { select: ',\n         e.flagged_at AS flaggedAt, e.flag_note AS flagNote,\n         e.non_project_sub AS nonProjectSub,\n         e.tl_action AS tlAction,\n         e.project_meeting AS projectMeeting',
     missing: {} },
+  { select: ',\n         e.flagged_at AS flaggedAt, e.flag_note AS flagNote,\n         e.non_project_sub AS nonProjectSub,\n         e.tl_action AS tlAction',
+    missing: { projectMeeting: null } },
   { select: ',\n         e.flagged_at AS flaggedAt, e.flag_note AS flagNote,\n         e.non_project_sub AS nonProjectSub',
-    missing: { tlAction: null } },
+    missing: { tlAction: null, projectMeeting: null } },
   { select: ',\n         e.flagged_at AS flaggedAt, e.flag_note AS flagNote',
-    missing: { nonProjectSub: null, tlAction: null } },
-  { select: '', missing: { flaggedAt: null, flagNote: null, nonProjectSub: null, tlAction: null } },
+    missing: { nonProjectSub: null, tlAction: null, projectMeeting: null } },
+  { select: '', missing: { flaggedAt: null, flagNote: null, nonProjectSub: null, tlAction: null, projectMeeting: null } },
 ];
 
 async function selectEntries(tail, params) {
@@ -244,7 +246,7 @@ function describeLine(row) {
   /* AND WHAT KIND OF LINE IT WAS, in the audit trail as on the screen. Without
      it the log of a lead's day reads as ordinary project work, which is the one
      thing a TL Action line is not. */
-  const tl = tlReview.labelFor(row.tlAction);
+  const tl = tlReview.labelFor(row.tlAction, Boolean(Number(row.projectMeeting)));
   return tl ? `${base} · ${tl}` : base;
 }
 
@@ -281,7 +283,11 @@ const shapeEntry = (e) => ({
      about what a line says. The words themselves live in src/tl-review.js and
      a test fails on any second copy of them, this comment included. null on
      every ordinary line, which is all of them until a lead files one. */
-  tlActionLabel: tlReview.labelFor(e.tlAction),
+  tlActionLabel: tlReview.labelFor(e.tlAction, Boolean(Number(e.projectMeeting))),
+  /* The flag itself travels beside the label, so the page can tell a meeting
+     line apart from a lead's without reading the words — which it must, to
+     refuse an edit that would change what kind of line it is. */
+  projectMeeting: Boolean(Number(e.projectMeeting)),
 });
 
 /* One day, in the shape the page and the exports both read.
@@ -435,6 +441,7 @@ const workingDay = () => {
        is only the studio-wide switch, published with the rest of the policy so
        the form does not have to fetch the settings separately. */
     tlAction: policy().tlAction,
+    projectMeeting: policy().projectMeeting,
     /* AND WHETHER THE DOWNLOAD BUTTON EXISTS AT ALL, published with the rest of
        the policy for the same reason tlAction is: the Timesheet tab already
        fetches this payload to draw the week, and a second request just to learn
@@ -463,6 +470,24 @@ const workingDay = () => {
  * save asks permissions.isProjectLead() again regardless. A list here that
  * somebody tampered with buys nothing.
  */
+/* THE PROJECTS THIS PERSON MAY LOG A MEETING ON: the ones in their reach that
+ * they do NOT lead. The exact complement of tlActionProjectsFor() below, taken
+ * over the same reach and from the same membership answer, so no project can
+ * appear in both lists or in neither.
+ *
+ * THE PAGE STILL DECIDES NOTHING, as the note on that function says: this is
+ * the server's answer sent once with the week so the form can draw a box
+ * without a round trip, and the save asks permissions.isProjectLead() again
+ * whatever the page sends. */
+async function projectMeetingProjectsFor(user) {
+  if (!policy().projectMeeting || !holds(user, 'timesheet.project_meeting')) return [];
+  const reach = await permissions.visibleProjects(user).catch(() => []);
+  const ids = reach.map((p) => p.id).filter(Boolean);
+  if (!ids.length) return [];
+  const led = await permissions.reviewTeamProjects(user.id, ids).catch(() => new Set());
+  return ids.filter((id) => !led.has(id));
+}
+
 async function tlActionProjectsFor(user) {
   if (!policy().tlAction || !holds(user, 'timesheet.tl_action')) return [];
   const reach = await permissions.visibleProjects(user).catch(() => []);
@@ -579,6 +604,7 @@ router.get('/week', requirePermission('timesheet.own'), async (req, res) => {
          belongs on the line being added. Empty for everybody without the key,
          and for everybody when the studio's switch is off. */
       tlActionProjects: await tlActionProjectsFor(req.user),
+      projectMeetingProjects: await projectMeetingProjectsFor(req.user),
       days: shaped,
       weekStart: days[0],
       weekEnd: days[6],
@@ -603,6 +629,7 @@ router.get('/week', requirePermission('timesheet.own'), async (req, res) => {
       /* Empty on the unavailable path, like every other list in this payload:
          a deployment whose timesheet tables are missing has no lines to add. */
       tlActionProjects: [],
+      projectMeetingProjects: [],
       days: days.map((d) => shapeDay(null, [], d)),
       weekStart: days[0], weekEnd: days[6], weekHours: 0,
       weekSplit: { project: 0, nonProject: 0, idle: 0 },
@@ -656,6 +683,10 @@ const ENTRY_OPTIONAL = (line, stamp) => [
      ALTER was refused still files every other kind of line, and loses only the
      one thing it cannot store. */
   [['tl_action', line.tlAction || null]],
+  /* AFTER tl_action, so it is the first thing dropped: a deployment whose
+     project_meeting ALTER was refused still files TL Action lines and every
+     other kind, and loses only the one it cannot store. */
+  [['project_meeting', line.projectMeeting ? 1 : null]],
 ];
 
 /* `on` is the connection to write through: the pool by default, and the
@@ -885,6 +916,66 @@ async function tlActionFor(user, body) {
   return { ok: true, tlAction: raw };
 }
 
+/* A NON-LEAD'S TIME IN A PROJECT MEETING. The mirror of tlActionFor() above,
+ * and deliberately written as its mirror rather than folded into it.
+ *
+ * EVERY GATE IS THE SAME SHAPE AND ONE IS INVERTED. The switch, the
+ * permission, project work only, a project in reach, and no asset — all as TL
+ * Action has them. The last one is the difference: TL Action requires
+ * isProjectLead(), and this requires NOT isProjectLead(). Somebody who leads
+ * project A and is an artist on project B therefore gets TL Action on A and
+ * Project Meeting on B, from the same form on the same day, and neither on the
+ * other's project.
+ *
+ * THE LEAD'S REFUSAL IS A 422, NOT A 403, and it names the way through: they
+ * are not forbidden from logging this time, they have a better field for it.
+ * A 403 reads as "you may not", which would be untrue and unhelpful.
+ */
+async function projectMeetingFor(user, body) {
+  const wanted = body.projectMeeting === true || body.projectMeeting === 'true'
+    || body.projectMeeting === 1 || body.projectMeeting === '1';
+  if (!wanted) return { ok: true, projectMeeting: false };
+
+  /* BOTH FLAGS ON ONE LINE IS REFUSED, and refused here rather than left to the
+     column: a line that is a lead's TL Action AND somebody's Project Meeting is
+     not a thing, and quietly dropping one of the two would file the hour under
+     a label nobody chose. */
+  if (body.tlAction) {
+    return { ok: false, status: 400, field: 'projectMeeting',
+      error: 'A line is either TL Action or Project Meeting, not both.' };
+  }
+  if (!policy().projectMeeting) {
+    return { ok: false, status: 409, field: 'projectMeeting',
+      error: 'Project Meeting is switched off for this studio. Lines already filed are unaffected.' };
+  }
+  if (!holds(user, 'timesheet.project_meeting')) {
+    return { ok: false, status: 403, field: 'projectMeeting',
+      error: 'You do not have the permission to log Project Meeting time.' };
+  }
+  const projectId = body.projectId || null;
+  if (body.nonProject || !projectId) {
+    return { ok: false, status: 400, field: 'projectId',
+      error: 'Project Meeting is project work: choose the client and the project it was for.' };
+  }
+  /* NO ASSET. A meeting is not about one asset, and allowing one would put
+     meeting hours on an asset's row in every screen that groups by asset.
+     Refused rather than quietly cleared: a request that names an asset meant to. */
+  if (body.assetId) {
+    return { ok: false, status: 400, field: 'assetId',
+      error: 'Project Meeting time is not logged against an asset. Leave the asset unset.' };
+  }
+  const reach = await permissions.visibleProjects(user);
+  if (!reach.some((p) => p.id === projectId)) {
+    return { ok: false, status: 403, field: 'projectId',
+      error: 'That project is not one of yours.' };
+  }
+  if (await permissions.isProjectLead(user, projectId)) {
+    return { ok: false, status: 422, field: 'projectMeeting',
+      error: 'You lead that project, so your meeting time is logged as TL Action instead.' };
+  }
+  return { ok: true, projectMeeting: true };
+}
+
 async function hoursFor(userId, { assetId, hours, date }, { exceptId = null } = {}) {
   if (!assetId) return { ok: true, hours, calculated: false };
   const figure = await dayFigure(userId, { assetId, date }, { exceptId });
@@ -928,6 +1019,12 @@ router.post('/entries', requirePermission('timesheet.own'), async (req, res) => 
   const tl = await tlActionFor(req.user, req.body || {});
   if (!tl.ok) return res.status(tl.status).json({ error: tl.error, field: tl.field });
 
+  /* The same questions for the other half of the feature. Asked after TL
+     Action so that a line sent with both is refused by the test inside this
+     one, in a sentence that names the conflict. */
+  const meeting = await projectMeetingFor(req.user, req.body || {});
+  if (!meeting.ok) return res.status(meeting.status).json({ error: meeting.error, field: meeting.field });
+
   /* A TL Action line names no asset, so hoursFor() falls straight through to
      "the number is the caller's" — the same path Leave, Training and
      unattributed project time have always taken. Called anyway rather than
@@ -958,6 +1055,7 @@ router.post('/entries', requirePermission('timesheet.own'), async (req, res) => 
   const line = verdict.value;
   line.calculated = worth.calculated;
   line.tlAction = tl.tlAction;
+  line.projectMeeting = meeting.projectMeeting;
 
   const day = await ensureDay(req.user.id, line.date).catch((err) => {
     if (unavailable(err)) return null;
@@ -1169,6 +1267,26 @@ router.patch('/entries/:id', requirePermission('timesheet.own'), async (req, res
     return res.status(400).json({ field: 'assetId',
       error: 'A TL Action line keeps the asset it was filed against. Delete it and add the right one.' });
   }
+  /* THE SAME RULE FOR A PROJECT MEETING LINE, and for the same reason: the flag
+     is what the line IS, and the permission and lead checks that let it be
+     filed were asked about that day and that project. An edit cannot turn an
+     ordinary line into meeting time or the other way round — it can fix the
+     hours and the note, which is what editing a line is for. */
+  const wasMeeting = Boolean(Number(found[0].project_meeting));
+  if ('projectMeeting' in req.body) {
+    const wants = req.body.projectMeeting === true || req.body.projectMeeting === 'true'
+      || req.body.projectMeeting === 1 || req.body.projectMeeting === '1';
+    if (wants !== wasMeeting) {
+      return res.status(400).json({ field: 'projectMeeting',
+        error: wasMeeting
+          ? 'A Project Meeting line keeps the kind it was filed as. Delete it and add the right one.'
+          : 'An ordinary line cannot become a Project Meeting line. Delete it and add the meeting line.' });
+    }
+  }
+  if (wasMeeting && 'assetId' in req.body && (req.body.assetId || null) !== (found[0].asset_id || null)) {
+    return res.status(400).json({ field: 'assetId',
+      error: 'A Project Meeting line names no asset. Delete it and add the right line.' });
+  }
 
   /* The same lock as on the way in, and in the same order: a line naming an
      asset is worth what the timer recorded, and this row's own hours are
@@ -1216,6 +1334,13 @@ router.patch('/entries/:id', requirePermission('timesheet.own'), async (req, res
   }
   const line = verdict.value;
   line.tlAction = wasTl;
+  /* AND THE MEETING FLAG IS CARRIED, FOR THE SAME REASON tl_action is.
+     updateEntry() writes every column the line carries, so a field left off
+     this object is a field written as NULL — editing the hours of a Project
+     Meeting line would have quietly turned it into an ordinary project line
+     with no asset, which reads as work. The line keeps the kind it was filed
+     as; the guard above refuses a request that tries to change it. */
+  line.projectMeeting = wasMeeting;
 
   // Moving a line to another day needs that day to exist and to be unlocked.
   if (line.date !== wasOn) {

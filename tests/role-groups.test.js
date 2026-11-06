@@ -219,7 +219,26 @@ const SINCE_SNAPSHOT = [MANAGE, 'settings.email_delivery', 'report.remind', 'set
  *                ELSE'S history is history.view_others, which is in
  *                SINCE_SNAPSHOT with the rest of the Super-Admin-only keys.
  */
+/* timesheet.project_meeting
+ *                TIME YOU SPENT IN A MEETING ABOUT A PROJECT YOU ARE ON
+ *                (Prompt 67 Part B). Wider than Super Admin on purpose, by the
+ *                same argument as history.view above and for the same reason:
+ *                it is a statement about your own time and nobody else's, and
+ *                the brief asks for every role that can add a timesheet line
+ *                today — which is every role, because timesheet.own is implied
+ *                for all of them. The assertion below ties it to timesheet.own's
+ *                own holders rather than to a hard-coded list, so if a studio
+ *                ever narrows who may fill a timesheet, this fails and somebody
+ *                decides on purpose.
+ *
+ *                HOLDING IT REACHES NOTHING ON ITS OWN. The server asks two
+ *                further questions the key cannot answer: is the project one
+ *                this person can see, and are they NOT its lead. A lead's
+ *                meeting time is TL Action, which is the key above and is
+ *                narrower on purpose.
+ */
 const WIDER_THAN_SUPER_ADMIN = ['leave.request', 'leave.view_team', 'timesheet.tl_action',
+  'timesheet.project_meeting',
   'assets.rename', 'history.view'];
 
 /* PROMPT 61'S VIEW KEYS: a third category, and they need one.
@@ -321,6 +340,19 @@ test('the keys that are wider than Super Admin are wider on purpose', () => {
   /* AND THE OTHER HALF IS NOT WIDE. Reading somebody else's history is a
      different act and stays with the Super Admin. */
   assert.deepStrictEqual(holdersOf('history.view_others'), ['super_admin']);
+
+  /* AND LOGGING A PROJECT MEETING REACHES THE SAME SET, for the same reason and
+     tied the same way: the brief asked for every role that can add a timesheet
+     line today, which is every role that holds timesheet.own. A studio that
+     narrows one must decide about the other on purpose. */
+  assert.deepStrictEqual(holdersOf('timesheet.project_meeting'), holdersOf('timesheet.own'),
+    'timesheet.project_meeting must reach exactly the designations that can fill a timesheet');
+  /* AND IT IS WIDER THAN TL ACTION, which is the point of the pair: a lead logs
+     the same meeting through the narrower key, and the server decides which of
+     the two applies per PROJECT rather than per designation. */
+  assert.ok(holdersOf('timesheet.project_meeting').length
+    > holdersOf('timesheet.tl_action').length,
+  'more designations can log a meeting than can log TL Action');
 
   /* NONE OF THEM IS AN APPROVAL, A CANCELLATION, OR A REACH INTO SOMEBODY
      ELSE'S WEEK. That is what makes "wider than Super Admin" defensible for

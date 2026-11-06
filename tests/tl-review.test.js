@@ -130,15 +130,28 @@ test('the listener the browser fixture copies is still wired this way', () => {
      of quietly making that suite a copy of something that no longer exists. */
   const projectHandler = PAGE.slice(
     PAGE.indexOf("document.getElementById('tl_project').addEventListener('change'"));
-  assert.match(projectHandler.slice(0, 600), /tlClearAction\(\)/,
-    'changing the project clears the box');
-  assert.match(projectHandler.slice(0, 600), /tlSyncAction\(\)/,
+  /* THE WINDOW IS THE HANDLER, not a fixed number of characters. It was
+     slice(0, 600), which stopped being the handler the moment Prompt 67 added
+     the Project Meeting box's two calls to it — the assertions then looked for
+     text that had been pushed past the end and failed on a handler that was
+     perfectly correct. The closing `});` is where it ends. */
+  const handler = projectHandler.slice(0, projectHandler.indexOf('\n});') + 4);
+  assert.match(handler, /tlClearAction\(\)/, 'changing the project clears the box');
+  assert.match(handler, /tlSyncAction\(\)/,
     'and re-asks whether it belongs on the new one');
   /* THE ORDER: cleared before re-asked. A tick left over from the old project
      while the new one is being checked is a tick about a project this person
      may not even lead. */
-  assert.ok(projectHandler.indexOf('tlClearAction()') < projectHandler.indexOf('tlSyncAction()'),
+  assert.ok(handler.indexOf('tlClearAction()') < handler.indexOf('tlSyncAction()'),
     'in that order');
+
+  /* AND THE SAME PAIR FOR PROJECT MEETING, which the same handler owns for the
+     same reason: whether that box belongs is a question about the NEW project
+     too, and a tick left over from the old one is a tick about a project this
+     person may well lead. */
+  assert.match(handler, /pmClear\(\)/, 'changing the project clears the meeting box');
+  assert.match(handler, /pmSync\(\)/, 'and re-asks whether it belongs on the new one');
+  assert.ok(handler.indexOf('pmClear()') < handler.indexOf('pmSync()'), 'in that order');
 
   /* AND THE ASSET PICKER'S HANDLER HAS NO TL BRANCH ANY MORE. It had one while
      a review's hours were calculated; the field is hidden for a TL line now, so

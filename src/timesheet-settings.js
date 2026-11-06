@@ -68,6 +68,16 @@ const DEFAULTS = {
      saw before. A feature that costs nothing to have on is one the studio asked
      to have on. */
   tlAction: true,
+  /* ON, for the same reason as tlAction above, and it is the other half of the
+     same question. TL Action gives a LEAD a way to log time that is not work on
+     an asset; this gives everybody else one — "I was in a meeting about this
+     project" is a sentence an artist needs as often as a lead does, and until
+     now the only honest place for it was a project line with no asset and a
+     typed figure, which reads as ordinary work in every screen that counts it.
+     On, it adds one check box for a non-lead on a project they are on. Off,
+     the box is gone and the server refuses new meeting lines; lines already
+     filed are unaffected. */
+  projectMeeting: true,
   /* ON, for the same reason as tlAction above: it blocks nobody and adds
      nothing to anybody's day. With it on, a role holding timesheet.export sees
      one more button on the Timesheet tab; everybody else sees exactly what
@@ -163,6 +173,10 @@ async function load(db) {
        undefined here and gets the default — which for this one is ON. */
     tlAction: row.tl_action_enabled === undefined
       ? DEFAULTS.tlAction : Boolean(Number(row.tl_action_enabled)),
+    /* Same tolerance again, and the same reason: a database whose ALTER has not
+       run reads undefined here and gets the default, which for this one is ON. */
+    projectMeeting: row.project_meeting_enabled === undefined
+      ? DEFAULTS.projectMeeting : Boolean(Number(row.project_meeting_enabled)),
     exportEnabled: row.export_enabled === undefined || row.export_enabled === null
       ? DEFAULTS.exportEnabled : Boolean(Number(row.export_enabled)),
     /* Two more columns added after the table shipped, so the same tolerance as
@@ -317,6 +331,7 @@ function validate(input) {
   };
   const requirePreviousDay = bool('requirePreviousDay');
   const tlAction = bool('tlAction');
+  const projectMeeting = bool('projectMeeting');
   /* THE DOWNLOAD SWITCH, AND WHY ITS ABSENCE HERE WAS A BUG.
    *
    * save() below writes `v.exportEnabled ? 1 : 0`. Until this line existed,
@@ -362,7 +377,8 @@ function validate(input) {
     ok: true,
     errors: [],
     value: { maxDayHours, minLineHours, maxLineHours, backdateDays, futureDays, loggableDays,
-      requirePreviousDay, tlAction, exportEnabled, hoursRuleEnabled, hoursRuleFrom },
+      requirePreviousDay, tlAction, projectMeeting, exportEnabled,
+      hoursRuleEnabled, hoursRuleFrom },
   };
 }
 
@@ -409,6 +425,24 @@ async function save(db, input, userId) {
   const widest = `INSERT INTO timesheet_settings
        (id, max_day_hours, min_line_hours, max_line_hours, backdate_days, future_days,
         loggable_days, require_previous_day, tl_action_enabled, export_enabled,
+        hours_rule_enabled, hours_rule_from, project_meeting_enabled, updated_by)
+     VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+     ON DUPLICATE KEY UPDATE
+       max_day_hours = $1, min_line_hours = $2, max_line_hours = $3,
+       backdate_days = $4, future_days = $5, loggable_days = $6,
+       require_previous_day = $7, tl_action_enabled = $8, export_enabled = $9,
+       hours_rule_enabled = $10, hours_rule_from = $11,
+       project_meeting_enabled = $12,
+       updated_by = $13`;
+  /* THE FOURTH WIDTH, which is the previous widest. The chain is now
+     project_meeting -> hours_rule -> tl_action/export -> the original eight,
+     each falling back on ER_BAD_FIELD_ERROR alone, for the reason the first
+     fallback gave: on shared hosting an ALTER is a thing that gets refused, and
+     a studio whose newest column never arrived must still be able to save the
+     settings it does have rather than losing the whole screen. */
+  const wideRule = `INSERT INTO timesheet_settings
+       (id, max_day_hours, min_line_hours, max_line_hours, backdate_days, future_days,
+        loggable_days, require_previous_day, tl_action_enabled, export_enabled,
         hours_rule_enabled, hours_rule_from, updated_by)
      VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
      ON DUPLICATE KEY UPDATE
@@ -443,14 +477,21 @@ async function save(db, input, userId) {
      the eight settings it does have rather than losing the whole screen. */
   try {
     await db.query(widest, [...core, v.tlAction ? 1 : 0, v.exportEnabled ? 1 : 0,
-      v.hoursRuleEnabled ? 1 : 0, v.hoursRuleFrom || null, userId || null]);
-  } catch (err) {
-    if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
+      v.hoursRuleEnabled ? 1 : 0, v.hoursRuleFrom || null,
+      v.projectMeeting ? 1 : 0, userId || null]);
+  } catch (err0) {
+    if (err0.code !== 'ER_BAD_FIELD_ERROR') throw err0;
     try {
-      await db.query(wide, [...core, v.tlAction ? 1 : 0, v.exportEnabled ? 1 : 0, userId || null]);
-    } catch (err2) {
-      if (err2.code !== 'ER_BAD_FIELD_ERROR') throw err2;
-      await db.query(narrow, [...core, userId || null]);
+      await db.query(wideRule, [...core, v.tlAction ? 1 : 0, v.exportEnabled ? 1 : 0,
+        v.hoursRuleEnabled ? 1 : 0, v.hoursRuleFrom || null, userId || null]);
+    } catch (err) {
+      if (err.code !== 'ER_BAD_FIELD_ERROR') throw err;
+      try {
+        await db.query(wide, [...core, v.tlAction ? 1 : 0, v.exportEnabled ? 1 : 0, userId || null]);
+      } catch (err2) {
+        if (err2.code !== 'ER_BAD_FIELD_ERROR') throw err2;
+        await db.query(narrow, [...core, userId || null]);
+      }
     }
   }
   await load(db);
@@ -480,6 +521,23 @@ const summarise = (s) => [
      and from which day" is the question that will be asked, and a log that
      recorded the hour limits and not this would not answer it. */
   `exact hours ${s.hoursRuleEnabled ? `REQUIRED from ${s.hoursRuleFrom || 'no date'}` : 'not required'}`,
+  /* APPENDED AT THE END, AND THE NEXT ONE MUST BE TOO.
+   *
+   * This sentence is a diffed value in the Activity Log, and src/activity.js
+   * clips every value at 200 characters — which this sentence already reaches
+   * on the DEFAULT settings. A clause inserted in the middle pushes everything
+   * after it along, and the first thing to fall off the end is the exact-hours
+   * rule: both the before and the after then clip to the same 200 characters,
+   * diff() sees no difference and drops the whole sentence from the record.
+   * That is not a hypothetical — this clause was first written between TL
+   * Action and the download switch, and tests/timesheet-hours-rule.test.js
+   * caught exactly that, which is the second time this file has been told.
+   *
+   * So: APPEND. A new setting goes here, after everything that is already in
+   * the sentence, and src/routes/timesheet-options.js records it as a short
+   * field of its own as well — which is the remedy that file already names and
+   * the one that cannot be clipped at all. */
+  `Project Meeting ${s.projectMeeting ? 'on' : 'off'}`,
 ].join(', ');
 
 module.exports = {

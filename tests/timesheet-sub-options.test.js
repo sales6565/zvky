@@ -231,10 +231,16 @@ function formHarness(categories, { kind = 'non' } = {}) {
      was not called would leave these cases passing while the box survived a
      switch to Non-project, which is the bug the clearing exists to prevent. The
      calls are counted and asserted on below. */
-  const tlCalls = { clear: 0, sync: 0 };
+  const tlCalls = { clear: 0, sync: 0, pmClear: 0, pmSync: 0 };
   const api = new Function('document', 'tsState', 'escapeHTML', 'tlCalls',
     `const tlClearAction = () => { tlCalls.clear += 1; };
      const tlSyncAction = () => { tlCalls.sync += 1; };
+     /* THE SAME TWO FOR PROJECT MEETING, stubbed for the same reason and
+        counted for the same one: syncTimesheetLine must clear and re-decide
+        BOTH boxes when the kind changes, or a tick survives a switch to
+        Non-project and is posted with a line the server refuses. */
+     const pmClear = () => { tlCalls.pmClear += 1; };
+     const pmSync = () => { tlCalls.pmSync += 1; };
      ${source};
      return { syncTimesheetLine, tlSyncSubOptions, tlSubOptionProblem, tlClearSubOption,
               tlCurrentCategory };`
@@ -324,6 +330,13 @@ test('a project line hides the dropdown and clears it', () => {
     'switching to Non-project clears the TL Action box exactly once');
   assert.strictEqual(h.tlCalls.sync, 2,
     'and both switches re-ask whether the box belongs on this line');
+  /* AND THE OTHER BOX, which is the same rule for the other half of the
+     feature: a Project Meeting tick that survived a switch to Non-project would
+     be posted with Leave, Training or Idle, and refused. */
+  assert.strictEqual(h.tlCalls.pmClear, 1,
+    'switching to Non-project clears the Project Meeting box exactly once');
+  assert.strictEqual(h.tlCalls.pmSync, 2,
+    'and both switches re-ask whether that box belongs either');
 });
 
 test('the form refuses to file a half-filled line, and says so beside the dropdown', () => {

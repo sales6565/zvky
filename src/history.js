@@ -259,7 +259,8 @@ async function timesheetByDay(db, userId, from, to) {
     const { rows } = await db.query(
       `SELECT e.id, DATE_FORMAT(e.entry_date, '%Y-%m-%d') AS day, e.hours,
               e.non_project AS nonProject, e.non_project_sub AS nonProjectSub,
-              e.notes, e.tl_action AS tlAction, e.asset_id AS assetId,
+              e.notes, e.tl_action AS tlAction, e.project_meeting AS projectMeeting,
+              e.asset_id AS assetId,
               a.\`code\` AS assetCode, a.\`name\` AS assetName,
               p.\`name\` AS projectName, c.\`name\` AS clientName
          FROM timesheet_entries e
@@ -453,6 +454,15 @@ async function build(db, { viewer, userId, from = null, to = null, days = null,
           nonProject: l.nonProject || null,
           nonProjectSub: l.nonProjectSub || null,
           tlAction: l.tlAction || null,
+          /* THE WORDS, FROM THE MODULE THAT OWNS THEM. The page used to spell
+             the two TL labels itself in histLine(), which is the second copy
+             src/tl-review.js exists to prevent — it simply lived in the page,
+             where the test that scans for copies was not looking. Sent as a
+             label so History, the Timesheet tab, the admin views and both
+             exports all read one answer. */
+          tlActionLabel: require('./tl-review')
+            .labelFor(l.tlAction, Boolean(Number(l.projectMeeting))),
+          projectMeeting: Boolean(Number(l.projectMeeting)),
           notes: l.notes || null,
           assetCode: l.assetCode || null,
           assetName: l.assetName || null,

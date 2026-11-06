@@ -63,7 +63,7 @@ section settings.chat_activity := Chat Activity
 section mobile.distribute := Mobile Apps
 
 ## ROLE super_admin
-keys(150): asset.add asset.assign asset.assign_any asset.bulk_assign asset.bulk_upload asset.delete asset.edit asset.hold asset.hold_any asset.lead_notes asset.override_stage assets.rename chat.group_create chat.group_manage_any chat.message_protected chat.open_inbox chat.settings chat.settings_view chat.use client.add client.close client.delete client.edit client.view followup.mark_idle followup.mark_leave followup.mark_onsight followup.mark_past_dates history.view history.view_others integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.approve leave.manage_all leave.request leave.view_team mobile.distribute outsource.deliver outsource.manage outsource.rates outsource.reopen outsource.view pending.view pnl.actual pnl.fixed pnl.manage project.add project.close project.delete project.edit project.milestones project.review_mine project.review_queue project.review_respond project.review_send project.view report.admin_dashboard report.artist_report report.follow_up report.idle report.remind report.view review.approve_client review.cd review.client_deliver review.client_return review.client_send review.client_view review.deliver review.tl review.tl_feedback review.tl_send_client server.browse_all server.download server.manage_requests server.request_delete server.submit_upload server.upload server.view server.view_audit settings.activity_log settings.asset_rename settings.asset_types settings.audit_logs settings.branding settings.branding_view settings.categories settings.chat_activity settings.chat_retention settings.chat_retention_view settings.email_config settings.email_config_view settings.email_delivery settings.email_delivery_view settings.holidays settings.holidays_view settings.integrations settings.integrations_view settings.ip_allowlist settings.ip_allowlist_view settings.ip_blocklist settings.ip_blocklist_view settings.leave.manage settings.leave.view settings.milestone_types settings.mis_access settings.mis_access_view settings.nudges settings.nudges_view settings.permissions settings.permissions_view settings.priorities settings.project_categories settings.recording_hours settings.recording_hours_view settings.reference_view settings.role_groups settings.role_groups_view settings.roles settings.roles_view settings.server.manage settings.server.view settings.theme settings.theme_view settings.working_hours settings.working_hours_view timesheet.all timesheet.backdate timesheet.export timesheet.min_hours_exempt timesheet.options timesheet.options_view timesheet.own timesheet.sub_options timesheet.team timesheet.tl_action timesheet.unlock_day user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.deactivate user.delete user.edit user.idle_view user.reset_password user.view user.view_team
+keys(151): asset.add asset.assign asset.assign_any asset.bulk_assign asset.bulk_upload asset.delete asset.edit asset.hold asset.hold_any asset.lead_notes asset.override_stage assets.rename chat.group_create chat.group_manage_any chat.message_protected chat.open_inbox chat.settings chat.settings_view chat.use client.add client.close client.delete client.edit client.view followup.mark_idle followup.mark_leave followup.mark_onsight followup.mark_past_dates history.view history.view_others integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.approve leave.manage_all leave.request leave.view_team mobile.distribute outsource.deliver outsource.manage outsource.rates outsource.reopen outsource.view pending.view pnl.actual pnl.fixed pnl.manage project.add project.close project.delete project.edit project.milestones project.review_mine project.review_queue project.review_respond project.review_send project.view report.admin_dashboard report.artist_report report.follow_up report.idle report.remind report.view review.approve_client review.cd review.client_deliver review.client_return review.client_send review.client_view review.deliver review.tl review.tl_feedback review.tl_send_client server.browse_all server.download server.manage_requests server.request_delete server.submit_upload server.upload server.view server.view_audit settings.activity_log settings.asset_rename settings.asset_types settings.audit_logs settings.branding settings.branding_view settings.categories settings.chat_activity settings.chat_retention settings.chat_retention_view settings.email_config settings.email_config_view settings.email_delivery settings.email_delivery_view settings.holidays settings.holidays_view settings.integrations settings.integrations_view settings.ip_allowlist settings.ip_allowlist_view settings.ip_blocklist settings.ip_blocklist_view settings.leave.manage settings.leave.view settings.milestone_types settings.mis_access settings.mis_access_view settings.nudges settings.nudges_view settings.permissions settings.permissions_view settings.priorities settings.project_categories settings.recording_hours settings.recording_hours_view settings.reference_view settings.role_groups settings.role_groups_view settings.roles settings.roles_view settings.server.manage settings.server.view settings.theme settings.theme_view settings.working_hours settings.working_hours_view timesheet.all timesheet.backdate timesheet.export timesheet.min_hours_exempt timesheet.options timesheet.options_view timesheet.own timesheet.project_meeting timesheet.sub_options timesheet.team timesheet.tl_action timesheet.unlock_day user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.deactivate user.delete user.edit user.idle_view user.reset_password user.view user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -286,7 +286,7 @@ write routes:
   PUT /api/theme = yes
 
 ## ROLE admin
-keys(40): asset.add asset.assign asset.bulk_upload asset.delete asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view history.view integration.send_to_dev leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones project.view report.admin_dashboard review.deliver settings.holidays_view timesheet.own user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.view
+keys(41): asset.add asset.assign asset.bulk_upload asset.delete asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view history.view integration.send_to_dev leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones project.view report.admin_dashboard review.deliver settings.holidays_view timesheet.own timesheet.project_meeting user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.view
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -509,7 +509,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE coordinator
-keys(19): asset.add asset.assign asset.bulk_upload asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.view history.view leave.request outsource.deliver outsource.manage outsource.view project.view review.deliver settings.holidays_view timesheet.own
+keys(20): asset.add asset.assign asset.bulk_upload asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.view history.view leave.request outsource.deliver outsource.manage outsource.view project.view review.deliver settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -732,7 +732,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE art_director
-keys(19): asset.hold chat.group_create chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.view project.view review.approve_client review.cd review.deliver settings.holidays_view timesheet.own
+keys(20): asset.hold chat.group_create chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.view project.view review.approve_client review.cd review.deliver settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -955,7 +955,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE creative_art_director
-keys(19): asset.hold chat.group_create chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.view project.view review.approve_client review.cd review.deliver settings.holidays_view timesheet.own
+keys(20): asset.hold chat.group_create chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.view project.view review.approve_client review.cd review.deliver settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -1178,7 +1178,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_art_director
-keys(27): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any assets.rename chat.group_create chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view project.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.tl_action user.view_team
+keys(28): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any assets.rename chat.group_create chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view project.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.project_meeting timesheet.tl_action user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -1401,7 +1401,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE art_supervisor
-keys(27): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any assets.rename chat.group_create chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view project.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.tl_action user.view_team
+keys(28): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any assets.rename chat.group_create chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view project.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.project_meeting timesheet.tl_action user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -1624,7 +1624,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_animation_supervisor
-keys(27): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any assets.rename chat.group_create chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view project.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.tl_action user.view_team
+keys(28): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any assets.rename chat.group_create chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view project.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.project_meeting timesheet.tl_action user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -1847,7 +1847,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE senior_team_lead
-keys(27): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any assets.rename chat.group_create chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view project.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.tl_action user.view_team
+keys(28): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any assets.rename chat.group_create chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view project.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.project_meeting timesheet.tl_action user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -2070,7 +2070,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE team_lead
-keys(27): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any assets.rename chat.group_create chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view project.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.tl_action user.view_team
+keys(28): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any assets.rename chat.group_create chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view project.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.project_meeting timesheet.tl_action user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -2293,7 +2293,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_team_lead
-keys(27): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any assets.rename chat.group_create chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view project.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.tl_action user.view_team
+keys(28): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any assets.rename chat.group_create chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view project.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.project_meeting timesheet.tl_action user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -2516,7 +2516,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE technical_manager
-keys(27): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any assets.rename chat.group_create chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view project.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.tl_action user.view_team
+keys(28): asset.add asset.assign asset.bulk_upload asset.edit asset.hold asset.hold_any assets.rename chat.group_create chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request leave.view_team outsource.deliver outsource.manage outsource.view project.view review.tl review.tl_feedback settings.holidays_view timesheet.own timesheet.project_meeting timesheet.tl_action user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -2739,7 +2739,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE senior_game_artist
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -2962,7 +2962,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE game_artist
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -3185,7 +3185,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_game_artist
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -3408,7 +3408,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE trainee_game_artist
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -3631,7 +3631,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE senior_motion_graphics_artist
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -3854,7 +3854,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE senior_game_animator
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -4077,7 +4077,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE game_animator
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -4300,7 +4300,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_game_animator
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -4523,7 +4523,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE trainee_game_animator
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -4746,7 +4746,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE game_designer
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -4969,7 +4969,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE senior_ui_ux_designer
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -5192,7 +5192,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_ui_ux_designer
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -5415,7 +5415,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_game_designer
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -5638,7 +5638,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE consultant_lead_game_designer
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -5861,7 +5861,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE head_of_production
-keys(68): asset.add asset.assign asset.assign_any asset.bulk_upload asset.delete asset.edit asset.hold asset.override_stage assets.rename chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones project.view report.admin_dashboard report.idle report.view review.approve_client review.cd review.deliver review.tl review.tl_feedback review.tl_send_client settings.activity_log settings.asset_types settings.audit_logs settings.branding settings.branding_view settings.categories settings.holidays_view settings.milestone_types settings.priorities settings.project_categories settings.reference_view settings.roles settings.roles_view settings.working_hours settings.working_hours_view timesheet.all timesheet.own user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.idle_view user.view user.view_team
+keys(69): asset.add asset.assign asset.assign_any asset.bulk_upload asset.delete asset.edit asset.hold asset.override_stage assets.rename chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones project.view report.admin_dashboard report.idle report.view review.approve_client review.cd review.deliver review.tl review.tl_feedback review.tl_send_client settings.activity_log settings.asset_types settings.audit_logs settings.branding settings.branding_view settings.categories settings.holidays_view settings.milestone_types settings.priorities settings.project_categories settings.reference_view settings.roles settings.roles_view settings.working_hours settings.working_hours_view timesheet.all timesheet.own timesheet.project_meeting user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.idle_view user.view user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -6084,7 +6084,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE cto
-keys(68): asset.add asset.assign asset.assign_any asset.bulk_upload asset.delete asset.edit asset.hold asset.override_stage assets.rename chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones project.view report.admin_dashboard report.idle report.view review.approve_client review.cd review.deliver review.tl review.tl_feedback review.tl_send_client settings.activity_log settings.asset_types settings.audit_logs settings.branding settings.branding_view settings.categories settings.holidays_view settings.milestone_types settings.priorities settings.project_categories settings.reference_view settings.roles settings.roles_view settings.working_hours settings.working_hours_view timesheet.all timesheet.own user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.idle_view user.view user.view_team
+keys(69): asset.add asset.assign asset.assign_any asset.bulk_upload asset.delete asset.edit asset.hold asset.override_stage assets.rename chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones project.view report.admin_dashboard report.idle report.view review.approve_client review.cd review.deliver review.tl review.tl_feedback review.tl_send_client settings.activity_log settings.asset_types settings.audit_logs settings.branding settings.branding_view settings.categories settings.holidays_view settings.milestone_types settings.priorities settings.project_categories settings.reference_view settings.roles settings.roles_view settings.working_hours settings.working_hours_view timesheet.all timesheet.own timesheet.project_meeting user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.idle_view user.view user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -6307,7 +6307,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE general_manager
-keys(68): asset.add asset.assign asset.assign_any asset.bulk_upload asset.delete asset.edit asset.hold asset.override_stage assets.rename chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones project.view report.admin_dashboard report.idle report.view review.approve_client review.cd review.deliver review.tl review.tl_feedback review.tl_send_client settings.activity_log settings.asset_types settings.audit_logs settings.branding settings.branding_view settings.categories settings.holidays_view settings.milestone_types settings.priorities settings.project_categories settings.reference_view settings.roles settings.roles_view settings.working_hours settings.working_hours_view timesheet.all timesheet.own user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.idle_view user.view user.view_team
+keys(69): asset.add asset.assign asset.assign_any asset.bulk_upload asset.delete asset.edit asset.hold asset.override_stage assets.rename chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones project.view report.admin_dashboard report.idle report.view review.approve_client review.cd review.deliver review.tl review.tl_feedback review.tl_send_client settings.activity_log settings.asset_types settings.audit_logs settings.branding settings.branding_view settings.categories settings.holidays_view settings.milestone_types settings.priorities settings.project_categories settings.reference_view settings.roles settings.roles_view settings.working_hours settings.working_hours_view timesheet.all timesheet.own timesheet.project_meeting user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.idle_view user.view user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -6530,7 +6530,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE managing_director_ceo
-keys(68): asset.add asset.assign asset.assign_any asset.bulk_upload asset.delete asset.edit asset.hold asset.override_stage assets.rename chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones project.view report.admin_dashboard report.idle report.view review.approve_client review.cd review.deliver review.tl review.tl_feedback review.tl_send_client settings.activity_log settings.asset_types settings.audit_logs settings.branding settings.branding_view settings.categories settings.holidays_view settings.milestone_types settings.priorities settings.project_categories settings.reference_view settings.roles settings.roles_view settings.working_hours settings.working_hours_view timesheet.all timesheet.own user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.idle_view user.view user.view_team
+keys(69): asset.add asset.assign asset.assign_any asset.bulk_upload asset.delete asset.edit asset.hold asset.override_stage assets.rename chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones project.view report.admin_dashboard report.idle report.view review.approve_client review.cd review.deliver review.tl review.tl_feedback review.tl_send_client settings.activity_log settings.asset_types settings.audit_logs settings.branding settings.branding_view settings.categories settings.holidays_view settings.milestone_types settings.priorities settings.project_categories settings.reference_view settings.roles settings.roles_view settings.working_hours settings.working_hours_view timesheet.all timesheet.own timesheet.project_meeting user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.idle_view user.view user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -6753,7 +6753,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE vice_president_global_operations_business_development
-keys(68): asset.add asset.assign asset.assign_any asset.bulk_upload asset.delete asset.edit asset.hold asset.override_stage assets.rename chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones project.view report.admin_dashboard report.idle report.view review.approve_client review.cd review.deliver review.tl review.tl_feedback review.tl_send_client settings.activity_log settings.asset_types settings.audit_logs settings.branding settings.branding_view settings.categories settings.holidays_view settings.milestone_types settings.priorities settings.project_categories settings.reference_view settings.roles settings.roles_view settings.working_hours settings.working_hours_view timesheet.all timesheet.own user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.idle_view user.view user.view_team
+keys(69): asset.add asset.assign asset.assign_any asset.bulk_upload asset.delete asset.edit asset.hold asset.override_stage assets.rename chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones project.view report.admin_dashboard report.idle report.view review.approve_client review.cd review.deliver review.tl review.tl_feedback review.tl_send_client settings.activity_log settings.asset_types settings.audit_logs settings.branding settings.branding_view settings.categories settings.holidays_view settings.milestone_types settings.priorities settings.project_categories settings.reference_view settings.roles settings.roles_view settings.working_hours settings.working_hours_view timesheet.all timesheet.own timesheet.project_meeting user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.idle_view user.view user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -6976,7 +6976,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE senior_producer
-keys(19): asset.add asset.assign asset.bulk_upload asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.view history.view leave.request outsource.deliver outsource.manage outsource.view project.view review.deliver settings.holidays_view timesheet.own
+keys(20): asset.add asset.assign asset.bulk_upload asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.view history.view leave.request outsource.deliver outsource.manage outsource.view project.view review.deliver settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -7199,7 +7199,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE producer
-keys(19): asset.add asset.assign asset.bulk_upload asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.view history.view leave.request outsource.deliver outsource.manage outsource.view project.view review.deliver settings.holidays_view timesheet.own
+keys(20): asset.add asset.assign asset.bulk_upload asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.view history.view leave.request outsource.deliver outsource.manage outsource.view project.view review.deliver settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -7422,7 +7422,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE creative_producer
-keys(19): asset.add asset.assign asset.bulk_upload asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.view history.view leave.request outsource.deliver outsource.manage outsource.view project.view review.deliver settings.holidays_view timesheet.own
+keys(20): asset.add asset.assign asset.bulk_upload asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.view history.view leave.request outsource.deliver outsource.manage outsource.view project.view review.deliver settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -7645,7 +7645,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE senior_project_manager
-keys(19): asset.add asset.assign asset.bulk_upload asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.view history.view leave.request outsource.deliver outsource.manage outsource.view project.view review.deliver settings.holidays_view timesheet.own
+keys(20): asset.add asset.assign asset.bulk_upload asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.view history.view leave.request outsource.deliver outsource.manage outsource.view project.view review.deliver settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -7868,7 +7868,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE project_manager
-keys(19): asset.add asset.assign asset.bulk_upload asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.view history.view leave.request outsource.deliver outsource.manage outsource.view project.view review.deliver settings.holidays_view timesheet.own
+keys(20): asset.add asset.assign asset.bulk_upload asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.view history.view leave.request outsource.deliver outsource.manage outsource.view project.view review.deliver settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -8091,7 +8091,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_project_manager
-keys(19): asset.add asset.assign asset.bulk_upload asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.view history.view leave.request outsource.deliver outsource.manage outsource.view project.view review.deliver settings.holidays_view timesheet.own
+keys(20): asset.add asset.assign asset.bulk_upload asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.view history.view leave.request outsource.deliver outsource.manage outsource.view project.view review.deliver settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -8314,7 +8314,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE senior_production_coordinator
-keys(19): asset.add asset.assign asset.bulk_upload asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.view history.view leave.request outsource.deliver outsource.manage outsource.view project.view review.deliver settings.holidays_view timesheet.own
+keys(20): asset.add asset.assign asset.bulk_upload asset.edit asset.hold assets.rename chat.group_create chat.open_inbox chat.use client.view history.view leave.request outsource.deliver outsource.manage outsource.view project.view review.deliver settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -8537,7 +8537,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE senior_technical_artist
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -8760,7 +8760,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE technical_artist
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -8983,7 +8983,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_technical_artist
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -9206,7 +9206,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE senior_unity_developer
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -9429,7 +9429,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE unity_developer
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -9652,7 +9652,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_unity_developer
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -9875,7 +9875,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE game_developer
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -10098,7 +10098,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_game_developer
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -10321,7 +10321,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE test_engineer
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -10544,7 +10544,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_test_engineer
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -10767,7 +10767,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE trainee_test_engineer
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -10990,7 +10990,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE game_mathematician
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -11213,7 +11213,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_game_mathematician
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -11436,7 +11436,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE associate_math_analyst
-keys(14): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own
+keys(15): asset.assign asset.edit asset.hold assets.rename chat.open_inbox chat.use client.view history.view integration.flag_tech_art integration.view_ingame leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -11659,7 +11659,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE senior_business_development_executive
-keys(9): asset.hold chat.open_inbox chat.use client.view history.view leave.request project.view settings.holidays_view timesheet.own
+keys(10): asset.hold chat.open_inbox chat.use client.view history.view leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -11882,7 +11882,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE senior_operations_financial_analyst
-keys(9): asset.hold chat.open_inbox chat.use client.view history.view leave.request project.view settings.holidays_view timesheet.own
+keys(10): asset.hold chat.open_inbox chat.use client.view history.view leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -12105,7 +12105,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE account_manager_marketing
-keys(68): asset.add asset.assign asset.assign_any asset.bulk_upload asset.delete asset.edit asset.hold asset.override_stage assets.rename chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones project.view report.admin_dashboard report.idle report.view review.approve_client review.cd review.deliver review.tl review.tl_feedback review.tl_send_client settings.activity_log settings.asset_types settings.audit_logs settings.branding settings.branding_view settings.categories settings.holidays_view settings.milestone_types settings.priorities settings.project_categories settings.reference_view settings.roles settings.roles_view settings.working_hours settings.working_hours_view timesheet.all timesheet.own user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.idle_view user.view user.view_team
+keys(69): asset.add asset.assign asset.assign_any asset.bulk_upload asset.delete asset.edit asset.hold asset.override_stage assets.rename chat.group_create chat.open_inbox chat.use client.add client.close client.delete client.edit client.view history.view integration.flag_tech_art integration.send_to_dev integration.view_ingame leave.request outsource.deliver outsource.manage outsource.reopen outsource.view project.add project.close project.delete project.edit project.milestones project.view report.admin_dashboard report.idle report.view review.approve_client review.cd review.deliver review.tl review.tl_feedback review.tl_send_client settings.activity_log settings.asset_types settings.audit_logs settings.branding settings.branding_view settings.categories settings.holidays_view settings.milestone_types settings.priorities settings.project_categories settings.reference_view settings.roles settings.roles_view settings.working_hours settings.working_hours_view timesheet.all timesheet.own timesheet.project_meeting user.add user.bulk_upload user.change_project user.change_reporting user.change_role user.delete user.edit user.idle_view user.view user.view_team
 sees:
   teamTabBtn=yes (assumes SRV.enabled)
   usersTabBtn=yes (assumes SRV.enabled)
@@ -12328,7 +12328,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE mis_analyst
-keys(9): asset.hold chat.open_inbox chat.use client.view history.view leave.request project.view settings.holidays_view timesheet.own
+keys(10): asset.hold chat.open_inbox chat.use client.view history.view leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -12551,7 +12551,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE junior_accountant
-keys(9): asset.hold chat.open_inbox chat.use client.view history.view leave.request project.view settings.holidays_view timesheet.own
+keys(10): asset.hold chat.open_inbox chat.use client.view history.view leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -12774,7 +12774,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE people_culture_partner
-keys(9): asset.hold chat.open_inbox chat.use client.view history.view leave.request project.view settings.holidays_view timesheet.own
+keys(10): asset.hold chat.open_inbox chat.use client.view history.view leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -12997,7 +12997,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE assistant_manager_hr_generalist
-keys(9): asset.hold chat.open_inbox chat.use client.view history.view leave.request project.view settings.holidays_view timesheet.own
+keys(10): asset.hold chat.open_inbox chat.use client.view history.view leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)
@@ -13220,7 +13220,7 @@ write routes:
   PUT /api/theme = no
 
 ## ROLE talent_acquisition_specialist
-keys(9): asset.hold chat.open_inbox chat.use client.view history.view leave.request project.view settings.holidays_view timesheet.own
+keys(10): asset.hold chat.open_inbox chat.use client.view history.view leave.request project.view settings.holidays_view timesheet.own timesheet.project_meeting
 sees:
   teamTabBtn=no (assumes SRV.enabled)
   usersTabBtn=no (assumes SRV.enabled)

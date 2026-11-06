@@ -3281,6 +3281,22 @@ async function ensureTimesheetSettings(db, log) {
     log('Schema: added timesheet_settings.tl_action_enabled, on — the TL Action check box is available.');
   }
 
+  /* PROJECT MEETING'S SWITCH, on, and its own check for the same reason every
+     one of these has its own: a database that has the columns above and not
+     this one is exactly what an upgrade produces. */
+  const { rows: pmCol } = await db.query(
+    `SELECT 1 AS present FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'timesheet_settings'
+        AND COLUMN_NAME = 'project_meeting_enabled'`
+  );
+  if (!pmCol.length) {
+    await db.query(
+      'ALTER TABLE timesheet_settings ADD COLUMN project_meeting_enabled TINYINT(1) NOT NULL DEFAULT 1'
+    );
+    log('Schema: added timesheet_settings.project_meeting_enabled, on \u2014 the Project Meeting '
+      + 'check box is available to whoever is not a lead of the project.');
+  }
+
   /* THE TIMESHEET DOWNLOAD'S SWITCH, on. Its own check for the same reason the
      one above has its own: a database that has require_previous_day and
      tl_action_enabled but not this one is exactly what an upgrade produces, and
@@ -4687,6 +4703,45 @@ async function ensureTlReview(db, log) {
   log('Schema: added timesheet_entries.tl_action — Project Meeting or Review on a lead\'s line.');
 }
 
+/* WAS THIS LINE SOMEBODY'S TIME IN A PROJECT MEETING?
+ *
+ * ===========================================================================
+ * A FLAG, NOT A SECOND tl_action VALUE, and that is the decision worth
+ * recording. tl_action already holds 'project_meeting' — for a LEAD. This is
+ * the same hour of the same meeting logged by somebody who is not the lead,
+ * and the two have to stay apart: TL Action is gated on timesheet.tl_action
+ * and on leading the project, this one on timesheet.project_meeting and on NOT
+ * leading it, and every existing reader of tl_action — the label, the export,
+ * the exclusion from asset figures, the migration that renamed 'asset_review'
+ * — would have had to learn the difference between two rows holding the same
+ * string. A column of its own makes "which of the two is this" a question with
+ * one answer, and a line carrying both is refused on the way in.
+ *
+ * NULLABLE TINYINT, so every line filed before this reads as not-a-meeting
+ * without a backfill, and idempotent on the column's absence like every ALTER
+ * here.
+ */
+async function ensureProjectMeetingColumn(db, log) {
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'timesheet_entries'
+        AND COLUMN_NAME = 'project_meeting'`
+  ).catch(() => ({ rows: [] }));
+  if (rows.length) return;
+  try {
+    await db.query(
+      'ALTER TABLE timesheet_entries ADD COLUMN project_meeting TINYINT(1) NULL AFTER tl_action'
+    );
+  } catch (err) {
+    if (err.code !== 'ER_NO_SUCH_TABLE') throw err;
+    log(`Schema: timesheet_entries is not there, so project_meeting was skipped (${err.code}).`);
+    return;
+  }
+  await db.query('ALTER TABLE timesheet_entries ADD KEY idx_tse_project_meeting (project_meeting)')
+    .catch(() => { /* the column is what matters; an index refused is not fatal */ });
+  log('Schema: added timesheet_entries.project_meeting \u2014 a non-lead\'s time in a project meeting.');
+}
+
 /* ---------------------------------------------------------------------------
  * 'asset_review' BECOMES 'review'.
  *
@@ -5845,6 +5900,9 @@ const STEPS = [
   /* After the timesheet tables (whose column it adds) and after assets and
      users (which the sessions table points at with a cascade each). */
   ['tl action', ensureTlReview],
+  /* After it, because it adds a column AFTER tl_action and reads as the other
+     half of the same feature — a lead's meeting and everybody else's. */
+  ['timesheet project meeting', ensureProjectMeetingColumn],
   // After the step that adds the column, whose values it converts.
   ['tl action rename', ensureTlActionRenamed],
   // After users, whose key every chat table points at.

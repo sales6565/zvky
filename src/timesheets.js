@@ -901,9 +901,18 @@ async function hoursLoggedOn(db, { assetId, userId, day, exceptId = null }) {
        later is still not ordinary project time, and the safe reading of an
        unknown TL action is to leave it out. It is also what makes a row the
        rename could not reach — an 'asset_review' on a database whose UPDATE was
-       refused — excluded anyway. */
+       refused — excluded anyway.
+       
+       AND THE SAME FOR A PROJECT MEETING LINE, for the same reason and with the
+       same caveat. A meeting line names no asset either — the field is hidden
+       when the box is ticked and the server refuses an assetId outright — so
+       like the clause beside it this does nothing for a line filed today. It is
+       here because "not time on the asset" is a property of the LINE and not of
+       whether somebody managed to attach an asset to it, and a rule that only
+       held while the form behaved is not a rule. COALESCE, because the column
+       is nullable and NULL means not-a-meeting. */
     `SELECT COALESCE(SUM(hours), 0) AS hours FROM timesheet_entries
-      WHERE ${where} AND (tl_action IS NULL)`,
+      WHERE ${where} AND (tl_action IS NULL) AND COALESCE(project_meeting, 0) = 0`,
     params
   ).catch(async (err) => {
     /* NO TABLE IS ZERO; A MISSING COLUMN IS NOT.

@@ -50,10 +50,36 @@ const RETIRED_REVIEW = 'asset_review';
 
 const isAction = (value) => ACTION_KEYS.includes(value);
 
-function labelFor(tlAction) {
+/* WHAT A LINE SAYS IT IS, for every screen and both exports.
+ *
+ * TWO ARGUMENTS NOW, because there are two ways a line can be meeting time and
+ * they are not the same line. `tlAction` is the lead's — gated on
+ * timesheet.tl_action and on LEADING the project. `projectMeeting` is
+ * everybody else's — gated on timesheet.project_meeting and on NOT leading it.
+ * Same meeting, same hour, different person, and the labels say which so a
+ * manager reading a day can tell a lead's time from the team's.
+ *
+ * ONE FUNCTION RATHER THAN TWO. Extended here rather than given a function of
+ * its own for the reason this module exists at all: the screen, the audit trail
+ * and both exports must not come to disagree about what a line says, and two
+ * label functions is the first step to two answers.
+ *
+ * TL ACTION WINS IF SOMETHING EVER CARRIES BOTH. The API refuses that
+ * combination on the way in, so it should not exist — but a label is read by
+ * screens that cannot refuse anything, and "TL · Project Meeting" is the
+ * stricter claim of the two. Lenient on the way out, as this module already is
+ * for the retired 'asset_review'. */
+function labelFor(tlAction, projectMeeting = false) {
   if (tlAction === ACTIONS.projectMeeting) return 'TL · Project Meeting';
   if (tlAction === ACTIONS.review || tlAction === RETIRED_REVIEW) return 'TL · Review';
+  if (projectMeeting) return PROJECT_MEETING_LABEL;
   return null;
 }
 
-module.exports = { ACTIONS, ACTION_KEYS, RETIRED_REVIEW, isAction, labelFor };
+/* The words a non-lead's meeting line reads as, everywhere: the Timesheet list,
+   the admin views, History and the Asset Name column of the export. */
+const PROJECT_MEETING_LABEL = 'Project Meeting';
+
+module.exports = {
+  ACTIONS, ACTION_KEYS, RETIRED_REVIEW, PROJECT_MEETING_LABEL, isAction, labelFor,
+};

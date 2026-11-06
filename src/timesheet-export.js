@@ -150,6 +150,10 @@ const ROW_SQL = `
          e.non_project        AS category,
          e.non_project_sub    AS subKey,
          e.tl_action          AS tlAction,
+         /* Beside tl_action because they are the two halves of one question —
+            was this line somebody's time in a meeting rather than work on an
+            asset — and the label function reads both. */
+         e.project_meeting    AS projectMeeting,
          e.notes              AS notes
     FROM timesheet_entries e
     JOIN timesheet_days d ON d.user_id = e.user_id AND d.work_date = e.entry_date
@@ -198,7 +202,7 @@ function mapRow(row, labels = new Map(), disciplines = new Map()) {
      It is not only tidiness: labelFor() also reads the retired review value as
      a review, so a row the migration could not reach gets a description here
      instead of an empty Asset Name cell. */
-  const tl = row.tlAction ? tlReview.labelFor(row.tlAction) : null;
+  const tl = tlReview.labelFor(row.tlAction, Boolean(Number(row.projectMeeting)));
   const subLabel = row.subKey ? (labels.get(row.subKey) || row.subKey) : null;
   const note = row.notes === null || row.notes === undefined ? '' : String(row.notes).trim();
 

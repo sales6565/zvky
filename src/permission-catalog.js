@@ -1058,6 +1058,34 @@ const GROUPS = [
           + 'your own time, with the hours typed in. Only for projects you lead.',
       },
       {
+        key: 'timesheet.project_meeting',
+        label: 'Log Project Meeting time',
+        /* THE OTHER HALF OF TL ACTION, and the halves do not overlap.
+         *
+         * A lead on a project gets TL Action there; everybody else on it gets
+         * this. The two are mutually exclusive BY PROJECT rather than by
+         * designation, which is the part worth saying: somebody who leads
+         * project A and is an artist on project B sees TL Action on A and
+         * Project Meeting on B, from the same form, on the same day. The
+         * server decides which with permissions.isProjectLead(), the one
+         * function that answers it, and a line carrying both flags is refused.
+         *
+         * `() => true`, LIKE timesheet.own. The brief asks for every role that
+         * can add a timesheet line today, and that is every role —
+         * timesheet.own is implied for everybody. Sitting in a meeting about a
+         * project you are staffed on is not a privilege, and until now the only
+         * honest place to put those hours was a project line with no asset,
+         * which reads as ordinary work in every screen that counts it.
+         *
+         * HOLDING IT IS NOT ENOUGH, for the same reason TL Action says so: the
+         * server asks whether the project is one this person can see, and
+         * whether they are NOT its lead. */
+        impliedBy: () => true,
+        describe: 'On the Time Sheet, tick Project Meeting to log time spent in a meeting '
+          + 'about a project, with the hours typed in and no asset. For projects you are on '
+          + 'but do not lead \u2014 leads log the same time as TL Action.',
+      },
+      {
         /* READING THE TIMESHEET POLICY, which is a reasonable thing for a lead
            to need: "why was my artist refused a line on Saturday" is answered
            by this screen, and answering it should not require the ability to

@@ -119,7 +119,12 @@ async function api(p, opts = {}){
    switch, and the ids of the projects this reader leads — the server's answer
    to "do you lead it", including Acting Team Leads. Both are declared outside
    the lifted block in the page. */
-let tsState = { week: { workingDay: { tlAction: true, maxHours: 8 }, tlActionProjects: [], days: [] }, draft: {} };
+/* THE TWO LISTS, because the form draws one box or the other from them: the
+   projects this reader LEADS (TL Action) and the projects they are on and do
+   NOT lead (Project Meeting). The server computes them as complements over one
+   reach, so a project in both would be a payload disagreeing with itself. */
+let tsState = { week: { workingDay: { tlAction: true, projectMeeting: true, maxHours: 8 },
+  tlActionProjects: [], projectMeetingProjects: [], days: [] }, draft: {} };
 let tlDay = '2026-03-12';
 /* The ordinary asset list, which the real one fetches. Stubbed because what it
    loads is not what this suite is about — what matters is that TL Action puts
@@ -156,15 +161,18 @@ document.getElementById('tl_asset').addEventListener('change', (e) => {
 });
 document.getElementById('tl_project').addEventListener('change', async (e) => {
   tlClearAction();
+  pmClear();
   await tlLoadAssets(e.target.value);
   await tlSyncAction();
+  pmSync();
 });
+document.getElementById('pm_box').addEventListener('change', pmSyncBox);
 window.__ready = true;
 </script></body></html>`;
 }
 
 const open = async (browser, { permissions = ['timesheet.tl_action'], tlAction = true,
-  leads = ['p1'] } = {}) => {
+  leads = ['p1'], projectMeeting = true, onNotLeading = [] } = {}) => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
@@ -175,8 +183,27 @@ const open = async (browser, { permissions = ['timesheet.tl_action'], tlAction =
     tsState.week.workingDay.tlAction = on;
     tsState.week.tlActionProjects = led;
   }, [permissions, tlAction, leads]);
+  await page.evaluate(([on, notLed]) => {
+    tsState.week.workingDay.projectMeeting = on;
+    tsState.week.projectMeetingProjects = notLed;
+  }, [projectMeeting, onNotLeading]);
   return { page, errors };
 };
+
+/* The Project Meeting box's own state, read the same way the TL one's is —
+   offsetParent rather than the style attribute, because "hidden" is a question
+   about what somebody looking at the form can see. */
+const pmBox = (page) => page.evaluate(() => ({
+  wrapShown: Boolean(document.getElementById('pm_wrap').offsetParent),
+  ticked: document.getElementById('pm_box').checked,
+  assetShown: Boolean(document.getElementById('tl_asset').offsetParent),
+  assetLabelShown: Boolean(document.getElementById('tl_assetWrap').offsetParent),
+  assetValue: document.getElementById('tl_asset').value,
+  hours: document.getElementById('tl_hours').value,
+  hoursLocked: document.getElementById('tl_hours').readOnly,
+  typedHelpShown: Boolean(document.getElementById('tl_helpTyped').offsetParent),
+  tlWrapShown: Boolean(document.getElementById('tl_actionWrap').offsetParent),
+}));
 const box = (page) => page.evaluate(() => ({
   wrap: document.getElementById('tl_actionWrap').style.display,
   ticked: document.getElementById('tl_action').checked,
@@ -405,6 +432,178 @@ test('the TL Action box, in a browser', { skip: SKIP }, async (t) => {
 
     assert.deepStrictEqual(await page.evaluate(() => window.__native), [],
       'no native dialog was reached');
+    await page.close();
+  });
+});
+
+/* ===========================================================================
+ * PROJECT MEETING: the same form, the other half of the people.
+ *
+ * It lives in this file rather than its own because it is the SAME control
+ * area and the same fixture: the two boxes share a slot, share the Asset field
+ * they hide and the Hours field they unlock, and the one thing worth proving
+ * above all is that a given person on a given project sees exactly one of them.
+ * Two fixtures could not assert that at all.
+ */
+test('Project Meeting, in a browser', { skip: SKIP }, async (t) => {
+  let browser;
+  t.before(async () => {
+    browser = await chromium.launch({ executablePath: EXECUTABLE,
+      args: ['--no-sandbox', '--disable-dev-shm-usage'] });
+  });
+  t.after(async () => { if (browser) await browser.close(); });
+
+  /* THE PICKER IS FILLED FIRST — in the page its options come from the week,
+     and a <select> with none cannot be chosen from. Then selectOption fires a
+     real change event, so the page's own listener runs: clear both boxes,
+     reload the assets, and re-ask which box belongs. That is the path a person
+     takes, which is the point of driving this in a browser at all. */
+  const pick = async (page, projectId) => {
+    await page.evaluate(() => {
+      document.getElementById('tl_project').innerHTML =
+        '<option value="">Select\u2026</option>'
+        + '<option value="p1">Alpha</option><option value="p2">Beta</option>';
+    });
+    await page.selectOption('#tl_project', projectId);
+    await page.waitForTimeout(60);
+  };
+
+  await t.test('a non-lead on the project sees it, after Project and before Asset', async () => {
+    const { page, errors } = await open(browser, {
+      permissions: ['timesheet.project_meeting'], leads: [], onNotLeading: ['p1'] });
+    await pick(page, 'p1');
+    const before = await pmBox(page);
+    assert.strictEqual(before.wrapShown, true, 'the box is there');
+    assert.strictEqual(before.tlWrapShown, false, 'and the lead\'s box is not');
+    assert.strictEqual(before.assetShown, true, 'the Asset field is still there until it is ticked');
+
+    /* THE ORDER ON THE FORM: which project, was this a meeting, and only then
+       which asset. Read off the rendered geometry rather than the source, so it
+       is the order somebody actually sees down the page. */
+    const positions = await page.evaluate(() => {
+      const top = (id) => document.getElementById(id).getBoundingClientRect().top;
+      return { project: top('tl_project'), meeting: top('pm_wrap'), asset: top('tl_assetWrap') };
+    });
+    assert.ok(positions.project < positions.meeting, 'Project comes before the box');
+    assert.ok(positions.meeting < positions.asset, 'and the box before Asset');
+    assert.deepStrictEqual(errors, []);
+    await page.close();
+  });
+
+  await t.test('a lead of that project never sees it — they get TL Action', async () => {
+    const { page, errors } = await open(browser, {
+      permissions: ['timesheet.tl_action', 'timesheet.project_meeting'],
+      leads: ['p1'], onNotLeading: [] });
+    await pick(page, 'p1');
+    const state = await pmBox(page);
+    assert.strictEqual(state.wrapShown, false, 'no Project Meeting box for the lead');
+    assert.strictEqual(state.tlWrapShown, true, 'the TL Action box instead');
+    assert.deepStrictEqual(errors, []);
+    await page.close();
+  });
+
+  await t.test('leading A and working on B gives each project its own box', async () => {
+    /* THE CASE THE BRIEF NAMES, and the reason both lists travel with the week.
+       One person, one form, one day: the box changes with the picker. */
+    const { page, errors } = await open(browser, {
+      permissions: ['timesheet.tl_action', 'timesheet.project_meeting'],
+      leads: ['p1'], onNotLeading: ['p2'] });
+
+    await pick(page, 'p1');
+    let state = await pmBox(page);
+    assert.strictEqual(state.tlWrapShown, true, 'TL Action on the project they lead');
+    assert.strictEqual(state.wrapShown, false);
+
+    await pick(page, 'p2');
+    state = await pmBox(page);
+    assert.strictEqual(state.wrapShown, true, 'Project Meeting on the one they do not');
+    assert.strictEqual(state.tlWrapShown, false);
+
+    // And never both, on either project.
+    await pick(page, 'p1');
+    state = await pmBox(page);
+    assert.ok(!(state.wrapShown && state.tlWrapShown), 'never both at once');
+    assert.deepStrictEqual(errors, []);
+    await page.close();
+  });
+
+  await t.test('ticking it hides the Asset field and lets the hours be typed', async () => {
+    const { page, errors } = await open(browser, {
+      permissions: ['timesheet.project_meeting'], leads: [], onNotLeading: ['p1'] });
+    await pick(page, 'p1');
+    await page.check('#pm_box');
+    await page.waitForTimeout(30);
+
+    const ticked = await pmBox(page);
+    assert.strictEqual(ticked.assetShown, false, 'the Asset field is gone');
+    assert.strictEqual(ticked.assetLabelShown, false, 'label and all — not merely disabled');
+    assert.strictEqual(ticked.assetValue, '', 'and cleared, so nothing is posted with the line');
+    assert.strictEqual(ticked.hoursLocked, false, 'the hours are the person\'s to type');
+    assert.strictEqual(ticked.typedHelpShown, true,
+      'and the sentence under them says so rather than explaining a clock');
+
+    await page.fill('#tl_hours', '1.5');
+    assert.strictEqual(await page.inputValue('#tl_hours'), '1.5');
+
+    /* AND IT ASKED THE SERVER NOTHING. The lists came down with the week; the
+       form makes no round trip while somebody is filling it in. */
+    assert.deepStrictEqual(await page.evaluate(() => window.__calls), []);
+    assert.deepStrictEqual(errors, []);
+    await page.close();
+  });
+
+  await t.test('un-ticking puts the ordinary form back', async () => {
+    const { page, errors } = await open(browser, {
+      permissions: ['timesheet.project_meeting'], leads: [], onNotLeading: ['p1'] });
+    await pick(page, 'p1');
+    await page.check('#pm_box');
+    await page.waitForTimeout(30);
+    await page.uncheck('#pm_box');
+    await page.waitForTimeout(30);
+
+    const back = await pmBox(page);
+    assert.strictEqual(back.assetShown, true, 'the Asset field is back');
+    assert.strictEqual(back.assetLabelShown, true);
+    assert.strictEqual(back.typedHelpShown, false, 'and the standing sentence with it');
+    const options = await page.evaluate(() =>
+      [...document.getElementById('tl_asset').options].map((o) => o.textContent));
+    assert.ok(options.some((o) => /An Ordinary Asset/.test(o)),
+      'with the project\'s assets in it, reloaded');
+    assert.deepStrictEqual(errors, []);
+    await page.close();
+  });
+
+  await t.test('the switch off, and the permission missing, each hide it', async () => {
+    for (const [why, opts] of [
+      ['the studio switch is off', { permissions: ['timesheet.project_meeting'],
+        projectMeeting: false, leads: [], onNotLeading: ['p1'] }],
+      ['the permission is not held', { permissions: [], leads: [], onNotLeading: ['p1'] }],
+      ['they are on no such project', { permissions: ['timesheet.project_meeting'],
+        leads: [], onNotLeading: [] }],
+    ]) {
+      const { page, errors } = await open(browser, opts);
+      await pick(page, 'p1');
+      assert.strictEqual((await pmBox(page)).wrapShown, false, `hidden when ${why}`);
+      assert.deepStrictEqual(errors, []);
+      await page.close();
+    }
+  });
+
+  await t.test('switching to Non-project takes it away and unticks it', async () => {
+    const { page, errors } = await open(browser, {
+      permissions: ['timesheet.project_meeting'], leads: [], onNotLeading: ['p1'] });
+    await pick(page, 'p1');
+    await page.check('#pm_box');
+    await page.waitForTimeout(30);
+
+    await page.selectOption('#tl_kind', 'non');
+    await page.evaluate(() => syncTimesheetLine());
+    await page.waitForTimeout(30);
+    const gone = await pmBox(page);
+    assert.strictEqual(gone.wrapShown, false, 'the box is gone with the project fields');
+    assert.strictEqual(gone.ticked, false,
+      'and un-ticked, so the tick is not posted with a Leave or Idle line');
+    assert.deepStrictEqual(errors, []);
     await page.close();
   });
 });

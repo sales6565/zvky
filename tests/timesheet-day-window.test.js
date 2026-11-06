@@ -272,6 +272,34 @@ test('the entry window, end to end', { skip: cfg ? false : SKIP_REASON }, async 
   };
   const today = () => require('../src/timesheet-gate').istDate();
   const shift = (n) => require('../src/timesheet-gate').shiftDays(today(), n);
+  /* THE NEAREST WORKING DAY AT OR BEFORE today+n.
+   *
+   * WHY THIS EXISTS. The studio logs Monday to Friday, and a route refuses a
+   * weekend with a 400 BEFORE it ever reaches the window check — so a subtest
+   * that wants to prove a CLOSED DAY answers 422 has to pick a day the studio
+   * actually logs on. shift(-2) is a working day four days a week and a
+   * Saturday or Sunday on the other three, which made these cases pass or fail
+   * by the day of the week the suite happened to run on. It ran on a Friday and
+   * shift(-2) was a Wednesday for months; it ran on a Monday and shift(-2) was
+   * a Saturday, and the window never got a word in.
+   *
+   * TWO DIRECTIONS, because a day chosen for being in the PAST must stay in the
+   * past and one chosen for being in the FUTURE must stay in the future —
+   * walking the wrong way turns "tomorrow is closed" into "yesterday is
+   * closed", which is a different claim that happens to pass. */
+  const workingShift = (n, step = -1) => {
+    const gate = require('../src/timesheet-gate');
+    /* The days base() sets as this suite's policy, which is what the routes
+       will be enforcing. Taken from the same literal rather than from the
+       settings module, whose in-process cache belongs to the server and not to
+       this one. */
+    const loggable = new Set([1, 2, 3, 4, 5]);
+    for (let away = 0; away < 7; away += 1) {
+      const date = gate.shiftDays(today(), n + (step * away));
+      if (loggable.has(new Date(`${date}T00:00:00Z`).getUTCDay())) return date;
+    }
+    throw new Error('no working day found within a week — the studio logs on no day at all');
+  };
   const grant = async (role, keys) => {
     const held = (await as('root', `/permissions/roles/${role}`)).body.role.permissions
       .filter((p) => p.enabled).map((p) => p.key);
@@ -330,7 +358,7 @@ test('the entry window, end to end', { skip: cfg ? false : SKIP_REASON }, async 
   await t.test('all four routes refuse a closed day, with the code', async () => {
     /* THE WHOLE POINT OF PART B. Before this prompt the first two refused and
        the last two did not look at the date at all. */
-    const twoBack = shift(-2);
+    const twoBack = workingShift(-2);
     const made = await line('ana', twoBack);
     assert.strictEqual(made.status, 201, 'filed while the window is open');
     const entryId = made.body.entry.id;
@@ -361,7 +389,12 @@ test('the entry window, end to end', { skip: cfg ? false : SKIP_REASON }, async 
       assert.strictEqual((await dayOf('ana', twoBack)).status, 'draft', 'not submitted');
 
       /* THE FUTURE IS CLOSED THE SAME WAY. */
-      const ahead = await line('ana', shift(1));
+      /* FORWARDS from tomorrow, for the reason workingShift() gives: on a
+         Friday, shift(1) is a Saturday and the route refuses it as a day the
+         studio does not log on — a 400 — long before the window is consulted.
+         The claim here is about the WINDOW, so the day has to be one the studio
+         would otherwise accept. */
+      const ahead = await line('ana', workingShift(1, 1));
       assert.strictEqual(ahead.status, 422, JSON.stringify(ahead.body));
       assert.strictEqual(ahead.body.code, 'TIMESHEET_DAY_LOCKED');
 

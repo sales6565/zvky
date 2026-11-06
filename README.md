@@ -281,6 +281,7 @@ somebody grants you. `timesheet.options` is **Super Admin only**, via
 | `timesheet.options` | **Super Admin** | Decide what the form offers everybody, and whether yesterday's sheet gates today's work |
 | `timesheet.sub_options` | **Super Admin** | Curate the second dropdown under a category — the Idle remarks, training types, on-site clients — and its heading |
 | `timesheet.tl_action` | **roles that lead a team**, plus Super Admin | Log your own TL Action time on a project you lead: a project meeting, or a review. Hours are typed |
+| `timesheet.project_meeting` | **every role that can fill a timesheet**, which is all of them | Log time spent in a meeting about a project you are on but do **not** lead. No asset, hours typed. The lead's half of the same meeting is `timesheet.tl_action` above |
 
 A separate key rather than widening an existing one, because nothing about
 managing the options should narrow anybody's ability to log their own time — and
@@ -322,6 +323,42 @@ they lead the project they chose — which includes Acting Team Leads, through
 for the projects each person actually leads. The projects somebody leads come
 down with the week as a list of ids, so the form needs no round trip while it is
 being filled in; the save asks the server again regardless.
+
+### Project Meeting: everybody else's time in the same meeting
+
+The other half of TL Action, for the people who are **not** the lead. Same slot
+on Add a line — after Project, before Asset — same effect when ticked: the Asset
+field is hidden and cleared, and the hours are typed with the day's ordinary
+limits and the exact-hours cap.
+
+**The split is per project, not per designation.** Somebody who leads project A
+and works as an artist on project B gets **TL Action** on A and **Project
+Meeting** on B, from one form on one day, and never both on either.
+`permissions.isProjectLead()` decides which — the same function the review gate
+is built on, so Acting Team Leads count as leads here too. The week payload
+carries two lists, `tlActionProjects` and `projectMeetingProjects`, computed as
+complements over one reach, and the save asks the server again whatever the page
+sends.
+
+**Three things have to be true**, as for TL Action: Settings → Time Sheet has
+**Timesheet Project Meeting** on (on by default, blocks nobody), the person holds
+`timesheet.project_meeting`, and they are on the chosen project and do **not**
+lead it. A lead who sends one is refused with a 422 that names TL Action as the
+field that is theirs — not a 403, because they are not forbidden from logging the
+time, they have a better place to put it.
+
+**It is not time on an asset.** A meeting line reaches no figure about one, by
+the same exclusion and for the same reason as TL Action: keyed on the
+`project_meeting` flag rather than on the line having no asset, because "not
+work on an asset" is a property of the line and not of whether a form behaved.
+It counts towards the person's own day and towards the exact-hours rule, which
+is the point of filing it.
+
+**A line is one or the other, never both.** `tl_action` already holds a value
+spelled `project_meeting` — the lead's — so the two are separate columns and a
+request carrying both is refused in a sentence that says why. An edit may fix a
+meeting line's hours or its note; it cannot change what kind of line it is, in
+either direction.
 
 Switching the setting off hides the box and refuses new TL Action lines. Lines
 already filed stay exactly where they are.

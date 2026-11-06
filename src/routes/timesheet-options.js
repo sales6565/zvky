@@ -119,6 +119,12 @@ router.put('/', async (req, res) => {
     requiredHoursPerDay: settings.maxDayHours,
     exactHoursRule: settings.hoursRuleEnabled,
     exactHoursRuleFrom: settings.hoursRuleFrom,
+    /* A SHORT FIELD OF ITS OWN, which is what the note above says to do with a
+       new switch rather than trusting it to survive inside the sentence. The
+       sentence already reaches the 200-character clip on the default settings,
+       so a switch recorded only there is a switch that can vanish from the log
+       the moment anything else lengthens. */
+    projectMeeting: settings.projectMeeting,
   });
   req.activity({
     module: 'settings',
