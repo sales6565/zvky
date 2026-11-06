@@ -52,6 +52,10 @@
 const { v4: uuid } = require('uuid');
 
 const dayStatus = require('./day-status');
+/* The timesheet half of an approved vacation (Prompt 67 Part C): the Leave
+   lines it writes as each day arrives, and the rule that a cancellation takes
+   back today and the future and never the past. */
+const vacationTimesheet = require('./vacation-timesheet');
 const leaveSettings = require('./leave-settings');
 const timesheetGate = require('./timesheet-gate');
 const holidays = require('./holidays');
@@ -651,6 +655,7 @@ async function edit(db, { requestId, input, actor, today = null, forSelf = true 
 
 async function decide(db, { requestId, approve, actor, note = null, today = null }) {
   const day = today || timesheetGate.istDate();
+  let filled = { created: [], skipped: [] };
   const request = await byId(db, requestId, { today: day });
   if (!request) return { ok: false, status: 404, code: 'not_found' };
   if (request.status !== STATUS.submitted) {
@@ -678,8 +683,22 @@ async function decide(db, { requestId, approve, actor, note = null, today = null
        — otherwise an approver's timing would silently erase the hours the
        person worked while waiting for it. */
     days = await materialise(db, request, { setBy: (actor && actor.id) || null, now: Date.now() });
+    /* AND THE TIMESHEET IS FILLED IN AS FAR AS TODAY (Prompt 67 Part C).
+       Only the days that have already arrived: every later day waits for the
+       sweep and its own morning, so a vacation cancelled on the third day has
+       no stale future rows to find. */
+    filled = await vacationTimesheet
+      .fill(db, await byId(db, requestId, { today: day }), { now: Date.now() })
+      .catch(() => ({ created: [], skipped: [] }));
   }
-  return { ok: true, request: await byId(db, requestId, { today: day }), days, approved: Boolean(approve) };
+  /* A REJECTION AFTER AN APPROVAL takes the lines back the same way a
+     cancellation does — today and the days after it, never the past. */
+  if (!approve) {
+    filled = { created: [], skipped: [] };
+    await vacationTimesheet.clear(db, request).catch(() => ({ removed: [] }));
+  }
+  return { ok: true, request: await byId(db, requestId, { today: day }), days, filled,
+    approved: Boolean(approve) };
 }
 
 /* CANCEL, AND END EARLY, which are the same act with two different cut dates.
@@ -723,6 +742,18 @@ async function cancel(db, { requestId, actor, today = null, fromDate = null, may
   }
   await dayStatus.recount(db, { userId: request.userId }).catch(() => {});
 
+  /* AND THE TIMESHEET LINES THIS VACATION WROTE, FROM TODAY ONWARDS.
+   *
+   * NEVER THE PAST, whatever the cut date is. A holder of leave.manage_all may
+   * cut a vacation from a past date — the day rows go, because an exclusion is
+   * a claim about availability that somebody with that key may revise — but the
+   * TIMESHEET is a record of what was done, and the person really was away on
+   * Monday. Removing a submitted Monday would be rewriting history, which the
+   * brief forbids in those words. So clear() takes the later of the cut and
+   * today, and src/vacation-timesheet.js is where that is decided. */
+  const unfilled = await vacationTimesheet.clear(db, request, { from: cut })
+    .catch(() => ({ removed: [], reopened: [] }));
+
   /* WHICH STATUS IT LANDS IN depends on whether anything survived, not on which
      button was pressed — so a "cancel" that happens to leave two days behind is
      honestly recorded as ended early rather than as never having happened. */
@@ -736,6 +767,7 @@ async function cancel(db, { requestId, actor, today = null, fromDate = null, may
     ok: true,
     request: await byId(db, requestId, { today: day }),
     cleared: clearing,
+    unfilled,
     kept: left,
     status,
   };

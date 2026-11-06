@@ -1032,12 +1032,43 @@ test('the exact-hours rule, end to end', { skip: cfg ? false : SKIP_REASON }, as
     /* THE SURVEY, PINNED. Idle, On Site and leave are marks on user_day_status;
        none of them writes a timesheet line. So there is no path that can push a
        day over without going through the cap — and if one is ever added, this
-       fails and whoever adds it has to decide what the cap means to it. */
+       fails and whoever adds it has to decide what the cap means to it.
+       
+       ONE HAS BEEN ADDED, AND HERE IS THE DECISION (Prompt 67 Part C).
+       src/vacation-timesheet.js writes a Leave line for each working day of an
+       approved vacation. THE CAP CANNOT BE BREACHED BY IT, for two reasons that
+       both have to hold:
+       
+         1. IT ONLY EVER WRITES TO A FULL-DAY LEAVE DAY. A full day of leave
+            requires NO hours — timesheetRequiredOn() says so, which is what
+            makes the rule silent on a day somebody is away — so there is no
+            requirement for the line to exceed. A PART day, where the person
+            worked the other half and the rule does apply, is deliberately not
+            filled at all: see isFullDay() in that module.
+         2. IT WRITES NOTHING TO A DAY THAT ALREADY HAS A LINE ON IT. So it can
+            never be the second line that tips a day over; it is the only line
+            or it is nothing.
+       
+       It is also the one writer that does not need the lock the route takes,
+       because of (2): there is no "already filed" total for it to race with.
+       Asserted as an allowlist of one rather than removing the check — the next
+       writer must still come here and make its own argument. */
     const files = ['src', 'src/routes'].flatMap((dir) => fs.readdirSync(path.join(ROOT, dir))
       .filter((f) => f.endsWith('.js')).map((f) => `${dir}/${f}`));
-    const writers = files.filter((f) => f !== 'src/routes/timesheets.js' && f !== 'src/migrate.js'
+    const DECIDED = new Set(['src/routes/timesheets.js', 'src/migrate.js',
+      'src/vacation-timesheet.js']);
+    const writers = files.filter((f) => !DECIDED.has(f)
       && /INSERT INTO timesheet_entries/.test(fs.readFileSync(path.join(ROOT, f), 'utf8')));
     assert.deepStrictEqual(writers, [], 'something else writes timesheet lines');
+
+    /* AND THE TWO CLAUSES THAT MAKE THE ARGUMENT ABOVE TRUE, read off that
+       module — because the argument is only as good as the code still doing
+       both things. */
+    const vac = fs.readFileSync(path.join(ROOT, 'src/vacation-timesheet.js'), 'utf8');
+    assert.match(vac, /if \(theirs\.length\) \{ skipped\.push/,
+      'it writes nothing to a day that already has a line');
+    assert.match(vac, /if \(!isFullDay\(day\.portion\)\) \{/,
+      'and nothing to a part day, where the rule does apply');
     const route = ROUTE.slice(ROUTE.indexOf("router.post('/entries'"));
     const inserts = (ROUTE.match(/insertEntry\(/g) || []).length;
     assert.strictEqual(inserts, 2, 'one definition and one call site');

@@ -449,6 +449,28 @@ router.post('/:id/cancel', requirePermission('leave.request'), async (req, res) 
     changes: done.cleared.length ? `cleared ${done.cleared.join(', ')}` : 'nothing left to clear',
   });
 
+  /* AND WHAT WAS TAKEN OFF THE TIMESHEET, which is never the past. Its own
+     entry for the same reason the filling has one: it is rows removed from
+     somebody's record, and the log should say which and leave no doubt about
+     the days it did not touch. */
+  const unfilled = (done.unfilled && done.unfilled.removed) || [];
+  if (unfilled.length) {
+    req.activity({
+      module: 'users',
+      action: 'vacation.timesheet_cleared',
+      entityType: 'user',
+      entityId: request.userId,
+      entityLabel: person.name,
+      summary: `${person.name} — ${unfilled.length} filled-in leave day(s) removed`,
+      changes: {
+        request: request.id,
+        removed: unfilled.join(', '),
+        reopened: ((done.unfilled && done.unfilled.reopened) || []).join(', ') || 'none',
+        note: 'days already past are left exactly as recorded',
+      },
+    });
+  }
+
   return res.json({ ...done, notified: sent });
 });
 
@@ -536,6 +558,38 @@ router.post('/:id/decide', requirePermission('leave.approve'), async (req, res) 
     entityLabel: existing.personName,
     summary: `${existing.personName} — ${done.request.label} — ${approve ? 'approved' : 'rejected'}`,
   });
+
+  /* THE TIMESHEET LINES, AS THEIR OWN ENTRY (Prompt 67 Part C).
+   *
+   * A SEPARATE LINE IN THE LOG rather than a field on the approval, because it
+   * is a separate act with a separate outcome: the approval is a decision, and
+   * this is a set of rows written on somebody's timesheet and a set of days
+   * submitted in their name. Somebody asking "why is my Monday submitted and
+   * who did it" is looking for this, and would not find it inside an entry
+   * titled "approved".
+   *
+   * THE SKIPPED DAYS ARE NAMED WITH THEIR REASON, which the brief asks for and
+   * which is the half that matters: a day left alone because the person had
+   * already filed something is the case where this feature deliberately does
+   * nothing, and silence about it reads as a bug. */
+  const filled = (done.filled && done.filled.created) || [];
+  const skipped = (done.filled && done.filled.skipped) || [];
+  if (filled.length || skipped.length) {
+    req.activity({
+      module: 'users',
+      action: 'vacation.timesheet_filled',
+      entityType: 'user',
+      entityId: existing.userId,
+      entityLabel: existing.personName,
+      summary: `${existing.personName} — ${filled.length} leave day(s) filled in`
+        + `${skipped.length ? `, ${skipped.length} skipped` : ''}`,
+      changes: {
+        request: done.request.id,
+        created: filled.join(', ') || 'none',
+        skipped: skipped.map((x) => `${x.date} (${x.why})`).join('; ') || 'none',
+      },
+    });
+  }
 
   /* APPROVING IS WHEN THE DAYS APPEAR, so it is also when the timers go down if
      the vacation already covers now — the approval may well come after the

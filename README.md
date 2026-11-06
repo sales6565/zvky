@@ -324,6 +324,50 @@ for the projects each person actually leads. The projects somebody leads come
 down with the week as a list of ids, so the form needs no round trip while it is
 being filled in; the save asks the server again regardless.
 
+### An approved vacation fills the timesheet in
+
+For each **full working day** an approved vacation covers, the system writes one
+**Leave** line on that person's timesheet — the studio's full-day hours, noted
+*Vacation (approved)*, no client and no project — and marks the day submitted,
+shown as **Submitted (Auto (Vacation))**. Somebody back from a fortnight away
+does not face fourteen empty days, a previous-day gate that will not let them
+start work, and a fortnight of submissions for time they were not here for.
+
+**Never before the day arrives.** Approving fills in the days that are already
+today or past; each later day waits for its own morning, brought in by the sweep
+that runs beside the leave sweep in the minute tick. That is what makes a stale
+future row impossible rather than merely unlikely: a vacation cancelled on the
+third day has nothing ahead of it to find. The sweep is driven by the database,
+so it is restart-safe and two workers running it do the same idempotent work.
+
+**What it never touches.** A day with any line on it already, or one the person
+submitted themselves, is theirs — nothing is written and the day is listed in
+the audit entry as skipped, with the reason. A weekly off or a holiday is not a
+working day and never was. And a **part day is left alone too**: this feature
+submits the day it fills, a submitted day takes no more lines, and half-filling
+one would lock somebody out of logging the half they actually worked.
+
+**Cancelling takes back today and later, never the past.** A holder of
+`leave.manage_all` may cut a vacation from a past date and the day rows go — an
+exclusion is a claim about availability — but the timesheet is a record of what
+was done, and the person really was away on Monday. Only lines this feature
+wrote are removed (`timesheet_entries.leave_request_id`), and only submissions
+it made are reopened (`timesheet_days.auto_submitted`), so a day somebody filed
+or submitted themselves is untouched even inside the range.
+
+**The lines are read-only to the person.** Editing or deleting one is refused
+with a 409 that says cancelling the vacation is the way to take it back. An
+admin with the existing reopen authority can reopen the day like any other.
+
+**It is not worked time**, and inherits that rather than claiming it: Leave
+produces no rows in the timesheet export at all, nothing about an asset reads
+the timesheet, and a full-day leave day requires no hours — so the exact-hours
+rule and the previous-day gate have nothing to ask of it.
+
+Settings → Leave has **Auto-fill timesheet for approved vacation**, on by
+default. Off stops new lines; lines already written stay, because they record
+days the person really was away.
+
 ### Project Meeting: everybody else's time in the same meeting
 
 The other half of TL Action, for the people who are **not** the lead. Same slot

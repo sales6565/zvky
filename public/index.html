@@ -22015,6 +22015,7 @@ async function renderLeaveSettings(){
     vacationMaxRangeDays: Number(s.vacationMaxRangeDays) || 60,
     vacationEmailEnabled: s.vacationEmailEnabled,
     vacationStopTimers: s.vacationStopTimers,
+    vacationAutoTimesheet: s.vacationAutoTimesheet,
     ...(leaveState.typed || {}),
   };
   el.innerHTML = `
@@ -22111,6 +22112,14 @@ async function renderLeaveSettings(){
                 rather see it running and deal with it by hand may. */''}
           <label class="rh-check" title="A vacation day records no time either way. This decides whether a running timer is put down when one starts."><input type="checkbox" id="lv_vac_stop"${shown.vacationStopTimers?' checked':''}>
             Stop running timers when vacation starts</label>
+          <!-- THE TIMESHEET HALF OF AN APPROVED VACATION. On by default: it
+               saves somebody coming back from a fortnight away to fourteen
+               empty days and a previous-day gate that will not let them start
+               work. Off stops new lines being written; lines already written
+               stay, because they are a record of days the person really was
+               away. -->
+          <label class="rh-check" title="One Leave line per working day, for the studio's full day, as each day arrives. Turning this off stops new lines; lines already filled in stay."><input type="checkbox" id="lv_vac_sheet"${shown.vacationAutoTimesheet?' checked':''}>
+            Auto-fill timesheet for approved vacation</label>
         </div>
         <div style="align-self:end;">
           <label class="rh-check"><input type="checkbox" id="lv_vac_mail"${shown.vacationEmailEnabled?' checked':''}>
@@ -22157,6 +22166,7 @@ async function renderLeaveSettings(){
       vacationMaxRangeDays: num('lv_vac_range', 60),
       vacationEmailEnabled: box('lv_vac_mail'),
       vacationStopTimers: box('lv_vac_stop'),
+      vacationAutoTimesheet: box('lv_vac_sheet'),
     };
   };
 

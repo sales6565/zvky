@@ -325,6 +325,13 @@ const shapeDay = (day, entries, workDate, mark = null, rule = null, window = nul
     } : null,
     status: day ? day.status : 'draft',
     submittedAt: day ? day.submitted_at : null,
+    /* WHO SUBMITTED IT, when it was not the person whose day it is. An
+       approved vacation submits the day for them (Prompt 67 Part C), and a day
+       that says "Submitted" with no explanation is a day somebody will wonder
+       about. The words live in src/vacation-timesheet.js. */
+    autoSubmitted: Boolean(day && Number(day.auto_submitted)),
+    submittedByLabel: day && Number(day.auto_submitted)
+      ? require('../vacation-timesheet').SUBMITTED_BY : null,
     decidedAt: day ? day.decided_at : null,
     decidedBy: day ? day.decider_email : null,
     rejectionReason: day ? day.rejection_reason : null,
@@ -1207,6 +1214,24 @@ router.patch('/entries/:id', requirePermission('timesheet.own'), async (req, res
     return res.status(403).json({ error: 'That line is on somebody else\'s timesheet.' });
   }
 
+  /* A LINE THE SYSTEM WROTE IS NOT THE PERSON'S TO CHANGE (Prompt 67 Part C).
+     
+     An approved vacation fills the timesheet in as Leave and submits the day.
+     Those lines are a record of days somebody was away, written from a decision
+     an approver made — editing or deleting one would let the record of a
+     vacation be quietly unmade from the screen that is meant to show it. The
+     way to undo them is to cancel the vacation, which takes back today and the
+     future and leaves the past alone.
+     
+     409 rather than 403: they are not forbidden from touching their own
+     timesheet, this particular line is simply not theirs to move. An admin with
+     the existing reopen authority can reopen the day like any other. */
+  if (found[0].leave_request_id) {
+    return res.status(409).json({ field: 'leaveRequestId',
+      error: 'That line was filled in from an approved vacation. Cancel or end the vacation '
+        + 'to take it back \u2014 days already past stay as recorded.' });
+  }
+
   const wasOn = sheets.toISO(found[0].entry_date);
   const day = await dayRow(req.user.id, wasOn);
   if (day && sheets.isLocked(day.status)) {
@@ -1434,6 +1459,13 @@ router.delete('/entries/:id', requirePermission('timesheet.own'), async (req, re
   if (!found.length) return res.status(404).json({ error: 'That line does not exist.' });
   if (found[0].user_id !== req.user.id) {
     return res.status(403).json({ error: 'That line is on somebody else\'s timesheet.' });
+  }
+  /* THE SAME RULE ON THE WAY OUT AS ON THE WAY IN: a line an approved vacation
+     wrote is not the person's to delete. See the note on the PATCH route. */
+  if (found[0].leave_request_id) {
+    return res.status(409).json({ field: 'leaveRequestId',
+      error: 'That line was filled in from an approved vacation. Cancel or end the vacation '
+        + 'to take it back \u2014 days already past stay as recorded.' });
   }
   const on = sheets.toISO(found[0].entry_date);
   const day = await dayRow(req.user.id, on);

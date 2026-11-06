@@ -391,7 +391,20 @@ test('a vacation that covers now, end to end', { skip: cfg ? false : SKIP_REASON
            simulated by asking the sweep what it would do AT a time inside the
            vacation — the same `now` the real sweep passes when the day
            arrives — and no state is carried between the two calls. */
-        const tomorrow = require('../src/timesheet-gate').shiftDays(today(), 1);
+        /* THE NEXT WORKING DAY, not simply tomorrow.
+           
+           A vacation is refused outright when every day in its range is a
+           weekly off or a holiday — rightly, since there would be nothing to
+           excuse — so booking "tomorrow" fails on a Friday and on a Saturday,
+           and this case passed or failed by the day of the week the suite ran
+           on. It ran on a Friday. The claim here is about a vacation that has
+           not started yet, so the day only has to be in the future and real. */
+        const gate = require('../src/timesheet-gate');
+        let tomorrow = gate.shiftDays(today(), 1);
+        for (let n = 1; n <= 7; n += 1) {
+          tomorrow = gate.shiftDays(today(), n);
+          if ([1, 2, 3, 4, 5].includes(new Date(`${tomorrow}T00:00:00Z`).getUTCDay())) break;
+        }
         const asset = await newAsset('Tomorrow', people.ana);
         await as('root', '/admin-dashboard/follow-up/day-status/clear', { method: 'POST',
           body: { userId: people.ana, date: today(), reason: 'test' } }).catch(() => {});

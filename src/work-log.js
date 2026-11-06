@@ -1554,6 +1554,18 @@ function scheduleAutoPause(db, log = console.log) {
       .catch((err) => { log(`[leave] sweep failed: ${err.sqlMessage || err.message}`); return []; });
     await tell(onLeave, notifications.KINDS.work_paused);
 
+    /* AND THE TIMESHEET HALF OF THE SAME QUESTION (Prompt 67 Part C): an
+       approved vacation's Leave lines, written for each working day as it
+       arrives rather than in advance.
+       
+       HERE, BESIDE THE SWEEP THAT STOPS THE TIMERS, because the two are about
+       the same people on the same days — one for the clock, one for the sheet.
+       Database-driven and idempotent, so it is restart-safe by construction and
+       two workers running this tick do the same work rather than twice the
+       work. Nothing is held in memory between ticks. */
+    await require('./vacation-timesheet').sweep(db, { log })
+      .catch((err) => { log(`[vacation] timesheet sweep failed: ${err.sqlMessage || err.message}`); return []; });
+
     const paused = await pauseOverdue(db);
     await tell(paused, notifications.KINDS.work_paused);
     if (paused.length) {

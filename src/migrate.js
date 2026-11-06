@@ -4703,6 +4703,67 @@ async function ensureTlReview(db, log) {
   log('Schema: added timesheet_entries.tl_action — Project Meeting or Review on a lead\'s line.');
 }
 
+/* WHICH VACATION WROTE THIS LINE, AND WHICH DAY THE SYSTEM SUBMITTED.
+ *
+ * ===========================================================================
+ * TWO COLUMNS, ONE FEATURE (Prompt 67 Part C): an approved vacation fills the
+ * person's timesheet in as Leave, one line per working day, and submits the
+ * day for them.
+ *
+ * timesheet_entries.leave_request_id IS THE WHOLE OF "THIS LINE IS OURS". Only
+ * src/vacation-timesheet.js ever sets it, and every statement that module makes
+ * is keyed on it — so a line somebody typed can never be read, moved or deleted
+ * by any of it. It also keeps the line linked to the request, which is what
+ * lets a cancellation find exactly its own rows.
+ *
+ * timesheet_days.auto_submitted IS THE SAME CLAIM ABOUT A SUBMISSION. A day the
+ * system submitted can be reopened by the system when the vacation is
+ * cancelled; a day the PERSON submitted must not be, even if it falls inside
+ * the range. Without this column the two are indistinguishable and a
+ * cancellation would silently reopen somebody's own submitted day.
+ *
+ * BOTH NULLABLE, so every row filed before this reads as "not ours" with no
+ * backfill, and both guarded on the column's absence like every ALTER here.
+ */
+async function ensureVacationTimesheetColumns(db, log) {
+  const { rows } = await db.query(
+    `SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'timesheet_entries'
+        AND COLUMN_NAME = 'leave_request_id'`
+  ).catch(() => ({ rows: [] }));
+  if (!rows.length) {
+    try {
+      await db.query(
+        'ALTER TABLE timesheet_entries ADD COLUMN leave_request_id CHAR(36) NULL AFTER project_meeting'
+      );
+      await db.query(
+        'ALTER TABLE timesheet_entries ADD KEY idx_tse_leave_request (leave_request_id)'
+      ).catch(() => { /* the column is what matters */ });
+      log('Schema: added timesheet_entries.leave_request_id \u2014 the vacation that wrote this line.');
+    } catch (err) {
+      if (err.code !== 'ER_NO_SUCH_TABLE') throw err;
+      log(`Schema: timesheet_entries is not there, so leave_request_id was skipped (${err.code}).`);
+    }
+  }
+
+  const { rows: dayCol } = await db.query(
+    `SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'timesheet_days'
+        AND COLUMN_NAME = 'auto_submitted'`
+  ).catch(() => ({ rows: [] }));
+  if (!dayCol.length) {
+    try {
+      await db.query(
+        'ALTER TABLE timesheet_days ADD COLUMN auto_submitted TINYINT(1) NULL AFTER submitted_at'
+      );
+      log('Schema: added timesheet_days.auto_submitted \u2014 the day was submitted by the system.');
+    } catch (err) {
+      if (err.code !== 'ER_NO_SUCH_TABLE') throw err;
+      log(`Schema: timesheet_days is not there, so auto_submitted was skipped (${err.code}).`);
+    }
+  }
+}
+
 /* WAS THIS LINE SOMEBODY'S TIME IN A PROJECT MEETING?
  *
  * ===========================================================================
@@ -5212,6 +5273,11 @@ async function ensureDayStatus(db, log) {
        never existed on a deployed database, so no admin can have expressed a
        preference about it and there is nothing to override. */
     ['vacation_stop_timers', 'TINYINT(1) NOT NULL DEFAULT 1'],
+    /* DEFAULT 1 for the same reason again: an approved vacation filling the
+       timesheet in as Leave is what the owner asked for, the column has never
+       existed on a deployed database, and nobody can have expressed a
+       preference about it. */
+    ['vacation_auto_timesheet', 'TINYINT(1) NOT NULL DEFAULT 1'],
   ]) {
     if (!ls.size || ls.has(col)) continue;
     try {
@@ -5903,6 +5969,9 @@ const STEPS = [
   /* After it, because it adds a column AFTER tl_action and reads as the other
      half of the same feature — a lead's meeting and everybody else's. */
   ['timesheet project meeting', ensureProjectMeetingColumn],
+  /* After it, because leave_request_id is added AFTER project_meeting and the
+     two are the same table. */
+  ['vacation timesheet fill', ensureVacationTimesheetColumns],
   // After the step that adds the column, whose values it converts.
   ['tl action rename', ensureTlActionRenamed],
   // After users, whose key every chat table points at.

@@ -127,6 +127,17 @@ const DEFAULTS = {
   vacationStopTimers: true,
   vacationMaxRangeDays: 60,
   vacationEmailEnabled: true,
+  /* ON, and it is the only one of these that WRITES anything.
+     
+     With it on, an approved vacation fills the person's timesheet in as Leave,
+     one line per working day, as each day arrives — which is the thing the
+     owner asked for and which saves somebody coming back from a fortnight away
+     to fourteen empty days and a gate that will not let them start work.
+     
+     OFF STOPS NEW CREATION AND NOTHING ELSE. Lines already written stay, and
+     stay submitted: they are a record of days the person really was away, and
+     withdrawing them because a switch moved would be rewriting that record. */
+  vacationAutoTimesheet: true,
 };
 
 let cache = { ...DEFAULTS, updatedBy: null, updatedByName: null, updatedAt: null };
@@ -168,6 +179,12 @@ async function load(db) {
       ? DEFAULTS.vacationStopTimers : Boolean(Number(row.vacation_stop_timers)),
     vacationMaxRangeDays: num(row.vacation_max_range_days) === null
       ? DEFAULTS.vacationMaxRangeDays : num(row.vacation_max_range_days),
+    /* The same tolerance every column added after this table shipped gets: a
+       database whose ALTER has not run reads undefined and gets the default,
+       which for this one is ON. */
+    vacationAutoTimesheet: row.vacation_auto_timesheet === undefined
+      || row.vacation_auto_timesheet === null
+      ? DEFAULTS.vacationAutoTimesheet : Boolean(Number(row.vacation_auto_timesheet)),
     vacationEmailEnabled: row.vacation_email_enabled === undefined || row.vacation_email_enabled === null
       ? DEFAULTS.vacationEmailEnabled : Boolean(Number(row.vacation_email_enabled)),
     updatedBy: row.updated_by || null,
@@ -346,6 +363,7 @@ function validate(input = {}, { existing = cache, schedule = workSchedule.curren
   }
   const vacationRequireApproval = bool('vacationRequireApproval');
   const vacationEmailEnabled = bool('vacationEmailEnabled');
+  const vacationAutoTimesheet = bool('vacationAutoTimesheet');
   const vacationStopTimers = bool('vacationStopTimers');
 
   const readCount = (key, label, fallback, floor, ceiling) => {
@@ -427,6 +445,7 @@ function validate(input = {}, { existing = cache, schedule = workSchedule.curren
       enabled, firstHalfEndMinutes, secondHalfStartMinutes,
       vacationEnabled: vacationEnabledNext,
       vacationRequireApproval, vacationMinNoticeDays, vacationMaxRangeDays, vacationEmailEnabled,
+      vacationAutoTimesheet,
       vacationStopTimers,
     },
   };
@@ -457,6 +476,7 @@ const clauses = (s, { schedule = workSchedule.current() } = {}) => {
     `notice ${Number(s.vacationMinNoticeDays) || DEFAULTS.vacationMinNoticeDays} day(s)`,
     `longest range ${Number(s.vacationMaxRangeDays) || DEFAULTS.vacationMaxRangeDays} day(s)`,
     `vacation email ${s.vacationEmailEnabled ? 'on' : 'off'}`,
+    `vacation timesheet fill ${s.vacationAutoTimesheet ? 'on' : 'off'}`,
     `vacation stops timers ${s.vacationStopTimers ? 'on' : 'OFF'}`,
   ];
 };
@@ -501,16 +521,18 @@ async function save(db, input, userId, { schedule = workSchedule.current(), toda
     `INSERT INTO leave_settings
        (id, enabled, first_half_end_minutes, second_half_start_minutes, updated_by,
         vacation_enabled, vacation_require_approval, vacation_min_notice_days,
-        vacation_max_range_days, vacation_email_enabled, vacation_stop_timers)
-     VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        vacation_max_range_days, vacation_email_enabled, vacation_stop_timers,
+        vacation_auto_timesheet)
+     VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      ON DUPLICATE KEY UPDATE
        enabled = $1, first_half_end_minutes = $2, second_half_start_minutes = $3, updated_by = $4,
        vacation_enabled = $5, vacation_require_approval = $6, vacation_min_notice_days = $7,
-       vacation_max_range_days = $8, vacation_email_enabled = $9, vacation_stop_timers = $10`,
+       vacation_max_range_days = $8, vacation_email_enabled = $9, vacation_stop_timers = $10,
+       vacation_auto_timesheet = $11`,
     [v.enabled ? 1 : 0, v.firstHalfEndMinutes, v.secondHalfStartMinutes, userId || null,
       v.vacationEnabled ? 1 : 0, v.vacationRequireApproval ? 1 : 0,
       v.vacationMinNoticeDays, v.vacationMaxRangeDays, v.vacationEmailEnabled ? 1 : 0,
-      v.vacationStopTimers ? 1 : 0]
+      v.vacationStopTimers ? 1 : 0, v.vacationAutoTimesheet ? 1 : 0]
   ).catch(async (err) => {
     /* AN UNMIGRATED TABLE STILL SAVES THE COLUMNS IT HAS. A deployment
        part-way through its migration must not lose the ability to change the

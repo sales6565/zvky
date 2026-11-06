@@ -89,6 +89,20 @@ test('no report outside the Time Sheet reads timesheet hours', () => {
        report of the studio's own: it is the Time Sheet tab's own download,
        behind the Time Sheet tab's own visibility. */
     'src/timesheet-export.js',
+    /* AN APPROVED VACATION'S OWN LINES (Prompt 67 Part C), and the decision it
+       makes is: IT READS NO HOURS AND REPORTS NOTHING.
+     *
+     * It writes a Leave line per working day of an approved vacation and reads
+     * timesheet_entries for exactly two questions, both about rows rather than
+     * figures: does this day already have a line on it (if so, leave it alone),
+     * and which lines did THIS vacation write (so a cancellation can take back
+     * its own, today and later, and never the past). It sums nothing, groups
+     * nothing and shows nobody a number.
+     *
+     * What Idle means to it is therefore the same as what every other category
+     * means to it: a line that exists, which is reason enough not to touch the
+     * day. */
+    'src/vacation-timesheet.js',
     /* THE EXACT-HOURS RULE, and it is allowed here because it makes the
        decision this test exists to force, out loud and in its header: IDLE
        COUNTS. Idle exists so that a day can be filled honestly, so a rule that
