@@ -73,6 +73,18 @@ function groupRows(groups, { withShared = false } = {}) {
       'Total %': pct(g.total),
       'Man Hours': hrs(g.manHours),
       'Time Spent (h)': hrs(g.timeSpentHours),
+      /* THE FIRST PASS HAS ITS OWN PAIR OF OPERANDS, and the sheet carries them
+         so both percentages can be checked in it.
+         
+         Man Hours and Time Spent are the TOTAL percentage's operands: an asset
+         whose first round predates time recording is in the total figure and
+         not in the first-pass one, so the two are over different sets of assets
+         and the first-pass estimate is not the same number. Without these two
+         columns a reader dividing the only hours on the row would get the wrong
+         answer for one of the two percentages and reasonably conclude the sheet
+         was broken. */
+      'First-pass Man Hours': hrs(g.firstPassManHours),
+      'First-pass Time (h)': hrs(g.firstPassHours),
     };
     if (withShared) row['Shared with others'] = g.handedOver || 0;
     /* On every grouped view, not just By User: "which project skips the CD
@@ -98,6 +110,10 @@ function assetRows(assets) {
     'Total hours': hrs(a.totalHours),
     'First-pass %': pct(a.firstPass),
     'Total %': pct(a.total),
+    /* The same mark the Every Asset tab draws as a chip. In the sheet it is a
+       word in a column, so it can be filtered on — which is what somebody
+       hunting for a timer started and stopped by accident would actually do. */
+    'Very little time': a.tinyTime ? 'yes' : '',
     Rounds: a.rounds,
     Contributors: a.contributors,
     /* Per asset this is a state, not a count — so it says what happened rather

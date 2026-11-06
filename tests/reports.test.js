@@ -65,32 +65,99 @@ test('with no rework the two numbers are the same', () => {
   assert.strictEqual(included[0].total, 120);
 });
 
-test('a group average is the mean of its assets, not weighted by size', () => {
-  /* One big asset should not speak for somebody's whole quarter: "they usually
-     run over" is a statement about assets, so each asset is one observation. */
-  assert.strictEqual(reports.mean([100, 50]), 75);
-  assert.strictEqual(reports.mean([100, null, 50]), 75, 'a missing value is skipped, not counted as zero');
-  assert.strictEqual(reports.mean([null, null]), null, 'and a group with nothing real in it has no average');
+test('a group figure is the sums divided, NOT the mean of per-asset percentages', () => {
+  /* THIS TEST USED TO ASSERT THE BUG, and it is worth saying so plainly: it
+     read "a group average is the mean of its assets, not weighted by size",
+     with a defence beside it — "one big asset should not speak for somebody's
+     whole quarter; each asset is one observation". As a statement about typical
+     assets that is a fair thing to want. It is not what the screen says. The
+     screen names two totals, Man Hours and Time Spent, and calls the percentage
+     theirs; the mean of a set of ratios is not the ratio of their sums, and the
+     gap between those two is how Work Efficiency came to report 72431.8% beside
+     totals of 143.6 and 112.3 hours.
+     
+     mean() is gone from the module rather than left unused, so nothing can
+     quietly go back to it. */
+  assert.strictEqual(reports.mean, undefined, 'the mean is gone, not merely unused');
+
+  /* TWO ASSETS, ONE BIG AND ONE SMALL, where the two answers differ and it is
+     obvious which is right: 10 hours estimated against 10 spent, and 1 against
+     4. The mean of 100% and 25% is 62.5%. The truth is 11 hours of estimate
+     against 14 of time, which is 78.6%. */
+  const assets = [
+    { manHours: 10, totalSeconds: 10 * 3600, firstPassSeconds: 10 * 3600 },
+    { manHours: 1, totalSeconds: 4 * 3600, firstPassSeconds: 4 * 3600 },
+  ];
+  const f = reports.figures(assets, 'total');
+  assert.strictEqual(f.manHours, 11);
+  assert.strictEqual(f.hours, 14);
+  assert.strictEqual(f.percent, 78.6);
+  assert.notStrictEqual(f.percent, 62.5, 'which is what the mean would have said');
+
+  /* AND THE OPERANDS ARE THE ANSWER'S OWN. The promise the report now makes is
+     that a reader can divide the two numbers on the row and get the third. */
+  assert.strictEqual(Math.round((f.manHours / f.hours) * 100 * 10) / 10, f.percent);
+
+  // Nothing countable at all has no figure — not nought, not NaN.
+  const empty = reports.figures([], 'total');
+  assert.strictEqual(empty.percent, null);
+  assert.strictEqual(reports.figures([{ manHours: 5, totalSeconds: 0 }], 'total').percent, null,
+    'an asset with no time recorded leaves no percentage behind it');
+});
+
+test('one asset with seconds of recorded time cannot carry the headline', () => {
+  /* THE SHAPE THAT PRODUCED 72431.8%. An asset estimated at about five hours
+     with one second against it scores 1,880,000% on its own. Under the mean,
+     one of those in twenty-six assets moved the headline by seventy-two
+     thousand points. Summed, it adds five hours to one total and three
+     ten-thousandths of an hour to the other, and moves nothing. */
+  const normal = Array.from({ length: 25 }, () => ({
+    manHours: (143.6 - 5.22) / 25,
+    totalSeconds: ((112.3 * 3600) - 1) / 25,
+    firstPassSeconds: ((112.3 * 3600) - 1) / 25,
+  }));
+  const tiny = { manHours: 5.22, totalSeconds: 1, firstPassSeconds: 1 };
+
+  const withTiny = reports.figures([...normal, tiny], 'total');
+  assert.strictEqual(withTiny.manHours, 143.6);
+  assert.strictEqual(withTiny.hours, 112.3);
+  assert.strictEqual(withTiny.percent, 127.9, 'the owner\'s own arithmetic, 143.6 / 112.3');
+  assert.ok(withTiny.percent < 1000, `nothing in the thousands: ${withTiny.percent}`);
+
+  // Its own per-asset percentage is still enormous, and still reported as such.
+  assert.ok(reports.efficiencyOf(5.22, 1) > 1000000,
+    'the asset itself is still absurd — it is simply no longer the headline');
+
+  // And it is marked, so somebody can go and look at it.
+  const { included } = reports.prepare([{ id: 't', code: 'T-1', name: 'T', submitted: true, ...tiny }]);
+  assert.strictEqual(included[0].tinyTime, true);
+  const ordinary = reports.prepare([{ id: 'n', code: 'N-1', name: 'N', submitted: true,
+    manHours: 5, totalSeconds: 4 * 3600, firstPassSeconds: 4 * 3600 }]);
+  assert.strictEqual(ordinary.included[0].tinyTime, false);
 });
 
 test('grouping counts what it could not place rather than inventing a group', () => {
+  /* The hours are what the group figure is made of now, so they are what the
+     fixture carries — a per-asset percentage is an output, not an input. */
   const assets = [
-    { category: 'slot', categoryLabel: 'Slot', firstPass: 100, total: 100, manHours: 4, totalSeconds: 3600 },
-    { category: 'slot', categoryLabel: 'Slot', firstPass: 50, total: 50, manHours: 4, totalSeconds: 3600 },
-    { category: null, firstPass: 90, total: 90, manHours: 4, totalSeconds: 3600 },
+    { category: 'slot', categoryLabel: 'Slot', manHours: 4, totalSeconds: 4 * 3600, firstPassSeconds: 4 * 3600 },
+    { category: 'slot', categoryLabel: 'Slot', manHours: 2, totalSeconds: 4 * 3600, firstPassSeconds: 4 * 3600 },
+    { category: null, manHours: 4, totalSeconds: 3600, firstPassSeconds: 3600 },
   ];
   const { groups, ungrouped } = reports.groupBy(assets, (a) => a.category, (a) => a.categoryLabel);
   assert.strictEqual(groups.length, 1);
   assert.strictEqual(groups[0].assets, 2);
-  assert.strictEqual(groups[0].total, 75);
+  assert.strictEqual(groups[0].manHours, 6);
+  assert.strictEqual(groups[0].timeSpentHours, 8);
+  assert.strictEqual(groups[0].total, 75, '6 hours estimated against 8 spent');
   assert.strictEqual(ungrouped, 1, 'the uncategorised asset is counted, not filed under "null"');
 });
 
 test('groups come back worst first, with unknowns last', () => {
   const assets = [
-    { k: 'good', total: 130, firstPass: 130 },
-    { k: 'bad', total: 60, firstPass: 60 },
-    { k: 'unknown', total: null, firstPass: null },
+    { k: 'good', manHours: 13, totalSeconds: 10 * 3600, firstPassSeconds: 10 * 3600 },
+    { k: 'bad', manHours: 6, totalSeconds: 10 * 3600, firstPassSeconds: 10 * 3600 },
+    { k: 'unknown', manHours: 5, totalSeconds: 0, firstPassSeconds: 0 },
   ];
   const { groups } = reports.groupBy(assets, (a) => a.k, (a) => a.k);
   assert.deepStrictEqual(groups.map((g) => g.key), ['bad', 'good', 'unknown']);
@@ -292,15 +359,36 @@ test('efficiency reports', { skip: cfg ? false : SKIP_REASON }, async (t) => {
 
   await t.test('the breakdowns roll the same assets up every way', async () => {
     const { body } = await as('root', '/reports/efficiency');
-    // Simple 200% and Reworked 83.3% -> mean 141.7 on total.
+    /* THE SUMS, DIVIDED ONCE — not the mean of the two assets' percentages.
+     *
+     * Simple is 10 hours estimated against 5 spent; Reworked is 10 against 12,
+     * of which 8 were the first pass. So:
+     *
+     *   total      (10 + 10) / (5 + 12) = 20 / 17 = 117.6%
+     *   first pass (10 + 10) / (5 +  8) = 20 / 13 = 153.8%
+     *
+     * This assertion used to read 141.7 and 162.5 — the means of 200 and 83.3,
+     * and of 200 and 125. Those are the figures the report gave before Prompt
+     * 67, and they are what made 72431.8% possible: an average of ratios is not
+     * the ratio of the totals printed beside it. */
     assert.strictEqual(body.summary.assets, 2);
-    assert.strictEqual(body.summary.total, 141.7);
-    assert.strictEqual(body.summary.firstPass, 162.5, '(200 + 125) / 2');
+    assert.strictEqual(body.summary.manHours, 20);
+    assert.strictEqual(body.summary.timeSpentHours, 17);
+    assert.strictEqual(body.summary.total, 117.6);
+    assert.strictEqual(body.summary.firstPassHours, 13);
+    assert.strictEqual(body.summary.firstPass, 153.8);
+
+    /* AND A READER CAN CHECK IT. The two numbers on the strip, divided, are the
+       percentage on the strip — which is the promise the whole fix exists to
+       make keepable. */
+    assert.strictEqual(
+      Math.round((body.summary.manHours / body.summary.timeSpentHours) * 100 * 10) / 10,
+      body.summary.total);
 
     assert.strictEqual(body.byUser.groups.length, 1);
     assert.strictEqual(body.byUser.groups[0].label, 'anna');
     assert.strictEqual(body.byUser.groups[0].assets, 2);
-    assert.strictEqual(body.byUser.groups[0].total, 141.7);
+    assert.strictEqual(body.byUser.groups[0].total, 117.6);
     assert.strictEqual(body.byProject.groups[0].label, 'Reported');
     assert.strictEqual(body.byScope.groups[0].label, 'Prop', 'labelled the way the studio names it');
     assert.ok(body.byClient.groups.length >= 1);

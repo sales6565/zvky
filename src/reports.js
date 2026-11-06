@@ -41,8 +41,17 @@
 // The maths lives here rather than in the route so it can be checked against
 // hand-worked examples without a database.
 
-// Hours, from seconds. Time is tracked in seconds; estimates are in hours.
-const HOUR = 3600;
+/* THE ARITHMETIC IS NOT HERE. src/efficiency.js owns every sum, every
+ * division and the one conversion from seconds to hours, and this module
+ * shapes rows for it and groups the answers.
+ *
+ * It was here, and it was wrong: a percentage per asset and then the MEAN of
+ * those percentages. See the note at the top of that module for the 72,431.8%
+ * report that found it. */
+const efficiency = require('./efficiency');
+
+// Re-exported so the callers that had it from here keep working.
+const HOUR = efficiency.HOUR;
 
 /* One asset's efficiency, or null where it cannot honestly be given.
  *
@@ -53,11 +62,14 @@ const HOUR = 3600;
  * left out and why instead of quietly reporting on a subset.
  */
 function efficiencyOf(manHours, seconds) {
-  const hours = Number(manHours);
-  const spent = Number(seconds);
-  if (!Number.isFinite(hours) || hours <= 0) return null;
-  if (!Number.isFinite(spent) || spent <= 0) return null;
-  return (hours / (spent / HOUR)) * 100;
+  /* ONE ASSET IS AN AGGREGATE OF ONE. Written this way rather than as its own
+     division so there is literally one expression in the codebase that turns a
+     pair of hours into a percentage — a second copy here is how the per-asset
+     figure and the group figure would come to disagree about rounding, about
+     zero, or about which way up the division goes. */
+  return efficiency.aggregate([
+    { manHours, hours: efficiency.hoursFromSeconds(seconds) },
+  ]).percent;
 }
 
 /* Why an asset is not in the report. One reason per asset, in the order a
@@ -80,13 +92,17 @@ function exclusionReason(row) {
    * the Excluded list now explains itself. */
   if (row.outsourced) return 'outsourced \u2014 no tracked time';
   if (!row.submitted) return 'never submitted';
-  if (!(Number(row.manHours) > 0)) return 'no Man Hours estimate';
-  if (!(Number(row.totalSeconds) > 0)) return 'no time recorded';
-  return null;
+  /* THE TWO ARITHMETIC GAPS COME FROM src/efficiency.js, which is also what
+     decides them inside the sums — so "excluded, and here is why" and "not
+     counted" can never be two different judgements. */
+  const verdict = efficiency.countable(row.manHours,
+    efficiency.hoursFromSeconds(row.totalSeconds));
+  return verdict.ok ? null : verdict.reason;
 }
 
-// Round to one decimal. Percentages to more precision than this are noise.
-const pct = (v) => (v === null ? null : Math.round(v * 10) / 10);
+// Round to one decimal, from src/efficiency.js so the whole report rounds once
+// and the same way.
+const pct = efficiency.display;
 
 /* Turn the raw per-asset rows into the shape every breakdown is built from.
  *
@@ -112,20 +128,37 @@ function prepare(rows) {
       skippedCd: Boolean(Number(row.skippedCd)),
       firstPass: pct(efficiencyOf(row.manHours, row.firstPassSeconds)),
       total: pct(efficiencyOf(row.manHours, row.totalSeconds)),
+      /* ALMOST NO TIME RECORDED, AND STILL COUNTED. Under the mean this was the
+         report — an asset with seconds against a real estimate scored in the
+         millions and carried the headline with it. Summing first makes it
+         harmless to the figures and leaves it worth finding, because a timer
+         started and stopped by accident is bad data and only the owner can say
+         which. So it stays in the sums and wears a chip in Every Asset. */
+      tinyTime: efficiency.tinyTime(efficiency.hoursFromSeconds(row.totalSeconds)),
     });
   }
   return { included, excluded };
 }
 
-/* The mean of the values that exist, ignoring the ones that do not.
+/* ONE SET OF ASSETS, TWO SUMS, ONE PERCENTAGE — the figures any row shows.
  *
- * A straight average of assets, not weighted by size. Weighting by hours would
- * let one big asset speak for a person's whole quarter; this way each asset is
- * one observation, which is what "they usually run over" means. */
-function mean(values) {
-  const real = values.filter((v) => v !== null && Number.isFinite(v));
-  if (!real.length) return null;
-  return pct(real.reduce((a, b) => a + b, 0) / real.length);
+ * THIS REPLACED A MEAN OF PER-ASSET PERCENTAGES, which is the bug that produced
+ * a 72,431.8% headline beside totals of 143.6 and 112.3 hours. The mean had a
+ * defence written beside it — "one big asset should not speak for somebody's
+ * whole quarter; each asset is one observation" — and as a statement about
+ * typical assets it is a fair thing to want. It is not what the screen says.
+ * The screen names the two totals and calls the percentage theirs, so it has to
+ * be theirs, and the mean of a set of ratios is not the ratio of their sums.
+ *
+ * `which` picks the pair of hours: total time, or first-pass time. First pass
+ * counts ONLY the assets that have a first-pass time, on both sides — an asset
+ * whose first round predates time recording has no first-pass figure to be in.
+ */
+function figures(assets, which = 'total') {
+  const hoursOf = (a) => efficiency.hoursFromSeconds(
+    which === 'firstPass' ? a.firstPassSeconds : a.totalSeconds);
+  return efficiency.displayed(efficiency.aggregate(
+    assets.map((a) => ({ manHours: a.manHours, hours: hoursOf(a) }))));
 }
 
 /* Group the prepared assets and average each group.
@@ -143,14 +176,27 @@ function groupBy(assets, keyOf, labelOf) {
     buckets.get(key).assets.push(asset);
   }
 
-  const groups = [...buckets.values()].map((b) => ({
+  const groups = [...buckets.values()].map((b) => {
+    /* THE ROW'S OWN TWO SUMS, and the percentage is theirs. manHours and
+       timeSpentHours are no longer computed separately from the percentage:
+       they ARE its operands, which is what lets a reader divide the two numbers
+       in front of them and get the third. */
+    const totals = figures(b.assets, 'total');
+    const first = figures(b.assets, 'firstPass');
+    return {
     key: b.key,
     label: b.label,
     assets: b.assets.length,
-    firstPass: mean(b.assets.map((a) => a.firstPass)),
-    total: mean(b.assets.map((a) => a.total)),
-    manHours: Math.round(b.assets.reduce((s, a) => s + Number(a.manHours || 0), 0) * 10) / 10,
-    timeSpentHours: Math.round((b.assets.reduce((s, a) => s + Number(a.totalSeconds || 0), 0) / HOUR) * 10) / 10,
+    firstPass: first.percent,
+    total: totals.percent,
+    /* The first-pass pair travels too, so the tooltip on that cell shows the
+       numbers that produced IT rather than the total's. */
+    firstPassManHours: first.manHours,
+    firstPassHours: first.hours,
+    firstPassAssets: first.counted,
+    manHours: totals.manHours,
+    timeSpentHours: totals.hours,
+    countedAssets: totals.counted,
     /* How many of these assets passed through more than one pair of hands.
        A By User row covers work the named person may not have done all of, and
        a reader deserves to know that rather than infer it. */
@@ -160,7 +206,8 @@ function groupBy(assets, keyOf, labelOf) {
        next column along and a reader can do that division themselves — while a
        percentage of three assets would read as a trend. */
     skippedCd: b.assets.filter((a) => a.skippedCd).length,
-  }));
+    };
+  });
 
   // Worst first: the point of the report is to find where estimates are wrong,
   // and nulls last because "unknown" is not a finding.
@@ -199,20 +246,87 @@ function trend(assets, grain = 'week') {
   return groups.sort((a, b) => String(a.key).localeCompare(String(b.key)));
 }
 
+/* ONE ROW PER (ASSET, PERSON), for the By User breakdown.
+ *
+ * ===========================================================================
+ * WHAT WAS WRONG. By User grouped each asset by its CURRENT assignee and gave
+ * that person the whole of it — every contributor's recorded time, and the
+ * whole estimate. The owner's one-person filter therefore reported 112.3 hours
+ * of Time Spent with 14 of its 26 assets marked Shared: much of that time was
+ * other people's, sitting under one name because that name holds the asset now.
+ *
+ * WHAT IT DOES INSTEAD. Each person gets the fraction of the asset their own
+ * recorded time accounts for, and THE SAME FRACTION GOES ON BOTH SIDES — so the
+ * per-user rows of a shared asset add back up to the asset exactly, on man
+ * hours and on time alike. The share is measured, not assumed: it is the clock,
+ * which is the only split in this data that is not somebody's guess.
+ *
+ * Time is not multiplied by the share but taken directly, because share x total
+ * IS that person's seconds — written out that way so the two can never drift
+ * apart through rounding.
+ *
+ * WITH NO CONTRIBUTION DATA this falls back to what it always did: the whole
+ * asset against its current assignee. A caller that cannot supply the
+ * breakdown (an older route, a test) therefore still gets a By User tab, and an
+ * asset whose time predates per-user recording is not silently dropped. */
+function perUser(assets, contributions) {
+  if (!contributions || !contributions.length) {
+    return assets.map((a) => ({ ...a, userShare: 1 }));
+  }
+  const byAsset = new Map();
+  for (const c of contributions) {
+    if (!byAsset.has(c.assetId)) byAsset.set(c.assetId, []);
+    byAsset.get(c.assetId).push(c);
+  }
+  const out = [];
+  for (const asset of assets) {
+    const mine = byAsset.get(asset.id) || [];
+    if (!mine.length) {
+      // No per-user rows for it: keep the old attribution rather than lose it.
+      out.push({ ...asset, userShare: 1 });
+      continue;
+    }
+    for (const c of mine) {
+      const share = efficiency.shareOf(c.seconds, asset.totalSeconds);
+      if (share <= 0) continue;
+      out.push({
+        ...asset,
+        assigneeId: c.userId,
+        assigneeName: c.userName || asset.assigneeName,
+        userShare: share,
+        manHours: Number(asset.manHours) * share,
+        totalSeconds: Number(c.seconds),
+        firstPassSeconds: Number(c.firstPassSeconds || 0),
+      });
+    }
+  }
+  return out;
+}
+
 /* Everything the Reports tab draws, from one set of rows. */
-function build(rows, { grain = 'week' } = {}) {
+function build(rows, { grain = 'week', contributions = null } = {}) {
   const { included, excluded } = prepare(rows);
 
   const by = (keyOf, labelOf) => groupBy(included, keyOf, labelOf);
+
+  /* THE KPI STRIP'S OWN FIGURES, from the same function every row uses. The
+     headline is not a different calculation from the rows beneath it — it is
+     the same one over every included asset. */
+  const totals = figures(included, 'total');
+  const first = figures(included, 'firstPass');
 
   return {
     summary: {
       assets: included.length,
       excluded: excluded.length,
-      firstPass: mean(included.map((a) => a.firstPass)),
-      total: mean(included.map((a) => a.total)),
-      manHours: Math.round(included.reduce((s, a) => s + Number(a.manHours || 0), 0) * 10) / 10,
-      timeSpentHours: Math.round((included.reduce((s, a) => s + Number(a.totalSeconds || 0), 0) / HOUR) * 10) / 10,
+      firstPass: first.percent,
+      total: totals.percent,
+      firstPassManHours: first.manHours,
+      firstPassHours: first.hours,
+      firstPassAssets: first.counted,
+      manHours: totals.manHours,
+      timeSpentHours: totals.hours,
+      countedAssets: totals.counted,
       /* The headline answer to "how often does a lead skip the CD gate".
        *
        * Scoped to the assets in this report, like every other number here —
@@ -223,37 +337,64 @@ function build(rows, { grain = 'week' } = {}) {
        * read as a total. */
       skippedCd: included.filter((a) => a.skippedCd).length,
     },
-    byUser: by((a) => a.assigneeId, (a) => a.assigneeName || 'Unassigned'),
+    /* THE ONE BREAKDOWN BUILT FROM PER-PERSON ROWS rather than from whole
+       assets — see perUser(). Every other grouping is about the WORK, so the
+       asset belongs whole to its category, its project and its client. */
+    byUser: groupBy(perUser(included, contributions),
+      (a) => a.assigneeId, (a) => a.assigneeName || 'Unassigned'),
     byCategory: by((a) => a.category, (a) => a.categoryLabel || a.category),
     byScope: by((a) => a.type, (a) => a.typeLabel || a.type),
     byProject: by((a) => a.projectId, (a) => a.projectName),
     byClient: by((a) => a.clientId, (a) => a.clientName),
     trend: trend(included, grain),
-    assets: included.map((a) => ({
+    assets: included.map((a) => {
+      /* THE ROW'S PERCENTAGES ARE WORKED OUT FROM THE HOURS THE ROW SHOWS.
+       *
+       * Every other view in this report promises that the two numbers on the
+       * row, divided, give the third — and a reader checking the Every Asset
+       * tab is doing exactly what a reader checking a group row does. So the
+       * operands are rounded first HERE, and only here, and the percentage is
+       * theirs. Computing it from the raw seconds instead left the last digit
+       * disagreeing with the division a person would actually perform.
+       *
+       * Two decimals on the hours because a single asset's time is often
+       * minutes, and one decimal would round a 20-minute round to 0.3. */
+      const manHours = efficiency.round1(a.manHours);
+      const round2 = (v) => Math.round(v * 100) / 100;
+      const firstPassHours = round2(efficiency.hoursFromSeconds(a.firstPassSeconds));
+      const totalHours = round2(efficiency.hoursFromSeconds(a.totalSeconds));
+      return {
       id: a.id, code: a.code, name: a.name,
       assignee: a.assigneeName, category: a.categoryLabel || a.category,
       scope: a.typeLabel || a.type, project: a.projectName, client: a.clientName,
-      manHours: Number(a.manHours),
-      firstPassHours: Math.round((Number(a.firstPassSeconds) / HOUR) * 100) / 100,
-      totalHours: Math.round((Number(a.totalSeconds) / HOUR) * 100) / 100,
-      firstPass: a.firstPass, total: a.total,
+      manHours,
+      firstPassHours,
+      totalHours,
+      firstPass: pct(efficiency.aggregate([{ manHours, hours: firstPassHours }]).percent),
+      total: pct(efficiency.aggregate([{ manHours, hours: totalHours }]).percent),
       rounds: Number(a.rounds || 1), contributors: Number(a.contributors || 1),
       /* Whether this one skipped the Creative Director. Comes from the event
          rather than the status — both routes to Approved for Client end in the
          same state, so the status cannot tell them apart. */
       skippedCd: Boolean(Number(a.skippedCd)),
+      tinyTime: Boolean(a.tinyTime),
       delivered: Boolean(a.delivered), finishedAt: a.finishedAt,
-    })),
+      };
+    }),
     excluded,
   };
 }
 
 module.exports = {
   HOUR,
+  // From src/efficiency.js, re-exported so a consumer of this module does not
+  // need to know which of the two holds the constant.
+  TINY_HOURS: efficiency.TINY_HOURS,
   efficiencyOf,
   exclusionReason,
   prepare,
-  mean,
+  figures,
+  perUser,
   groupBy,
   periodKey,
   trend,

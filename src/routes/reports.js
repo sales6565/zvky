@@ -177,7 +177,36 @@ async function buildReport(req) {
   }));
 
   const grain = req.query.grain === 'month' ? 'month' : 'week';
-  const report = reports.build(prepared, { grain });
+
+  /* WHO ACTUALLY PUT THE TIME IN, per asset.
+   *
+   * By User used to group each asset by its CURRENT assignee and hand that
+   * person the whole of it — everybody's recorded hours and the whole estimate.
+   * That is how a filter on one person reported 112.3 hours against 26 assets
+   * of which 14 were marked Shared. This is the breakdown that lets
+   * src/reports.js give each person the fraction their own clock accounts for,
+   * and apply that same fraction to the estimate.
+   *
+   * One query for the whole report, keyed on the assets already selected, so
+   * the cost does not grow with the number of people. Assets with no rows here
+   * keep the old attribution rather than disappearing — see perUser(). */
+  const assetIds = prepared.map((r) => r.id);
+  const { rows: contributions } = assetIds.length ? await db.query(
+    `SELECT w.asset_id AS assetId, w.user_id AS userId, u.\`name\` AS userName,
+            SUM(COALESCE(w.seconds, 0)) AS seconds,
+            SUM(CASE WHEN w.round = 1 THEN COALESCE(w.seconds, 0) ELSE 0 END) AS firstPassSeconds
+       FROM work_sessions w
+       LEFT JOIN users u ON u.id = w.user_id
+      WHERE w.asset_id IN ($1) AND w.user_id IS NOT NULL
+      GROUP BY w.asset_id, w.user_id, u.\`name\``,
+    [assetIds]
+  ) : { rows: [] };
+
+  const report = reports.build(prepared, { grain, contributions });
+  /* The "very little time" threshold travels with the report so the page can
+     name it in the chip's tooltip without holding a second copy of the number.
+     One constant, in src/efficiency.js. */
+  report.tinyHours = reports.TINY_HOURS;
 
   /* What the filter dropdowns offer: drawn from the reader's own scope, so
      they cannot pick a project the report would then refuse to show. */

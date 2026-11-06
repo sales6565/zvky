@@ -80,7 +80,12 @@ function fixture() {
     return PAGE.slice(from, to);
   };
   const sections = cut('function reportSections(){', '/* ---------- Idle Report ----------', 'the report sections');
-  const colours = cut('function effColor(v){', 'function effCell(v){', 'the efficiency colour bands');
+  /* The colour bands alone. The upper anchor is the comment that introduces
+     the cell renderer rather than its signature, because the signature
+     changed when the cell started carrying the two numbers that produced
+     its percentage (Prompt 67) and an anchor on a signature is an anchor
+     that moves. */
+  const colours = cut('function effColor(v){', '/* ONE EFFICIENCY CELL', 'the efficiency colour bands');
   const artist = cut('/* ---------- Artist Report ----------', 'async function renderTeam(){', 'the Artist Report');
 
   /* No styles and no chrome: this fixture exists to press one button. The

@@ -774,6 +774,12 @@ button.chat-status:focus-visible{outline:2px solid var(--focus-ring);outline-off
    make, not a fault — the column exists so it can be counted, not accused. */
 .rep-skip{font-size:10.5px;padding:1px 7px;border-radius:20px;background:var(--prog-t16);
   color:var(--prog);font-family:'IBM Plex Mono';letter-spacing:.2px;}
+/* An asset with almost no recorded time. Counted in the figures — summing the
+   hours before dividing makes it harmless to them — and marked so the owner can
+   find data that a timer started and stopped by accident would look exactly
+   like. Muted rather than alarming: it is a thing to look at, not a fault. */
+.rep-tiny{font-size:10.5px;padding:1px 7px;border-radius:20px;border:1px solid var(--surface-3);
+  color:var(--ink-faint);font-family:'IBM Plex Mono';letter-spacing:.2px;white-space:nowrap;}
 
 /* Where the meaning of the recorded hours changes. Not an error state, so not
    red: a plain aside above the numbers it qualifies. */
@@ -10489,9 +10495,22 @@ function effColor(v){
   if(v < 100) return 'var(--prog)';
   return 'var(--approved)';
 }
-function effCell(v){
+/* ONE EFFICIENCY CELL, AND THE TWO NUMBERS THAT MADE IT.
+ *
+ * `man` and `hours` are the row's OWN operands, sent by the server beside the
+ * percentage — not fetched from another column and not recomputed here. The
+ * page does no efficiency arithmetic at all; src/efficiency.js does it once and
+ * this formats the answer.
+ *
+ * THE TOOLTIP IS THE CHECK. A reader hovering any percentage sees exactly the
+ * division that produced it, which is what was missing when the screen showed
+ * 143.6 h, 112.3 h and 72431.8% together and nobody could tell by looking that
+ * the three had nothing to do with each other. */
+function effCell(v, man, hours){
   if(v === null || v === undefined) return `<td class="mono" style="color:var(--ink-faint);">N/A</td>`;
-  return `<td class="mono" style="color:${effColor(v)};font-weight:600;">${v}%</td>`;
+  const tip = (man === null || man === undefined || hours === null || hours === undefined)
+    ? '' : ` title="${man}h / ${hours}h"`;
+  return `<td class="mono"${tip} style="color:${effColor(v)};font-weight:600;">${v}%</td>`;
 }
 
 /* A bar, drawn in the row. 100% is the line — anything reaching it came in on
@@ -10775,8 +10794,8 @@ async function renderReports(sections = reportSections()){
   const summary = `
     <div class="stats">
       <div class="stat"><div class="num">${s.assets}</div><div class="lbl">Assets reported</div></div>
-      <div class="stat"><div class="num" style="color:${effColor(s.firstPass)}">${s.firstPass===null?'N/A':s.firstPass+'%'}</div><div class="lbl">First-pass efficiency</div></div>
-      <div class="stat"><div class="num" style="color:${effColor(s.total)}">${s.total===null?'N/A':s.total+'%'}</div><div class="lbl">Total efficiency</div></div>
+      <div class="stat"${s.firstPass===null?'':` title="${s.firstPassManHours}h / ${s.firstPassHours}h"`}><div class="num" style="color:${effColor(s.firstPass)}">${s.firstPass===null?'N/A':s.firstPass+'%'}</div><div class="lbl">First-pass efficiency</div></div>
+      <div class="stat"${s.total===null?'':` title="${s.manHours}h / ${s.timeSpentHours}h"`}><div class="num" style="color:${effColor(s.total)}">${s.total===null?'N/A':s.total+'%'}</div><div class="lbl">Total efficiency</div></div>
       <div class="stat"><div class="num">${s.manHours}</div><div class="lbl">Man Hours estimated</div></div>
       <div class="stat"><div class="num">${s.timeSpentHours}</div><div class="lbl">Time Spent (h)</div></div>
       <div class="stat" title="Assets a team lead sent straight to the client, skipping Creative Director review."><div class="num"${s.skippedCd?' style="color:var(--prog);"':''}>${s.skippedCd}</div><div class="lbl">Skipped CD review</div></div>
@@ -10799,8 +10818,11 @@ async function renderReports(sections = reportSections()){
       ${d.assets.map(a=>`<tr>
         <td class="mono">${escapeHTML(a.code)}</td><td style="font-weight:600;">${escapeHTML(a.name)}</td>
         <td>${escapeHTML(a.assignee||'—')}</td><td>${escapeHTML(a.category||'—')}</td><td>${escapeHTML(a.scope||'—')}</td>
-        <td class="mono">${a.manHours}h</td><td class="mono">${a.firstPassHours}h</td><td class="mono">${a.totalHours}h</td>
-        ${effCell(a.firstPass)}${effCell(a.total)}
+        <td class="mono">${a.manHours}h</td><td class="mono">${a.firstPassHours}h</td>
+        <td class="mono">${a.totalHours}h${a.tinyTime
+          ? ` <span class="rep-tiny" title="Less than ${d.tinyHours}h of time was recorded against this asset. It is counted in the figures; it is flagged because a timer started and stopped by accident looks exactly like this.">very little time</span>`
+          : ''}</td>
+        ${effCell(a.firstPass, a.manHours, a.firstPassHours)}${effCell(a.total, a.manHours, a.totalHours)}
         <td class="mono">${a.rounds}${a.contributors>1?` <span class="round-tag">${a.contributors} people</span>`:''}</td>
         <td>${a.skippedCd
           ? '<span class="rep-skip">skipped</span>'
@@ -10820,7 +10842,7 @@ async function renderReports(sections = reportSections()){
       ${rows.map(g=>`<tr>
         <td style="font-weight:600;">${escapeHTML(String(g.label))}</td>
         <td class="mono">${g.assets}</td>
-        ${effCell(g.firstPass)}${effCell(g.total)}${effBar(g.total)}
+        ${effCell(g.firstPass, g.firstPassManHours, g.firstPassHours)}${effCell(g.total, g.manHours, g.timeSpentHours)}${effBar(g.total)}
         <td class="mono">${g.manHours}h</td><td class="mono">${g.timeSpentHours}h</td>
         ${reportState.view==='byUser'?`<td class="mono">${g.handedOver||''}</td>`:''}
         <td class="mono">${g.skippedCd ? `<span class="rep-skip">${g.skippedCd}</span>` : ''}</td>
