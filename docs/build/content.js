@@ -320,8 +320,10 @@ module.exports = [
     + 'archived \u2014 so both can appear to vanish at the same moment. Tick Show archived and it is there. The '
     + 'built-in Unassigned client can never be deleted; it is where projects go before they have a client.'),
   roles('Adding, editing, closing and deleting projects and clients sits with the administration band. Everyone can '
-    + 'see the clients they work under. One extra rule on projects: unless your designation sees the whole studio, '
-    + 'you can only delete projects you created.', ['administration', 'everyone']),
+    + 'see the clients they work under. One extra rule on projects: editing, closing, archiving and restoring one '
+    + 'reach only the projects your designation can already see \u2014 which for most designations means the '
+    + 'projects you are named on or have work in, and for a studio-wide designation means all of them. Being given '
+    + 'the permission does not widen what you can see.', ['administration', 'everyone']),
 
   pagebreak(),
   // ============================================================ 5

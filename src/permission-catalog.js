@@ -65,6 +65,24 @@ const PENDING = 'This action has not been built yet. The permission can be grant
  * src/migrate.js does, by writing the view key explicitly for every role and
  * every role group whose stored rows reach the area.
  */
+/* THE SCOPE LIMIT, SAID ONCE, FOR EVERY KEY THAT HAS IT.
+ *
+ * project.edit, project.delete and project.close all mean "may do this to the
+ * projects this role can see" — never "to every project". The roles screen used
+ * to say nothing about that at all (project.edit had no description whatever),
+ * and the two that did describe themselves described only the action. An owner
+ * reading "Project Edit" reasonably expects it to reach every project, and when
+ * it does not, that is reported as the permission being broken — which is how
+ * the bug behind src/project-authority.js was reported in the first place, from
+ * the other direction.
+ *
+ * APPENDED TO ALL THREE FROM HERE, not written into each, so the three cannot
+ * end up describing the same limit three different ways.
+ * tests/project-authority.test.js asserts every key in project-authority's KEYS
+ * carries it. */
+const PROJECT_SCOPE_NOTE = ' It applies only to the projects this role can already see '
+  + '\u2014 switching it on does not widen that.';
+
 const viewOf = (...writeKeys) => (caps) => writeKeys.some((k) => {
   const entry = BY_KEY.get(k);
   /* A write key this file does not have is a typo in the area model, and
@@ -550,18 +568,36 @@ const GROUPS = [
           + 'those screens already show you, and changing a project needs its own permission.',
       },
       { key: 'project.add',           label: 'Project Add',          impliedBy: has('createProject') },
-      { key: 'project.edit',          label: 'Project Edit',         impliedBy: has('createProject') },
+      {
+        /* NO DESCRIPTION AT ALL until now, which is part of how its reach came
+         * to be misunderstood: the one key an owner reaches for to let somebody
+         * correct a project's details said nothing about what it covers or what
+         * it does not.
+         *
+         * IMPLIED BY createProject, UNCHANGED. The default set is exactly what
+         * it was — the roles that held this hold it still — because changing a
+         * default is a different decision from fixing a rule, and this change
+         * makes no role able to do anything it was not already granted. */
+        key: 'project.edit',
+        label: 'Project Edit',
+        impliedBy: has('createProject'),
+        describe: 'Change a project\u2019s name, its client, and who is attached to it '
+          + '\u2014 team leads, acting team leads, production coordinators and supervision.'
+          + PROJECT_SCOPE_NOTE,
+      },
       {
         key: 'project.delete',
         label: 'Project Delete',
         impliedBy: has('createProject'),
-        describe: 'Archive a project, or delete one outright once it holds nothing.',
+        describe: 'Archive a project, or delete one outright once it holds nothing.'
+          + PROJECT_SCOPE_NOTE,
       },
       {
         key: 'project.close',
         label: 'Close / Reopen Project',
         impliedBy: has('createProject'),
-        describe: 'Close a project so it takes no new assets and its existing ones are read-only, and reopen it.',
+        describe: 'Close a project so it takes no new assets and its existing ones are read-only, and reopen it.'
+          + PROJECT_SCOPE_NOTE,
       },
       {
         /* Setting the dates on a project's own stages — Art from here to here,
@@ -2656,4 +2692,4 @@ function describe() {
   }));
 }
 
-module.exports = { GROUPS, ALL, KEYS, BY_KEY, isPermission, grantableKeys, baselineFor, effectiveFor, describe };
+module.exports = { GROUPS, ALL, KEYS, BY_KEY, PROJECT_SCOPE_NOTE, isPermission, grantableKeys, baselineFor, effectiveFor, describe };

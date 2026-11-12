@@ -7,7 +7,11 @@ const db = require('../db');
 const { authenticate, requirePermission, can } = require('../middleware/auth');
 const lifecycle = require('../lifecycle');
 const { visibleProjects, canAccessProject, holds } = require('../permissions');
-const { assignableRoles, roleDef, supervisionRoles } = require('../roles');
+const permissions = require('../permissions');
+/* WHO MAY CHANGE A PROJECT — the shared rule, also mirrored in the page.
+   See src/project-authority.js; mayChange below is its only caller here. */
+const authority = require('../project-authority');
+const { assignableRoles, supervisionRoles } = require('../roles');
 const activity = require('../activity');
 const serverSettings = require('../server-settings');
 const serverLink = require('../server-link');
@@ -172,7 +176,28 @@ router.get('/', async (req, res) => {
     ).catch(() => ({ rows: [] }));
     mine = new Map(rows.map((r) => [r.project_id, Number(r.n) || 0]));
   }
-  res.json({ projects: projects.map((p) => ({ ...p, my_open_assets: mine.get(p.id) || 0 })) });
+  /* THE SCOPE HALF OF EVERY PROJECT-CHANGING CONTROL, ANSWERED HERE.
+   *
+   * `inReach` is reachesProject()'s own answer, stamped on each row. The page's
+   * copy of the rule in src/project-authority.js reads this field rather than
+   * re-deriving scope from the role's tier, which is what the bug did — so the
+   * page and the five routes cannot disagree about which projects a role
+   * reaches, because only one function ever decides it.
+   *
+   * TRUE FOR EVERYTHING IN THIS LIST, AND THAT IS NOT A SHORTCUT. These rows
+   * came out of visibleProjects(), and reach is "scope-wide, or the owner, or
+   * visible" — so every row here is reachable by construction. It is computed
+   * rather than assumed anyway: this list is not the only payload the page
+   * draws these controls from (the Projects tab has its own, including archived
+   * projects), and a field whose value is asserted in one place and computed in
+   * another is the next drift. */
+  const visible = new Set(ids);
+  const reach = await Promise.all(projects.map((p) => permissions.reachesProject(req.user, p, visible)));
+  res.json({
+    projects: projects.map((p, i) => ({
+      ...p, my_open_assets: mine.get(p.id) || 0, inReach: reach[i],
+    })),
+  });
 });
 
 // POST /api/projects — anyone whose role can create projects. The creator becomes the owner.
@@ -413,13 +438,44 @@ function codeFor(name) {
   return name.split(/\s+/).map((w) => w[0]).join('').toUpperCase();
 }
 
-// Whether this caller may change this particular project. The same reach rule
-// delete uses: a studio-wide role reaches every project, everyone else only the
-// ones they created. The permission says whether they may edit at all; the
-// role's scope says which ones — the two are different questions.
-function mayChange(user, project) {
-  return roleDef(user.role).projectScope === 'all' || project.owner_id === user.id;
+/* WHETHER THIS CALLER MAY CHANGE THIS PARTICULAR PROJECT.
+ *
+ * This WAS the bug. It read:
+ *
+ *     roleDef(user.role).projectScope === 'all' || project.owner_id === user.id
+ *
+ * — a ROLE TIER, standing behind five routes that requirePermission() had
+ * already decided the permission half of. Granting Project Edit to a role whose
+ * scope is narrower than the studio and which cannot create projects (so is
+ * never an owner_id) left every one of these routes answering 403 to a role
+ * Settings said held the key. public/index.html had the same two lines, so the
+ * control was not offered either, which is why it was reported as a missing
+ * Edit option rather than as a refusal.
+ *
+ * The rule now lives in src/project-authority.js, is shared with the page
+ * character for character, and combines the permission with "can this role see
+ * this project" instead of "did this role create it". The long notes are there
+ * and on reachesProject() in src/permissions.js.
+ *
+ * ONE AWAIT, THEN A SYNCHRONOUS DECISION. reach is resolved here and closed
+ * over by accessFor, which is what lets the decision itself be the same
+ * function the browser runs. */
+async function mayChange(user, project, decide) {
+  const reach = await permissions.reachesProject(user, project);
+  return decide(authority.accessFor({ permissions: heldBy(user) }, reach), project);
 }
+
+/* THE EFFECTIVE SET, as authenticate() attached it. A Set, so accessFor's
+   holds() is a lookup rather than a scan. req.user.permissions is the array
+   form of the same set; this takes the user rather than the request so a caller
+   that only has the user — the diagnostic script, a test — works too. */
+const heldBy = (user) => new Set((user && user.permissions) || []);
+
+/* The refusal, per control. The verb is the only thing that differs. */
+const refuse = (res, verdict, verb) => res.status(403).json({
+  error: authority.refusal(verdict, verb),
+  reason: verdict.code,
+});
 
 // PATCH /api/projects/:id — rename a project and change who is attached to it.
 //
@@ -432,9 +488,8 @@ router.patch('/:id', requirePermission('project.edit'), async (req, res) => {
   const { rows } = await db.query('SELECT * FROM projects WHERE id = $1', [req.params.id]);
   const project = rows[0];
   if (!project) return res.status(404).json({ error: 'Project not found' });
-  if (!mayChange(req.user, project)) {
-    return res.status(403).json({ error: 'You can only edit projects you created' });
-  }
+  const mayEdit = await mayChange(req.user, project, authority.canEditProject);
+  if (!mayEdit.ok) return refuse(res, mayEdit, 'edit');
   const shut = lifecycle.projectRefusal(project);
   if (shut) return res.status(409).json({ error: shut, projectClosed: true });
 
@@ -630,9 +685,8 @@ router.delete('/:id', requirePermission('project.delete'), async (req, res) => {
   const { rows } = await db.query('SELECT * FROM projects WHERE id = $1', [req.params.id]);
   const project = rows[0];
   if (!project) return res.status(404).json({ error: 'Project not found' });
-  if (!mayChange(req.user, project)) {
-    return res.status(403).json({ error: 'You can only delete projects you created' });
-  }
+  const mayDelete = await mayChange(req.user, project, authority.canDeleteProject);
+  if (!mayDelete.ok) return refuse(res, mayDelete, 'delete');
   // Soft by default, following the convention the value lists set: something
   // with records under it is deactivated, never deleted, and everything that
   // depends on it keeps working. A project holds assets, their submissions and
@@ -678,9 +732,8 @@ router.post('/:id/restore', requirePermission('project.delete'), async (req, res
   const { rows } = await db.query('SELECT * FROM projects WHERE id = $1', [req.params.id]);
   const project = rows[0];
   if (!project) return res.status(404).json({ error: 'Project not found' });
-  if (!mayChange(req.user, project)) {
-    return res.status(403).json({ error: 'You can only restore projects you created' });
-  }
+  const mayRestore = await mayChange(req.user, project, authority.canDeleteProject);
+  if (!mayRestore.ok) return refuse(res, mayRestore, 'restore');
   // Restoring into an archived client would put it somewhere still hidden.
   const { rows: owner } = await db.query('SELECT * FROM clients WHERE id = $1', [project.client_id]);
   if (owner.length && !owner[0].is_active) {
@@ -700,9 +753,8 @@ router.post('/:id/close', requirePermission('project.close'), async (req, res) =
   const { rows } = await db.query('SELECT * FROM projects WHERE id = $1', [req.params.id]);
   const project = rows[0];
   if (!project) return res.status(404).json({ error: 'Project not found' });
-  if (!mayChange(req.user, project)) {
-    return res.status(403).json({ error: 'You can only close projects you created' });
-  }
+  const mayClose = await mayChange(req.user, project, authority.canCloseProject);
+  if (!mayClose.ok) return refuse(res, mayClose, 'close');
   if (project.closed_at) return res.json({ ok: true, closed: true, alreadyClosed: true });
 
   const unfinished = await lifecycle.unfinishedAssets(db, req.params.id);
@@ -723,9 +775,8 @@ router.post('/:id/reopen', requirePermission('project.close'), async (req, res) 
   const { rows } = await db.query('SELECT * FROM projects WHERE id = $1', [req.params.id]);
   const project = rows[0];
   if (!project) return res.status(404).json({ error: 'Project not found' });
-  if (!mayChange(req.user, project)) {
-    return res.status(403).json({ error: 'You can only reopen projects you created' });
-  }
+  const mayReopen = await mayChange(req.user, project, authority.canCloseProject);
+  if (!mayReopen.ok) return refuse(res, mayReopen, 'reopen');
   await db.query('UPDATE projects SET closed_at = NULL WHERE id = $1', [req.params.id]);
   console.log(`${req.user.email} reopened project "${project.name}".`);
   res.json({ ok: true, closed: false });

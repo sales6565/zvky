@@ -4357,17 +4357,78 @@ const REWORK_STATUSES = ['tl_changes_requested','cd_changes_requested','game_fee
 function currentProject(){
   return (state.projects||[]).find(p=>p.id===state.currentProjectId) || null;
 }
-/* Whether this account may change that project — the exact rule the API
-   applies, asked here so the button is not offered where it would 403.
+/* WHO MAY CHANGE A PROJECT. THE SHARED RULE, AND THIS IS A VERBATIM COPY.
+ *
+ * ===========================================================================
+ * WHAT WAS HERE, AND WHY IT WAS THE BUG.
+ *
+ *     function mayEditCurrentProject(){
+ *       const p = currentProject();
+ *       if(!p || !can('project.edit')) return false;
+ *       return caps().projectScope==='all' || p.owner_id===(state.currentUser||{}).id;
+ *     }
+ *
+ * The second line is the permission. The third is caps() — the role's TIER —
+ * and no checkbox in Settings > Role Permissions can move a tier. So granting
+ * Project Edit to a designation scoped narrower than the studio, which also
+ * cannot create a project and so is never an owner_id, left this returning
+ * false for every project that exists: the pencil never drew. src/routes/
+ * projects.js carried the same two lines, so the API refused it too.
+ *
+ * This is the third time that shape has been found here — the comment above
+ * UI_GATES lists the first two. UI_GATES fixes the half that is "may this role
+ * do this at all"; this is the half that is "to THIS project", which a table of
+ * element ids cannot express.
+ *
+ * ===========================================================================
+ * EVERYTHING BETWEEN THE MIRROR MARKERS IS COPIED FROM src/project-authority.js
+ * CHARACTER FOR CHARACTER, and tests/project-authority.test.js cuts both copies
+ * out and compares them. Change the rule in one place and the suite fails. Do
+ * not reformat it, do not "tidy" it to match the house style of this file: its
+ * only job is to be identical.
+ *
+ * The two facts it needs are supplied by this page's own accessors below —
+ * can() for the permission, and the server's own `inReach` for the scope. */
+/* ===== MIRROR START — copied verbatim into public/index.html ===== */
+const PROJECT_DENIED_NO_PROJECT = 'there is no project to act on';
+const PROJECT_DENIED_NO_KEY = 'the role does not hold ';
+const PROJECT_DENIED_OUT_OF_SCOPE = 'the project is not one this role can see';
+const PROJECT_ALLOWED = 'the role holds the permission and can see this project';
 
-   Two questions, not one: the permission says whether this role may edit a
-   project at all, and projectScope — a tier value, not a switch — says which
-   ones it reaches. A Producer given Project Edit may change the projects they
-   own; the studio-wide roles reach all of them. */
+function projectVerdict(key, access, project) {
+  if (!project) return { ok: false, code: 'no_project', reason: PROJECT_DENIED_NO_PROJECT };
+  if (!access || !access.holds(key)) {
+    return { ok: false, code: 'no_key', reason: PROJECT_DENIED_NO_KEY + key };
+  }
+  if (!access.reaches(project)) {
+    return { ok: false, code: 'out_of_scope', reason: PROJECT_DENIED_OUT_OF_SCOPE };
+  }
+  return { ok: true, code: 'allowed', reason: PROJECT_ALLOWED };
+}
+
+function canEditProject(access, project) { return projectVerdict('project.edit', access, project); }
+function canDeleteProject(access, project) { return projectVerdict('project.delete', access, project); }
+function canCloseProject(access, project) { return projectVerdict('project.close', access, project); }
+/* ===== MIRROR END ===== */
+
+/* THE PAGE'S HALF OF `access`.
+ *
+ * `holds` is can(), which reads the permission list /auth/me returns — the
+ * role's own keys unioned with every role group's, decided by the server.
+ *
+ * `reaches` reads the inReach the SERVER stamped on the project row, computed
+ * by permissions.reachesProject() — the same function the five routes guard
+ * with. It is deliberately not re-derived here: re-deriving scope in the
+ * browser from the role's tier is precisely the bug this replaces.
+ *
+ * A ROW FROM A SERVER THAT PREDATES THE FIELD has inReach undefined, and this
+ * reads that as out of reach rather than in. That is the safe direction: the
+ * control is not offered, the API is the authority either way, and the person
+ * sees the old behaviour rather than a button that 403s. */
+const projectAccess = { holds: (key) => can(key), reaches: (p) => p && p.inReach === true };
+
 function mayEditCurrentProject(){
-  const p = currentProject();
-  if(!p || !can('project.edit')) return false;
-  return caps().projectScope==='all' || p.owner_id===(state.currentUser||{}).id;
+  return canEditProject(projectAccess, currentProject()).ok;
 }
 
 /* Show or hide one gated element. `also` carries the non-permission half of the
@@ -11583,6 +11644,16 @@ async function render(){
      and would otherwise keep the shape they had at sign-in. */
   if(await refreshPermissions()){
     [...TAB_GATE_IDS,'newProjectBtn','chatWrap'].forEach(id=>applyGate(id));
+    /* THE PENCIL, ON THE OPEN PROJECT, WITHOUT A RELOAD.
+       editProjectBtn was missing from this list, so granting Project Edit took
+       effect everywhere except on the screen: the permission was live on the
+       very next request, and the control stayed hidden until the person
+       navigated or re-picked a project. It is applied here, on the same
+       condition every tab button already uses — no second polling loop, no
+       reload. The Projects tab's own row buttons need no line here: render()
+       calls renderProjects() a few lines below, which refetches the rows (and
+       with them the server's inReach) and redraws them. */
+    applyGate('editProjectBtn');
     if(state.openAssetId && document.getElementById('drawer').classList.contains('show')){
       openDrawer(state.openAssetId);
     }
@@ -11900,10 +11971,17 @@ function clientDetailHTML(c){
         <td>${projectBadge(p) || '<span style="font-size:11.5px;color:var(--ink-faint);">active</span>'}</td>
         <td style="text-align:right;white-space:nowrap;">
           ${p.status==='active' ? `<button class="btn btn-ghost btn-sm openProjectBtn" data-id="${p.id}">Open dashboard</button>` : ''}
-          ${can('project.close') && p.isActive ? (p.status==='closed'
+          ${/* THE SAME RULE THE ROUTE APPLIES, which these four buttons did not ask.
+                They were drawn from can('project.close') / can('project.delete')
+                ALONE — no scope test — while POST /:id/close and DELETE /:id
+                both applied one. A role granted either key was therefore shown
+                a button for every project on the screen and refused by all of
+                them. canCloseProject / canDeleteProject are the shared rule,
+                and p.inReach is the server's own scope answer. */''}
+          ${canCloseProject(projectAccess, p).ok && p.isActive ? (p.status==='closed'
             ? `<button class="btn btn-ghost btn-sm projReopenBtn" data-id="${p.id}" data-name="${escapeHTML(p.name)}">Reopen</button>`
             : `<button class="btn btn-ghost btn-sm projCloseBtn" data-id="${p.id}" data-name="${escapeHTML(p.name)}">Close</button>`) : ''}
-          ${can('project.delete') ? (p.isActive
+          ${canDeleteProject(projectAccess, p).ok ? (p.isActive
             ? `<button class="btn btn-ghost btn-sm projArchiveBtn" data-id="${p.id}" data-name="${escapeHTML(p.name)}">Archive</button>`
             : `<button class="btn btn-ghost btn-sm projRestoreBtn" data-id="${p.id}" data-name="${escapeHTML(p.name)}">Restore</button>`) : ''}
           ${/* The same three conditions the client's own permanent delete uses:
@@ -11913,7 +11991,7 @@ function clientDetailHTML(c){
                 project with assets is deliberately absent rather than disabled
                 — it can never be deleted, so a greyed button would be an offer
                 that is never going to come good. */''}
-          ${can('project.delete') && !p.isActive && !p.assetCount
+          ${canDeleteProject(projectAccess, p).ok && !p.isActive && !p.assetCount
             ? `<button class="btn btn-ghost btn-sm projPurgeBtn" data-id="${p.id}" data-name="${escapeHTML(p.name)}"
                  style="color:var(--brand-accent);">Delete permanently</button>` : ''}
         </td></tr>`).join('')}
@@ -25430,6 +25508,28 @@ async function toggleNotifPanel(){
   renderNotifList();
 }
 
+/* RE-DECIDE EVERY GATED CONTROL, IF AND ONLY IF SOMETHING ACTUALLY MOVED.
+ *
+ * refreshPermissions() returns true when the permission list it just read
+ * differs from the one the page was holding (or when one of the feature
+ * switches on that payload moved), and false when nothing changed or when it
+ * was throttled — so this costs nothing on the ticks where there is nothing to
+ * do, and never redraws a screen for an unchanged answer.
+ *
+ * The same three things render()'s own branch does, for the same reason: the
+ * tab strip, the project-level controls, and the open asset drawer. Kept beside
+ * the poll that calls it rather than folded into render(), because render()
+ * reloads the board and this must not. */
+async function applyPermissionChange(){
+  if(!(await refreshPermissions())) return;
+  [...TAB_GATE_IDS,'newProjectBtn','chatWrap'].forEach(id=>applyGate(id));
+  applyGate('editProjectBtn');
+  if(state.view==='projects') renderProjects();
+  if(state.openAssetId && document.getElementById('drawer').classList.contains('show')){
+    openDrawer(state.openAssetId);
+  }
+}
+
 function startNotifications(){
   stopNotifications();
   loadNotifications();
@@ -25437,7 +25537,30 @@ function startNotifications(){
      timer of its own: it is the same question — "is something waiting on me" —
      asked on the same cadence, and one interval is one thing to stop when the
      session ends. */
-  notifState.timer = setInterval(()=>{ pollNotifications(); refreshPendingCount(); }, NOTIF_POLL_MS);
+  /* AND A PERMISSION CHANGE REACHES AN OPEN SCREEN, on this same interval and
+     without one of its own.
+     
+     refreshPermissions() is throttled to one /auth/me read every twenty
+     seconds and was only ever called from render() — which runs on navigation
+     and on actions, not on a clock. So on a page left open, a permission
+     granted in Settings changed nothing at all until the person clicked
+     something: the twenty-second throttle was the only part of "within the
+     normal refresh cycle" that existed. Asking here is what makes the rest of
+     it true.
+     
+     NOT A SECOND POLLING LOOP, which is the point of putting it here rather
+     than in a timer of its own: this interval is already running, already
+     asking the server "is anything waiting on me", and the throttle inside
+     refreshPermissions means the extra request is at most one per twenty
+     seconds whatever this cadence is.
+     
+     applyPermissionChange() rather than render(): a full render refetches the
+     board and would fight with whatever the person is doing. It re-decides the
+     gates — the tabs, the New Project button, the Edit pencil — and redraws
+     the Projects tab only when that is the screen being looked at. */
+  notifState.timer = setInterval(()=>{
+    pollNotifications(); refreshPendingCount(); applyPermissionChange();
+  }, NOTIF_POLL_MS);
 }
 
 document.getElementById('notifBell').addEventListener('click', e=>{ e.stopPropagation(); toggleNotifPanel(); });

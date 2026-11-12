@@ -5839,6 +5839,89 @@ async function ensureReminderTables(db, log) {
   log('Schema: reminder_settings created — manual reminders on, email off, one a day, marker at three.');
 }
 
+/* GRANTING PROJECT EDIT MUST ALSO GRANT THE READ IT NEEDS.
+ *
+ * ===========================================================================
+ * THE HALF THE CATALOGUE CANNOT REACH.
+ *
+ * project.view is impliedBy: () => true — every designation gets it by
+ * DEFAULT, so for an untouched install this step finds nothing to do and that
+ * is the normal case. But a default is only what a role starts with. A Super
+ * Admin can switch project.view off for a role in Settings, and from then on
+ * the role has a stored row saying 0; granting it project.edit afterwards
+ * produces exactly the bug this whole change is about from the other end — the
+ * role may change a project it cannot read the name of.
+ *
+ * The same is true of a ROLE GROUP: a group that grants project.edit to its
+ * member roles grants nothing about reading the list, and a member whose own
+ * stored row says 0 stays unable to.
+ *
+ * So the view key is written explicitly, once, for every role and every group
+ * that holds any of the three project write keys. After this, switching the
+ * read off again is a decision somebody makes on purpose rather than a gap
+ * somebody finds.
+ *
+ * ===========================================================================
+ * IDEMPOTENT, AND NARROW.
+ *
+ * Both statements are UPDATE/INSERT ... ON DUPLICATE KEY on rows that already
+ * exist in the shape this install uses, keyed on the write keys actually
+ * stored. Running it twice changes nothing the second time; running it on an
+ * install where nobody has touched project.view changes nothing at all, which
+ * is asserted rather than assumed (tests/project-authority.test.js runs it
+ * twice and compares every role's effective set).
+ *
+ * IT ONLY EVER TURNS THE READ ON. There is no branch here that takes anything
+ * away: a role that holds project.view keeps it whether or not it holds a write
+ * key, and a role that holds no write key is not touched.
+ *
+ * TOLERANT OF A MISSING GROUP TABLE, because role groups arrived after roles
+ * did and an install part-way through its migrations must not fail here.
+ */
+async function ensureProjectViewForEditors(db, log) {
+  const WRITES = ['project.edit', 'project.delete', 'project.close'];
+
+  /* Roles: the view row exists for every role (topUpRole writes one per
+     catalogue key), so this is an UPDATE of the ones holding a write key. The
+     INSERT covers a role whose rows predate the key, which cannot normally
+     happen but costs one statement to rule out. */
+  const { result } = await db.query(
+    `UPDATE role_permissions v
+        SET v.enabled = 1, v.updated_by_email = 'system'
+      WHERE v.permission_key = 'project.view'
+        AND v.enabled = 0
+        AND EXISTS (SELECT 1 FROM (SELECT * FROM role_permissions) w
+                     WHERE w.role_key = v.role_key
+                       AND w.permission_key IN ($1, $2, $3)
+                       AND w.enabled = 1)`,
+    WRITES
+  );
+  const roles = (result && result.affectedRows) || 0;
+
+  /* Groups: a group granting a write key also grants the read. INSERT IGNORE
+     rather than an UPDATE, because a group's grants are rows that exist only
+     when granted — there is no enabled flag to flip. */
+  let groups = 0;
+  try {
+    const { result: g } = await db.query(
+      `INSERT IGNORE INTO role_group_permissions (group_id, permission_key)
+       SELECT DISTINCT gp.group_id, 'project.view'
+         FROM role_group_permissions gp
+        WHERE gp.permission_key IN ($1, $2, $3)`,
+      WRITES
+    );
+    groups = (g && g.affectedRows) || 0;
+  } catch (err) {
+    if (!/doesn't exist|ER_NO_SUCH_TABLE/i.test(err.message || '')) throw err;
+  }
+
+  if (roles || groups) {
+    log(`Schema: project.view switched on for ${roles} role(s) and ${groups} role group(s) `
+      + 'that hold a project write key \u2014 a role that may change a project must be able to read it.');
+  }
+}
+
+
 const STEPS = [
   ['stale role constraints', dropStaleRoleConstraints],
   ['users.role column width', widenRoleColumn],
@@ -5972,6 +6055,9 @@ const STEPS = [
   /* After it, because leave_request_id is added AFTER project_meeting and the
      two are the same table. */
   ['vacation timesheet fill', ensureVacationTimesheetColumns],
+  /* After the role-permission tables exist and after role groups, whose
+     stored rows it reads. Only ever switches the project read ON. */
+  ['project view for editors', ensureProjectViewForEditors],
   // After the step that adds the column, whose values it converts.
   ['tl action rename', ensureTlActionRenamed],
   // After users, whose key every chat table points at.

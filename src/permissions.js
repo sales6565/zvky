@@ -144,6 +144,77 @@ async function canAccessProject(user, projectId) {
   return projects.some((p) => p.id === projectId);
 }
 
+/* IS THIS PROJECT WITHIN THIS ROLE'S REACH — the scope half of every
+ * project-changing permission, and the fix for a granted permission that did
+ * nothing.
+ *
+ * ===========================================================================
+ * WHAT WAS THERE BEFORE, AND WHY IT MADE THE PERMISSION INERT.
+ *
+ * src/routes/projects.js had this, and the page had a copy of it:
+ *
+ *     roleDef(user.role).projectScope === 'all' || project.owner_id === user.id
+ *
+ * Read it with a real role in mind. An owner grants Project Edit to Producer
+ * because producers should be able to correct a project's details. Producer's
+ * scope is `assigned`, not `all`, so the first half is false. Producer has
+ * createProject: false, so it can never be the owner_id of anything, so the
+ * second half is false too. The permission was switched on, /auth/me returned
+ * it, the Settings screen showed it held — and every route answered 403 and the
+ * pencil never drew. The same was true of every designation an owner would
+ * plausibly grant it to: of the sixty built-in roles, exactly one (admin) holds
+ * project.edit by default without studio-wide scope, and it owns what it
+ * creates, so the gap never showed up for the accounts that built the feature.
+ *
+ * THE RULE THAT REPLACES IT IS THE ONE THE SCREENS ALREADY PROMISE: a role
+ * changes the projects it can SEE. Not the projects it created — being able to
+ * see a project is already the studio's statement that this is your work.
+ *
+ * ===========================================================================
+ * IT WIDENS NOTHING FOR ANYBODY WHO COULD EDIT BEFORE, and that is checkable
+ * rather than hopeful, because the two old branches are still the first two
+ * lines of it:
+ *
+ *   scope 'all'      -> true here, and visibleProjects returns everything, so
+ *                       the answer is the same answer.
+ *   the owner        -> true here. It is also the reason the owner test stays
+ *                       as its own line rather than being left to
+ *                       canAccessProject: every scope's query already includes
+ *                       `p.owner_id = $1`, so an ACTIVE project of one's own is
+ *                       visible anyway — but visibleProjects excludes ARCHIVED
+ *                       projects from every scope, for everybody, and restoring
+ *                       one is exactly the operation performed on an archived
+ *                       project. Without this line, granting an owner the right
+ *                       to restore their own archived project would have been
+ *                       taken away by this change.
+ *
+ * Everything after those two lines is new reach, and only ever more.
+ *
+ * ARCHIVED PROJECTS ARE NOT REACHABLE BY A SCOPED ROLE, which is the deliberate
+ * consequence of answering this with "can you see it". It matches what the
+ * Projects tab does: archived projects are listed only to a caller whose scope
+ * is the whole studio (see archivedProjectsByClient in src/routes/clients.js),
+ * so a scoped role is never shown one to act on in the first place.
+ *
+ * THE PERMISSION IS A SEPARATE QUESTION and is not asked here. This answers
+ * WHICH projects; src/project-authority.js puts that together with WHETHER the
+ * role holds the key, and is the only place the two are combined.
+ */
+async function reachesProject(user, project, visible = null) {
+  if (!user || !project) return false;
+  const def = roleDef(user.role);
+  if (!def) return false;
+  if (def.projectScope === 'all') return true;
+  if (project.owner_id && project.owner_id === user.id) return true;
+  /* `visible` IS AN ANSWER ALREADY PAID FOR, NOT A SECOND RULE. A caller
+     deciding this for a whole list has usually just run visibleProjects() to
+     build it; handing the ids in turns N calls of that query into nought.
+     Asked only after the two short-circuits above, so it answers exactly the
+     question canAccessProject would have asked. */
+  if (visible) return visible.has(project.id);
+  return canAccessProject(user, project.id);
+}
+
 // Is the given user one of this user's direct reports?
 async function isReport(user, userId) {
   if (!userId) return false;
@@ -988,6 +1059,7 @@ module.exports = {
   isAwaitingRework,
   REWORK_STATUSES,
   visibleProjects,
+  reachesProject,
   canAccessProject,
   canViewAsset,
   canEditAsset,

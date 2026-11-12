@@ -4,7 +4,7 @@ const { asyncRouter } = require('../async-router');
 const router = asyncRouter();
 const db = require('../db');
 const { authenticate, requirePermission } = require('../middleware/auth');
-const { visibleProjects } = require('../permissions');
+const { visibleProjects, reachesProject } = require('../permissions');
 const projectMilestones = require('../project-milestones');
 const clients = require('../clients');
 const lifecycle = require('../lifecycle');
@@ -124,6 +124,31 @@ async function clientsFor(user, { includeArchived = false } = {}) {
   const milestonesBy = await projectMilestones.forProjects(db, allProjectIds);
   const milestonesIn = (projectId) => milestonesBy.get(projectId) || [];
 
+  /* WHICH OF THESE PROJECTS THIS ROLE MAY ACT ON — the scope half of Close,
+   * Archive, Restore and Delete permanently, answered by the one function that
+   * decides it and stamped on each row as `inReach`.
+   *
+   * THESE FOUR BUTTONS HAD NO SCOPE TEST AT ALL. The page drew them from
+   * can('project.close') / can('project.delete') alone, while the routes
+   * additionally applied the old ownership check — so a role granted those keys
+   * was shown four buttons and refused by all four. The rows carry no owner_id
+   * (see projectFields below), so the page could not have applied the old rule
+   * here even if somebody had thought to; this field is what makes the page
+   * able to ask the same question the route asks.
+   *
+   * COMPUTED, NOT ASSUMED, and the archived list is why. Live rows came out of
+   * visibleProjects() and are reachable by construction; archived ones are read
+   * by a separate query that visibleProjects deliberately has no part in, so
+   * their reach is a real question with a real answer — the owner of an
+   * archived project reaches it, and a scoped role that merely used to see it
+   * does not. The visible set is handed in so the live rows cost no queries. */
+  const visibleIds = new Set(projects.map((p) => p.id));
+  const reachOf = new Map();
+  for (const project of [...projects, ...[...archivedProjects.values()].flat()]) {
+    reachOf.set(project.id, await reachesProject(user, project, visibleIds));
+  }
+  const inReach = (projectId) => reachOf.get(projectId) === true;
+
   return rows
     .filter((c) => includeArchived || c.is_active)
     .filter((c) => seesEverything || c.created_by === user.id || byClient.has(c.id)
@@ -150,12 +175,14 @@ async function clientsFor(user, { includeArchived = false } = {}) {
           ...projectFields(p),
           isActive: true, closedAt: p.closed_at || null,
           status: p.closed_at ? 'closed' : 'active',
+          inReach: inReach(p.id),
           ...projectTotals(totalsIn(p.id)),
           milestones: milestonesIn(p.id),
         })),
         archivedProjects: archived.map((p) => ({
           ...projectFields(p), isActive: false,
           closedAt: p.closed_at || null, status: 'archived',
+          inReach: inReach(p.id),
           ...projectTotals(totalsIn(p.id)),
           milestones: milestonesIn(p.id),
         })),
