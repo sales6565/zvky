@@ -11642,22 +11642,16 @@ async function render(){
   /* If the role gained or lost something since this page loaded, the tabs and
      toolbar buttons have to be re-decided too — they are applied once at boot
      and would otherwise keep the shape they had at sign-in. */
-  if(await refreshPermissions()){
-    [...TAB_GATE_IDS,'newProjectBtn','chatWrap'].forEach(id=>applyGate(id));
-    /* THE PENCIL, ON THE OPEN PROJECT, WITHOUT A RELOAD.
-       editProjectBtn was missing from this list, so granting Project Edit took
-       effect everywhere except on the screen: the permission was live on the
-       very next request, and the control stayed hidden until the person
-       navigated or re-picked a project. It is applied here, on the same
-       condition every tab button already uses — no second polling loop, no
-       reload. The Projects tab's own row buttons need no line here: render()
-       calls renderProjects() a few lines below, which refetches the rows (and
-       with them the server's inReach) and redraws them. */
-    applyGate('editProjectBtn');
-    if(state.openAssetId && document.getElementById('drawer').classList.contains('show')){
-      openDrawer(state.openAssetId);
-    }
-  }
+  /* THE GATE LIST IS NOT WRITTEN OUT HERE. It was, and tests/reports.test.js
+     caught the third copy of it going in: the list of gates to re-apply when
+     the permission set moves now exists once, in reapplyPermissionGates(), and
+     both the poll and this call it. The bug that test is the fence around is a
+     tab added to UI_GATES and to only one of the hand-written lists.
+     
+     redrawProjects: false, because render() renders the view itself a few lines
+     below — redrawing the Projects tab here would fetch it twice for one
+     permission change. */
+  if(await refreshPermissions()) reapplyPermissionGates({ redrawProjects:false });
   if(state.view==='board' || state.view==='list'){ await loadAssets(); }
   renderStats();
   /* The permission half comes from UI_GATES; this is the other half — these
@@ -25508,26 +25502,46 @@ async function toggleNotifPanel(){
   renderNotifList();
 }
 
-/* RE-DECIDE EVERY GATED CONTROL, IF AND ONLY IF SOMETHING ACTUALLY MOVED.
+/* EVERY CONTROL WHOSE ANSWER CAN HAVE CHANGED, RE-DECIDED. ONE COPY.
+ *
+ * The tabs and the two toolbar controls, from the derived list — never a
+ * hand-written one; tests/reports.test.js pins that, having been written for a
+ * Reports tab that was invisible to everybody because it was added to UI_GATES
+ * and to one of two typed-out lists.
+ *
+ * AND THE EDIT PENCIL, which was missing from it. Granting Project Edit took
+ * effect everywhere except on the screen: live on the role's very next request,
+ * and the control still hidden until the person navigated or re-picked a
+ * project.
+ *
+ * `redrawProjects` is false for the caller that is about to render the view
+ * anyway (render()), and true for the poll, which is not.
+ */
+function reapplyPermissionGates({ redrawProjects = true } = {}){
+  [...TAB_GATE_IDS,'newProjectBtn','chatWrap'].forEach(id=>applyGate(id));
+  applyGate('editProjectBtn');
+  /* The Projects tab's rows carry Close, Archive, Restore and Delete
+     permanently, each decided by the same shared rule from the server's
+     inReach — so the rows are refetched rather than re-judged locally. */
+  if(redrawProjects && state.view==='projects') renderProjects();
+  if(state.openAssetId && document.getElementById('drawer').classList.contains('show')){
+    openDrawer(state.openAssetId);
+  }
+}
+
+/* THE POLL'S HALF: ASK, AND RE-DECIDE ONLY IF SOMETHING ACTUALLY MOVED.
  *
  * refreshPermissions() returns true when the permission list it just read
  * differs from the one the page was holding (or when one of the feature
  * switches on that payload moved), and false when nothing changed or when it
- * was throttled — so this costs nothing on the ticks where there is nothing to
- * do, and never redraws a screen for an unchanged answer.
+ * was throttled — so a tick with nothing to do costs one request at most, and
+ * a screen is never redrawn for an unchanged answer.
  *
- * The same three things render()'s own branch does, for the same reason: the
- * tab strip, the project-level controls, and the open asset drawer. Kept beside
- * the poll that calls it rather than folded into render(), because render()
- * reloads the board and this must not. */
+ * Not render(): a full render refetches the board and would fight with whatever
+ * the person is in the middle of. */
 async function applyPermissionChange(){
   if(!(await refreshPermissions())) return;
-  [...TAB_GATE_IDS,'newProjectBtn','chatWrap'].forEach(id=>applyGate(id));
-  applyGate('editProjectBtn');
-  if(state.view==='projects') renderProjects();
-  if(state.openAssetId && document.getElementById('drawer').classList.contains('show')){
-    openDrawer(state.openAssetId);
-  }
+  reapplyPermissionGates();
 }
 
 function startNotifications(){

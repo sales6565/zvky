@@ -61,6 +61,11 @@ function fixture() {
   assert.ok(declared, 'found mayEditCurrentProject in the page');
   const mayEdit = declared[0];
   const applyGate = cut('function applyGate(id, also){', '\n}\n', 'applyGate') + '\n}';
+  /* Both halves: the one copy of the re-apply list, and the poll that calls it.
+     tests/reports.test.js is what forced them apart — a third hand-written copy
+     of the gate list is the bug that test exists for. */
+  const reapply = cut('function reapplyPermissionGates({ redrawProjects = true } = {}){',
+    '\n}\n', 'reapplyPermissionGates') + '\n}';
   const applyChange = cut('async function applyPermissionChange(){', '\n}\n', 'applyPermissionChange') + '\n}';
 
   return `<!doctype html><html><head><meta charset="utf-8"></head><body>
@@ -109,6 +114,7 @@ function fixture() {
     }
     function renderProjects(){ RENDERS += 1; }
     function openDrawer(){ }
+    ${reapply}
     ${applyChange}
     </script></body></html>`;
 }
@@ -231,6 +237,11 @@ test('the permission poll rides the interval that was already there', () => {
     `public/index.html has ${intervals.length} intervals; a new polling loop has been added`);
   assert.ok(/pollNotifications\(\); refreshPendingCount\(\); applyPermissionChange\(\);/.test(PAGE),
     'applyPermissionChange is not called from the notification interval');
+  /* AND THE GATE LIST IS WRITTEN OUT ONCE. tests/reports.test.js asserts the
+     count of derived-list uses; this asserts the other half of the same thing
+     from this side — that render() delegates rather than carrying a copy. */
+  assert.ok(/if\(await refreshPermissions\(\)\) reapplyPermissionGates\(\{ redrawProjects:false \}\);/.test(PAGE),
+    'render() no longer delegates the re-apply to reapplyPermissionGates');
   assert.ok(!/setInterval\([^)]*applyPermissionChange/.test(PAGE),
     'applyPermissionChange has been given an interval of its own');
   assert.ok(!/setInterval\([^)]*refreshPermissions/.test(PAGE),
