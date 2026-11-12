@@ -65,6 +65,9 @@ test('the contract migration keeps existing data and is safe to rerun', { skip: 
   assert.ok(said.some((l) => /external_feedback carries the Dev & QA bug fields/.test(l)));
 
   assert.equal(JSON.stringify(await fb()), before, 'every existing feedback field, timestamps included, is kept');
+  // The optional destination arrives as an empty column: no existing row is given one.
+  assert.ok((await cols('external_feedback')).includes('destination'));
+  assert.deepStrictEqual((await sql(cfg, 'SELECT destination FROM external_feedback')).map((r) => r.destination), [null, null]);
   const states = await sql(cfg, 'SELECT bug_ref, `state` FROM external_feedback ORDER BY bug_ref');
   assert.deepStrictEqual(states.map((r) => [r.bug_ref, r.state]), [['NG-101', 'noted_legacy'], ['NG-102', 'legacy']]);
   const [client] = await sql(cfg, `SELECT created_at, updated_at FROM clients WHERE id = '${C}'`);

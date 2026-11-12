@@ -70,6 +70,39 @@ See `docs/forge-api-contract.md` in the Dev & QA repository for the full table. 
   `POST /assets/:id/feedback/:fid/withdraw`. An internal Send to Dev can be cancelled with
   `POST /api/assets/handoffs/:id/cancel` until Dev & QA acknowledges it.
 
+## Destination: Art or Animation (`destination`)
+
+`POST /assets/:id/feedback` accepts an optional `destination`: `"art"` or `"animation"`.
+Letter case is folded.
+
+- **Validation.** Any other value is a 400 `validation_failed`, with
+  `errors: [{ field: "destination", code: "invalid" }]` (or `not_a_string`). An empty
+  string is the same as not sending it.
+- **It must agree with the asset.** Forge has one rule for which department an asset's
+  work belongs to (`src/asset-discipline.js`). It is Animation when its type is
+  `animation` or its category's discipline is Animation; otherwise it is Art. That rule
+  puts the asset under the Art or the Animation tab. A destination that disagrees is a 400
+  `destination_mismatch` with `assetDiscipline`. Nothing is recorded and nothing moves;
+  Forge never re-routes it silently. Every asset has a type, so every asset is exactly
+  one of the two. No asset is classified as workable by both today.
+- **Stored** on `external_feedback.destination`, NULL when not sent. It is kept through
+  every state, and returned:
+  - as `destination` in every feedback event payload;
+  - in the `asset.ready_for_reintegration` feedback list;
+  - in `GET /feedback/:id` and `GET /feedback?…`;
+  - in the `created` / `note_only` / `duplicate` answers, beside `assetDiscipline`.
+- **Omitted**, everything is exactly as before: the asset's own discipline decides, and
+  `destination` is `null`.
+- **Idempotency.**
+  - A replay with the same `Idempotency-Key` and body returns the first answer.
+  - The same key with a different `destination` is a 422, as for any changed field.
+  - The same bug (same `client_bug_id`, or `bug_ref` from the same source) is a
+    `duplicate`.
+  - The same open bug asked for by the other department is a 409 `destination_conflict`,
+    never a second record.
+- **Shown** to the Team Lead as *Destination: Art* / *Destination: Animation*, in Pending
+  Actions (*Game feedback waiting on you*) and in the asset's Game feedback panel.
+
 ## Signatures, and checking both apps hold the same secret
 
 Dev & QA signs every call: HMAC-SHA256 over `t.METHOD.<target>.<raw body>` with

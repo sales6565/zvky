@@ -3397,6 +3397,10 @@ router.get('/:id/game-feedback', async (req, res) => {
     [req.params.id]
   ).catch(() => ({ rows: [] }));
 
+  /* The department Dev & QA asked for on each round ('art' | 'animation', or null when it
+     did not say), read beside the query above rather than by changing it. */
+  const destinationOf = await feedbackLifecycle.destinationsFor(db, req.params.id);
+
   /* THE OPEN ROUND is the newest one that MOVED the asset, which is the one carrying the
      restore pair — exactly the row the POST answers. Everything else was taken as a note
      against work already in flight and has nothing open about it. */
@@ -3437,6 +3441,7 @@ router.get('/:id/game-feedback', async (req, res) => {
       build: r.build || null,
       cpStage: r.cp_stage || null,
       link: r.link || null,
+      destination: destinationOf.get(r.id) || null,
       // Whether THIS round is the one an answer would apply to.
       open: Boolean(open && open.id === r.id),
       at: r.created_at,

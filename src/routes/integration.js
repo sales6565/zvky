@@ -28,6 +28,8 @@ const lifecycle = require('../lifecycle');
 const workLog = require('../work-log');
 const events = require('../integration-events');
 const feedbackLifecycle = require('../feedback-lifecycle');
+const { assetDiscipline, disciplineLabel, DISCIPLINE_IDS } = require('../asset-discipline');
+const referenceData = require('../reference-data');
 
 // Who a game bug can come from. A list rather than free text: these end up in reports,
 // and four spellings of "QA" would make those reports lie quietly.
@@ -702,6 +704,16 @@ router.put('/assets/:id/in-game', (req, res) => idempotency.withIdempotency(req,
  *   title, bug_ref, client_bug_id, source_app, severity, checkpoint (or cp_stage),
  *   build, test_ref, sender_name, sender_role, sender_team, link, reported_at,
  *   handoff_id, attachments: [{ name, url }]
+ *   destination   art | animation                                         optional
+ *
+ * DESTINATION, when sent, is the department the sender wants the change made by, and it
+ * is stored on the feedback (external_feedback.destination) and returned in every
+ * feedback event. It must agree with the asset: Forge's one rule for which department an
+ * asset's work belongs to (src/asset-discipline.js — the type, or the category's
+ * discipline) is what puts the asset under the Art or the Animation tab, so an Animation
+ * request on an Art asset would be routed to the wrong department. That is refused, 400
+ * `destination_mismatch`, rather than silently re-routed. Omitted, nothing changes: the
+ * asset's own discipline decides, as before, and the stored destination stays NULL.
  *
  * THE ANSWER SAYS WHAT HAPPENED, in `result`:
  *   created    200  the asset was idle and is now in Game Feedback, with the Team Lead
@@ -729,12 +741,12 @@ const FEEDBACK_FIELDS = {
   client_bug_id: 'string', source_app: 'string', severity: 'string', checkpoint: 'string',
   cp_stage: 'string', build: 'string', test_ref: 'string', sender_name: 'string',
   sender_role: 'string', sender_team: 'string', link: 'string', reported_at: 'string',
-  handoff_id: 'string', attachments: 'array',
+  handoff_id: 'string', attachments: 'array', destination: 'string',
 };
 const LIMITS = {
   description: 10000, note: 10000, title: 255, bug_ref: 120, client_bug_id: 64, source_app: 32,
   severity: 24, checkpoint: 32, cp_stage: 32, build: 64, test_ref: 191, sender_name: 191,
-  sender_role: 64, sender_team: 64, link: 2048, reported_at: 40, handoff_id: 36,
+  sender_role: 64, sender_team: 64, link: 2048, reported_at: 40, handoff_id: 36, destination: 16,
 };
 const isHttpUrl = (v) => {
   try { const u = new URL(v); return (u.protocol === 'https:' || u.protocol === 'http:') && !u.username && !u.password; } catch { return false; }
@@ -790,6 +802,14 @@ function validateFeedback(body) {
     else out.reported_at = d;
   }
   out.checkpoint = out.checkpoint || out.cp_stage || null;
+  /* Optional; exactly `art` or `animation` when present (letter case folded, as for
+     `source`). Anything else — development, qa, artist, anim — is refused, never guessed. */
+  if (out.destination !== undefined) {
+    const d = out.destination.toLowerCase();
+    if (!DISCIPLINE_IDS.includes(d)) {
+      errors.push({ field: 'destination', code: 'invalid', message: `destination must be one of: ${DISCIPLINE_IDS.join(', ')}.` });
+    } else out.destination = d;
+  }
   return { errors, value: out };
 }
 
@@ -802,11 +822,23 @@ router.post('/assets/:id/feedback', (req, res) => idempotency.withIdempotency(re
   }
 
   const { rows } = await trx.query(
-    'SELECT id, `code`, `name`, project_id, `status`, assignee_id, routed_to_id FROM assets WHERE id = $1',
+    'SELECT id, `code`, `name`, project_id, `status`, assignee_id, routed_to_id, `type`, category FROM assets WHERE id = $1',
     [req.params.id]
   );
   const asset = rows[0];
   if (!asset) return rejected(404, 'No such asset.', { code: 'asset_not_found' });
+
+  /* Which department this asset's work belongs to, by the same rule as the Dashboard's
+     Art / Animation tabs. An explicit destination must match it. */
+  const discipline = assetDiscipline(asset, referenceData.categoryDisciplines());
+  if (f.destination && f.destination !== discipline) {
+    const message = `This asset is ${disciplineLabel(discipline)} work in Forge, so it cannot take a request for ${disciplineLabel(f.destination)}. `
+      + `Send it with destination "${discipline}", or raise it against a${f.destination === 'art' ? 'n Art' : 'n Animation'} asset.`;
+    return rejected(400, message, {
+      code: 'destination_mismatch', field: 'destination', assetDiscipline: discipline,
+      errors: [{ field: 'destination', code: 'asset_discipline', message }],
+    });
+  }
 
   if (f.handoff_id) {
     const h = await trx.query('SELECT id FROM handoffs WHERE id = $1 AND project_id = $2', [f.handoff_id, asset.project_id]);
@@ -841,7 +873,7 @@ router.post('/assets/:id/feedback', (req, res) => idempotency.withIdempotency(re
 
   /* --- already open here? -------------------------------------------------- */
   const dupe = await trx.query(
-    `SELECT id, round, \`state\` FROM external_feedback
+    `SELECT id, round, \`state\`, destination FROM external_feedback
       WHERE asset_id = $1 AND \`state\` IN ($2)
         AND ((source_app <=> $3 AND client_bug_id = $4) OR (source = $5 AND bug_ref <> '' AND bug_ref = $6))
       ORDER BY created_at LIMIT 1`,
@@ -849,9 +881,19 @@ router.post('/assets/:id/feedback', (req, res) => idempotency.withIdempotency(re
   );
   if (dupe.rows.length) {
     const was = dupe.rows[0];
+    /* The same bug, already open, asked for by a different department: that is not the
+       same request, and the open one is not re-routed under the Team Lead's feet. */
+    if (f.destination && was.destination && was.destination !== f.destination) {
+      return {
+        status: 409,
+        body: { result: 'refused', code: 'destination_conflict', feedbackId: was.id, destination: was.destination,
+          error: `This bug is already open here for ${disciplineLabel(was.destination)}. Withdraw it first to send it to ${disciplineLabel(f.destination)}.` },
+      };
+    }
     return {
       status: 200,
-      body: { result: 'duplicate', feedbackId: was.id, round: Number(was.round), state: was.state, alreadyRaised: true, movedAsset: false, assetStatus: asset.status },
+      body: { result: 'duplicate', feedbackId: was.id, round: Number(was.round), state: was.state, alreadyRaised: true, movedAsset: false, assetStatus: asset.status,
+        destination: was.destination || null, assetDiscipline: discipline },
     };
   }
 
@@ -868,8 +910,8 @@ router.post('/assets/:id/feedback', (req, res) => idempotency.withIdempotency(re
          (id, asset_id, round, source, bug_ref, severity, note, sender_name, sender_role,
           build, cp_stage, link, prev_status, prev_routed_to_id,
           \`state\`, title, checkpoint, test_ref, sender_team, source_app, client_bug_id,
-          attachments, reported_at, handoff_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
+          attachments, reported_at, handoff_id, destination)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)`,
       [
         feedbackId, asset.id, round, f.source, f.bug_ref || '', f.severity || null, f.description,
         f.sender_name || null, f.sender_role || null, f.build || null, f.checkpoint, f.link || null,
@@ -878,7 +920,7 @@ router.post('/assets/:id/feedback', (req, res) => idempotency.withIdempotency(re
         state, f.title || null, f.checkpoint, f.test_ref || null, f.sender_team || null,
         f.source_app || null, f.client_bug_id || null,
         f.attachments && f.attachments.length ? JSON.stringify(f.attachments) : null,
-        f.reported_at || null, f.handoff_id || null,
+        f.reported_at || null, f.handoff_id || null, f.destination || null,
       ]
     );
   } catch (err) {
@@ -886,14 +928,15 @@ router.post('/assets/:id/feedback', (req, res) => idempotency.withIdempotency(re
        at one round, with a fresh idempotency key. Returned, so it replays. */
     if (err && err.code === 'ER_DUP_ENTRY') {
       const existing = await trx.query(
-        `SELECT id, round, \`state\` FROM external_feedback
+        `SELECT id, round, \`state\`, destination FROM external_feedback
           WHERE asset_id = $1 AND round = $2 AND source = $3 AND bug_ref = $4`,
         [asset.id, round, f.source, f.bug_ref || '']
       );
       const was = existing.rows[0];
       return {
         status: 200,
-        body: { result: 'duplicate', feedbackId: was ? was.id : null, round, state: was ? was.state : null, alreadyRaised: true, movedAsset: false, assetStatus: asset.status },
+        body: { result: 'duplicate', feedbackId: was ? was.id : null, round, state: was ? was.state : null, alreadyRaised: true, movedAsset: false, assetStatus: asset.status,
+          destination: was ? was.destination || null : null, assetDiscipline: discipline },
       };
     }
     throw err;
@@ -909,6 +952,7 @@ router.post('/assets/:id/feedback', (req, res) => idempotency.withIdempotency(re
     id: feedbackId, round, source: f.source, source_app: f.source_app, client_bug_id: f.client_bug_id,
     bug_ref: f.bug_ref, title: f.title, severity: f.severity, handoff_id: f.handoff_id, state,
     attachments: f.attachments && f.attachments.length ? JSON.stringify(f.attachments) : null,
+    destination: f.destination || null,
   };
 
   if (!idle) {
@@ -923,7 +967,8 @@ router.post('/assets/:id/feedback', (req, res) => idempotency.withIdempotency(re
     await feedbackLifecycle.emitFor(trx, 'feedback.received', row, asset, { result: 'note_only', reason });
     return {
       status: 200,
-      body: { result: 'note_only', feedbackId, round, state, movedAsset: false, reason, assetStatus: asset.status },
+      body: { result: 'note_only', feedbackId, round, state, movedAsset: false, reason, assetStatus: asset.status,
+        destination: f.destination || null, assetDiscipline: discipline },
     };
   }
 
@@ -942,6 +987,7 @@ router.post('/assets/:id/feedback', (req, res) => idempotency.withIdempotency(re
     body: {
       result: 'created', feedbackId, round, state, movedAsset: true, assetStatus: 'game_feedback',
       restoredTo: { status: asset.status, routedToId: asset.routed_to_id },
+      destination: f.destination || null, assetDiscipline: discipline,
     },
   };
 }, { markReplay: true }));
@@ -1174,7 +1220,7 @@ const shapeFeedback = (r) => ({
   id: r.id, assetId: r.asset_id, assetCode: r.asset_code || null, projectId: r.project_id || null,
   state: r.state, round: Number(r.round), source: r.source, sourceApp: r.source_app || null,
   clientBugId: r.client_bug_id || null, bugRef: r.bug_ref || null, title: r.title || null,
-  severity: r.severity || null, handoffId: r.handoff_id || null, createdAt: iso(r.created_at),
+  severity: r.severity || null, handoffId: r.handoff_id || null, destination: r.destination || null, createdAt: iso(r.created_at),
   resolvedAt: iso(r.resolved_at), resolutionNote: r.resolution_note || null,
   version: Number(r.entity_version) || 0,
 });

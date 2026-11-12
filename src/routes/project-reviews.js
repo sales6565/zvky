@@ -136,7 +136,7 @@ async function gameFeedbackAwaiting(user) {
               u.\`name\` AS assigneeName,
               f.source, f.bug_ref AS bugRef, f.severity, f.note,
               f.sender_name AS senderName, f.sender_role AS senderRole,
-              f.round, f.created_at AS raisedAt
+              f.round, f.created_at AS raisedAt, f.destination
          FROM assets a
          JOIN projects p ON p.id = a.project_id
          LEFT JOIN clients c ON c.id = p.client_id

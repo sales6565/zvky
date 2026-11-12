@@ -44,6 +44,9 @@ function payloadOf(row, asset, extra = {}) {
     title: row.title || null,
     severity: row.severity || null,
     handoffId: row.handoff_id || null,
+    /* The department the sender asked for (`art` | `animation`), or null when it did not
+       say. Added beside the existing fields; nothing renamed. */
+    destination: row.destination || null,
     attachments,
     ...extra,
   };
@@ -149,7 +152,7 @@ async function onTransition(runner, assetBefore, action, toStatus) {
         assetStatus: toStatus,
         feedback: approved.map((r) => ({
           feedbackId: r.id, clientBugId: r.client_bug_id || null, sourceApp: r.source_app || null,
-          bugRef: r.bug_ref || null, handoffId: r.handoff_id || null,
+          bugRef: r.bug_ref || null, handoffId: r.handoff_id || null, destination: r.destination || null,
         })),
       },
     });
@@ -178,4 +181,13 @@ async function onDecline(runner, assetId, feedbackId, { reason, decidedBy, acted
   });
 }
 
-module.exports = { OPEN, TERMINAL, APPROVALS, onTransition, onPass, onDecline, payloadOf, emitFor, setState, assetOf };
+/* The destination of every feedback round on an asset, as a Map from feedback id. Read
+   with a catch for the same reason the panel reads the table with one: a deployment part
+   way through the migration step shows the panel without the chip rather than a 500. */
+async function destinationsFor(runner, assetId) {
+  const { rows } = await runner.query('SELECT id, destination FROM external_feedback WHERE asset_id = $1 AND destination IS NOT NULL', [assetId])
+    .catch(() => ({ rows: [] }));
+  return new Map(rows.map((r) => [r.id, r.destination]));
+}
+
+module.exports = { OPEN, TERMINAL, APPROVALS, onTransition, onPass, onDecline, payloadOf, emitFor, setState, assetOf, destinationsFor };

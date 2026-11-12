@@ -3162,6 +3162,21 @@ async function ensureIntegrationContract(db, log) {
   }
 }
 
+/* external_feedback.destination — the department Dev & QA asked for, when it said.
+ *
+ * `art` or `animation`, from the optional `destination` field of POST
+ * /assets/:id/feedback; NULL for every row before it and for every caller that does
+ * not send it, which is exactly the old behaviour (the asset's own discipline decides,
+ * as it always has — src/asset-discipline.js). Stored on the row so it survives every
+ * step of the lifecycle and travels in every feedback event; nothing reads it back out
+ * of the free text. Additive: no existing row is touched. */
+async function ensureFeedbackDestination(db, log) {
+  const fb = await columnsOf(db, 'external_feedback');
+  if (!fb.size || fb.has('destination')) return;
+  await db.query('ALTER TABLE external_feedback ADD COLUMN destination VARCHAR(16) NULL');
+  log('Schema: external_feedback.destination (the department Dev & QA asked for).');
+}
+
 /* The days the studio is shut.
  *
  * NOT SEEDED, and that is a decision rather than an omission. A studio's
@@ -6092,6 +6107,8 @@ const STEPS = [
   ['integration key rotation', ensureKeyRotation],
   ['asset_events.acted_via', ensureActedVia],
   ['integration contract v1', ensureIntegrationContract],
+  // On external_feedback, so after the contract step that shapes that table.
+  ['feedback destination', ensureFeedbackDestination],
   /* After assets and users, whose keys the history points at, and before the
      mirror below reads the switch. */
   ['asset renaming', ensureAssetRename],

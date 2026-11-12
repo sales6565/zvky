@@ -340,6 +340,10 @@ test('PRODUCTION SAFETY: the submit route is exactly what it was', () => {
       [/require\('\.\.\/asset-name'\)|require\('\.\.\/asset-settings'\)|require\('\.\.\/activity'\)/,
         'the one shared asset-name rule, its studio switch, and the audit helper'],
       [/checkedName/, 'creating an asset asks src/asset-name.js for the rule'],
+      /* The Dev & QA feedback destination (Art or Animation). GET /:id/game-feedback,
+         the read-only Game feedback panel, gains one read and one field for the chip;
+         no existing line changed. The submit route reads neither. */
+      [/destinationOf/, 'the Game feedback panel shows the department Dev & QA asked for'],
     ];
     for (const line of added) {
       const why = ADDITIVE.find(([re]) => re.test(line));

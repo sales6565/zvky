@@ -7116,6 +7116,11 @@ async function renderPending(){
           if(src.ref && r.bugRef) meta.push(`${src.ref} ${escapeHTML(r.bugRef)}`);
           if(r.severity) meta.push(escapeHTML(r.severity));
           if(r.assigneeName) meta.push(`assigned to ${escapeHTML(r.assigneeName)}`);
+          /* The department Dev & QA asked for, from the request's own field; nothing when
+             it did not say. A lookup, not a comparison: the Art / Animation rule itself
+             lives in assetDiscipline() alone. */
+          const destLabel = ({ art: 'Art', animation: 'Animation' })[r.destination];
+          const dest = destLabel ? `<span class="gf-dest" style="display:inline-block;margin-left:6px;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;border:1px solid var(--line);">Destination: ${destLabel}</span>` : '';
           return `<div class="pr-item">
             <div class="pr-what">
               <strong>${escapeHTML(r.name || 'An asset')}</strong>
@@ -7127,6 +7132,7 @@ async function renderPending(){
                 <span class="status-pill" style="background:${statusTint(src.color)};color:${src.color};"><span class="d" style="background:${src.color}"></span>${escapeHTML(src.label)}</span>
                 ${r.senderName?`<span class="pr-meta" style="margin-left:6px;">${escapeHTML(r.senderName)}${
                   r.senderRole?` (${escapeHTML(r.senderRole)})`:''}</span>`:''}
+                ${dest}
                 ${meta.length?`<span class="pr-meta" style="margin-left:6px;">· ${meta.join(' · ')}</span>`:''}
               </div>
               ${r.note?`<div class="note" style="margin-top:6px;border-left-color:${src.color};"><p>${escapeHTML(r.note)}</p></div>`:''}
@@ -12580,6 +12586,11 @@ function inGameLineHTML(g){
    supplies — see FEEDBACK_SOURCES — rather than a fixed row with blanks in it. */
 function feedbackRoundHTML(r){
   const src = feedbackSource(r.source);
+  /* "Destination: Art" / "Destination: Animation": the department Dev & QA asked for, from
+     the request's own field, so nobody reads it out of the description. Nothing when the
+     sender did not say: the asset's own Art / Animation classification applies, as ever. */
+  const destLabel = ({ art: 'Art', animation: 'Animation' })[r.destination];
+  const dest = destLabel ? `<span class="gf-dest" style="display:inline-block;margin-left:6px;padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;border:1px solid var(--line);">Destination: ${destLabel}</span>` : '';
   const meta = [];
   if(src.ref && r.bugRef) meta.push(`${src.ref} <strong>${escapeHTML(r.bugRef)}</strong>`);
   if(r.severity) meta.push(escapeHTML(r.severity));
@@ -12592,7 +12603,7 @@ function feedbackRoundHTML(r){
     : src.label;
   return `<div class="note gf-round${r.open?' gf-open':''}" data-fid="${escapeHTML(r.id)}" style="border-left-color:${src.color};">
     <span class="who"><span class="gf-src" style="background:${statusTint(src.color)};color:${src.color};">${escapeHTML(src.label)}</span>
-      ${who} · round ${r.round}${r.open?' · <strong>open</strong>':''}</span>
+      ${who} · round ${r.round}${r.open?' · <strong>open</strong>':''}${dest}</span>
     <span class="when">${fmtDate(r.at)}</span>
     ${meta.length?`<div class="gf-meta">${meta.join(' · ')}</div>`:''}
     ${r.note?`<p>${escapeHTML(r.note)}</p>`:''}
