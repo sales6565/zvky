@@ -294,6 +294,30 @@ test('no action depends on the dates', { skip: cfg ? false : SKIP_REASON }, asyn
     }
   });
 
+  await t.test('Upload: every date combination', async () => {
+    /* THE ACTION MY FIRST PASS MISSED, and a mutation found the gap: a
+       start-date check added to the thumbnail route survived the whole suite.
+       Upload is on the brief's class-G list and now has a case.
+       
+       The thumbnail route is the upload that takes a file on an asset at any
+       stage; the submission upload is covered by the Submit cases above, which
+       drive the same route the artist's Submit button does. */
+    const png = Buffer.from(
+      '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a4944415408d7'
+      + '63f8ffff3f0005fe02fea735b6a20000000049454e44ae426082', 'hex');
+    for (const d of DATES) {
+      const a = await makeAsset(`Upload ${d.label}`, d.body);
+      const form = new FormData();
+      form.set('image', new Blob([png], { type: 'image/png' }), 'thumb.png');
+      const r = await fetch(`${server.base}/assets/${a.id}/thumbnail`, {
+        method: 'POST', body: form, headers: { Authorization: `Bearer ${token.ana}` },
+      });
+      const body = await r.text();
+      assert.ok(r.status < 400,
+        `${d.label}: Upload — ${r.status} ${body.slice(0, 200)}`);
+    }
+  });
+
   await t.test('the TL review actions: every date combination', async () => {
     for (const d of DATES) {
       const a = await makeAsset(`Review ${d.label}`, d.body);
