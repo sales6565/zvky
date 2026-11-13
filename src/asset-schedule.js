@@ -1,26 +1,49 @@
-/* When an asset may be started.
+/* THE ASSET'S DATES ARE INFORMATION. THEY DECIDE NOTHING.
  *
- * An asset can carry a Start Date: the day the work is scheduled to begin.
- * Until that day arrives, Accept and Start is refused. Three decisions are
- * written down here rather than in the two places that ask, because the button
- * and the endpoint disagreeing is the failure this shape exists to prevent —
- * a person told they may start being refused when they click.
+ * An asset can carry a Start Date (the day the work is scheduled to begin) and
+ * an End Date, stored as `due_date` (the day it is wanted). Both are planning
+ * fields: they are shown, sorted, filtered, counted and put in reminders, and
+ * NOTHING in Forge is allowed, refused, enabled, disabled, shown or hidden
+ * because of either of them.
  *
- *   1. ON OR AFTER, not on the day itself. A task whose start date slipped past
- *      unnoticed is late, not forbidden; strictly-that-day would make every
- *      missed schedule a permanent lockout with no way back except editing the
- *      date, which turns a planning field into a trap.
+ * ===========================================================================
+ * WHAT THIS FILE USED TO DO, AND WHY IT WAS WRONG.
  *
- *   2. NO START DATE MEANS NO WAITING. The field is optional everywhere it is
- *      offered, and blank has to keep meaning what it meant before it existed:
- *      nothing scheduled, so nothing to wait for.
+ * It owned a gate. `startsInFuture()` compared the start date against today in
+ * IST and `notYetMessage()` worded the refusal, and two callers asked:
+ * POST /api/assets/:id/start answered 409, and the board disabled Accept and
+ * Start with "This task can't be started until <date>".
  *
- *   3. TODAY IS IST. The studio's day boundaries are already IST in the Time
- *      Sheet, and a rule about "has the day arrived" that used the server's
- *      clock would open a task five and a half hours early for everybody in
- *      the office. India has never observed daylight saving, so the offset is
- *      a constant rather than a lookup — the same reasoning src/timesheets.js
- *      relies on for storing clock times as minutes.
+ * The reasoning was careful and it was about the wrong thing. It worried about
+ * the button and the endpoint disagreeing, and about a missed start date
+ * becoming a permanent lockout — real failures, both, of a rule that should not
+ * have existed. The owner's position is that these dates are for information
+ * only: a schedule is what the studio INTENDS, and an artist who has been given
+ * a task and is sitting in front of it must be able to start it. A planning
+ * field that refuses work is a planning field that gets left blank, and then
+ * the schedule nobody can trust is the one thing the field was for.
+ *
+ * So the two gate functions are GONE rather than left unused. A dead
+ * `startsInFuture()` is an invitation: the next person who wants "not before
+ * its date" finds a function that already says it and one caller away from a
+ * gate. tests/asset-start-date.test.js fails if either name comes back, and
+ * fails if anything outside the display and reminder modules reads an asset's
+ * start or end date to decide an action.
+ *
+ * ===========================================================================
+ * WHAT IS LEFT IS DATE HANDLING, AND IT IS STILL NEEDED.
+ *
+ * Storing, editing and showing a DATE correctly is the part that was never
+ * about gating: asISODate() is what keeps a stored date from shifting a day
+ * when it crosses a timezone, and every route that writes one of these columns
+ * goes through it. todayInIST() remains because the studio's day is IST
+ * everywhere in this application and the import, the dashboard and the
+ * reminders all ask what today is.
+ *
+ *   TODAY IS IST. The studio's day boundaries are already IST in the Time
+ *   Sheet, and India has never observed daylight saving, so the offset is a
+ *   constant rather than a lookup — the same reasoning src/timesheets.js relies
+ *   on for storing clock times as minutes.
  */
 
 const IST_OFFSET_MINUTES = 5 * 60 + 30;
@@ -52,21 +75,4 @@ function asISODate(value) {
   return match ? match[0] : null;
 }
 
-/* Has the day arrived? Comparing YYYY-MM-DD strings is comparing dates: the
-   format sorts lexicographically, so there is no arithmetic to get wrong and
-   no timezone left in the comparison. */
-function startsInFuture(asset, now = new Date()) {
-  const start = asISODate(asset && (asset.start_date ?? asset.startDate));
-  if (!start) return false;
-  return start > todayInIST(now);
-}
-
-// The refusal, worded once so the button's tooltip and the API say the same.
-function notYetMessage(asset, now = new Date()) {
-  const start = asISODate(asset && (asset.start_date ?? asset.startDate));
-  if (!start) return null;
-  return `This task cannot be started until ${start} — its start date has not arrived yet.`
-    + ` Today is ${todayInIST(now)} in IST.`;
-}
-
-module.exports = { todayInIST, asISODate, startsInFuture, notYetMessage, IST_OFFSET_MINUTES };
+module.exports = { todayInIST, asISODate, IST_OFFSET_MINUTES };

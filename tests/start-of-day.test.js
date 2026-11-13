@@ -827,8 +827,10 @@ test('MUTATION 17 — the banner\'s Start is the ordinary route and nothing else
   assert.match(fn, /await api\(`\/assets\/\$\{encodeURIComponent\(assetId\)\}\/start`, \{ method:'POST' \}\)/);
   /* NO SECOND ENDPOINT AND NO FLAG. A banner that could start work by another
      door would be a door past seven gates: the outsource check, mayStartWork,
-     STARTABLE, the awaiting-handover stages, the start date, the holiday, the
-     previous-day timesheet rule and the one-active-task rule. */
+     STARTABLE, the awaiting-handover stages, the holiday, the previous-day
+     timesheet rule and the one-active-task rule. The asset's start date WAS on
+     this list and is not any more: Prompt 69 made the dates information only.
+     tests/asset-start-date.test.js is what holds it off the route now. */
   assert.ok(!/banner|nudge|force|skip/i.test(fn.replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/startFromBanner|DAY_BANNER_[A-Z]+|paintDayBanner/g, '')),
   'nothing is passed that the board does not pass');
@@ -842,9 +844,19 @@ test('MUTATION 17 — the banner\'s Start is the ordinary route and nothing else
   const start = route.slice(routeFrom, routeTo);
   for (const gate of ['oversightOutsource.activeForAsset', 'mayStartWork(req, asset)',
     'STARTABLE.includes(asset.status)', 'AWAITING_HANDOVER[asset.status]',
-    'assetSchedule.startsInFuture(asset)', "holidayRefusal('started')", 'timesheetRefusal(req)']) {
+    "holidayRefusal('started')", 'timesheetRefusal(req)']) {
     assert.ok(start.includes(gate), `${gate} is still on the one start route`);
   }
+  /* AND THE ONE THAT WAS TAKEN OFF IT STAYS OFF. Asserted here as well as in
+     tests/asset-start-date.test.js, because this is the test that enumerates
+     what the banner's single endpoint enforces, and a gate added back here
+     would make the banner refuse on a date again. */
+  const startCode = start.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!/startsInFuture|notYetMessage/.test(startCode),
+    'the asset start date is back on the start route; the dates are information only');
+  /* The note explaining what was taken off, on the other hand, must stay — it
+     is the only place a reader of this route learns the dates are deliberate. */
+  assert.match(start, /START DATE IS NOT CONSULTED HERE/);
   /* AND THE REFUSAL IS SHOWN ON THE BANNER, not as a toast that is gone before
      anybody reads it. */
   assert.match(fn, /DAY_BANNER_ERR = \(err && err\.message\)/);

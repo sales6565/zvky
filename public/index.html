@@ -2754,8 +2754,10 @@ table td.pick-col input[type=checkbox], table th.pick-col input[type=checkbox]{
          and submit stamps on the asset panel and is never typed in here. -->
     <label>Man Hours</label><input type="text" id="f_hours" placeholder="e.g. 16 — the estimate, not time tracked">
     <div class="row2"><div><label>Priority</label><select id="f_priority"></select></div><div><label>Assignee</label><select id="f_assignee"></select></div></div>
-    <!-- Both optional. A start date in the future holds Accept and Start closed
-         until the day arrives; blank means there is nothing to wait for. -->
+    <!-- Both optional, and both information only: they say when the work is
+         meant to begin and when it is wanted. Neither decides anything — a task
+         whose start date is next month can still be accepted and started today,
+         and one past its end date is late, not closed. -->
     <div class="row2">
       <div><label>Start Date</label><input type="date" id="f_start"></div>
       <div><label>End Date (Deadline)</label><input type="date" id="f_due"></div>
@@ -6144,9 +6146,11 @@ function paintDayBanner(){
 /* START, THROUGH THE ORDINARY ROUTE AND NOTHING ELSE.
  *
  * POST /api/assets/:id/start is the only way a session opens in this
- * application, and it carries seven independent gates: the outsource check,
- * mayStartWork, STARTABLE, the awaiting-handover stages, the start date, the
- * holiday, the previous-day timesheet rule and the one-active-task rule. The
+ * application, and it carries several independent gates: the outsource check,
+ * mayStartWork, STARTABLE, the awaiting-handover stages, the holiday, the
+ * previous-day timesheet rule, leave and the one-active-task rule. The asset's
+ * start date is NOT among them and never should have been — see the note where
+ * notYetStartable() used to be. The
  * banner calls it exactly as the board's own button does — no second endpoint,
  * no flag, nothing that could pass a gate the board cannot.
  *
@@ -6942,14 +6946,25 @@ async function refreshTimesheetGate(){
   }catch(e){ /* the twenty-second poll will catch up */ }
 }
 
-/* The date this asset cannot be started before, or null when nothing is
-   scheduled. Blank keeps meaning what it meant before the field existed. */
-function notYetStartable(a){
-  const raw = a && a.start_date;
-  if(!raw) return null;
-  const start = String(raw).slice(0,10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(start) && start > todayIST() ? start : null;
-}
+/* THE ASSET'S DATES DECIDE NOTHING ON THIS PAGE.
+ *
+ * notYetStartable(a) was here. It returned the start date when that date was
+ * still in the future, and `canStart` below subtracted it — so Accept and Start
+ * was drawn disabled, with the title "This task can't be started until
+ * 2026-11-18" and a sentence under it naming today in IST. The server answered
+ * 409 to match.
+ *
+ * The owner's position is that the start date and the end date are information
+ * only. They are still stored, still editable, still shown in the list column
+ * and the drawer field, still filtered on, still counted into At Risk and
+ * overdue, and still named in reminders — and no control on this page is
+ * enabled, disabled, shown or hidden because of either of them.
+ *
+ * Removed rather than left returning null, for the reason src/asset-schedule.js
+ * gives at more length: a function that already computes "is this date in the
+ * future" sitting one caller away from a button state is how the gate comes
+ * back. tests/asset-start-date.test.js fails if the name reappears.
+ */
 function filteredAssets(){
   let pool = state.assets;
   if(state.filterType) pool = pool.filter(a=>a.type===state.filterType);
@@ -12729,14 +12744,11 @@ async function openDrawer(id){
      it", which reads as a bug in the button rather than the rule it is. */
   const mine = a.assignee_id===u.id;
   const blocked = blockingWork(a);
-  /* The second reason the same button is refused, independent of the first: an
-     asset scheduled to begin later cannot be started yet. Either condition
-     alone disables it; it opens only when both allow. Both are also checked in
-     POST /assets/:id/start — the button is a courtesy, the server is the rule. */
-  const waiting = notYetStartable(a);
-  /* The third independent reason, beside the open-task rule and the start date.
-     Not asset-specific — it is about the person, not the task — which is why it
-     takes no argument and why every task on the board closes together. */
+  /* THE SECOND INDEPENDENT REASON. There were three; the asset's start date was
+     one of them and is not any more — see the note where notYetStartable used
+     to be. Not asset-specific: this one is about the person, not the task,
+     which is why it takes no argument and why every task on the board closes
+     together. */
   const owing = timesheetBlock();
   /* Put down on purpose, and by whom it can be picked up again.
      
@@ -12786,11 +12798,11 @@ async function openDrawer(id){
   const canResume = hs.canResume;
   const holdWhy = !hs.canHold && hs.hold.offer ? hs.hold.message : null;
   const resumeWhy = !hs.canResume && hs.resume.offer ? hs.resume.message : null;
-  const canStart = mayStart && !a.work_open && !held && (mine || a.status!=='assigned') && !blocked && !waiting && !owing;
+  const canStart = mayStart && !a.work_open && !held && (mine || a.status!=='assigned') && !blocked && !owing;
   /* Offered and refused, rather than absent: somebody looking for the button
      they used yesterday should find it and be told why it is not available,
      not be left wondering whether the asset is theirs at all. */
-  const startBlocked = mayStart && !a.work_open && !held && (mine || a.status!=='assigned') && Boolean(blocked || waiting || owing);
+  const startBlocked = mayStart && !a.work_open && !held && (mine || a.status!=='assigned') && Boolean(blocked || owing);
   /* The checklist is set by the creator and the reviewers, not by whoever is
      carrying the work — they read it and work to it. Mirrors canManageTasks in
      src/permissions.js; the API decides, this only stops offering a control
@@ -12952,6 +12964,15 @@ async function openDrawer(id){
               ? 'Nothing to press.'
               : 'Press Resume when you pick it up again.'}` : ''}
         </div>` : ''}
+        ${/* TWO REASONS, NOT THREE. The third branch here drew a disabled Accept
+              and Start titled "This task can't be started until <date>" with a
+              sentence naming today in IST. The asset's dates no longer decide
+              anything, so there is no third reason and no date in any of this
+              copy — which is the "no leftover disabled-state, tooltip or
+              message that mentions the dates as a reason" half of the change.
+              `startBlocked` is now exactly `blocked || owing`, so the two
+              branches below cover it and there is nothing left to fall
+              through to. */''}
         ${startBlocked ? (owing ? `
           <button class="btn btn-brand" id="d_startBtn" disabled
             title="Fill your timesheet for ${escapeHTML(owing.dateLabel || owing.date)} first">Accept and Start</button>
@@ -12959,17 +12980,12 @@ async function openDrawer(id){
             <strong>${escapeHTML(owing.dateLabel || owing.date)}</strong> to start work.
             An Idle line counts, and this unlocks as soon as it is saved.
             <a href="#" class="ts-gate-link" data-tsgate="${escapeHTML(owing.date || '')}">Open the Time Sheet</a></div>`
-          : blocked ? `
+          : `
           <button class="btn btn-brand" id="d_startBtn" disabled
             title="Finish ${escapeHTML(blocked.code || 'your current task')} first">Accept and Start</button>
           <div class="start-blocked">Finish your current task before starting another —
             <strong>${escapeHTML(blocked.code || 'an asset')}</strong>${blocked.name ? ` (${escapeHTML(blocked.name)})` : ''}
-            is still open. Submit it for review and this one unlocks.</div>` : `
-          <button class="btn btn-brand" id="d_startBtn" disabled
-            title="This task can't be started until ${escapeHTML(waiting)}">Accept and Start</button>
-          <div class="start-blocked">This task can't be started until
-            <strong>${escapeHTML(waiting)}</strong> — its start date has not arrived yet.
-            Today is ${escapeHTML(todayIST())} in IST.</div>`) : ''}
+            is still open. Submit it for review and this one unlocks.</div>`) : ''}
       </div>
       <div class="ref-err" id="d_startErr"></div>
     ` : ''}
@@ -13390,8 +13406,12 @@ async function openDrawer(id){
     document.getElementById('d_category').onchange = async e=>{ try{ await api('/assets/'+id,{method:'PATCH',body:{category:e.target.value||null}}); a.category=e.target.value||null; render(); }catch(err){ showToast(err.message); } };
     document.getElementById('d_hours').onchange = async e=>{ try{ await api('/assets/'+id,{method:'PATCH',body:{manHours:e.target.value?Number(e.target.value):null}}); a.man_hours=e.target.value; render(); }catch(err){ showToast(err.message); } };
     document.getElementById('d_due').onchange = async e=>{ try{ await api('/assets/'+id,{method:'PATCH',body:{due:e.target.value||null}}); a.due_date=e.target.value; render(); }catch(err){ showToast(err.message); } };
-    /* Editing the start date can open or close Accept and Start, so the whole
-       drawer is redrawn rather than just the board behind it. */
+    /* THE SAME REDRAW THE END DATE GETS, and for the same reason: the list
+       column behind the drawer shows this date, and the At Risk and overdue
+       figures are computed from the dates. It no longer opens or closes Accept
+       and Start — that is what this comment used to say, and it is why the
+       drawer rather than the board was redrawn. Kept as a full redraw because
+       the drawer's own field should show what was saved. */
     document.getElementById('d_start').onchange = async e=>{
       try{ await api('/assets/'+id,{method:'PATCH',body:{startDate:e.target.value||null}});
         a.start_date=e.target.value; await render(); openDrawer(id);

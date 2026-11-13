@@ -2514,8 +2514,8 @@ const AWAITING_HANDOVER = {
  * the clock.
  *
  * 409, matching every other "not now" refusal on these two endpoints — the
- * start date, the one-active-task rule, the handover gates. 403 would say the
- * person may not do this, and they may; it is the day that is wrong.
+ * one-active-task rule, the handover gates. 403 would say the person may not do
+ * this, and they may; it is the day that is wrong.
  */
 function holidayRefusal(verb) {
   const closed = holidays.at();
@@ -2601,35 +2601,42 @@ router.post('/:id/start', async (req, res) => {
     return res.status(409).json({ error: AWAITING_HANDOVER[asset.status] });
   }
 
-  /* Not before the day it is scheduled to begin.
+  /* THE ASSET'S START DATE IS NOT CONSULTED HERE, AND MUST NOT BE.
    *
-   * Alongside the one-active-task rule below rather than merged with it: they
-   * are two independent reasons the same button is refused, and either alone is
-   * enough. The page disables the button for both, and both are checked here
-   * too, because a disabled button is a courtesy and the server is the rule.
+   * This is where the gate was:
    *
-   * src/asset-schedule.js owns the comparison so the tooltip and this refusal
-   * cannot drift — the failure worth designing against is somebody being told
-   * they may start and then being refused when they click. */
-  if (assetSchedule.startsInFuture(asset)) {
-    return res.status(409).json({
-      error: assetSchedule.notYetMessage(asset),
-      startsOn: assetSchedule.asISODate(asset.start_date),
-    });
-  }
+   *     if (assetSchedule.startsInFuture(asset)) {
+   *       return res.status(409).json({ error: assetSchedule.notYetMessage(asset), ... });
+   *     }
+   *
+   * An asset with a start date of next Tuesday answered 409 "This task cannot
+   * be started until 2026-11-18 — its start date has not arrived yet", and the
+   * board disabled Accept and Start to match. The owner's position is that the
+   * start date and the end date are information only: they say what the studio
+   * intends, and they do not decide whether somebody may begin work that has
+   * been assigned to them.
+   *
+   * So the dates are stored, edited, shown, sorted, filtered, counted and put
+   * in reminders exactly as before, and no route reads them to allow or refuse
+   * anything. src/asset-schedule.js no longer even exports the comparison —
+   * see the note there — and tests/asset-start-date.test.js fails if a date
+   * check appears on this route again.
+   *
+   * THE OTHER GATES ON THIS ROUTE ARE UNTOUCHED. The outsource check,
+   * mayStartWork, STARTABLE, the awaiting-handover stages, the holiday, the
+   * previous day's timesheet, leave and the one-active-task rule all still
+   * apply and are all unrelated to these two columns. Removing one reason a
+   * button is refused is not removing the others. */
 
-  /* And not on a day the studio is shut. Beside the start-date rule above
-     rather than merged with it, exactly as that one sits beside the
-     one-active-task rule below: these are independent reasons the same button
-     is refused and any one of them alone is enough. See holidayRefusal. */
+  /* Not on a day the studio is shut. See holidayRefusal. */
   const shutForStart = holidayRefusal('started');
   if (shutForStart) return res.status(409).json(shutForStart);
 
-  /* And not while yesterday's sheet is missing. Fourth in the row of
-     independent reasons this one button is refused — the start date, the
-     holiday, this, and the one-active-task rule below — and any one alone is
-     enough. Above the accept transition for the same reason that rule is:
-     nothing has happened yet, so a refusal here leaves no half-done state. */
+  /* And not while yesterday's sheet is missing. Another of the independent
+     reasons this one button is refused — the holiday, this, and the
+     one-active-task rule below — and any one alone is enough. Above the accept
+     transition for the same reason that rule is: nothing has happened yet, so a
+     refusal here leaves no half-done state. */
   const owingForStart = await timesheetRefusal(req);
   if (owingForStart) return res.status(409).json(owingForStart);
 
@@ -3055,13 +3062,13 @@ router.post('/:id/resume', requirePermission('asset.hold'), async (req, res) => 
     });
   }
 
-  /* The start date is NOT re-checked here, and that is deliberate.
-   *
-   * It is a rule about when work may BEGIN, and this work began — the date was
-   * checked at Accept and Start. Re-applying it on resume would only ever fire
-   * if somebody moved the date forward mid-round, and would then strand a task
-   * its holder had already put hours into, with a refusal about the future on
-   * work already done. */
+  /* THE START DATE IS NOT CONSULTED HERE EITHER, and now it is not consulted
+   * at Accept and Start: the dates are information only. This note used to
+   * explain why Resume alone was exempt from a gate the start route applied —
+   * re-applying it mid-round would strand a task its holder had already put
+   * hours into — and the answer turned out to be that the gate was wrong on
+   * both. Kept because Resume is one of the actions a reader checks when asking
+   * whether a date can still stop work: it cannot, here or anywhere. */
   const episode = await assignments.current(db, req.params.id);
   /* THE REOPENED STRETCH BELONGS TO THE ASSIGNEE, not to whoever pressed Resume.
    *
