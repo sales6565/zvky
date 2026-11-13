@@ -302,15 +302,38 @@ test('the blocked Start button says what to do and links to the day', () => {
   const at = code.indexOf('const owing = timesheetBlock();');
   assert.ok(at !== -1, 'the drawer asks the question');
 
-  /* A THIRD INDEPENDENT REASON, folded into the two that were already there —
-     the open-task rule and the start date — rather than a fourth code path. */
-  assert.match(code, /&& !blocked && !waiting && !owing;/, 'it closes the button');
-  assert.match(code, /Boolean\(blocked \|\| waiting \|\| owing\)/, 'and opens the explanation');
+  /* ONE OF TWO INDEPENDENT REASONS, folded in rather than given a code path of
+     its own. There were THREE — the open-task rule, the asset's start date and
+     this — and Prompt 69 took the start date out: the dates are information
+     only, so `waiting` is gone from both expressions. This test is about the
+     TIMESHEET reason, which is unchanged; the terms beside it are asserted so
+     that losing one of them fails here. */
+  assert.match(code, /&& !blocked && !owing;/, 'it closes the button');
+  assert.match(code, /Boolean\(blocked \|\| owing\)/, 'and opens the explanation');
+  /* SCOPED TO THE TWO EXPRESSIONS, not to the page.
+     
+     This started as a page-wide grep for `!waiting` and matched two unrelated
+     things on the way to being right: `!waitingOnRelay` in this same drawer,
+     and `if(!waiting) return;` in the office-server bridge, where `waiting` is
+     a pending request. The term that must not come back is the one INSIDE these
+     two declarations, so that is what is read. */
+  const canStartLine = code.match(/^ {2}const canStart = .*;$/m);
+  const startBlockedLine = code.match(/^ {2}const startBlocked = .*;$/m);
+  assert.ok(canStartLine && startBlockedLine, 'the two button expressions are where they were');
+  const both = canStartLine[0] + startBlockedLine[0];
+  assert.ok(!/waiting|start_date|startsInFuture/.test(both),
+    `the asset start date is back in the button state — see tests/asset-start-date.test.js: ${both}`);
 
   /* OFFERED AND REFUSED, not absent — the rule this panel already states for
      the other two reasons. A disabled button with the reason beats a missing
      one. */
-  const panel = code.slice(code.indexOf('${startBlocked ? (owing ?'), code.indexOf(': blocked ? `'));
+  /* THE TIMESHEET BRANCH ALONE. It used to end at ': blocked ? `', the start of
+     the second of three branches; with the start-date branch gone there are two,
+     and the second begins at ': `'. Bounded either way so this reads only the
+     branch it is about. */
+  const boxAt = code.indexOf('${startBlocked ? (owing ?');
+  assert.ok(boxAt !== -1, 'the start box is where it was');
+  const panel = code.slice(boxAt, code.indexOf('Finish your current task', boxAt));
   assert.match(panel, /<button class="btn btn-brand" id="d_startBtn" disabled/);
   assert.match(panel, /Fill your timesheet for/);
   assert.match(panel, /An Idle line counts/, 'and names the quick way to comply');

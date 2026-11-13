@@ -372,10 +372,24 @@ test('bulk assign and schedule', { skip: cfg ? false : SKIP_REASON }, async (t) 
     assert.strictEqual((await read(a.id)).assignee_id, people.ana, 'still theirs');
   });
 
-  await t.test('a bulk-assigned asset obeys the start date gate', async () => {
-    /* The two features meeting. Scheduling work to begin next week and handing
-       it out in the same action is the whole point of the panel, and it would
-       be worth very little if the person could start it that afternoon. */
+  await t.test('a bulk-set start date schedules the work and gates nothing', async () => {
+    /* INVERTED BY PROMPT 69, and the old reasoning is kept because it is what
+       the panel was built on:
+       
+         "The two features meeting. Scheduling work to begin next week and
+          handing it out in the same action is the whole point of the panel, and
+          it would be worth very little if the person could start it that
+          afternoon."
+       
+       The owner's position is the other one: the dates are information. Handing
+       out forty assets with a start date next week is still the point of the
+       panel — it tells forty people when the work is MEANT to begin — and the
+       one who finishes early and picks theirs up on Friday is not doing
+       something the studio needs to prevent. So the date is stored by the bulk
+       action, shows on every one of those rows, and refuses nothing.
+       
+       What the panel still refuses is a start after an end, which is a
+       statement about the two values being typed; that is the case below. */
     const day = (offset) => schedule.todayInIST(new Date(Date.now() + offset * 86400000));
     const later = await fresh();
     const today = await fresh();
@@ -387,13 +401,18 @@ test('bulk assign and schedule', { skip: cfg ? false : SKIP_REASON }, async (t) 
       assetIds: [today.id], assigneeId: people.ana, startDate: day(0), due: day(10),
     })).status, 200);
 
-    const refused = await as('ana', `/assets/${later.id}/start`, { method: 'POST' });
-    assert.strictEqual(refused.status, 409, JSON.stringify(refused.body));
-    assert.match(refused.body.error, /cannot be started until/i);
-    assert.strictEqual(refused.body.startsOn, day(3));
+    // The date is on the row, which is the whole of what it is for.
+    assert.strictEqual(schedule.asISODate((await read(later.id)).start_date), day(3),
+      'the bulk action still stores the start date it was given');
+
+    const started = await as('ana', `/assets/${later.id}/start`, { method: 'POST' });
+    assert.strictEqual(started.status, 200,
+      `a start date three days out must not refuse the work: ${JSON.stringify(started.body)}`);
+    await as('ana', `/assets/${later.id}/submit`, { method: 'POST',
+      body: { link: 'https://drive.zvky.test/later' } });
 
     assert.strictEqual((await as('ana', `/assets/${today.id}/start`, { method: 'POST' })).status, 200,
-      'and one scheduled for today opens normally');
+      'and one scheduled for today opens as it always did');
     await as('ana', `/assets/${today.id}/submit`, { method: 'POST',
       body: { link: 'https://drive.zvky.test/today' } });
   });

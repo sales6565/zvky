@@ -307,6 +307,24 @@ test('PRODUCTION SAFETY: the submit route is exactly what it was', () => {
     const REMOVED_OK = [
       "  if (!name || !name.trim()) return res.status(400).json({ error: 'Asset name is required' });",
       '      [id, code, name.trim(), type, category || null, priority, projectId, assigneeId, req.user.id,',
+      /* Prompt 69. The asset's start date and end date are information only, so
+       * the start-date gate came off POST /:id/start — the three lines of the
+       * 409 it answered.
+       *
+       * WHY THIS CANNOT REACH THE ENDPOINT THIS TEST PROTECTS: all three are
+       * inside POST /api/assets/:id/start. None is in POST /:id/submit, none is
+       * in GET /versions/:versionId/download, and neither of those routes reads
+       * assets.start_date at all — asserted directly by the grep guard in
+       * tests/asset-start-date.test.js, which names every module allowed to read
+       * these columns. Submitting work and downloading a legacy file are
+       * untouched: an artist pastes a link, attaches a file or does not, and
+       * both answer exactly as before.
+       *
+       * The removal is also the opposite of a new refusal — it takes one away —
+       * so it cannot be the failure mode this guard exists for. */
+      '  if (assetSchedule.startsInFuture(asset)) {',
+      '      error: assetSchedule.notYetMessage(asset),',
+      '      startsOn: assetSchedule.asISODate(asset.start_date),',
     ];
     const lost = removed.filter((line) => !REMOVED_OK.includes(line));
     assert.deepStrictEqual(lost, [], `the submit route lost code: ${lost.join(' | ')}`);
